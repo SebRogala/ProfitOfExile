@@ -84,6 +84,20 @@ assert_nothing_skipped() {
 #
 # The phase split mirrors the `go test` invocations below: phase 1 runs
 # ./internal/db/migrations/..., phase 2 runs everything else.
+#
+# `./.claude/worktrees` and `./.claude/pipeforge` join node_modules/target/.git
+# in the prune set here and in the two finds below — one prune set, three copies
+# of it. Pruned by PATH rather than by the `.claude` name: the cause is those two
+# directories holding nested checkouts, not the tool directory around them, and
+# pruning all of `.claude` would also hide a real Go file somebody puts there.
+#
+# `.claude/worktrees/` holds nested git worktrees of this repository (gitignored,
+# local only), each a full second copy of the tree. Without the prune their
+# `*_integration_test.go` files enter phase 2's expected inventory — their paths
+# are not `./internal/db/migrations/*`, so even the migrations tests slip past
+# that exclusion — while `go list` never sees them as packages of this module, so
+# they are demanded and can never run. Measured 2026-08-27: ten phantom missing
+# tests, all of them phase 1's, on a checkout that had a worktree open.
 expected_tests() {
 	local scope="$1"
 	local -a files=()
@@ -92,7 +106,8 @@ expected_tests() {
 		mapfile -t files < <(find ./internal/db/migrations -name '*_integration_test.go' | sort)
 	else
 		mapfile -t files < <(find . \
-			\( -name node_modules -o -name target -o -name .git \) -prune -o \
+			\( -name node_modules -o -name target -o -name .git \
+			   -o -path ./.claude/worktrees -o -path ./.claude/pipeforge \) -prune -o \
 			-name '*_integration_test.go' -not -path './internal/db/migrations/*' -print |
 			sort)
 	fi
@@ -127,7 +142,8 @@ expected_tests() {
 # way lands on the name side alone and is reported here rather than silently
 # skipped everywhere.
 integration_files_by_name() {
-	find . \( -name node_modules -o -name target -o -name .git \) -prune -o \
+	find . \( -name node_modules -o -name target -o -name .git \
+		   -o -path ./.claude/worktrees -o -path ./.claude/pipeforge \) -prune -o \
 		-name '*_integration_test.go' -print | sed 's|^\./||' | sort
 }
 
@@ -137,7 +153,8 @@ integration_files_by_name() {
 integration_files_by_tag() {
 	local -a gofiles=()
 	mapfile -t gofiles < <(find . \
-		\( -name node_modules -o -name target -o -name .git \) -prune -o \
+		\( -name node_modules -o -name target -o -name .git \
+		   -o -path ./.claude/worktrees -o -path ./.claude/pipeforge \) -prune -o \
 		-name '*.go' -print)
 	[ ${#gofiles[@]} -gt 0 ] || return 0
 	grep -lx -- '//go:build integration' "${gofiles[@]}" | sed 's|^\./||' | sort

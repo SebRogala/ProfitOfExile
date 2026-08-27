@@ -2,7 +2,9 @@ package mercenary
 
 import (
 	"errors"
+	"fmt"
 	"math"
+	"math/rand"
 	"testing"
 )
 
@@ -56,7 +58,7 @@ func TestDecide_CorrelationAboveThreshold_ReportsDuplicate(t *testing.T) {
 		t.Fatalf("test setup: NCC %v is not above the %v threshold", ncc, DedupeThreshold)
 	}
 
-	if got := Decide(KeyState{Live: []Signature{stored}}, candidate); got != Duplicate {
+	if got, _ := Decide(KeyState{Live: []Signature{stored}}, nil, candidate); got != Duplicate {
 		t.Fatalf("Decide at NCC %v = %v, want duplicate", ncc, got)
 	}
 }
@@ -76,13 +78,13 @@ func TestDecide_CorrelationBelowThreshold_ReportsStored(t *testing.T) {
 		t.Fatalf("test setup: NCC %v is not below the %v threshold", ncc, DedupeThreshold)
 	}
 
-	if got := Decide(KeyState{Live: []Signature{stored}}, candidate); got != Stored {
+	if got, _ := Decide(KeyState{Live: []Signature{stored}}, nil, candidate); got != Stored {
 		t.Fatalf("Decide at NCC %v = %v, want stored", ncc, got)
 	}
 }
 
 func TestDecide_EmptyKey_ReportsStored(t *testing.T) {
-	if got := Decide(KeyState{}, baseSignature(t)); got != Stored {
+	if got, _ := Decide(KeyState{}, nil, baseSignature(t)); got != Stored {
 		t.Fatalf("Decide on an empty key = %v, want stored", got)
 	}
 }
@@ -95,7 +97,7 @@ func TestDecide_MatchesAnyLiveSample_ReportsDuplicate(t *testing.T) {
 	unrelatedB := mustSignature(t, patternRGB(func(o int) bool { return o%3 == 0 }, 1, 255, 200))
 
 	state := KeyState{Live: []Signature{unrelatedA, unrelatedB, duplicateOf}}
-	if got := Decide(state, duplicateOf); got != Duplicate {
+	if got, _ := Decide(state, nil, duplicateOf); got != Duplicate {
 		t.Fatalf("Decide against a matching third sample = %v, want duplicate", got)
 	}
 }
@@ -107,7 +109,7 @@ func TestDecide_ThirdNovelSample_ReportsStored(t *testing.T) {
 		mustSignature(t, patternRGB(func(o int) bool { return o%3 == 0 }, 1, 255, 200)),
 	}}
 
-	if got := Decide(state, baseSignature(t)); got != Stored {
+	if got, _ := Decide(state, nil, baseSignature(t)); got != Stored {
 		t.Fatalf("Decide on a two-sample key = %v, want stored", got)
 	}
 }
@@ -121,7 +123,7 @@ func TestDecide_FourthNovelSample_ReportsCapped(t *testing.T) {
 		mustSignature(t, patternRGB(func(o int) bool { return o%5 == 0 }, 1, 255, 200)),
 	}}
 
-	if got := Decide(state, baseSignature(t)); got != Capped {
+	if got, _ := Decide(state, nil, baseSignature(t)); got != Capped {
 		t.Fatalf("Decide on a full key = %v, want capped", got)
 	}
 }
@@ -137,7 +139,7 @@ func TestDecide_DuplicateOnAFullKey_ReportsDuplicate(t *testing.T) {
 		known,
 	}}
 
-	if got := Decide(state, known); got != Duplicate {
+	if got, _ := Decide(state, nil, known); got != Duplicate {
 		t.Fatalf("Decide on a full key holding this art = %v, want duplicate", got)
 	}
 }
@@ -149,7 +151,7 @@ func TestDecide_MatchesRetiredArt_ReportsTombstoned(t *testing.T) {
 	retired := baseSignature(t)
 	state := KeyState{Retired: []Signature{retired}}
 
-	if got := Decide(state, retired); got != Tombstoned {
+	if got, _ := Decide(state, nil, retired); got != Tombstoned {
 		t.Fatalf("Decide on art identical to a retired sample = %v, want tombstoned", got)
 	}
 }
@@ -165,7 +167,7 @@ func TestDecide_NovelArtUnderARetiredKey_ReportsStored(t *testing.T) {
 	}
 
 	state := KeyState{Retired: []Signature{retired}}
-	if got := Decide(state, novel); got != Stored {
+	if got, _ := Decide(state, nil, novel); got != Stored {
 		t.Fatalf("Decide on new art under a retired key = %v, want stored", got)
 	}
 }
@@ -182,7 +184,7 @@ func TestDecide_CorrelationWithRetiredArtBelowThreshold_ReportsStored(t *testing
 		t.Fatalf("test setup: NCC %v is not below the %v threshold", ncc, DedupeThreshold)
 	}
 
-	if got := Decide(KeyState{Retired: []Signature{retired}}, candidate); got != Stored {
+	if got, _ := Decide(KeyState{Retired: []Signature{retired}}, nil, candidate); got != Stored {
 		t.Fatalf("Decide at NCC %v against retired art = %v, want stored", ncc, got)
 	}
 }
@@ -197,7 +199,7 @@ func TestDecide_CapCountsLiveSamplesOnly(t *testing.T) {
 		mustSignature(t, patternRGB(func(o int) bool { return o%5 == 0 }, 1, 255, 200)),
 	}}
 
-	if got := Decide(state, baseSignature(t)); got != Stored {
+	if got, _ := Decide(state, nil, baseSignature(t)); got != Stored {
 		t.Fatalf("Decide on a key holding %d retired and 0 live samples = %v, want stored",
 			len(state.Retired), got)
 	}
@@ -318,15 +320,276 @@ func TestNewKey_RejectsOverlongFamily(t *testing.T) {
 }
 
 // The tally is what the client reads to decide whether to keep offering a
-// sample, so each outcome has to land in its own column.
+// sample, so each outcome has to land in its own column. Conflicting is counted
+// apart from Duplicate in particular: a duplicate means the pool already serves
+// this art, a conflict means it never will until somebody retires the incumbent.
 func TestAcceptResult_RecordsEachOutcomeSeparately(t *testing.T) {
 	var got AcceptResult
-	for _, outcome := range []Outcome{Stored, Stored, Duplicate, Capped, Capped, Capped, Tombstoned} {
+	for _, outcome := range []Outcome{
+		Stored, Stored, Duplicate, Capped, Capped, Capped, Tombstoned, Conflicting, Conflicting,
+	} {
 		got.Record(outcome)
 	}
 
-	want := AcceptResult{Stored: 2, Duplicate: 1, Capped: 3, Tombstoned: 1}
-	if got != want {
-		t.Fatalf("AcceptResult = %+v, want %+v", got, want)
+	want := AcceptResult{Stored: 2, Duplicate: 1, Capped: 3, Tombstoned: 1, Conflicting: 2}
+	// Field by field rather than ==: AcceptResult carries the Conflicts slice
+	// now, which makes the struct uncomparable. Conflicts is checked too — the
+	// index a conflict entry carries is the CALLER's, so Record growing one
+	// would be filling in a number it does not have.
+	if got.Stored != want.Stored || got.Duplicate != want.Duplicate ||
+		got.Capped != want.Capped || got.Tombstoned != want.Tombstoned ||
+		got.Conflicting != want.Conflicting || len(got.Conflicts) != 0 {
+		t.Fatalf("AcceptResult = %+v, want %+v with no Conflicts detail", got, want)
+	}
+}
+
+// --- cross-family conflict ---
+
+// One picture belongs to one family. A mistimed hover on one device claims art
+// another family is already pooled for, and serving both would leave every
+// device matching that picture against two answers — which is the state the
+// client's own merge rule reacts to by emptying BOTH keys.
+func TestDecide_ArtAlreadyPooledUnderAnotherFamily_ReportsConflicting(t *testing.T) {
+	candidate := perturbed(t, 17) // NCC ≈ 0.8836 against the base: just above the threshold
+	foreign := []ForeignSample{{Key: Key{Family: "Chain", Tier: 1}, Signature: baseSignature(t)}}
+
+	if got, _ := Decide(KeyState{}, foreign, candidate); got != Conflicting {
+		t.Fatalf("Decide against another family's live art = %v, want conflicting", got)
+	}
+}
+
+// The refusal is only actionable if the player is told what to forget, so the
+// conflict names the sample that refused it — the MATCHING one, not simply the
+// first family in the view.
+func TestDecide_Conflict_NamesTheMatchingFamilyAsTheIncumbent(t *testing.T) {
+	candidate := perturbed(t, 17)
+	unrelated := mustSignature(t, patternRGB(func(o int) bool { return o%2 == 0 }, 1, 255, 200))
+	if ncc := unrelated.NCC(candidate); ncc >= DedupeThreshold {
+		t.Fatalf("test setup: the decoy sample correlates at %v with the candidate", ncc)
+	}
+	// The decoy sits FIRST, so returning the head of the view — or the last
+	// sample walked — names the wrong family.
+	foreign := []ForeignSample{
+		{Key: Key{Family: "Pierce", Tier: 1}, Signature: unrelated},
+		{Key: Key{Family: "Chain", Tier: 1}, Signature: baseSignature(t)},
+		{Key: Key{Family: "Brutality", Tier: 3}, Signature: unrelated},
+	}
+
+	_, incumbent := Decide(KeyState{}, foreign, candidate)
+
+	if incumbent == nil {
+		t.Fatal("Decide reported a conflict without naming the incumbent")
+	}
+	if incumbent.Key.Family != "Chain" || incumbent.Key.Tier != 1 {
+		t.Errorf("incumbent = %v, want Chain--1 — the sample that actually matched", incumbent.Key)
+	}
+}
+
+// The conflict runs on the SAME correlation as dedupe. One slot pair further
+// apart is a different picture, and two families are allowed to own two
+// different pictures.
+func TestDecide_ForeignArtBelowTheThreshold_IsNotAConflict(t *testing.T) {
+	candidate := perturbed(t, 18) // NCC ≈ 0.8767: just below
+	foreign := []ForeignSample{{Key: Key{Family: "Chain", Tier: 1}, Signature: baseSignature(t)}}
+
+	got, incumbent := Decide(KeyState{}, foreign, candidate)
+
+	if got != Stored {
+		t.Fatalf("Decide against another family's art at NCC 0.8767 = %v, want stored", got)
+	}
+	if incumbent != nil {
+		t.Errorf("Decide named %q as an incumbent for a candidate it stored", incumbent.Key.Family)
+	}
+}
+
+// A full key offered another family's art is told about the conflict, not about
+// the cap. "Full" invites the device to retry once a slot frees; this art will
+// never be stored under this key until the incumbent is retired, and only the
+// conflict says so.
+func TestDecide_ConflictOnAFullKey_ReportsConflictingNotCapped(t *testing.T) {
+	art := baseSignature(t)
+	full := KeyState{Live: []Signature{
+		mustSignature(t, patternRGB(func(o int) bool { return o%2 == 0 }, 1, 255, 200)),
+		mustSignature(t, patternRGB(func(o int) bool { return o%3 == 0 }, 1, 255, 200)),
+		mustSignature(t, patternRGB(func(o int) bool { return o%5 == 0 }, 1, 255, 200)),
+	}}
+	foreign := []ForeignSample{{Key: Key{Family: "Chain", Tier: 1}, Signature: art}}
+
+	got, incumbent := Decide(full, foreign, art)
+
+	if got != Conflicting {
+		t.Fatalf("Decide on a full key against another family's art = %v, want conflicting", got)
+	}
+	if incumbent == nil || incumbent.Key.Family != "Chain" {
+		t.Errorf("incumbent = %+v, want Chain", incumbent)
+	}
+}
+
+// The other half of the conflict-before-cap ordering: a full key offered art no
+// other family holds is still capped. A non-empty foreign view is not by itself
+// a refusal — only a MATCH in it is — so the cap has to survive one.
+func TestDecide_FullKeyAgainstANonMatchingForeignView_ReportsCapped(t *testing.T) {
+	candidate := baseSignature(t)
+	full := KeyState{Live: []Signature{
+		mustSignature(t, patternRGB(func(o int) bool { return o%2 == 0 }, 1, 255, 200)),
+		mustSignature(t, patternRGB(func(o int) bool { return o%3 == 0 }, 1, 255, 200)),
+		mustSignature(t, patternRGB(func(o int) bool { return o%5 == 0 }, 1, 255, 200)),
+	}}
+	foreign := []ForeignSample{
+		{Key: Key{Family: "Chain", Tier: 1}, Signature: full.Live[0]},
+		{Key: Key{Family: "Pierce", Tier: 2}, Signature: full.Live[1]},
+	}
+	for _, other := range foreign {
+		if ncc := other.Signature.NCC(candidate); ncc >= DedupeThreshold {
+			t.Fatalf("test setup: %v correlates at %v with the candidate, so this would be a conflict",
+				other.Key, ncc)
+		}
+	}
+
+	got, incumbent := Decide(full, foreign, candidate)
+
+	if got != Capped {
+		t.Fatalf("Decide on a full key against art no other family holds = %v, want capped", got)
+	}
+	if incumbent != nil {
+		t.Errorf("Decide named %q as an incumbent for a capped candidate", incumbent.Key.Family)
+	}
+}
+
+// The pool already carries this art under both families, so it is already
+// inconsistent and the client's merge rule is what cleans that up. Reporting a
+// conflict here would tell the device to settle a sample the pool is in fact
+// still serving it.
+func TestDecide_ArtOnItsOwnKeyAndOnAnothers_ReportsDuplicate(t *testing.T) {
+	art := baseSignature(t)
+	foreign := []ForeignSample{{Key: Key{Family: "Chain", Tier: 1}, Signature: art}}
+
+	got, incumbent := Decide(KeyState{Live: []Signature{art}}, foreign, art)
+
+	if got != Duplicate {
+		t.Fatalf("Decide on art this key already holds AND another family holds = %v, want duplicate", got)
+	}
+	if incumbent != nil {
+		t.Errorf("Decide named %q as an incumbent for a duplicate", incumbent.Key.Family)
+	}
+}
+
+// Retirement of this key's own art outranks the conflict. The two ask different
+// things of the device — a tombstone says "stop holding this", a conflict says
+// "this belongs to somebody else" — and the sample the device is being told
+// about was thrown out of THIS key.
+func TestDecide_OwnKeyRetirementOutranksACrossFamilyConflict(t *testing.T) {
+	art := baseSignature(t)
+	foreign := []ForeignSample{{Key: Key{Family: "Chain", Tier: 1}, Signature: art}}
+
+	got, _ := Decide(KeyState{Retired: []Signature{art}}, foreign, art)
+
+	if got != Tombstoned {
+		t.Fatalf("Decide on art retired from this key and live under another = %v, want tombstoned", got)
+	}
+}
+
+// The signature masks the tier badge, so one family's tier-1 and tier-3 art are
+// the same picture by construction whenever the game draws them the same. If
+// its own other tier counted as foreign, the second tier of every such family
+// would be refused.
+func TestOtherFamilies_SameFamilyAtAnotherTierIsNotForeign(t *testing.T) {
+	art := baseSignature(t)
+	live := []ForeignSample{{Key: Key{Family: "Chain", Tier: 1}, Signature: art}}
+
+	foreign := otherFamilies(live, "Chain")
+
+	if len(foreign) != 0 {
+		t.Fatalf("foreign view for Chain = %+v, want empty: its own tier-1 sample is not another family's art",
+			foreign)
+	}
+	if got, _ := Decide(KeyState{}, foreign, art); got != Stored {
+		t.Fatalf("Chain tier 3 offered the art Chain tier 1 holds = %v, want stored", got)
+	}
+}
+
+// Every other family stays in the view, at every tier. Narrowing it to one
+// family, or to one tier, would let a conflict through unnoticed.
+func TestOtherFamilies_KeepsEveryOtherFamilysArt(t *testing.T) {
+	art := baseSignature(t)
+	live := []ForeignSample{
+		{Key: Key{Family: "Chain", Tier: 1}, Signature: art},
+		{Key: Key{Family: "Pierce", Tier: 1}, Signature: art},
+		{Key: Key{Family: "Brutality", Tier: 3}, Signature: art},
+	}
+
+	foreign := otherFamilies(live, "Chain")
+
+	seen := map[string]int16{}
+	for _, sample := range foreign {
+		seen[sample.Key.Family] = sample.Key.Tier
+	}
+	if len(seen) != 2 || seen["Pierce"] != 1 || seen["Brutality"] != 3 {
+		t.Fatalf("foreign view for Chain = %v, want {Pierce:1, Brutality:3}", seen)
+	}
+}
+
+// The pool-wide advisory lock in repository.go is held for exactly this shape of
+// work — the largest batch the SERVER will accept, decided against a SATURATED
+// pool — and its comment quotes the number this benchmark produces.
+//
+// The batch factor is MaxTemplatesPerUpload, not the desktop's
+// MAX_TEMPLATES_PER_BATCH (32): the upload handler is what admits a request, and
+// a client that is not the desktop owes that constant nothing. What the lock has
+// to survive is the worst request the endpoint accepts, so that is what this
+// measures.
+//
+// Decide alone, not Decide plus otherFamilies: the filter is a slice copy next
+// to a full-batch-times-full-view sweep of correlations over 1728 floats each.
+func BenchmarkDecide_MaxBatchAgainstFullForeignView(b *testing.B) {
+	// What the upload handler admits (internal/server/handlers/mercenary.go).
+	batchSize := MaxTemplatesPerUpload
+	// The saturated key space, DERIVED: every family at all three tiers. A
+	// literal here would pin the benchmark — and the lock comment quoting it —
+	// to whatever the vocabulary held the day it was written, which is exactly
+	// how the create migration's 264 outlived the 88-family vocabulary that
+	// produced it.
+	foreignKeys := 3 * KnownFamilyCount()
+
+	rng := rand.New(rand.NewSource(1))
+	randomSignature := func() Signature {
+		rgb := make([]byte, SigBytes)
+		for i := range rgb {
+			rgb[i] = byte(rng.Intn(256))
+		}
+		sig, err := NewSignature(rgb)
+		if err != nil {
+			b.Fatalf("NewSignature: %v", err)
+		}
+		return sig
+	}
+
+	foreign := make([]ForeignSample, 0, foreignKeys*MaxSamplesPerKey)
+	for key := 0; key < foreignKeys; key++ {
+		for sample := 0; sample < MaxSamplesPerKey; sample++ {
+			foreign = append(foreign, ForeignSample{
+				Key:       Key{Family: fmt.Sprintf("family-%d", key), Tier: 1},
+				Signature: randomSignature(),
+			})
+		}
+	}
+	batch := make([]Signature, batchSize)
+	for i := range batch {
+		batch[i] = randomSignature()
+	}
+
+	// Nothing matches, so every candidate walks the whole view. A setup that
+	// short-circuited would report a fraction of what the lock really holds for.
+	for _, candidate := range batch {
+		if outcome, _ := Decide(KeyState{}, foreign, candidate); outcome != Stored {
+			b.Fatalf("benchmark setup: a candidate decided %v, so the scan exits early", outcome)
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, candidate := range batch {
+			Decide(KeyState{}, foreign, candidate)
+		}
 	}
 }

@@ -106,9 +106,34 @@ func mercPost(t *testing.T, router http.Handler, path, body string, withDevice b
 	return w
 }
 
-func decodeCounts(t *testing.T, w *httptest.ResponseRecorder) map[string]int {
+// mercAck is the union of what the two write endpoints answer with, declared on
+// the TEST side so a renamed json tag in the handler breaks a test instead of
+// moving both sides together and quietly reading zero.
+//
+// One struct for both: the tombstone ack is a strict subset (its only key is
+// `tombstoned`), and the fields it does not send stay at their zero values,
+// which is exactly what its tests assert about them.
+type mercAck struct {
+	Stored                int               `json:"stored"`
+	Duplicate             int               `json:"duplicate"`
+	Capped                int               `json:"capped"`
+	Tombstoned            int               `json:"tombstoned"`
+	Conflicting           int               `json:"conflicting"`
+	Rejected              int               `json:"rejected"`
+	RejectedUnknownFamily int               `json:"rejected_unknown_family"`
+	Conflicts             []mercAckConflict `json:"conflicts"`
+}
+
+type mercAckConflict struct {
+	Index           int    `json:"index"`
+	Family          string `json:"family"`
+	Tier            int    `json:"tier"`
+	IncumbentFamily string `json:"incumbent_family"`
+}
+
+func decodeAck(t *testing.T, w *httptest.ResponseRecorder) mercAck {
 	t.Helper()
-	var got map[string]int
+	var got mercAck
 	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
 		t.Fatalf("decode response: %v (body %q)", err, w.Body.String())
 	}
@@ -194,7 +219,7 @@ func TestMercTemplatesUpload_UnreadableTemplate_IsRejectedWithoutLosingTheOthers
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
 	}
-	if got := decodeCounts(t, w)["rejected"]; got != 1 {
+	if got := decodeAck(t, w).Rejected; got != 1 {
 		t.Errorf("rejected = %d, want 1", got)
 	}
 	if len(store.gotCandidates) != 1 {
@@ -218,7 +243,7 @@ func TestMercTemplatesUpload_WrongLengthSignature_IsRejected(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
 	}
-	if got := decodeCounts(t, w)["rejected"]; got != 1 {
+	if got := decodeAck(t, w).Rejected; got != 1 {
 		t.Errorf("rejected = %d, want 1", got)
 	}
 	if store.acceptCalls != 0 {
@@ -235,7 +260,7 @@ func TestMercTemplatesUpload_OutOfRangeTier_IsRejected(t *testing.T) {
 
 	w := mercPost(t, mercRouter(store, nil, nil), "/api/desktop/merc-templates", body, true)
 
-	if got := decodeCounts(t, w)["rejected"]; got != 1 {
+	if got := decodeAck(t, w).Rejected; got != 1 {
 		t.Errorf("rejected = %d, want 1 for tier 4", got)
 	}
 	if store.acceptCalls != 0 {
@@ -245,22 +270,157 @@ func TestMercTemplatesUpload_OutOfRangeTier_IsRejected(t *testing.T) {
 
 // The response is the client's instruction sheet: it has to be able to tell
 // "we kept it" from "we already had it" from "that key is full" from "that key
-// is retired", because it reacts differently to each.
+// is retired" from "another family owns that picture", because it reacts
+// differently to each.
 func TestMercTemplatesUpload_ReportsEachOutcomeSeparately(t *testing.T) {
 	store := &fakeMercStore{acceptResult: mercenary.AcceptResult{
-		Stored: 2, Duplicate: 3, Capped: 4, Tombstoned: 5,
+		Stored: 2, Duplicate: 3, Capped: 4, Tombstoned: 5, Conflicting: 6,
 	}}
 	body := validUploadBody(templateJSON("Chain", 1, mercSignatureB64(1)))
 
 	w := mercPost(t, mercRouter(store, nil, nil), "/api/desktop/merc-templates", body, true)
 
-	got := decodeCounts(t, w)
-	want := map[string]int{"stored": 2, "duplicate": 3, "capped": 4, "tombstoned": 5,
-		"rejected": 0, "rejected_unknown_family": 0}
-	for key, wantValue := range want {
-		if got[key] != wantValue {
-			t.Errorf("%s = %d, want %d (full body: %v)", key, got[key], wantValue, got)
-		}
+	got := decodeAck(t, w)
+	want := mercAck{Stored: 2, Duplicate: 3, Capped: 4, Tombstoned: 5, Conflicting: 6}
+	// Field by field, not ==: mercAck carries the conflicts slice, whose shape
+	// is the wire-key test's business rather than this one's.
+	if got.Stored != want.Stored || got.Duplicate != want.Duplicate ||
+		got.Capped != want.Capped || got.Tombstoned != want.Tombstoned ||
+		got.Conflicting != want.Conflicting || got.Rejected != want.Rejected ||
+		got.RejectedUnknownFamily != want.RejectedUnknownFamily {
+		t.Errorf("upload ack counters = %+v, want %+v", got, want)
+	}
+}
+
+// A conflict is settled per SAMPLE, so the index in the ack has to point at the
+// template the client actually sent. It does not point at the candidate the
+// pool decided on: the decode loop drops what it cannot read, so the two
+// diverge the moment anything is dropped — here the pool's candidate 0 is the
+// request's template 2.
+//
+// Handing back the candidate index would make the device settle the wrong
+// template, or one its batch does not carry at all.
+func TestMercTemplatesUpload_ConflictNamesTheRequestIndexNotTheCandidateIndex(t *testing.T) {
+	store := &fakeMercStore{acceptResult: mercenary.AcceptResult{
+		Conflicting: 1,
+		Conflicts: []mercenary.Conflict{{
+			Index:           0,
+			Key:             mercenary.Key{Family: "Pierce", Tier: 2},
+			IncumbentFamily: "Chain",
+		}},
+	}}
+	body := validUploadBody(
+		templateJSON("Definitely Not A Support", 1, mercSignatureB64(1)),
+		templateJSON("Chain", 1, "not base64!!"),
+		templateJSON("Pierce", 2, mercSignatureB64(2)),
+	)
+
+	w := mercPost(t, mercRouter(store, nil, nil), "/api/desktop/merc-templates", body, true)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if len(store.gotCandidates) != 1 {
+		t.Fatalf("test setup: %d candidates reached the pool, want 1", len(store.gotCandidates))
+	}
+	ack := decodeAck(t, w)
+	if len(ack.Conflicts) != 1 {
+		t.Fatalf("conflicts = %+v, want 1 entry", ack.Conflicts)
+	}
+	want := mercAckConflict{Index: 2, Family: "Pierce", Tier: 2, IncumbentFamily: "Chain"}
+	if ack.Conflicts[0] != want {
+		t.Errorf("conflict = %+v, want %+v", ack.Conflicts[0], want)
+	}
+	if ack.Conflicting != 1 {
+		t.Errorf("conflicting = %d, want 1", ack.Conflicting)
+	}
+}
+
+// An index the batch does not carry can only be this server's own bookkeeping
+// bug — Accept indexes the slice it was handed — so it is reported as unknown
+// rather than mapped onto whichever template happens to sit at that position.
+// The request still succeeds: the counter is what tells the device a sample was
+// refused, and losing the whole ack over a bad index would lose that too.
+func TestMercTemplatesUpload_ConflictIndexOutsideTheBatch_IsReportedAsUnknown(t *testing.T) {
+	store := &fakeMercStore{acceptResult: mercenary.AcceptResult{
+		Conflicting: 1,
+		Conflicts: []mercenary.Conflict{{
+			Index:           7,
+			Key:             mercenary.Key{Family: "Pierce", Tier: 2},
+			IncumbentFamily: "Chain",
+		}},
+	}}
+	body := validUploadBody(templateJSON("Pierce", 2, mercSignatureB64(2)))
+
+	w := mercPost(t, mercRouter(store, nil, nil), "/api/desktop/merc-templates", body, true)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	ack := decodeAck(t, w)
+	if len(ack.Conflicts) != 1 {
+		t.Fatalf("conflicts = %+v, want 1 entry", ack.Conflicts)
+	}
+	if ack.Conflicts[0].Index != -1 {
+		t.Errorf("index = %d for a candidate index outside a 1-template batch, want -1",
+			ack.Conflicts[0].Index)
+	}
+}
+
+// The ack is a wire contract the desktop parses. Its key set is pinned here
+// because a rename is invisible to every other test in this file — a client
+// reading a key the server stopped sending gets a silent zero, which reads as
+// "nothing was refused".
+func TestMercTemplatesUpload_AckCarriesExactlyTheDocumentedKeys(t *testing.T) {
+	store := &fakeMercStore{acceptResult: mercenary.AcceptResult{
+		Stored:      1,
+		Conflicting: 1,
+		Conflicts: []mercenary.Conflict{{
+			Index:           0,
+			Key:             mercenary.Key{Family: "Pierce", Tier: 2},
+			IncumbentFamily: "Chain",
+		}},
+	}}
+	body := validUploadBody(
+		templateJSON("Pierce", 2, mercSignatureB64(2)),
+		templateJSON("Chain", 1, mercSignatureB64(1)),
+	)
+
+	w := mercPost(t, mercRouter(store, nil, nil), "/api/desktop/merc-templates", body, true)
+
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode ack: %v (body %q)", err, w.Body.String())
+	}
+	assertKeys(t, "upload ack", envelope, []string{"capped", "conflicting", "conflicts",
+		"duplicate", "rejected", "rejected_unknown_family", "stored", "tombstoned"})
+
+	var conflicts []map[string]json.RawMessage
+	if err := json.Unmarshal(envelope["conflicts"], &conflicts); err != nil {
+		t.Fatalf("decode conflicts: %v", err)
+	}
+	if len(conflicts) != 1 {
+		t.Fatalf("conflicts = %d, want 1", len(conflicts))
+	}
+	assertKeys(t, "conflict", conflicts[0], []string{"family", "incumbent_family", "index", "tier"})
+}
+
+// An upload with nothing to refuse still sends `conflicts`, as an empty array
+// and never as null: the desktop parses it into a Vec, and serde's `default`
+// covers a MISSING field, not an explicit null — a null would fail the whole
+// ack parse and strand the batch as unsettled.
+func TestMercTemplatesUpload_NoConflicts_SendsAnEmptyArrayNotNull(t *testing.T) {
+	store := &fakeMercStore{acceptResult: mercenary.AcceptResult{Stored: 1}}
+	body := validUploadBody(templateJSON("Chain", 1, mercSignatureB64(1)))
+
+	w := mercPost(t, mercRouter(store, nil, nil), "/api/desktop/merc-templates", body, true)
+
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode ack: %v (body %q)", err, w.Body.String())
+	}
+	if got := string(envelope["conflicts"]); got != "[]" {
+		t.Errorf("conflicts = %s, want []", got)
 	}
 }
 
@@ -349,7 +509,7 @@ func TestMercTemplatesUpload_AFullWorstCaseBatch_IsUnderTheBodyCap(t *testing.T)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
 	}
-	if got := decodeCounts(t, w)["rejected"]; got != 0 {
+	if got := decodeAck(t, w).Rejected; got != 0 {
 		t.Fatalf("rejected = %d, want 0 — every template in the batch is well-formed", got)
 	}
 	if len(store.gotCandidates) != mercBatchSize {
@@ -583,7 +743,7 @@ func TestMercTemplatesTombstone_ReportsHowManySamplesWereRetired(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
 	}
-	if got := decodeCounts(t, w)["tombstoned"]; got != 3 {
+	if got := decodeAck(t, w).Tombstoned; got != 3 {
 		t.Errorf("tombstoned = %d, want 3", got)
 	}
 	wantKey := mercenary.Key{Family: "Chain", Tier: 2}
@@ -638,12 +798,12 @@ func TestMercTemplatesUpload_FamilyOutsideTheVocabulary_IsRejected(t *testing.T)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
 	}
-	counts := decodeCounts(t, w)
-	if counts["rejected_unknown_family"] != 1 {
-		t.Errorf("rejected_unknown_family = %d, want 1", counts["rejected_unknown_family"])
+	ack := decodeAck(t, w)
+	if ack.RejectedUnknownFamily != 1 {
+		t.Errorf("rejected_unknown_family = %d, want 1", ack.RejectedUnknownFamily)
 	}
-	if counts["rejected"] != 0 {
-		t.Errorf("rejected = %d, want 0 — an unknown family is not a malformed one", counts["rejected"])
+	if ack.Rejected != 0 {
+		t.Errorf("rejected = %d, want 0 — an unknown family is not a malformed one", ack.Rejected)
 	}
 	if store.acceptCalls != 0 {
 		t.Errorf("store was called with an invented family")
@@ -663,12 +823,12 @@ func TestMercTemplatesUpload_CountsUnknownFamiliesApartFromMalformedTemplates(t 
 
 	w := mercPost(t, mercRouter(store, nil, nil), "/api/desktop/merc-templates", body, true)
 
-	counts := decodeCounts(t, w)
-	if counts["rejected_unknown_family"] != 1 {
-		t.Errorf("rejected_unknown_family = %d, want 1", counts["rejected_unknown_family"])
+	ack := decodeAck(t, w)
+	if ack.RejectedUnknownFamily != 1 {
+		t.Errorf("rejected_unknown_family = %d, want 1", ack.RejectedUnknownFamily)
 	}
-	if counts["rejected"] != 1 {
-		t.Errorf("rejected = %d, want 1", counts["rejected"])
+	if ack.Rejected != 1 {
+		t.Errorf("rejected = %d, want 1", ack.Rejected)
 	}
 	if len(store.gotCandidates) != 1 {
 		t.Fatalf("candidates reaching the pool = %d, want 1", len(store.gotCandidates))
@@ -692,7 +852,7 @@ func TestMercTemplatesTombstone_FamilyOutsideTheVocabulary_IsAccepted(t *testing
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
 	}
-	if got := decodeCounts(t, w)["tombstoned"]; got != 2 {
+	if got := decodeAck(t, w).Tombstoned; got != 2 {
 		t.Errorf("tombstoned = %d, want 2", got)
 	}
 	if store.gotKey.Family != renamedAway {

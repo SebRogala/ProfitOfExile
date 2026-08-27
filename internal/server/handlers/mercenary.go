@@ -60,6 +60,46 @@ type mercUploadRequest struct {
 	Templates     []mercTemplateItem `json:"templates"`
 }
 
+// mercUploadAck is what an upload answers with: what the pool did with the
+// batch, by outcome, plus per-sample detail for the one outcome a device cannot
+// act on from a count alone.
+//
+// A struct rather than the map[string]int it used to be, because the payload
+// stopped being homogeneous when `conflicts` arrived — and because these key
+// names are a wire contract the desktop parses, so they belong somewhere a
+// reader can see all of them at once.
+//
+// Every counter keeps the name it had. The desktop's UploadAck fields are all
+// #[serde(default)] with no deny_unknown_fields, so an old build ignores the two
+// new keys and a new build tolerates a server that has not shipped them yet.
+type mercUploadAck struct {
+	Stored     int `json:"stored"`
+	Duplicate  int `json:"duplicate"`
+	Capped     int `json:"capped"`
+	Tombstoned int `json:"tombstoned"`
+	// Conflicting counts candidates refused because a LIVE sample of another
+	// family already carries that art. Apart from `duplicate` because the two
+	// ask opposite things of the device: a duplicate means the pool already
+	// serves this sample, a conflict means it never will until somebody retires
+	// the incumbent.
+	Conflicting           int                `json:"conflicting"`
+	Rejected              int                `json:"rejected"`
+	RejectedUnknownFamily int                `json:"rejected_unknown_family"`
+	Conflicts             []mercConflictItem `json:"conflicts"`
+}
+
+// mercConflictItem names one refused template and the family that already owns
+// its art, so the log line the player reads says what to forget.
+//
+// Index is the position in the REQUEST's `templates` array, not in the batch
+// the pool decided on — see the decode loop for why the two diverge.
+type mercConflictItem struct {
+	Index           int    `json:"index"`
+	Family          string `json:"family"`
+	Tier            int    `json:"tier"`
+	IncumbentFamily string `json:"incumbent_family"`
+}
+
 type mercTombstoneRequest struct {
 	FormatVersion int    `json:"format_version"`
 	Family        string `json:"family"`
@@ -257,8 +297,14 @@ func MercTemplatesUpload(store MercTemplateStore, limiter *mercenary.RateLimiter
 		// fatal: one malformed entry must not discard the good ones sent with
 		// it, and the count tells the client something is wrong on its side.
 		candidates := make([]mercenary.Candidate, 0, len(body.Templates))
+		// candidateIndex[i] is the REQUEST position of candidate i. Every
+		// `continue` below shifts the two apart, and the conflict report is
+		// per-sample: a device settles the offer at `templates[index]`, so
+		// handing it a candidate index would make it settle the wrong template —
+		// or, after enough drops, an index its batch does not carry at all.
+		candidateIndex := make([]int, 0, len(body.Templates))
 		rejected, unknownFamily := 0, 0
-		for _, item := range body.Templates {
+		for requestIndex, item := range body.Templates {
 			key, err := mercenary.NewKey(item.Family, item.Tier)
 			if err != nil {
 				// An unknown family is counted apart from a malformed one
@@ -292,6 +338,7 @@ func MercTemplatesUpload(store MercTemplateStore, limiter *mercenary.RateLimiter
 				continue
 			}
 			candidates = append(candidates, mercenary.Candidate{Key: key, Signature: sig})
+			candidateIndex = append(candidateIndex, requestIndex)
 		}
 
 		result := mercenary.AcceptResult{}
@@ -306,6 +353,9 @@ func MercTemplatesUpload(store MercTemplateStore, limiter *mercenary.RateLimiter
 			}
 		}
 
+		// Still `Stored > 0`: a conflicting candidate is refused, so the corpus
+		// is byte-identical afterwards and evicting on it would throw the cache
+		// away for nothing.
 		if result.Stored > 0 {
 			cache.Invalidate(mercenary.SupportedFormatVersion)
 		}
@@ -317,19 +367,55 @@ func MercTemplatesUpload(store MercTemplateStore, limiter *mercenary.RateLimiter
 			"duplicate", result.Duplicate,
 			"capped", result.Capped,
 			"tombstoned", result.Tombstoned,
+			"conflicting", result.Conflicting,
 			"rejected", rejected,
 			"rejected_unknown_family", unknownFamily,
 		)
 
-		writeMercJSON(w, map[string]int{
-			"stored":                  result.Stored,
-			"duplicate":               result.Duplicate,
-			"capped":                  result.Capped,
-			"tombstoned":              result.Tombstoned,
-			"rejected":                rejected,
-			"rejected_unknown_family": unknownFamily,
+		writeMercJSON(w, mercUploadAck{
+			Stored:                result.Stored,
+			Duplicate:             result.Duplicate,
+			Capped:                result.Capped,
+			Tombstoned:            result.Tombstoned,
+			Conflicting:           result.Conflicting,
+			Rejected:              rejected,
+			RejectedUnknownFamily: unknownFamily,
+			Conflicts:             mercConflictItems(dev.Fingerprint, result.Conflicts, candidateIndex),
 		})
 	}
+}
+
+// mercConflictItems renders the pool's conflict detail for the wire, mapping
+// each entry's CANDIDATE index back to the index of the template the client
+// actually sent.
+//
+// A never-nil slice, so the field marshals as `[]` and not as `null`: the
+// desktop parses this into a Vec, and serde's `default` covers a MISSING field,
+// not an explicit null.
+//
+// An index outside the batch can only be a bug in this server's own bookkeeping
+// — Accept indexes the slice it was handed — so it is logged and sent as -1
+// rather than silently mapped onto some other template. The client
+// bounds-checks and ignores it; the count still says a sample was refused.
+func mercConflictItems(fingerprint string, conflicts []mercenary.Conflict, candidateIndex []int) []mercConflictItem {
+	items := make([]mercConflictItem, 0, len(conflicts))
+	for _, conflict := range conflicts {
+		requestIndex := -1
+		if conflict.Index >= 0 && conflict.Index < len(candidateIndex) {
+			requestIndex = candidateIndex[conflict.Index]
+		} else {
+			slog.Error("merc templates: conflict index outside the batch",
+				"device", fingerprint, "candidate_index", conflict.Index,
+				"candidates", len(candidateIndex))
+		}
+		items = append(items, mercConflictItem{
+			Index:           requestIndex,
+			Family:          conflict.Key.Family,
+			Tier:            int(conflict.Key.Tier),
+			IncumbentFamily: conflict.IncumbentFamily,
+		})
+	}
+	return items
 }
 
 // MercTemplatesServe handles GET /api/desktop/merc-templates?format_version=N.
