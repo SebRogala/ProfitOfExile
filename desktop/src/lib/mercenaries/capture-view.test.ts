@@ -17,9 +17,14 @@ import {
 	STATUS_LABEL,
 	STATUS_TONE,
 	captureOnScreen,
+	canResetTemplates,
+	RESET_TEMPLATES_TITLE,
 	supportText,
 	supportTitle,
-	templateChip
+	templateChip,
+	templateGroups,
+	seedChip,
+	seedGroupLabel
 } from './capture-view';
 import type {
 	MercCapture,
@@ -662,5 +667,143 @@ describe('templateChip', () => {
 		// with it would read as two buttons.
 		expect(POOLED_CHIP_MARK).not.toBe('✕');
 		expect(POOLED_CHIP_MARK.length).toBeGreaterThan(0);
+	});
+});
+
+describe('templateGroups', () => {
+	it('puts a seeded family in the seeded group and nothing else there', () => {
+		// The two groups read two different lists. Deriving the seeded one from
+		// the learned keys would print `Return--3` as a family name and send
+		// `merc_forget_seed` an argument no store entry carries.
+		const groups = templateGroups({
+			learnedFamilies: ['Return--3'],
+			pooledFamilies: [],
+			seededFamilies: ['Fork']
+		});
+
+		expect(groups.seeded.map((chip) => chip.family)).toEqual(['Fork']);
+		expect(groups.learned.map((chip) => chip.raw)).toEqual(['Return--3']);
+	});
+
+	it('renders a family that is both seeded and learned in BOTH groups', () => {
+		// A hover confirm of a seeded family stores a Local sample BESIDE the
+		// seed (the same-key "already known" check ignores seeds), so this
+		// device holds two removable things under one family name. Subtracting
+		// either list from the other would leave one of them with no ✕.
+		const groups = templateGroups({
+			learnedFamilies: ['Fork--1'],
+			pooledFamilies: [],
+			seededFamilies: ['Fork']
+		});
+
+		expect(groups.seeded.map((chip) => chip.family)).toEqual(['Fork']);
+		expect(groups.learned.map((chip) => chip.family)).toEqual(['Fork']);
+	});
+
+	it('still marks a pooled key when a seed shares its family', () => {
+		// The pooled marker is keyed on `<family>--<tier>`, not on the family,
+		// so the seeded list must not disturb it.
+		const groups = templateGroups({
+			learnedFamilies: ['Fork--1'],
+			pooledFamilies: ['Fork--1'],
+			seededFamilies: ['Fork']
+		});
+
+		expect(groups.learned[0].pooled).toBe(true);
+	});
+
+	it('has no seeded group when nothing is seeded', () => {
+		const groups = templateGroups({
+			learnedFamilies: ['Return--3'],
+			pooledFamilies: [],
+			seededFamilies: []
+		});
+
+		expect(groups.seeded).toEqual([]);
+	});
+
+	it('has no seeded group when Rust never sent the list', () => {
+		// A Rust build older than POE-208 omits `seededFamilies` entirely, and
+		// the store applies the slice WHOLE — there is no field-wise default
+		// upstream of here, so the page would crash on an absent list.
+		const groups = templateGroups({ learnedFamilies: [], pooledFamilies: [] });
+
+		expect(groups.seeded).toEqual([]);
+	});
+});
+
+describe('seedChip', () => {
+	it('prints the family alone, with no tier the player never read', () => {
+		// One seed per family, installed under the family's LOWEST vocabulary
+		// tier — a store detail, not a read. Printing `(Tier 1)` would claim a
+		// badge was read, and `merc_forget_seed` takes the family either way.
+		const chip = seedChip('Swift Affliction');
+
+		expect(chip.family).toBe('Swift Affliction');
+		expect(chip.label).toBe('Swift Affliction');
+	});
+
+	it('says the seed came from the gem art rather than from a hover', () => {
+		const chip = seedChip('Fork');
+
+		expect(chip.hint).toMatch(/art/i);
+		expect(chip.hint).toMatch(/not from a hover/i);
+	});
+
+	it('says the ✕ is local and blocklists the family', () => {
+		// Every seed eviction blocklists, or the next module start re-derives
+		// the same art and the button looks broken.
+		const chip = seedChip('Fork');
+
+		expect(chip.hint).toMatch(/this device/i);
+		expect(chip.hint).toMatch(/blocklist/i);
+	});
+
+	it('never claims the shared consequence a learned chip carries', () => {
+		// The learned chip's ✕ posts a tombstone and retires the template for
+		// everyone. A seed was never confirmed and never offered to the pool,
+		// so borrowing that wording would promise an effect this button has not
+		// got — and would send the reader looking for a pool entry to undo.
+		const chip = seedChip('Fork');
+
+		expect(chip.hint).not.toMatch(/retire/i);
+		expect(chip.hint).not.toMatch(/everyone/i);
+		expect(chip.hint).not.toMatch(/pool/i);
+	});
+});
+
+describe('seedGroupLabel', () => {
+	it('counts the seeded families', () => {
+		expect(seedGroupLabel(18)).toBe('seeded from art — 18 families');
+	});
+
+	it('says family, not families, for one', () => {
+		expect(seedGroupLabel(1)).toBe('seeded from art — 1 family');
+	});
+});
+
+describe('canResetTemplates', () => {
+	it('offers the reset on a device that has only seeds', () => {
+		// The fresh-device state after the format-2 purge: seeds installed, no
+		// hover yet. `merc_reset_templates` is the ONLY door to the seed
+		// blocklist and the art cache, so a player who dismissed every seed
+		// chip here would otherwise have no way to get any of them back.
+		expect(canResetTemplates(0, 3)).toBe(true);
+	});
+
+	it('offers the reset on a device that has only learned templates', () => {
+		expect(canResetTemplates(2, 0)).toBe(true);
+	});
+
+	it('withholds the reset when there is nothing at all to reset', () => {
+		expect(canResetTemplates(0, 0)).toBe(false);
+	});
+
+	it('says the reset reaches the seed blocklist and the cached art', () => {
+		// The learned half is what the button is named after; the seed half is
+		// the surprise, and a danger button whose second effect is unannounced
+		// is one the player cannot consent to.
+		expect(RESET_TEMPLATES_TITLE).toMatch(/blocklist/i);
+		expect(RESET_TEMPLATES_TITLE).toMatch(/art/i);
 	});
 });

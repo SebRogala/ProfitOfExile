@@ -325,6 +325,24 @@ pub struct MercenarySlice {
     /// step.
     #[serde(default)]
     pub pooled_families: Vec<String>,
+    /// The families this device knows only from the gem art it seeded itself
+    /// with (POE-208) — exactly [`icons::TemplateStore::seeded_families`].
+    ///
+    /// FAMILY NAMES, not `"<family>--<tier>"` keys, and that is the whole
+    /// difference from the two lists above: a seed is installed once per family
+    /// under the family's lowest vocabulary tier, so the tier in the key is an
+    /// implementation detail of the store rather than something the player
+    /// chose, and printing it would invite a `merc_forget_template(family,
+    /// tier)` call for a tier nobody read. The seed's own door is
+    /// `merc_forget_seed(family)`.
+    ///
+    /// NOT a subset of [`Self::learned_families`] — the two are independent
+    /// lists over the same store, and a family can be in both: a hover confirm
+    /// of a seeded family stores a Local sample BESIDE the seed (the same-key
+    /// "already known" check ignores seeds), so the page shows one chip in each
+    /// group and the two ✕ buttons remove different things.
+    #[serde(default)]
+    pub seeded_families: Vec<String>,
     pub last_error: Option<String>,
     /// Who the module HEARD, for the burst it is scanning under (2026-08-25).
     ///
@@ -395,6 +413,7 @@ impl Default for MercenarySlice {
             capture: None,
             learned_families: Vec::new(),
             pooled_families: Vec::new(),
+            seeded_families: Vec::new(),
             last_error: None,
             burst_speaker: None,
             geometry_source: GEOMETRY_SOURCE_DEFAULT.to_string(),
@@ -743,6 +762,10 @@ mod tests {
             }),
             learned_families: vec!["Pierce--3".into()],
             pooled_families: vec!["Pierce--3".into()],
+            // POE-208. A family name, deliberately NOT a `--<tier>` key and
+            // deliberately not one of the two lists above: the page renders it
+            // as its own chip group whose ✕ calls `merc_forget_seed(family)`.
+            seeded_families: vec!["Fork".into()],
             last_error: None,
             burst_speaker: Some("Fennik, of Unshakeable Faith".into()),
             geometry_source: GEOMETRY_SOURCE_FILE.into(),
@@ -775,6 +798,12 @@ mod tests {
         // wire string the page branches on, so a variant rename must fail here
         // and not on screen.
         assert_eq!(v["pooledFamilies"], serde_json::json!(["Pierce--3"]));
+        // The gem-art seeds (POE-208), the page's third chip group. The key
+        // spelling is the contract, and so is the SHAPE of its members: a
+        // `"Fork--1"` here would send the page's ✕ to `merc_forget_seed` with a
+        // family name no store key carries, which forgets nothing and reports
+        // success.
+        assert_eq!(v["seededFamilies"], serde_json::json!(["Fork"]));
         // The speaker the strip prints beside "scanning" (2026-08-25 smoke).
         assert_eq!(v["burstSpeaker"], "Fennik, of Unshakeable Faith");
         assert_eq!(v["sync"]["lastPull"], "unchanged");
@@ -862,6 +891,10 @@ mod tests {
         assert!(slice.capture.is_none());
         assert_eq!(slice.geometry_source, "default");
         assert!(slice.learned_families.is_empty());
+        // Nothing is seeded until the art is fetched and installed (POE-208),
+        // so a pre-poll slice claiming a seeded family would put a chip on the
+        // page for a template the store does not hold.
+        assert!(slice.seeded_families.is_empty());
         assert!(slice.last_error.is_none());
     }
 
