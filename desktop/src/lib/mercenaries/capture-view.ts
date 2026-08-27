@@ -528,8 +528,9 @@ export function poolSyncView(sync: MercSyncStatus, nowMs: number): PoolSyncView 
 
 /**
  * How long ago something happened, in words, or null when there is no
- * timestamp to age. Coarse on purpose: the pull happens once per module start,
- * so a minute's precision is all the page can honestly claim.
+ * timestamp to age. Coarse on purpose: the pull happens at module start and
+ * then at most once a minute, when a recruit window is detected (POE-210), so
+ * a minute's precision is all the page can honestly claim.
  */
 export function describeAge(atMs: number | null, nowMs: number): string | null {
 	if (atMs === null) return null;
