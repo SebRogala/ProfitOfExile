@@ -88,6 +88,14 @@ services:
     container_name: profitofexile_desktop
     volumes:
       - ./desktop:/app/desktop
+      # The engine's committed wire fixtures, read-only. `src/lib/exchange/corpus.test.ts`
+      # imports them from their CANONICAL path — they are the output of Go's
+      # TestCorpus_wireGolden and there must be exactly one copy, or the desktop
+      # tier stops being a cross-layer check the moment the two drift. Mounting
+      # `./desktop` alone left that import unresolvable in here while it resolved
+      # on the host, so `make desktop-test-js` failed on a file the host suite
+      # passed on.
+      - ./internal/exchange/testdata/wire:/app/internal/exchange/testdata/wire:ro
       # The merc signature parity golden (POE-207), for the same reason and by
       # the same rule: `crop.png` + `signature.bin` are the ONE artefact the Go
       # and Rust derivations of format 2 are both checked against, so there is
