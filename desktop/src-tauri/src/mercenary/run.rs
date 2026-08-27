@@ -65,7 +65,7 @@ use crate::modules::ModuleJoin;
 use crate::AppState;
 
 use super::geometry::{self, OcrLineBox};
-use super::icons::{CellSig, LearnOutcome, Origin, TemplateStore};
+use super::icons::{CellSig, LearnOutcome, LoadedStore, Origin, Rekeyed, TemplateStore};
 use super::read::{build_capture, capture_complete, fold_header, same_panel_positive, pass2_texts};
 // The row identity lives with the reader that produces it (POE-207): the crop
 // cache is built in `read.rs` and consumed here, and both have to spell the key
@@ -1663,6 +1663,61 @@ fn purge_log_line(purged: &super::icons::PurgedStore) -> String {
     }
 }
 
+/// The tombstones a re-keying load owes the pool, deduplicated (POE-211).
+///
+/// Only a LOCAL sample the pool had already accepted owes one: that is the
+/// only case where THIS device put art on the server under the old key. A
+/// pooled sample under the old name was somebody else's upload — retiring it
+/// from here would delete their art on a name this device merely read — and an
+/// unuploaded local sample was never on the server at all.
+///
+/// The dedup is the point of returning keys rather than the entries: one key
+/// can hold [`super::icons::TemplateStore::MAX_SAMPLES_PER_KEY`] samples, and
+/// a tombstone is keyed `(version, family, tier)`, so three re-keyed samples
+/// of one key owe ONE POST, not three of the same one.
+fn tombstones_owed(rekeyed: &[Rekeyed]) -> Vec<(String, u8)> {
+    let mut owed: Vec<(String, u8)> = Vec::new();
+    for entry in rekeyed.iter().filter(|r| r.uploaded_local) {
+        let key = (entry.old_family.clone(), entry.tier);
+        if !owed.contains(&key) {
+            owed.push(key);
+        }
+    }
+    owed
+}
+
+/// The one line a re-keying load writes to the log (POE-211).
+///
+/// It names both halves of the fold and the tombstone count, because those are
+/// the two things the Windows smoke check reads: that the migration ran at all
+/// (it runs ONCE — the next start finds no old family in the index), and that
+/// the pool was told about the key it retired.
+///
+/// `not_removed` — the old files [`super::icons::persist_rekey`] could not
+/// unlink — is appended only when it is non-zero. An orphan no index names
+/// costs nothing to read past, but a directory that keeps growing across starts
+/// is a bug nobody could report off a log that never mentioned it.
+fn rekey_log_line(rekeyed: &[Rekeyed], not_removed: usize) -> String {
+    let mut folds: Vec<String> = Vec::new();
+    for entry in rekeyed {
+        let fold = format!("{} to {}", entry.old_family, entry.new_family);
+        if !folds.contains(&fold) {
+            folds.push(fold);
+        }
+    }
+    let line = format!(
+        "Merc: re-keyed {} sample(s) from {} ({} tombstone(s) offered)",
+        rekeyed.len(),
+        folds.join(", "),
+        tombstones_owed(rekeyed).len(),
+    );
+    if not_removed == 0 {
+        line
+    } else {
+        format!("{line}, {not_removed} file(s) not removed")
+    }
+}
+
 /// What the icon matcher is running with, and whether the user has moved it
 /// off the numbers format 2 was measured on (POE-207).
 ///
@@ -1774,7 +1829,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         // below is released as soon as the pass has looked at the directory.
         seed::spawn_fetch(&app);
 
-        let (store, problems) = TemplateStore::load(dir);
+        let LoadedStore { store, problems, rekeyed } = TemplateStore::load(dir);
         template_problems = problems;
         let loaded = store.len();
 
@@ -1785,12 +1840,94 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         // what made this seam a second writer: a corpus that landed in the gap
         // was saved to disk and then erased by the assignment below, taking its
         // ETag with it (the next pull answering 304 for art the store no longer
-        // held).
+        // held). The re-key persist below obeys the same discipline: it is a
+        // WRITER of the installed store, so it runs behind this assignment and
+        // saves what the mutex holds, never the local copy.
         {
             let state = app.state::<AppState>();
             *state.merc_templates.lock().unwrap_or_else(|e| e.into_inner()) = store;
         }
         crate::app_log(&app, format!("Merc: {loaded} learned templates loaded"));
+
+        // THE FAMILY RE-KEY IS PERSISTED HERE (POE-211). `load` folded the
+        // aliased families in memory and reported what it touched; this is the
+        // write that makes the fold stick, and the OLD KEY LEAVING `index.json`
+        // IS THE ONE-SHOT MARKER — no marker file, because a file could
+        // disagree with the index it describes.
+        //
+        // THE SAVE RUNS ONLY ON A CLEAN INDEX READ. It rewrites `index.json`
+        // from the store in memory, and an entry `load` could not decode is not
+        // in it — a transient AV lock, a OneDrive placeholder, a truncated PNG.
+        // The gate keeps THIS writer off the index; it does NOT protect that
+        // entry. Any later writer of the installed store — `apply_corpus`,
+        // `mark_uploaded`, the off-tick `SaveQueue`, a forget or a reset —
+        // rewrites the index out of the same memory and drops it just as surely,
+        // and that erasure PREDATES POE-211: `load` already skipped undecodable
+        // entries, and the first `apply_corpus` of a session already rewrote the
+        // index without them. What the gate buys is that the fold is not what
+        // spends the one-shot marker on a start whose read was incomplete, so a
+        // transient lock costs a deferral rather than the migration. Art that is
+        // corrupt for good defers the fold on this device until
+        // `merc_reset_templates`; it is reported as a problem on every start.
+        //
+        // The purge above released the directory lock (it is a non-reentrant
+        // `std::sync::Mutex<()>`), so this takes it for itself, then the store's
+        // mutex inside it — `writing_icons_dir` → `merc_templates`, the order
+        // `apply_corpus` takes. Under one acquisition of both, so no forget or
+        // reset landing between the load and the save can rewrite an index
+        // naming PNGs this is about to unlink.
+        if !rekeyed.is_empty() {
+            // OWED THE MOMENT THE FOLDED STORE IS INSTALLED, not the moment it
+            // reaches disk — and the install above ran whether or not the save
+            // below does. Any later writer of that store — the corpus merge,
+            // `mark_uploaded`, the off-tick `SaveQueue`, a forget or a reset —
+            // persists the fold and spends the one-shot marker, on a DEFERRED
+            // start exactly as on a failed save, so the record belongs outside
+            // both gates. `record_pending_in` dedupes against what the file
+            // already holds, so a deferred start that records the same key
+            // again changes nothing.
+            //
+            // Before the directory guard below is taken, so the two locks are
+            // never held at the same time (`record_tombstones` takes
+            // `SYNC_FILE_LOCK`, and so does `apply_corpus`'s sync-file work,
+            // outside its own directory guard). `retry_pending_tombstones`, a
+            // few lines below, is what SENDS these; POSTing from here as well
+            // would send each key twice.
+            sync::record_tombstones(&app, &tombstones_owed(&rekeyed));
+            if template_problems.is_empty() {
+                let persisted = {
+                    let state = app.state::<AppState>();
+                    super::icons::writing_icons_dir(&state.merc_icons_write, || {
+                        let store = state
+                            .merc_templates
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        super::icons::persist_rekey(dir, &store, &rekeyed)
+                    })
+                };
+                match persisted {
+                    Ok(not_removed) => {
+                        crate::app_log(&app, rekey_log_line(&rekeyed, not_removed))
+                    }
+                    // NOT "the next start folds again": a later successful save
+                    // by any writer completes the fold minus the unlink, leaving
+                    // the old PNGs orphaned (harmless — no index names them).
+                    // What is durable either way is the tombstone record above.
+                    Err(e) => crate::app_log(
+                        &app,
+                        format!("Merc: the re-keyed store could not be written — {e}"),
+                    ),
+                }
+            } else {
+                crate::app_log(
+                    &app,
+                    format!(
+                        "Merc: the family re-key is deferred — {} unreadable index entr(ies)",
+                        template_problems.len()
+                    ),
+                );
+            }
+        }
 
         // AFTER the whole-store assignment, BEFORE the pull's merge (POE-208).
         // A seed is memory-only, so it has to be put into the store the session
@@ -6150,6 +6287,86 @@ mod tests {
         });
 
         assert_eq!(line, "Merc: dropped an unreadable template index (format 2)");
+    }
+
+    // -- the family re-key's decisions (POE-211) -----------------------------
+
+    fn rekeyed(tier: u8, uploaded_local: bool) -> Rekeyed {
+        Rekeyed {
+            old_family: "Increased Area of Effect".to_string(),
+            new_family: "Area of Effect".to_string(),
+            tier,
+            old_files: Vec::new(),
+            uploaded_local,
+        }
+    }
+
+    /// Only art this device actually put on the server under the old key owes
+    /// a tombstone. A sample the pool never saw needs nothing retired, and
+    /// POSTing for it would retire every OTHER device's art under that key —
+    /// a tombstone carries no device filter.
+    #[test]
+    fn only_a_sample_the_pool_accepted_owes_a_tombstone() {
+        let owed = tombstones_owed(&[rekeyed(2, true), rekeyed(3, false)]);
+
+        assert_eq!(owed, [("Increased Area of Effect".to_string(), 2)]);
+    }
+
+    /// One key can hold three samples and a tombstone is keyed
+    /// `(version, family, tier)`, so three re-keyed samples of one key owe ONE
+    /// POST — not the same one three times.
+    #[test]
+    fn several_re_keyed_samples_of_one_key_owe_a_single_tombstone() {
+        let owed = tombstones_owed(&[rekeyed(2, true), rekeyed(2, true), rekeyed(2, true)]);
+
+        assert_eq!(owed, [("Increased Area of Effect".to_string(), 2)]);
+    }
+
+    /// The log line names both halves of the fold and the count, because those
+    /// are what the smoke check reads: that the migration ran, and that the
+    /// pool was told about the key it retired.
+    #[test]
+    fn the_re_key_line_names_the_fold_and_the_tombstone_count() {
+        let line = rekey_log_line(&[rekeyed(2, true)], 0);
+
+        assert_eq!(
+            line,
+            "Merc: re-keyed 1 sample(s) from Increased Area of Effect to Area of Effect (1 tombstone(s) offered)",
+        );
+    }
+
+    /// A fold that retires nothing says zero rather than staying silent: "the
+    /// store moved but the pool was not told" is the state to be able to read
+    /// off the log, not one to infer from a missing line.
+    #[test]
+    fn a_re_key_that_owes_no_tombstone_reports_zero() {
+        let line = rekey_log_line(&[rekeyed(2, false)], 0);
+
+        assert!(line.ends_with("(0 tombstone(s) offered)"), "{line}");
+    }
+
+    /// One fold, however many samples went through it, is named ONCE. Two tiers
+    /// of the same family are two samples and two tombstones — the counts still
+    /// have to say so — but repeating "Increased Area of Effect to Area of
+    /// Effect" once per sample turns a 61-sample store's line into a wall.
+    #[test]
+    fn the_re_key_line_names_one_fold_once_however_many_samples_took_it() {
+        let line = rekey_log_line(&[rekeyed(2, true), rekeyed(3, true)], 0);
+
+        assert_eq!(
+            line,
+            "Merc: re-keyed 2 sample(s) from Increased Area of Effect to Area of Effect (2 tombstone(s) offered)",
+        );
+    }
+
+    /// An old file that would not go away is REPORTED. The migration is still
+    /// correct — no index names the orphan — but a directory that keeps growing
+    /// across starts is a bug nobody could report off a silent log.
+    #[test]
+    fn the_re_key_line_reports_old_files_that_could_not_be_removed() {
+        let line = rekey_log_line(&[rekeyed(2, true)], 2);
+
+        assert!(line.ends_with("(1 tombstone(s) offered), 2 file(s) not removed"), "{line}");
     }
 
     // -- the matcher's geometry warning (POE-207) ----------------------------

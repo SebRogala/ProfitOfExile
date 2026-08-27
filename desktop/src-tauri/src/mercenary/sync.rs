@@ -1238,6 +1238,38 @@ pub fn enqueue_backfill(app: &AppHandle) {
 // Tombstone
 // ---------------------------------------------------------------------------
 
+/// Record forgets as owed WITHOUT sending them (POE-211).
+///
+/// [`spawn_tombstone`] is the page's path: the user clicked ✕ and is waiting,
+/// so the POST goes out now. The family re-key's path is the other half — it
+/// runs at module start, a few lines before [`retry_pending_tombstones`] offers
+/// everything the file holds, so sending from there would POST each key twice
+/// and make the retry line misreport a fresh record as a forget "the pool has
+/// not acknowledged".
+///
+/// Recording is owed WHETHER OR NOT the migration ran, because the load seam
+/// installs the FOLDED store before it decides whether to save at all: a start
+/// that defers the fold and a save that fails both leave it in memory, and any
+/// later writer of it — the corpus merge, `mark_uploaded`, the off-tick
+/// `SaveQueue`, a forget or a reset — persists the fold, spending the one-shot
+/// marker (the old family leaving `index.json`) whichever gets there first. A
+/// tombstone recorded only on the save's success arm would be lost with it.
+/// The durable record is also what closes the crash window between the save and
+/// the send: `pool-sync.json` outlives the process, a spawned POST does not.
+///
+/// `record_pending_in` dedupes against what the file already holds, so a start
+/// that re-runs this over a key already recorded changes nothing.
+pub(super) fn record_tombstones(app: &AppHandle, keys: &[(String, u8)]) {
+    let Some(dir) = icons_dir(app) else {
+        return;
+    };
+    for (family, tier) in keys {
+        if let Err(e) = record_pending_in(&dir, family, *tier) {
+            crate::app_log(app, format!("Merc: could not record the forget — {e}"));
+        }
+    }
+}
+
 /// Make a local forget stick for everyone.
 ///
 /// Recorded locally FIRST and only then sent: between the forget and the

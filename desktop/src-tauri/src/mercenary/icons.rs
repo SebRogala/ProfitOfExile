@@ -33,7 +33,7 @@
 //! on the version so the two corpora never mix.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use image::{DynamicImage, GenericImageView, RgbImage, RgbaImage};
 use serde::{Deserialize, Serialize};
@@ -769,6 +769,127 @@ struct Collision {
 #[derive(Debug, Default, Clone)]
 pub struct TemplateStore {
     templates: Vec<Template>,
+}
+
+/// What one [`TemplateStore::load`] read off disk.
+///
+/// A named struct rather than a tuple because the third field is a WRITE the
+/// reader owes (POE-211): `load` itself stays read-only, and dropping
+/// `rekeyed` on the floor at a call site would leave the old family in
+/// `index.json` — which is the one-shot marker this migration turns on.
+#[derive(Debug)]
+pub struct LoadedStore {
+    pub store: TemplateStore,
+    /// One line per entry that could not be read, already phrased for the log.
+    pub problems: Vec<String>,
+    /// One entry per sample the alias table folded — empty on every start
+    /// after the first one that met an aliased index.
+    pub rekeyed: Vec<Rekeyed>,
+}
+
+impl LoadedStore {
+    /// A load that read no samples at all — a missing, unparseable or
+    /// foreign-version index. Nothing was re-keyed, by construction.
+    fn nothing(problems: Vec<String>) -> Self {
+        Self {
+            store: TemplateStore::new(),
+            problems,
+            rekeyed: Vec::new(),
+        }
+    }
+}
+
+/// One sample [`TemplateStore::load`] re-keyed through
+/// [`super::vocab::alias_family`] (POE-211).
+///
+/// Carries everything the load seam needs to finish the migration on disk
+/// without re-reading the index: the destination the sample is now under, the
+/// files the old name left behind ([`TemplateStore::save`] never unlinks, so
+/// nothing else would ever remove them), and whether the pool was told about
+/// this sample under the old key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rekeyed {
+    /// The family `index.json` named — the key the pool still holds.
+    pub old_family: String,
+    /// The family the sample is in memory under now.
+    pub new_family: String,
+    pub tier: u8,
+    /// The signature PNG the old name was written to, and the `-raw.png`
+    /// colour crop beside it. Names, not a directory listing: the raw sibling
+    /// may not exist.
+    ///
+    /// **The raw crop is DELETED, not moved.** It is the only copy of the GGG
+    /// colour crop this device holds for that sample — the corpus fixture is
+    /// harvested from these — and the re-key throws it away, because
+    /// [`TemplateStore::load`] never reads a raw crop back and
+    /// [`TemplateStore::save`] cannot rewrite one the store does not hold.
+    /// Keeping it under the old slug would leave a file no index names.
+    /// Nothing at runtime reads it: the matcher works off the 24×24 signature.
+    pub old_files: Vec<PathBuf>,
+    /// `true` when this was a LOCAL sample the pool had already accepted —
+    /// the only case owing a tombstone, because it is the only one where this
+    /// device put art under the old key on the server.
+    pub uploaded_local: bool,
+}
+
+/// The files [`TemplateStore::save`] wrote for one index entry.
+///
+/// Derived from the indexed name rather than probed: `load` stays a reader,
+/// and the raw sibling is optional on disk (`save` writes it only while a
+/// sample still carries its crop in memory, and `load` never reads one back).
+/// Whoever unlinks these ignores the ones that are not there.
+///
+/// **Unlinking the `-raw.png` DISCARDS the GGG colour crop** — the only copy on
+/// the device, and what the corpus fixture is harvested from. It is not moved
+/// to the new slug because `load` never reads one back into the store, so
+/// `save` has nothing to rewrite it from; nothing at runtime reads it either.
+///
+/// One pre-existing property of `save` rides along: its per-key `-N`
+/// renumbering is derived from the ORDER of the samples it writes, so removing
+/// one key's files can leave a surviving `-raw.png` sibling of an UNTOUCHED key
+/// paired with a different signature than it was cut with. No runtime effect,
+/// for the same reason — nothing reads a raw crop off disk.
+fn store_files(dir: &Path, file: &str) -> Vec<PathBuf> {
+    let mut out = vec![dir.join(file)];
+    if let Some(stem) = file.strip_suffix(".png") {
+        out.push(dir.join(format!("{stem}-raw.png")));
+    }
+    out
+}
+
+/// Make a re-key stick on disk: rewrite the index under the new families, then
+/// unlink what the old slug wrote (POE-211).
+///
+/// Returns the number of old files that would not go away, so the caller can
+/// say so instead of swallowing it — an orphaned PNG no index names is not a
+/// correctness failure, but a directory that keeps growing across starts is a
+/// bug report nobody could have filed off a silent log.
+///
+/// The order is load-bearing. Unlinking AHEAD of the save would take the art
+/// away with `index.json` still pointing at it, so a crash in between would
+/// leave every re-keyed entry unreadable; behind it, the index no longer names
+/// the old files and the worst outcome is orphans.
+///
+/// Caller's job, not this function's: the directory write lock
+/// ([`writing_icons_dir`]) and the store's mutex. This takes neither, so it is
+/// callable from a test with a plain `&TemplateStore`.
+pub(super) fn persist_rekey(
+    dir: &Path,
+    store: &TemplateStore,
+    rekeyed: &[Rekeyed],
+) -> Result<usize, String> {
+    store.save(dir)?;
+    let mut not_removed = 0usize;
+    for file in rekeyed.iter().flat_map(|r| &r.old_files) {
+        // A name the old index carried, so a missing raw sibling is expected
+        // and is NOT counted: `store_files` derives both names without probing.
+        match std::fs::remove_file(file) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => not_removed += 1,
+        }
+    }
+    Ok(not_removed)
 }
 
 impl TemplateStore {
@@ -1607,18 +1728,43 @@ impl TemplateStore {
     /// reported and yields nothing; it is NOT rewritten or cleaned here.
     /// [`purge_stale_store`] is the one writer that acts on the version, and
     /// it runs before the loop starts, inside the directory's write lock —
-    /// putting the unlink here would make every reader a writer.
-    pub fn load(dir: &Path) -> (Self, Vec<String>) {
+    /// putting the unlink here would make every reader a writer. The alias
+    /// below keeps that rule: it changes the IN-MEMORY key only, and what it
+    /// folded is REPORTED in [`LoadedStore::rekeyed`] for the load seam to
+    /// persist under that same lock.
+    ///
+    /// **Families are folded through [`super::vocab::alias_family`]**
+    /// (POE-211). An index an older build wrote keys its samples on the family
+    /// that build derived, and a folded name resolves to nothing afterwards:
+    /// [`Self::match_family`] would go on reporting it while `vocab::resolve`
+    /// found no such family, so the cell would read unresolved beside good art
+    /// the store already holds.
+    ///
+    /// **A re-keyed [`Origin::Local`] sample is reset to `uploaded: false`**
+    /// (POE-211 A4), so [`Self::pending_uploads`] offers it again under the
+    /// new family. A tombstone is keyed `(version, family, tier)` with no
+    /// device filter, so the one this migration owes for the old key retires
+    /// every device's art under it — art nobody re-offers is retired for
+    /// everyone. [`Origin::Pooled`] and [`Origin::Seed`] samples keep their
+    /// flags: neither was ever this device's to publish.
+    ///
+    /// A fold can leave a key holding more than [`Self::MAX_SAMPLES_PER_KEY`]
+    /// samples, and that is not clamped here: the cap is a gate on LEARNING
+    /// (and on what a pull merges), not an invariant of the store, and this
+    /// path stores index entries that were each accepted when they were
+    /// learned. Dropping one of them silently to make an arithmetic bound hold
+    /// would throw away a confirmation the player made.
+    pub fn load(dir: &Path) -> LoadedStore {
         let mut problems = Vec::new();
         let raw = match std::fs::read_to_string(dir.join(INDEX_FILE)) {
             Ok(raw) => raw,
-            Err(_) => return (Self::new(), problems),
+            Err(_) => return LoadedStore::nothing(problems),
         };
         let index = match read_index(&raw) {
             Ok(index) => index,
             Err(problem) => {
                 problems.push(problem);
-                return (Self::new(), problems);
+                return LoadedStore::nothing(problems);
             }
         };
         if index.format_version != super::sync::FORMAT_VERSION {
@@ -1628,22 +1774,35 @@ impl TemplateStore {
                 index.entries.len(),
                 super::sync::FORMAT_VERSION,
             ));
-            return (Self::new(), problems);
+            return LoadedStore::nothing(problems);
         }
         let mut store = Self::new();
+        let mut rekeyed = Vec::new();
         for entry in index.entries {
             match image::open(dir.join(&entry.file)) {
                 Ok(img) => {
                     let rgb = img.to_rgb8();
                     match CellSig::from_rgb(rgb.into_raw()) {
                         Some(sig) => {
+                            let family = super::vocab::alias_family(&entry.family);
+                            let folded = family != entry.family;
+                            let local = entry.origin == Origin::Local;
+                            if folded {
+                                rekeyed.push(Rekeyed {
+                                    old_family: entry.family.clone(),
+                                    new_family: family.to_string(),
+                                    tier: entry.tier,
+                                    old_files: store_files(dir, &entry.file),
+                                    uploaded_local: local && entry.uploaded,
+                                });
+                            }
                             store.push_sample(
-                                &entry.family,
+                                family,
                                 entry.tier,
                                 sig,
                                 None,
                                 entry.origin,
-                                entry.uploaded,
+                                entry.uploaded && !(folded && local),
                             );
                         }
                         None => problems.push(format!(
@@ -1652,10 +1811,14 @@ impl TemplateStore {
                         )),
                     }
                 }
+                // Reported, and NOT re-keyed: a sample that never reached the
+                // store is not one the seam should save, unlink or tombstone —
+                // that tombstone would retire art this device can no longer
+                // re-offer.
                 Err(e) => problems.push(format!("{}: {e}", entry.file)),
             }
         }
-        (store, problems)
+        LoadedStore { store, problems, rekeyed }
     }
 }
 
@@ -2738,7 +2901,7 @@ mod tests {
         store.learn("Caustic Conversion", 3, sig_of(&img, 2, 2), None, &MercGeometry::default().thresholds);
         store.save(&dir).expect("save");
 
-        let (loaded, problems) = TemplateStore::load(&dir);
+        let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
 
         assert!(problems.is_empty(), "{problems:?}");
         assert_eq!(loaded.learned_keys(), ["Caustic Conversion--3"]);
@@ -2753,7 +2916,7 @@ mod tests {
     fn loading_a_missing_store_yields_an_empty_one() {
         let dir = temp_dir("absent").join("never-created");
 
-        let (store, problems) = TemplateStore::load(&dir);
+        let LoadedStore { store, problems, .. } = TemplateStore::load(&dir);
 
         assert!(store.is_empty());
         assert!(problems.is_empty());
@@ -2771,7 +2934,7 @@ mod tests {
         store.save(&dir).expect("save");
         std::fs::write(dir.join("chain--t1.png"), b"not a png").expect("corrupt one file");
 
-        let (loaded, problems) = TemplateStore::load(&dir);
+        let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
 
         assert_eq!(loaded.learned_keys(), ["Pierce--3"]);
         assert_eq!(problems.len(), 1, "{problems:?}");
@@ -3234,7 +3397,7 @@ mod tests {
         store.mark_uploaded("Chain", 2, &sig_of(&img, 1, 0).bytes().to_vec());
         store.save(&dir).expect("save");
 
-        let (loaded, problems) = TemplateStore::load(&dir);
+        let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
 
         assert!(problems.is_empty(), "{problems:?}");
         assert_eq!(loaded.pooled_keys(), ["Pierce--1"]);
@@ -3260,7 +3423,7 @@ mod tests {
         );
         store.save(&dir).expect("save");
 
-        let (loaded, _) = TemplateStore::load(&dir);
+        let LoadedStore { store: loaded, .. } = TemplateStore::load(&dir);
 
         assert_eq!(loaded.pending_uploads().len(), 1);
     }
@@ -3291,7 +3454,7 @@ mod tests {
         )
         .expect("rewrite the index in the old shape");
 
-        let (loaded, problems) = TemplateStore::load(&dir);
+        let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
 
         assert!(loaded.is_empty(), "loaded {:?}", loaded.learned_keys());
         assert_eq!(problems.len(), 1, "{problems:?}");
@@ -3318,7 +3481,7 @@ mod tests {
         );
         store.save(&dir).expect("save");
 
-        let (loaded, problems) = TemplateStore::load(&dir);
+        let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
 
         assert!(problems.is_empty(), "{problems:?}");
         assert_eq!(loaded.learned_keys(), ["Chain--2"]);
@@ -3353,10 +3516,267 @@ mod tests {
         )
         .expect("rewrite the version");
 
-        let (loaded, problems) = TemplateStore::load(&dir);
+        let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
 
         assert!(loaded.is_empty(), "loaded {:?}", loaded.learned_keys());
         assert_eq!(problems.len(), 1, "{problems:?}");
+    }
+
+    // -- the family re-key (POE-211) -----------------------------------------
+
+    /// The family the alias table folds, spelled the way an index an older
+    /// build wrote spells it.
+    const OLD_AOE: &str = "Increased Area of Effect";
+
+    /// A store written before the fold keys its samples on the family THAT
+    /// build derived. `load` re-keys them, so art the player already confirmed
+    /// survives the vocabulary change under the name `vocab::resolve` now
+    /// answers to — without it the cell reads unresolved beside good art.
+    #[test]
+    fn a_sample_indexed_under_an_aliased_family_loads_under_the_folded_one() {
+        let img = fixture();
+        let dir = temp_dir("rekey-load");
+        let original = sig_of(&img, 1, 0);
+        let mut store = TemplateStore::new();
+        store.push_sample(OLD_AOE, 2, original.clone(), None, Origin::Local, false);
+        store.save(&dir).expect("save");
+
+        let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
+
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(loaded.learned_keys(), ["Area of Effect--2"]);
+        assert_eq!(
+            loaded.templates()[0].sig.bytes(),
+            original.bytes(),
+            "the fold moves the key, not the art",
+        );
+    }
+
+    /// The tier is the other half of the key and the alias says nothing about
+    /// it: a re-keyed sample must still report the tier it was learned at, or
+    /// the cell resolves to the wrong link of the right family.
+    #[test]
+    fn a_match_against_a_re_keyed_sample_reports_the_stored_tier() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let dir = temp_dir("rekey-tier");
+        let mut store = TemplateStore::new();
+        store.push_sample(OLD_AOE, 2, sig_of(&img, 2, 2), None, Origin::Local, false);
+        store.save(&dir).expect("save");
+
+        let LoadedStore { store: loaded, .. } = TemplateStore::load(&dir);
+
+        let m = loaded.match_family(&cands_of(&img, 2, 2), &t);
+        assert_eq!(m.state, ReadState::Matched, "match was {m:?}");
+        assert_eq!(m.family.as_deref(), Some("Area of Effect"));
+        assert_eq!(m.learned_tier, Some(2));
+    }
+
+    /// A re-keyed local sample is OWED TO THE POOL AGAIN, even though the index
+    /// says it was already published (POE-211 A4). The migration tombstones the
+    /// old key and a tombstone carries no device filter, so art nobody
+    /// re-offers under the new family is retired for everybody.
+    #[test]
+    fn a_re_keyed_local_sample_is_offered_to_the_pool_again() {
+        let img = fixture();
+        let dir = temp_dir("rekey-reoffer");
+        let mut store = TemplateStore::new();
+        store.push_sample(OLD_AOE, 2, sig_of(&img, 1, 0), None, Origin::Local, true);
+        store.save(&dir).expect("save");
+
+        let LoadedStore { store: loaded, .. } = TemplateStore::load(&dir);
+
+        let pending = loaded.pending_uploads();
+        let keys: Vec<(&str, u8)> = pending.iter().map(|(f, t, _)| (f.as_str(), *t)).collect();
+        assert_eq!(keys, [("Area of Effect", 2)]);
+    }
+
+    /// What the fold re-keyed is reported in full, because the load seam
+    /// finishes the migration on disk from this and nothing else: the
+    /// destination it saves under, the files the old slug wrote (`save` never
+    /// unlinks, so nothing else would ever remove them), and whether the pool
+    /// was told about this sample under the old key.
+    #[test]
+    fn a_re_keyed_sample_reports_the_fold_and_the_files_the_old_name_wrote() {
+        let img = fixture();
+        let dir = temp_dir("rekey-report");
+        let mut store = TemplateStore::new();
+        store.push_sample(
+            OLD_AOE,
+            2,
+            sig_of(&img, 1, 0),
+            Some(RgbaImage::new(44, 44)),
+            Origin::Local,
+            true,
+        );
+        store.save(&dir).expect("save");
+
+        let LoadedStore { rekeyed, .. } = TemplateStore::load(&dir);
+
+        assert_eq!(
+            rekeyed,
+            vec![Rekeyed {
+                old_family: OLD_AOE.to_string(),
+                new_family: "Area of Effect".to_string(),
+                tier: 2,
+                old_files: vec![
+                    dir.join("increased-area-of-effect--t2.png"),
+                    dir.join("increased-area-of-effect--t2-raw.png"),
+                ],
+                uploaded_local: true,
+            }],
+        );
+    }
+
+    /// A pooled sample keeps the flag the index gave it. The re-offer above is
+    /// gated on provenance, not on the fold: a sample this device only read
+    /// from the corpus is not one it may republish as its own evidence.
+    #[test]
+    fn a_re_keyed_pooled_sample_keeps_its_upload_flag() {
+        let img = fixture();
+        let dir = temp_dir("rekey-pooled-flag");
+        let mut store = TemplateStore::new();
+        store.push_sample(OLD_AOE, 2, sig_of(&img, 1, 0), None, Origin::Pooled, true);
+        store.save(&dir).expect("save");
+
+        let LoadedStore { store: loaded, .. } = TemplateStore::load(&dir);
+
+        assert_eq!(loaded.pooled_keys(), ["Area of Effect--2"]);
+        assert!(
+            loaded.templates()[0].uploaded,
+            "a pooled sample's flag was reset by a fold that is not about it",
+        );
+    }
+
+    /// And it owes no tombstone. The old pool key holds somebody else's
+    /// upload; retiring it from here would delete their art under a name this
+    /// device merely read.
+    #[test]
+    fn a_re_keyed_pooled_sample_owes_no_tombstone() {
+        let img = fixture();
+        let dir = temp_dir("rekey-pooled-owed");
+        let mut store = TemplateStore::new();
+        store.push_sample(OLD_AOE, 2, sig_of(&img, 1, 0), None, Origin::Pooled, true);
+        store.save(&dir).expect("save");
+
+        let LoadedStore { rekeyed, .. } = TemplateStore::load(&dir);
+
+        assert_eq!(rekeyed.len(), 1, "{rekeyed:?}");
+        assert!(!rekeyed[0].uploaded_local);
+    }
+
+    /// THE MIGRATION IS ONE-SHOT, and the marker is the index itself: once the
+    /// seam has saved the re-keyed store, the old family is not in
+    /// `index.json` any more and the next start finds nothing to fold. No
+    /// marker file — one could disagree with the index it describes.
+    #[test]
+    fn a_second_load_after_the_re_key_was_saved_folds_nothing() {
+        let img = fixture();
+        let dir = temp_dir("rekey-once");
+        let mut store = TemplateStore::new();
+        store.push_sample(OLD_AOE, 2, sig_of(&img, 1, 0), None, Origin::Local, true);
+        store.save(&dir).expect("save");
+        let LoadedStore { store: first, .. } = TemplateStore::load(&dir);
+        first.save(&dir).expect("save the re-keyed store");
+
+        let LoadedStore { store: second, rekeyed, .. } = TemplateStore::load(&dir);
+
+        assert!(rekeyed.is_empty(), "the fold ran twice: {rekeyed:?}");
+        assert_eq!(second.learned_keys(), ["Area of Effect--2"]);
+    }
+
+    /// A family the table does not carry is not touched. Without this, a
+    /// `load` that re-keyed everything — or reported every sample as folded —
+    /// would pass every test above.
+    #[test]
+    fn a_family_the_alias_table_does_not_carry_is_not_re_keyed() {
+        let img = fixture();
+        let dir = temp_dir("rekey-untouched");
+        let mut store = TemplateStore::new();
+        store.push_sample("Chain", 2, sig_of(&img, 1, 0), None, Origin::Local, true);
+        store.save(&dir).expect("save");
+
+        let LoadedStore { store: loaded, rekeyed, .. } = TemplateStore::load(&dir);
+
+        assert!(rekeyed.is_empty(), "{rekeyed:?}");
+        assert_eq!(loaded.learned_keys(), ["Chain--2"]);
+    }
+
+    /// The migration's write, end to end: the index names the folded family
+    /// and NOTHING under the old slug is left on disk. `save` never unlinks, so
+    /// without the second half every fold leaves a signature PNG and its raw
+    /// crop behind that no index will ever name again.
+    #[test]
+    fn persisting_a_re_key_rewrites_the_index_and_removes_the_old_files() {
+        let img = fixture();
+        let dir = temp_dir("rekey-persist-ok");
+        let mut store = TemplateStore::new();
+        store.push_sample(
+            OLD_AOE,
+            2,
+            sig_of(&img, 1, 0),
+            Some(RgbaImage::new(44, 44)),
+            Origin::Local,
+            true,
+        );
+        store.save(&dir).expect("save");
+        let LoadedStore { store: loaded, rekeyed, .. } = TemplateStore::load(&dir);
+
+        let not_removed = persist_rekey(&dir, &loaded, &rekeyed).expect("persist");
+
+        assert_eq!(not_removed, 0);
+        let raw = std::fs::read_to_string(dir.join(INDEX_FILE)).expect("read the index");
+        let families: Vec<String> = read_index(&raw)
+            .expect("parse the index")
+            .entries
+            .into_iter()
+            .map(|e| e.family)
+            .collect();
+        assert_eq!(families, ["Area of Effect"]);
+        assert!(
+            !dir.join("increased-area-of-effect--t2.png").exists(),
+            "the old signature PNG is still on disk",
+        );
+        assert!(
+            !dir.join("increased-area-of-effect--t2-raw.png").exists(),
+            "the old raw crop is still on disk",
+        );
+    }
+
+    /// A save that FAILS takes nothing with it. The unlink is behind the save
+    /// precisely so a write that never landed leaves the directory exactly as
+    /// this start found it — art removed under an index that still names it
+    /// would be unreadable on every later start.
+    #[test]
+    fn a_re_key_whose_save_fails_leaves_the_old_files_alone() {
+        let img = fixture();
+        let dir = temp_dir("rekey-persist-err");
+        let mut store = TemplateStore::new();
+        store.push_sample(
+            OLD_AOE,
+            2,
+            sig_of(&img, 1, 0),
+            Some(RgbaImage::new(44, 44)),
+            Origin::Local,
+            true,
+        );
+        store.save(&dir).expect("save");
+        let LoadedStore { store: loaded, rekeyed, .. } = TemplateStore::load(&dir);
+        // `save` starts with `create_dir_all`, and a regular file cannot be a
+        // parent directory — the write fails before it touches anything.
+        std::fs::write(dir.join("blocker"), b"a regular file").expect("write the blocker");
+
+        let result = persist_rekey(&dir.join("blocker").join("store"), &loaded, &rekeyed);
+
+        assert!(result.is_err(), "the save was expected to fail: {result:?}");
+        assert!(
+            dir.join("increased-area-of-effect--t2.png").exists(),
+            "the old signature PNG was removed by a failed migration",
+        );
+        assert!(
+            dir.join("increased-area-of-effect--t2-raw.png").exists(),
+            "the old raw crop was removed by a failed migration",
+        );
     }
 
     // -- the directory write lock -------------------------------------------
@@ -3489,7 +3909,7 @@ mod tests {
         );
         store.save(&dir).expect("save");
 
-        let (loaded, problems) = TemplateStore::load(&dir);
+        let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
 
         assert!(problems.is_empty(), "{problems:?}");
         let reloaded = &loaded.templates()[0].sig;
@@ -3540,7 +3960,7 @@ mod tests {
             .collect();
         assert!(left.is_empty(), "png left behind: {left:?}");
         assert!(dir.join("pool-sync.json").exists(), "the sync file is not ours to delete");
-        let (store, problems) = TemplateStore::load(&dir);
+        let LoadedStore { store, problems, .. } = TemplateStore::load(&dir);
         assert!(store.is_empty());
         assert!(problems.is_empty(), "the purged index reads clean: {problems:?}");
     }
@@ -4862,7 +5282,7 @@ mod tests {
             store.push_sample("Arrow Nova", 3, template(APART.1), None, Origin::Local, false);
 
             store.save(&dir).expect("save");
-            let (loaded, problems) = TemplateStore::load(&dir);
+            let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
 
             assert!(problems.is_empty(), "{problems:?}");
             assert_eq!(loaded.learned_keys(), ["Arrow Nova--3"]);
@@ -5100,7 +5520,7 @@ mod tests {
 
             let dir = temp_dir("persisted");
             store.save(&dir).expect("save");
-            let (loaded, _) = TemplateStore::load(&dir);
+            let LoadedStore { store: loaded, .. } = TemplateStore::load(&dir);
             assert_eq!(
                 loaded.len(),
                 store.persisted_len(),
