@@ -1250,10 +1250,10 @@ pub struct PendingConfirm {
 /// PREVIOUS cell's tooltip over the NEW cell's crop. Two "Ailment Damage"
 /// confirms landed one second apart on adjacent slots that way, and the second
 /// of them filed Faster Attacks art under Ailment Damage — 19 of the 21
-/// poisoned templates in Sebastian's store came from that mechanism. A lagging
-/// tooltip names a DIFFERENT cell on each read of a sweep, so requiring two
-/// reads that agree on the same `(row key, slot)` costs a sweep everything and
-/// a deliberate hover one extra 400 ms tick.
+/// poisoned templates in Sebastian's store on 2026-08-26 came from that
+/// mechanism. A lagging tooltip names a DIFFERENT cell on each read of a
+/// sweep, so requiring two reads that agree on the same `(row key, slot)`
+/// costs a sweep everything and a deliberate hover one extra 400 ms tick.
 ///
 /// The three outcomes:
 ///
