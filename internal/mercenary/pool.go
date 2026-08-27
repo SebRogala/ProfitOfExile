@@ -38,8 +38,10 @@ import (
 const SupportedFormatVersion int16 = 2
 
 // DedupeThreshold is the correlation at or above which a candidate is the same
-// art as a sample already pooled under its key. It is the desktop's default
-// `icon_match` threshold (desktop/src-tauri/src/mercenary/mod.rs:281-284).
+// art as a sample already pooled — under its own key (a duplicate) or under
+// another family (a conflict). It is the desktop's default `icon_match`
+// threshold (desktop/src-tauri/src/mercenary/mod.rs, `icon_match` field and its
+// 0.88 default).
 //
 // The desktop's copy is overridable from its thresholds JSON; this one is a
 // compile-time constant and the server has no way to learn that a client moved
@@ -187,6 +189,11 @@ const (
 	// Tombstoned means this exact art was retired from the key. The key
 	// itself stays open — only the sample that was thrown out is refused.
 	Tombstoned
+	// Conflicting means a LIVE sample of another family already carries this
+	// art. One picture belongs to one family, so the pool refuses the second
+	// claim on it rather than serving both and letting every device decide
+	// which of the two to believe.
+	Conflicting
 )
 
 func (o Outcome) String() string {
@@ -199,6 +206,8 @@ func (o Outcome) String() string {
 		return "capped"
 	case Tombstoned:
 		return "tombstoned"
+	case Conflicting:
+		return "conflicting"
 	default:
 		return "unknown"
 	}
@@ -218,7 +227,55 @@ type KeyState struct {
 	Retired []Signature
 }
 
+// ForeignSample is one live pooled sample in the form the accept rule needs: a
+// key, and a signature already DECODED.
+//
+// Not Sample, which carries the raw bytes the serve path round-trips: the
+// cross-family check compares one candidate against the whole live view, so a
+// []byte here would re-decode every sample once per candidate — a full batch's
+// 32 candidates times the whole saturated view, instead of the one pass the
+// repository pays per request. (The view's ceiling is derived in repository.go's
+// lockPoolSQL comment; it moves with the vocabulary, so nothing here names it.)
+type ForeignSample struct {
+	Key       Key
+	Signature Signature
+}
+
+// otherFamilies narrows a version's whole live view to the samples that could
+// CONFLICT with art offered under `family` — everything under a different
+// family name.
+//
+// Same family, different tier, is deliberately not foreign. The signature masks
+// the tier-badge corner (see SupportedFormatVersion), so one family's tier-1 and
+// tier-3 art correlate at ~1.0 by construction whenever the picture is the same
+// — which it usually is. Treating that as a conflict would refuse the second
+// tier of every family in the vocabulary.
+//
+// The caller supplies a view built from LIVE rows only. Retired art of another
+// family is not served to anybody, so it has nothing to be confused with, and
+// letting it refuse an upload would break the documented recovery path: the way
+// out of a mislabel is to tombstone the wrong key so the right family's art can
+// finally be stored.
+func otherFamilies(live []ForeignSample, family string) []ForeignSample {
+	foreign := make([]ForeignSample, 0, len(live))
+	for _, sample := range live {
+		if sample.Key.Family != family {
+			foreign = append(foreign, sample)
+		}
+	}
+	return foreign
+}
+
 // Decide is the accept rule, pure and independent of storage.
+//
+// `state` is the candidate's own key; `foreign` is every LIVE sample of the
+// same format version under a DIFFERENT family (otherFamilies builds it). The
+// second return is the incumbent that refused a Conflicting candidate, and nil
+// for every other outcome — returned rather than an index so the caller can
+// name the family without carrying a parallel array. It is the FIRST foreign
+// match in pool order, so the order `foreign` arrives in decides which of
+// several matching families gets named: the repository's poolSQL orders by
+// (family, tier, id) precisely so two identical uploads name the same one.
 //
 // A retired sample is refused by the SAME correlation that catches a duplicate:
 // what was thrown out is recognised again and stays out, while art the pool has
@@ -230,38 +287,73 @@ type KeyState struct {
 // three retirements would close a key by exhaustion and reintroduce the block
 // this rule exists to avoid.
 //
-// Duplicate is checked before the cap, and that ordering is deliberate: a full
-// key offered art it already has is reported as a duplicate rather than as
-// capped, because "we already have this" is the answer the uploading device can
-// act on (stop offering it) while "full" invites a retry once a slot frees.
-func Decide(state KeyState, candidate Signature) Outcome {
+// The order — own-key retired, own-key duplicate, cross-family conflict, cap,
+// store — is the whole rule, and every step of it is load-bearing:
+//
+//   - Duplicate before the cap: a full key offered art it already has is
+//     reported as a duplicate rather than as capped, because "we already have
+//     this" is the answer the uploading device can act on (stop offering it)
+//     while "full" invites a retry once a slot frees.
+//   - Own-key duplicate before the conflict: if the pool already carries this
+//     art under BOTH families it is already inconsistent, and the client's own
+//     merge rule empties such a cluster. Reporting the conflict instead would
+//     tell a device to settle a sample the pool is in fact still serving to it.
+//   - Conflict before the cap: "another family owns this picture" is a
+//     permanent refusal the player can fix (forget the wrong family), while
+//     "full" tells the device to keep retrying art that will never be stored.
+func Decide(state KeyState, foreign []ForeignSample, candidate Signature) (Outcome, *ForeignSample) {
 	for _, retired := range state.Retired {
 		if retired.NCC(candidate) >= DedupeThreshold {
-			return Tombstoned
+			return Tombstoned, nil
 		}
 	}
 	for _, live := range state.Live {
 		if live.NCC(candidate) >= DedupeThreshold {
-			return Duplicate
+			return Duplicate, nil
+		}
+	}
+	for _, other := range foreign {
+		if other.Signature.NCC(candidate) >= DedupeThreshold {
+			incumbent := other
+			return Conflicting, &incumbent
 		}
 	}
 	if len(state.Live) >= MaxSamplesPerKey {
-		return Capped
+		return Capped, nil
 	}
-	return Stored
+	return Stored, nil
+}
+
+// Conflict names one refused candidate and the art that refused it.
+//
+// Index is the candidate's position in the batch handed to Accept — NOT its
+// position in the request that produced the batch. The handler drops templates
+// it cannot decode before building candidates, so the two differ whenever
+// anything was dropped, and translating between them is the handler's job.
+type Conflict struct {
+	Index           int
+	Key             Key
+	IncumbentFamily string
 }
 
 // AcceptResult tallies one upload by outcome. The counts sum to the number of
 // candidates that reached the pool; templates the handler could not decode are
 // counted separately as rejected and never become candidates.
+//
+// Conflicts carries one entry per Conflicting candidate. It is detail on top of
+// the count, not a replacement for it: a device settles per SAMPLE, so it needs
+// to know WHICH of the templates it offered was refused and by whom.
 type AcceptResult struct {
-	Stored     int
-	Duplicate  int
-	Capped     int
-	Tombstoned int
+	Stored      int
+	Duplicate   int
+	Capped      int
+	Tombstoned  int
+	Conflicting int
+	Conflicts   []Conflict
 }
 
-// Record folds one outcome into the tally.
+// Record folds one outcome into the tally. The Conflicts detail is appended by
+// the caller, which is the only party that knows the candidate's index.
 func (r *AcceptResult) Record(o Outcome) {
 	switch o {
 	case Stored:
@@ -272,6 +364,8 @@ func (r *AcceptResult) Record(o Outcome) {
 		r.Capped++
 	case Tombstoned:
 		r.Tombstoned++
+	case Conflicting:
+		r.Conflicting++
 	}
 }
 

@@ -56,7 +56,46 @@ func integrationPool(t *testing.T) *pgxpool.Pool {
 		t.Skip("merc_icon_templates not found, skipping (migration not applied)")
 	}
 
+	clearVersion(t, pool)
 	return pool
+}
+
+// clearVersionOnce makes the version-wide wipe below run exactly once per suite
+// process, on whichever test reaches integrationPool first.
+var clearVersionOnce sync.Once
+
+// clearVersion empties the format version these tests write, ONCE per suite.
+//
+// The per-family clear reserveFamily does is not enough on its own, because the
+// accept rule is not per-family any more: poolSQL reads the WHOLE version, and
+// every live row in it — under ANY family — is foreign art the cross-family rule
+// compares against. So one leftover firstThird row, from a run killed between a
+// test's pre- and post-clear, turns every same-art test in this file into a
+// Conflicting one, under a family none of them mention.
+//
+// This is the pre-suite half; reserveFamily's per-family clear stays as the
+// post-test half, which is what keeps ONE test's rows out of the NEXT test.
+func clearVersion(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	var err error
+	clearVersionOnce.Do(func() {
+		_, err = pool.Exec(context.Background(),
+			`DELETE FROM merc_icon_templates WHERE format_version = $1`, integrationVersion)
+	})
+	if err != nil {
+		t.Fatalf("clear format version %d before the suite: %v", integrationVersion, err)
+	}
+}
+
+// clearFamily deletes every row of one family. `when` names the call site so a
+// pre-test wipe, a post-test one and a between-rounds one are told apart in the
+// failure.
+func clearFamily(t *testing.T, pool *pgxpool.Pool, family, when string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`DELETE FROM merc_icon_templates WHERE family = $1`, family); err != nil {
+		t.Fatalf("%s cleanup for %q: %v", when, family, err)
+	}
 }
 
 // reserveFamily hands a test one REAL family from the shipped vocabulary and
@@ -71,14 +110,8 @@ func reserveFamily(t *testing.T, pool *pgxpool.Pool, family string) string {
 	if _, err := NewKey(family, 1); err != nil {
 		t.Fatalf("test setup: %q is not a shipped family: %v", family, err)
 	}
-	clear := func(when string) {
-		if _, err := pool.Exec(context.Background(),
-			`DELETE FROM merc_icon_templates WHERE family = $1`, family); err != nil {
-			t.Fatalf("%s cleanup for %q: %v", when, family, err)
-		}
-	}
-	clear("pre-test")
-	t.Cleanup(func() { clear("post-test") })
+	clearFamily(t, pool, family, "pre-test")
+	t.Cleanup(func() { clearFamily(t, pool, family, "post-test") })
 	return family
 }
 
@@ -650,23 +683,36 @@ func TestRepository_Accept_ConcurrentUploadsForTheLastSlot_StoreExactlyOne(t *te
 	}
 }
 
-// Two uploads whose key sets overlap in opposite order must not deadlock. They
-// do not because Accept sorts its keys before locking them; without that sort
-// each transaction would hold the lock the other is waiting on, and both would
-// sit there until the deadlock detector killed one.
-func TestRepository_Accept_OverlappingKeysInOppositeOrder_DoNotDeadlock(t *testing.T) {
+// Two multi-key uploads landing at once both complete. They queue on the one
+// pool-wide advisory lock instead of taking a lock per key, which is what
+// removed the lock-ordering problem the old per-key locks had to sort around:
+// there is no longer a second lock for a transaction to hold while it waits.
+//
+// Each family carries its OWN art here. The same picture under two families is
+// now a conflict by design, so building both batches from one pattern — which
+// the per-key version of this test did — would assert the refusal rule instead
+// of the lock.
+func TestRepository_Accept_ConcurrentMultiKeyUploads_BothSucceedUnderThePoolLock(t *testing.T) {
 	pool := integrationPool(t)
 	repo := NewRepository(pool)
 	first := reserveFamily(t, pool, "Cold Penetration")
 	second := reserveFamily(t, pool, "Critical Chance")
+	requireDistinct(t, first)
+	patterns := distinctPatterns()
 
-	// A deadlock would otherwise hang the test until the whole suite times out;
-	// with a deadline it surfaces as a failure naming this test.
+	// A lock that never released would otherwise hang the test until the whole
+	// suite times out; with a deadline it surfaces as a failure naming this test.
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	forward := []Candidate{candidate(t, first, 1, firstThird), candidate(t, second, 1, firstThird)}
-	backward := []Candidate{candidate(t, second, 2, firstThird), candidate(t, first, 2, firstThird)}
+	forward := []Candidate{
+		candidate(t, first, 1, patterns[0]),
+		candidate(t, second, 1, patterns[1]),
+	}
+	backward := []Candidate{
+		candidate(t, second, 2, patterns[1]),
+		candidate(t, first, 2, patterns[0]),
+	}
 
 	results := make([]AcceptResult, 2)
 	errs := make([]error, 2)
@@ -682,12 +728,222 @@ func TestRepository_Accept_OverlappingKeysInOppositeOrder_DoNotDeadlock(t *testi
 
 	for i, err := range errs {
 		if err != nil {
-			t.Fatalf("batch %d failed (a deadlock or lock timeout looks like this): %v", i, err)
+			t.Fatalf("batch %d failed (a lock that never released looks like this): %v", i, err)
 		}
 	}
 	if results[0].Stored != 2 || results[1].Stored != 2 {
 		t.Fatalf("stored = %d and %d, want 2 each: %+v %+v",
 			results[0].Stored, results[1].Stored, results[0], results[1])
+	}
+}
+
+// clearFamilies wipes several families between rounds of a repeated test — the
+// same delete reserveFamily brackets a test with, needed mid-test here.
+func clearFamilies(t *testing.T, pool *pgxpool.Pool, families ...string) {
+	t.Helper()
+	for _, family := range families {
+		clearFamily(t, pool, family, "between-rounds")
+	}
+}
+
+// One picture belongs to one family. A device that hovered the wrong cell can
+// offer the same art under two families in a single batch, and the pool keeps
+// the first claim and refuses the second — whichever order they arrive in,
+// because a stored candidate joins the live view the rest of the batch is
+// checked against.
+//
+// Without that within-batch growth the two would be decided against a snapshot
+// that contains neither, and both would be stored.
+func TestRepository_Accept_SameArtUnderTwoFamiliesInOneBatch_StoresTheFirstAndRefusesTheSecond(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewRepository(pool)
+	alpha := reserveFamily(t, pool, "Added Chaos")
+	beta := reserveFamily(t, pool, "Added Cold")
+	ctx := context.Background()
+
+	for _, order := range [][2]string{{alpha, beta}, {beta, alpha}} {
+		winner, loser := order[0], order[1]
+		t.Run(winner+"-first", func(t *testing.T) {
+			clearFamilies(t, pool, alpha, beta)
+
+			result, err := repo.Accept(ctx, "device-a", integrationVersion, []Candidate{
+				candidate(t, winner, 1, firstThird),
+				candidate(t, loser, 1, firstThird),
+			})
+			if err != nil {
+				t.Fatalf("Accept: %v", err)
+			}
+
+			if result.Stored != 1 || result.Conflicting != 1 {
+				t.Fatalf("one art claimed by two families = %+v, want 1 stored and 1 conflicting", result)
+			}
+			if len(result.Conflicts) != 1 {
+				t.Fatalf("conflicts = %+v, want 1 entry", result.Conflicts)
+			}
+			got := result.Conflicts[0]
+			if got.Index != 1 {
+				t.Errorf("conflict index = %d, want 1 (the second candidate is the refused one)", got.Index)
+			}
+			if got.Key.Family != loser {
+				t.Errorf("refused family = %q, want %q", got.Key.Family, loser)
+			}
+			if got.IncumbentFamily != winner {
+				t.Errorf("incumbent = %q, want %q — the log line the player acts on names it",
+					got.IncumbentFamily, winner)
+			}
+			if live := liveCount(t, pool, winner, 1); live != 1 {
+				t.Errorf("%q live samples = %d, want 1", winner, live)
+			}
+			if live := liveCount(t, pool, loser, 1); live != 0 {
+				t.Errorf("%q live samples = %d, want 0", loser, live)
+			}
+		})
+	}
+}
+
+// The batch shape that tells a correct hoisted foreign view from a stale one.
+//
+// Accept builds the cross-family view once per DISTINCT family and drops it on
+// every store, and only a batch that RETURNS to a family after storing under
+// another one can see the difference: candidate 3 is decided for a family whose
+// view was built before candidate 2 put art in the pool. Without the
+// invalidation it is checked against a view missing that art and stored, and the
+// pool ends up serving one picture under two families — the state the conflict
+// rule exists to prevent. A two-candidate batch cannot catch this: its second
+// family has no cached view yet.
+func TestRepository_Accept_FamilyRevisitedAfterAnotherFamilyStored_StillSeesTheNewArt(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewRepository(pool)
+	revisited := reserveFamily(t, pool, "Additional Duration")
+	other := reserveFamily(t, pool, "Additional Leech")
+	requireDistinct(t, revisited)
+	patterns := distinctPatterns()
+	ctx := context.Background()
+
+	result, err := repo.Accept(ctx, "device-a", integrationVersion, []Candidate{
+		candidate(t, revisited, 1, patterns[0]),
+		candidate(t, other, 1, patterns[1]),
+		// Same art as the candidate above, offered back under the family whose
+		// view was built first.
+		candidate(t, revisited, 3, patterns[1]),
+	})
+	if err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	if result.Stored != 2 || result.Conflicting != 1 {
+		t.Fatalf("batch revisiting a family after a foreign store = %+v, want 2 stored and 1 conflicting",
+			result)
+	}
+	if len(result.Conflicts) != 1 {
+		t.Fatalf("conflicts = %+v, want 1 entry", result.Conflicts)
+	}
+	got := result.Conflicts[0]
+	if got.Index != 2 || got.Key.Family != revisited || got.Key.Tier != 3 {
+		t.Errorf("conflict = index %d on %v, want index 2 on %s--3", got.Index, got.Key, revisited)
+	}
+	if got.IncumbentFamily != other {
+		t.Errorf("incumbent = %q, want %q — the art stored earlier in this same batch",
+			got.IncumbentFamily, other)
+	}
+	if live := liveCount(t, pool, revisited, 3); live != 0 {
+		t.Errorf("%q tier-3 live samples = %d, want 0: the conflicting art must not be stored",
+			revisited, live)
+	}
+}
+
+// The refusal has to survive concurrency, which is the whole reason the lock
+// moved from per-key to per-version: two devices claiming one picture for two
+// families take two DIFFERENT key locks, each reads a pool without the other's
+// row, and both store. Repeated because a lock bug is a race — one pass proves
+// nothing.
+func TestRepository_Accept_ConcurrentUploadsOfOneArtUnderTwoFamilies_StoreExactlyOne(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewRepository(pool)
+	families := [2]string{
+		reserveFamily(t, pool, "Added Fire"),
+		reserveFamily(t, pool, "Added Lightning"),
+	}
+	ctx := context.Background()
+
+	const rounds = 20
+	for round := 0; round < rounds; round++ {
+		clearFamilies(t, pool, families[0], families[1])
+
+		results := make([]AcceptResult, 2)
+		errs := make([]error, 2)
+		var wg sync.WaitGroup
+		for i := 0; i < 2; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				results[i], errs[i] = repo.Accept(ctx, "racer", integrationVersion,
+					[]Candidate{candidate(t, families[i], 1, firstThird)})
+			}(i)
+		}
+		wg.Wait()
+
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: racer %d: %v", round, i, err)
+			}
+		}
+		stored := results[0].Stored + results[1].Stored
+		conflicting := results[0].Conflicting + results[1].Conflicting
+		if stored != 1 || conflicting != 1 {
+			t.Fatalf("round %d: two families racing for one picture = %d stored, %d conflicting; "+
+				"want 1 and 1 (%+v, %+v)", round, stored, conflicting, results[0], results[1])
+		}
+		live := liveCount(t, pool, families[0], 1) + liveCount(t, pool, families[1], 1)
+		if live != 1 {
+			t.Fatalf("round %d: live samples across both families = %d, want 1", round, live)
+		}
+	}
+}
+
+// The way out of a mislabel: retire the wrong key, and the family whose art it
+// really is can finally pool it. Retired art of another family is not served to
+// anybody, so it has nothing to be confused with and must not go on refusing
+// the correct upload — otherwise the first writer owns the picture forever and
+// the conflict rule has no undo short of SQL.
+func TestRepository_Accept_RetiringTheIncumbentUnblocksTheConflictingArt(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewRepository(pool)
+	mislabel := reserveFamily(t, pool, "Arcane Traps")
+	correct := reserveFamily(t, pool, "Arrow Nova")
+	ctx := context.Background()
+
+	if _, err := repo.Accept(ctx, "device-a", integrationVersion,
+		[]Candidate{candidate(t, mislabel, 1, firstThird)}); err != nil {
+		t.Fatalf("Accept the mislabel: %v", err)
+	}
+
+	// While the mislabel is live the correct family is refused — the control
+	// that makes the retirement below mean something.
+	blocked, err := repo.Accept(ctx, "device-b", integrationVersion,
+		[]Candidate{candidate(t, correct, 1, firstThird)})
+	if err != nil {
+		t.Fatalf("Accept while the mislabel is live: %v", err)
+	}
+	if blocked.Conflicting != 1 || blocked.Stored != 0 {
+		t.Fatalf("upload against a live incumbent = %+v, want 1 conflicting and 0 stored", blocked)
+	}
+
+	key, _ := NewKey(mislabel, 1)
+	if _, err := repo.Tombstone(ctx, integrationVersion, key); err != nil {
+		t.Fatalf("Tombstone the mislabel: %v", err)
+	}
+
+	after, err := repo.Accept(ctx, "device-b", integrationVersion,
+		[]Candidate{candidate(t, correct, 1, firstThird)})
+	if err != nil {
+		t.Fatalf("Accept after retiring the mislabel: %v", err)
+	}
+	if after.Stored != 1 || after.Conflicting != 0 {
+		t.Fatalf("upload after retiring the incumbent = %+v, want 1 stored and 0 conflicting", after)
+	}
+	if live := liveCount(t, pool, correct, 1); live != 1 {
+		t.Errorf("%q live samples = %d, want 1", correct, live)
 	}
 }
 
@@ -698,14 +954,8 @@ func reserveOrphanFamily(t *testing.T, pool *pgxpool.Pool, family string) string
 	if _, known := knownFamilies[family]; known {
 		t.Fatalf("test setup: %q is in the vocabulary, so it is not an orphan", family)
 	}
-	clear := func(when string) {
-		if _, err := pool.Exec(context.Background(),
-			`DELETE FROM merc_icon_templates WHERE family = $1`, family); err != nil {
-			t.Fatalf("%s cleanup for %q: %v", when, family, err)
-		}
-	}
-	clear("pre-test")
-	t.Cleanup(func() { clear("post-test") })
+	clearFamily(t, pool, family, "pre-test")
+	t.Cleanup(func() { clearFamily(t, pool, family, "post-test") })
 	return family
 }
 

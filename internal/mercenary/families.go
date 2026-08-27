@@ -15,8 +15,9 @@ package mercenary
 //
 // Why the server carries this at all: `family` arrives as free text from a
 // spoofable client, and without a closed set one device can create unbounded
-// keys — 264 real keys, or as many rows as the rate limit allows, all of them
-// art nothing will ever match. Validating against the shipped vocabulary makes
+// keys — 459 real keys (153 families x 3 tiers), or as many rows as the rate
+// limit allows, all of them art nothing will ever match. Validating against
+// the shipped vocabulary makes
 // the key space finite and equal to the vocabulary the desktop resolves
 // against. It is a fixed list because the vocabulary ships with a build; a new
 // league's supports arrive as a fixture change on both sides, and
