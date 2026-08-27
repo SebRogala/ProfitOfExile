@@ -71,12 +71,16 @@
 //! `ssot::build_snapshot` and `set_module_enabled` all do it).
 //! Module-owned state Mutexes sit OUTSIDE this order and are acquired alone:
 //! `AppState.mercenary` and `AppState.merc_templates` (POE-165), and
-//! `AppState.temple` and `AppState.temple_settings` (POE-171), are taken by
-//! their own module's loop with no module lock held — and never together, so
-//! they have no order between them. The one place two of them meet is
-//! `ssot::build_snapshot`, which takes each in turn and drops each guard before
-//! taking the next, after the `modules_enabled` guard has already been dropped;
-//! none of them is ever taken inside `module_handles`.
+//! `AppState.temple` and `AppState.temple_settings` (POE-171), and
+//! `AppState.screen` (POE-214 — named for what it holds rather than for a
+//! module, but singly owned all the same: the merc detect tick is its only
+//! writer, through `ssot::publish_screen`, which drops the guard before it
+//! emits), are taken by their own module's loop with no module lock held — and
+//! never together, so they have no order between them. The one place two of them meet is
+//! `ssot::build_snapshot`, which takes each in turn — `screen` included — and
+//! drops each guard before taking the next, after the `modules_enabled` guard
+//! has already been dropped; none of them is ever taken inside
+//! `module_handles`.
 //!
 //! Two consequences the temple commands rely on: `temple_set_*` writes
 //! `temple_settings` in a scoped block and calls `persist_settings` (disk I/O,

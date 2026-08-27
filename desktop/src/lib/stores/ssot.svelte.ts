@@ -57,6 +57,50 @@ import {
  */
 const POOLS = ['skill', 'transfigured'] as const;
 
+/**
+ * Which cue measured `ScreenSlice.uiScale` (POE-214) — the wire strings Rust's
+ * `ScreenScaleSource` serialises to, pinned from the Rust side by a serde test.
+ *
+ * A confidence LABEL, not a rank: merc is the sole writer and the latest
+ * measurement wins, whichever cue produced it.
+ */
+export type ScreenScaleSource = 'merc-frame' | 'merc-ocr' | 'remembered';
+
+/**
+ * The screen the game is drawn on and the game-UI scale measured on it
+ * (POE-214). TypeScript mirror of Rust's `ScreenSlice`.
+ *
+ * **Unit.** `uiScale` is game-UI px per px of the reference fixture: a
+ * 1920x1200 screen is 1.0 by definition, and 1080p measures 0.90 = 1080/1200 —
+ * the game's UI scales with screen HEIGHT. The temple's
+ * `AnchorCalibration.scale` is a DIFFERENT unit (relative to its own 1374-px
+ * reference width) and the ratio between the two is unmeasured, so the two
+ * numbers must not be substituted for each other.
+ *
+ * **Reader rule.** A non-merc consumer reads THIS slice, never
+ * `ssot.mercenary.capture.scale`. Both are written from the same settled scale
+ * on the same Rust tick, so they never disagree — but the capture is null until
+ * a recruit window opens and is retired again when it closes, so a reader keyed
+ * on it would lose the screen's scale every time the player shuts the window.
+ *
+ * Rust-owned and read-only here; there is no consumer yet (POE-214 names the
+ * two to come: the Lab `CaptureRegion` as fractions of this slice, and the
+ * temple once its unit ratio is measured), which is why the store below does
+ * not project it onto a rune.
+ */
+export interface ScreenSlice {
+	/** Captured screen width in physical px. */
+	width: number;
+	/** Captured screen height in physical px. */
+	height: number;
+	/** Game-UI px per reference-fixture px — see the unit note above. */
+	uiScale: number;
+	/** What measured `uiScale`. A label, not a precedence. */
+	source: ScreenScaleSource;
+	/** Unix ms the measurement was taken at. */
+	measuredAtMs: number;
+}
+
 /** Serialized Rust `AppSsotSnapshot` — `league.name` is `string | null`. */
 export interface SsotSnapshot {
 	league: { name: string | null };
@@ -80,6 +124,21 @@ export interface SsotSnapshot {
 	 *  that write `temple_settings`, and Rust echoes the result back into this
 	 *  slice. Nothing in the webview assigns it except `applyTemple`. */
 	temple?: TempleSlice;
+	/** The screen and its measured game-UI scale (POE-214). Rust-owned; `null`
+	 *  until something has measured one, and a consumer must NOT read `null` as
+	 *  1.0 — that is a real measurement (a 1920x1200 screen) and assuming it
+	 *  mis-scales every rect on a 1080p machine by 11%. No UI consumer yet.
+	 *
+	 *  **`null`, not absent, is what an unmeasured screen sends.** Rust's
+	 *  `Option<ScreenSlice>` carries no `skip_serializing_if`, so the key is
+	 *  always on the wire — a consumer must test `== null` (or truthiness), NOT
+	 *  `=== undefined`. Same shape and same reason as `MercenarySlice.capture`.
+	 *
+	 *  The `?` is a TEST-LITERAL affordance, not a wire claim: `resolving`,
+	 *  `mercenary` and `temple` are not even `Option` in Rust and carry it for
+	 *  the same reason — it is what lets a case build the one-field snapshot it
+	 *  is about. Only the `| null` above says anything about the payload. */
+	screen?: ScreenSlice | null;
 }
 
 /**

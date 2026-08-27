@@ -261,6 +261,18 @@ pub struct AppState {
     /// a Mutex: it is read on every tick and never read together with the
     /// settings.
     pub temple_rearm: AtomicU64,
+    /// The screen the game is drawn on and the game-UI scale measured on it
+    /// (POE-214) — the owner of the `screen` SSOT slice. Written by ONE writer,
+    /// the merc detect tick, through `ssot::publish_screen`, and projected
+    /// read-only into every snapshot by `ssot::build_snapshot`. Acquired alone,
+    /// never inside a module lock (lock order — see src/modules.rs).
+    ///
+    /// Its own owner rather than a field of `AppState.mercenary`: the merc
+    /// slice is retired when the recruit window closes, and the screen's scale
+    /// is not — it is what the Lab capture regions and (once the temple's
+    /// unit ratio is measured) the temple anchor want to read. `None` until
+    /// something measures one; do not read a missing value as 1.0.
+    pub screen: Mutex<Option<ssot::ScreenSlice>>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -3494,6 +3506,7 @@ pub fn run() {
         temple: Mutex::new(temple::slice::TempleSlice::default()),
         temple_settings: Mutex::new(temple::slice::TempleSettings::shipped()),
         temple_rearm: AtomicU64::new(0),
+        screen: Mutex::new(None),
     };
 
     tauri::Builder::default()
