@@ -4186,6 +4186,7 @@ mod tests {
     /// the format-2 derivation was chosen on was measured here.
     mod corpus {
         use super::*;
+        use crate::mercenary::geometry::outer_rect_for_inner;
 
         const DIR: &str = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -4222,37 +4223,64 @@ mod tests {
             manifest().crops.into_iter().filter(|c| !c.poisoned).collect()
         }
 
+        /// The inner side every committed crop is cut at.
+        ///
+        /// 39/43 is the pre-POE-214 laptop geometry — the OCR path's 0.974
+        /// scale — and the rule is `outer = inner + 2 · inset`, so this one
+        /// number is the whole of it. A re-harvest at a machine's real UI
+        /// scale (POE-215) changes it and nothing else below.
+        const CROP_INNER: u32 = 39;
+
         /// Mount a raw crop in a cell the production geometry reads.
         ///
-        /// The crops ARE inner rects: 39×39, which is `cell_size` 43 at the
-        /// live scale 0.974 minus 2 px of `cell_inset` per side. Pasting one
-        /// into a 43×43 canvas and handing `[0, 0, 43, 43]` to the production
-        /// entry points is what makes these numbers the numbers the loop gets
-        /// — occupancy gate, inner rect, alignment window and all — rather
-        /// than numbers from a private derivation that only the test knows.
+        /// The crops ARE inner rects, so the cell they came out of is derived
+        /// from their own dimensions rather than typed in. Handing THAT rect
+        /// to the production entry points is what makes these numbers the
+        /// numbers the loop gets — occupancy gate, inner rect, alignment
+        /// window and all — rather than numbers from a private derivation
+        /// that only the test knows.
         fn mounted(file: &str) -> DynamicImage {
             mount(crop_of(file))
         }
 
-        /// One committed 39×39 inner crop, as pixels.
+        /// One committed inner crop, as pixels. Shape-checked in [`mount`],
+        /// which is the door a synthesised crop comes through too.
         fn crop_of(file: &str) -> RgbaImage {
-            let crop = image::open(std::path::Path::new(DIR).join(file))
+            image::open(std::path::Path::new(DIR).join(file))
                 .unwrap_or_else(|e| panic!("{file}: {e}"))
-                .to_rgba8();
-            assert_eq!(
-                crop.dimensions(),
-                (39, 39),
-                "{file} is not a 39×39 inner crop",
-            );
-            crop
+                .to_rgba8()
         }
 
-        /// Paste an inner crop into the 43×43 cell canvas [`mounted`]
-        /// describes. Split out so a SYNTHESISED crop reaches the production
-        /// entry points through exactly the same door a committed one does.
+        /// The OUTER cell rect of a MOUNTED cell — the whole canvas
+        /// [`mount`] built, read off that canvas.
+        ///
+        /// Taking it from the image rather than from [`CROP_INNER`] is what
+        /// keeps the two halves of a read in step: `mount` sizes the canvas
+        /// from the crop it was handed, so a rect derived from the corpus
+        /// constant instead would be the wrong rect for every crop that is
+        /// not 39 px — the PC's 36 px cell below, and every row POE-215
+        /// re-harvests.
+        fn whole_of(img: &DynamicImage) -> [i32; 4] {
+            [0, 0, img.width() as i32, img.height() as i32]
+        }
+
+        /// Paste an inner crop into the cell canvas its own size implies.
+        ///
+        /// Split out from [`mounted`] so a SYNTHESISED crop — including one
+        /// cut at another machine's UI scale — reaches the production entry
+        /// points through exactly the same door a committed one does. The two
+        /// asserts are the preconditions the derivation rests on: a cell is
+        /// square, and an inner crop under `SIG_DIM + 2 · SHIFT_MAX` leaves
+        /// [`shift_window`] no window to search, so a corpus cut that small
+        /// would silently be measuring the unaligned fallback.
         fn mount(crop: RgbaImage) -> DynamicImage {
-            let mut canvas = RgbaImage::from_pixel(43, 43, Rgba([0, 0, 0, 255]));
-            image::imageops::replace(&mut canvas, &crop, 2, 2);
+            let (w, h) = crop.dimensions();
+            assert_eq!(w, h, "an inner crop is square, not {w}×{h}");
+            let floor = SIG_DIM + 2 * SHIFT_MAX as u32;
+            assert!(w >= floor, "a {w} px inner crop leaves no {floor} px alignment window");
+            let (side, inset) = outer_rect_for_inner(w, &MercGeometry::default());
+            let mut canvas = RgbaImage::from_pixel(side, side, Rgba([0, 0, 0, 255]));
+            image::imageops::replace(&mut canvas, &crop, inset as i64, inset as i64);
             DynamicImage::ImageRgba8(canvas)
         }
 
@@ -4267,7 +4295,23 @@ mod tests {
         /// resulting score is a real correlation between two real arts rather
         /// than a number written into a fixture.
         fn blended(a: &str, b: &str, weight: f32) -> DynamicImage {
-            let (pa, pb) = (crop_of(a), crop_of(b));
+            mount(blend(a, &crop_of(a), b, &crop_of(b), weight))
+        }
+
+        /// The pixel blend [`blended`] mounts, split out so its geometry guard
+        /// can be exercised.
+        ///
+        /// Two crops cut at different UI scales have no common pixel grid.
+        /// Without the assert the loop below either indexes `b` out of bounds
+        /// (`b` the smaller) or blends a corner of it into the whole of `a`
+        /// and says nothing (`b` the larger) — and POE-215's re-harvest is
+        /// what puts two geometries in this directory.
+        fn blend(a: &str, pa: &RgbaImage, b: &str, pb: &RgbaImage, weight: f32) -> RgbaImage {
+            assert_eq!(
+                pa.dimensions(),
+                pb.dimensions(),
+                "{a} and {b} are cut at different geometries; a blend needs one",
+            );
             let mut out = pa.clone();
             for (x, y, px) in out.enumerate_pixels_mut() {
                 let other = pb.get_pixel(x, y);
@@ -4277,20 +4321,20 @@ mod tests {
                         .clamp(0.0, 255.0) as u8;
                 }
             }
-            mount(out)
+            out
         }
-
-        const OUTER: [i32; 4] = [0, 0, 43, 43];
 
         /// Every alignment of one crop — a probe.
         fn probe(file: &str) -> CellCandidates {
-            cell_candidates(&mounted(file), OUTER, &MercGeometry::default())
+            let img = mounted(file);
+            cell_candidates(&img, whole_of(&img), &MercGeometry::default())
                 .unwrap_or_else(|| panic!("{file} normalizes"))
         }
 
         /// The unshifted signature of one crop — a stored template.
         fn template(file: &str) -> CellSig {
-            normalize_cell(&mounted(file), OUTER, &MercGeometry::default())
+            let img = mounted(file);
+            normalize_cell(&img, whole_of(&img), &MercGeometry::default())
                 .unwrap_or_else(|| panic!("{file} normalizes"))
         }
 
@@ -4417,6 +4461,211 @@ mod tests {
             assert_eq!(named, on_disk);
         }
 
+        // -- the geometry the readers derive --------------------------------
+
+        /// Every crop a reader can load is cut at the ONE geometry the numbers
+        /// above were measured at.
+        ///
+        /// [`crop_of`] no longer pins it — the readers derive the cell from
+        /// whatever they are handed, which is what lets a crop cut at another
+        /// machine's UI scale through the same door — so the corpus's own
+        /// uniformity has to be asserted somewhere, and this is it. 39/43 is
+        /// the pre-POE-214 laptop geometry; POE-215 re-harvests, and when it
+        /// does this is the number that moves.
+        ///
+        /// Two rows are NOT 39×39, and both are 29×29 tooltip-text crops filed
+        /// as poisoned — [`clean`] keeps every reader off them, and the
+        /// manifest header's "39x39" describes the corpus proper. They are
+        /// pinned by name rather than skipped by predicate so that a THIRD
+        /// odd-sized row fails here instead of quietly widening the corpus.
+        #[test]
+        fn every_crop_a_reader_loads_is_cut_at_the_one_corpus_geometry() {
+            let mut odd: Vec<String> = Vec::new();
+            for c in manifest().crops {
+                let dims = crop_of(&c.file).dimensions();
+                if dims == (CROP_INNER, CROP_INNER) {
+                    continue;
+                }
+                assert!(
+                    c.poisoned,
+                    "{} is {dims:?}, not {CROP_INNER}×{CROP_INNER}, and a reader loads it",
+                    c.file,
+                );
+                odd.push(c.file);
+            }
+            odd.sort();
+
+            assert_eq!(
+                odd,
+                ["cooldown-recovery--t2-raw.png", "less-duration--t2-raw.png"],
+                "the only rows off the corpus geometry are the two poisoned tooltip crops",
+            );
+        }
+
+        /// Every committed crop was cut at the pre-POE-214 registration: the
+        /// gold frame's dark|light step falls INSIDE the crop, on 76 of the
+        /// 78 rows.
+        ///
+        /// This is the sentence the manifest header carries, run rather than
+        /// asserted in prose — and run through
+        /// [`cellfit::frame_step_columns`], the SAME statistic
+        /// `cellfit`'s own AC1 test reads the two fixtures with, so the corpus
+        /// and the fixtures cannot disagree about what a frame looks like.
+        /// What it means is that every template the pool has ever stored
+        /// carries a slice of the neighbouring cell's frame, which is the
+        /// defect POE-214 measured and POE-215 re-harvests away.
+        ///
+        /// Poisoned rows are INCLUDED: the claim is about the harvest, not
+        /// about what the matcher reads, and the two rows that miss are the
+        /// two 29×29 tooltip crops that
+        /// [`every_crop_a_reader_loads_is_cut_at_the_one_corpus_geometry`]
+        /// names — never cut from a cell at all, so no frame to carry.
+        ///
+        /// The step lands at ONE column of every row that has it, between 0
+        /// and 6 — the manifest's own "columns 0-6", read back off the pixels.
+        ///
+        /// **POE-215's re-harvest flips the count to 0.** When it lands, the
+        /// numbers here and the manifest's `source` sentence move together — a
+        /// re-harvest that left either one alone would be lying about the
+        /// corpus it produced.
+        #[test]
+        fn seventy_six_of_the_seventy_eight_committed_crops_carry_the_frame_step() {
+            use crate::mercenary::cellfit;
+
+            let mut without: Vec<String> = Vec::new();
+            let mut columns: Vec<usize> = Vec::new();
+            for c in manifest().crops {
+                let means = cellfit::column_means(&crop_of(&c.file));
+                let steps = cellfit::frame_step_columns(&means);
+                match steps.as_slice() {
+                    [] => without.push(c.file),
+                    [x] => columns.push(*x),
+                    _ => panic!("{} carries the step at {steps:?}, not at one column", c.file),
+                }
+            }
+            without.sort();
+            let (lo, hi) = (
+                *columns.iter().min().expect("some row carries the step"),
+                *columns.iter().max().expect("some row carries the step"),
+            );
+
+            assert_eq!(columns.len(), 76, "rows carrying the frame's dark|light step");
+            assert_eq!(
+                without,
+                ["cooldown-recovery--t2-raw.png", "less-duration--t2-raw.png"],
+                "the only rows without it are the two tooltip crops",
+            );
+            assert_eq!((lo, hi), (0, 6), "the manifest's 'columns 0-6'");
+        }
+
+        /// Blending onto a LARGER `b` is refused — the direction the guard is
+        /// the only thing standing in.
+        ///
+        /// `b` bigger than `a` indexes in bounds on every pixel of `a`, so
+        /// without the assert the loop runs to completion and returns a blend
+        /// of `a` with `b`'s top-left CORNER, at a different sampling of the
+        /// art than `b`'s own template was cut at. Nothing panics and nothing
+        /// reads wrong on the surface — the score just quietly stops being a
+        /// correlation between the two icons the test names. 42 is what a
+        /// harvest at a higher UI scale than the corpus's 0.974 produces, and
+        /// POE-215 is what puts a second scale in this directory.
+        #[test]
+        #[should_panic(expected = "are cut at different geometries")]
+        fn a_blend_onto_a_larger_crop_is_refused_before_it_blends_a_corner() {
+            let (a, b, weight) = NEAR_MISS;
+            let at_a_higher_scale = resampled(b, 42);
+
+            blend(a, &crop_of(a), b, &at_a_higher_scale, weight);
+        }
+
+        /// Blending onto a SMALLER `b` names both files instead of an index.
+        ///
+        /// The pair here is what POE-215's re-harvest produces: the same art
+        /// off the laptop at 39 px and off the PC at 36. This direction does
+        /// panic on its own — the loop walks `a`'s 39 rows into `b`'s 36 — but
+        /// on a pixel index the reader has to map back to a file by hand, so
+        /// what the guard buys here is the message rather than the catch.
+        #[test]
+        #[should_panic(expected = "are cut at different geometries")]
+        fn a_blend_onto_a_smaller_crop_names_both_files() {
+            let (a, b, weight) = NEAR_MISS;
+            let at_pc_scale = resampled(b, 36);
+
+            blend(a, &crop_of(a), b, &at_pc_scale, weight);
+        }
+
+        /// One committed crop, resampled square to `side` — a stand-in for a
+        /// harvest at another machine's UI scale, which no committed row
+        /// carries yet.
+        fn resampled(file: &str, side: u32) -> RgbaImage {
+            image::imageops::resize(
+                &crop_of(file),
+                side,
+                side,
+                image::imageops::FilterType::Triangle,
+            )
+        }
+
+        /// A cell cut at the PC's UI scale reaches the matcher with a full
+        /// alignment window — the readers above at a geometry no committed
+        /// crop carries.
+        ///
+        /// The crop is taken in memory from the frame-fitted rect on
+        /// `merc-recruit-pc-1080p.png`, so it is 36×36 (`cell_size` 40 at UI
+        /// scale 0.90 less 2 px of inset per side) rather than the corpus's
+        /// 39. Mounting it has to rebuild a 40×40 cell, and `shift_window` has
+        /// to find 30 px of window in it — over `SIG_DIM` 24, so all 49
+        /// alignments are built. A reader that had kept 43/39 hard-coded would
+        /// paste this crop into the wrong canvas and read the black margin as
+        /// part of the art.
+        #[test]
+        fn a_cell_cut_at_the_pcs_scale_reaches_the_matcher_with_a_full_window() {
+            use crate::mercenary::cellfit;
+            use crate::mercenary::geometry::{detect, Frame};
+            use crate::mercenary::read::crop_rgba;
+            use crate::mercenary::vocab::MercVocab;
+
+            let g = MercGeometry::default();
+            let img = image::open(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/merc-recruit-pc-1080p.png"
+            ))
+            .expect("the committed PC panel loads");
+            let frame = Frame::cropped(cellfit::PC_ORIGIN, cellfit::PC_SCREEN);
+            let layout = detect(
+                &cellfit::pc_lines(),
+                &g,
+                &MercVocab::load().expect("vocabulary parses"),
+                None,
+            )
+            .expect("the PC panel");
+            let fitted = cellfit::refine(&img, frame, layout, &g);
+            assert!(
+                fitted.fit.is_some(),
+                "precondition: the PC panel's frame is found, declined with {:?}",
+                fitted.declined,
+            );
+            let cell = frame.local(fitted.layout.rows[3].cells[0]);
+            let crop = crop_rgba(&img, cell, &g).expect("the fitted cell lies on the fixture");
+            assert_eq!(crop.dimensions(), (36, 36), "the PC's inner crop at UI scale 0.90");
+
+            let mounted = mount(crop);
+            let rect = whole_of(&mounted);
+
+            assert_eq!(rect, [0, 0, 40, 40], "36 + 2 · 2, the cell mount rebuilt");
+            let (window, aligned) = shift_window(rect, &g);
+            assert!(aligned, "30 px of window is over SIG_DIM {SIG_DIM}");
+            assert_eq!([window[2], window[3]], [30, 30]);
+            assert!(
+                normalize_cell(&mounted, rect, &g).is_some(),
+                "the mounted PC cell normalises",
+            );
+            assert_eq!(
+                cell_candidates(&mounted, rect, &g).expect("the PC cell has candidates").all().len(),
+                (SHIFT_SPAN * SHIFT_SPAN) as usize,
+            );
+        }
+
         // -- the narrow-window fallback -------------------------------------
 
         /// The boundary `cellInset` crosses, from the safe side.
@@ -4430,8 +4679,8 @@ mod tests {
             let mut g = MercGeometry::default();
             g.cell_inset = 6.0;
 
-            let cands = cell_candidates(&mounted("multistrike--t3-raw.png"), OUTER, &g)
-                .expect("normalizes");
+            let img = mounted("multistrike--t3-raw.png");
+            let cands = cell_candidates(&img, whole_of(&img), &g).expect("normalizes");
 
             assert_eq!(cands.all().len(), (SHIFT_SPAN * SHIFT_SPAN) as usize);
         }
@@ -4448,8 +4697,8 @@ mod tests {
             let mut g = MercGeometry::default();
             g.cell_inset = 7.0;
 
-            let cands = cell_candidates(&mounted("multistrike--t3-raw.png"), OUTER, &g)
-                .expect("normalizes");
+            let img = mounted("multistrike--t3-raw.png");
+            let cands = cell_candidates(&img, whole_of(&img), &g).expect("normalizes");
 
             assert_eq!(cands.all().len(), 1);
         }
@@ -4469,7 +4718,7 @@ mod tests {
             g.cell_inset = 7.0;
             let img = mounted("multistrike--t3-raw.png");
             let inset = g.cell_inset.round() as i32;
-            let side = OUTER[2] - 2 * inset;
+            let side = whole_of(&img)[2] - 2 * inset;
             let crop = img
                 .crop_imm(inset as u32, inset as u32, side as u32, side as u32)
                 .to_rgb8();
@@ -4481,7 +4730,7 @@ mod tests {
             );
             let expected = CellSig::from_rgb(resized.into_raw()).expect("normalizes");
 
-            let got = normalize_cell(&img, OUTER, &g).expect("normalizes");
+            let got = normalize_cell(&img, whole_of(&img), &g).expect("normalizes");
 
             assert_eq!(got, expected);
         }
@@ -4497,12 +4746,12 @@ mod tests {
             let mut g = MercGeometry::default();
             g.cell_inset = 7.0;
             let img = mounted("multistrike--t3-raw.png");
-            let sig = normalize_cell(&img, OUTER, &g).expect("normalizes");
+            let sig = normalize_cell(&img, whole_of(&img), &g).expect("normalizes");
             let mut store = TemplateStore::new();
             store.push_sample("Multistrike", 3, sig, None, Origin::Local, false);
 
             let m = store.match_family(
-                &cell_candidates(&img, OUTER, &g).expect("normalizes"),
+                &cell_candidates(&img, whole_of(&img), &g).expect("normalizes"),
                 &Thresholds::default(),
             );
 
@@ -5054,12 +5303,9 @@ mod tests {
             let t = Thresholds::default();
             let (base, other, weight) = NEAR_MISS;
             let stored = template(base);
-            let confirmed = normalize_cell(
-                &blended(base, other, weight),
-                OUTER,
-                &MercGeometry::default(),
-            )
-            .expect("the blend still reads as an occupied cell");
+            let blend = blended(base, other, weight);
+            let confirmed = normalize_cell(&blend, whole_of(&blend), &MercGeometry::default())
+                .expect("the blend still reads as an occupied cell");
             let score = stored.ncc(&confirmed);
             assert!(
                 score >= t.icon_low && score < t.icon_match,

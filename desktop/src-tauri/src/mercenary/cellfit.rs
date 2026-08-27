@@ -942,10 +942,124 @@ fn luma_f64(r: u8, g: u8, b: u8) -> f64 {
     0.299 * r as f64 + 0.587 * g as f64 + 0.114 * b as f64
 }
 
+/// The origin `tests/fixtures/merc-recruit-pc-1080p.png` was cropped at, and
+/// the screen it came off: a 1920×1080 PC. JPEG-derived, so its per-cell ring
+/// scores run about 0.6× the lossless reference's.
+#[cfg(test)]
+pub(super) const PC_ORIGIN: (i32, i32) = (700, 585);
+/// See [`PC_ORIGIN`].
+#[cfg(test)]
+pub(super) const PC_SCREEN: [u32; 2] = [1920, 1080];
+
+/// The PC panel's OCR lines, hand-authored in SCREEN px from the capture: six
+/// rows at y-centres 616/659/703/746/790/833 in a skill column at x 743, and
+/// the wager line above row 1. All six names are in `mercenary-stats.json`, so
+/// [`super::geometry::detect`] seeds its column off them exactly as it would
+/// off the real OCR's.
+///
+/// `pub(super)` for the same reason [`super::geometry::reference_lines`] is:
+/// the fixture and these lines are ONE ground truth — the SECOND machine's,
+/// at UI scale 0.90 — and `icons`' corpus readers need both halves of it to
+/// cut a cell at a scale no committed crop was harvested at (POE-214 Part C).
+#[cfg(test)]
+pub(super) fn pc_lines() -> Vec<super::geometry::OcrLineBox> {
+    use super::geometry::test_line;
+    vec![
+        test_line("Wager: 8 831", 700, 580),
+        test_line("Withering Step", 743, 616),
+        test_line("Chaotic Burst", 743, 659),
+        test_line("Chaotic Shot", 743, 703),
+        test_line("Caustic Arrow", 743, 746),
+        test_line("Trarthan Agility", 743, 790),
+        test_line("Grace", 743, 833),
+    ]
+}
+
+// -- AC1/AC2 (Part C): the gold frame's dark|light step ---------------------
+//
+// `pub(super)` and at module level for the same reason [`pc_lines`] is: the
+// step statistic below is ONE definition of what the frame looks like in a
+// column mean, and `icons`' corpus reader runs it over the committed crops
+// (POE-214 Part C) while the tests here run it over the two fixtures. A
+// second copy would drift the moment a threshold moved.
+
+/// The gold frame's dark line, as a ceiling on a column mean.
+///
+/// A1 measures the line itself at luma ~10 (reference) / 12-14 (PC JPEG).
+/// This ceiling is read against two column means of a whole cell, both
+/// measured over the 27 occupied cells of the two fixtures: the dark
+/// column inside the OCR crop's left band (6.4-11.6) and the back-probe
+/// two px left of the fitted crop (6.4-11.9). 15 clears the top of both
+/// by three levels.
+///
+/// It does NOT separate the line from the panel on its own — the columns
+/// where the frame fades into panel read 11-18 — which is why
+/// [`frame_step_columns`] pairs it with [`LIGHT_LINE`] on the NEXT column
+/// rather than using it alone.
+#[cfg(test)]
+pub(super) const DARK_LINE: f32 = 15.0;
+
+/// The 2-px light line drawn immediately inside [`DARK_LINE`], as a floor
+/// on a column mean. A1 measures it at ~47 / 45-52; averaged down a cell,
+/// the fitted crop's first column — which IS that line — reads 40.5-41.2
+/// (reference) / 37.6-41.5 (PC).
+///
+/// The value the same floor has to stay ABOVE is the OCR crop's first
+/// column, 5.2-23.1: flat panel at the near slots, and at the far ones
+/// the PREVIOUS cell's dark frame line, which the accumulated drift has
+/// walked the crop's left edge onto (the reference's row 2 slot 2 reads
+/// 6.1 and its row 3 slot 3 reads 5.2). So 30 sits in the 23.1-37.6 gap
+/// those two leave, with seven levels of margin on either side.
+#[cfg(test)]
+pub(super) const LIGHT_LINE: f32 = 30.0;
+
+/// How far in from an edge the frame is looked for: columns `0..EDGE_BAND`
+/// are tested, so the light-line read reaches index `EDGE_BAND`.
+///
+/// The OCR path's drift grows with the slot — the reference's step sits at
+/// column 4 on slot 0 and 7 on slot 3, the PC's at 3 on slot 0 and 7 on
+/// slot 4. 7 is the largest column measured, so the right-hand headroom is
+/// ZERO. A capture with a further occupied slot would push the step past
+/// the band and fail loudly in
+/// `the_fit_moves_the_cell_crop_off_the_gold_frame_it_was_cutting_through`
+/// ("exactly one of its left 8 columns") rather than pass quietly;
+/// widening the band is the fix at that point, and it still stops well
+/// short of the art's own centre.
+#[cfg(test)]
+pub(super) const EDGE_BAND: usize = 8;
+
+/// A crop's column means, left to right, in BT.601 luma — the same
+/// weighting every other number in this module was measured with.
+#[cfg(test)]
+pub(super) fn column_means(crop: &image::RgbaImage) -> Vec<f32> {
+    let (w, h) = crop.dimensions();
+    (0..w)
+        .map(|x| {
+            (0..h)
+                .map(|y| {
+                    let p = crop.get_pixel(x, y).0;
+                    crate::mercenary::geometry::luma(p[0], p[1], p[2]) as f32
+                })
+                .sum::<f32>()
+                / h as f32
+        })
+        .collect()
+}
+
+/// The columns of the left [`EDGE_BAND`] where a dark line is immediately
+/// followed by a light one — the gold frame's signature, read the way A1
+/// describes it rather than by correlating a template.
+#[cfg(test)]
+pub(super) fn frame_step_columns(means: &[f32]) -> Vec<usize> {
+    (0..EDGE_BAND)
+        .filter(|&x| means[x] <= DARK_LINE && means[x + 1] >= LIGHT_LINE)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mercenary::geometry::{detect, reference_lines, test_line, OcrLineBox};
+    use crate::mercenary::geometry::{detect, reference_lines, OcrLineBox};
     use crate::mercenary::seed;
     use crate::mercenary::vocab::MercVocab;
     use image::Rgba;
@@ -981,35 +1095,12 @@ mod tests {
 
     // -- the PC fixture -------------------------------------------------------
 
-    /// `tests/fixtures/merc-recruit-pc-1080p.png` is the (700,585) crop of a
-    /// 1920×1080 PC screen. JPEG-derived, so its per-cell ring scores run about
-    /// 0.6× the lossless reference's.
-    const PC_ORIGIN: (i32, i32) = (700, 585);
-    const PC_SCREEN: [u32; 2] = [1920, 1080];
-
     /// The PC panel's frame columns, MEASURED in SCREEN px for slots 0-4 (slot
     /// 5 is empty on every row of this capture).
     const PC_FRAME_COLUMNS: [i32; 5] = [956, 999, 1043, 1087, 1131];
     /// The dark square's side at the PC's 0.90 UI scale, measured. `round(43 ·
     /// 43.8 / 48.67)`; at 38 the interior slots drop out.
     const PC_SIDE: i32 = 39;
-
-    /// The PC panel's OCR lines, hand-authored in SCREEN px from the capture:
-    /// six rows at y-centres 616/659/703/746/790/833 in a skill column at
-    /// x 743, and the wager line above row 1. All six names are in
-    /// `mercenary-stats.json`, so `detect` seeds its column off them exactly as
-    /// it would off the real OCR's.
-    fn pc_lines() -> Vec<OcrLineBox> {
-        vec![
-            test_line("Wager: 8 831", 700, 580),
-            test_line("Withering Step", 743, 616),
-            test_line("Chaotic Burst", 743, 659),
-            test_line("Chaotic Shot", 743, 703),
-            test_line("Caustic Arrow", 743, 746),
-            test_line("Trarthan Agility", 743, 790),
-            test_line("Grace", 743, 833),
-        ]
-    }
 
     // -- helpers --------------------------------------------------------------
 
@@ -1668,5 +1759,173 @@ mod tests {
         assert!(FitDecline::NoLeverArm { span: 1 }.to_string().contains("span 1 slot(s)"));
         assert!(FitDecline::OutOfBand { ratio: 1.4 }.to_string().contains("1.400×"));
     }
-}
 
+    // -- AC1/AC2 (Part C): what the corpus was cut through --------------------
+    //
+    // The step statistic itself — [`DARK_LINE`], [`LIGHT_LINE`], [`EDGE_BAND`],
+    // [`column_means`], [`frame_step_columns`] — lives at module level so
+    // `icons`' corpus reader runs the same one.
+
+    /// One fixture read twice: the layout the OCR path registers, and the
+    /// [`Refined`] the fit re-registers it to. Both come off the SAME `detect`
+    /// call the pinned fits above use, so the crops below are the crops the
+    /// loop would cut on that machine.
+    fn both_registrations(
+        file: &str,
+        origin: (i32, i32),
+        screen: [u32; 2],
+        lines: Vec<OcrLineBox>,
+    ) -> (DynamicImage, Frame, MercLayout, Refined) {
+        let g = MercGeometry::default();
+        let img = fixture(file);
+        let frame = Frame::cropped(origin, screen);
+        let ocr = detect(&lines, &g, &vocab(), None).expect("the panel");
+        let refined = refine(&img, frame, ocr.clone(), &g);
+        (img, frame, ocr, refined)
+    }
+
+    /// The reference and the PC, named, each read both ways.
+    fn both_fixtures() -> Vec<(&'static str, DynamicImage, Frame, MercLayout, Refined)> {
+        let (ri, rf, ro, rr) =
+            both_registrations("merc-skills-panel.png", REF_ORIGIN, REF_SCREEN, reference_lines());
+        let (pi, pf, po, pr) = both_registrations(
+            "merc-recruit-pc-1080p.png",
+            PC_ORIGIN,
+            PC_SCREEN,
+            pc_lines(),
+        );
+        vec![("reference", ri, rf, ro, rr), ("pc", pi, pf, po, pr)]
+    }
+
+    /// Every occupied cell of a fitted panel as `(row, slot, ocr rect, fitted
+    /// rect)`, in FIXTURE px. Occupancy is decided on the FITTED rect, which
+    /// is the rect `build_capture` decides it on.
+    fn occupied_pairs(
+        img: &DynamicImage,
+        frame: Frame,
+        ocr: &MercLayout,
+        refined: &Refined,
+    ) -> Vec<(usize, usize, [i32; 4], [i32; 4])> {
+        let g = MercGeometry::default();
+        let mut out = Vec::new();
+        for (r, row) in refined.layout.rows.iter().enumerate() {
+            for (s, &cell) in row.cells.iter().enumerate() {
+                let fitted = frame.local(cell);
+                if crate::mercenary::geometry::occupied(img, fitted, &g) {
+                    out.push((r, s, frame.local(ocr.rows[r].cells[s]), fitted));
+                }
+            }
+        }
+        out
+    }
+
+    /// AC1 on pixels: the cell crop the loop cuts today runs INTO the gold
+    /// frame, and the one the fit cuts starts ON it.
+    ///
+    /// Measured over all 27 occupied cells of the two committed fixtures, so
+    /// this is the corpus's own defect rather than a description of it. The
+    /// OCR crop carries the frame's dark|light step at exactly ONE column of
+    /// its left eight — column 4 at the reference's slot 0 walking right to 7
+    /// by slot 3, and column 3 at the PC's slot 0 walking to 7 by slot 4,
+    /// because the 0.7 % pitch error ACCUMULATES with the slot. The fitted
+    /// crop carries it at none of its eight, and its first column IS the light
+    /// line: 37.6-41.5 against the OCR crop's 5.2-23.1.
+    ///
+    /// Only the LEFT edge is a control, and that is a measurement rather than
+    /// an omission: the fit moves x and (D4) leaves y where the OCR centres
+    /// put it, so the top and bottom edges read the same both ways (the step
+    /// appears on 3 of 27 OCR crops and 2 of 27 fitted ones). The right edge
+    /// is one rounding px from the frame's OTHER dark line — `cell_size` 44
+    /// wraps a 43 px square — and catches it on 2 of the 27 fitted crops. The
+    /// registration the corpus is cut at is a LEFT-edge fact.
+    ///
+    /// This test is sharp one px RIGHT and tolerant one px left — the light
+    /// line is two px wide. [`the_frames_dark_line_sits_two_px_left_of_the_fitted_crop`]
+    /// closes the other side.
+    #[test]
+    fn the_fit_moves_the_cell_crop_off_the_gold_frame_it_was_cutting_through() {
+        let g = MercGeometry::default();
+        let mut cells = 0;
+
+        for (name, img, frame, ocr, refined) in both_fixtures() {
+            assert!(refined.fit.is_some(), "{name}: precondition, the frame is found");
+            for (r, s, ocr_rect, fitted_rect) in occupied_pairs(&img, frame, &ocr, &refined) {
+                cells += 1;
+                let at = format!("{name} row {r} slot {s}");
+                let today = crate::mercenary::read::crop_rgba(&img, ocr_rect, &g)
+                    .unwrap_or_else(|| panic!("{at}: the OCR crop lies on the fixture"));
+                let fitted = crate::mercenary::read::crop_rgba(&img, fitted_rect, &g)
+                    .unwrap_or_else(|| panic!("{at}: the fitted crop lies on the fixture"));
+
+                let (today_means, fitted_means) = (column_means(&today), column_means(&fitted));
+                let steps = frame_step_columns(&today_means);
+                assert_eq!(
+                    steps.len(),
+                    1,
+                    "{at}: the OCR crop must carry the frame at exactly one of its left \
+                     {EDGE_BAND} columns, not at {steps:?} — profile {:?}",
+                    &today_means[..EDGE_BAND],
+                );
+                assert!(
+                    (3..=7).contains(&steps[0]),
+                    "{at}: the measured drift puts the frame at column 3-7, not {}",
+                    steps[0],
+                );
+                assert_eq!(
+                    frame_step_columns(&fitted_means),
+                    Vec::<usize>::new(),
+                    "{at}: the fitted crop still cuts through the frame — profile {:?}",
+                    &fitted_means[..EDGE_BAND],
+                );
+                assert!(
+                    fitted_means[0] >= LIGHT_LINE,
+                    "{at}: the fitted crop must START on the light line, not at {}",
+                    fitted_means[0],
+                );
+                assert!(
+                    today_means[0] < LIGHT_LINE,
+                    "{at}: the OCR crop must start short of the light line — on panel at \
+                     the near slots, on the previous cell's dark line at the far ones — \
+                     not at {}",
+                    today_means[0],
+                );
+            }
+        }
+
+        assert_eq!(cells, 27, "the two fixtures carry 12 + 15 occupied cells");
+    }
+
+    /// AC1's other half, and the sharpness of the registration: the frame's
+    /// dark line is EXACTLY two px left of the fitted crop's first column.
+    ///
+    /// Two px is `cell_inset`, so this is the statement that the fitted OUTER
+    /// rect's own left edge IS the dark line. Measured: a fit reporting `x0`
+    /// one px right reads the light line here (33.7) and one px left reads
+    /// flat panel (17.8), against the 6.4-11.9 the dark line gives. It earns
+    /// its place beside the test above, which a one-px-LEFT error still passes
+    /// (the light line is 2 px wide, so the crop still starts on it) — this is
+    /// the half that pins the registration to a single pixel in BOTH
+    /// directions.
+    #[test]
+    fn the_frames_dark_line_sits_two_px_left_of_the_fitted_crop() {
+        let g = MercGeometry::default();
+        let mut cells = 0;
+
+        for (name, img, frame, ocr, refined) in both_fixtures() {
+            for (r, s, _, fitted_rect) in occupied_pairs(&img, frame, &ocr, &refined) {
+                cells += 1;
+                let back = [fitted_rect[0] - 2, fitted_rect[1], fitted_rect[2], fitted_rect[3]];
+                let crop = crate::mercenary::read::crop_rgba(&img, back, &g)
+                    .unwrap_or_else(|| panic!("{name} row {r} slot {s}: the probe is on-image"));
+                let first = column_means(&crop)[0];
+                assert!(
+                    first <= DARK_LINE,
+                    "{name} row {r} slot {s}: two px left of the fitted crop must be the \
+                     frame's dark line (measured 6.4-11.9), not {first}",
+                );
+            }
+        }
+
+        assert_eq!(cells, 27, "the two fixtures carry 12 + 15 occupied cells");
+    }
+}

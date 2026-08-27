@@ -1,5 +1,5 @@
 {
- "source": "merc-icons raw cell crops, scale 0.974, 39x39 inner rects: 61 from the 2026-08-27 store (POE-207, no per-row source) + 17 from the laptop store 2026-08-27 (POE-209, each carrying a per-row source). Both harvests are the 0.974/39x39 geometry; the PC's store is a different one (scale 0.872, 34-35 px crops, POE-214) and has never fed this corpus",
+ "source": "merc-icons raw cell crops, scale 0.974, 39x39 inner rects: 61 from the 2026-08-27 store (POE-207, no per-row source) + 17 from the laptop store 2026-08-27 (POE-209, each carrying a per-row source). Both harvests are the 0.974/39x39 geometry; the PC's store is a different one (scale 0.872, 34-35 px crops, POE-214) and has never fed this corpus. Every row here was cut at the pre-POE-214 registration, so the gold frame's dark|light step falls INSIDE the crop (measured at columns 0-6, on 76 of the 78 rows; the two that miss are the 29x29 tooltip crops); re-harvest tracked in POE-215",
  "crops": [
   {
    "file": "increased-area-of-effect--t2-raw.png",
