@@ -69,9 +69,19 @@ pub struct MercDebugReport {
     pub ocr_lines: usize,
     /// Lines that matched a merc SKILL name well enough to seed the column.
     pub skill_candidates: usize,
-    /// The "Wager" line that discriminates the recruit window from every other
-    /// PoE surface listing skill names.
+    /// The chrome line that discriminates the recruit window from every other
+    /// PoE surface listing skill names — whichever of the three
+    /// ([`geometry::AnchorKind`]) this frame carried.
+    ///
+    /// TEXT only: no position test is applied here, unlike `geometry::detect`,
+    /// which additionally requires the line to sit within
+    /// `wager_search_pitches` of the rows. So a report with an `anchor_text`
+    /// and `detected: false` is a real and distinct state — the line was on
+    /// screen but not where the panel would put it.
     pub anchor_text: Option<String>,
+    /// Which of the three the `anchor_text` was. `None` exactly when
+    /// `anchor_text` is.
+    pub anchor_kind: Option<geometry::AnchorKind>,
     pub detected: bool,
     pub rows: usize,
     pub occupied_cells: usize,
@@ -232,9 +242,9 @@ pub fn summary_line(r: &MercDebugReport) -> String {
         r.dump_dir,
         r.ocr_lines,
         r.skill_candidates,
-        match &r.anchor_text {
-            Some(t) => format!("{t:?}"),
-            None => "missing".to_string(),
+        match (&r.anchor_text, &r.anchor_kind) {
+            (Some(t), Some(kind)) => format!("{kind} {t:?}"),
+            _ => "missing".to_string(),
         },
         if r.detected {
             format!(
@@ -320,6 +330,7 @@ fn debug_capture_blocking(
         ocr_lines: 0,
         skill_candidates: 0,
         anchor_text: None,
+        anchor_kind: None,
         detected: false,
         rows: 0,
         occupied_cells: 0,
@@ -372,10 +383,11 @@ fn debug_capture_blocking(
             read.state != super::ReadState::Unknown
         })
         .count();
-    report.anchor_text = lines
+    let anchor = lines
         .iter()
-        .find(|l| geometry::is_wager_line(&l.text, &g))
-        .map(|l| l.text.clone());
+        .find_map(|l| geometry::text_anchor(&l.text, &g).map(|kind| (l.text.clone(), kind)));
+    report.anchor_text = anchor.as_ref().map(|(text, _)| text.clone());
+    report.anchor_kind = anchor.map(|(_, kind)| kind);
 
     let started = Instant::now();
     // `None`, always: a debug capture is a one-shot grab with no session behind
@@ -502,9 +514,11 @@ fn detect_note(report: &MercDebugReport) -> String {
             "no panel: {} skill-name candidates, 2 needed",
             report.skill_candidates
         ),
-        (_, None) => "no panel: skill names found, but no \"Wager\" anchor line".to_string(),
+        (_, None) => "no panel: skill names found, but none of the three anchor lines — \
+                      \"Wager\", \"Should (Not) Recruit\", \"TAKE ITEM\" / \"REMATCH\""
+            .to_string(),
         _ => "no panel: candidates and anchor present, so the row clustering or the anchor's \
-              position relative to row 1 rejected it — see the line rects"
+              position relative to the rows rejected it — see the line rects"
             .to_string(),
     }
 }
@@ -797,6 +811,7 @@ mod tests {
             ocr_lines: 7,
             skill_candidates: 2,
             anchor_text: Some("Wager: 1 028".into()),
+            anchor_kind: Some(geometry::AnchorKind::Wager),
             detected: true,
             rows: 6,
             occupied_cells: 12,
@@ -956,6 +971,23 @@ mod tests {
         assert!(line.contains("12 occupied cells"), "got {line}");
     }
 
+    /// WHICH anchor survived the frame is the thing a lost capture is diagnosed
+    /// from — POE-217 was a frame that had lost two of the three and was
+    /// reported as having lost the wager. The text alone does not say it: a
+    /// mangled `Waggr: 6 231` and a `Should Recruit` are both just strings in
+    /// the log.
+    #[test]
+    fn the_log_summary_names_which_of_the_three_anchors_matched() {
+        let mut r = report();
+        r.anchor_text = Some("Should Recruit".into());
+        r.anchor_kind = Some(geometry::AnchorKind::RecruitVerdict);
+
+        let line = summary_line(&r);
+
+        assert!(line.contains("recruit verdict"), "got {line}");
+        assert!(line.contains("Should Recruit"), "got {line}");
+    }
+
     /// A failed detect must say so in the same line — "0 rows" would read as a
     /// detected but empty panel.
     #[test]
@@ -963,6 +995,7 @@ mod tests {
         let mut r = report();
         r.detected = false;
         r.anchor_text = None;
+        r.anchor_kind = None;
 
         let line = summary_line(&r);
 
@@ -979,11 +1012,20 @@ mod tests {
         r.skill_candidates = 1;
         assert!(detect_note(&r).contains("2 needed"), "{}", detect_note(&r));
 
+        // All THREE anchors get named, not just the wager: an operator reading
+        // "no Wager anchor line" off a frame whose buttons were hidden and
+        // whose verdict line was right there looks at the wrong predicate
+        // (POE-217).
         r.skill_candidates = 4;
         r.anchor_text = None;
-        assert!(detect_note(&r).contains("Wager"), "{}", detect_note(&r));
+        r.anchor_kind = None;
+        let note = detect_note(&r);
+        assert!(note.contains("Wager"), "{note}");
+        assert!(note.contains("Recruit"), "{note}");
+        assert!(note.contains("TAKE ITEM"), "{note}");
 
         r.anchor_text = Some("Wager: 1 028".into());
+        r.anchor_kind = Some(geometry::AnchorKind::Wager);
         let note = detect_note(&r);
         assert!(
             note.contains("row clustering"),
