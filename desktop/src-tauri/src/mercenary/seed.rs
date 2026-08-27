@@ -183,8 +183,10 @@ pub struct SeedArt {
 ///
 /// Measured by [`tests::sweep_the_calibration_against_the_corpus`] over
 /// 13 fractions × 11 × 13 offsets × 5 backgrounds, scored through the real
-/// 49-alignment search against the 29 clean corpus crops of mapped families.
-/// At this point 26 of the 29 reach `icon_match` 0.88, worst 0.689, mean
+/// 49-alignment search against the corpus as it stood on 2026-08-27 (POE-208:
+/// 29 clean crops of mapped families; POE-209 grew the corpus and did NOT
+/// re-run the sweep, which is `#[ignore]`d).
+/// At that point 26 of the 29 reached `icon_match` 0.88, worst 0.689, mean
 /// 0.946; the next four rows of the ranked table are this same fraction and
 /// offset at the four other backgrounds, and only then does another geometry
 /// appear (1.175 at offset 3, -3, worst 0.658). A plateau around one point,
@@ -195,8 +197,10 @@ pub const SEED_ART_FRAC: f32 = 1.125;
 /// and 2 px up at the reference window 34.
 ///
 /// **Chosen so the MEDIAN best alignment is (0, 0)**, not so the score is
-/// highest. Scoring alone picks `+1` in y, which scores better (27 of 29) and
-/// is wrong: at that offset the search's best shift is pinned at the `dy = -3`
+/// highest. Every count below is over POE-208's 29 clean crops of mapped
+/// families; the sweep was not re-run for POE-209's grown corpus. Scoring
+/// alone picks `+1` in y, which scores better (27 of 29) and is wrong: at that
+/// offset the search's best shift is pinned at the `dy = -3`
 /// edge on 26 of the 29 crops, so the whole ±3 px budget is spent cancelling a
 /// constant and a cell whose own jitter runs the same way falls off the end.
 /// The search is for `geometry::detect`'s per-cell jitter; the calibration
@@ -206,7 +210,8 @@ pub const SEED_ART_OFFSET_FRAC: [f32; 2] = [4.0 / 34.0, -2.0 / 34.0];
 /// The cell background behind transparent art pixels.
 ///
 /// **Measured, and then overruled by the sweep — both numbers matter.** Over
-/// the clean corpus crops of mapped families, the crop pixels underneath the
+/// POE-208's 29 clean corpus crops of mapped families — the sweep was not
+/// re-run for POE-209's grown corpus — the crop pixels underneath the
 /// art's fully transparent pixels (11,200 of them at this calibration) have a
 /// median of (18, 16, 14) sRGB, with the 5th-to-50th percentile spanning only
 /// (14, 13, 11)..(18, 16, 14): the recruit window's empty cell is a near-black
@@ -563,7 +568,7 @@ pub struct FetchPlan {
 ///
 /// A cached file is NEVER re-fetched. The route serves
 /// `Cache-Control: immutable` (ADR-012) and the art is a released game asset;
-/// re-validating it every start would spend 18 requests to learn nothing.
+/// re-validating it every start would spend 23 requests to learn nothing.
 pub fn plan_fetch(
     entries: &[SeedEntry],
     blocked: &SeedBlocklist,
@@ -1253,12 +1258,19 @@ mod tests {
     /// The seven families whose art was compared against a live crop BY EYE on
     /// 2026-08-27 (POE-165 discoveries § "Seed source").
     ///
-    /// Two of them — Faster Attacks and Fork — have no clean corpus crop (both
-    /// confirmations in Sebastian's store were mislabels), so the eye is the
-    /// only evidence they will ever have here and `visual` is their ceiling.
-    /// The other five are re-graded to `corpus` by the generator when they
-    /// pass, and the constant is what keeps them enabled if a future corpus
-    /// ever loses their crop.
+    /// Two of them — Faster Attacks and Fork — have no clean corpus crop. All
+    /// THREE Faster Attacks confirmations across Sebastian's two stores carry
+    /// art another family already holds (POE-209 added the third), and so does
+    /// the one Fork confirmation, so the eye is the only evidence they will
+    /// ever have here and `visual` is their ceiling. The other five are
+    /// re-graded to `corpus` by the generator when they pass, and the constant
+    /// is what keeps them enabled if a future corpus ever loses their crop.
+    ///
+    /// Faster Projectiles stays `visual` for a different reason: its own seed
+    /// reaches its three clean crops at 0.948/0.986/0.986, but Faster
+    /// Attacks's seed reaches the same crops at 0.874/0.895/0.895, so the read
+    /// never gets its `icon_lead`. The pair is then excluded from `enabled`
+    /// altogether (0.907 seed-to-seed).
     const VISUAL_FAMILIES: [&str; 7] = [
         "Added Chaos",
         "Faster Attacks",
@@ -1548,11 +1560,11 @@ mod tests {
     /// art in two cells at 0.45-0.70 unaligned): a crop cut 3 px off centre
     /// scores badly unshifted however right the constants are.
     ///
-    /// Measured at the shipped calibration, over the 24 clean crops of
-    /// corpus-graded families: **12 clear `icon_match` unshifted**, 8 of them
-    /// because their own best alignment IS (0, 0); the rest fall away with
-    /// their jitter, down to `infused-channelling--t3-raw.png` at 0.225
-    /// unshifted and 0.958 at its best shift of (-3, 0). So the clause holds
+    /// Measured at the shipped calibration, over the 32 clean crops of
+    /// corpus-graded families (POE-209): **17 clear `icon_match` unshifted**,
+    /// 12 of them because their own best alignment IS (0, 0); the rest fall
+    /// away with their jitter, down to `elemental-focus--t3-raw.png` at 0.224
+    /// unshifted and 0.923 at its best shift of (-3, 0). So the clause holds
     /// for half the corpus and cannot hold for all of it.
     ///
     /// Both halves are therefore asserted in
@@ -1653,8 +1665,9 @@ mod tests {
             "internal/gemicon/gem-icon-urls.json.",
             "tier: the family's LOWEST vocabulary tier — one seed per family, under one key.",
             "verified: 'corpus' = every clean corpus crop of this family resolves to it through the real",
-            "matcher (the acceptance test re-checks every row that claims it); 'visual' = the art was",
-            "compared against a live crop by eye on 2026-08-27; 'name' = only the name rule says so.",
+            "matcher (the acceptance test re-checks every ENABLED row that claims it, and re-derives the",
+            "pairwise exclusion behind every disabled one); 'visual' = the art was compared against a live",
+            "crop by eye on 2026-08-27; 'name' = only the name rule says so.",
             "enabled: RULING 2026-08-27 (orchestrator) — 'name'-only rows ship DISABLED. A wrong seed is a",
             "confident wrong Matched that provokes no hover, so the eviction rule never reaches it; the",
             "module's standing preference is to fail towards LowConfidence, never towards a wrong family.",
@@ -1860,30 +1873,36 @@ mod tests {
     /// The measured floor. An empty or collapsed corpus grade must fail here
     /// rather than ship a map that seeds nothing and says nothing.
     ///
-    /// **Seventeen, not the plan's twenty.** Twenty is the count of mapped
-    /// families with a clean corpus crop; three of them do not verify, each
-    /// for its own reason, all measured 2026-08-27 at the shipped calibration:
+    /// **Twenty-four, not twenty-eight.** Twenty-eight is the count of mapped
+    /// families with a clean corpus crop; four of them do not verify, each for
+    /// its own reason, all re-measured 2026-08-27 at the shipped calibration
+    /// over POE-209's grown corpus:
     ///
     /// - `Chance to Poison` — the player gem's art is a different picture
-    ///   (0.680 against its own crops, where everything that verifies is
-    ///   ≥ 0.92). A naming hit, not an art hit; the name rules cannot tell.
-    /// - `Minion Life` — 0.854, just under `icon_match`, and its crop is
-    ///   reached by `Minion Damage`'s art at 0.982. Two gems, one picture.
-    /// - `Faster Projectiles` — reaches 0.889 but `Faster Attacks`'s seed
-    ///   reaches the same crop at 0.874, so the read is `LowConfidence` for
-    ///   want of `icon_lead`. That pair is then excluded from `enabled`
+    ///   (0.689/0.690 against its own two crops, where everything that
+    ///   verifies is ≥ 0.92). A naming hit, not an art hit; the name rules
+    ///   cannot tell.
+    /// - `Minion Life` — 0.860 and 0.837 against its two crops, both under
+    ///   `icon_match`. (Its crop is also reached by `Minion Damage`'s art,
+    ///   which is why [`gradable_rows`] is not the all-candidates store.)
+    /// - `Multiple Projectiles` — 0.848, just under `icon_match`, on the one
+    ///   clean crop the family has.
+    /// - `Faster Projectiles` — its own seed reaches its three crops at
+    ///   0.948/0.986/0.986, but `Faster Attacks`'s seed reaches the same crops
+    ///   at 0.874/0.895/0.895, so the read is wrong-family or `LowConfidence`
+    ///   for want of `icon_lead`. That pair is then excluded from `enabled`
     ///   altogether by the pairwise rule.
     ///
     /// Raising this number is the follow-up curation ticket's job. Lowering it
     /// means something regressed.
     #[test]
-    fn at_least_seventeen_entries_are_corpus_verified() {
+    fn at_least_twenty_four_entries_are_corpus_verified() {
         let n = load_map()
             .expect("the map parses")
             .iter()
             .filter(|e| e.verified == Verified::Corpus)
             .count();
-        assert!(n >= 17, "only {n} corpus-verified entries");
+        assert!(n >= 24, "only {n} corpus-verified entries");
     }
 
     /// The ruling, as a check: everything enabled has evidence behind it, and
@@ -2083,7 +2102,9 @@ mod tests {
         // spends it on a constant error leaves nothing for the cell that
         // jitters the same way. Ranking by score alone picks exactly that
         // calibration — the first run of this sweep did, and its winner's best
-        // shift was pinned at the dy = -3 EDGE on 26 of the 29 crops, three
+        // shift was pinned at the dy = -3 EDGE on 26 of the 29 crops it then
+        // ran against (POE-208's; POE-209 grew the corpus without re-running
+        // this sweep), three
         // pixels of budget already gone before the cell's own jitter was
         // counted.
         table.retain(|r| r.med == (0, 0));
@@ -2147,14 +2168,15 @@ mod tests {
         );
     }
 
-    /// How many of the 24 clean crops of corpus-graded families must clear
+    /// How many of the 32 clean crops of corpus-graded families must clear
     /// `icon_match` against their seed with NO alignment shift.
     ///
-    /// Twelve, measured at the shipped calibration — half the corpus, and 8 of
-    /// those 12 because their own best shift is exactly (0, 0). A floor rather
-    /// than an equality so a calibration that helps MORE crops is not a
-    /// failure; dropping below it means the art has moved off the window.
-    const UNSHIFTED_FLOOR: usize = 12;
+    /// Seventeen, measured at the shipped calibration over POE-209's grown
+    /// corpus — half of it, and 12 of those 17 because their own best shift is
+    /// exactly (0, 0). A floor rather than an equality so a calibration that
+    /// helps MORE crops is not a failure; dropping below it means the art has
+    /// moved off the window.
+    const UNSHIFTED_FLOOR: usize = 17;
 
     /// The shipped constants, restated as two checks the sweep's ranking is
     /// built on: the calibration MATCHES the corpus, and it is not free to
@@ -2260,8 +2282,8 @@ mod tests {
     }
 
     /// The acceptance test (POE-208 WI-A): a store holding every ENABLED seed
-    /// recognises every corpus-verified family, aligned and unshifted, and
-    /// recognises nothing it should not.
+    /// recognises every corpus-verified family it SHIPS, aligned and
+    /// unshifted, and recognises nothing it should not.
     #[test]
     fn every_corpus_entry_matches_through_the_real_matcher() {
         let t = Thresholds::default();
@@ -2274,8 +2296,17 @@ mod tests {
         let store = seeded_store(&rows, &SEED_ART);
         assert_eq!(store.len(), rows.len(), "a seed yielded during the install");
 
+        // The grade is re-checked in the store the row actually SHIPS in, and
+        // a corpus grade only ships when the row is enabled. POE-209's crops
+        // made that distinction real: `Brutality` and `Maim` both grade
+        // `corpus` and are then taken off by the pairwise rule, so the enabled
+        // store holds no seed for either and asking it to recognise them would
+        // assert the opposite of what their exclusion means. What took them off
+        // is `a_graded_row_is_disabled_only_by_the_pairwise_rule`, which checks
+        // that rule over EVERY graded row rather than only the corpus-graded
+        // ones, so it is not restated here.
         let mut verified = 0usize;
-        for entry in map.iter().filter(|e| e.verified == Verified::Corpus) {
+        for entry in map.iter().filter(|e| e.verified == Verified::Corpus && e.enabled) {
             assert!(
                 corpus_verifies(&entry.family, &store, &t),
                 "{} claims corpus verification but does not match",
@@ -2283,7 +2314,7 @@ mod tests {
             );
             verified += 1;
         }
-        assert!(verified >= 17, "only {verified} corpus-verified families");
+        assert!(verified >= 22, "only {verified} corpus-verified families ship a seed");
 
         // The failure that costs most is not a miss, it is a confident wrong
         // name: a cell that reads `Matched` on a family it is not provokes no

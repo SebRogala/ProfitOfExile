@@ -1,5 +1,5 @@
 {
- "source": "Sebastian PC merc-icons store 2026-08-27, scale 0.974, 39x39 inner crops",
+ "source": "merc-icons raw cell crops, scale 0.974, 39x39 inner rects: 61 from the 2026-08-27 store (POE-207, no per-row source) + 17 from the laptop store 2026-08-27 (POE-209, each carrying a per-row source). Both harvests are the 0.974/39x39 geometry; the PC's store is a different one (scale 0.872, 34-35 px crops, POE-214) and has never fed this corpus",
  "crops": [
   {
    "file": "increased-area-of-effect--t2-raw.png",
@@ -387,6 +387,129 @@
    "family": "Chance to Poison",
    "tier": 3,
    "poisoned": false
+  },
+  {
+   "file": "chain--t2-raw.png",
+   "family": "Chain",
+   "tier": 2,
+   "poisoned": false,
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "pierce--t2-raw.png",
+   "family": "Pierce",
+   "tier": 2,
+   "poisoned": false,
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "faster-attacks--t2-3-raw.png",
+   "family": "Faster Attacks",
+   "tier": 2,
+   "poisoned": true,
+   "why": "same art as faster-projectiles--t2-2 at 0.880, over the 0.83 lead ceiling (0.864 against --t2, 0.878 against --t3); the Faster Attacks and Faster Projectiles arts are one picture in the merc panel — POE-212",
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "multiple-projectiles--t3-2-raw.png",
+   "family": "Multiple Projectiles",
+   "tier": 3,
+   "poisoned": false,
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "area-of-effect--t3-3-raw.png",
+   "family": "Area of Effect",
+   "tier": 3,
+   "poisoned": false,
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "area-of-effect--t3-4-raw.png",
+   "family": "Area of Effect",
+   "tier": 3,
+   "poisoned": false,
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "faster-projectiles--t2-2-raw.png",
+   "family": "Faster Projectiles",
+   "tier": 2,
+   "poisoned": false,
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "added-fire--t3-raw.png",
+   "family": "Added Fire",
+   "tier": 3,
+   "poisoned": false,
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "brutality--t2-raw.png",
+   "family": "Brutality",
+   "tier": 2,
+   "poisoned": false,
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "combustion--t3-raw.png",
+   "family": "Combustion",
+   "tier": 3,
+   "poisoned": true,
+   "why": "same art as ignite-chance--t2 at 0.998, and the two crops come from different machines' stores — POE-212",
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "maim--t3-raw.png",
+   "family": "Maim",
+   "tier": 3,
+   "poisoned": false,
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "minion-life--t2-raw.png",
+   "family": "Minion Life",
+   "tier": 2,
+   "poisoned": false,
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "multiple-totems--t3-raw.png",
+   "family": "Multiple Totems",
+   "tier": 3,
+   "poisoned": false,
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "impale-chance--t2-raw.png",
+   "family": "Impale Chance",
+   "tier": 2,
+   "poisoned": false,
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "ironwood--t2-raw.png",
+   "family": "Ironwood",
+   "tier": 2,
+   "poisoned": true,
+   "why": "same art as physical-as-extra--t3 at 0.974, and the two crops come from different machines' stores — POE-212",
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "raging-cry--t3-raw.png",
+   "family": "Raging Cry",
+   "tier": 3,
+   "poisoned": false,
+   "source": "laptop store 2026-08-27"
+  },
+  {
+   "file": "secondary-shots--t3-raw.png",
+   "family": "Secondary Shots",
+   "tier": 3,
+   "poisoned": true,
+   "why": "same art as extra-targets--t3 at 0.998, and the two crops come from different machines' stores — POE-212",
+   "source": "laptop store 2026-08-27"
   }
  ]
 }

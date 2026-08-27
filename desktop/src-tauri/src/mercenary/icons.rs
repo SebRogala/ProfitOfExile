@@ -1552,12 +1552,13 @@ impl TemplateStore {
 
     /// Templates rescored over all 49 alignments in stage two, per side.
     ///
-    /// Measured on the 61-crop corpus (POE-207): with the 40 non-poisoned
-    /// crops as the store and each of them as a probe, the two-stage result at
-    /// 12 equals the full 49-shift result — family, score AND runner-up — on
-    /// 40/40 probes, and the true best other-family template is inside the
-    /// refined set every time. At 8 one probe differs, and it differs towards
-    /// `LowConfidence`, never towards a wrong family.
+    /// Measured on the corpus, re-measured over POE-209's 78 crops: with the
+    /// 53 non-poisoned crops as the store and each of them as a probe, the
+    /// two-stage result at 12 equals the full 49-shift result — family, score
+    /// AND runner-up — on 53/53 probes, and the true best other-family
+    /// template is inside the refined set every time. At 8, over POE-207's
+    /// 40 clean crops, one probe differed — towards `LowConfidence`, never
+    /// towards a wrong family.
     pub const REFINE_K: usize = 12;
 
     /// Best family for a cell, over every alignment of it.
@@ -2527,7 +2528,8 @@ mod tests {
     /// (a silver gem under crossed golden shafts): two supports, one palette.
     ///
     /// Version 1 scored that same pair at 0.8552 — under the threshold, but
-    /// only just, and on the whole 61-crop corpus its equivalent went over.
+    /// only just, and on the whole corpus as it stood then (61 crops) its
+    /// equivalent went over.
     /// The disc mask is what moved it: the silver both icons share is mostly
     /// frame, and the frame is now outside the correlation.
     #[test]
@@ -4165,13 +4167,18 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // The 61-crop corpus (POE-207)
+    // The 78-crop corpus (POE-207, grown by POE-209)
     // -----------------------------------------------------------------------
 
-    /// Sebastian's whole `merc-icons` store as it stood on 2026-08-27: the 61
-    /// raw 39×39 colour crops the samples were learned from, with a manifest
-    /// naming each one's family, its tier, and whether the confirmation that
-    /// produced it was WRONG.
+    /// Sebastian's `merc-icons` crops as they stood on 2026-08-27: 78 raw
+    /// 39×39 colour crops the samples were learned from — 61 harvested for
+    /// POE-207 and 17 from the laptop store for POE-209 (each carrying a
+    /// per-row `source`) — with a manifest naming each one's family, its
+    /// tier, and whether the confirmation that produced it was WRONG.
+    ///
+    /// Every crop here is the 0.974 / 39×39 geometry. The PC's own store is a
+    /// different one (scale 0.872, 34-35 px crops, POE-214) and has never fed
+    /// this corpus.
     ///
     /// This is the only many-icon ground truth the module has — the committed
     /// reference panel carries twelve cells and three repeated arts, which is
@@ -4253,7 +4260,7 @@ mod tests {
         ///
         /// The corpus holds no clean cross-family pair inside
         /// `[icon_low, icon_match)` — the whole point of the format-2
-        /// derivation is that real different-family art tops out at 0.759
+        /// derivation is that real different-family art tops out at 0.770
         /// unshifted — so the near-miss the refusal must not swallow has to be
         /// SYNTHESISED. A pixel blend is the honest way to make one: it moves a
         /// real icon towards another real icon along a continuum, so the
@@ -4288,7 +4295,7 @@ mod tests {
         }
 
         /// Derived once: the crops, their signatures, and the full
-        /// probe × template score matrix. 40 crops × 49 alignments is the
+        /// probe × template score matrix. 53 crops × 49 alignments is the
         /// expensive part and every test below reads the same numbers out of
         /// it, so it is paid once per test binary rather than once per test.
         struct Corpus {
@@ -4406,7 +4413,7 @@ mod tests {
                 .collect();
             on_disk.sort();
 
-            assert_eq!(named.len(), 61, "the corpus is Sebastian's 61-template store");
+            assert_eq!(named.len(), 78, "the corpus is Sebastian's two 39×39 crop stores");
             assert_eq!(named, on_disk);
         }
 
@@ -4503,19 +4510,27 @@ mod tests {
             assert_eq!(m.family.as_deref(), Some("Multistrike"));
         }
 
-        /// The 21 wrong templates, by name.
+        /// The 25 wrong templates, by name.
         ///
         /// Pinned rather than counted: the corpus is only ground truth while
-        /// the manifest agrees with what was actually diagnosed on 2026-08-26
-        /// (2 tooltip-text crops and 19 same-art-two-families mislabels from a
-        /// cursor sweep the tooltip lagged). A count would let a later edit
-        /// swap a genuinely poisoned crop for a clean one and keep passing,
-        /// and every band below is measured over the complement of this list.
-        const POISONED: [&str; 21] = [
+        /// the manifest agrees with what was actually diagnosed. Twenty-one
+        /// were diagnosed on 2026-08-26 — 2 tooltip-text crops and 19
+        /// same-art-two-families mislabels from a cursor sweep the tooltip
+        /// lagged. Four more came with POE-209's laptop crops, and they are a
+        /// DIFFERENT shape: each carries art a family from the OTHER store
+        /// already holds (Faster Attacks/Faster Projectiles at 0.880,
+        /// Combustion/Ignite Chance at 0.998, Ironwood/Physical as Extra at
+        /// 0.974, Secondary Shots/Extra Targets at 0.998), so no one session's
+        /// lagging tooltip can explain them — see POE-212. A count would let a
+        /// later edit swap a genuinely poisoned crop for a clean one and keep
+        /// passing, and every band below is measured over the complement of
+        /// this list.
+        const POISONED: [&str; 25] = [
             "ailment-damage--t2-3-raw.png",
             "area-of-effect--t3-2-raw.png",
             "area-of-effect--t3-raw.png",
             "brittle-chance--t3-raw.png",
+            "combustion--t3-raw.png",
             "cooldown-recovery--t2-2-raw.png",
             "cooldown-recovery--t2-3-raw.png",
             "cooldown-recovery--t2-raw.png",
@@ -4523,20 +4538,23 @@ mod tests {
             "dot-multiplier--t2-raw.png",
             "dot-multiplier--t3-raw.png",
             "faster-attacks--t2-2-raw.png",
+            "faster-attacks--t2-3-raw.png",
             "faster-attacks--t2-raw.png",
             "fork--t3-raw.png",
             "ignite-chance--t3-raw.png",
             "increased-area-of-effect--t2-2-raw.png",
             "increased-area-of-effect--t2-raw.png",
             "increased-area-of-effect--t3-raw.png",
+            "ironwood--t2-raw.png",
             "less-duration--t2-raw.png",
             "multiple-projectiles--t3-raw.png",
             "physical-as-extra-chaos--t3-raw.png",
+            "secondary-shots--t3-raw.png",
             "swift-affliction--t3-2-raw.png",
         ];
 
         #[test]
-        fn the_manifest_marks_exactly_the_twenty_one_diagnosed_mislabels() {
+        fn the_manifest_marks_exactly_the_twenty_five_diagnosed_mislabels() {
             let mut marked: Vec<String> = manifest()
                 .crops
                 .into_iter()
@@ -4564,41 +4582,71 @@ mod tests {
             assert!(unexplained.is_empty(), "no reason given for {unexplained:?}");
         }
 
-        /// The clean corpus's shape: 40 crops carrying 13 pairs of same-family
+        /// The clean corpus's shape: 53 crops carrying 17 pairs of same-family
         /// art. Both halves of the band below are measured over exactly these,
         /// so a manifest edit that quietly drops a hard pair — the honest way
         /// to make a threshold test pass — fails here instead.
         #[test]
-        fn the_clean_corpus_holds_forty_crops_in_thirteen_same_family_pairs() {
+        fn the_clean_corpus_holds_fifty_three_crops_in_seventeen_same_family_pairs() {
             let c = corpus();
 
-            assert_eq!(c.crops.len(), 40);
-            assert_eq!(c.same_family_pairs().len(), 13);
+            assert_eq!(c.crops.len(), 53);
+            assert_eq!(c.same_family_pairs().len(), 17);
         }
 
-        /// The one same-family pair format 2 does NOT resolve, named.
+        /// The same-family pairs format 2 does NOT resolve, named.
         ///
-        /// Two "Ailment Damage" tier-2 confirms of visibly the same skull at
-        /// 0.833: over `icon_low`, under `icon_match`, so the cell reads `?`
-        /// and asks for a hover instead of guessing. Pinned by name and
-        /// bracketed on both sides — a derivation that pushed it to `Matched`
+        /// - Two "Ailment Damage" tier-2 confirms of visibly the same skull,
+        ///   at 0.833 (POE-207).
+        /// - The two tier-2 "Faster Projectiles" confirms — one from each of
+        ///   Sebastian's two machines — at 0.855 (POE-209).
+        ///
+        /// Both sit over `icon_low` and under `icon_match`, so the cell reads
+        /// `?` and asks for a hover instead of guessing. Pinned by name and
+        /// bracketed on BOTH sides — a derivation that pushed one to `Matched`
         /// would be claiming a confidence this art does not support, and one
         /// that pushed it under `icon_low` would throw the cell away.
+        ///
+        /// Neither is a mislabel, and this list is not a place to park one.
+        /// The Faster Projectiles pair's two crops each reach `icon_match`
+        /// against the SAME family's tier-3 crop (the band below says so, by
+        /// not naming those pairs), and no crop of either family comes within
+        /// the matcher's lead of a different family (the cross-family band
+        /// says so). What is left is `geometry::detect`'s per-cell jitter on
+        /// art with little off-centre structure, which is the case the
+        /// `LowConfidence` band exists for.
+        const HARD_PAIRS: [(&str, &str); 2] = [
+            ("ailment-damage--t2-raw.png", "ailment-damage--t2-2-raw.png"),
+            ("faster-projectiles--t2-raw.png", "faster-projectiles--t2-2-raw.png"),
+        ];
+
+        /// The indices of [`HARD_PAIRS`], normalised the way
+        /// [`Corpus::same_family_pairs`] emits a pair (`i < j`).
+        fn hard_pairs(c: &Corpus) -> Vec<(usize, usize)> {
+            HARD_PAIRS
+                .iter()
+                .map(|(a, b)| {
+                    let (i, j) = (index_of(c, a), index_of(c, b));
+                    (i.min(j), i.max(j))
+                })
+                .collect()
+        }
+
         #[test]
-        fn the_hardest_pair_of_same_family_art_lands_in_the_low_confidence_band() {
+        fn the_two_hardest_pairs_of_same_family_art_land_in_the_low_confidence_band() {
             let c = corpus();
             let t = Thresholds::default();
-            let i = index_of(c, "ailment-damage--t2-raw.png");
-            let j = index_of(c, "ailment-damage--t2-2-raw.png");
 
-            let score = c.pair(i, j);
+            for (a, b) in HARD_PAIRS {
+                let score = c.pair(index_of(c, a), index_of(c, b));
 
-            assert!(
-                score >= t.icon_low && score < t.icon_match,
-                "the Ailment Damage pair scored {score}, outside [{}, {})",
-                t.icon_low,
-                t.icon_match,
-            );
+                assert!(
+                    score >= t.icon_low && score < t.icon_match,
+                    "{a} / {b} scored {score}, outside [{}, {})",
+                    t.icon_low,
+                    t.icon_match,
+                );
+            }
         }
 
         /// Every OTHER same-family pair clears `icon_match` on its own — the
@@ -4608,15 +4656,12 @@ mod tests {
         fn every_other_pair_of_same_family_art_clears_the_match_threshold() {
             let c = corpus();
             let t = Thresholds::default();
-            let hardest = (
-                index_of(c, "ailment-damage--t2-raw.png"),
-                index_of(c, "ailment-damage--t2-2-raw.png"),
-            );
+            let hard = hard_pairs(c);
 
             let failures: Vec<(String, String, f32)> = c
                 .same_family_pairs()
                 .into_iter()
-                .filter(|&p| p != hardest)
+                .filter(|p| !hard.contains(p))
                 .map(|(i, j)| (c.crops[i].file.clone(), c.crops[j].file.clone(), c.pair(i, j)))
                 .filter(|(_, _, s)| *s < t.icon_match)
                 .collect();
@@ -4692,10 +4737,10 @@ mod tests {
         /// The two-stage search IS the full search, on every crop.
         ///
         /// `match_family` refines only `REFINE_K` templates per side; the
-        /// other 27 keep a coarse score that under-estimates their true best.
+        /// other 40 keep a coarse score that under-estimates their true best.
         /// This compares it against `match_family_exhaustive` — the same
         /// verdict computed over all 49 alignments of every template — for
-        /// every clean crop probed against a store of the other 39. Family,
+        /// every clean crop probed against a store of the other 52. Family,
         /// score AND runner-up, because a K too small shows up first as a
         /// runner-up that is too low, which inflates the lead before it ever
         /// changes the winner.
@@ -4723,7 +4768,7 @@ mod tests {
 
         /// The OTHER-FAMILY half of the refinement set, isolated.
         ///
-        /// The equivalence test above does not reach it: with 39 templates and
+        /// The equivalence test above does not reach it: with 52 templates and
         /// `REFINE_K` 12, the plain top-12 already holds the best other-family
         /// template for every crop of this corpus, so removing the
         /// other-family pass leaves that test green. That is a property of the
@@ -4915,7 +4960,7 @@ mod tests {
 
         /// The two crops the 2026-08-26 investigation found carrying the SAME
         /// art under two different families — the shape of 19 of the 21
-        /// mislabels the purge removed.
+        /// mislabels that purge removed.
         const SAME_ART: (&str, &str) = (
             "physical-as-extra-chaos--t3-raw.png",
             "brittle-chance--t3-raw.png",
@@ -4929,7 +4974,8 @@ mod tests {
         /// Synthetic on purpose, and BOTH parents are clean corpus crops. No
         /// real cross-family pair in the corpus sits in that band: the
         /// format-2 derivation exists precisely to keep different families
-        /// apart, and the worst clean pair reaches only 0.759 unshifted. So the
+        /// apart, and the worst clean pair reaches only 0.770 unshifted
+        /// (`concentrated-effect--t3` / `area-of-effect--t3-3`). So the
         /// near-miss the refusal must NOT swallow cannot be quoted from the
         /// fixture and has to be built, by walking one real icon towards
         /// another real icon until the correlation lands in the band.
