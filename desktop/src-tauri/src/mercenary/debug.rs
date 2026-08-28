@@ -698,6 +698,12 @@ pub(super) fn block_seed(app: &AppHandle, dir: &Path, family: &str) {
 /// wrongly-reset store is otherwise unrecoverable, and the directory is a debug
 /// surface anyway.
 ///
+/// **`merc-icons/pre-fit/` is left alone too** (POE-215). That is where the
+/// one-shot registration reset parked the art it dropped, and it is the same
+/// promise one level out: a store reset made in error must not also throw away
+/// the colour crops the phase-2 re-harvest wants. Nothing reads it back, so
+/// leaving it costs a directory.
+///
 /// The version in that empty index is load-bearing (POE-207): an index without
 /// one reads as format 1, and the next module start's
 /// `icons::purge_stale_store` would take a reset store for a stale one and

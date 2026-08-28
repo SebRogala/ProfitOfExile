@@ -79,6 +79,31 @@ pub const SHIFT_MAX: i32 = 3;
 /// Shifts per axis — `-SHIFT_MAX ..= SHIFT_MAX`.
 pub const SHIFT_SPAN: i32 = 2 * SHIFT_MAX + 1;
 
+/// The cut geometry a sample was learned at (POE-215).
+///
+/// **Not a format version.** [`super::sync::FORMAT_VERSION`] says how a
+/// signature is DERIVED — change it and nothing correlates against anything, so
+/// the whole store is purged. This says where on the screen the crop it was
+/// derived FROM was taken. A pre-POE-214 sample was cut at the OCR line-pitch
+/// guess, which lands 6-12 px off the art; a sample cut at
+/// [`super::ScaleSource::Frame`] or `Held` is registered on the grid's own gold
+/// frame. Both are format-2 signatures and both correlate — the pre-fit ones
+/// just correlate against the wrong pixels, which is why they are dropped by
+/// `reset_unregistered` rather than purged by `purge_stale_store`.
+///
+/// **0 means "unknown", never "old"**: it is what an index written before this
+/// field existed deserialises to ([`IndexEntry`] defaults it), and it is what
+/// [`TemplateStore::merge_pulled`] records for every pooled sample, because the
+/// wire carries no registration and the upload endpoint has no role gate — a
+/// v0.8.0 install can publish pre-fit art until it upgrades.
+///
+/// **Bump this when the cut geometry moves again**, not when the derivation
+/// does. A bump re-arms the one-shot reset (the marker
+/// `SyncFile::reset_registration` is compared against this) and re-arms the
+/// learn gate, which is the whole mechanism: everything below the current value
+/// is art cut somewhere this build no longer cuts.
+pub const REGISTRATION: u16 = 1;
+
 /// The per-axis shifts stage one of the match search scores.
 ///
 /// Every second offset, so nine of the 49 alignments cover the whole ±3 px
@@ -99,6 +124,17 @@ const MASK_H_FRAC: f32 = 0.35;
 
 /// Index file naming the templates in a store directory.
 const INDEX_FILE: &str = "index.json";
+
+/// Where `reset_unregistered` parks the art it drops, under the store
+/// directory.
+///
+/// Insurance, not a cache: nothing reads it back. The signatures are
+/// reproducible from a fresh hover, but the `-raw.png` colour crops are the
+/// only copies of the GGG art on the device outside
+/// `tests/fixtures/merc-icon-crops/`, and the phase-2 re-harvest wants them.
+/// [`super::debug::merc_reset_templates`] leaves this directory alone on
+/// purpose — a store reset in error must stay recoverable.
+const PRE_FIT_DIR: &str = "pre-fit";
 
 /// Run one write of the template directory, serialised against every other
 /// writer of it (POE-204 WI-B).
@@ -546,6 +582,14 @@ pub struct Template {
     /// is left `false` on disk, so the next module start offers it again
     /// instead of the retry budget having to outlive the session.
     pub uploaded: bool,
+    /// The cut geometry this sample was learned at — see [`REGISTRATION`].
+    ///
+    /// Persisted, and the gate on two things: [`TemplateStore::pending_uploads`]
+    /// refuses to offer a sample below the current value, and
+    /// [`reset_unregistered`] drops one. [`Origin::Seed`] samples carry 0 and
+    /// meet neither — a seed is re-derived at the window in force on every
+    /// start and is never on disk.
+    pub registration: u16,
 }
 
 /// What a template lookup concluded.
@@ -605,6 +649,19 @@ struct IndexEntry {
     origin: Origin,
     #[serde(default)]
     uploaded: bool,
+    /// The cut geometry the sample was learned at (POE-215) — see
+    /// [`REGISTRATION`]. Defaults to 0, and 0 is read as "unknown": every index
+    /// written before this field existed was written by a build that cut at the
+    /// OCR guess, but so is a hand-edited one, and both answer the only
+    /// question the reset asks — "can this build vouch for where this art was
+    /// cut?" — with no.
+    ///
+    /// This is why [`StoreIndex`] and not this struct carries
+    /// `deny_unknown_fields`: a field ADDED here by a later build must not turn
+    /// a downgrade into [`purge_stale_store`] unlinking every `*.png` in the
+    /// directory. The version is the contract, and it lives one level up.
+    #[serde(default)]
+    registration: u16,
 }
 
 /// One sample as the shared pool served it (POE-201).
@@ -850,9 +907,16 @@ pub struct Rekeyed {
 /// paired with a different signature than it was cut with. No runtime effect,
 /// for the same reason — nothing reads a raw crop off disk.
 fn store_files(dir: &Path, file: &str) -> Vec<PathBuf> {
-    let mut out = vec![dir.join(file)];
+    store_file_names(file).into_iter().map(|n| dir.join(n)).collect()
+}
+
+/// The same derivation as [`store_files`], as bare names — what
+/// [`reset_unregistered`] needs, because it moves each file between two
+/// directories rather than unlinking it from one.
+fn store_file_names(file: &str) -> Vec<String> {
+    let mut out = vec![file.to_string()];
     if let Some(stem) = file.strip_suffix(".png") {
-        out.push(dir.join(format!("{stem}-raw.png")));
+        out.push(format!("{stem}{RAW_SUFFIX}"));
     }
     out
 }
@@ -1023,12 +1087,21 @@ impl TemplateStore {
     /// [`Self::seeds_lost_since`] and blocklists them, without which the next
     /// module start would re-derive the same wrong seed from the same cached
     /// art.
+    ///
+    /// **`registration` is the caller's statement about the CROP**, not about
+    /// the store — see [`REGISTRATION`]. The confirm path derives it from the
+    /// [`super::ScaleSource`] the crop was cut at and never asks this function
+    /// at all below the current value (`run::learn_result` reports that refusal
+    /// instead), so a `Local` sample recorded below [`REGISTRATION`] should not
+    /// be reachable; [`registration_warnings`] says so out loud if one turns up
+    /// on disk.
     pub fn learn(
         &mut self,
         family: &str,
         tier: u8,
         sig: CellSig,
         raw: Option<RgbaImage>,
+        registration: u16,
         t: &Thresholds,
     ) -> LearnOutcome {
         // Loop rather than branch: two seeds can hold one art (the map's
@@ -1061,7 +1134,7 @@ impl TemplateStore {
         {
             return LearnOutcome::AlreadyKnown;
         }
-        self.push_sample(family, tier, sig, raw, Origin::Local, false);
+        self.push_sample(family, tier, sig, raw, Origin::Local, false, registration);
         LearnOutcome::Stored
     }
 
@@ -1103,7 +1176,10 @@ impl TemplateStore {
         {
             return SeedInstall::KeyFull;
         }
-        self.push_sample(family, tier, sig, None, Origin::Seed, false);
+        // Registration 0, and it costs nothing: a seed is never saved, never
+        // offered to the pool and never met by the reset, so the only reader is
+        // [`registration_warnings`], which counts `Local` and `Pooled` alone.
+        self.push_sample(family, tier, sig, None, Origin::Seed, false, 0);
         SeedInstall::Installed
     }
 
@@ -1220,6 +1296,7 @@ impl TemplateStore {
         raw: Option<RgbaImage>,
         origin: Origin,
         uploaded: bool,
+        registration: u16,
     ) {
         self.templates.push(Template {
             family: family.to_string(),
@@ -1228,6 +1305,7 @@ impl TemplateStore {
             raw,
             origin,
             uploaded,
+            registration,
         });
     }
 
@@ -1278,10 +1356,19 @@ impl TemplateStore {
     /// Built from the in-memory signatures, never from the directory: the
     /// colour crops sitting next to them on disk are GGG's art and must not
     /// leave the device (POE-201 L4).
+    ///
+    /// **A sample below [`REGISTRATION`] is never offered** (POE-215 D3). The
+    /// pool has no way to tell where a signature was cut, so publishing pre-fit
+    /// art is how one device's stale registration becomes everybody's — and the
+    /// backfill (`sync::enqueue_backfill`) is exactly the path that would do it
+    /// on the first start after an upgrade, before the reset that drops those
+    /// samples has finished being believed. The filter is the belt to the
+    /// reset's braces: an old index that survived the reset still offers
+    /// nothing.
     pub fn pending_uploads(&self) -> Vec<(String, u8, Vec<u8>)> {
         self.templates
             .iter()
-            .filter(|t| t.origin == Origin::Local && !t.uploaded)
+            .filter(|t| t.origin == Origin::Local && !t.uploaded && t.registration >= REGISTRATION)
             .map(|t| (t.family.clone(), t.tier, t.sig.bytes().to_vec()))
             .collect()
     }
@@ -1518,6 +1605,14 @@ impl TemplateStore {
                 out.skipped += 1;
                 continue;
             }
+            // Registration 0 — "unknown", and honest (POE-215 D1). The wire
+            // carries no registration, and the upload endpoint has no role gate
+            // ("every device may publish"), so a pre-fit install goes on
+            // offering art cut at the OCR guess until it upgrades. Recording
+            // [`REGISTRATION`] here would be this device asserting something it
+            // cannot see; recording 0 is what makes
+            // [`registration_warnings`]'s pooled count a live re-pollution
+            // monitor.
             self.push_sample(
                 &sample.family,
                 sample.tier,
@@ -1525,6 +1620,7 @@ impl TemplateStore {
                 None,
                 Origin::Pooled,
                 false,
+                0,
             );
             out.added += 1;
         }
@@ -1711,14 +1807,16 @@ impl TemplateStore {
                 file,
                 origin: t.origin,
                 uploaded: t.uploaded,
+                registration: t.registration,
             });
         }
-        let json = serde_json::to_string_pretty(&StoreIndex {
-            format_version: super::sync::FORMAT_VERSION,
-            entries: index,
-        })
-        .map_err(|e| e.to_string())?;
-        std::fs::write(dir.join(INDEX_FILE), json).map_err(|e| e.to_string())
+        write_index(
+            dir,
+            &StoreIndex {
+                format_version: super::sync::FORMAT_VERSION,
+                entries: index,
+            },
+        )
     }
 
     /// Read a store back. A missing directory is an empty store (the normal
@@ -1804,6 +1902,7 @@ impl TemplateStore {
                                 None,
                                 entry.origin,
                                 entry.uploaded && !(folded && local),
+                                entry.registration,
                             );
                         }
                         None => problems.push(format!(
@@ -1913,6 +2012,358 @@ pub struct PurgedStore {
     pub version: Option<u16>,
     /// How many templates that index named.
     pub dropped: usize,
+}
+
+/// What one [`reset_unregistered`] did, for [`reset_log_line`] and for the
+/// pull-suppression decision.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResetReport {
+    /// `Local` samples dropped because they were cut below [`REGISTRATION`].
+    ///
+    /// COUNTED WHEN THE ART HAS MOVED, not when the entry was selected: an
+    /// entry whose files would not move keeps its index row, so it was not
+    /// dropped and must not be counted as one. [`Self::dropped_anything`] is
+    /// what suppresses the start's pool pull, and suppressing it for a move
+    /// that failed would cost the device a corpus for nothing.
+    pub dropped_local: usize,
+    /// `Pooled` samples dropped. ALL of them, whatever they claim: every
+    /// pooled sample on a pre-fit store predates the server-side purge, and
+    /// the wire never said where any of them was cut. Counted on the same
+    /// terms as [`Self::dropped_local`].
+    pub dropped_pooled: usize,
+    /// PNGs actually moved into `pre-fit/` — signatures and `-raw` siblings
+    /// together, and never more than the entries account for. Lower than
+    /// `2 × (dropped_local + dropped_pooled)` is normal: `save` writes a raw
+    /// sibling only while the sample still carries its crop in memory.
+    pub moved: usize,
+    /// Index entries left behind — the registered survivors, plus any entry
+    /// whose art would not move and which therefore keeps its row for the next
+    /// start to try again.
+    pub kept: usize,
+    /// Anything that went wrong while moving or rewriting, already phrased for
+    /// the log. A reset that could not finish is still a reset that did
+    /// something, so this rides on the report rather than replacing it.
+    ///
+    /// Non-empty is what keeps the one-shot marker unrecorded and the ETag
+    /// unchanged — see the call site in `run::run_loop`.
+    pub problems: Vec<String>,
+}
+
+impl ResetReport {
+    /// Whether anything was dropped — the condition D5 suppresses this start's
+    /// pool pull on. An EMPTY reset has nothing to be re-served, so it leaves
+    /// the pull alone.
+    pub fn dropped_anything(&self) -> bool {
+        self.dropped_local > 0 || self.dropped_pooled > 0
+    }
+}
+
+/// Drop every sample this build cannot vouch for the registration of, keeping
+/// their art in `pre-fit/` (POE-215 D2).
+///
+/// **What goes:** every `Local` entry below [`REGISTRATION`], and every
+/// `Pooled` entry. The pooled arm is unconditional because a pre-fit store's
+/// pooled art was served by a corpus built from pre-fit uploads, and a served
+/// sample carries no registration to test — see [`TemplateStore::merge_pulled`].
+///
+/// **Move FIRST, write the index SECOND.** [`TemplateStore::save`] derives file
+/// names from the ORDER of the samples it writes, so a surviving second sample
+/// of a key takes the freed bare name the moment the index is rewritten from a
+/// store — write-then-move would then move the survivor's own file out. This
+/// function never goes through `save` for the same reason: the kept entries
+/// keep the exact names they already have on disk.
+///
+/// A crash between the two leaves an index naming files that are now in
+/// `pre-fit/`. [`TemplateStore::load`] skips an entry whose file will not open
+/// and reports it, and the next start's reset — the marker was never recorded —
+/// finds the same entries, moves nothing (the sources are gone,
+/// `NotFound` is tolerated) and rewrites the index. It converges.
+///
+/// **A move that FAILS keeps its entry in the index.** Writing the row out
+/// while the PNG is still in the store directory would orphan that file for
+/// good; left in, the entry is retried next start, because a non-empty
+/// [`ResetReport::problems`] is what stops the caller recording the one-shot
+/// marker. The counters then report what actually moved, so a pass that dropped
+/// nothing does not suppress the pull.
+///
+/// **Caller's job:** the directory write lock ([`writing_icons_dir`]), and the
+/// sync-file half — clearing the ETag and recording
+/// `sync::SyncFile::reset_registration` — which takes its own lock and must
+/// therefore run OUTSIDE that guard.
+pub fn reset_unregistered(dir: &Path) -> ResetReport {
+    let mut report = ResetReport::default();
+    let Ok(raw) = std::fs::read_to_string(dir.join(INDEX_FILE)) else {
+        return report;
+    };
+    // A version this build does not read is `purge_stale_store`'s business,
+    // and it has already run by the time this does: it leaves an EMPTY
+    // format-2 index behind, so there is nothing here to drop. Touching a
+    // foreign index here would be a second writer with a different rule.
+    let Ok(index) = read_index(&raw) else {
+        return report;
+    };
+    if index.format_version != super::sync::FORMAT_VERSION {
+        return report;
+    }
+
+    let (dropped, mut kept): (Vec<IndexEntry>, Vec<IndexEntry>) = index
+        .entries
+        .into_iter()
+        .partition(|e| e.origin == Origin::Pooled || e.registration < REGISTRATION);
+    if dropped.is_empty() {
+        report.kept = kept.len();
+        return report;
+    }
+
+    let pre_fit = dir.join(PRE_FIT_DIR);
+    if let Err(e) = std::fs::create_dir_all(&pre_fit) {
+        // NOTHING WAS DROPPED, and the counters have to say so. They are what
+        // `dropped_anything` — and through it D5's pull suppression — reads,
+        // and a reset that could not open its own destination has left every
+        // entry in the index and every PNG where it was. Counting the entries
+        // it MEANT to drop would suppress this start's pull to protect a move
+        // that never happened. The problem is what keeps the reset armed.
+        report.problems.push(format!("{}: {e} — nothing was dropped", pre_fit.display()));
+        report.kept = kept.len() + dropped.len();
+        return report;
+    }
+    for entry in dropped {
+        let names = store_file_names(&entry.file);
+        // ONE suffix for the signature and its `-raw` sibling TOGETHER. See
+        // [`free_suffix`] — numbering them apart is how a colour crop ends up
+        // filed against a signature it was not cut with.
+        let mut failed = false;
+        match free_suffix(&pre_fit, &names) {
+            Ok(suffix) => {
+                for name in &names {
+                    match move_into_pre_fit(dir, &pre_fit, name, &suffix) {
+                        Ok(true) => report.moved += 1,
+                        // The source was not there. Expected for a `-raw`
+                        // sibling `save` never wrote, and expected for EVERY
+                        // name on a start re-running an interrupted reset.
+                        Ok(false) => {}
+                        Err(e) => {
+                            report.problems.push(e);
+                            failed = true;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                report.problems.push(e);
+                failed = true;
+            }
+        }
+        if failed {
+            // THE ENTRY KEEPS ITS INDEX ROW. Writing it out of the index while
+            // its PNG is still in the store directory orphans that file for
+            // good — nothing else unlinks it, and no later pass has a name to
+            // look for. Kept, the next start finds the same entry (the marker
+            // is not recorded, because `problems` is not empty) and tries the
+            // move again; whatever DID move is `Ok(false)` on the retry.
+            kept.push(entry);
+            continue;
+        }
+        match entry.origin {
+            Origin::Pooled => report.dropped_pooled += 1,
+            // `Seed` is never in an index (`save` skips it), so this arm is
+            // reached by `Local` alone — and a hand-written `"seed"` entry
+            // would be pre-fit art under another name either way.
+            _ => report.dropped_local += 1,
+        }
+    }
+    report.kept = kept.len();
+
+    if let Err(e) = write_index(
+        dir,
+        &StoreIndex {
+            format_version: super::sync::FORMAT_VERSION,
+            entries: kept,
+        },
+    ) {
+        report.problems.push(e);
+    }
+    report
+}
+
+/// Write `index.json` the way [`super::sync::SyncFile::save`] writes its own
+/// file: into a temp name, then rename it over the real one.
+///
+/// A TORN `index.json` does not cost an index, it costs the STORE. The next
+/// start's [`purge_stale_store`] reads a file that parses as neither shape,
+/// calls the directory a foreign-format store, and unlinks every PNG in it —
+/// including the registered survivors the interrupted write was keeping. The
+/// rename is what makes the file go from one whole index straight to the other.
+fn write_index(dir: &Path, index: &StoreIndex) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(index).map_err(|e| format!("{INDEX_FILE}: {e}"))?;
+    let path = dir.join(INDEX_FILE);
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| format!("{INDEX_FILE}: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("{INDEX_FILE}: {e}"))
+}
+
+/// Move one file into `pre-fit/` under a suffix [`free_suffix`] already chose
+/// for the whole sample. `Ok(false)` when there was nothing to move.
+fn move_into_pre_fit(
+    dir: &Path,
+    pre_fit: &Path,
+    name: &str,
+    suffix: &str,
+) -> Result<bool, String> {
+    let src = dir.join(name);
+    if !src.exists() {
+        return Ok(false);
+    }
+    let dest = pre_fit.join(suffixed(name, suffix));
+    match std::fs::rename(&src, &dest) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("{name}: {e}")),
+    }
+}
+
+/// The `-N` suffix `pre-fit/` has free for ALL of one sample's files at once —
+/// `""` when the plain names are free, then `-2`, `-3`, … The numbering starts
+/// at 2 so the first copy keeps the name it had in the store, exactly as
+/// [`TemplateStore::save`]'s per-key numbering does.
+///
+/// A name already taken is not overwritten: the destination may hold the art of
+/// an EARLIER interrupted reset, or of a different sample of the same key that
+/// `save`'s order-derived numbering has since renamed, and this directory is
+/// the only copy of those colour crops.
+///
+/// **Over the whole set, never per file.** The signature and its `-raw` sibling
+/// are two halves of ONE sample, and a suffix chosen for each separately splits
+/// them the moment only one of the two clashes: `x--t2-2.png` would land beside
+/// `x--t2-raw.png`, which is a different sample's colour crop wearing the pair's
+/// name. `-raw` is the only copy of the GGG art on the device and the corpus
+/// fixture is harvested out of this directory, so a pair that reads as one
+/// sample is the whole value of it.
+fn free_suffix(pre_fit: &Path, names: &[String]) -> Result<String, String> {
+    for n in 1..1000 {
+        let suffix = if n == 1 { String::new() } else { format!("-{n}") };
+        if names.iter().all(|name| !pre_fit.join(suffixed(name, &suffix)).exists()) {
+            return Ok(suffix);
+        }
+    }
+    Err(format!("{}: no free name left in {PRE_FIT_DIR}/", names.join(", ")))
+}
+
+/// One store file name with a [`free_suffix`] applied.
+///
+/// The number goes exactly where [`TemplateStore::save`] puts its own — BEFORE
+/// the `-raw` marker, not before the extension — so the pair reads
+/// `chain--t2-2.png` / `chain--t2-2-raw.png`, which is how the store spells a
+/// second sample of one key. Numbering `-raw.png` as if `raw` were part of the
+/// stem yields `chain--t2-raw-2.png`, a name nothing else in the module writes
+/// and which no reader of `pre-fit/` would pair with its signature.
+fn suffixed(name: &str, suffix: &str) -> String {
+    if suffix.is_empty() {
+        return name.to_string();
+    }
+    if let Some(stem) = name.strip_suffix(RAW_SUFFIX) {
+        return format!("{stem}{suffix}{RAW_SUFFIX}");
+    }
+    match name.rsplit_once('.') {
+        Some((stem, ext)) => format!("{stem}{suffix}.{ext}"),
+        None => format!("{name}{suffix}"),
+    }
+}
+
+/// What [`store_file_names`] appends to a signature's name for its colour crop.
+const RAW_SUFFIX: &str = "-raw.png";
+
+/// The ONE line a [`reset_unregistered`] says. Pure, so the wording is pinned
+/// by a test rather than by reading a Windows log.
+///
+/// The pull-skip clause is part of it on purpose: the reason the pull is
+/// skipped is the reset, and a reader meeting the two as separate lines has to
+/// join them up. See POE-215 D5 — the ETag is cleared in the same breath, so
+/// the NEXT start pulls normally, and by then the pool purge should have
+/// landed.
+pub fn reset_log_line(report: &ResetReport) -> String {
+    // ONLY ON A CLEAN PASS. The ETag is cleared by
+    // `sync::record_registration_reset`, which the call site runs only when
+    // `problems` is empty — otherwise it says the tag is UNCHANGED and the
+    // reset stays armed. Claiming the clear unconditionally here put the two
+    // lines in contradiction on the one run where the reader needs the truth.
+    let etag = if report.problems.is_empty() { ", ETag cleared" } else { "" };
+    let mut line = if report.dropped_anything() {
+        format!(
+            "Merc: registration reset — dropped {} local + {} pooled pre-fit samples (kept in \
+             {PRE_FIT_DIR}/: {} file(s)), {} sample(s) left{etag}; pool pull skipped this \
+             start — verify the pool purge (POE-215 runbook), then restart",
+            report.dropped_local, report.dropped_pooled, report.moved, report.kept,
+        )
+    } else {
+        format!(
+            "Merc: registration reset — no pre-fit samples to drop ({} sample(s) left){etag}",
+            report.kept,
+        )
+    };
+    for problem in &report.problems {
+        line.push_str(&format!(" [{problem}]"));
+    }
+    line
+}
+
+/// What the loaded store says about its own registration, one line per thing
+/// worth saying (POE-215 D4).
+///
+/// NOT part of `run::matcher_geometry_warnings`: that runs before the store is
+/// read and takes a [`super::MercGeometry`], and it answers "is this build
+/// configured oddly". This answers "is what came off disk cut where this build
+/// cuts", which needs the store.
+///
+/// The three cases are three different bugs:
+///
+/// - a `Local` sample below [`REGISTRATION`] should be unreachable — the reset
+///   drops them and the confirm path never learns one — so one on disk means a
+///   reset that did not finish or a writer that bypassed the gate;
+/// - `Pooled` samples below it are EXPECTED for as long as v0.8.0 installs are
+///   publishing, and the count is the live re-pollution monitor the (b) purge
+///   is verified against. Not a warning, because nothing is wrong with this
+///   device;
+/// - anything ABOVE it was written by a newer build: this one will go on
+///   offering that art to the pool and matching against it, cut somewhere it
+///   does not know about.
+pub fn registration_warnings(store: &TemplateStore) -> Vec<String> {
+    let mut out = Vec::new();
+    let count = |f: &dyn Fn(&Template) -> bool| store.templates.iter().filter(|t| f(t)).count();
+
+    let local_unknown = count(&|t: &Template| {
+        t.origin == Origin::Local && t.registration < REGISTRATION
+    });
+    if local_unknown > 0 {
+        out.push(format!(
+            "Merc: WARNING — {local_unknown} locally-learned sample(s) of unknown registration \
+             survived the reset; they are never offered to the pool, and a \
+             merc_reset_templates is the way to clear them",
+        ));
+    }
+    let pooled_unknown = count(&|t: &Template| {
+        t.origin == Origin::Pooled && t.registration < REGISTRATION
+    });
+    if pooled_unknown > 0 {
+        out.push(format!(
+            "Merc: {pooled_unknown} pooled samples of unknown registration — the pool accepts \
+             uploads from pre-fit installs until they upgrade",
+        ));
+    }
+    let ahead = count(&|t: &Template| t.registration > REGISTRATION);
+    if ahead > 0 {
+        let highest = store
+            .templates
+            .iter()
+            .map(|t| t.registration)
+            .max()
+            .unwrap_or(REGISTRATION);
+        out.push(format!(
+            "Merc: WARNING — {ahead} sample(s) recorded at registration {highest}, above this \
+             build's {REGISTRATION}; the store was written by a newer build",
+        ));
+    }
+    out
 }
 
 /// The best correlation of one template against a set of alignments.
@@ -2595,7 +3046,7 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &MercGeometry::default().thresholds);
 
         let m = store.match_family(&cands_of(&img, 1, 0), &t);
 
@@ -2616,6 +3067,7 @@ mod tests {
             2,
             sig_of(img, 1, 0),
             None,
+            REGISTRATION,
             &MercGeometry::default().thresholds,
         );
         store
@@ -2744,7 +3196,7 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &MercGeometry::default().thresholds);
 
         let m = store.match_family(&cands_of(&img, 2, 2), &t);
 
@@ -2780,9 +3232,9 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 1, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
+        store.learn("Chain", 1, sig_of(&img, 1, 0), None, REGISTRATION, &MercGeometry::default().thresholds);
 
-        let second = store.learn("Chain", 3, sig_of(&img, 1, 0), None, &t);
+        let second = store.learn("Chain", 3, sig_of(&img, 1, 0), None, REGISTRATION, &t);
 
         assert_eq!(second, LearnOutcome::Stored, "a second tier of one family is not a collision");
         assert_eq!(store.len(), 2);
@@ -2798,8 +3250,8 @@ mod tests {
         let img = fixture();
         let mut store = TemplateStore::new();
 
-        store.learn("Chain", 1, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
-        store.learn("Chain", 3, sig_of(&img, 2, 2), None, &MercGeometry::default().thresholds);
+        store.learn("Chain", 1, sig_of(&img, 1, 0), None, REGISTRATION, &MercGeometry::default().thresholds);
+        store.learn("Chain", 3, sig_of(&img, 2, 2), None, REGISTRATION, &MercGeometry::default().thresholds);
 
         assert_eq!(store.len(), 2);
         assert_eq!(store.learned_keys(), ["Chain--1", "Chain--3"]);
@@ -2814,14 +3266,14 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &t);
         let first = store.get("Chain", 2).unwrap().sig.clone();
 
-        let same = store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        let same = store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &t);
         assert_eq!(same, LearnOutcome::AlreadyKnown, "the same art again is refused");
         assert_eq!(store.len(), 1);
 
-        let accepted = store.learn("Chain", 2, sig_of(&img, 2, 2), None, &t);
+        let accepted = store.learn("Chain", 2, sig_of(&img, 2, 2), None, REGISTRATION, &t);
         assert_eq!(
             accepted,
             LearnOutcome::Stored,
@@ -2836,7 +3288,7 @@ mod tests {
         );
 
         for _ in 0..3 {
-            store.learn("Chain", 2, sig_of(&img, 0, 0), None, &t);
+            store.learn("Chain", 2, sig_of(&img, 0, 0), None, REGISTRATION, &t);
         }
         assert_eq!(store.len(), TemplateStore::MAX_SAMPLES_PER_KEY, "capped per key");
         assert_eq!(store.get("Chain", 2).unwrap().sig, first, "the first sample stays");
@@ -2848,8 +3300,8 @@ mod tests {
     fn forget_removes_only_the_named_key() {
         let img = fixture();
         let mut store = TemplateStore::new();
-        store.learn("Chain", 1, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
-        store.learn("Chain", 3, sig_of(&img, 2, 2), None, &MercGeometry::default().thresholds);
+        store.learn("Chain", 1, sig_of(&img, 1, 0), None, REGISTRATION, &MercGeometry::default().thresholds);
+        store.learn("Chain", 3, sig_of(&img, 2, 2), None, REGISTRATION, &MercGeometry::default().thresholds);
 
         assert!(store.forget("Chain", 1));
 
@@ -2871,8 +3323,8 @@ mod tests {
     fn reset_empties_the_store() {
         let img = fixture();
         let mut store = TemplateStore::new();
-        store.learn("Chain", 1, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
-        store.learn("Pierce", 3, sig_of(&img, 2, 2), None, &MercGeometry::default().thresholds);
+        store.learn("Chain", 1, sig_of(&img, 1, 0), None, REGISTRATION, &MercGeometry::default().thresholds);
+        store.learn("Pierce", 3, sig_of(&img, 2, 2), None, REGISTRATION, &MercGeometry::default().thresholds);
 
         store.reset();
 
@@ -2900,7 +3352,7 @@ mod tests {
         let t = MercGeometry::default().thresholds;
         let dir = temp_dir("roundtrip");
         let mut store = TemplateStore::new();
-        store.learn("Caustic Conversion", 3, sig_of(&img, 2, 2), None, &MercGeometry::default().thresholds);
+        store.learn("Caustic Conversion", 3, sig_of(&img, 2, 2), None, REGISTRATION, &MercGeometry::default().thresholds);
         store.save(&dir).expect("save");
 
         let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
@@ -2931,8 +3383,8 @@ mod tests {
         let img = fixture();
         let dir = temp_dir("corrupt");
         let mut store = TemplateStore::new();
-        store.learn("Chain", 1, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
-        store.learn("Pierce", 3, sig_of(&img, 2, 2), None, &MercGeometry::default().thresholds);
+        store.learn("Chain", 1, sig_of(&img, 1, 0), None, REGISTRATION, &MercGeometry::default().thresholds);
+        store.learn("Pierce", 3, sig_of(&img, 2, 2), None, REGISTRATION, &MercGeometry::default().thresholds);
         store.save(&dir).expect("save");
         std::fs::write(dir.join("chain--t1.png"), b"not a png").expect("corrupt one file");
 
@@ -3021,8 +3473,8 @@ mod tests {
     fn learned_keys_are_family_double_dash_tier_sorted() {
         let img = fixture();
         let mut store = TemplateStore::new();
-        store.learn("Return", 3, sig_of(&img, 2, 2), None, &MercGeometry::default().thresholds);
-        store.learn("Caustic Conversion", 1, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
+        store.learn("Return", 3, sig_of(&img, 2, 2), None, REGISTRATION, &MercGeometry::default().thresholds);
+        store.learn("Caustic Conversion", 1, sig_of(&img, 1, 0), None, REGISTRATION, &MercGeometry::default().thresholds);
 
         let keys = store.learned_keys();
 
@@ -3122,7 +3574,7 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &t);
 
         let out = store.merge_pulled(
             &corpus(vec![pooled("Chain", 2, sig_of(&img, 1, 0))], vec![]),
@@ -3142,9 +3594,9 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
-        store.learn("Chain", 2, sig_of(&img, 2, 2), None, &t);
-        store.learn("Chain", 2, sig_of(&img, 0, 0), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &t);
+        store.learn("Chain", 2, sig_of(&img, 2, 2), None, REGISTRATION, &t);
+        store.learn("Chain", 2, sig_of(&img, 0, 0), None, REGISTRATION, &t);
         assert_eq!(store.len(), TemplateStore::MAX_SAMPLES_PER_KEY);
 
         let out = store.merge_pulled(
@@ -3166,7 +3618,7 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &t);
 
         let out = store.merge_pulled(
             &corpus(
@@ -3194,7 +3646,7 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &t);
 
         store.merge_pulled(&corpus(vec![], vec![("Chain", 2)]), &[], &t);
 
@@ -3208,8 +3660,8 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
-        store.learn("Chain", 3, sig_of(&img, 2, 2), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &t);
+        store.learn("Chain", 3, sig_of(&img, 2, 2), None, REGISTRATION, &t);
 
         store.merge_pulled(&corpus(vec![], vec![("Chain", 2)]), &[], &t);
 
@@ -3243,7 +3695,7 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &t);
 
         store.merge_pulled(
             &corpus(vec![], vec![("Chain", 2)]),
@@ -3261,7 +3713,7 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &t);
         // BOTH directions. A newer server is the case that will happen next;
         // an OLDER one is the case that is happening now — format-1 rows are
         // still in the pool, and a client that merged them would be pulling
@@ -3317,7 +3769,7 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &t);
 
         store.merge_pulled(
             &corpus(vec![pooled("Chain", 2, sig_of(&img, 2, 2))], vec![]),
@@ -3336,7 +3788,7 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &t);
 
         let pending = store.pending_uploads();
 
@@ -3353,8 +3805,8 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
-        store.learn("Chain", 2, sig_of(&img, 2, 2), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &t);
+        store.learn("Chain", 2, sig_of(&img, 2, 2), None, REGISTRATION, &t);
         let first = sig_of(&img, 1, 0).bytes().to_vec();
 
         assert!(store.mark_uploaded("Chain", 2, &first));
@@ -3375,6 +3827,7 @@ mod tests {
             2,
             sig_of(&img, 1, 0),
             None,
+            REGISTRATION,
             &MercGeometry::default().thresholds,
         );
 
@@ -3390,7 +3843,7 @@ mod tests {
         let t = MercGeometry::default().thresholds;
         let dir = temp_dir("provenance");
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &t);
         store.merge_pulled(
             &corpus(vec![pooled("Pierce", 1, sig_of(&img, 2, 2))], vec![]),
             &[],
@@ -3421,6 +3874,7 @@ mod tests {
             2,
             sig_of(&img, 1, 0),
             None,
+            REGISTRATION,
             &MercGeometry::default().thresholds,
         );
         store.save(&dir).expect("save");
@@ -3444,6 +3898,7 @@ mod tests {
             2,
             sig_of(&img, 1, 0),
             None,
+            REGISTRATION,
             &MercGeometry::default().thresholds,
         );
         store.save(&dir).expect("save");
@@ -3479,6 +3934,7 @@ mod tests {
             2,
             sig_of(&img, 1, 0),
             None,
+            REGISTRATION,
             &MercGeometry::default().thresholds,
         );
         store.save(&dir).expect("save");
@@ -3505,6 +3961,7 @@ mod tests {
             2,
             sig_of(&img, 1, 0),
             None,
+            REGISTRATION,
             &MercGeometry::default().thresholds,
         );
         store.save(&dir).expect("save");
@@ -3524,6 +3981,477 @@ mod tests {
         assert_eq!(problems.len(), 1, "{problems:?}");
     }
 
+    // -- the one-shot registration reset (POE-215) ---------------------------
+
+    /// A store holding one of everything the reset has to tell apart, written
+    /// to `dir` exactly as a real one would be.
+    ///
+    /// The load-bearing row is the FIRST key: `Chain--2` holds a pre-fit sample
+    /// AND a fitted one, so `save`'s order-derived numbering gives the doomed
+    /// sample the bare name `chain--t2.png` and the survivor `chain--t2-2.png`.
+    /// A reset that rewrote the index through `save` would renumber the
+    /// survivor into the name it was about to move away.
+    fn mixed_pre_fit_store(dir: &Path, img: &DynamicImage) {
+        let mut store = TemplateStore::new();
+        store.push_sample(
+            "Chain",
+            2,
+            sig_of(img, 1, 0),
+            Some(RgbaImage::new(44, 44)),
+            Origin::Local,
+            true,
+            0,
+        );
+        store.push_sample("Chain", 2, sig_of(img, 2, 2), None, Origin::Local, true, REGISTRATION);
+        store.push_sample("Pierce", 3, sig_of(img, 0, 0), None, Origin::Local, true, 0);
+        store.push_sample("Return", 1, sig_of(img, 3, 1), None, Origin::Pooled, false, 0);
+        store.push_sample(
+            "Caustic Conversion",
+            3,
+            sig_of(img, 1, 1),
+            None,
+            Origin::Local,
+            false,
+            REGISTRATION,
+        );
+        store.save(dir).expect("save");
+    }
+
+    /// The file names `index.json` currently holds, in index order.
+    fn indexed_files(dir: &Path) -> Vec<String> {
+        let raw = std::fs::read_to_string(dir.join(INDEX_FILE)).expect("read the index");
+        read_index(&raw)
+            .expect("the index parses")
+            .entries
+            .into_iter()
+            .map(|e| e.file)
+            .collect()
+    }
+
+    /// The reset drops every sample cut before POE-214's frame fit — the local
+    /// ones by their recorded registration, the pooled ones outright — and
+    /// leaves the fitted ones under the file names they already had.
+    ///
+    /// The survivor of the mixed key is the whole point: it keeps
+    /// `chain--t2-2.png`, the name `save` gave it when the sample now in
+    /// `pre-fit/` was still ahead of it. Rewriting the index from a store
+    /// instead would hand it `chain--t2.png` — the name being moved away in the
+    /// same breath.
+    #[test]
+    fn the_reset_drops_pre_fit_samples_and_leaves_the_fitted_ones_where_they_were() {
+        let img = fixture();
+        let dir = temp_dir("reset-mixed");
+        mixed_pre_fit_store(&dir, &img);
+
+        let report = reset_unregistered(&dir);
+
+        assert_eq!(
+            report,
+            ResetReport {
+                dropped_local: 2,
+                dropped_pooled: 1,
+                // `chain--t2.png` + its `-raw` sibling, `pierce--t3.png`,
+                // `return--t1.png`.
+                moved: 4,
+                kept: 2,
+                problems: Vec::new(),
+            },
+        );
+        assert_eq!(
+            indexed_files(&dir),
+            ["chain--t2-2.png", "caustic-conversion--t3.png"],
+        );
+        let pre_fit = dir.join(PRE_FIT_DIR);
+        for name in [
+            "chain--t2.png",
+            "chain--t2-raw.png",
+            "pierce--t3.png",
+            "return--t1.png",
+        ] {
+            assert!(pre_fit.join(name).exists(), "{name} is not in pre-fit/");
+            assert!(!dir.join(name).exists(), "{name} is still in the store");
+        }
+        let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(loaded.learned_keys(), ["Caustic Conversion--3", "Chain--2"]);
+    }
+
+    /// The reset is a ONE-SHOT, but the marker that makes it one lives in
+    /// `pool-sync.json` — so this function itself has to be safe to run twice.
+    /// A second pass finds nothing pre-fit left and must not move the survivors
+    /// it kept the first time.
+    #[test]
+    fn a_second_reset_of_an_already_reset_store_moves_nothing() {
+        let img = fixture();
+        let dir = temp_dir("reset-twice");
+        mixed_pre_fit_store(&dir, &img);
+        reset_unregistered(&dir);
+
+        let again = reset_unregistered(&dir);
+
+        assert_eq!(again, ResetReport { kept: 2, ..ResetReport::default() });
+        assert_eq!(
+            indexed_files(&dir),
+            ["chain--t2-2.png", "caustic-conversion--t3.png"],
+        );
+    }
+
+    /// The crash window the move-then-save order opens: the art is in
+    /// `pre-fit/` and `index.json` still names it. The next start's reset finds
+    /// the same doomed entries, has nothing left to move, and rewrites the
+    /// index anyway — so the store converges instead of loading entries whose
+    /// files are gone forever.
+    ///
+    /// The missing sources must be TOLERATED, not reported: a reset that
+    /// counted them as problems would print a scary line on the one path that
+    /// is working as designed.
+    #[test]
+    fn a_reset_interrupted_before_the_index_was_written_converges_on_the_next_run() {
+        let img = fixture();
+        let dir = temp_dir("reset-crash");
+        mixed_pre_fit_store(&dir, &img);
+        let pre_fit = dir.join(PRE_FIT_DIR);
+        std::fs::create_dir_all(&pre_fit).expect("pre-fit");
+        for name in ["chain--t2.png", "chain--t2-raw.png", "pierce--t3.png", "return--t1.png"] {
+            std::fs::rename(dir.join(name), pre_fit.join(name)).expect("move by hand");
+        }
+
+        let report = reset_unregistered(&dir);
+
+        assert_eq!(report.moved, 0, "the art was already moved");
+        assert!(report.problems.is_empty(), "{:?}", report.problems);
+        assert_eq!((report.dropped_local, report.dropped_pooled, report.kept), (2, 1, 2));
+        assert_eq!(
+            indexed_files(&dir),
+            ["chain--t2-2.png", "caustic-conversion--t3.png"],
+        );
+    }
+
+    /// `pre-fit/` may already hold a file of that name — an earlier reset's,
+    /// or one the order-derived numbering has since re-used. The incoming art
+    /// takes a `-N` name rather than overwriting it, because these `-raw.png`
+    /// crops are the only copies of the GGG art the device has.
+    #[test]
+    fn art_whose_name_is_taken_in_pre_fit_is_numbered_rather_than_overwritten() {
+        let img = fixture();
+        let dir = temp_dir("reset-clash");
+        mixed_pre_fit_store(&dir, &img);
+        let pre_fit = dir.join(PRE_FIT_DIR);
+        std::fs::create_dir_all(&pre_fit).expect("pre-fit");
+        std::fs::write(pre_fit.join("pierce--t3.png"), b"an earlier reset's art")
+            .expect("occupy the name");
+
+        reset_unregistered(&dir);
+
+        assert_eq!(
+            std::fs::read(pre_fit.join("pierce--t3.png")).expect("read"),
+            b"an earlier reset's art",
+            "the incumbent was overwritten",
+        );
+        assert!(
+            pre_fit.join("pierce--t3-2.png").exists(),
+            "the incoming art took no numbered name",
+        );
+    }
+
+    /// The signature and its `-raw` sibling take the SAME `-N` suffix.
+    /// `pre-fit/` already holds a `chain--t2.png` from an earlier reset but no
+    /// sibling beside it, so a suffix chosen per FILE would file this sample's
+    /// signature as `chain--t2-2.png` and its colour crop as
+    /// `chain--t2-raw.png` — paired, by name, with the incumbent's art. The
+    /// corpus fixture is harvested out of this directory by exactly that
+    /// pairing.
+    #[test]
+    fn a_samples_signature_and_its_raw_sibling_take_one_numbered_name() {
+        let img = fixture();
+        let dir = temp_dir("reset-clash-pair");
+        mixed_pre_fit_store(&dir, &img);
+        let pre_fit = dir.join(PRE_FIT_DIR);
+        std::fs::create_dir_all(&pre_fit).expect("pre-fit");
+        std::fs::write(pre_fit.join("chain--t2.png"), b"an earlier reset's signature")
+            .expect("occupy the signature name");
+
+        reset_unregistered(&dir);
+
+        assert!(pre_fit.join("chain--t2-2.png").exists(), "the signature took no numbered name");
+        assert!(
+            pre_fit.join("chain--t2-2-raw.png").exists(),
+            "the colour crop did not follow its signature's number",
+        );
+        assert!(
+            !pre_fit.join("chain--t2-raw.png").exists(),
+            "the pair was split across two numbers",
+        );
+    }
+
+    /// …and the free suffix is answered over the WHOLE sample, not off the
+    /// signature alone. Here only the `-raw` name is taken, so a suffix derived
+    /// from the signature would come back empty and the rename would overwrite
+    /// the incumbent colour crop — the only copy of that GGG art on the device.
+    #[test]
+    fn a_free_signature_name_does_not_let_the_raw_crop_overwrite_an_incumbent() {
+        let img = fixture();
+        let dir = temp_dir("reset-clash-raw");
+        mixed_pre_fit_store(&dir, &img);
+        let pre_fit = dir.join(PRE_FIT_DIR);
+        std::fs::create_dir_all(&pre_fit).expect("pre-fit");
+        std::fs::write(pre_fit.join("chain--t2-raw.png"), b"an earlier reset's colour crop")
+            .expect("occupy the sibling name");
+
+        reset_unregistered(&dir);
+
+        assert_eq!(
+            std::fs::read(pre_fit.join("chain--t2-raw.png")).expect("read"),
+            b"an earlier reset's colour crop",
+            "the incumbent colour crop was overwritten",
+        );
+        assert!(pre_fit.join("chain--t2-2.png").exists(), "the signature took no numbered name");
+        assert!(pre_fit.join("chain--t2-2-raw.png").exists(), "the crop took no numbered name");
+    }
+
+    /// A reset that cannot open its own destination directory has moved nothing
+    /// and dropped nothing, and the counters have to say so:
+    /// [`ResetReport::dropped_anything`] is what suppresses this start's pool
+    /// pull, and suppressing it for a move that never happened costs the device
+    /// its corpus and sends the operator to purge a pool for no reason. The
+    /// index is left exactly as it was, and the problem keeps the reset armed.
+    #[test]
+    fn a_reset_that_cannot_open_pre_fit_drops_nothing() {
+        let img = fixture();
+        let dir = temp_dir("reset-no-pre-fit");
+        mixed_pre_fit_store(&dir, &img);
+        // A plain file where the directory has to go.
+        std::fs::write(dir.join(PRE_FIT_DIR), b"not a directory").expect("occupy the path");
+
+        let report = reset_unregistered(&dir);
+
+        assert_eq!((report.dropped_local, report.dropped_pooled, report.moved), (0, 0, 0));
+        assert!(!report.dropped_anything(), "a reset that moved nothing suppressed the pull");
+        assert_eq!(report.kept, 5, "every entry is still the store's");
+        assert_eq!(report.problems.len(), 1, "{:?}", report.problems);
+        assert_eq!(
+            indexed_files(&dir),
+            [
+                "chain--t2.png",
+                "chain--t2-2.png",
+                "pierce--t3.png",
+                "return--t1.png",
+                "caustic-conversion--t3.png",
+            ],
+            "the index was rewritten by a reset that moved nothing",
+        );
+    }
+
+    /// An entry whose art would not move KEEPS ITS INDEX ROW. Writing it out
+    /// while the PNG is still in the store directory orphans that file for
+    /// good — no later pass has a name to look for it under. Kept, the entry is
+    /// retried next start, because the problem it recorded is what stops the
+    /// caller spending the one-shot marker.
+    ///
+    /// The failure is the `no free name left` arm: `pre-fit/` already holds
+    /// every name this sample could take, which is the one per-entry failure a
+    /// test can induce without a permission the process does not have.
+    #[test]
+    fn an_entry_whose_art_would_not_move_stays_in_the_index() {
+        let img = fixture();
+        let dir = temp_dir("reset-no-free-name");
+        mixed_pre_fit_store(&dir, &img);
+        let pre_fit = dir.join(PRE_FIT_DIR);
+        std::fs::create_dir_all(&pre_fit).expect("pre-fit");
+        std::fs::write(pre_fit.join("pierce--t3.png"), b"taken").expect("occupy");
+        for n in 2..1000 {
+            std::fs::write(pre_fit.join(format!("pierce--t3-{n}.png")), b"taken")
+                .expect("occupy");
+        }
+
+        let report = reset_unregistered(&dir);
+
+        assert_eq!(report.problems.len(), 1, "{:?}", report.problems);
+        assert_eq!(
+            (report.dropped_local, report.dropped_pooled),
+            (1, 1),
+            "the entry that did not move was counted as dropped",
+        );
+        assert!(
+            dir.join("pierce--t3.png").exists(),
+            "the art is still in the store directory",
+        );
+        assert!(
+            indexed_files(&dir).contains(&"pierce--t3.png".to_string()),
+            "the art was orphaned: {:?}",
+            indexed_files(&dir),
+        );
+        let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!(loaded.learned_keys().contains(&"Pierce--3".to_string()), "{:?}", loaded.learned_keys());
+    }
+
+    /// An index written before the field existed reads every sample as
+    /// registration 0, and that is not a serde detail — it is what makes those
+    /// samples droppable and unpublishable. This asserts the two consequences,
+    /// because the default itself is invisible.
+    #[test]
+    fn an_index_without_the_registration_field_is_dropped_and_never_offered() {
+        let img = fixture();
+        let dir = temp_dir("reset-old-index");
+        let mut store = TemplateStore::new();
+        store.push_sample("Chain", 2, sig_of(&img, 1, 0), None, Origin::Local, false, REGISTRATION);
+        store.save(&dir).expect("save");
+        let raw = std::fs::read_to_string(dir.join(INDEX_FILE)).expect("read");
+        // Exactly the shape a build before POE-215 wrote: the key is absent,
+        // not zero.
+        let old = raw
+            .lines()
+            .filter(|l| !l.contains("\"registration\""))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .replace("\"uploaded\": false,", "\"uploaded\": false");
+        std::fs::write(dir.join(INDEX_FILE), old).expect("rewrite the index");
+
+        let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
+
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(loaded.len(), 1, "the sample still loads");
+        assert!(
+            loaded.pending_uploads().is_empty(),
+            "art of unknown registration was offered to the pool",
+        );
+        let report = reset_unregistered(&dir);
+        assert_eq!((report.dropped_local, report.kept), (1, 0));
+    }
+
+    /// The one line a non-empty reset says. Both counts and the pull-skip
+    /// clause are in it: the reason the pool is not asked this start is the
+    /// reset, and a reader meeting the two as separate lines has to join them
+    /// up themselves.
+    #[test]
+    fn the_reset_line_names_both_counts_and_the_skipped_pull() {
+        let line = reset_log_line(&ResetReport {
+            dropped_local: 2,
+            dropped_pooled: 1,
+            moved: 4,
+            kept: 2,
+            problems: Vec::new(),
+        });
+
+        assert!(
+            line.starts_with(
+                "Merc: registration reset — dropped 2 local + 1 pooled pre-fit samples \
+                 (kept in pre-fit/: 4 file(s)), 2 sample(s) left, ETag cleared;"
+            ),
+            "{line}",
+        );
+        assert!(line.contains("pool pull skipped this start"), "{line}");
+        assert!(line.contains("POE-215 runbook"), "{line}");
+    }
+
+    /// The ETag clause belongs to the CALLER's success branch, not to every
+    /// line. `record_registration_reset` is what clears the tag and the call
+    /// site runs it only on a clean pass — otherwise it prints "the pool ETag
+    /// is UNCHANGED". Claiming the clear here put this line in contradiction
+    /// with the one printed straight after it, on the one run where the reader
+    /// needs the truth.
+    #[test]
+    fn a_reset_that_did_not_finish_does_not_claim_the_etag_was_cleared() {
+        let line = reset_log_line(&ResetReport {
+            dropped_local: 1,
+            moved: 1,
+            kept: 2,
+            problems: vec!["chain--t2.png: permission denied".to_string()],
+            ..ResetReport::default()
+        });
+
+        assert!(!line.contains("ETag cleared"), "{line}");
+        assert!(line.contains("[chain--t2.png: permission denied]"), "{line}");
+    }
+
+    /// A reset that dropped nothing must NOT claim the pull was skipped —
+    /// nothing suppresses it, and a line saying otherwise would send the next
+    /// reader looking for a purge that was never owed.
+    #[test]
+    fn a_reset_that_dropped_nothing_does_not_claim_a_skipped_pull() {
+        let line = reset_log_line(&ResetReport { kept: 7, ..ResetReport::default() });
+
+        assert!(!line.contains("pool pull skipped"), "{line}");
+        assert!(line.contains("no pre-fit samples to drop (7 sample(s) left)"), "{line}");
+    }
+
+    // -- the load-time registration report (POE-215 D4) -----------------------
+
+    /// A locally-learned sample of unknown registration should be unreachable:
+    /// the reset drops them and the confirm path refuses to learn one. One on
+    /// disk means a reset that did not finish, and the load seam says so.
+    #[test]
+    fn a_local_sample_of_unknown_registration_is_warned_about() {
+        let img = fixture();
+        let mut store = TemplateStore::new();
+        store.push_sample("Chain", 2, sig_of(&img, 1, 0), None, Origin::Local, false, 0);
+
+        let warnings = registration_warnings(&store);
+
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].starts_with("Merc: WARNING — 1 locally-learned"), "{warnings:?}");
+    }
+
+    /// Pooled samples of unknown registration are EXPECTED while v0.8.0
+    /// installs are still publishing, so this is a count and not a warning —
+    /// it is the live monitor the server-side purge is verified against.
+    #[test]
+    fn pooled_samples_of_unknown_registration_are_counted_without_a_warning() {
+        let img = fixture();
+        let mut store = TemplateStore::new();
+        store.push_sample("Chain", 2, sig_of(&img, 1, 0), None, Origin::Pooled, false, 0);
+        store.push_sample("Pierce", 3, sig_of(&img, 2, 2), None, Origin::Pooled, false, 0);
+
+        let warnings = registration_warnings(&store);
+
+        assert_eq!(
+            warnings,
+            ["Merc: 2 pooled samples of unknown registration — the pool accepts uploads from \
+              pre-fit installs until they upgrade"],
+        );
+    }
+
+    /// A store written by a LATER build: this one goes on matching against and
+    /// publishing art cut somewhere it knows nothing about, so it says so
+    /// rather than reading the higher number as "fine, it is above the gate".
+    #[test]
+    fn a_store_written_at_a_higher_registration_is_warned_about() {
+        let img = fixture();
+        let mut store = TemplateStore::new();
+        store.push_sample(
+            "Chain",
+            2,
+            sig_of(&img, 1, 0),
+            None,
+            Origin::Local,
+            false,
+            REGISTRATION + 1,
+        );
+
+        let warnings = registration_warnings(&store);
+
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains(&format!("registration {}, above this build's", REGISTRATION + 1)),
+            "{warnings:?}",
+        );
+    }
+
+    /// The negative that keeps the three above honest: a store cut where this
+    /// build cuts says NOTHING. A monitor that printed on every start would be
+    /// ignored by the second week.
+    #[test]
+    fn a_store_cut_at_this_registration_reports_nothing() {
+        let img = fixture();
+        let mut store = TemplateStore::new();
+        store.push_sample("Chain", 2, sig_of(&img, 1, 0), None, Origin::Local, false, REGISTRATION);
+        store.push_sample("Pierce", 3, sig_of(&img, 2, 2), None, Origin::Pooled, false, REGISTRATION);
+        store.push_sample("Return", 1, sig_of(&img, 0, 0), None, Origin::Seed, false, 0);
+
+        assert!(registration_warnings(&store).is_empty());
+    }
+
     // -- the family re-key (POE-211) -----------------------------------------
 
     /// The family the alias table folds, spelled the way an index an older
@@ -3540,7 +4468,7 @@ mod tests {
         let dir = temp_dir("rekey-load");
         let original = sig_of(&img, 1, 0);
         let mut store = TemplateStore::new();
-        store.push_sample(OLD_AOE, 2, original.clone(), None, Origin::Local, false);
+        store.push_sample(OLD_AOE, 2, original.clone(), None, Origin::Local, false, REGISTRATION);
         store.save(&dir).expect("save");
 
         let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
@@ -3563,7 +4491,7 @@ mod tests {
         let t = MercGeometry::default().thresholds;
         let dir = temp_dir("rekey-tier");
         let mut store = TemplateStore::new();
-        store.push_sample(OLD_AOE, 2, sig_of(&img, 2, 2), None, Origin::Local, false);
+        store.push_sample(OLD_AOE, 2, sig_of(&img, 2, 2), None, Origin::Local, false, REGISTRATION);
         store.save(&dir).expect("save");
 
         let LoadedStore { store: loaded, .. } = TemplateStore::load(&dir);
@@ -3583,7 +4511,7 @@ mod tests {
         let img = fixture();
         let dir = temp_dir("rekey-reoffer");
         let mut store = TemplateStore::new();
-        store.push_sample(OLD_AOE, 2, sig_of(&img, 1, 0), None, Origin::Local, true);
+        store.push_sample(OLD_AOE, 2, sig_of(&img, 1, 0), None, Origin::Local, true, REGISTRATION);
         store.save(&dir).expect("save");
 
         let LoadedStore { store: loaded, .. } = TemplateStore::load(&dir);
@@ -3610,6 +4538,7 @@ mod tests {
             Some(RgbaImage::new(44, 44)),
             Origin::Local,
             true,
+            REGISTRATION,
         );
         store.save(&dir).expect("save");
 
@@ -3638,7 +4567,7 @@ mod tests {
         let img = fixture();
         let dir = temp_dir("rekey-pooled-flag");
         let mut store = TemplateStore::new();
-        store.push_sample(OLD_AOE, 2, sig_of(&img, 1, 0), None, Origin::Pooled, true);
+        store.push_sample(OLD_AOE, 2, sig_of(&img, 1, 0), None, Origin::Pooled, true, 0);
         store.save(&dir).expect("save");
 
         let LoadedStore { store: loaded, .. } = TemplateStore::load(&dir);
@@ -3658,7 +4587,7 @@ mod tests {
         let img = fixture();
         let dir = temp_dir("rekey-pooled-owed");
         let mut store = TemplateStore::new();
-        store.push_sample(OLD_AOE, 2, sig_of(&img, 1, 0), None, Origin::Pooled, true);
+        store.push_sample(OLD_AOE, 2, sig_of(&img, 1, 0), None, Origin::Pooled, true, 0);
         store.save(&dir).expect("save");
 
         let LoadedStore { rekeyed, .. } = TemplateStore::load(&dir);
@@ -3676,7 +4605,7 @@ mod tests {
         let img = fixture();
         let dir = temp_dir("rekey-once");
         let mut store = TemplateStore::new();
-        store.push_sample(OLD_AOE, 2, sig_of(&img, 1, 0), None, Origin::Local, true);
+        store.push_sample(OLD_AOE, 2, sig_of(&img, 1, 0), None, Origin::Local, true, REGISTRATION);
         store.save(&dir).expect("save");
         let LoadedStore { store: first, .. } = TemplateStore::load(&dir);
         first.save(&dir).expect("save the re-keyed store");
@@ -3695,7 +4624,7 @@ mod tests {
         let img = fixture();
         let dir = temp_dir("rekey-untouched");
         let mut store = TemplateStore::new();
-        store.push_sample("Chain", 2, sig_of(&img, 1, 0), None, Origin::Local, true);
+        store.push_sample("Chain", 2, sig_of(&img, 1, 0), None, Origin::Local, true, REGISTRATION);
         store.save(&dir).expect("save");
 
         let LoadedStore { store: loaded, rekeyed, .. } = TemplateStore::load(&dir);
@@ -3720,6 +4649,7 @@ mod tests {
             Some(RgbaImage::new(44, 44)),
             Origin::Local,
             true,
+            REGISTRATION,
         );
         store.save(&dir).expect("save");
         let LoadedStore { store: loaded, rekeyed, .. } = TemplateStore::load(&dir);
@@ -3761,6 +4691,7 @@ mod tests {
             Some(RgbaImage::new(44, 44)),
             Origin::Local,
             true,
+            REGISTRATION,
         );
         store.save(&dir).expect("save");
         let LoadedStore { store: loaded, rekeyed, .. } = TemplateStore::load(&dir);
@@ -3907,6 +4838,7 @@ mod tests {
             3,
             original.clone(),
             None,
+            REGISTRATION,
             &MercGeometry::default().thresholds,
         );
         store.save(&dir).expect("save");
@@ -3979,7 +4911,7 @@ mod tests {
         let img = fixture();
         let dir = temp_dir("purge-v2");
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, REGISTRATION, &MercGeometry::default().thresholds);
         store.save(&dir).expect("save");
         let before = std::fs::read_to_string(dir.join("index.json")).expect("read");
 
@@ -4409,6 +5341,7 @@ mod tests {
                         None,
                         Origin::Local,
                         false,
+                        REGISTRATION,
                     );
                 }
                 store
@@ -4748,7 +5681,7 @@ mod tests {
             let img = mounted("multistrike--t3-raw.png");
             let sig = normalize_cell(&img, whole_of(&img), &g).expect("normalizes");
             let mut store = TemplateStore::new();
-            store.push_sample("Multistrike", 3, sig, None, Origin::Local, false);
+            store.push_sample("Multistrike", 3, sig, None, Origin::Local, false, REGISTRATION);
 
             let m = store.match_family(
                 &cell_candidates(&img, whole_of(&img), &g).expect("normalizes"),
@@ -5061,7 +5994,7 @@ mod tests {
                 } else {
                     c.crops[i].family.clone()
                 };
-                store.push_sample(&family, 2, c.templates[i].clone(), None, Origin::Local, false);
+                store.push_sample(&family, 2, c.templates[i].clone(), None, Origin::Local, false, REGISTRATION);
             }
 
             let fast = store.match_family(&c.probes[probe], &t);
@@ -5163,6 +6096,7 @@ mod tests {
                         None,
                         Origin::Local,
                         false,
+                        REGISTRATION,
                     );
                 }
             }
@@ -5245,7 +6179,7 @@ mod tests {
         /// is the thing under test.
         fn holding(family: &str, tier: u8, sig: CellSig) -> TemplateStore {
             let mut store = TemplateStore::new();
-            store.push_sample(family, tier, sig, None, Origin::Local, false);
+            store.push_sample(family, tier, sig, None, Origin::Local, false, REGISTRATION);
             store
         }
 
@@ -5266,7 +6200,7 @@ mod tests {
             );
             let mut store = holding("Physical as Extra Chaos", 3, stored);
 
-            let outcome = store.learn("Brittle Chance", 3, confirmed, None, &t);
+            let outcome = store.learn("Brittle Chance", 3, confirmed, None, REGISTRATION, &t);
 
             let LearnOutcome::ConflictsWith {
                 family,
@@ -5315,7 +6249,7 @@ mod tests {
             );
             let mut store = holding("Faster Projectiles", 3, stored);
 
-            let outcome = store.learn("Concentrated Effect", 3, confirmed, None, &t);
+            let outcome = store.learn("Concentrated Effect", 3, confirmed, None, REGISTRATION, &t);
 
             assert_eq!(outcome, LearnOutcome::Stored, "the blend scored {score}");
             assert_eq!(
@@ -5468,6 +6402,7 @@ mod tests {
                 None,
                 Origin::Pooled,
                 false,
+                0,
             );
 
             let out = store.merge_pulled(
@@ -5504,6 +6439,7 @@ mod tests {
                 None,
                 Origin::Pooled,
                 false,
+                0,
             );
 
             let out = store.merge_pulled(
@@ -5541,7 +6477,7 @@ mod tests {
         /// A store holding one SEED, by the back door.
         fn seeded(family: &str, tier: u8, sig: CellSig) -> TemplateStore {
             let mut store = TemplateStore::new();
-            store.push_sample(family, tier, sig, None, Origin::Seed, false);
+            store.push_sample(family, tier, sig, None, Origin::Seed, false, 0);
             store
         }
 
@@ -5571,7 +6507,7 @@ mod tests {
         fn a_seed_does_not_survive_a_save_and_load() {
             let dir = temp_dir("save");
             let mut store = seeded("Faster Casting", 2, template(APART.0));
-            store.push_sample("Arrow Nova", 3, template(APART.1), None, Origin::Local, false);
+            store.push_sample("Arrow Nova", 3, template(APART.1), None, Origin::Local, false, REGISTRATION);
 
             store.save(&dir).expect("save");
             let LoadedStore { store: loaded, problems, .. } = TemplateStore::load(&dir);
@@ -5591,7 +6527,7 @@ mod tests {
         #[test]
         fn a_seed_is_not_a_learned_key() {
             let mut store = seeded("Faster Casting", 2, template(APART.0));
-            store.push_sample("Arrow Nova", 3, template(APART.1), None, Origin::Local, false);
+            store.push_sample("Arrow Nova", 3, template(APART.1), None, Origin::Local, false, REGISTRATION);
 
             assert_eq!(store.learned_keys(), ["Arrow Nova--3"]);
             assert_eq!(store.seeded_families(), ["Faster Casting"]);
@@ -5604,7 +6540,7 @@ mod tests {
         #[test]
         fn a_seed_is_not_a_pooled_key() {
             let mut store = seeded("Faster Casting", 2, template(APART.0));
-            store.push_sample("Arrow Nova", 3, template(APART.1), None, Origin::Pooled, false);
+            store.push_sample("Arrow Nova", 3, template(APART.1), None, Origin::Pooled, false, 0);
 
             assert_eq!(store.pooled_keys(), ["Arrow Nova--3"]);
         }
@@ -5643,6 +6579,7 @@ mod tests {
                     None,
                     Origin::Local,
                     false,
+                    REGISTRATION,
                 );
             }
 
@@ -5661,7 +6598,7 @@ mod tests {
             let mut store = seeded("Physical as Extra Chaos", 3, template(SAME_ART.0));
             let before = store.seeded_families();
 
-            let outcome = store.learn("Brittle Chance", 3, template(SAME_ART.1), None, &t);
+            let outcome = store.learn("Brittle Chance", 3, template(SAME_ART.1), None, REGISTRATION, &t);
 
             assert_eq!(outcome, LearnOutcome::Stored);
             assert_eq!(store.learned_keys(), ["Brittle Chance--3"]);
@@ -5683,7 +6620,7 @@ mod tests {
             let art = template(APART.0);
             let mut store = seeded("Faster Casting", 2, art.clone());
 
-            let outcome = store.learn("Faster Casting", 2, art, None, &t);
+            let outcome = store.learn("Faster Casting", 2, art, None, REGISTRATION, &t);
 
             assert_eq!(outcome, LearnOutcome::Stored);
             assert_eq!(store.learned_keys(), ["Faster Casting--2"]);
@@ -5768,7 +6705,7 @@ mod tests {
         fn evicting_a_seed_does_not_let_a_sample_past_the_local_incumbent() {
             let t = Thresholds::default();
             let mut store = holding("Physical as Extra Chaos", 3, template(SAME_ART.0));
-            store.push_sample("Ailment Damage", 2, template(SAME_ART.1), None, Origin::Seed, false);
+            store.push_sample("Ailment Damage", 2, template(SAME_ART.1), None, Origin::Seed, false, 0);
 
             let out = store.merge_pulled(
                 &pull(vec![PooledSample {
@@ -5791,7 +6728,7 @@ mod tests {
         #[test]
         fn forgetting_a_seed_leaves_the_familys_confirmations_alone() {
             let mut store = seeded("Faster Casting", 2, template(APART.0));
-            store.push_sample("Faster Casting", 3, template(APART.0), None, Origin::Local, false);
+            store.push_sample("Faster Casting", 3, template(APART.0), None, Origin::Local, false, REGISTRATION);
 
             assert!(store.forget_seed("Faster Casting"));
             assert!(!store.forget_seed("Faster Casting"), "nothing left to forget");
@@ -5805,7 +6742,7 @@ mod tests {
         #[test]
         fn the_persisted_count_is_the_number_save_writes() {
             let mut store = seeded("Faster Casting", 2, template(APART.0));
-            store.push_sample("Arrow Nova", 3, template(APART.1), None, Origin::Local, false);
+            store.push_sample("Arrow Nova", 3, template(APART.1), None, Origin::Local, false, REGISTRATION);
 
             assert_eq!(store.len(), 2);
             assert_eq!(store.persisted_len(), 1);
@@ -5860,7 +6797,7 @@ mod tests {
             let mut store = seeded("Faster Casting", 2, template(APART.0));
             assert!(!store.has_non_seed("Faster Casting", 2));
 
-            store.push_sample("Faster Casting", 2, template(APART.1), None, Origin::Pooled, false);
+            store.push_sample("Faster Casting", 2, template(APART.1), None, Origin::Pooled, false, 0);
             assert!(store.has_non_seed("Faster Casting", 2));
         }
     }
