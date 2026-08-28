@@ -3,6 +3,8 @@
 Status: current. Last verified 2026-07-26; the desktop <-> server ordering
 section was added and verified 2026-08-25, and the desktop release channels
 section 2026-08-25 (beta channel not yet exercised by a real tag; the client-side dual-manifest check ships with POE-203 WI-2).
+The merc registration reset runbook was written 2026-08-28 against the POE-215
+plan and the shipped server code; it is a one-off and has not been executed yet.
 
 Canonical for: how `main` reaches production, why the deploy is path-filtered, and
 what a green pipeline does and does not tell you.
@@ -212,6 +214,130 @@ of the new name are refused. On a shrink the server is ahead by construction,
 and it refuses uploads of the DROPPED name from desktops that still derive it —
 that refusal is the intended outcome, because those uploads would key art
 nothing can ever match again.
+
+### The merc registration reset (POE-215, one-off)
+
+POE-214 made the desktop cut a mercenary icon crop at the cell geometry it
+actually fitted, and record that registration on the sample. Every sample
+learned before it — local and pooled alike — is cut 4-6 px off and cannot be
+matched against a correctly registered one. The shared pool holds 22 such
+pre-fit samples and its upload endpoint has no role gate (any device may
+publish), so it keeps accepting pre-fit art from every install still on v0.8.0
+until that install runs the fixed build.
+
+The order is the general one above, in its sharpest form: **purge the pool ->
+restart the server -> verify the corpus is empty -> push the beta tag -> first
+start on each device.** A device that starts before the purge lands pulls the
+pre-fit art straight back in.
+
+**1. Copy both device stores out first.** On each machine, copy
+`%APPDATA%\profitofexile\merc-icons\` somewhere outside the app —
+`Screenshots/merc-icons-<machine>/` is the precedent. The reset moves what it
+drops into `merc-icons\pre-fit\` rather than deleting it, and 78 of the crops
+are already committed under `desktop/src-tauri/tests/fixtures/merc-icon-crops/`,
+so this is belt and braces rather than the only copy. Do it anyway; it costs a
+drag.
+
+**2. The purge — audit, then backdate.** Both statements run against the
+TimescaleDB container. Look it up by its stable id prefix, never by a full
+container name (same reason as *Verifying a deploy landed* above):
+
+```
+PROD_HOST=...        # see private ops notes
+DB_SERVICE_ID=...    # TimescaleDB service, stable id prefix
+
+ssh "$PROD_HOST" "docker exec \$(docker ps -q -f name=$DB_SERVICE_ID) \
+  psql -U profitofexile -d profitofexile -c \"SELECT id, family, tier, device_id, created_at FROM merc_icon_templates WHERE format_version = 2 AND tombstoned_at IS NULL ORDER BY family, tier, id;\""
+```
+
+Expect 22 rows. Then, with the same predicate:
+
+```
+ssh "$PROD_HOST" "docker exec \$(docker ps -q -f name=$DB_SERVICE_ID) \
+  psql -U profitofexile -d profitofexile -c \"UPDATE merc_icon_templates SET tombstoned_at = NOW() - INTERVAL '31 days' WHERE format_version = 2 AND tombstoned_at IS NULL;\""
+```
+
+**Why a backdated tombstone and not a `DELETE`, and why 31 days.**
+`Repository.retirementCutoff` is `NOW() - RetiredMatchWindow`, and
+`RetiredMatchWindow` is 30 days (`internal/mercenary/pool.go`). A tombstone
+older than that cutoff is invisible to all three reads: `poolSQL` treats the row
+as absent when deciding an upload, `corpusSQL` never served it once
+`tombstoned_at` was non-NULL, and `tombstonesSQL` filters on `tombstoned_at >
+cutoff` so the key is not published to clients either. That last one is the
+point of backdating rather than using plain `NOW()`: a *live* tombstone would be
+served, and `merge_pulled`'s tombstone rule makes every client delete its own
+local samples under that key — for the next 30 days, including the good samples
+the fixed build is about to learn. And a `DELETE` is out because the pool's
+contract is that the server never deletes a row; retirement is the only removal
+verb it has. The `WHERE ... tombstoned_at IS NULL` predicate excludes rows the
+statement already touched, so both statements are safe to re-run.
+
+**3. Drop the corpus cache and verify.** The served corpus is cached in-process
+and invalidated only by the write paths (upload, tombstone) — a purge done in
+SQL is invisible to it. Restart the server container, or wait out
+`DefaultMercCorpusTTL` (5 minutes,
+`internal/server/handlers/mercenary.go`). Then:
+
+```
+curl -i https://profitofexile.top/api/desktop/merc-templates
+```
+
+The read is public — no `X-Device-ID` header, and `format_version` defaults to
+the server's supported version (2). Two things must hold: a **new** `ETag`, and
+`"templates": []`. A stale ETag means the cache did not drop; a non-empty
+`templates` means the `UPDATE` did not match what you think it did.
+
+**4. Push the beta tag** (owner). Only now — see the ordering rule above.
+
+**5. First start on each device, in the log.** The reset is one-shot and marked
+in the sync file, so it runs exactly once per install:
+
+- The reset line: `Merc: registration reset — dropped N local + M pooled
+  pre-fit samples (kept in pre-fit/: F file(s)), K sample(s) left, ETag
+  cleared; pool pull skipped this start — verify the pool purge (POE-215
+  runbook), then restart`. The client refuses to pull on the start it reset,
+  precisely so a purge you have not actually completed cannot immediately
+  undo it. (A store with nothing to drop logs `… no pre-fit samples to drop
+  (K sample(s) left), ETag cleared` and pulls normally.)
+- A reset that could **not** finish says so instead: the line carries the
+  problems in `[…]`, does NOT claim `ETag cleared`, and is followed by `Merc:
+  the registration reset did not finish — the pool ETag is UNCHANGED and the
+  reset stays armed for the next start`. Nothing is stranded — an entry whose
+  art would not move keeps its `index.json` row and is retried, and a reset that
+  could not open `pre-fit\` at all drops nothing and does not skip the pull.
+  Restart the app; if the same line repeats, something is holding the store
+  directory open (AV scan, OneDrive sync) — close it and restart again.
+- Second start: **no** reset line, and a normal pull that returns an empty
+  corpus with a new ETag.
+- Hover-confirm a Frame- or Held-fitted cell: `template saved`, and the upload
+  answers `stored`, not `capped`.
+- Fresh raws are 36x36 (PC) / 40x40 (laptop) with no gold frame line in them.
+- The load seam prints nothing but `Merc: N pooled samples of unknown
+  registration — the pool accepts uploads from pre-fit installs until they
+  upgrade`; a `Merc: WARNING — … unknown registration survived the reset`
+  line means the reset did not do its job. An OCR-guess cell that is
+  confirmed logs `template NOT learned — the cell was cut at the OCR guess
+  (fit declined, nothing held)` and is not uploaded.
+
+That last count is the live monitor. Until every install is on the fixed build,
+a v0.8.0 device can re-pollute the pool with pre-fit uploads, and a rising
+pooled-unknown count is how you see it. A second purge is the same two
+statements.
+
+**6. Phase 2 — the coupled re-harvest.** The sweep against a re-harvested corpus
+and the re-harvest itself are Windows-session work under the fixed build, and
+these move together or not at all: manifest `source`;
+`seventy_six_of_the_seventy_eight_committed_crops_carry_the_frame_step` (flips
+to 0 — its `min().expect` panics on empty, so reshape it, do not renumber);
+`CROP_INNER 39` becomes two sizes (36 PC / 40 laptop), which changes the shape
+of `every_crop_a_reader_loads_is_cut_at_the_one_corpus_geometry` and makes every
+band partition by crop size (`blend` refuses cross-size pairs); `POISONED[25]`;
+the same- and cross-family band literals; `VISUAL_FAMILIES`; `seed-map.json`
+regeneration (`MERC_SEED_MAP_UPDATE=1`); adding a `row_means` mirror of the two
+registration proofs (`column_means` exists, `row_means` does not yet); then the
+sweep itself, the `SEED_ART_*` docs, and deleting `SEED_ART_OFFSET_FRAC_PREFIT`
+if it was introduced. Go is **not** coupled — the parity golden derives its
+window from the crop.
 
 ## When you need a manual deploy
 
