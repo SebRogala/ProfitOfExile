@@ -219,7 +219,7 @@ nothing can ever match again.
 
 POE-214 made the desktop cut a mercenary icon crop at the cell geometry it
 actually fitted, and record that registration on the sample. Every sample
-learned before it — local and pooled alike — is cut 4-6 px off and cannot be
+learned before it — local and pooled alike — is cut 6-12 px off and cannot be
 matched against a correctly registered one. The shared pool holds 22 such
 pre-fit samples and its upload endpoint has no role gate (any device may
 publish), so it keeps accepting pre-fit art from every install still on v0.8.0
@@ -312,9 +312,10 @@ in the sync file, so it runs exactly once per install:
 - Hover-confirm a Frame- or Held-fitted cell: `template saved`, and the upload
   answers `stored`, not `capped`.
 - Fresh raws are 36x36 (PC) / 40x40 (laptop) with no gold frame line in them.
-- The load seam prints nothing but `Merc: N pooled samples of unknown
-  registration — the pool accepts uploads from pre-fit installs until they
-  upgrade`; a `Merc: WARNING — … unknown registration survived the reset`
+- The load seam prints NOTHING on the happy path (after a purge the pooled
+  count is zero, and the count line is emitted only when it is non-zero); a
+  `Merc: N pooled samples of unknown registration — the pool accepts uploads
+  from pre-fit installs until they upgrade` line is the re-pollution monitor; a `Merc: WARNING — … unknown registration survived the reset`
   line means the reset did not do its job. An OCR-guess cell that is
   confirmed logs `template NOT learned — the cell was cut at the OCR guess
   (fit declined, nothing held)` and is not uploaded.
