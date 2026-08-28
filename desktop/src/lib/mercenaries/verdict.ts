@@ -578,8 +578,10 @@ function evaluateRuleset(
 	// A fail outranks an unknown: a mercenary carrying a forbidden stat is out
 	// whatever else could not be read. A ruleset with NOTHING applied — every
 	// group parked or contextual — has asked the mercenary for nothing, so it is
-	// unknown rather than a pass nobody earned. None of the twenty-four rulesets
-	// (twenty saved searches, four authored) is in that state; a future one could be.
+	// unknown rather than a pass nobody earned. None of the twenty-six rulesets
+	// (twenty-two transcribe a saved search — from twenty-one fixture files, two
+	// rungs sharing one — and four are authored) is in that state; a future one
+	// could be.
 	const outcome: RulesetOutcome =
 		applied.length === 0
 			? 'unknown'

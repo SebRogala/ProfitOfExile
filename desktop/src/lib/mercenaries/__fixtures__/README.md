@@ -3,7 +3,7 @@
 Committed ground truth for `lib/mercenaries/rulesets.ts`. The typed rulesets are a
 transcription of these files; `rulesets.test.ts` asserts the transcription against
 them, so a typo in the data module fails against raw GGG JSON rather than against
-itself — for the 20 GGG-saved files. The four authored `guide-c-*.json` files are the
+itself — for the 21 GGG-saved files. The four authored `guide-c-*.json` files are the
 builder's own output, and what that check is worth for them is stated under "Authored
 queries (guide-c)".
 
@@ -27,7 +27,7 @@ its own hash in the top-level `id` field. The human-facing page for the same sea
 | `WvKGjV8Kfm.json` | guide-a | Manyshot |
 | `LgkKKmllTn.json` | guide-a | Kinetist v1 |
 | `5nd22GvKCa.json` | guide-a | Combatant |
-| `7nRvBzl2S5.json` | guide-b | Kinetist ladder — MV |
+| `7nRvBzl2S5.json` | guide-b, guide-d | Kinetist ladder — MV / 20D |
 | `BgzkZKGQF8.json` | guide-b | Kinetist ladder — Mid |
 | `LgkGrPO5Fn.json` | guide-b | Kinetist ladder — End |
 | `zbrQyEqah4.json` | guide-b | Kinetist ladder — GG |
@@ -44,12 +44,29 @@ its own hash in the top-level `id` field. The human-facing page for the same sea
 | `mkgR2DbeS6.json` | guide-b | Wild Strike ladder — Midgame |
 | `jWRDpypkCX.json` | guide-b | Wild Strike ladder — Endgame |
 | `bGDrZYZaCL.json` | guide-b | Wild Strike ladder — GG Merc |
+| `4mKr0Jbwh9.json` | guide-d | Kinetist ladder — budget |
 
-**Decoded:** the four Manyshot files and the nine Combatant files, 2026-08-26. The four
-Manyshot files are the only ones here that carry no `filters` block at all — no
-item-level floor — so `rulesets.ts` leaves `ilvlMin` absent on those rungs and the
-fidelity test reads the key as optional. The nine Combatant files set `ilvl` 83 like
-everything else.
+**Decoded:** the four Manyshot files and the nine Combatant files, 2026-08-26;
+`4mKr0Jbwh9.json`, 2026-08-28. The four Manyshot files are the only ones here that carry
+no `filters` block at all — no item-level floor — so `rulesets.ts` leaves `ilvlMin`
+absent on those rungs and the fidelity test reads the key as optional. The nine
+Combatant files set `ilvl` 83 like everything else, and so does `4mKr0Jbwh9.json`.
+
+**One file, two rulesets.** `7nRvBzl2S5.json` is the oracle of BOTH
+`guide-b-kinetist-mv` and `guide-d-kinetist-20d`: XTheFarmerX's sheet republishes
+Nerotox's own Kinetist MV link as his "20D KB Merc" rung, so the two sources transcribe
+one saved search and there is nothing to commit twice. A fixture belongs to a RULESET,
+not to a source, and `rulesets.test.ts` names this pair rather than leaving the sharing
+implied — anything else sharing an oracle is a ruleset pointed at the wrong file.
+
+**`4mKr0Jbwh9` is a TYPED hash.** It is not in XTheFarmerX's linked sheet — Sebastian
+read it off the video's own trade tab (Merc Skills / Trade Filters chapters, 9:48–18:56)
+and re-fetched it. What the sheet publishes instead is a sibling, "Cheap Starter KB Merc"
+under `G6PdveWBib`, and the two differ only in the last min-2 damage group:
+`G6PdveWBib` lacks Faster Attacks (Tier 2) `mercenary.support_987` and Greater Faster
+Attacks (Tier 3) `mercenary.support_50485`. The typed hash therefore resolves to a
+coherent KB search of its own rather than to a mistyped sibling. `G6PdveWBib` is NOT
+committed: no ruleset transcribes it, and a fixture no test reads is a file that rots.
 
 ### Guide URLs
 
@@ -67,11 +84,21 @@ re-fetchable if you can find the search it came from again.
 - guide-c — one page, no searches at all:
   <https://mobalytics.gg/poe/builds/captainlance9-luminary-merc-bot>, section
   "Ideal Merc Options". See "Authored queries (guide-c)" below.
+- guide-d — one video, both searches: XTheFarmerX, "5 DIVINE BUDGET LIFE STACKING KB
+  MERC BUILD | Trade Links - Crafting - Merc Warrants" (2026-08-14, league Allflame),
+  <https://www.youtube.com/watch?v=LXoJCRmUaJI>, channel
+  <https://www.youtube.com/@XTheFarmerX_POE2>. Its description links a Google Sheet of
+  Better-Trading folders, which is where the 20D hash comes from:
+  <https://docs.google.com/spreadsheets/d/1c-9qyowK9jp8OIR0bwh8G0V3qjY8U6lEDAxA6xOUMdU/edit?gid=586502310>.
+  The budget hash is not in that sheet — see "One file, two rulesets" and
+  "`4mKr0Jbwh9` is a TYPED hash" above.
 
-Each video's description is the only place its trade links exist; the rung-level
-`guideUrl` in `rulesets.ts` names which video published which link. It is one video
-per LADDER for the first two and one video for BOTH Combatant ladders, so the guide
-URL cannot be derived from the ladder key.
+Each guide-b video's description is the only place its trade links exist; the rung-level
+`guideUrl` in `rulesets.ts` names which of those videos published which link. It is one
+video per LADDER for the first two and one video for BOTH Combatant ladders, so the
+guide URL cannot be derived from the ladder key. Guide-d needs none of that: one video
+publishes both its rungs, so they inherit the source URL the way guide-a's and guide-c's
+rulesets do.
 
 The Combatant description carries one prose note, about all nine searches rather than
 any one of them, so no rung takes it as an `authorNote`: "Please play around yourself
@@ -101,8 +128,8 @@ skills and support links in sentences and publishes no trade link for any of the
 They are written in the same body shape a saved search comes back in — `{"id": …,
 "query": {…}}`, with the `id` naming the file rather than a hash and no `filters` block,
 because the prose sets no item-level floor — so `rulesets.test.ts` reads them through the
-same `fromFixture` reader as the other twenty and the fidelity sweep covers all
-twenty-four.
+same `fromFixture` reader as the other twenty-one and the fidelity sweep covers all
+twenty-six rulesets.
 
 **What that check is worth, and what it is not.** It fails on a typed-model edit nobody
 meant to make. It cannot fail on a MISREADING of the guide: both sides of the comparison
