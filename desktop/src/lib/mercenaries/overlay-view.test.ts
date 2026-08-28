@@ -405,6 +405,26 @@ describe('the one guides line', () => {
 		expect(line).toEqual({ text: 'WORTH · CaptainLance (Kinetist)', tone: 'pass' });
 	});
 
+	// Two guides publish ONE saved search — XTheFarmerX's 20D rung is Nerotox's
+	// Kinetist MV link — so a mercenary answering it is WORTH to both. The line
+	// names both rather than collapsing them: they are two independent
+	// endorsements, and each names the rung whose search to comp against, which
+	// is the thing the player opens next.
+	it('names both guides when the one search they share is what said WORTH', () => {
+		const line = guidesLine(
+			verdict([
+				source('guide-b', 'Guide B', 'worth', ['guide-b-kinetist-mv'], [
+					ruleset('guide-b-kinetist-mv', 'Kinetist', 'mv')
+				]),
+				source('guide-d', 'XTheFarmerX', 'worth', ['guide-d-kinetist-20d'], [
+					ruleset('guide-d-kinetist-20d', 'Kinetist', 'mid', '20D')
+				])
+			]),
+			capture([])
+		);
+		expect(line?.text).toBe('WORTH · Guide B (Kinetist mv), XTheFarmerX (Kinetist 20D)');
+	});
+
 	// A WORTH outranks a SKIP beside it: one guide paying for this mercenary is
 	// the actionable fact, and hiding it behind the other guide's no would lose
 	// the play entirely.

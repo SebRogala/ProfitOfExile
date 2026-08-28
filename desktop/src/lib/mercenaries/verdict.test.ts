@@ -509,9 +509,26 @@ describe('sources are evaluated independently', () => {
 			// Guide C asks this archetype for the skill row and no Kinetic Bolt,
 			// and says nothing about Barrage either way — a third opinion, not a
 			// tie-breaker between the first two.
-			['guide-c', 'worth']
+			['guide-c', 'worth'],
+			// Guide D's 20D rung IS guide B's MV search, so it answers the same
+			// Barrage the way guide B does. Its budget rung requires Greater
+			// Multiple Projectiles this mercenary has not got, and a source is
+			// worth as soon as one of its rungs passes.
+			['guide-d', 'worth']
 		]);
 		expect(sourceOf(verdict, 'guide-b').best).toEqual(['guide-b-kinetist-mv']);
+	});
+
+	// The consequence of two guides publishing ONE saved search (`7nRvBzl2S5`,
+	// Nerotox's Kinetist MV link republished as XTheFarmerX's 20D rung): a
+	// mercenary answering it is worth to both, and neither one's yes is derived
+	// from the other's — they are separate rulesets over separate sources.
+	it('calls a mercenary worth for both guides that publish the saved search it answers', () => {
+		const verdict = verdictOf(kinetistCapture());
+		expect(
+			(['guide-b', 'guide-d'] as const).map((id) => `${id} ${sourceOf(verdict, id).headline}`)
+		).toEqual(['guide-b worth', 'guide-d worth']);
+		expect(sourceOf(verdict, 'guide-d').best).toEqual(['guide-d-kinetist-20d']);
 	});
 
 	it('reports a source the caller switched off as off, with nothing evaluated', () => {
@@ -802,8 +819,8 @@ describe('the row anchor of a `mercenary` group', () => {
 
 	// A sweep that stopped passing anything would report no offenders and look
 	// green, so what it reached is asserted as well as what it found. Every
-	// guide-b ladder, both untiered guide-a rulesets and all four guide-c
-	// rulesets that any of these captures can answer are in here.
+	// guide-b ladder, both guide-d rungs, both untiered guide-a rulesets and all
+	// four guide-c rulesets that any of these captures can answer are in here.
 	it('sweeps a passing rung of every ladder, both guide-a archetypes and all four guide-c rulesets', () => {
 		expect([...new Set(sweep().visited)].sort()).toEqual([
 			'guide-a-combatant',
@@ -828,7 +845,9 @@ describe('the row anchor of a `mercenary` group', () => {
 			'guide-c-blade-ambusher',
 			'guide-c-combatant',
 			'guide-c-kinetist',
-			'guide-c-manyshot'
+			'guide-c-manyshot',
+			'guide-d-kinetist-20d',
+			'guide-d-kinetist-budget'
 		]);
 	});
 
@@ -1426,5 +1445,37 @@ describe('guide C — a ruleset transcribed from prose', () => {
 		]);
 		const kinetist = rulesetOf(verdictOf(capture), 'guide-c', 'guide-c-kinetist');
 		expect(kinetist.reasons).toContain('Bonuses fired: Haste');
+	});
+});
+
+/**
+ * Guide D's cheap rung is the one search here that is Nerotox's Mid rung with
+ * different switches, so what is worth checking is where it DISAGREES: it
+ * requires Greater Multiple Projectiles where Nerotox requires Return, and its
+ * live deny group refuses the whole Pierce family — including the Pierce that
+ * guide B's MV rung, the search guide D's own upper rung republishes, requires.
+ */
+describe('guide D — the budget rung', () => {
+	it('fails a Kinetist merc without the Greater Multiple Projectiles its core group requires', () => {
+		const verdict = verdictOf(kinetistCapture());
+		expect(groupOf(verdict, 'guide-d', 'guide-d-kinetist-budget', 'core').outcome).toBe('fail');
+		expect(rulesetOf(verdict, 'guide-d', 'guide-d-kinetist-budget').reasons).toContain(
+			'Core skill + links on row 1: needs 2, has 1 — missing Greater Multiple Projectiles (Tier 3)'
+		);
+	});
+
+	it('passes the same merc once it carries that link', () => {
+		expect(rulesetOf(verdictOf(kinetistCapture([GMP])), 'guide-d', 'guide-d-kinetist-budget').outcome).toBe(
+			'pass'
+		);
+	});
+
+	// The two rungs of this one ladder disagree about Pierce, which is what makes
+	// the merged `deny` slot worth its own check: a mercenary can answer the 20D
+	// search and be refused by the budget one.
+	it('denies a Pierce the rung above it requires', () => {
+		const verdict = verdictOf(kinetistCapture([GMP, PIERCE]));
+		expect(groupOf(verdict, 'guide-d', 'guide-d-kinetist-budget', 'deny').outcome).toBe('fail');
+		expect(rulesetOf(verdict, 'guide-d', 'guide-d-kinetist-20d').outcome).toBe('pass');
 	});
 });

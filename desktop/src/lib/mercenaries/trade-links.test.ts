@@ -12,6 +12,7 @@ import WvKGjV8Kfm from './__fixtures__/WvKGjV8Kfm.json';
 import LgkKKmllTn from './__fixtures__/LgkKKmllTn.json';
 import n5nd22GvKCa from './__fixtures__/5nd22GvKCa.json';
 import n7nRvBzl2S5 from './__fixtures__/7nRvBzl2S5.json';
+import n4mKr0Jbwh9 from './__fixtures__/4mKr0Jbwh9.json';
 import BgzkZKGQF8 from './__fixtures__/BgzkZKGQF8.json';
 import LgkGrPO5Fn from './__fixtures__/LgkGrPO5Fn.json';
 import zbrQyEqah4 from './__fixtures__/zbrQyEqah4.json';
@@ -39,6 +40,7 @@ const FIXTURES: Record<string, { id: string; query: unknown }> = {
 	LgkKKmllTn,
 	'5nd22GvKCa': n5nd22GvKCa,
 	'7nRvBzl2S5': n7nRvBzl2S5,
+	'4mKr0Jbwh9': n4mKr0Jbwh9,
 	BgzkZKGQF8,
 	LgkGrPO5Fn,
 	zbrQyEqah4,
@@ -137,11 +139,11 @@ describe('rulesets transcribed from prose', () => {
 		]);
 	});
 
-	// The positive control the assertion above needs: the other twenty rulesets
-	// DO carry a hash, so an empty authored list would not be the two sides
-	// agreeing that nothing is authored.
-	it('leaves the twenty saved searches addressable by hash', () => {
-		expect(SAVED.length).toBe(20);
+	// The positive control the assertion above needs: the other twenty-two
+	// rulesets DO carry a hash, so an empty authored list would not be the two
+	// sides agreeing that nothing is authored.
+	it('leaves the twenty-two saved searches addressable by hash', () => {
+		expect(SAVED.length).toBe(22);
 		expect(SAVED.every((r) => r.authored === undefined)).toBe(true);
 	});
 
@@ -155,17 +157,20 @@ describe('rulesets transcribed from prose', () => {
 });
 
 describe('source guide links', () => {
-	// All three identified 2026-08-26. Guide A's and guide B's saved-search hashes
-	// are exactly the trade links on that page / in those video descriptions;
-	// guide B's URL is the CHANNEL, because its ladders come from different videos
-	// of it and pointing the source at one would misattribute the others' links.
-	// Guide C's page publishes no links at all — the URL is where the PROSE is, so
-	// a reader can re-check the transcription against the sentences it came from.
+	// The first three identified 2026-08-26, guide D 2026-08-28. Guide A's, guide
+	// B's and guide D's saved-search hashes are exactly the trade links on that
+	// page / in those video descriptions; guide B's URL is the CHANNEL, because
+	// its ladders come from different videos of it and pointing the source at one
+	// would misattribute the others' links, while guide D's is a single VIDEO
+	// because both of its rungs came out of that one. Guide C's page publishes no
+	// links at all — the URL is where the PROSE is, so a reader can re-check the
+	// transcription against the sentences it came from.
 	it('points each source at the page its rules were taken from', () => {
 		expect(MERC_SOURCES.map((s) => [s.id, s.guideUrl])).toEqual([
 			['guide-a', 'https://wealthyexile.com/strategies/7062/alchgo_astrolabe__merc_boss_rushing'],
 			['guide-b', 'https://www.youtube.com/channel/UCqIRIXItoDOlET2oeFn6WKA'],
-			['guide-c', 'https://mobalytics.gg/poe/builds/captainlance9-luminary-merc-bot']
+			['guide-c', 'https://mobalytics.gg/poe/builds/captainlance9-luminary-merc-bot'],
+			['guide-d', 'https://www.youtube.com/watch?v=LXoJCRmUaJI']
 		]);
 	});
 });
@@ -198,10 +203,10 @@ describe('per-ruleset guide URLs', () => {
 		]);
 	});
 
-	// Guide A's and guide C's rulesets each come off ONE page, so they inherit
-	// the source URL rather than repeating it per ruleset.
+	// Guide A's, guide C's and guide D's rulesets each come off ONE page or video,
+	// so they inherit the source URL rather than repeating it per ruleset.
 	it('leaves a one-page source’s rulesets without a URL of their own', () => {
-		const onePage = ['guide-a', 'guide-c'].flatMap(
+		const onePage = ['guide-a', 'guide-c', 'guide-d'].flatMap(
 			(id) => (MERC_SOURCES.find((s) => s.id === id) as MercSource).rulesets
 		);
 		expect(onePage.map((r) => `${r.id} ${r.guideUrl ?? 'inherits the source URL'}`)).toEqual([
@@ -211,7 +216,9 @@ describe('per-ruleset guide URLs', () => {
 			'guide-c-kinetist inherits the source URL',
 			'guide-c-manyshot inherits the source URL',
 			'guide-c-blade-ambusher inherits the source URL',
-			'guide-c-combatant inherits the source URL'
+			'guide-c-combatant inherits the source URL',
+			'guide-d-kinetist-budget inherits the source URL',
+			'guide-d-kinetist-20d inherits the source URL'
 		]);
 	});
 });
@@ -262,7 +269,7 @@ describe('round-trip normaliser', () => {
 
 describe('rulesetQuery', () => {
 	for (const ruleset of allRulesets()) {
-		// For the twenty saved searches the oracle is GGG's own JSON: the builder
+		// For the twenty-two saved searches the oracle is GGG's own JSON: the builder
 		// walks the typed data model, and what comes out has to be the response
 		// returned for that hash. For guide-c's four the fixture is this builder's
 		// own output — a weaker check, and the only one available, since there is

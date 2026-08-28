@@ -18,6 +18,7 @@ import WvKGjV8Kfm from './__fixtures__/WvKGjV8Kfm.json';
 import LgkKKmllTn from './__fixtures__/LgkKKmllTn.json';
 import n5nd22GvKCa from './__fixtures__/5nd22GvKCa.json';
 import n7nRvBzl2S5 from './__fixtures__/7nRvBzl2S5.json';
+import n4mKr0Jbwh9 from './__fixtures__/4mKr0Jbwh9.json';
 import BgzkZKGQF8 from './__fixtures__/BgzkZKGQF8.json';
 import LgkGrPO5Fn from './__fixtures__/LgkGrPO5Fn.json';
 import zbrQyEqah4 from './__fixtures__/zbrQyEqah4.json';
@@ -82,6 +83,7 @@ const FIXTURES: Record<string, RawSavedSearch> = {
 	LgkKKmllTn: LgkKKmllTn as unknown as RawSavedSearch,
 	'5nd22GvKCa': n5nd22GvKCa as unknown as RawSavedSearch,
 	'7nRvBzl2S5': n7nRvBzl2S5 as unknown as RawSavedSearch,
+	'4mKr0Jbwh9': n4mKr0Jbwh9 as unknown as RawSavedSearch,
 	BgzkZKGQF8: BgzkZKGQF8 as unknown as RawSavedSearch,
 	LgkGrPO5Fn: LgkGrPO5Fn as unknown as RawSavedSearch,
 	zbrQyEqah4: zbrQyEqah4 as unknown as RawSavedSearch,
@@ -476,7 +478,7 @@ describe('the oracle a ruleset is checked against', () => {
 	 * from being handed a guide-c ruleset and building a trade link to a hash GGG
 	 * never issued — so which rulesets are on which side is pinned, not implied.
 	 */
-	it('gives the two saved-search guides a hash and guide-c a fixture file', () => {
+	it('gives the three saved-search guides a hash and guide-c a fixture file', () => {
 		const byKind = allRulesets().map(
 			(r) => `${r.id} ${r.savedSearch ? `saved=${r.savedSearch.hash}` : `authored=${r.authored?.file}`}`
 		);
@@ -486,7 +488,7 @@ describe('the oracle a ruleset is checked against', () => {
 			'guide-c-blade-ambusher authored=guide-c-blade-ambusher',
 			'guide-c-combatant authored=guide-c-combatant'
 		]);
-		expect(byKind.filter((row) => row.includes('saved=')).length).toBe(20);
+		expect(byKind.filter((row) => row.includes('saved=')).length).toBe(22);
 	});
 
 	it('resolves a saved ruleset to its GGG hash', () => {
@@ -524,17 +526,24 @@ describe('group entry keys', () => {
 	});
 });
 
-describe('Kinetist ladder', () => {
-	const KINETIST_GROUP_IDS = [
-		'deny',
-		'core',
-		'secondary',
-		'behavior',
-		'deny-supports',
-		'auras',
-		'damage'
-	];
+/**
+ * The seven slots of a Kinetist rung, in the saved searches' own order. Module
+ * scope because TWO sources are transcribed under them — guide-b's four rungs
+ * and guide-d's two — and the whole point of a slot id is that a rung of either
+ * can be diffed against a rung of the other. Two matching literals in two
+ * describes would let one ladder drift and still look pinned.
+ */
+const KINETIST_GROUP_IDS = [
+	'deny',
+	'core',
+	'secondary',
+	'behavior',
+	'deny-supports',
+	'auras',
+	'damage'
+];
 
+describe('Kinetist ladder', () => {
 	/**
 	 * The only differences the four rungs are allowed to have, taken from the POE-165
 	 * tier table. Values are indexed by rung, cheapest first: [mv, mid, end, gg].
@@ -802,17 +811,31 @@ describe('Frost Blades ladder', () => {
 			'return mercenary enabled=true min=-'
 		]);
 	});
+});
 
-	// `TIERS` spells both Endgame rungs 'end'; without this the matrix would head
-	// two columns 'endgame' and the verdict would name two rungs identically.
-	it('spells the two Endgame rungs apart and leaves every other rung’s tier to speak', () => {
+/**
+ * `tierLabel` is the rung's own wording, and it is declared exactly where the
+ * `TIERS` key cannot name the rung on its own. Two reasons that happens, one per
+ * source below, and the sweep is over EVERY ruleset so a label added anywhere
+ * else has to be justified here rather than appearing silently in a column head.
+ */
+describe('rungs whose tier key does not name them', () => {
+	it('spells each such rung the way its own guide spells it', () => {
 		expect(
 			allRulesets()
 				.filter((r) => r.tierLabel !== undefined)
 				.map((r) => `${r.id} ${r.tierLabel}`)
 		).toEqual([
+			// One ladder, two rungs, one tier: `TIERS` spells both 'end', and two
+			// columns headed 'endgame' would tell the reader the matrix is showing
+			// one search twice.
 			'guide-b-frost-blades-end-noreturn endgame (no return)',
-			'guide-b-frost-blades-end-return endgame (return)'
+			'guide-b-frost-blades-end-return endgame (return)',
+			// One tier per rung here — what `TIERS` cannot carry is the guide's own
+			// naming: XTheFarmerX calls his two searches "budget" and "20D", and
+			// 'mv'/'mid' would put words in his mouth about what they cost.
+			'guide-d-kinetist-budget budget',
+			'guide-d-kinetist-20d 20D'
 		]);
 	});
 });
@@ -879,6 +902,88 @@ describe('Wild Strike ladder', () => {
 		expect(
 			ladderNamed('wild-strike').map((r) => `${r.tier} ${groupOf(r, 'return')?.enabledInSearch}`)
 		).toEqual(['mv false', 'mid false', 'end false', 'gg true']);
+	});
+});
+
+/**
+ * XTheFarmerX's two-rung ladder. Same archetype and the same seven slots as
+ * Nerotox's, which is the point: the two sources are different opinions about
+ * one kind of mercenary, and the matrix can only diff them rung to rung while
+ * the slot ids agree.
+ */
+describe('guide-d Kinetist ladder', () => {
+	const GUIDE_D = MERC_SOURCES.find((s) => s.id === 'guide-d') as MercSource;
+
+	function guideDRungs(): MercRuleset[] {
+		const found = ladders(GUIDE_D)[0];
+		if (!found) throw new Error('guide-d declares no ladder');
+		return found;
+	}
+
+	// Id AND tier, because `ladders()` orders by `TIERS` and the ids alone would
+	// pass on a stable sort that never looked at a tier: the claim is that the
+	// budget rung is keyed `mv` and the 20D rung `mid`, and that this is the
+	// cheap-to-dear order.
+	it('lists its two rungs cheapest first', () => {
+		expect(guideDRungs().map((r) => `${r.id} ${r.tier}`)).toEqual([
+			'guide-d-kinetist-budget mv',
+			'guide-d-kinetist-20d mid'
+		]);
+	});
+
+	// The constraint that makes the two sources comparable, and the one thing the
+	// fixture-fidelity tests cannot see: group ids exist only in `rulesets.ts`.
+	// The budget rung's first `not` group denies the Pierce family as well as the
+	// three skills, and it is still the `deny` slot — a rung is allowed to put
+	// more in a slot, never to rename it.
+	it('transcribes both rungs under the same slot ids Nerotox’s rungs use', () => {
+		expect(guideDRungs().map((r) => r.groups.map((g) => g.id))).toEqual([
+			KINETIST_GROUP_IDS,
+			KINETIST_GROUP_IDS
+		]);
+	});
+
+	// The author publishes no price for either search — the ~5d / ~9d the listings
+	// opened at on 2026-08-28 is a live measurement, not his number. A `floor` is
+	// the guide author speaking (`verdict.ts` prints it as his), so inventing one
+	// from a measurement would attribute a price to someone who never quoted it.
+	it('quotes no price floor on either rung', () => {
+		expect(guideDRungs().map((r) => `${r.id} ${r.floor ?? 'no floor'}`)).toEqual([
+			'guide-d-kinetist-budget no floor',
+			'guide-d-kinetist-20d no floor'
+		]);
+	});
+});
+
+/**
+ * A fixture is the oracle of a RULESET, not of a source — and since XTheFarmerX
+ * republished Nerotox's Kinetist MV link as his own 20D rung, one committed
+ * search now answers two of them.
+ */
+describe('a saved search two sources transcribe', () => {
+	/** Oracle names more than one ruleset is checked against. */
+	function sharedOracles(): string[] {
+		const counts = new Map<string, number>();
+		for (const ruleset of allRulesets()) {
+			const oracle = oracleFixture(ruleset);
+			counts.set(oracle, (counts.get(oracle) ?? 0) + 1);
+		}
+		return [...counts.entries()].filter(([, n]) => n > 1).map(([oracle]) => oracle);
+	}
+
+	it('checks the guide-b MV rung and the guide-d 20D rung against one hash', () => {
+		expect(allRulesets().filter((r) => oracleFixture(r) === '7nRvBzl2S5').map((r) => r.id)).toEqual([
+			'guide-b-kinetist-mv',
+			'guide-d-kinetist-20d'
+		]);
+	});
+
+	// The other half: sharing is a documented fact about ONE search, so a second
+	// shared oracle is a ruleset pointed at the wrong fixture — which the
+	// per-ruleset fidelity test above would report as a transcription failure
+	// somewhere else entirely.
+	it('leaves every other ruleset an oracle of its own', () => {
+		expect(sharedOracles()).toEqual(['7nRvBzl2S5']);
 	});
 });
 
@@ -1061,13 +1166,14 @@ describe('source registry', () => {
 
 	// The line under each source's name on the page. It has to say WHOSE rules
 	// these are and which side of the trade they are written from, because the
-	// three sources disagree on purpose and a reader comparing three headlines
-	// cannot otherwise tell a seller's floor from a buyer's shopping list.
+	// sources disagree on purpose and a reader comparing their headlines cannot
+	// otherwise tell a seller's floor from a buyer's shopping list.
 	it('says whose rules each source carries and which side of the trade they take', () => {
 		expect(MERC_SOURCES.map((s) => `${s.label}: ${s.description ?? 'none'}`)).toEqual([
 			"Guide A: ckaiba's seller-side floors — wealthyexile strategy 7062",
 			"Guide B: Nerotox's tiered saved searches — three videos, four ladders",
-			"CaptainLance: CaptainLance's buyer-side ideal links for a Luminary merc bot — no prices, no floors"
+			"CaptainLance: CaptainLance's buyer-side ideal links for a Luminary merc bot — no prices, no floors",
+			"XTheFarmerX: XTheFarmerX's budget life-stacking KB merc — two saved searches, the upper one Nerotox's own link"
 		]);
 	});
 });
@@ -1078,10 +1184,14 @@ describe('buyer-contextual entries', () => {
 	 * saved searches say — the transcription tests above cannot see it drift,
 	 * because from the fixture's point of view these entries are ordinary enabled
 	 * filters. So the flag's exact placement is pinned here: Haste wherever a
-	 * guide gates on it, and the experimental Barrage toggle on the one rung that
-	 * has it switched on.
+	 * guide gates on it, and Barrage on the mapping search that keeps it live.
+	 *
+	 * The two Barrage rows are that ONE search seen twice. The ruling is about
+	 * the search, not about whoever published it, so guide-d's 20D rung — the
+	 * same hash as guide-b's MV rung, Barrage live in a `count` of one, byte for
+	 * byte — carries it too.
 	 */
-	it('flags Haste on every ruleset that gates on it, plus the MV Barrage', () => {
+	it('flags Haste on every ruleset that gates on it, plus Barrage on the MV search', () => {
 		const flagged = allRulesets().flatMap((ruleset) =>
 			ruleset.groups.flatMap((group) =>
 				group.entries
@@ -1095,7 +1205,9 @@ describe('buyer-contextual entries', () => {
 			'guide-b-kinetist-mv/auras/mercenary.skill_52155',
 			'guide-b-kinetist-mid/auras/mercenary.skill_52155',
 			'guide-b-kinetist-end/auras/mercenary.skill_52155',
-			'guide-b-kinetist-gg/auras/mercenary.skill_52155'
+			'guide-b-kinetist-gg/auras/mercenary.skill_52155',
+			'guide-d-kinetist-20d/secondary/mercenary.skill_1356',
+			'guide-d-kinetist-20d/auras/mercenary.skill_52155'
 		]);
 	});
 });

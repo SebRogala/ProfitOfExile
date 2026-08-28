@@ -1,33 +1,34 @@
 /**
  * Mercenary rulesets — the declarative data model behind the Mercenaries view page.
  *
- * THREE sources, and they do not all come from the same kind of thing. Guide-a
- * and guide-b are transcriptions of GGG trade SAVED SEARCHES: the raw responses
- * live in `__fixtures__/<hash>.json` (see that directory's README for provenance
- * and re-fetch commands) and `rulesets.test.ts` asserts this file against them,
- * so the fixtures — not this file — are the ground truth. Guide-c is a
- * transcription of PROSE: CaptainLance's "Ideal Merc Options" names skills and
- * support links in sentences and publishes no trade link at all, so those four
- * rulesets carry an `authored` fixture instead of a `savedSearch` and their
- * fixture is OUR OWN output, not GGG's. It is committed and asserted like the
- * others because it still catches a typed-model edit nobody meant to make, but
- * it cannot catch a MISREADING of the guide — only a human re-reading the page
- * can, and the prose is quoted in the group comments below so that re-read is
- * possible without leaving the file.
+ * FOUR sources, and they do not all come from the same kind of thing. Guide-a,
+ * guide-b and guide-d are transcriptions of GGG trade SAVED SEARCHES: the raw
+ * responses live in `__fixtures__/<hash>.json` (see that directory's README for
+ * provenance and re-fetch commands) and `rulesets.test.ts` asserts this file
+ * against them, so the fixtures — not this file — are the ground truth.
+ * Guide-c is a transcription of PROSE: CaptainLance's "Ideal Merc Options"
+ * names skills and support links in sentences and publishes no trade link at
+ * all, so those four rulesets carry an `authored` fixture instead of a
+ * `savedSearch` and their fixture is OUR OWN output, not GGG's. It is
+ * committed and asserted like the others because it still catches a
+ * typed-model edit nobody meant to make, but it cannot catch a MISREADING of
+ * the guide — only a human re-reading the page can, and the prose is quoted in
+ * the group comments below so that re-read is possible without leaving the
+ * file.
  *
  * The two kinds also point in opposite directions. Guide-a's rulesets are
- * seller-side (its author states price floors), guide-b's are a buyer's tier
- * ladder, and guide-c is a buyer's IDEAL: CaptainLance is telling a Luminary
- * merc-bot player what links to look for, with no prices and no floors. So a
- * guide-c pass says "this mercenary is what the build wants", never "this is
- * what it is worth".
+ * seller-side (its author states price floors), guide-b's and guide-d's are
+ * buyers' tier ladders, and guide-c is a buyer's IDEAL: CaptainLance is telling
+ * a Luminary merc-bot player what links to look for, with no prices and no
+ * floors. So a guide-c pass says "this mercenary is what the build wants", never
+ * "this is what it is worth".
  *
  * Entry `name` values are copied verbatim from `__fixtures__/mercenary-stats.json`
  * (GGG's Mercenary stat vocabulary), `(Tier N)` suffix included. They are display
  * text, not keys: two different ids can share one name.
  *
  * Guide-b is Nerotox's YouTube CHANNEL, not one video: the source URL is the
- * channel and every tiered ruleset carries the `guideUrl` of the video whose
+ * channel and every one of ITS rungs carries the `guideUrl` of the video whose
  * description published its trade link. Three videos, four ladders so far — the
  * Kinetist ladder (2026-08-08), the Manyshot ladder (2026-07-29), and the Frost
  * Blades and Wild Strike ladders that ONE Combatant video (2026-08-08) publishes
@@ -41,6 +42,9 @@
  * Kinetist rungs here, and guide-a's Kinetist aura group; Haste is a plain
  * switched-off bonus where a source simply does not gate on it — the Manyshot
  * mid rung's search, and guide-c's Kinetist buff group.
+ *
+ * Guide-d is the other shape — one video for both its rungs, so they inherit
+ * the source URL and carry no `guideUrl` of their own.
  *
  * The Combatant description carries one prose note and NO rung takes it as an
  * `authorNote`, because it is about the nine searches together rather than any
@@ -65,11 +69,26 @@
  * Guide-c has no such audit to do: there is no saved search to disagree with the
  * prose, so the prose IS the transcription and every guide-c group carries the
  * sentence it came from.
+ *
+ * Guide-d is XTheFarmerX's budget life-stacking Kinetic Blast build, published
+ * as ONE video ("5 DIVINE BUDGET LIFE STACKING KB MERC BUILD | Trade Links -
+ * Crafting - Merc Warrants", 2026-08-14) with two saved searches in it: a
+ * buyer's two-point ladder, and the shortest source here. It publishes no price
+ * for either rung — Sebastian measured the live listings 2026-08-28, budget from
+ * ~5d and 20D from ~9d against the ~20c the video shows at recording — so
+ * neither rung carries a `floor`, the guide-b reading rather than guide-a's.
+ *
+ * Its 20D rung's hash is `7nRvBzl2S5`, which guide-b already declares: the
+ * video's linked sheet republishes Nerotox's own Kinetist MV link six days after
+ * it went up, so the two sources transcribe ONE saved search and share ONE
+ * fixture file. That is provenance rather than duplication — two guides
+ * endorsing one search is a fact about the market, and a mercenary passing it
+ * reads WORTH from both of them.
  */
 
 import type { MercAuthoredQuery, MercSavedSearch } from './trade-links';
 
-export const SOURCE_IDS = ['guide-a', 'guide-b', 'guide-c'] as const;
+export const SOURCE_IDS = ['guide-a', 'guide-b', 'guide-c', 'guide-d'] as const;
 export type MercSourceId = (typeof SOURCE_IDS)[number];
 
 export const ARCHETYPES = ['manyshot', 'kinetist', 'combatant', 'blade-ambusher'] as const;
@@ -207,8 +226,8 @@ export interface MercSource {
 	 * What this source IS, in one line, shown under its name on the page.
 	 *
 	 * Whose rules these are and which side of the trade they are written from —
-	 * the three sources disagree on purpose (`verdict.ts` never merges them), and
-	 * a reader looking at three headlines needs to know that guide-a quotes
+	 * the sources disagree on purpose (`verdict.ts` never merges them), and a
+	 * reader looking at a row of headlines needs to know that guide-a quotes
 	 * seller floors while guide-c quotes a buyer's shopping list.
 	 */
 	description?: string;
@@ -2935,6 +2954,349 @@ const GUIDE_C_COMBATANT: MercRuleset = {
 	]
 };
 
+/**
+ * "5 DIVINE BUDGET LIFE STACKING KB MERC BUILD | Trade Links - Crafting - Merc
+ * Warrants", 2026-08-14 — the source URL, because BOTH rungs come off this one
+ * video. Its description links the sheet the 20D hash was copied from:
+ * <https://docs.google.com/spreadsheets/d/1c-9qyowK9jp8OIR0bwh8G0V3qjY8U6lEDAxA6xOUMdU/edit?gid=586502310>
+ */
+const XTHEFARMERX_KB_VIDEO = 'https://www.youtube.com/watch?v=LXoJCRmUaJI';
+
+/**
+ * The cheap rung, hash `4mKr0Jbwh9`.
+ *
+ * Sebastian TYPED this hash off the video's own trade tab (its Merc Skills and
+ * Trade Filters chapters, 9:48–18:56); it is not in the linked sheet, which
+ * publishes a sibling "Cheap Starter KB Merc" under `G6PdveWBib`. The two differ
+ * only in the last damage group — `G6PdveWBib` lacks Faster Attacks (Tier 2) and
+ * Greater Faster Attacks (Tier 3) — so the typed hash resolves to a coherent KB
+ * search and is the frame's own, not a mistyped sibling. `G6PdveWBib` is NOT
+ * committed: no ruleset transcribes it.
+ *
+ * Read against Nerotox's Mid rung (`BgzkZKGQF8`), which is the same seven slots:
+ * Greater Multiple Projectiles is required on the core skill instead of Return,
+ * Barrage is a live secondary rather than a parked one, the whole Pierce family
+ * including Lesser is denied by the LIVE deny group rather than by
+ * `deny-supports`, and the damage group grows the two Faster Attacks tiers.
+ */
+const GUIDE_D_KINETIST_BUDGET: MercRuleset = {
+	id: 'guide-d-kinetist-budget',
+	label: 'Kinetist',
+	archetype: 'kinetist',
+	ladder: 'kinetist',
+	// `TIERS` is a ranking order, not a claim about what a rung costs; the guide
+	// spells this rung "budget", which is what `tierLabel` is for.
+	tier: 'mv',
+	tierLabel: 'budget',
+	savedSearch: { league: ALLFLAME, hash: '4mKr0Jbwh9' },
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			// The only Kinetist deny list here that denies support links as well as
+			// skills — the Pierce family is refused outright rather than parked in
+			// `deny-supports` the way guide-b's rungs park it.
+			id: 'deny',
+			label: 'Denied skills and links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_32089', name: 'Kinetic Rain of Impact', enabledInSearch: true },
+				{ id: 'mercenary.skill_12583', name: 'Kinetic Bolt', enabledInSearch: true },
+				{ id: 'mercenary.skill_26705', name: 'Power Siphon', enabledInSearch: true },
+				{ id: 'mercenary.support_6040', name: 'Lesser Pierce (Tier 1)', enabledInSearch: true },
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_27970',
+					name: 'Greater Pierce (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'core',
+			label: 'Core skill + links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'secondary',
+			label: 'Additional skills',
+			type: 'count',
+			enabledInSearch: true,
+			min: 1,
+			entries: [
+				{ id: 'mercenary.skill_44258', name: 'Greater Kinetic Blast', enabledInSearch: true },
+				{ id: 'mercenary.skill_1356', name: 'Barrage', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'behavior',
+			label: 'Projectile behaviour links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_27970',
+					name: 'Greater Pierce (Tier 3)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_32052', name: 'Greater Fork (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			// Parked, and redundant while it is: the live `deny` group above already
+			// refuses both of these. Transcribed as the author saved it.
+			id: 'deny-supports',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: false,
+			entries: [
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_27970',
+					name: 'Greater Pierce (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			// Haste is switched OFF here, so this search does not gate on it — a
+			// plain bonus, not `buyerContextual`. Same reading as the Nerotox Mid
+			// rung, and the opposite of the 20D rung below, whose `and` group is on.
+			id: 'auras',
+			label: 'Auras',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_52155', name: 'Haste', enabledInSearch: false }]
+		},
+		{
+			id: 'damage',
+			label: 'Damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_55659',
+					name: 'Greater Critical Damage (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_32189', name: 'Critical Damage (Tier 2)', enabledInSearch: true },
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_50485',
+					name: 'Greater Faster Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		}
+	]
+};
+
+/**
+ * The upper rung, the sheet's "20D KB Merc" — hash `7nRvBzl2S5`, byte for byte
+ * the search `GUIDE_B_KINETIST_MV` transcribes. Written out rather than derived
+ * from that constant for the reason the whole file is written out: sharing an
+ * object would make "the two sources transcribe the same search" true by
+ * construction, and it is exactly the fact the fidelity test is supposed to be
+ * able to disprove.
+ */
+const GUIDE_D_KINETIST_20D: MercRuleset = {
+	id: 'guide-d-kinetist-20d',
+	label: 'Kinetist',
+	archetype: 'kinetist',
+	ladder: 'kinetist',
+	tier: 'mid',
+	tierLabel: '20D',
+	savedSearch: { league: ALLFLAME, hash: '7nRvBzl2S5' },
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'deny',
+			label: 'Denied skills',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_32089', name: 'Kinetic Rain of Impact', enabledInSearch: true },
+				{ id: 'mercenary.skill_12583', name: 'Kinetic Bolt', enabledInSearch: true },
+				{ id: 'mercenary.skill_26705', name: 'Power Siphon', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'core',
+			label: 'Core skill + links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			id: 'secondary',
+			label: 'Additional skills',
+			type: 'count',
+			enabledInSearch: true,
+			min: 1,
+			entries: [
+				{ id: 'mercenary.skill_44258', name: 'Greater Kinetic Blast', enabledInSearch: true },
+				// `buyerContextual` is Sebastian's selling-side ruling (see the flag's
+				// doc comment above and the guide-a Haste entry), and it follows the
+				// HASH rather than whoever published it. This rung transcribes the
+				// same hash `7nRvBzl2S5` as guide-b's MV rung, so it carries the same flag.
+				{
+					id: 'mercenary.skill_1356',
+					name: 'Barrage',
+					enabledInSearch: true,
+					buyerContextual: true
+				}
+			]
+		},
+		{
+			id: 'behavior',
+			label: 'Projectile behaviour links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_27970',
+					name: 'Greater Pierce (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_32052', name: 'Greater Fork (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny-supports',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: false,
+			entries: [
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_27970',
+					name: 'Greater Pierce (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			// This search DOES gate on Haste — live `and` group, live filter — so the
+			// entry is buyer-contextual, the same ruling guide-b makes on the same
+			// search. The budget rung above has the group's only filter switched off
+			// and therefore gates on nothing.
+			id: 'auras',
+			label: 'Auras',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{
+					id: 'mercenary.skill_52155',
+					name: 'Haste',
+					enabledInSearch: true,
+					buyerContextual: true
+				}
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_55659',
+					name: 'Greater Critical Damage (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_32189', name: 'Critical Damage (Tier 2)', enabledInSearch: true }
+			]
+		}
+	]
+};
+
 export const MERC_SOURCES: MercSource[] = [
 	{
 		id: 'guide-a',
@@ -2984,6 +3346,16 @@ export const MERC_SOURCES: MercSource[] = [
 			GUIDE_C_BLADE_AMBUSHER,
 			GUIDE_C_COMBATANT
 		]
+	},
+	{
+		id: 'guide-d',
+		label: 'XTheFarmerX',
+		description:
+			"XTheFarmerX's budget life-stacking KB merc — two saved searches, the upper one Nerotox's own link",
+		// ONE video publishes both rungs, so neither carries a `guideUrl` of its
+		// own — unlike guide-b, whose ladders come off different videos.
+		guideUrl: XTHEFARMERX_KB_VIDEO,
+		rulesets: [GUIDE_D_KINETIST_BUDGET, GUIDE_D_KINETIST_20D]
 	}
 ];
 
