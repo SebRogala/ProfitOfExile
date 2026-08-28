@@ -345,6 +345,22 @@ pub struct SyncFile {
     /// disowned and merging it would undo the forget once per module start.
     #[serde(default)]
     pub pending_tombstones: Vec<WireKey>,
+    /// The highest [`super::icons::REGISTRATION`] whose one-shot store reset
+    /// has already run here (POE-215 D2). 0 on every install that predates the
+    /// reset, which is what arms it.
+    ///
+    /// **Here and not in `index.json`.** A top-level field added to
+    /// `icons::StoreIndex` would be an unknown key to any older build, and that
+    /// struct carries `deny_unknown_fields` — a downgrade would read the index
+    /// as unparseable and `purge_stale_store` would unlink every `*.png` in the
+    /// directory. This file has no such gate and defaults every field, so an
+    /// older build reads it, ignores this, and keeps its ETag.
+    ///
+    /// Recorded AFTER the reset moved the art, so a crash in between re-runs a
+    /// reset that finds nothing left to move. See
+    /// [`super::icons::reset_unregistered`].
+    #[serde(default)]
+    pub reset_registration: u16,
 }
 
 /// Serialises every read-modify-write of `pool-sync.json`.
@@ -390,6 +406,10 @@ impl SyncFile {
             format_version: FORMAT_VERSION,
             etag: None,
             pending_tombstones: Vec::new(),
+            // 0, so a device whose `pool-sync.json` was discarded (a format
+            // bump, a truncated write) re-runs the reset. It costs one pass
+            // over an index that has nothing left to drop.
+            reset_registration: 0,
         }
     }
 
@@ -493,6 +513,20 @@ pub struct SyncState {
     landed: Option<(PooledCorpus, Option<String>)>,
     /// Whether this session has already said the server is unreachable.
     unreachable_logged: bool,
+    /// Whether this module start's pool traffic is suppressed because the
+    /// one-shot registration reset just dropped art (POE-215 D5).
+    ///
+    /// The client half of the (b)-before-(a) order: if the pool has NOT been
+    /// purged yet, a pull on this very start would re-serve the pre-fit art the
+    /// reset just moved into `pre-fit/`, and the reset would look like it did
+    /// nothing. It blocks both spawns — the start pull and the detect-driven
+    /// re-pull, which fires on the next recruit window — for this start only.
+    /// The ETag is cleared in the same breath, so the next start pulls a full
+    /// corpus.
+    ///
+    /// Cleared by [`begin`], so a module toggled off and on again after the
+    /// purge lands pulls normally, and set only by the reset call site.
+    pull_suppressed_this_start: bool,
     /// What the page shows.
     status: MercSyncStatus,
 }
@@ -517,7 +551,24 @@ pub fn status(state: &AppState) -> MercSyncStatus {
 /// so "session" means "one module run": a user who toggles the module off and
 /// on after fixing their network gets told the truth again.
 pub fn begin_session(app: &AppHandle) {
-    with_state(app, |s| s.unreachable_logged = false);
+    with_state(app, begin);
+}
+
+/// What one module start resets on the sync state. Pure over [`SyncState`], so
+/// "the suppression lasts exactly one start" is a property a test can hold.
+fn begin(state: &mut SyncState) {
+    state.unreachable_logged = false;
+    state.pull_suppressed_this_start = false;
+}
+
+/// Suppress this start's pool traffic — see
+/// [`SyncState::pull_suppressed_this_start`].
+///
+/// Called from the capture loop's start AFTER [`begin_session`] and BEFORE
+/// [`spawn_pull`]: `begin_session` clears the flag for the new start, and
+/// setting it before that would clear the very thing it just set.
+pub fn suppress_pull_this_start(app: &AppHandle) {
+    with_state(app, |s| s.pull_suppressed_this_start = true);
 }
 
 /// Log a pool failure at most once per session, and record it for the page.
@@ -740,12 +791,12 @@ pub async fn pull_once(app: &AppHandle, etag: Option<&str>) -> Option<PullOutcom
 /// - the REQUEST claim (`pulling`) is single-flight — a module toggled
 ///   repeatedly gets one pull, not one per toggle;
 /// - the SEAM claim (`startup_claim`) says a capture loop is starting up and
-///   will apply whatever lands. It is taken unconditionally, including when the
-///   request itself was not claimed because a pull from a previous module start
-///   is still in flight. That case is the whole reason it is unconditional: an
-///   off→on toggle across an in-flight pull used to leave the claim unset, so
-///   the corpus applied itself against a store the restarting loop had not
-///   installed yet.
+///   will apply whatever lands. It is taken unconditionally — including when
+///   the request itself was not claimed, because a pull from a previous module
+///   start is still in flight or because this start's registration reset
+///   suppressed the ask. Those are the cases it exists for: an off→on toggle
+///   across an in-flight pull used to leave the claim unset, so the corpus
+///   applied itself against a store the restarting loop had not installed yet.
 ///
 /// The caller stays on its own thread — this returns immediately.
 pub fn spawn_pull(app: &AppHandle) {
@@ -797,6 +848,21 @@ fn claim_pull(state: &mut SyncState, now_ms: u64) -> bool {
     // The seam is starting either way; only the request may already be
     // somebody else's.
     state.startup_claim = true;
+    // AFTER the seam claim, and that order is load-bearing (POE-215 D5).
+    // Suppression stops this start from ASKING. It cannot recall a pull a
+    // PREVIOUS module start already issued, and that corpus — built from the
+    // very pre-fit art the reset just moved into `pre-fit/` — is the one that
+    // would otherwise apply itself against a store this start has not installed
+    // yet. The seam claim is what parks it instead; `record_pull` then drops it
+    // because this start is suppressed.
+    //
+    // It costs a suppressed start nothing. `claim_step` reads "done" off
+    // `!pulling`, never off the claim, so with no request in flight the seam's
+    // FIRST look releases the claim and `wait_for_pull` returns immediately
+    // rather than sitting out `STARTUP_WAIT`.
+    if state.pull_suppressed_this_start {
+        return false;
+    }
     if state.pulling {
         return false;
     }
@@ -822,6 +888,11 @@ fn claim_pull(state: &mut SyncState, now_ms: u64) -> bool {
 /// Never sets `startup_claim`. Pure over [`SyncState`] for the same reason
 /// [`claim_pull`] is.
 fn claim_repull(state: &mut SyncState, now_ms: u64) -> bool {
+    // The re-pull is the other door into the same corpus, and it fires on the
+    // next recruit window — well inside the start the reset suppressed.
+    if state.pull_suppressed_this_start {
+        return false;
+    }
     if state.pulling {
         return false;
     }
@@ -873,17 +944,34 @@ fn finish_pull(
     outcome: Option<PullOutcome>,
 ) -> Option<(PooledCorpus, Option<String>)> {
     let now = super::run::now_ms();
-    let to_apply = with_state(app, |s| record_pull(s, now, outcome));
+    let (to_apply, discarded) = with_state(app, |s| record_pull(s, now, outcome));
+    if discarded {
+        crate::app_log(
+            app,
+            "Merc: pool corpus discarded — this start reset the store; it re-pulls next start"
+                .to_string(),
+        );
+    }
     crate::ssot::emit_ssot(app);
     to_apply
 }
 
-/// Fold a finished pull into the sync state, answering who applies the corpus.
+/// Fold a finished pull into the sync state, answering who applies the corpus
+/// and whether it was DISCARDED.
 ///
-/// `None` means it was PARKED for a load seam that is still holding its claim;
-/// `Some` means the seam is gone and the caller must apply it against the store
-/// the seam already installed. A corpus is never dropped on this branch — the
-/// two answers are "somebody else will" and "you must", and there is no third.
+/// `None` means the caller has nothing to do — the corpus was parked for a load
+/// seam that is still holding its claim, or there was no corpus at all; `Some`
+/// means the seam is gone and the caller must apply it against the store the
+/// seam already installed.
+///
+/// The bool is the third answer, and it exists because suppression cannot be
+/// enforced at the ASK alone (POE-215 D5): `claim_pull` and `claim_repull`
+/// refuse to issue a request on a suppressed start, but a request a PREVIOUS
+/// start issued is already on the wire and its corpus was built from the
+/// pre-fit art this start's reset just moved out of the store. This is the
+/// landing seam every pull passes through, so it is where that corpus is
+/// dropped — neither parked nor handed back. Nothing records its ETag either,
+/// because only [`apply_corpus`] does that, so the next start pulls in full.
 ///
 /// Pure over [`SyncState`] because this handshake is the only thing standing
 /// between a merged corpus and a whole-store write that would erase it.
@@ -891,25 +979,31 @@ fn record_pull(
     state: &mut SyncState,
     now_ms: u64,
     outcome: Option<PullOutcome>,
-) -> Option<(PooledCorpus, Option<String>)> {
+) -> (Option<(PooledCorpus, Option<String>)>, bool) {
     state.pulling = false;
+    if state.pull_suppressed_this_start && matches!(outcome, Some(PullOutcome::Corpus(..))) {
+        // The page's pull status is left where it was — this session took
+        // nothing from the pool, and `Never` is exactly that. Stamping
+        // `last_pull_ms` here would date a merge that did not happen.
+        return (None, true);
+    }
     state.status.last_pull_ms = Some(now_ms);
     match outcome {
         None => {
             state.status.last_pull = PullResult::Failed;
-            None
+            (None, false)
         }
         Some(PullOutcome::NotModified) => {
             state.status.last_pull = PullResult::Unchanged;
-            None
+            (None, false)
         }
         Some(PullOutcome::Corpus(corpus, etag)) => {
             state.status.last_pull = PullResult::Merged;
             if state.startup_claim {
                 state.landed = Some((corpus, etag));
-                None
+                (None, false)
             } else {
-                Some((corpus, etag))
+                (Some((corpus, etag)), false)
             }
         }
     }
@@ -1757,6 +1851,38 @@ pub fn forget_etag(app: &AppHandle) {
     }
 }
 
+/// Whether the one-shot registration reset still owes this store a run
+/// (POE-215 D2).
+///
+/// `<`, not `!=`: a `pool-sync.json` written by a NEWER build records a higher
+/// number, and re-running this build's reset against it would drop art that
+/// build vouched for. A downgrade leaves the store alone.
+pub fn needs_registration_reset(dir: &Path) -> bool {
+    SyncFile::load(dir).reset_registration < super::icons::REGISTRATION
+}
+
+/// The sync-file half of the one-shot reset: forget the corpus this store was
+/// merged from, and record that the reset has run.
+///
+/// ONE read-modify-write for both, because they are one fact. The ETag names a
+/// corpus that has just stopped describing this store, and leaving it would
+/// earn a 304 on the next start — the device would sit on an emptied store
+/// forever, which is the same failure `merc_reset_templates` calls
+/// [`forget_etag`] for.
+///
+/// Called AFTER [`super::icons::reset_unregistered`] has moved the art and
+/// OUTSIDE the icons directory guard, because this takes [`SYNC_FILE_LOCK`].
+/// Both orderings are load-bearing: recording first would let a crash skip the
+/// move for good, and taking the two locks together would put a second order on
+/// them.
+pub fn record_registration_reset(dir: &Path) -> Result<(), String> {
+    let _guard = SYNC_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut file = SyncFile::load(dir);
+    file.etag = None;
+    file.reset_registration = super::icons::REGISTRATION;
+    file.save(dir)
+}
+
 /// Record the store's pooled-sample count for the page. Called from the load
 /// seam, where the merged store is in hand.
 pub fn set_pooled_samples(app: &AppHandle, count: usize) {
@@ -1928,6 +2054,7 @@ mod tests {
                 family: "Chain".to_string(),
                 tier: 2,
             }],
+            reset_registration: super::super::icons::REGISTRATION,
         };
         file.save(&dir).expect("save");
 
@@ -1962,6 +2089,7 @@ mod tests {
                 family: "Chain".to_string(),
                 tier: 2,
             }],
+            reset_registration: super::super::icons::REGISTRATION,
         };
         file.save(&dir).expect("save");
 
@@ -1970,6 +2098,197 @@ mod tests {
         assert_eq!(loaded.format_version, FORMAT_VERSION);
         assert!(loaded.etag.is_none(), "the foreign tag is not reused");
         assert!(loaded.pending_tombstones.is_empty());
+    }
+
+    // -- the one-shot registration reset (POE-215) ---------------------------
+
+    /// The marker and the ETag are one fact and move together: the reset has
+    /// run, and the corpus the ETag names no longer describes this store.
+    /// Leaving the tag would earn a 304 on the next start and strand the device
+    /// on the store the reset just emptied.
+    #[test]
+    fn recording_the_reset_drops_the_etag_and_disarms_the_next_start() {
+        let dir = temp_dir("reset-marker");
+        SyncFile {
+            format_version: FORMAT_VERSION,
+            etag: Some("\"pre-fit-corpus\"".to_string()),
+            pending_tombstones: Vec::new(),
+            reset_registration: 0,
+        }
+        .save(&dir)
+        .expect("save");
+        assert!(needs_registration_reset(&dir), "an unreset store owes the reset");
+
+        record_registration_reset(&dir).expect("record");
+
+        let loaded = SyncFile::load(&dir);
+        assert!(loaded.etag.is_none(), "the pre-fit corpus is still named");
+        assert_eq!(loaded.reset_registration, super::super::icons::REGISTRATION);
+        assert!(!needs_registration_reset(&dir), "the reset would run a second time");
+    }
+
+    /// The pending forgets are NOT the reset's business (POE-215 D2). They are
+    /// keys this device disowned and the server has not acknowledged; dropping
+    /// them would silently un-forget art the player threw out.
+    #[test]
+    fn recording_the_reset_leaves_the_pending_forgets_alone() {
+        let dir = temp_dir("reset-keeps-tombstones");
+        SyncFile {
+            format_version: FORMAT_VERSION,
+            etag: None,
+            pending_tombstones: vec![WireKey { family: "Chain".to_string(), tier: 2 }],
+            reset_registration: 0,
+        }
+        .save(&dir)
+        .expect("save");
+
+        record_registration_reset(&dir).expect("record");
+
+        assert_eq!(SyncFile::load(&dir).owed(), [("Chain".to_string(), 2)]);
+    }
+
+    /// A `pool-sync.json` written by a LATER build records a higher number, and
+    /// this build must not re-run its own reset against a store that build
+    /// vouched for — that would drop art on a downgrade.
+    #[test]
+    fn a_store_reset_by_a_later_build_is_left_alone() {
+        let dir = temp_dir("reset-newer");
+        SyncFile {
+            format_version: FORMAT_VERSION,
+            etag: None,
+            pending_tombstones: Vec::new(),
+            reset_registration: super::super::icons::REGISTRATION + 1,
+        }
+        .save(&dir)
+        .expect("save");
+
+        assert!(!needs_registration_reset(&dir));
+    }
+
+    /// The client half of the (b)-before-(a) order (POE-215 D5): a start whose
+    /// reset dropped art asks the pool for nothing, through EITHER door — the
+    /// start pull or the recruit-window re-pull.
+    #[test]
+    fn a_suppressed_start_issues_no_pull_through_either_door() {
+        let mut state = SyncState { pull_suppressed_this_start: true, ..SyncState::default() };
+
+        let pull = claim_pull(&mut state, 10_000);
+        let repull = claim_repull(&mut state, 10_000 + REPULL_THROTTLE_MS);
+
+        assert!(!pull, "the start pull was claimed");
+        assert!(!repull, "the re-pull was claimed");
+        assert!(!state.pulling, "a request was taken on a suppressed start");
+    }
+
+    /// …and it STILL takes the load seam's claim. Suppression only stops this
+    /// start asking; a pull the previous start issued is already on the wire,
+    /// and the claim is what makes its corpus park at the landing seam instead
+    /// of applying itself against a store this start has not installed yet.
+    #[test]
+    fn a_suppressed_start_still_takes_the_load_seam_claim() {
+        let mut state = SyncState { pull_suppressed_this_start: true, ..SyncState::default() };
+
+        claim_pull(&mut state, 10_000);
+
+        assert!(state.startup_claim, "an in-flight corpus had nothing to park against");
+    }
+
+    /// And the claim costs the suppressed start nothing: `claim_step` reads
+    /// "done" off `!pulling`, so with no request in flight the seam's first look
+    /// releases it and `wait_for_pull` returns rather than sitting out
+    /// `STARTUP_WAIT`.
+    #[test]
+    fn a_suppressed_starts_seam_claim_is_released_on_its_first_look() {
+        let mut state = SyncState { pull_suppressed_this_start: true, ..SyncState::default() };
+        claim_pull(&mut state, 10_000);
+
+        let (landed, keep_waiting) = claim_step(&mut state, false);
+
+        assert!(landed.is_none());
+        assert!(!keep_waiting, "the start would have waited out the window for nothing");
+        assert!(!state.startup_claim);
+    }
+
+    /// D5 IS A GUARANTEE, NOT A REQUEST. Refusing to issue a pull cannot recall
+    /// one a PREVIOUS start already issued, and that corpus was built from the
+    /// very pre-fit art this start's reset moved into `pre-fit/`. Parking it for
+    /// the seam would put it straight back into the store.
+    #[test]
+    fn a_corpus_landing_while_a_suppressed_starts_seam_holds_is_not_parked() {
+        let mut state = SyncState {
+            pull_suppressed_this_start: true,
+            pulling: true,
+            startup_claim: true,
+            ..SyncState::default()
+        };
+
+        let (to_apply, discarded) = record_pull(
+            &mut state,
+            5,
+            Some(PullOutcome::Corpus(one_corpus(), Some("\"e1\"".into()))),
+        );
+
+        assert!(discarded, "the corpus was not reported as dropped");
+        assert!(state.landed.is_none(), "the pre-reset corpus was parked for the seam");
+        assert!(to_apply.is_none());
+    }
+
+    /// The other half of the same guarantee: a corpus landing after the seam let
+    /// go must not be handed back either. That path merges into the INSTALLED
+    /// store, which is the store the reset just emptied.
+    #[test]
+    fn a_corpus_landing_after_a_suppressed_starts_seam_let_go_is_not_applied() {
+        let mut state = SyncState {
+            pull_suppressed_this_start: true,
+            pulling: true,
+            ..SyncState::default()
+        };
+
+        let (to_apply, discarded) = record_pull(
+            &mut state,
+            5,
+            Some(PullOutcome::Corpus(one_corpus(), Some("\"e1\"".into()))),
+        );
+
+        assert!(discarded, "the corpus was not reported as dropped");
+        assert!(to_apply.is_none(), "the pre-reset corpus was handed back to be merged");
+    }
+
+    /// The drop lasts exactly as long as the suppression does. `begin` clears
+    /// the flag for the next start, and that start's corpus has to land — the
+    /// ETag went with the reset, so this is the pull that gives the device its
+    /// pooled art back.
+    #[test]
+    fn the_corpus_of_the_start_after_a_suppressed_one_lands_normally() {
+        let mut state = SyncState {
+            pull_suppressed_this_start: true,
+            pulling: true,
+            ..SyncState::default()
+        };
+
+        begin(&mut state);
+        let (to_apply, discarded) = record_pull(
+            &mut state,
+            5,
+            Some(PullOutcome::Corpus(one_corpus(), Some("\"e1\"".into()))),
+        );
+
+        assert!(!discarded, "the next start's corpus was dropped too");
+        assert!(to_apply.is_some(), "the next start had nothing to merge");
+    }
+
+    /// EXACTLY one start. The suppression is about a pool that may not have
+    /// been purged yet, and the ETag went with the reset — so the next start
+    /// has to pull, or the device never gets the corpus back.
+    #[test]
+    fn the_start_after_a_suppressed_one_pulls_again() {
+        let mut state = SyncState { pull_suppressed_this_start: true, ..SyncState::default() };
+        claim_pull(&mut state, 10_000);
+
+        begin(&mut state);
+
+        assert!(claim_pull(&mut state, 20_000), "the next start was still suppressed");
+        assert!(state.startup_claim);
     }
 
     /// The response grew a counter after this client shipped. Both shapes have
@@ -2301,7 +2620,7 @@ mod tests {
             ..SyncState::default()
         };
 
-        let to_apply = record_pull(
+        let (to_apply, _) = record_pull(
             &mut state,
             5,
             Some(PullOutcome::Corpus(one_corpus(), Some("\"e1\"".into()))),
@@ -2327,7 +2646,7 @@ mod tests {
         assert!(!keep_waiting);
         assert!(!state.startup_claim, "the seam let go");
 
-        let to_apply = record_pull(
+        let (to_apply, _) = record_pull(
             &mut state,
             5,
             Some(PullOutcome::Corpus(one_corpus(), Some("\"e1\"".into()))),
@@ -2399,7 +2718,7 @@ mod tests {
             ..SyncState::default()
         };
 
-        let to_apply = record_pull(&mut state, 5, None);
+        let (to_apply, _) = record_pull(&mut state, 5, None);
 
         assert!(to_apply.is_none());
         assert!(state.landed.is_none());
@@ -2417,7 +2736,7 @@ mod tests {
             ..SyncState::default()
         };
 
-        let to_apply = record_pull(&mut state, 5, Some(PullOutcome::NotModified));
+        let (to_apply, _) = record_pull(&mut state, 5, Some(PullOutcome::NotModified));
 
         assert!(to_apply.is_none());
         assert!(state.landed.is_none());
@@ -2845,8 +3164,8 @@ mod tests {
     fn a_refused_sample_is_still_owed_after_the_batch_settles() {
         let t = super::super::MercGeometry::default().thresholds;
         let mut store = super::super::icons::TemplateStore::new();
-        store.learn("Chain", 2, art(1), None, &t);
-        store.learn("Pierce", 1, art(2), None, &t);
+        store.learn("Chain", 2, art(1), None, super::super::icons::REGISTRATION, &t);
+        store.learn("Pierce", 1, art(2), None, super::super::icons::REGISTRATION, &t);
         let batch: Vec<PendingSample> = store
             .pending_uploads()
             .into_iter()
@@ -2883,8 +3202,8 @@ mod tests {
     fn a_local_samples_uploaded_flag_survives_a_pooled_install_of_the_same_key() {
         let t = super::super::MercGeometry::default().thresholds;
         let mut store = super::super::icons::TemplateStore::new();
-        store.learn("Chain", 2, art(1), None, &t);
-        store.learn("Chain", 2, art(2), None, &t);
+        store.learn("Chain", 2, art(1), None, super::super::icons::REGISTRATION, &t);
+        store.learn("Chain", 2, art(2), None, super::super::icons::REGISTRATION, &t);
         let published = store.pending_uploads()[0].2.clone();
         assert!(store.mark_uploaded("Chain", 2, &published));
 

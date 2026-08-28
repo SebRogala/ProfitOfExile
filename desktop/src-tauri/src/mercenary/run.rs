@@ -1159,7 +1159,14 @@ pub fn apply_confirmed(
 /// looked up under the hovered cell's index was another cell's art and the
 /// store learned it under the hovered cell's family. One of the two mislabel
 /// paths behind the 21 poisoned templates measured on 2026-08-26.
-pub type SigCache = HashMap<(String, u8), (CellSig, Option<image::RgbaImage>)>;
+/// The third element is the [`ScaleSource`] the crop was CUT at (POE-215 D3),
+/// stamped where the fresh crops are folded in and carried from there
+/// unchanged. It travels with the crop rather than being looked up when a
+/// confirm lands, because by then it can be a different number: the hovered
+/// cell's crop is deliberately COLD — [`merge_sigs`] keeps whatever it had —
+/// and a [`PendingConfirm`] can outlive several re-detects, so the session's
+/// current registration is a statement about a tick this crop was not cut on.
+pub type SigCache = HashMap<(String, u8), (CellSig, Option<image::RgbaImage>, ScaleSource)>;
 
 /// Fold a fresh detect's crops into the cached ones, protecting the cell the
 /// cursor is inside.
@@ -1359,8 +1366,10 @@ pub struct PendingConfirm {
     pub name: Option<String>,
     pub ids: Vec<String>,
     pub score: f32,
-    /// The cold crop as it stood at read 1. See the type doc.
-    pub crop: Option<(CellSig, Option<image::RgbaImage>)>,
+    /// The cold crop as it stood at read 1, and the [`ScaleSource`] it was cut
+    /// at. See the type doc, and [`SigCache`] for why the registration travels
+    /// with the crop instead of being read off the session at apply time.
+    pub crop: Option<(CellSig, Option<image::RgbaImage>, ScaleSource)>,
     /// Stamped at read 1 and never refreshed. See [`PENDING_CONFIRM_TTL`].
     pub at: Instant,
 }
@@ -1957,10 +1966,67 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             crate::app_log(&app, purge_log_line(&purged));
         }
 
+        // AND THEN THE ONE-SHOT REGISTRATION RESET (POE-215 D2), its own
+        // sibling scope: `writing_icons_dir` is a non-reentrant
+        // `std::sync::Mutex<()>`, so the purge above released it and this takes
+        // it for itself. Before the pull, for the same reason the purge is:
+        // whatever the store holds when the corpus lands has to be the store
+        // this build vouches for, and dropping art AFTER a merge would drop
+        // what the merge just installed.
+        //
+        // Not a purge: the signatures here are format 2 and they correlate
+        // fine. They were just cut 6-12 px off the art, at the OCR guess
+        // POE-214 replaced. See `icons::REGISTRATION`.
+        let mut suppress_pull = false;
+        if sync::needs_registration_reset(dir) {
+            let report = {
+                let state = app.state::<AppState>();
+                super::icons::writing_icons_dir(&state.merc_icons_write, || {
+                    super::icons::reset_unregistered(dir)
+                })
+            };
+            crate::app_log(&app, super::icons::reset_log_line(&report));
+            // OUTSIDE the directory guard, because this takes `SYNC_FILE_LOCK`
+            // and nothing may hold two of the module's locks in a new order.
+            // AFTER the move, so a crash in between re-arms a reset that finds
+            // nothing left to move rather than skipping one that never ran —
+            // and only on a CLEAN pass, so a directory the reset could not
+            // finish writing is tried again next start rather than being
+            // marked done. A pass that rewrote the index and failed only on a
+            // file converges anyway: the retry finds nothing left to drop.
+            if report.problems.is_empty() {
+                if let Err(e) = sync::record_registration_reset(dir) {
+                    crate::app_log(
+                        &app,
+                        format!(
+                            "Merc: the registration reset ran but could not be recorded, so it \
+                             runs again next start — {e}"
+                        ),
+                    );
+                }
+            } else {
+                crate::app_log(
+                    &app,
+                    "Merc: the registration reset did not finish — the pool ETag is UNCHANGED \
+                     and the reset stays armed for the next start"
+                        .to_string(),
+                );
+            }
+            suppress_pull = report.dropped_anything();
+        }
+
         // Ask the shared pool BEFORE reading the disk, so the round-trip
         // overlaps the load instead of following it (POE-201). One pull per
         // module start, single-flight inside `spawn_pull`.
         sync::begin_session(&app);
+        // AFTER `begin_session`, which clears the flag for this start (POE-215
+        // D5). A non-empty reset means the pool may still be serving the very
+        // art that was just dropped, and this start has no way to tell — so it
+        // does not ask. The ETag went with the reset, so the next start pulls a
+        // full corpus and the runbook's purge is what makes it a clean one.
+        if suppress_pull {
+            sync::suppress_pull_this_start(&app);
+        }
         sync::spawn_pull(&app);
         // Beside the pull, for the same reason: the network overlaps the disk
         // load. A warm cache issues no request at all and `wait_for_install`
@@ -2007,6 +2073,20 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         };
         template_problems = problems;
         crate::app_log(&app, format!("Merc: {loaded} learned templates loaded"));
+
+        // WHAT CAME OFF DISK, IN REGISTRATION TERMS (POE-215 D4). Here rather
+        // than in `matcher_geometry_warnings`, which runs before the store is
+        // read and takes only geometry — and before the pull's merge below, so
+        // the pooled-unknown count is what this device has been carrying rather
+        // than what this start's corpus just added.
+        let warnings = {
+            let state = app.state::<AppState>();
+            let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+            super::icons::registration_warnings(&store)
+        };
+        for warning in warnings {
+            crate::app_log(&app, warning);
+        }
 
         // THE FAMILY RE-KEY IS PERSISTED HERE (POE-211). `load` folded the
         // aliased families in memory and reported what it touched; this is the
@@ -3220,9 +3300,20 @@ fn detect_tick(
         // confirmations this session is holding.
         sync::spawn_repull(app);
     }
+    // THE ONE PLACE A CROP IS STAMPED WITH ITS REGISTRATION (POE-215 D3).
+    // `read::build_capture` cuts the crops but is not told which cue registered
+    // the layout it was handed; this line is where the two meet, and after it
+    // every copy of the crop — the cache, a `PendingConfirm`, the template that
+    // is finally learned — carries the source of the tick it was cut on.
+    let cut_at = layout.scale_source;
+    let fresh: SigCache = result
+        .sigs
+        .into_iter()
+        .map(|(key, (sig, raw))| (key, (sig, raw, cut_at)))
+        .collect();
     session.sigs = merge_sigs(
         std::mem::take(&mut session.sigs),
-        result.sigs,
+        fresh,
         hovered_for_sigs(
             std::mem::take(&mut session.geometry_changed),
             hovered_key(&result.capture, cursor),
@@ -3635,12 +3726,22 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
     let row_index = capture.rows[ri].index;
     let cached = agreed.crop;
     let (learned, needs_save, offer) = match cached {
-        Some((sig, raw)) => {
+        // THE REGISTRATION GATE (POE-215 D3). A crop cut at the OCR guess is
+        // 6-12 px off the art, and a template learned from one poisons every
+        // later match on this device and — through the pool — on everybody
+        // else's. The store is not asked at all, so no `Local` sample below
+        // `icons::REGISTRATION` can be created; `learn_result` turns the
+        // un-asked case into the line the player reads.
+        Some((.., source)) if crop_registration(source) < super::icons::REGISTRATION => {
+            learn_result(None, &family, tier, Vec::new())
+        }
+        Some((sig, raw, source)) => {
             // The bytes the pool gets, taken before the signature is moved into
             // the store. Copied here rather than read back out of the store so
             // the payload is built from memory on the one path that has it
             // (POE-201 L4) — the store directory is never walked.
             let bytes = sig.bytes().to_vec();
+            let registration = crop_registration(source);
             let (outcome, lost_seeds) = {
                 let state = app.state::<AppState>();
                 let mut store =
@@ -3654,8 +3755,14 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
                 // reached this cell (D5): a hovered cell may be drawn
                 // highlighted, and a template learned from the highlight
                 // matches nothing later.
-                let outcome =
-                    store.learn(&family, tier, sig, raw, &session.geometry.thresholds);
+                let outcome = store.learn(
+                    &family,
+                    tier,
+                    sig,
+                    raw,
+                    registration,
+                    &session.geometry.thresholds,
+                );
                 let lost = store.seeds_lost_since(&seeded);
                 (outcome, lost)
             };
@@ -3675,7 +3782,7 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
                     }
                 }
             }
-            learn_result(outcome, &family, tier, bytes)
+            learn_result(Some(outcome), &family, tier, bytes)
         }
         // The confirmation still stands — it names the cell. Only the template
         // is missing, and saying so is the difference between "we already knew
@@ -3755,12 +3862,25 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
 /// `confirmed_family` / `confirmed_tier` are the cell's, from the corroborated
 /// read. The family and tier inside [`LearnOutcome::ConflictsWith`] are the
 /// OTHER ones — whoever already holds the art.
+///
+/// **`outcome` is `None` when the store was never asked** (POE-215 D3): the
+/// crop was cut at [`ScaleSource::Ocr`], which is the 6-12 px drift POE-214
+/// removed, and learning from it would file art the matcher can never reach
+/// again — and then publish it. The refusal is a REFUSAL and not a failure: the
+/// cell is still confirmed for the overlay, the player is told why nothing was
+/// stored, and hovering the same cell once the fit lands stores it.
+///
+/// Asking the store and then discarding the answer would not do: `learn`
+/// mutates, so the sample would already be in memory and on the next save.
 fn learn_result(
-    outcome: LearnOutcome,
+    outcome: Option<LearnOutcome>,
     confirmed_family: &str,
     confirmed_tier: u8,
     bytes: Vec<u8>,
 ) -> (Learned, bool, Option<sync::PendingSample>) {
+    let Some(outcome) = outcome else {
+        return (Learned::Unregistered, false, None);
+    };
     let stored = outcome.stored();
     let learned = match outcome {
         LearnOutcome::Stored => Learned::Saved,
@@ -3815,6 +3935,19 @@ enum Learned {
     /// No pre-hover crop was cached for the cell — the capture that produced it
     /// has been replaced since. The cell is still confirmed.
     NoCrop,
+    /// The crop was cut at [`ScaleSource::Ocr`] — the pre-POE-214 guess, 6-12 px
+    /// off the art — so the store was never asked and the pool was never
+    /// offered anything (POE-215 D3). The cell is still confirmed; the fix is
+    /// to hover it again once the frame fit lands, which the detect line's
+    /// `via frame` / `via ocr` says.
+    ///
+    /// It OUTRANKS `AlreadyKnown`, and that is a consequence of not asking: a
+    /// cell the store already holds, re-hovered in a session that never fits,
+    /// reads "NOT learned — cut at the OCR guess" rather than "already known".
+    /// Accepted. The alternative is asking the store to find out, and `learn`
+    /// mutates — the unregistered sample would be in memory and on the next
+    /// save before the answer came back.
+    Unregistered,
 }
 
 impl Learned {
@@ -3835,7 +3968,27 @@ impl Learned {
             Learned::NoCrop => {
                 "no pre-hover crop cached, template not learned".to_string()
             }
+            Learned::Unregistered => {
+                "template NOT learned — the cell was cut at the OCR guess (fit declined, \
+                 nothing held)"
+                    .to_string()
+            }
         }
+    }
+}
+
+/// The registration a crop cut at `source` carries — see
+/// [`super::icons::REGISTRATION`].
+///
+/// [`ScaleSource::Frame`] and [`ScaleSource::Held`] are both registered on the
+/// grid's own gold frame: `Held` is a `Frame` measurement of an earlier tick of
+/// the same session, re-applied, so the RECTS are the fitted ones either way
+/// and the crop is cut where this build cuts. [`ScaleSource::Ocr`] is the line-pitch
+/// guess POE-214 replaced, and 0 says this build cannot vouch for it.
+pub fn crop_registration(source: ScaleSource) -> u16 {
+    match source {
+        ScaleSource::Frame | ScaleSource::Held => super::icons::REGISTRATION,
+        ScaleSource::Ocr => 0,
     }
 }
 
@@ -4639,12 +4792,12 @@ mod tests {
     #[test]
     fn a_refused_template_is_not_offered_to_the_pool() {
         let (_, needs_save, offer) = learn_result(
-            LearnOutcome::ConflictsWith {
+            Some(LearnOutcome::ConflictsWith {
                 family: "Physical as Extra Chaos".into(),
                 tier: 3,
                 origin: Origin::Local,
                 score: 0.98,
-            },
+            }),
             "Brittle Chance",
             3,
             vec![7u8; 4],
@@ -4659,7 +4812,7 @@ mod tests {
     #[test]
     fn a_stored_template_is_offered_to_the_pool_under_the_confirmed_name() {
         let (learned, needs_save, offer) =
-            learn_result(LearnOutcome::Stored, "Brittle Chance", 3, vec![7u8; 4]);
+            learn_result(Some(LearnOutcome::Stored), "Brittle Chance", 3, vec![7u8; 4]);
 
         assert_eq!(learned, Learned::Saved);
         assert!(needs_save);
@@ -4667,6 +4820,99 @@ mod tests {
         assert_eq!(offer.family, "Brittle Chance");
         assert_eq!(offer.tier, 3);
         assert_eq!(offer.bytes, vec![7u8; 4]);
+    }
+
+    // -- the registration gate (POE-215 D3) ----------------------------------
+
+    /// A crop cut at the OCR guess buys nothing: no template, no disk write, no
+    /// pool offer. The 6-12 px drift POE-214 removed is exactly what made the
+    /// old store unmatchable, and publishing one of those samples is how this
+    /// device's stale registration would become everybody's.
+    #[test]
+    fn a_crop_cut_at_the_ocr_guess_is_neither_learned_nor_offered() {
+        let (learned, needs_save, offer) =
+            learn_result(None, "Brittle Chance", 3, vec![7u8; 4]);
+
+        assert_eq!(learned, Learned::Unregistered);
+        assert!(!needs_save, "a refused sample owes the disk nothing");
+        assert!(offer.is_none(), "offered {offer:?}");
+    }
+
+    /// The player has to be told WHY nothing was stored, or a cell that
+    /// confirms without ever learning reads as a silent failure. The line names
+    /// the cause (the OCR guess) and, in the parenthesis, what has to change
+    /// for the next hover to stick.
+    #[test]
+    fn the_unregistered_line_says_the_cell_was_cut_at_the_ocr_guess() {
+        let line = Learned::Unregistered.describe();
+
+        assert_eq!(
+            line,
+            "template NOT learned — the cell was cut at the OCR guess (fit declined, nothing \
+             held)",
+        );
+    }
+
+    /// `Held` is a `Frame` measurement of an earlier tick of the same session,
+    /// re-applied — the RECTS are the fitted ones — so it vouches exactly as
+    /// `Frame` does. Reading it as unregistered would refuse every confirm made
+    /// while a tooltip covers the grid, which is most of them.
+    #[test]
+    fn only_a_crop_cut_at_the_ocr_guess_lacks_this_builds_registration() {
+        assert_eq!(crop_registration(ScaleSource::Frame), super::super::icons::REGISTRATION);
+        assert_eq!(crop_registration(ScaleSource::Held), super::super::icons::REGISTRATION);
+        assert_eq!(crop_registration(ScaleSource::Ocr), 0);
+    }
+
+    /// The other half of the gate: art the store DOES take is recorded at this
+    /// build's registration, which is what lets `pending_uploads` offer it. A
+    /// `learn` that stored 0 for a fitted crop would leave the sample on disk
+    /// and permanently unpublishable.
+    #[test]
+    fn a_sample_learned_from_a_fitted_crop_is_offered_to_the_pool() {
+        let mut store = super::super::icons::TemplateStore::new();
+
+        store.learn(
+            "Brittle Chance",
+            3,
+            sig(3),
+            None,
+            crop_registration(ScaleSource::Frame),
+            &MercGeometry::default().thresholds,
+        );
+
+        let offered: Vec<(String, u8)> = store
+            .pending_uploads()
+            .into_iter()
+            .map(|(f, t, _)| (f, t))
+            .collect();
+        assert_eq!(offered, [("Brittle Chance".to_string(), 3)]);
+    }
+
+    /// THE F7 CASE. A claim can stand for up to `PENDING_CONFIRM_TTL`, and the
+    /// session's registration can change under it — a monitor swap, the game's
+    /// UI slider, or simply the fit declining. What is learned is the FIRST
+    /// read's crop, so the registration that gates it must be that crop's own
+    /// and not whatever the session is registered at when the second read
+    /// lands.
+    #[test]
+    fn a_standing_claim_keeps_its_own_crops_registration_across_a_source_change() {
+        let at = Instant::now();
+        let held = read_cut_at("skill.a", 0, "Chain", 2, 1, at, ScaleSource::Frame);
+        // The session dropped to the OCR guess between the two reads, so this
+        // read's own crop is unregistered.
+        let second = read_cut_at("skill.a", 0, "Chain", 2, 9, at, ScaleSource::Ocr);
+
+        let (_, outcome) = fold_pending(Some(held), second);
+
+        let applied = applied_of(&outcome).expect("two agreeing reads confirm the cell");
+        let (_, _, cut_at) = applied.crop.as_ref().expect("the held read carried a crop");
+        assert_eq!(*cut_at, ScaleSource::Frame);
+        assert_eq!(
+            crop_registration(*cut_at),
+            super::super::icons::REGISTRATION,
+            "the claim's own frame-cut crop was refused as unregistered",
+        );
     }
 
     /// The refusal line is the whole of the diagnosis: it has to say the
@@ -4994,9 +5240,16 @@ mod tests {
     }
 
     fn cache(entries: &[((&str, u8), u8)]) -> SigCache {
+        cache_cut_at(entries, ScaleSource::Frame)
+    }
+
+    /// [`cache`] with the crops' own [`ScaleSource`] spelled out — the
+    /// `merge_sigs` half of F7, where the session re-registers under a cache
+    /// that was cut at the old one.
+    fn cache_cut_at(entries: &[((&str, u8), u8)], cut_at: ScaleSource) -> SigCache {
         entries
             .iter()
-            .map(|((row, slot), seed)| (sig_key(row, *slot), (sig(*seed), None)))
+            .map(|((row, slot), seed)| (sig_key(row, *slot), (sig(*seed), None, cut_at)))
             .collect()
     }
 
@@ -5020,6 +5273,54 @@ mod tests {
             merged[&sig_key("skill.a", 1)].0,
             sig(9),
             "every other cell takes the fresh crop, so a moved window re-caches",
+        );
+    }
+
+    /// THE OTHER HALF OF F7. The registration is part of the crop, so the cold
+    /// crop the hovered cell keeps must keep the source it was CUT at — not the
+    /// one the session has re-fitted to since. Stamping the fresh source onto a
+    /// kept crop is how art cut 6-12 px off the art would walk through the
+    /// registration gate and into the pool.
+    #[test]
+    fn the_hovered_cells_kept_crop_keeps_the_source_it_was_cut_at() {
+        let hovered = sig_key("skill.a", 0);
+        let previous =
+            cache_cut_at(&[(("skill.a", 0), 1), (("skill.a", 1), 2)], ScaleSource::Ocr);
+        let fresh = cache_cut_at(&[(("skill.a", 0), 9), (("skill.a", 1), 9)], ScaleSource::Frame);
+
+        let merged = merge_sigs(previous, fresh, Some(hovered.clone()));
+
+        assert_eq!(
+            merged[&hovered].2,
+            ScaleSource::Ocr,
+            "the kept crop was re-stamped with the registration the session holds now",
+        );
+        assert_eq!(
+            merged[&sig_key("skill.a", 1)].2,
+            ScaleSource::Frame,
+            "every other cell takes the fresh crop, and its source with it",
+        );
+    }
+
+    /// The refusing direction of F7, which is the one that protects the pool: a
+    /// claim made while the session was on the OCR guess stays refused after the
+    /// fit lands. The crop that would be learned is read 1's, cut 6-12 px off
+    /// the art, and the session's current registration says nothing about it.
+    #[test]
+    fn a_claim_cut_at_the_ocr_guess_is_still_refused_once_the_fit_lands() {
+        let at = Instant::now();
+        let held = read_cut_at("skill.a", 0, "Chain", 2, 1, at, ScaleSource::Ocr);
+        // The frame fit landed between the two reads.
+        let second = read_cut_at("skill.a", 0, "Chain", 2, 9, at, ScaleSource::Frame);
+
+        let (_, outcome) = fold_pending(Some(held), second);
+
+        let applied = applied_of(&outcome).expect("two agreeing reads confirm the cell");
+        let (_, _, cut_at) = applied.crop.as_ref().expect("the held read carried a crop");
+        assert_eq!(*cut_at, ScaleSource::Ocr);
+        assert!(
+            crop_registration(*cut_at) < super::super::icons::REGISTRATION,
+            "an OCR-cut crop was made learnable by a fit that landed after it",
         );
     }
 
@@ -5344,6 +5645,21 @@ mod tests {
         seed: u8,
         at: Instant,
     ) -> PendingConfirm {
+        read_cut_at(row, slot, family, tier, seed, at, ScaleSource::Frame)
+    }
+
+    /// [`read_of`] with the crop's own [`ScaleSource`] spelled out — the F7
+    /// case, where the session's registration moves while a claim is standing.
+    #[allow(clippy::too_many_arguments)]
+    fn read_cut_at(
+        row: &str,
+        slot: u8,
+        family: &str,
+        tier: u8,
+        seed: u8,
+        at: Instant,
+        cut_at: ScaleSource,
+    ) -> PendingConfirm {
         PendingConfirm {
             key: sig_key(row, slot),
             family: family.to_string(),
@@ -5351,7 +5667,7 @@ mod tests {
             name: Some(format!("{family} (Tier {tier})")),
             ids: vec![format!("support.{family}.t{tier}")],
             score: 0.94,
-            crop: Some((sig(seed), None)),
+            crop: Some((sig(seed), None, cut_at)),
             at,
         }
     }

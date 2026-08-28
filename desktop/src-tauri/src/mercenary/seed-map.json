@@ -18,8 +18,11 @@
     "A follow-up curation ticket flips rows on as verification lands.",
     "enabled is ALSO withdrawn from both halves of any pair of seeds whose signatures correlate at",
     "or above icon_match - icon_lead (0.83): inside that band neither family can ever read Matched,",
-    "and keeping just one would answer the other family's cells with the wrong name.",
-    "Excluded by that pairwise rule: Brutality, Faster Attacks, Faster Projectiles, Maim."
+    "and keeping just one would answer the other family's cells with the wrong name. That pairwise",
+    "measurement is taken at the SHIPPED calibration (SEED_ART), unlike the corpus grade above,",
+    "which can only be taken at the offset the corpus was harvested at: the withdrawal describes",
+    "the store a device installs, and a device derives at SEED_ART.",
+    "Excluded by that pairwise rule: Area of Effect, Concentrated Effect, Faster Attacks, Faster Projectiles, Less Duration, More Duration."
   ],
   "entries": [
     {
@@ -55,7 +58,7 @@
       "gem": "Increased Area of Effect Support",
       "tier": 1,
       "verified": "corpus",
-      "enabled": true
+      "enabled": false
     },
     {
       "family": "Arrow Nova",
@@ -69,7 +72,7 @@
       "gem": "Brutality Support",
       "tier": 1,
       "verified": "corpus",
-      "enabled": false
+      "enabled": true
     },
     {
       "family": "Chain",
@@ -118,7 +121,7 @@
       "gem": "Concentrated Effect Support",
       "tier": 1,
       "verified": "corpus",
-      "enabled": true
+      "enabled": false
     },
     {
       "family": "Cooldown Recovery",
@@ -237,7 +240,7 @@
       "gem": "Less Duration Support",
       "tier": 1,
       "verified": "corpus",
-      "enabled": true
+      "enabled": false
     },
     {
       "family": "Lightning Penetration",
@@ -251,7 +254,7 @@
       "gem": "Maim Support",
       "tier": 3,
       "verified": "corpus",
-      "enabled": false
+      "enabled": true
     },
     {
       "family": "Melee Physical Damage",
@@ -293,7 +296,7 @@
       "gem": "More Duration Support",
       "tier": 1,
       "verified": "corpus",
-      "enabled": true
+      "enabled": false
     },
     {
       "family": "Multiple Projectiles",

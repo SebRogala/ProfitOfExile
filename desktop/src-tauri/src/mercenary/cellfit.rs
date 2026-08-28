@@ -1056,31 +1056,222 @@ pub(super) fn frame_step_columns(means: &[f32]) -> Vec<usize> {
         .collect()
 }
 
+// -- the two committed panels, read the way the loop reads them ------------
+//
+// `pub(super)` and at module level for the same reason [`pc_lines`] is: the
+// fitted cells of these two fixtures are the ONLY frame-registered cells this
+// repo holds, and `seed`'s calibration is measured on them (POE-215 WI-B).
+// A second copy of the detect → refine → occupancy walk would drift the moment
+// one of its thresholds moved.
+
+/// `tests/fixtures/merc-skills-panel.png` is the (60,585) crop of the laptop's
+/// 1920×1200 `recruit-cai.png`, and [`super::geometry::reference_lines`] is
+/// the OCR half of that same screen — so the two are one ground truth and this
+/// origin is what joins them. See [`PC_ORIGIN`] for the PC's half.
+#[cfg(test)]
+pub(super) const REF_ORIGIN: (i32, i32) = (60, 585);
+/// See [`REF_ORIGIN`].
+#[cfg(test)]
+pub(super) const REF_SCREEN: [u32; 2] = [1920, 1200];
+
+#[cfg(test)]
+pub(super) fn vocab() -> super::vocab::MercVocab {
+    super::vocab::MercVocab::load().expect("vocabulary parses")
+}
+
+#[cfg(test)]
+pub(super) fn fixture(name: &str) -> DynamicImage {
+    image::open(format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR")))
+        .unwrap_or_else(|e| panic!("the committed fixture {name} loads: {e}"))
+}
+
+/// One fixture read twice: the layout the OCR path registers, and the
+/// [`Refined`] the fit re-registers it to. Both come off the SAME `detect`
+/// call the pinned fits use, so the crops are the crops the loop would cut on
+/// that machine.
+#[cfg(test)]
+pub(super) fn both_registrations(
+    file: &str,
+    origin: (i32, i32),
+    screen: [u32; 2],
+    lines: Vec<super::geometry::OcrLineBox>,
+) -> (DynamicImage, Frame, MercLayout, Refined) {
+    let g = MercGeometry::default();
+    let img = fixture(file);
+    let frame = Frame::cropped(origin, screen);
+    let ocr = super::geometry::detect(&lines, &g, &vocab(), None).expect("the panel");
+    let refined = refine(&img, frame, ocr.clone(), &g);
+    (img, frame, ocr, refined)
+}
+
+/// The reference and the PC, named, each read both ways.
+#[cfg(test)]
+pub(super) fn both_fixtures() -> Vec<(&'static str, DynamicImage, Frame, MercLayout, Refined)> {
+    let (ri, rf, ro, rr) = both_registrations(
+        "merc-skills-panel.png",
+        REF_ORIGIN,
+        REF_SCREEN,
+        super::geometry::reference_lines(),
+    );
+    let (pi, pf, po, pr) =
+        both_registrations("merc-recruit-pc-1080p.png", PC_ORIGIN, PC_SCREEN, pc_lines());
+    vec![("reference", ri, rf, ro, rr), ("pc", pi, pf, po, pr)]
+}
+
+/// Every occupied cell of a fitted panel as `(row, slot, ocr rect, fitted
+/// rect)`, in FIXTURE px. Occupancy is decided on the FITTED rect, which is
+/// the rect `build_capture` decides it on.
+#[cfg(test)]
+pub(super) fn occupied_pairs(
+    img: &DynamicImage,
+    frame: Frame,
+    ocr: &MercLayout,
+    refined: &Refined,
+) -> Vec<(usize, usize, [i32; 4], [i32; 4])> {
+    let g = MercGeometry::default();
+    let mut out = Vec::new();
+    for (r, row) in refined.layout.rows.iter().enumerate() {
+        for (s, &cell) in row.cells.iter().enumerate() {
+            let fitted = frame.local(cell);
+            if super::geometry::occupied(img, fitted, &g) {
+                out.push((r, s, frame.local(ocr.rows[r].cells[s]), fitted));
+            }
+        }
+    }
+    out
+}
+
+// -- the by-eye family labels (POE-215 WI-B) --------------------------------
+
+/// What the eye put on each occupied cell of the two committed fixtures, on
+/// **2026-08-28**, and the ONLY family labels this repo holds for a
+/// frame-registered cell.
+///
+/// # Method, and how far to trust it
+///
+/// The panel names its SKILLS, never its supports, so there is no text to read
+/// and the label is a judgement. Three sources were crossed, in this order:
+///
+/// 1. Each fitted inner crop was correlated against all 78 committed corpus
+///    crops (`tests/fixtures/merc-icon-crops`, which DO carry family labels)
+///    over a ±6 px search — wider than [`super::icons::SHIFT_MAX`] on purpose,
+///    because the corpus is cut at the OCR registration and sits ~5 px left of
+///    a fitted crop, which the shipped ±3 search cannot cross.
+/// 2. Each label was then checked BY EYE against the gem art the seed map
+///    names for that family, rendered through `seed::render_cell` so the
+///    comparison is like for like.
+/// 3. A label was kept only when both agreed. Every row below scored ≥ 0.87
+///    against a corpus crop of its family, except `Trap and Mine Damage` —
+///    no corpus crop exists for it and the eye is its only evidence — and
+///    `Second Wind` and `Added Lightning`, whose corpus crops come from a
+///    third machine and reach only 0.54 / 0.65, but whose art the eye matches
+///    without hesitation.
+///
+/// **Ten of the 27 occupied cells stay unlabelled**, and each for a reason
+/// that no amount of looking would fix:
+///
+/// - Five (reference r0s0/r2s0, PC r0s1/r2s1/r3s4) carry the one picture that
+///   `DoT Multiplier`, `Cooldown Recovery` and one mislabelled `Swift
+///   Affliction` crop all share in the corpus. No player gem has that art, so
+///   the family behind it is not decidable here and no seed could match it.
+/// - Three (reference r3s2, PC r2s2/r3s1) carry the picture the corpus splits
+///   between `Physical as Extra Chaos` and `Brittle Chance` — again a merc
+///   family with no player gem.
+/// - Two (PC r1s0/r3s0) carry an art no corpus crop reaches above 0.60.
+///
+/// `tier` is the number of BARS in the cell's tier badge, counted by eye at
+/// 10× — `None` where the gem art runs across the badge and the leftmost bar
+/// cannot be told from it. Nothing in the measurement reads it; it is here so
+/// a later pass has the cell's own tier rather than the tier of whichever
+/// corpus crop identified it.
+#[cfg(test)]
+pub(super) const FIXTURE_CELL_FAMILIES: &[(&str, usize, usize, &str, Option<u8>)] = &[
+    ("reference", 0, 1, "Spell Cascade", None),
+    ("reference", 1, 0, "More Duration", Some(2)),
+    ("reference", 1, 1, "Lightning Penetration", Some(2)),
+    ("reference", 2, 1, "Area of Effect", Some(2)),
+    ("reference", 2, 2, "Second Wind", Some(3)),
+    ("reference", 3, 0, "Trap and Mine Damage", Some(2)),
+    ("reference", 3, 1, "Area of Effect", Some(2)),
+    ("reference", 3, 3, "Added Lightning", None),
+    ("reference", 5, 0, "More Duration", Some(2)),
+    ("pc", 0, 0, "Area of Effect", Some(2)),
+    ("pc", 1, 1, "Area of Effect", Some(2)),
+    ("pc", 2, 0, "Faster Projectiles", Some(2)),
+    ("pc", 2, 3, "Chance to Poison", None),
+    ("pc", 3, 2, "Faster Projectiles", None),
+    ("pc", 3, 3, "Area of Effect", Some(3)),
+    ("pc", 4, 0, "Faster Casting", Some(2)),
+    ("pc", 4, 1, "Area of Effect", Some(3)),
+];
+
+/// One labelled, frame-registered cell, mounted the way the corpus readers
+/// mount a stored inner crop.
+///
+/// The OUTER rect is rebuilt through [`super::geometry::outer_rect_for_inner`]
+/// rather than from a 43/39 pair, because the two fixtures do not share one:
+/// the reference cuts 40 inside 44 and the PC 36 inside 40.
+#[cfg(test)]
+pub(super) struct LabelledCell {
+    /// `"reference r2 s1 Area of Effect"` — fixture, row, slot and family, so
+    /// a failure names the cell AND what it was labelled as.
+    pub at: String,
+    /// The merc family, as [`FIXTURE_CELL_FAMILIES`] has it.
+    pub family: &'static str,
+    /// The UI scale whose cell is this size — what a seed for this cell has to
+    /// be derived at, derived FROM the crop rather than assumed.
+    pub scale: f32,
+    /// The cell, black outside the inner crop.
+    pub cell: DynamicImage,
+    /// `[0, 0, side, side]` — the whole of `cell`.
+    pub outer: [i32; 4],
+}
+
+/// [`FIXTURE_CELL_FAMILIES`] resolved against the two fixtures' fitted rects.
+#[cfg(test)]
+pub(super) fn labelled_fixture_cells() -> Vec<LabelledCell> {
+    let g = MercGeometry::default();
+    let mut out = Vec::new();
+    for (name, img, frame, ocr, refined) in both_fixtures() {
+        assert!(refined.fit.is_some(), "{name}: precondition, the frame is found");
+        for (r, s, _ocr_rect, fitted) in occupied_pairs(&img, frame, &ocr, &refined) {
+            let Some((_, _, _, family, _)) = FIXTURE_CELL_FAMILIES
+                .iter()
+                .find(|(f, fr, fs, _, _)| *f == name && *fr == r && *fs == s)
+            else {
+                continue;
+            };
+            let crop = super::read::crop_rgba(&img, fitted, &g)
+                .unwrap_or_else(|| panic!("{name} row {r} slot {s}: the fitted crop lies on the fixture"));
+            let inner = crop.width();
+            let (side, inset) = super::geometry::outer_rect_for_inner(inner, &g);
+            let mut canvas = image::RgbaImage::from_pixel(side, side, image::Rgba([0, 0, 0, 255]));
+            image::imageops::replace(&mut canvas, &crop, inset as i64, inset as i64);
+            out.push(LabelledCell {
+                at: format!("{name} r{r} s{s} {family}"),
+                family,
+                scale: (inner as f32 + 2.0 * g.cell_inset) / g.cell_size,
+                cell: DynamicImage::ImageRgba8(canvas),
+                outer: [0, 0, side as i32, side as i32],
+            });
+        }
+    }
+    assert_eq!(
+        out.len(),
+        FIXTURE_CELL_FAMILIES.len(),
+        "every labelled (fixture, row, slot) must name an OCCUPIED cell of that fixture",
+    );
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mercenary::geometry::{detect, reference_lines, OcrLineBox};
     use crate::mercenary::seed;
-    use crate::mercenary::vocab::MercVocab;
     use image::Rgba;
 
-    fn vocab() -> MercVocab {
-        MercVocab::load().expect("vocabulary parses")
-    }
-
-    fn fixture(name: &str) -> DynamicImage {
-        image::open(format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR")))
-            .unwrap_or_else(|e| panic!("the committed fixture {name} loads: {e}"))
-    }
-
     // -- the reference fixture ------------------------------------------------
-
-    /// `tests/fixtures/merc-skills-panel.png` is the (60,585) crop of the
-    /// laptop's 1920×1200 `recruit-cai.png`, and [`reference_lines`] is the OCR
-    /// half of that same screen — so the two are one ground truth and the crop
-    /// origin is what joins them.
-    const REF_ORIGIN: (i32, i32) = (60, 585);
-    const REF_SCREEN: [u32; 2] = [1920, 1200];
 
     /// The gold frame's dark lines, MEASURED in fixture px: 312 / 361 / 409-410
     /// / 458 / 507 / 556, i.e. a slot pitch of 48.67. The OCR path predicts
@@ -1765,59 +1956,6 @@ mod tests {
     // The step statistic itself — [`DARK_LINE`], [`LIGHT_LINE`], [`EDGE_BAND`],
     // [`column_means`], [`frame_step_columns`] — lives at module level so
     // `icons`' corpus reader runs the same one.
-
-    /// One fixture read twice: the layout the OCR path registers, and the
-    /// [`Refined`] the fit re-registers it to. Both come off the SAME `detect`
-    /// call the pinned fits above use, so the crops below are the crops the
-    /// loop would cut on that machine.
-    fn both_registrations(
-        file: &str,
-        origin: (i32, i32),
-        screen: [u32; 2],
-        lines: Vec<OcrLineBox>,
-    ) -> (DynamicImage, Frame, MercLayout, Refined) {
-        let g = MercGeometry::default();
-        let img = fixture(file);
-        let frame = Frame::cropped(origin, screen);
-        let ocr = detect(&lines, &g, &vocab(), None).expect("the panel");
-        let refined = refine(&img, frame, ocr.clone(), &g);
-        (img, frame, ocr, refined)
-    }
-
-    /// The reference and the PC, named, each read both ways.
-    fn both_fixtures() -> Vec<(&'static str, DynamicImage, Frame, MercLayout, Refined)> {
-        let (ri, rf, ro, rr) =
-            both_registrations("merc-skills-panel.png", REF_ORIGIN, REF_SCREEN, reference_lines());
-        let (pi, pf, po, pr) = both_registrations(
-            "merc-recruit-pc-1080p.png",
-            PC_ORIGIN,
-            PC_SCREEN,
-            pc_lines(),
-        );
-        vec![("reference", ri, rf, ro, rr), ("pc", pi, pf, po, pr)]
-    }
-
-    /// Every occupied cell of a fitted panel as `(row, slot, ocr rect, fitted
-    /// rect)`, in FIXTURE px. Occupancy is decided on the FITTED rect, which
-    /// is the rect `build_capture` decides it on.
-    fn occupied_pairs(
-        img: &DynamicImage,
-        frame: Frame,
-        ocr: &MercLayout,
-        refined: &Refined,
-    ) -> Vec<(usize, usize, [i32; 4], [i32; 4])> {
-        let g = MercGeometry::default();
-        let mut out = Vec::new();
-        for (r, row) in refined.layout.rows.iter().enumerate() {
-            for (s, &cell) in row.cells.iter().enumerate() {
-                let fitted = frame.local(cell);
-                if crate::mercenary::geometry::occupied(img, fitted, &g) {
-                    out.push((r, s, frame.local(ocr.rows[r].cells[s]), fitted));
-                }
-            }
-        }
-        out
-    }
 
     /// AC1 on pixels: the cell crop the loop cuts today runs INTO the gold
     /// frame, and the one the fit cuts starts ON it.

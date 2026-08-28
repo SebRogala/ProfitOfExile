@@ -193,19 +193,62 @@ pub struct SeedArt {
 /// not a lucky cell.
 pub const SEED_ART_FRAC: f32 = 1.125;
 
-/// The art's top-left relative to the window's, in window widths — 4 px right
+/// The art's top-left relative to the window's, in window widths — 2 px LEFT
 /// and 2 px up at the reference window 34.
 ///
-/// **Chosen so the MEDIAN best alignment is (0, 0)**, not so the score is
-/// highest. Every count below is over POE-208's 29 clean crops of mapped
-/// families; the sweep was not re-run for POE-209's grown corpus. Scoring
-/// alone picks `+1` in y, which scores better (27 of 29) and is wrong: at that
-/// offset the search's best shift is pinned at the `dy = -3`
-/// edge on 26 of the 29 crops, so the whole ±3 px budget is spent cancelling a
-/// constant and a cell whose own jitter runs the same way falls off the end.
-/// The search is for `geometry::detect`'s per-cell jitter; the calibration
-/// owes it a zero mean.
-pub const SEED_ART_OFFSET_FRAC: [f32; 2] = [4.0 / 34.0, -2.0 / 34.0];
+/// **Chosen so the MEDIAN best alignment is (0, 0)** on the only
+/// frame-registered cells this repo holds, not so the score is highest. The
+/// search is for `geometry::detect`'s per-cell jitter; the calibration owes it
+/// a zero mean.
+///
+/// # Re-measured against registered cells (POE-215 WI-B, 2026-08-28)
+///
+/// POE-208 fitted this to `tests/fixtures/merc-icon-crops`, and every crop in
+/// that corpus was cut at the OCR registration — LEFT of the gold frame the
+/// icon is drawn in, far enough that the frame's own dark|light step falls at
+/// columns 3-7 INSIDE the crop
+/// (`cellfit::tests::the_fit_moves_the_cell_crop_off_the_gold_frame_it_was_cutting_through`
+/// measures exactly that, over these same 27 cells). The art therefore sits
+/// ~5 px further right inside a corpus crop than inside the cell the loop cuts
+/// today, and the `+4/34` that centred the search on the corpus is 6 px wrong
+/// against a fitted cell.
+///
+/// Measured over the 17 labelled cells of
+/// [`super::cellfit::FIXTURE_CELL_FAMILIES`], each seed derived at that
+/// cell's OWN window — the reference fixture's fitted cell is 44 outer / 40
+/// inner / 34 window, the PC's is 40 / 36 / 30:
+///
+/// | offset | median best shift | edge-pinned | mean score |
+/// |---|---|---|---|
+/// | `+4, -2` — POE-208, now [`SEED_ART_PREFIT`] | `(-3, -1)` | **17 of 17** | 0.584 |
+/// | `-2, -2` — this | `(0, 0)` | 0 of 17 | 0.918 |
+///
+/// A 6 px systematic error cannot show up as a best shift of `-6`: the search
+/// is ±[`SHIFT_MAX`], so it shows up as every cell PINNED at the `dx = -3`
+/// edge with its whole jitter budget already spent. Counting pins rather than
+/// reading medians is what makes the old value visibly wrong instead of
+/// merely off.
+///
+/// Only x moved. `-3, -2` is indistinguishable from this on the median (0, 0)
+/// and on the pin count (0 of 17) and 0.004 worse on the mean, so the bracket
+/// x sits in is one px wide and the better mean picks inside it; `-1, -2`
+/// already pins a cell and moves the median to (-1, 0), and `-4, -2` moves it
+/// to (1, 0). The fraction stays [`SEED_ART_FRAC`], which is still the sweep's
+/// best at this offset (1.100 and 1.125 tie on the median and the pins).
+///
+/// # What this trades
+///
+/// A cell cut at the OCR guess — which is what a DECLINED fit still yields —
+/// is now 6 px away from the seed rather than 0. That is the intended
+/// direction and not a side effect: POE-215 refuses to LEARN from an
+/// unregistered crop, and the seeds follow the registration the store is being
+/// rebuilt on.
+pub const SEED_ART_OFFSET_FRAC: [f32; 2] = [-2.0 / 34.0, -2.0 / 34.0];
+
+/// The offset `seed-map.json` was GRADED at — POE-208's fit to the pre-POE-215
+/// corpus. See [`SEED_ART_PREFIT`].
+#[cfg(test)]
+pub(super) const SEED_ART_OFFSET_FRAC_PREFIT: [f32; 2] = [4.0 / 34.0, -2.0 / 34.0];
 
 /// The cell background behind transparent art pixels.
 ///
@@ -229,6 +272,25 @@ pub const SEED_ART_BG: [u8; 3] = [0, 0, 0];
 pub const SEED_ART: SeedArt = SeedArt {
     frac: SEED_ART_FRAC,
     offset_frac: SEED_ART_OFFSET_FRAC,
+    bg: SEED_ART_BG,
+};
+
+/// The calibration `seed-map.json` was graded at, and the ONLY one that may be
+/// graded against `tests/fixtures/merc-icon-crops`.
+///
+/// Every crop in that corpus was cut through the gold frame (see
+/// [`SEED_ART_OFFSET_FRAC`]), so a seed rendered for a FITTED cell is 6 px off
+/// every one of them — the mirror of the measurement recorded there. Grading
+/// the map at the shipped calibration would take rows out of `enabled` on the
+/// corpus's registration rather than on the seeds, so the grades stay
+/// reproducible at the offset the corpus was harvested at while the seeds the
+/// app installs use [`SEED_ART`].
+///
+/// Comes off with the corpus it grades against, in POE-215 phase 2 (d).
+#[cfg(test)]
+pub(super) const SEED_ART_PREFIT: SeedArt = SeedArt {
+    frac: SEED_ART_FRAC,
+    offset_frac: SEED_ART_OFFSET_FRAC_PREFIT,
     bg: SEED_ART_BG,
 };
 
@@ -1470,6 +1532,16 @@ mod tests {
         (MercGeometry::default(), 1.0)
     }
 
+    /// [`derive`] at [`SEED_ART_PREFIT`] — the door every corpus grade goes
+    /// through, and the only one that may.
+    ///
+    /// Named rather than spelled out at each call site so the rule is greppable:
+    /// a corpus-facing test that calls [`derive`] is grading a seed the corpus's
+    /// own registration cannot answer, and would demote the map.
+    fn derive_prefit(art: &RgbaImage, g: &MercGeometry, scale: f32) -> Option<CellSig> {
+        derive_with(art, g, scale, &SEED_ART_PREFIT)
+    }
+
     /// A store holding one seed per row, at `p`.
     fn seeded_store(rows: &[(String, String, u8)], p: &SeedArt) -> TemplateStore {
         let (g, scale) = seed_scale();
@@ -1542,7 +1614,7 @@ mod tests {
                 if VISUAL_FAMILIES.contains(&family.as_str()) {
                     return true;
                 }
-                let Some(seed) = derive(&art(gem), &g, scale) else {
+                let Some(seed) = derive_prefit(&art(gem), &g, scale) else {
                     return false;
                 };
                 let mut crops = clean.iter().filter(|c| c.family == *family).peekable();
@@ -1580,7 +1652,7 @@ mod tests {
     /// for half the corpus and cannot hold for all of it.
     ///
     /// Both halves are therefore asserted in
-    /// [`the_shipped_calibration_matches_the_corpus_and_is_offset_sensitive`]:
+    /// [`the_prefit_calibration_matches_the_corpus_and_is_offset_sensitive`]:
     /// the plan's clause as a FLOOR on how many crops clear it unshifted, and
     /// the systematic component as a median best shift of exactly (0, 0),
     /// which per-cell jitter cannot move and a constant error cannot survive.
@@ -1608,9 +1680,25 @@ mod tests {
     /// survivor then answers the other family's cells with a confident wrong
     /// name, which is the one outcome this module refuses. So both go, the
     /// same rule `merge_pulled` applies to one art claimed by two families.
+    ///
+    /// # Two calibrations, one per axis (POE-215 WI-B)
+    ///
+    /// The grade and the withdrawal do not answer the same question, so they
+    /// are not measured at the same offset:
+    ///
+    /// - The GRADE ([`gradable_rows`], [`corpus_verifies`], and the store they
+    ///   run in) reads a corpus crop, and every crop was harvested at the OCR
+    ///   registration, so it stays at [`SEED_ART_PREFIT`] — the only offset
+    ///   that corpus can answer.
+    /// - The pairwise WITHDRAWAL reads seed against seed and no crop at all.
+    ///   It is [`derive`] at [`SEED_ART`], because the store it describes is
+    ///   the one a device installs: computed at the pre-fit offset it would
+    ///   fabricate self-consistency, writing a map that is only coherent at an
+    ///   offset the app never uses while `install_seed`'s `best_other_family`
+    ///   refused those same rows on the shipped one.
     fn generated_map() -> (Vec<SeedEntry>, Vec<String>) {
         let rows = gradable_rows();
-        let store = seeded_store(&rows, &SEED_ART);
+        let store = seeded_store(&rows, &SEED_ART_PREFIT);
         let t = Thresholds::default();
         let keys = gem_icon_keys();
         let (g, scale) = seed_scale();
@@ -1686,7 +1774,10 @@ mod tests {
             "A follow-up curation ticket flips rows on as verification lands.",
             "enabled is ALSO withdrawn from both halves of any pair of seeds whose signatures correlate at",
             "or above icon_match - icon_lead (0.83): inside that band neither family can ever read Matched,",
-            "and keeping just one would answer the other family's cells with the wrong name.",
+            "and keeping just one would answer the other family's cells with the wrong name. That pairwise",
+            "measurement is taken at the SHIPPED calibration (SEED_ART), unlike the corpus grade above,",
+            "which can only be taken at the offset the corpus was harvested at: the withdrawal describes",
+            "the store a device installs, and a device derives at SEED_ART.",
         ]
         .map(str::to_string)
         .to_vec();
@@ -1940,6 +2031,11 @@ mod tests {
     /// Every row that is graded but NOT enabled is one the pairwise rule took
     /// back — there is no third reason, and a hand-edit that switched one off
     /// for a fourth reason has to fail here.
+    ///
+    /// At [`SEED_ART`], matching the axis `generated_map` withdraws on: the
+    /// pairwise rule is a seed↔seed claim about the installed store, so the
+    /// re-derivation that audits it has to be taken at the offset a device
+    /// derives at, not at the corpus's [`SEED_ART_PREFIT`].
     #[test]
     fn a_graded_row_is_disabled_only_by_the_pairwise_rule() {
         let t = Thresholds::default();
@@ -2022,8 +2118,13 @@ mod tests {
 
     // -- calibration --------------------------------------------------------
 
-    /// The sweep that produced the three constants, and the claim that they
-    /// ARE its answer.
+    /// The sweep that produced [`SEED_ART_PREFIT`], and the claim that it IS
+    /// its answer.
+    ///
+    /// It ranks against the pre-POE-215 corpus, so it can only ever speak for
+    /// the PRE-FIT offset — POE-215 WI-B re-measured the shipped one against
+    /// frame-registered cells instead. Re-pointing this at the shipped
+    /// constants is phase 2's job, and only after the corpus is re-harvested.
     ///
     /// Ignored by default because it derives 51 seeds at each of 8,580 points
     /// and takes about a minute in release; run it when the art, the corpus or
@@ -2171,11 +2272,11 @@ mod tests {
         // asks. The tolerance is 1e-4 rather than 1e-6 because the correlation
         // sums 657 f32 products: a signature against itself lands a few ulps
         // either side of 1.0 (1.0000014 here), never exactly on it.
-        let shipped = derive(&art("Multistrike Support"), &g, scale).expect("derives");
+        let shipped = derive_prefit(&art("Multistrike Support"), &g, scale).expect("derives");
         let won = derive_with(&art("Multistrike Support"), &g, scale, &winner).expect("derives");
         assert!(
             (shipped.ncc(&won) - 1.0).abs() < 1e-4,
-            "the sweep's best calibration is {} — the shipped constants are not its answer",
+            "the sweep's best calibration is {} — SEED_ART_PREFIT is not its answer",
             table[0].label,
         );
     }
@@ -2183,16 +2284,21 @@ mod tests {
     /// How many of the 32 clean crops of corpus-graded families must clear
     /// `icon_match` against their seed with NO alignment shift.
     ///
-    /// Seventeen, measured at the shipped calibration over POE-209's grown
+    /// Seventeen, measured at [`SEED_ART_PREFIT`] over POE-209's grown
     /// corpus — half of it, and 12 of those 17 because their own best shift is
     /// exactly (0, 0). A floor rather than an equality so a calibration that
     /// helps MORE crops is not a failure; dropping below it means the art has
     /// moved off the window.
     const UNSHIFTED_FLOOR: usize = 17;
 
-    /// The shipped constants, restated as two checks the sweep's ranking is
+    /// [`SEED_ART_PREFIT`], restated as two checks the sweep's ranking is
     /// built on: the calibration MATCHES the corpus, and it is not free to
     /// slide.
+    ///
+    /// **Pre-fit, not shipped** (POE-215 WI-B): the corpus is cut at the OCR
+    /// registration and only the offset it was harvested at can grade it. What
+    /// the SHIPPED calibration does against a frame-registered cell is
+    /// [`the_shipped_calibration_centres_the_search_on_frame_registered_cells`].
     ///
     /// 1. Every corpus-graded family's clean crops reach `icon_match` against
     ///    their own seed, and the MEDIAN best alignment over all of them is
@@ -2216,7 +2322,7 @@ mod tests {
     /// derivation that matched everything at every offset would clear the
     /// first, and one that matched nothing would clear the second.
     #[test]
-    fn the_shipped_calibration_matches_the_corpus_and_is_offset_sensitive() {
+    fn the_prefit_calibration_matches_the_corpus_and_is_offset_sensitive() {
         let t = Thresholds::default();
         let (g, scale) = seed_scale();
         let window = window_px(&g, scale) as f32;
@@ -2227,17 +2333,17 @@ mod tests {
         let error_px = (2 * SHIFT_MAX + 1) as f32;
         let shifted = SeedArt {
             offset_frac: [
-                SEED_ART_OFFSET_FRAC[0] + error_px / window,
-                SEED_ART_OFFSET_FRAC[1],
+                SEED_ART_OFFSET_FRAC_PREFIT[0] + error_px / window,
+                SEED_ART_OFFSET_FRAC_PREFIT[1],
             ],
-            ..SEED_ART
+            ..SEED_ART_PREFIT
         };
         let clean = clean_crops();
         let (mut dxs, mut dys) = (Vec::new(), Vec::new());
         let mut unshifted_hits = 0usize;
         let mut worst_unshifted = (f32::MAX, String::new());
         for entry in corpus {
-            let seed = derive(&art(&entry.gem), &g, scale).expect("the seed derives");
+            let seed = derive_prefit(&art(&entry.gem), &g, scale).expect("the seed derives");
             let off = derive_with(&art(&entry.gem), &g, scale, &shifted)
                 .expect("the shifted seed derives");
             for crop in clean.iter().filter(|c| c.family == entry.family) {
@@ -2293,9 +2399,212 @@ mod tests {
         );
     }
 
+    /// How many of the 17 labelled fixture cells must reach `icon_match`
+    /// against their own seed at the shipped calibration.
+    ///
+    /// Fifteen, measured 2026-08-28. The two that miss are both statements
+    /// about the ART rather than about the registration, which is why this is
+    /// a floor and not a universal:
+    ///
+    /// - `Chance to Poison` (PC r2 s3) at 0.476 — the merc panel does not draw
+    ///   this family with the player gem's picture at all. The map grades it
+    ///   `name` and ships it DISABLED, so no device ever installs that seed;
+    ///   the cell is kept here because dropping the one row that disagrees
+    ///   would make the floor a description of the rows that agree.
+    /// - `Faster Projectiles` (PC r3 s2) at 0.850 — the family whose art the
+    ///   corpus already records as one picture with `Faster Attacks`
+    ///   (POE-212). Both halves of that pair ship disabled too.
+    ///
+    /// At [`SEED_ART_PREFIT`] this count is ZERO of 17, which is the outcome
+    /// the offset move exists to change.
+    ///
+    /// The floor IS the measurement — 15 of 17, with no headroom under it —
+    /// the same shape as [`UNSHIFTED_FLOOR`]. That is deliberate and is what
+    /// makes it a regression detector: one more cell falling off `icon_match`
+    /// fails here rather than being absorbed by slack. It is written as a floor
+    /// only so a calibration that helps a third cell is not a failure.
+    const REGISTERED_MATCH_FLOOR: usize = 15;
+
+    /// The shipped calibration against the only frame-registered cells this
+    /// repo holds (POE-215 WI-B).
+    ///
+    /// [`the_prefit_calibration_matches_the_corpus_and_is_offset_sensitive`]
+    /// is the same claim against the pre-POE-215 corpus, and the two cannot be
+    /// one test: the corpus is cut through the gold frame and the fixtures are
+    /// cut on it, so a single offset cannot centre on both. This one is the
+    /// claim that MATTERS to a device — the loop cuts fitted cells.
+    ///
+    /// Three assertions, and each is unsound alone:
+    ///
+    /// 1. The median best alignment over the labelled cells is (0, 0) and NO
+    ///    cell is pinned at the ±[`SHIFT_MAX`] edge. Per-cell jitter cannot
+    ///    move a median; a systematic error cannot survive one. The pin count
+    ///    is what makes an error LARGER than the search visible at all — a 6 px
+    ///    offset reads as a −3 edge pin, never as −6.
+    /// 2. At [`SEED_ART_PREFIT`] the same cells are pinned 17 of 17 at
+    ///    (−3, −1). This is the measurement that moved the constant, kept
+    ///    because "the median is (0, 0)" is cheap to satisfy by accident and
+    ///    "the previous value pinned everything" is not.
+    /// 3. Two px of x — a displacement the ±3 search could absorb — already
+    ///    takes the median off (0, 0) and starts pinning cells. Seven px was
+    ///    the right probe against the corpus, where the search and the crops'
+    ///    own jitter can explain 6 between them; here the cells are registered,
+    ///    so the claim can be made sharp instead.
+    #[test]
+    fn the_shipped_calibration_centres_the_search_on_frame_registered_cells() {
+        use crate::mercenary::cellfit::{labelled_fixture_cells, FIXTURE_CELL_FAMILIES};
+        let t = Thresholds::default();
+        let g = MercGeometry::default();
+        let window = window_px(&g, 1.0) as f32;
+        let map = load_map().expect("the map parses");
+        let cells = labelled_fixture_cells();
+        let families: std::collections::BTreeSet<&str> =
+            FIXTURE_CELL_FAMILIES.iter().map(|(_, _, _, family, _)| *family).collect();
+        assert_eq!(cells.len(), 17, "the labelled set is 17 of the 27 occupied cells");
+        assert_eq!(families.len(), 10, "over 10 distinct seeded families");
+
+        // Through the MAP, not a second family → gem table: a label naming a
+        // family the map dropped has to fail here rather than quietly measure
+        // nothing.
+        let gem = |family: &str| -> String {
+            map.iter()
+                .find(|e| e.family == family)
+                .unwrap_or_else(|| panic!("{family} is labelled but is not a seed-map family"))
+                .gem
+                .clone()
+        };
+
+        // median best shift, cells pinned at the edge, cells at `icon_match`,
+        // and the worst cell.
+        let measure = |p: &SeedArt| {
+            let (mut dxs, mut dys) = (Vec::new(), Vec::new());
+            let (mut pinned, mut matched) = (0usize, 0usize);
+            let mut worst = (f32::MAX, String::new());
+            for cell in &cells {
+                // At the CELL's own window — 34 at the reference fixture, 30 at
+                // the PC's — because the fraction form is what has to make both
+                // work, and hard-coding one would measure only the reference.
+                let seed = derive_with(&art(&gem(cell.family)), &g, cell.scale, p)
+                    .unwrap_or_else(|| panic!("{}: the seed derives", cell.at));
+                let cand = cell_candidates(&cell.cell, cell.outer, &g)
+                    .unwrap_or_else(|| panic!("{}: the fitted cell normalizes", cell.at));
+                let (score, dx, dy) = best_alignment(&seed, &cand);
+                if dx.abs() == SHIFT_MAX || dy.abs() == SHIFT_MAX {
+                    pinned += 1;
+                }
+                if score >= t.icon_match {
+                    matched += 1;
+                }
+                if score < worst.0 {
+                    worst = (score, cell.at.clone());
+                }
+                dxs.push(dx);
+                dys.push(dy);
+            }
+            dxs.sort();
+            dys.sort();
+            ((dxs[dxs.len() / 2], dys[dys.len() / 2]), pinned, matched, worst)
+        };
+
+        let (median, pinned, matched, worst) = measure(&SEED_ART);
+        assert_eq!(
+            median,
+            (0, 0),
+            "the median best alignment over {} registered cells is {median:?} — the shipped \
+             calibration carries a systematic offset the shift search is paying for",
+            cells.len(),
+        );
+        assert_eq!(
+            pinned, 0,
+            "{pinned} of {} registered cells are pinned at the ±{SHIFT_MAX} px edge — an offset \
+             larger than the search reads as an edge pin, not as a large median",
+            cells.len(),
+        );
+        assert!(
+            matched >= REGISTERED_MATCH_FLOOR,
+            "only {matched} of {} registered cells reach icon_match (floor \
+             {REGISTERED_MATCH_FLOOR}); worst is {} at {:.3}",
+            cells.len(),
+            worst.1,
+            worst.0,
+        );
+
+        let (median, pinned, matched, _) = measure(&SEED_ART_PREFIT);
+        assert_eq!(
+            (median, pinned, matched),
+            ((-3, -1), cells.len(), 0),
+            "the pre-fit offset must still pin every registered cell — that measurement is why \
+             SEED_ART_OFFSET_FRAC moved, and it is what phase 2's re-harvest has to change",
+        );
+
+        let nudged = SeedArt {
+            offset_frac: [SEED_ART_OFFSET_FRAC[0] + 2.0 / window, SEED_ART_OFFSET_FRAC[1]],
+            ..SEED_ART
+        };
+        let (median, pinned, _, _) = measure(&nudged);
+        assert_ne!(
+            median,
+            (0, 0),
+            "2 px of x — well inside the ±{SHIFT_MAX} search — must move the median off (0, 0), \
+             or this test would pass for a calibration that is merely close",
+        );
+        assert!(pinned > 0, "and must start spending the search on the constant");
+    }
+
+    /// How many corpus-graded families must actually SHIP a seed — be graded
+    /// `corpus` AND survive the pairwise rule.
+    ///
+    /// Twenty, re-based 2026-08-28 from 22 when the pairwise withdrawal moved
+    /// onto the shipped calibration (POE-215 WI-B). The offset move both takes
+    /// rows out and puts rows back, and both directions are the same fact: at
+    /// `SEED_ART_PREFIT` the seeds carried a 6 px registration error, so every
+    /// pairwise correlation was measured between two mis-registered pictures
+    /// and none of the six numbers described the installed store.
+    ///
+    /// Withdrawn (all four grade `corpus`, all four now ship disabled):
+    ///
+    /// - `Area of Effect` ↔ `Concentrated Effect` — 0.907 at window 34 (0.909
+    ///   at the PC's 30), which is above `icon_match`, not merely inside the
+    ///   lead band: `install_seed`'s `best_other_family` refuses the second of
+    ///   them outright on every device, so keeping the pair enabled described a
+    ///   store no device could build. At `SEED_ART_PREFIT` the same pair reads
+    ///   0.792 and the map claimed both.
+    /// - `Less Duration` ↔ `More Duration` — 0.844 at window 34 (0.853 at 30),
+    ///   inside the 0.83 lead band, against 0.811 at `SEED_ART_PREFIT`.
+    ///
+    /// Returned: `Brutality` ↔ `Maim`, 0.831 at `SEED_ART_PREFIT` and 0.724
+    /// shipped, so the pre-fit map excluded a pair that is not in fact
+    /// confusable and both now ship enabled.
+    ///
+    /// The shrink is not a regression to fix by loosening a threshold. The
+    /// registered art of these families really is that similar — POE-212's
+    /// shared-art class — and a seed inside another family's lead band makes
+    /// BOTH families permanently un-`Matched`. The enabled set goes 23 → 21,
+    /// and 21 seeds registered on the cell the loop cuts beat 23 graded 6 px
+    /// off it. POE-215 phase 2's
+    /// re-harvest and sweep re-decide this set on a corpus cut at the fitted
+    /// rect; until then, raising this number is that ticket's job and lowering
+    /// it means something regressed.
+    const CORPUS_SEEDS_SHIPPED_FLOOR: usize = 20;
+
     /// The acceptance test (POE-208 WI-A): a store holding every ENABLED seed
     /// recognises every corpus-verified family it SHIPS, aligned and
     /// unshifted, and recognises nothing it should not.
+    ///
+    /// **The store graded here is built at [`SEED_ART_PREFIT`], which is not
+    /// the store a device installs** (POE-215 WI-B). It cannot be otherwise
+    /// while the evidence is `tests/fixtures/merc-icon-crops`: those crops were
+    /// cut at the OCR registration, so a store derived at [`SEED_ART`] is 6 px
+    /// off every one of them and this test would fail on the corpus's
+    /// registration rather than on the seeds. What it therefore certifies is
+    /// the *membership* of the enabled set — which families are in, which
+    /// crops they answer, which of them may not come close — at the only
+    /// offset the corpus can speak for.
+    ///
+    /// The SHIPPED calibration's own evidence is the 17 frame-registered cells
+    /// of [`the_shipped_calibration_centres_the_search_on_frame_registered_cells`],
+    /// and that is all of it until POE-215 phase 2 re-harvests the corpus on
+    /// the fitted rect; at that point the two collapse into one test.
     #[test]
     fn every_corpus_entry_matches_through_the_real_matcher() {
         let t = Thresholds::default();
@@ -2305,16 +2614,17 @@ mod tests {
             .filter(|e| e.enabled)
             .map(|e| (e.family.clone(), e.gem.clone(), e.tier))
             .collect();
-        let store = seeded_store(&rows, &SEED_ART);
+        let store = seeded_store(&rows, &SEED_ART_PREFIT);
         assert_eq!(store.len(), rows.len(), "a seed yielded during the install");
 
         // The grade is re-checked in the store the row actually SHIPS in, and
-        // a corpus grade only ships when the row is enabled. POE-209's crops
-        // made that distinction real: `Brutality` and `Maim` both grade
-        // `corpus` and are then taken off by the pairwise rule, so the enabled
-        // store holds no seed for either and asking it to recognise them would
-        // assert the opposite of what their exclusion means. What took them off
-        // is `a_graded_row_is_disabled_only_by_the_pairwise_rule`, which checks
+        // a corpus grade only ships when the row is enabled. The pairwise rule
+        // makes that distinction real: `Area of Effect`, `Concentrated Effect`,
+        // `Less Duration` and `More Duration` all grade `corpus` and are then
+        // taken off, so the enabled store holds no seed for any of them and
+        // asking it to recognise them would assert the opposite of what their
+        // exclusion means. What took them off is
+        // `a_graded_row_is_disabled_only_by_the_pairwise_rule`, which checks
         // that rule over EVERY graded row rather than only the corpus-graded
         // ones, so it is not restated here.
         let mut verified = 0usize;
@@ -2326,7 +2636,11 @@ mod tests {
             );
             verified += 1;
         }
-        assert!(verified >= 22, "only {verified} corpus-verified families ship a seed");
+        assert!(
+            verified >= CORPUS_SEEDS_SHIPPED_FLOOR,
+            "only {verified} corpus-verified families ship a seed (floor \
+             {CORPUS_SEEDS_SHIPPED_FLOOR})",
+        );
 
         // The failure that costs most is not a miss, it is a confident wrong
         // name: a cell that reads `Matched` on a family it is not provokes no
@@ -2373,6 +2687,12 @@ mod tests {
     /// Two seeds inside the lead band would make BOTH their families
     /// permanently un-`Matched`, and the install gate (`icon_match`) would not
     /// catch it — it refuses at 0.88, and the damage starts at 0.83.
+    ///
+    /// [`derive`] and NOT [`derive_prefit`], deliberately: this is a pure
+    /// seed↔seed claim about the store a device installs, and a device
+    /// installs [`SEED_ART`]. No corpus crop enters it, so the rule that keeps
+    /// corpus-facing tests at [`SEED_ART_PREFIT`] does not reach here — grading
+    /// this pair at the pre-fit offset would certify a store nobody ships.
     #[test]
     fn no_two_enabled_seeds_are_inside_the_lead_band() {
         let t = Thresholds::default();
@@ -3006,7 +3326,7 @@ mod tests {
         let seeds = derive_installable(&dir, &rows, &SeedBlocklist::default(), &g, 1.0, &mut BTreeMap::new());
         let mut store = TemplateStore::new();
         // The same art, already confirmed under ANOTHER family.
-        store.learn("Chain", 1, seeds[0].2.clone(), None, &t);
+        store.learn("Chain", 1, seeds[0].2.clone(), None, super::super::icons::REGISTRATION, &t);
 
         let tally = install_all(&mut store, &seeds, &SeedBlocklist::default(), &t);
 
