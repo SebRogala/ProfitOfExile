@@ -3786,7 +3786,7 @@ dependencies = [
 
 [[package]]
 name = "profitofexile-desktop"
-version = "0.8.0"
+version = "0.8.1-beta.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
