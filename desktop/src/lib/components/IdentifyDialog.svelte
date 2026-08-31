@@ -10,6 +10,35 @@
 	let error = $state('');
 	let success = $state('');
 	let appVersion = $state('');
+	// What the server says this device hash IS — the dialog's whole reason to
+	// ask is that a hash alone cannot tell a registered device from a fresh
+	// one. 'checking' until /api/device/me answers.
+	let registration = $state<'checking' | 'registered' | 'unregistered' | 'unknown'>('checking');
+	let registeredAlias = $state('');
+	let registeredRole = $state('');
+
+	async function loadRegistration() {
+		registration = 'checking';
+		registeredAlias = '';
+		registeredRole = '';
+		try {
+			const { fetchDeviceMe } = await import('$lib/api');
+			const body = (await fetchDeviceMe()) as Record<string, unknown>;
+			registeredRole = typeof body.role === 'string' ? body.role : '';
+			if (!('alias' in body)) {
+				// A server from before the alias field: it answered, but cannot
+				// say whether this device is registered.
+				registration = 'unknown';
+			} else if (typeof body.alias === 'string' && body.alias !== '') {
+				registeredAlias = body.alias;
+				registration = 'registered';
+			} else {
+				registration = 'unregistered';
+			}
+		} catch {
+			registration = 'unknown';
+		}
+	}
 
 	$effect(() => {
 		if (open) {
@@ -21,6 +50,7 @@
 			getVersion()
 				.then(v => { appVersion = v; })
 				.catch(() => {});
+			loadRegistration();
 		}
 	});
 
@@ -69,6 +99,10 @@
 
 			const body = await resp.json();
 			success = `Identified as "${body.alias}"`;
+			// The /me cache can serve the old alias for its TTL, so the status
+			// row takes the identify response's own answer instead of re-asking.
+			registration = 'registered';
+			registeredAlias = body.alias;
 
 			// Auto-close after a short delay
 			setTimeout(() => { open = false; }, 1500);
@@ -103,6 +137,18 @@
 				<div class="device-info">
 					<span class="label">Device</span>
 					<code class="device-code">{shortId || '...'}</code>
+				</div>
+
+				<div class="registration" class:registered={registration === 'registered'}>
+					{#if registration === 'checking'}
+						Checking registration…
+					{:else if registration === 'registered'}
+						Registered as "{registeredAlias}"{registeredRole ? ` · role ${registeredRole}` : ''}
+					{:else if registration === 'unregistered'}
+						Not registered on the server yet
+					{:else}
+						Server unreachable — registration unknown
+					{/if}
 				</div>
 
 				<div class="field">
@@ -208,6 +254,18 @@
 		font-size: 13px;
 		color: var(--accent);
 		letter-spacing: 0.5px;
+	}
+
+	.registration {
+		font-size: 12px;
+		color: var(--text-muted);
+		background: var(--bg);
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		padding: 6px 10px;
+	}
+	.registration.registered {
+		color: var(--success);
 	}
 
 	.field {
