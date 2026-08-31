@@ -1,0 +1,72 @@
+name: Desktop Cache Warmer
+
+# Desktop Build runs only on v-desktop-* TAG refs, and a GitHub Actions cache
+# is restorable only from the ref that saved it or that ref's base branch. A
+# tag is nobody's base, so tag runs restore exclusively from main — and until
+# this workflow existed, nothing on main ever compiled the desktop Rust tree
+# on Windows (quality.yml's desktop-rust job compiles it inside a Linux
+# container, which a windows-latest cache key can never match). Both
+# v0.8.1-beta tags therefore built fully cold (~10 min each).
+#
+# This job is the main-branch warmer: same runner image, same toolchain
+# action, same workspace, same rust-cache shared-key as desktop.yml, so the
+# next tag build restores a hot dependency tree and only recompiles the app
+# crate (whose version bump invalidates it anyway). The build here runs
+# WITHOUT the signing/env secrets on purpose — only the app crate reads them
+# (option_env!), dependencies never do, and the app crate is not what the
+# cache is for.
+#
+# The weekly cron re-warms after a Rust stable point release: rust-cache keys
+# include the rustc version, so a toolchain bump orphans the old cache until
+# a main push would happen to rebuild it.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop-cache.yml'
+
+concurrency:
+  group: desktop-cache-warmer
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+          shared-key: desktop-windows
+
+      - name: Install Node.js LTS
+        # Same cache config as desktop.yml, so the npm cache this job saves is
+        # the one the tag build restores ("npm cache is not found" on both
+        # beta tags came from the same tag-ref scoping as the Rust misses).
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install frontend dependencies
+        run: cd desktop && npm ci
+
+      - name: Build desktop Rust (release)
+        # tauri-build's build script requires the frontendDist directory
+        # (../build relative to src-tauri) to exist; an empty one satisfies it
+        # — this job compiles Rust for the cache, it does not bundle an app.
+        run: |
+          New-Item -ItemType Directory -Force desktop/build | Out-Null
+          cd desktop/src-tauri
+          cargo build --release

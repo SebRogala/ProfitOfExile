@@ -18,9 +18,18 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust dependencies
+        # This workflow runs only on tag refs, and a GitHub Actions cache is
+        # restorable only from the ref that saved it or that ref's base branch
+        # — so tag runs can ONLY restore caches saved on main, and their own
+        # saves are dead weight no later run can read (both 0.8.1-beta tags
+        # ran fully cold this way). desktop-cache.yml is the main-branch
+        # warmer that saves under this shared-key; save-if false skips the
+        # pointless upload here.
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri -> target
+          shared-key: desktop-windows
+          save-if: false
 
       - name: Install Node.js LTS
         uses: actions/setup-node@v4
