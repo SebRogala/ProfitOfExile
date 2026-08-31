@@ -130,8 +130,20 @@ jobs:
             echo "tag=${TAG}"
           } >> "$GITHUB_OUTPUT"
 
-          # Read the signature for latest.json
-          SIG=$(cat artifacts/sig/*.sig)
+          # Read the signature for latest.json — the one for the artifact the
+          # manifest URL serves. bundle.createUpdaterArtifacts "v1Compatible"
+          # makes Tauri emit TWO signatures (the v2 one for the raw setup.exe
+          # and the v1 one for the legacy .nsis.zip); a bare *.sig glob
+          # concatenated both here once (v0.8.1-beta.1) and the updater's
+          # base64 parse failed at the first blob's padding ("invalid symbol
+          # 61, offset 434"). The manifest points at the raw setup.exe, so
+          # only its own .sig may go in — and exactly one must match.
+          SIG_FILES=(artifacts/sig/*-setup.exe.sig)
+          if [ "${#SIG_FILES[@]}" -ne 1 ] || [ ! -f "${SIG_FILES[0]}" ]; then
+            echo "expected exactly one *-setup.exe.sig, got: ${SIG_FILES[*]}" >&2
+            exit 1
+          fi
+          SIG=$(cat "${SIG_FILES[0]}")
 
           # Rename installer to fixed name (for stable download URLs)
           INSTALLER=$(ls artifacts/installer/*.exe | head -1)
