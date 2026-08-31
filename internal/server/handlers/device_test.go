@@ -352,6 +352,7 @@ func meRouter(upserter device.Upserter) http.Handler {
 // meResponse mirrors the documented response body of GET /api/device/me.
 type meResponse struct {
 	Role     string   `json:"role"`
+	Alias    *string  `json:"alias"`
 	Channel  string   `json:"channel"`
 	Features []string `json:"features"`
 }
@@ -403,6 +404,62 @@ func TestDeviceMe_RoleDeterminesChannelAndFeatures(t *testing.T) {
 				t.Errorf("features = %#v, want %#v", resp.Features, tt.wantFeatures)
 			}
 		})
+	}
+}
+
+func TestDeviceMe_ReportsTheRegisteredAlias(t *testing.T) {
+	fingerprint := "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+	alias := "Gaming PC"
+
+	upserter := &mockUpserter{
+		UpsertFn: func(_ context.Context, fp, _ string) (*device.Device, error) {
+			return &device.Device{Fingerprint: fp, Alias: &alias, Role: "user"}, nil
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/device/me", nil)
+	req.Header.Set("X-Device-ID", fingerprint)
+	w := httptest.NewRecorder()
+
+	meRouter(upserter).ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp meResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Alias == nil || *resp.Alias != alias {
+		t.Errorf("alias = %v, want %q — the identify dialog reads registration off this field", resp.Alias, alias)
+	}
+}
+
+func TestDeviceMe_UnregisteredDeviceHasNullAlias(t *testing.T) {
+	// A device the middleware knows but nobody has identified: alias must be
+	// null, not "" — the dialog distinguishes "not registered" from a field
+	// the server does not report at all.
+	fingerprint := "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+
+	upserter := &mockUpserter{
+		UpsertFn: func(_ context.Context, fp, _ string) (*device.Device, error) {
+			return &device.Device{Fingerprint: fp, Role: "user"}, nil
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/device/me", nil)
+	req.Header.Set("X-Device-ID", fingerprint)
+	w := httptest.NewRecorder()
+
+	meRouter(upserter).ServeHTTP(w, req)
+
+	var resp meResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Alias != nil {
+		t.Errorf("alias = %q, want null for an unregistered device", *resp.Alias)
 	}
 }
 

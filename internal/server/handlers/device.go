@@ -71,9 +71,13 @@ func DeviceIdentify(repo device.AliasSetter) http.HandlerFunc {
 }
 
 // deviceMeResponse is the JSON body of GET /api/device/me. Features is always
-// encoded, and always as an array — see device.Entitlements.
+// encoded, and always as an array — see device.Entitlements. Alias is the
+// device's registered name (null while unregistered, and always null for an
+// anonymous request) so the identify dialog can say whether THIS device is
+// known to the server, not only what it is entitled to.
 type deviceMeResponse struct {
 	Role     string   `json:"role"`
+	Alias    *string  `json:"alias"`
 	Channel  string   `json:"channel"`
 	Features []string `json:"features"`
 }
@@ -97,8 +101,14 @@ type deviceMeResponse struct {
 func DeviceMe() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		role := ""
+		var alias *string
 		if d := middleware.DeviceFromContext(r.Context()); d != nil {
 			role = d.Role
+			// The middleware serves a cached record, so an alias set by
+			// /api/device/identify can read stale here for up to the cache
+			// TTL — the dialog shows the identify response's own answer for
+			// that window, so this is display data, never a gate.
+			alias = d.Alias
 		}
 
 		channel, features := device.Entitlements(role)
@@ -107,6 +117,7 @@ func DeviceMe() http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-store")
 		json.NewEncoder(w).Encode(deviceMeResponse{
 			Role:     role,
+			Alias:    alias,
 			Channel:  channel,
 			Features: features,
 		})
