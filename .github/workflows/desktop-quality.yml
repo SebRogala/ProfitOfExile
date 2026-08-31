@@ -1,0 +1,55 @@
+name: Desktop Quality
+
+# The desktop halves of the old single Quality workflow, split out so a
+# backend or docs change does not run them and a desktop change does not run
+# the Go suites. Same whitelist trade-off as quality.yml and deploy.yml.
+# docker-compose.yml and Makefile are inputs (compose build desktop,
+# make merc-seed-art); the Rust cache warmer is desktop-cache.yml, not here —
+# these jobs build inside a Linux container and cannot share its cache.
+
+on:
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'docker-compose.yml'
+      - 'Makefile'
+      - '.github/workflows/desktop-quality.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - 'docker-compose.yml'
+      - 'Makefile'
+      - '.github/workflows/desktop-quality.yml'
+
+jobs:
+  desktop-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build desktop image
+        run: docker compose build desktop
+      - name: Install dependencies
+        run: docker compose run --rm -w /app/desktop desktop npm ci --legacy-peer-deps
+      - name: Svelte check
+        run: docker compose run --rm -w /app/desktop desktop npm run check
+      - name: Unit tests
+        run: docker compose run --rm -w /app/desktop desktop npm test
+
+  desktop-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build desktop image
+        run: docker compose build desktop
+      # The merc seed-art fixture is NOT committed (GPL-3 repo, CC-BY-NC-SA
+      # icons — see desktop/src-tauri/tests/fixtures/merc-seed-art/README.md),
+      # so the Rust suite has to fetch it first or every calibration test in
+      # mercenary::seed fails. Against PROD, whose cache already holds all 223
+      # support icons; a dev server would fetch each one from the wiki. The
+      # target exits non-zero on any failure, so a bad fetch stops here with a
+      # readable cause instead of surfacing as a wall of test failures.
+      - name: Fetch merc seed art
+        run: make merc-seed-art POE_SERVER_URL=https://profitofexile.top
+      - name: Cargo test
+        run: docker compose run --rm -w /app/desktop/src-tauri desktop cargo test
