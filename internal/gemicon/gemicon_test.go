@@ -582,8 +582,8 @@ func TestNewWithMap_KeyOutsideTheSuppliedMapReturns404WithoutFetching(t *testing
 // Each map needs its OWN directory: two maps sharing one would share the
 // filename scheme, and any pair of keys reducing to the same safeFileName would
 // serve one set's artwork under the other's name. So an empty dir is an
-// unconfigured caller, not a request for the gem default.
-func TestNewWithMap_EmptyCacheDirIsRejectedWithoutFallingBackToTheGemDefault(t *testing.T) {
+// unconfigured caller, not a request for a default.
+func TestNewWithMap_EmptyCacheDirIsRejected(t *testing.T) {
 	c, err := NewWithMap(map[string]string{chaosIconKey: "https://example.invalid/icon.png"}, "")
 
 	if err == nil {
@@ -592,7 +592,20 @@ func TestNewWithMap_EmptyCacheDirIsRejectedWithoutFallingBackToTheGemDefault(t *
 	if c != nil {
 		t.Errorf("NewWithMap returned a cache alongside an error: %+v", c)
 	}
-	if _, statErr := os.Stat(DefaultCacheDir); !os.IsNotExist(statErr) {
-		t.Errorf("an empty cache dir created %q; stat err = %v — the gem default must not be shared", DefaultCacheDir, statErr)
+}
+
+// New is held to the same rule as NewWithMap since POE-221: this package holds
+// no default directory at all, because any default it held would be the GEM
+// set's and a second map could silently be handed it. The caller derives one
+// sub-directory per map from its configured root. Reintroduce a fallback inside
+// New and this fails on the nil error.
+func TestNew_EmptyCacheDirIsRejectedRatherThanDefaulted(t *testing.T) {
+	c, err := New("")
+
+	if err == nil {
+		t.Fatalf("New(\"\") error = nil, want a rejection (cache = %+v)", c)
+	}
+	if c != nil {
+		t.Errorf("New returned a cache alongside an error: %+v", c)
 	}
 }

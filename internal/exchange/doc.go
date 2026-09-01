@@ -618,10 +618,12 @@
 //
 //	GET /api/currency-exchange/icon/{escaped metadata id}
 //
-// which is internal/gemicon's cache over IconURLs() and its own cache directory
-// (CURRENCY_EXCHANGE_ICON_CACHE_DIR, default ./data/currency-exchange-icons-cache;
-// a persistent volume in production). An id absent from the map is a 404 and an
-// unfetchable upstream a 502, exactly as for gem icons.
+// which is internal/gemicon's cache over IconURLs() and its own cache directory:
+// the currency-exchange/ sub-directory of ICON_CACHE_DIR (default
+// ./data/icons-cache; a persistent volume in production, shared with the gem
+// set but never the same directory — see internal/server on why the split is
+// load-bearing). An id absent from the map is a 404 and an unfetchable upstream
+// a 502, exactly as for gem icons.
 //
 // The server reads its tuning from the environment in cmd/server, each override
 // falling back to DefaultConfig on an unparseable value with a Warn:

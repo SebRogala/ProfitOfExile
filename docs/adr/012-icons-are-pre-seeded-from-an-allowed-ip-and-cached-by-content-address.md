@@ -15,6 +15,10 @@ hand.
 Amended 2026-08-19 (POE-177) — see the amendment at the end: a second icon set
 now shares this mechanism, and one factual claim in Context below is corrected.
 
+Amended 2026-09-01 (POE-221) — the two cache directories became sub-directories
+of one volume. Layout only; every decision below stands. See the second
+amendment at the end.
+
 ## Context
 
 The server serves gem and item artwork at `/api/gem-icon/{name}` from
@@ -53,7 +57,10 @@ failure rather than a loud one.
 **1. The icon cache is pre-seeded from an allowed IP; the server never fetches in
 production.** `scripts/download-gem-icons.py` pulls every mapped icon using the
 server's exact cache-filename scheme, and its output is copied into the
-`GEM_ICON_CACHE_DIR` volume (`/data/gem-icons-cache` in production). Runtime
+`GEM_ICON_CACHE_DIR` volume (`/data/gem-icons-cache` in production) — **that
+variable and that volume are superseded by the 2026-09-01 (POE-221) amendment
+below**, which replaces them with a `gems/` sub-directory of the single
+`ICON_CACHE_DIR` root; the decision itself is unchanged. Runtime
 fetching remains in the code because it is how a developer machine populates its
 own cache; it is not a production path.
 
@@ -99,7 +106,11 @@ deploy step.
 
 ## Amended 2026-08-19 (POE-177)
 
-Status of this section: current behaviour, except where it says otherwise.
+Status of this section: current behaviour, EXCEPT its cache-directory layout,
+which the 2026-09-01 amendment below supersedes. The two environment variables
+and the two volumes it names no longer exist; the requirement they served — one
+directory per icon set — does, as two sub-directories of one volume. The old
+names are kept here because they are what the production migration moves *from*.
 
 **A second icon set shares this decision and its code.** Currency Exchange item
 icons are served at `/api/currency-exchange/icon/{metadata id}` by the same
@@ -158,3 +169,57 @@ host fetched `Chaos_Orb_inventory_icon.png` through the new route live from
 poewiki — 200, a 78x78 PNG. The block is specific to the production VPS's IP,
 which is what makes the seeding step easy to forget: every environment a
 developer can test in works without it.
+
+## Amended 2026-09-01 (POE-221)
+
+Status of this section: current behaviour.
+
+**One volume, one sub-directory per icon set.** The two cache directories are no
+longer two independently configured volumes. There is a single root —
+`ICON_CACHE_DIR`, default `./data/icons-cache`, `/data/icons-cache` in
+production — and `internal/server` derives one sub-directory per set beneath it:
+
+```
+<ICON_CACHE_DIR>/gems               internal/gemicon/gem-icon-urls.json
+<ICON_CACHE_DIR>/currency-exchange  internal/exchange/itemdata/icon-urls.json
+```
+
+`GEM_ICON_CACHE_DIR` and `CURRENCY_EXCHANGE_ICON_CACHE_DIR` are removed, with no
+aliases; `gemicon` now holds no default directory at all, because a default
+living in that package would necessarily be the gem set's and could silently be
+handed to a second map. The root's default and the two sub-directory names live
+in `internal/server` instead, and that is where the safety property now sits:
+`NewRouter` substitutes `DefaultIconCacheDir` for an empty `IconCacheDir` before
+it joins either sub-directory, so an unset root resolves to a real per-set
+directory rather than to the process's working directory. `New` and `NewWithMap`
+still reject an empty directory, but that guard is unreachable from the
+production caller — the join always yields a non-empty path — so it is a
+constructor precondition for future callers, not what protects this one.
+
+**This changes nothing about the decisions above.** Seeding still happens from an
+allowed IP, still lands before the deploy, and Decision 3 is still accepted and
+still unimplemented. The separate-directories requirement in the POE-177
+amendment is unchanged and is exactly what the sub-directories preserve: the
+filename scheme is shared and neither generator can see the other's keys, so a
+flat root would still let a gem name and an item id that reduce to the same
+`safeFileName` serve each other's artwork. What the split no longer requires is a
+*second volume*, and a future icon set gets a sub-directory rather than another
+one.
+
+**What forced it (measured on production, 2026-09-01).** The second volume the
+POE-177 amendment called for was never created. The server container had only the
+gem volume mounted, no `CURRENCY_EXCHANGE_ICON_CACHE_DIR` in its environment, and
+so the item cache resolved to the code default inside the container's writable
+layer — where, per Decision 1, poewiki refuses the VPS and every
+`GET /api/currency-exchange/icon/<id>` answered `502`. The desktop table rendered
+no item icons at all. A per-set volume is an operator step that has to be
+repeated for every new set and fails silently when skipped; a per-set
+sub-directory under one mount is created by the server itself.
+
+**The migration is one-time and ordered.** Mount the new volume, move the
+existing gem files into `gems/` (764 files as of 2026-09-01 — a move, not a
+re-crawl), seed `currency-exchange/` from an allowed IP, set `ICON_CACHE_DIR`,
+then deploy, then drop the old volume. Seeding before the deploy is the same
+Decision 2 ordering as any icon addition, for the same reason.
+[GEM-ICONS.md → The one-time migration to a single volume](../GEM-ICONS.md#the-one-time-migration-to-a-single-volume-poe-221)
+carries the commands.

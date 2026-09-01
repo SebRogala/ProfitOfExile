@@ -529,14 +529,15 @@ func main() {
 		DeviceRepo:           deviceRepo,
 		MercTemplateRepo:     mercTemplateRepo,
 		FenceChecker:         serverLock,
-		// PROD: these dirs must be persistent Coolify volumes, else every
-		// redeploy starts empty and re-fetches every icon from poewiki — which
-		// on the VPS is not a slow path but a dead one (ADR-012: poewiki 403s
-		// datacenter IPs, so an unseeded icon 502s forever). The two icon sets
-		// keep separate directories: they share the cache-filename scheme, and
-		// a gem name and an item id could reduce to the same file.
-		GemIconCacheDir:              getEnvDefault("GEM_ICON_CACHE_DIR", "./data/gem-icons-cache"),
-		CurrencyExchangeIconCacheDir: getEnvDefault("CURRENCY_EXCHANGE_ICON_CACHE_DIR", "./data/currency-exchange-icons-cache"),
+		// PROD: this must be a persistent Coolify volume (/data/icons-cache),
+		// else every redeploy starts empty and re-fetches every icon from
+		// poewiki — which on the VPS is not a slow path but a dead one
+		// (ADR-012: poewiki 403s datacenter IPs, so an unseeded icon 502s
+		// forever). ONE volume holds every icon set: internal/server derives a
+		// sub-directory per set beneath this root, because the sets share the
+		// cache-filename scheme and one flat directory would let a gem name and
+		// an item id reduce to the same file.
+		IconCacheDir: getEnvDefault("ICON_CACHE_DIR", server.DefaultIconCacheDir),
 	}
 
 	router := server.NewRouter(pool, frontendFS, routerCfg)

@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +22,30 @@ import (
 	"profitofexile/internal/server/handlers"
 	devmw "profitofexile/internal/server/middleware"
 	"profitofexile/internal/trade"
+)
+
+// DefaultIconCacheDir is the icon cache root used when RouterConfig.IconCacheDir
+// is empty. In production it is a persistent volume (ICON_CACHE_DIR in
+// cmd/server); an ephemeral one there is not a slow first request but a
+// permanent 502, because poewiki 403s the VPS and the cache can only be
+// pre-seeded — see docs/GEM-ICONS.md and ADR-012.
+const DefaultIconCacheDir = "./data/icons-cache"
+
+// The icon cache root holds one sub-directory per icon set, and the split is
+// load-bearing rather than tidiness. Every set runs on the same internal/gemicon
+// cache, which reduces a key to a filename with one shared scheme
+// (gemicon.safeFileName), and the key spaces are generated independently — a gem
+// display name from gem-icon-urls.json, a Currency Exchange metadata id from the
+// exchange asset — so neither generator can see a collision with the other's
+// keys. One flat directory would therefore let two keys that reduce to the same
+// filename serve each other's artwork. A new icon set gets a new sub-directory
+// here; nothing is ever cached in the root itself.
+//
+// These names are also the on-disk layout an operator seeds by hand (POE-221),
+// so changing one is a production migration, not a rename.
+const (
+	gemIconSubdir              = "gems"
+	currencyExchangeIconSubdir = "currency-exchange"
 )
 
 // RouterConfig holds optional configuration for the server router.
@@ -80,23 +105,17 @@ type RouterConfig struct {
 	// TODO(POE-118): cancel the writer lifecycle on fence loss so a demoted server
 	// stops writing without waiting for an external restart.
 	FenceChecker handlers.LivenessChecker
-	// GemIconCacheDir is the persistent directory where fetched gem icons are
-	// cached. Empty falls back to gemicon.DefaultCacheDir.
-	GemIconCacheDir string
+	// IconCacheDir is the ROOT of the persistent on-disk icon cache, not a
+	// cache directory itself: each icon set is served out of its own
+	// sub-directory beneath it (gemIconSubdir, currencyExchangeIconSubdir), for
+	// the collision reason documented on those constants. Empty falls back to
+	// DefaultIconCacheDir, so both icon routes are always registered.
+	IconCacheDir string
 	// MercTemplateRepo is the shared mercenary icon-template pool (POE-200).
 	// May be nil — the /api/desktop/merc-templates routes are then not
 	// registered, which the desktop's pull already treats as "keep the local
 	// store" rather than as an error.
 	MercTemplateRepo *mercenary.Repository
-	// CurrencyExchangeIconCacheDir is the persistent directory where fetched
-	// currency-exchange item icons are cached. It must not share
-	// GemIconCacheDir: the two maps have separate key spaces and a shared
-	// directory shares the cache-filename scheme. Empty has NO default — the
-	// route is then not registered and item icons are simply absent, which the
-	// clients already render as no icon.
-	// That case logs at Info; an ERROR here means the directory was configured
-	// and the cache still failed to open.
-	CurrencyExchangeIconCacheDir string
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -142,26 +161,31 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 
 	r.Get("/api/health", handlers.Health(pinger, cfg.FenceChecker))
 
-	// Gem icons: public, static, no league scope or auth. Serves both clients
-	// from a persistent on-disk cache of poewiki images.
-	if gemIcons, err := gemicon.New(cfg.GemIconCacheDir); err != nil {
-		slog.Error("gem icon cache init failed; /api/gem-icon disabled", "error", err)
+	// Icons: public, static, no league scope or auth. Both sets serve both
+	// clients from a persistent on-disk cache of poewiki images, rooted at one
+	// configured directory with one sub-directory per set. The root always
+	// resolves, so both routes are always registered and an ERROR below means
+	// the directory could not be opened, not that it was left unset.
+	iconRoot := cfg.IconCacheDir
+	if iconRoot == "" {
+		iconRoot = DefaultIconCacheDir
+	}
+
+	if gemIcons, err := gemicon.New(filepath.Join(iconRoot, gemIconSubdir)); err != nil {
+		slog.Error("gem icon cache init failed; /api/gem-icon disabled",
+			"root", iconRoot, "subdir", gemIconSubdir, "error", err)
 	} else {
 		r.Get("/api/gem-icon/{name}", gemIcons.Handler())
 	}
 
 	// Currency Exchange item icons: the same cache implementation over the
-	// exchange asset's id→poewiki URL map and its own directory. The {name} here
-	// is a feed metadata id whose slashes arrive percent-encoded (%2F), which the
-	// handler unescapes before the map lookup — see exchange.IconPath, which is
-	// what builds the path clients request.
-	// An unset directory is a configuration choice, not a failure: NewWithMap
-	// rejects it deliberately (no default, see the field doc), so the two cases
-	// are split to keep the ERROR line meaning "configured and broken".
-	if cfg.CurrencyExchangeIconCacheDir == "" {
-		slog.Info("currency-exchange icon cache not configured; /api/currency-exchange/icon disabled")
-	} else if itemIcons, err := gemicon.NewWithMap(exchange.IconURLs(), cfg.CurrencyExchangeIconCacheDir); err != nil {
-		slog.Error("currency-exchange icon cache init failed; /api/currency-exchange/icon disabled", "error", err)
+	// exchange asset's id→poewiki URL map and its own sub-directory. The {name}
+	// here is a feed metadata id whose slashes arrive percent-encoded (%2F),
+	// which the handler unescapes before the map lookup — see exchange.IconPath,
+	// which is what builds the path clients request.
+	if itemIcons, err := gemicon.NewWithMap(exchange.IconURLs(), filepath.Join(iconRoot, currencyExchangeIconSubdir)); err != nil {
+		slog.Error("currency-exchange icon cache init failed; /api/currency-exchange/icon disabled",
+			"root", iconRoot, "subdir", currencyExchangeIconSubdir, "error", err)
 	} else {
 		r.Get("/api/currency-exchange/icon/{name}", itemIcons.Handler())
 	}

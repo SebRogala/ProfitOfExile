@@ -1,24 +1,33 @@
 #!/usr/bin/env python3
-"""Pre-populate the gem-icon cache.
+"""Pre-populate an icon cache directory.
 
 poewiki 403s datacenter IPs, so the server (internal/gemicon) cannot fetch icons
 at runtime in production — its disk cache must be seeded from an allowed IP.
 
-This pulls every icon in internal/gemicon/gem-icon-urls.json and writes it using
-the SAME filename scheme as the server's cache (safeFileName: runs of
-[^A-Za-z0-9] -> "_", trimmed, + ".png"). The output directory can therefore be
-dropped straight into the server's GEM_ICON_CACHE_DIR volume as cache hits.
+This pulls every icon in the given map and writes it using the SAME filename
+scheme as the server's cache (safeFileName: runs of [^A-Za-z0-9] -> "_",
+trimmed, + ".png"), so OUT_DIR drops straight into the server's cache as hits.
+
+The server keeps ONE cache root (ICON_CACHE_DIR, /data/icons-cache in
+production) with ONE SUB-DIRECTORY PER ICON SET, because every set shares this
+filename scheme and a flat directory would let two keys reduce to the same file.
+So point OUT_DIR at the sub-directory for the map you are pulling, never at the
+root:
+
+    icons-cache/gems               internal/gemicon/gem-icon-urls.json
+    icons-cache/currency-exchange  internal/exchange/itemdata/icon-urls.json
 
 Usage:
     python3 scripts/download-gem-icons.py [MAP_JSON] [OUT_DIR]
 
-Then ship OUT_DIR into the prod icon-cache volume (see docs / ops notes) and the
-server serves every icon from disk with no upstream fetch.
+Then ship OUT_DIR into the matching sub-directory of the prod icon-cache volume
+(see docs/GEM-ICONS.md) and the server serves every icon from disk with no
+upstream fetch.
 """
 import json, os, re, sys, time, urllib.request
 
 MAP = sys.argv[1] if len(sys.argv) > 1 else "internal/gemicon/gem-icon-urls.json"
-OUT = sys.argv[2] if len(sys.argv) > 2 else "gem-icons-cache"
+OUT = sys.argv[2] if len(sys.argv) > 2 else "icons-cache/gems"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _unsafe = re.compile(r"[^A-Za-z0-9]+")

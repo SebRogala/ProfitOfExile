@@ -16,6 +16,23 @@ Currency Exchange item icons run on the same cache under a second map and a
 second route; the steps below are gem-specific, so see
 [Currency Exchange items](#currency-exchange-items) for what differs.
 
+Both sets share **one** cache root — `ICON_CACHE_DIR`, default
+`./data/icons-cache`, `/data/icons-cache` on production — with **one
+sub-directory per set**:
+
+```
+<ICON_CACHE_DIR>/gems               internal/gemicon/gem-icon-urls.json
+<ICON_CACHE_DIR>/currency-exchange  internal/exchange/itemdata/icon-urls.json
+```
+
+The sub-directories are load-bearing, not tidiness. Both sets run through the
+same cache-filename scheme and their key spaces are generated independently, so
+a flat root would let a gem name and a metadata id that reduce to the same
+filename serve each other's artwork. `internal/server` derives the two paths
+from the root (`gemIconSubdir`, `currencyExchangeIconSubdir`); nothing is ever
+cached in the root itself, and a new icon set gets a new sub-directory rather
+than a new volume.
+
 ## Adding an icon
 
 Order matters. Seeding after the deploy leaves a window where the server knows the
@@ -40,7 +57,7 @@ name, cannot fetch it, and returns `502`.
 3. **Pull the new file(s).** The puller writes using the server's exact cache-filename scheme and skips files already present, so it is safe to re-run:
 
    ```
-   python3 scripts/download-gem-icons.py internal/gemicon/gem-icon-urls.json gem-icons-cache
+   python3 scripts/download-gem-icons.py internal/gemicon/gem-icon-urls.json icons-cache/gems
    ```
 
    To pull only new entries, hand it a JSON file containing just those keys.
@@ -51,16 +68,17 @@ name, cannot fetch it, and returns `502`.
    [Deployment](DEPLOY.md).
 
    ```
-   tar czf new-icons.tgz -C gem-icons-cache .
+   tar czf new-icons.tgz -C icons-cache/gems .
    scp new-icons.tgz "$PROD_HOST":/tmp/
    ssh "$PROD_HOST" "C=\$(docker ps -q -f name=$SERVER_SERVICE_ID); \
      mkdir -p /tmp/ni && tar xzf /tmp/new-icons.tgz -C /tmp/ni && \
-     for f in /tmp/ni/*.png; do docker cp \"\$f\" \"\$C:/data/gem-icons-cache/\"; done"
+     for f in /tmp/ni/*.png; do docker cp \"\$f\" \"\$C:/data/icons-cache/gems/\"; done"
    ```
 
    The server image has no shell, so `docker cp` is the way in. The volume is
-   `$SERVER_SERVICE_ID-profitofexile-gem-icons` mounted at
-   `/data/gem-icons-cache`.
+   `$SERVER_SERVICE_ID-profitofexile-icons` mounted at `/data/icons-cache`, and
+   gem files go in its `gems/` sub-directory — a file dropped in the root is
+   never read.
 
 5. **Deploy** — the map is embedded, so the icon only resolves once the new binary
    is running. Merging to `main` deploys when the change touches a filtered path;
@@ -99,11 +117,12 @@ GET /api/currency-exchange/icon/{metadata id, %2F-escaped}
 ```
 
 by the **same** `internal/gemicon` cache over a second map —
-`gemicon.NewWithMap(exchange.IconURLs(), CURRENCY_EXCHANGE_ICON_CACHE_DIR)`.
+`gemicon.NewWithMap(exchange.IconURLs(), <ICON_CACHE_DIR>/currency-exchange)`.
 Everything above about 404s, 502s, `no-store`, caching headers and seed-before-
-deploy applies unchanged. The two sets keep separate cache directories on
-purpose: they share the cache-filename scheme, and a gem name and an item id
-could reduce to the same file.
+deploy applies unchanged, and so does the one-root/one-sub-directory layout: the
+two sets share a volume but never a directory, because they share the
+cache-filename scheme and a gem name and an item id could reduce to the same
+file.
 
 What is different is where the map comes from. There is no hand-edited JSON to
 add a row to: `internal/exchange/itemdata/items.json` (names, icons and
@@ -143,45 +162,143 @@ icons forward and rewrites names and categories from the dump.
 
 ### Pre-seeding production
 
-Step 4 above hardcodes the gem directory and the gem volume, so it does not
-transfer as written. The item set needs its own volume, its own environment
-variable and its own copy. `PROD_HOST` and `SERVER_SERVICE_ID` are the same
-placeholders as in step 4.
+Step 4 above is the gem sub-directory of the shared volume; the item set needs
+the same treatment against its own sub-directory. `PROD_HOST` and
+`SERVER_SERVICE_ID` are the same placeholders as in step 4.
 
-1. **Create a second Coolify persistent volume** on the server service, mounted
-   at `/data/currency-exchange-icons-cache`. Following the gem volume's naming,
-   that is `$SERVER_SERVICE_ID-profitofexile-currency-exchange-icons`. It must
-   be a separate volume from `$SERVER_SERVICE_ID-profitofexile-gem-icons`, for
-   the filename-collision reason above.
-
-2. **Set `CURRENCY_EXCHANGE_ICON_CACHE_DIR=/data/currency-exchange-icons-cache`
-   in the Coolify environment.** Like `GEM_ICON_CACHE_DIR`, this variable lives
-   only there — neither is in the `Dockerfile` or `docker-compose.yml`, so
-   nothing in the repository will set it for you. Skip it and the code default
-   (`./data/currency-exchange-icons-cache`) resolves inside the container's
-   writable layer: no error, no icons, and whatever the container did fetch is
-   gone on the next deploy.
-
-3. **Pull and copy the files** — from a machine poewiki does not block. Same
-   puller as step 3 above, pointed at the generated flat map:
+1. **Pull the files** — from a machine poewiki does not block. Same puller as
+   step 3 above, pointed at the generated flat map and at the item
+   sub-directory:
 
    ```
    python3 scripts/download-gem-icons.py \
-     internal/exchange/itemdata/icon-urls.json currency-exchange-icons-cache
-
-   tar czf new-item-icons.tgz -C currency-exchange-icons-cache .
-   scp new-item-icons.tgz "$PROD_HOST":/tmp/
-   ssh "$PROD_HOST" "C=\$(docker ps -q -f name=$SERVER_SERVICE_ID); \
-     mkdir -p /tmp/nii && tar xzf /tmp/new-item-icons.tgz -C /tmp/nii && \
-     for f in /tmp/nii/*.png; do docker cp \"\$f\" \"\$C:/data/currency-exchange-icons-cache/\"; done"
+     internal/exchange/itemdata/icon-urls.json icons-cache/currency-exchange
    ```
 
-   As with gems, the server image has no shell, so `docker cp` is the way in.
+2. **First seed — untar onto the volume from the host.** This is the path to
+   use whenever the container running right now does not already have the icon
+   volume mounted. A container's mounts are fixed when it is created, so a
+   volume added in Coolify is invisible to the running process and appears only
+   on the next deploy; writing the host path sidesteps that, and needs no shell
+   in the image.
 
-4. **Then deploy.** The seed has to land *before* the first deploy that serves
+   ```
+   tar czf new-item-icons.tgz -C icons-cache/currency-exchange .
+   scp new-item-icons.tgz "$PROD_HOST":/tmp/
+   ssh "$PROD_HOST" "mkdir -p <icon volume>/_data/currency-exchange && \
+     tar xzf /tmp/new-item-icons.tgz -C <icon volume>/_data/currency-exchange/"
+   ```
+
+   `<icon volume>` is the host path under Docker's volume root for
+   `$SERVER_SERVICE_ID-profitofexile-icons`; the private ops notes carry it. The
+   `mkdir -p` is on the **host** path and is load-bearing before the first
+   deploy — the server creates both sub-directories on startup, but only once it
+   has the mount. Nothing in the layout reads the volume root, so files left in
+   `_data/` are invisible rather than wrong.
+
+3. **Then deploy.** The seed has to land *before* the first deploy that serves
    item icons, not after. This does not degrade gracefully: poewiki 403s the
    VPS, so an unseeded item icon is a permanent `502` and a permanent `?`, not
    a slow first request.
+
+4. **Later top-ups — `docker cp` into the running container.** Once a deploy has
+   mounted the volume and the server has created both sub-directories, new files
+   can go straight in without waiting for a deploy. The server image has no
+   shell, so `docker cp` is the way in.
+
+   ```
+   tar czf new-item-icons.tgz -C icons-cache/currency-exchange .
+   scp new-item-icons.tgz "$PROD_HOST":/tmp/
+   ssh "$PROD_HOST" "C=\$(docker ps -q -f name=$SERVER_SERVICE_ID); \
+     mkdir -p /tmp/nii && tar xzf /tmp/new-item-icons.tgz -C /tmp/nii && \
+     for f in /tmp/nii/*.png; do docker cp \"\$f\" \"\$C:/data/icons-cache/currency-exchange/\"; done"
+   ```
+
+   Both preconditions are silent when unmet. `docker cp` into a path the
+   container does not have mounted writes to its writable layer — no error, and
+   the bytes vanish on the next deploy — and dropping the trailing slash on the
+   destination does the same thing under a different name. Use step 2 instead
+   whenever you are not certain the mount is there.
+
+### The one-time migration to a single volume (POE-221)
+
+Status: pending as of 2026-09-01. Production still runs the old layout — one
+volume mounted at `/data/gem-icons-cache` under `GEM_ICON_CACHE_DIR`, no volume
+and no variable for the item set, and every
+`GET /api/currency-exchange/icon/<id>` answering `502`. That is the symptom this
+change exists to fix; the code no longer reads either old variable, so the
+migration below is not optional once the new binary deploys.
+
+Order matters for the same ADR-012 reason as everything above: **seed before the
+deploy that reads `ICON_CACHE_DIR`.** The whole chain is
+
+> create the volume → seed **both** sub-directories from the host → set
+> `ICON_CACHE_DIR` → deploy → verify one gem icon *and* one item icon → only
+> then remove `GEM_ICON_CACHE_DIR` and the old volume.
+
+Both seeding steps are **host-side**, and that is not a stylistic choice. A
+container's mounts are fixed when it is created, so the new volume is not
+visible inside the server container that is running now — it appears on the
+deploy in step 4. `docker cp` into `/data/icons-cache/...` before that deploy
+either fails outright or, without a trailing slash on the destination, silently
+writes into the container's writable layer, where the deploy throws it away.
+The `docker cp` recipe in [Pre-seeding production](#pre-seeding-production)
+step 4 is for top-ups *after* this migration, not for it.
+
+1. **Create the Coolify persistent volume** `$SERVER_SERVICE_ID-profitofexile-icons`
+   on the server service, mounted at `/data/icons-cache`.
+
+2. **Move the existing gem files into `gems/`.** They are already on the host in
+   the old volume's `_data/` directory — 764 files as of 2026-09-01 — and moving
+   them costs nothing, where re-pulling costs a full poewiki crawl:
+
+   ```
+   ssh "$PROD_HOST" "mkdir -p <new volume>/_data/gems && \
+     mv <old volume>/_data/*.png <new volume>/_data/gems/"
+   ```
+
+   The exact volume paths are host paths under Docker's volume root; the private
+   ops notes carry them. Nothing in the new layout reads the root, so a file
+   left behind in `_data/` is invisible rather than wrong.
+
+3. **Seed `currency-exchange/` the same way** — host-side, symmetric with the
+   gem move in step 2. This has never been seeded on production, so it is a
+   full pull from an allowed IP, not a top-up: run the puller per
+   [Pre-seeding production](#pre-seeding-production) step 1, then untar the
+   result onto the volume, exactly as its step 2 does:
+
+   ```
+   tar czf new-item-icons.tgz -C icons-cache/currency-exchange .
+   scp new-item-icons.tgz "$PROD_HOST":/tmp/
+   ssh "$PROD_HOST" "mkdir -p <new volume>/_data/currency-exchange && \
+     tar xzf /tmp/new-item-icons.tgz -C <new volume>/_data/currency-exchange/"
+   ```
+
+   The `mkdir -p` is on the host path, for the same reason step 2's is: the
+   server creates both sub-directories on startup, but not until the deploy in
+   step 4 gives it the mount.
+
+4. **Set `ICON_CACHE_DIR=/data/icons-cache`** in the Coolify environment. There
+   is no alias: leaving `ICON_CACHE_DIR` unset resolves the default
+   `./data/icons-cache` inside the container's writable layer — no error, no
+   icons, and everything gone on the next deploy. `GEM_ICON_CACHE_DIR` is dead
+   in the code, so leaving it set for now changes nothing; it comes out in
+   step 5, once the new layout is proven.
+
+5. **Deploy, verify, then drop the old variable and volume.** Verify both routes
+   before removing anything:
+
+   ```
+   curl -s -o /dev/null -w "%{http_code}\n" \
+     "https://profitofexile.top/api/gem-icon/Absolution"
+   curl -s -o /dev/null -w "%{http_code}\n" \
+     "https://profitofexile.top/api/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare"
+   ```
+
+   The first `200` proves the gem move landed, the second that the item seed is
+   readable — one alone proves half a migration. Only after both do you remove
+   `GEM_ICON_CACHE_DIR` from the environment and drop
+   `$SERVER_SERVICE_ID-profitofexile-gem-icons`.
 
 ## What "missing" looks like
 

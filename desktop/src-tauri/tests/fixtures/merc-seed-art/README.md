@@ -11,8 +11,8 @@ running game — evidence of what a cell looked like. These are the complete,
 reusable icons. This repository is GPL-3.0 (see `LICENSE`, relicensed for the
 LabCompass room SVGs), and GPL-3.0 and CC-BY-NC-SA are not compatible:
 committing whole icons here would purport to relicense art nobody involved may
-relicense. The same rule already applies to `data/gem-icons-cache/` and
-`gem-icons-cache/` — this is that rule reaching one more directory.
+relicense. The same rule already applies to `data/icons-cache/` and
+`icons-cache/` — this is that rule reaching one more directory.
 
 Ruling taken 2026-08-27 by the POE-208 orchestrator; reversible, and Sebastian
 may override it.
