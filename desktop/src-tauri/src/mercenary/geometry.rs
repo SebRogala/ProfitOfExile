@@ -1620,7 +1620,7 @@ mod tests {
 
     /// The whole of D2 steps 1-3 on the reference panel: seven lines in the
     /// column collapse to SIX rows because the wrapped name's two lines sit
-    /// 18 px apart (inside 1.5 × 16), and the pitch is the median of the five
+    /// 18 px apart (inside 2 × 16), and the pitch is the median of the five
     /// inter-row gaps those six centres produce — 49, 48, 49, 48, 48 → 48.
     #[test]
     fn the_reference_panel_detects_six_rows_at_the_pitch_its_centres_imply() {
@@ -1758,6 +1758,32 @@ mod tests {
 
         assert_eq!(layout.rows.len(), 6);
         assert_eq!(layout.rows[5].text, "Ball Lightning of Orbiting Trap");
+    }
+
+    /// The 1080p wrap measured on 2026-09-01 (app.log 11:10:23 and the 15:03
+    /// debug capture, both `7 rows, scale 0.791`): rows 43-44 px apart, the two
+    /// lines of a wrapped name 17 px apart, the small-caps names boxed at 11 px
+    /// by the OCR. A merge window of 1.5 line heights is 16.5 px there, so the
+    /// continuation became a seventh row and the pitch median fell from 43.5 to
+    /// 39 - the exact `rowPitch` that capture reported.
+    #[test]
+    fn a_wrapped_name_at_1080p_line_heights_is_one_row() {
+        let lines = vec![
+            tall("Wager: 6 539", 100, 174, 11),
+            tall("Conductivity", 170, 574, 11),
+            tall("Vaal Lightning Trap", 170, 617, 11),
+            tall("Ball Lightning of Orbiting", 170, 652, 11),
+            tall("Trap", 170, 669, 11),
+            tall("Summon Skitterbots", 170, 704, 11),
+            tall("Flame Dash", 170, 748, 11),
+            tall("Lightning Spire Trap", 170, 791, 11),
+        ];
+
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
+
+        assert_eq!(layout.rows.len(), 6, "the continuation line must join its row");
+        assert_eq!(layout.rows[2].text, "Ball Lightning of Orbiting Trap");
+        assert_eq!(layout.row_pitch, 43.5);
     }
 
     /// The anchor is the discriminator. A gem tooltip or a character panel

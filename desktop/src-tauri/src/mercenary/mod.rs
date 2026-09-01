@@ -740,7 +740,13 @@ impl Default for MercGeometry {
             max_slots: 6,
             max_rows: 8,
             column_x_tolerance_frac: 0.15,
-            row_cluster_factor: 1.5,
+            // Bounded on both sides by measured panels: at 1080p the two lines
+            // of a wrapped name sit 17 px apart with the OCR boxing the names
+            // at 11 px (1.55 heights - 1.5 split them, app.log 2026-09-01),
+            // while the reference panel's nearest lines of two ADJACENT rows
+            // sit 39 px apart at 16 px boxes (2.44 heights). 2.0 is the
+            // middle of that window.
+            row_cluster_factor: 2.0,
             min_skill_candidates: 2,
             wager_search_pitches: 12.0,
             badge: BadgeGeometry::default(),
