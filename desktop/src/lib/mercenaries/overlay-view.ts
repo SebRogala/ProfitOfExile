@@ -18,16 +18,33 @@
  *
  * **Uncertainty is printed, never hidden** — the same rule the page and the
  * temple overlay follow. A retired capture keeps its verdict and says the
- * window is gone; unread icons are counted out loud, because an icon the reader
- * could not identify is the difference between a SKIP and a WORTH.
+ * window is gone (for as long as the strip stays up — see the linger below);
+ * unread icons are counted out loud, because an icon the reader could not
+ * identify is the difference between a SKIP and a WORTH.
  *
- * **The strip is also the module's only visible pulse.** Reported on the
- * 2026-08-25 smoke: "I have no idea whether something is being captured or not,
- * and I have to constantly alt-tab." So the visibility gate is now in two
- * parts — [`overlayVisible`] draws a one-line [`statusLine`] whenever the
- * module is running at all, and [`overlayShowsVerdict`] adds the verdict block
- * on top of it once there is a capture to word. An idle module used to draw
- * NOTHING, which is indistinguishable from an overlay that never got built.
+ * **The strip is on screen for as long as a recruit window is being worked,
+ * and four seconds longer** (owner decision, 2026-09-01). `scanning`, `live`
+ * and `done` show for as long as they last — the burst after a voice line, the
+ * read filling in, the finished read the player is deciding on. `idle` —
+ * "window gone" over a retired capture, or "waiting" over nothing — shows for
+ * [`LINGER_MS`] and then the strip clears entirely, because a panel that stays
+ * over the game after the decision is made costs more than it tells. The gate
+ * for that is [`overlayShown`]; [`overlayVisible`] underneath it is the
+ * status-only half every line's wording still keys on. The one input the slice
+ * cannot carry is the clock, so the route owns an [`OverlayLinger`] record and
+ * advances it with [`lingerAdvance`] on every poll.
+ *
+ * **The strip is the module's visible pulse, for four seconds.** The 2026-08-25
+ * smoke reported "I have no idea whether something is being captured or not,
+ * and I have to constantly alt-tab", so the status line was made permanent: the
+ * gate is in two parts, [`overlayVisible`] giving a one-line [`statusLine`]
+ * whenever the module is running at all, and [`overlayShowsVerdict`] adding the
+ * verdict block on top of it once there is a capture to word. The 2026-09-01
+ * decision withdrew the PERMANENCE in favour of the linger above and accepts
+ * what that costs back: once the linger expires an idle module again draws
+ * nothing, which is indistinguishable from an overlay that never got built. The
+ * Mercenaries page carries the waiting state, and the triggering itself is to
+ * be reworked.
  *
  * Each fact appears on exactly ONE line. The on-screen status line carries the
  * unread count, so [`unreadNote`] withholds it there rather than printing it
@@ -57,9 +74,10 @@ import type { MercCapture, MercStatus, MercenarySlice, ReadState } from './captu
  *
  * `off` and `unavailable` are the two that mean the module is not producing
  * verdicts at all; drawing a strip in either would leave a panel over the game
- * that no longer tracks anything. The three RUNNING states all draw — including
- * `idle`, which is where the loop returns after a capture is retired, and where
- * the "window gone" marker does its work.
+ * that no longer tracks anything. Every RUNNING state has something to draw —
+ * including `idle`, which is where the loop returns after a capture is retired
+ * and where the "window gone" marker does its work. Whether an idle strip is
+ * still ON SCREEN is [`overlayShown`]'s linger, not this set.
  */
 export const OVERLAY_VISIBLE_STATUSES: MercStatus[] = ['idle', 'scanning', 'live', 'done'];
 
@@ -78,10 +96,14 @@ function onScreen(slice: MercenarySlice): boolean {
 }
 
 /**
- * Whether the overlay draws ANYTHING — the outer gate.
+ * Whether the module has anything to draw — the status-only half of the gate.
+ *
+ * [`overlayShown`] adds the idle linger on top of this and is the one the route
+ * reads; this answers the status question alone, and every line's wording keys
+ * on it.
  *
  * One condition: the module is running. A running module with nothing captured
- * yet draws the status strip and nothing else, which is the POE-199 smoke fix.
+ * yet has the status strip and nothing else, which is the POE-199 smoke fix.
  * The previous rule required a capture too, so an armed-but-empty module was
  * pixel-identical to a module that had failed to start, and the only way to
  * tell them apart was to alt-tab to the page.
@@ -101,11 +123,88 @@ export function overlayVisible(slice: MercenarySlice): boolean {
  * Whether the VERDICT BLOCK draws — the header, the guide lines, the glyphs.
  *
  * The inner gate: everything this covers is a statement about a capture, so it
- * needs one. [`overlayVisible`] is the outer gate and the status line rides on
- * that alone.
+ * needs one. [`overlayVisible`] is the status-only half beneath it, and the
+ * status line rides on that alone; [`overlayShown`] — that plus the idle
+ * linger — decides whether either of them draws.
  */
 export function overlayShowsVerdict(slice: MercenarySlice): boolean {
 	return overlayVisible(slice) && slice.capture !== null;
+}
+
+/**
+ * How long the strip stays up once the module has nothing live to show — a
+ * retired capture ("window gone") or the waiting line — before it clears.
+ *
+ * Owner decision, 2026-09-01: "after 4 s, clear the content so the whole
+ * overlay disappears". Long enough to register the window-gone marker, or to
+ * notice the module is idle after a burst found nothing; short enough that the
+ * strip is not still there when the player has moved on. It applies to the
+ * waiting line as well as to a retired capture — the cost, known and accepted,
+ * is that an armed module with no strip is indistinguishable from one that
+ * never triggered; the Mercenaries page carries the waiting state.
+ */
+export const LINGER_MS = 4000;
+
+/**
+ * When the strip's idle linger started — the one piece of state the pure gate
+ * needs and the slice cannot carry, because Rust does not know the strip's
+ * clock. `null` while the module is not idle.
+ */
+export interface OverlayLinger {
+	idleSinceMs: number | null;
+}
+
+/** Nothing lingering: the record before the first slice is seen. */
+export function lingerInit(): OverlayLinger {
+	return { idleSinceMs: null };
+}
+
+/**
+ * Advance the linger for the slice just polled.
+ *
+ * Entering `idle` starts the clock; every other status clears it, so a burst
+ * that fires during the linger (a voice line right after the window closed)
+ * shows the strip in full and the idle after it starts a fresh four seconds.
+ * Staying idle keeps the original start — the route polls every three seconds,
+ * and a clock that restarted on each poll would never run out.
+ *
+ * Returns `prev` itself when nothing moved, so a route holding it as state is
+ * not woken by a poll that changed nothing.
+ */
+export function lingerAdvance(prev: OverlayLinger, slice: MercenarySlice, nowMs: number): OverlayLinger {
+	if (slice.status !== 'idle') return prev.idleSinceMs === null ? prev : lingerInit();
+	if (prev.idleSinceMs !== null) return prev;
+	return { idleSinceMs: nowMs };
+}
+
+/**
+ * How much of the linger is left, in ms — `0` once it has run out, `null` when
+ * nothing is lingering. The route arms its one clear-timer from this rather
+ * than from a fixed delay, so a poll that re-runs its effect mid-linger re-arms
+ * for the REMAINDER instead of pushing the clear out by another four seconds.
+ */
+export function lingerRemainingMs(linger: OverlayLinger, nowMs: number): number | null {
+	if (linger.idleSinceMs === null) return null;
+	return Math.max(0, LINGER_MS - (nowMs - linger.idleSinceMs));
+}
+
+/**
+ * Whether the strip is on screen right now — [`overlayVisible`] plus the
+ * linger. This is the gate the route's outer `{#if}` reads.
+ *
+ * `scanning`, `live` and `done` are shown for as long as they last. `idle` is
+ * shown while the linger has time left and then not at all, whether it holds a
+ * retired capture or nothing. `off` and `unavailable` are never shown.
+ *
+ * An idle slice whose linger the route has not advanced yet (`idleSinceMs`
+ * null) counts as just begun, so the first poll after a module start shows the
+ * waiting line rather than flashing nothing.
+ */
+export function overlayShown(slice: MercenarySlice, linger: OverlayLinger, nowMs: number): boolean {
+	if (!overlayVisible(slice)) return false;
+	if (slice.status !== 'idle') return true;
+	const remaining = lingerRemainingMs(linger, nowMs);
+	return remaining === null || remaining > 0;
 }
 
 /**
