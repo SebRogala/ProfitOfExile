@@ -22,7 +22,10 @@
 	 *
 	 * The search box sits beside the counter on the last row because the two read
 	 * as one sentence — what the reader is looking for, and how much of the table
-	 * is left. It is a view filter and not a rule: nothing about it is persisted
+	 * is left. Since POE-222 the counter also carries the ROW CAP: how much of
+	 * that is drawn, and the one click that draws the rest. The cap's own picker
+	 * is in the page head with Sort and Density, where the other view-shaping
+	 * picks live and where Clear does not reach. It is a view filter and not a rule: nothing about it is persisted
 	 * and Clear does not empty it.
 	 *
 	 * Presentation only. It holds two pieces of state — whether the Add popover is
@@ -45,7 +48,7 @@
 		GateInputs,
 		ItemRule
 	} from '$lib/exchange/filters';
-	import { iconSrc, type ExchangeUnit } from '$lib/exchange/view';
+	import { iconSrc, type ExchangeUnit, type RowCounts } from '$lib/exchange/view';
 	import ExchangeCategoryPills from './ExchangeCategoryPills.svelte';
 	import ExchangeItemPicker from './ExchangeItemPicker.svelte';
 	import ItemIcon from './ItemIcon.svelte';
@@ -66,6 +69,7 @@
 		search,
 		counts,
 		apiBase,
+		onshowall,
 		oncategoryrule,
 		onitemrule,
 		ongate,
@@ -139,8 +143,15 @@
 		 * search — shares the other figure. Since POE-196 this one is non-zero out
 		 * of the box: the trash-price knobs ship armed, and their rows are exactly
 		 * the ones a reader has to be told are a default rather than an absence.
+		 *
+		 * `shown` is what the TABLE DRAWS and `matched` what the filters left, and
+		 * since POE-222 those differ: the row cap slices the head of the list. The
+		 * counter names the cap whenever `capped` is true and puts All one click
+		 * away, which is what makes a shipped cap disclosure rather than a filter
+		 * (`applyRowCap`). Neither `hidden` figure counts a capped row — the cap
+		 * takes nothing, it just stops drawing.
 		 */
-		counts: { shown: number; total: number; hiddenByGates: number; hiddenByFilters: number };
+		counts: RowCounts;
 		apiBase: string;
 		/** The pill's NEXT state, per `cycleCategoryRule`; `undefined` is neutral. */
 		oncategoryrule: (category: string, state: CategoryRuleState | undefined) => void;
@@ -165,8 +176,16 @@
 		/** The raw box contents; `''` is the search off. */
 		onsearch: (query: string) => void;
 		/**
+		 * Lifts the row cap to All. The counter's own affordance and the only
+		 * control on this bar that is not a filter: it changes how much of the
+		 * table is drawn, not what is left of it. Rendered only while the cap is
+		 * actually holding rows back, because a "show all" over a list that is all
+		 * shown is a button that does nothing.
+		 */
+		onshowall: () => void;
+		/**
 		 * Clears the rules and the investment bounds — never the gates, the sort,
-		 * mode or the search. The gates are standing policy rather than a question
+		 * mode, the row cap or the search. The gates are standing policy rather than a question
 		 * the reader asked once, and they have their own Defaults; the search is not
 		 * persisted and has its own ×, so sweeping either up here would make Clear
 		 * the second control that undoes them.
@@ -631,10 +650,27 @@
 		<!-- Attribution, not one lump: the gates hide rows on a bar the reader has
 		     never touched, so "hidden by filters" over an empty bar reads as a
 		     broken table. Each clause is dropped when it is zero — a counter that
-		     says "0 hidden by gates" is noise on the common case. -->
+		     says "0 hidden by gates" is noise on the common case.
+
+		     The capped sentence is a THIRD figure and not a replacement (POE-222):
+		     what is drawn, out of what the filters left, out of what the server
+		     sent. A cap that printed only "50 of 1443" would read as 1393 rows
+		     taken by something, which is what the gate/filter clauses beside it
+		     mean; naming the cap and its two totals is the difference between
+		     pagination and a hidden filter, and "show all" is the way past it.
+		     Uncapped, the counter says exactly what it said before the cap
+		     existed — `shown` and `matched` are the same number then, and a "of
+		     50 plays · 1443 served" on a table with nothing held back would be
+		     arithmetic nobody asked for. -->
 		<Tooltip text={EXCHANGE_TOOLTIPS.Counter} position="above">
 			<span class="counter">
-				<span class="mono shown">{counts.shown}</span> of {counts.total} plays
+				{#if counts.capped}
+					<span class="mono shown">{counts.shown}</span> of {counts.matched} matching
+					<span class="cap-note">(cap)</span>
+					<span class="sep">&middot;</span> {counts.total} served
+				{:else}
+					<span class="mono shown">{counts.shown}</span> of {counts.total} plays
+				{/if}
 				{#if counts.hiddenByGates > 0}
 					<span class="sep">&middot;</span> {counts.hiddenByGates} hidden by gates
 				{/if}
@@ -643,9 +679,16 @@
 				{/if}
 			</span>
 		</Tooltip>
+		{#if counts.capped}
+			<button
+				class="show-all"
+				title="Draws every matching play. Sets the Show pick to All, so it stays lifted until you set it back."
+				onclick={onshowall}>show all</button
+			>
+		{/if}
 		<button
 			class="clear"
-			title="Clears the category and item rules and the run investment bounds. The gates, the search, the sort and the density are left alone."
+			title="Clears the category and item rules and the run investment bounds. The gates, the search, the sort, the row cap and the density are left alone."
 			onclick={onclear}>Clear</button
 		>
 	</div>
@@ -941,6 +984,15 @@
 		opacity: 0.5;
 	}
 
+	/* Dimmer than the figures it qualifies: it names the reason the first number
+	   is small, and is not itself one of the counts. */
+	.counter .cap-note {
+		opacity: 0.7;
+	}
+
+	/* The counter's own affordance, so it reads as part of that sentence rather
+	   than as a second Clear — same underline, lowercase, no gap of its own. */
+	.show-all,
 	.clear {
 		background: transparent;
 		border: none;
@@ -952,6 +1004,7 @@
 		padding: 0;
 	}
 
+	.show-all:hover,
 	.clear:hover {
 		color: var(--color-lab-text);
 	}
