@@ -31,8 +31,10 @@
 		DENSITY_OPTIONS,
 		HORIZON_OPTIONS,
 		MODE_OPTIONS,
+		ROW_CAP_OPTIONS,
 		SORT_OPTIONS,
 		anyConvertStep,
+		applyRowCap,
 		dataAgeParts,
 		deriveState,
 		formatChaos,
@@ -44,10 +46,13 @@
 		parseDensity,
 		parseHorizon,
 		parseMode,
+		parseRowCap,
 		parseSort,
 		parseUnit,
 		printsExpectedRoi,
 		refetchDelay,
+		rowCapLimit,
+		rowCounts,
 		sortPlays,
 		worthwhileScale
 	} from '$lib/exchange/view';
@@ -83,6 +88,12 @@
 	const mode = persisted('currencyExchangeMode', 'all');
 	const horizon = persisted('currencyExchangeHorizon', 'recent');
 	const sortPref = persisted('currencyExchangeSort', 'expected');
+	/**
+	 * How much of the ranked list is drawn (POE-222). A view pick and not a
+	 * filter — it sits with Sort, Mode, Horizon and Density for that reason, and
+	 * Clear leaves all five alone.
+	 */
+	const rowCapPref = persisted('currencyExchangeRowCap', '50');
 	const densityPref = persisted('currencyExchangeDensity', 'comfortable');
 	const unitPref = persisted('currencyExchangeUnit', 'chaos');
 	/**
@@ -193,6 +204,12 @@
 	 * days ago, with the reason for it sitting in a box they are not looking at.
 	 */
 	let search = $state('');
+	/**
+	 * Whether a query is narrowing the table. Held once because two rules read
+	 * it: the cap is bypassed while it is true (`applyRowCap`), and the empty
+	 * table says a different sentence.
+	 */
+	const searchActive = $derived(search.trim() !== '');
 
 	// ----------------------------------------------------------- the filters --
 
@@ -221,7 +238,10 @@
 	 * the other way round would cost the same rows at more comparisons; the search
 	 * runs last of the four because it narrows what the persisted setup has
 	 * already left on screen rather than joining it. The sort is last of all
-	 * because it is the only step whose answer depends on how many rows survived.
+	 * because it is the only step whose answer depends on how many rows survived —
+	 * last of the FILTERS, that is: the row cap slices the head of what this chain
+	 * produces (`cappedRows` below), after the sort and after the search, and it
+	 * takes no part in what any of this counts.
 	 *
 	 * The gate step is held in its own `$derived` rather than folded into the
 	 * chain, because the counter has to be able to say how many rows the GATES
@@ -251,29 +271,54 @@
 	);
 
 	/**
+	 * What the table DRAWS: the head of `rows` under the reader's row cap, and
+	 * the whole of it while a search is running (POE-222).
+	 *
+	 * The last step, and read by nothing but the `{#each}`. The counter measures
+	 * the cap (`rowCounts`) and says so; every other consumer on this page reads
+	 * an UNCAPPED list, because a question about what the FILTERS left is not
+	 * answered by how much of the answer is on screen. `showConvert`, the gate
+	 * attribution and the empty-table branch read `rows` — what the filters
+	 * left — while the item universe reads `allPlays`, one step further back
+	 * again: the picker has to keep listing an item whose own rule hid it, or
+	 * that rule is clearable from nowhere but the chip.
+	 */
+	const cappedRows = $derived(
+		applyRowCap(rows, rowCapLimit(parseRowCap(rowCapPref.value)), searchActive)
+	);
+
+	/**
 	 * Whether the route's convert slot is drawn, for the whole table at once.
 	 *
-	 * Taken over `rows` — what is actually rendered — and not over `allPlays`: a
+	 * Taken over `rows` — what the filters left — and not over `allPlays`: a
 	 * reader who has filtered down to direct plays is looking at a column of empty
 	 * dashed tiles, and the response still holding a 1-hop they cannot see is no
-	 * reason to keep spending the width on it. Both the header spans and every
+	 * reason to keep spending the width on it. Deliberately NOT over `cappedRows`,
+	 * for the opposite reason: the cap is how much of one answer is drawn, and a
+	 * column that appeared the moment the cap was lifted would re-lay the table
+	 * out under a control that is only supposed to lengthen it. Both the header spans and every
 	 * `ExchangeRoute` read this one value, which is what keeps the two geometries
 	 * mirrored; the rule against deciding it per row lives with `anyConvertStep`.
 	 */
 	const showConvert = $derived(anyConvertStep(rows));
 
 	/**
-	 * The counter's attribution. Gates get their own figure; the rules, the
+	 * The counter's attribution, derived in `rowCounts` rather than here so the
+	 * one rule it carries is unit-tested: the rows the CAP leaves undrawn are
+	 * never charged to the filters. Gates get their own figure; the rules, the
 	 * bounds and the search share the other, because those three are all things
 	 * the reader can see they set on a bar that is always open — a gate's controls
 	 * are behind a collapsed row, so its rows are the ones that need pointing at.
 	 */
-	const counts = $derived({
-		shown: rows.length,
-		total: allPlays.length,
-		hiddenByGates: afterRules.length - afterGates.length,
-		hiddenByFilters: allPlays.length - rows.length - (afterRules.length - afterGates.length)
-	});
+	const counts = $derived(
+		rowCounts({
+			served: allPlays,
+			afterRules,
+			afterGates,
+			matched: rows,
+			shown: cappedRows
+		})
+	);
 
 	/**
 	 * What the empty table says when the GATES are what emptied it.
@@ -345,8 +390,9 @@
 
 	/**
 	 * Clear resets the persisted setup that hides rows — the two rule layers and
-	 * the two investment bounds — and nothing else. Sort, mode, horizon and
-	 * density change what the reader is looking at, not how much of it, so
+	 * the two investment bounds — and nothing else. Sort, mode, horizon, density
+	 * and the row cap change what the reader is looking at, not what is left of it
+	 * — the cap draws the head of the same list and says so on the counter — so
 	 * clearing a filter that emptied the table must not also throw away the way
 	 * they had it set up. The search is left alone too, for the opposite reason:
 	 * it is not part of the setup, it is visibly in its own box, and that box has
@@ -487,6 +533,16 @@
 
 		<div class="divider"></div>
 
+		<span class="control-label">Show</span>
+		<SegmentedButtons
+			value={parseRowCap(rowCapPref.value)}
+			options={ROW_CAP_OPTIONS}
+			onselect={(v) => (rowCapPref.value = parseRowCap(v))}
+			title="How many rows to draw, from the top of the order you picked. It hides nothing: the counter beside the search says how many plays the filters left and how many the server sent, and offers All in one click. A search ignores it — every match is shown. Clear leaves it alone, like the sort and the density."
+		/>
+
+		<div class="divider"></div>
+
 		<SegmentedButtons
 			value={parseMode(mode.value)}
 			options={MODE_OPTIONS}
@@ -529,6 +585,7 @@
 			{search}
 			{counts}
 			{apiBase}
+			onshowall={() => (rowCapPref.value = 'all')}
 			oncategoryrule={setCategoryRule}
 			onitemrule={setItemRule}
 			ongate={setGate}
@@ -636,7 +693,7 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each rows as play, i (play.key)}
+					{#each cappedRows as play, i (play.key)}
 						{@const progress = hoursProgress(play.hoursSeen, hoursWindow)}
 						{@const scale = worthwhileScale(play)}
 						{@const money = moneyColumns(play)}
@@ -883,7 +940,7 @@
 				<span class="key"><span class="sw sw-low-liq"></span>low liquidity</span>
 			</Tooltip>
 
-			<!-- Only while the column is on screen: with every rendered play direct,
+			<!-- Only while the column is on screen: with every play the filters left direct,
 			     the convert slot is gone and a legend entry for its dashed tile would
 			     explain a mark the reader cannot find. -->
 			{#if showConvert}
@@ -937,7 +994,7 @@
 
 		<div class="empty">
 			{allPlays.length > 0
-				? search.trim() !== ''
+				? searchActive
 					? 'No plays match your search, gates and filters right now.'
 					: counts.hiddenByGates > 0 && counts.hiddenByFilters === 0
 						? gatesEmptyMessage

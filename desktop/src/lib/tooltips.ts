@@ -142,7 +142,7 @@ export const EXCHANGE_TOOLTIPS: Record<string, string> = {
 	'Min return':
 		'The least return a play must show, as a percent of what one exchange costs — the same NET figure the ROI% column prints. Empty (or 0) is off, which shows everything above the server’s +0.1% sanity floor — it never serves a play that loses money or gains only float noise. Type 2 for the floor the server used to apply to everyone.',
 	Counter:
-		'What is left of the response, and what took the rest. Gates are counted apart from everything else because their controls sit behind a collapsed row — the split points at the row that would give those rows back. Five of the seven ship off, so anything this reads before you touch a knob is the two item-price floors dropping the sub-chaos and hundreds-per-divine tiers. Everything else is counted together: the category pills, the item chips, the run-cost bounds, and the search box.'
+		'What is left of the response, and what took the rest. Gates are counted apart from everything else because their controls sit behind a collapsed row — the split points at the row that would give those rows back. Five of the seven ship off, so anything this reads before you touch a knob is the two item-price floors dropping the sub-chaos and hundreds-per-divine tiers. Everything else is counted together: the category pills, the item chips, the run-cost bounds, and the search box. When the Show cap is holding rows back it reads differently — how many are drawn, out of how many matched, out of how many the server sent — and the cap is not counted as hidden by anything: nothing took those rows, they are simply below the last one drawn, and "show all" draws them.'
 };
 
 export const SELL_CONFIDENCE_TOOLTIPS: Record<string, string> = {

@@ -167,6 +167,50 @@ export function parseUnit(raw: string): ExchangeUnit {
 	return UNIT_OPTIONS.some((option) => option.value === raw) ? (raw as ExchangeUnit) : 'chaos';
 }
 
+/**
+ * How much of the ranked list the table draws at once. `'all'` is the cap off.
+ *
+ * A cap and not page numbers, by owner ruling (POE-222): the table is one
+ * ranked list read from the top, and 954 rows under the shipped filters is a
+ * scroll that has no end a reader ever reaches. Page numbers would ask them to
+ * hold a position in a list whose order changes every hour; a cap only says how
+ * much of the head is on screen, and says it out loud (`rowCounts`).
+ */
+export type ExchangeRowCap = '25' | '50' | '100' | '200' | 'all';
+
+/** The row-cap picker's entries, in display order. */
+export const ROW_CAP_OPTIONS: { value: ExchangeRowCap; label: string }[] = [
+	{ value: '25', label: '25' },
+	{ value: '50', label: '50' },
+	{ value: '100', label: '100' },
+	{ value: '200', label: '200' },
+	{ value: 'all', label: 'All' }
+];
+
+/**
+ * Narrow a persisted or user-supplied string to a row cap; default `'50'`.
+ *
+ * A number rather than `'all'`, because the first screen is what an unset
+ * preference is asking for — and unlike a filter default, this one is allowed
+ * to be a number precisely because it hides nothing the counter does not name
+ * and the "show all" beside that counter does not undo in one click.
+ */
+export function parseRowCap(raw: string): ExchangeRowCap {
+	return ROW_CAP_OPTIONS.some((option) => option.value === raw) ? (raw as ExchangeRowCap) : '50';
+}
+
+/**
+ * The pick as the number `applyRowCap` slices with; `'all'` is `Infinity`.
+ *
+ * Kept apart from `parseRowCap` because the two answers have different jobs:
+ * the picker is SET to a string it has an entry for, and the slice takes a
+ * number. Folding them would leave the control reading `Infinity`, which is on
+ * no option.
+ */
+export function rowCapLimit(cap: ExchangeRowCap): number {
+	return cap === 'all' ? Infinity : Number(cap);
+}
+
 // ------------------------------------------------------------- the state --
 
 /**
@@ -1017,6 +1061,104 @@ export function sortPlays(
 		);
 	}
 	return [...plays].sort((a, b) => byMoneyDesc(moneyColumns(a).roi, moneyColumns(b).roi));
+}
+
+/**
+ * The head of an already-sorted list — the LAST step of the page's chain, after
+ * `sortPlays` and after the search (POE-222).
+ *
+ * DISCLOSURE, NOT A FILTER. `feedback_visibility_default` forbids a default
+ * that HIDES served plays, and ADR-018 forbids anything that reorders, demotes
+ * or partitions one. This is neither: a cap that NAMES ITS OWN SIZE on the
+ * counter and carries a one-click "show all" beside it is pagination, which is
+ * what the owner asked for on 2026-09-01. It reads no key and no flag, it
+ * decides nothing about a play, and the order it hands back is the order it was
+ * given — it slices the head and does nothing else. Everything that answers a
+ * question ABOUT the table keeps reading the uncapped list: the counts, the
+ * item universe, the convert column and the empty-table messages.
+ *
+ * A search bypasses it entirely — the rule `BestPlays.svelte` already runs on
+ * the gem side. A query names what the reader is looking for, so every match is
+ * shown and only browsing is capped; a capped search would answer "there is no
+ * such play" with a play it found and dropped.
+ *
+ * EVERY path hands back a new array — the search bypass and the `'all'` pick
+ * (`Infinity`, via `rowCapLimit`) included — so the caller holds the same kind
+ * of value whatever it asked for. Returning the input by reference on one path
+ * would make the drawn list alias `rows` under exactly one combination of
+ * settings, which is the shape of bug that only shows up once something
+ * downstream sorts or splices what it was handed.
+ */
+export function applyRowCap(
+	plays: CurrencyExchangePlay[],
+	cap: number,
+	searchActive: boolean
+): CurrencyExchangePlay[] {
+	if (searchActive) return [...plays];
+	return plays.slice(0, cap);
+}
+
+/** What the counter says, and what the empty-table messages read. */
+export interface RowCounts {
+	/** How many rows are DRAWN — the capped count. */
+	shown: number;
+	/** How many survived the rules, the gates, the bounds and the search. */
+	matched: number;
+	/** How many the response carried. */
+	total: number;
+	/** Whether the cap is holding rows back — what makes the counter say so. */
+	capped: boolean;
+	/** Taken by the gates, counted apart because their row ships collapsed. */
+	hiddenByGates: number;
+	/** Taken by the rules, the bounds and the search together. */
+	hiddenByFilters: number;
+}
+
+/** The five lists the counter is measured over, in chain order. */
+export interface RowCountsInput {
+	/** The response's own plays, unfiltered. */
+	served: CurrencyExchangePlay[];
+	/** After the category and item rules. */
+	afterRules: CurrencyExchangePlay[];
+	/** After the gates. */
+	afterGates: CurrencyExchangePlay[];
+	/** After the bounds and the search, sorted — the full list, uncapped. */
+	matched: CurrencyExchangePlay[];
+	/** What the `{#each}` draws — `applyRowCap` over `matched`. */
+	shown: CurrencyExchangePlay[];
+}
+
+/**
+ * The counter's attribution: what is drawn, out of what survived, out of what
+ * arrived, and what took the difference.
+ *
+ * `hiddenByFilters` is measured against `matched` and NEVER against `shown`,
+ * which is the one rule this function exists to hold: the cap is not a filter
+ * and the rows it leaves undrawn are not hidden — they are the tail of a list
+ * the reader can lengthen from the counter itself. Charging them to the filters
+ * would point at controls that took nothing, and would make the shipped cap
+ * read as 900 rows a rule threw away (POE-222).
+ *
+ * Gates are counted apart from everything else for the reason they always were:
+ * their controls sit behind a collapsed row, so a lump figure over a bar with
+ * nothing visibly set on it reads as a broken table rather than as a knob.
+ */
+export function rowCounts({
+	served,
+	afterRules,
+	afterGates,
+	matched,
+	shown
+}: RowCountsInput): RowCounts {
+	const hiddenByGates = afterRules.length - afterGates.length;
+	return {
+		shown: shown.length,
+		matched: matched.length,
+		total: served.length,
+		capped: shown.length < matched.length,
+		hiddenByGates,
+		hiddenByFilters: served.length - matched.length - hiddenByGates
+	};
 }
 
 // --------------------------------------------------------------- the legs --

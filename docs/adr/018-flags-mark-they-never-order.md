@@ -8,6 +8,9 @@ serve-and-flag principle, and scopes
 [ADR-016](016-expected-roi-is-a-cross-hour-simulation-displayed-prices-stay-single-hour.md)'s
 ranking clause to the served order (see that ADR's 2026-09-01 amendment).
 
+Amended 2026-09-01 (POE-222) — see the amendment at the end: a row cap is
+disclosure and not a filter, and the three properties that keep it one.
+
 ## Context
 
 The Apocalypse card recipe stood in the book at buy 401c / sell 1200c for over
@@ -58,3 +61,27 @@ flag partitions, demotes, hides, or breaks a tie.**
 - **Quality is still expressible, and still opt-in.** `HideSuspect` and the
   Gates knobs remain the reader's, default off, per ADR-015 and ADR-017. A reader
   who wants the flagged rows gone types it; the table does not decide for them.
+
+## Amended 2026-09-01 (POE-222)
+
+Status of this section: current behaviour. Nothing in the Decision moves; one
+mechanism is placed on the right side of it.
+
+**A row cap is DISCLOSURE, not a filter, and stays one only while it holds all
+three of these.** The desktop Currency Exchange table draws the head of the
+sorted list under a `Show` pick (POE-222, `applyRowCap` /
+`desktop/src/lib/exchange/view.ts`). That is not the partitioning this ADR bars,
+and the difference is not a matter of degree: the cap slices the head of the
+order the reader picked without touching it, it reads no flag and no key and so
+decides nothing about any play, it NAMES ITS OWN SIZE on the counter, and it
+carries a one-click "show all" beside that name. Everything answering a question
+*about* the table — the counts, the item universe, the convert column, the
+empty-table messages — keeps reading the uncapped list, and a search bypasses the
+cap entirely.
+
+A cap that loses any of those properties is a default that hides served plays,
+and re-opens both this ADR and
+[ADR-017](017-no-default-engine-floor-may-hide-a-live-market.md): a cap that
+reordered or skipped rows to decide which head to keep would break the sort
+rule above, and a cap that went unnamed on screen or could not be lifted in one
+click would be `feedback_visibility_default`'s hiding by a quieter name.

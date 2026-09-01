@@ -5,9 +5,11 @@ import {
 	HORIZON_OPTIONS,
 	MODE_OPTIONS,
 	REFETCH_DEBOUNCE_MS,
+	ROW_CAP_OPTIONS,
 	REFETCH_JITTER_MS,
 	SORT_OPTIONS,
 	anyConvertStep,
+	applyRowCap,
 	chaosIconPath,
 	currencyIconPath,
 	dataAgeParts,
@@ -26,11 +28,14 @@ import {
 	parseDensity,
 	parseHorizon,
 	parseMode,
+	parseRowCap,
 	parseSort,
 	parseUnit,
 	quoteUnit,
 	refetchDelay,
 	routeSlots,
+	rowCapLimit,
+	rowCounts,
 	runInvestment,
 	runLedger,
 	sortPlays,
@@ -761,6 +766,51 @@ describe('parseUnit', () => {
 	});
 });
 
+describe('parseRowCap', () => {
+	it('passes "25" through', () => {
+		expect(parseRowCap('25')).toBe('25');
+	});
+
+	it('passes "all" through', () => {
+		expect(parseRowCap('all')).toBe('all');
+	});
+
+	it('falls back to "50" for a cap size this build does not offer', () => {
+		// A preference written by a build with a different option list has to land
+		// on a size this one can draw, not on a number the picker cannot show.
+		expect(parseRowCap('500')).toBe('50');
+	});
+
+	it('falls back to "50" for an unset preference', () => {
+		// The reader who has never been asked gets the first screen, not 954 rows.
+		expect(parseRowCap('')).toBe('50');
+	});
+});
+
+describe('ROW_CAP_OPTIONS', () => {
+	it('offers the four sizes and All, labelled, in picker order', () => {
+		expect(ROW_CAP_OPTIONS).toEqual([
+			{ value: '25', label: '25' },
+			{ value: '50', label: '50' },
+			{ value: '100', label: '100' },
+			{ value: '200', label: '200' },
+			{ value: 'all', label: 'All' }
+		]);
+	});
+});
+
+describe('rowCapLimit', () => {
+	it('reads a size as the number of rows to draw', () => {
+		expect(rowCapLimit('200')).toBe(200);
+	});
+
+	it('reads All as no limit at all', () => {
+		// Infinity and not a big number: a literal ceiling would start capping
+		// again the day a response carries more plays than it.
+		expect(rowCapLimit('all')).toBe(Infinity);
+	});
+});
+
 describe('deriveState', () => {
 	const now = new Date('2026-08-19T12:00:00.000Z');
 
@@ -1382,6 +1432,181 @@ describe('sortPlays', () => {
 		sortPlays(served, 'fastest');
 
 		expect(keys(served)).toEqual(['slow', 'fast']);
+	});
+});
+
+describe('applyRowCap', () => {
+	function keys(plays: CurrencyExchangePlay[]): string[] {
+		return plays.map((p) => p.key);
+	}
+
+	/**
+	 * Deliberately in ASCENDING expectation, which is the order no sort on this
+	 * page would produce: the cap is handed an already-sorted list and its only
+	 * job is to take the head of it. A helper that read a key and re-ranked would
+	 * answer with the two largest instead of the first two.
+	 */
+	const sorted = [
+		play({ key: 'first', expectedRoi: 1 }),
+		play({ key: 'second', expectedRoi: 2 }),
+		play({ key: 'third', expectedRoi: 3 }),
+		play({ key: 'fourth', expectedRoi: 4 })
+	];
+
+	it('draws the head of the list it was given, in the order it was given', () => {
+		expect(keys(applyRowCap(sorted, 2, false))).toEqual(['first', 'second']);
+	});
+
+	it('draws every row when the cap is All', () => {
+		// `rowCapLimit('all')` is what reaches it, so Infinity is the real input.
+		expect(keys(applyRowCap(sorted, Infinity, false))).toEqual([
+			'first',
+			'second',
+			'third',
+			'fourth'
+		]);
+	});
+
+	it('draws every row when the cap is larger than the list', () => {
+		expect(keys(applyRowCap(sorted, 200, false))).toEqual([
+			'first',
+			'second',
+			'third',
+			'fourth'
+		]);
+	});
+
+	it('draws every match while a search is running, however small the cap', () => {
+		// A query names what the reader is looking for: capping it would answer
+		// "no such play" with a play that was found and dropped.
+		expect(keys(applyRowCap(sorted, 1, true))).toEqual(['first', 'second', 'third', 'fourth']);
+	});
+
+	it('draws every row when the cap is exactly the length of the list', () => {
+		// The off-by-one boundary, and the one the shipped cap of 50 sits on for a
+		// reader whose filters left exactly 50: `slice(0, cap - 1)` passes every
+		// other case in this block and drops the last row here, and the counter
+		// must not offer a `show all` over a table that is already all shown.
+		const shown = applyRowCap(sorted, sorted.length, false);
+
+		expect(keys(shown)).toEqual(['first', 'second', 'third', 'fourth']);
+		expect(
+			rowCounts({
+				served: sorted,
+				afterRules: sorted,
+				afterGates: sorted,
+				matched: sorted,
+				shown
+			}).capped
+		).toBe(false);
+	});
+
+	it('leaves the list it was given intact', () => {
+		// The page holds `rows` across the cap — the counter, `showConvert` and the
+		// empty-table branch all read it after this call. A cap that truncated in
+		// place would take those rows off every one of them.
+		const served = [play({ key: 'a' }), play({ key: 'b' }), play({ key: 'c' })];
+
+		applyRowCap(served, 1, false);
+
+		expect(keys(served)).toEqual(['a', 'b', 'c']);
+	});
+
+	it('hands back a copy when a search bypasses the cap', () => {
+		// The bypass is the path that once returned its input by reference, so the
+		// drawn list WAS `rows` under exactly one combination of settings. An
+		// alias that exists in one branch and not the others is worse than one
+		// that always exists: it is the branch nothing downstream is tested on.
+		const served = [play({ key: 'a' }), play({ key: 'b' })];
+
+		expect(applyRowCap(served, 1, true)).not.toBe(served);
+	});
+
+	it('hands back a copy when the cap is All', () => {
+		// `Infinity` is the other place a short-circuit is tempting — slicing a
+		// whole list looks like waste. The caller must hold the same kind of value
+		// whichever pick is set.
+		const served = [play({ key: 'a' }), play({ key: 'b' })];
+
+		expect(applyRowCap(served, Infinity, false)).not.toBe(served);
+	});
+});
+
+describe('rowCounts', () => {
+	/** Distinct keys only, because the counter reads lengths and nothing else. */
+	function plays(count: number): CurrencyExchangePlay[] {
+		return Array.from({ length: count }, (_, i) => play({ key: `p${i}` }));
+	}
+
+	/**
+	 * Ten served, two taken by the rules, three by the gates, one by the bounds
+	 * and the search together — four matching, of which the cap draws two.
+	 */
+	const chain = {
+		served: plays(10),
+		afterRules: plays(8),
+		afterGates: plays(5),
+		matched: plays(4),
+		shown: plays(2)
+	};
+
+	it('reports the drawn count as the length of the capped list', () => {
+		expect(rowCounts(chain).shown).toBe(2);
+	});
+
+	it('reports the matched count as the length of the uncapped list', () => {
+		// Never `shown`: the figure the counter says the filters left is measured
+		// before the cap slices, or the cap reads as a filter.
+		expect(rowCounts(chain).matched).toBe(4);
+	});
+
+	it('reports the served count as the length of the response', () => {
+		expect(rowCounts(chain).total).toBe(10);
+	});
+
+	it('does not charge the rows the cap left undrawn to the filters', () => {
+		// The rule this helper exists for. Two rows are below the last one drawn
+		// and nothing took them: the filters took six — two by rule, three by
+		// gate, one by bound — and counting against `shown` instead of `matched`
+		// would report eight and read as a table gutted by controls the reader can
+		// see are off.
+		const counts = rowCounts(chain);
+
+		expect(counts.hiddenByGates).toBe(3);
+		expect(counts.hiddenByFilters).toBe(3);
+	});
+
+	it('says the cap is holding rows back when fewer are drawn than matched', () => {
+		expect(rowCounts(chain).capped).toBe(true);
+	});
+
+	it('says the cap is not holding rows back when every match is drawn', () => {
+		// The uncapped counter is the one every reader sees on a small table, and
+		// it must not offer a "show all" over a list that is all shown.
+		const counts = rowCounts({ ...chain, shown: chain.matched });
+
+		expect(counts.capped).toBe(false);
+		expect(counts.shown).toBe(4);
+	});
+
+	it('counts no rows hidden by the gates when every play passes them', () => {
+		const all = plays(3);
+
+		expect(
+			rowCounts({ served: all, afterRules: all, afterGates: all, matched: all, shown: all })
+				.hiddenByGates
+		).toBe(0);
+	});
+
+	it('counts no rows hidden by the filters when every served play matches', () => {
+		// The unfiltered table is what a reader with no rules, no gates and no
+		// bounds sees, and the bar must say nothing was taken from it.
+		const all = plays(3);
+
+		expect(
+			rowCounts({ served: all, afterRules: all, afterGates: all, matched: all, shown: all })
+				.hiddenByFilters
+		).toBe(0);
 	});
 });
 
