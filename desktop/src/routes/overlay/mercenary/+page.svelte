@@ -6,8 +6,13 @@
 	 * STATUS line draws for every running status, capture or not ("I have no
 	 * idea whether something is being captured or not, and I have to constantly
 	 * alt-tab"); the verdict block draws on top of it once there is a capture.
-	 * Both gates and every word live in `$lib/mercenaries/overlay-view`, which
-	 * has a unit-test harness this file does not.
+	 * The panel as a whole is on screen for as long as a recruit window is being
+	 * worked — scanning, reading, done — and for `LINGER_MS` (4 s) after the
+	 * module goes idle, whether that is "window gone" over a retired capture or
+	 * "waiting" over nothing; then it clears entirely (owner decision,
+	 * 2026-09-01). Both gates, the linger and every word live in
+	 * `$lib/mercenaries/overlay-view`, which has a unit-test harness this file
+	 * does not; this file owns only the clock — see "Idle linger" below.
 	 *
 	 * Read `docs/OVERLAY-GUIDE.md` before changing anything here. The guards this
 	 * window is bound by, and where each is satisfied:
@@ -80,6 +85,7 @@
 	 * copy would be one poll away from lying. Same inputs on both windows is
 	 * what makes the page and this strip agree (POE-199 L5).
 	 */
+	import { untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { ssot } from '$lib/stores/ssot.svelte';
 	import { MERCENARY_WINDOW_LABEL } from '$lib/overlay/manager';
@@ -90,8 +96,11 @@
 	import {
 		guidesLine,
 		headerLine,
+		lingerAdvance,
+		lingerInit,
+		lingerRemainingMs,
 		overlayShowsVerdict,
-		overlayVisible,
+		overlayShown,
 		liveRowGlyphs,
 		statusLine,
 		unreadNote
@@ -99,7 +108,45 @@
 
 	const merc = $derived(ssot.mercenary);
 	const capture = $derived(merc.capture);
-	const visible = $derived(overlayVisible(merc));
+
+	// --- Idle linger (see the header) ---
+	//
+	// The gate is pure and the clock is the one input the slice cannot carry, so
+	// this route owns exactly two things: the linger record, advanced whenever
+	// the polled status changes, and ONE timeout that re-reads the clock when
+	// the linger runs out — without it nothing would re-evaluate the gate until
+	// the next SSOT poll, up to three seconds late, and reading the clock every
+	// frame would redraw a static panel for nothing.
+	//
+	// The timeout is armed for the REMAINDER, not for a fixed four seconds: the
+	// effect re-runs on every poll that replaces the slice, and a fixed delay
+	// re-armed every three seconds would never fire.
+	let linger = $state(lingerInit());
+	let nowMs = $state(Date.now());
+	$effect(() => {
+		const status = merc.status;
+		const next = untrack(() => lingerAdvance(linger, merc, Date.now()));
+		untrack(() => {
+			linger = next;
+			nowMs = Date.now();
+		});
+		const remaining = lingerRemainingMs(next, Date.now());
+		// One guard, not three paths. `remaining` cannot be null while the status
+		// is `idle` — `lingerAdvance` leaves `idleSinceMs` set on every idle slice
+		// — so the null arm only narrows the type for the non-idle statuses. `0`
+		// means the linger already ran out and the derived gate already reads as
+		// hidden, so arming there would rewrite `nowMs` on every poll for nothing.
+		if (status !== 'idle' || remaining === null || remaining === 0) return;
+		// 50 ms PAST the boundary: a timer that fires exactly on it would read the
+		// clock as one tick short of expired and leave the strip up until the next
+		// poll.
+		const timer = setTimeout(() => {
+			nowMs = Date.now();
+		}, remaining + 50);
+		return () => clearTimeout(timer);
+	});
+
+	const shown = $derived(overlayShown(merc, linger, nowMs));
 	const showsVerdict = $derived(overlayShowsVerdict(merc));
 	const status = $derived(statusLine(merc));
 	const enabled = $derived(enabledSources(merc.sourcesOff));
@@ -184,7 +231,7 @@
 </script>
 
 <div class="overlay-root">
-	{#if visible}
+	{#if shown}
 		<div class="panel" bind:this={panelEl}>
 			<!-- The module's pulse. Drawn for every running status, capture or
 			     not — an empty overlay and a dead one used to look the same. -->

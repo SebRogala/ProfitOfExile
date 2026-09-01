@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	IDLE_LINE,
+	LINGER_MS,
 	NO_CELLS_NOTE,
 	NO_GUIDES_NOTE,
 	SCANNING_LINE,
@@ -11,8 +12,12 @@ import {
 	captureRetired,
 	guidesLine,
 	headerLine,
+	lingerAdvance,
+	lingerInit,
+	lingerRemainingMs,
 	liveRowGlyphs,
 	overlayShowsVerdict,
+	overlayShown,
 	overlayVisible,
 	rowGlyphs,
 	statusLine,
@@ -140,6 +145,111 @@ describe('whether the strip draws at all', () => {
 
 	it('draws nothing where capture is unavailable', () => {
 		expect(overlayVisible(slice('unavailable', capture([row(0, ['matched'])])))).toBe(false);
+	});
+});
+
+describe('whether the strip is on screen', () => {
+	// Owner decision, 2026-09-01: the strip stays for as long as a recruit
+	// window is being worked, and four seconds after the module goes idle.
+	const live = capture([row(0, ['matched'])]);
+	const retired = { ...live, live: false };
+	const since = (idleSinceMs: number | null) => ({ idleSinceMs });
+
+	it('shows a burst for as long as it looks, whatever the clock says', () => {
+		expect(overlayShown(slice('scanning', null), since(0), 1_000_000)).toBe(true);
+	});
+
+	it('shows a read for as long as it lasts', () => {
+		expect(overlayShown(slice('live', live), since(0), 1_000_000)).toBe(true);
+	});
+
+	it('shows a finished read for as long as the window is on screen', () => {
+		expect(overlayShown(slice('done', live), since(0), 1_000_000)).toBe(true);
+	});
+
+	it('shows the waiting line the moment the module goes idle', () => {
+		expect(overlayShown(slice('idle', null), since(1000), 1000)).toBe(true);
+	});
+
+	it('keeps a retired capture up inside the four seconds', () => {
+		expect(overlayShown(slice('idle', retired), since(1000), 1000 + LINGER_MS - 1)).toBe(true);
+	});
+
+	// "Window gone" IS the clear, four seconds on: the whole overlay goes.
+	it('clears a retired capture once the four seconds are up', () => {
+		expect(overlayShown(slice('idle', retired), since(1000), 1000 + LINGER_MS)).toBe(false);
+	});
+
+	it('clears the waiting line once the four seconds are up', () => {
+		expect(overlayShown(slice('idle', null), since(1000), 1000 + LINGER_MS)).toBe(false);
+	});
+
+	// The route advances the linger from an effect, which runs after the first
+	// render reads the gate: an idle slice nobody has clocked yet must not flash
+	// nothing before the effect catches up.
+	it('treats an idle slice the route has not clocked yet as just begun', () => {
+		expect(overlayShown(slice('idle', null), lingerInit(), 1_000_000)).toBe(true);
+	});
+
+	it('never shows a module that is off, however fresh the linger', () => {
+		expect(overlayShown(slice('off', live), since(1000), 1000)).toBe(false);
+	});
+
+	it('never shows a module whose capture is unavailable', () => {
+		expect(overlayShown(slice('unavailable', null), since(1000), 1000)).toBe(false);
+	});
+});
+
+describe('advancing the idle linger', () => {
+	it('starts the clock when the module goes idle', () => {
+		expect(lingerAdvance(lingerInit(), slice('idle', null), 1000)).toEqual({ idleSinceMs: 1000 });
+	});
+
+	// The route polls every three seconds; a clock restarted on each poll would
+	// never run out and the strip would never clear.
+	it('keeps the original start across later idle polls', () => {
+		const started = lingerAdvance(lingerInit(), slice('idle', null), 1000);
+		expect(lingerAdvance(started, slice('idle', null), 4000)).toEqual({ idleSinceMs: 1000 });
+	});
+
+	it('clears the clock when a burst starts', () => {
+		const started = lingerAdvance(lingerInit(), slice('idle', null), 1000);
+		expect(lingerAdvance(started, slice('scanning', null), 2000)).toEqual({ idleSinceMs: null });
+	});
+
+	// A voice line right after the window closed: the burst shows in full, and
+	// the idle after it gets a fresh four seconds rather than the tail of the
+	// old ones.
+	it('restarts from the new idle after a burst', () => {
+		let linger = lingerAdvance(lingerInit(), slice('idle', null), 1000);
+		linger = lingerAdvance(linger, slice('scanning', null), 2000);
+		linger = lingerAdvance(linger, slice('idle', null), 9000);
+		expect(linger).toEqual({ idleSinceMs: 9000 });
+	});
+
+	// Held as state by the route: a poll that changed nothing must hand back the
+	// same record, or every poll would wake the gate for nothing.
+	it('returns the same record when nothing moved', () => {
+		const started = lingerAdvance(lingerInit(), slice('idle', null), 1000);
+		expect(lingerAdvance(started, slice('idle', null), 2000)).toBe(started);
+		const cleared = lingerInit();
+		expect(lingerAdvance(cleared, slice('live', capture([row(0, ['matched'])])), 2000)).toBe(cleared);
+	});
+});
+
+describe('how much linger is left', () => {
+	it('counts down from four seconds', () => {
+		expect(lingerRemainingMs({ idleSinceMs: 1000 }, 2500)).toBe(LINGER_MS - 1500);
+	});
+
+	// The route arms its clear-timer from this; a negative delay would be a
+	// timer in the past, which browsers clamp anyway but should not be asked for.
+	it('bottoms out at zero once the time is up', () => {
+		expect(lingerRemainingMs({ idleSinceMs: 1000 }, 1000 + LINGER_MS + 5000)).toBe(0);
+	});
+
+	it('has nothing to count while the module is not idle', () => {
+		expect(lingerRemainingMs(lingerInit(), 2500)).toBeNull();
 	});
 });
 

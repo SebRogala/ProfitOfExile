@@ -60,6 +60,15 @@ show/hide list and in `set_debug_mode`'s force-show branch. Persisted geometry
 is independent of the coupling: temple has none, the merc strip has
 `mercenary_overlay`.
 
+The merc strip's **on-screen lifecycle** (owner decision, 2026-09-01) is: shown
+for as long as a recruit window is being worked — `scanning` (the burst after
+a voice line or Scan now), `live` (reading), `done` (read paused) — and for
+`LINGER_MS` (4 s) after the module goes `idle`, whether that idle is "window
+gone" over a retired capture or "waiting" over nothing; then the panel clears
+and the whole overlay disappears. The gate is `overlayShown` in
+`desktop/src/lib/mercenaries/overlay-view.ts`; the route owns only the clock.
+The full contract is in `desktop/src/lib/mercenaries/README.md`.
+
 The merc strip's **height follows content; width and position are persisted**
 (owner decision, 2026-08-25). Its route observes its own panel with a
 `ResizeObserver` and calls the Rust `fit_overlay_height` command, which converts
@@ -160,13 +169,18 @@ named path.
 
 - **Merc strip, after a row-count change** (the content-driven resize path): let
   the strip redraw at a different height — open a recruit window with a
-  different number of rows, or let a live capture retire — then sweep the mouse
+  different number of rows — then, with the read still running, sweep the mouse
   across the strip and left-click on it. The click must reach the game and the
   module status must stay `live`/`scanning`. A click that selects something in
   our window instead, or a status that drops to `idle`, means the resize lost
   `WS_EX_TRANSPARENT` and the re-assert in `fit_overlay_height` is not working.
+  A retire no longer serves as the redraw here: it leaves the strip on screen
+  for only the 4 s linger, and `idle` throughout it.
 - **Merc strip, first paint**: starting the module must not flash a large empty
-  panel. The constructor seed is one line tall and the content replaces it.
+  panel. The constructor seed is one line tall and the content replaces it. The
+  waiting line shows for 4 s after the start and then the strip clears; a strip
+  still showing "waiting for a mercenary" a minute later means the idle linger
+  (`overlayShown` / `lingerAdvance`) is not being advanced by the route.
 - **Merc header, across re-detects** (added after the 2026-08-25 smoke, where
   the header blinked between the mercenary's name and its class every two
   seconds): keep one recruit window open and watch the header line for at least
@@ -179,18 +193,21 @@ named path.
   the strip marks `?` or `✕` until the status line reads `done · N rows · all
   icons read`. From then on the log says `capture complete — OCR paused` once,
   the strip must stay on screen with its verdict, and closing the window must
-  still retire it (up to ~20 s later, two liveness checks). A strip that blanks
-  at `done`, or a status that never reaches it on a fully-read window, means the
-  on-screen status set (`live` + `done`) or `capture_complete` disagrees with
-  what the reader produced. **Hover still corrects a wrong read while `done`**:
-  park the cursor on a cell the module matched WRONG and confirm the tooltip
-  replaces it — the detect is what paused, not the hover. The re-read of an
-  already-matched cell is capped per cell (`HoverBudget`, 3 per capture), so the
-  correction has to land within the first few ticks of the hover; moving off the
-  cell and back does NOT refill it, and neither does a retire the module
-  restored from — the budget rides along with the confirmations in the retained
-  slot, so a spent cell stays spent across a retire and re-detect of the same
-  panel. Only a genuinely new window refills it.
+  still retire it (up to ~20 s later, two liveness checks): the strip then says
+  `recruit window gone — last read` for 4 s and clears entirely. A strip that
+  blanks at `done`, or a status that never reaches it on a fully-read window,
+  means the on-screen status set (`live` + `done`) or `capture_complete`
+  disagrees with what the reader produced; a strip still up more than a few
+  seconds after the log says `window gone` means the linger is not running out.
+  **Hover still corrects a wrong read while `done`**: park the cursor on a cell
+  the module matched WRONG and confirm the tooltip replaces it — the detect is
+  what paused, not the hover. The re-read of an already-matched cell is capped
+  per cell (`HoverBudget`, 3 per capture), so the correction has to land within
+  the first few ticks of the hover; moving off the cell and back does NOT refill
+  it, and neither does a retire the module restored from — the budget rides
+  along with the confirmations in the retained slot, so a spent cell stays spent
+  across a retire and re-detect of the same panel. Only a genuinely new window
+  refills it.
 - **Merc hover, the occluded panel** (added after the 2026-08-25 smoke, where
   hovering a cell retired the capture two ticks later and the cell flipped back
   to `✕`): with a recruit window open, park the cursor on a support cell for at
