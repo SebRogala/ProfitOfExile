@@ -46,6 +46,7 @@
 		parseMode,
 		parseSort,
 		parseUnit,
+		printsExpectedRoi,
 		refetchDelay,
 		sortPlays,
 		worthwhileScale
@@ -481,7 +482,7 @@
 			value={parseSort(sortPref.value)}
 			options={SORT_OPTIONS}
 			onselect={(v) => (sortPref.value = parseSort(v))}
-			title="Rank by the simulated outcome the server ranks on, by the hour's best-case chaos the ROI column shows — which orders the number each row prints, one posting of the market it enters on, so a market that posts a thousand at a time ranks above one that posts a single item at ten times the price — or by how long the market needs to absorb the play's worthwhile scale, shortest wait first."
+			title="Rank by the simulated chaos the Exp. ROI column shows, by the hour's best-case chaos the ROI column shows, or by how long the market needs to absorb the play's worthwhile scale, shortest wait first. Each sort orders the figure its own column prints and nothing else: the two money columns are one posting of the market the row enters on, so a market that posts a thousand at a time ranks above one that posts a single item at ten times the price, and a row whose column prints a dash has no key and sits at the end. The server's order only breaks ties between rows whose column reads the same."
 		/>
 
 		<div class="divider"></div>
@@ -693,9 +694,12 @@
 							     exists for a positive expectation, so the minus is always a row
 							     with no run: the simulation is free to measure a loss
 							     and the server serves it anyway (ADR-016), so red is a reading
-							     here and not an error state. The ranking is still the
-							     PER-EXCHANGE expectation this scales, which is why the Exp. ROI
-							     sort keeps the served order rather than re-reading the column.
+							     here and not an error state. The Exp. ROI sort orders by THIS
+							     figure (POE-220) and the served order is only its tie-break, so
+							     the dash below is a missing key and not a small one: the sort
+							     reads `printsExpectedRoi` — the predicate this cell branches on —
+							     before it reads the column, and a row that prints no figure sits
+							     at the end rather than ranking on a number the reader cannot see.
 							     NOTHING measured is not a wash. A recipe with no simulable entry
 							     hour carries a 0 mean over 0 entries, and printing that as "0c"
 							     would tell the reader the play was replayed and broke even. It
@@ -707,7 +711,7 @@
 							     caveat and the title carries it into dense, where every
 							     sub-line is gone. -->
 							<td class="num">
-								{#if play.simEntries === 0}
+								{#if !printsExpectedRoi(play)}
 									<span
 										class="mono reserved"
 										title="Not simulable: no hour of the last day could be replayed for this play, so there is no expectation to report."

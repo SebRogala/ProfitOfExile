@@ -693,6 +693,27 @@ export function moneyColumns(play: CurrencyExchangePlay): MoneyColumns {
 	};
 }
 
+/**
+ * Whether the Exp. ROI column prints a figure on this row.
+ *
+ * ONE HOME for the question, because two answers to it are two different
+ * tables. The cell prints a dash for a play the simulation could not replay —
+ * `simEntries` 0 carries a 0 mean over 0 entries, and printing that as "0c"
+ * would tell the reader the play was replayed and broke even — while
+ * `moneyColumns().expectedRoi` still multiplies that 0 out to a number. The
+ * Exp. ROI sort reads this before it reads the column (POE-220), so a row with
+ * no printed figure sorts as a MISSING KEY and lands at the end rather than
+ * being ordered by a figure nobody can see. The cell in
+ * `CurrencyExchangePage.svelte` reads the same predicate, so the two cannot
+ * drift into disagreeing about which rows have an answer.
+ *
+ * `lowCoverage` is deliberately NOT part of it: a thin mean is a real mean the
+ * cell dims and captions, so those rows print a figure and sort by it.
+ */
+export function printsExpectedRoi(play: CurrencyExchangePlay): boolean {
+	return play.simEntries !== 0;
+}
+
 // ------------------------------------------------------------- the ledger --
 
 /**
@@ -875,6 +896,39 @@ function byMoneyDesc(left: number, right: number): number {
 }
 
 /**
+ * Ascending comparator over the Scale column's wait, total on every key it can
+ * be handed.
+ *
+ * `null` is the MISSING KEY — no `worthwhileScale` at all, or one whose depth
+ * could not be read — and lands at the END, tied with every other unknown so
+ * the served order survives between them. That is the dash the Scale column
+ * prints for those rows.
+ *
+ * `Infinity` is NOT a missing key. `worthwhileScale` answers it for a positive
+ * but vanishing `expectedRoi` (`Number.MIN_VALUE` divides the 100c target into
+ * `Infinity` flips), and the column prints that wait rather than a dash — so
+ * the sort takes it as the largest key there is and puts the row behind every
+ * readable wait, which is where an unbounded wait belongs on a "shortest first"
+ * list. It still sits AHEAD of the rows with no key at all.
+ *
+ * It compares rather than subtracts, because `Infinity - Infinity` is `NaN` and
+ * a comparator that answers `NaN` is inconsistent — `Array.prototype.sort` then
+ * leaves the order unspecified for the WHOLE array, not for the pair that
+ * produced it. Measured 2026-09-01: V8 consumes a `NaN` result as 0, so the
+ * subtraction this replaced did not visibly reorder anything on WebView2. The
+ * shape is still wrong to ship, and the difference the tests can pin is the one
+ * above — an `Infinity` wait is a key, not a dash.
+ */
+function byHoursAsc(left: number | null, right: number | null): number {
+	if (left === null || right === null) {
+		if (left === right) return 0;
+		return left === null ? 1 : -1;
+	}
+	if (left === right) return 0;
+	return left < right ? -1 : 1;
+}
+
+/**
  * The table's rows in the order the sort picker asks for.
  *
  * ONE RULE, since the owner ruling of 2026-09-01 (POE-220): a sort orders by the
@@ -893,7 +947,12 @@ function byMoneyDesc(left: number, right: number): number {
  * reader who opts in; neither is allowed to move a row the table is showing.
  *
  * `'expected'` orders by `moneyColumns().expectedRoi` descending — the Exp. ROI
- * COLUMN, derived here, not the served order. It used to hand back the response's
+ * COLUMN, derived here, not the served order — on the rows that PRINT one. A row
+ * the simulation could not replay prints a dash there (`printsExpectedRoi`, the
+ * one home for that question, which the cell reads too), so it has no key and
+ * lands at the END with the other unreadable columns rather than being ranked on
+ * a number nobody on screen can see. Two such rows tie and keep the served order.
+ * It used to hand back the response's
  * array copied, which carried the server's own ranking (clean before suspect,
  * then covered before low-coverage, then `expectedRoi` desc, then turnover, then
  * direct-first, then key — POE-193). Two of those six tie-breaks were flag
@@ -924,15 +983,18 @@ function byMoneyDesc(left: number, right: number): number {
  * sits at the END of the list. That is a MISSING KEY and not a demotion: two
  * unknowns compare equal, so they keep the served order between them, and a
  * comparator that ranked an unknown wait as instant would put the least-known
- * row on top. The order reads the same `worthwhileScale` the Scale column prints
- * in comfortable density (dense trades the wait away with every other sub-line),
- * so the two can never disagree about a play's hours.
+ * row on top. An `Infinity` wait is a printed figure and not a missing key, so
+ * it sorts as the largest key rather than as a dash (`byHoursAsc`). The order
+ * reads the same `worthwhileScale` the Scale column prints in comfortable
+ * density (dense trades the wait away with every other sub-line), so the two can
+ * never disagree about a play's hours.
  *
  * Every option sorts a COPY, so a caller holding the result can never reorder
- * the response's own array through it, and every comparator is total and
- * antisymmetric — a money column that will not read as a number sorts as
- * `-Infinity` and lands at the END too, the same missing-key treatment
- * (`byMoneyDesc`) — so `Array.prototype.sort`'s stability carries the served
+ * the response's own array through it, and every comparator COMPARES rather than
+ * subtracts, so it stays total and antisymmetric on the infinities both keys can
+ * carry — a money column that will not read as a number sorts as `-Infinity` and
+ * lands at the END too, the same missing-key treatment (`byMoneyDesc`) — so
+ * `Array.prototype.sort`'s stability carries the served
  * order through every tie. The Fastest sort ties often, because its hours are whole
  * ones: everything the market swallows inside the hour reads 1 and stays in the
  * server's order behind that.
@@ -942,19 +1004,16 @@ export function sortPlays(
 	sort: ExchangeSort
 ): CurrencyExchangePlay[] {
 	if (sort === 'fastest') {
-		return [...plays].sort((a, b) => {
-			const left = worthwhileScale(a)?.hours ?? null;
-			const right = worthwhileScale(b)?.hours ?? null;
-			if (left === null || right === null) {
-				if (left === right) return 0;
-				return left === null ? 1 : -1;
-			}
-			return left - right;
-		});
+		return [...plays].sort((a, b) =>
+			byHoursAsc(worthwhileScale(a)?.hours ?? null, worthwhileScale(b)?.hours ?? null)
+		);
 	}
 	if (sort === 'expected') {
 		return [...plays].sort((a, b) =>
-			byMoneyDesc(moneyColumns(a).expectedRoi, moneyColumns(b).expectedRoi)
+			byMoneyDesc(
+				printsExpectedRoi(a) ? moneyColumns(a).expectedRoi : NaN,
+				printsExpectedRoi(b) ? moneyColumns(b).expectedRoi : NaN
+			)
 		);
 	}
 	return [...plays].sort((a, b) => byMoneyDesc(moneyColumns(a).roi, moneyColumns(b).roi));
