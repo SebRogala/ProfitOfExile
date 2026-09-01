@@ -52,9 +52,6 @@ import (
 //go:embed gem-icon-urls.json
 var iconURLsJSON []byte
 
-// DefaultCacheDir is used when no cache directory is configured.
-const DefaultCacheDir = "./data/gem-icons-cache"
-
 // maxImageBytes bounds a single upstream fetch. Inventory icons are a few KB;
 // this cap guards against a misbehaving or unexpected upstream response.
 const maxImageBytes = 5 << 20 // 5 MiB
@@ -108,19 +105,18 @@ type Cache struct {
 }
 
 // New builds a Cache from the embedded gem name→URL map and ensures cacheDir
-// exists. An empty cacheDir falls back to DefaultCacheDir. It returns an error
-// if the embedded JSON is malformed (a build-time defect) or the cache
-// directory cannot be created.
+// exists. It returns an error if the embedded JSON is malformed (a build-time
+// defect), cacheDir is empty, or the cache directory cannot be created.
+//
+// cacheDir is required here for the same reason NewWithMap requires it, and
+// this package deliberately holds no default: any default it held would be the
+// GEM set's directory, and nothing stops a second map from being handed it. The
+// caller owns the layout — internal/server derives one sub-directory per map
+// from a single configured cache root (POE-221).
 func New(cacheDir string) (*Cache, error) {
 	var urls map[string]string
 	if err := json.Unmarshal(iconURLsJSON, &urls); err != nil {
 		return nil, fmt.Errorf("gemicon: parse embedded url map: %w", err)
-	}
-	// The DefaultCacheDir fallback lives here and not in NewWithMap on purpose:
-	// it is the GEM map's directory, and silently handing it to a second map
-	// would make two icon sets share one directory and one filename scheme.
-	if cacheDir == "" {
-		cacheDir = DefaultCacheDir
 	}
 	return NewWithMap(urls, cacheDir)
 }
@@ -139,7 +135,9 @@ func New(cacheDir string) (*Cache, error) {
 // safeFileName — across the two maps, where neither generator can see the
 // other's keys — would serve one set's artwork under the other's name.
 // cacheDir is therefore required: an empty one is an unconfigured caller, not a
-// request for a default.
+// request for a default. Since POE-221 those directories are sub-directories of
+// one configured cache root, which is what lets production mount a single
+// volume without reintroducing the collision.
 func NewWithMap(urls map[string]string, cacheDir string) (*Cache, error) {
 	if cacheDir == "" {
 		return nil, errors.New("gemicon: cache dir is required")

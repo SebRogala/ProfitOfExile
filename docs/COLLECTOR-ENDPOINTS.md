@@ -105,8 +105,8 @@ Legs are served with display names and icon paths, not raw metadata ids: the
 handler resolves each id through the committed asset in
 `internal/exchange/itemdata/` (regenerate it once per league with
 `scripts/generate-currency-exchange-items.py`) and serves the artwork from
-`/api/currency-exchange/icon/{id}` (id `%2F`-escaped) out of
-`CURRENCY_EXCHANGE_ICON_CACHE_DIR`,
+`/api/currency-exchange/icon/{id}` (id `%2F`-escaped) out of the
+`currency-exchange/` sub-directory of `ICON_CACHE_DIR`,
 which must be pre-seeded on production — see [Gem and Item Icons](GEM-ICONS.md).
 
 Read `internal/exchange/doc.go` before changing it — the feed's semantics, the
