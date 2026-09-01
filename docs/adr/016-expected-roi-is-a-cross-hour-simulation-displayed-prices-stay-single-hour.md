@@ -4,6 +4,10 @@
 
 Accepted (POE-193, 2026-08-21)
 
+Amended 2026-09-01 (POE-220) — see the amendment at the end: the third
+Consequence's "both ranked below the plays that measured well" is true of the
+SERVED order only, and no longer describes the desktop table.
+
 ## Context
 
 The Currency Exchange engine's headline number was `RoiPct`/`Roi`: one hour's
@@ -92,7 +96,11 @@ is a deliberate redeploy plus a re-calibration, not a deploy-time setting.
   flip. Stated as such in `sim.go`.
 - **This is not a quality gate, and ADR-015 stands unchanged.** Nothing new is
   hidden. A low-coverage play and a negative-expectation play are both SERVED,
-  both flagged, and both ranked below the plays that measured well — "we could
+  both flagged, and both ranked below the plays that measured well **in the
+  SERVED order** (amended 2026-09-01, POE-220 — the ranking clause of this
+  bullet and of the Decision's second bullet describes the wire order and no
+  client table; see the amendment at the end and
+  [ADR-018](018-flags-mark-they-never-order.md)) — "we could
   not measure this" and "we measured this and it loses" are different claims and
   the reader gets to see both, which is exactly [ADR-015](015-exchange-quality-gates-live-client-side-the-server-serves-everything-sane.md)'s
   serve-and-flag principle. The server's gate set is untouched, the client's
@@ -130,3 +138,21 @@ is a deliberate redeploy plus a re-calibration, not a deploy-time setting.
   rejected static transforms.
 - [ADR-015](015-exchange-quality-gates-live-client-side-the-server-serves-everything-sane.md)
   — the serve-and-flag principle this decision extends rather than amends.
+
+## Amended 2026-09-01 (POE-220)
+
+Status of this section: current behaviour. Nothing in the Decision moves; one
+Consequence is scoped.
+
+**"Ranked below the plays that measured well" was always a statement about the
+SERVED order, and a reader would have read it as a statement about the table.**
+The Decision's ranking bullet (Suspect asc, LowCoverage asc, ExpectedRoi desc, …)
+still describes exactly what `internal/exchange` emits on the wire. It never
+described what the desktop draws, and since POE-220 it demonstrably does not:
+every desktop Currency Exchange sort orders by the figure its own column prints
+and by nothing else, so a suspect or low-coverage play sits wherever its number
+puts it, marked and unmoved. The served order survives only as a tie-break.
+
+The rule that replaces the client half is
+[ADR-018](018-flags-mark-they-never-order.md); the incident that forced it is
+recorded there.

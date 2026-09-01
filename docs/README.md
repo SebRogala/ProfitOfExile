@@ -45,6 +45,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-015: Exchange quality gates live client-side; the server serves everything sane](adr/015-exchange-quality-gates-live-client-side-the-server-serves-everything-sane.md)
 - [ADR-016: Expected ROI is a cross-hour simulation; displayed prices stay single-hour](adr/016-expected-roi-is-a-cross-hour-simulation-displayed-prices-stay-single-hour.md)
 - [ADR-017: No default engine floor may hide a live market](adr/017-no-default-engine-floor-may-hide-a-live-market.md)
+- [ADR-018: Flags mark; they never order](adr/018-flags-mark-they-never-order.md)
 
 Superseded:
 
