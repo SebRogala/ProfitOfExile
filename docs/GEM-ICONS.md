@@ -183,14 +183,15 @@ the same treatment against its own sub-directory. `PROD_HOST` and
    in the image.
 
    ```
+   ICON_VOL=/var/lib/docker/volumes/$SERVER_SERVICE_ID-profitofexile-icons
    tar czf new-item-icons.tgz -C icons-cache/currency-exchange .
    scp new-item-icons.tgz "$PROD_HOST":/tmp/
-   ssh "$PROD_HOST" "mkdir -p <icon volume>/_data/currency-exchange && \
-     tar xzf /tmp/new-item-icons.tgz -C <icon volume>/_data/currency-exchange/"
+   ssh "$PROD_HOST" "mkdir -p $ICON_VOL/_data/currency-exchange && \
+     tar xzf /tmp/new-item-icons.tgz -C $ICON_VOL/_data/currency-exchange/"
    ```
 
-   `<icon volume>` is the host path under Docker's volume root for
-   `$SERVER_SERVICE_ID-profitofexile-icons`; the private ops notes carry it. The
+   `$ICON_VOL` is the host path under Docker's volume root (`/var/lib/docker/volumes/<name>`, as observed on the production host) for
+   `$SERVER_SERVICE_ID-profitofexile-icons`; the private ops notes carry the exact name. The
    `mkdir -p` is on the **host** path and is load-bearing before the first
    deploy — the server creates both sub-directories on startup, but only once it
    has the mount. Nothing in the layout reads the volume root, so files left in
@@ -253,12 +254,14 @@ step 4 is for top-ups *after* this migration, not for it.
    them costs nothing, where re-pulling costs a full poewiki crawl:
 
    ```
-   ssh "$PROD_HOST" "mkdir -p <new volume>/_data/gems && \
-     mv <old volume>/_data/*.png <new volume>/_data/gems/"
+   OLD_VOL=/var/lib/docker/volumes/$SERVER_SERVICE_ID-profitofexile-gem-icons
+   NEW_VOL=/var/lib/docker/volumes/$SERVER_SERVICE_ID-profitofexile-icons
+   ssh "$PROD_HOST" "mkdir -p $NEW_VOL/_data/gems && \
+     mv $OLD_VOL/_data/*.png $NEW_VOL/_data/gems/"
    ```
 
-   The exact volume paths are host paths under Docker's volume root; the private
-   ops notes carry them. Nothing in the new layout reads the root, so a file
+   Both are host paths under Docker's volume root (`/var/lib/docker/volumes/<name>`); the private
+   ops notes carry the exact names. Nothing in the new layout reads the root, so a file
    left behind in `_data/` is invisible rather than wrong.
 
 3. **Seed `currency-exchange/` the same way** — host-side, symmetric with the
@@ -270,8 +273,8 @@ step 4 is for top-ups *after* this migration, not for it.
    ```
    tar czf new-item-icons.tgz -C icons-cache/currency-exchange .
    scp new-item-icons.tgz "$PROD_HOST":/tmp/
-   ssh "$PROD_HOST" "mkdir -p <new volume>/_data/currency-exchange && \
-     tar xzf /tmp/new-item-icons.tgz -C <new volume>/_data/currency-exchange/"
+   ssh "$PROD_HOST" "mkdir -p $NEW_VOL/_data/currency-exchange && \
+     tar xzf /tmp/new-item-icons.tgz -C $NEW_VOL/_data/currency-exchange/"
    ```
 
    The `mkdir -p` is on the host path, for the same reason step 2's is: the

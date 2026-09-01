@@ -2,9 +2,11 @@
 
 Status: CURRENT. Normative for the desktop Currency Exchange table.
 
-Last verified: 2026-08-23 against `main@346c2c2` plus the uncommitted divine
-trash-price knob — `desktop/src/lib/exchange/view.ts`, `filters.ts`,
-`internal/exchange/plays.go`, `desktop/src/lib/tooltips.ts`.
+Last verified: 2026-09-01 against `main@7e3fddd` — `desktop/src/lib/exchange/view.ts`,
+`filters.ts`, `internal/exchange/plays.go`, `desktop/src/lib/tooltips.ts`. The
+divine trash-price knob that the 2026-08-23 stamp carried as uncommitted landed
+in `c43e76f`; POE-220 (`c175941`) then edited §4's sort ruling, which is what
+this re-stamp covers.
 
 This document is the single normative statement of what the numbers on one
 Currency Exchange row mean and how they must agree. It is normative because the
