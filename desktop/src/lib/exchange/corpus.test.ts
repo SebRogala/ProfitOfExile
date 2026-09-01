@@ -975,11 +975,34 @@ describe('incident — the 2026-08-23 screenshot’s spreadless 170 print', () =
 
 describe('incident — Mawr Blaidd, junk low IN the newest hour (POE-188)', () => {
 	// The extreme too far from the hour's VWAP to trade on, served with the leg
-	// marked `suspect`. The reader judges it — that is ADR-015's split — but it
-	// ranks after every clean play in every order the client offers, because a
-	// suspect number out-sorting a clean one hands the reader the very row the flag
-	// warns about.
+	// marked `suspect`. The reader judges it — that is ADR-015's split — and since
+	// POE-220 the flag decides nothing about where the row sits: every sort orders
+	// by the figure its own column prints, so this row lands in a DIFFERENT place
+	// under each of the three, exactly like a clean one.
 	const SORTS: ExchangeSort[] = ['expected', 'roi', 'fastest'];
+
+	/**
+	 * The clean market on either side of the flagged row, per sort.
+	 *
+	 * Pinned as neighbours rather than as an index, so a failure names the two
+	 * markets the row should have been between. The flag used to send it behind
+	 * all fourteen other rows in all three orders; what puts it where it is now is
+	 * one number each time, and the three places differ because the three columns
+	 * do.
+	 */
+	const NEIGHBOURS: Record<ExchangeSort, { above: string; below: string }> = {
+		// ROI column +192.8c: under the clean flip's +197.8c, over the divine-quoted
+		// flip's +140c. Eleven clean rows are behind it here.
+		roi: { above: CLEAN_FLIP_KEY, below: SCARAB_DIVINE_KEY },
+		// Exp. ROI column +17.7c: under the tattoo twin's +27.4c, over the one-hop
+		// triangle's +6.9c. A different seat from the ROI sort's, which is the whole
+		// reason the table offers two columns to order by.
+		expected: { above: TATTOO_TWIN_KEY, below: SCARAB_HOP_KEY },
+		// One hour to absorb, which nine clean rows tie with; the stable sort keeps
+		// the served order inside that tie and puts this row last of it, still ahead
+		// of every row whose wait cannot be read at all.
+		fastest: { above: YOUNG_KEY, below: DIVINE_ANCHOR_KEY }
+	};
 
 	for (const { horizon, response } of FIXTURES) {
 		it(`survives a fresh-install filter pass in the ${horizon} horizon`, () => {
@@ -988,17 +1011,20 @@ describe('incident — Mawr Blaidd, junk low IN the newest hour (POE-188)', () =
 	}
 
 	for (const sort of SORTS) {
-		it(`sorts after every clean row under the ${sort} sort`, () => {
-			// The partition property, asserted as the set of clean rows that ended up
-			// BEHIND this one — so a failure names the markets the suspect row jumped
-			// rather than reporting two indices. A comparator that lost the `suspect`
-			// branch would let this row climb on its 192c best case, which is the
-			// largest ROI column in the fixture and three times the next one.
+		it(`sits between the clean rows its own column puts it between under the ${sort} sort`, () => {
+			// A comparator that grew a `suspect` branch back would send this row to the
+			// end of the table under all three sorts, and this fails naming the two
+			// clean markets it belonged between.
 			const ordered = sortPlays(RECENT.plays, sort);
 			const junkAt = ordered.findIndex((p) => p.key === MAWR_JUNK_KEY);
+			const { above, below } = NEIGHBOURS[sort];
 
 			expect(ordered[junkAt]?.suspect).toBe(true);
-			expect(names(ordered.slice(junkAt + 1).filter((p) => !p.suspect))).toEqual([]);
+			expect(names(ordered.slice(junkAt - 1, junkAt + 2))).toEqual([
+				INCIDENT_NAMES[above],
+				INCIDENT_NAMES[MAWR_JUNK_KEY],
+				INCIDENT_NAMES[below]
+			]);
 		});
 	}
 
@@ -1029,7 +1055,7 @@ describe('incident — Divine Vessel, a 100% tick (POE-184)', () => {
 	// `null`.
 	//
 	// The rule that answers `null` is the one this pins: the Fastest sort puts such
-	// a row at the END of its partition rather than dropping it or treating it as
+	// a row at the END of the list rather than dropping it or treating it as
 	// instant. A comparator that read `null` as 0 hours would put the deadest market
 	// in the fixture at the top of the "fastest" list.
 	it('has no worthwhile run to sort by', () => {
@@ -1048,18 +1074,18 @@ describe('incident — Divine Vessel, a 100% tick (POE-184)', () => {
 		expect(sortPlays(RECENT.plays, 'fastest').length).toBe(RECENT.plays.length);
 	});
 
-	it('sits at the end of its own partition under the Fastest sort', () => {
-		// Its partition is the SUSPECT one — both of its legs are marked — so "the
-		// end" is the end of the suspect band and not the end of the table by
-		// accident. Asserted as the last unreadable-hours row within that band, so a
-		// second such row appearing later cannot make this pass vacuously.
+	it('sits at the very end of the Fastest sort, on the missing key and not the flag', () => {
+		// Since POE-220 there is no suspect band to be at the end of: what puts this
+		// row last is the wait nobody can read, which it shares with four CLEAN rows,
+		// and the served order behind them that the stable sort keeps. Asserted as
+		// the whole unreadable tail — a comparator that scattered the unknowns, or
+		// one that read `null` as nought hours, breaks the second expectation.
 		const ordered = sortPlays(RECENT.plays, 'fastest');
-		const suspects = ordered.filter((p) => p.suspect);
-		const readable = suspects.filter((p) => worthwhileScale(p)?.hours != null);
+		const unreadable = ordered.filter((p) => worthwhileScale(p)?.hours == null);
 
-		expect(names(suspects).at(-1)).toBe(INCIDENT_NAMES[VESSEL_KEY]);
-		expect(readable.length).toBeGreaterThan(0);
-		expect(names(suspects).slice(0, readable.length)).toEqual(names(readable));
+		expect(unreadable.filter((p) => !p.suspect).length).toBeGreaterThan(0);
+		expect(names(ordered).slice(-unreadable.length)).toEqual(names(unreadable));
+		expect(names(ordered).at(-1)).toBe(INCIDENT_NAMES[VESSEL_KEY]);
 	});
 
 	it('still closes on Get = Spend + Exp. ROI at a chain end of nothing', () => {
@@ -1163,8 +1189,8 @@ describe('fresh-install visibility (ADR-017)', () => {
 
 	it('keeps every measured loser and every flagged row on screen', () => {
 		// The half of the rule that is easiest to break by accident: `lowLiquidity`,
-		// `lowCoverage`, `suspect` and a negative `expectedRoi` are marks and ranking
-		// keys, never reasons to hide. All four shapes are in the fixture, and each
+		// `lowCoverage`, `suspect` and a negative `expectedRoi` are MARKS — never
+		// sort keys since POE-220, and never reasons to hide. All four shapes are in the fixture, and each
 		// row carrying one must reach a fresh install unless a sanctioned floor
 		// removed it for its PRICE — which is a different reason and the only other
 		// one allowed.

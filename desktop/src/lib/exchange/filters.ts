@@ -408,7 +408,7 @@ export interface Gates {
  * with the two trash-price knobs the whole of that qualifier, because the judgement
  * those levels stood in for is made honestly one layer down: the ranking is the
  * per-play simulated expectation, and lowCoverage, suspect and a negative
- * expectation are flagged and sunk rather than hidden (ADR-016). An absolute
+ * expectation are flagged rather than hidden (ADR-016). An absolute
  * cutoff in front of a measured ranking hides plays the measurement says are
  * real — measured against the live stack on 2026-08-21, the armed levels hid
  * 142 of the 143 served 1-hop plays, and hid an Apocalypse card flip for

@@ -96,10 +96,12 @@ function response(overrides: Partial<CurrencyExchangeResponse> = {}): CurrencyEx
  * a column that says nothing about the row, and the answer stops being the one
  * the test asked for.
  *
- * The `'expected'` cases INVERT that idiom, and deliberately: that branch sorts
- * by nothing at all, so a fixture tied on the untested field would let a
- * mutation that lost the branch fall through to a comparator, tie, and hand
- * back the served order anyway. Those cases vary both fields instead.
+ * The `'expected'` cases follow the same idiom for the same reason since
+ * POE-220: that branch orders by the Exp. ROI COLUMN, so a case about it varies
+ * `expectedRoi` and leaves `roi` at the factory value on every row. A production
+ * swap to the ROI column then ties across the whole fixture, falls back on
+ * stability, and hands the served order straight back — which is never the order
+ * those cases pin.
  *
  * `expectedRoiPct` is NOT `expectedRoi / investment` (4/200 would be 0.02): the
  * wire's expectation pair carries no such identity — each is a mean over the
@@ -979,23 +981,48 @@ describe('sortPlays', () => {
 		return plays.map((p) => p.key);
 	}
 
-	it('leaves the server ranking untouched under the Exp. ROI sort', () => {
-		// The served order already carries the low-coverage band and expectedRoi
-		// desc plus turnover, direct-first and key tie-breaks (POE-193);
-		// re-sorting on expectedRoi alone would discard them.
+	it('orders by the expected chaos the column shows, overriding the served order', () => {
+		// POE-220. The list arrives in the SERVER's order, which ranks every clean
+		// play before every suspect one, so the flagged row is last on the wire.
+		// The Exp. ROI sort re-derives the order from the column: the suspect row
+		// expects the most and therefore leads, because the picked column is the
+		// whole key and the flag is a mark that moves nothing.
 		//
-		// BOTH money fields vary, and out of order in the same direction, because
-		// this case has two ways to go wrong and a tie would hide one of them:
-		// re-sorting on expectedRoi desc answers b,c,a, and losing the branch
-		// entirely — falling through to the roi comparator — answers b,c,a as
-		// well. Either way the served order is gone.
+		// `roi` is deliberately left at the fixture's default on all three, so a
+		// comparator that read the ROI column instead would tie, fall back on
+		// stability and hand the served order straight back.
 		const served = [
-			play({ key: 'a', roi: 5, expectedRoi: 2 }),
-			play({ key: 'b', roi: 500, expectedRoi: 50 }),
-			play({ key: 'c', roi: 50, expectedRoi: 20 })
+			play({ key: 'clean-lead', expectedRoi: 20 }),
+			play({ key: 'clean-tail', expectedRoi: 2 }),
+			play({ key: 'suspect-best', expectedRoi: 120, suspect: true })
 		];
 
-		expect(keys(sortPlays(served, 'expected'))).toEqual(['a', 'b', 'c']);
+		expect(keys(sortPlays(served, 'expected'))).toEqual([
+			'suspect-best',
+			'clean-lead',
+			'clean-tail'
+		]);
+	});
+
+	it('orders by the posting-priced Exp. ROI the column shows, not by the per-exchange one', () => {
+		// The same disagreement the ROI case below pins, on the measured number:
+		// `a` expects 2c an exchange on a market that posts TWENTY at a time, so
+		// its Exp. ROI column reads +40c; `b` expects five times as much per
+		// exchange on a market that posts one, and its column reads +10c. Served
+		// `b`-first so that a branch handing back the fetched list unchanged, or
+		// one reading the wire's `expectedRoi`, both answer b,a.
+		const lot = play({
+			key: 'a',
+			expectedRoi: 2,
+			legs: [leg({ priceItemQty: 20, priceQuoteQty: 20 })]
+		});
+		const served = [
+			play({ key: 'b', expectedRoi: 10, legs: [leg({ priceItemQty: 1, priceQuoteQty: 1 })] }),
+			lot
+		];
+
+		expect(moneyColumns(lot).expectedRoi).toBe(40);
+		expect(keys(sortPlays(served, 'expected'))).toEqual(['a', 'b']);
 	});
 
 	it('orders by chaos gained per exchange under the ROI sort', () => {
@@ -1037,19 +1064,45 @@ describe('sortPlays', () => {
 		expect(keys(sortPlays(served, 'roi'))).toEqual(['direct:scarab:divine', 'direct:card:chaos']);
 	});
 
-	it('keeps a suspect play behind every clean one even when its ROI is the largest', () => {
-		// The flag is the reason the server ranks it last: its price sits outside
-		// the fair band, so the big number is the part not to trust.
+	it('orders a suspect play by its ROI column like every other row', () => {
+		// POE-220, the Apocalypse incident (prod snapshot 2026-09-01 17:00Z): a
+		// direct flip bought at 401c and sold at 1200c, both prices standing 20+
+		// hours, flagged suspect because the buy sits below fair × 0.67 (fair
+		// 933.33 that hour). Its ROI column is the middle of these three, so the
+		// middle is where it goes. The partition this replaced sent it behind BOTH
+		// clean rows — on the real table, to row 638 of 954.
+		//
+		// The buy market posts one at a time, so the row's display scale is 1 and
+		// the column prints the wire's per-exchange gain unmultiplied; that figure
+		// is pinned beside the order, because it is the sort key and a fixture
+		// whose column read something else would order for the wrong reason.
+		const apocalypse = play({
+			key: 'direct:apocalypse:chaos',
+			roi: 795,
+			suspect: true,
+			legs: [
+				leg({
+					action: 'buy',
+					price: 401,
+					priceItemQty: 1,
+					priceQuoteQty: 401,
+					fair: 933.33,
+					fairOk: false,
+					suspect: true
+				})
+			]
+		});
 		const served = [
-			play({ key: 'clean-small', roi: 5 }),
-			play({ key: 'clean-big', roi: 50 }),
-			play({ key: 'suspect-huge', roi: 5000, suspect: true })
+			play({ key: 'clean-huge', roi: 14812 }),
+			play({ key: 'clean-small', roi: 300 }),
+			apocalypse
 		];
 
+		expect(moneyColumns(apocalypse).roi).toBe(795);
 		expect(keys(sortPlays(served, 'roi'))).toEqual([
-			'clean-big',
-			'clean-small',
-			'suspect-huge'
+			'clean-huge',
+			'direct:apocalypse:chaos',
+			'clean-small'
 		]);
 	});
 
@@ -1059,10 +1112,82 @@ describe('sortPlays', () => {
 		expect(keys(sortPlays(served, 'roi'))).toEqual(['first', 'second']);
 	});
 
+	it('keeps the server order between two plays tied on the Exp. ROI column', () => {
+		// Tied on the COLUMN and not on the wire: `a` expects 2c an exchange on a
+		// market that posts TWENTY at a time and `b` 40c on one that posts one, so
+		// both columns read +40c. The served order is the only tie-break left, and
+		// a comparator that reached past the tie for the wire's own `expectedRoi`
+		// would answer b,a.
+		const a = play({
+			key: 'a',
+			expectedRoi: 2,
+			legs: [leg({ priceItemQty: 20, priceQuoteQty: 20 })]
+		});
+		const b = play({
+			key: 'b',
+			expectedRoi: 40,
+			legs: [leg({ priceItemQty: 1, priceQuoteQty: 1 })]
+		});
+
+		expect(moneyColumns(a).expectedRoi).toBe(40);
+		expect(moneyColumns(b).expectedRoi).toBe(40);
+		expect(keys(sortPlays([a, b], 'expected'))).toEqual(['a', 'b']);
+	});
+
+	it('keeps the server order between two plays tied on the ROI column', () => {
+		// The same tie on the best-case column: the wire figures differ twentyfold
+		// and both columns land on +100c, because `a`'s market posts twenty at a
+		// time and `b`'s posts one. Stability carries the served order through, and
+		// it can only do that while the comparator answers 0 on the column it was
+		// asked to sort by.
+		const a = play({ key: 'a', roi: 5, legs: [leg({ priceItemQty: 20, priceQuoteQty: 20 })] });
+		const b = play({ key: 'b', roi: 100, legs: [leg({ priceItemQty: 1, priceQuoteQty: 1 })] });
+
+		expect(moneyColumns(a).roi).toBe(100);
+		expect(moneyColumns(b).roi).toBe(100);
+		expect(keys(sortPlays([a, b], 'roi'))).toEqual(['a', 'b']);
+	});
+
+	it('puts a play whose Exp. ROI column will not read as a number at the end', () => {
+		// `api.ts`'s `get<T>` casts the body to the wire type without validating
+		// it, so a malformed `expectedRoi` reaches the comparator as a
+		// number-typed `NaN`. One `NaN` key makes `Array.prototype.sort`'s answer
+		// unspecified for the WHOLE array, which is why the two readable rows are
+		// pinned in column order beside the unreadable one's place: a MISSING KEY
+		// lands last, the same treatment an unreadable wait gets under Fastest.
+		//
+		// The unreadable row is served in the MIDDLE deliberately. V8 answers the
+		// same three keys differently from every starting order, and this is one
+		// the unguarded comparators get wrong: subtracting the raw keys — what
+		// this sorted by before POE-220 — leaves the array exactly as served, and
+		// comparing them without the guard answers high,unreadable,low.
+		const served = [
+			play({ key: 'low', expectedRoi: 2 }),
+			play({ key: 'unreadable', expectedRoi: NaN }),
+			play({ key: 'high', expectedRoi: 50 })
+		];
+
+		expect(keys(sortPlays(served, 'expected'))).toEqual(['high', 'low', 'unreadable']);
+	});
+
+	it('puts a play whose ROI column will not read as a number at the end', () => {
+		// The same guard on the best-case column, and the other malformed shape a
+		// cast body can arrive in: a `roi` the server never sent is `undefined`,
+		// which the column multiplies into `NaN` just the same. Served in the
+		// middle for the reason the Exp. ROI case above states.
+		const served = [
+			play({ key: 'low', roi: 5 }),
+			play({ key: 'unreadable', roi: undefined as unknown as number }),
+			play({ key: 'high', roi: 500 })
+		];
+
+		expect(keys(sortPlays(served, 'roi'))).toEqual(['high', 'low', 'unreadable']);
+	});
+
 	it('sorts into a new array rather than reordering the fetched list', () => {
 		// The page holds the fetched list in reactive state and re-derives the sort
-		// from it; an in-place sort would make the Exp. ROI option unable to
-		// restore the server ranking without a refetch.
+		// from it; an in-place sort would leave the next pick reordering an
+		// already-reordered list, with the served tie-breaks gone for good.
 		const served = [play({ key: 'a', roi: 5 }), play({ key: 'b', roi: 500 })];
 
 		sortPlays(served, 'roi');
@@ -1070,23 +1195,18 @@ describe('sortPlays', () => {
 		expect(keys(served)).toEqual(['a', 'b']);
 	});
 
-	it("hands out a copy under the Exp. ROI sort too, never the caller's own array", () => {
-		// The Exp. ROI branch keeps the served order but must not alias the
-		// response's array: the page mutating the sorted list (or Svelte state
-		// wrapping it) would otherwise write through to the fetched result.
-		//
-		// Both fields vary for the reason the order case above gives — the copy
-		// has to be a copy of the SERVED list, and a tied fixture would let a
-		// lost branch return a re-sorted array that happens to read the same.
-		const served = [
-			play({ key: 'a', roi: 5, expectedRoi: 2 }),
-			play({ key: 'b', roi: 500, expectedRoi: 50 })
-		];
+	it('sorts into a new array under the Exp. ROI sort as well', () => {
+		// The page holds the fetched list in reactive state and re-derives every
+		// sort from it, so the response's own array must survive a sort intact —
+		// an in-place one would leave the next pick sorting an already-reordered
+		// list and the served tie-breaks gone for good.
+		const served = [play({ key: 'a', expectedRoi: 2 }), play({ key: 'b', expectedRoi: 50 })];
 
 		const sorted = sortPlays(served, 'expected');
 
 		expect(sorted).not.toBe(served);
-		expect(keys(sorted)).toEqual(['a', 'b']);
+		expect(keys(sorted)).toEqual(['b', 'a']);
+		expect(keys(served)).toEqual(['a', 'b']);
 	});
 
 	it('puts the play the market absorbs soonest first under the Fastest sort', () => {
@@ -1147,28 +1267,33 @@ describe('sortPlays', () => {
 		expect(keys(sortPlays(served, 'fastest'))).toEqual(['first-unknown', 'second-unknown']);
 	});
 
-	it('keeps a clean play with an unreadable wait ahead of every suspect one', () => {
-		// The suspect partition outranks the null-last rule: a clean unknown is
-		// still a clean row, and the flag is the reason a suspect play sits last.
+	it('puts a suspect play with a readable wait ahead of a clean play with none', () => {
+		// The null-last rule is about a MISSING key and not about the flag: the
+		// suspect row has hours and the clean one does not, so the suspect row
+		// leads. Served clean-first, which is the wire's own order, so the
+		// partition this replaced would answer the list unchanged.
 		const served = [
-			play({ key: 'suspect-fast', expectedRoi: 100, depth: 100_000, suspect: true }),
-			play({ key: 'clean-unreadable', depth: 0 })
+			play({ key: 'clean-unreadable', depth: 0 }),
+			play({ key: 'suspect-fast', expectedRoi: 100, depth: 100_000, suspect: true })
 		];
 
-		expect(keys(sortPlays(served, 'fastest'))).toEqual(['clean-unreadable', 'suspect-fast']);
+		expect(keys(sortPlays(served, 'fastest'))).toEqual(['suspect-fast', 'clean-unreadable']);
 	});
 
-	it('keeps a suspect play behind every clean one under the Fastest sort, however fast it absorbs', () => {
+	it('lets a suspect play lead the Fastest sort when the market absorbs it soonest', () => {
+		// One flip at 100,000/h is an hour; ten flips at 5/h is two; a hundred at
+		// 10/h is ten. The three waits are strictly apart, so the order is the
+		// hours and nothing else — the flag on the fastest row moves it nowhere.
 		const served = [
 			play({ key: 'clean-slow', expectedRoi: 1, depth: 10 }),
 			play({ key: 'suspect-instant', expectedRoi: 100, depth: 100_000, suspect: true }),
-			play({ key: 'clean-quick', expectedRoi: 10, depth: 900 })
+			play({ key: 'clean-quick', expectedRoi: 10, depth: 5 })
 		];
 
 		expect(keys(sortPlays(served, 'fastest'))).toEqual([
+			'suspect-instant',
 			'clean-quick',
-			'clean-slow',
-			'suspect-instant'
+			'clean-slow'
 		]);
 	});
 
