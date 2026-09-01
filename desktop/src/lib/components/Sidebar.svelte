@@ -171,6 +171,11 @@
 			<span class="icon">&#x23F1;&#xFE0F;</span>
 			<span class="indicator" class:off={!timerActive} class:always={timerActive && gameFocused} class:auto={timerActive && !gameFocused}></span>
 		</button>
+		<!-- Modules are not Lab overlays: the expanded panel gives them their own
+		     "Modules" label, the rail gets the same break as a rule. -->
+		{#if moduleEntries.length > 0}
+			<div class="collapsed-sep"></div>
+		{/if}
 		{#each moduleEntries as [id, label] (id)}
 			{@const on = ssot.modules[id] ?? false}
 			<button class="collapsed-overlay" title={moduleTitle(id, label, on)} onclick={() => setModuleEnabled(id, !on)}>
