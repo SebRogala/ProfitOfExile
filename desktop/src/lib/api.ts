@@ -400,10 +400,15 @@ export interface CurrencyExchangeLeg {
  * chaos one exchanged unit actually returned across the simulated entries of
  * the last day — post this play's undercut orders in each of those hours, chase
  * the buy, wait for the sell, fire-sale whatever never sold. It can be
- * NEGATIVE, and such a play is still served and still ranked, after every play
- * that measured well. The served order is clean before `suspect`, then covered
- * before `lowCoverage`, then `expectedRoi` desc — a chaos payout, so a bigger
- * stake outranks a better rate.
+ * NEGATIVE, and such a play is still served. The SERVED order is clean before
+ * `suspect`, then covered before `lowCoverage`, then `expectedRoi` desc — a
+ * chaos payout, so a bigger stake outranks a better rate.
+ *
+ * That order is the wire's, and the desktop does not display it: the table
+ * re-sorts every response by the column the sort picker names and by nothing
+ * else, flags included (`exchange/view.ts` `sortPlays`, POE-220). What survives
+ * of the served order on screen is its tie-breaks, which a stable sort carries
+ * through rows tied on the picked column.
  *
  * OPTIMISTIC is the word here on purpose: this block words the WIRE, and its
  * wording mirrors the Go docs on the fields it describes. The desktop-surface
@@ -430,7 +435,8 @@ export interface CurrencyExchangeLeg {
  * liquidity reading — `depth` (units per hour) is not one. `tick` is the
  * coarsest leg tick, the worst price step the recipe has to live with.
  * `suspect` is true when any leg is; such a play is still served — the reader
- * judges it — but ranks after every clean one. `hoursSeen` counts the window
+ * judges it — and the wire ranks it after every clean one, an ordering the
+ * desktop table drops (see above). `hoursSeen` counts the window
  * hours in which the recipe cleared every gate on that hour's own prices, and
  * `lastHour` is the hour every price above was read from: always the window's
  * newest, because a recipe that did not clear in the last snapshot is not

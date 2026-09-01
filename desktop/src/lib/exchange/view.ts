@@ -84,11 +84,14 @@ export function parseHorizon(raw: string): CurrencyExchangeHorizon {
 }
 
 /**
- * Which number the table is ordered by. `'expected'` is the server's own
- * ranking, which since POE-193 is the fill-simulated `expectedRoi` (ADR-016);
- * `'roi'` re-orders by the BEST-CASE chaos the ROI column prints, which is a
- * different question — a 40% best case on 2c is not the play a stocked account
- * wants; and `'fastest'` by how long the market needs to absorb the play's
+ * Which number the table is ordered by — and, since POE-220, ONLY that number:
+ * each option names a column and orders by the figure that column prints, with
+ * no flag partitioning the list underneath it (`sortPlays`).
+ *
+ * `'expected'` reads the fill-simulated Exp. ROI column (ADR-016), which is the
+ * measured question; `'roi'` the BEST-CASE chaos the ROI column prints, which is
+ * a different one — a 40% best case on 2c is not the play a stocked account
+ * wants; and `'fastest'` how long the market needs to absorb the play's
  * worthwhile scale (`worthwhileScale().hours`), which is the question a big
  * return on a thin market answers badly.
  */
@@ -108,14 +111,14 @@ export const SORT_OPTIONS: { value: ExchangeSort; label: string }[] = [
  * cases the order the reader picked still exists under a new name. `'fill'` is
  * what `'fastest'` was called while the table scaled by a typed Quantity
  * (POE-192 replaced that with the derived scale). `'roiPct'` is what the
- * served order was called while the server ranked on the best-case
- * percentage; POE-193 re-based that ranking on `expectedRoi`, and the pick has
- * always meant "the list as the server ranked it", so it resolves to
- * `'expected'` rather than to a percentage sort that no longer exists.
+ * default pick was called while the server ranked on the best-case percentage;
+ * POE-193 re-based that ranking on `expectedRoi`, and the pick has always meant
+ * "the table's headline order", so it resolves to `'expected'` rather than to a
+ * percentage sort that no longer exists.
  *
  * Everything else — a mode from a build this one has never seen, an empty
- * preference — also answers `'expected'`, which is the one order that carries
- * the server's full set of tie-breaks.
+ * preference — also answers `'expected'`, the measured number, which is the
+ * order a reader who has picked nothing is best served by.
  */
 export function parseSort(raw: string): ExchangeSort {
 	if (raw === 'fill') return 'fastest';
@@ -851,72 +854,95 @@ function saleTotal(
 // -------------------------------------------------------------- the order --
 
 /**
+ * Descending comparator over a money column, total even on an unreadable key.
+ *
+ * `api.ts`'s `get<T>` casts the body to the wire type without validating it, so
+ * a missing or malformed `roi`/`expectedRoi` reaches this as `NaN` — and a
+ * single `NaN` key makes `Array.prototype.sort`'s output unspecified for the
+ * WHOLE array, not just for the row that carries it. Every non-finite key is
+ * therefore read as `-Infinity`, which lands it at the END and leaves two of
+ * them tied on the served order; `worthwhileScale` already guards the same
+ * field the same way for the Fastest sort.
+ *
+ * It compares rather than subtracts, because `-Infinity - -Infinity` is `NaN`
+ * and would put the untotal comparator straight back.
+ */
+function byMoneyDesc(left: number, right: number): number {
+	const a = Number.isFinite(left) ? left : -Infinity;
+	const b = Number.isFinite(right) ? right : -Infinity;
+	if (a === b) return 0;
+	return a < b ? 1 : -1;
+}
+
+/**
  * The table's rows in the order the sort picker asks for.
  *
- * `'expected'` is the list exactly as served: the server already ranks clean
- * before suspect, then covered before low-coverage, then `expectedRoi` desc,
- * then turnover, then direct-first, then key (POE-193). Re-sorting it here on
- * `expectedRoi` alone would throw away those tie-breaks — and the low-coverage
- * band in particular, which is the one the reader cannot reconstruct from a
- * single number — so the Exp. ROI sort keeps the served order, copied, so a
- * caller holding the result can never mutate the response's own array through
- * it.
+ * ONE RULE, since the owner ruling of 2026-09-01 (POE-220): a sort orders by the
+ * figure its column prints and by nothing else. The flags a row can carry —
+ * `suspect`, `lowCoverage`, `lowLiquidity`, and the legs' `depletedSide` — are
+ * MARKS. None of them is a sort key, a partition, or a demotion.
  *
- * That option is deliberately NOT re-pointed at the Exp. ROI COLUMN, and the
- * reason is what that column is: one POSTING's expectation, which is a market's
- * own lot size and not a ranking key. The served order stays the ranking; the
- * column tells the reader what the row in front of them pays. The seam is that
- * the Exp. ROI column is not monotonic in the order it sits in — a row's single
- * posting ranks wherever its per-exchange mean put it, so a market that posts a
- * thousand at a time sits below one that posts one and prints a larger number.
- * It is a seam by choice: the alternative throws away the clean/suspect
- * partition and the coverage band for an order nobody asked for.
+ * What that replaced: every option here used to partition on `suspect` first, so
+ * a flagged play sat behind every clean one whatever key the reader picked. The
+ * measured cost (prod snapshot 2026-09-01 17:00Z, league Allflame) was the
+ * Apocalypse direct flip — buy 401c, sell 1200c, both prices standing 20+ hours
+ * — landing at row 638 of 954 under the ROI sort on the third-largest ROI in the
+ * table. A partition on a flag is a hidden gate: the picker named a column and
+ * the list answered a different question, with nothing on screen saying so. The
+ * flag still renders, and `EXCHANGE_HIDE_SUSPECT` still hides such rows for a
+ * reader who opts in; neither is allowed to move a row the table is showing.
  *
- * `'roi'` re-sorts by the BEST-CASE chaos the ROI COLUMN prints, `moneyColumns().roi`,
- * and not by the wire's per-exchange `roi`. The rule is that the table is
- * ordered by the number it SHOWS: a table ordered by a figure printed nowhere on
- * it reads as broken, and the two orders genuinely differ.
+ * `'expected'` orders by `moneyColumns().expectedRoi` descending — the Exp. ROI
+ * COLUMN, derived here, not the served order. It used to hand back the response's
+ * array copied, which carried the server's own ranking (clean before suspect,
+ * then covered before low-coverage, then `expectedRoi` desc, then turnover, then
+ * direct-first, then key — POE-193). Two of those six tie-breaks were flag
+ * partitions, which is why the served order can no longer be this option's
+ * answer. The three that survive as ORDER — turnover, direct-first, key — are
+ * kept for free by sorting a stably-ordered served list: a tie on the column
+ * leaves the server's remaining order intact.
  *
- * Every row is posting-sized since the second owner ruling of 2026-08-22, so the
- * order no longer compares a posting against a run across rows. What it still
- * compares is postings of DIFFERENT SIZES — a market that posts a thousand at a
- * time against one that posts one — because a market's lot is a fact about that
- * market and not a choice the table makes. That is the same reading chaos rows
- * already carried before the second ruling, and it is disclosed where it is
- * caused: on each buy step's hover, which says what that market posts.
- * Re-pointing the sort at `play.roi` to dodge it would order the table by a
- * number no column prints, which is the failure this option exists to avoid. The
- * Investment column has no sort of its own; if it ever gets one it reads the
- * same helper.
+ * The seam that ordering by the column opens is real and accepted: the Exp. ROI
+ * column is one POSTING's expectation, a market's own lot size, so a market that
+ * posts a thousand at a time can print a larger number than one that posts one
+ * with the better per-exchange expectation. That is the same reading every money
+ * column on the row already carries since the second owner ruling of 2026-08-22
+ * (every row is posting-sized), and it is disclosed where it is caused — on each
+ * buy step's hover, which says what that market posts. The alternative was
+ * ordering by a number no column prints, which is the failure these options
+ * exist to avoid.
  *
- * `'fastest'` sorts by how
- * long the market needs to absorb the play's worthwhile scale — ascending,
- * because the shortest wait is the best row, and a play whose hours cannot be
- * read (`worthwhileScale` `null`, which since POE-193 includes every play whose
- * expectation is not positive, or its `hours` `null`) sits at the end of its
- * partition rather than being dropped or treated as instant.
+ * `'roi'` orders by `moneyColumns().roi` descending — the BEST-CASE chaos the
+ * ROI COLUMN prints, and not the wire's per-exchange `roi`. Same rule and the
+ * same posting-sized reading; the Investment column has no sort of its own, and
+ * if it ever gets one it reads the same helper.
  *
- * Both re-sorts keep the one property the server ordering exists to carry: every
- * suspect play stays after every clean one, however large its ROI or however
- * fast it absorbs. A suspect number is the reason it ranks last, so letting it
- * out-sort a clean play would hand the reader the very row the flag warns about.
- * Within a partition the sort is stable, so tied plays keep the server's
- * remaining tie-breaks — and the Fastest sort ties often, because its hours are
- * whole ones: everything the market swallows inside the hour reads 1 and stays
- * in the server's order behind that.
- *
- * The order reads the same `worthwhileScale` the Scale column prints in
- * comfortable density (dense trades the wait away with every other sub-line),
+ * `'fastest'` orders by how long the market needs to absorb the play's
+ * worthwhile scale, ascending, because the shortest wait is the best row. A play
+ * whose hours cannot be read — `worthwhileScale` `null`, which since POE-193
+ * includes every play whose expectation is not positive, or its `hours` `null` —
+ * sits at the END of the list. That is a MISSING KEY and not a demotion: two
+ * unknowns compare equal, so they keep the served order between them, and a
+ * comparator that ranked an unknown wait as instant would put the least-known
+ * row on top. The order reads the same `worthwhileScale` the Scale column prints
+ * in comfortable density (dense trades the wait away with every other sub-line),
  * so the two can never disagree about a play's hours.
+ *
+ * Every option sorts a COPY, so a caller holding the result can never reorder
+ * the response's own array through it, and every comparator is total and
+ * antisymmetric — a money column that will not read as a number sorts as
+ * `-Infinity` and lands at the END too, the same missing-key treatment
+ * (`byMoneyDesc`) — so `Array.prototype.sort`'s stability carries the served
+ * order through every tie. The Fastest sort ties often, because its hours are whole
+ * ones: everything the market swallows inside the hour reads 1 and stays in the
+ * server's order behind that.
  */
 export function sortPlays(
 	plays: CurrencyExchangePlay[],
 	sort: ExchangeSort
 ): CurrencyExchangePlay[] {
-	if (sort === 'expected') return [...plays];
 	if (sort === 'fastest') {
 		return [...plays].sort((a, b) => {
-			if (a.suspect !== b.suspect) return a.suspect ? 1 : -1;
 			const left = worthwhileScale(a)?.hours ?? null;
 			const right = worthwhileScale(b)?.hours ?? null;
 			if (left === null || right === null) {
@@ -926,10 +952,12 @@ export function sortPlays(
 			return left - right;
 		});
 	}
-	return [...plays].sort((a, b) => {
-		if (a.suspect !== b.suspect) return a.suspect ? 1 : -1;
-		return moneyColumns(b).roi - moneyColumns(a).roi;
-	});
+	if (sort === 'expected') {
+		return [...plays].sort((a, b) =>
+			byMoneyDesc(moneyColumns(a).expectedRoi, moneyColumns(b).expectedRoi)
+		);
+	}
+	return [...plays].sort((a, b) => byMoneyDesc(moneyColumns(a).roi, moneyColumns(b).roi));
 }
 
 // --------------------------------------------------------------- the legs --

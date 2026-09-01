@@ -1280,7 +1280,8 @@
 	/* Too few simulated hours to trust the mean. Dimmed rather than recoloured,
 	   so the sign still reads: the verdict on the number is unchanged, the
 	   confidence in it is what dropped. Matches how a suspect play stays in the
-	   table with a marker instead of being hidden. */
+	   table with a marker instead of being hidden — and, since POE-220, in the
+	   place the sorted column puts it rather than pushed to the back. */
 	.thin {
 		opacity: 0.55;
 	}

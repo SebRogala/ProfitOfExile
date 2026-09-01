@@ -87,7 +87,10 @@ rows already carried before the second ruling, it is disclosed where it is
 caused — on each buy step's hover, which says what that market posts — and the
 rule that the table is ordered by the number it SHOWS is what holds the sort
 where it is. Re-pointing it at `play.roi` would order the table by a figure
-printed on no row.
+printed on no row. Since POE-220 the `'expected'` sort reads
+`moneyColumns(play).expectedRoi` under the same rule — it used to hand back the
+served order — so the posting-size reading above is now the whole table's and
+not just the ROI column's, and no flag partitions either order.
 
 *What did not move.* `worthwhileScale` itself is untouched: the run is still
 derived, still what the Scale column prints (×N, its cost, its hours), still
