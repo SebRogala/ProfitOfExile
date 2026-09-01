@@ -1170,6 +1170,39 @@ describe('sortPlays', () => {
 		expect(keys(sortPlays(served, 'expected'))).toEqual(['high', 'low', 'unreadable']);
 	});
 
+	it('puts a play whose Exp. ROI column prints a dash at the end under the Exp. ROI sort', () => {
+		// POE-220. `simEntries` 0 means no hour of the last day could be replayed,
+		// so the cell prints a dash — but `moneyColumns` still multiplies the wire
+		// field out into a number, and sorting on that ranked the row by a figure
+		// nobody on screen can see. The column and the sort read ONE predicate
+		// (`printsExpectedRoi`) since, so no printed figure is a MISSING KEY and
+		// lands last, ahead of no other rule.
+		//
+		// The blank row carries the LARGEST `expectedRoi` of the three on purpose:
+		// a sort that read the column without the predicate would lead with it.
+		const blank = play({ key: 'not-simulable', expectedRoi: 9000, simEntries: 0 });
+		const served = [
+			play({ key: 'small', expectedRoi: 2 }),
+			blank,
+			play({ key: 'big', expectedRoi: 50 })
+		];
+
+		expect(moneyColumns(blank).expectedRoi).toBe(9000);
+		expect(keys(sortPlays(served, 'expected'))).toEqual(['big', 'small', 'not-simulable']);
+	});
+
+	it('keeps the served order between two plays whose Exp. ROI columns both print a dash', () => {
+		// Two missing keys compare equal, so stability hands the served order back.
+		// Served SMALLEST-first, so a comparator that reached past the missing key
+		// for the column underneath it would answer second,first.
+		const served = [
+			play({ key: 'first-blank', expectedRoi: 40, simEntries: 0 }),
+			play({ key: 'second-blank', expectedRoi: 9000, simEntries: 0 })
+		];
+
+		expect(keys(sortPlays(served, 'expected'))).toEqual(['first-blank', 'second-blank']);
+	});
+
 	it('puts a play whose ROI column will not read as a number at the end', () => {
 		// The same guard on the best-case column, and the other malformed shape a
 		// cast body can arrive in: a `roi` the server never sent is `undefined`,
@@ -1265,6 +1298,37 @@ describe('sortPlays', () => {
 		];
 
 		expect(keys(sortPlays(served, 'fastest'))).toEqual(['first-unknown', 'second-unknown']);
+	});
+
+	it('puts a wait that never ends behind every readable one but ahead of a missing one', () => {
+		// POE-220. A positive but vanishing expectation divides the 100c target
+		// into `Infinity` flips, so the wait comes out `Infinity` on any readable
+		// depth. The Scale column PRINTS that wait rather than a dash, so the sort
+		// takes it as the LARGEST key and not as a missing one — behind every
+		// readable wait, still ahead of the row that has no wait to print. The
+		// dash row is served FIRST so that reading `Infinity` as a missing key —
+		// the other reading available here — would tie the three and hand back
+		// dash,first,second instead.
+		//
+		// The two endless rows are pinned adjacent and in served order because
+		// nothing but the server's order separates two equal keys; their depths
+		// differ twentyfive-fold so that a comparator reaching past the tie has
+		// something to reach for.
+		const endless = play({ key: 'first-endless', expectedRoi: Number.MIN_VALUE, depth: 40 });
+		const served = [
+			play({ key: 'no-wait', depth: 0 }),
+			endless,
+			play({ key: 'second-endless', expectedRoi: Number.MIN_VALUE, depth: 4000 }),
+			play({ key: 'readable', expectedRoi: 10, depth: 5 })
+		];
+
+		expect(worthwhileScale(endless)?.hours).toBe(Infinity);
+		expect(keys(sortPlays(served, 'fastest'))).toEqual([
+			'readable',
+			'first-endless',
+			'second-endless',
+			'no-wait'
+		]);
 	});
 
 	it('puts a suspect play with a readable wait ahead of a clean play with none', () => {
