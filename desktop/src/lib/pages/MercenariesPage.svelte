@@ -402,76 +402,86 @@
 			<pre class="report" class:error={debugFailed}>{debugReport}</pre>
 		{/if}
 
-		<div class="templates">
-			<span class="templates-head">Learned icon templates ({templates.length})</span>
-			<span class="pool" class:pool-ok={pool.tone === 'pass'} title={pool.detail ?? undefined}>
-				{pool.label}
-			</span>
-			<!-- Where they live is a fact about the store, not about it being empty:
-			     the un-poison path needs it most when the list is NOT empty. -->
-			<span class="meta">stored under merc-icons/ in the app data directory</span>
-			{#if templates.length === 0}
-				<span class="meta">none yet — hover a support cell in game to teach one</span>
-			{:else}
-				<ul class="template-list">
-					{#each templates as template (template.raw)}
-						<li class="template" class:pooled={template.pooled} title={template.hint}>
-							{#if template.pooled}
-								<!-- The marker says "shared", the title says what that means. A
-								     glyph alone would be a private code; the title is the channel
-								     a screen reader gets. -->
-								<span class="pooled-mark" aria-hidden="true">{POOLED_CHIP_MARK}</span>
-								<span class="sr-only">from the shared pool:</span>
-							{/if}
-							<span>{template.label}</span>
-							<button
-								class="forget"
-								onclick={() => forgetTemplate(template.family, template.tier)}
-								aria-label="forget the learned template for {template.label}"
-								title={template.hint}
-							>
-								✕
-							</button>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-			<!-- A SEPARATE group (POE-208), not a marker on the list above: a seed
-			     is a different thing from a learned template. Nobody confirmed it,
-			     it carries no tier anyone read, and its ✕ has no shared
-			     consequence — so it gets its own head, its own count and its own
-			     command rather than borrowing the learned chip's wording. -->
-			{#if seeded.length > 0}
-				<span class="templates-head seed-head">{seedGroupLabel(seeded.length)}</span>
-				<ul class="template-list">
-					{#each seeded as chip (chip.family)}
-						<li class="template seeded" title={chip.hint}>
-							<span>{chip.label}</span>
-							<button
-								class="forget"
-								onclick={() => forgetSeed(chip.family)}
-								aria-label="forget the seeded template for {chip.label}"
-								title={chip.hint}
-							>
-								✕
-							</button>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-			<!-- Outside BOTH lists: the reset is the only door to the seed
-			     blocklist and the art cache, and a fresh device has seeds with no
-			     learned chips at all. Inside the learned list's `{:else}` it was
-			     invisible in exactly the state that needs it. -->
-			{#if canResetTemplates(templates.length, seeded.length)}
-				<Button variant="danger" onclick={resetTemplates} title={RESET_TEMPLATES_TITLE}>
-					Reset learned templates
-				</Button>
-			{/if}
-			{#if templateError}
-				<p class="error">{templateError}</p>
-			{/if}
-		</div>
+		<!-- Closed by default: this is maintenance, not the read. The summary
+		     carries the counts and the pool state so a closed panel still says
+		     whether the matcher has anything to match with. -->
+		<details class="templates">
+			<summary class="templates-summary">
+				<span class="templates-head">Learned icon templates ({templates.length})</span>
+				{#if seeded.length > 0}
+					<span class="templates-head">· {seedGroupLabel(seeded.length)}</span>
+				{/if}
+				<span class="pool" class:pool-ok={pool.tone === 'pass'} title={pool.detail ?? undefined}>
+					{pool.label}
+				</span>
+			</summary>
+			<div class="templates-body">
+				<!-- Where they live is a fact about the store, not about it being empty:
+				     the un-poison path needs it most when the list is NOT empty. -->
+				<span class="meta">stored under merc-icons/ in the app data directory</span>
+				{#if templates.length === 0}
+					<span class="meta">none yet — hover a support cell in game to teach one</span>
+				{:else}
+					<ul class="template-list">
+						{#each templates as template (template.raw)}
+							<li class="template" class:pooled={template.pooled} title={template.hint}>
+								{#if template.pooled}
+									<!-- The marker says "shared", the title says what that means. A
+									     glyph alone would be a private code; the title is the channel
+									     a screen reader gets. -->
+									<span class="pooled-mark" aria-hidden="true">{POOLED_CHIP_MARK}</span>
+									<span class="sr-only">from the shared pool:</span>
+								{/if}
+								<span>{template.label}</span>
+								<button
+									class="forget"
+									onclick={() => forgetTemplate(template.family, template.tier)}
+									aria-label="forget the learned template for {template.label}"
+									title={template.hint}
+								>
+									✕
+								</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				<!-- A SEPARATE group (POE-208), not a marker on the list above: a seed
+				     is a different thing from a learned template. Nobody confirmed it,
+				     it carries no tier anyone read, and its ✕ has no shared
+				     consequence — so it gets its own head, its own count and its own
+				     command rather than borrowing the learned chip's wording. -->
+				{#if seeded.length > 0}
+					<span class="templates-head seed-head">{seedGroupLabel(seeded.length)}</span>
+					<ul class="template-list">
+						{#each seeded as chip (chip.family)}
+							<li class="template seeded" title={chip.hint}>
+								<span>{chip.label}</span>
+								<button
+									class="forget"
+									onclick={() => forgetSeed(chip.family)}
+									aria-label="forget the seeded template for {chip.label}"
+									title={chip.hint}
+								>
+									✕
+								</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				<!-- Outside BOTH lists: the reset is the only door to the seed
+				     blocklist and the art cache, and a fresh device has seeds with no
+				     learned chips at all. Inside the learned list's `{:else}` it was
+				     invisible in exactly the state that needs it. -->
+				{#if canResetTemplates(templates.length, seeded.length)}
+					<Button variant="danger" onclick={resetTemplates} title={RESET_TEMPLATES_TITLE}>
+						Reset learned templates
+					</Button>
+				{/if}
+				{#if templateError}
+					<p class="error">{templateError}</p>
+				{/if}
+			</div>
+		</details>
 	</section>
 
 	<!-- 2. What the reader saw, before any rule is applied to it. -->
@@ -1088,11 +1098,38 @@
 	/* --- learned templates --- */
 
 	.templates {
+		margin-top: 0.6rem;
+	}
+
+	.templates-summary {
 		display: flex;
 		align-items: center;
 		flex-wrap: wrap;
 		gap: 0.5rem;
-		margin-top: 0.6rem;
+		cursor: pointer;
+		list-style: none;
+	}
+
+	.templates-summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.templates-summary::before {
+		content: '▸';
+		font-size: 0.7rem;
+		color: var(--color-lab-text-muted);
+	}
+
+	.templates[open] > .templates-summary::before {
+		content: '▾';
+	}
+
+	.templates-body {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-top: 0.5rem;
 	}
 
 	.templates-head {
