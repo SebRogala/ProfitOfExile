@@ -2582,7 +2582,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         // runs the full detect in THIS iteration rather than the next one:
         // waiting a cadence is the 2-4 s of "nothing happening" WI-B measured,
         // and the probe has already paid for the grab.
-        let mut probed: Option<image::DynamicImage> = None;
+        let mut probed: Option<crate::capture::Capture> = None;
         // When the probe's GRAB started, on the iterations a hit hands that
         // grab to the detect below. See the timing comment there.
         let mut probe_started: Option<Instant> = None;
@@ -2852,8 +2852,10 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
 /// and then OCRs [`probe_band`] alone: on the 2026-08-24 dump's geometry that
 /// is 7% of the pixels a detect reads, and the OCR is the expensive half.
 ///
-/// On a HIT it returns the image it grabbed, so the full detect that follows
-/// runs on the SAME frame rather than waiting a cadence for one of its own.
+/// On a HIT it returns the whole `Capture` it grabbed — the pixels AND the
+/// display they came off (POE-237) — so the full detect that follows runs on
+/// the SAME frame rather than waiting a cadence for one of its own, and stamps
+/// its measurement with the monitor that frame was actually taken on.
 /// That is the difference between "the probe found the window" and "the probe
 /// found the window and the player saw it a second later".
 ///
@@ -2866,17 +2868,21 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
 /// saw no chrome has not detected anything and has not MISSED anything either,
 /// and routing it through [`LoopState::on_detect`] would let a probe advance
 /// the retire counter of a capture it was never asked about.
-fn probe_tick(app: &AppHandle, session: &mut Session) -> (DetectTick, Option<image::DynamicImage>) {
+fn probe_tick(
+    app: &AppHandle,
+    session: &mut Session,
+) -> (DetectTick, Option<crate::capture::Capture>) {
     let tick = DetectTick::probe();
 
     let started = Instant::now();
-    let img = match crate::capture::capture_screen() {
-        Ok(img) => img,
+    let grab = match crate::capture::capture_screen(app) {
+        Ok(grab) => grab,
         Err(e) => {
             fail(app, session, format!("Merc: screen capture failed — {e}"));
             return (tick, None);
         }
     };
+    let img = &grab.image;
     let (iw, ih) = {
         use image::GenericImageView;
         img.dimensions()
@@ -2910,7 +2916,7 @@ fn probe_tick(app: &AppHandle, session: &mut Session) -> (DetectTick, Option<ima
             ),
         );
     }
-    (tick, hit.then_some(img))
+    (tick, hit.then_some(grab))
 }
 
 /// The screen slice a detect tick publishes for `screen` at `scale`.
@@ -2919,13 +2925,21 @@ fn probe_tick(app: &AppHandle, session: &mut Session) -> (DetectTick, Option<ima
 /// which SSOT cue a merc [`ScaleSource`] maps to, and — POE-240 — whether that
 /// cue counts as a VERIFICATION. Both are `ssot`'s rules, not this loop's; a
 /// literal here would be a second producer of a flag that already has one.
+///
+/// `grabbed_on` is the display the frame this scale was measured on came off
+/// (POE-237), taken from the same `crate::capture::Capture` as its pixels and
+/// copied through untouched. It is what lets `ssot::screen_matches` tell a
+/// second 1920x1080 monitor from the remembered one, so it must never be
+/// re-derived here from anything but that capture.
 fn published_screen(
     screen: [u32; 2],
     scale: f32,
     cue: ScaleSource,
     measured_at_ms: u64,
+    grabbed_on: (u32, (i32, i32)),
 ) -> crate::ssot::ScreenSlice {
     let source = crate::ssot::screen_scale_source(cue);
+    let (monitor_id, origin) = grabbed_on;
     crate::ssot::ScreenSlice {
         width: screen[0],
         height: screen[1],
@@ -2933,6 +2947,8 @@ fn published_screen(
         source,
         measured_at_ms,
         verified_this_session: crate::ssot::verifies_the_screen(source),
+        monitor_id,
+        origin,
     }
 }
 
@@ -2987,7 +3003,7 @@ fn detect_tick(
     session: &mut Session,
     cursor: Option<(i32, i32)>,
     cancel: &watch::Receiver<bool>,
-    grabbed: Option<image::DynamicImage>,
+    grabbed: Option<crate::capture::Capture>,
 ) -> DetectTick {
     // A KNOWN panel is re-read on a crop of itself. The full-screen OCR is the
     // tick's dominant cost, and once the panel has been found the whole answer
@@ -3002,16 +3018,21 @@ fn detect_tick(
     let report = |outcome: Option<DetectOutcome>| DetectTick { outcome, full_frame };
 
     let started = Instant::now();
-    let img = match grabbed {
-        Some(img) => img,
-        None => match crate::capture::capture_screen() {
-            Ok(img) => img,
+    let grab = match grabbed {
+        Some(grab) => grab,
+        None => match crate::capture::capture_screen(app) {
+            Ok(grab) => grab,
             Err(e) => {
                 fail(app, session, format!("Merc: screen capture failed — {e}"));
                 return report(Some(miss(app, session, true)));
             }
         },
     };
+    // The display travels with the pixels, whether this tick grabbed them or a
+    // probe did (POE-237): both halves come off one `Capture`, so the id
+    // published below always names the monitor the scale was measured on.
+    let grabbed_on = (grab.monitor_id, grab.origin);
+    let img = grab.image;
     let (iw, ih) = {
         use image::GenericImageView;
         img.dimensions()
@@ -3022,7 +3043,7 @@ fn detect_tick(
     // monitor, and only the OCR view is narrowed below — so this is the screen's
     // real size on every path. A scale remembered from another monitor is
     // dropped here, which is the first moment anything in the app can tell.
-    crate::ssot::drop_if_mismatched(app, (iw, ih));
+    crate::ssot::drop_if_mismatched(app, (iw, ih), grabbed_on.0);
 
     let cropped = crop.map(|r| img.crop_imm(r[0] as u32, r[1] as u32, r[2] as u32, r[3] as u32));
     let mut view = cropped.as_ref().unwrap_or(&img);
@@ -3274,7 +3295,8 @@ fn detect_tick(
     // takes its `captured_at_ms` from the same source: this is when the scale
     // was MEASURED, and publishing at the settle rather than after pass 2 keeps
     // a cancelled tick's measurement from being lost.
-    let published = published_screen(screen, layout.scale, layout.scale_source, now_ms());
+    let published =
+        published_screen(screen, layout.scale, layout.scale_source, now_ms(), grabbed_on);
     let screen_record = crate::ssot::publish_screen(app, published);
     // POE-240: `ssot::accepts` refused this measurement — an OCR reading that
     // only re-states the screen scale already standing. The guard, the wording
@@ -3711,8 +3733,8 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
     // A FRESH grab: the tooltip is only on screen now, and was not in the
     // detect frame. The template still comes from the detect frame's crop.
     let grab_started = Instant::now();
-    let img = match crate::capture::capture_screen() {
-        Ok(img) => img,
+    let img = match crate::capture::capture_screen(app) {
+        Ok(grab) => grab.image,
         Err(e) => {
             fail(app, session, format!("Merc: hover capture failed — {e}"));
             return false;
@@ -5315,16 +5337,40 @@ mod tests {
     #[test]
     fn the_published_screen_slice_is_verified_only_by_a_frame_cue() {
         let at = 1_724_000_000_000;
+        let on = (65_537, (0, 0));
 
-        assert!(published_screen([2560, 1440], 1.25, ScaleSource::Frame, at).verified_this_session);
         assert!(
-            published_screen([2560, 1440], 1.25, ScaleSource::Held, at).verified_this_session,
+            published_screen([2560, 1440], 1.25, ScaleSource::Frame, at, on).verified_this_session
+        );
+        assert!(
+            published_screen([2560, 1440], 1.25, ScaleSource::Held, at, on).verified_this_session,
             "a held registration is a frame measurement, one or more ticks old",
         );
         assert!(
-            !published_screen([2560, 1440], 1.25, ScaleSource::Ocr, at).verified_this_session,
+            !published_screen([2560, 1440], 1.25, ScaleSource::Ocr, at, on).verified_this_session,
             "the drifting cue confirms nothing",
         );
+    }
+
+    /// The display travels WITH the pixels (POE-237). `grabbed_on` comes off
+    /// the same `crate::capture::Capture` the frame did, and this function's
+    /// whole job with it is to copy it through: a slice that named any other
+    /// display would tell `ssot::screen_matches` a measurement was taken
+    /// somewhere it was not, which is worse than the same-resolution blind spot
+    /// POE-237 closed.
+    ///
+    /// Both halves are non-default on purpose — the id is a second monitor's
+    /// and the origin is a display LEFT of the primary — so re-deriving them
+    /// instead of copying (`let (monitor_id, origin) = (0, (0, 0));`) fails
+    /// here rather than passing on a coincidence.
+    #[test]
+    fn the_published_slice_carries_the_display_its_frame_came_off() {
+        let grabbed_on = (131_074, (-1920, 0));
+
+        let slice =
+            published_screen([1920, 1080], 1.0, ScaleSource::Frame, 1_724_000_000_000, grabbed_on);
+
+        assert_eq!((slice.monitor_id, slice.origin), grabbed_on);
     }
 
     /// The hover box is mostly ABOVE the cursor, scaled with the panel — the

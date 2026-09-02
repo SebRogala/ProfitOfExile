@@ -1,37 +1,262 @@
-/// Screen capture for reading PoE gem tooltips.
+/// Screen capture for reading PoE gem tooltips, the merc recruit window and
+/// the temple layout panel.
 /// Windows implementation uses xcap for screen capture.
 /// Other platforms get a stub that returns an error.
 
+/// One screen grab and the display it came off (POE-237).
+///
+/// The identity travels WITH the pixels, rather than being asked for again
+/// later, because the two questions have different answers the moment the
+/// player alt-tabs: a caller that grabbed a frame and then looked up "which
+/// monitor is the game on" could stamp a measurement taken on one display with
+/// the id of another. Every consumer that publishes geometry
+/// (`ssot::ScreenSlice`) or prunes against it (`ssot::drop_if_mismatched`)
+/// reads these two fields off the same value it read `image` from.
+pub struct Capture {
+    /// The whole monitor, as grabbed. Callers crop it themselves.
+    pub image: image::DynamicImage,
+    /// The display's id in xcap's space (the Windows `HMONITOR` truncated to 32
+    /// bits, `xcap::Monitor::id`) — the SAME space
+    /// [`GameMonitor::id`] is in, because the focus poller reads its handle the
+    /// same way.
+    ///
+    /// `0` means UNKNOWN and is never compared as an identity: it is what a
+    /// pre-POE-237 persisted slice loads as, and — in theory — what a handle
+    /// whose low 32 bits are all zero would truncate to. Consumers treat it as
+    /// "no opinion" and fall back to comparing dimensions
+    /// (`ssot::different_monitor`).
+    pub monitor_id: u32,
+    /// The display's top-left corner in virtual-desktop PHYSICAL px, so a rect
+    /// measured inside this image can be turned into a screen-absolute one.
+    /// `(0, 0)` for the primary monitor, and also the unknown value — the two
+    /// coincide, which is why `monitor_id` and not this is the identity.
+    ///
+    /// This is xcap's `Monitor::x()`/`y()`, which reads Windows'
+    /// `DEVMODEW.dmPosition`; [`GameMonitor::x`]/[`GameMonitor::y`] are the
+    /// same corner read from `GetMonitorInfoW`'s `rcMonitor` instead. OBSERVED
+    /// to agree under the app's per-monitor-v2 DPI awareness, which is what
+    /// lets `capture_screen` look one display up by the other's corner. If a
+    /// future build drops PMv2 the two APIs report different (virtualised)
+    /// spaces and that lookup is the thing that breaks first.
+    pub origin: (i32, i32),
+}
+
+/// The display the GAME is drawn on, as the focus poller last resolved it
+/// (POE-237) — the owner is `AppState.game_monitor`.
+///
+/// `None` there means nothing has seen the game window yet (and is what the
+/// non-Windows build always holds), which [`capture_screen`] reads as "grab the
+/// primary monitor", the pre-POE-237 behaviour.
+///
+/// PHYSICAL px throughout, and `x`/`y` are `GetMonitorInfoW`'s `rcMonitor`
+/// corner — the same corner [`Capture::origin`] carries out of xcap, by a
+/// different API (see that field).
+///
+/// Carries NO scale factor. Both webview readers size themselves from the
+/// TAURI monitor they matched this one to by position, and it is THAT
+/// `scaleFactor` their logical-vs-physical maths has to agree with — a second
+/// number from a third API could only disagree with it (`overlay/monitor-choice.ts`).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameMonitor {
+    /// xcap's id space — see [`Capture::monitor_id`].
+    pub id: u32,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Which display the game is on, for the webview (POE-237).
+///
+/// The layout builds a module's fullscreen widget window on this monitor
+/// instead of the primary one, and Settings converts a widget's shipped CSS
+/// defaults into coordinates inside that same canvas — see
+/// `overlay/monitor-choice.ts`, which owns the matching rule. Both go through
+/// the TAURI monitor they match this one to by position, so what they read a
+/// scale factor off is that one and never this value.
+///
+/// `None` while nothing has seen the game window, which every caller must read
+/// as "use the primary monitor" rather than as a failure: it is the honest
+/// answer before PoE has ever been in the foreground, and the permanent one off
+/// Windows.
+///
+/// A plain read of the owner. The lookup that fills it happens once per focus
+/// transition, in the poller, precisely so this command is not a display
+/// enumeration on every Settings poll.
+#[tauri::command]
+pub fn get_game_monitor(state: tauri::State<crate::AppState>) -> Option<GameMonitor> {
+    *state.game_monitor.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(windows)]
 mod platform {
+    use super::{Capture, GameMonitor};
     use image::DynamicImage;
+    use tauri::{AppHandle, Emitter, Manager};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
     use xcap::Monitor;
 
-    /// Capture the primary monitor's full screen as an image.
-    pub fn capture_screen() -> Result<DynamicImage, String> {
-        let monitors = Monitor::all().map_err(|e| format!("Failed to list monitors: {}", e))?;
-        let monitor = monitors
-            .into_iter()
-            .find(|m| m.is_primary())
-            .or_else(|| Monitor::all().ok()?.into_iter().next())
-            .ok_or_else(|| "No monitor found".to_string())?;
+    /// Capture the display the game is on — or the primary one until something
+    /// has said where the game is.
+    ///
+    /// Before POE-237 this was unconditionally the primary monitor, which is
+    /// the bug: with PoE fullscreen on a second display every OCR read the
+    /// wrong screen while focus detection still said the game was in front.
+    /// The target comes from `AppState.game_monitor`, written by the focus
+    /// poller from the game window's own HWND.
+    ///
+    /// The lookup is `from_point(x + 1, y + 1)` rather than the corner itself:
+    /// a monitor rect is half-open at its far edges, and the exact top-left of
+    /// a display whose neighbour ends there is ambiguous. One pixel in is
+    /// unambiguously inside, on every arrangement.
+    ///
+    /// A game monitor that cannot be found is a display that is GONE —
+    /// unplugged, or rearranged out from under the stored rect — and the
+    /// remembered answer is then wrong rather than merely unluckily timed. So
+    /// the stored value is CLEARED and the capture falls through to the
+    /// primary, which is the pre-POE-237 behaviour and the same answer this
+    /// function gives before anything has seen the game window.
+    ///
+    /// Erroring instead is what shipped first, and it is worse: nothing
+    /// re-resolves the display except a focus TRANSITION, and a player whose
+    /// second monitor died while PoE stayed in the foreground never makes one —
+    /// so every capture for the rest of the session failed, and OCR simply
+    /// stopped. Clearing is self-healing in the other direction too: the next
+    /// transition into the game writes a fresh value, and because the slot is
+    /// now `None` it counts as a change, so it logs and emits again.
+    ///
+    /// Cleared, and therefore logged, ONCE: the following captures read `None`
+    /// and take the primary without a word.
+    pub fn capture_screen(app: &AppHandle) -> Result<Capture, String> {
+        let target = *app
+            .state::<crate::AppState>()
+            .game_monitor
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
 
+        let monitor = match target {
+            Some(game) => match Monitor::from_point(game.x + 1, game.y + 1) {
+                Ok(monitor) => monitor,
+                Err(e) => {
+                    *app.state::<crate::AppState>()
+                        .game_monitor
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()) = None;
+                    crate::app_log(
+                        app,
+                        format!(
+                            "the game's monitor at {},{} is gone ({}) — capturing the primary until the next alt-tab",
+                            game.x, game.y, e
+                        ),
+                    );
+                    primary_monitor()?
+                }
+            },
+            None => primary_monitor()?,
+        };
+
+        let monitor_id = monitor.id();
+        let origin = (monitor.x(), monitor.y());
         let img = monitor
             .capture_image()
             .map_err(|e| format!("Screen capture failed: {}", e))?;
 
-        Ok(DynamicImage::ImageRgba8(img))
+        Ok(Capture { image: DynamicImage::ImageRgba8(img), monitor_id, origin })
+    }
+
+    /// The primary display, or any display at all — the pre-POE-237 target,
+    /// kept verbatim as the no-game-window fallback.
+    fn primary_monitor() -> Result<Monitor, String> {
+        let monitors = Monitor::all().map_err(|e| format!("Failed to list monitors: {}", e))?;
+        monitors
+            .into_iter()
+            .find(|m| m.is_primary())
+            .or_else(|| Monitor::all().ok()?.into_iter().next())
+            .ok_or_else(|| "No monitor found".to_string())
+    }
+
+    /// Resolve the display `hwnd` is on and remember it as the game's
+    /// (POE-237). Called by the focus poller on the transition TO `Game`.
+    ///
+    /// `MONITOR_DEFAULTTONEAREST` rather than `…TONULL`: a window straddling
+    /// two displays, or one being dragged, still has a monitor the player is
+    /// looking at it on, and answering "none" there would silently send the
+    /// next capture back to the primary.
+    ///
+    /// The id is the `HMONITOR` truncated the way `xcap::Monitor::id` truncates
+    /// it, so [`Capture::monitor_id`] and [`GameMonitor::id`] are comparable —
+    /// which is what lets a published measurement say WHICH display it was
+    /// taken on.
+    ///
+    /// Logs and emits ONLY on a change. This runs on every alt-tab back into
+    /// the game, and a line per alt-tab would drown the log the player reads.
+    pub fn remember_game_monitor(app: &AppHandle, hwnd: HWND) {
+        let hmonitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+        let mut info =
+            MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !unsafe { GetMonitorInfoW(hmonitor, &mut info) }.as_bool() {
+            crate::app_log(
+                app,
+                "could not read the game window's monitor — capture stays on the last known display"
+                    .to_string(),
+            );
+            return;
+        }
+        let rect = info.rcMonitor;
+        let next = GameMonitor {
+            id: hmonitor.0 as u32,
+            x: rect.left,
+            y: rect.top,
+            width: (rect.right - rect.left).max(0) as u32,
+            height: (rect.bottom - rect.top).max(0) as u32,
+        };
+
+        let changed = {
+            let state = app.state::<crate::AppState>();
+            let mut current = state.game_monitor.lock().unwrap_or_else(|e| e.into_inner());
+            if *current == Some(next) {
+                false
+            } else {
+                *current = Some(next);
+                true
+            }
+        };
+        if !changed {
+            return;
+        }
+
+        crate::app_log(
+            app,
+            format!(
+                "game is on monitor {} at {},{} ({}x{})",
+                next.id, next.x, next.y, next.width, next.height
+            ),
+        );
+        // To the MAIN window only, and window-scoped: the layout is what rebuilds
+        // a widget overlay onto the new display, and no overlay window acts on
+        // this. A `getCurrentWebviewWindow().listen` is therefore what receives
+        // it (`docs/OVERLAY-GUIDE.md`, runtime-earned observations).
+        if let Err(e) = app.emit_to("main", "game-monitor-changed", next) {
+            log::warn!("emit game-monitor-changed failed: {}", e);
+        }
     }
 }
 
 #[cfg(not(windows))]
 mod platform {
-    use image::DynamicImage;
+    use super::Capture;
+    use tauri::AppHandle;
 
-    pub fn capture_screen() -> Result<DynamicImage, String> {
+    /// No capture off Windows, exactly as before POE-237 — the whole OCR half
+    /// of the app is Windows-only and every caller already treats this `Err`
+    /// as the normal answer on a dev machine.
+    pub fn capture_screen(_app: &AppHandle) -> Result<Capture, String> {
         Err("Screen capture not available on this platform".to_string())
     }
-
 }
 
 pub use platform::*;
@@ -106,8 +331,9 @@ fn preprocess_with(
     // the aspect ratio is preserved and OCR line rects stay proportional to the
     // source.
     //
-    // Nothing hard-caps the input size: the live capture paths crop from the
-    // primary monitor, so dimensions stay bounded. (The test_ocr_on_image debug
+    // Nothing hard-caps the input size: the live capture paths crop from one
+    // monitor (the game's since POE-237), so dimensions stay bounded. (The
+    // test_ocr_on_image debug
     // command can feed an arbitrary image — a 2× buffer of it is the accepted
     // cost of not special-casing a debug path.)
     let upscaled = image::imageops::resize(&contrasted, w * 2, h * 2, filter);

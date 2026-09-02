@@ -281,7 +281,7 @@ fn debug_capture_blocking(
             path.clone(),
         ),
         None => (
-            crate::capture::capture_screen().map_err(|e| abort(&app, e))?,
+            crate::capture::capture_screen(&app).map_err(|e| abort(&app, e))?.image,
             "screen".to_string(),
         ),
     };

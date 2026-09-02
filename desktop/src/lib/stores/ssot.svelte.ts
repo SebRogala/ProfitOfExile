@@ -110,12 +110,34 @@ export interface ScreenSlice {
 	 * startup load from settings do not.
 	 *
 	 * `false` is not "wrong", it is "trusted from last session, unconfirmed".
-	 * It is what the lifecycle's two blind spots — a different monitor of the
-	 * same resolution, an in-game UI-scale change with no verifying panel on
-	 * screen — surface as, since the dimensions Rust prunes on cannot see
-	 * either. Never persisted: a restart always starts unverified.
+	 * It is what the lifecycle's remaining blind spot — an in-game UI-scale
+	 * change with no verifying panel on screen — surfaces as, since neither the
+	 * dimensions nor the display Rust prunes on can see one. (The other blind
+	 * spot, a different monitor of the same resolution, is `monitorId`'s since
+	 * POE-237.) Never persisted: a restart always starts unverified.
 	 */
 	verifiedThisSession: boolean;
+	/**
+	 * WHICH display it was measured on (POE-237) — Rust's `Capture.monitor_id`,
+	 * a Win32 `HMONITOR` truncated to 32 bits.
+	 *
+	 * `0` means UNKNOWN: a scale persisted before POE-237, or a handle that
+	 * truncated to zero. Never compare it as an identity without excluding `0`
+	 * first — Rust's `ssot::different_monitor` is the rule, and it declines to
+	 * answer on a zero.
+	 *
+	 * NOT the id `availableMonitors()` reports; the two enumerations do not
+	 * share an id space, which is why `overlay/monitor-choice.ts` matches a
+	 * display on its POSITION.
+	 */
+	monitorId: number;
+	/**
+	 * That display's top-left in virtual-desktop PHYSICAL px, as `[x, y]`, so a
+	 * rect measured inside a capture can be placed on the desktop. `[0, 0]` for
+	 * the primary monitor and for an unknown one — which is why `monitorId`,
+	 * not this, is the identity.
+	 */
+	origin: [number, number];
 }
 
 /** Serialized Rust `AppSsotSnapshot` — `league.name` is `string | null`. */

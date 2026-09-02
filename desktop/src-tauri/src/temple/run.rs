@@ -566,7 +566,8 @@ pub const DIAMOND_H_REF: f32 = 200.0;
 /// # The windowed-client failure mode
 ///
 /// The offset is taken from the CAPTURE's right edge, and
-/// [`crate::capture::capture_screen`] grabs the whole primary monitor. On a
+/// [`crate::capture::capture_screen`] grabs a whole monitor — the game's since
+/// POE-237, the primary one before it. On a
 /// fullscreen (or borderless-fullscreen) client those two edges coincide, which
 /// is the case every fixture above was measured in. On a **windowed** client
 /// they do not: the game draws the panel against the window's right edge, the
@@ -921,20 +922,21 @@ fn fail(app: &AppHandle, session: &mut Session, msg: String) {
 /// Returns whether this tick paid for the full read — the caller times only the
 /// ticks that did not, per [`SLOW_TICK`].
 fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) -> bool {
-    let img = match crate::capture::capture_screen() {
-        Ok(img) => img,
+    let grab = match crate::capture::capture_screen(app) {
+        Ok(grab) => grab,
         Err(e) => {
             fail(app, session, format!("Temple: screen capture failed — {e}"));
             miss(app, session, true);
             return false;
         }
     };
+    let img = grab.image;
     // Before ANY remembered geometry is read (POE-227): a screen scale measured
     // on another monitor is dropped from the shared slice on the first capture
     // whose dimensions disagree with it. The temple does not consume that slice
     // yet — its unit ratio is unmeasured (see `ssot::ScreenSlice`) — but it does
     // capture screens, and the prune belongs to whichever module looks first.
-    crate::ssot::drop_if_mismatched(app, (img.width(), img.height()));
+    crate::ssot::drop_if_mismatched(app, (img.width(), img.height()), grab.monitor_id);
     // The ONLY place the loop obtains its settings, so the stale-hint prune
     // cannot be skipped without the compile failing.
     let (settings, pruned) = settings_for_capture(&settings_snapshot(app), (img.width(), img.height()));

@@ -284,6 +284,19 @@ pub struct AppState {
     /// unit ratio is measured) the temple anchor want to read. `None` until
     /// something measures one; do not read a missing value as 1.0.
     pub screen: Mutex<Option<ssot::ScreenSlice>>,
+    /// The display the GAME is on (POE-237) — resolved by the focus poller from
+    /// the PoE window's own HWND on every transition into the game, and read by
+    /// `capture::capture_screen` to decide which monitor to grab.
+    ///
+    /// `None` means nothing has seen the game window yet, which capture reads
+    /// as "the primary monitor" — the pre-POE-237 behaviour, and the permanent
+    /// state off Windows, where there is no poller and no capture.
+    ///
+    /// Its own owner rather than a field of the focus state: it outlives a blur
+    /// (the game does not change display by being alt-tabbed away from) and its
+    /// reader is the capture layer, which has nothing to do with the show/hide
+    /// list the poller's other output drives.
+    pub game_monitor: Mutex<Option<capture::GameMonitor>>,
     /// Where the user put each overlay WIDGET (POE-225), keyed
     /// `"<module>.<widget>"` — the owner of `Settings.widgets`.
     ///
@@ -2368,8 +2381,8 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
         loop_count += 1;
 
         let gem_region = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let screen = match capture::capture_screen() {
-            Ok(s) => s,
+        let screen = match capture::capture_screen(&app) {
+            Ok(c) => c.image,
             Err(e) => {
                 if loop_count % 20 == 1 {
                     app_log(&app, format!("Screen capture failed: {}", e));
@@ -2557,8 +2570,8 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
         loop_count += 1;
 
         let font_region = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let screen = match capture::capture_screen() {
-            Ok(s) => s,
+        let screen = match capture::capture_screen(&app) {
+            Ok(c) => c.image,
             Err(e) => {
                 if loop_count % 40 == 1 {
                     app_log(&app, format!("Font scan: screen capture failed: {}", e));
@@ -3032,10 +3045,15 @@ fn spawn_focus_poller(app: AppHandle) {
             {
                 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
-                let focus_state = unsafe {
+                // The HWND comes out WITH the verdict (POE-237). The game's
+                // window is the only thing that can say which display the game
+                // is on, and asking again after the block would be asking about
+                // whatever is in front by then — which, one alt-tab later, is a
+                // different window on a different monitor.
+                let (focus_state, game_hwnd) = unsafe {
                     let fg = GetForegroundWindow();
                     if fg.0.is_null() {
-                        FocusState::Other // no foreground window → treat as blur
+                        (FocusState::Other, fg) // no foreground window → treat as blur
                     } else {
                         // Check if this window belongs to our process (overlay, main window).
                         let mut fg_pid: u32 = 0;
@@ -3043,9 +3061,9 @@ fn spawn_focus_poller(app: AppHandle) {
                         if tid == 0 {
                             // HWND invalidated between GetForegroundWindow and here (TOCTOU).
                             // Fall through to title-based detection.
-                            FocusState::Other
+                            (FocusState::Other, fg)
                         } else if fg_pid == our_pid {
-                            FocusState::OwnWindow
+                            (FocusState::OwnWindow, fg)
                         } else {
                             // Check window class (more reliable than title — avoids
                             // matching browser tabs like "Path of Exile Trade")
@@ -3055,27 +3073,45 @@ fn spawn_focus_poller(app: AppHandle) {
                             if cls_len > 0 {
                                 let class_name = String::from_utf16_lossy(&cls_buf[..cls_len as usize]);
                                 if class_name == "POEWindowClass" {
-                                    FocusState::Game
+                                    (FocusState::Game, fg)
                                 } else {
-                                    FocusState::Other
+                                    (FocusState::Other, fg)
                                 }
                             } else {
-                                FocusState::Other
+                                (FocusState::Other, fg)
                             }
                         }
                     }
                 };
 
-                app.state::<AppState>()
-                    .game_in_foreground
-                    .store(matches!(focus_state, FocusState::Game), Ordering::SeqCst);
+                let is_focused = matches!(focus_state, FocusState::Game);
+
+                // On the transition INTO the game, and only there: resolve
+                // which display the game window is on so every capture that
+                // follows grabs THAT monitor (POE-237). The transition is the
+                // right cadence — a player who moves the game to another screen
+                // alt-tabs out and back to do it, and the per-second poll would
+                // otherwise re-ask a question whose answer changes a handful of
+                // times a session. The call logs and emits only when the answer
+                // actually moved.
+                //
+                // BEFORE the `game_in_foreground` store, not inside the
+                // transition block below it: that flag is what the merc capture
+                // loop gates on, so a tick that read it between the store and
+                // this lookup would grab the display the game had just left —
+                // exactly the wrong-monitor frame POE-237 exists to stop. The
+                // `!was_focused` term is what keeps this on the transition; the
+                // block below owns the assignment to `was_focused`.
+                if is_focused && !was_focused {
+                    capture::remember_game_monitor(&app, game_hwnd);
+                }
+
+                app.state::<AppState>().game_in_foreground.store(is_focused, Ordering::SeqCst);
                 // When foreground is our own window (overlay button click, main app),
                 // don't change game_focused — preserve the last known state.
                 if matches!(focus_state, FocusState::OwnWindow) {
                     continue;
                 }
-
-                let is_focused = matches!(focus_state, FocusState::Game);
 
                 if is_focused != was_focused {
                     was_focused = is_focused;
@@ -3553,6 +3589,7 @@ pub fn run() {
         temple_rearm: AtomicU64::new(0),
         merc_refit: AtomicU64::new(0),
         screen: Mutex::new(None),
+        game_monitor: Mutex::new(None),
         widgets: Mutex::new(std::collections::BTreeMap::new()),
     };
 
@@ -3567,6 +3604,7 @@ pub fn run() {
             ssot::set_league,
             ssot::refresh_league,
             ssot::geometry_recalibrate,
+            capture::get_game_monitor,
             modules::set_module_enabled,
             get_pair_code,
             get_device_id,

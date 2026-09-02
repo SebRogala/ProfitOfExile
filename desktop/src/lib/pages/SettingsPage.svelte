@@ -10,6 +10,7 @@
 	import { ssot, fetchSsot } from '$lib/stores/ssot.svelte';
 	import { screenGeometryView } from '$lib/geometry/view';
 	import { MERC_OVERLAY_DEFAULTS, physicalGeometry } from '$lib/overlay/overlay-defaults';
+	import { chooseMonitor, type GameMonitorInfo } from '$lib/overlay/monitor-choice';
 	import {
 		canStartConfigure,
 		overlayGroups,
@@ -446,13 +447,18 @@
 	/**
 	 * The scale factor of the monitor the widget overlay lives on.
 	 *
-	 * The PRIMARY monitor's, not this window's: a widget overlay is built at
-	 * `primaryMonitor()`'s position and size (`routes/(app)/+layout.svelte`), so
-	 * that is the display a widget's physical coordinates are measured against.
-	 * Reading this window's factor instead would be wrong by the ratio between
-	 * the two whenever the main window sits on a second display with different
-	 * scaling — and silently, since it agrees on a single-monitor machine.
-	 * `currentMonitor()` is the fallback for the same reason the layout uses it.
+	 * The overlay's display, not this window's: a widget overlay is built on the
+	 * GAME's monitor (`routes/(app)/+layout.svelte`, POE-237), so that is the
+	 * display a widget's physical coordinates are measured against. Reading this
+	 * window's factor instead would be wrong by the ratio between the two
+	 * whenever the main window sits on a second display with different scaling —
+	 * and silently, since it agrees on a single-monitor machine.
+	 *
+	 * The CHOICE is `chooseMonitor`'s, shared with the layout rather than
+	 * re-spelled, because the two answers have to be the same display: the
+	 * layout sizes the canvas from it and this converts the shipped CSS defaults
+	 * into coordinates inside that canvas. The primary is the fallback on every
+	 * failing path, exactly as the layout falls back.
 	 *
 	 * Zero until it answers, and the Show toggle declines while it is: creating a
 	 * placement row means converting the registry's CSS defaults to the physical
@@ -462,9 +468,20 @@
 	let widgetScaleFactor = $state(0);
 	$effect(() => {
 		(async () => {
-			const { currentMonitor, primaryMonitor } = await import('@tauri-apps/api/window');
-			const monitor =
+			const { availableMonitors, currentMonitor, primaryMonitor } = await import(
+				'@tauri-apps/api/window'
+			);
+			const primary =
 				(await primaryMonitor().catch(() => null)) ?? (await currentMonitor().catch(() => null));
+			const game = await invoke<GameMonitorInfo | null>('get_game_monitor').catch((e: any) => {
+				console.warn('[settings] get_game_monitor failed, using the primary monitor:', e);
+				return null;
+			});
+			const listed = await availableMonitors().catch((e: any) => {
+				console.warn('[settings] availableMonitors failed, using the primary monitor:', e);
+				return [];
+			});
+			const monitor = chooseMonitor(game, listed, primary);
 			if (monitor && monitor.scaleFactor > 0) widgetScaleFactor = monitor.scaleFactor;
 			else console.warn('[settings] no monitor scale factor — Show cannot place a widget yet');
 		})().catch((e: any) => console.warn('[settings] monitor lookup failed:', e));
