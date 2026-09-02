@@ -19,10 +19,7 @@
 		MERCENARY_MODULE_ID,
 		MERCENARY_WINDOW_LABEL,
 		TEMPLE_MODULE_ID,
-		TEMPLE_WINDOW_LABEL,
-		destroyOverlay,
-		isOverlayActive,
-		readOverlayRegion
+		TEMPLE_WINDOW_LABEL
 	} from '$lib/overlay/manager';
 	import { moduleOverlayDriver } from '$lib/overlay/module-lifecycle';
 	import { MERC_OVERLAY_DEFAULTS, physicalGeometry } from '$lib/overlay/overlay-defaults';
@@ -429,19 +426,22 @@
 	// show a stale board. `docs/OVERLAY-GUIDE.md` guards, and where each is met:
 	//
 	//  1. capabilities — the `temple` label is in capabilities/default.json.
-	//  2/3. physical vs logical — the constructor takes LOGICAL pixels, so the
-	//    physical constants below are divided by Tauri's `scaleFactor()`, and
-	//    the exact `PhysicalPosition`/`PhysicalSize` are applied in
-	//    `tauri://created`. `window.devicePixelRatio` is not used.
+	//  2/3. physical vs logical — the window IS the primary monitor (POE-225), so
+	//    the monitor's physical position and size are divided by ITS scale
+	//    factor for the constructor, which takes LOGICAL pixels, and the exact
+	//    `PhysicalPosition`/`PhysicalSize` are applied in `tauri://created`.
+	//    `window.devicePixelRatio` is not used.
 	//  4. move, not recreate — this window is never repositioned, so there is
 	//    no destroy/recreate cycle to avoid. It is built and torn down only on
 	//    the module flag's transitions and on the bounded creation retry, and
 	//    `module-lifecycle.ts` orders all of them so two never overlap.
-	//  5. settings survival — DELIBERATELY not applicable: the temple overlay
-	//    persists nothing, so `persist_overlay_settings` has no field of ours to
-	//    copy and its survival test has nothing to cover. The merc verdict
-	//    overlay below is the same shape with that decision taken the other way
-	//    — see it for what persisting the position costs.
+	//  5. settings survival — the WINDOW persists nothing, because it is the
+	//    primary monitor and there is nothing about it a user could choose. What
+	//    IS persisted is where the user put each WIDGET inside it
+	//    (`Settings.widgets`, keyed `"temple.<widget>"`), and that map is owned
+	//    by an `AppState` mutex, so it travels through `from_state` and is
+	//    covered by the round-trip tests in `settings.rs` rather than by
+	//    `persist_overlay_settings`.
 	//  6. error visibility — every failure below goes through `logTemple`, so it
 	//    reaches `app_log_from_frontend` (the LOGS channel, and the only one
 	//    readable in a shipped build) with the console as a second copy. Nothing
@@ -452,10 +452,6 @@
 	// and hides the `temple` window on the game-focus transition, exactly as it
 	// does the comparator; the route decides only whether it has a board worth
 	// drawing.
-	const TEMPLE_OVERLAY_X = 40;
-	const TEMPLE_OVERLAY_Y = 40;
-	const TEMPLE_OVERLAY_W = 620;
-	const TEMPLE_OVERLAY_H = 260;
 
 	/**
 	 * Guard 6's channel.
@@ -492,24 +488,41 @@
 	async function createTempleOverlay(): Promise<boolean> {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
 		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
+		const { currentMonitor, primaryMonitor } = await import('@tauri-apps/api/window');
 
 		await destroyTempleWindow();
 
-		// Constructor dimensions are LOGICAL; the constants are physical.
-		const sf = await getCurrentWebviewWindow()
-			.scaleFactor()
-			.catch((e: any) => {
-				logTemple(`scaleFactor failed, using 1: ${e}`);
-				return 1;
-			});
+		// The window IS the primary monitor (POE-225): one fullscreen,
+		// click-through canvas per module, with the widgets placed inside it.
+		// `currentMonitor()` is the fallback rather than a constant, because a
+		// constant would be a guess at a resolution — and a window sized wrong
+		// puts every widget's persisted physical coordinate in the wrong place.
+		const monitor =
+			(await primaryMonitor().catch((e: any) => {
+				logTemple(`primaryMonitor failed, trying currentMonitor: ${e}`);
+				return null;
+			})) ??
+			(await currentMonitor().catch((e: any) => {
+				logTemple(`currentMonitor failed too: ${e}`);
+				return null;
+			}));
+		if (!monitor) {
+			// No monitor, no canvas. Refusing is what the bounded retry in
+			// `module-lifecycle.ts` is for; guessing a size would place the
+			// widgets somewhere the player never put them.
+			logTemple('no monitor to build the overlay on — not creating it');
+			return false;
+		}
+		// Constructor dimensions are LOGICAL; a monitor reports PHYSICAL.
+		const sf = monitor.scaleFactor > 0 ? monitor.scaleFactor : 1;
 		const win = new WebviewWindow(TEMPLE_WINDOW_LABEL, {
-			url: `/overlay/${TEMPLE_WINDOW_LABEL}`,
+			url: `/overlay/${TEMPLE_WINDOW_LABEL}${debugMode ? '?debug' : ''}`,
 			transparent: true,
 			decorations: false,
 			alwaysOnTop: true,
-			// Nothing drags or resizes this window: the geometry is fixed by the
-			// constants above and no drag handle is drawn, so a resizable frame
-			// only offers an edge that would desync the board from its position.
+			// Nothing drags or resizes this window: it is the monitor. A
+			// resizable frame would only offer an edge that desyncs every
+			// widget's persisted position from the canvas it was measured in.
 			resizable: false,
 			shadow: false,
 			skipTaskbar: true,
@@ -518,8 +531,10 @@
 			// front — taking focus would pull the player out of PoE for the
 			// second before the click-through thread below runs.
 			focus: false,
-			width: Math.round(TEMPLE_OVERLAY_W / sf),
-			height: Math.round(TEMPLE_OVERLAY_H / sf),
+			x: Math.round(monitor.position.x / sf),
+			y: Math.round(monitor.position.y / sf),
+			width: Math.round(monitor.size.width / sf),
+			height: Math.round(monitor.size.height / sf),
 		});
 
 		return await new Promise<boolean>((resolve) => {
@@ -532,10 +547,12 @@
 
 			win.once('tauri://created', async () => {
 				try {
-					await win.setPosition(new PhysicalPosition(TEMPLE_OVERLAY_X, TEMPLE_OVERLAY_Y));
-					await win.setSize(new PhysicalSize(TEMPLE_OVERLAY_W, TEMPLE_OVERLAY_H));
-					// Display-only: interactive width 0, like compass/pathstrip/timer.
-					// Do NOT copy the comparator's 48px right-edge zone here.
+					await win.setPosition(new PhysicalPosition(monitor.position.x, monitor.position.y));
+					await win.setSize(new PhysicalSize(monitor.size.width, monitor.size.height));
+					// Registration, not interactivity: the window declares no hot
+					// rects of its own, and `WidgetHost.svelte` declares one per
+					// `[data-hot]` element its widgets draw. Registering is what
+					// lets the hook repair the WS_EX_TRANSPARENT WebView2 strips.
 					//
 					// MEASURED: this command is fire-and-forget. Rust spawns a
 					// thread that sleeps ~1 s before `set_ignore_cursor_events`

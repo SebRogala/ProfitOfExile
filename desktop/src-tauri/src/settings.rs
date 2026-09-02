@@ -155,6 +155,85 @@ pub struct Settings {
     /// the merc module measures this one; see `apply_to_state`.
     #[serde(default)]
     pub screen_scale: Option<ScreenScaleSetting>,
+    /// Where the user put each overlay WIDGET (POE-225), keyed
+    /// `"<module>.<widget>"` — `"temple.board"`, `"temple.advice"`.
+    ///
+    /// A map rather than a field per widget because the widgets are declared in
+    /// the frontend registry (`src/lib/overlay/widgets/widget-registry.ts`) and
+    /// a module adding one must not need a Rust field, a getter, a setter and a
+    /// line in [`persist_overlay_settings`] before it can be placed. A key this
+    /// build no longer declares is carried through untouched rather than
+    /// pruned: an id is dropped only when its module is removed, and silently
+    /// deleting placements on a downgrade is worse than keeping a few dead
+    /// rows.
+    ///
+    /// `BTreeMap`, so the file is written in a stable order and a diff of
+    /// settings.json is readable.
+    ///
+    /// UNLIKE [`OverlaySettings`] this is owned by an `AppState` mutex
+    /// (`AppState.widgets`) and therefore travels through [`from_state`] like
+    /// any other owned field — it must NOT be added to
+    /// [`persist_overlay_settings`], which would carry the file's stale copy
+    /// back over what the owner just wrote.
+    #[serde(default)]
+    pub widgets: std::collections::BTreeMap<String, WidgetGeometry>,
+}
+
+/// One overlay widget's placement inside its module's fullscreen window
+/// (POE-225).
+///
+/// PHYSICAL pixels, window-relative. The module's window IS the primary
+/// monitor and every capture is the primary monitor, so window-relative
+/// physical px are also capture px — which is the unit a game-anchored widget
+/// would have to be placed in anyway, so user-placed and game-anchored widgets
+/// share one unit with no conversion between them. Shipped defaults are CSS px
+/// in the frontend registry and are converted once, by `physicalGeometry`, the
+/// same way `MERC_OVERLAY_DEFAULTS` is.
+///
+/// `width`/`height` rather than `w`/`h` to match [`OverlaySettings`], which is
+/// the other rectangle in this file.
+///
+/// `visible` is the user's Show checkbox, not a runtime state: a widget hidden
+/// here is not rendered at all, and one that has never been configured has no
+/// entry and renders at its shipped default.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WidgetGeometry {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub visible: bool,
+}
+
+/// One entry of [`widgets_for_module`], in the shape the webview reads.
+///
+/// A struct rather than a `(String, WidgetGeometry)` tuple: serde renders a
+/// tuple as a two-element ARRAY, so the TypeScript side would be indexing
+/// `entry[0]` / `entry[1]` and a field added later would silently shift.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WidgetGeometryEntry {
+    pub id: String,
+    pub geometry: WidgetGeometry,
+}
+
+/// Every stored placement belonging to `module`, in key order.
+///
+/// The `.` is part of the prefix, so a module called `temple` does not collect
+/// `temple2.board`. Pure, and separate from the command, so that boundary is
+/// testable off a running app.
+pub fn widgets_for_module(
+    widgets: &std::collections::BTreeMap<String, WidgetGeometry>,
+    module: &str,
+) -> Vec<WidgetGeometryEntry> {
+    let prefix = format!("{module}.");
+    widgets
+        .iter()
+        .filter(|(id, _)| id.starts_with(&prefix))
+        .map(|(id, geometry)| WidgetGeometryEntry {
+            id: id.clone(),
+            geometry: *geometry,
+        })
+        .collect()
 }
 
 /// The persisted form of [`crate::ssot::ScreenSlice`] (POE-214 D2).
@@ -386,6 +465,11 @@ impl Default for Settings {
             merc_trade_auto: default_merc_trade_auto(),
             merc_tier_floor: default_merc_tier_floor(),
             screen_scale: None,
+            // Empty, not a seeded map of the shipped defaults: an unconfigured
+            // widget must render at whatever the registry ships TODAY, and
+            // writing today's numbers into the file would pin a user to them
+            // the way an unchosen module default would (see `modules`).
+            widgets: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -552,6 +636,10 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         // [`preserve_screen_scale`] is the half that says so, and
         // `persist_settings` runs it over this struct before the write.
         screen_scale: screen.as_ref().and_then(ScreenScaleSetting::from_slice),
+        // Owned by an AppState mutex, so it is read HERE and not carried
+        // forward by `persist_overlay_settings` — the owner is what
+        // `set_widget_geometry` just wrote to, and the file is the stale copy.
+        widgets: state.widgets.lock().unwrap_or_else(|e| e.into_inner()).clone(),
     }
 }
 
@@ -725,6 +813,7 @@ mod tests {
             temple_rearm: AtomicU64::new(0),
             merc_refit: AtomicU64::new(0),
             screen: Mutex::new(None),
+            widgets: Mutex::new(std::collections::BTreeMap::new()),
         }
     }
 
@@ -1291,6 +1380,155 @@ mod tests {
         );
     }
 
+    /// A placement written by `set_widget_geometry` has to be there on the next
+    /// start, so the whole chain is exercised: owner → [`from_state`] → the
+    /// JSON text that actually reaches the disk → [`apply_to_state`] → owner.
+    ///
+    /// Every field is asserted separately because they are separately losable:
+    /// the `x`/`y` pair is `i32` and the size pair is `u32`, so a field crossed
+    /// in either projection puts the widget somewhere plausible rather than
+    /// somewhere obviously wrong. Deliberately asymmetric numbers for the same
+    /// reason.
+    #[test]
+    fn a_widget_placement_round_trips_through_state_and_the_file() {
+        let saved_from = test_app_state();
+        saved_from.widgets.lock().unwrap().insert(
+            "temple.advice".to_string(),
+            WidgetGeometry { x: 250, y: 41, width: 402, height: 203, visible: true },
+        );
+
+        let text = serde_json::to_string(&from_state(&saved_from)).expect("must serialize");
+        let parsed: Settings = serde_json::from_str(&text).expect("its own output must parse");
+        let loaded_into = test_app_state();
+        let _ = apply_to_state(&parsed, &loaded_into);
+
+        let widgets = loaded_into.widgets.lock().unwrap();
+        let placed = widgets
+            .get("temple.advice")
+            .copied()
+            .expect("the placement must survive the file");
+        assert_eq!(placed.x, 250);
+        assert_eq!(placed.y, 41);
+        assert_eq!(placed.width, 402);
+        assert_eq!(placed.height, 203);
+        assert!(placed.visible, "a shown widget must not come back hidden");
+    }
+
+    /// The Show checkbox is the half that is easy to lose: `false` is also
+    /// `bool`'s default, so a field dropped from the projection reads as
+    /// "hidden" on the way out and the widget silently reappears on the way
+    /// back in.
+    #[test]
+    fn a_hidden_widget_comes_back_hidden() {
+        let saved_from = test_app_state();
+        saved_from.widgets.lock().unwrap().insert(
+            "temple.board".to_string(),
+            WidgetGeometry { x: 40, y: 40, width: 200, height: 200, visible: false },
+        );
+
+        let text = serde_json::to_string(&from_state(&saved_from)).expect("must serialize");
+        let parsed: Settings = serde_json::from_str(&text).expect("its own output must parse");
+        let loaded_into = test_app_state();
+        let _ = apply_to_state(&parsed, &loaded_into);
+
+        assert_eq!(
+            loaded_into.widgets.lock().unwrap().get("temple.board").map(|g| g.visible),
+            Some(false),
+            "the user's Show choice is the state, not a runtime flag",
+        );
+    }
+
+    /// Every settings.json written before POE-225 has no `widgets` key. It must
+    /// load as "nothing has been placed" — the `#[serde(default)]` — rather
+    /// than failing the whole file and resetting every other preference in it.
+    #[test]
+    fn a_settings_file_without_widgets_loads_with_no_placements() {
+        let parsed: Settings =
+            serde_json::from_str(r#"{"server_url":"https://kept.example"}"#).expect("must parse");
+
+        assert_eq!(parsed.server_url, "https://kept.example");
+        assert!(parsed.widgets.is_empty());
+    }
+
+    /// The widget map is OWNED by an `AppState` mutex, so the save-time
+    /// composition must let [`from_state`]'s copy stand — exactly like
+    /// `temple_calibration` above and unlike the window and overlay rows.
+    ///
+    /// Fails if `widgets` is ever added to [`persist_overlay_settings`], which
+    /// would carry the file's stale placement back over the one
+    /// `set_widget_geometry` just wrote and make every drag revert on the next
+    /// save from any unrelated command.
+    #[test]
+    fn forget_screen_scale_does_not_carry_a_stale_widget_placement_back() {
+        let state = test_app_state();
+        *state.screen.lock().unwrap() = None;
+        state.widgets.lock().unwrap().insert(
+            "temple.board".to_string(),
+            WidgetGeometry { x: 900, y: 120, width: 200, height: 200, visible: true },
+        );
+        // What the file still says — the placement before the user dragged it.
+        let existing = Settings {
+            widgets: [(
+                "temple.board".to_string(),
+                WidgetGeometry { x: 40, y: 40, width: 200, height: 200, visible: true },
+            )]
+            .into_iter()
+            .collect(),
+            ..Settings::default()
+        };
+        let mut about_to_save = from_state(&state);
+
+        forget_screen_scale(&existing, &mut about_to_save);
+
+        assert_eq!(
+            about_to_save.widgets.get("temple.board").map(|g| (g.x, g.y)),
+            Some((900, 120)),
+            "the owner's placement is what reaches the file, not the file's own",
+        );
+    }
+
+    #[test]
+    fn widgets_for_module_returns_only_that_module_s_placements() {
+        let placed = WidgetGeometry { x: 1, y: 2, width: 3, height: 4, visible: true };
+        let widgets: std::collections::BTreeMap<String, WidgetGeometry> = [
+            ("temple.advice".to_string(), placed),
+            ("temple.board".to_string(), placed),
+            ("mercenary.strip".to_string(), placed),
+        ]
+        .into_iter()
+        .collect();
+
+        let ids: Vec<String> = widgets_for_module(&widgets, "temple")
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
+
+        assert_eq!(ids, vec!["temple.advice".to_string(), "temple.board".to_string()]);
+    }
+
+    /// The separator is part of the prefix. Without it a module named `temple`
+    /// would collect a future `temple2`'s widgets and place them in the wrong
+    /// window — the class of bug a bare `starts_with(module)` always has.
+    #[test]
+    fn widgets_for_module_does_not_collect_a_module_whose_name_merely_starts_the_same() {
+        let widgets: std::collections::BTreeMap<String, WidgetGeometry> = [(
+            "temple2.board".to_string(),
+            WidgetGeometry { x: 1, y: 2, width: 3, height: 4, visible: true },
+        )]
+        .into_iter()
+        .collect();
+
+        assert_eq!(widgets_for_module(&widgets, "temple"), vec![]);
+    }
+
+    /// A widget that has never been configured has no row, so the answer for a
+    /// module nobody has placed yet is empty — not a seeded default. The
+    /// frontend registry owns the shipped placement.
+    #[test]
+    fn widgets_for_module_answers_nothing_for_a_module_with_no_placements() {
+        assert_eq!(widgets_for_module(&Default::default(), "temple"), vec![]);
+    }
+
     /// The merge must not resurrect what the load refused. `apply_to_state`
     /// drops a hand-edited value that cannot describe a screen, which leaves
     /// the slice empty — and an empty slice is exactly the condition the merge
@@ -1786,6 +2024,11 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
     *state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()) = settings.normal_variant.clone();
     *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()) = settings.show_low_confidence;
     *state.ui_prefs.lock().unwrap_or_else(|e| e.into_inner()) = settings.ui_prefs.clone();
+    // Widget placements, straight through: unlike `modules` there is no
+    // registry default to overlay here — a widget with no entry renders at the
+    // shipped CSS default the frontend registry holds, and an entry for a
+    // widget this build does not declare is simply never looked up.
+    *state.widgets.lock().unwrap_or_else(|e| e.into_inner()) = settings.widgets.clone();
     // The owner map holds the EFFECTIVE state, not the persisted delta:
     // registry defaults overlaid with what the user chose (see modules.rs).
     *state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()) =

@@ -284,6 +284,18 @@ pub struct AppState {
     /// unit ratio is measured) the temple anchor want to read. `None` until
     /// something measures one; do not read a missing value as 1.0.
     pub screen: Mutex<Option<ssot::ScreenSlice>>,
+    /// Where the user put each overlay WIDGET (POE-225), keyed
+    /// `"<module>.<widget>"` — the owner of `Settings.widgets`.
+    ///
+    /// An owner rather than a read-through to the file because two windows want
+    /// it: the module's fullscreen overlay places its widgets from it, and
+    /// Settings lists and edits the same rows. A `settings::load` per read
+    /// would put a disk round-trip in the overlay's first paint and would let
+    /// the two windows disagree for as long as a save was in flight.
+    ///
+    /// Acquired alone, never inside a module lock (lock order — see
+    /// src/modules.rs).
+    pub widgets: Mutex<std::collections::BTreeMap<String, settings::WidgetGeometry>>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -1303,6 +1315,34 @@ fn set_overlay_config_mode(label: String, on: bool, app: AppHandle) -> Result<()
     Ok(())
 }
 
+/// Whether `label` is currently in widget-configuration mode.
+///
+/// The catch-up half of the ordering contract in `docs/OVERLAY-GUIDE.md`
+/// ("Widget overlays"): Settings sets this flag BEFORE it emits
+/// `widget-config`, so a window that Settings had to CREATE for the config
+/// session — and which therefore had no listener when the event went out —
+/// asks this on mount and finds out anyway. The event stays the fast path for a
+/// window that was already open.
+///
+/// Always false off Windows: the flag lives in the mouse-hook registry, which
+/// is a Windows structure, and a Linux dev build has no click-through to leave.
+#[tauri::command]
+fn get_overlay_config_mode(label: String) -> bool {
+    // One `let` per platform rather than two block expressions: a cfg'd-out
+    // trailing block would leave the Windows build with a `bool` block in
+    // statement position and no tail expression.
+    #[cfg(windows)]
+    let on = overlay_hook::config_mode(&label);
+
+    #[cfg(not(windows))]
+    let on = {
+        let _ = label;
+        false
+    };
+
+    on
+}
+
 #[tauri::command]
 fn get_comparator_data(state: tauri::State<AppState>) -> serde_json::Value {
     state.comparator_data.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -1336,12 +1376,16 @@ fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) -
 /// resizes a window on a caller's say-so and the caller is a webview. `main` is
 /// the app itself and the `overlay-*-pos` config windows are dragged and sized
 /// by the user — a content-driven refit would fight both.
-const RESIZABLE_OVERLAY_LABELS: [&str; 6] = [
+///
+/// `temple` was here and is not any more (POE-225). That window is now the
+/// primary monitor with widgets placed inside it, so a content-driven refit
+/// would shrink the canvas the widgets are positioned against; it sizes to
+/// content per WIDGET, in CSS, and never calls this command.
+const RESIZABLE_OVERLAY_LABELS: [&str; 5] = [
     "comparator",
     "compass",
     "pathstrip",
     "timer",
-    "temple",
     "mercenary",
 ];
 
@@ -1607,6 +1651,53 @@ fn set_mercenary_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool,
         x, y, width: w, height: h, enabled,
     });
     settings::save(&app, &s);
+}
+
+/// Every stored placement for one module's widgets (POE-225).
+///
+/// Read from the OWNER, not from the file: the overlay window asks for this on
+/// its first paint and Settings asks for the same rows while a save may be in
+/// flight, and a `settings::load` per call would let the two answers disagree
+/// (and would put a disk read in the overlay's first frame).
+///
+/// A widget with no entry is absent from the answer rather than filled in with
+/// a default — the shipped defaults are CSS pixels in the frontend registry
+/// (`src/lib/overlay/widgets/widget-registry.ts`), and inventing a physical one
+/// here would need this command to know the display's scale factor.
+#[tauri::command]
+fn get_widget_geometries(
+    module: String,
+    state: tauri::State<'_, AppState>,
+) -> Vec<settings::WidgetGeometryEntry> {
+    let widgets = state.widgets.lock().unwrap_or_else(|e| e.into_inner());
+    settings::widgets_for_module(&widgets, &module)
+}
+
+/// Place one widget and persist the whole map (POE-225).
+///
+/// Owner first, file second, through `persist_settings` — the same order every
+/// owned setting uses, and the reason `Settings.widgets` must never be added to
+/// `persist_overlay_settings`: that function's job is fields no `AppState`
+/// mutex owns, and carrying the file's copy over this one would undo the write
+/// that just happened.
+///
+/// The id is not validated against a widget list. The registry lives in the
+/// frontend, so the only check available here would be a duplicate of it that
+/// could fall out of date, and the failure it would prevent is a dead map entry
+/// nothing ever reads.
+#[tauri::command]
+fn set_widget_geometry(
+    id: String,
+    geometry: settings::WidgetGeometry,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) {
+    state
+        .widgets
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(id, geometry);
+    persist_settings(&app);
 }
 
 #[tauri::command]
@@ -2705,6 +2796,13 @@ fn spawn_focus_poller(app: AppHandle) {
                         log::warn!("game_focused mutex poisoned, recovering");
                         e.into_inner()
                     }) = is_focused;
+                    // Reserved, not consumed: nothing has listened for this since
+                    // `manager.ts`'s `initFocusListener` was deleted with its other
+                    // uncalled window-manager functions (POE-225). Show/hide is
+                    // done below, in Rust, and the frontend reads focus off
+                    // `AppStatus`. Kept because it is the only push signal a future
+                    // window would have, and because removing it is a contract
+                    // change to any page that starts listening.
                     if let Err(e) = app.emit("game-focus-changed", is_focused) {
                         log::warn!("emit game-focus-changed failed: {}", e);
                     }
@@ -3187,6 +3285,7 @@ pub fn run() {
         temple_rearm: AtomicU64::new(0),
         merc_refit: AtomicU64::new(0),
         screen: Mutex::new(None),
+        widgets: Mutex::new(std::collections::BTreeMap::new()),
     };
 
     tauri::Builder::default()
@@ -3245,6 +3344,7 @@ pub fn run() {
             set_overlay_has_content,
             set_overlay_hot_rects,
             set_overlay_config_mode,
+            get_overlay_config_mode,
             get_comparator_data,
             set_overlay_clickthrough,
             request_trade_refresh,
@@ -3261,6 +3361,8 @@ pub fn run() {
             set_timer_overlay_settings,
             get_mercenary_overlay_settings,
             set_mercenary_overlay_settings,
+            get_widget_geometries,
+            set_widget_geometry,
             get_timer_appearance,
             set_timer_appearance,
             get_lab_overlays_enabled,
@@ -3652,6 +3754,15 @@ mod tests {
     #[test]
     fn the_main_window_is_not_a_resizable_overlay() {
         assert!(!is_resizable_overlay_label("main"));
+    }
+
+    /// POE-225: the temple window is the whole primary monitor and its widgets
+    /// size themselves in CSS. A refit of the WINDOW would shrink the canvas
+    /// the widgets' persisted physical coordinates are measured against, so the
+    /// label was removed from the allowlist and must stay off it.
+    #[test]
+    fn the_temple_widget_window_is_not_a_resizable_overlay() {
+        assert!(!is_resizable_overlay_label("temple"));
     }
 
     /// The position config windows are dragged and sized by the USER — a

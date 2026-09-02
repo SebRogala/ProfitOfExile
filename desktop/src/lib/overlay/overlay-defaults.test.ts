@@ -17,6 +17,7 @@
 import { describe, expect, it } from 'vitest';
 import layoutSource from '../../routes/(app)/+layout.svelte?raw';
 import settingsSource from '../pages/SettingsPage.svelte?raw';
+import widgetGeometrySource from './widgets/widget-geometry.ts?raw';
 import { MERC_OVERLAY_DEFAULTS, physicalGeometry } from './overlay-defaults';
 
 /** The two files allowed to place the merc strip, and nobody else. */
@@ -106,5 +107,15 @@ describe('CSS pixels to physical pixels', () => {
 	// zero reaching here would collapse the window to nothing.
 	it('treats a nonsensical scale factor as unscaled', () => {
 		expect(physicalGeometry({ x: 40, y: 300, w: 460, h: 40 }, 0).w).toBe(460);
+	});
+
+	// The second consumer of the conversion (POE-225). The widget engine reasons
+	// its shipped placements in CSS and persists them physical, which is the
+	// same boundary and therefore must be the same rounding — a local
+	// `Math.floor(x * sf)` there would put widgets a pixel off the rectangles
+	// the settings page and the host each computed separately.
+	it('is what the widget engine converts a placement with', () => {
+		expect(widgetGeometrySource).toContain("from '../overlay-defaults'");
+		expect(widgetGeometrySource).toMatch(/physicalGeometry\(\s*rect,\s*scaleFactor\s*\)/);
 	});
 });

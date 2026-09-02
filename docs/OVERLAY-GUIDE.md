@@ -31,7 +31,12 @@ flags and `lab_overlays_enabled` documented here are NOT modules.
    asynchronous and has produced “already exists” failures.
 5. **Settings survival:** overlay settings are not rebuilt from `AppState`.
    `persist_overlay_settings` must copy every persisted overlay field, and
-   `test_overlay_settings_survive_persist_cycle` must cover additions.
+   `test_overlay_settings_survive_persist_cycle` must cover additions. WIDGET
+   placements are the exception and must stay out of that function:
+   `Settings.widgets` IS owned by an `AppState` mutex, so it travels through
+   `from_state`, and carrying the file's copy forward would undo the write
+   `set_widget_geometry` just made. `settings.rs` has a test that fails if it is
+   ever added there.
 6. **Error visibility:** log failed invoke, window, and event operations. Do not
    silently swallow failures in overlay paths.
 
@@ -54,7 +59,7 @@ window's own page:
   `desktop/src/lib/overlay/hot-rects.ts`). A click inside one is consumed and
   re-emitted to that window as `overlay-click {label, x, y}`; everything else
   reaches the game. Declaring nothing — which is what compass, path-strip,
-  timer, temple and the merc strip do — makes a window display-only. Listen with
+  timer and the merc strip do — makes a window display-only. Listen with
   `getCurrentWebviewWindow().listen('overlay-click', …)`; a bare `listen()` from
   `@tauri-apps/api/event` registers for the `Any` target and a labelled
   `emit_to` does not match it (tauri 2.10.3 `manager/mod.rs:602-628`).
@@ -83,14 +88,14 @@ match wins — the hook cannot see z-order.
 The capture/configuration overlay is deliberately interactive and has different
 drag, resize, save, and cancel behavior. Treat it as a third type.
 
-Temple (`temple`) and merc verdict (`mercenary`) are display-only overlays
-COUPLED TO A MODULE FLAG rather than to an overlay setting: the module toggle
-creates and destroys the window, and `desktop/src/lib/overlay/module-lifecycle.ts`
-orders those transitions so a fast off→on→off cannot strand a transparent
+Temple (`temple`) and merc verdict (`mercenary`) are overlays COUPLED TO A
+MODULE FLAG rather than to an overlay setting: the module toggle creates and
+destroys the window, and `desktop/src/lib/overlay/module-lifecycle.ts` orders
+those transitions so a fast off→on→off cannot strand a transparent
 always-on-top window. They still appear in the Rust focus poller's game-focus
 show/hide list and in `set_debug_mode`'s force-show branch. Persisted geometry
-is independent of the coupling: temple has none, the merc strip has
-`mercenary_overlay`.
+is independent of the coupling: the merc strip has `mercenary_overlay`, and the
+temple window has none because it IS the primary monitor (below).
 
 The merc strip's **on-screen lifecycle** (owner decision, 2026-09-01) is: shown
 for as long as a recruit window is being worked — `scanning` (the burst after
@@ -151,6 +156,91 @@ takes focus and stops the capture loop until the game is in front again.
 Closing it means making the command await its own setup and report, which is a
 change to the Rust command rather than a second wait in each creation path.
 
+## Widget overlays
+
+A module may instead open ONE fullscreen, click-through window over the primary
+monitor and place small panels — WIDGETS — inside it. The temple is the first
+(POE-225); the lab windows and the merc strip are not migrated.
+
+- The window is the monitor. `routes/(app)/+layout.svelte` reads
+  `primaryMonitor()` (falling back to `currentMonitor()`), constructs at the
+  monitor's logical size and applies the exact `PhysicalPosition`/`PhysicalSize`
+  in `tauri://created` — guard 3, with the monitor's own scale factor. It has no
+  persisted rect, is not resizable, and is NOT in `RESIZABLE_OVERLAY_LABELS`:
+  `fit_overlay_height` would shrink the canvas every widget's persisted
+  coordinate is measured against.
+- The widgets are declared in
+  `desktop/src/lib/overlay/widgets/widget-registry.ts`, keyed
+  `"<module>.<widget>"`, with shipped defaults in CSS pixels; their placements
+  are persisted in PHYSICAL, window-relative pixels in `Settings.widgets`. That
+  unit is also capture pixels, because the window and every capture are the same
+  monitor — so a user-placed widget and a future game-anchored one need no
+  conversion between them.
+- `WidgetHost.svelte` owns placement, hot rects and click routing. Any element a
+  widget draws with `data-hot` is claimed; one that also carries `data-action`
+  is dispatched through `elementFromPoint`. The window declares nothing of its
+  own, so a widget overlay with no buttons on screen is display-only.
+- **Hot rects and `has_content` are one declaration, not two.** `hit_test` skips
+  a window whose `has_content` is false before it reads a single rect, and the
+  flag starts false, so `use-hot-rects.ts` sets it from the rects' emptiness —
+  armed when the first rect appears, cleared when the last goes away and on
+  teardown. A host that only sent rects would have every button it draws
+  swallowed by the game, silently. The five older overlays each set the flag
+  from their own content rule; a widget window has no separate rule, because
+  "drawing something clickable" and "claiming a rectangle" are the same
+  statement out here.
+- The host is mounted UNCONDITIONALLY by the module's route; the module's own
+  content rule is applied inside the `content` snippet, which receives
+  `(spec, configMode)`. A host behind an `{#if}` has no `widget-config`
+  listener while the module is drawing nothing, so a window flipped into config
+  mode then would be genuinely interactive with no Save and no Cancel on it. In
+  config mode a widget with no content draws a placeholder carrying its name, so
+  an empty frame is still identifiable and still draggable.
+- A widget is CONTENT-SIZED until the user drags an edge: Save persists
+  `width`/`height` of `0` unless that widget was resized in this config session
+  or already had a non-zero stored size, and `placementFor` reads a zero size
+  back as "let the content decide" while applying the registry's shipped width
+  as a `max-width`. Persisting the measured size on every Save would pin every
+  widget in the module the first time any one of them was moved. A stored
+  placement is also clamped to the CURRENT window on load, so a rectangle saved
+  on a larger monitor cannot render entirely off-screen.
+
+### Config-mode ordering contract
+
+Config mode is IN-WINDOW, not a `/overlay?sync=` copy, and the order the three
+steps happen in is what makes it recoverable. Settings (WI-C) does, in this
+order:
+
+1. Ensure the module's window EXISTS and is SHOWN — creating it force-shown if
+   the module is off or the game is not focused, the `set_debug_mode` path for
+   one label. A window that is not on screen cannot be arranged, and one that
+   does not exist has nothing to receive the event.
+2. `set_overlay_config_mode(label, true)` — the Rust flag first, so the mouse
+   hook is already leaving the window alone before it becomes interactive.
+3. Emit `widget-config {module, on: true}`, **webview-scoped** to that label.
+
+The host ALSO queries `get_overlay_config_mode(label)` once on mount, chained
+onto its `widget-config` listener so the listener is registered FIRST — `listen`
+is itself async, and a query that ran beside it could answer false, then miss
+the event that arrived before the listener existed. That query is the catch-up
+path for step 1 creating the window: such a window has no listener when step 3
+fires, and without the query it would sit interactive with no Save and no
+Cancel. Because the flag is set before the emit, the query cannot miss it. The
+two paths may therefore both fire, which is harmless: entering config mode is
+idempotent, so a second Configure press — the user's way out of a window that
+somehow missed both — re-emits safely and never reseeds a drag in progress.
+
+The host owns the way out. Save writes every widget of the module through
+`set_widget_geometry` — committing only the ids whose invoke RESOLVED, and
+staying in config mode with the failure named in the Save/Cancel bar if any
+rejected — and Cancel re-reads the persisted map rather than restoring a
+snapshot taken on the way in (config mode can begin before the first read has
+answered, and restoring an empty snapshot would wipe every placement). Both then
+call `set_overlay_config_mode(label, false)` and emit
+`widget-config-end {module}`, which is what Settings restores the window's
+previous shown/hidden state on. The five per-window config flows above are
+untouched.
+
 ## Current data and lifecycle behavior
 
 - Shared main-window status is event-driven through `status.svelte.ts`.
@@ -202,6 +292,15 @@ regression test/decision.
 Static gates cannot reach these; run them on a Windows build after touching the
 named path.
 
+- **Widget overlay, click-through and the hot rect** (POE-225): with the temple
+  module on and the game focused, click the game through an empty part of the
+  fullscreen window AND through a widget — both must reach the game. Then start
+  the app in debug mode and toggle the module off and on, so the window is built
+  with `?debug` and the temple advice widget draws its `data-hot` probe: a click
+  on the probe must log `hot-rect probe clicked`, and a click one pixel outside
+  it must reach the game. A probe that does nothing means the declaration or the
+  `overlay-click` listener is wrong; a click beside it that does NOT reach the
+  game means the withdrawn/declared rect is too big.
 - **Merc strip, after a row-count change** (the content-driven resize path): let
   the strip redraw at a different height — open a recruit window with a
   different number of rows — then, with the read still running, sweep the mouse
