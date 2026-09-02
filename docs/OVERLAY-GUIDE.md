@@ -146,15 +146,78 @@ follows `game_focused`, which is HELD over our own windows. The two reads are
 deliberately never unified — so a click that focused the verdict overlay would
 drop the raw flag and stop the loop producing the verdict on screen.
 
-Known exposure (measured, not fixed): `set_overlay_clickthrough` is
-fire-and-forget. It spawns a thread that sleeps ~1 s before calling
-`set_ignore_cursor_events`, because the WebView2 HWND is not available sooner,
-so a newly created overlay is INTERACTIVE for about a second and the caller's
-`await` cannot observe a failure in that setup. For display-only overlays this
-is a stray click on the panel; for the merc verdict overlay that click also
-takes focus and stops the capture loop until the game is in front again.
-Closing it means making the command await its own setup and report, which is a
-change to the Rust command rather than a second wait in each creation path.
+**Creation fails loudly if click-through cannot be applied.**
+`set_overlay_clickthrough` still spends ~1 s waiting for the WebView2 HWND — it
+is not available sooner — but it now AWAITS that work and returns
+`Result<(), String>`. Four things can fail it: the label is gone by the time the
+wait elapses (`window-gone`), the HWND never becomes available, the belt below
+finds the style did not take, or `set_ignore_cursor_events(true)` refuses. The
+first three are the live signals; the fourth is close to unreachable, because
+tao's Windows implementation returns `Ok` unconditionally and Tauri only errors
+when the event loop is already gone — it is kept because "close to unreachable"
+is not "cannot happen", and swallowing it is the defect this command was fixed
+for. Registration with the hook is still attempted on every path that has an
+HWND, because a window the caller decides to keep must stay repairable.
+
+`window-gone` carries a machine-readable prefix, and it is the ONE ordinary
+failure: an overlay toggled off inside the 1 s wait looks exactly like this and
+has nothing left to catch a click. The caller reports it as an info line rather
+than a warning (`$lib/overlay/clickthrough-report.ts`); every other reason means
+a live window that may be opaque to the mouse. The literal is pinned at both
+ends, in `lib.rs`'s tests and in `clickthrough-report.test.ts`.
+
+The belt is a Rust-side read-back: after applying, the setup asks the window
+what `WS_EX_TRANSPARENT` it actually carries (`overlay_hook::is_transparent`)
+and fails if it reads back missing. Two things make it a read-back rather than a
+race, and both are load-bearing:
+
+- **`window.hwnd()` is the barrier.** `set_ignore_cursor_events` posts its work
+  to the event loop and returns; `hwnd()` is a blocking round-trip to that same
+  loop, so by the time it answers the style call has been serviced. The belt
+  sits after that call for this reason. Moving it earlier, or making the lookup
+  non-blocking, breaks the ordering silently.
+- **It reads three times, 20 ms apart.** WebView2 is still building children
+  underneath, and child-building is what strips `WS_EX_TRANSPARENT` in the first
+  place, so a verdict that destroys the user's overlay must not rest on one
+  sample. The passing path costs one read; only the failing path pays 40 ms.
+
+An unreadable style is UNKNOWN, not missing — `GetWindowLongW` answers 0 both
+for "no extended styles" and for an error, the same rule the hook's own repair
+uses — so a Win32 hiccup does not tear a working overlay down.
+
+The 500 ms `set_noactivate` re-apply stays fire-and-forget on its own thread: it
+is a repair of a style WebView2 may strip while it builds children, not a gate.
+It resolves the LABEL again rather than reusing the handle it was given, because
+callers now answer a failure by DESTROYING the window and Win32 recycles HWND
+values — a raw handle half a second old can name someone else's window. A
+destroyed overlay leaves the hook's registry through the `Destroyed` arm of
+`on_window_event`, which also tears the hook down when it was the last one.
+
+What the caller does with the failure differs by overlay type, and both answers
+are in `routes/(app)/+layout.svelte`:
+
+- The two MODULE-COUPLED windows (temple, merc) destroy the half-built window
+  and report the creation failed, which `module-lifecycle.ts` retries with its
+  bounded budget. Half-built is worse than absent here — the temple window is
+  the size of the monitor, so one that never became click-through swallows
+  every click on the screen, and a click on the merc strip also takes focus,
+  drops `game_in_foreground` and stops the capture loop.
+- The four LAB overlays (comparator, compass, path strip, timer) REPORT and
+  keep the window: they are small, user-positioned rectangles the user just
+  switched on, and destroying one would read as a toggle that does nothing.
+  Note the split is by OWNER, not by size — the merc strip is small too and is
+  in the group above, because it is coupled to a module flag and a click on it
+  stops the capture loop. Their call is deliberately not
+  awaited before the "hide if the game is not focused" step either — that hide
+  must not wait a second on a window the user is not looking at — so the
+  failure arrives on the promise's `catch`, in the app log as well as the
+  console.
+
+The window is still INTERACTIVE for that ~1 s, which no amount of reporting
+closes: `focus: false` on the constructor stops the window activating itself,
+but a click landing in it during that second still hits the panel. What changed
+is that a setup which never completed is no longer indistinguishable from one
+that did.
 
 ## Widget overlays
 
@@ -293,12 +356,77 @@ The host owns the way out. Save writes every widget of the module through
 staying in config mode with the failure named in the Save/Cancel bar if any
 rejected — and Cancel re-reads the persisted map rather than restoring a
 snapshot taken on the way in (config mode can begin before the first read has
-answered, and restoring an empty snapshot would wipe every placement). Both then
-call `set_overlay_config_mode(label, false)` and emit
-`widget-config-end {module}` — which is what the layout restores the window and
-the module flag on, and what Settings clears its `Configuring…` button and
-re-reads the placements on. The five per-window config flows above are
-untouched.
+answered, and restoring an empty snapshot would wipe every placement).
+
+**The exit is ordered the same way the entry is, and for the same reason:
+nothing local changes until Rust confirms.** Both paths call
+`set_overlay_config_mode(label, false)` FIRST and keep local config mode — the
+widget frames, the draft rectangles and the Save/Cancel bar — until it resolves.
+Only then are the draft dropped and `widget-config-end {module}` emitted, which
+is what the layout restores the window and the module flag on, and what Settings
+clears its `Configuring…` button and re-reads the placements on.
+
+Clearing config mode first was the bug (POE-227): it removed the only controls a
+monitor-sized overlay window has while the window was still interactive, and the
+failure was logged rather than shown — an invisible, always-on-top rectangle
+eating every click over the game with nothing on it to press. Emitting
+`widget-config-end` on that path made it worse, ending the session everywhere
+except on the window the user was stuck inside.
+
+**A refusal RE-ASSERTS config mode before it shows the error, and that is not
+belt-and-braces.** Read the Rust side's asymmetry first: on the way OUT,
+`set_overlay_config_mode` clears its own registry flag and re-applies
+`WS_EX_NOACTIVATE` even when `set_ignore_cursor_events(true)` failed, then
+returns the error. Leaving the flag set would strand the window — the hook skips
+a config-mode window and would never repair it. That is right for Rust and it
+costs the host its retry: with the flag cleared the hook resumes repairing
+`WS_EX_TRANSPARENT` on the next mouse move, so within one twitch of the cursor
+the window is click-through again and the bar the host just decided to keep is
+no longer clickable. So the host sends `set_overlay_config_mode(label, true)`
+before rendering the failure, and the wording turns on whether THAT landed:
+re-asserted means "press Save or Cancel again", and a re-assert that failed too
+means the window cannot be recovered from the inside and the way back is
+Configure in Settings. The decision is `configExitDecision` in
+`$lib/overlay/widgets/widget-config-exit.ts`.
+
+**The layout puts a floor under a session that never ends.** Because the host
+can now decline to leave config mode, `widget-config-end` may never arrive —
+and everyone outside the window is waiting on it: Settings on `Configuring…`,
+the module flag possibly forced on, the window possibly force-shown. So
+`routes/(app)/+layout.svelte` arms a deadline where Settings' opening deadline
+stands down (on `widget-config-open`) and clears it in `endWidgetConfig`; if it
+fires, it logs and runs `abandonWidgetConfig`. Ten minutes: far above real
+arranging (the session ends when the user presses Save or Cancel, however long
+they take) and far below "for the rest of the process", which is what a
+forced-on module running a screen-capture loop would otherwise cost. A second
+Configure press re-arms it, which is the honest reading of the user saying they
+are still working.
+
+**An abandon has to reach the WINDOW, not just Settings.** The host listens for
+`widget-config` and nothing else, so restoring the module flag and the button
+while saying nothing to the window would leave Rust's `config_mode` set — the
+re-assert above puts it back on a refused exit — and with it a monitor-sized
+interactive rectangle the mouse hook deliberately skips, now with no Settings
+button left to explain it. `abandonWidgetConfig` therefore does the window
+first, in three steps, and only then restores and emits the end:
+
+1. `widget-config {on: false}`, webview-scoped. The HOST owns the Rust call —
+   its handler runs `exitConfig` — so the ordinary path keeps one owner and the
+   host clears its own frames, draft and bar.
+2. `set_overlay_config_mode(label, false)` direct, as a belt. It covers a host
+   that is unreachable (no listener, a window mid-teardown) and one whose own
+   exit REFUSED, which has just re-asserted config mode and would otherwise
+   leave the flag set behind us. On an abandon the layout wins: the session is
+   coming down whether the window agrees or not.
+3. The same event again. Free when the host has already exited — `exitConfig`
+   returns immediately when it is not in config mode — and it closes the gap
+   step 2 opens: a host that refused in step 1 is still drawing frames over a
+   window that is click-through again, and this repeat is the retry that now
+   succeeds, because step 2 has already put Rust where the host needs it.
+
+The same three steps run for a start that never got as far as a host, where the
+belt and the repeat are expected to find nothing. The five per-window config
+flows above are untouched.
 
 ## Current data and lifecycle behavior
 
@@ -331,7 +459,8 @@ runtime failure mode:
   or the established Rust-backed polling path.
 - WebView2 child HWNDs defeat parent-only `WM_NCHITTEST` handling.
 - HWND access immediately after creation can fail; the click-through command
-  delays setup while WebView2 initializes.
+  delays setup while WebView2 initializes. The delay is runtime-earned and
+  stays; what the command no longer does is return before it has elapsed.
 - `focusable: false`, `WS_EX_NOACTIVATE` alone, and Tauri cursor-ignore APIs did
   not provide selective interaction reliably.
 - `onMount` was observed not to run reliably in overlay windows; established
@@ -348,8 +477,14 @@ regression test/decision.
 
 ## Windows smoke checks
 
-Static gates cannot reach these; run them on a Windows build after touching the
-named path.
+Before any Windows build, run `make desktop-check-windows`: it type-checks the
+`cfg(windows)` half of the crate (overlay hook, click-through setup, capture)
+against the `x86_64-pc-windows-gnu` target inside the desktop image, which the
+Linux `cargo check`/`cargo test` gates never compile. It is a type-check only;
+the build itself still happens on Windows CI.
+
+Static gates cannot reach the checks below; run them on a Windows build after
+touching the named path.
 
 - **Widget overlay, click-through and the hot rect** (POE-225): with the temple
   module on and the game focused, click the game through an empty part of the
@@ -365,6 +500,41 @@ named path.
   worth drawing (`overlayShowsBoard`). Outside a temple the window is up and the
   widget renders nothing, so there is no rect to click and the check proves
   nothing.
+- **Click-through actually applied, on every overlay** (POE-227): the command
+  now awaits its own setup and returns a failure, but only Windows can produce
+  one. Toggle each overlay on with the game focused and click the game through
+  it. Then force the failure path once if you can (a label destroyed inside the
+  ~1 s wait — toggle the temple module off and straight back on): the temple
+  window must not be left standing, `module-lifecycle.ts` must log a retry, and
+  the app log must carry the `set_overlay_clickthrough` reason. The Windows
+  branch of this command is TYPE-CHECKED by `make desktop-check-windows`
+  (`clickthrough_setup`, `clickthrough_belt_passes`,
+  `overlay_hook::is_transparent`); only the behaviour is smoke.
+- **Leaving widget-config mode** (POE-227): with the temple widgets being
+  arranged, press Save and then, in a second session, Cancel. Both must close
+  the session — the frames go, the bar goes, Settings' `Configuring…` clears,
+  and the module flag and window visibility return to what they were. This is
+  the ORDERING check: `widget-config-exit.test.ts` pins only the decision, and
+  the sequence that consumes it (invoke first, keep the bar, re-assert on a
+  refusal, emit `widget-config-end` only on the Ok) is in `WidgetHost.svelte`,
+  which has no unit-test harness.
+- **A REFUSED exit from widget-config mode** (POE-227): if
+  `set_overlay_config_mode(label, false)` ever rejects, the red frames and the
+  Save/Cancel bar must REMAIN with the reason in the bar, and — this is the half
+  that is easy to get wrong — the buttons must still respond after the cursor
+  has moved across the window, which is what the re-assert buys. A bar that
+  disappears is the original POE-227 regression; a bar that stays but stops
+  responding means the re-assert is not being sent or is failing silently, and
+  the wording must then be the "press Configure in Settings again" one.
+- **A widget-config session that never ends** (POE-227): leave a session open
+  past `WIDGET_CONFIG_SESSION_MAX_MS` (10 min) without pressing Save or Cancel.
+  The layout must log that it is ending the session from its side and run
+  `abandonWidgetConfig`: Settings' button leaves `Configuring…`, a module this
+  flow force-enabled must go back off rather than keep capturing, and — the half
+  that is invisible from Settings — the WINDOW must come out of config mode
+  with it. Check the last part by clicking the game through where the widgets
+  were: a click that does not reach the game means the abandon restored the
+  outside and left the window interactive, which is the POE-227 N1 regression.
 - **Comparator width, after an overlay-wide CSS change** (added after the
   POE-225 batch, where a `box-sizing: border-box` added to the shared overlay
   layout's reset narrowed the comparator table from 582 px to 560): with the

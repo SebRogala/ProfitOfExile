@@ -111,6 +111,9 @@ merc-seed-art: ## Fetch the merc seed gem art fixture (see its README; honours P
 desktop-check: ## Cargo check desktop (Rust)
 	docker compose run --rm -w /app/desktop/src-tauri desktop cargo check
 
+desktop-check-windows: ## Cargo check desktop for the Windows target (type-checks the cfg(windows) half: overlay hook, click-through, capture)
+	docker compose run --rm -w /app/desktop/src-tauri desktop sh -c 'rustup target add x86_64-pc-windows-gnu >/dev/null 2>&1; cargo check --target x86_64-pc-windows-gnu'
+
 desktop-test: ## Run desktop Rust tests
 	docker compose run --rm -w /app/desktop/src-tauri desktop cargo test
 

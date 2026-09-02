@@ -779,6 +779,28 @@ mod win {
         Some(stop_tx)
     }
 
+    /// Whether `hwnd` currently carries `WS_EX_TRANSPARENT` — the style Tauri's
+    /// `set_ignore_cursor_events(true)` installs on Windows, and the one
+    /// WebView2 strips when it rebuilds child windows.
+    ///
+    /// The read-back half of `set_overlay_clickthrough`'s belt: the Tauri call
+    /// can answer `Ok` on a window whose extended style did not take, and a
+    /// transparent always-on-top window that is NOT click-through swallows
+    /// every click over the game with nothing visible to explain it.
+    ///
+    /// `None` means UNKNOWN, not "not transparent": `GetWindowLongW` answers 0
+    /// both for "no extended styles" and for failure, and an overlay always has
+    /// some, so a zero is not evidence of a missing style. The hook's own
+    /// repair above reads the same value under the same rule — failing a window
+    /// we could not measure would tear down working overlays on a Win32 hiccup.
+    pub unsafe fn is_transparent(hwnd: HWND) -> Option<bool> {
+        let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        if ex == 0 {
+            return None;
+        }
+        Some(ex & WS_EX_TRANSPARENT.0 as i32 != 0)
+    }
+
     pub unsafe fn set_noactivate(hwnd: HWND) {
         let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
         SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as i32);
@@ -794,8 +816,8 @@ mod win {
 
 #[cfg(windows)]
 pub use win::{
-    config_mode, install_hook, invalidate_label, register, set_config_mode, set_has_content,
-    set_hot_rects, set_noactivate, unregister,
+    config_mode, install_hook, invalidate_label, is_transparent, register, set_config_mode,
+    set_has_content, set_hot_rects, set_noactivate, unregister,
 };
 
 /// Whether `label` is currently being arranged by the user — always false where

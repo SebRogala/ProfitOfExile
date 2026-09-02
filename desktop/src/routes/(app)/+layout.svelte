@@ -21,6 +21,7 @@
 		TEMPLE_MODULE_ID,
 		TEMPLE_WINDOW_LABEL
 	} from '$lib/overlay/manager';
+	import { clickthroughReport } from '$lib/overlay/clickthrough-report';
 	import { moduleOverlayDriver } from '$lib/overlay/module-lifecycle';
 	import {
 		widgetConfigEnd,
@@ -89,6 +90,39 @@
 		invoke('set_sidebar_open', { open: next }).catch(e => console.error('set_sidebar_open failed:', e));
 	}
 
+	/**
+	 * A click-through setup that did not land, reported in the app log as well
+	 * as the console (guide guard 6 — a shipped build has no devtools).
+	 *
+	 * `set_overlay_clickthrough` AWAITS its own setup and returns the failure
+	 * now, so there is something real to report: a transparent, always-on-top
+	 * window that is not click-through swallows the player's clicks with nothing
+	 * on screen to explain it. The FOUR lab overlays only REPORT it — they are
+	 * small, user-positioned rectangles, and destroying the one the user just
+	 * switched on would read as a toggle that does nothing. The two
+	 * module-coupled windows (temple, merc) destroy and retry instead, because
+	 * one of them is the size of the monitor and a click on the other stops the
+	 * capture loop; that path is `module-lifecycle.ts`.
+	 *
+	 * So their call is attached rather than awaited. The command spends ~1 s
+	 * waiting for the WebView2 HWND (guide, runtime-earned observations), and
+	 * the "hide if the game is not focused" step that follows every creation
+	 * must not sit on screen for that second on a window nobody is looking at.
+	 * Nothing downstream reads the result, so the `catch` observes it just as
+	 * well as an `await` would.
+	 *
+	 * Not every failure is a warning: a window destroyed inside that 1 s wait is
+	 * what an ordinary toggle-off looks like and has nothing left to eat a
+	 * click. `clickthroughReport` is that decision, out where it can be tested.
+	 */
+	function logClickthroughFailure(label: string, e: unknown): void {
+		const report = clickthroughReport(label, e);
+		if (report.level === 'error') console.error(`[overlay] ${report.message}`);
+		else console.info(`[overlay] ${report.message}`);
+		invoke('app_log_from_frontend', { msg: report.message })
+			.catch(err => console.error('[overlay] app log unreachable:', err));
+	}
+
 	// Comparator overlay state
 	let comparatorActive = $state(false);
 	let comparatorWin = $state<any>(null);
@@ -129,8 +163,9 @@
 
 		win.once('tauri://created', async () => {
 			await win.setPosition(new PhysicalPosition(physX, physY));
-			await invoke('set_overlay_clickthrough', { label: 'comparator' })
-				.catch(e => console.error('[overlay] click-through setup failed:', e));
+			// Reported, not awaited — see `logClickthroughFailure`.
+			void invoke('set_overlay_clickthrough', { label: 'comparator' })
+				.catch(e => logClickthroughFailure('comparator', e));
 			comparatorWin = win;
 			comparatorActive = true;
 
@@ -214,8 +249,9 @@
 		win.once('tauri://created', async () => {
 			await win.setPosition(new PhysicalPosition(physX, physY));
 			await win.setSize(new PhysicalSize(w, h));
-			await invoke('set_overlay_clickthrough', { label: 'compass' })
-				.catch(e => console.error('[overlay] compass click-through setup failed:', e));
+			// Reported, not awaited — see `logClickthroughFailure`.
+			void invoke('set_overlay_clickthrough', { label: 'compass' })
+				.catch(e => logClickthroughFailure('compass', e));
 			compassWin = win;
 			compassActive = true;
 
@@ -295,8 +331,9 @@
 		win.once('tauri://created', async () => {
 			await win.setPosition(new PhysicalPosition(physX, physY));
 			await win.setSize(new PhysicalSize(w, h));
-			await invoke('set_overlay_clickthrough', { label: 'pathstrip' })
-				.catch(e => console.error('[overlay] pathstrip click-through setup failed:', e));
+			// Reported, not awaited — see `logClickthroughFailure`.
+			void invoke('set_overlay_clickthrough', { label: 'pathstrip' })
+				.catch(e => logClickthroughFailure('pathstrip', e));
 			pathstripWin = win;
 			pathstripActive = true;
 
@@ -373,8 +410,9 @@
 		win.once('tauri://created', async () => {
 			await win.setPosition(new PhysicalPosition(physX, physY));
 			await win.setSize(new PhysicalSize(w, h));
-			await invoke('set_overlay_clickthrough', { label: 'timer' })
-				.catch(e => console.error('[overlay] timer click-through setup failed:', e));
+			// Reported, not awaited — see `logClickthroughFailure`.
+			void invoke('set_overlay_clickthrough', { label: 'timer' })
+				.catch(e => logClickthroughFailure('timer', e));
 			timerWin = win;
 			timerActive = true;
 
@@ -561,14 +599,18 @@
 					// `[data-hot]` element its widgets draw. Registering is what
 					// lets the hook repair the WS_EX_TRANSPARENT WebView2 strips.
 					//
-					// MEASURED: this command is fire-and-forget. Rust spawns a
-					// thread that sleeps ~1 s before `set_ignore_cursor_events`
-					// (the WebView2 HWND is not available sooner — see the guide's
-					// runtime-earned observations), so the await below returns
-					// long before click-through is installed and this try/catch
-					// cannot see a failure in it. The window is briefly
-					// INTERACTIVE after creation; a click landing in that second
-					// hits the board instead of the game.
+					// AWAITED, and it is the gate this creation turns on. The
+					// command spends ~1 s waiting for the WebView2 HWND (the
+					// guide's runtime-earned observations) and then reports
+					// whether the window is actually click-through; it used to
+					// return before doing any of that, so this try/catch could
+					// not see a failure and a window that never became
+					// click-through was kept. THIS window is the size of the
+					// monitor: an invisible, always-on-top one that is not
+					// click-through swallows every click on the screen until it
+					// is destroyed. Which is what the catch does — and the
+					// `false` sends the failure back to `module-lifecycle.ts`,
+					// whose bounded retry builds it again.
 					await invoke('set_overlay_clickthrough', {
 						label: TEMPLE_WINDOW_LABEL,
 					});
@@ -715,6 +757,60 @@
 	const WIDGET_WINDOW_WAIT_MS = 10_000;
 	const WIDGET_WINDOW_POLL_MS = 150;
 
+	/**
+	 * How long an OPEN config session may run before this file ends it itself.
+	 *
+	 * Not the same clock as Settings' opening deadline, which bounds the OPENING
+	 * only and stands down on `widget-config-open`. This one starts where that
+	 * one stops, and it exists because the host can now decline to end a session:
+	 * `WidgetHost.svelte` keeps config mode when `set_overlay_config_mode(label,
+	 * false)` refuses, which is right for the user in front of the window and
+	 * leaves everyone else waiting — Settings on `Configuring…`, the module flag
+	 * possibly forced on, the window possibly force-shown. Without a floor under
+	 * it, a window whose exit can never succeed runs a capture loop the user
+	 * never asked for until the app is restarted.
+	 *
+	 * Ten minutes because it must sit far above real arranging — the session ends
+	 * when the user presses Save or Cancel, however long they take, and dragging
+	 * widgets around a board is minutes, not seconds — and far below "for the
+	 * rest of the session". A user still arranging at ten minutes loses the
+	 * frames and presses Configure again; a stuck one gets their module back.
+	 */
+	const WIDGET_CONFIG_SESSION_MAX_MS = 10 * 60_000;
+
+	/**
+	 * The armed deadlines, by module. Also the record of which sessions this file
+	 * has seen OPEN and not yet seen end — which is what the timer needs and
+	 * `widgetConfigSessions` cannot answer, because a session that forced nothing
+	 * still has to be reported to Settings.
+	 */
+	const widgetConfigDeadlines = new Map<string, ReturnType<typeof setTimeout>>();
+
+	function clearWidgetConfigDeadline(module: string): void {
+		const timer = widgetConfigDeadlines.get(module);
+		if (timer === undefined) return;
+		clearTimeout(timer);
+		widgetConfigDeadlines.delete(module);
+	}
+
+	/** Arm the deadline for a session that is now open. Re-arming on a second
+	 *  Configure press restarts the clock, which is the honest reading: the user
+	 *  just told us they are still working on this module. */
+	function armWidgetConfigDeadline(module: string): void {
+		clearWidgetConfigDeadline(module);
+		widgetConfigDeadlines.set(
+			module,
+			setTimeout(() => {
+				widgetConfigDeadlines.delete(module);
+				logWidgetConfig(
+					module,
+					`still in configuration after ${Math.round(WIDGET_CONFIG_SESSION_MAX_MS / 60_000)} min — ending the session from here`
+				);
+				void abandonWidgetConfig(module);
+			}, WIDGET_CONFIG_SESSION_MAX_MS)
+		);
+	}
+
 	/** The starts currently in flight, by module. A second Configure press during
 	 *  the wait above would re-derive the session against a half-built world,
 	 *  fail, and abandon the FIRST press — disabling the module under it. */
@@ -832,6 +928,9 @@
 			await getCurrentWebviewWindow()
 				.emit('widget-config-open', { module })
 				.catch((e: any) => logWidgetConfig(module, `could not confirm config mode to Settings: ${e}`));
+			// Armed where Settings' opening deadline stands down, so exactly one
+			// clock is running on this module at any moment.
+			armWidgetConfigDeadline(module);
 		} catch (e) {
 			// Settings is sitting on "Configuring...", and nothing else will
 			// answer it: the host that emits `widget-config-end` is in the window
@@ -842,6 +941,11 @@
 	}
 
 	async function endWidgetConfig(module: string): Promise<void> {
+		// First, and unconditionally: this runs for an end that arrived normally,
+		// for one this file's own deadline produced, and for a module that never
+		// had a session at all. A timer left armed past any of them would abandon
+		// the NEXT session ten minutes in.
+		clearWidgetConfigDeadline(module);
 		const target = WIDGET_CONFIG_TARGETS[module];
 		// The state of the world NOW, not when the session opened: if the game is
 		// back in front, the poller has already shown this window and wants it
@@ -863,10 +967,56 @@
 		if (ended.actions.disableModule) await setModuleEnabledForSession(target.moduleId, false);
 	}
 
-	/** Undo the session and tell Settings, for a start that never got as far as a
-	 *  host. The echo the emit produces on our own listener is a no-op — the
-	 *  session is already closed by then. */
+	/**
+	 * End the session from THIS side: take the window out of config mode, undo
+	 * what the session forced, and tell Settings.
+	 *
+	 * Two callers with the same need. A start that never got as far as a host
+	 * (no window, or a command that failed) — and the deadline above, which fires
+	 * on a session the host has declined to end. The second is why the window
+	 * half exists at all: the host listens for `widget-config` and nothing else,
+	 * so restoring Settings and the module flag without telling the window would
+	 * leave Rust's `config_mode` set — the re-assert in `WidgetHost.exitConfig`
+	 * puts it back on a refused exit — and with it a monitor-sized interactive
+	 * rectangle the mouse hook deliberately skips, with no Settings button left
+	 * to say so.
+	 *
+	 * The window is dealt with BEFORE the restore, because the restore may hide
+	 * or tear the window down, and the three steps are in this order:
+	 *
+	 * 1. `widget-config {on: false}` to the window. The HOST owns the Rust call
+	 *    — its handler runs `exitConfig` — so the normal path keeps one owner and
+	 *    the host clears its frames, its draft and its bar itself.
+	 * 2. The belt, direct to Rust. It covers a host that is unreachable (no
+	 *    listener, a window mid-teardown) and a host whose own exit REFUSED, in
+	 *    which case it has just re-asserted config mode and would otherwise leave
+	 *    the flag set behind us. On an abandon the layout wins: the session is
+	 *    being taken down whether the window agrees or not.
+	 * 3. The same event again. Free when the host has already exited (its
+	 *    `configMode` guard drops it), and it is what closes the one gap step 2
+	 *    opens: a host that refused in step 1 is still drawing frames over a
+	 *    window that is click-through again, and this repeat is the retry that
+	 *    now succeeds, because step 2 has already put Rust where the host needs
+	 *    it. Without it the user is left with painted frames and dead buttons.
+	 *
+	 * The echo the final `widget-config-end` produces on our own listener is a
+	 * no-op — the session is already closed by then.
+	 */
 	async function abandonWidgetConfig(module: string): Promise<void> {
+		const target = WIDGET_CONFIG_TARGETS[module];
+		if (target) {
+			await emitTo(target.label, 'widget-config', { module, on: false }).catch((e: any) =>
+				logWidgetConfig(module, `could not ask the window to leave config mode: ${e}`)
+			);
+			// Expected to fail when there is no window — this is also the path a
+			// start that never built one takes — so it is a note, not an alarm.
+			await invoke('set_overlay_config_mode', { label: target.label, on: false }).catch(
+				(e: any) => logWidgetConfig(module, `direct config-mode clear did not apply: ${e}`)
+			);
+			await emitTo(target.label, 'widget-config', { module, on: false }).catch((e: any) =>
+				logWidgetConfig(module, `could not repeat the leave request: ${e}`)
+			);
+		}
 		await endWidgetConfig(module);
 		await getCurrentWebviewWindow()
 			.emit('widget-config-end', { module })
@@ -1017,24 +1167,23 @@
 				try {
 					await win.setPosition(new PhysicalPosition(geometry.x, geometry.y));
 					await win.setSize(new PhysicalSize(geometry.w, geometry.h));
-					// Display-only: interactive width 0, like compass/pathstrip/timer
-					// and the temple. Do NOT copy the comparator's right-edge zone —
-					// a focused own-window stops the capture loop.
+					// Display-only: it declares no hot rects, like
+					// compass/pathstrip/timer and the temple. Do NOT copy the
+					// comparator's right-edge zone — a focused own-window stops
+					// the capture loop.
 					//
-					// MEASURED: this command is fire-and-forget. Rust spawns a
-					// thread that sleeps ~1 s before `set_ignore_cursor_events`
-					// (the WebView2 HWND is not available sooner), so the await
-					// returns long before click-through is installed and the
-					// catch below cannot observe a failure in it. For this
-					// overlay that second has teeth: the window IS interactive
-					// until the thread runs, and a click landing on it takes
-					// focus, drops `game_in_foreground`, and stops the capture
-					// loop producing the verdict. Left as-is deliberately — the
-					// fix belongs in the Rust command (make it await and report),
-					// not in a second copy of the wait here. `focus: false` on
-					// the constructor covers only the OTHER half of that second:
-					// the window no longer ACTIVATES itself on creation, but a
-					// click that lands in it still does.
+					// AWAITED, and it is the gate this creation turns on. The
+					// command spends ~1 s waiting for the WebView2 HWND and then
+					// reports whether the window is actually click-through; it
+					// used to return before doing any of that, so the catch below
+					// could not observe a failure. For this overlay a window that
+					// stays interactive has teeth beyond a stray click: a click
+					// landing on it takes focus, drops `game_in_foreground`, and
+					// stops the capture loop producing the verdict. So a failed
+					// setup destroys it and reports the creation failed, which is
+					// what `module-lifecycle.ts`'s bounded retry acts on.
+					// `focus: false` on the constructor covers the other half:
+					// the window does not ACTIVATE itself on creation.
 					await invoke('set_overlay_clickthrough', {
 						label: MERCENARY_WINDOW_LABEL,
 					});
