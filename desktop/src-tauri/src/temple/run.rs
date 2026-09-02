@@ -17,6 +17,19 @@
 //! Linux container compiling the code it is meant to protect. This follows
 //! `mercenary::run`, which does the same.
 //!
+//! # Before any of it: the arm gate (POE-242)
+//!
+//! The four gates below are all *inside* a tick. Ahead of them sits the one
+//! that decides whether a tick runs at all: the loop captures only while
+//! Client.txt has put an incursion in scope ([`super::trigger`]). Until then it
+//! publishes [`TempleStatus::Waiting`] once and naps — no capture, no
+//! correlation, nothing. The module being ON is not the trigger; Alva is.
+//!
+//! [`loop_step`] is that gate plus the focus check and the cadence check, as
+//! one pure function, so the property that matters ("a disarmed loop never
+//! reaches `capture_screen`") is a property of the step rather than of a
+//! status.
+//!
 //! # Four gates before an expensive read
 //!
 //! A full read is 28 OCR calls: two bounded crops for the side panel and the
@@ -106,6 +119,7 @@ use super::markers;
 use super::panel::{self, SystemOcr};
 use super::reader::{self, TempleLayout};
 use super::slice::{self, TempleSettings, TempleSlice, TempleStatus};
+use super::trigger;
 
 /// Loop quantum. Every wait is built out of these, so a stop signal is honoured
 /// within one of them whatever the cadence above it says.
@@ -321,6 +335,131 @@ pub fn wants_full_read(
     read
 }
 
+// ------------------------------------------------------ the loop's step --
+
+/// What one iteration of the loop does, decided before anything is captured.
+///
+/// The whole of the POE-242 gate is here, as a total function of three
+/// booleans, so "a disarmed loop never captures" is a property of the STEP
+/// rather than of a status the loop happens to publish. `capture_screen` is
+/// reached from exactly one arm of the loop's `match` — [`Self::Detect`] — and
+/// [`loop_step`] is the only thing that can return it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopStep {
+    /// The game is not the foreground window. The layout panel is not on
+    /// screen, so there is nothing to look at.
+    UnfocusedNap,
+    /// Nothing has armed the module ([`super::trigger`]): the player is in a
+    /// map, or a town, and Alva has not spoken.
+    DisarmedNap,
+    /// Armed, and the next detect tick is not due yet.
+    Quantum,
+    /// Armed and due: run [`tick`], which captures.
+    Detect,
+}
+
+impl LoopStep {
+    /// How long the loop waits after this step.
+    ///
+    /// The two nap steps take the SECOND, not the loop quantum: a disarmed loop
+    /// is the state a session spends nearly all its time in, and waking it ten
+    /// times a second to re-ask a question whose answer arrives on another
+    /// thread would spend most of what the gate just saved. Cancellation is
+    /// unaffected — [`nap`] polls the stop signal every [`TICK`] whatever it is
+    /// handed.
+    pub fn nap(self) -> Duration {
+        match self {
+            LoopStep::UnfocusedNap | LoopStep::DisarmedNap => UNFOCUSED_NAP,
+            LoopStep::Quantum | LoopStep::Detect => TICK,
+        }
+    }
+}
+
+/// The loop's gate, in one pure function. Focus first, the arm second, the
+/// cadence last.
+pub fn loop_step(focused: bool, armed: bool, detect_due: bool) -> LoopStep {
+    if !focused {
+        return LoopStep::UnfocusedNap;
+    }
+    if !armed {
+        return LoopStep::DisarmedNap;
+    }
+    if detect_due {
+        LoopStep::Detect
+    } else {
+        LoopStep::Quantum
+    }
+}
+
+/// The status to publish for a gate that just moved — or for one whose
+/// announcement something else wrote over — and `None` while neither happened.
+///
+/// `said` is the armed-ness the loop last announced (`None` before the first
+/// one) and `status` is what the slice holds right now. Publishing on the
+/// TRANSITION rather than every iteration is what keeps the gate from writing
+/// over a board that is on screen: an armed loop that has read a panel sits at
+/// [`TempleStatus::Read`], and re-announcing `Idle` under it once a second
+/// would mark the board stale ten times a temple.
+///
+/// # Why `status` is read at all
+///
+/// A transition-only gate is a WRITE-ONCE announcement, and POE-171 finding 15
+/// is the case that loses it: a retiring loop's `Stopping → Idle` publish can
+/// land after the new loop's `Waiting`, and a disarmed loop that already `said`
+/// `false` would never republish — the page would sit on `idle` ("about to
+/// read") for the rest of a session that is not looking at all. So the DISARMED
+/// half is re-asserted whenever applying it would still move the status: while
+/// the loop is not looking, it owns the status outright.
+///
+/// The ARMED half is not re-asserted, because `Reading` / `Read` over an
+/// `Idle` announcement is the loop's own work rather than a foreign write.
+///
+/// Re-assertion is keyed on [`next_status`] rather than on `status ==
+/// Waiting` so a status no tick result can leave ([`TempleStatus::Unavailable`])
+/// does not turn into one publish and one log line per second.
+pub fn gate_announcement(
+    said: Option<bool>,
+    armed: bool,
+    status: TempleStatus,
+) -> Option<TickOutcome> {
+    let outcome = if armed {
+        TickOutcome::Armed
+    } else {
+        TickOutcome::Disarmed
+    };
+    if said != Some(armed) {
+        return Some(outcome);
+    }
+    if armed {
+        return None;
+    }
+    (next_status(status, TickOutcome::Disarmed).status != status).then_some(outcome)
+}
+
+/// The app-log line for a gate that just changed — one per transition, beside
+/// the publish [`gate_announcement`] asked for.
+///
+/// **The capture loop is the one owner of the arm/disarm app-log line.**
+/// `trigger::on_client_line` writes the arm STATE and says nothing: it fires on
+/// every Client.txt transition whether or not the module is running, so letting
+/// it log too put two lines in `app.log` for one event whenever the module was
+/// on. This one is the fact a smoke run is checking — the capture loop saying it
+/// has started (or stopped) looking — and it covers the arm that expires on
+/// [`super::trigger::ALVA_TAIL_MS`] with no log line behind it at all, which the
+/// trigger could not have reported.
+fn gate_line(armed: bool, reason: Option<trigger::ArmReason>) -> String {
+    match (armed, reason) {
+        (true, Some(reason)) => format!(
+            "Temple: capture armed by {} — looking for the layout panel",
+            reason.label()
+        ),
+        (true, None) => "Temple: capture armed — looking for the layout panel".to_string(),
+        (false, _) => {
+            "Temple: capture stood down — waiting for Alva (Re-arm forces a read)".to_string()
+        }
+    }
+}
+
 // --------------------------------------------------- the status machine --
 
 /// What one loop event says about the module's state.
@@ -338,6 +477,20 @@ pub enum TickOutcome {
     /// The tick ran clean and a panel anchored. A full read follows, which
     /// publishes its own status through [`slice::project`].
     Anchored,
+    /// The arm gate closed (POE-242): nothing in Client.txt puts an incursion
+    /// in scope, so the loop is not capturing. Not a tick — no tick ran.
+    Disarmed,
+    /// The arm gate opened. Also not a tick: it is the announcement that the
+    /// loop has started looking again, published BEFORE the first read.
+    ///
+    /// What it moves is the STATUS, not the board — [`apply_status`] writes
+    /// `status` and `last_error` and touches nothing else. The overlay is the
+    /// surface that reacts: `Idle` is not in the webview's
+    /// `OVERLAY_VISIBLE_STATUSES`, so the board stops floating over the game
+    /// while the loop looks for a new one. The Temple PAGE keeps drawing the
+    /// last board it was given, under a badge that now reads
+    /// `watching for the layout panel`.
+    Armed,
     /// The loop is shutting down.
     Stopping,
 }
@@ -379,6 +532,13 @@ pub fn next_status(prev: TempleStatus, outcome: TickOutcome) -> StatusUpdate {
         TickOutcome::Failed => (TempleStatus::Error, false),
         TickOutcome::NoPanel => (TempleStatus::PanelNotVisible, true),
         TickOutcome::Anchored => (TempleStatus::Reading, true),
+        // The two gate events clear for the same reason [`TickOutcome::Stopping`]
+        // does: a loop that is not looking is not reporting a live board, and
+        // the failure it had while it WAS looking is no longer something the
+        // user can act on. Leaving the message standing under a `waiting` badge
+        // is the drift this machine exists to prevent, one status further on.
+        TickOutcome::Disarmed => (TempleStatus::Waiting, true),
+        TickOutcome::Armed => (TempleStatus::Idle, true),
         // A stopped loop is not reporting a live board, and the reason the last
         // error happened is no longer something the user can act on.
         TickOutcome::Stopping => (TempleStatus::Idle, true),
@@ -805,6 +965,12 @@ struct Session {
     /// change, and a hint that is merely in the wrong PLACE costs one windowed
     /// correlation and is caught by the nominating pass on the same tick.
     cheap_hint: Option<CheapHint>,
+    /// The armed-ness the loop last announced, `None` before the first one.
+    /// See [`gate_announcement`] — it is what makes `Waiting` one publish
+    /// rather than one per nap. Not the only input: the slice's own status is
+    /// read alongside it, so an announcement another thread wrote over comes
+    /// back.
+    gate_said: Option<bool>,
 }
 
 fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
@@ -833,6 +999,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         errors: ErrorLog::default(),
         last_panel_check: Instant::now(),
         cheap_hint: None,
+        gate_said: None,
     };
     // Backdated so the first iteration ticks immediately rather than after a
     // full cadence of doing nothing.
@@ -843,32 +1010,66 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             break;
         }
 
-        if !game_focused(&app) {
-            // No capture while alt-tabbed: the layout panel is not on screen,
-            // and a full-screen anchor match every second would be pure heat.
-            if !nap(&cancel, UNFOCUSED_NAP) {
-                break;
+        // No capture while alt-tabbed: the layout panel is not on screen, and a
+        // full-screen anchor match every second would be pure heat. The arm
+        // gate (POE-242) is asked only behind it, for two reasons: the loop
+        // publishes nothing at all while the game is not in front (see
+        // `TempleStatus::Idle`), and an unfocused iteration does the same thing
+        // either way.
+        let focused = game_focused(&app);
+        let arm = if focused {
+            trigger::arm_state(&app)
+        } else {
+            trigger::TempleArm::Disarmed
+        };
+        let armed = arm.is_armed(now_ms());
+        if focused {
+            // Decided UNDER the slice lock, against the status the slice
+            // actually holds, so a foreign write (POE-171 finding 15) is
+            // corrected on the next iteration rather than standing forever —
+            // see `gate_announcement`.
+            let said = session.gate_said;
+            let mut announced = None;
+            publish(&app, |slice| {
+                if let Some(outcome) = gate_announcement(said, armed, slice.status) {
+                    apply_status(slice, outcome);
+                    announced = Some(outcome);
+                }
+            });
+            if announced.is_some() {
+                crate::app_log(&app, gate_line(armed, arm.reason()));
+                session.gate_said = Some(armed);
             }
-            continue;
         }
 
-        if last_detect.elapsed() >= session.state.detect_interval() {
-            let started = Instant::now();
-            let promoted = tick(&app, &mut session, &cancel);
-            last_detect = Instant::now();
-            if session.state.note_tick_duration(started.elapsed(), promoted) {
-                crate::app_log(
-                    &app,
-                    format!(
-                        "Temple: detect tick took {} ms — cadence backing off to {} s",
-                        started.elapsed().as_millis(),
-                        DETECT_INTERVAL_SLOW.as_secs()
-                    ),
-                );
+        let step = loop_step(
+            focused,
+            armed,
+            last_detect.elapsed() >= session.state.detect_interval(),
+        );
+        // A `match` and not an `if`, so a fifth [`LoopStep`] cannot be added
+        // without deciding here whether it captures.
+        match step {
+            LoopStep::Detect => {
+                let started = Instant::now();
+                let promoted = tick(&app, &mut session, &cancel);
+                last_detect = Instant::now();
+                if session.state.note_tick_duration(started.elapsed(), promoted) {
+                    crate::app_log(
+                        &app,
+                        format!(
+                            "Temple: detect tick took {} ms — cadence backing off to {} s",
+                            started.elapsed().as_millis(),
+                            DETECT_INTERVAL_SLOW.as_secs()
+                        ),
+                    );
+                }
             }
+            // Nothing to do but wait: `step.nap()` below is the whole of it.
+            LoopStep::UnfocusedNap | LoopStep::DisarmedNap | LoopStep::Quantum => {}
         }
 
-        if !nap(&cancel, TICK) {
+        if !nap(&cancel, step.nap()) {
             break;
         }
     }
@@ -883,6 +1084,12 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
     // thread's first one, overwriting it. Inherited from `mercenary::run`,
     // which has the same shape; the shared fix is a slice generation counter
     // both loops stamp, not a change here.
+    //
+    // The ARM GATE is no longer exposed to it (POE-242): a disarmed loop
+    // publishes `Waiting` once and then never again, so this `Idle` landing on
+    // top of it would have stuck for the session. `gate_announcement` reads the
+    // slice's own status and re-asserts the disarmed half, so the next
+    // iteration puts `Waiting` back.
     publish(&app, |slice| apply_status(slice, TickOutcome::Stopping));
     crate::app_log(&app, "Module temple: stopped".to_string());
 }
@@ -1539,6 +1746,162 @@ mod tests {
         );
     }
 
+    // ------------------------------------------------------- the arm gate --
+
+    /// The POE-242 bug, as an invariant over the whole input space: the only
+    /// iteration that captures is a focused, armed one whose cadence is due.
+    ///
+    /// Fails if the arm gate is dropped, or placed AFTER the cadence check, or
+    /// read as "armed or due" — each of which puts `capture_screen` back on a
+    /// map, which is the owner report this work item answers.
+    #[test]
+    fn only_a_focused_armed_iteration_on_cadence_reaches_the_capture_step() {
+        for focused in [false, true] {
+            for armed in [false, true] {
+                for due in [false, true] {
+                    assert_eq!(
+                        loop_step(focused, armed, due) == LoopStep::Detect,
+                        focused && armed && due,
+                        "focused={focused} armed={armed} due={due}",
+                    );
+                }
+            }
+        }
+    }
+
+    /// A disarmed loop naps like an alt-tabbed one, not like a loop between
+    /// ticks. Fails if the disarmed step takes the cadence quantum — the loop
+    /// would then wake ten times a second for the whole of a session it is
+    /// meant to be asleep for.
+    #[test]
+    fn a_disarmed_loop_naps_the_full_second_rather_than_the_cadence_quantum() {
+        assert_eq!(loop_step(true, false, true).nap(), UNFOCUSED_NAP);
+    }
+
+    /// An armed loop that is not due yet still waits on the quantum, so the
+    /// next tick lands on the cadence rather than a second late. Fails if
+    /// `Quantum` and `DisarmedNap` are collapsed into one step — which is one
+    /// wrong change, so the step and the wait it buys are one outcome here.
+    #[test]
+    fn an_armed_loop_between_ticks_waits_one_quantum() {
+        assert_eq!(loop_step(true, true, false), LoopStep::Quantum);
+        assert_eq!(LoopStep::Quantum.nap(), TICK);
+    }
+
+    /// `Waiting` is published on the way into the disarmed state and NOT on
+    /// every nap after it. Fails if the announcement is unconditional: the loop
+    /// would then take the slice mutex and clone the slice once a second for
+    /// the whole of a session that has no incursion in it.
+    #[test]
+    fn a_disarmed_loop_announces_waiting_exactly_once() {
+        assert_eq!(
+            gate_announcement(None, false, TempleStatus::Idle),
+            Some(TickOutcome::Disarmed),
+        );
+
+        assert_eq!(
+            gate_announcement(Some(false), false, TempleStatus::Waiting),
+            None,
+            "and not again",
+        );
+    }
+
+    /// POE-171 finding 15, as it reaches this gate: a retiring loop's
+    /// `Stopping → Idle` lands after the new loop's `Waiting`. A disarmed loop
+    /// publishes nothing more, so a transition-only gate would leave the page
+    /// reading `idle` ("about to read") for the rest of a session that is not
+    /// looking at all.
+    ///
+    /// Fails if the announcement is keyed on `said` alone — which is what it
+    /// was before this test existed.
+    #[test]
+    fn a_foreign_idle_over_a_disarmed_loop_is_corrected_on_the_next_iteration() {
+        assert_eq!(
+            gate_announcement(Some(false), false, TempleStatus::Idle),
+            Some(TickOutcome::Disarmed),
+        );
+    }
+
+    /// The re-assertion must not turn a status no tick result can leave into a
+    /// publish and a log line every second. `Unavailable` is that status: it
+    /// means capture or OCR is missing for the life of the process, and
+    /// [`next_status`] holds it against every outcome.
+    ///
+    /// Fails if the re-assertion is keyed on `status == Waiting` rather than on
+    /// whether applying `Disarmed` would move the status.
+    #[test]
+    fn a_disarmed_loop_does_not_re_announce_over_an_unavailable_module() {
+        assert_eq!(
+            gate_announcement(Some(false), false, TempleStatus::Unavailable),
+            None,
+        );
+    }
+
+    /// The gate opening is announced too — otherwise the page would sit on
+    /// `waiting` until the first read landed. Fails if only the disarm is
+    /// announced.
+    #[test]
+    fn a_gate_that_opens_announces_itself() {
+        assert_eq!(
+            gate_announcement(Some(false), true, TempleStatus::Waiting),
+            Some(TickOutcome::Armed),
+        );
+    }
+
+    /// An armed loop that has read a board must not have `Idle` written over it
+    /// every iteration. Fails if the armed half is re-asserted the way the
+    /// disarmed half is — the page's board would be marked stale once a second
+    /// for the length of a temple.
+    #[test]
+    fn an_armed_loop_does_not_re_announce_over_a_board_it_has_read() {
+        assert_eq!(gate_announcement(Some(true), true, TempleStatus::Read), None);
+    }
+
+    /// The two lines `docs/OVERLAY-GUIDE.md` smoke item 12 tells the runner to
+    /// look for. Fails if the arms are swapped — the log would then say the
+    /// capture armed at the moment it stood down, which is the one thing that
+    /// item is measuring.
+    #[test]
+    fn the_gate_line_says_which_way_the_gate_moved() {
+        assert_eq!(
+            gate_line(true, Some(trigger::ArmReason::AlvaLine)),
+            "Temple: capture armed by Alva — looking for the layout panel",
+        );
+        assert_eq!(
+            gate_line(false, None),
+            "Temple: capture stood down — waiting for Alva (Re-arm forces a read)",
+        );
+    }
+
+    /// The status the arm gate publishes, and the one the plan names: "on,
+    /// waiting for Alva". Fails if the disarmed loop keeps publishing `idle`,
+    /// which reads as "running and about to read" — the exact wrong answer to
+    /// "why is nothing happening?".
+    #[test]
+    fn a_disarmed_gate_publishes_waiting() {
+        let mut slice = TempleSlice::default();
+
+        apply_status(&mut slice, TickOutcome::Disarmed);
+
+        assert_eq!(slice.status, TempleStatus::Waiting);
+    }
+
+    /// Arming returns the module to `Idle` BEFORE the first read, so a board
+    /// read during the previous incursion is not still presented as current
+    /// while the loop looks for a new one. Fails if `Armed` leaves `Waiting`
+    /// standing, or lands on `Reading` (which would claim a read in flight).
+    #[test]
+    fn arming_returns_the_module_to_idle_before_the_first_read() {
+        let mut slice = TempleSlice {
+            status: TempleStatus::Waiting,
+            ..TempleSlice::default()
+        };
+
+        apply_status(&mut slice, TickOutcome::Armed);
+
+        assert_eq!(slice.status, TempleStatus::Idle);
+    }
+
     // ---------------------------------------------------- status machine --
 
     /// The bug this machine exists for: one transient capture failure while no
@@ -1606,6 +1969,8 @@ mod tests {
             TickOutcome::Failed,
             TickOutcome::NoPanel,
             TickOutcome::Anchored,
+            TickOutcome::Disarmed,
+            TickOutcome::Armed,
             TickOutcome::Stopping,
         ] {
             let mut slice = TempleSlice {

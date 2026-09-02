@@ -180,6 +180,43 @@ pub fn parse_nav_event(line: &str, in_lab: bool) -> Option<NavEvent> {
     None
 }
 
+/// How much of the log's tail a catch-up pass reads.
+///
+/// 32KB covers hundreds of `[WINDOW]` focus lines, which are what push area
+/// entries far back in a file that is otherwise quiet.
+pub const CATCH_UP_TAIL_BYTES: u64 = 32_768;
+
+/// The last [`CATCH_UP_TAIL_BYTES`] of the log as text, first partial line
+/// dropped. `None` for a missing, unreadable or empty file.
+///
+/// The size every catch-up pass shares. `temple::trigger::catch_up` takes its
+/// whole answer from this function (POE-242); [`replay_recent_log`] calls
+/// [`read_tail`] directly for its first step, because it needs `file_len` again
+/// for its second, larger read and would otherwise stat the file twice. Both go
+/// through [`CATCH_UP_TAIL_BYTES`], so the two passes cannot disagree about how
+/// far back "recent" reaches — but they are two reads, not one.
+pub fn recent_log_tail(path: &Path) -> Option<String> {
+    let file_len = std::fs::metadata(path)
+        .map_err(|e| log::warn!("recent_log_tail: metadata failed: {}", e))
+        .ok()?
+        .len();
+    if file_len == 0 {
+        return None;
+    }
+    read_tail(path, file_len, CATCH_UP_TAIL_BYTES)
+}
+
+/// The newest `You have entered X.` area in `tail`, or `None` when it holds no
+/// area line at all.
+///
+/// Where the player is standing, as far as the log knows. Separate from
+/// [`replay_recent_log`], which answers the LAB's question ("is this area a lab
+/// room?") and returns nav events; this one answers "what is the current area?"
+/// and returns its name, which is what the temple trigger needs.
+pub fn newest_entered_area(tail: &str) -> Option<&str> {
+    tail.lines().rev().find_map(parse_entered_area)
+}
+
 /// Reconstruct current lab state from Client.txt on startup/overlay toggle.
 ///
 /// Two-step read to minimize I/O:
@@ -202,8 +239,8 @@ pub fn replay_recent_log(path: &Path) -> (Vec<NavEvent>, bool) {
         return (vec![], false);
     }
 
-    // Step 1: read to check in_lab — 32KB covers hundreds of [WINDOW] focus lines
-    let probe = match read_tail(path, file_len, 32_768) {
+    // Step 1: read to check in_lab — see `CATCH_UP_TAIL_BYTES`
+    let probe = match read_tail(path, file_len, CATCH_UP_TAIL_BYTES) {
         Some(s) => s,
         None => return (vec![], false),
     };
@@ -458,5 +495,77 @@ mod tests {
         let (events, in_lab) = replay_recent_log(path);
         assert!(events.is_empty());
         assert!(!in_lab);
+    }
+
+    /// A freshly rotated Client.txt: the file is there and holds nothing. The
+    /// callers treat `None` as "no answer" and leave their state alone, so
+    /// handing them `Some("")` would read as "the log says you are nowhere".
+    #[test]
+    fn test_recent_log_tail_is_none_for_an_empty_file() {
+        let dir = std::env::temp_dir().join("poe_test_tail_empty");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("Client_empty.txt");
+        std::fs::File::create(&path).unwrap();
+
+        assert_eq!(recent_log_tail(&path), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The seek lands mid-line in any log worth reading, and half a line is not
+    /// a line: `temple::trigger::catch_up` reads the FIRST line of this buffer
+    /// as an area candidate like any other, and a fragment of `: You have
+    /// entered The Temple of Atzoatl.` would still parse.
+    ///
+    /// Every line here is exactly 100 bytes and the file is 34 000, so the
+    /// `CATCH_UP_TAIL_BYTES` boundary falls 32 bytes into a line — the whole
+    /// point of the arithmetic. A dropped truncation step leaves a 67-byte
+    /// first line.
+    #[test]
+    fn test_recent_log_tail_drops_the_truncated_first_line() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("poe_test_tail_truncated");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("Client_truncated.txt");
+        let mut f = std::fs::File::create(&path).unwrap();
+        for i in 0..340u32 {
+            let line = format!("{i:04} 2026/04/01 19:00:00 1234 [INFO Client 1] padding");
+            writeln!(f, "{line:<99}").unwrap();
+        }
+        drop(f);
+
+        let tail = recent_log_tail(&path).expect("a tail for a non-empty file");
+
+        assert_eq!(
+            tail.lines().next().map(str::len),
+            Some(99),
+            "the first line must be a whole one, not the tail of one",
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Where the player is standing is the LAST area the log names, not the
+    /// first. Fails if the scan runs forwards — a tail that still holds an
+    /// earlier temple entry would then report the temple for the rest of the
+    /// session.
+    #[test]
+    fn test_newest_entered_area_takes_the_newest_not_the_first() {
+        let tail = "\
+2026/04/01 20:00:00 1234 [INFO Client 1] : You have entered The Temple of Atzoatl.
+2026/04/01 20:10:00 1234 [INFO Client 1] : You have entered Ancient City.
+";
+
+        assert_eq!(newest_entered_area(tail), Some("Ancient City"));
+    }
+
+    /// A tail with no area line in it answers nothing, and `None` is how the
+    /// callers hear that — `temple::trigger::catch_up_state` turns it into
+    /// `Disarmed` rather than a guess.
+    #[test]
+    fn test_newest_entered_area_is_none_without_an_area_line() {
+        let tail = "2026/04/01 20:00:00 1234 [INFO Client 1] Izaro: Ascend with precision.\n";
+
+        assert_eq!(newest_entered_area(tail), None);
     }
 }

@@ -25,6 +25,9 @@
 //! - [`advisor`] (POE-170) — the board graph, the Monte-Carlo rollout and the
 //!   rule layer that ranks `(architect kill, door set)` and decides whether to
 //!   leave the map. Consumes every module above it and is pure.
+//! - [`trigger`] (POE-242) — what puts an incursion in scope, and so whether
+//!   [`run`]'s loop may capture at all: a pure state machine over the Client.txt
+//!   lines Alva and the temple area write, plus a thin `AppState` wrapper.
 //! - The overlay (POE-171) lands as a sibling module and is the only intended
 //!   consumer of this one.
 //!
@@ -74,6 +77,7 @@ pub mod rooms;
 pub mod run;
 pub mod slice;
 pub mod strategy;
+pub mod trigger;
 
 /// Why a screenshot did not yield a board.
 ///

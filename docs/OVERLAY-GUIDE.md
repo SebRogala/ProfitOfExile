@@ -763,6 +763,43 @@ touching the named path.
   one succeeds. All three lines are on the same cadence — the first, then every
   tenth of a run — so a rate of roughly one line per minute in the chronic case
   is the design, not a lost log.
+- **The temple captures only when Alva says so** (POE-242, item 12 of the
+  POE-223 smoke list): with the temple module on and the game focused, stand in
+  a map with no incursion running. The Temple page's status must read **on,
+  waiting for Alva** and `app.log` must carry ONE `Temple: capture stood down`
+  line — one, not one a second. Then start an incursion: the log gets
+  `Temple: capture armed by Alva` (exactly one line — the capture loop owns the
+  arm/disarm line, the Client.txt trigger writes state and says nothing), the
+  status returns to `idle`, and opening the layout panel reads the board as
+  before. Walk into the temple and out again: the arm survives the whole run (an
+  area arm carries no deadline) and the `You have entered` line back into the map
+  stands it down. Restart the app INSIDE the temple — the catch-up must log
+  `the log's newest area is the temple, armed` rather than leaving the module
+  waiting for a line that is never coming. A tail with **no** `You have entered`
+  line in it (a quiet log, or one truncated between area changes) seeds
+  `Disarmed` by design — Re-arm is the recovery, not a bug to report.
+
+  **The open questions this item exists to answer.** Three reads, in this order:
+
+  1. **The decision read — the one that decides the design.** Open Alva's
+     dialogue and the layout panel BEFORE clicking *Enter Incursion*. Does the
+     module read the board? Client.txt cannot answer this: the measured file
+     shows only that Alva's start line exists, not whether it fires when the
+     dialogue opens or when *Enter Incursion* is clicked. If it fires on the
+     click, the panel was open while the module was disarmed and this read is
+     LOST — and there is **no earlier signal in Client.txt to move to**. The
+     owner then picks between the free-running cheap detect POE-242 replaced and
+     giving up the decision read. Weak evidence for the good case (the start
+     line lands 3–7 s after `[WINDOW] Gained focus`) is not a measurement.
+  2. **The post-incursion read.** After the incursion, back in the map, open the
+     panel again. Does it read? This one is expected to pass and is measured:
+     the incursion instance logs no area change at all, so the arm bought at the
+     start survives the whole incursion and `Good job…` extends it.
+  3. **The hideout read.** Open the layout panel from Alva IN THE HIDEOUT, with
+     no incursion and no voice line. Does the module read it, or does it need
+     Re-arm? If it needs Re-arm, a hideout arm is a follow-up — the premise that
+     the panel is only ever opened with an Alva line or the temple area in scope
+     is UNVERIFIED (see `temple/trigger.rs`).
 
 ## Adding an overlay
 

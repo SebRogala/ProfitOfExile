@@ -216,6 +216,16 @@ pub enum TempleStatus {
     /// standing rather than reverting to this one.
     #[default]
     Idle,
+    /// Running, and NOT capturing: nothing in Client.txt has put an incursion
+    /// in scope (POE-242).
+    ///
+    /// The loop's resting state, and where a session spends nearly all of its
+    /// time. Distinct from [`Self::PanelNotVisible`] on the axis that matters
+    /// to a reader wondering why nothing is happening: `panel_not_visible` is
+    /// the module having LOOKED and seen no panel, this is the module not
+    /// looking. See `super::trigger` for what arms it — an Alva voice line, the
+    /// temple area, or the Re-arm button.
+    Waiting,
     /// The loop looked and found no layout panel.
     PanelNotVisible,
     /// A full read is in flight.
@@ -2223,6 +2233,7 @@ mod tests {
         let statuses = [
             (TempleStatus::Off, "off"),
             (TempleStatus::Idle, "idle"),
+            (TempleStatus::Waiting, "waiting"),
             (TempleStatus::PanelNotVisible, "panel_not_visible"),
             (TempleStatus::Reading, "reading"),
             (TempleStatus::Read, "read"),
