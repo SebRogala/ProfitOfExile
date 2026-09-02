@@ -308,6 +308,15 @@
 		return `(${region.x}, ${region.y}) ${region.w}\u00d7${region.h}`;
 	}
 
+	/** Where the rect beside it came from (POE-233). The row always shows a
+	 *  rect — an unset region is a real, derived rect, not a blank — so this is
+	 *  the only thing that tells the user whether it follows the screen. */
+	function regionSourceLabel(source: 'default' | 'user' | undefined): string {
+		if (source === 'user') return '(set by you)';
+		if (source === 'default') return '(default, scaled from reference)';
+		return '';
+	}
+
 	// --- Comparator Overlay Position (red frame for positioning) ---
 	// --- Trade Staleness Settings ---
 	let tradeStaleWarnSecs = $state(store.status?.trade_stale_warn_secs ?? 120);
@@ -995,7 +1004,11 @@
 					<Button onclick={cancelRegion}>Cancel</Button>
 				{:else}
 					<span class="setting-value mono">{formatRegion(store.status?.gem_region)}</span>
+					<span class="region-source">{regionSourceLabel(store.status?.gem_region_source)}</span>
 					<Button onclick={() => showRegionOverlay('gem')} disabled={!!overlayVisible}>Configure</Button>
+					{#if store.status?.gem_region_source === 'user'}
+						<Button onclick={() => invoke('reset_gem_region').catch(e => console.error(e))} title="Follow the measured screen again">Reset to default</Button>
+					{/if}
 				{/if}
 			</div>
 
@@ -1007,7 +1020,11 @@
 					<Button onclick={cancelRegion}>Cancel</Button>
 				{:else}
 					<span class="setting-value mono">{formatRegion(store.status?.font_region)}</span>
+					<span class="region-source">{regionSourceLabel(store.status?.font_region_source)}</span>
 					<Button onclick={() => showRegionOverlay('font')} disabled={!!overlayVisible}>Configure</Button>
+					{#if store.status?.font_region_source === 'user'}
+						<Button onclick={() => invoke('reset_font_region').catch(e => console.error(e))} title="Follow the measured screen again">Reset to default</Button>
+					{/if}
 				{/if}
 			</div>
 		</section>
@@ -1316,6 +1333,12 @@
 	.setting-value.mono {
 		font-family: 'Consolas', 'Courier New', monospace;
 		letter-spacing: 0.1em;
+	}
+
+	.region-source {
+		font-size: 0.72rem;
+		color: var(--text-muted);
+		white-space: nowrap;
 	}
 
 	.setting-note {

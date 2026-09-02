@@ -621,6 +621,13 @@ pub fn publish_screen(app: &AppHandle, next: ScreenSlice) -> ScreenRecord {
     };
     if record.changed {
         emit_ssot(app);
+        // `AppStatus::gem_region` and `font_region` are DERIVED from this scale
+        // (`crate::effective_region`), so a new measurement silently moves the
+        // rects the Settings rows display. `ssot-changed` does not carry them —
+        // they live on `status-changed` — so without this the Settings row keeps
+        // showing the rect measured against the previous screen until some
+        // unrelated command happens to re-emit status.
+        crate::emit_status(app);
     }
     record
 }

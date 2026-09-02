@@ -23,8 +23,15 @@ export interface AppStatus {
 	client_txt_path: string;
 	client_txt_exists: boolean;
 	server_url: string;
+	/** The gem rect the OCR loop crops with — the user's if they placed one,
+	 *  otherwise the reference rect scaled to the measured screen (POE-233). */
 	gem_region: { x: number; y: number; w: number; h: number };
+	/** `'user'` when the rect above was placed in Settings, `'default'` when it
+	 *  was derived from the reference rect. Only a `'user'` rect can be reset. */
+	gem_region_source: 'default' | 'user';
 	font_region: { x: number; y: number; w: number; h: number };
+	/** See `gem_region_source`. */
+	font_region_source: 'default' | 'user';
 	sidebar_open: boolean;
 	game_focused: boolean;
 	trade_stale_warn_secs: number;
