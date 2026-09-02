@@ -17,8 +17,34 @@ const SETTINGS_FILENAME: &str = "settings.json";
 pub struct Settings {
     pub client_txt_path: String,
     pub server_url: String,
-    pub gem_region: CaptureRegion,
-    pub font_region: CaptureRegion,
+    /// The gem OCR rect the user placed in Settings, or `None` when they never
+    /// placed one — in which case the app derives it from
+    /// [`crate::GEM_REGION_REF`] and the measured screen (POE-233).
+    ///
+    /// **Migration.** Before POE-233 this field was non-optional and every file
+    /// ever written carried the shipped 1080p literal, whether or not the user
+    /// had touched the region. A persisted rect EQUAL to
+    /// [`crate::SHIPPED_GEM_REGION_1080P`] is therefore read back as `None`
+    /// ([`user_set_region`]), so those users get the scaled default instead of a
+    /// 1080p rect frozen as an override. The cost is exact and accepted: a user
+    /// who deliberately placed the region on the shipped literal loses that
+    /// choice and gains the same rect on a 1080p screen, and a different one on
+    /// any other screen (on the 1200p machine the same user gets
+    /// `{33, 50, 611, 83}`).
+    ///
+    /// **`skip_serializing_if` is a rollback guard, not tidiness.** Serialised
+    /// as `"gem_region": null`, this field is REJECTED by the pre-POE-233 build
+    /// whose field was non-optional — `load` there discards the whole file and
+    /// the next persist overwrites it with defaults, so a beta-channel rollback
+    /// would cost the user every setting. Omitting the key entirely reads as
+    /// "absent" on both builds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gem_region: Option<CaptureRegion>,
+    /// The font panel rect the user placed, or `None` — same migration rule as
+    /// [`Settings::gem_region`], against [`crate::SHIPPED_FONT_PANEL_1080P`],
+    /// and the same rollback guard.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_region: Option<CaptureRegion>,
     pub window: Option<WindowSettings>,
     pub sidebar_open: bool,
     pub comparator_overlay: Option<OverlaySettings>,
@@ -479,8 +505,8 @@ impl Default for Settings {
         Self {
             client_txt_path: crate::detect_client_txt_path(),
             server_url: String::from(option_env!("POE_SERVER_URL").unwrap_or("https://profitofexile.localhost")),
-            gem_region: CaptureRegion::default(),
-            font_region: CaptureRegion::default_font_panel(),
+            gem_region: None,
+            font_region: None,
             window: None,
             sidebar_open: true,
             comparator_overlay: None,
@@ -553,6 +579,23 @@ fn settings_path(app: &tauri::AppHandle) -> Option<PathBuf> {
 }
 
 /// Load settings from disk. Returns defaults if file doesn't exist or is invalid.
+/// Read a persisted lab OCR rect as an OVERRIDE: a rect that is the shipped
+/// 1080p literal was never a choice, so it comes back as `None`.
+///
+/// Pure and separate from [`load`] because it is the whole of the POE-233
+/// migration — every settings file written before that change carries the
+/// shipped literal in a field that had no way to say "unset", and reading those
+/// back as overrides would freeze every existing user on a 1080p rect for good.
+fn user_set_region(
+    persisted: Option<CaptureRegion>,
+    shipped: &CaptureRegion,
+) -> Option<CaptureRegion> {
+    match persisted {
+        Some(ref rect) if rect == shipped => None,
+        other => other,
+    }
+}
+
 pub fn load(app: &tauri::AppHandle) -> Settings {
     let path = match settings_path(app) {
         Some(p) => p,
@@ -561,8 +604,11 @@ pub fn load(app: &tauri::AppHandle) -> Settings {
     match fs::read_to_string(&path) {
         Ok(contents) => {
             match serde_json::from_str::<Settings>(&contents) {
-                Ok(s) => {
+                Ok(mut s) => {
                     log::info!("Settings loaded from {:?}", path);
+                    s.gem_region = user_set_region(s.gem_region, &crate::SHIPPED_GEM_REGION_1080P);
+                    s.font_region =
+                        user_set_region(s.font_region, &crate::SHIPPED_FONT_PANEL_1080P);
                     s
                 }
                 Err(e) => {
@@ -818,8 +864,8 @@ mod tests {
             detected_gems: Mutex::new(Vec::new()),
             lab_state: Mutex::new(crate::lab_state::LabState::Idle),
             logs: Mutex::new(Vec::new()),
-            gem_region: Mutex::new(CaptureRegion::default()),
-            font_region: Mutex::new(CaptureRegion::default_font_panel()),
+            gem_region: Mutex::new(None),
+            font_region: Mutex::new(None),
             sidebar_open: Mutex::new(true),
             game_focused: Mutex::new(false),
             trade_client: crate::trade::TradeApiClient::new(),
@@ -2259,6 +2305,129 @@ mod tests {
         // Overlay should still be from existing file
         let compass = target.compass_overlay.expect("compass_overlay lost");
         assert_eq!(compass.x, 50);
+    }
+
+    // --- the lab OCR regions (POE-233) ---------------------------------------
+    //
+    // These pin the MIGRATION, which is the half of POE-233 that can silently
+    // hurt existing users: the resolution arithmetic itself is pinned beside
+    // `effective_region` in lib.rs.
+
+    /// Every settings.json written before POE-233 carries the shipped 1080p
+    /// rect in a field that had no way to say "the user never set one". Read
+    /// back as an override it would pin every existing user to a 1080p rect
+    /// forever — on a 1440p screen, permanently 25% too small — and no UI would
+    /// say why, because the row would look identical to a deliberate choice.
+    #[test]
+    fn a_persisted_rect_equal_to_the_shipped_default_loads_as_unset() {
+        let loaded = user_set_region(
+            Some(crate::SHIPPED_GEM_REGION_1080P),
+            &crate::SHIPPED_GEM_REGION_1080P,
+        );
+
+        assert_eq!(loaded, None, "an untouched region must not survive as an override");
+    }
+
+    /// The other side of the same rule, and the one that makes it safe: a rect
+    /// the user actually placed is not the shipped literal, so it is kept.
+    #[test]
+    fn a_persisted_rect_the_user_placed_loads_as_an_override() {
+        let placed = CaptureRegion { x: 120, y: 64, w: 700, h: 90 };
+
+        let loaded = user_set_region(Some(placed.clone()), &crate::SHIPPED_GEM_REGION_1080P);
+
+        assert_eq!(loaded, Some(placed));
+    }
+
+    /// A file written AFTER POE-233 by a user who never placed a region has no
+    /// rect at all (serde fills the field from `Settings::default`). It must
+    /// stay unset rather than acquiring the shipped literal on the way in,
+    /// which would re-create the very override this migration removes.
+    #[test]
+    fn an_absent_rect_stays_unset() {
+        assert_eq!(user_set_region(None, &crate::SHIPPED_FONT_PANEL_1080P), None);
+    }
+
+    /// The whole chain for a placed region: owner → [`from_state`] → the JSON
+    /// text that reaches the disk → [`apply_to_state`] → owner. Asymmetric
+    /// numbers on all four fields because a crossed pair (`x`/`y` are `i32`,
+    /// `w`/`h` are `u32`) would put the crop somewhere plausible instead of
+    /// somewhere obviously wrong.
+    #[test]
+    fn a_placed_gem_region_round_trips_through_state_and_the_file() {
+        let saved_from = test_app_state();
+        *saved_from.gem_region.lock().unwrap() =
+            Some(CaptureRegion { x: 118, y: 64, w: 702, h: 91 });
+
+        let text = serde_json::to_string(&from_state(&saved_from)).expect("must serialize");
+        let parsed: Settings = serde_json::from_str(&text).expect("its own output must parse");
+        let loaded_into = test_app_state();
+        let _ = apply_to_state(&parsed, &loaded_into);
+
+        assert_eq!(
+            *loaded_into.gem_region.lock().unwrap(),
+            Some(CaptureRegion { x: 118, y: 64, w: 702, h: 91 }),
+        );
+    }
+
+    /// The unset case must survive the file as unset. It is the one that
+    /// regresses invisibly: a projection that wrote the RESOLVED rect instead
+    /// of the override would turn "follows the screen" into a frozen override
+    /// on the next save, for every user, without anyone touching a setting.
+    #[test]
+    fn an_unset_font_region_round_trips_through_state_and_the_file_as_unset() {
+        let saved_from = test_app_state();
+        *saved_from.font_region.lock().unwrap() = None;
+
+        let text = serde_json::to_string(&from_state(&saved_from)).expect("must serialize");
+        let parsed: Settings = serde_json::from_str(&text).expect("its own output must parse");
+        let loaded_into = test_app_state();
+        *loaded_into.font_region.lock().unwrap() =
+            Some(CaptureRegion { x: 1, y: 2, w: 3, h: 4 });
+        let _ = apply_to_state(&parsed, &loaded_into);
+
+        assert_eq!(*loaded_into.font_region.lock().unwrap(), None);
+    }
+
+    /// The rollback guard. Written as `"gem_region": null`, this field is
+    /// rejected by the pre-POE-233 build whose `gem_region` was non-optional:
+    /// its `load` fails the whole parse, falls back to `Settings::default()`,
+    /// and the next persist overwrites the file — every stored setting gone
+    /// because one field said `null`. The beta channel makes that rollback a
+    /// real path, so the unset region must leave NO key behind.
+    #[test]
+    fn an_unset_gem_region_writes_no_key_at_all() {
+        let text = serde_json::to_string(&Settings { gem_region: None, ..Settings::default() })
+            .expect("must serialize");
+
+        assert!(!text.contains("gem_region"), "an unset region must be absent, not null: {text}");
+    }
+
+    /// Same guard for the font panel, whose field carries the same attribute
+    /// and the same rollback consequence.
+    #[test]
+    fn an_unset_font_region_writes_no_key_at_all() {
+        let text = serde_json::to_string(&Settings { font_region: None, ..Settings::default() })
+            .expect("must serialize");
+
+        assert!(!text.contains("font_region"), "an unset region must be absent, not null: {text}");
+    }
+
+    /// The other side of the skip: a region the user placed still reaches the
+    /// file, with its values. A `skip_serializing` (no `_if`) would satisfy the
+    /// two tests above while silently dropping every user's override.
+    #[test]
+    fn a_placed_gem_region_still_writes_its_key_and_values() {
+        let text = serde_json::to_string(&Settings {
+            gem_region: Some(CaptureRegion { x: 118, y: 64, w: 702, h: 91 }),
+            ..Settings::default()
+        })
+        .expect("must serialize");
+
+        assert!(
+            text.contains(r#""gem_region":{"x":118,"y":64,"w":702,"h":91}"#),
+            "a placed region must reach the file verbatim: {text}",
+        );
     }
 }
 

@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CaptureRegion {
     pub x: i32,
     pub y: i32,
@@ -30,18 +30,153 @@ pub struct CaptureRegion {
     pub h: u32,
 }
 
-impl Default for CaptureRegion {
-    fn default() -> Self {
-        // Default for 1080p — gem name tooltip area
-        Self { x: 30, y: 45, w: 550, h: 75 }
+/// The gem name tooltip rect in REFERENCE px — the 1920x1200 unit
+/// [`ssot::ScreenSlice::ui_scale`] measures, where 1080p is 0.90 (the game's UI
+/// scales with screen HEIGHT).
+///
+/// **Derived, not measured, and provisional until both smoke machines (laptop
+/// 1.0, PC 0.90) confirm it.** The number it comes from is the shipped 1080p
+/// literal [`SHIPPED_GEM_REGION_1080P`], divided by 0.90 and rounded:
+/// `{30, 45, 550, 75} / 0.90 = {33.3, 50, 611.1, 83.3}`. The rounding is
+/// lossless in the direction that matters — scaling these back by 0.90 and
+/// rounding reproduces the shipped literal exactly, which
+/// `the_gem_reference_rect_reproduces_the_shipped_1080p_rect` pins — so no
+/// 1080p user's crop moves by this change.
+///
+/// **Aspect assumption.** `ui_scale` is tied to HEIGHT, so scaling `x`/`w` by it
+/// assumes the layout is as wide, relative to its height, as the reference —
+/// 16:9 or the 16:10 reference itself. Both smoke machines are 1920 wide, so a
+/// non-16:9 monitor is UNVERIFIED. Nothing here centres or letterboxes the rect;
+/// inventing a centring model without a screenshot to check it against would be
+/// a guess wearing arithmetic.
+pub const GEM_REGION_REF: CaptureRegion = CaptureRegion { x: 33, y: 50, w: 611, h: 83 };
+
+/// The font panel rect (craft options + "Crafts Remaining") in REFERENCE px.
+/// Same derivation and the same provisional status as [`GEM_REGION_REF`]:
+/// `{460, 270, 530, 350} / 0.90 = {511.1, 300, 588.9, 388.9}`.
+pub const FONT_PANEL_REF: CaptureRegion = CaptureRegion { x: 511, y: 300, w: 589, h: 389 };
+
+/// What [`effective_region`] assumes when NOTHING has measured a screen: that
+/// the game is running at 1080p. It is the `ui_scale` a 1920x1080 screen
+/// measures (1080/1200).
+///
+/// This is deliberately NOT the README's fail-closed rule for
+/// [`ssot::ScreenSlice`] readers, and the difference is worth being explicit
+/// about: a widget that fails closed simply is not drawn, while an OCR loop that
+/// fails closed stops reading gems at all. Assuming 1080p keeps EXACTLY the
+/// pre-POE-233 behaviour for an unmeasured screen — the same rect the app has
+/// always cropped — and the scan loops say so once per session in the app log
+/// instead of the assumption being silent.
+pub const ASSUMED_UI_SCALE: f32 = 0.90;
+
+/// The gem rect this app shipped with, a fixed 1080p literal. Two live roles:
+/// it is what [`effective_region`] falls back to (via [`ASSUMED_UI_SCALE`]), and
+/// it is the value [`settings::user_set_region`] treats as "the user never set
+/// one" when it loads a settings file written before POE-233.
+pub const SHIPPED_GEM_REGION_1080P: CaptureRegion = CaptureRegion { x: 30, y: 45, w: 550, h: 75 };
+
+/// The font panel rect this app shipped with. Same two roles as
+/// [`SHIPPED_GEM_REGION_1080P`].
+pub const SHIPPED_FONT_PANEL_1080P: CaptureRegion =
+    CaptureRegion { x: 460, y: 270, w: 530, h: 350 };
+
+/// The rect a lab OCR loop crops with: the user's if they set one, else the
+/// reference rect scaled to the measured screen, else the shipped 1080p rect.
+///
+/// Pure, and the only place the three-way choice is made — `build_status`, both
+/// scan loops and the Settings "Configure" overlay all resolve through it, so
+/// what the user sees in Settings is what the OCR crops.
+///
+/// The `None` `ui_scale` branch is "assume 1080p", not fail-closed: see
+/// [`ASSUMED_UI_SCALE`] for why an OCR region differs from a widget rect here.
+/// A `ui_scale` that is not a positive finite number takes that same branch: a
+/// `0.0` or NaN measurement would otherwise collapse the rect to `0x0` or to a
+/// NaN cast (which saturates to `0` in Rust), and an OCR loop cropping nothing
+/// is exactly the fail-closed outcome this function is written to avoid.
+pub fn effective_region(
+    user: Option<CaptureRegion>,
+    reference: CaptureRegion,
+    ui_scale: Option<f32>,
+) -> CaptureRegion {
+    match user {
+        Some(rect) => rect,
+        None => {
+            let scale = ui_scale
+                .filter(|s| s.is_finite() && *s > 0.0)
+                .unwrap_or(ASSUMED_UI_SCALE);
+            scale_region(&reference, scale)
+        }
     }
 }
 
-impl CaptureRegion {
-    /// Default for font panel area (1080p) — craft options + "Crafts Remaining"
-    pub fn default_font_panel() -> Self {
-        Self { x: 460, y: 270, w: 530, h: 350 }
+/// What a Configure → Save should STORE for the rect the user just confirmed:
+/// `None` when it is exactly the rect the screen already derives, `Some`
+/// otherwise.
+///
+/// The overlay opens on the rect IN FORCE ([`get_gem_region`]), so opening
+/// Configure and saving without moving the frame hands the setter the derived
+/// default. Storing that unconditionally would freeze the current screen's
+/// arithmetic as a user override — the region silently stops following the
+/// screen, and the Settings row flips to "user" for a choice nobody made.
+///
+/// Pure so the decision is testable without an `AppHandle`, the same reason
+/// [`effective_region`] is.
+fn region_override(
+    incoming: CaptureRegion,
+    reference: CaptureRegion,
+    ui_scale: Option<f32>,
+) -> Option<CaptureRegion> {
+    if incoming == effective_region(None, reference, ui_scale) {
+        None
+    } else {
+        Some(incoming)
     }
+}
+
+/// Reference px -> physical px, rounded to whole pixels on every field.
+fn scale_region(reference: &CaptureRegion, ui_scale: f32) -> CaptureRegion {
+    CaptureRegion {
+        x: (reference.x as f32 * ui_scale).round() as i32,
+        y: (reference.y as f32 * ui_scale).round() as i32,
+        w: (reference.w as f32 * ui_scale).round().max(0.0) as u32,
+        h: (reference.h as f32 * ui_scale).round().max(0.0) as u32,
+    }
+}
+
+/// The one line a scan loop logs when the rect it asked for came back smaller
+/// than it asked for, `None` when the crop is the requested size.
+///
+/// `image`'s `crop_imm` CLAMPS to the image bounds (`imageops::crop_dimms`:
+/// `x = min(x, iwidth)`, `width = min(width, iwidth - x)`) — it does not panic
+/// and it does not error. So a rect that hangs off the capture is silently a
+/// SMALLER crop, and the OCR just quietly reads less of the panel. Comparing the
+/// sizes is what turns that into a breadcrumb; no clipping is needed, because
+/// the crate already clipped.
+fn crop_shortfall(region: &CaptureRegion, cropped_w: u32, cropped_h: u32) -> Option<String> {
+    if cropped_w == region.w && cropped_h == region.h {
+        return None;
+    }
+    Some(format!(
+        "lab OCR region exceeds the capture — asked for {}x{} at ({}, {}), got {}x{}; the read is of a partial region",
+        region.w, region.h, region.x, region.y, cropped_w, cropped_h,
+    ))
+}
+
+/// How [`AppStatus::gem_region`] was arrived at, for the Settings row.
+fn region_source(user: &Option<CaptureRegion>) -> String {
+    match user {
+        Some(_) => "user".to_string(),
+        None => "default".to_string(),
+    }
+}
+
+/// The measured game-UI scale, or `None` when nothing has measured a screen yet.
+fn measured_ui_scale(state: &AppState) -> Option<f32> {
+    state
+        .screen
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .map(|slice| slice.ui_scale)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -53,8 +188,20 @@ pub struct AppStatus {
     pub client_txt_path: String,
     pub client_txt_exists: bool,
     pub server_url: String,
+    /// The gem rect the OCR loop will actually crop with — the user's if they
+    /// set one, otherwise the reference rect scaled to the measured screen
+    /// (`effective_region`). NOT the stored value: `gem_region_source` says
+    /// which of the two this is.
     pub gem_region: CaptureRegion,
+    /// `"user"` when the rect above came from Settings -> Configure, `"default"`
+    /// when it was derived from `GEM_REGION_REF`. The Settings row needs the
+    /// difference: a derived rect follows the screen and can be reset, a user
+    /// rect does neither.
+    pub gem_region_source: String,
+    /// The font panel rect in force — see `gem_region`.
     pub font_region: CaptureRegion,
+    /// See `gem_region_source`.
+    pub font_region_source: String,
     pub sidebar_open: bool,
     pub game_focused: bool,
     pub trade_stale_warn_secs: u32,
@@ -84,8 +231,18 @@ pub struct AppState {
     pub detected_gems: Mutex<Vec<String>>,
     pub lab_state: Mutex<lab_state::LabState>,
     pub logs: Mutex<Vec<String>>,
-    pub gem_region: Mutex<CaptureRegion>,
-    pub font_region: Mutex<CaptureRegion>,
+    /// The gem OCR rect the USER set in Settings, or `None` when they never did
+    /// (POE-233). The owner of `Settings.gem_region`, and deliberately the
+    /// override alone rather than the resolved rect: a resolved rect stored here
+    /// would be projected straight back into the settings file by
+    /// `settings::from_state`, and every user would silently acquire a
+    /// hand-placed region they never placed.
+    ///
+    /// What the OCR loops crop with is `effective_region(user, ref, ui_scale)`,
+    /// re-resolved per iteration so a mid-session measurement takes effect.
+    pub gem_region: Mutex<Option<CaptureRegion>>,
+    /// The font panel rect the user set, or `None` — see `gem_region`.
+    pub font_region: Mutex<Option<CaptureRegion>>,
     pub sidebar_open: Mutex<bool>,
     pub game_focused: Mutex<bool>,
     pub trade_client: trade::TradeApiClient,
@@ -315,6 +472,12 @@ pub struct AppState {
 fn build_status(state: &AppState) -> AppStatus {
     let client_txt_path = state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let client_txt_exists = std::path::Path::new(&client_txt_path).exists();
+    // Bound here rather than inside the struct literal: a temporary guard in a
+    // literal lives to the end of the whole statement, and `screen` is one of
+    // the mutexes taken alone (see src/modules.rs "Lock order").
+    let ui_scale = measured_ui_scale(state);
+    let gem_user = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let font_user = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
     AppStatus {
         state: format!("{:?}", *state.lab_state.lock().unwrap_or_else(|e| e.into_inner())),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -323,8 +486,10 @@ fn build_status(state: &AppState) -> AppStatus {
         client_txt_path,
         client_txt_exists,
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        gem_region: state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        font_region: state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        gem_region: effective_region(gem_user.clone(), GEM_REGION_REF, ui_scale),
+        gem_region_source: region_source(&gem_user),
+        font_region: effective_region(font_user.clone(), FONT_PANEL_REF, ui_scale),
+        font_region_source: region_source(&font_user),
         sidebar_open: *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()),
         game_focused: *state.game_focused.lock().unwrap_or_else(|e| e.into_inner()),
         trade_stale_warn_secs: *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()),
@@ -775,32 +940,78 @@ fn get_lab_catchup(app: AppHandle) -> serde_json::Value {
     serde_json::json!({ "events": events, "in_lab": in_lab })
 }
 
+/// The gem rect IN FORCE, which is what the Settings "Configure" overlay opens
+/// on. It is the resolved rect, not the stored override — an unset region must
+/// put the frame where the OCR is actually reading, not at (0, 0).
 #[tauri::command]
 fn get_gem_region(state: tauri::State<AppState>) -> CaptureRegion {
-    state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    let user = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    effective_region(user, GEM_REGION_REF, measured_ui_scale(&state))
 }
 
 #[tauri::command]
 fn set_gem_region(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
     let state = app.state::<AppState>();
     let region = CaptureRegion { x, y, w, h };
-    app_log(&app, format!("Region set: ({}, {}) {}x{}", x, y, w, h));
-    *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = region;
+    let stored = region_override(region, GEM_REGION_REF, measured_ui_scale(&state));
+    app_log(
+        &app,
+        match stored {
+            Some(_) => format!("Region set: ({}, {}) {}x{}", x, y, w, h),
+            None => format!(
+                "Region saved unchanged at ({}, {}) {}x{} — left unset so it keeps following the screen",
+                x, y, w, h
+            ),
+        },
+    );
+    *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = stored;
     persist_settings(&app);
     emit_status(&app);
 }
 
+/// Drop the user's gem rect so the region follows the measured screen again.
+#[tauri::command]
+fn reset_gem_region(app: AppHandle) {
+    let state = app.state::<AppState>();
+    app_log(&app, "Gem region reset to the default (scaled from the reference rect)".to_string());
+    *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    persist_settings(&app);
+    emit_status(&app);
+}
+
+/// The font panel rect IN FORCE — see [`get_gem_region`].
 #[tauri::command]
 fn get_font_region(state: tauri::State<AppState>) -> CaptureRegion {
-    state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    let user = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    effective_region(user, FONT_PANEL_REF, measured_ui_scale(&state))
 }
 
 #[tauri::command]
 fn set_font_region(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
     let state = app.state::<AppState>();
     let region = CaptureRegion { x, y, w, h };
-    app_log(&app, format!("Font region set: ({}, {}) {}x{}", x, y, w, h));
-    *state.font_region.lock().unwrap_or_else(|e| e.into_inner()) = region;
+    let stored = region_override(region, FONT_PANEL_REF, measured_ui_scale(&state));
+    app_log(
+        &app,
+        match stored {
+            Some(_) => format!("Font region set: ({}, {}) {}x{}", x, y, w, h),
+            None => format!(
+                "Font region saved unchanged at ({}, {}) {}x{} — left unset so it keeps following the screen",
+                x, y, w, h
+            ),
+        },
+    );
+    *state.font_region.lock().unwrap_or_else(|e| e.into_inner()) = stored;
+    persist_settings(&app);
+    emit_status(&app);
+}
+
+/// Drop the user's font panel rect — see [`reset_gem_region`].
+#[tauri::command]
+fn reset_font_region(app: AppHandle) {
+    let state = app.state::<AppState>();
+    app_log(&app, "Font panel region reset to the default (scaled from the reference rect)".to_string());
+    *state.font_region.lock().unwrap_or_else(|e| e.into_inner()) = None;
     persist_settings(&app);
     emit_status(&app);
 }
@@ -2351,6 +2562,11 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
     const MAX_REJECT_LOGS: usize = 12;
     let mut logged_rejects: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut rejects_suppressed = false;
+    // One line per scan session each, not per iteration: the loop runs four
+    // times a second and the LOGS panel keeps 50 entries, so an unthrottled
+    // notice would push every other diagnostic out of the buffer.
+    let mut logged_assumed_1080p = false;
+    let mut logged_short_crop = false;
     let start = std::time::Instant::now();
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
     const MAX_GEMS: u32 = 3;
@@ -2380,7 +2596,19 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
 
         loop_count += 1;
 
-        let gem_region = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        // Re-resolved every iteration, not once before the loop: the merc
+        // detect tick can publish the first screen measurement in the middle of
+        // a gem scan, and the rect this scan crops with should follow it.
+        let gem_user = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let ui_scale = measured_ui_scale(&state);
+        let gem_region = effective_region(gem_user.clone(), GEM_REGION_REF, ui_scale);
+        if gem_user.is_none() && ui_scale.is_none() && !logged_assumed_1080p {
+            logged_assumed_1080p = true;
+            app_log(&app, format!(
+                "lab OCR regions unscaled: no screen measured yet — the gem region assumes 1080p ({}, {}) {}x{}",
+                gem_region.x, gem_region.y, gem_region.w, gem_region.h,
+            ));
+        }
         let screen = match capture::capture_screen(&app) {
             Ok(c) => c.image,
             Err(e) => {
@@ -2393,6 +2621,12 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
         };
 
         let cropped = screen.crop_imm(gem_region.x.max(0) as u32, gem_region.y.max(0) as u32, gem_region.w, gem_region.h);
+        if !logged_short_crop {
+            if let Some(line) = crop_shortfall(&gem_region, cropped.width(), cropped.height()) {
+                logged_short_crop = true;
+                app_log(&app, line);
+            }
+        }
         let processed = capture::preprocess_for_ocr(&cropped);
         let lines = match ocr::recognize_text(&processed) {
             Ok(l) => l,
@@ -2537,6 +2771,9 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
     // OCR-failure paths below cannot `continue` past the expiry check — a
     // permanently failing capture is exactly the case this guard exists for.
     let mut frame_saw_panel = false;
+    // One line per scan session each — see the gem loop.
+    let mut logged_assumed_1080p = false;
+    let mut logged_short_crop = false;
 
     // Surface which OCR recognizer is active (and any en-US fallback warning) so a
     // silent CJK fallback shows up in the LOGS panel, not just stderr.
@@ -2569,7 +2806,19 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
 
         loop_count += 1;
 
-        let font_region = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        // Re-resolved every iteration — see the gem loop: a font scan outlives
+        // several merc detect ticks, so the first measurement of the session can
+        // land under it.
+        let font_user = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let ui_scale = measured_ui_scale(&state);
+        let font_region = effective_region(font_user.clone(), FONT_PANEL_REF, ui_scale);
+        if font_user.is_none() && ui_scale.is_none() && !logged_assumed_1080p {
+            logged_assumed_1080p = true;
+            app_log(&app, format!(
+                "lab OCR regions unscaled: no screen measured yet — the font panel region assumes 1080p ({}, {}) {}x{}",
+                font_region.x, font_region.y, font_region.w, font_region.h,
+            ));
+        }
         let screen = match capture::capture_screen(&app) {
             Ok(c) => c.image,
             Err(e) => {
@@ -2587,6 +2836,12 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
             font_region.w,
             font_region.h,
         );
+        if !logged_short_crop {
+            if let Some(line) = crop_shortfall(&font_region, cropped.width(), cropped.height()) {
+                logged_short_crop = true;
+                app_log(&app, line);
+            }
+        }
         let processed = capture::preprocess_for_ocr(&cropped);
         let lines = match ocr::recognize_text(&processed) {
             Ok(l) => l,
@@ -3532,8 +3787,8 @@ pub fn run() {
         detected_gems: Mutex::new(Vec::new()),
         lab_state: Mutex::new(lab_state::LabState::Idle),
         logs: Mutex::new(Vec::new()),
-        gem_region: Mutex::new(CaptureRegion::default()),
-        font_region: Mutex::new(CaptureRegion::default_font_panel()),
+        gem_region: Mutex::new(None),
+        font_region: Mutex::new(None),
         sidebar_open: Mutex::new(true),
         game_focused: Mutex::new(false),
         trade_client: trade::TradeApiClient::new(),
@@ -3622,8 +3877,10 @@ pub fn run() {
             get_logs,
             get_gem_region,
             set_gem_region,
+            reset_gem_region,
             get_font_region,
             set_font_region,
+            reset_font_region,
             capture_mouse_position,
             start_scanning,
             stop_scanning,
@@ -3923,9 +4180,12 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        body_excerpt, clamp_overlay_height, clickthrough_outcome, dictionary_reject_reason,
-        is_resizable_overlay_label, min_overlay_height, ocr_warning_field, overlay_focus_action,
-        retry_after_delay, write_debug_mode, ClickthroughSetup, CLICKTHROUGH_WINDOW_GONE,
+        body_excerpt, clamp_overlay_height, clickthrough_outcome, crop_shortfall,
+        dictionary_reject_reason, effective_region, is_resizable_overlay_label,
+        min_overlay_height, ocr_warning_field, overlay_focus_action, region_override,
+        region_source, retry_after_delay, write_debug_mode, CaptureRegion, ClickthroughSetup,
+        CLICKTHROUGH_WINDOW_GONE, FONT_PANEL_REF, GEM_REGION_REF, SHIPPED_FONT_PANEL_1080P,
+        SHIPPED_GEM_REGION_1080P,
     };
     use std::sync::Mutex;
     use std::time::Duration;
@@ -4291,5 +4551,182 @@ mod tests {
             retry_after_delay(Some("Wed, 21 Oct 2015 07:28:00 GMT")),
             Duration::from_secs(1),
         );
+    }
+
+    // --- the lab OCR capture regions (POE-233) ------------------------------
+    //
+    // `effective_region` is the whole of the three-way choice, so these are the
+    // tests that say what the OCR loops crop. The two `× 0.90` cases are the
+    // release gate: they are what makes this change a no-op for every existing
+    // 1080p user, which is the only claim a smoke on two machines cannot check
+    // for the machines it is not run on.
+
+    #[test]
+    fn a_region_the_user_placed_wins_over_the_measured_screen() {
+        let placed = CaptureRegion { x: 118, y: 64, w: 702, h: 91 };
+
+        let resolved = effective_region(Some(placed.clone()), GEM_REGION_REF, Some(1.0));
+
+        assert_eq!(resolved, placed, "a placed region is an override, not a starting point");
+    }
+
+    /// The derivation the reference rect exists to satisfy: scaled back by the
+    /// 1080p `ui_scale`, `GEM_REGION_REF` must land EXACTLY on the rect this app
+    /// has always cropped. Anything else and POE-233 silently moves the gem
+    /// tooltip crop for every 1080p user who never touched Settings.
+    #[test]
+    fn the_gem_reference_rect_reproduces_the_shipped_1080p_rect() {
+        let resolved = effective_region(None, GEM_REGION_REF, Some(0.90));
+
+        assert_eq!(resolved, SHIPPED_GEM_REGION_1080P);
+    }
+
+    /// Same gate for the font panel, whose rect is nearly five times the area —
+    /// a rounding slip there loses a craft option, not a few pixels of margin.
+    #[test]
+    fn the_font_reference_rect_reproduces_the_shipped_1080p_rect() {
+        let resolved = effective_region(None, FONT_PANEL_REF, Some(0.90));
+
+        assert_eq!(resolved, SHIPPED_FONT_PANEL_1080P);
+    }
+
+    /// `ui_scale` 1.0 IS the 1920x1200 reference fixture, so the reference rect
+    /// is the physical rect there — the identity that makes these constants
+    /// readable as reference px rather than as some third unit. What it CATCHES
+    /// is the measurement being dropped: a resolution that scaled by
+    /// `ASSUMED_UI_SCALE` instead of the measured value passes every 1080p test
+    /// in this file and is wrong on exactly the machine the reference describes.
+    #[test]
+    fn the_reference_rect_is_the_physical_rect_on_the_reference_screen() {
+        let resolved = effective_region(None, GEM_REGION_REF, Some(1.0));
+
+        assert_eq!(resolved, GEM_REGION_REF);
+    }
+
+    /// The "assume 1080p" branch, stated as a test because it is the one place
+    /// this module deliberately does NOT fail closed: an unmeasured screen must
+    /// keep cropping exactly where the app cropped before POE-233, because the
+    /// alternative for an OCR loop is reading nothing at all.
+    #[test]
+    fn an_unmeasured_screen_assumes_1080p() {
+        let resolved = effective_region(None, GEM_REGION_REF, None);
+
+        assert_eq!(resolved, SHIPPED_GEM_REGION_1080P);
+    }
+
+    /// A measured 1440p screen, to pin that the rect actually TRACKS the
+    /// measurement rather than only reproducing the two calibrated points:
+    /// 1440/1200 = 1.2, so every field is the reference rect times 1.2.
+    #[test]
+    fn a_taller_screen_scales_the_region_up() {
+        let resolved = effective_region(None, GEM_REGION_REF, Some(1.2));
+
+        assert_eq!(resolved, CaptureRegion { x: 40, y: 60, w: 733, h: 100 });
+    }
+
+    /// A `0.0` scale is arithmetically valid and catastrophic: every field
+    /// multiplies to zero, so the OCR loop would crop a `0x0` rect and read
+    /// nothing at all, silently, for the rest of the session. The assumed-1080p
+    /// branch is the right answer for a nonsense measurement for the same reason
+    /// it is the right answer for a missing one.
+    #[test]
+    fn a_zero_ui_scale_falls_back_to_the_1080p_rect() {
+        let resolved = effective_region(None, GEM_REGION_REF, Some(0.0));
+
+        assert_eq!(resolved, SHIPPED_GEM_REGION_1080P);
+    }
+
+    /// NaN is the other way the measurement arrives broken (a `0 / 0` height
+    /// ratio off a capture that reported no rows). `f32 as u32` saturates NaN to
+    /// `0` rather than trapping, so without the guard this is the `0x0` crop
+    /// again — with no division by zero anywhere to notice.
+    #[test]
+    fn a_nan_ui_scale_falls_back_to_the_1080p_rect() {
+        let resolved = effective_region(None, GEM_REGION_REF, Some(f32::NAN));
+
+        assert_eq!(resolved, SHIPPED_GEM_REGION_1080P);
+    }
+
+    // --- what a Configure → Save stores (POE-233) ---------------------------
+
+    /// Configure opens the frame on the rect IN FORCE, so "open it, look, save"
+    /// hands the setter the derived default. Storing that would freeze this
+    /// screen's arithmetic as a user override: the region stops following the
+    /// screen and the Settings row says "user" for a choice nobody made.
+    #[test]
+    fn saving_the_derived_rect_unchanged_leaves_the_region_unset() {
+        let derived = effective_region(None, GEM_REGION_REF, Some(1.2));
+
+        let stored = region_override(derived, GEM_REGION_REF, Some(1.2));
+
+        assert_eq!(stored, None, "an unmoved frame is not an override");
+    }
+
+    /// The other side, and the one that makes the rule safe: a frame the user
+    /// actually moved is not the derived rect, so it is stored verbatim.
+    #[test]
+    fn saving_a_moved_rect_stores_it_as_an_override() {
+        let moved = CaptureRegion { x: 118, y: 64, w: 702, h: 91 };
+
+        let stored = region_override(moved.clone(), GEM_REGION_REF, Some(1.2));
+
+        assert_eq!(stored, Some(moved));
+    }
+
+    /// The comparison is against the rect derived for THIS screen, not against
+    /// the reference rect or the shipped literal. On a 1440p screen the shipped
+    /// 1080p rect is a real, deliberate override — a user who wants the old crop
+    /// back — and swallowing it as "unchanged" would discard it on every save.
+    #[test]
+    fn saving_the_1080p_rect_on_a_taller_screen_is_an_override() {
+        let stored = region_override(SHIPPED_GEM_REGION_1080P, GEM_REGION_REF, Some(1.2));
+
+        assert_eq!(stored, Some(SHIPPED_GEM_REGION_1080P));
+    }
+
+    /// `image`'s `crop_imm` clamps rather than failing, so a region that hangs
+    /// off the bottom of the capture yields a SHORTER crop and the OCR quietly
+    /// reads a partial panel. The shortfall line is the only breadcrumb, so it
+    /// has to carry both sizes — "something was wrong with the region" is not
+    /// actionable, "asked for 550x75, got 550x40" is.
+    #[test]
+    fn a_crop_shorter_than_the_region_reports_both_sizes() {
+        let line = crop_shortfall(&CaptureRegion { x: 30, y: 45, w: 550, h: 75 }, 550, 40)
+            .expect("a short crop must be reported");
+
+        // The phrases, not the bare sizes: "asked for" and "got" are what make
+        // the line readable, and a swapped argument pair would satisfy a
+        // `contains("550x75")` while telling the reader the exact opposite.
+        assert!(line.contains("asked for 550x75"), "the requested size is missing from: {line}");
+        assert!(line.contains("got 550x40"), "the actual size is missing from: {line}");
+    }
+
+    /// The other axis, because the two bounds are clamped independently: a
+    /// region pushed off the RIGHT edge of the capture loses width alone.
+    #[test]
+    fn a_crop_narrower_than_the_region_is_reported() {
+        assert!(crop_shortfall(&CaptureRegion { x: 30, y: 45, w: 550, h: 75 }, 480, 75).is_some());
+    }
+
+    /// The common case: the region fits, so the loop logs nothing. A check that
+    /// fired on a good crop would put a line in every scan session's log and
+    /// train the reader to ignore it.
+    #[test]
+    fn a_crop_of_the_requested_size_is_not_reported() {
+        assert_eq!(crop_shortfall(&CaptureRegion { x: 30, y: 45, w: 550, h: 75 }, 550, 75), None);
+    }
+
+    /// The two labels the Settings row switches on. They cross the Rust/TS
+    /// boundary as bare strings (`AppStatus.gem_region_source`), so swapping
+    /// them would tell every user with a placed region that it is a default —
+    /// and offer them a Reset that does nothing they can see.
+    #[test]
+    fn a_placed_region_reports_the_user_source() {
+        assert_eq!(region_source(&Some(CaptureRegion { x: 1, y: 2, w: 3, h: 4 })), "user");
+    }
+
+    #[test]
+    fn an_unplaced_region_reports_the_default_source() {
+        assert_eq!(region_source(&None), "default");
     }
 }
