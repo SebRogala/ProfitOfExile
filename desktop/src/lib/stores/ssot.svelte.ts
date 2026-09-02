@@ -83,10 +83,12 @@ export type ScreenScaleSource = 'merc-frame' | 'merc-ocr' | 'remembered';
  * a recruit window opens and is retired again when it closes, so a reader keyed
  * on it would lose the screen's scale every time the player shuts the window.
  *
- * Rust-owned and read-only here; there is no consumer yet (POE-214 names the
- * two to come: the Lab `CaptureRegion` as fractions of this slice, and the
- * temple once its unit ratio is measured), which is why the store below does
- * not project it onto a rune.
+ * Rust-owned and read-only here. Projected onto `ssot.screen` for the Settings
+ * "Screen geometry" card (POE-227); the two READERS POE-214 names are still to
+ * come (the Lab `CaptureRegion` as fractions of this slice, and the temple once
+ * its unit ratio is measured). The lifecycle — what is remembered, what
+ * verifies it, and the three events that drop it — is normative in
+ * `desktop/src/lib/README.md` → "Screen Geometry (SSOT)".
  */
 export interface ScreenSlice {
 	/** Captured screen width in physical px. */
@@ -127,7 +129,8 @@ export interface SsotSnapshot {
 	/** The screen and its measured game-UI scale (POE-214). Rust-owned; `null`
 	 *  until something has measured one, and a consumer must NOT read `null` as
 	 *  1.0 — that is a real measurement (a 1920x1200 screen) and assuming it
-	 *  mis-scales every rect on a 1080p machine by 11%. No UI consumer yet.
+	 *  mis-scales every rect on a 1080p machine by 11%. Projected onto
+	 *  `ssot.screen`, which the Settings "Screen geometry" card reads (POE-227).
 	 *
 	 *  **`null`, not absent, is what an unmeasured screen sends.** Rust's
 	 *  `Option<ScreenSlice>` carries no `skip_serializing_if`, so the key is
@@ -188,6 +191,13 @@ export const ssot = $state({
 	 *  `templeSliceDefault()` — the Rust derive default, pinned by a serde test
 	 *  on both sides. */
 	temple: templeSliceDefault() as TempleSlice,
+	/** The screen and its measured game-UI scale (POE-214), or `null` when
+	 *  nothing has measured one. Rust owns it; the only writer here is the
+	 *  snapshot apply. `null` must NEVER be read as 1.0 — that is a real
+	 *  measurement (a 1920x1200 screen) and assuming it mis-scales every rect on
+	 *  a 1080p machine by 11%. Its consumer is the Settings "Screen geometry"
+	 *  card (POE-227), which renders the `null` as "not measured yet". */
+	screen: null as ScreenSlice | null,
 });
 
 /** The three market fields, which share the write-through + poll-guard machinery. */
@@ -405,6 +415,14 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	applyModules(snap.modules, dispatchedAtSeq);
 	applyMercenary(snap.mercenary);
 	applyTemple(snap.temple);
+	// NOT fail-closed on absence, unlike the two module slices above — this one
+	// is deliberately DROPPABLE. `ssot::drop_if_mismatched` clears it on the
+	// first capture whose dimensions disagree with the remembered measurement
+	// (POE-227), and "keep the last known one" would leave the Settings card
+	// showing a scale the app has just thrown away. Rust never omits the key
+	// (`Option<ScreenSlice>` carries no `skip_serializing_if`), so an absent one
+	// only ever means a payload older than the field.
+	ssot.screen = snap.screen ?? null;
 }
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;

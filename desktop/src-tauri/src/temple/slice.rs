@@ -272,6 +272,29 @@ pub struct LayoutView {
     /// `"high"` or `"low"` — [`Confidence::Low`] means the door sets are a best
     /// effort over an unreadable panel and nothing should act on them.
     pub confidence: String,
+    /// Entrance plate centre in CAPTURE px — the origin the board hangs off
+    /// (POE-227). Published so a surface that draws ON the game (a door arrow,
+    /// a kill marker) can place itself against the board the reader actually
+    /// read, instead of re-deriving a lattice from `scale` and guessing where it
+    /// starts.
+    ///
+    /// Capture px means whole-primary-monitor px (`crate::capture`), which is
+    /// also window-relative px for a monitor-sized overlay — no conversion.
+    /// NOT reference px and NOT CSS px.
+    pub origin: [i32; 2],
+    /// The 13 plate centres in capture px, in [`Slot::ALL`] order — the same
+    /// order and the same unit as `origin` above, and the same order `slots`
+    /// uses, so index `i` of one describes the plate at index `i` of the other.
+    ///
+    /// Published rather than derived on the far side: they are
+    /// `Lattice::new(origin, scale)`'s centres verbatim, and a second
+    /// implementation of that rounding in TypeScript would be a second answer
+    /// to where a plate is.
+    ///
+    /// A fixed 13 rather than a `Vec` (which `slots` above is): the board has
+    /// exactly 13 plates by construction — [`Lattice`] carries the same array —
+    /// so a length is not something a consumer should have to check.
+    pub centres: [[i32; 2]; 13],
 }
 
 /// One architect block, resolved.
@@ -478,6 +501,12 @@ fn layout_view(read: &ReadResult<'_>) -> LayoutView {
             Confidence::High => "high".to_string(),
             Confidence::Low => "low".to_string(),
         },
+        origin: [layout.origin.0, layout.origin.1],
+        // `TempleLayout.slots` IS `Lattice::new(origin, scale).centres` — the
+        // reader fills it from exactly that (`reader::read_layout_at`), so this
+        // republishes the lattice the board was read off rather than rebuilding
+        // one that could round differently.
+        centres: layout.slots.map(|(x, y)| [x, y]),
     }
 }
 
@@ -827,7 +856,7 @@ mod tests {
     use super::*;
     use crate::temple::advisor::Warning;
     use crate::temple::doors::Thresholds;
-    use crate::temple::lattice::Slot;
+    use crate::temple::lattice::{Lattice, Slot};
     use crate::temple::rooms::{match_room_name, resolve_name};
 
     fn calibration() -> AnchorCalibration {
@@ -838,18 +867,29 @@ mod tests {
         }
     }
 
+    /// The origin and scale [`layout`] builds its board at — a plausible
+    /// anchored Entrance on a 1374-wide capture. Named so a test can rebuild
+    /// the same lattice without copying two numbers out of the helper.
+    const FIXTURE_ORIGIN: (i32, i32) = (673, 494);
+    const FIXTURE_SCALE: f32 = 0.99;
+
     /// A layout with the given current room and door set; every other field is
     /// a plausible constant, because nothing below reads them.
     fn layout(current: Option<Slot>, doors: &[(Slot, Slot)], uncertain: &[(Slot, Slot)]) -> TempleLayout {
+        // `slots` is the lattice the anchor fixes — `reader::read_layout_at`
+        // fills it from exactly this expression. A filler `[(0, 0); 13]` was
+        // harmless while nothing read the field; it is not now that the
+        // projection publishes the centres (POE-227).
+        let lattice = Lattice::new(FIXTURE_ORIGIN, FIXTURE_SCALE);
         TempleLayout {
-            origin: (673, 494),
-            scale: 0.99,
+            origin: lattice.origin,
+            scale: lattice.scale,
             ncc: 0.94,
             confidence: Confidence::High,
             current,
             doors: doors.iter().map(|(a, b)| Edge::new(*a, *b)).collect(),
             uncertain: uncertain.iter().map(|(a, b)| Edge::new(*a, *b)).collect(),
-            slots: [(0, 0); 13],
+            slots: lattice.centres,
             thresholds: Thresholds { horizontal: 0.20, diagonal: 0.20 },
             calibration: calibration(),
         }
@@ -938,6 +978,58 @@ mod tests {
         assert_eq!(c1.name.as_deref(), Some("Locus of Corruption"));
         assert_eq!(c1.tier, 3, "Locus of Corruption is the tier-3 corruption room");
         assert!(!c1.current, "only the layout's own current room is current");
+    }
+
+    /// The pixel geometry a game-anchored surface places itself against
+    /// (POE-227): every published centre is the lattice's own centre for the
+    /// slot at the SAME index, in capture px.
+    ///
+    /// Fails if the projection drops the field, publishes a filler, transposes
+    /// x and y, or walks `slots` in an order that is not `Slot::ALL` — any of
+    /// which would put a door arrow on the wrong plate with nothing on screen
+    /// to say so.
+    #[test]
+    fn the_published_centres_are_the_lattice_the_board_was_read_off() {
+        let layout = layout(Some(Slot::D3), &[], &[]);
+        let rooms = board_rooms(&[]);
+        let panel = panel("Tombs", Some(6), Vec::new());
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        let view = slice.layout.expect("a read publishes its layout");
+        let lattice = Lattice::new(FIXTURE_ORIGIN, FIXTURE_SCALE);
+        for (i, slot) in Slot::ALL.into_iter().enumerate() {
+            let (x, y) = lattice.centre(slot);
+            assert_eq!(
+                view.centres[i],
+                [x, y],
+                "{slot:?} is published at the wrong pixel centre",
+            );
+        }
+    }
+
+    /// The origin is published, and it is the Entrance plate's centre — the one
+    /// relation that holds independently of the lattice arithmetic, because the
+    /// Entrance's offset IS `(0, 0)`.
+    ///
+    /// Fails if `origin` carries the anchor's top-left, the panel rect, or the
+    /// board's first slot instead — every one of which would look plausible in
+    /// the JSON and shift a whole overlay.
+    #[test]
+    fn the_published_origin_is_the_entrance_plate_centre() {
+        let layout = layout(Some(Slot::D3), &[], &[]);
+        let rooms = board_rooms(&[]);
+        let panel = panel("Tombs", Some(6), Vec::new());
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        let view = slice.layout.expect("a read publishes its layout");
+        assert_eq!(view.origin, [FIXTURE_ORIGIN.0, FIXTURE_ORIGIN.1]);
+        assert_eq!(
+            view.centres[Slot::ENTRANCE.index()],
+            view.origin,
+            "the Entrance sits at the origin by construction",
+        );
     }
 
     /// Unknown plates are SURFACED, not hidden: they carry `known: false` and
@@ -1567,6 +1659,25 @@ mod tests {
                 scale: 0.99,
                 ncc: 0.94,
                 confidence: "high".to_string(),
+                // The board `Lattice::new((900, 900), 0.99)` builds — the same
+                // origin and scale a reader would have measured, so the pinned
+                // JSON below carries real geometry rather than filler.
+                origin: [900, 900],
+                centres: [
+                    [900, 465],
+                    [795, 569],
+                    [1005, 569],
+                    [690, 673],
+                    [900, 673],
+                    [1110, 673],
+                    [585, 777],
+                    [795, 777],
+                    [1005, 777],
+                    [1215, 777],
+                    [690, 881],
+                    [900, 900],
+                    [1110, 881],
+                ],
             }),
             panel: Some(PanelView {
                 room: Some("Locus of Corruption".to_string()),
@@ -1622,7 +1733,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high"},"panel":{"room":"Locus of Corruption","offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible"]},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]]},"panel":{"room":"Locus of Corruption","offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible"]},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///

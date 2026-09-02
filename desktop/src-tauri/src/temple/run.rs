@@ -686,18 +686,34 @@ pub fn settings_for_capture(
     (settings, pruned)
 }
 
-/// Drop the stored calibration from the owner and from disk.
+/// Drop the stored calibration from the OWNER only.
 ///
-/// The pruning decision is [`settings_for_capture`]'s; this is only the write.
+/// The pruning decision is [`settings_for_capture`]'s; this is only the clear.
+///
+/// Split out of [`forget_calibration`] so a caller that has its own file write
+/// does not have to make two (POE-227): `ssot::geometry_recalibrate` clears
+/// this alongside the shared screen scale and then writes settings.json ONCE,
+/// through `settings::persist_forgetting_screen_scale`, which rebuilds the file
+/// from `AppState` — this cleared owner included. Two writes there would have
+/// the first one (`crate::persist_settings`, whose `preserve_screen_scale`
+/// merge restores a stored measurement over an empty projection) put the stale
+/// scale back on disk, correct only for as long as the second write followed.
+pub(crate) fn clear_calibration(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    state
+        .temple_settings
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .calibration = None;
+}
+
+/// Drop the stored calibration from the owner AND from disk.
+///
+/// The temple tick's own path: a capture whose dimensions disagree with the
+/// stored hint prunes it and has nothing else to write, so the clear and the
+/// save are one call.
 fn forget_calibration(app: &AppHandle) {
-    {
-        let state = app.state::<AppState>();
-        state
-            .temple_settings
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .calibration = None;
-    }
+    clear_calibration(app);
     crate::persist_settings(app);
 }
 
@@ -913,6 +929,12 @@ fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) 
             return false;
         }
     };
+    // Before ANY remembered geometry is read (POE-227): a screen scale measured
+    // on another monitor is dropped from the shared slice on the first capture
+    // whose dimensions disagree with it. The temple does not consume that slice
+    // yet — its unit ratio is unmeasured (see `ssot::ScreenSlice`) — but it does
+    // capture screens, and the prune belongs to whichever module looks first.
+    crate::ssot::drop_if_mismatched(app, (img.width(), img.height()));
     // The ONLY place the loop obtains its settings, so the stale-hint prune
     // cannot be skipped without the compile failing.
     let (settings, pruned) = settings_for_capture(&settings_snapshot(app), (img.width(), img.height()));
@@ -1082,6 +1104,33 @@ fn panel_text(
 }
 
 /// The expensive half: 13 plates, the side panel, the diamond, the advisor.
+/// Screen height the shared `ui_scale` unit calls 1.0 — the height of the merc
+/// reference fixture, restated here rather than imported so this file does not
+/// grow a dependency on a slice it deliberately does not read. The number's
+/// owner is [`crate::ssot::ScreenSlice`]'s unit note.
+const UI_SCALE_REFERENCE_HEIGHT: f32 = 1200.0;
+
+/// The line POE-227 D3 exists to print: `k`, the ratio between the temple's own
+/// scale unit and the shared `ui_scale` unit, on a board that actually anchored.
+///
+/// The two units are measured against different references — the temple's
+/// against `anchor::REFERENCE_SCREEN_WIDTH` (1374, a WIDTH), the slice's against
+/// a 1920x1200 fixture whose scale tracks HEIGHT — and nothing in the repo can
+/// relate them offline, because every temple fixture is a crop of a panel rather
+/// than a whole screen. So the ratio is measured in play: one temple session
+/// prints this line, `k` is read off it, and the constant lands in a follow-up
+/// that switches the temple onto the shared slice. Until then a reader must NOT
+/// substitute one scale for the other.
+///
+/// Pure, and separated from the log call, so the arithmetic and the format are
+/// testable without a screen or an `AppHandle`.
+fn unit_ratio_line(scale: f32, capture_width: u32, capture_height: u32) -> String {
+    let k = scale / (capture_height as f32 / UI_SCALE_REFERENCE_HEIGHT);
+    format!(
+        "temple unit ratio k={k:.4} (scale {scale:.3}, capture {capture_width}x{capture_height})"
+    )
+}
+
 fn full_read(
     app: &AppHandle,
     session: &mut Session,
@@ -1093,6 +1142,15 @@ fn full_read(
     already_read: Option<panel::PanelReading>,
 ) {
     publish(app, |slice| apply_status(slice, TickOutcome::Anchored));
+    // POE-227 D3 instrumentation, and the ONLY thing this batch does about the
+    // temple's unit: print the ratio between the two scales on a real board so
+    // the constant can be read off a live session's log. Nothing consumes it —
+    // the temple still measures and stores its own scale, and still does not
+    // write the shared screen slice.
+    crate::app_log(
+        app,
+        unit_ratio_line(layout.scale, img.width(), img.height()),
+    );
 
     let panel = match already_read {
         Some(panel) => panel,
@@ -1167,6 +1225,31 @@ mod tests {
             TICK <= MODULE_THREAD_POLL_CEILING,
             "a thread module must poll cancel at least every {MODULE_THREAD_POLL_CEILING:?}",
         );
+    }
+
+    /// The measurement POE-227 D3 exists to take. On the reference screen the
+    /// shared unit is 1.0 by definition, so `k` is the temple's own scale
+    /// unchanged — which makes this the case that pins the DIVISOR: an
+    /// instrumentation line that divided by the width, or by the wrong
+    /// reference, would print a number the follow-up commit would then bake in
+    /// as a wrong constant, with nothing downstream to contradict it.
+    #[test]
+    fn on_the_reference_screen_the_unit_ratio_is_the_temple_scale_itself() {
+        let line = unit_ratio_line(0.9600, 1920, 1200);
+
+        assert_eq!(line, "temple unit ratio k=0.9600 (scale 0.960, capture 1920x1200)");
+    }
+
+    /// The case the ratio is FOR: a 1080p screen, where the shared unit is 0.90
+    /// and the temple's is not, so `k` and the scale visibly differ. Fails if
+    /// the height is ignored — which on the reference screen alone would look
+    /// exactly right.
+    #[test]
+    fn a_shorter_screen_scales_the_unit_ratio_up() {
+        // 0.864 / (1080 / 1200) = 0.864 / 0.9 = 0.96.
+        let line = unit_ratio_line(0.864, 1920, 1080);
+
+        assert_eq!(line, "temple unit ratio k=0.9600 (scale 0.864, capture 1920x1080)");
     }
 
     /// A panel is not retired on its first miss — the anchor loses a fading

@@ -1273,6 +1273,55 @@ pub fn held_is_stale(held_scale: f32, s_ocr: f32) -> bool {
     ratio < cellfit::SCALE_BAND.0 || ratio > cellfit::SCALE_BAND.1
 }
 
+/// Whether the user has pressed Settings → **Recalibrate** since this session
+/// last looked (POE-227).
+///
+/// The manual arm of the geometry lifecycle. [`held_is_stale`] above is the
+/// automatic one and needs a CONTRADICTING cue to fire; this needs none, which
+/// is the whole point of the button: a registration that is wrong but
+/// self-consistent — the fit landed on the wrong grid and every tick since has
+/// agreed with it — is exactly the state neither the dimension check nor the
+/// band check can see, and the only way out of it is a person saying so.
+///
+/// `!=`, not `>`: the counter is a bump the session has or has not SEEN, and a
+/// reader that demanded growth would sit out the rest of the run if the two
+/// ever went backwards (a fresh `AppState` at 0 against a session that had seen
+/// 3). What it means is "not the value I recorded", nothing more.
+fn refit_requested(last_seen: u64, current: u64) -> bool {
+    last_seen != current
+}
+
+/// What consuming a Recalibrate bump did to the session's registration.
+#[derive(Debug, PartialEq)]
+enum Refit {
+    /// No bump since this session last looked — the tick carries on unchanged.
+    NotRequested,
+    /// The bump landed, and this is the registration it threw away.
+    Dropped(FittedScale),
+    /// The bump landed with nothing settled to drop. Still a re-measure — there
+    /// is simply nothing to carry — and still worth a line, because a silent
+    /// no-op is indistinguishable from a button this loop never saw.
+    NothingHeld,
+}
+
+/// Spend a Recalibrate bump: record the counter and drop the registration the
+/// session had SETTLED on (POE-227).
+///
+/// Separated from the detect tick so the rule is testable without a screen, and
+/// spending the counter is part of it rather than the caller's to remember: a
+/// bump left unrecorded would re-drop the fresh registration on every tick from
+/// here on, which is the same panel measured from scratch forever.
+fn consume_refit(session: &mut Session, current: u64) -> Refit {
+    if !refit_requested(session.refit_seen, current) {
+        return Refit::NotRequested;
+    }
+    session.refit_seen = current;
+    match session.fitted.take() {
+        Some(held) => Refit::Dropped(held),
+        None => Refit::NothingHeld,
+    }
+}
+
 /// Whether the layout this tick hands downstream is registered DIFFERENTLY from
 /// the one the last tick handed down.
 ///
@@ -1769,6 +1818,12 @@ struct Session {
     /// Which cue the LAST tick's layout was registered from, so a step into or
     /// out of [`ScaleSource::Ocr`] can be seen for what it is.
     scale_source: ScaleSource,
+    /// The `AppState.merc_refit` value this session has already acted on — the
+    /// Settings **Recalibrate** counter (POE-227). Seeded from the counter at
+    /// session start, not from 0, so a button press from an EARLIER session
+    /// does not re-fire on the first tick of this one, which has nothing held
+    /// to drop anyway. See [`refit_requested`].
+    refit_seen: u64,
     /// Armed when the tick's registration differs from the last one's, and
     /// consumed by the next [`merge_sigs`] — normally the same tick's, but a
     /// tick that returns early between the fit and the merge (a cancel) leaves
@@ -2282,6 +2337,9 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         trade: None,
         fitted: None,
         scale_source: ScaleSource::Ocr,
+        // Seeded, not zeroed: a press that happened while no loop was running
+        // has nothing to undo — this session holds no registration yet.
+        refit_seen: refit_counter(&app),
         geometry_changed: false,
         revision: 0,
     };
@@ -2670,6 +2728,17 @@ fn pooled_keys(app: &AppHandle) -> Vec<String> {
     store.pooled_keys()
 }
 
+/// The Recalibrate counter — bumped by `ssot::geometry_recalibrate` (POE-227).
+///
+/// The merc-side twin of `temple::run::rearm_counter`. Read once per detect
+/// tick and compared against the session's own last-seen value through
+/// [`refit_requested`].
+fn refit_counter(app: &AppHandle) -> u64 {
+    let state = app.state::<AppState>();
+    let counter = state.merc_refit.load(std::sync::atomic::Ordering::SeqCst);
+    counter
+}
+
 /// The template store's edit counter — bumped by the forget/reset commands.
 fn template_generation(app: &AppHandle) -> u64 {
     let state = app.state::<AppState>();
@@ -2888,6 +2957,12 @@ fn detect_tick(
         img.dimensions()
     };
     let screen = [iw, ih];
+    // Before ANY remembered geometry is read (POE-227). `iw`/`ih` are the whole
+    // grab's dimensions even on a cropped tick — the platform layer captures a
+    // monitor, and only the OCR view is narrowed below — so this is the screen's
+    // real size on every path. A scale remembered from another monitor is
+    // dropped here, which is the first moment anything in the app can tell.
+    crate::ssot::drop_if_mismatched(app, (iw, ih));
 
     let cropped = crop.map(|r| img.crop_imm(r[0] as u32, r[1] as u32, r[2] as u32, r[3] as u32));
     let mut view = cropped.as_ref().unwrap_or(&img);
@@ -3022,7 +3097,38 @@ fn detect_tick(
     // to show the two cues side by side.
     let s_ocr = layout.scale;
 
-    // …and the same read is what keeps a HELD registration honest. The session
+    // The MANUAL arm of the geometry lifecycle, and it runs FIRST — before the
+    // staleness gate below and before the fit — because it needs no cue at all
+    // (POE-227). Recalibrate empties the shared screen scale, and a session
+    // still holding a registration would republish it — through
+    // `apply_held` below and `publish_screen` further down — on this very tick,
+    // putting the number the user asked to be forgotten straight back into the
+    // slice and into settings.json. Dropping the registration here, before the
+    // deadband and before the fit, is what makes the button re-measure: with
+    // nothing held, `next_fitted_scale` adopts this tick's fit outright and a
+    // tick whose fit declines leaves the layout on the OCR cue it was built
+    // with (`geometry::MercLayout` reads `ScaleSource::Ocr` until something
+    // registers it).
+    match consume_refit(session, refit_counter(app)) {
+        Refit::NotRequested => {}
+        Refit::Dropped(held) => crate::app_log(
+            app,
+            format!(
+                "Merc: Recalibrate — dropped the settled frame registration (scale \
+                 {:.3}); this tick re-measures the panel",
+                held.scale
+            ),
+        ),
+        Refit::NothingHeld => crate::app_log(
+            app,
+            "Merc: Recalibrate — no frame registration was held; this tick measures \
+             the panel"
+                .to_string(),
+        ),
+    }
+
+    // The AUTOMATIC arm, and what `s_ocr` above is the other half of: the same
+    // read is what keeps a HELD registration honest. The session
     // measures `fitted` once and then carries it across every tick that cannot
     // see the frame, while `s_ocr` is re-measured here on every one of them, so
     // a UI-scale change during a run of declines would otherwise be written
@@ -5480,12 +5586,82 @@ mod tests {
         assert!(held_is_stale(cellfit::SCALE_BAND.1 + 0.001, 1.0));
     }
 
+    /// The manual arm of the geometry lifecycle: a Recalibrate the session has
+    /// not seen fires, and the same counter read twice does not. Without the
+    /// second half the bump would be spent on every tick from here on and the
+    /// panel would be re-measured from scratch forever.
+    #[test]
+    fn a_recalibrate_counter_the_session_has_not_seen_asks_for_a_refit() {
+        assert!(refit_requested(0, 1), "the first press is a bump this session has not seen");
+        assert!(!refit_requested(3, 3), "…and a counter already recorded asks for nothing");
+    }
+
+    /// `!=`, deliberately, not `>`. The counter is a value the session has or
+    /// has not RECORDED, and the two can go backwards for a reason that has
+    /// nothing to do with the user: `AppState` is rebuilt at 0 while a session
+    /// carrying a higher number is still running. A rule that demanded growth
+    /// would sit that session out for the rest of its life.
+    #[test]
+    fn a_recalibrate_counter_that_went_backwards_still_asks_for_a_refit() {
+        assert!(refit_requested(3, 0));
+    }
+
+    /// What the button actually does to a session: the settled registration is
+    /// handed back and GONE, so `cellfit::apply_held` has nothing to re-apply
+    /// and this tick's fit registers outright. Without the drop, Recalibrate
+    /// would clear the shared screen scale and the very next tick would
+    /// republish the same held number onto it.
+    #[test]
+    fn a_refit_drops_the_registration_the_session_had_settled_on() {
+        let mut session = bare_session();
+        let held = reg(0.8985, 40, FitSource::Grid);
+        session.fitted = Some(held);
+
+        let outcome = consume_refit(&mut session, 1);
+
+        assert_eq!(outcome, Refit::Dropped(held), "the dropped registration is reported");
+        assert_eq!(session.fitted, None, "…and the session is holding nothing after it");
+        assert_eq!(session.refit_seen, 1, "…and the bump is spent");
+    }
+
+    /// A press that arrives with nothing settled is still a press: it is
+    /// reported (a silent no-op reads as a button the loop never saw) and it
+    /// still spends the counter.
+    #[test]
+    fn a_refit_with_no_registration_held_is_reported_and_still_spends_the_bump() {
+        let mut session = bare_session();
+
+        let outcome = consume_refit(&mut session, 7);
+
+        assert_eq!(outcome, Refit::NothingHeld);
+        assert_eq!(session.refit_seen, 7);
+    }
+
+    /// The other side of spending it: a tick that sees the counter it already
+    /// recorded leaves the registration alone. A session re-fitting on every
+    /// tick would re-derive the seed store and make every hovered cell learn a
+    /// highlighted crop — the cost `next_fitted_scale`'s deadband exists to
+    /// avoid.
+    #[test]
+    fn a_counter_the_session_already_spent_leaves_the_registration_standing() {
+        let mut session = bare_session();
+        let held = reg(0.8985, 40, FitSource::Grid);
+        session.fitted = Some(held);
+        session.refit_seen = 4;
+
+        let outcome = consume_refit(&mut session, 4);
+
+        assert_eq!(outcome, Refit::NotRequested);
+        assert_eq!(session.fitted, Some(held), "the registration survives an unbumped tick");
+    }
+
     /// What may arm `geometry_changed`, in six lines. The `Frame` → `Held` step
     /// is the one that must NOT: a declined tick re-applies the rects the
     /// session was already using, so every cached crop is still valid. The
-    /// `Frame` → `Ocr` line is defensive — the loop never drops a settled
-    /// registration — and is here so a future path that does cannot make the
-    /// cache lie.
+    /// `Frame` → `Ocr` line is reachable since POE-227: a Recalibrate drops the
+    /// settled registration mid-session, so the next tick whose fit declines
+    /// hands down an OCR-registered layout after a `Frame` one, and every
+    /// cached crop moves the 6-12 px the fit exists to remove.
     #[test]
     fn only_a_size_adoption_or_an_ocr_crossing_counts_as_a_re_registration() {
         assert!(
@@ -6793,6 +6969,7 @@ mod tests {
             trade: None,
             fitted: None,
             scale_source: ScaleSource::Ocr,
+            refit_seen: 0,
             geometry_changed: false,
             revision: 0,
         }
