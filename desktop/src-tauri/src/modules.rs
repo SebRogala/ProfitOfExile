@@ -306,6 +306,70 @@ pub fn persistable_modules(
         .collect()
 }
 
+/// The module map AS IT SHOULD REACH DISK: the owner map with every
+/// force-for-this-run substituted back to the value it had before (POE-226).
+///
+/// The owner map holds the EFFECTIVE state, because a forced module really does
+/// start — that is the point of forcing it. What must not follow it onto disk is
+/// the forcing itself. A command that simply declined to call `persist_settings`
+/// did NOT achieve that: the owner map is what `settings::from_state` projects,
+/// so the next save by anything else at all wrote the forced value out and the
+/// equally-unpersisted restore never took it back. Transience is a property of
+/// the projection, and this is the projection.
+///
+/// `transient` maps a forced id to its PRE-session value, so the substitution is
+/// a lookup rather than a guess. An id absent from it is written unchanged.
+pub fn persisted_view(
+    owner: &HashMap<String, bool>,
+    transient: &HashMap<String, bool>,
+) -> HashMap<String, bool> {
+    let mut view = owner.clone();
+    for (id, previous) in transient {
+        view.insert(id.clone(), *previous);
+    }
+    view
+}
+
+/// Update the transient overrides for one write to the owner map.
+///
+/// `previous` is the value the owner map held BEFORE this write, `enabled` the
+/// value being written, and `persist` whether this write is the user's own
+/// choice (`set_module_enabled`) or a force for this run
+/// (`set_module_enabled_transient`).
+///
+/// ONE function for both branches so that the whole decision has a seam: the
+/// commands differ by the flag they pass and nothing else.
+///
+/// Three rules, each of which is a bug when it is missing:
+///
+/// - A PERSISTED write drops any override. It is the user's own choice, so it
+///   is what belongs on disk from here on — including when it happens to agree
+///   with what a session forced. Keeping the entry would have their toggle
+///   silently reverted at the next save.
+/// - A FORCED write keeps the value it recorded first (`or_insert`). A session
+///   can force the same module twice; re-reading `previous` the second time
+///   would record the state the FIRST force created, and the restore would then
+///   have nothing to go back to.
+/// - A forced write that lands ON the recorded value ENDS the override. That is
+///   the restore: the flag is back, the owner map and the file agree again, and
+///   there is nothing left to substitute. Keeping the entry would pin the module
+///   to that value against every later real toggle.
+pub fn note_module_write(
+    transient: &mut HashMap<String, bool>,
+    id: &str,
+    previous: bool,
+    enabled: bool,
+    persist: bool,
+) {
+    if persist {
+        transient.remove(id);
+    } else if enabled == transient.get(id).copied().unwrap_or(previous) {
+        transient.remove(id);
+    } else {
+        transient.entry(id.to_string()).or_insert(previous);
+    }
+}
+
 /// Whether `id` names a registered module. Validate-on-write: the setter
 /// rejects an unknown id rather than storing a key nothing will ever start.
 fn validate_module_id(id: &str, defs: &[ModuleDefLite]) -> Result<(), String> {
@@ -443,6 +507,41 @@ pub fn apply_reconcile(app: &AppHandle) {
 /// outside the `module_handles` critical section (lock order — see module doc).
 #[tauri::command]
 pub fn set_module_enabled(id: String, enabled: bool, app: AppHandle) -> Result<(), String> {
+    set_module_flag(id, enabled, app, true)
+}
+
+/// The same toggle, NOT written to disk (POE-226).
+///
+/// One caller: the widget-config force path in `routes/(app)/+layout.svelte`,
+/// which switches a module on because its overlay window is built off that flag
+/// and there is nothing to arrange without one, then switches it back off when
+/// the user Saves or Cancels. That is a session decision, not the user's
+/// preference — persisting it means a crash or a kill mid-session leaves the
+/// module on at the next start, with the Modules row reading enabled and the
+/// user never having touched it.
+///
+/// Everything else is identical, the id validation and the reconcile included:
+/// the module really does start and stop, it is only the FILE that is left
+/// alone. Whatever the settings file already said is what the next start reads.
+#[tauri::command]
+pub fn set_module_enabled_transient(
+    id: String,
+    enabled: bool,
+    app: AppHandle,
+) -> Result<(), String> {
+    set_module_flag(id, enabled, app, false)
+}
+
+/// The shared body of the two commands above. `persist` is their ONLY
+/// difference, and it is a parameter rather than a duplicated body so that a
+/// change to the toggle (a new validation, a different nudge order) cannot
+/// reach one command and miss the other.
+fn set_module_flag(
+    id: String,
+    enabled: bool,
+    app: AppHandle,
+    persist: bool,
+) -> Result<(), String> {
     if let Err(e) = validate_module_id(&id, &module_lifecycles()) {
         // The caller sees the Err; without this the rejection leaves no trace
         // anywhere the user or a log dump can reach it.
@@ -451,13 +550,30 @@ pub fn set_module_enabled(id: String, enabled: bool, app: AppHandle) -> Result<(
     }
     {
         let state = app.state::<AppState>();
-        state
+        let previous = state
             .modules_enabled
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(id.clone(), enabled);
+        // The two mutexes are taken one after the other, never nested: the
+        // insert above has released its guard by the time this line runs.
+        //
+        // `previous` is `None` only before `apply_to_state` has filled the owner
+        // map, which cannot happen here — the id was just validated against the
+        // registry and the map is effective from birth. Falling back to the
+        // value being written makes that impossible case a no-op rather than a
+        // wrong record.
+        note_module_write(
+            &mut state.transient_modules.lock().unwrap_or_else(|e| e.into_inner()),
+            &id,
+            previous.unwrap_or(enabled),
+            enabled,
+            persist,
+        );
     }
-    crate::persist_settings(&app);
+    if persist {
+        crate::persist_settings(&app);
+    }
     apply_reconcile(&app);
     crate::ssot::emit_ssot(&app);
     Ok(())
@@ -535,6 +651,104 @@ mod tests {
         let lines = Arc::new(Mutex::new(Vec::new()));
         let sink = lines.clone();
         (Arc::new(move |msg: String| sink.lock().unwrap().push(msg)), lines)
+    }
+
+    // --- transient module overrides (POE-226) --------------------------------
+    //
+    // The bug these exist for: `set_module_enabled_transient` declining to call
+    // `persist_settings` did not make its write transient. The owner map is what
+    // `settings::from_state` projects, so the next save by ANYTHING — a widget
+    // Save, a temple command persisting calibration — wrote the forced value out,
+    // and the restore, equally unpersisted, never took it back. The module was on
+    // at the next start with the user never having enabled it.
+
+    #[test]
+    fn a_forced_module_is_written_to_disk_as_the_value_it_had_before() {
+        let owner = desired(&[("temple", true)]);
+        let transient = desired(&[("temple", false)]);
+
+        let view = persisted_view(&owner, &transient);
+
+        assert_eq!(
+            view.get("temple"),
+            Some(&false),
+            "the file must keep saying what the user chose, not what a session forced",
+        );
+    }
+
+    #[test]
+    fn a_module_nobody_forced_is_written_to_disk_unchanged() {
+        let owner = desired(&[("mercenary", true), ("temple", true)]);
+        let transient = desired(&[("temple", false)]);
+
+        let view = persisted_view(&owner, &transient);
+
+        assert_eq!(
+            view.get("mercenary"),
+            Some(&true),
+            "an override on one module must not reach another",
+        );
+    }
+
+    #[test]
+    fn forcing_a_module_on_records_the_value_it_had() {
+        let mut transient = HashMap::new();
+
+        note_module_write(&mut transient, "temple", false, true, false);
+
+        assert_eq!(transient.get("temple"), Some(&false));
+    }
+
+    /// A session can force the same module twice — a second Configure press
+    /// after the focus poller intervened. Re-reading the owner map the second
+    /// time would record the state the FIRST force created.
+    #[test]
+    fn forcing_a_module_twice_keeps_the_value_from_before_the_first_force() {
+        let mut transient = HashMap::new();
+
+        note_module_write(&mut transient, "temple", false, true, false);
+        note_module_write(&mut transient, "temple", true, true, false);
+
+        assert_eq!(transient.get("temple"), Some(&false));
+    }
+
+    /// The restore. The flag is back where it started, so owner and file agree
+    /// and there is nothing left to substitute — an entry kept here would pin
+    /// the module against every later real toggle.
+    #[test]
+    fn restoring_a_forced_module_clears_its_override() {
+        let mut transient = HashMap::new();
+        note_module_write(&mut transient, "temple", false, true, false);
+
+        note_module_write(&mut transient, "temple", true, false, false);
+
+        assert!(!transient.contains_key("temple"));
+    }
+
+    /// The user toggling the module themselves mid-session. Their choice is
+    /// what belongs on disk from here on; keeping the override would revert it
+    /// silently at the next save.
+    #[test]
+    fn an_explicit_toggle_during_a_session_clears_the_override() {
+        let mut transient = HashMap::new();
+        note_module_write(&mut transient, "temple", false, true, false);
+
+        note_module_write(&mut transient, "temple", true, true, true);
+
+        assert!(!transient.contains_key("temple"));
+    }
+
+    /// …including when the user's choice AGREES with what the session forced.
+    /// The equality rule that ends a restore must not fire on a persisted write:
+    /// the value is the same, the meaning is not.
+    #[test]
+    fn an_explicit_toggle_back_to_the_pre_session_value_still_clears_the_override() {
+        let mut transient = HashMap::new();
+        note_module_write(&mut transient, "temple", false, true, false);
+
+        note_module_write(&mut transient, "temple", true, false, true);
+
+        assert!(!transient.contains_key("temple"));
     }
 
     // --- reconcile: the semantics matrix -------------------------------------

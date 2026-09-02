@@ -570,6 +570,15 @@ pub fn from_state(state: &crate::AppState) -> Settings {
     // mutex is one of the module-owned ones that are taken alone (see
     // modules.rs "Lock order"). `ScreenSlice` is `Copy`, so the deref copies.
     let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
+    // Two module mutexes, taken one at a time and released before the literal,
+    // for the same reason `screen` is bound here: a guard created inside a
+    // struct literal lives to the end of the whole statement, and these are
+    // taken alone (modules.rs "Lock order").
+    let persisted_modules = {
+        let owner = state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let transient = state.transient_modules.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        crate::modules::persisted_view(&owner, &transient)
+    };
     Settings {
         client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
@@ -605,10 +614,10 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         ui_prefs: state.ui_prefs.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         // Delta only — the owner map holds every registry id, but persisting
         // unchosen defaults would pin them forever (see modules.rs).
-        modules: crate::modules::persistable_modules(
-            &state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()),
-            &crate::modules::module_lifecycles(),
-        ),
+        // ...through the transient view first: a module a flow forced on for
+        // this run must go to disk as whatever the user last chose, or the next
+        // save by anything at all makes the force permanent (POE-226).
+        modules: crate::modules::persistable_modules(&persisted_modules, &crate::modules::module_lifecycles()),
         // One AppState Mutex, four settings fields: the aggregate is what the
         // loop and the commands share, but splitting it on disk keeps a
         // hand-edited file readable and lets one bad field default on its own.
@@ -796,6 +805,7 @@ mod tests {
             ui_prefs: Mutex::new(std::collections::HashMap::new()),
             ssot: Mutex::new(crate::ssot::AppSsotSnapshot::default()),
             modules_enabled: Mutex::new(std::collections::HashMap::new()),
+            transient_modules: Mutex::new(std::collections::HashMap::new()),
             module_handles: Mutex::new(std::collections::HashMap::new()),
             modules_shutting_down: AtomicBool::new(false),
             mercenary: Mutex::new(crate::mercenary::MercenarySlice::default()),
@@ -841,6 +851,92 @@ mod tests {
             saved.modules.is_empty(),
             "an unchosen default must not reach settings.json, got {:?}",
             saved.modules,
+        );
+    }
+
+    /// POE-226. A module forced on for one run must not reach settings.json —
+    /// not because the forcing command skipped `persist_settings` (it does, and
+    /// that was not enough), but because ANY other save projects the same owner
+    /// map. This is that save: `from_state` called for an unrelated reason while
+    /// the session is still open.
+    ///
+    /// Asserted as the value the NEXT LAUNCH computes — the delta overlaid on
+    /// the registry default — because that is the thing the user sees: a Modules
+    /// row that reads on with no toggle ever pressed.
+    #[test]
+    fn a_module_forced_for_this_run_is_not_persisted_as_enabled() {
+        let state = test_app_state();
+        let _ = apply_to_state(&Settings::default(), &state);
+        // The force: the owner map really is on, because the module really runs.
+        state
+            .modules_enabled
+            .lock()
+            .unwrap()
+            .insert("temple".to_string(), true);
+        state
+            .transient_modules
+            .lock()
+            .unwrap()
+            .insert("temple".to_string(), false);
+
+        let saved = from_state(&state);
+
+        let reloaded = test_app_state();
+        let _ = apply_to_state(&saved, &reloaded);
+        assert_eq!(
+            reloaded.modules_enabled.lock().unwrap().get("temple"),
+            Some(&false),
+            "a forced module must be off at the next start, got {:?}",
+            saved.modules,
+        );
+    }
+
+    /// The other half: once the override is gone — the restore cleared it, or
+    /// the user toggled the module themselves — the owner map is the truth again
+    /// and a real choice reaches disk. Without this, "never persist temple"
+    /// would pass the test above and lose every genuine toggle.
+    #[test]
+    fn a_module_with_no_override_left_is_persisted_from_the_owner_map() {
+        let state = test_app_state();
+        let _ = apply_to_state(&Settings::default(), &state);
+        state
+            .modules_enabled
+            .lock()
+            .unwrap()
+            .insert("temple".to_string(), true);
+
+        let saved = from_state(&state);
+
+        assert_eq!(
+            saved.modules.get("temple"),
+            Some(&true),
+            "a real choice must still be written, got {:?}",
+            saved.modules,
+        );
+    }
+
+    /// An override on one module must not follow the projection onto another.
+    #[test]
+    fn an_override_on_one_module_leaves_its_siblings_persisted() {
+        let state = test_app_state();
+        let _ = apply_to_state(&Settings::default(), &state);
+        {
+            let mut owner = state.modules_enabled.lock().unwrap();
+            owner.insert("temple".to_string(), true);
+            owner.insert("mercenary".to_string(), true);
+        }
+        state
+            .transient_modules
+            .lock()
+            .unwrap()
+            .insert("temple".to_string(), false);
+
+        let saved = from_state(&state);
+
+        assert_eq!(
+            saved.modules.get("mercenary"),
+            Some(&true),
+            "the merc choice is the user's and must survive a temple session",
         );
     }
 

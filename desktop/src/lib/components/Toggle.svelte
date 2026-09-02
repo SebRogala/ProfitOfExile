@@ -1,5 +1,19 @@
 <script lang="ts">
-	let { checked = $bindable() } = $props();
+	let {
+		checked = $bindable(),
+		onchange
+	}: {
+		checked?: boolean;
+		/**
+		 * Called with the new value after a click.
+		 *
+		 * For a caller whose truth is not a variable it can `bind:` to — a value
+		 * read out of a keyed map, say, which has to be written back through a
+		 * command rather than assigned. Optional, so every existing
+		 * `bind:checked` caller is unaffected.
+		 */
+		onchange?: (checked: boolean) => void;
+	} = $props();
 </script>
 
 <button
@@ -8,7 +22,7 @@
 	role="switch"
 	aria-checked={checked}
 	aria-label={checked ? 'Disable' : 'Enable'}
-	onclick={() => { checked = !checked; }}
+	onclick={() => { checked = !checked; onchange?.(checked); }}
 >
 	<span class="knob"></span>
 </button>
