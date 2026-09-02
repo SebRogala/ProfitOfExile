@@ -25,6 +25,16 @@
  * physical px on a 150 % display is 40.667 CSS px; rounding that to 41 and
  * multiplying back gives 62, so every open-and-save of config mode would walk
  * the widget one pixel to the right.
+ *
+ * # [`HostSize`] is CSS px, and [`rebase`] is the exception
+ *
+ * Every host size in this file is CSS px — it comes from `window.innerWidth` —
+ * and every rule that consumes one ([`clampToHost`], [`dragged`], [`resized`])
+ * is a rule about the CSS layout. [`rebase`] is the one that is not: it
+ * compares against the host size RUST STORED, which is physical, so it takes an
+ * explicitly physical host and its callers convert. Handing it the CSS host on
+ * a 150 % display would rebase every widget by two thirds on a monitor that
+ * never changed.
  */
 import { physicalGeometry, type OverlayDefaultGeometry } from '../overlay-defaults';
 import type { WidgetSpec } from './widget-registry';
@@ -36,6 +46,18 @@ export interface WidgetGeometry {
 	width: number;
 	height: number;
 	visible: boolean;
+	/**
+	 * The host window this rectangle was placed against, in the SAME physical
+	 * pixels (POE-239) — snake_case because that is what Rust puts on the wire.
+	 *
+	 * Absent or `0` means unknown, which is every row written before the field
+	 * existed and every row written by a caller that does not know the overlay
+	 * window's size — Settings' Show checkbox lives in a different window and is
+	 * the one that does. [`rebase`] leaves an unknown-host row alone, so both
+	 * behave exactly as they did before.
+	 */
+	host_width?: number;
+	host_height?: number;
 }
 
 /** A widget's live rectangle inside the host, in CSS px. Same shape as a
@@ -110,24 +132,123 @@ export function cssRect(geometry: WidgetGeometry, scaleFactor: number): WidgetRe
 }
 
 /**
- * The live rectangle as Rust wants it — physical, rounded, with the Show flag.
+ * The live rectangle as Rust wants it — physical, rounded, with the Show flag
+ * and the host it was placed against.
  *
  * Width and height are floored at zero: `PhysicalSize` is unsigned, and a
  * negative one from a rectangle the caller measured badly would be a panic on
  * the Rust side rather than a misplaced widget.
+ *
+ * `host` is the live host box in CSS px — the same unit as `rect`, and
+ * converted the same way — because what makes the stored rectangle meaningful
+ * later is the size of the thing it was placed inside ([`rebase`], POE-239).
+ * Writing it on every Save is what gives [`rebase`] something to scale against
+ * on the next monitor, instead of leaving the clamp to pin the widget to a
+ * corner the following Save would write back over the user's intent.
  */
 export function widgetGeometry(
 	rect: WidgetRect,
 	scaleFactor: number,
-	visible: boolean
+	visible: boolean,
+	host: HostSize
 ): WidgetGeometry {
 	const physical = physicalGeometry(rect, scaleFactor);
+	const box = hostInPhysicalPx(host, scaleFactor);
 	return {
 		x: physical.x,
 		y: physical.y,
 		width: Math.max(0, physical.w),
 		height: Math.max(0, physical.h),
-		visible
+		visible,
+		host_width: box.width,
+		host_height: box.height
+	};
+}
+
+/**
+ * A CSS-px host box in physical px, or `0 × 0` when it cannot be converted.
+ *
+ * Zero is the value [`rebase`] reads as "unknown, change nothing", which is the
+ * right answer for both ways this fails: a scale factor that has not resolved,
+ * and a host that has not measured itself yet (the frame before the first
+ * `resize`). Neither is a monitor size, and guessing one would rebase every
+ * stored widget against a number nothing supplied.
+ */
+function hostInPhysicalPx(host: HostSize, scaleFactor: number): HostSize {
+	if (!(scaleFactor > 0) || !Number.isFinite(scaleFactor)) return { width: 0, height: 0 };
+	return {
+		width: Math.round(host.width * scaleFactor),
+		height: Math.round(host.height * scaleFactor)
+	};
+}
+
+/**
+ * The stored rectangle scaled into proportion on a host of a different size.
+ *
+ * The problem it exists for (POE-239): persisted geometry is absolute physical
+ * px, so a widget placed near the bottom-right of a 3840 × 2160 monitor is off
+ * the edge of a 1920 × 1080 one. [`clampToHost`] stopped that rendering
+ * off-screen by pinning it to the corner — but a pinned widget is not the
+ * user's placement, and the next Save writes the corner back over it
+ * permanently. Rebasing first restores the INTENT (a third of the way across is
+ * still a third of the way across) and leaves the clamp as the last-resort
+ * safety it was meant to be.
+ *
+ * Position and size scale by the same two axis ratios, so a widget keeps its
+ * proportion of the screen rather than its pixel size — on a monitor with a
+ * different aspect ratio that means a slightly different shape, which is the
+ * honest answer for a rectangle whose two axes were placed against two
+ * different extents. A content-sized `0 × 0` is not a size at all and is left
+ * at `0 × 0`, so the content-sizing contract survives the rebase.
+ *
+ * A widget that DOES have a size keeps at least [`MIN_WIDGET_SIDE_CSS`] of it.
+ * Shrinking is the direction that cannot be undone: a frame narrower than its
+ * grab zone has no interior to drag and no edge to pull ([`edgeAt`] returns
+ * `null` once the zone collapses), so a 30 px widget halved by a 4K → 1080p
+ * move would come back on the next monitor unrecoverable, and config mode is
+ * the only way a widget is ever moved. That is the same floor [`resized`] pins
+ * a live gesture to, and it is spelled in CSS px, so it is converted with the
+ * SAME `scaleFactor` the caller converted `physicalHost` with rather than a
+ * second one this function could guess at.
+ *
+ * Returns the geometry UNCHANGED whenever there is nothing to rebase against:
+ * an unknown stored host (`0`, every row written before this field existed), an
+ * unmeasured live host, or a scale factor that has not resolved — the last
+ * because the floor cannot be expressed in physical px without one, and both
+ * callers already return an unchanged row at that point anyway (their
+ * `hostInPhysicalPx` answers `0 × 0`). Those rows behave exactly as they did
+ * before. A live host the SAME size as the stored one needs no special case —
+ * both ratios are 1 and every field is an integer, so the arithmetic is the
+ * identity.
+ *
+ * The `physicalHost` argument is PHYSICAL px, the unit Rust stores, and not the CSS
+ * [`HostSize`] the rest of this file passes around — see the units note at the
+ * top of the file.
+ */
+export function rebase(
+	geometry: WidgetGeometry,
+	physicalHost: HostSize,
+	scaleFactor: number
+): WidgetGeometry {
+	const fromWidth = geometry.host_width ?? 0;
+	const fromHeight = geometry.host_height ?? 0;
+	if (!(fromWidth > 0) || !(fromHeight > 0)) return geometry;
+	if (!(physicalHost.width > 0) || !(physicalHost.height > 0)) return geometry;
+	if (!(scaleFactor > 0) || !Number.isFinite(scaleFactor)) return geometry;
+	const rx = physicalHost.width / fromWidth;
+	const ry = physicalHost.height / fromHeight;
+	// Zero is the content-sizing contract, not a small rectangle, so only a
+	// widget that actually carries a size is floored.
+	const sized = geometry.width > 0 && geometry.height > 0;
+	const floor = sized ? Math.round(MIN_WIDGET_SIDE_CSS * scaleFactor) : 0;
+	return {
+		...geometry,
+		x: Math.round(geometry.x * rx),
+		y: Math.round(geometry.y * ry),
+		width: Math.max(floor, Math.round(geometry.width * rx)),
+		height: Math.max(floor, Math.round(geometry.height * ry)),
+		host_width: physicalHost.width,
+		host_height: physicalHost.height
 	};
 }
 
@@ -241,7 +362,11 @@ export function seedRect(
 	if (!geometry) {
 		return clampToHost(box ?? { ...spec.defaults }, host);
 	}
-	const rect = cssRect(geometry, scaleFactor);
+	// Rebase BEFORE the clamp, the same order `placementFor` uses: config mode
+	// must open a widget where it is being drawn, or a Save would write the
+	// pre-rebase rectangle straight back.
+	const based = rebase(geometry, hostInPhysicalPx(host, scaleFactor), scaleFactor);
+	const rect = cssRect(based, scaleFactor);
 	if (!rect) return null;
 	return clampToHost(
 		{
@@ -402,9 +527,15 @@ export function placementFor(
 			maxWidth: ceiling
 		};
 	}
-	const rect = cssRect(geometry, scaleFactor);
+	// REBASE FIRST, CLAMP SECOND (POE-239). A rectangle saved on a bigger
+	// monitor is scaled back into proportion here; the clamp below is what
+	// catches whatever is still outside — an unknown stored host, an aspect
+	// change, a widget wider than the new screen — and it can only pin to an
+	// edge, which is a placement the user did not make.
+	const based = rebase(geometry, hostInPhysicalPx(host, scaleFactor), scaleFactor);
+	const rect = cssRect(based, scaleFactor);
 	if (!rect) return null;
-	const sized = spec.resizable && geometry.width > 0 && geometry.height > 0;
+	const sized = spec.resizable && based.width > 0 && based.height > 0;
 	// Clamped against the window it is about to be drawn in, not against the one
 	// it was saved on: a stored placement outlives the monitor it was made on, and
 	// a widget whose origin is past the new bottom-right renders entirely

@@ -350,7 +350,12 @@
 					// when the user made one (`sizeToPersist`).
 					sizeToPersist(spec, rect, resizedThisSession.has(spec.id), stored[spec.id]),
 					scaleFactor,
-					visible
+					visible,
+					// The host this placement was made against, so a later start on a
+					// different monitor can rebase it instead of clamping it into a
+					// corner (POE-239). The LIVE box, not the one the row was loaded
+					// with: what is being saved is where the widget is now.
+					host
 				);
 				try {
 					await invoke('set_widget_geometry', { id: spec.id, geometry });
