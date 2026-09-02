@@ -4,7 +4,10 @@
 > banner because it contains runtime-earned WebView2/Win32 observations. It also
 > contains contradictory generations of the implementation and must not be used
 > as a construction recipe. Use the maintained
-> [overlay guide](../OVERLAY-GUIDE.md) for current work.
+> [overlay guide](../OVERLAY-GUIDE.md) for current work. Superseded in
+> particular since 2026-09-02 (POE-224): the single tracked window and its
+> right-edge interactive band described below are now a registry of hooked
+> windows, each declaring its own hot rectangles.
 
 This document captures everything learned from ~10 hours of debugging overlay windows in Tauri v2 with WebView2 on Windows. Follow this guide to avoid repeating these mistakes.
 

@@ -10,6 +10,7 @@ mod log_watcher;
 mod mercenary;
 mod modules;
 mod ocr;
+mod overlay_hook;
 mod settings;
 mod ssot;
 mod temple;
@@ -1013,467 +1014,21 @@ async fn trade_lookup(
     Ok(result)
 }
 
-// ---------------------------------------------------------------------------
-// Overlay click-through system
-//
-// Problem: WebView2 creates child HWNDs (Chrome_WidgetWin_0/1, Intermediate
-// D3D Window) that handle hit-testing independently. Subclassing the parent
-// with WM_NCHITTEST → HTTRANSPARENT does NOT work because WebView2's child
-// windows intercept mouse input before the parent sees it. WebView2 also
-// strips WS_EX_TRANSPARENT when creating/updating child windows.
-//
-// Solution:
-//   1. Set WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE on the
-//      overlay window — always fully click-through, game never sees it.
-//   2. Install a global WH_MOUSE_LL hook.
-//   3. Hook re-applies WS_EX_TRANSPARENT on every mouse event (WebView2 fix).
-//   4. When a click lands in the interactive zone (rightmost N pixels),
-//      buffer the coordinates and consume the click (game doesn't see it).
-//   5. Message loop drains the buffer and emits Tauri `overlay-click` events.
-//   6. Frontend uses elementFromPoint + data-action attributes to map clicks.
-//   7. HAS_CONTENT flag gates interception — empty overlay passes clicks through.
-// ---------------------------------------------------------------------------
-
-/// Overlay click-through system for Windows/WebView2.
-///
-/// The overlay is ALWAYS fully click-through (WS_EX_TRANSPARENT). The game
-/// never sees the overlay window — cursor and input pass through completely.
-///
-/// A WH_MOUSE_LL hook intercepts clicks in the interactive zone (rightmost N
-/// pixels) and emits Tauri events instead. The hook consumes these clicks so
-/// they don't reach the game. The overlay frontend maps click coordinates to
-/// button actions.
-/// Cached overlay geometry for the click-through hook, and the rule for when
-/// that cache may be trusted.
-///
-/// A type rather than four loose statics so the trust rule is testable off
-/// Windows. The rule exists entirely for the case a test cannot provoke — a
-/// failed `GetWindowRect` — but every consequence of that failure lives here,
-/// so this is the seam. Compiled on every platform under `test`; only Windows
-/// builds instantiate it (POE-148).
-#[cfg(any(windows, test))]
-// Off Windows this compiles for tests only, with no hook to call `invalidate`.
-#[cfg_attr(not(windows), allow(dead_code))]
-mod rect_cache {
-    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-    use std::sync::Mutex as StdMutex;
-
-    pub struct RectCache {
-        /// (left, top, right, bottom) in physical pixels.
-        rect: StdMutex<(i32, i32, i32, i32)>,
-        dirty: AtomicBool,
-        valid: AtomicBool,
-        read_failures: AtomicU32,
-    }
-
-    impl RectCache {
-        pub const fn new() -> Self {
-            Self {
-                rect: StdMutex::new((0, 0, 0, 0)),
-                // Starts dirty and untrusted: (0,0,0,0) describes no window.
-                dirty: AtomicBool::new(true),
-                valid: AtomicBool::new(false),
-                read_failures: AtomicU32::new(0),
-            }
-        }
-
-        /// Mark the cache stale so the next attempt re-reads it.
-        pub fn invalidate(&self) {
-            self.dirty.store(true, Ordering::Relaxed);
-        }
-
-        /// Whether a refresh is due, clearing the flag in the same operation.
-        pub fn take_dirty(&self) -> bool {
-            self.dirty.swap(false, Ordering::Relaxed)
-        }
-
-        /// Record a successful read.
-        ///
-        /// Poison-tolerant, like every reader: taking the lock with `if let Ok`
-        /// dropped the update on a poisoned mutex *after* the dirty flag had
-        /// already been cleared, so a single panic while holding the lock froze
-        /// the rect for the rest of the session with no signal.
-        pub fn store(&self, rect: (i32, i32, i32, i32)) {
-            *self.rect.lock().unwrap_or_else(|e| e.into_inner()) = rect;
-            self.valid.store(true, Ordering::Relaxed);
-        }
-
-        /// Record a failed read.
-        ///
-        /// The stored tuple still holds the *previous* geometry, so trust is
-        /// withdrawn rather than the value replaced — consumers must decline,
-        /// not compute against another window's rect. Staying dirty lets the
-        /// cache self-heal on the next attempt that can read; the accepted
-        /// trade-off is that a persistently unreadable window is retried on
-        /// every mouse event, which the failure count makes visible.
-        pub fn record_failure(&self) {
-            self.dirty.store(true, Ordering::Relaxed);
-            self.valid.store(false, Ordering::Relaxed);
-            self.read_failures.fetch_add(1, Ordering::Relaxed);
-        }
-
-        /// Forget which window the cache describes, without counting a failure.
-        pub fn reset_for_new_window(&self) {
-            self.dirty.store(true, Ordering::Relaxed);
-            self.valid.store(false, Ordering::Relaxed);
-        }
-
-        /// Whether the stored rect came from a successful read of the current
-        /// window. False means every consumer must decline.
-        pub fn is_valid(&self) -> bool {
-            self.valid.load(Ordering::Relaxed)
-        }
-
-        pub fn get(&self) -> (i32, i32, i32, i32) {
-            *self.rect.lock().unwrap_or_else(|e| e.into_inner())
-        }
-
-        /// Failures since the last drain. The hook cannot log — it must return
-        /// inside `LowLevelHooksTimeout` — so its message loop drains this.
-        pub fn take_failures(&self) -> u32 {
-            self.read_failures.swap(0, Ordering::Relaxed)
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::RectCache;
-
-        #[test]
-        fn a_fresh_cache_is_untrusted() {
-            // (0,0,0,0) would hit-test as a degenerate zone at the screen
-            // origin, so the cache must not be trusted before its first read.
-            assert!(!RectCache::new().is_valid());
-        }
-
-        #[test]
-        fn a_failed_read_withdraws_trust_while_leaving_the_stale_rect_in_place() {
-            // The exact POE-148 regression: before this, a failed GetWindowRect
-            // only re-set the dirty flag, and the hook went straight on to
-            // hit-test and translate coordinates against the tuple below.
-            let cache = RectCache::new();
-            cache.store((100, 200, 400, 500));
-
-            cache.record_failure();
-
-            assert!(!cache.is_valid());
-            assert_eq!(
-                cache.get(),
-                (100, 200, 400, 500),
-                "the stale rect is still readable — withdrawing trust is what stops it being used"
-            );
-        }
-
-        #[test]
-        fn a_failed_read_leaves_the_cache_dirty_so_it_can_self_heal() {
-            // Mirrors the refresh sequence: the dirty flag is consumed before
-            // the read, so a successful read leaves the cache clean.
-            let cache = RectCache::new();
-            assert!(cache.take_dirty(), "a fresh cache is due for its first read");
-            cache.store((1, 2, 3, 4));
-            assert!(!cache.take_dirty(), "a successful read leaves nothing to refresh");
-
-            cache.record_failure();
-
-            assert!(cache.take_dirty());
-        }
-
-        #[test]
-        fn a_later_successful_read_restores_trust() {
-            let cache = RectCache::new();
-            cache.record_failure();
-
-            cache.store((10, 20, 30, 40));
-
-            assert!(cache.is_valid());
-            assert_eq!(cache.get(), (10, 20, 30, 40));
-        }
-
-        #[test]
-        fn failed_reads_are_counted_and_drained_by_the_reporter() {
-            let cache = RectCache::new();
-            cache.record_failure();
-            cache.record_failure();
-
-            assert_eq!(cache.take_failures(), 2);
-            assert_eq!(cache.take_failures(), 0, "the drain must not re-report");
-        }
-
-        #[test]
-        fn adopting_a_new_window_withdraws_trust_without_counting_a_failure() {
-            let cache = RectCache::new();
-            cache.store((100, 200, 400, 500));
-
-            cache.reset_for_new_window();
-
-            assert!(!cache.is_valid());
-            assert_eq!(cache.take_failures(), 0);
-        }
-
-        #[test]
-        fn a_poisoned_rect_lock_does_not_freeze_the_cache() {
-            // Every reader already recovers from poisoning with `into_inner`, so
-            // a writer that gives up on `Err` leaves them serving the old tuple
-            // for the rest of the session. One panic while holding this lock
-            // used to be enough.
-            let cache = RectCache::new();
-            cache.store((1, 2, 3, 4));
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let _guard = cache.rect.lock().unwrap();
-                panic!("poison the rect lock");
-            }));
-            assert!(cache.rect.is_poisoned(), "the arrange step must have poisoned the lock");
-
-            cache.store((50, 60, 70, 80));
-
-            assert_eq!(cache.get(), (50, 60, 70, 80));
-            assert!(cache.is_valid());
-        }
-    }
-}
-
-#[cfg(windows)]
-mod overlay_clickthrough {
-    use super::rect_cache::RectCache;
-    use std::sync::atomic::{AtomicI32, AtomicIsize, AtomicBool, Ordering};
-    use std::sync::Mutex as StdMutex;
-    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM, BOOL, RECT};
-    use windows::Win32::UI::WindowsAndMessaging::*;
-
-    struct SendHook(HHOOK);
-    unsafe impl Send for SendHook {}
-
-    static HOOK_HANDLE: StdMutex<Option<SendHook>> = StdMutex::new(None);
-    static OVERLAY_HWND: AtomicIsize = AtomicIsize::new(0);
-    /// Cached overlay geometry. See `rect_cache::RectCache` for the trust rule.
-    static RECT_CACHE: RectCache = RectCache::new();
-    /// Width of interactive zone on the right edge (physical pixels).
-    static INTERACTIVE_WIDTH: AtomicI32 = AtomicI32::new(48);
-    /// Click buffer — hook pushes overlay-relative coordinates, message loop drains and emits events.
-    static CLICK_BUFFER: StdMutex<Vec<(i32, i32)>> = StdMutex::new(Vec::new());
-    /// Whether the overlay has visible content. When false, clicks pass through entirely.
-    static HAS_CONTENT: AtomicBool = AtomicBool::new(false);
-
-    /// Re-read the overlay rect into `RECT_CACHE` when it is marked dirty.
-    ///
-    /// Deliberately cached rather than read per event: this runs inside a
-    /// `WH_MOUSE_LL` hook, which Windows silently unhooks when it exceeds
-    /// `LowLevelHooksTimeout`, and the hook sees every mouse event system-wide.
-    fn refresh_rect_if_dirty() {
-        let hwnd_val = OVERLAY_HWND.load(Ordering::Relaxed);
-        if hwnd_val == 0 { return; }
-        if !RECT_CACHE.take_dirty() { return; }
-
-        unsafe {
-            let hwnd = HWND(hwnd_val as *mut _);
-            let mut rect = RECT::default();
-            if GetWindowRect(hwnd, &mut rect).is_ok() {
-                RECT_CACHE.store((rect.left, rect.top, rect.right, rect.bottom));
-            } else {
-                RECT_CACHE.record_failure();
-            }
-        }
-    }
-
-    /// Check if cursor is in the interactive zone. Also refreshes cached rect if dirty.
-    fn check_interactive(cx: i32, cy: i32) -> bool {
-        if OVERLAY_HWND.load(Ordering::Relaxed) == 0 { return false; }
-
-        refresh_rect_if_dirty();
-        // Decline rather than hit-test against a rect we could not read. The
-        // overlay is fully click-through, so declining passes the click to the
-        // game — the same outcome as the cursor being outside the zone, and
-        // strictly better than claiming a click at coordinates translated
-        // against another window's geometry.
-        if !RECT_CACHE.is_valid() { return false; }
-
-        let (left, top, right, bottom) = RECT_CACHE.get();
-        let iw = INTERACTIVE_WIDTH.load(Ordering::Relaxed);
-        cx >= left && cx < right && cy >= top && cy < bottom && cx >= (right - iw)
-    }
-
-    unsafe extern "system" fn mouse_hook_proc(
-        n_code: i32,
-        w_param: WPARAM,
-        l_param: LPARAM,
-    ) -> LRESULT {
-        if n_code >= 0 {
-            let mouse = &*(l_param.0 as *const MSLLHOOKSTRUCT);
-            let cx = mouse.pt.x;
-            let cy = mouse.pt.y;
-            let msg_id = w_param.0 as u32;
-
-            // A click is the one event rare enough to afford a fresh
-            // GetWindowRect (clicks are ~3 orders of magnitude rarer than
-            // moves, and the move path must stay inside LowLevelHooksTimeout).
-            // A successful read bounds a missed move/resize/DPI event to a
-            // single click instead of misplacing the interactive zone and every
-            // emitted coordinate for the rest of the session (POE-148). A failed
-            // read gives no such bound — it invalidates the cache instead, and
-            // the consumers below decline until a read succeeds.
-            if msg_id == WM_LBUTTONDOWN {
-                RECT_CACHE.invalidate();
-                refresh_rect_if_dirty();
-            }
-
-            // WebView2 may strip WS_EX_TRANSPARENT when creating/updating child
-            // windows. Re-apply when it's missing. Only check when cursor is near
-            // the overlay to avoid per-mouse-event Win32 calls system-wide.
-            let hwnd_val = OVERLAY_HWND.load(Ordering::Relaxed);
-            // Cache validity gates this too: "near the overlay" is meaningless
-            // when the cached rect belongs to a window we could not read.
-            if hwnd_val != 0 && RECT_CACHE.is_valid() {
-                let hwnd = HWND(hwnd_val as *mut _);
-                // Only do the GetWindowLongW check when cursor is near the overlay
-                // (within the full window rect, not just the interactive zone).
-                let (left, top, right, bottom) = RECT_CACHE.get();
-                if cx >= left && cx < right && cy >= top && cy < bottom {
-                    let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
-                    // ex == 0 can mean failure OR "no styles" — only re-apply if we
-                    // got a nonzero result that's missing WS_EX_TRANSPARENT.
-                    if ex != 0 && ex & WS_EX_TRANSPARENT.0 as i32 == 0 {
-                        SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_TRANSPARENT.0 as i32);
-                    }
-                }
-            }
-
-            if check_interactive(cx, cy) && HAS_CONTENT.load(Ordering::Relaxed) {
-                // Consume clicks in the interactive zone — don't pass to game.
-                if msg_id == WM_LBUTTONDOWN || msg_id == WM_LBUTTONUP {
-                    if msg_id == WM_LBUTTONDOWN {
-                        // Buffer overlay-relative coordinates for the message loop to emit.
-                        let (left, top, _, _) = RECT_CACHE.get();
-                        CLICK_BUFFER.lock().unwrap_or_else(|e| e.into_inner())
-                            .push((cx - left, cy - top));
-                    }
-                    return LRESULT(1); // Consume — don't pass to game or CallNextHookEx
-                }
-            }
-        }
-        CallNextHookEx(None, n_code, w_param, l_param)
-    }
-
-    /// Install the global mouse hook. The message loop drains click events and
-    /// emits Tauri `overlay-click` events. Returns a stop-signal sender.
-    pub fn install_hook(app: tauri::AppHandle) -> Option<std::sync::mpsc::Sender<()>> {
-        if HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
-            log::info!("Overlay mouse hook already installed — reusing existing hook");
-            return None;
-        }
-        let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
-        std::thread::spawn(move || {
-            unsafe {
-                let hook = match SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0) {
-                    Ok(h) => h,
-                    Err(e) => { log::error!("Mouse hook install failed: {}", e); return; }
-                };
-                *HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = Some(SendHook(hook));
-                log::info!("Overlay mouse hook installed (fully click-through mode)");
-
-                let mut msg = MSG::default();
-                // Throttled: a persistently unreadable rect stays dirty, so the
-                // hook retries on every mouse event and the counter can climb by
-                // thousands a second. One line per second reports the volume
-                // without flooding the 50-entry LOGS buffer.
-                let mut last_failure_report = std::time::Instant::now();
-                loop {
-                    if stop_rx.try_recv().is_ok() { break; }
-
-                    if last_failure_report.elapsed() >= std::time::Duration::from_secs(1) {
-                        last_failure_report = std::time::Instant::now();
-                        let failures = RECT_CACHE.take_failures();
-                        if failures > 0 {
-                            crate::app_log(&app, format!(
-                                "Overlay rect read failed {} time(s) in the last second — interactive-zone clicks passed through to the game until a read succeeds",
-                                failures,
-                            ));
-                        }
-                    }
-
-                    // Drain click buffer → emit Tauri events.
-                    {
-                        let mut buf = CLICK_BUFFER.lock().unwrap_or_else(|e| e.into_inner());
-                        for (x, y) in buf.drain(..) {
-                            use tauri::Emitter;
-                            if let Err(e) = app.emit("overlay-click", serde_json::json!({ "x": x, "y": y })) {
-                                log::warn!("emit overlay-click failed: {}", e);
-                            }
-                        }
-                    }
-
-                    if PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                        let _ = TranslateMessage(&msg);
-                        DispatchMessageW(&msg);
-                    } else {
-                        std::thread::sleep(std::time::Duration::from_millis(1));
-                    }
-                }
-
-                if let Some(SendHook(h)) = HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                    if let Err(e) = UnhookWindowsHookEx(h) {
-                        log::error!("Failed to unhook mouse hook: {} — hook may leak", e);
-                    }
-                }
-                log::info!("Overlay mouse hook removed");
-            }
-        });
-        Some(stop_tx)
-    }
-
-
-
-    pub fn set_overlay_hwnd(hwnd: HWND) {
-        OVERLAY_HWND.store(hwnd.0 as isize, Ordering::Relaxed);
-        // The cached rect describes the previous overlay until the first
-        // successful read of this one.
-        RECT_CACHE.reset_for_new_window();
-    }
-
-    pub fn set_has_content(has: bool) {
-        HAS_CONTENT.store(has, Ordering::Relaxed);
-    }
-
-    pub fn set_interactive_width(px: i32) {
-        INTERACTIVE_WIDTH.store(px, Ordering::Relaxed);
-    }
-
-    pub fn invalidate_rect() {
-        RECT_CACHE.invalidate();
-    }
-
-    /// Invalidate the cached rect when `hwnd` is the overlay this hook tracks.
-    ///
-    /// Keyed on the HWND rather than a window label so it stays correct for
-    /// whichever overlay currently owns the interactive zone.
-    pub fn invalidate_if_tracked(hwnd: HWND) {
-        if OVERLAY_HWND.load(Ordering::Relaxed) == hwnd.0 as isize {
-            RECT_CACHE.invalidate();
-        }
-    }
-
-    pub unsafe fn set_noactivate(hwnd: HWND) {
-        let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
-        SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as i32);
-
-        unsafe extern "system" fn enum_child(child: HWND, _: LPARAM) -> BOOL {
-            let ex = GetWindowLongW(child, GWL_EXSTYLE);
-            SetWindowLongW(child, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as i32);
-            BOOL(1)
-        }
-        let _ = EnumChildWindows(hwnd, Some(enum_child), LPARAM(0));
-    }
-}
-
-/// Set up an overlay window for click-through with an interactive zone.
+/// Set up an overlay window for click-through and REGISTER it with the hook.
 /// Call from JS after the window is created. Delays 1s for HWND availability.
 ///
+/// Every overlay registers, not only the interactive one: the hook is the only
+/// thing that repairs the `WS_EX_TRANSPARENT` WebView2 strips off when it
+/// rebuilds child windows, and it repairs what it tracks. Which clicks a window
+/// then CLAIMS is a separate declaration — `set_overlay_hot_rects`, sent by the
+/// window's own page — so this command no longer takes an interactive width.
+///
 /// - `label`: Tauri window label
-/// - `interactive_width`: width in physical pixels of the interactive zone on the right edge
 #[tauri::command]
-fn set_overlay_clickthrough(label: String, interactive_width: i32, app: AppHandle) {
+fn set_overlay_clickthrough(label: String, app: AppHandle) {
     #[cfg(not(windows))]
     {
-        let _ = (label, interactive_width, app);
+        let _ = (label, app);
     }
 
     #[cfg(windows)]
@@ -1491,39 +1046,66 @@ fn set_overlay_clickthrough(label: String, interactive_width: i32, app: AppHandl
                 None => { log::warn!("Overlay '{}' not found after delay", label2); return; }
             };
 
-            // Make entire window click-through
-            if let Err(e) = window.set_ignore_cursor_events(true) {
-                log::error!("set_ignore_cursor_events failed for '{}': {}", label2, e);
-                return;
+            // This setup runs a full second after the window was created, and
+            // the user can have opened widget configuration inside that second.
+            // Re-asserting click-through then would leave the window neither
+            // interactive (cursor events ignored again) nor hooked (the hook
+            // still sees `config_mode` and keeps its hands off it), with
+            // nothing to undo it until config mode is closed. Registration
+            // itself is unconditional — it is what the hook needs to repair
+            // WS_EX_TRANSPARENT once config mode ends, and `register` keeps the
+            // flag for a same-HWND re-register.
+            let in_config = overlay_hook::config_mode(&label2);
+            if in_config {
+                log::info!(
+                    "Overlay '{}' is in widget-configuration mode — registering without re-arming click-through",
+                    label2
+                );
+            } else {
+                // Make entire window click-through
+                if let Err(e) = window.set_ignore_cursor_events(true) {
+                    log::error!("set_ignore_cursor_events failed for '{}': {}", label2, e);
+                    return;
+                }
             }
 
             if let Ok(hwnd) = window.hwnd() {
                 let h = HWND(hwnd.0 as *mut _);
-                unsafe { overlay_clickthrough::set_noactivate(h); }
-
-                // Only set interactive zone globals for overlays that need click
-                // interception (interactive_width > 0). Non-interactive overlays
-                // (compass, pathstrip) must not overwrite the comparator's HWND.
-                if interactive_width > 0 {
-                    overlay_clickthrough::set_interactive_width(interactive_width);
-                    overlay_clickthrough::set_overlay_hwnd(h);
-
-                    if let Some(tx) = overlay_clickthrough::install_hook(app2.clone()) {
-                        let state = app2.state::<AppState>();
-                        *state.overlay_hook_stop.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
-                    }
+                if !in_config {
+                    unsafe { overlay_hook::set_noactivate(h); }
                 }
 
-                // Re-apply WS_EX_NOACTIVATE after WebView2 children are created
+                overlay_hook::register(&label2, h);
+
+                // Idempotent: the first overlay to get here installs the hook,
+                // every later one reuses it and gets `None`.
+                if let Some(tx) = overlay_hook::install_hook(app2.clone()) {
+                    let state = app2.state::<AppState>();
+                    *state.overlay_hook_stop.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
+                }
+
+                // Re-apply WS_EX_NOACTIVATE after WebView2 children are created.
+                // Re-checked, not inherited from `in_config`: config mode can be
+                // entered during these 500 ms too, and WS_EX_NOACTIVATE on a
+                // window the user is dragging widgets in stops it taking the
+                // focus its own drag handles need.
                 let hwnd_raw = hwnd.0 as isize;
+                let label3 = label2.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(500));
+                    if overlay_hook::config_mode(&label3) {
+                        log::info!(
+                            "Overlay '{}' entered widget-configuration mode — WS_EX_NOACTIVATE not re-applied",
+                            label3
+                        );
+                        return;
+                    }
                     unsafe {
-                        overlay_clickthrough::set_noactivate(HWND(hwnd_raw as *mut _));
+                        overlay_hook::set_noactivate(HWND(hwnd_raw as *mut _));
                     }
                 });
 
-                log::info!("Overlay clickthrough setup complete for '{}' (interactive={}px)", label2, interactive_width);
+                log::info!("Overlay clickthrough setup complete for '{}' (registered with the mouse hook)", label2);
             } else {
                 log::warn!("Overlay '{}' HWND not available after delay", label2);
             }
@@ -1626,22 +1208,89 @@ fn set_comparator_data(payload: serde_json::Value, app: AppHandle) {
     *state.comparator_data.lock().unwrap_or_else(|e| e.into_inner()) = payload;
 }
 
+/// Tell the hook whether `label` is drawing anything.
+///
+/// Per window, not process-wide: an empty comparator must pass its clicks
+/// through while the merc strip beside it is still claiming its own.
 #[tauri::command]
-fn set_overlay_has_content(has_content: bool) {
+fn set_overlay_has_content(label: String, has_content: bool) {
     #[cfg(windows)]
-    overlay_clickthrough::set_has_content(has_content);
+    overlay_hook::set_has_content(&label, has_content);
 
     #[cfg(not(windows))]
-    let _ = has_content;
+    let _ = (label, has_content);
 }
 
+/// Declare the window-relative PHYSICAL rectangles `label` claims clicks in.
+///
+/// Replaces the right-edge interactive width: a page measures the elements it
+/// wants clickable and sends their rects, so nothing between them is taken from
+/// the game. Sending an empty list withdraws the claim.
 #[tauri::command]
-fn set_overlay_interactive_width(width: i32) {
+fn set_overlay_hot_rects(label: String, rects: Vec<overlay_hook::HotRect>) {
     #[cfg(windows)]
-    overlay_clickthrough::set_interactive_width(width);
+    overlay_hook::set_hot_rects(&label, rects);
 
     #[cfg(not(windows))]
-    let _ = width;
+    let _ = (label, rects);
+}
+
+/// Put `label` in or out of widget-configuration mode.
+///
+/// On, the window becomes genuinely interactive so its page can handle drags
+/// and Save/Cancel itself, and the hook leaves it alone — it neither repairs
+/// `WS_EX_TRANSPARENT` (which would undo the interactivity within one mouse
+/// event) nor intercepts its clicks. Off restores click-through, re-asserts
+/// `WS_EX_NOACTIVATE`, and hands the window back to the hook.
+///
+/// No caller yet: the widget host (WI-B, POE-225) and Settings → Configure
+/// (WI-C, POE-226) are the ones that will invoke it. It ships with WI-A because
+/// the flag it sets is what `set_overlay_clickthrough` and `fit_overlay_height`
+/// now consult before re-arming click-through.
+#[tauri::command]
+fn set_overlay_config_mode(label: String, on: bool, app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window(&label)
+        .ok_or_else(|| format!("Window '{}' not found", label))?;
+
+    if on {
+        // Flag first: between the two calls the hook must already be leaving
+        // this window alone, or it can re-apply WS_EX_TRANSPARENT on the very
+        // next mouse event and the window never becomes interactive.
+        #[cfg(windows)]
+        overlay_hook::set_config_mode(&label, true);
+
+        if let Err(e) = window.set_ignore_cursor_events(false) {
+            #[cfg(windows)]
+            overlay_hook::set_config_mode(&label, false);
+            let msg = format!("set_ignore_cursor_events(false) failed for '{}': {}", label, e);
+            log::error!("{}", msg);
+            return Err(msg);
+        }
+    } else {
+        if let Err(e) = window.set_ignore_cursor_events(true) {
+            // Left in config mode deliberately: the window is still interactive,
+            // so telling the hook otherwise would only add a fight over
+            // WS_EX_TRANSPARENT to a window that already failed to close.
+            let msg = format!("set_ignore_cursor_events(true) failed for '{}': {}", label, e);
+            log::error!("{}", msg);
+            return Err(msg);
+        }
+        #[cfg(windows)]
+        {
+            use windows::Win32::Foundation::HWND;
+            match window.hwnd() {
+                Ok(hwnd) => unsafe { overlay_hook::set_noactivate(HWND(hwnd.0 as *mut _)) },
+                Err(e) => log::warn!(
+                    "set_overlay_config_mode({label}): HWND unavailable, WS_EX_NOACTIVATE not re-applied: {e}"
+                ),
+            }
+        }
+        #[cfg(windows)]
+        overlay_hook::set_config_mode(&label, false);
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -1664,11 +1313,10 @@ fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) -
         .map_err(|e| format!("set_position failed: {}", e))?;
     window.set_size(tauri::PhysicalSize::new(w, h))
         .map_err(|e| format!("set_size failed: {}", e))?;
-    // Invalidate cached rect so the mouse hook picks up the new position
+    // Invalidate the cached rect so the mouse hook picks up the new position.
+    // Any registered label, not just the comparator: every overlay is hooked now.
     #[cfg(windows)]
-    if label == "comparator" {
-        overlay_clickthrough::invalidate_rect();
-    }
+    overlay_hook::invalidate_label(&label);
     Ok(())
 }
 
@@ -1813,19 +1461,31 @@ fn fit_overlay_height(label: String, content_height: f64, app: AppHandle) -> Res
         .map_err(|e| format!("set_position failed: {}", e))?;
 
     // MEASURED, and the reason this is not just a resize: WebView2 strips
-    // WS_EX_TRANSPARENT when it creates or updates child windows (stated at the
-    // click-through system's module comment, and re-applied per mouse event by
-    // the hook at the WS_EX_TRANSPARENT re-apply block). The hook is the ONLY
-    // thing that repairs it, and it repairs exactly one window —
-    // `OVERLAY_HWND`, which is the comparator's. The merc strip is not tracked
-    // by it, so a resize that made WebView2 rebuild its children would leave
-    // this window opaque to the mouse: clicks stop reaching the game, and a
-    // click landing here takes focus, drops `game_in_foreground` and stops the
-    // capture loop producing the verdict on screen.
+    // WS_EX_TRANSPARENT when it creates or updates child windows (stated at
+    // `overlay_hook`'s module comment, and re-applied per mouse event by the
+    // hook's re-apply loop). The hook is the ONLY thing that repairs it, and it
+    // repairs the windows in its registry — which is now every overlay that
+    // called `set_overlay_clickthrough`, this one included. The re-assert stays
+    // anyway: the repair is driven by mouse events over the window, so a resize
+    // that rebuilt WebView2's children would otherwise leave this window opaque
+    // to the mouse until the cursor happened to cross it — clicks stop reaching
+    // the game, and a click landing here takes focus, drops
+    // `game_in_foreground` and stops the capture loop producing the verdict on
+    // screen.
     //
     // Both calls are idempotent, so re-asserting after every resize costs a
     // couple of Win32 calls on a path that only runs when the content actually
     // changed height.
+    //
+    // Skipped entirely while the user is arranging this window's widgets: the
+    // window is deliberately `set_ignore_cursor_events(false)` then and the
+    // hook is deliberately leaving it alone, so a content-driven resize
+    // re-asserting click-through would make it neither interactive nor hooked
+    // until config mode is closed.
+    if overlay_hook::config_mode(&label) {
+        log::info!("fit_overlay_height({label}): in widget-configuration mode — click-through left off");
+        return Ok(applied_css);
+    }
     if let Err(e) = window.set_ignore_cursor_events(true) {
         log::warn!("fit_overlay_height({label}): re-arming click-through failed: {e}");
     }
@@ -1834,7 +1494,7 @@ fn fit_overlay_height(label: String, content_height: f64, app: AppHandle) -> Res
         use windows::Win32::Foundation::HWND;
         match window.hwnd() {
             Ok(hwnd) => unsafe {
-                overlay_clickthrough::set_noactivate(HWND(hwnd.0 as *mut _));
+                overlay_hook::set_noactivate(HWND(hwnd.0 as *mut _));
             },
             Err(e) => {
                 log::warn!("fit_overlay_height({label}): HWND unavailable, WS_EX_NOACTIVATE not re-applied: {e}");
@@ -1854,7 +1514,7 @@ fn comparator_moved(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
     settings::save(&app, &s);
     // Invalidate cached rect so the mouse hook picks up the new position
     #[cfg(windows)]
-    overlay_clickthrough::invalidate_rect();
+    overlay_hook::invalidate_label("comparator");
     // Emit via Rust — guaranteed to reach all windows
     if let Err(e) = app.emit("comparator-moved", serde_json::json!({ "x": x, "y": y, "w": w, "h": h })) {
         log::warn!("emit comparator-moved failed: {}", e);
@@ -3571,7 +3231,8 @@ pub fn run() {
             set_devtools,
             set_comparator_data,
             set_overlay_has_content,
-            set_overlay_interactive_width,
+            set_overlay_hot_rects,
+            set_overlay_config_mode,
             get_comparator_data,
             set_overlay_clickthrough,
             request_trade_refresh,
@@ -3706,25 +3367,30 @@ pub fn run() {
                     | tauri::WindowEvent::Resized(_)
                     | tauri::WindowEvent::ScaleFactorChanged { .. }
             ) {
-                if let Ok(hwnd) = window.hwnd() {
-                    overlay_clickthrough::invalidate_if_tracked(
-                        windows::Win32::Foundation::HWND(hwnd.0 as *mut _),
-                    );
-                }
+                // By label, for ANY registered overlay. The singleton this
+                // replaced keyed on the HWND because it tracked exactly one
+                // window and the label could not tell it which; the registry
+                // holds the label already, so this also saves a `hwnd()` call
+                // per window event.
+                overlay_hook::invalidate_label(window.label());
             }
-            // Clean up overlay mouse hook when comparator window is destroyed
+            // Drop a destroyed overlay from the hook's registry, and tear the
+            // hook down when that was the last one. Keyed to the comparator
+            // before the registry existed — now any hooked overlay can be the
+            // one that closes, and the hook has to outlive the others.
             if let tauri::WindowEvent::Destroyed = event {
-                if window.label() == "comparator" {
-                    #[cfg(windows)]
-                    {
-                        let app = window.app_handle();
-                        let state = app.state::<AppState>();
-                        // Send stop signal — the hook thread will unhook and exit
-                        if let Some(tx) = state.overlay_hook_stop.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                            let _ = tx.send(());
-                        }
-                        log::info!("overlay_clickthrough: cleaned up on comparator destroy");
+                #[cfg(windows)]
+                if overlay_hook::unregister(window.label()) {
+                    let app = window.app_handle();
+                    let state = app.state::<AppState>();
+                    // Send stop signal — the hook thread will unhook and exit
+                    if let Some(tx) = state.overlay_hook_stop.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                        let _ = tx.send(());
                     }
+                    log::info!(
+                        "overlay_hook: '{}' was the last hooked overlay — hook torn down",
+                        window.label()
+                    );
                 }
             }
             // Save window position/size on close

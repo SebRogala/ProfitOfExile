@@ -37,16 +37,48 @@ flags and `lab_overlays_enabled` documented here are NOT modules.
 
 ## Overlay types
 
-The comparator is interactive. Rust installs `WS_EX_TRANSPARENT`/
-`WS_EX_NOACTIVATE` behavior and a `WH_MOUSE_LL` hook through
-`set_overlay_clickthrough`. The right-edge interactive width starts at 48
-physical pixels and may widen for displayed controls. `HAS_CONTENT` prevents an
-empty comparator from intercepting clicks. Buttons must align with the right
-edge and expose the `data-action` metadata consumed by the coordinate handler.
+EVERY overlay calls `set_overlay_clickthrough(label)`, and that call does two
+things: it installs `WS_EX_TRANSPARENT`/`WS_EX_NOACTIVATE` behavior on the
+window, and it REGISTERS the window with the shared `WH_MOUSE_LL` hook
+(`desktop/src-tauri/src/overlay_hook.rs`). Registration is not about being
+interactive — it is what lets the hook repair the `WS_EX_TRANSPARENT` WebView2
+strips off when it rebuilds child windows. The hook is installed by the first
+window to register and torn down when the last one is destroyed.
 
-Compass, path-strip, and timer overlays are display-only. They still call
-`set_overlay_clickthrough`, but with `interactiveWidth: 0`. Do not copy
-comparator button/hook assumptions into these overlays.
+Which clicks a window CLAIMS is a separate, per-window declaration made by the
+window's own page:
+
+- `set_overlay_hot_rects(label, rects)` — window-relative rectangles in
+  PHYSICAL pixels (`getBoundingClientRect()` × the window's Tauri
+  `scaleFactor()`; the conversion and the change test are in
+  `desktop/src/lib/overlay/hot-rects.ts`). A click inside one is consumed and
+  re-emitted to that window as `overlay-click {label, x, y}`; everything else
+  reaches the game. Declaring nothing — which is what compass, path-strip,
+  timer, temple and the merc strip do — makes a window display-only. Listen with
+  `getCurrentWebviewWindow().listen('overlay-click', …)`; a bare `listen()` from
+  `@tauri-apps/api/event` registers for the `Any` target and a labelled
+  `emit_to` does not match it (tauri 2.10.3 `manager/mod.rs:602-628`).
+- `set_overlay_has_content(label, has_content)` — a window that is drawing
+  nothing claims nothing, whatever it declared.
+- `set_overlay_config_mode(label, on)` — while on, the window is genuinely
+  interactive (`set_ignore_cursor_events(false)`) and the hook leaves it
+  entirely alone: it neither repairs `WS_EX_TRANSPARENT` nor intercepts.
+
+Outside config mode a window's `WS_EX_TRANSPARENT` is never cleared, so a
+button appearing and disappearing is a hot rect being declared and withdrawn,
+never a transparency flip.
+
+The comparator is the interactive one today: its page declares the button
+column (and the trade-queue row while that shows) and maps the emitted
+coordinates with `elementFromPoint` + `data-action`. Buttons must be inside a
+declared rect and expose that `data-action` metadata; they no longer have to
+align with the window's right edge, because the claim is the element's own
+rectangle rather than a band measured from the edge.
+
+The hook pairs button-up with button-down: it consumes a release only when it
+consumed the matching press, so a drag that started on the game keeps its
+release. Two overlapping windows are resolved by registration order, first
+match wins — the hook cannot see z-order.
 
 The capture/configuration overlay is deliberately interactive and has different
 drag, resize, save, and cancel behavior. Treat it as a third type.
@@ -93,11 +125,14 @@ setting).
 `set_ignore_cursor_events(true)` plus `set_noactivate` on Windows, both
 idempotent. This is not belt-and-braces: WebView2 strips `WS_EX_TRANSPARENT`
 when it creates or updates child windows, and the only thing that repairs it is
-the `WH_MOUSE_LL` hook, which repairs exactly one window — `OVERLAY_HWND`, the
-comparator's. The merc strip is not tracked by it, so a resize that made
-WebView2 rebuild its children would leave the strip opaque to the mouse: clicks
-stop reaching the game, and a click landing on the strip takes focus, drops
-`game_in_foreground` and stops the capture loop.
+the `WH_MOUSE_LL` hook. The hook now repairs every REGISTERED window, the merc
+strip included — before the registry it tracked one HWND, the comparator's, and
+the strip was simply unprotected. The re-assert stays anyway, because the repair
+is driven by mouse events over the window: a resize that rebuilt WebView2's
+children would otherwise leave the strip opaque to the mouse until the cursor
+happened to cross it. While it is opaque, clicks stop reaching the game, and a
+click landing on the strip takes focus, drops `game_in_foreground` and stops the
+capture loop.
 
 For the merc overlay, click-through is a correctness requirement, not a
 preference. The capture loop reads the screen only while the game is the RAW
@@ -260,6 +295,11 @@ points rather than cloning every step blindly:
   lifecycles;
 - an `/overlay/...` route and state catch-up/reconciliation appropriate to that
   overlay type;
-- `set_overlay_clickthrough` with the correct interactive width.
+- `set_overlay_clickthrough(label)` — for every overlay, so the hook can repair
+  its `WS_EX_TRANSPARENT`;
+- `set_overlay_hot_rects` from the window's own page ONLY if it has controls the
+  player must be able to click; a display-only overlay declares nothing — and
+  its `overlay-click` listener must be `getCurrentWebviewWindow().listen(…)`,
+  never a bare `listen()` (see "Overlay types").
 
 Verify desktop Svelte checks/unit tests and Rust tests after overlay changes.

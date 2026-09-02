@@ -119,8 +119,9 @@
 </div>
 
 <style>
-	/* Click-through is installed in Rust (`set_overlay_clickthrough`, interactive
-	   width 0); `pointer-events: none` is the webview half of the same promise. */
+	/* Click-through is installed in Rust (`set_overlay_clickthrough`; this window
+	   declares no hot rects, so the hook never claims a click from it);
+	   `pointer-events: none` is the webview half of the same promise. */
 	.overlay-root {
 		position: fixed;
 		inset: 0;
