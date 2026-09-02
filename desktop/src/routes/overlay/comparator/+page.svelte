@@ -5,6 +5,7 @@
 	import { listen } from '@tauri-apps/api/event';
 	import type { CompareGem } from '$lib/api';
 	import { defaultSelectedGem } from '$lib/comparator-selection';
+	import { hotRectsEqual, physicalHotRect, type HotRect } from '$lib/overlay/hot-rects';
 	import type { TradeLookupResult, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
 	import { isSource } from '$lib/tradeApi';
 	import GemIcon from '../../(app)/components/GemIcon.svelte';
@@ -65,7 +66,7 @@
 		// the one that ran.
 		selectedGem = defaultSelectedGem(results, selectedGem);
 		// Tell the mouse hook whether we have content — when empty, clicks pass through to game.
-		invoke('set_overlay_has_content', { hasContent: results.length > 0 })
+		invoke('set_overlay_has_content', { label: 'comparator', hasContent: results.length > 0 })
 			.catch(e => console.warn('[overlay] set_overlay_has_content failed:', e));
 	});
 
@@ -138,11 +139,64 @@
 		};
 	});
 
-	// Widen the interactive click zone when the queue row is visible.
+	// The rectangles the mouse hook claims clicks in — this window's buttons and
+	// nothing else. The right-edge "interactive width" this replaces was a band
+	// measured from the window edge (48 physical px, 140 while the queue row
+	// showed), so it also ate the gap beside the buttons and, with the queue row
+	// up, a strip across the bottom of the table. Measuring the elements is both
+	// narrower and self-maintaining.
+	let sideEl = $state<HTMLDivElement | null>(null);
+	let queueEl = $state<HTMLDivElement | null>(null);
+	let sentHotRects: HotRect[] | null = null;
+	let hotRectFrame = 0;
+
+	function sendHotRects() {
+		hotRectFrame = 0;
+		const rects: HotRect[] = [];
+		// Declaration order is the hook's tie-break, so the buttons the player
+		// aims at most come first.
+		for (const el of [sideEl, queueEl]) {
+			if (!el) continue;
+			const r = physicalHotRect(el.getBoundingClientRect(), cachedScaleFactor);
+			if (r) rects.push(r);
+		}
+		if (sentHotRects && hotRectsEqual(sentHotRects, rects)) return;
+		sentHotRects = rects;
+		invoke('set_overlay_hot_rects', { label: 'comparator', rects })
+			.catch(e => console.warn('[overlay] set_overlay_hot_rects failed:', e));
+	}
+
+	// One measurement per frame at most: layout is settled by then, and a burst
+	// of reactive changes collapses into a single IPC call.
+	function scheduleHotRects() {
+		if (hotRectFrame) return;
+		hotRectFrame = requestAnimationFrame(sendHotRects);
+	}
+
 	$effect(() => {
-		const width = tradeQueue ? 140 : 48;
-		invoke('set_overlay_interactive_width', { width })
-			.catch(e => console.warn('[overlay] set_overlay_interactive_width failed:', e));
+		// Everything that can move the buttons: the column mounting, the queue
+		// row coming and going, a row per gem, and the scale factor resolving
+		// (until it does, the conversion declines and nothing is claimed).
+		void sideEl;
+		void queueEl;
+		void tradeQueue;
+		void results.length;
+		void cachedScaleFactor;
+		scheduleHotRects();
+	});
+
+	$effect(() => {
+		// A resize moves `.side` (fixed to the right edge) and `.queue-row`
+		// (fixed to the bottom) without changing any of the state above.
+		const onResize = () => scheduleHotRects();
+		window.addEventListener('resize', onResize);
+		return () => {
+			window.removeEventListener('resize', onResize);
+			if (hotRectFrame) {
+				cancelAnimationFrame(hotRectFrame);
+				hotRectFrame = 0;
+			}
+		};
 	});
 
 	// Trade refresh — request the Comparator to do the lookup via event.
@@ -179,7 +233,10 @@
 	$effect(() => {
 		let cancelled = false;
 
-		const unlistenPromise = listen<{ x: number; y: number }>('overlay-click', (event) => {
+		// Targeted at this window, not broadcast: Rust emits with `emit_to(label)`
+		// now that every overlay is hooked, and a bare `listen` registers for the
+		// `Any` target, which a labelled emit deliberately does not match.
+		const unlistenPromise = getCurrentWebviewWindow().listen<{ label: string; x: number; y: number }>('overlay-click', (event) => {
 			if (cancelled || results.length === 0 || cachedScaleFactor === 0) return;
 			const lx = event.payload.x / cachedScaleFactor;
 			const ly = event.payload.y / cachedScaleFactor;
@@ -318,7 +375,7 @@
 					</div>
 				{/each}
 				</div>
-			<div class="side">
+			<div class="side" bind:this={sideEl}>
 				{#each results as gem, i (gem.name)}
 					<div class="side-row">
 						<button class="act-btn pick-btn" class:active={selectedGem === gem.name} data-action="pick" data-index={i} title="Pick">&#x2713;</button>
@@ -333,7 +390,7 @@
 			</div>
 		</div>
 		{#if tradeQueue}
-			<div class="queue-row">
+			<div class="queue-row" bind:this={queueEl}>
 				<span class="queue-status">
 					{Math.min(tradeQueue.position, tradeQueue.total)}/{tradeQueue.total}
 					{#if tradeQueue.status === 'waiting' && tradeQueue.waitSecs > 0}{Math.ceil(tradeQueue.waitSecs)}s{/if}

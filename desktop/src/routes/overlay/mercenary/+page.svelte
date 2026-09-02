@@ -50,8 +50,8 @@
 	 * must never take focus: a focused own-window makes the raw flag false and
 	 * the capture loop stops reading the screen, so an interactive verdict strip
 	 * would switch off the thing producing the verdict. Hence
-	 * `set_overlay_clickthrough(interactiveWidth: 0)` in the layout and
-	 * `pointer-events: none` below — the two halves of one promise.
+	 * `set_overlay_clickthrough` in the layout with no hot rects ever declared,
+	 * and `pointer-events: none` below — the two halves of one promise.
 	 *
 	 * `onMount` is not reliable in an overlay window and cross-window JS state is
 	 * not either, so everything comes from the Rust-backed `get_ssot` poll that
@@ -273,10 +273,11 @@
 </div>
 
 <style>
-	/* Click-through is installed in Rust (`set_overlay_clickthrough`, interactive
-	   width 0); `pointer-events: none` is the webview half of the same promise.
-	   A click reaching this window would take focus, and a focused own-window
-	   stops the capture loop that produces the verdict. */
+	/* Click-through is installed in Rust (`set_overlay_clickthrough`; this window
+	   declares no hot rects, so the hook never claims a click from it);
+	   `pointer-events: none` is the webview half of the same promise. A click
+	   reaching this window would take focus, and a focused own-window stops the
+	   capture loop that produces the verdict. */
 	.overlay-root {
 		position: fixed;
 		inset: 0;

@@ -125,7 +125,7 @@
 
 		win.once('tauri://created', async () => {
 			await win.setPosition(new PhysicalPosition(physX, physY));
-			await invoke('set_overlay_clickthrough', { label: 'comparator', interactiveWidth: 48 })
+			await invoke('set_overlay_clickthrough', { label: 'comparator' })
 				.catch(e => console.error('[overlay] click-through setup failed:', e));
 			comparatorWin = win;
 			comparatorActive = true;
@@ -210,7 +210,7 @@
 		win.once('tauri://created', async () => {
 			await win.setPosition(new PhysicalPosition(physX, physY));
 			await win.setSize(new PhysicalSize(w, h));
-			await invoke('set_overlay_clickthrough', { label: 'compass', interactiveWidth: 0 })
+			await invoke('set_overlay_clickthrough', { label: 'compass' })
 				.catch(e => console.error('[overlay] compass click-through setup failed:', e));
 			compassWin = win;
 			compassActive = true;
@@ -291,7 +291,7 @@
 		win.once('tauri://created', async () => {
 			await win.setPosition(new PhysicalPosition(physX, physY));
 			await win.setSize(new PhysicalSize(w, h));
-			await invoke('set_overlay_clickthrough', { label: 'pathstrip', interactiveWidth: 0 })
+			await invoke('set_overlay_clickthrough', { label: 'pathstrip' })
 				.catch(e => console.error('[overlay] pathstrip click-through setup failed:', e));
 			pathstripWin = win;
 			pathstripActive = true;
@@ -369,7 +369,7 @@
 		win.once('tauri://created', async () => {
 			await win.setPosition(new PhysicalPosition(physX, physY));
 			await win.setSize(new PhysicalSize(w, h));
-			await invoke('set_overlay_clickthrough', { label: 'timer', interactiveWidth: 0 })
+			await invoke('set_overlay_clickthrough', { label: 'timer' })
 				.catch(e => console.error('[overlay] timer click-through setup failed:', e));
 			timerWin = win;
 			timerActive = true;
@@ -547,7 +547,6 @@
 					// hits the board instead of the game.
 					await invoke('set_overlay_clickthrough', {
 						label: TEMPLE_WINDOW_LABEL,
-						interactiveWidth: 0,
 					});
 				} catch (e) {
 					// A window that is transparent, always-on-top and NOT
@@ -635,7 +634,9 @@
 	// this window is shown and hidden on the HELD `game_focused` — two reads
 	// that are deliberately never unified (see the focus poller in `lib.rs`). A
 	// click landing here would take focus, drop the raw flag, and stop the loop
-	// that produces the verdict on screen. Hence `interactiveWidth: 0`.
+	// that produces the verdict on screen. Hence it declares no hot rects: it
+	// registers with the mouse hook (so WebView2 cannot strip its
+	// WS_EX_TRANSPARENT unrepaired) and claims not one pixel of the click.
 	// The shipped placement lives in `$lib/overlay/overlay-defaults` because the
 	// Settings position flow builds a config window from the SAME numbers and
 	// persists whatever it is saved at. Two copies meant a Save from Settings
@@ -766,7 +767,6 @@
 					// click that lands in it still does.
 					await invoke('set_overlay_clickthrough', {
 						label: MERCENARY_WINDOW_LABEL,
-						interactiveWidth: 0,
 					});
 				} catch (e) {
 					// Transparent, always-on-top and NOT click-through eats clicks
