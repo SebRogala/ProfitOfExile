@@ -526,6 +526,29 @@ runtime failure mode:
   by the owning main-window flow.
 - The WebView2 transparency resize workaround can disturb position, so exact
   physical position/size is applied after creation.
+- Windows removes a `WH_MOUSE_LL` hook whose proc exceeds
+  `LowLevelHooksTimeout` (300 ms by default) and reports nothing **(from
+  training data; not yet reproduced on this app — smoke item 9 is the
+  acceptance)**: the process keeps its `HHOOK`, `overlay_hook.rs`'s
+  `HOOK_CLAIMED` stays set, and every symptom is silent — overlay buttons stop
+  responding and the `WS_EX_TRANSPARENT` repair stops, with no log line. The
+  message-loop thread therefore runs a watchdog every `WATCHDOG_PERIOD_MS`
+  (3 s, a tunable guess): it samples `GetCursorPos` and the stamp the hook proc
+  writes, and re-installs in place when **the cursor moved between two samples
+  and no callback landed at or after the earlier one** —
+  `overlay_hook::hook_is_dead` (POE-238). What it CANNOT detect: an idle cursor
+  is not death, so a hook removed while the user's hand is off the mouse stays
+  unnoticed until the next movement; a cursor `GetCursorPos` could not read is
+  treated the same way (unreadable is `None`, never a stand-in coordinate) and
+  is reported on its own first/every-tenth cadence; and a hook that is merely
+  slow reads as healthy. Every watchdog line is gated by
+  `overlay_hook::Cadence` — first, then every tenth of a consecutive run —
+  because `app_log` is a synchronous write plus an emit on the hook thread, and
+  successful re-installs need that gate as much as failures do: a proc that
+  chronically blows the timeout is repaired and re-broken indefinitely. The
+  claim is deliberately never released around the re-install, and the mouse
+  path is deliberately limited to one `Relaxed` `AtomicU64` store — both are
+  what keep the recovery from becoming the next timeout.
 
 Do not delete these observations merely because a future code path appears
 simpler; reproduce the Windows behavior first or supersede them with a dated
@@ -679,6 +702,30 @@ touching the named path.
   the inverse check matters too: a tick that merely read the panel badly must
   NOT log `recruit window replaced`, because that log line means the session's
   hover confirmations were just thrown away.
+- **Hook re-install after a silent removal** (POE-238, item 9 of the POE-223
+  smoke list): with the comparator open on a gem, make Windows drop the
+  `WH_MOUSE_LL` hook — hold a debugger pause of at least 1 s on the app, or
+  unplug and replug the mouse — then move the cursor. `app.log` must show
+  exactly ONE `overlay hook re-installed (#1 consecutive, silent for N ms)`
+  line, and the comparator's buttons must work afterwards. `silent for` is the
+  age of the newest callback stamp, so it includes time nobody touched the
+  mouse and is process uptime while the hook has never fired — it is not a
+  measure of how long the hook was gone. A line that KEEPS coming back (about
+  every 6 s, not 3 s: the re-install makes the proc stamp once, so one whole
+  watchdog period reads alive before the next verdict) has two suspects, in
+  this order: (1) the hook proc is chronically exceeding
+  `LowLevelHooksTimeout`, so Windows removes each fresh hook as fast as we
+  install it — the parked half of POE-238 is the throttle that would fix it,
+  and the give-away is that the `#N consecutive` counter keeps climbing;
+  (2) the stamp is not landing at all (the re-install "succeeded" onto a proc
+  that never runs), which looks identical in the log but leaves the buttons
+  dead. No line at all with dead buttons means the watchdog read the cursor as
+  still — look for `overlay hook watchdog blind: GetCursorPos failed N time(s)`
+  before concluding `hook_is_dead` is wrong. A burst of `overlay hook
+  re-install failed` lines is the honest failure: the buttons stay dead until
+  one succeeds. All three lines are on the same cadence — the first, then every
+  tenth of a run — so a rate of roughly one line per minute in the chronic case
+  is the design, not a lost log.
 
 ## Adding an overlay
 
