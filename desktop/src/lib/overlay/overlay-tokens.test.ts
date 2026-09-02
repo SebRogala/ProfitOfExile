@@ -46,16 +46,26 @@ const overlayPages = import.meta.glob('/src/routes/overlay/**/+page.svelte', {
 /**
  * Every component an overlay route draws WITH.
  *
- * Only `lib/temple/` today (`TempleLattice.svelte`, shared with the page), and
- * it is listed by directory rather than globbed app-wide because most `$lib`
- * components never enter an overlay window and would fail this check for tokens
- * only `app.css` declares — correctly, since they are never drawn out here.
+ * Two directories: `lib/temple/` (`TempleLattice.svelte`, shared with the page)
+ * and `lib/overlay/widgets/` (`WidgetHost.svelte` and anything the widget
+ * engine grows — it renders in EVERY module's overlay window, so its palette
+ * has to resolve out here for all of them). They are listed by directory rather
+ * than globbed app-wide because most `$lib` components never enter an overlay
+ * window and would fail this check for tokens only `app.css` declares —
+ * correctly, since they are never drawn out here.
  */
-const overlayComponents = import.meta.glob('/src/lib/temple/*.svelte', {
-	query: '?raw',
-	import: 'default',
-	eager: true
-}) as Record<string, string>;
+const overlayComponents = {
+	...(import.meta.glob('/src/lib/temple/*.svelte', {
+		query: '?raw',
+		import: 'default',
+		eager: true
+	}) as Record<string, string>),
+	...(import.meta.glob('/src/lib/overlay/widgets/*.svelte', {
+		query: '?raw',
+		import: 'default',
+		eager: true
+	}) as Record<string, string>)
+};
 
 /** Every stylesheet in the app, by root-relative path. */
 const stylesheets = import.meta.glob('/src/**/*.css', {
@@ -107,6 +117,22 @@ function referencedIn(source: string): string[] {
 	return [...new Set([...source.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]))];
 }
 
+/**
+ * Every custom property a source file declares FOR ITSELF.
+ *
+ * The rule below is about the PALETTE — a colour an overlay surface names and
+ * no stylesheet in that window declares renders as nothing over the game. A
+ * property the component both sets and reads is not a palette token and has no
+ * stylesheet to be declared in: `WidgetHost.svelte` writes `--widget-cursor`
+ * into the same `style` attribute Svelte owns, because an imperative
+ * `node.style.cursor` is erased on the next re-render of that attribute. So a
+ * locally declared property satisfies its own reference, and everything else
+ * still has to come from the palette.
+ */
+function selfDeclaredIn(source: string): Set<string> {
+	return new Set([...source.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+}
+
 describe('the overlay palette', () => {
 	const imported = cssImportsOf(overlayLayoutSource, OVERLAY_LAYOUT_DIR);
 	const declared = new Set<string>();
@@ -123,7 +149,10 @@ describe('the overlay palette', () => {
 	});
 
 	it.each(overlaySurfaces)('declares every custom property %s draws with', (_label, source) => {
-		const missing = referencedIn(source).filter((token) => !declared.has(token));
+		const own = selfDeclaredIn(source);
+		const missing = referencedIn(source).filter(
+			(token) => !declared.has(token) && !own.has(token)
+		);
 		expect(missing).toEqual([]);
 	});
 
@@ -146,5 +175,15 @@ describe('the overlay palette', () => {
 		expect(covered).toContain('/src/routes/overlay/temple/+page.svelte');
 		expect(covered).toContain('/src/routes/overlay/mercenary/+page.svelte');
 		expect(covered.length).toBeGreaterThanOrEqual(6);
+	});
+
+	it('covers the widget host, which draws inside every module overlay', () => {
+		// The host is not a route, so the page glob above cannot see it, and it
+		// draws the config frame and the Save/Cancel bar in whatever window a
+		// module opens. Named explicitly because it is the component whose
+		// absence from the component glob would silently narrow this suite.
+		expect(Object.keys(overlayComponents)).toContain(
+			'/src/lib/overlay/widgets/WidgetHost.svelte'
+		);
 	});
 });

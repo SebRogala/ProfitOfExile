@@ -26,7 +26,13 @@
 		display: contents;
 	}
 
+	/* `box-sizing` is part of the reset rather than a per-panel declaration
+	   because an overlay widget's box is sized in the SAME pixels its placement
+	   is persisted in: a `.panel` given the registry's 200 px under the default
+	   `content-box` renders 220 wide once its padding is added, and the widget
+	   would not be the size the user placed. */
 	:global(*) {
+		box-sizing: border-box;
 		margin: 0;
 		padding: 0;
 	}

@@ -1,28 +1,15 @@
 <script lang="ts">
 	/**
-	 * Temple builder overlay (POE-171) — a DISPLAY-ONLY overlay window.
+	 * Temple builder overlay (POE-171, rebuilt on the widget engine in POE-225).
 	 *
-	 * Read `docs/OVERLAY-GUIDE.md` before changing anything here. The guards this
-	 * window is bound by, and where each is satisfied:
-	 *
-	 * 1. **Capabilities** — the `temple` label is in
-	 *    `src-tauri/capabilities/default.json`'s `windows` list. Without it the
-	 *    Tauri APIs this window's layout calls are simply unavailable.
-	 * 2. **Physical persistence / 3. logical construction** — both live in the
-	 *    owning window (`routes/(app)/+layout.svelte::createTempleOverlay`),
-	 *    which converts with Tauri's `scaleFactor()` for the constructor and
-	 *    then applies exact `PhysicalPosition`/`PhysicalSize`. Nothing in this
-	 *    file touches geometry, and `window.devicePixelRatio` appears nowhere.
-	 * 4. **Move instead of recreate** — this window is created once per module
-	 *    switch-on and destroyed on switch-off; it never destroys or recreates
-	 *    itself, and it does not reposition.
-	 * 5. **Settings survival** — deliberately NOT applicable: the temple overlay
-	 *    persists no settings, so there is no field for `persist_overlay_settings`
-	 *    to copy. See the note in the layout's `createTempleOverlay`.
-	 * 6. **Error visibility** — this file has no failure path of its own to
-	 *    report: it invokes nothing and listens to nothing. Every operation that
-	 *    CAN fail (build, position, click-through, teardown) belongs to the
-	 *    owning window and logs there, through `app_log_from_frontend`.
+	 * The window is now the whole primary monitor and click-through everywhere;
+	 * what the player sees is two independently placeable WIDGETS inside it —
+	 * `temple.board` (the lattice) and `temple.advice` (the recommendation and
+	 * everything the read could not settle). `WidgetHost.svelte` owns the
+	 * placement, config mode, hot rects and click routing, and
+	 * `docs/OVERLAY-GUIDE.md`'s six guards are answered there; this file owns
+	 * only what each widget draws, which is the same content the single 620×260
+	 * panel drew before the split (D10 — no new content in this batch).
 	 *
 	 * `onMount` is not reliable in an overlay window and cross-window JS state is
 	 * not either, so the board comes from the Rust-backed `get_ssot` poll that
@@ -36,6 +23,14 @@
 	 * repaint. What is left here is the one thing Rust cannot answer — whether
 	 * there is a board worth drawing — and that is `overlayShowsBoard(status)`.
 	 *
+	 * That gate lives INSIDE the widget snippet and not around `WidgetHost`. A
+	 * host that is not mounted has no `widget-config` listener, so a window
+	 * flipped into config mode while there is no board would be genuinely
+	 * interactive with no Save and no Cancel on it — a rectangle over the game
+	 * eating every click with no way out. Mounted always, drawing nothing when
+	 * there is nothing: the widget boxes are empty and claim no clicks, and in
+	 * config mode each frame carries its own name so it can still be placed.
+	 *
 	 * **What it draws when the read is imperfect is the point.** The unread
 	 * plates, the fallback door read, a low-confidence panel and the advisor's
 	 * own warnings all reach the overlay, because the surface the player is
@@ -43,7 +38,10 @@
 	 * hides what it is uncertain about is the failure mode POE-171 is written
 	 * against.
 	 */
+	import { invoke } from '@tauri-apps/api/core';
 	import TempleLattice from '$lib/temple/TempleLattice.svelte';
+	import WidgetHost from '$lib/overlay/widgets/WidgetHost.svelte';
+	import { TEMPLE_WINDOW_LABEL } from '$lib/overlay/manager';
 	import {
 		formatRisk,
 		gambleLabel,
@@ -68,15 +66,54 @@
 	const markerNotice = $derived(markerFallbackNotice(temple.layout));
 	const lowConfidence = $derived(temple.layout?.confidence === 'low');
 	const warnings = $derived(temple.advice?.warnings ?? []);
+
+	/**
+	 * Whether to draw the hot-rect probe button.
+	 *
+	 * A QUERY PARAM and not the app's debug flag, because there is no debug
+	 * signal in an overlay window: `debugMode` is main-window `$state`,
+	 * `AppState.debug_mode` is not projected into `AppStatus` or into the SSOT
+	 * snapshot, and adding it to the snapshot is another work item's file. The
+	 * owning layout appends `?debug` when it builds this window while debug mode
+	 * is already on, so the smoke check is: turn debug mode on, toggle the temple
+	 * module off and on, and the button is there.
+	 *
+	 * `window.location.search` rather than SvelteKit's `page` store: overlay
+	 * routes are rendered by a static adapter into a window with no navigation.
+	 */
+	const debugProbe =
+		typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
+
+	/**
+	 * What a forwarded click does.
+	 *
+	 * The whole point of the probe is that a click on it must reach US and a
+	 * click one pixel outside it must reach the GAME, and the only evidence of
+	 * the first half that a shipped build can produce is a log line.
+	 */
+	function handleAction(action: string): void {
+		if (action !== 'hot-probe') return;
+		invoke('app_log_from_frontend', {
+			msg: '[temple-widgets] hot-rect probe clicked — the mouse hook forwarded a click'
+		}).catch((e) => console.error('[widgets] probe log unreachable:', e));
+	}
 </script>
 
-<div class="overlay-root">
-	{#if visible}
-		<div class="panel">
-			<div class="board">
+<WidgetHost module={TEMPLE_WINDOW_LABEL} onAction={(action) => handleAction(action)}>
+	{#snippet content(spec, configMode)}
+		{#if !visible}
+			<!-- No board worth drawing. Nothing on screen — unless the user is
+			     placing widgets, in which case an unlabelled empty frame is
+			     indistinguishable from a widget that is broken. -->
+			{#if configMode}
+				<p class="placeholder">{spec.label}</p>
+			{/if}
+		{:else if spec.id === 'temple.board'}
+			<div class="board panel">
 				<TempleLattice layout={temple.layout} highlightDoors={recommendedDoors} compact />
 			</div>
-			<div class="advice">
+		{:else if spec.id === 'temple.advice'}
+			<div class="advice panel">
 				{#if leaveBanner}
 					<!-- As prominent as the kill: R5 says this map is done. -->
 					<p class="leave">{leaveBanner}</p>
@@ -113,25 +150,18 @@
 				{#each warnings as warning (warning)}
 					<p class="warn">{warning}</p>
 				{/each}
+
+				{#if debugProbe}
+					<button class="probe" data-hot data-action="hot-probe">hot-rect probe</button>
+				{/if}
 			</div>
-		</div>
-	{/if}
-</div>
+		{/if}
+	{/snippet}
+</WidgetHost>
 
 <style>
-	/* Click-through is installed in Rust (`set_overlay_clickthrough`; this window
-	   declares no hot rects, so the hook never claims a click from it);
-	   `pointer-events: none` is the webview half of the same promise. */
-	.overlay-root {
-		position: fixed;
-		inset: 0;
-		pointer-events: none;
-		background: transparent;
-	}
-
+	/* Each widget carries the panel chrome the single container used to. */
 	.panel {
-		display: flex;
-		gap: 10px;
 		padding: 8px 10px;
 		background: rgb(15 17 23 / 82%);
 		border: 1px solid var(--color-lab-border);
@@ -140,16 +170,32 @@
 		font-size: 13px;
 	}
 
+	/* The widget box decides the width, not this: the host applies the
+	   registry's shipped width as a max-width until the user resizes the widget,
+	   and a fixed 200 here would ignore a resize in config mode. The lattice SVG
+	   is `width: 100%`, so the column has to be definite for it to have anything
+	   to fill. */
 	.board {
-		flex: 0 0 200px;
+		width: 100%;
 	}
 
 	.advice {
-		flex: 1;
 		display: flex;
 		flex-direction: column;
 		gap: 3px;
 		min-width: 0;
+		/* The widget box is content-sized inside a host the size of the monitor,
+		   so without a bound a one-line headline reads as `max-content` and runs
+		   the full width of the screen. The bound is the host's max-width. */
+		max-width: 100%;
+	}
+
+	/* Config mode with no board: the frame still has to say which widget it is,
+	   or the user is dragging two identical empty rectangles. */
+	.placeholder {
+		padding: 4px 8px;
+		font-size: 11px;
+		color: var(--color-lab-text-muted);
 	}
 
 	.leave {
@@ -193,5 +239,19 @@
 		font-size: 11px;
 		line-height: 1.3;
 		color: var(--color-lab-yellow);
+	}
+
+	/* The hot-rect probe (smoke item 4). Deliberately plain and deliberately
+	   small: what is being checked is that the mouse hook consumes a click
+	   inside this box and passes one just outside it to the game. */
+	.probe {
+		align-self: flex-start;
+		margin-top: 4px;
+		padding: 2px 8px;
+		font-size: 11px;
+		color: var(--color-lab-bg);
+		background: var(--color-lab-green);
+		border: none;
+		border-radius: 3px;
 	}
 </style>
