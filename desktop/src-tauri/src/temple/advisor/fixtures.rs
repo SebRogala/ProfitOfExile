@@ -38,6 +38,11 @@ pub fn board(
     state.doors = doors.iter().map(|(a, b)| Edge::new(*a, *b)).collect();
     state.position = Some(position);
     state.remaining = remaining;
+    // A hand-encoded board states the current room outright — every one of
+    // these fixtures is a screenshot someone read the room off. `None` is
+    // reserved for the live case where neither the panel title nor the plate
+    // was legible; a fixture asserting THAT sets the field itself.
+    state.current_tier = Some(state.tier(position));
     state
 }
 

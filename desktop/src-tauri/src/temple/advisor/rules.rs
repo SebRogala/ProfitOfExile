@@ -739,6 +739,10 @@ fn applied(
     let mut after = board.clone();
     if let Some(architect) = architect {
         after.set_room(position, Some(architect.line.clone()), architect.built_tier);
+        // The kill is what sets the current room's tier, so the simulated board
+        // states it too. No rule reads it today; leaving it at the pre-kill
+        // value would make the first one that does read a stale number.
+        after.current_tier = Some(architect.built_tier);
     }
     after.doors.extend(doors.iter().copied());
     after

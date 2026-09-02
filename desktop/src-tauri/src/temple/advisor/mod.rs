@@ -128,6 +128,19 @@ pub enum Warning {
     /// `N Incursions Remaining` was not legible, so every rollout terminates
     /// immediately and the scores are the current board's, not a forecast.
     NoBudget,
+    /// Neither the side-panel title nor the current plate named the room the
+    /// player is standing in, so a `change` offer cannot be resolved: its built
+    /// tier is `currentTier + 1` and nothing on screen carried `currentTier`
+    /// (POE-229).
+    UnknownCurrentTier,
+    /// The side-panel title and the current layout plate both read, and they
+    /// named different rooms. The plate is the one used — it is positionally
+    /// pinned and numeral-cross-checked — but one of the two OCR passes is
+    /// wrong, and which one is not decidable, so the player is told.
+    CurrentRoomDisagreement {
+        title: &'static str,
+        plate: &'static str,
+    },
 }
 
 impl Warning {
@@ -149,6 +162,13 @@ impl Warning {
                 "incursions remaining was not legible; scores reflect the board as it stands"
                     .to_string()
             }
+            Warning::UnknownCurrentTier => {
+                "current room tier unknown — cannot resolve a 'change' offer".to_string()
+            }
+            Warning::CurrentRoomDisagreement { title, plate } => format!(
+                "the side panel says {title:?} but the current plate says {plate:?}; \
+                 the plate is used"
+            ),
         }
     }
 }
@@ -190,6 +210,9 @@ pub fn advise(
     if board.remaining == 0 {
         warnings.push(Warning::NoBudget);
     }
+    if let Some((title, plate)) = board.current_room_disagreement {
+        warnings.push(Warning::CurrentRoomDisagreement { title, plate });
+    }
 
     let Some(position) = board.position else {
         warnings.push(Warning::NoPosition);
@@ -202,9 +225,13 @@ pub fn advise(
         };
     };
 
-    let architects = resolve_architects(offers, board.tier(position), &mut warnings);
+    let architects = resolve_architects(offers, board.current_tier, &mut warnings);
     let choices: Vec<Option<ArchitectChoice>> = if architects.is_empty() {
-        if !offers.is_empty() {
+        // "Neither target was readable" is a claim about the OCR, and it is
+        // false when the targets read fine and it was the current room that did
+        // not. `UnknownCurrentTier` already says the true thing; adding this on
+        // top would send the player looking at the architect blocks.
+        if !offers.is_empty() && !warnings.contains(&Warning::UnknownCurrentTier) {
             warnings.push(Warning::UnresolvedArchitects);
         }
         vec![None]
@@ -436,16 +463,21 @@ fn rank(scored: Vec<Scored>) -> Vec<Ranked> {
 /// The panel's own wording is **not** the answer: with Contested Development
 /// taken, *"Kill to change to Shrine of Empowerment"* on a tier-1 room builds
 /// Sanctum of Unity II. Every offer goes through
-/// [`rooms::resolve_offer`], which is where that arithmetic lives.
+/// [`rooms::resolve_offer_for`], which is where that arithmetic lives.
+///
+/// `current_tier` is [`BoardState::current_tier`] — `None` when the read never
+/// named the room the player is standing in. An `upgrade` still resolves there
+/// (its printed name IS the built room); a `change` does not, and says so
+/// rather than resolving to the tier-1 room the kill will not build (POE-229).
 fn resolve_architects(
     offers: &[ArchitectOffer],
-    current_tier: Tier,
+    current_tier: Option<Tier>,
     warnings: &mut Vec<Warning>,
 ) -> Vec<ArchitectChoice> {
     let mut out = Vec::new();
     for (index, offer) in offers.iter().enumerate() {
-        match rooms::resolve_offer(&offer.printed_target, current_tier) {
-            Some(resolved) => out.push(ArchitectChoice {
+        match rooms::resolve_offer_for(&offer.printed_target, offer.kind, current_tier) {
+            rooms::OfferResolution::Built(resolved) => out.push(ArchitectChoice {
                 offer_index: index,
                 architect_name: offer.architect_name.clone(),
                 kind: offer.kind,
@@ -453,9 +485,14 @@ fn resolve_architects(
                 built_tier: resolved.built_tier,
                 display_name: resolved.display_name,
             }),
-            None => warnings.push(Warning::UnresolvedOffer {
+            rooms::OfferResolution::UnknownName => warnings.push(Warning::UnresolvedOffer {
                 printed: offer.printed_target.clone(),
             }),
+            rooms::OfferResolution::UnknownCurrentTier => {
+                if !warnings.contains(&Warning::UnknownCurrentTier) {
+                    warnings.push(Warning::UnknownCurrentTier);
+                }
+            }
         }
     }
     out

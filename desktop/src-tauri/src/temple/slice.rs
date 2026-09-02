@@ -510,22 +510,84 @@ fn layout_view(read: &ReadResult<'_>) -> LayoutView {
     }
 }
 
-/// The tier of the slot the player is standing in — what
-/// [`rooms::resolve_offer`] needs to turn a printed target into the room the
-/// kill actually builds.
-fn current_tier(read: &ReadResult<'_>) -> Tier {
-    let Some(current) = read.layout.current else {
-        return Tier::T0;
+/// The room the player is standing in, as this read established it, together
+/// with the reason to distrust it — the ONE place that question is answered
+/// (POE-229).
+///
+/// # Why the layout plate comes first
+///
+/// The plate is *positionally pinned*: it is cropped from the slot the lattice
+/// puts under the cursor, and its name is cross-checked against the tier
+/// numeral printed on the same plate ([`rooms::cross_check_numeral`]), which
+/// demotes a disagreeing read to [`Match::Unknown`] rather than passing it on.
+/// The side-panel title has neither guard: [`super::panel::read_panel`] picks
+/// it heuristically out of whole-screen OCR, where the layout panel's own plate
+/// names interleave with the side panel's lines — [`super::panel::SCREEN_FURNITURE`]
+/// exists because that pick goes wrong.
+///
+/// So the title is the *fallback*, and it earns its place: the gold selection
+/// frame overhangs the current plate, so that plate is the one most likely to
+/// read `Unknown`, and the title is then the only source left. That is POE-229 —
+/// standing in **Office of Cartography** with C2 unread, an offer was ranked
+/// and printed against tier 0.
+///
+/// # `None` is not tier 0
+///
+/// A filler, the Entrance and the Apex are all genuinely tier 0, and an offer
+/// taken there really does build tier 1. `None` is the different fact that
+/// *neither source named the room*, and [`rooms::resolve_offer_for`] refuses to
+/// do Contested Development's arithmetic against it rather than printing a room
+/// the kill will not build.
+pub fn current_identity(
+    current: Option<Slot>,
+    identities: &[Option<RoomIdentity>; 13],
+    panel: &PanelReading,
+) -> CurrentRoom {
+    let plate = current.and_then(|slot| identities[slot.index()]);
+    let title = panel.room.identity();
+    // Both read and they name different rooms: one of the two OCR passes is
+    // wrong and nothing here can tell which, so the guarded source is kept and
+    // the conflict is handed back to be said out loud. Resolving it silently is
+    // what makes a wrong room look like a certain one.
+    let disagreement = match (title, plate) {
+        (Some(title), Some(plate)) if title != plate => {
+            Some((title.display_name(), plate.display_name()))
+        }
+        _ => None,
     };
-    read.rooms
-        .iter()
-        .find(|r| r.slot == current)
-        .and_then(|r| r.identity.identity())
-        .map_or(Tier::T0, |id| id.tier())
+    CurrentRoom {
+        identity: plate.or(title),
+        disagreement,
+    }
 }
 
-fn offer_view(index: usize, offer: &ArchitectOffer, current_tier: Tier) -> OfferView {
-    let resolved = rooms::resolve_offer(&offer.printed_target, current_tier);
+/// What [`current_identity`] established about the room the player is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CurrentRoom {
+    /// The room, or `None` when neither source named it.
+    pub identity: Option<RoomIdentity>,
+    /// `(title, plate)` display names, when both sources resolved and named
+    /// different rooms. [`Self::identity`] is the plate's in that case.
+    pub disagreement: Option<(&'static str, &'static str)>,
+}
+
+/// The tier of the slot the player is standing in — what
+/// [`rooms::resolve_offer_for`] needs to turn a printed target into the room the
+/// kill actually builds. `None` when [`current_identity`] named no room.
+fn current_tier(read: &ReadResult<'_>) -> Option<Tier> {
+    current_identity(read.layout.current, &identities(read.rooms), read.panel)
+        .identity
+        .map(|id| id.tier())
+}
+
+fn offer_view(index: usize, offer: &ArchitectOffer, current_tier: Option<Tier>) -> OfferView {
+    let resolved = match rooms::resolve_offer_for(&offer.printed_target, offer.kind, current_tier) {
+        rooms::OfferResolution::Built(resolved) => Some(resolved),
+        // Both failures publish the printed target with no resolved room: the
+        // page has the architect's own wording and nothing invented on top of
+        // it. Which failure it was reaches the page as an advisor warning.
+        rooms::OfferResolution::UnknownName | rooms::OfferResolution::UnknownCurrentTier => None,
+    };
     OfferView {
         index,
         architect_name: offer.architect_name.clone(),
@@ -854,6 +916,7 @@ impl ReadGate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::temple::advisor::rules::ArchitectChoice;
     use crate::temple::advisor::Warning;
     use crate::temple::doors::Thresholds;
     use crate::temple::lattice::{Lattice, Slot};
@@ -1239,6 +1302,374 @@ mod tests {
             first.printed_target, "Qwertz Chamber",
             "what the panel printed is still shown — it is what the player sees",
         );
+    }
+
+    // ------------------------------------------- POE-229: the current room --
+
+    /// The 2026-09-02 screenshot's corridors: the Entrance (E1) reaches C2 by
+    /// way of D2, and C2's neighbour C1 holds the finished corruption room.
+    const SCREENSHOT_DOORS: [(Slot, Slot); 3] = [
+        (Slot::E1, Slot::D2),
+        (Slot::D2, Slot::C2),
+        (Slot::C2, Slot::C1),
+    ];
+
+    /// The 2026-09-02 screenshot board: standing in **Office of Cartography**
+    /// (tier 2) at C2 with that plate UNREAD — the gold selection frame
+    /// overhangs the current plate, which is why it is the one that fails to
+    /// read — and **Locus of Corruption** (tier 3) already built next door at
+    /// C1. Two incursions left.
+    ///
+    /// `title` is what the side panel printed for the room the player is in, so
+    /// a test can also take it away.
+    fn screenshot_board(
+        title: &str,
+        offers: Vec<ArchitectOffer>,
+    ) -> (TempleLayout, Vec<RoomReading>, PanelReading) {
+        (
+            layout(Some(Slot::C2), &SCREENSHOT_DOORS, &[]),
+            board_rooms(&[(Slot::C1, "Locus of Corruption")]),
+            panel(title, Some(2), offers),
+        )
+    }
+
+    /// The architect choice the advisor made for one offer block, if it made
+    /// one at all.
+    fn ranked_choice(advice: &Advice, offer_index: usize) -> Option<&ArchitectChoice> {
+        advice
+            .recommendations
+            .iter()
+            .map(|r| &r.option)
+            .chain(advice.gambles.iter().map(|g| &g.option))
+            .filter_map(|option| option.architect.as_ref())
+            .find(|a| a.offer_index == offer_index)
+    }
+
+    /// POE-229. The current plate is the one the selection frame covers, so it
+    /// is the one most likely to read Unknown — and the side panel's title is
+    /// then the only source left for the room the player is in.
+    ///
+    /// A `change` is the discriminating kind: its built tier is
+    /// `currentTier + 1` of a DIFFERENT line, so nothing in the printed text
+    /// carries it. From Office of Cartography II, *"change to Gemcutter's
+    /// Workshop"* builds the gem line's tier 3.
+    ///
+    /// Fails if the title is not consulted when the plate is unread, or if the
+    /// tier falls back to `T0` — the shipped bug, which printed and ranked the
+    /// tier-1 room.
+    #[test]
+    fn a_change_offer_on_an_unread_current_plate_advances_from_the_title_tier() {
+        let (layout, rooms, panel) = screenshot_board(
+            "Office of Cartography",
+            vec![offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change)],
+        );
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let published = slice
+            .panel
+            .expect("panel")
+            .offers
+            .into_iter()
+            .next()
+            .expect("one architect block");
+        assert_eq!(
+            published.display_name.as_deref(),
+            Some("Doryani's Institute"),
+            "the gem line at tier 2 + 1, not the printed Gemcutter's Workshop",
+        );
+        assert_eq!(published.built_tier, Some(3));
+
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped())
+            .expect("a board with a current room ranks");
+        let choice = ranked_choice(&advice, 0).expect("the change offer is ranked");
+        assert_eq!(choice.built_tier, Tier::T3);
+        assert_eq!(choice.display_name, "Doryani's Institute");
+    }
+
+    /// Neither source named the room: the plate is unread AND the panel title
+    /// did not resolve. A `change` offer's built tier is a fact about the room
+    /// the player is standing in, so there is no answer — and the advisor says
+    /// so instead of inventing tier 1.
+    ///
+    /// Fails if the unknown tier collapses back to `T0`, which would publish a
+    /// room name the kill will not build with no warning attached.
+    #[test]
+    fn a_change_offer_with_no_readable_current_room_warns_instead_of_guessing() {
+        let (layout, rooms, panel) = screenshot_board(
+            "Qwertz Chamber",
+            vec![offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change)],
+        );
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let published = slice
+            .panel
+            .expect("panel")
+            .offers
+            .into_iter()
+            .next()
+            .expect("one architect block");
+        assert_eq!(published.display_name, None);
+        assert_eq!(published.built_tier, None);
+
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped())
+            .expect("a board with a current room still ranks its doors");
+        assert!(
+            advice.warnings.contains(&Warning::UnknownCurrentTier),
+            "the unknown tier must be stated, got {:?}",
+            advice.warnings,
+        );
+        assert!(
+            ranked_choice(&advice, 0).is_none(),
+            "an unresolvable change offer must not reach the ranking as a choice",
+        );
+        assert!(
+            !advice.warnings.contains(&Warning::UnresolvedArchitects),
+            "the architect's target read fine — it was the current room that did not: {:?}",
+            advice.warnings,
+        );
+    }
+
+    /// The same unreadable current room, but an `upgrade`: that kind prints
+    /// tier `current + 1` of the room's OWN line, so the printed name IS the
+    /// built room and the current tier is not needed at all.
+    ///
+    /// Fails if the upgrade is refused alongside the change — the whole point
+    /// of splitting the two kinds is that only one of them needs the tier.
+    #[test]
+    fn an_upgrade_offer_resolves_from_its_own_printed_name_with_no_current_room() {
+        let (layout, rooms, panel) = screenshot_board(
+            "Qwertz Chamber",
+            vec![offer("Zalatl", "Atlas of Worlds", OfferKind::Upgrade)],
+        );
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let published = slice
+            .panel
+            .expect("panel")
+            .offers
+            .into_iter()
+            .next()
+            .expect("one architect block");
+        assert_eq!(published.display_name.as_deref(), Some("Atlas of Worlds"));
+        assert_eq!(published.built_tier, Some(3));
+
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped())
+            .expect("ranks");
+        assert!(
+            !advice.warnings.contains(&Warning::UnknownCurrentTier),
+            "an upgrade needs no current tier, so nothing is unknown: {:?}",
+            advice.warnings,
+        );
+        let choice = ranked_choice(&advice, 0).expect("the upgrade offer is ranked");
+        assert_eq!(choice.built_tier, Tier::T3);
+    }
+
+    /// The plate read and the title did not: the layout plate is still the
+    /// second source, not a dead branch. A `change` is the discriminating kind
+    /// — it resolves only if some source supplied the tier.
+    ///
+    /// Fails if the title becomes the ONLY source rather than the first one.
+    #[test]
+    fn a_read_current_plate_supplies_the_tier_when_the_title_does_not() {
+        let layout = layout(Some(Slot::C2), &SCREENSHOT_DOORS, &[]);
+        let rooms = board_rooms(&[
+            (Slot::C1, "Locus of Corruption"),
+            (Slot::C2, "Office of Cartography"),
+        ]);
+        let panel = panel(
+            "Qwertz Chamber",
+            Some(2),
+            vec![offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change)],
+        );
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let published = slice
+            .panel
+            .expect("panel")
+            .offers
+            .into_iter()
+            .next()
+            .expect("one architect block");
+        assert_eq!(published.display_name.as_deref(), Some("Doryani's Institute"));
+        assert_eq!(published.built_tier, Some(3));
+    }
+
+    /// The board the two sources disagree about: the plate reads Surveyor's
+    /// Study (tier 1) and the title reads Office of Cartography (tier 2), so
+    /// the same `change` offer resolves to two different rooms.
+    fn disagreeing_board() -> (TempleLayout, Vec<RoomReading>, PanelReading) {
+        (
+            layout(Some(Slot::C2), &SCREENSHOT_DOORS, &[]),
+            board_rooms(&[
+                (Slot::C1, "Locus of Corruption"),
+                (Slot::C2, "Surveyor's Study"),
+            ]),
+            panel(
+                "Office of Cartography",
+                Some(2),
+                vec![offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change)],
+            ),
+        )
+    }
+
+    /// Both sources read and they disagree: the plate wins. It is cropped from
+    /// the slot the lattice pins under the cursor and cross-checked against the
+    /// tier numeral on the same plate, while the title is a heuristic pick out
+    /// of whole-screen OCR that can land on another plate's name.
+    ///
+    /// Fails if the title is preferred, or if the sources are merged some third
+    /// way: the plate's tier 1 builds Department of Thaumaturgy, the title's
+    /// tier 2 builds Doryani's Institute.
+    #[test]
+    fn a_disagreeing_current_plate_beats_the_side_panel_title() {
+        let (layout, rooms, panel) = disagreeing_board();
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let published = slice
+            .panel
+            .expect("panel")
+            .offers
+            .into_iter()
+            .next()
+            .expect("one architect block");
+        assert_eq!(
+            published.display_name.as_deref(),
+            Some("Department of Thaumaturgy"),
+            "the plate's tier 1, not the title's tier 2 (which would build Doryani's Institute)",
+        );
+        assert_eq!(published.built_tier, Some(2));
+    }
+
+    /// Picking the plate is not the same as being sure of it — one of the two
+    /// OCR passes is wrong and nothing in the reader can tell which, so the
+    /// conflict is published rather than resolved out of sight.
+    ///
+    /// Fails if the disagreement is swallowed, or if the warning does not name
+    /// both readings.
+    #[test]
+    fn a_current_room_the_two_sources_disagree_about_reaches_the_page_as_a_warning() {
+        let (layout, rooms, panel) = disagreeing_board();
+
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped())
+            .expect("ranks");
+
+        assert!(
+            advice.warnings.contains(&Warning::CurrentRoomDisagreement {
+                title: "Office of Cartography",
+                plate: "Surveyor's Study",
+            }),
+            "the conflict must be stated, got {:?}",
+            advice.warnings,
+        );
+        let rendered = advice_view(&advice).warnings;
+        assert!(
+            rendered
+                .iter()
+                .any(|w| w.contains("Office of Cartography") && w.contains("Surveyor's Study")),
+            "the page gets both readings, got {rendered:?}",
+        );
+    }
+
+    /// A plate that read a filler is tier 0, and tier 0 is an ANSWER: an offer
+    /// taken in a filler really does build tier 1. Only "no source named the
+    /// room" is unknown.
+    ///
+    /// Fails if `current_identity` collapses the line-less kinds to `None`,
+    /// which would refuse every `change` offer taken in a filler, the Entrance
+    /// or the Apex.
+    #[test]
+    fn a_current_plate_that_read_a_filler_is_tier_zero_rather_than_unknown() {
+        let layout = layout(Some(Slot::C2), &SCREENSHOT_DOORS, &[]);
+        let rooms = board_rooms(&[(Slot::C1, "Locus of Corruption"), (Slot::C2, "Chasm")]);
+        let panel = panel(
+            "Qwertz Chamber",
+            Some(2),
+            vec![offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change)],
+        );
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let published = slice
+            .panel
+            .expect("panel")
+            .offers
+            .into_iter()
+            .next()
+            .expect("one architect block");
+        assert_eq!(
+            published.display_name.as_deref(),
+            Some("Gemcutter's Workshop"),
+            "tier 0 + 1 is the gem line's tier 1",
+        );
+        assert_eq!(published.built_tier, Some(1));
+    }
+
+    /// The unknown current tier is one fact about the read, not one per
+    /// architect block: two unresolvable `change` offers still produce a single
+    /// line for the overlay.
+    ///
+    /// Fails if the warning is pushed per offer, which would print the same
+    /// sentence twice under a two-architect panel — the common case.
+    #[test]
+    fn two_change_offers_with_no_readable_current_room_warn_once() {
+        let (layout, rooms, panel) = screenshot_board(
+            "Qwertz Chamber",
+            vec![
+                offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change),
+                offer("Zalatl", "Surveyor's Study", OfferKind::Change),
+            ],
+        );
+
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped())
+            .expect("ranks");
+
+        assert_eq!(
+            advice
+                .warnings
+                .iter()
+                .filter(|w| **w == Warning::UnknownCurrentTier)
+                .count(),
+            1,
+            "one unknown current room is one warning, got {:?}",
+            advice.warnings,
+        );
+    }
+
+    /// The owner's report, end to end: on the screenshot board the swap that
+    /// completes Locus + Doryani must outrank the Atlas upgrade that completes
+    /// nothing. It was ranked below it because the change resolved to the
+    /// tier-1 Gemcutter's Workshop.
+    ///
+    /// Fails if the change offer is resolved at the wrong tier, or if the top
+    /// recommendation is the upgrade.
+    #[test]
+    fn the_swap_that_completes_the_target_pair_outranks_the_upgrade_that_completes_nothing() {
+        let (layout, rooms, panel) = screenshot_board(
+            "Office of Cartography",
+            vec![
+                offer("Zalatl", "Atlas of Worlds", OfferKind::Upgrade),
+                offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change),
+            ],
+        );
+
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped())
+            .expect("ranks");
+
+        let top = advice
+            .recommendations
+            .first()
+            .expect("at least one recommendation");
+        let choice = top
+            .option
+            .architect
+            .as_ref()
+            .expect("the top recommendation kills an architect");
+        assert_eq!(
+            choice.offer_index, 1,
+            "the change offer completes the pair; the upgrade is worth nothing here",
+        );
+        assert_eq!(choice.built_tier, Tier::T3);
+        assert_eq!(choice.display_name, "Doryani's Institute");
+        assert_eq!(top.option.headline(), "change → Doryani's Institute");
     }
 
     // --------------------------------------------------- marker fallback --
