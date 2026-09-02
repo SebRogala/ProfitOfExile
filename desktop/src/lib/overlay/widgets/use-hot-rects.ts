@@ -28,7 +28,7 @@
  *   does not need one because it declares two elements it holds references to.
  *
  * All three funnel into one `requestAnimationFrame`, so a burst of reactive
- * changes costs at most one measurement per frame, and `hotRectsEqual`
+ * changes costs at most one measurement per frame, and [`nextHotRectCalls`]
  * suppresses the IPC entirely when nothing moved — which is the common case,
  * since the host re-renders on every SSOT poll.
  *
@@ -42,8 +42,8 @@
  * each set the flag from their own content rule; a host has no content rule of
  * its own, because for a widget window "drawing something clickable" and
  * "claiming a rectangle" are the same statement. So the flag follows the rects,
- * and [`hasContentTransition`] is what keeps that from becoming an IPC call per
- * animation frame.
+ * and [`nextHotRectCalls`] — which owns the whole what-to-invoke decision — is
+ * what keeps that from becoming an IPC call per animation frame.
  */
 import { invoke } from '@tauri-apps/api/core';
 import { hotRectsEqual, physicalHotRect, type HotRect } from '../hot-rects';
@@ -62,20 +62,42 @@ export interface HotRectsParams {
 /** The elements a host claims clicks in. */
 const HOT_SELECTOR = '[data-hot]';
 
+/** What a measurement decides to send. An absent field is a call NOT made. */
+export interface HotRectCalls {
+	/** The rects to declare through `set_overlay_hot_rects`. */
+	rects?: HotRect[];
+	/** The value to write through `set_overlay_has_content`. */
+	hasContent?: boolean;
+}
+
 /**
- * Whether a declaration has to move the window's `has_content` flag, and where
- * to — `null` when it does not.
+ * What a fresh measurement has to invoke, given what was last sent.
  *
- * The flag is a boolean and the rects are a list, so only the EMPTINESS of the
- * list matters: a host that redraws a button one pixel over has changed its
- * rects and not its content, and re-asserting the flag on every such frame
- * would put an IPC call behind every animation frame the overlay runs.
+ * The whole decision, so the action around it is measurement and IPC and
+ * nothing else — an overlay window has no test harness in this app, and both
+ * halves of this fail invisibly: a rect re-declared on every animation frame
+ * costs an IPC call per frame, and a `has_content` flag left false has
+ * `overlay_hook::hit_test` skip the window BEFORE it looks at a single rect, so
+ * every button the host draws is swallowed by the game with nothing reporting a
+ * failure.
+ *
+ * `prev` is `null` when nothing has been sent yet — which is also what teardown
+ * resets to, so the withdrawal is never suppressed as a no-change.
+ *
+ * Two rules:
+ *
+ * - Nothing at all when the rects are unchanged. That is the common case by a
+ *   wide margin: the host re-measures on every frame a mutation touches, and a
+ *   host re-renders on every SSOT poll.
+ * - The flag moves only when the EMPTINESS of the list changed. It is a boolean
+ *   and the rects are a list, so a button that moved a pixel has changed its
+ *   rects and not its content.
  */
-export function hasContentTransition(prevCount: number, nextCount: number): boolean | null {
-	const had = prevCount > 0;
-	const has = nextCount > 0;
-	if (had === has) return null;
-	return has;
+export function nextHotRectCalls(prev: HotRect[] | null, next: HotRect[]): HotRectCalls {
+	if (prev && hotRectsEqual(prev, next)) return {};
+	const had = (prev?.length ?? 0) > 0;
+	const has = next.length > 0;
+	return had === has ? { rects: next } : { rects: next, hasContent: has };
 }
 
 export function useHotRects(node: HTMLElement, params: HotRectsParams) {
@@ -101,16 +123,16 @@ export function useHotRects(node: HTMLElement, params: HotRectsParams) {
 	}
 
 	function declare(rects: HotRect[]) {
-		if (sent && hotRectsEqual(sent, rects)) return;
-		const flip = hasContentTransition(sent?.length ?? 0, rects.length);
-		sent = rects;
-		invoke('set_overlay_hot_rects', { label: current.module, rects }).catch((e) =>
+		const calls = nextHotRectCalls(sent, rects);
+		if (!calls.rects) return;
+		sent = calls.rects;
+		invoke('set_overlay_hot_rects', { label: current.module, rects: calls.rects }).catch((e) =>
 			console.warn(`[overlay] set_overlay_hot_rects failed for '${current.module}':`, e)
 		);
 		// After the rects, not before: the flag is what makes the hook look at
 		// them, so arming it first opens a window in which the hook would consume a
 		// click against the PREVIOUS declaration.
-		if (flip !== null) setHasContent(flip);
+		if (calls.hasContent !== undefined) setHasContent(calls.hasContent);
 	}
 
 	function schedule() {

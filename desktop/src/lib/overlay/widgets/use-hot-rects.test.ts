@@ -1,53 +1,55 @@
 /**
- * The rule that decides whether a hot-rect declaration also has to move the
- * window's `has_content` flag.
+ * What a widget host's fresh measurement actually sends to Rust.
  *
- * The flag is not decoration. `overlay_hook::hit_test` returns `None` for a
- * window whose `has_content` is false without looking at one rect, and a
- * registry entry starts false — so a widget host that declared rects and never
- * touched the flag would have every button it draws swallowed by the game, with
- * nothing anywhere reporting a failure. That is a Windows-only path with no
- * harness, which is why the decision is a function rather than an `if` in the
- * action.
+ * Both calls fail invisibly, which is why the decision is a function rather
+ * than an `if` inside a Svelte action with no harness. `set_overlay_hot_rects`
+ * re-sent on every animation frame is an IPC call per frame for a window whose
+ * buttons did not move; `set_overlay_has_content` left false has
+ * `overlay_hook::hit_test` return `None` before it looks at one rect — a
+ * registry entry starts false — so every button the host draws is swallowed by
+ * the game with nothing anywhere reporting a failure. That is a Windows-only
+ * path this suite cannot run.
  */
 import { describe, expect, it } from 'vitest';
-import actionSource from './use-hot-rects.ts?raw';
-import { hasContentTransition } from './use-hot-rects';
+import { nextHotRectCalls } from './use-hot-rects';
+import type { HotRect } from '../hot-rects';
 
-describe('whether a declaration moves the has_content flag', () => {
-	it('arms the flag when the first rect appears', () => {
-		expect(hasContentTransition(0, 1)).toBe(true);
+const A: HotRect = { x: 10, y: 20, w: 100, h: 30 };
+const MOVED: HotRect = { x: 11, y: 20, w: 100, h: 30 };
+const B: HotRect = { x: 400, y: 20, w: 60, h: 30 };
+
+describe('what a measurement has to invoke', () => {
+	it('declares the rects and arms the flag when the first button appears', () => {
+		expect(nextHotRectCalls(null, [A])).toEqual({ rects: [A], hasContent: true });
 	});
 
-	it('clears the flag when the last rect goes away', () => {
-		expect(hasContentTransition(2, 0)).toBe(false);
+	// The common case by a wide margin: the host re-measures on every frame a
+	// mutation touches, and it re-renders on every SSOT poll.
+	it('invokes nothing at all when the rects are unchanged', () => {
+		expect(nextHotRectCalls([A, B], [A, B])).toEqual({});
 	});
 
-	// The common case by a wide margin: the host re-measures on every animation
-	// frame a mutation touches, and a button that moved a pixel has changed its
-	// rect and not its content. Re-asserting the flag there would put an IPC
-	// call behind every frame the overlay runs.
-	it('says nothing when the count changed but the emptiness did not', () => {
-		expect(hasContentTransition(2, 3)).toBeNull();
+	it('declares the rects and leaves the flag alone when a button only moved', () => {
+		// Changed rects, unchanged emptiness. Re-asserting the flag here is the
+		// IPC-per-frame the emptiness test exists to prevent.
+		expect(nextHotRectCalls([A], [MOVED])).toEqual({ rects: [MOVED] });
 	});
 
-	it('says nothing when there was nothing before and nothing now', () => {
-		expect(hasContentTransition(0, 0)).toBeNull();
-	});
-});
-
-describe('the action that consumes it', () => {
-	// A source assertion because the action needs a DOM and this suite runs on
-	// node: what it pins is the wiring the pure function above cannot reach —
-	// that the flag is declared at all, and under the same label as the rects.
-	// Deleting either call is what the FATAL finding was.
-	it('declares the flag alongside the rects, for the same window label', () => {
-		expect(actionSource).toContain("invoke('set_overlay_has_content', { label: current.module,");
-		expect(actionSource).toContain("invoke('set_overlay_hot_rects', { label: current.module,");
+	it('declares the rects and leaves the flag alone when a second button appears', () => {
+		expect(nextHotRectCalls([A], [A, B])).toEqual({ rects: [A, B] });
 	});
 
-	it('clears the flag when the host is torn down', () => {
-		const destroy = actionSource.slice(actionSource.indexOf('destroy()'));
-		expect(destroy).toContain('setHasContent(false)');
+	it('withdraws the rects and clears the flag when the last button goes away', () => {
+		// A rect left behind for a button that unmounted is a hole in the game
+		// the player cannot see, and a flag left armed keeps the hook consuming
+		// clicks against whatever it last heard about.
+		expect(nextHotRectCalls([A], [])).toEqual({ rects: [], hasContent: false });
+	});
+
+	// Teardown resets `sent` to null precisely so this is not suppressed as a
+	// no-change: a window that never claimed anything must still leave nothing
+	// behind.
+	it('still withdraws when nothing had been sent yet', () => {
+		expect(nextHotRectCalls(null, [])).toEqual({ rects: [] });
 	});
 });

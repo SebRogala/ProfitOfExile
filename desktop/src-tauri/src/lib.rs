@@ -1307,14 +1307,15 @@ fn set_overlay_config_mode(label: String, on: bool, app: AppHandle) -> Result<()
             return Err(msg);
         }
     } else {
-        if let Err(e) = window.set_ignore_cursor_events(true) {
-            // Left in config mode deliberately: the window is still interactive,
-            // so telling the hook otherwise would only add a fight over
-            // WS_EX_TRANSPARENT to a window that already failed to close.
-            let msg = format!("set_ignore_cursor_events(true) failed for '{}': {}", label, e);
-            log::error!("{}", msg);
-            return Err(msg);
-        }
+        // The flag is cleared even when the call below FAILED. It used to be
+        // left set, on the reasoning that a still-interactive window should not
+        // be told otherwise — but the two outcomes are not symmetric. Leaving it
+        // set strands a monitor-sized window that eats every click over the game
+        // with no way back, because the hook skips a config-mode window and will
+        // not repair it; clearing it costs at most a WS_EX_TRANSPARENT the hook
+        // re-applies on the next mouse move. So the whole exit path runs and the
+        // failure is reported to the caller afterwards.
+        let failed = window.set_ignore_cursor_events(true).err();
         #[cfg(windows)]
         {
             use windows::Win32::Foundation::HWND;
@@ -1327,6 +1328,11 @@ fn set_overlay_config_mode(label: String, on: bool, app: AppHandle) -> Result<()
         }
         #[cfg(windows)]
         overlay_hook::set_config_mode(&label, false);
+        if let Some(e) = failed {
+            let msg = format!("set_ignore_cursor_events(true) failed for '{}': {}", label, e);
+            log::error!("{}", msg);
+            return Err(msg);
+        }
     }
 
     Ok(())

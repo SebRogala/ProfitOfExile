@@ -140,6 +140,43 @@ export function overlayGroups(grants: OverlayGroupGrants): OverlayGroup[] {
 }
 
 /**
+ * The configuration flows that can have an interactive window over the game
+ * right now, as `SettingsPage.svelte` reads them.
+ */
+export interface OpenConfigFlows {
+	/** An OCR region window is on screen (`overlayVisible`). */
+	region: boolean;
+	/** A per-window position COPY is on screen (`anyPositionOverlayOpen`). */
+	position: boolean;
+	/** A module's in-window widget config session is running
+	 *  (`widgetConfiguring`). */
+	widgets: boolean;
+}
+
+/**
+ * Whether Overlay Positions may START another Configure flow.
+ *
+ * The three flows are mutually exclusive, and the reason is the same for every
+ * pair: each one makes a DIFFERENT window interactive over the game, and each
+ * ends only through its own Save/Cancel. A second one started on top leaves two
+ * click-eating rectangles over the game, and whichever bar the user reaches
+ * stands down only one of them — the other is left interactive with its
+ * controls behind the first. The page's `overlay-save`/`overlay-cancel` handler
+ * cannot untangle them either: it dispatches to the FIRST open flow it finds.
+ *
+ * So the answer is one boolean for both buttons rather than a rule per control.
+ * The row whose own flow is open does not need it — that row draws Save/Cancel
+ * instead of Configure — and this is what disables all the others.
+ *
+ * A pure function rather than an inline `disabled={…}` because `.svelte` has no
+ * unit-test harness in this app, and a missing term here fails as a second
+ * window over the game that no gate can see.
+ */
+export function canStartConfigure(open: OpenConfigFlows): boolean {
+	return !open.region && !open.position && !open.widgets;
+}
+
+/**
  * The geometry line for one widget row.
  *
  * Three answers, because a widget has three states and two of them used to be

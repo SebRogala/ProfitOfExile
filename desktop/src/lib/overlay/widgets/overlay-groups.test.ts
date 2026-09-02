@@ -8,7 +8,7 @@
  * something that was already fine.
  */
 import { describe, expect, it } from 'vitest';
-import { overlayGroups, widgetGeometryText } from './overlay-groups';
+import { canStartConfigure, overlayGroups, widgetGeometryText } from './overlay-groups';
 import { placeableWidgetsFor } from './widget-registry';
 import { TEMPLE_WINDOW_LABEL } from '../manager';
 
@@ -126,5 +126,30 @@ describe('a widget row geometry line', () => {
 		expect(widgetGeometryText({ x: 12, y: 8, width: 100, height: 50, visible: false })).toBe(
 			'(12, 8) 100×50'
 		);
+	});
+});
+
+describe('whether another Configure flow may be started', () => {
+	const IDLE = { region: false, position: false, widgets: false };
+
+	it('allows one when no configuration window is up', () => {
+		expect(canStartConfigure(IDLE)).toBe(true);
+	});
+
+	// Each of the three below is a window that is interactive over the game and
+	// ends only through its OWN Save/Cancel. Starting a second flow leaves the
+	// first one click-eating behind it, and the page's overlay-save handler
+	// dispatches to whichever it finds first — so the second bar the user
+	// reaches stands down the wrong window.
+	it('refuses one while an OCR region window is on screen', () => {
+		expect(canStartConfigure({ ...IDLE, region: true })).toBe(false);
+	});
+
+	it('refuses one while a per-window position copy is on screen', () => {
+		expect(canStartConfigure({ ...IDLE, position: true })).toBe(false);
+	});
+
+	it('refuses one while a widget config session is running', () => {
+		expect(canStartConfigure({ ...IDLE, widgets: true })).toBe(false);
 	});
 });

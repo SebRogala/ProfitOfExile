@@ -10,7 +10,11 @@
 	import { ssot, fetchSsot } from '$lib/stores/ssot.svelte';
 	import { screenGeometryView } from '$lib/geometry/view';
 	import { MERC_OVERLAY_DEFAULTS, physicalGeometry } from '$lib/overlay/overlay-defaults';
-	import { overlayGroups, widgetGeometryText } from '$lib/overlay/widgets/overlay-groups';
+	import {
+		canStartConfigure,
+		overlayGroups,
+		widgetGeometryText
+	} from '$lib/overlay/widgets/overlay-groups';
 	import type { WidgetGeometry } from '$lib/overlay/widgets/widget-geometry';
 	import type { WidgetSpec } from '$lib/overlay/widgets/widget-registry';
 	import Tooltip from '$lib/components/Tooltip.svelte';
@@ -834,6 +838,16 @@
 	let anyPositionOverlayOpen = $derived(
 		Object.values(positionOverlays).some(w => w !== null)
 	);
+
+	/** Whether either Configure button in Overlay Positions may be pressed. The
+	 *  three flows are mutually exclusive — see `canStartConfigure`. */
+	let configureAllowed = $derived(
+		canStartConfigure({
+			region: !!overlayVisible,
+			position: anyPositionOverlayOpen,
+			widgets: widgetConfiguring !== null
+		})
+	);
 </script>
 
 <div class="settings-page">
@@ -1029,7 +1043,7 @@
 						{:else}
 							{@const s = overlaySettings[cfg.name]}
 							<span class="setting-value mono">{s ? `(${s.x}, ${s.y}) ${s.width}\u00d7${s.height}` : 'Not set'}</span>
-							<Button onclick={() => showPositionOverlay(cfg.name)} disabled={!!overlayVisible}>Configure</Button>
+							<Button onclick={() => showPositionOverlay(cfg.name)} disabled={!configureAllowed}>Configure</Button>
 						{/if}
 					</div>
 				{/each}
@@ -1041,6 +1055,7 @@
 							Show
 							<Toggle
 								checked={widgetGeometries[widget.id]?.visible ?? true}
+								label={widget.label}
 								onchange={(next) => setWidgetVisible(widget, next)}
 							/>
 						</span>
@@ -1055,7 +1070,7 @@
 						<span class="setting-value">
 							{widgetConfiguring === module ? 'Save or Cancel in the overlay' : ''}
 						</span>
-						<Button onclick={() => configureWidgets(module)}>
+						<Button onclick={() => configureWidgets(module)} disabled={!configureAllowed}>
 							{widgetConfiguring === module ? 'Configuring\u2026' : 'Configure widgets'}
 						</Button>
 					</div>

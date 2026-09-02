@@ -1,11 +1,30 @@
 //! Module lifecycle registry (POE-128).
 //!
 //! A **module** is an optional background unit the user can switch off: one
-//! registry entry, one spawn fn, one persisted enabled flag. Enable spawns it,
-//! disable cancels it. `AppState.modules_enabled` is the single owner of the
-//! flags (always the *effective* state — registry defaults overlaid with the
-//! user's persisted choices), `settings.json` stores the delta, and the
-//! `modules` SSOT slice publishes the map to every window (see src/ssot.rs).
+//! registry entry, one spawn fn, one enabled flag. Enable spawns it, disable
+//! cancels it. `AppState.modules_enabled` is the single owner of the flags
+//! (always the *effective* state — registry defaults overlaid with the user's
+//! persisted choices), `settings.json` stores the delta, and the `modules` SSOT
+//! slice publishes the map to every window (see src/ssot.rs).
+//!
+//! # Two writers: the user's choice and this session's force
+//!
+//! [`set_module_enabled`] is the user's own toggle and is written to disk.
+//! [`set_module_enabled_transient`] (POE-226) is the same toggle for the life of
+//! THIS session only — the widget-config flow forces a module on because its
+//! overlay window is built off that flag, then puts it back. Both go through
+//! `set_module_flag`, which differs by one `persist` parameter.
+//!
+//! Transience is a property of the PROJECTION, not of skipping the write.
+//! `AppState.modules_enabled` holds the effective state either way, because a
+//! forced module really does start; `AppState.transient_modules` maps each
+//! forced id to the value it held BEFORE the force, and
+//! [`persisted_view`] substitutes those back on the way to disk.
+//! `settings::from_state` projects through that view, so the next save by
+//! anything at all writes the user's value rather than the session's. Declining
+//! to call `persist_settings` was the version of this that did NOT work.
+//! [`note_module_write`] is the one place the override map is updated, and it
+//! carries the three rules that make a force reversible.
 //!
 //! # Recipe — adding a module
 //!
@@ -69,6 +88,13 @@
 //! it inside to "satisfy" the order. Acquiring `modules_enabled` alone, with
 //! `module_handles` NOT held, is fine anywhere (`from_state`, `apply_to_state`,
 //! `ssot::build_snapshot` and `set_module_enabled` all do it).
+//! `transient_modules` (the session-force overrides above) comes AFTER
+//! `modules_enabled` and is never NESTED inside it: `set_module_flag` inserts
+//! into the owner map in a scoped block, lets that guard go, and only then takes
+//! `transient_modules` for [`note_module_write`]. `settings::from_state` reads
+//! them the same way — one at a time, each guard dropped before the next — so
+//! the pair has an order without ever being held together. Nesting them is what
+//! a second writer would deadlock against.
 //! Module-owned state Mutexes sit OUTSIDE this order and are acquired alone:
 //! `AppState.mercenary` and `AppState.merc_templates` (POE-165), and
 //! `AppState.temple` and `AppState.temple_settings` (POE-171), and

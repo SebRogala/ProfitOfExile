@@ -1,7 +1,7 @@
 # Tauri v2 Overlay Guide
 
 > **Status: Current implementation guide.** Last verified against desktop code:
-> 2026-07-22. Runtime observations that are valuable but not statically provable
+> 2026-09-02. Runtime observations that are valuable but not statically provable
 > are labelled as such. Earlier debugging detail is preserved in
 > [the historical overlay notes](history/overlay-debugging-notes.md).
 
@@ -359,7 +359,21 @@ named path.
   on the probe must log `hot-rect probe clicked`, and a click one pixel outside
   it must reach the game. A probe that does nothing means the declaration or the
   `overlay-click` listener is wrong; a click beside it that does NOT reach the
-  game means the withdrawn/declared rect is too big.
+  game means the withdrawn/declared rect is too big. **This needs a live temple
+  board on screen**, not just the module enabled: the probe sits inside the
+  advice widget's snippet, which the route draws only when there is a board
+  worth drawing (`overlayShowsBoard`). Outside a temple the window is up and the
+  widget renders nothing, so there is no rect to click and the check proves
+  nothing.
+- **Comparator width, after an overlay-wide CSS change** (added after the
+  POE-225 batch, where a `box-sizing: border-box` added to the shared overlay
+  layout's reset narrowed the comparator table from 582 px to 560): with the
+  comparator overlay open on a gem, check that the table is as wide as its saved
+  window and that no column is clipped. `routes/overlay/+layout.svelte` is loaded
+  by EVERY overlay window, and the five that predate the widget engine are laid
+  out under the default `content-box` — a box-model declaration added there
+  reflows all of them silently, with no gate that can see it. Anything the widget
+  host needs belongs in `WidgetHost.svelte`, which is where `border-box` now is.
 - **Merc strip, after a row-count change** (the content-driven resize path): let
   the strip redraw at a different height — open a recruit window with a
   different number of rows — then, with the read still running, sweep the mouse

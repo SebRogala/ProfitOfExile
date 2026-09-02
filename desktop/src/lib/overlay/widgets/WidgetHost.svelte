@@ -224,7 +224,17 @@
 			for (const spec of specs) {
 				const box = nodes[spec.id]?.getBoundingClientRect();
 				const measured = box ? { x: box.left, y: box.top, w: box.width, h: box.height } : null;
-				seeded[spec.id] = seedRect(spec, stored[spec.id], measured, scaleFactor, host);
+				const seed = seedRect(spec, stored[spec.id], measured, scaleFactor, host);
+				// `null` means the stored rectangle cannot be converted because the
+				// scale factor has not resolved. No draft entry, so no frame is drawn
+				// for that widget — and Save refuses at scale 0 anyway, so there is
+				// nothing to lose by leaving it out. Said out loud because a missing
+				// frame in config mode otherwise reads as a broken widget.
+				if (!seed) {
+					log(`${spec.id} has no scale factor yet — leaving it out of this config session`);
+					continue;
+				}
+				seeded[spec.id] = seed;
 			}
 			draft = seeded;
 			resizedThisSession = new Set();
@@ -536,6 +546,21 @@
 		height: 100vh;
 		pointer-events: none;
 		background: transparent;
+	}
+
+	/* `border-box` stops at this host, and lives here rather than in the shared
+	   overlay layout's reset (`routes/overlay/+layout.svelte`).
+
+	   The host needs it: a widget's box is sized in the SAME pixels its
+	   placement is persisted in, so a `.panel` given the registry's 200 px under
+	   the default `content-box` renders 220 wide once its padding is added and
+	   the widget is not the size the user placed. Nothing else in an overlay
+	   window needs it, and the five windows that predate the widget engine were
+	   laid out under `content-box` — a global reset silently narrowed the
+	   comparator's table from 582 px to 560. */
+	.widget-host,
+	.widget-host :global(*) {
+		box-sizing: border-box;
 	}
 
 	.widget-host.config {
