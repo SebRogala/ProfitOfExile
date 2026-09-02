@@ -1464,11 +1464,57 @@ mod tests {
         assert_eq!(choice.built_tier, Tier::T3);
     }
 
-    /// The plate read and the title did not: the layout plate is still the
-    /// second source, not a dead branch. A `change` is the discriminating kind
-    /// — it resolves only if some source supplied the tier.
+    /// The same `upgrade`, but with the title RESOLVABLE: standing in Office of
+    /// Cartography II with C2 unread, *"upgrade to Atlas of Worlds"*.
     ///
-    /// Fails if the title becomes the ONLY source rather than the first one.
+    /// This is the other side of `resolve_offer_for`. The case above takes the
+    /// `current_tier == None` branch, where an upgrade answers from its own
+    /// printed name; here the title supplies tier 2, so the function DELEGATES
+    /// to `resolve_offer` and the answer comes from `min(3, current + 1)` of the
+    /// printed room's line instead. Both branches must land on Atlas of Worlds
+    /// III — an upgrade prints tier `current + 1` of the room's own line, so the
+    /// two roads lead to the same room by construction, and an implementation
+    /// where they disagree is one that got the arithmetic or the line wrong.
+    ///
+    /// Fails if the delegation branch refuses an upgrade for want of a tier it
+    /// has, or advances the wrong line.
+    #[test]
+    fn an_upgrade_offer_with_a_readable_title_resolves_through_the_current_tier() {
+        let (layout, rooms, panel) = screenshot_board(
+            "Office of Cartography",
+            vec![offer("Zalatl", "Atlas of Worlds", OfferKind::Upgrade)],
+        );
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let published = slice
+            .panel
+            .expect("panel")
+            .offers
+            .into_iter()
+            .next()
+            .expect("one architect block");
+        assert_eq!(published.display_name.as_deref(), Some("Atlas of Worlds"));
+        assert_eq!(published.built_tier, Some(3));
+
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped())
+            .expect("ranks");
+        assert!(
+            !advice.warnings.contains(&Warning::UnknownCurrentTier),
+            "the title named the room, so the tier is known: {:?}",
+            advice.warnings,
+        );
+        let choice = ranked_choice(&advice, 0).expect("the upgrade offer is ranked");
+        assert_eq!(choice.built_tier, Tier::T3);
+        assert_eq!(choice.display_name, "Atlas of Worlds");
+    }
+
+    /// The plate read and the title did not: the plate is the FIRST source, and
+    /// this is the case that proves it is consulted at all. A `change` is the
+    /// discriminating kind — it resolves only if some source supplied the tier.
+    ///
+    /// Fails if the title becomes the only source, which is what the ordering in
+    /// `current_identity` would collapse to if `plate.or(title)` lost its first
+    /// operand.
     #[test]
     fn a_read_current_plate_supplies_the_tier_when_the_title_does_not() {
         let layout = layout(Some(Slot::C2), &SCREENSHOT_DOORS, &[]);

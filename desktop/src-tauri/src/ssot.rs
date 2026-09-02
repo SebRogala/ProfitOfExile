@@ -561,6 +561,18 @@ pub fn drop_if_mismatched(app: &AppHandle, capture: (u32, u32)) -> bool {
 /// from `AppState` with the screen scale explicitly emptied. Persisting the
 /// temple's clear separately would go through `crate::persist_settings`, whose
 /// `preserve_screen_scale` merge writes the stale scale back out.
+///
+/// # Both re-arms are bumped BEFORE the write, and that order is load-bearing
+///
+/// The merc capture loop runs on its own thread and can tick between any two
+/// statements here. A tick that has not yet seen `merc_refit` still holds the
+/// registration it settled on, republishes it through [`publish_screen`] and
+/// persists it — so a write placed before the bump can have the forgotten
+/// number back on disk milliseconds after it was emptied, and the press does
+/// nothing the user can see. With the bumps first, the earliest tick that can
+/// reach the file is one that has already dropped its held fit and measured the
+/// panel afresh; a fresh measurement landing in the file is the outcome
+/// Recalibrate is asking for, not the one it is guarding against.
 #[tauri::command]
 pub fn geometry_recalibrate(app: AppHandle) {
     {
@@ -568,7 +580,6 @@ pub fn geometry_recalibrate(app: AppHandle) {
         *state.screen.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
     crate::temple::run::clear_calibration(&app);
-    crate::settings::persist_forgetting_screen_scale(&app);
     {
         let state = app.state::<AppState>();
         state
@@ -578,6 +589,7 @@ pub fn geometry_recalibrate(app: AppHandle) {
             .merc_refit
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
+    crate::settings::persist_forgetting_screen_scale(&app);
     crate::app_log(
         &app,
         "Recalibrate: dropped the remembered screen scale and temple calibration — \

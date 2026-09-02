@@ -17,8 +17,14 @@ import { TEMPLE_WINDOW_LABEL } from '../manager';
 import { WIDGETS, placeableWidgetsFor, widgetsFor } from './widget-registry';
 
 describe('every declared widget', () => {
-	it('declares at least one, so the assertions below are not vacuous', () => {
-		expect(WIDGETS.length).toBeGreaterThan(0);
+	// The whole registry, not the temple filter below it: POE-225 D10 is that
+	// this batch ships the old single temple panel split in two and NOTHING
+	// else. A widget added to another module — or a third temple one — is a row
+	// in Settings, a persisted rectangle and a snippet branch the host will not
+	// find, so it has to be a deliberate edit here rather than something that
+	// arrives past a filter that never looked.
+	it('ships exactly the two temple widgets', () => {
+		expect(WIDGETS.map((widget) => widget.id)).toEqual(['temple.board', 'temple.advice']);
 	});
 
 	it.each(WIDGETS.map((widget) => [widget.id, widget] as const))(

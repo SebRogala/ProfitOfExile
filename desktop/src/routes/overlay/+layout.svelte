@@ -26,13 +26,16 @@
 		display: contents;
 	}
 
-	/* `box-sizing` is part of the reset rather than a per-panel declaration
-	   because an overlay widget's box is sized in the SAME pixels its placement
-	   is persisted in: a `.panel` given the registry's 200 px under the default
-	   `content-box` renders 220 wide once its padding is added, and the widget
-	   would not be the size the user placed. */
+	/* `box-sizing` is deliberately NOT reset here. The widget host needs
+	   `border-box` — its boxes are sized in the same pixels their placement is
+	   persisted in — but it is the ONE surface that does, and it declares it for
+	   itself (`lib/overlay/widgets/WidgetHost.svelte`). This layout is shared by
+	   every overlay window, and the five that predate the widget engine were laid
+	   out under the default `content-box`: resetting globally silently reflowed
+	   them, taking the comparator's `.table` (`width: 560px` + 10 px of padding +
+	   a 1 px border) from 582 px to 560. A reset that changes windows the change
+	   was not about does not belong in the shared layout. */
 	:global(*) {
-		box-sizing: border-box;
 		margin: 0;
 		padding: 0;
 	}

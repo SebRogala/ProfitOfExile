@@ -1,9 +1,21 @@
 <script lang="ts">
 	let {
 		checked = $bindable(),
+		label,
 		onchange
 	}: {
 		checked?: boolean;
+		/**
+		 * What this switch governs, for the accessible name.
+		 *
+		 * Without it the button announces itself as "Enable"/"Disable" and
+		 * nothing else, which is unambiguous for a lone toggle in a row that has
+		 * its own visible text and useless the moment a page draws several — the
+		 * two "Show" switches in Overlay Positions are one row per widget and
+		 * were indistinguishable from each other. Optional, so a caller whose
+		 * row already reads as one control is unaffected.
+		 */
+		label?: string;
 		/**
 		 * Called with the new value after a click.
 		 *
@@ -14,6 +26,8 @@
 		 */
 		onchange?: (checked: boolean) => void;
 	} = $props();
+
+	const action = $derived(checked ? 'Disable' : 'Enable');
 </script>
 
 <button
@@ -21,7 +35,7 @@
 	class:on={checked}
 	role="switch"
 	aria-checked={checked}
-	aria-label={checked ? 'Disable' : 'Enable'}
+	aria-label={label ? `${action} ${label}` : action}
 	onclick={() => { checked = !checked; onchange?.(checked); }}
 >
 	<span class="knob"></span>

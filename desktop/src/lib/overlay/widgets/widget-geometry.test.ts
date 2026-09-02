@@ -64,11 +64,19 @@ describe('physical pixels to CSS pixels', () => {
 	// by a pixel every time.
 	it('keeps a fractional result so a save-without-moving does not drift', () => {
 		const rect = cssRect({ x: 61, y: 61, width: 300, height: 300, visible: true }, 1.5);
-		expect(widgetGeometry(rect, 1.5, true).x).toBe(61);
+		expect(widgetGeometry(rect!, 1.5, true).x).toBe(61);
 	});
 
-	it('treats a scale factor that has not resolved as unscaled', () => {
-		expect(cssRect({ x: 40, y: 40, width: 200, height: 200, visible: true }, 0).x).toBe(40);
+	// FAILS CLOSED, like `hot-rects.ts`. Substituting 1 for an unresolved factor
+	// is not "no answer", it is a confident wrong one: on a 150 % display every
+	// stored widget would be drawn a third too far out, which reads as a
+	// placement the user got wrong rather than as a conversion that never ran.
+	it('declines the conversion while the scale factor has not resolved', () => {
+		expect(cssRect({ x: 40, y: 40, width: 200, height: 200, visible: true }, 0)).toBeNull();
+	});
+
+	it('declines the conversion when the scale factor is not a usable number', () => {
+		expect(cssRect({ x: 40, y: 40, width: 200, height: 200, visible: true }, NaN)).toBeNull();
 	});
 });
 
@@ -279,6 +287,21 @@ describe('deciding where a widget goes', () => {
 		});
 	});
 
+	// Fails closed with `cssRect`. The frames before `scaleFactor()` answers are
+	// a handful; a widget drawn a third off on a 150 % display for those frames
+	// is indistinguishable from one the user placed badly.
+	it('renders nothing for a stored widget while the scale factor has not resolved', () => {
+		expect(
+			placementFor(RESIZABLE, { x: 375, y: 60, width: 600, height: 300, visible: true }, 0, HOST)
+		).toBeNull();
+	});
+
+	// The unstored branch converts nothing, so an unconfigured widget is drawn
+	// at the registry's CSS numbers from the first frame.
+	it('still uses the shipped default while the scale factor has not resolved', () => {
+		expect(placementFor(RESIZABLE, undefined, 0, HOST)).toMatchObject({ x: 250, y: 40 });
+	});
+
 	it('renders nothing for a widget the user has hidden', () => {
 		expect(
 			placementFor(
@@ -454,6 +477,17 @@ describe('the rectangle config mode opens a widget at', () => {
 			w: RESIZABLE.defaults.w,
 			h: RESIZABLE.defaults.h
 		});
+	});
+
+	// Fails closed with `cssRect`: a frame opened at an assumed 1x is a frame in
+	// the wrong place, and Save refuses at an unresolved scale factor anyway.
+	it('declines to seed a stored widget while the scale factor has not resolved', () => {
+		expect(seedRect(RESIZABLE, STORED, MEASURED, 0, HOST)).toBeNull();
+	});
+
+	// The unstored branch converts nothing, so it still answers.
+	it('still seeds an unstored widget while the scale factor has not resolved', () => {
+		expect(seedRect(RESIZABLE, undefined, MEASURED, 0, HOST)).toEqual(MEASURED);
 	});
 
 	it('pulls a seed stored off the current monitor back inside it', () => {

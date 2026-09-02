@@ -84,20 +84,28 @@ function clamp(value: number, lo: number, hi: number): number {
 	return Math.min(Math.max(value, lo), Math.max(lo, hi));
 }
 
-/** A scale factor that can be divided by — `scaleFactor()` failing leaves
- *  callers with 0, and the whole layout would collapse to the origin. */
-function safeScale(scaleFactor: number): number {
-	return scaleFactor > 0 ? scaleFactor : 1;
-}
-
-/** The persisted rectangle in CSS px. */
-export function cssRect(geometry: WidgetGeometry, scaleFactor: number): WidgetRect {
-	const sf = safeScale(scaleFactor);
+/**
+ * The persisted rectangle in CSS px, or `null` when the scale factor cannot
+ * support the conversion.
+ *
+ * FAILS CLOSED, the way `../hot-rects.ts`'s `physicalHotRect` does, and for the
+ * same reason. `scaleFactor()` is 0 until it answers and stays 0 if it fails,
+ * and substituting 1 for it does not produce "no answer" — it produces a
+ * CONFIDENT WRONG one: on a 150 % display every stored widget would be drawn a
+ * third too far out and a third too large, which looks exactly like a placement
+ * the user got wrong rather than like a conversion that never happened. The
+ * callers already have a not-drawn state ([`placementFor`] returns `null` for a
+ * hidden widget, and the host filters those out) and Save already refuses at
+ * scale 0, so declining costs the frames before the factor resolves and nothing
+ * else.
+ */
+export function cssRect(geometry: WidgetGeometry, scaleFactor: number): WidgetRect | null {
+	if (!(scaleFactor > 0) || !Number.isFinite(scaleFactor)) return null;
 	return {
-		x: geometry.x / sf,
-		y: geometry.y / sf,
-		w: geometry.width / sf,
-		h: geometry.height / sf
+		x: geometry.x / scaleFactor,
+		y: geometry.y / scaleFactor,
+		w: geometry.width / scaleFactor,
+		h: geometry.height / scaleFactor
 	};
 }
 
@@ -214,6 +222,12 @@ export const EDGE_CURSORS: Record<ResizeEdge, string> = {
  * nothing — the temple's, outside a temple — measures `0 × 0`, and taking that
  * as a real size would open config mode on a frame with no interior to drag
  * and no edge to pull, which is the same dead end an unrecoverable widget is.
+ *
+ * `null` when there IS a stored placement and [`cssRect`] cannot convert it —
+ * the host draws no frame for that widget rather than one at a made-up scale,
+ * and Save refuses at an unresolved scale factor anyway. A widget with nothing
+ * stored is seeded from what it measures or from the registry, neither of which
+ * is a conversion, so it is unaffected.
  */
 export function seedRect(
 	spec: WidgetSpec,
@@ -221,13 +235,14 @@ export function seedRect(
 	measured: WidgetRect | null,
 	scaleFactor: number,
 	host: HostSize
-): WidgetRect {
+): WidgetRect | null {
 	// `??` would accept a zero here, because zero is not nullish.
 	const box = measured && measured.w > 0 && measured.h > 0 ? measured : null;
 	if (!geometry) {
 		return clampToHost(box ?? { ...spec.defaults }, host);
 	}
 	const rect = cssRect(geometry, scaleFactor);
+	if (!rect) return null;
 	return clampToHost(
 		{
 			x: rect.x,
@@ -360,6 +375,13 @@ export interface WidgetPlacement {
  *    non-resizable widget's stored width and height are whatever its content
  *    measured when the user last saved, and pinning the box to that would clip
  *    it the moment the content grew a line.
+ *
+ * A fourth `null`, before case 3 can be decided: the window's scale factor has
+ * not resolved, so the stored physical rectangle cannot be converted
+ * ([`cssRect`]). Nothing is drawn for those frames rather than a widget placed
+ * at an assumed 1×, which on a scaled display is a widget the user is looking
+ * at in the wrong place. An UNSTORED widget (case 2) needs no conversion and
+ * still renders.
  */
 export function placementFor(
 	spec: WidgetSpec,
@@ -381,6 +403,7 @@ export function placementFor(
 		};
 	}
 	const rect = cssRect(geometry, scaleFactor);
+	if (!rect) return null;
 	const sized = spec.resizable && geometry.width > 0 && geometry.height > 0;
 	// Clamped against the window it is about to be drawn in, not against the one
 	// it was saved on: a stored placement outlives the monitor it was made on, and
