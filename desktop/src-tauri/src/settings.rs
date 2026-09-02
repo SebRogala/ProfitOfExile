@@ -182,11 +182,12 @@ pub struct Settings {
 /// One overlay widget's placement inside its module's fullscreen window
 /// (POE-225).
 ///
-/// PHYSICAL pixels, window-relative. The module's window IS the primary
-/// monitor and every capture is the primary monitor, so window-relative
-/// physical px are also capture px — which is the unit a game-anchored widget
-/// would have to be placed in anyway, so user-placed and game-anchored widgets
-/// share one unit with no conversion between them. Shipped defaults are CSS px
+/// PHYSICAL pixels, window-relative. The module's window IS one monitor and
+/// every capture is that same monitor — the GAME's, on both sides, since
+/// POE-237 — so window-relative physical px are also capture px, which is the
+/// unit a game-anchored widget would have to be placed in anyway; user-placed
+/// and game-anchored widgets therefore share one unit with no conversion
+/// between them. Shipped defaults are CSS px
 /// in the frontend registry and are converted once, by `physicalGeometry`, the
 /// same way `MERC_OVERLAY_DEFAULTS` is.
 ///
@@ -282,6 +283,23 @@ pub struct ScreenScaleSetting {
     /// Unix ms the measurement was taken at, carried through unchanged so an
     /// age survives the restart with the number it belongs to.
     pub measured_at_ms: u64,
+    /// WHICH display it was measured on (POE-237) — `crate::capture::Capture`'s
+    /// id space, mirrored from [`crate::ssot::ScreenSlice::monitor_id`].
+    ///
+    /// Persisted because the startup seed is exactly where it is needed: a
+    /// player whose two monitors are the same resolution used to load last
+    /// session's scale and have nothing able to notice the game had moved, and
+    /// the lazy prune (`ssot::drop_if_mismatched`) can only compare what the
+    /// file carried. `#[serde(default)]` fills `0` — UNKNOWN — for every file
+    /// written before this field existed, and an unknown id prunes on the
+    /// dimensions alone, which is what those files have always done.
+    #[serde(default)]
+    pub monitor_id: u32,
+    /// The measured display's top-left in virtual-desktop PHYSICAL px.
+    /// `#[serde(default)]` fills `(0, 0)`, which is both the primary monitor
+    /// and the unknown value — the id, not this, is the identity.
+    #[serde(default)]
+    pub origin: (i32, i32),
 }
 
 impl ScreenScaleSetting {
@@ -320,6 +338,8 @@ impl ScreenScaleSetting {
                 height: slice.height,
                 ui_scale: slice.ui_scale,
                 measured_at_ms: slice.measured_at_ms,
+                monitor_id: slice.monitor_id,
+                origin: slice.origin,
             }),
         }
     }
@@ -341,6 +361,8 @@ impl ScreenScaleSetting {
             source,
             measured_at_ms: self.measured_at_ms,
             verified_this_session: crate::ssot::verifies_the_screen(source),
+            monitor_id: self.monitor_id,
+            origin: self.origin,
         }
     }
 
@@ -789,6 +811,7 @@ mod tests {
     fn test_app_state() -> crate::AppState {
         crate::AppState {
             device_id: String::new(),
+            game_monitor: Mutex::new(None),
             pair_code: Mutex::new(String::new()),
             client_txt_path: Mutex::new(String::new()),
             server_url: Mutex::new(String::new()),
@@ -1007,6 +1030,10 @@ mod tests {
             height: 1080,
             ui_scale: 0.9,
             source,
+            // A real display, so a round trip that dropped the identity is
+            // visible as a `0` rather than as the same `0` it started with.
+            monitor_id: 65_537,
+            origin: (-1920, 0),
             // As the writers build one — never a literal, so the round-trip
             // tests below run against the flag the app actually publishes.
             verified_this_session: crate::ssot::verifies_the_screen(source),
@@ -1054,6 +1081,52 @@ mod tests {
             crate::ssot::ScreenScaleSource::Remembered,
             "a loaded scale was not measured this run and must say so",
         );
+    }
+
+    /// POE-237's half of the same cycle: WHICH display the number was measured
+    /// on has to survive the restart, or the lazy prune has nothing to compare
+    /// against and a player with two 1920x1080 monitors loads a scale measured
+    /// on the other one with no way for anything to notice. Fails if
+    /// `from_slice` or `to_slice` drops either field, or if the struct never
+    /// grew them.
+    #[test]
+    fn the_display_a_scale_was_measured_on_round_trips_through_settings() {
+        let state = test_app_state();
+        *state.screen.lock().unwrap() =
+            Some(measured_screen(crate::ssot::ScreenScaleSource::MercFrame));
+
+        let saved = from_state(&state);
+        let stored = saved.screen_scale.expect("a frame measurement must reach settings.json");
+        assert_eq!(stored.monitor_id, 65_537);
+        assert_eq!(stored.origin, (-1920, 0));
+
+        let reloaded = test_app_state();
+        let _ = apply_to_state(&saved, &reloaded);
+
+        let loaded = reloaded.screen.lock().unwrap().expect("the load must fill the slice");
+        assert_eq!(
+            loaded.monitor_id, 65_537,
+            "a remembered scale that cannot say which display it came off cannot be pruned",
+        );
+        assert_eq!(loaded.origin, (-1920, 0));
+    }
+
+    /// Every settings.json written before POE-237 stored a scale with no
+    /// display. It must load as UNKNOWN — the `0` `ssot::different_monitor`
+    /// declines to answer on — rather than failing the file or defaulting to a
+    /// plausible id, which would prune every remembered scale on the first
+    /// capture after the upgrade.
+    #[test]
+    fn a_screen_scale_written_before_the_display_was_recorded_loads_as_unknown() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"screen_scale":{"width":1920,"height":1080,"ui_scale":0.9,"measured_at_ms":1724000000000}}"#,
+        )
+        .expect("a stored scale without the display must still parse");
+
+        let stored = parsed.screen_scale.expect("the scale itself must load");
+        assert_eq!((stored.width, stored.height), (1920, 1080), "the measurement is untouched");
+        assert_eq!(stored.monitor_id, 0, "0 is what the prune reads as 'no opinion'");
+        assert_eq!(stored.origin, (0, 0));
     }
 
     /// The one number a restart must NOT carry (POE-240). A frame measurement
@@ -1138,6 +1211,11 @@ mod tests {
                 height: 1200,
                 ui_scale: 1.0,
                 measured_at_ms: 1_724_000_000_000,
+                // A file written before POE-237: the display is unknown, which is
+                // what `#[serde(default)]` fills in and what the prune falls back
+                // to comparing dimensions alone for.
+                monitor_id: 0,
+                origin: (0, 0),
             }),
             ..Settings::default()
         };
@@ -1165,6 +1243,11 @@ mod tests {
                 height: 1080,
                 ui_scale: 0.9,
                 measured_at_ms: 1_724_000_000_000,
+                // A file written before POE-237: the display is unknown, which is
+                // what `#[serde(default)]` fills in and what the prune falls back
+                // to comparing dimensions alone for.
+                monitor_id: 0,
+                origin: (0, 0),
             }),
             ..Settings::default()
         };
@@ -1193,6 +1276,11 @@ mod tests {
                 height: 1440,
                 ui_scale: 0.8985_f32,
                 measured_at_ms: 1_724_000_000_123,
+                // A file written before POE-237: the display is unknown, which is
+                // what `#[serde(default)]` fills in and what the prune falls back
+                // to comparing dimensions alone for.
+                monitor_id: 0,
+                origin: (0, 0),
             }),
             ..Settings::default()
         };
@@ -1264,6 +1352,11 @@ mod tests {
                     height,
                     ui_scale,
                     measured_at_ms: 1_724_000_000_000,
+                    // A file written before POE-237: the display is unknown, which is
+                    // what `#[serde(default)]` fills in and what the prune falls back
+                    // to comparing dimensions alone for.
+                    monitor_id: 0,
+                    origin: (0, 0),
                 }),
                 ..Settings::default()
             };
@@ -1303,6 +1396,11 @@ mod tests {
                 height: 1200,
                 ui_scale: 1.0,
                 measured_at_ms: 1_724_000_000_000,
+                // A file written before POE-237: the display is unknown, which is
+                // what `#[serde(default)]` fills in and what the prune falls back
+                // to comparing dimensions alone for.
+                monitor_id: 0,
+                origin: (0, 0),
             }),
             ..Settings::default()
         };
@@ -1334,6 +1432,8 @@ mod tests {
             ui_scale: 1.25,
             source: crate::ssot::ScreenScaleSource::MercFrame,
             measured_at_ms: 1_724_000_600_000,
+            monitor_id: 65_537,
+            origin: (0, 0),
             verified_this_session: crate::ssot::verifies_the_screen(
                 crate::ssot::ScreenScaleSource::MercFrame,
             ),
@@ -1344,6 +1444,11 @@ mod tests {
                 height: 1200,
                 ui_scale: 1.0,
                 measured_at_ms: 1_724_000_000_000,
+                // A file written before POE-237: the display is unknown, which is
+                // what `#[serde(default)]` fills in and what the prune falls back
+                // to comparing dimensions alone for.
+                monitor_id: 0,
+                origin: (0, 0),
             }),
             ..Settings::default()
         };
@@ -1378,6 +1483,11 @@ mod tests {
                 height: 1200,
                 ui_scale: 1.0,
                 measured_at_ms: 1_724_000_000_000,
+                // A file written before POE-237: the display is unknown, which is
+                // what `#[serde(default)]` fills in and what the prune falls back
+                // to comparing dimensions alone for.
+                monitor_id: 0,
+                origin: (0, 0),
             }),
             ..Settings::default()
         };
@@ -1693,6 +1803,11 @@ mod tests {
                 height: 1080,
                 ui_scale: 0.0,
                 measured_at_ms: 1_724_000_000_000,
+                // A file written before POE-237: the display is unknown, which is
+                // what `#[serde(default)]` fills in and what the prune falls back
+                // to comparing dimensions alone for.
+                monitor_id: 0,
+                origin: (0, 0),
             }),
             ..Settings::default()
         };
@@ -1719,6 +1834,11 @@ mod tests {
                 height: 1200,
                 ui_scale: 1.0,
                 measured_at_ms: 1_724_000_000_000,
+                // A file written before POE-237: the display is unknown, which is
+                // what `#[serde(default)]` fills in and what the prune falls back
+                // to comparing dimensions alone for.
+                monitor_id: 0,
+                origin: (0, 0),
             }),
             ..Settings::default()
         };
@@ -1730,6 +1850,8 @@ mod tests {
             ui_scale: 1.25,
             source: crate::ssot::ScreenScaleSource::MercFrame,
             measured_at_ms: 1_724_000_600_000,
+            monitor_id: 65_537,
+            origin: (0, 0),
             verified_this_session: crate::ssot::verifies_the_screen(
                 crate::ssot::ScreenScaleSource::MercFrame,
             ),

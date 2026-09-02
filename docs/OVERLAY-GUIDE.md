@@ -254,24 +254,45 @@ that did.
 
 ## Widget overlays
 
-A module may instead open ONE fullscreen, click-through window over the primary
+A module may instead open ONE fullscreen, click-through window over the game's
 monitor and place small panels — WIDGETS — inside it. The temple is the first
 (POE-225); the lab windows and the merc strip are not migrated.
 
-- The window is the monitor. `routes/(app)/+layout.svelte` reads
-  `primaryMonitor()` (falling back to `currentMonitor()`), constructs at the
-  monitor's logical size and applies the exact `PhysicalPosition`/`PhysicalSize`
-  in `tauri://created` — guard 3, with the monitor's own scale factor. It has no
-  persisted rect, is not resizable, and is NOT in `RESIZABLE_OVERLAY_LABELS`:
-  `fit_overlay_height` would shrink the canvas every widget's persisted
-  coordinate is measured against.
+- The window is the GAME monitor (POE-237). `routes/(app)/+layout.svelte` asks
+  Rust's `get_game_monitor` — which the focus poller answers from the PoE
+  window's own HWND — and matches it against an `availableMonitors()` entry by
+  POSITION, because the two enumerations do not share an id space; the rule is
+  `overlay/monitor-choice.ts` and it falls back to `primaryMonitor()` (then
+  `currentMonitor()`) on every failing path, which is what shipped before
+  POE-237. It constructs at the monitor's logical size and applies the exact
+  `PhysicalPosition`/`PhysicalSize` in `tauri://created` — guard 3, with that
+  monitor's own scale factor. It has no persisted rect, is not resizable, and is
+  NOT in `RESIZABLE_OVERLAY_LABELS`: `fit_overlay_height` would shrink the canvas
+  every widget's persisted coordinate is measured against. When the game moves to
+  another display Rust emits `game-monitor-changed` to the main window and the
+  layout REBUILDS the window there through the driver's own off/on — guard 4's
+  "move, not recreate" is about repositioning within one display, and a different
+  display is a different canvas: different size, different scale factor,
+  different coordinate space for every widget in it. Two cases do NOT rebuild.
+  A notice naming the display the window was already BUILT on only teaches it
+  the id (a window built before anything had seen the game window records id
+  `0`), so the layout records the id and stops. And a live widget-config session
+  DEFERS the rebuild to its end: a rebuild is a destroy, and that window is the
+  surface the user is dragging widgets on — taking it down mid-session drops
+  them into a window that no longer exists and leaves Settings on
+  `Configuring…` waiting on a destroyed host. The deferral leaves the recorded
+  display untouched, so the next notice still rebuilds; and when the session was
+  the only thing holding the window up, its end tears the window down and the
+  next build asks `get_game_monitor` afresh.
 - The widgets are declared in
   `desktop/src/lib/overlay/widgets/widget-registry.ts`, keyed
   `"<module>.<widget>"`, with shipped defaults in CSS pixels; their placements
   are persisted in PHYSICAL, window-relative pixels in `Settings.widgets`. That
   unit is also capture pixels, because the window and every capture are the same
-  monitor — so a user-placed widget and a future game-anchored one need no
-  conversion between them.
+  monitor — the game's, by construction on both sides since POE-237 (the window
+  is built on it, `capture::capture_screen` grabs it, and `ssot.screen` carries
+  its id and origin) — so a user-placed widget and a future game-anchored one
+  need no conversion between them.
 - `WidgetHost.svelte` owns placement, hot rects and click routing. Any element a
   widget draws with `data-hot` is claimed; one that also carries `data-action`
   is dispatched through `elementFromPoint`. The window declares nothing of its
@@ -702,6 +723,22 @@ touching the named path.
   the inverse check matters too: a tick that merely read the panel badly must
   NOT log `recruit window replaced`, because that log line means the session's
   hover confirmations were just thrown away.
+- **Game fullscreen on the secondary monitor** (POE-237, item 10 of the POE-223
+  smoke list): put PoE fullscreen on a display that is NOT the Windows primary,
+  alt-tab into it once so the focus poller resolves it (`app.log` says `game is
+  on monitor N at x,y`), then check all three consumers on THAT monitor: the
+  temple widget window draws over the game rather than on the primary; a merc
+  recruit window is detected and the strip appears beside it; and the Settings
+  "Screen geometry" card reports the second display's own resolution. Then drag
+  the game to the primary and alt-tab back: one more `game is on monitor` line,
+  and the temple window must reappear on the primary within a second — a window
+  left behind means the `game-monitor-changed` rebuild is not firing (it is
+  `emit_to("main")`, so a bare `listen()` in the layout would never see it).
+  Unplug the second display while PoE stays in the foreground and capture must
+  NOT stop: one `the game's monitor at x,y is gone — capturing the primary until
+  the next alt-tab` line, and OCR keeps running off the primary. Only the one
+  line — a repeat every tick means the stored display is not being cleared —
+  and the next alt-tab into the game logs a fresh `game is on monitor` line.
 - **Hook re-install after a silent removal** (POE-238, item 9 of the POE-223
   smoke list): with the comparator open on a gem, make Windows drop the
   `WH_MOUSE_LL` hook — hold a debugger pause of at least 1 s on the app, or

@@ -23,6 +23,7 @@
 	} from '$lib/overlay/manager';
 	import { clickthroughReport } from '$lib/overlay/clickthrough-report';
 	import { moduleOverlayDriver } from '$lib/overlay/module-lifecycle';
+	import { chooseMonitor, type GameMonitorInfo } from '$lib/overlay/monitor-choice';
 	import {
 		widgetConfigEnd,
 		widgetConfigLive,
@@ -471,17 +472,22 @@
 	// show a stale board. `docs/OVERLAY-GUIDE.md` guards, and where each is met:
 	//
 	//  1. capabilities — the `temple` label is in capabilities/default.json.
-	//  2/3. physical vs logical — the window IS the primary monitor (POE-225), so
-	//    the monitor's physical position and size are divided by ITS scale
-	//    factor for the constructor, which takes LOGICAL pixels, and the exact
+	//  2/3. physical vs logical — the window IS the GAME's monitor (POE-237;
+	//    the primary one until something has seen the game window), so the
+	//    monitor's physical position and size are divided by ITS scale factor
+	//    for the constructor, which takes LOGICAL pixels, and the exact
 	//    `PhysicalPosition`/`PhysicalSize` are applied in `tauri://created`.
 	//    `window.devicePixelRatio` is not used.
-	//  4. move, not recreate — this window is never repositioned, so there is
-	//    no destroy/recreate cycle to avoid. It is built and torn down only on
-	//    the module flag's transitions and on the bounded creation retry, and
-	//    `module-lifecycle.ts` orders all of them so two never overlap.
-	//  5. settings survival — the WINDOW persists nothing, because it is the
-	//    primary monitor and there is nothing about it a user could choose. What
+	//  4. move, not recreate — this window is never repositioned WITHIN a
+	//    display, so there is no destroy/recreate cycle to avoid there. It is
+	//    built and torn down on the module flag's transitions, on the bounded
+	//    creation retry, and — POE-237 — when the game moves to another
+	//    monitor, which is a genuinely different canvas rather than a move:
+	//    the size, the scale factor and every widget's coordinate space change
+	//    with it. All of them go through `module-lifecycle.ts`, so two never
+	//    overlap.
+	//  5. settings survival — the WINDOW persists nothing, because it is a whole
+	//    monitor and there is nothing about it a user could choose. What
 	//    IS persisted is where the user put each WIDGET inside it
 	//    (`Settings.widgets`, keyed `"temple.<widget>"`), and that map is owned
 	//    by an `AppState` mutex, so it travels through `from_state` and is
@@ -512,6 +518,33 @@
 			.catch(e => console.error('[overlay] temple: app log unreachable:', e));
 	}
 
+	/**
+	 * The display the temple window was last BUILT on, as Rust's
+	 * `get_game_monitor` reported it (POE-237). `0` means "not built on a known
+	 * display" — either nothing had seen the game window yet or the lookup
+	 * failed — and every real id differs from it, so the first notice after such
+	 * a build rebuilds onto the display the game is actually on.
+	 *
+	 * A plain `let`, not a rune: nothing renders from it, and making it reactive
+	 * would re-enter the lifecycle effect on every build.
+	 */
+	let templeMonitorId = 0;
+
+	/**
+	 * WHERE the temple window was last built — the top-left of the monitor it
+	 * was actually constructed on, in the same virtual-desktop physical px Rust
+	 * reports (POE-237). `null` when no window is up.
+	 *
+	 * The id cannot answer this on its own. A build that happened before
+	 * anything had seen the game window records id `0` and lands on the primary,
+	 * so the first notice — the game being on that very primary — differs from
+	 * `0` and would rebuild an already-correct window, taking the overlay away
+	 * for the length of a destroy/create. The corner is what the two
+	 * enumerations share (`overlay/monitor-choice.ts`), so it is what can say
+	 * "that is the display this window is already on".
+	 */
+	let templeMonitorAt: { x: number; y: number } | null = null;
+
 	/** The create/destroy ordering, and the bounded retry — see
 	 *  `$lib/overlay/module-lifecycle`. The driver owns the mutable state; this
 	 *  file owns the Tauri work it orders. */
@@ -533,16 +566,22 @@
 	async function createTempleOverlay(): Promise<boolean> {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
 		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
-		const { currentMonitor, primaryMonitor } = await import('@tauri-apps/api/window');
+		const { availableMonitors, currentMonitor, primaryMonitor } = await import(
+			'@tauri-apps/api/window'
+		);
 
 		await destroyTempleWindow();
 
-		// The window IS the primary monitor (POE-225): one fullscreen,
-		// click-through canvas per module, with the widgets placed inside it.
-		// `currentMonitor()` is the fallback rather than a constant, because a
-		// constant would be a guess at a resolution — and a window sized wrong
-		// puts every widget's persisted physical coordinate in the wrong place.
-		const monitor =
+		// The window IS one monitor (POE-225): one fullscreen, click-through
+		// canvas per module, with the widgets placed inside it. WHICH monitor is
+		// the game's, since POE-237 — a window on the primary while PoE is
+		// fullscreen on the second display draws every widget where the player
+		// is not looking, and Rust's capture reads the wrong screen for the same
+		// reason. `currentMonitor()` is the primary's fallback rather than a
+		// constant, because a constant would be a guess at a resolution — and a
+		// window sized wrong puts every widget's persisted physical coordinate
+		// in the wrong place.
+		const primary =
 			(await primaryMonitor().catch((e: any) => {
 				logTemple(`primaryMonitor failed, trying currentMonitor: ${e}`);
 				return null;
@@ -551,6 +590,18 @@
 				logTemple(`currentMonitor failed too: ${e}`);
 				return null;
 			}));
+		// Both lookups fail SOFT to the pre-POE-237 behaviour (the primary):
+		// a module with its window on the wrong display is still usable, and one
+		// with no window at all is not.
+		const game = await invoke<GameMonitorInfo | null>('get_game_monitor').catch((e: any) => {
+			logTemple(`get_game_monitor failed, building on the primary monitor: ${e}`);
+			return null;
+		});
+		const listed = await availableMonitors().catch((e: any) => {
+			logTemple(`availableMonitors failed, building on the primary monitor: ${e}`);
+			return [];
+		});
+		const monitor = chooseMonitor(game, listed, primary);
 		if (!monitor) {
 			// No monitor, no canvas. Refusing is what the bounded retry in
 			// `module-lifecycle.ts` is for; guessing a size would place the
@@ -558,6 +609,22 @@
 			logTemple('no monitor to build the overlay on — not creating it');
 			return false;
 		}
+		if (game && (monitor.position.x !== game.x || monitor.position.y !== game.y)) {
+			// A real disagreement between the two enumerations, worth saying out
+			// loud: Rust placed the game window on a display this webview does
+			// not list, so the overlay is going on the primary and the widgets
+			// will be on the wrong screen until the next rebuild.
+			logTemple(
+				`the game is on a monitor at ${game.x},${game.y} that this window cannot see — building on the primary`
+			);
+		}
+		// What a `game-monitor-changed` is compared against: the id Rust gave, and
+		// the corner of the display this window is actually going on — which are
+		// the SAME display only when the match above succeeded. `0` is "not built
+		// on a known display"; the corner is what stops that case from rebuilding
+		// a window that is already where the notice says the game is.
+		templeMonitorId = game?.id ?? 0;
+		templeMonitorAt = { x: monitor.position.x, y: monitor.position.y };
 		// Constructor dimensions are LOGICAL; a monitor reports PHYSICAL.
 		const sf = monitor.scaleFactor > 0 ? monitor.scaleFactor : 1;
 		const win = new WebviewWindow(TEMPLE_WINDOW_LABEL, {
@@ -681,6 +748,75 @@
 		logTemple('window still present after 5 close/destroy rounds — giving the label up');
 		return false;
 	}
+
+	/**
+	 * The game moved to another display: rebuild the window there (POE-237).
+	 *
+	 * A REBUILD, not a move. The window is the monitor, so the new display
+	 * brings a different size, a different scale factor and a different physical
+	 * coordinate space for every widget inside it — none of which a
+	 * `setPosition` would fix, and all of which the constructor path already
+	 * gets right. Guard 4's "move, not recreate" is about repositioning a window
+	 * on ONE display; this is a different canvas.
+	 *
+	 * Through the driver's own off/on, which is the same path a module toggle
+	 * takes (and the one a `?debug` rebuild uses): the driver serialises the
+	 * destroy and the create, so this cannot race a build the module flag
+	 * started. Nothing is queued when no window is up — `setDesired` is
+	 * value-guarded and the flag's own effect re-asserts `true` on its next poll
+	 * anyway.
+	 *
+	 * TWO notices do not rebuild, and both are below: one naming the display the
+	 * window is already ON (only the id was unknown), and one that arrives while
+	 * the user is arranging widgets — the window a rebuild would destroy is the
+	 * surface that session is running on. `docs/OVERLAY-GUIDE.md` states both
+	 * with the rest of the rebuild rule.
+	 *
+	 * Window-scoped, because Rust sends this with `emit_to("main")`.
+	 */
+	getCurrentWebviewWindow()
+		.listen<GameMonitorInfo>('game-monitor-changed', (event) => {
+			if (event.payload.id === templeMonitorId) return;
+			if (!templeOverlay.built()) {
+				// Nothing to rebuild — but the NEXT build must not be compared
+				// against a display the window was never on.
+				templeMonitorId = 0;
+				templeMonitorAt = null;
+				return;
+			}
+			if (
+				templeMonitorAt &&
+				templeMonitorAt.x === event.payload.x &&
+				templeMonitorAt.y === event.payload.y
+			) {
+				// Already the right canvas — the window was BUILT on the display
+				// this notice names, and only the id was unknown (a build made
+				// before anything had seen the game window records `0`). Learning
+				// the id is the whole change; rebuilding would take a correct
+				// overlay off screen for a destroy/create to put it back where it
+				// already was.
+				templeMonitorId = event.payload.id;
+				return;
+			}
+			if (widgetConfigLive(widgetConfigSessions, TEMPLE_WINDOW_LABEL)) {
+				// A rebuild is a destroy, and this window is the surface the user
+				// is dragging widgets on: taking it down mid-session drops them
+				// into a window that no longer exists and leaves Settings on
+				// `Configuring…` waiting for a host that was destroyed. The
+				// record is deliberately NOT updated, so the next notice still
+				// rebuilds; and when the session was the only thing holding the
+				// window up, its end tears the window down and the next build
+				// asks `get_game_monitor` afresh.
+				logTemple(
+					`the game moved to monitor ${event.payload.id} while widgets are being arranged — deferring the rebuild until the config session ends`
+				);
+				return;
+			}
+			logTemple(`the game moved to monitor ${event.payload.id} — rebuilding the overlay there`);
+			templeOverlay.setDesired(false);
+			templeOverlay.setDesired(true);
+		})
+		.catch((e: any) => logTemple(`could not listen for game-monitor-changed: ${e}`));
 
 	// Two terms, ORed: the module flag (× its feature grant) and a live
 	// widget-config session. `undefined` means the first poll has not answered

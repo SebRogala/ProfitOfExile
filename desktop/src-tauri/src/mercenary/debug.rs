@@ -316,7 +316,7 @@ fn debug_capture_blocking(
             image::open(path).map_err(|e| format!("{path}: {e}"))?,
             path.clone(),
         ),
-        None => (crate::capture::capture_screen()?, "screen".to_string()),
+        None => (crate::capture::capture_screen(&app)?.image, "screen".to_string()),
     };
     timings.push(timing("capture", started));
     let (iw, ih) = img.dimensions();
