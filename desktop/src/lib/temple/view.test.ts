@@ -57,6 +57,26 @@ function layout(over: Partial<LayoutView> = {}): LayoutView {
 		scale: 1,
 		ncc: 0.95,
 		confidence: 'high',
+		origin: [0, 0],
+		// Nothing in `view.ts` reads the published lattice — it draws the board
+		// on its own `PLATE_CENTRES` — but `LayoutView.centres` is a 13-tuple
+		// mirroring Rust's `[[i32; 2]; 13]`, so the degenerate board this
+		// fixture describes still has to carry all thirteen.
+		centres: [
+			[0, 0],
+			[0, 0],
+			[0, 0],
+			[0, 0],
+			[0, 0],
+			[0, 0],
+			[0, 0],
+			[0, 0],
+			[0, 0],
+			[0, 0],
+			[0, 0],
+			[0, 0],
+			[0, 0]
+		],
 		...over
 	};
 }

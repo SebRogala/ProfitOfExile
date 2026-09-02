@@ -465,6 +465,128 @@ pub fn should_remember_screen(changed: bool, source: ScreenScaleSource) -> bool 
     changed && matches!(source, ScreenScaleSource::MercFrame)
 }
 
+/// Whether a remembered measurement still describes the screen just captured
+/// (POE-227).
+///
+/// Dimensions ONLY, and exactly: `ui_scale` is not consulted, because the whole
+/// point is that a scale measured on another monitor is unverifiable from here
+/// — the width and the height are the one thing a capture states about itself.
+///
+/// `None` matches everything: there is nothing remembered to be wrong, and
+/// answering `false` would make the caller "drop" a slot that is already empty
+/// and spend a log line and a file write saying so on every tick.
+///
+/// Pure so the rule is unit-testable without an `AppHandle`, the same reason
+/// [`should_flag_unreachable`] and [`record_screen`] are extracted.
+pub fn screen_matches(current: &Option<ScreenSlice>, capture: (u32, u32)) -> bool {
+    match current {
+        None => true,
+        Some(current) => current.width == capture.0 && current.height == capture.1,
+    }
+}
+
+/// Forget the remembered screen scale when this capture is a different size
+/// (POE-227). Returns whether anything was dropped.
+///
+/// This is the lazy prune the startup load could not do: `settings::apply_to_state`
+/// loads and trusts a stored `screen_scale` with no `AppHandle` and no idea what
+/// size the screen is, so a value carried over from another monitor stays
+/// readable until someone captures one. Every detect tick that grabs a screen
+/// calls this first, which makes the FIRST capture after a resolution change the
+/// moment the stale value dies — the temple's `settings_for_capture` /
+/// `forget_calibration` pair, generalised to the shared slice.
+///
+/// Dropping means dropping BOTH copies. The owner is cleared here, and
+/// [`crate::settings::persist_forgetting_screen_scale`] writes the file with the
+/// field empty — `crate::persist_settings` cannot be used for that, because its
+/// `preserve_screen_scale` merge would read the cleared owner as "this session
+/// has nothing to write" and put the stale value straight back.
+///
+/// Lock-then-drop-then-emit, like [`publish_screen`]: the `screen` guard is
+/// scoped to the block, so it is dropped before the log, the emit and the write.
+pub fn drop_if_mismatched(app: &AppHandle, capture: (u32, u32)) -> bool {
+    let dropped = {
+        let state = app.state::<AppState>();
+        let mut current = state.screen.lock().unwrap_or_else(|e| e.into_inner());
+        if screen_matches(&current, capture) {
+            None
+        } else {
+            current.take()
+        }
+    };
+    let Some(stale) = dropped else {
+        return false;
+    };
+    crate::app_log(
+        app,
+        format!(
+            "screen is now {}×{} — dropping the remembered scale (was {}×{})",
+            capture.0, capture.1, stale.width, stale.height
+        ),
+    );
+    emit_ssot(app);
+    crate::settings::persist_forgetting_screen_scale(app);
+    true
+}
+
+/// Forget every remembered geometry measurement and force a fresh one
+/// (POE-227) — the Settings **Recalibrate** button.
+///
+/// The manual arm of the lifecycle contract (`desktop/src/lib/README.md`,
+/// "Screen geometry"): a measurement is otherwise re-taken only when the
+/// capture's dimensions change or the consuming module's own verification
+/// fails. This is what a user presses when neither fired and the numbers are
+/// still wrong.
+///
+/// Both remembered geometries go, because a user who says "measure it again"
+/// means the geometry, not one module's copy of it: the shared screen scale
+/// (owner + file) and the temple's `AnchorCalibration` (its own unit, and its
+/// own store — see the unit note on [`ScreenSlice`]).
+///
+/// Clearing them is not enough on its own, because neither module re-measures
+/// just because the store is empty:
+///
+/// - the temple's read gate skips a board that looks unchanged, so
+///   `temple_rearm` is bumped to force one full re-read;
+/// - the merc session HOLDS the frame registration it settled on and carries it
+///   across every tick that cannot see the frame (`mercenary::run`'s
+///   `next_fitted_scale` keeps it, `cellfit::apply_held` re-applies it). The
+///   next tick after a Recalibrate would therefore republish that same held
+///   number onto this slice and persist it again. `merc_refit` is bumped so
+///   that tick drops `session.fitted` first and measures the panel afresh.
+///
+/// ONE settings write, not two: the temple's calibration is cleared in its
+/// owner (`temple::run::clear_calibration`) and
+/// `settings::persist_forgetting_screen_scale` then rebuilds the whole file
+/// from `AppState` with the screen scale explicitly emptied. Persisting the
+/// temple's clear separately would go through `crate::persist_settings`, whose
+/// `preserve_screen_scale` merge writes the stale scale back out.
+#[tauri::command]
+pub fn geometry_recalibrate(app: AppHandle) {
+    {
+        let state = app.state::<AppState>();
+        *state.screen.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+    crate::temple::run::clear_calibration(&app);
+    crate::settings::persist_forgetting_screen_scale(&app);
+    {
+        let state = app.state::<AppState>();
+        state
+            .temple_rearm
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        state
+            .merc_refit
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    crate::app_log(
+        &app,
+        "Recalibrate: dropped the remembered screen scale and temple calibration — \
+         the next capture re-measures"
+            .to_string(),
+    );
+    emit_ssot(&app);
+}
+
 /// The [`ScreenScaleSource`] label a merc-side [`crate::mercenary::ScaleSource`]
 /// publishes under.
 ///
@@ -1610,6 +1732,53 @@ mod tests {
             !should_remember_screen(true, ScreenScaleSource::Remembered),
             "a just-loaded value has nothing to write back",
         );
+    }
+
+    /// Nothing remembered matches every capture. The prune is what makes the
+    /// caller log a line and rewrite settings.json, and a `false` here would
+    /// spend both on an empty slot on every detect tick of every session that
+    /// has never measured a screen.
+    #[test]
+    fn an_unmeasured_screen_matches_any_capture() {
+        assert!(screen_matches(&None, (1920, 1080)));
+    }
+
+    /// The keep case: the remembered measurement describes the screen just
+    /// captured, so it survives. A `false` here would drop and re-measure the
+    /// scale on every tick, which is the whole thing WI-B2 exists to avoid.
+    #[test]
+    fn a_measurement_of_the_same_screen_is_kept() {
+        assert!(screen_matches(&Some(reference_screen()), (1920, 1200)));
+    }
+
+    /// A different WIDTH is a different screen. Fails if the predicate compares
+    /// the height alone — the case that matters, because the game's UI scales
+    /// with height, so an ultrawide swap keeps the height and changes nothing
+    /// else the app can see.
+    #[test]
+    fn a_measurement_from_a_different_width_is_dropped() {
+        assert!(!screen_matches(&Some(reference_screen()), (2560, 1200)));
+    }
+
+    /// A different HEIGHT is a different screen. Fails if the predicate
+    /// compares the width alone — the 1920x1200 → 1920x1080 swap, which is the
+    /// exact pair POE-214 measured (1.0 vs 0.90) and the one an unpruned scale
+    /// gets 11% wrong.
+    #[test]
+    fn a_measurement_from_a_different_height_is_dropped() {
+        assert!(!screen_matches(&Some(reference_screen()), (1920, 1080)));
+    }
+
+    /// The scale is NOT part of the question. Two runs on the same monitor can
+    /// settle 0.0031 apart (see [`UI_SCALE_EPS`]), and a predicate that read the
+    /// scale would call that a monitor change and throw away a good
+    /// measurement — the dimensions are the only thing a capture states about
+    /// itself.
+    #[test]
+    fn a_wobbled_scale_on_the_same_screen_is_still_a_match() {
+        let drifted = ScreenSlice { ui_scale: 0.87, ..reference_screen() };
+
+        assert!(screen_matches(&Some(drifted), (1920, 1200)));
     }
 
     /// `Frame` is the plain case: this tick measured the gold frame, so the

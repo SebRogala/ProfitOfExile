@@ -587,6 +587,54 @@ pub fn preserve_screen_scale(existing: &Settings, target: &mut Settings) {
     }
 }
 
+/// Write settings with the remembered screen scale explicitly EMPTIED
+/// (POE-227) — the one save path [`preserve_screen_scale`] does not run on.
+///
+/// `crate::persist_settings` cannot express this. Its merge exists because
+/// [`from_state`]'s projection is lossy, so it reads an empty projection as
+/// "this session has nothing to write" and restores the stored value — which is
+/// exactly the shape a deliberate drop has. A caller that cleared
+/// `AppState.screen` and then called `persist_settings` would get the stale
+/// value back on disk and, on the next start, back in the owner.
+///
+/// Everything else about the write is `persist_settings`': the whole file is
+/// rebuilt from [`from_state`], and [`persist_overlay_settings`] carries the
+/// window/overlay rows no `AppState` mutex owns. Only the screen-scale merge is
+/// left out.
+///
+/// The caller is expected to have cleared the owner first — this does not clear
+/// it, so that the two SSOT writes ([`crate::ssot::drop_if_mismatched`] and
+/// [`crate::ssot::geometry_recalibrate`]) keep the lock-then-drop-then-write
+/// shape the rest of the module uses.
+pub fn persist_forgetting_screen_scale(app: &tauri::AppHandle) {
+    let existing = load(app);
+    let mut target = {
+        let state = app.state::<crate::AppState>();
+        from_state(&state)
+    };
+    forget_screen_scale(&existing, &mut target);
+    save(app, &target);
+}
+
+/// The save-time composition a deliberate drop uses — [`preserve_screen_scale`]'s
+/// opposite number, and everything about the write that is a DECISION.
+///
+/// Extracted from [`persist_forgetting_screen_scale`] with no `AppHandle` so
+/// both halves are unit-testable: that the stored measurement is emptied rather
+/// than merged back, and that emptying it does not also empty the rows no
+/// `AppState` mutex owns.
+fn forget_screen_scale(existing: &Settings, target: &mut Settings) {
+    // Not `preserve_screen_scale`. That merge reads an empty projection as
+    // "this session measured nothing" and restores the stored value — which is
+    // indistinguishable, from inside the merge, from a caller that has just
+    // decided to throw it away.
+    target.screen_scale = None;
+    // Everything `crate::persist_settings` carries forward is still carried
+    // forward: dropping the geometry must not also drop the window position and
+    // the five overlay rects, which `from_state` deliberately leaves `None`.
+    persist_overlay_settings(existing, target);
+}
+
 /// Copy overlay/window settings from existing file into the new settings struct.
 /// These fields are managed by their own save commands, not by AppState.
 pub fn persist_overlay_settings(existing: &Settings, target: &mut Settings) {
@@ -675,6 +723,7 @@ mod tests {
             temple: Mutex::new(crate::temple::slice::TempleSlice::default()),
             temple_settings: Mutex::new(crate::temple::slice::TempleSettings::shipped()),
             temple_rearm: AtomicU64::new(0),
+            merc_refit: AtomicU64::new(0),
             screen: Mutex::new(None),
         }
     }
@@ -1140,6 +1189,106 @@ mod tests {
         assert_eq!((kept.width, kept.height), (2560, 1440));
         assert_eq!(kept.ui_scale, 1.25);
         assert_eq!(kept.measured_at_ms, 1_724_000_600_000);
+    }
+
+    /// The drop path's whole point (POE-227): a save that is FORGETTING the
+    /// geometry writes an empty field, even though `from_state` produces the
+    /// same empty field a session with nothing to say produces.
+    ///
+    /// Fails the moment this composition is replaced by `crate::persist_settings`
+    /// (or grows a `preserve_screen_scale` call), which is the one mistake that
+    /// makes Recalibrate and the stale-monitor prune both silently no-ops: the
+    /// owner would be cleared, the file would keep the stale value, and the
+    /// next start would load it straight back.
+    #[test]
+    fn forget_screen_scale_empties_a_stored_measurement_instead_of_merging_it_back() {
+        let state = test_app_state();
+        // The post-drop owner: cleared by `ssot::drop_if_mismatched` /
+        // `ssot::geometry_recalibrate` before the write.
+        *state.screen.lock().unwrap() = None;
+        let existing = Settings {
+            screen_scale: Some(ScreenScaleSetting {
+                width: 1920,
+                height: 1200,
+                ui_scale: 1.0,
+                measured_at_ms: 1_724_000_000_000,
+            }),
+            ..Settings::default()
+        };
+        let mut about_to_save = from_state(&state);
+
+        forget_screen_scale(&existing, &mut about_to_save);
+
+        assert_eq!(
+            about_to_save.screen_scale, None,
+            "a deliberate drop must reach the file, not be merged away",
+        );
+    }
+
+    /// The other half: forgetting the geometry must not forget the geometry of
+    /// our own WINDOWS. `from_state` leaves the window row and the five overlay
+    /// rects `None` on purpose (their own save commands own them), so a drop
+    /// path that skipped the carry-forward would wipe every overlay position
+    /// the first time a monitor changed or Recalibrate was pressed.
+    #[test]
+    fn forget_screen_scale_keeps_the_window_and_overlay_rows() {
+        let state = test_app_state();
+        *state.screen.lock().unwrap() = None;
+        let existing = Settings {
+            window: Some(WindowSettings { x: 40, y: 60, width: 1280, height: 800, maximized: false }),
+            comparator_overlay: Some(OverlaySettings {
+                x: 1500,
+                y: 200,
+                width: 630,
+                height: 250,
+                enabled: true,
+            }),
+            ..Settings::default()
+        };
+        let mut about_to_save = from_state(&state);
+
+        forget_screen_scale(&existing, &mut about_to_save);
+
+        let window = about_to_save.window.expect("the window row must survive the drop");
+        assert_eq!((window.x, window.y, window.width, window.height), (40, 60, 1280, 800));
+        let comparator = about_to_save
+            .comparator_overlay
+            .expect("the comparator's rect must survive the drop");
+        assert_eq!((comparator.x, comparator.y), (1500, 200));
+    }
+
+    /// The third half, and the reason Recalibrate is ONE write (POE-227): the
+    /// temple's calibration is cleared in its OWNER
+    /// (`temple::run::clear_calibration`) and reaches the file through
+    /// `from_state`'s projection, so the save-time composition must not carry
+    /// the stored one forward the way it carries the window rows.
+    ///
+    /// Fails if `temple_calibration` is ever added to `persist_overlay_settings`
+    /// — which would leave Recalibrate clearing the owner while settings.json
+    /// kept the hint, and the next start loading it straight back.
+    #[test]
+    fn forget_screen_scale_does_not_carry_a_cleared_temple_calibration_back() {
+        let state = test_app_state();
+        *state.screen.lock().unwrap() = None;
+        // What `clear_calibration` leaves behind: the owner's hint is gone, the
+        // rest of the temple's settings are untouched.
+        state.temple_settings.lock().unwrap().calibration = None;
+        let existing = Settings {
+            temple_calibration: Some(crate::temple::anchor::AnchorCalibration {
+                screen_w: 2560,
+                screen_h: 1440,
+                scale: 0.99,
+            }),
+            ..Settings::default()
+        };
+        let mut about_to_save = from_state(&state);
+
+        forget_screen_scale(&existing, &mut about_to_save);
+
+        assert_eq!(
+            about_to_save.temple_calibration, None,
+            "the owner's clear is what reaches the file — one write, not two",
+        );
     }
 
     /// The merge must not resurrect what the load refused. `apply_to_state`

@@ -262,6 +262,16 @@ pub struct AppState {
     /// a Mutex: it is read on every tick and never read together with the
     /// settings.
     pub temple_rearm: AtomicU64,
+    /// Bumped by `ssot::geometry_recalibrate` — the Settings **Recalibrate**
+    /// button (POE-227). The merc detect loop compares it against the value its
+    /// session last saw and, when it moved, throws away the frame registration
+    /// it had SETTLED on so the next tick measures the panel again from the OCR
+    /// cue. Without it the button clears the shared screen scale and the merc
+    /// loop republishes the same held number onto it on its next tick, which is
+    /// the one thing Recalibrate exists to stop. `temple_rearm`'s mirror on the
+    /// merc side, and an atomic for the same reason: read once per tick, never
+    /// read together with anything else.
+    pub merc_refit: AtomicU64,
     /// The screen the game is drawn on and the game-UI scale measured on it
     /// (POE-214) — the owner of the `screen` SSOT slice. Written by ONE writer,
     /// the merc detect tick, through `ssot::publish_screen`, and projected
@@ -3175,6 +3185,7 @@ pub fn run() {
         temple: Mutex::new(temple::slice::TempleSlice::default()),
         temple_settings: Mutex::new(temple::slice::TempleSettings::shipped()),
         temple_rearm: AtomicU64::new(0),
+        merc_refit: AtomicU64::new(0),
         screen: Mutex::new(None),
     };
 
@@ -3188,6 +3199,7 @@ pub fn run() {
             ssot::get_ssot,
             ssot::set_league,
             ssot::refresh_league,
+            ssot::geometry_recalibrate,
             modules::set_module_enabled,
             get_pair_code,
             get_device_id,

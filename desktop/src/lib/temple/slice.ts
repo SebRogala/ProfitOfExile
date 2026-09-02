@@ -104,6 +104,31 @@ export interface SlotView {
 	current: boolean;
 }
 
+/** One plate centre in capture px — `[x, y]`. */
+export type PlateCentre = [number, number];
+
+/** Exactly the 13 plate centres Rust publishes, in `Slot::ALL` order.
+ *
+ *  A TUPLE, not an array: Rust's `LayoutView.centres` is `[[i32; 2]; 13]` and
+ *  the board has thirteen plates in every league, so a consumer indexing a
+ *  fourteenth is a mistake the type can catch here instead of an `undefined`
+ *  reaching an SVG transform. */
+export type PlateCentres = [
+	PlateCentre,
+	PlateCentre,
+	PlateCentre,
+	PlateCentre,
+	PlateCentre,
+	PlateCentre,
+	PlateCentre,
+	PlateCentre,
+	PlateCentre,
+	PlateCentre,
+	PlateCentre,
+	PlateCentre,
+	PlateCentre
+];
+
 /** The board, as pixels gave it. */
 export interface LayoutView {
 	/** 13 entries, in `Slot::ALL` order. */
@@ -122,6 +147,18 @@ export interface LayoutView {
 	ncc: number;
 	/** `"high"` or `"low"` — low means nothing should act on the door sets. */
 	confidence: string;
+	/** Entrance plate centre in CAPTURE px — the origin the board hangs off
+	 *  (POE-227). Capture px is whole-primary-monitor px, which is also
+	 *  window-relative px for a monitor-sized overlay: no conversion. NOT
+	 *  reference px and NOT CSS px (divide by `scaleFactor()` for those). It is
+	 *  the Entrance plate's centre, so it is also `centres[Slot::ENTRANCE]`. */
+	origin: PlateCentre;
+	/** The 13 plate centres in capture px, in `Slot::ALL` order — the same order
+	 *  and unit as `origin`, and the same order as `slots`, so index `i` of one
+	 *  describes the plate at index `i` of the other. Published by Rust from the
+	 *  lattice the board was actually read off; do not re-derive them from
+	 *  `scale` here, which would be a second answer to where a plate is. */
+	centres: PlateCentres;
 }
 
 /** One architect block, resolved. */

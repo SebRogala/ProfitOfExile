@@ -6,7 +6,8 @@
 	import { relaunch } from '@tauri-apps/plugin-process';
 	import { store } from '$lib/stores/status.svelte';
 	import { hasFeature, MERC_FEATURE } from '$lib/stores/entitlements.svelte';
-	import { ssot } from '$lib/stores/ssot.svelte';
+	import { ssot, fetchSsot } from '$lib/stores/ssot.svelte';
+	import { screenGeometryView } from '$lib/geometry/view';
 	import { MERC_OVERLAY_DEFAULTS, physicalGeometry } from '$lib/overlay/overlay-defaults';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
@@ -42,6 +43,43 @@
 			await invoke('refresh_league');
 		} catch (e) {
 			console.warn('[settings] refresh_league failed:', e);
+		}
+	}
+
+	// --- Screen geometry (SSOT) ---
+	// Display-only, like League: the numbers are Rust's (`ssot.screen`, POE-214)
+	// and this surface never computes or defaults one. In particular a missing
+	// measurement is printed as missing — never as 1.0, which is a REAL
+	// measurement (a 1920x1200 screen) and would silently mis-scale every rect
+	// on a 1080p machine by 11%.
+	let geometryNow = $state(new Date());
+	$effect(() => {
+		// The measured-at label is relative, so it has to be re-derived off a
+		// moving clock or it freezes at "just now" for the rest of the session.
+		// 30 s is the resolution of the coarsest unit the helper prints under an
+		// hour.
+		const tick = setInterval(() => { geometryNow = new Date(); }, 30_000);
+		return () => clearInterval(tick);
+	});
+	// Every rendering decision, including the one that matters, lives in
+	// `geometry/view.ts` where a test can reach it.
+	const screenGeometry = $derived(screenGeometryView(ssot.screen, geometryNow));
+
+	let recalibrating = $state(false);
+
+	// Drops the remembered screen scale AND the temple's calibration, and forces
+	// the temple's next read. Rust owns the whole sequence — see
+	// `ssot::geometry_recalibrate` — so this only asks and then re-reads the
+	// snapshot, rather than waiting up to a poll interval for the eager nudge.
+	async function recalibrateGeometry() {
+		recalibrating = true;
+		try {
+			await invoke('geometry_recalibrate');
+			await fetchSsot();
+		} catch (e) {
+			console.warn('[settings] geometry_recalibrate failed:', e);
+		} finally {
+			recalibrating = false;
 		}
 	}
 
@@ -695,6 +733,37 @@
 			</div>
 		</section>
 
+		<!-- Screen geometry -->
+		<section>
+			<h2>Screen geometry</h2>
+
+			<div class="setting-row">
+				<span class="setting-label">Resolution</span>
+				<span class="setting-value" class:mono={!screenGeometry.unmeasured} class:muted={screenGeometry.unmeasured}>{screenGeometry.resolution}</span>
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">UI scale</span>
+				<span class="setting-value" class:mono={!screenGeometry.unmeasured} class:muted={screenGeometry.unmeasured}>{screenGeometry.uiScale}</span>
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">Measured by</span>
+				<span class="setting-value" class:muted={screenGeometry.unmeasured}>{screenGeometry.source}</span>
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">Measured</span>
+				<span class="setting-value" class:muted={screenGeometry.unmeasured}>{screenGeometry.measured}</span>
+				<Button onclick={recalibrateGeometry} disabled={recalibrating}>Recalibrate</Button>
+			</div>
+
+			<p class="setting-note">
+				Remembered once measured; verified on use; re-measured only when the screen size
+				changes, verification fails, or you press Recalibrate.
+			</p>
+		</section>
+
 		<!-- Overlays -->
 		<section>
 			<h2>Overlay Positions</h2>
@@ -906,6 +975,13 @@
 	.setting-value.mono {
 		font-family: 'Consolas', 'Courier New', monospace;
 		letter-spacing: 0.1em;
+	}
+
+	.setting-note {
+		margin: 0.35rem 0 0;
+		font-size: 0.72rem;
+		line-height: 1.4;
+		color: var(--text-muted);
 	}
 
 	.update-available {

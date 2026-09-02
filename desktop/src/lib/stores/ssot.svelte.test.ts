@@ -925,7 +925,27 @@ describe('temple slice', () => {
 				current: 'C1',
 				scale: 0.99,
 				ncc: 0.94,
-				confidence: 'high'
+				confidence: 'high',
+				origin: [900, 900],
+				// All 13, as Rust publishes them — `LayoutView.centres` is
+				// `[[i32; 2]; 13]` and the Entrance sits at the origin (index 11
+				// of `Slot::ALL`). Kept identical to the Rust sample in
+				// `temple/slice.rs`, so the two fixtures cannot drift.
+				centres: [
+					[900, 465],
+					[795, 569],
+					[1005, 569],
+					[690, 673],
+					[900, 673],
+					[1110, 673],
+					[585, 777],
+					[795, 777],
+					[1005, 777],
+					[1215, 777],
+					[690, 881],
+					[900, 900],
+					[1110, 881]
+				]
 			},
 			panel: { room: 'Locus of Corruption', offers: [], incursionsRemaining: 6 },
 			advice: {
@@ -1248,27 +1268,40 @@ const rejectedScreenSource: ScreenSlice = {
 };
 
 describe('screen slice (POE-214)', () => {
-	// Nothing in the webview consumes the slice yet (POE-214 B1 ships the wire
-	// contract; the Lab regions and the temple are the consumers to come), so
-	// what these two pin is the CONTRACT rather than a rune: the literals are
-	// annotated `SsotSnapshot`, which makes `npm run check` fail if the field or
-	// its shape drifts from Rust's, and the runtime assertions catch the day an
-	// `applyScreen` is added that throws on — or short-circuits — a payload,
-	// taking the rest of the snapshot with it.
+	// The literals are annotated `SsotSnapshot`, which makes `npm run check`
+	// fail if the field or its shape drifts from Rust's; the runtime assertions
+	// below cover the rune the Settings "Screen geometry" card reads (POE-227).
 
-	it('applies the rest of a snapshot that carries a screen slice', () => {
+	it('projects a measured screen onto the rune, whole', () => {
 		const snap: SsotSnapshot = { league: { name: 'Mirage' }, screen: referenceScreen };
+
 		applySnapshot(snap);
-		expect(ssot.league).toBe('Mirage');
+
+		expect(ssot.screen).toEqual(referenceScreen);
 	});
 
 	// `screen: null` rather than an absent key, because that is the payload Rust
 	// actually sends: `Option<ScreenSlice>` has no `skip_serializing_if`, so an
 	// unmeasured screen arrives as an explicit null.
-	it('applies the rest of a snapshot whose screen is unmeasured', () => {
+	it('clears the rune when a later snapshot reports no measurement', () => {
 		applySnapshot({ league: { name: 'Mirage' }, screen: referenceScreen });
 		const snap: SsotSnapshot = { league: { name: 'Settlers' }, screen: null };
+
 		applySnapshot(snap);
-		expect(ssot.league).toBe('Settlers');
+
+		// NOT fail-closed on absence like the two module slices: this slice is
+		// droppable by design (`ssot::drop_if_mismatched` clears it when the
+		// capture's dimensions change), and keeping the last known measurement
+		// would leave the geometry card advertising a scale the app has thrown
+		// away.
+		expect(ssot.screen).toBeNull();
+	});
+
+	it('applies the rest of a snapshot that carries a screen slice', () => {
+		const snap: SsotSnapshot = { league: { name: 'Mirage' }, screen: referenceScreen };
+
+		applySnapshot(snap);
+
+		expect(ssot.league).toBe('Mirage');
 	});
 });

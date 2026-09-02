@@ -23,7 +23,7 @@ const RUST_DEFAULT_JSON =
 
 /** Rust: the fully populated sample, `SAMPLE_SLICE_JSON` in `slice.rs`. */
 const RUST_SAMPLE_JSON =
-	'{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high"},"panel":{"room":"Locus of Corruption","offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist\'s Den","displayName":"Torment Cells","builtTier":2}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible"]},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"lastError":"Temple: OCR failed"}';
+	'{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]]},"panel":{"room":"Locus of Corruption","offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist\'s Den","displayName":"Torment Cells","builtTier":2}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible"]},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"lastError":"Temple: OCR failed"}';
 
 describe('templeSliceDefault', () => {
 	it('is exactly what Rust sends for a slice nothing has written yet', () => {
@@ -79,6 +79,18 @@ describe('the Rust sample decodes into this mirror', () => {
 		expect(slice.layout?.unresolvedIncident).toEqual(['B0-C1']);
 		expect(slice.layout?.markerError).toBe('the diamond rect fell outside the capture');
 		expect(slice.layout?.slots[0].known).toBe(true);
+	});
+
+	it('reads the pixel geometry, with the Entrance sitting on the origin', () => {
+		// POE-227: what a game-anchored surface places itself against. Capture
+		// px, `Slot::ALL` order — so index 11 is E1, the Entrance, whose offset
+		// from the origin is (0, 0) by construction. A mirror that renamed
+		// either field, or landed the pairs transposed, reads undefined or the
+		// wrong plate here rather than silently drawing in the wrong place.
+		expect(slice.layout?.origin).toEqual([900, 900]);
+		expect(slice.layout?.centres).toHaveLength(13);
+		expect(slice.layout?.centres[11]).toEqual(slice.layout?.origin);
+		expect(slice.layout?.centres[0]).toEqual([900, 465]);
 	});
 
 	it('reads the offer with BOTH the printed and the resolved name', () => {
