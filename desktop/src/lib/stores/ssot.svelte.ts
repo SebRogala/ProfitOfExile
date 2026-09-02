@@ -28,8 +28,7 @@
  *   // Read: ssot.mercenary  (Merc OCR status, last capture, enabled-guide echo)
  *   // Read: ssot.temple  (temple board, advice and settings echo; no direct write)
  *   // Write: setNormalVariant(v) / setDedicationSelection(variant, pool)
- *   // Write: setModuleEnabled(id, enabled)          — persisted preference
- *   // Write: setModuleEnabledForSession(id, enabled) — this run only (POE-226)
+ *   // Write: setModuleEnabled(id, enabled)
  *   // Write: setMercSourcesOff(offList) — which guides take part in the verdict
  *   // Write: setTempleKeys(n) / setTempleConfig(c) / setTempleProfile(p) / rearmTemple()
  *   //   (these four return the rejection message instead of throwing — Rust
@@ -555,36 +554,13 @@ export async function setDedicationSelection(variant: string, pool: string): Pro
  * mid-click.
  */
 export async function setModuleEnabled(id: string, enabled: boolean): Promise<void> {
-	await writeModuleFlag(id, enabled, 'set_module_enabled');
-}
-
-/**
- * The same toggle for the length of THIS SESSION only — nothing is written to
- * the settings file (POE-226).
- *
- * One caller: the widget-config force path in `routes/(app)/+layout.svelte`,
- * which switches a module on because its overlay window is built off that flag,
- * and off again when the user Saves or Cancels. Persisting that would leave the
- * module on at the next start if the app died mid-session — a Modules row
- * reading enabled that the user never touched.
- *
- * A separate export rather than a `persist` argument on the one above: a
- * boolean at the call site says nothing about which behaviour it picks, and the
- * two are not interchangeable.
- */
-export async function setModuleEnabledForSession(id: string, enabled: boolean): Promise<void> {
-	await writeModuleFlag(id, enabled, 'set_module_enabled_transient');
-}
-
-/** The write-through both module setters share; they differ only in the command. */
-async function writeModuleFlag(id: string, enabled: boolean, command: string): Promise<void> {
 	const key = moduleKey(id);
 	beginWrite([key]);
 	ssot.modules[id] = enabled;
 	try {
-		await invoke(command, { id, enabled });
+		await invoke('set_module_enabled', { id, enabled });
 	} catch (e) {
-		console.warn(`[ssot] ${command} failed:`, e);
+		console.warn('[ssot] set_module_enabled failed:', e);
 	} finally {
 		endWrite([key]);
 	}

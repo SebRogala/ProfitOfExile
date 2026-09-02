@@ -6,7 +6,7 @@
 	import TopBar from '$lib/components/TopBar.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
-	import { ssot, setModuleEnabledForSession, startSsotStore } from '$lib/stores/ssot.svelte';
+	import { ssot, startSsotStore } from '$lib/stores/ssot.svelte';
 	import { startRunRecorder } from '$lib/run-recorder';
 	import { nav, viewToPath, type View } from '$lib/stores/navigation.svelte';
 	import {
@@ -682,19 +682,36 @@
 		return false;
 	}
 
-	// The module flag is the single switch. `undefined` means the first poll has
-	// not answered yet, and is treated as "not yet known" rather than as off —
-	// tearing a window down on a value nobody has reported would fight the
-	// startup poll. Re-reporting the same flag is a no-op inside the driver.
+	// Two terms, ORed: the module flag (× its feature grant) and a live
+	// widget-config session. `undefined` means the first poll has not answered
+	// yet, and is treated as "not yet known" rather than as off — tearing a
+	// window down on a value nobody has reported would fight the startup poll.
+	// Re-reporting the same value is a no-op inside the driver.
+	//
+	// The SESSION term is what makes arranging widgets cost no module work
+	// (POE-241): the window is raised here, for the length of the session, while
+	// the Rust temple loop stays spawned by the module flag alone
+	// (`modules.rs` reconcile — untouched by this flow). Dropping the record in
+	// `endWidgetConfig` is therefore what tears the window down again when the
+	// flag is off, and it is the LAST thing that function does for exactly that
+	// reason.
 	$effect(() => {
 		const enabled = ssot.modules[TEMPLE_MODULE_ID];
-		if (enabled === undefined) return;
-		// The feature gate is ANDed in rather than short-circuiting the effect:
-		// a device that loses the grant with the module flag still set must have
-		// the window taken down, not left standing (POE-203). This takes the
-		// WINDOW down, not the module — the Rust temple module keeps running on
-		// its own flag, because the gate is hiding and not securing.
-		templeOverlay.setDesired(enabled && templeGranted);
+		const configuring = widgetConfigLive(widgetConfigSessions, TEMPLE_WINDOW_LABEL);
+		// A session wants the window whatever the poll has or has not said, so
+		// the not-yet-known bail-out needs BOTH halves: nothing to say AND
+		// nothing to take down. A session that opened before the first poll
+		// answered leaves a window that only this effect can remove, and bailing
+		// out on its end would strand it until the poll lands — which, on a
+		// device that never answers, is never.
+		if (enabled === undefined && !configuring && !templeOverlay.built()) return;
+		// The feature gate is ANDed over BOTH terms rather than the flag alone: a
+		// device that loses the grant must have the window taken down whether the
+		// module flag or a config session is what is holding it up (POE-203).
+		// This takes the WINDOW down, not the module — the Rust temple module
+		// keeps running on its own flag, because the gate is hiding and not
+		// securing.
+		templeOverlay.setDesired((configuring || enabled === true) && templeGranted);
 	});
 
 	// --- Widget config mode (POE-226) ---
@@ -706,30 +723,29 @@
 	// Settings emits `widget-config-start {module}` and the work happens here.
 	//
 	// What makes step 1 more than a `show()` is that a module-coupled overlay
-	// exists only while its module flag is on, and is hidden by the Rust focus
-	// poller whenever the game is not in front — which, while the user is
-	// looking at Settings, it never is. Both are forced for the session and
-	// undone on `widget-config-end`; `widget-config-session.ts` is the record of
-	// which, because the four shown x enabled combinations restore differently
-	// and getting it wrong is silent in both directions.
+	// exists only while something wants it — normally the module flag — and is
+	// hidden by the Rust focus poller whenever the game is not in front, which
+	// while the user is looking at Settings it never is. So the SESSION itself
+	// is the second thing that wants the window (POE-241): recording it raises
+	// the driver's desired state for the length of the session and starts no
+	// module work, which is why arranging widget positions costs no capture loop
+	// and no OCR. What is left to force is the visibility, and
+	// `widget-config-session.ts` is the record of it, because both restores are
+	// silent when they are wrong.
 
 	/**
-	 * The overlay window and module flag behind each module that has widgets. The
-	 * temple is the only one until the lab windows and the merc strip migrate
-	 * (POE-225 D1).
+	 * The overlay window behind each module that has widgets. The temple is the
+	 * only one until the lab windows and the merc strip migrate (POE-225 D1).
 	 *
 	 * Keyed by the WINDOW LABEL, because that is what a `WidgetSpec.module` is
-	 * and therefore what Settings sends. The module id is a separate value that
-	 * happens to spell the same word — the distinction `manager.ts` keeps, and
-	 * the reason it is stored rather than reused from the key.
+	 * and therefore what Settings sends — the distinction `manager.ts` keeps
+	 * between a window label and the module id that happens to spell the same
+	 * word. The module id itself is no longer stored here: nothing in this flow
+	 * touches a module flag any more.
 	 */
-	const WIDGET_CONFIG_TARGETS: Record<
-		string,
-		{ label: string; moduleId: string; built: () => boolean }
-	> = {
+	const WIDGET_CONFIG_TARGETS: Record<string, { label: string; built: () => boolean }> = {
 		[TEMPLE_WINDOW_LABEL]: {
 			label: TEMPLE_WINDOW_LABEL,
-			moduleId: TEMPLE_MODULE_ID,
 			// The driver's own settled marker. The LABEL appearing is not the same
 			// thing: `getByLabel` answers the moment the constructor returns, while
 			// `tauri://created` is still running — and that handler ends by hiding
@@ -740,16 +756,25 @@
 		}
 	};
 
-	/** What each live config session forced. Not a rune: nothing renders from it,
-	 *  and a reactive read would re-enter the effect that builds the window. */
-	let widgetConfigSessions: WidgetConfigSessions = widgetConfigSessionsInit();
+	/**
+	 * What each live config session forced — and, since POE-241, the second term
+	 * of every module overlay's desired state, which is why it is a rune.
+	 *
+	 * `$state.raw` and not deep `$state`: the map is only ever REPLACED (both
+	 * reducers return a new object), so a proxy would buy nothing and would put
+	 * one between `widgetConfigLive` and a plain record read. Nothing renders
+	 * from it; its one reactive consumer is the overlay effect above, which
+	 * writes nothing, so a session recorded here asks for the window the same
+	 * way the module flag does.
+	 */
+	let widgetConfigSessions: WidgetConfigSessions = $state.raw(widgetConfigSessionsInit());
 
 	/**
-	 * How long a force-enabled module gets to produce its window.
+	 * How long a session gets to produce its window.
 	 *
-	 * Enabling the flag is what BUILDS the window: `setModuleEnabled` mutates the
-	 * SSOT rune synchronously, the effect above hands the driver its new desired
-	 * state, and the driver creates. That path is bounded by the driver's own
+	 * Recording the session is what BUILDS the window: `widgetConfigSessions` is
+	 * a rune, the effect above ORs it into the driver's desired state, and the
+	 * driver creates. That path is bounded by the driver's own
 	 * `CREATE_TIMEOUT_MS` (10 s) plus a retry, so waiting the same 10 s here
 	 * covers a first attempt that succeeds slowly without waiting out a window
 	 * that is never coming.
@@ -765,16 +790,18 @@
 	 * one stops, and it exists because the host can now decline to end a session:
 	 * `WidgetHost.svelte` keeps config mode when `set_overlay_config_mode(label,
 	 * false)` refuses, which is right for the user in front of the window and
-	 * leaves everyone else waiting — Settings on `Configuring…`, the module flag
-	 * possibly forced on, the window possibly force-shown. Without a floor under
-	 * it, a window whose exit can never succeed runs a capture loop the user
-	 * never asked for until the app is restarted.
+	 * leaves everyone else waiting — Settings on `Configuring…`, the window
+	 * force-shown, and a window that only the session record is holding up.
+	 * Without a floor under it, a window whose exit can never succeed leaves a
+	 * monitor-sized INTERACTIVE rectangle over the game until the app is
+	 * restarted: the mouse hook deliberately skips a window in config mode, so
+	 * every click where the widgets are stops reaching PoE.
 	 *
 	 * Ten minutes because it must sit far above real arranging — the session ends
 	 * when the user presses Save or Cancel, however long they take, and dragging
 	 * widgets around a board is minutes, not seconds — and far below "for the
 	 * rest of the session". A user still arranging at ten minutes loses the
-	 * frames and presses Configure again; a stuck one gets their module back.
+	 * frames and presses Configure again; a stuck one gets their clicks back.
 	 */
 	const WIDGET_CONFIG_SESSION_MAX_MS = 10 * 60_000;
 
@@ -886,28 +913,21 @@
 			return;
 		}
 		let win = await widgetConfigWindow(target.label);
-		const pre = {
-			shown: win ? await win.isVisible().catch(() => false) : false,
-			enabled: ssot.modules[target.moduleId] === true
-		};
+		const pre = { shown: win ? await win.isVisible().catch(() => false) : false };
 		const started = widgetConfigStart(widgetConfigSessions, module, pre);
-		// Recorded BEFORE the module flag moves, because `createTempleOverlay`
-		// reads it: a window built for this session must not run its
+		// The record IS the request for the window (POE-241): the overlay effect
+		// above ORs `widgetConfigLive` into the driver's desired state, so this
+		// assignment is what builds a window for a module whose flag is off — and
+		// it starts no module work, so nothing here turns on a capture loop or an
+		// OCR pass. It also has to land before `createTempleOverlay` runs, which
+		// reads the same record: a window built for this session must not run its
 		// not-focused-so-hide step.
 		widgetConfigSessions = started.sessions;
 		try {
-			if (started.actions.enableModule) {
-				// Through the session setter, never `setModuleEnabled`: this is a
-				// means to an end, not the user's preference, and persisting it
-				// leaves the module on at the next start if the app dies here. The
-				// rune is written synchronously either way, so the effect above
-				// asks the driver for the window now rather than a poll later.
-				await setModuleEnabledForSession(target.moduleId, true);
-			}
-			// Whenever there is no window yet — not only after an enable. A module
-			// that reads as on can still be mid-build (a restart, a retry after a
-			// failed create), and abandoning immediately would take the module down
-			// with it.
+			// Whenever there is no window yet — not only when the module was off. A
+			// module that reads as on can still be mid-build (a restart, a retry
+			// after a failed create), and abandoning immediately would take the
+			// session down with it.
 			if (!win) win = await waitForWidgetConfigWindow(target);
 			if (!win) throw new Error(`the ${target.label} window did not appear`);
 			// Step 1: on screen. Unconditional rather than gated on
@@ -958,13 +978,16 @@
 			return null;
 		});
 		const ended = widgetConfigEnd(widgetConfigSessions, module, status?.game_focused === true);
-		widgetConfigSessions = ended.sessions;
-		if (!target) return;
-		if (ended.actions.hideWindow) {
+		if (target && ended.actions.hideWindow) {
 			const win = await widgetConfigWindow(target.label);
 			if (win) await win.hide().catch((e: any) => logWidgetConfig(module, `hide failed: ${e}`));
 		}
-		if (ended.actions.disableModule) await setModuleEnabledForSession(target.moduleId, false);
+		// LAST, because dropping the record is what lowers the window's desired
+		// state: for a module whose flag is off, the driver tears the window down
+		// on this assignment. Hiding first therefore hides a window that still
+		// exists, rather than racing a teardown into a "hide failed" line — the
+		// same ordering the force-disable used to need, for the same reason.
+		widgetConfigSessions = ended.sessions;
 	}
 
 	/**
@@ -975,7 +998,7 @@
 	 * (no window, or a command that failed) — and the deadline above, which fires
 	 * on a session the host has declined to end. The second is why the window
 	 * half exists at all: the host listens for `widget-config` and nothing else,
-	 * so restoring Settings and the module flag without telling the window would
+	 * so restoring the visibility and the button without telling the window would
 	 * leave Rust's `config_mode` set — the re-assert in `WidgetHost.exitConfig`
 	 * puts it back on a refused exit — and with it a monitor-sized interactive
 	 * rectangle the mouse hook deliberately skips, with no Settings button left
