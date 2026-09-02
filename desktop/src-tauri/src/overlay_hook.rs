@@ -676,6 +676,153 @@ impl PressLatch {
     }
 }
 
+/// One watchdog observation of the hook's health.
+///
+/// `last_callback_ms` is the stamp the hook proc wrote on its most recent
+/// invocation and `at_ms` is when the sample itself was taken, both on the one
+/// monotonic clock the message-loop thread and the hook proc share. Keeping
+/// them apart is the whole point: "the hook has not run" only means something
+/// against a moment we know the cursor was somewhere else.
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, Copy)]
+pub struct Sample {
+    /// Screen position of the cursor in physical pixels, or `None` when
+    /// `GetCursorPos` failed.
+    ///
+    /// Unreadable is `None` and never a stand-in coordinate: a fabricated
+    /// `(0, 0)` or a copy of the previous sample's position is
+    /// indistinguishable from a real reading, so it makes the watchdog claim
+    /// an observation it never made — and `(0, 0)` is a position the cursor
+    /// can genuinely be in, so the fabrication can also invent a movement.
+    /// [`hook_is_dead`] reads `None` on either side as "not moved", which
+    /// spends a period of blindness rather than a wrong verdict.
+    pub cursor: Option<(i32, i32)>,
+    /// When the hook proc last ran.
+    pub last_callback_ms: u64,
+    /// When this sample was taken.
+    pub at_ms: u64,
+}
+
+/// Whether Windows has silently removed the `WH_MOUSE_LL` hook (POE-238).
+///
+/// Windows unhooks a low-level hook whose proc exceeds `LowLevelHooksTimeout`
+/// (300 ms by default, from training data) and tells nobody: the app keeps its
+/// `HHOOK`, `HOOK_CLAIMED` stays set, and every symptom is silent — buttons
+/// stop working, the `WS_EX_TRANSPARENT` repair stops, no log line. The only
+/// evidence available from outside is that mouse events are demonstrably
+/// happening and we are not seeing them.
+///
+/// **Dead iff the cursor MOVED between the two samples and no callback landed
+/// at or after the previous sample's time.** Both terms are load-bearing:
+///
+/// - The movement is what makes the silence mean something. An idle cursor
+///   produces no callbacks on a perfectly healthy hook, so silence alone is
+///   never death — a user reading the screen with a hand off the mouse must
+///   not trigger a re-install. A cursor we could not READ (`None` on either
+///   side) is no different: an unobserved position is not an observed move.
+/// - `>= prev.at_ms` and not `> prev.at_ms`: a callback whose stamp EQUALS the
+///   previous sample's time is a callback we saw at that instant, which is
+///   inside the observed window, so it counts as alive. Erring the other way
+///   re-installs a live hook on a millisecond tie.
+///
+/// `prev` is `None` on the first period, which is never dead: one sample gives
+/// no interval to have been silent through, and it is passed as an `Option`
+/// rather than being special-cased in the caller so that rule is testable.
+///
+/// This is the CONVERSE of what it can prove. A hook that is alive but slow, or
+/// one removed while the cursor sits still for minutes, both read as alive.
+/// The watchdog detects removal-under-use, which is the case the user is in
+/// when the symptom matters.
+#[cfg(any(windows, test))]
+pub fn hook_is_dead(prev: Option<Sample>, now: Sample) -> bool {
+    let Some(prev) = prev else {
+        return false;
+    };
+    let moved = match (prev.cursor, now.cursor) {
+        (Some(before), Some(after)) => before != after,
+        _ => false,
+    };
+    moved && now.last_callback_ms < prev.at_ms
+}
+
+/// Whether the `nth` event of a consecutive run should be logged: the first,
+/// then every tenth.
+///
+/// `nth` counts from 1, so it is the count the caller has just incremented and
+/// not an index.
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn should_log_nth(nth: u32) -> bool {
+    nth == 1 || nth % 10 == 0
+}
+
+/// A first-then-every-tenth log gate over a run of consecutive events.
+///
+/// Everything the watchdog reports repeats for as long as its cause lasts —
+/// re-installing the hook, failing to re-install it, failing to read the
+/// cursor — and each report is a `crate::app_log`: a synchronous file write
+/// plus an `app.emit`, on the very thread whose latency is why the hook died,
+/// into a 50-entry UI buffer that a per-period line would flush clean of the
+/// entries explaining the cause. The first line names the condition; the
+/// every-tenth line says it is still going, so a broken invariant is visibly
+/// being worked on rather than silently abandoned.
+///
+/// [`Cadence::new`] ends a run at the first non-occurrence. Use
+/// [`Cadence::spanning_one_gap`] when a single non-occurrence is manufactured
+/// by the reaction to the run itself: a re-install that took makes the hook
+/// proc stamp `LAST_CALLBACK_MS` again, so the watchdog period right after ANY
+/// successful re-install reads alive — including when the proc is still
+/// exceeding `LowLevelHooksTimeout` and Windows is about to remove the fresh
+/// hook too. That case alternates dead/alive/dead/alive, so a counter that
+/// reset at the first alive period would restart at 1, and log, every second
+/// period — the flood this type exists to stop. Two consecutive quiet periods
+/// are recovery; one is only our own repair.
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Cadence {
+    consecutive: u32,
+    spans_one_gap: bool,
+    gap_pending: bool,
+}
+
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
+impl Cadence {
+    /// A run that ends at the first non-occurrence.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A run that survives one non-occurrence; a second one ends it.
+    pub fn spanning_one_gap() -> Self {
+        Self { spans_one_gap: true, ..Self::default() }
+    }
+
+    /// Record one observation and return whether it should be logged, which is
+    /// only ever true when `occurred`.
+    pub fn note(&mut self, occurred: bool) -> bool {
+        if occurred {
+            self.gap_pending = false;
+            self.consecutive = self.consecutive.saturating_add(1);
+            return should_log_nth(self.consecutive);
+        }
+        if self.spans_one_gap && self.consecutive > 0 && !self.gap_pending {
+            self.gap_pending = true;
+            return false;
+        }
+        self.consecutive = 0;
+        self.gap_pending = false;
+        false
+    }
+
+    /// Length of the current run — the `N` a logged line reports.
+    pub fn count(&self) -> u32 {
+        self.consecutive
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Windows implementation
 // ---------------------------------------------------------------------------
@@ -683,12 +830,13 @@ impl PressLatch {
 #[cfg(windows)]
 mod win {
     use super::{
-        hit_test, register_in, set_has_content_in, set_hot_rects_in, unregister_in, upsert,
-        HookedWindow, HotRect, PressLatch,
+        hit_test, hook_is_dead, register_in, set_has_content_in, set_hot_rects_in, unregister_in,
+        upsert, Cadence, HookedWindow, HotRect, PressLatch, Sample,
     };
+    use std::sync::atomic::AtomicU64;
     use std::sync::Mutex as StdMutex;
     use std::sync::RwLock;
-    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, RECT, WPARAM};
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::*;
 
     struct SendHook(HHOOK);
@@ -704,8 +852,38 @@ mod win {
     /// burst and their 1 s setup timers expire together, so two of them could
     /// both find no handle and both install. The loser's hook would never be
     /// unhooked — `HOOK_HANDLE` can only hold one.
+    ///
+    /// **The watchdog never releases it** (POE-238). Re-installing from inside
+    /// the message loop keeps the claim held by the thread that is doing the
+    /// work, so no other overlay can win a `compare_exchange` mid-repair and
+    /// start a second hook thread; the claim is still released in exactly one
+    /// place, when this thread exits. Do not add a release around the
+    /// re-install — the stale `HHOOK` is replaced under the same claim, which
+    /// is the whole reason the recovery is safe to do here.
     static HOOK_CLAIMED: std::sync::atomic::AtomicBool =
         std::sync::atomic::AtomicBool::new(false);
+    /// When [`mouse_hook_proc`] last ran, on [`now_ms`]'s clock.
+    ///
+    /// The ONLY thing the mouse path writes, and it writes it with one
+    /// `Relaxed` store of a `u64` — no lock, no allocation, no Win32 call — so
+    /// the proc stays inside `LowLevelHooksTimeout` (the same budget that makes
+    /// the rect cache a cache). `Relaxed` is enough because nothing is ordered
+    /// against this value: the watchdog compares it to a time it recorded
+    /// itself, and reading a stamp one period stale costs at most one extra
+    /// watchdog period.
+    ///
+    /// `0` means the hook has never fired, which is the honest state until the
+    /// first mouse event.
+    static LAST_CALLBACK_MS: AtomicU64 = AtomicU64::new(0);
+    /// How often the message loop checks whether the hook is still alive.
+    ///
+    /// **A guess, and tunable.** The only measured anchor is
+    /// `LowLevelHooksTimeout`'s 300 ms default (training data), which bounds
+    /// how long a proc may take, not how often a removal should be looked for.
+    /// 3 s trades a few seconds of dead buttons against a `GetCursorPos` and an
+    /// atomic load on a thread that is already waking every millisecond. Raise
+    /// it if the smoke check shows re-installs the user never asked for.
+    const WATCHDOG_PERIOD_MS: u64 = 3000;
     /// Every overlay window the hook watches.
     ///
     /// A `std::sync::RwLock` on purpose: the hook proc reads it on every mouse
@@ -724,6 +902,20 @@ mod win {
 
     fn hooked_mut() -> std::sync::RwLockWriteGuard<'static, Vec<HookedWindow>> {
         HOOKED.write().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Monotonic milliseconds, shared by the hook proc and the watchdog.
+    ///
+    /// Zeroed at whichever of the two reads it first, so the numbers are
+    /// process-relative and only ever compared against each other. A
+    /// `std::time::Instant` and not `GetTickCount64` because it needs no
+    /// additional `windows` crate feature and cannot be dragged backwards by a
+    /// system-clock adjustment; after the one-time init a read is an atomic
+    /// load plus a `QueryPerformanceCounter`, which the mouse path can afford.
+    fn now_ms() -> u64 {
+        static CLOCK: std::sync::LazyLock<std::time::Instant> =
+            std::sync::LazyLock::new(std::time::Instant::now);
+        CLOCK.elapsed().as_millis() as u64
     }
 
     /// Re-read one window's rect when it is marked dirty.
@@ -755,6 +947,12 @@ mod win {
         w_param: WPARAM,
         l_param: LPARAM,
     ) -> LRESULT {
+        // Proof of life for the watchdog, before anything that could return
+        // early: any invocation at all means Windows still has this hook
+        // installed. One Relaxed store — see LAST_CALLBACK_MS for why the mouse
+        // path may not do more than that.
+        LAST_CALLBACK_MS.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
+
         if n_code >= 0 {
             let mouse = &*(l_param.0 as *const MSLLHOOKSTRUCT);
             let cx = mouse.pt.x;
@@ -910,7 +1108,10 @@ mod win {
     /// Upholds one invariant: **a non-empty registry means a hook is installed
     /// or is being installed.** The thread re-checks the registry after it
     /// releases the claim and re-installs if anyone registered during teardown
-    /// (see the tail of the loop below).
+    /// (see the tail of the loop below). The other way that invariant breaks is
+    /// Windows removing the hook for exceeding `LowLevelHooksTimeout`, which it
+    /// does silently; the watchdog in the loop below detects that and
+    /// re-installs in place (POE-238).
     pub fn install_hook(app: tauri::AppHandle) -> Option<std::sync::mpsc::Sender<()>> {
         use std::sync::atomic::Ordering;
         if HOOK_CLAIMED
@@ -943,6 +1144,23 @@ mod win {
                 // thousands a second. One line per second reports the volume
                 // without flooding the 50-entry LOGS buffer.
                 let mut last_failure_report = std::time::Instant::now();
+                // Hook-health watchdog (POE-238). It rides this thread rather
+                // than a second one because the recovery it performs — swapping
+                // the handle inside HOOK_HANDLE — must not race the teardown at
+                // the bottom of this loop, and because the thread is already
+                // awake every millisecond.
+                let mut last_watchdog = std::time::Instant::now();
+                let mut watchdog_prev: Option<Sample> = None;
+                // Three log gates, one per condition the watchdog can be stuck
+                // in. Successful re-installs need one as much as failures do:
+                // the state this recovery was written for — a proc that keeps
+                // exceeding LowLevelHooksTimeout — is repaired and re-broken
+                // indefinitely, so an ungated line is a file write and an emit
+                // every couple of periods, forever. See Cadence for why this
+                // one, and only this one, spans a gap.
+                let mut reinstalls = Cadence::spanning_one_gap();
+                let mut reinstall_failures = Cadence::new();
+                let mut cursor_blind = Cadence::new();
                 loop {
                     if stop_rx.try_recv().is_ok() { break; }
 
@@ -957,6 +1175,101 @@ mod win {
                                 failures,
                             ));
                         }
+                    }
+
+                    if last_watchdog.elapsed()
+                        >= std::time::Duration::from_millis(WATCHDOG_PERIOD_MS)
+                    {
+                        last_watchdog = std::time::Instant::now();
+                        let mut point = POINT { x: 0, y: 0 };
+                        // An unreadable cursor is None, never a stand-in
+                        // coordinate: hook_is_dead then sees no movement and
+                        // declares nothing dead on a failed Win32 call, since
+                        // re-installing a live hook is the more expensive
+                        // mistake. Blindness is otherwise indistinguishable
+                        // from a still cursor from the log's side, so it is
+                        // counted and reported.
+                        let cursor = if GetCursorPos(&mut point).is_ok() {
+                            Some((point.x, point.y))
+                        } else {
+                            None
+                        };
+                        if cursor_blind.note(cursor.is_none()) {
+                            crate::app_log(&app, format!(
+                                "overlay hook watchdog blind: GetCursorPos failed {} time(s) — a silently removed hook cannot be detected until it succeeds",
+                                cursor_blind.count(),
+                            ));
+                        }
+                        let now = Sample {
+                            cursor,
+                            last_callback_ms: LAST_CALLBACK_MS
+                                .load(std::sync::atomic::Ordering::Relaxed),
+                            at_ms: now_ms(),
+                        };
+                        let dead = hook_is_dead(watchdog_prev, now);
+                        if dead {
+                            // Silence since the last callback, which INCLUDES
+                            // time the user simply was not touching the mouse,
+                            // and which is process uptime while the stamp is
+                            // still 0. It is the age of the newest evidence we
+                            // have, not a measure of how long the hook has been
+                            // gone — hence "silent for", not "dead for".
+                            let silent_for = now.at_ms.saturating_sub(now.last_callback_ms);
+                            // Best effort, and expected to fail: Windows has
+                            // already removed the hook this handle names, so
+                            // the call is here to cover the case where it did
+                            // not (a proc that is merely wedged) rather than
+                            // because it is going to succeed.
+                            if let Some(SendHook(h)) =
+                                HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()).take()
+                            {
+                                if let Err(e) = UnhookWindowsHookEx(h) {
+                                    // Debug and not app_log: this failing is
+                                    // the expected shape of the bug being
+                                    // recovered from, so it is a detail for
+                                    // whoever is reading a trace, not news for
+                                    // the user's log panel.
+                                    log::debug!("overlay hook watchdog: stale UnhookWindowsHookEx failed: {}", e);
+                                }
+                            }
+                            match SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0) {
+                                Ok(h) => {
+                                    *HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) =
+                                        Some(SendHook(h));
+                                    reinstall_failures.note(false);
+                                    if reinstalls.note(true) {
+                                        crate::app_log(&app, format!(
+                                            "overlay hook re-installed (#{} consecutive, silent for {} ms)",
+                                            reinstalls.count(), silent_for,
+                                        ));
+                                    }
+                                }
+                                Err(e) => {
+                                    // A period that re-installed nothing is a
+                                    // non-occurrence for the re-install run, so a
+                                    // success after a long failure stretch logs
+                                    // as a fresh `#1` instead of resuming silently.
+                                    reinstalls.note(false);
+                                    if reinstall_failures.note(true) {
+                                        crate::app_log(&app, format!(
+                                            "overlay hook re-install failed ({} attempt(s), silent for {} ms): {} — retrying every {} ms; overlay buttons and WS_EX_TRANSPARENT repair are down until it succeeds",
+                                            reinstall_failures.count(), silent_for, e, WATCHDOG_PERIOD_MS,
+                                        ));
+                                    }
+                                }
+                            }
+                            // LAST_CALLBACK_MS is deliberately NOT stamped here.
+                            // Leaving it stale is what makes the next period
+                            // retry a re-install that failed or did not take: a
+                            // hook that IS working overwrites it within
+                            // milliseconds of the next mouse event, so the only
+                            // state the staleness can survive into is the one
+                            // that still needs recovering.
+                        } else {
+                            reinstalls.note(false);
+                            reinstall_failures.note(false);
+                        }
+                        watchdog_prev = Some(now);
                     }
 
                     // Drain click buffer → emit Tauri events to the window that
@@ -1611,5 +1924,169 @@ mod registry_tests {
         );
 
         assert!(lines.is_empty(), "one window's own rects are its business: {:?}", lines);
+    }
+}
+
+#[cfg(test)]
+mod watchdog_tests {
+    use super::{hook_is_dead, Cadence, Sample};
+
+    /// A watchdog sample: where the cursor was (`None` = `GetCursorPos`
+    /// failed), when the hook proc last ran, and when the sample was taken —
+    /// the three numbers the decision reads, spelled out at each call site so
+    /// every test states its own timeline.
+    fn sample(cursor: Option<(i32, i32)>, last_callback_ms: u64, at_ms: u64) -> Sample {
+        Sample { cursor, last_callback_ms, at_ms }
+    }
+
+    #[test]
+    fn a_moved_cursor_with_no_callback_since_the_previous_sample_is_a_dead_hook() {
+        // The POE-238 symptom: Windows removed the hook for exceeding
+        // LowLevelHooksTimeout and said nothing. The user is moving the mouse,
+        // so events are certainly being delivered somewhere, and the last one
+        // we saw predates the previous sample.
+        let prev = sample(Some((100, 100)), 4_000, 5_000);
+        let now = sample(Some((640, 480)), 4_000, 8_000);
+
+        assert!(hook_is_dead(Some(prev), now));
+    }
+
+    #[test]
+    fn a_callback_that_landed_between_the_samples_keeps_a_moved_cursor_alive() {
+        // The healthy case that looks the most like the dead one: the cursor
+        // moved, and the hook saw it.
+        let prev = sample(Some((100, 100)), 4_000, 5_000);
+        let now = sample(Some((640, 480)), 7_900, 8_000);
+
+        assert!(!hook_is_dead(Some(prev), now));
+    }
+
+    #[test]
+    fn a_still_cursor_is_not_evidence_of_death() {
+        // A hand off the mouse produces exactly the silence a removed hook
+        // does. Re-installing here would fire on any user who stopped to read
+        // the screen for three seconds.
+        let prev = sample(Some((100, 100)), 4_000, 5_000);
+        let now = sample(Some((100, 100)), 4_000, 8_000);
+
+        assert!(!hook_is_dead(Some(prev), now));
+    }
+
+    #[test]
+    fn an_unreadable_cursor_is_never_a_move() {
+        // GetCursorPos failed on one side, so there is no observed pair of
+        // positions to differ — and the silence it would otherwise convict is
+        // exactly as consistent with a user who let go of the mouse. Both
+        // directions read the same arm, and the stamps are the dead case's, so
+        // only the unreadable position is keeping the verdict at false.
+        let seen = sample(Some((100, 100)), 4_000, 5_000);
+        let blind_now = sample(None, 4_000, 8_000);
+        let blind_prev = sample(None, 4_000, 5_000);
+        let seen_now = sample(Some((640, 480)), 4_000, 8_000);
+
+        assert!(!hook_is_dead(Some(seen), blind_now), "unreadable now");
+        assert!(!hook_is_dead(Some(blind_prev), seen_now), "unreadable previously");
+    }
+
+    #[test]
+    fn the_first_sample_never_reports_dead() {
+        // One sample gives no interval the hook could have been silent
+        // through — the cursor has not been observed moving yet.
+        let now = sample(Some((640, 480)), 0, 3_000);
+
+        assert!(!hook_is_dead(None, now));
+    }
+
+    #[test]
+    fn a_callback_stamped_exactly_at_the_previous_sample_is_alive() {
+        // The boundary: a callback whose stamp EQUALS the previous sample's
+        // time was seen at that instant, which is inside the observed window.
+        // Only a stamp strictly older than it means the interval was silent.
+        let prev = sample(Some((100, 100)), 5_000, 5_000);
+        let now = sample(Some((640, 480)), 5_000, 8_000);
+
+        assert!(!hook_is_dead(Some(prev), now));
+    }
+
+    #[test]
+    fn the_first_event_of_a_run_is_logged() {
+        // The line that names the condition. Without it a permanently refused
+        // SetWindowsHookExW is indistinguishable from a healthy session.
+        let mut cadence = Cadence::new();
+
+        assert!(cadence.note(true));
+        assert_eq!(cadence.count(), 1);
+    }
+
+    #[test]
+    fn the_events_between_the_first_and_the_tenth_are_silent() {
+        // A condition that persists repeats every WATCHDOG_PERIOD_MS; logging
+        // each one would flush the 50-entry buffer that holds the explanation.
+        let mut cadence = Cadence::new();
+        cadence.note(true);
+
+        let logged: Vec<u32> = (2..10).filter(|_| cadence.note(true)).collect();
+
+        assert!(logged.is_empty(), "logged events 2..9: {:?}", logged);
+    }
+
+    #[test]
+    fn the_tenth_event_of_a_run_is_logged() {
+        // The heartbeat that says the invariant is still broken and still
+        // being worked on, rather than silently abandoned.
+        let mut cadence = Cadence::new();
+        let logged: Vec<u32> = (1..=10).filter(|_| cadence.note(true)).collect();
+
+        assert_eq!(logged, vec![1, 10]);
+    }
+
+    #[test]
+    fn a_quiet_observation_ends_a_strict_run() {
+        // GetCursorPos succeeding, or the hook reading alive, means the next
+        // occurrence starts a fresh story and must be logged as #1 rather than
+        // continuing a count from minutes ago.
+        let mut cadence = Cadence::new();
+        for _ in 0..5 {
+            cadence.note(true);
+        }
+
+        cadence.note(false);
+
+        assert!(cadence.note(true), "the event after a quiet observation is a new run");
+        assert_eq!(cadence.count(), 1);
+    }
+
+    #[test]
+    fn a_run_that_spans_a_gap_survives_the_alive_period_a_re_install_manufactures() {
+        // The chronic LowLevelHooksTimeout case: every successful re-install
+        // makes the hook proc stamp once more, so the following period reads
+        // alive even though the fresh hook is already being removed. A strict
+        // run would restart at 1 on each of those and log every ~6 s.
+        let mut cadence = Cadence::spanning_one_gap();
+        let mut logged = 0;
+        for _ in 0..5 {
+            if cadence.note(true) {
+                logged += 1;
+            }
+            assert!(!cadence.note(false), "a non-occurrence is never logged");
+        }
+
+        assert_eq!(cadence.count(), 5, "the alternation is one run of five");
+        assert_eq!(logged, 1, "only the first of the five is logged");
+    }
+
+    #[test]
+    fn two_consecutive_quiet_observations_end_a_run_that_spans_one_gap() {
+        // Recovery, as opposed to the single alive period our own repair
+        // manufactures: the hook is stamping again across a whole period it
+        // was not just re-installed in.
+        let mut cadence = Cadence::spanning_one_gap();
+        cadence.note(true);
+
+        cadence.note(false);
+        cadence.note(false);
+
+        assert!(cadence.note(true), "the event after a real recovery is a new run");
+        assert_eq!(cadence.count(), 1);
     }
 }
