@@ -60,6 +60,7 @@
 		type WidgetPlacement,
 		type WidgetRect
 	} from './widget-geometry';
+	import { configExitDecision, type ConfigExitOutcome } from './widget-config-exit';
 	import { useHotRects } from './use-hot-rects';
 
 	let {
@@ -246,26 +247,80 @@
 		}
 	}
 
+	/** Ask Rust for a config-mode state and report which way it went. */
+	async function setConfigMode(on: boolean): Promise<ConfigExitOutcome> {
+		return await invoke('set_overlay_config_mode', { label: module, on }).then(
+			() => ({ ok: true }) as ConfigExitOutcome,
+			(error) => ({ ok: false, error }) as ConfigExitOutcome
+		);
+	}
+
+	/**
+	 * Leave config mode — but only once Rust says the window is out of it.
+	 *
+	 * The order is the point (POE-227). This used to clear `configMode` and the
+	 * draft FIRST and then merely log a rejection, so a failed exit took the
+	 * Save/Cancel bar off a window that was still interactive: a monitor-sized,
+	 * invisible, always-on-top rectangle eating every click over the game with
+	 * nothing on it to press. Now nothing local changes until the command
+	 * resolves, and a refusal keeps the frames and names itself in the bar.
+	 *
+	 * A refusal ALSO re-asserts config mode, and that half is not belt-and-braces
+	 * (see `widget-config-exit.ts`). Rust's exit path clears its registry flag
+	 * even when the click-through re-arm failed — correct, or the mouse hook
+	 * would skip this window forever and never repair it — which means the hook
+	 * resumes repairing `WS_EX_TRANSPARENT` on the next mouse move. Without the
+	 * re-assert the bar we just decided to keep would stop being clickable within
+	 * one twitch of the cursor. `configExitDecision` words the bar from whether
+	 * that landed: pressable again, or go back to Settings.
+	 *
+	 * `widget-config-end` is emitted on the Ok path only: it is what the layout
+	 * restores the window and the module flag on, and what Settings clears
+	 * `Configuring…` on. Emitting it after a refusal would end the session
+	 * everywhere except on the window the user is still stuck inside. The
+	 * layout's own deadline is what stops that stranding Settings forever.
+	 */
 	async function exitConfig(): Promise<void> {
-		if (exiting) return;
+		// Not in config mode is nothing to leave. Without this an `on: false`
+		// aimed at a window that has already exited would invoke Rust again and
+		// emit a second `widget-config-end`, and the layout's abandon path sends
+		// exactly such a repeat on purpose (see `abandonWidgetConfig`) — a
+		// stray one has to be free. It also matches `saveConfig`/`cancelConfig`,
+		// which have always guarded on `configMode`.
+		//
+		// What this deliberately does NOT do is clear Rust's flag for a host that
+		// never entered config mode locally (a missed event AND a failed catch-up
+		// query). That window is interactive with no bar on it, and only the
+		// layout can see it — which is why `abandonWidgetConfig` carries a direct
+		// `set_overlay_config_mode(off)` belt rather than relying on this path.
+		if (!configMode || exiting) return;
 		exiting = true;
-		configMode = false;
-		draft = {};
-		resizedThisSession = new Set();
-		saveError = '';
 		try {
-			await invoke('set_overlay_config_mode', { label: module, on: false });
-		} catch (e) {
-			// The window is still interactive: it will keep eating the player's
-			// clicks until something re-asserts click-through. Loud, not silent.
-			log(`could not return the window to click-through: ${e}`);
+			const outcome = await setConfigMode(false);
+			// Only after a refusal, and before the error is shown: the bar has to
+			// be pressable by the time the user reads what it says.
+			const reassert = outcome.ok ? null : await setConfigMode(true);
+			const decision = configExitDecision(outcome, reassert);
+			if (decision.keepConfigMode) {
+				if (!outcome.ok) log(`could not return the window to click-through: ${outcome.error}`);
+				if (reassert && !reassert.ok) {
+					log(`could not re-assert config mode either — the bar may stop responding: ${reassert.error}`);
+				}
+				saveError = decision.error;
+				return;
+			}
+			configMode = false;
+			draft = {};
+			resizedThisSession = new Set();
+			saveError = '';
+			try {
+				await getCurrentWebviewWindow().emit('widget-config-end', { module });
+			} catch (e) {
+				log(`could not report the end of config mode: ${e}`);
+			}
+		} finally {
+			exiting = false;
 		}
-		try {
-			await getCurrentWebviewWindow().emit('widget-config-end', { module });
-		} catch (e) {
-			log(`could not report the end of config mode: ${e}`);
-		}
-		exiting = false;
 	}
 
 	async function saveConfig(): Promise<void> {
