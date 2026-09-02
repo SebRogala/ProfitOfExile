@@ -1,3 +1,7 @@
+---
+uid: fb110520-ead9-48d2-b7d0-f17a3a198a95
+---
+
 # ADR-015: Exchange Quality Gates Live Client-side; the Server Serves Everything Sane
 
 ## Status

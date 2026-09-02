@@ -1,3 +1,7 @@
+---
+uid: bbe8db0a-8fb2-4424-9c12-d8f800f1555d
+---
+
 # ADR-016: Expected ROI Is a Cross-hour Simulation; Displayed Prices Stay Single-hour
 
 ## Status
