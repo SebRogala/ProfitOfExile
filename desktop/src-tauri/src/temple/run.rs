@@ -1177,6 +1177,21 @@ fn full_read(
         return;
     }
 
+    // Both name-sources for the room the player is standing in read, and they
+    // disagree: the advice carries a warning for the overlay, and this puts the
+    // same fact in the app log, which is what a user can send back. `log::` is
+    // not that — it goes nowhere under `windows_subsystem = "windows"`.
+    if let Some((title, plate)) =
+        slice::current_identity(layout.current, &slice::identities(&rooms), &panel).disagreement
+    {
+        crate::app_log(
+            app,
+            format!(
+                "Temple: side panel says {title:?} but the current plate says {plate:?}; using the plate"
+            ),
+        );
+    }
+
     let (settled, marker_error) = match read_markers(img, &layout) {
         Ok(set) => (Some(set), None),
         Err(e) => (None, Some(e)),

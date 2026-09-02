@@ -193,6 +193,19 @@ pub struct BoardState {
     /// slot and not a per-map visited set. The prototype's `visited_this_map`
     /// modelled the stronger, wrong claim.
     pub last_visited: Option<Slot>,
+    /// The tier of the room the player is standing in, as the read established
+    /// it — `None` when neither the side-panel title nor the plate named it.
+    ///
+    /// Separate from `rooms[position].1` because that field cannot tell "tier-0
+    /// filler" from "never read": both are `(None, Tier::T0)`. The distinction
+    /// is the whole of POE-229 — a filler really does take an offer to tier 1,
+    /// an unread room does not, and Contested Development's arithmetic has no
+    /// answer for the second.
+    pub current_tier: Option<Tier>,
+    /// `(title, plate)` display names when the side-panel title and the current
+    /// plate both read and named different rooms. The plate is the one this
+    /// board carries; the pair is kept so [`super::advise`] can say so.
+    pub current_room_disagreement: Option<(&'static str, &'static str)>,
 }
 
 impl BoardState {
@@ -205,6 +218,8 @@ impl BoardState {
             position: None,
             remaining: 0,
             last_visited: None,
+            current_tier: None,
+            current_room_disagreement: None,
         }
     }
 
@@ -236,16 +251,40 @@ impl BoardState {
                 .copied()
                 .collect(),
         };
-        let rooms = std::array::from_fn(|i| match identities[i] {
+        // The current slot is the one the gold selection frame overhangs, so it
+        // is the plate most likely to be unread — and the side-panel title is
+        // the game's own statement of the same room. `current_identity` is the
+        // single seam that picks between them (POE-229); taking it here rather
+        // than in the caller means the board and the projection can never
+        // disagree about which room the player is standing in.
+        let current = crate::temple::slice::current_identity(layout.current, identities, panel);
+        let mut rooms: [Room; 13] = std::array::from_fn(|i| match identities[i] {
             Some(RoomIdentity::Room { line, tier }) => (Some(line.mechanical_line()), tier),
             _ => (None, Tier::T0),
         });
+        // ONLY when the plate read nothing. A plate that read is the guarded
+        // source and stays on the board whatever the title says — including a
+        // read Entrance, Apex or filler, whose `(None, T0)` is a fact and not a
+        // hole for the title to fill.
+        if let Some(slot) = layout.current {
+            if identities[slot.index()].is_none() {
+                // Through the seam, not `panel.room` directly: with the plate
+                // unread the seam's answer IS the title today, and going through
+                // it keeps that true if a third source or a confidence rule is
+                // ever added to `current_identity`.
+                if let Some(RoomIdentity::Room { line, tier }) = current.identity {
+                    rooms[slot.index()] = (Some(line.mechanical_line()), tier);
+                }
+            }
+        }
         BoardState {
             rooms,
             doors,
             position: layout.current,
             remaining: panel.incursions_remaining.unwrap_or(0),
             last_visited: None,
+            current_tier: current.identity.map(|id| id.tier()),
+            current_room_disagreement: current.disagreement,
         }
     }
 
@@ -419,8 +458,14 @@ mod tests {
     }
 
     fn panel(remaining: Option<u8>) -> PanelReading {
+        panel_titled("Cloister", remaining)
+    }
+
+    /// A panel whose side-panel title reads `room` — the second source for the
+    /// slot the player is standing in.
+    fn panel_titled(room: &str, remaining: Option<u8>) -> PanelReading {
         PanelReading {
-            room: rooms::match_room_name("Cloister"),
+            room: rooms::match_room_name(room),
             architects: Vec::new(),
             incursions_remaining: remaining,
         }
@@ -472,6 +517,62 @@ mod tests {
         assert_eq!(board.line(D0), None);
         assert_eq!(board.line(C2), Some(&Line::Corruption));
         assert_eq!(board.tier(C2), Tier::T2);
+    }
+
+    // POE-229. The gold selection frame overhangs the current plate, so that
+    // plate is the one most likely to read nothing — and the side panel prints
+    // the same room's name. With no other source the board takes the title,
+    // rather than scoring the room the player is standing in as tier-0 filler.
+    #[test]
+    fn an_unread_current_plate_is_filled_from_the_side_panel_title() {
+        let board = BoardState::from_reading(
+            &layout(&[], &[]),
+            &[None; 13],
+            &panel_titled("Office of Cartography", Some(5)),
+            None,
+        );
+        assert_eq!(board.position, Some(D1), "precondition: D1 is the current slot");
+        assert_eq!(board.tier(D1), Tier::T2);
+        assert_eq!(board.line(D1), Some(&Line::named("atlas_of_worlds")));
+        assert_eq!(board.current_tier, Some(Tier::T2));
+    }
+
+    // The plate is the guarded source: it is cropped from the slot the lattice
+    // pins under the cursor and cross-checked against its own tier numeral,
+    // while the title is a heuristic pick out of whole-screen OCR. A plate that
+    // read therefore stays on the board however loudly the title disagrees.
+    #[test]
+    fn a_current_plate_that_read_is_not_overwritten_by_a_disagreeing_title() {
+        let mut identities = [None; 13];
+        identities[D1.index()] = rooms::resolve_name("Catalyst of Corruption");
+        let board = BoardState::from_reading(
+            &layout(&[], &[]),
+            &identities,
+            &panel_titled("Office of Cartography", Some(5)),
+            None,
+        );
+        assert_eq!(board.line(D1), Some(&Line::Corruption));
+        assert_eq!(board.tier(D1), Tier::T2);
+        assert_eq!(board.current_tier, Some(Tier::T2));
+    }
+
+    // A read Entrance is a fact, not a hole: it is tier 0 with no line, and a
+    // title naming a real room must not turn the slot the player is standing in
+    // into one. Fails if the title fill keys on "the plate has no line" rather
+    // than on "the plate read nothing".
+    #[test]
+    fn a_read_line_less_current_plate_is_not_overwritten_by_the_title() {
+        let mut identities = [None; 13];
+        identities[D1.index()] = Some(RoomIdentity::Filler("Cellar"));
+        let board = BoardState::from_reading(
+            &layout(&[], &[]),
+            &identities,
+            &panel_titled("Office of Cartography", Some(5)),
+            None,
+        );
+        assert_eq!(board.line(D1), None);
+        assert_eq!(board.tier(D1), Tier::T0);
+        assert_eq!(board.current_tier, Some(Tier::T0));
     }
 
     // `select_mode` prices connected lines only, so the board must not hand it a

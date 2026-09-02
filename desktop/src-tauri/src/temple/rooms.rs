@@ -714,6 +714,76 @@ pub fn resolve_offer(printed_target: &str, current_tier: Tier) -> Option<Resolve
     })
 }
 
+/// What [`resolve_offer_for`] could say about one architect block.
+///
+/// Three outcomes rather than an `Option`, because the two failures are
+/// different facts about the read and the overlay must not print the same line
+/// for both: an unreadable name is an OCR problem, an unknown current tier is a
+/// board the reader has not finished establishing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OfferResolution {
+    /// What the kill builds.
+    Built(ResolvedOffer),
+    /// The printed target is not one of the 75 tiered rooms.
+    UnknownName,
+    /// The name is in the vocabulary, but the arithmetic needs a current tier
+    /// this read never established.
+    UnknownCurrentTier,
+}
+
+/// [`resolve_offer`] for a read that may not know the current tier.
+///
+/// # Why the kind matters here and nowhere else
+///
+/// With a known `current_tier` both kinds are the same `min(3, current + 1)`
+/// arithmetic and this delegates verbatim — [`OfferKind`] changes nothing.
+///
+/// Without one the two kinds part company, because only one of them prints the
+/// answer:
+///
+/// - [`OfferKind::Upgrade`] prints tier `current + 1` of the room's OWN line,
+///   so the printed name IS the built room. Its own tier is the built tier and
+///   the current tier is not needed at all. This is POE-229: standing in
+///   **Office of Cartography** with the plate unread, *"upgrade to Atlas of
+///   Worlds"* builds Atlas of Worlds III, not the tier-1 Surveyor's Study that
+///   `current_tier = 0` produced.
+/// - [`OfferKind::Change`] names a DIFFERENT line, so the built tier is a fact
+///   about the room the player is standing in and nothing in the printed text
+///   carries it. There is no answer to give, and assuming tier 1 prints a room
+///   the kill will not build.
+pub fn resolve_offer_for(
+    printed_target: &str,
+    kind: OfferKind,
+    current_tier: Option<Tier>,
+) -> OfferResolution {
+    let Some(identity) = match_room_name(printed_target).identity() else {
+        return OfferResolution::UnknownName;
+    };
+    let Some(line) = identity.line() else {
+        return OfferResolution::UnknownName;
+    };
+    if let Some(current_tier) = current_tier {
+        return match resolve_offer(printed_target, current_tier) {
+            Some(resolved) => OfferResolution::Built(resolved),
+            None => OfferResolution::UnknownName,
+        };
+    }
+    match kind {
+        OfferKind::Change => OfferResolution::UnknownCurrentTier,
+        OfferKind::Upgrade => {
+            let built = identity.tier();
+            match line.name(built) {
+                Some(display_name) => OfferResolution::Built(ResolvedOffer {
+                    line,
+                    built_tier: built,
+                    display_name,
+                }),
+                None => OfferResolution::UnknownName,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
