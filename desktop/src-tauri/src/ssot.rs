@@ -60,12 +60,14 @@ pub struct LeagueSlice {
 
 /// Which cue measured [`ScreenSlice::ui_scale`] (POE-214).
 ///
-/// A confidence LABEL, not a rank. The merc module is the sole writer and the
-/// latest measurement always wins, so a `MercOcr` reading published after a
-/// `MercFrame` one replaces it rather than losing to it. What the label buys a
-/// reader — and a smoke check — is the ability to tell a scale measured on the
-/// support grid's gold frame from the OCR line-pitch estimate that stood in for
-/// it before POE-214, and drifted 6-12 px doing so.
+/// A statement about the CUE, and — since POE-240 — the input [`accepts`]
+/// reads to decide whether a measurement may replace the one standing. It is
+/// still not a rank: there is no ordering to consult, only the one rule
+/// [`accepts`] states, under which a `MercOcr` reading that agrees with the
+/// `MercFrame` value already published leaves it alone instead of overwriting
+/// it with the 6-12 px line-pitch drift POE-214 diagnosed. What the label buys
+/// a reader — and a smoke check — is the ability to tell a scale measured on
+/// the support grid's gold frame from that estimate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ScreenScaleSource {
@@ -105,9 +107,12 @@ pub enum ScreenScaleSource {
 /// player shuts the window. This slice outlives the capture.
 ///
 /// **Writer.** The merc detect tick is the SOLE writer, through
-/// [`publish_screen`]; WI-B2 adds the startup load of a persisted value under
-/// [`ScreenScaleSource::Remembered`]. There is no rank between writers because
-/// there is only one: the latest measurement wins.
+/// [`publish_screen`]; the startup load of a persisted value comes in under
+/// [`ScreenScaleSource::Remembered`] (WI-B2). There is still no rank between
+/// writers because there is only one — but not every measurement it offers is
+/// taken: [`accepts`] refuses a `MercOcr` reading that only re-states the
+/// `MercFrame` value already standing (POE-240), so a session whose fit landed
+/// once is not walked off it by the drifting cue for the rest of its life.
 ///
 /// **No `PartialEq`, deliberately.** Whole-struct equality would compare
 /// `measured_at_ms` and `ui_scale` exactly — the two fields the publish gate
@@ -128,6 +133,21 @@ pub struct ScreenSlice {
     pub source: ScreenScaleSource,
     /// Unix ms the measurement was taken at.
     pub measured_at_ms: u64,
+    /// Whether a cue that VERIFIES the screen produced this value in THIS run
+    /// (POE-240), as [`verifies_the_screen`] decides.
+    ///
+    /// The README's lifecycle says a scale is "remembered and TRUSTED at start,
+    /// VERIFIED on first use"; before POE-240 that second half had no
+    /// representation, so a remembered value and a value the gold frame
+    /// re-measured this session looked identical to every consumer and to the
+    /// Settings card. `false` is the honest answer for a startup seed and for
+    /// an OCR-only session, and it is what carries the blind spot
+    /// [`screen_matches`] cannot see.
+    ///
+    /// NOT persisted: [`crate::settings::ScreenScaleSetting::from_slice`] drops
+    /// it and `to_slice` seeds it from [`verifies_the_screen`] — which answers
+    /// `false` for a load, because a load is not a verification.
+    pub verified_this_session: bool,
 }
 
 /// Full app-wide SSOT snapshot. Cloned for both the poll response and the
@@ -399,20 +419,119 @@ fn screen_changed(current: Option<&ScreenSlice>, next: &ScreenSlice) -> bool {
     }
 }
 
-/// Store `next` in the screen slot and report whether it is worth emitting.
+/// The drift [`ScreenScaleSource::MercOcr`] is documented to carry, in
+/// `ui_scale` units.
 ///
-/// **Store always, gate only the emit.** The slot is overwritten whatever the
-/// gate says, so `measured_at_ms` tracks the LAST measurement — WI-B2 persists
-/// this slot and an age belonging to an older tick would be a lie, and a
-/// consumer asking "how old is this scale?" would get the wrong answer on every
-/// tick the gate refused. The bool is only about waking the overlays.
+/// POE-214 measured the line-pitch estimate at 6-12 px off the gold frame. The
+/// unit's denominator is the reference HEIGHT, 1200 px, so the wide end of that
+/// range is `12 / 1200 = 0.01` of `ui_scale`. An OCR reading further from the
+/// standing value than this is describing something the drift cannot explain —
+/// a real change of screen — and [`accepts`] takes it.
+const OCR_DRIFT_BAND: f32 = 0.01;
+
+/// Whether a cue that VERIFIES the screen is what produced a measurement
+/// (POE-240) — the one rule behind [`ScreenSlice::verified_this_session`].
 ///
-/// Split out of [`publish_screen`] with no `AppHandle` precisely so that rule is
-/// pinned by a test rather than by the prose above it.
-pub(crate) fn record_screen(current: &mut Option<ScreenSlice>, next: ScreenSlice) -> bool {
+/// Only the gold frame does. `MercOcr` is the line-pitch estimate that sits
+/// within [`OCR_DRIFT_BAND`] of the truth at best, and `Remembered` is a file
+/// read: neither looked at anything this run that could confirm the screen is
+/// the screen the number was measured on.
+///
+/// Pure, and called by BOTH writers — `mercenary::run`'s publish and
+/// [`crate::settings::ScreenScaleSetting::to_slice`] — so the flag has one
+/// producer rather than a literal at each site that can drift apart.
+pub fn verifies_the_screen(source: ScreenScaleSource) -> bool {
+    matches!(source, ScreenScaleSource::MercFrame)
+}
+
+/// Whether `next` may replace what is already in the screen slot (POE-240).
+///
+/// The rule, by the cue that produced `next`:
+///
+/// - **`MercFrame`** — always. It is the measurement everything else is a
+///   stand-in for, and a fresh one is never worse than what it replaces.
+/// - **`MercOcr`** — only when it is saying something the drift cannot explain:
+///   different dimensions, or a `ui_scale` further than [`OCR_DRIFT_BAND`] from
+///   the standing value. Inside the band it is the same screen re-described
+///   6-12 px worse, and taking it would walk a session off a landed frame fit
+///   for every remaining tick of an open recruit window — the bug POE-240 was
+///   filed for.
+/// - **`Remembered`** — never over anything. It is the startup seed: it fills
+///   an empty slot and has nothing to say about a screen that has since been
+///   measured.
+///
+/// An empty slot takes anything — there is nothing to protect.
+///
+/// `settings::apply_to_state` writes the remembered seed directly into an empty
+/// slot at startup and is the only caller that bypasses [`record_screen`]; any
+/// future settings-reload path must go through [`record_screen`], or it will
+/// overwrite a measurement this rule exists to protect.
+///
+/// A refusal is not silent, but the log line is the CALLER's (see
+/// `mercenary::run`, which dedupes it per distinct source and rounded scale);
+/// this stays pure so the rule is unit-testable without an `AppHandle`.
+// WI-4 extends this with monitor identity
+pub(crate) fn accepts(current: Option<&ScreenSlice>, next: &ScreenSlice) -> bool {
+    let Some(current) = current else {
+        return true;
+    };
+    match next.source {
+        ScreenScaleSource::MercFrame => true,
+        ScreenScaleSource::Remembered => false,
+        ScreenScaleSource::MercOcr => {
+            current.width != next.width
+                || current.height != next.height
+                || (current.ui_scale - next.ui_scale).abs() > OCR_DRIFT_BAND
+        }
+    }
+}
+
+/// What [`record_screen`] did with a measurement.
+///
+/// Two bools rather than one because the caller acts on each separately: a
+/// refusal is worth a log line, a change is worth an emit and a persist, and
+/// "not a change" and "not taken at all" are different answers that used to
+/// arrive as the same `false`.
+#[derive(Debug, Clone, Copy)]
+pub struct ScreenRecord {
+    /// Whether the slot took `next`. `false` — [`accepts`] refused it and the
+    /// value already standing is untouched, `measured_at_ms` included.
+    pub accepted: bool,
+    /// Whether the overlays are worth waking. Always `false` on a refusal.
+    pub changed: bool,
+    /// The `ui_scale` in force once this call returned: `next`'s when it was
+    /// taken, the survivor's when it was refused.
+    ///
+    /// Carried out rather than re-read, because the refusal log line names
+    /// both numbers and this call is the only place that holds them together
+    /// under one guard — by the time the caller has the record back, a
+    /// [`geometry_recalibrate`] on another thread may have emptied the slot.
+    pub standing_ui_scale: f32,
+}
+
+/// Store `next` in the screen slot if [`accepts`] allows it, and report both
+/// halves of what happened.
+///
+/// **Accept first, then gate the emit.** An accepted measurement overwrites the
+/// slot whatever the emit gate says, so `measured_at_ms` tracks the last
+/// ACCEPTED measurement — WI-B2 persists this slot and an age belonging to an
+/// older tick would be a lie. A REFUSED one changes nothing at all, stamp
+/// included: the slice describes the value in force, and that value was
+/// measured when it says it was (POE-240).
+///
+/// Split out of [`publish_screen`] with no `AppHandle` precisely so those rules
+/// are pinned by tests rather than by the prose above them.
+pub(crate) fn record_screen(current: &mut Option<ScreenSlice>, next: ScreenSlice) -> ScreenRecord {
+    if !accepts(current.as_ref(), &next) {
+        // A refusal is only ever over a value that is there — an empty slot
+        // takes anything — so the scale that survived is the standing one,
+        // never `next`'s.
+        let standing = current.as_ref().unwrap_or(&next).ui_scale;
+        return ScreenRecord { accepted: false, changed: false, standing_ui_scale: standing };
+    }
     let changed = screen_changed(current.as_ref(), &next);
     *current = Some(next);
-    changed
+    ScreenRecord { accepted: true, changed, standing_ui_scale: next.ui_scale }
 }
 
 /// Publish a screen measurement into the SSOT, emitting only on a real change.
@@ -427,20 +546,22 @@ pub(crate) fn record_screen(current: &mut Option<ScreenSlice>, next: ScreenSlice
 /// All that is left here is the lock-drop-emit sequence the doc above states,
 /// which is what makes calling this on every detect tick the right thing to do.
 ///
-/// Returns whether the value CHANGED — the same bool the emit is gated on,
-/// handed back so the caller can gate a persist on it too (WI-B2) without
-/// asking the slot a second question the deadband would have to answer twice.
-/// Ignoring it is an ordinary call, so it is not `#[must_use]`.
-pub fn publish_screen(app: &AppHandle, next: ScreenSlice) -> bool {
-    let changed = {
+/// Returns [`record_screen`]'s whole answer: `changed` is the bool the emit is
+/// gated on, handed back so the caller can gate a persist on it too (WI-B2)
+/// without asking the slot a second question the deadband would have to answer
+/// twice, and `accepted` is what lets the caller say once that a measurement
+/// was refused (POE-240). Ignoring it is an ordinary call, so it is not
+/// `#[must_use]`.
+pub fn publish_screen(app: &AppHandle, next: ScreenSlice) -> ScreenRecord {
+    let record = {
         let state = app.state::<AppState>();
         let mut current = state.screen.lock().unwrap_or_else(|e| e.into_inner());
         record_screen(&mut current, next)
     };
-    if changed {
+    if record.changed {
         emit_ssot(app);
     }
-    changed
+    record
 }
 
 /// Whether a just-published slice is worth writing to settings (POE-214 WI-B2).
@@ -475,6 +596,14 @@ pub fn should_remember_screen(changed: bool, source: ScreenScaleSource) -> bool 
 /// `None` matches everything: there is nothing remembered to be wrong, and
 /// answering `false` would make the caller "drop" a slot that is already empty
 /// and spend a log line and a file write saying so on every tick.
+///
+/// Two things this therefore cannot see: a different monitor of the SAME
+/// resolution, and an in-game UI-scale change made while no verifying panel is
+/// on screen. Both are the temple's `FULL_READ_EVERY_N_MISSES` class — a stale
+/// value that only a re-read can catch — and neither is fixed by widening this
+/// predicate, which has only the capture's dimensions to work with.
+/// [`ScreenSlice::verified_this_session`] is what carries the honesty about
+/// them (POE-240).
 ///
 /// Pure so the rule is unit-testable without an `AppHandle`, the same reason
 /// [`should_flag_unreachable`] and [`record_screen`] are extracted.
@@ -1524,6 +1653,21 @@ mod tests {
             ui_scale: 1.0,
             source: ScreenScaleSource::MercFrame,
             measured_at_ms: 1_700_000_000_000,
+            verified_this_session: true,
+        }
+    }
+
+    /// A measurement as the merc writer builds one: the flag is never a literal
+    /// at a call site, it is [`verifies_the_screen`]'s answer for the cue. Used
+    /// by every test that asks what the SLOT ends up holding, so a change to
+    /// that rule reaches those assertions instead of being papered over by a
+    /// hand-written `true`.
+    fn measured_by(source: ScreenScaleSource, ui_scale: f32) -> ScreenSlice {
+        ScreenSlice {
+            ui_scale,
+            source,
+            verified_this_session: verifies_the_screen(source),
+            ..reference_screen()
         }
     }
 
@@ -1577,6 +1721,7 @@ mod tests {
         assert_eq!(json["screen"]["height"], 1200);
         assert_eq!(json["screen"]["uiScale"], 1.0);
         assert_eq!(json["screen"]["measuredAtMs"], 1_700_000_000_000u64);
+        assert_eq!(json["screen"]["verifiedThisSession"], true);
     }
 
     /// The three source strings, exactly. They are read by a TS union and by
@@ -1693,24 +1838,28 @@ mod tests {
         assert!(screen_changed(Some(&current), &next));
     }
 
-    /// The emit half of "store always, gate only the emit": a repeat of the
-    /// measurement already in the slot is not worth waking every overlay's
-    /// poll, however fresh its stamp.
+    /// The emit half of the gate: a repeat of the measurement already in the
+    /// slot is accepted — it is a fresh frame fit of the same screen — but is
+    /// not worth waking every overlay's poll, however fresh its stamp.
     #[test]
     fn record_screen_reports_no_change_for_a_repeat_measurement() {
         let base = reference_screen();
         let mut slot = Some(base);
         let next = ScreenSlice { measured_at_ms: base.measured_at_ms + 5_000, ..base };
 
-        assert!(!record_screen(&mut slot, next));
+        let record = record_screen(&mut slot, next);
+
+        assert!(record.accepted, "a fresh frame fit of the same screen is taken");
+        assert!(!record.changed);
     }
 
-    /// The store half, and the one WI-B2 depends on: the slot takes the refused
-    /// measurement anyway, so `measured_at_ms` is the age of the last
-    /// MEASUREMENT. Gated storage would make it the age of the last CHANGE, and
-    /// a persisted scale would then claim to be hours older than it is.
+    /// The store half, and the one WI-B2 depends on: an ACCEPTED measurement
+    /// overwrites the slot whatever the emit gate says, so `measured_at_ms` is
+    /// the age of the last accepted measurement. Gated storage would make it
+    /// the age of the last CHANGE, and a persisted scale would then claim to be
+    /// hours older than it is.
     #[test]
-    fn a_refused_screen_measurement_is_still_stored() {
+    fn an_accepted_screen_measurement_the_emit_gate_refused_is_still_stored() {
         let base = reference_screen();
         let mut slot = Some(base);
         let next = ScreenSlice { measured_at_ms: base.measured_at_ms + 5_000, ..base };
@@ -1721,6 +1870,190 @@ mod tests {
             slot.expect("the slot still holds a measurement").measured_at_ms,
             base.measured_at_ms + 5_000
         );
+    }
+
+    // ------------------------------------------------- source acceptance --
+
+    /// The bug POE-240 was filed for, from the consumer's side: a session whose
+    /// frame fit landed once keeps that number for as long as the OCR cue only
+    /// re-describes the same screen. Before the rule, every OCR-only tick of an
+    /// open recruit window overwrote the frame value with the 6-12 px drift.
+    ///
+    /// 0.005 is written out rather than derived from [`OCR_DRIFT_BAND`] so this
+    /// pins the BAND's value too: it is 6 px of the 1200-px reference height,
+    /// the near end of POE-214's measured drift, and a band narrowed below it
+    /// would start taking exactly the readings it exists to turn down.
+    #[test]
+    fn an_ocr_measurement_inside_the_drift_band_does_not_replace_a_frame_measurement() {
+        let frame = measured_by(ScreenScaleSource::MercFrame, 1.0);
+        let mut slot = Some(frame);
+        let drifted = ScreenSlice {
+            measured_at_ms: frame.measured_at_ms + 5_000,
+            ..measured_by(ScreenScaleSource::MercOcr, 1.0 - 0.005)
+        };
+
+        let record = record_screen(&mut slot, drifted);
+
+        assert!(!record.accepted);
+        assert!(
+            !record.changed,
+            "a refusal changed nothing, so it must not wake every overlay's poll",
+        );
+        let standing = slot.expect("the frame measurement is still there");
+        assert_eq!(standing.ui_scale, 1.0);
+        assert_eq!(standing.source, ScreenScaleSource::MercFrame);
+    }
+
+    /// The stamp is part of "the value in force", not a separate fact: a
+    /// refusal must not advance `measured_at_ms`, because the number that
+    /// survived really was measured when it says it was. Freshening the stamp
+    /// on a refusal would make the Settings card age a value that never moved.
+    #[test]
+    fn a_refused_measurement_leaves_the_standing_stamp_alone() {
+        let frame = measured_by(ScreenScaleSource::MercFrame, 1.0);
+        let mut slot = Some(frame);
+        let drifted = ScreenSlice {
+            measured_at_ms: frame.measured_at_ms + 5_000,
+            ..measured_by(ScreenScaleSource::MercOcr, 1.0 - 0.005)
+        };
+
+        record_screen(&mut slot, drifted);
+
+        assert_eq!(
+            slot.expect("the frame measurement is still there").measured_at_ms,
+            frame.measured_at_ms,
+        );
+    }
+
+    /// The refusal log line names the number that SURVIVED, and this call is
+    /// the only place still holding it — a caller re-reading the slot can find
+    /// it emptied by a Recalibrate. A record that echoed the refused reading
+    /// back would have the log say "kept 0.99" on a session standing at 1.0.
+    #[test]
+    fn a_refusal_reports_the_scale_that_survived_it() {
+        let mut slot = Some(measured_by(ScreenScaleSource::MercFrame, 1.0));
+        let drifted = measured_by(ScreenScaleSource::MercOcr, 1.0 - 0.005);
+
+        let record = record_screen(&mut slot, drifted);
+
+        assert_eq!(record.standing_ui_scale, 1.0);
+    }
+
+    /// Different dimensions are a different screen, and no drift band can
+    /// explain them — so the OCR reading is the only description of the screen
+    /// actually in front of the player and it wins. Without this arm a
+    /// resolution change on an OCR-only session would strand the old scale.
+    #[test]
+    fn an_ocr_measurement_of_different_dimensions_replaces_a_frame_measurement() {
+        let mut slot = Some(measured_by(ScreenScaleSource::MercFrame, 1.0));
+        let elsewhere = ScreenSlice {
+            height: 1080,
+            ..measured_by(ScreenScaleSource::MercOcr, 1.0)
+        };
+
+        let record = record_screen(&mut slot, elsewhere);
+
+        assert!(record.accepted);
+        assert_eq!(slot.expect("the new screen is stored").height, 1080);
+    }
+
+    /// The far side of the band. 0.02 is 24 px of the 1200-px reference height,
+    /// twice the wide end of the drift POE-214 measured: not the cue being
+    /// imprecise about the same screen, but the screen having changed. Written
+    /// out rather than derived from [`OCR_DRIFT_BAND`] so a band widened to
+    /// swallow it — which would pin a session to a scale the game no longer
+    /// draws at — fails here.
+    #[test]
+    fn an_ocr_measurement_outside_the_drift_band_replaces_a_frame_measurement() {
+        let mut slot = Some(measured_by(ScreenScaleSource::MercFrame, 1.0));
+        let far = measured_by(ScreenScaleSource::MercOcr, 1.0 - 0.02);
+
+        let record = record_screen(&mut slot, far);
+
+        assert!(record.accepted);
+        assert_eq!(slot.expect("the new scale is stored").source, ScreenScaleSource::MercOcr);
+    }
+
+    /// A frame fit needs no argument to be taken: it is the measurement every
+    /// other cue stands in for. Here it replaces an OCR value that agrees with
+    /// it to well inside the band — the case a symmetric "only if it differs"
+    /// rule would wrongly refuse, leaving the slice labelled `merc-ocr` and
+    /// unverified for the rest of the session.
+    #[test]
+    fn a_frame_measurement_replaces_an_ocr_value_it_agrees_with() {
+        let mut slot = Some(measured_by(ScreenScaleSource::MercOcr, 1.0));
+        let frame = measured_by(ScreenScaleSource::MercFrame, 1.0);
+
+        let record = record_screen(&mut slot, frame);
+
+        assert!(record.accepted);
+        assert_eq!(slot.expect("the frame fit is stored").source, ScreenScaleSource::MercFrame);
+    }
+
+    /// The startup seed is not a measurement and must never overwrite one. The
+    /// load happens once, into an empty slot; a `Remembered` slice arriving
+    /// after a live cue has spoken is a stale file read, and taking it would
+    /// undo the session's own reading of the screen in front of the player.
+    #[test]
+    fn a_remembered_seed_never_replaces_a_live_measurement() {
+        let mut slot = Some(measured_by(ScreenScaleSource::MercOcr, 1.0));
+        let seed = measured_by(ScreenScaleSource::Remembered, 0.9);
+
+        let record = record_screen(&mut slot, seed);
+
+        assert!(!record.accepted);
+        assert_eq!(slot.expect("the live measurement stands").ui_scale, 1.0);
+    }
+
+    /// An empty slot has nothing to protect, so the startup seed fills it —
+    /// which is the whole point of persisting a scale. A rule that refused
+    /// `Remembered` outright would make every launch unmeasured until a recruit
+    /// window opened.
+    #[test]
+    fn a_remembered_seed_fills_an_empty_slot() {
+        let mut slot = None;
+
+        let record = record_screen(&mut slot, measured_by(ScreenScaleSource::Remembered, 0.9));
+
+        assert!(record.accepted);
+        assert_eq!(slot.expect("the seed is stored").ui_scale, 0.9);
+    }
+
+    // ------------------------------------------- verified this session --
+
+    /// Only the gold frame verifies. The OCR line pitch is the estimate that
+    /// drifts and a load looked at nothing this run, so neither may claim the
+    /// screen was confirmed — this is the rule both writers (the merc publish
+    /// and `settings::ScreenScaleSetting::to_slice`) seed the flag from.
+    #[test]
+    fn only_a_frame_measurement_verifies_the_screen() {
+        assert!(verifies_the_screen(ScreenScaleSource::MercFrame));
+        assert!(
+            !verifies_the_screen(ScreenScaleSource::MercOcr),
+            "the drifting cue confirms nothing",
+        );
+        assert!(
+            !verifies_the_screen(ScreenScaleSource::Remembered),
+            "a file read is not a look at the screen",
+        );
+    }
+
+    /// An OCR reading accepted because the screen actually changed is still not
+    /// a verification — it is the drifting cue describing a screen nothing has
+    /// confirmed. Carrying the replaced value's `true` across would be the
+    /// worst version of the flag: a claim of confirmation attached to the one
+    /// number nobody checked.
+    #[test]
+    fn an_accepted_ocr_measurement_on_a_new_screen_is_unverified() {
+        let mut slot = Some(measured_by(ScreenScaleSource::MercFrame, 1.0));
+        let elsewhere = ScreenSlice {
+            height: 1080,
+            ..measured_by(ScreenScaleSource::MercOcr, 0.9)
+        };
+
+        record_screen(&mut slot, elsewhere);
+
+        assert!(!slot.expect("the new screen is stored").verified_this_session);
     }
 
     /// The persist trigger, both halves. A tick that re-measures the same

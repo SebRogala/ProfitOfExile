@@ -268,6 +268,11 @@ impl ScreenScaleSetting {
     /// persist TRIGGER ([`crate::ssot::should_remember_screen`]) only decides
     /// when to spend a write.
     ///
+    /// `verified_this_session` is DROPPED here — this struct has no such field
+    /// (POE-240). Verification is a statement about the run that made it, so
+    /// carrying it into the file would let next session's startup seed claim a
+    /// screen it has not looked at.
+    ///
     /// - `MercFrame` — stored. The gold frame is the cue POE-214 exists to
     ///   measure.
     /// - `MercOcr` — refused. It is the line-pitch estimate that sits 6-12 px
@@ -298,13 +303,21 @@ impl ScreenScaleSetting {
 
     /// The stored numbers as a slice, always labelled `Remembered` — a load is
     /// not a measurement, and the label is the only thing that says so.
+    ///
+    /// `verified_this_session` is seeded from
+    /// [`crate::ssot::verifies_the_screen`], which answers `false` here for the
+    /// same reason: nothing this run has looked at the screen (POE-240). The
+    /// field is deliberately absent from the STORED struct, so the flag cannot
+    /// survive a restart even by accident.
     pub fn to_slice(&self) -> crate::ssot::ScreenSlice {
+        let source = crate::ssot::ScreenScaleSource::Remembered;
         crate::ssot::ScreenSlice {
             width: self.width,
             height: self.height,
             ui_scale: self.ui_scale,
-            source: crate::ssot::ScreenScaleSource::Remembered,
+            source,
             measured_at_ms: self.measured_at_ms,
+            verified_this_session: crate::ssot::verifies_the_screen(source),
         }
     }
 
@@ -664,8 +677,9 @@ pub fn from_state(state: &crate::AppState) -> Settings {
 /// contract is fields no `AppState` mutex owns, and `state.screen` owns this
 /// one. A measurement DOES win — a `MercFrame` slice makes `from_slice` return
 /// `Some`, so `target.screen_scale` is already filled and this leaves it alone,
-/// whatever dimensions the stored value had (latest measurement wins, which is
-/// also why no separate stale-dimensions prune exists; see `apply_to_state`).
+/// whatever dimensions the stored value had (a frame measurement always
+/// replaces — `ssot::accepts` — which is also why no separate stale-dimensions
+/// prune exists; see `apply_to_state`).
 ///
 /// A stored value that cannot describe a screen is dropped rather than carried
 /// forward — the same [`ScreenScaleSetting::is_sane`] gate `apply_to_state`
@@ -970,6 +984,9 @@ mod tests {
             height: 1080,
             ui_scale: 0.9,
             source,
+            // As the writers build one — never a literal, so the round-trip
+            // tests below run against the flag the app actually publishes.
+            verified_this_session: crate::ssot::verifies_the_screen(source),
             measured_at_ms: 1_724_000_000_000,
         }
     }
@@ -1013,6 +1030,37 @@ mod tests {
             loaded.source,
             crate::ssot::ScreenScaleSource::Remembered,
             "a loaded scale was not measured this run and must say so",
+        );
+    }
+
+    /// The one number a restart must NOT carry (POE-240). A frame measurement
+    /// that verified the screen last session says nothing about the screen this
+    /// one is drawn on — the monitor may have changed, or the game's UI scale —
+    /// so the load comes back unverified and the Settings card says "trusted
+    /// from last session" until a gold frame confirms it again. Fails if
+    /// `ScreenScaleSetting` grows the field, or if `to_slice` hard-codes `true`.
+    #[test]
+    fn a_verified_screen_scale_comes_back_unverified_after_a_restart() {
+        let state = test_app_state();
+        let verified = measured_screen(crate::ssot::ScreenScaleSource::MercFrame);
+        assert!(
+            verified.verified_this_session,
+            "the frame measurement this test saves must be a verified one",
+        );
+        *state.screen.lock().unwrap() = Some(verified);
+
+        let saved = from_state(&state);
+        let reloaded = test_app_state();
+        let _ = apply_to_state(&saved, &reloaded);
+
+        let loaded = reloaded
+            .screen
+            .lock()
+            .unwrap()
+            .expect("the load must fill the slice");
+        assert!(
+            !loaded.verified_this_session,
+            "a restart has looked at nothing and must not claim it verified the screen",
         );
     }
 
@@ -1252,7 +1300,8 @@ mod tests {
 
     /// The other half: the merge is a floor, not a freeze. A frame measurement
     /// this session fills `from_state`'s field, so the stored value must NOT be
-    /// merged over it — latest measurement wins, whatever it measured.
+    /// merged over it — a frame measurement always replaces (`ssot::accepts`),
+    /// whatever dimensions it measured.
     #[test]
     fn preserve_screen_scale_lets_a_fresh_measurement_replace_the_stored_one() {
         let state = test_app_state();
@@ -1262,6 +1311,9 @@ mod tests {
             ui_scale: 1.25,
             source: crate::ssot::ScreenScaleSource::MercFrame,
             measured_at_ms: 1_724_000_600_000,
+            verified_this_session: crate::ssot::verifies_the_screen(
+                crate::ssot::ScreenScaleSource::MercFrame,
+            ),
         });
         let existing = Settings {
             screen_scale: Some(ScreenScaleSetting {
@@ -1557,10 +1609,10 @@ mod tests {
         );
     }
 
-    /// Why WI-B2 needs no stale-dimensions prune: `record_screen` stores
-    /// whatever it is handed, so the first frame fit of the real screen
-    /// replaces a value remembered at another monitor's size outright, and the
-    /// same tick is worth a write. A prune at load would only be racing this.
+    /// Why WI-B2 needs no stale-dimensions prune: `ssot::accepts` takes every
+    /// frame fit, so the first one of the real screen replaces a value
+    /// remembered at another monitor's size outright, and the same tick is
+    /// worth a write. A prune at load would only be racing this.
     #[test]
     fn a_frame_measurement_of_a_different_screen_replaces_the_remembered_dimensions() {
         let state = test_app_state();
@@ -1581,8 +1633,11 @@ mod tests {
             ui_scale: 1.25,
             source: crate::ssot::ScreenScaleSource::MercFrame,
             measured_at_ms: 1_724_000_600_000,
+            verified_this_session: crate::ssot::verifies_the_screen(
+                crate::ssot::ScreenScaleSource::MercFrame,
+            ),
         };
-        let changed = {
+        let record = {
             let mut slot = state.screen.lock().unwrap();
             crate::ssot::record_screen(&mut slot, measured)
         };
@@ -1594,7 +1649,7 @@ mod tests {
         assert_eq!(stored.ui_scale, 1.25);
         assert_eq!(stored.measured_at_ms, 1_724_000_600_000);
         assert!(
-            crate::ssot::should_remember_screen(changed, measured.source),
+            crate::ssot::should_remember_screen(record.changed, measured.source),
             "a screen this different from the remembered one is worth a write",
         );
     }
@@ -2112,9 +2167,9 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
     // at another monitor's size is left in place: `apply_to_state` has no
     // `AppHandle`, so the primary monitor's size is not cheaply known at this
     // seam, and inventing a lock order to go and get one would cost more than
-    // the staleness does. The merc tick is the cure — `ssot::record_screen`
-    // stores whatever it is handed, so the first frame measurement of the real
-    // screen overwrites this outright, whatever its dims were. A session that
+    // the staleness does. The merc tick is the cure — `ssot::accepts` takes
+    // every frame fit, so the first frame measurement of the real screen
+    // overwrites this seed outright, whatever its dims were. A session that
     // never measures (merc module off) therefore runs on a `remembered` label,
     // which is exactly what that label is for: a consumer that cannot afford a
     // stale screen weighs the label and waits for a measurement.
