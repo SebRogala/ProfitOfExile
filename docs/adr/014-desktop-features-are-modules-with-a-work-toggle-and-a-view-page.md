@@ -1,3 +1,7 @@
+---
+uid: a6350460-c1ae-46bc-81e5-284082d47cb1
+---
+
 # ADR-014: Desktop Features Are Modules with a Work Toggle and a View Page
 
 ## Status

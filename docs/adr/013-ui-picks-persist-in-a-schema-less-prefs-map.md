@@ -1,3 +1,7 @@
+---
+uid: c0c62fa9-c47a-4920-847a-16c0d35e8e7c
+---
+
 # ADR-013: UI Picks Persist in a Schema-less Prefs Map
 
 ## Status

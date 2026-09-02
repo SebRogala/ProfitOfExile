@@ -1,3 +1,7 @@
+---
+uid: f54fb16b-bca6-4d51-9fa3-bf38f3204184
+---
+
 # ADR-018: Flags Mark; They Never Order
 
 ## Status
