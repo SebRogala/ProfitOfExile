@@ -1,12 +1,12 @@
 <script lang="ts">
 	import '../../app.css';
 	import { invoke } from '@tauri-apps/api/core';
-	import { listen } from '@tauri-apps/api/event';
+	import { emitTo, listen } from '@tauri-apps/api/event';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import TopBar from '$lib/components/TopBar.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
-	import { ssot, startSsotStore } from '$lib/stores/ssot.svelte';
+	import { ssot, setModuleEnabledForSession, startSsotStore } from '$lib/stores/ssot.svelte';
 	import { startRunRecorder } from '$lib/run-recorder';
 	import { nav, viewToPath, type View } from '$lib/stores/navigation.svelte';
 	import {
@@ -22,6 +22,13 @@
 		TEMPLE_WINDOW_LABEL
 	} from '$lib/overlay/manager';
 	import { moduleOverlayDriver } from '$lib/overlay/module-lifecycle';
+	import {
+		widgetConfigEnd,
+		widgetConfigLive,
+		widgetConfigSessionsInit,
+		widgetConfigStart,
+		type WidgetConfigSessions
+	} from '$lib/overlay/widgets/widget-config-session';
 	import { MERC_OVERLAY_DEFAULTS, physicalGeometry } from '$lib/overlay/overlay-defaults';
 	import LabPage from '$lib/pages/LabPage.svelte';
 	import SettingsPage from '$lib/pages/SettingsPage.svelte';
@@ -579,11 +586,23 @@
 				// window built while PoE is not in the foreground would sit on
 				// the desktop until the next alt-tab. Failing this leaves a
 				// visible window, not a broken one — logged, not fatal.
-				try {
-					const status = await invoke<any>('get_status');
-					if (!status?.game_focused) await win.hide();
-				} catch (e) {
-					logTemple(`initial focus check failed, window left visible: ${e}`);
+				//
+				// SKIPPED while the user is arranging widgets (POE-226). A window
+				// built for a config session is built BECAUSE Settings asked for
+				// it, and the user is in Settings, so the game is never focused
+				// then — hiding here would race the `show()` that follows the
+				// build and leave the session on an invisible window about half
+				// the time. One owner for the decision: while a session is live,
+				// the config flow decides visibility, not this check.
+				if (widgetConfigLive(widgetConfigSessions, TEMPLE_WINDOW_LABEL)) {
+					logTemple('built during a widget-config session — leaving it visible');
+				} else {
+					try {
+						const status = await invoke<any>('get_status');
+						if (!status?.game_focused) await win.hide();
+					} catch (e) {
+						logTemple(`initial focus check failed, window left visible: ${e}`);
+					}
 				}
 				finish(true);
 			}).catch(e => {
@@ -635,6 +654,240 @@
 		// its own flag, because the gate is hiding and not securing.
 		templeOverlay.setDesired(enabled && templeGranted);
 	});
+
+	// --- Widget config mode (POE-226) ---
+	//
+	// Settings cannot open config mode itself: the three steps have to happen in
+	// one order (`docs/OVERLAY-GUIDE.md`, "Config-mode ordering contract") and
+	// the first of them is ensuring the module's WINDOW exists and is on screen,
+	// which is this file's job — it owns every overlay window's creation. So
+	// Settings emits `widget-config-start {module}` and the work happens here.
+	//
+	// What makes step 1 more than a `show()` is that a module-coupled overlay
+	// exists only while its module flag is on, and is hidden by the Rust focus
+	// poller whenever the game is not in front — which, while the user is
+	// looking at Settings, it never is. Both are forced for the session and
+	// undone on `widget-config-end`; `widget-config-session.ts` is the record of
+	// which, because the four shown x enabled combinations restore differently
+	// and getting it wrong is silent in both directions.
+
+	/**
+	 * The overlay window and module flag behind each module that has widgets. The
+	 * temple is the only one until the lab windows and the merc strip migrate
+	 * (POE-225 D1).
+	 *
+	 * Keyed by the WINDOW LABEL, because that is what a `WidgetSpec.module` is
+	 * and therefore what Settings sends. The module id is a separate value that
+	 * happens to spell the same word — the distinction `manager.ts` keeps, and
+	 * the reason it is stored rather than reused from the key.
+	 */
+	const WIDGET_CONFIG_TARGETS: Record<
+		string,
+		{ label: string; moduleId: string; built: () => boolean }
+	> = {
+		[TEMPLE_WINDOW_LABEL]: {
+			label: TEMPLE_WINDOW_LABEL,
+			moduleId: TEMPLE_MODULE_ID,
+			// The driver's own settled marker. The LABEL appearing is not the same
+			// thing: `getByLabel` answers the moment the constructor returns, while
+			// `tauri://created` is still running — and that handler ends by hiding
+			// the window when the game is not focused, which during a config
+			// session it never is. Waiting for `built()` is waiting for that
+			// handler to have finished.
+			built: () => templeOverlay.built()
+		}
+	};
+
+	/** What each live config session forced. Not a rune: nothing renders from it,
+	 *  and a reactive read would re-enter the effect that builds the window. */
+	let widgetConfigSessions: WidgetConfigSessions = widgetConfigSessionsInit();
+
+	/**
+	 * How long a force-enabled module gets to produce its window.
+	 *
+	 * Enabling the flag is what BUILDS the window: `setModuleEnabled` mutates the
+	 * SSOT rune synchronously, the effect above hands the driver its new desired
+	 * state, and the driver creates. That path is bounded by the driver's own
+	 * `CREATE_TIMEOUT_MS` (10 s) plus a retry, so waiting the same 10 s here
+	 * covers a first attempt that succeeds slowly without waiting out a window
+	 * that is never coming.
+	 */
+	const WIDGET_WINDOW_WAIT_MS = 10_000;
+	const WIDGET_WINDOW_POLL_MS = 150;
+
+	/** The starts currently in flight, by module. A second Configure press during
+	 *  the wait above would re-derive the session against a half-built world,
+	 *  fail, and abandon the FIRST press — disabling the module under it. */
+	const widgetConfigStarting = new Set<string>();
+
+	function logWidgetConfig(module: string, msg: string): void {
+		console.warn(`[widget-config] ${module}: ${msg}`);
+		invoke('app_log_from_frontend', { msg: `[widget-config] ${module}: ${msg}` })
+			.catch(e => console.error('[widget-config] app log unreachable:', e));
+	}
+
+	async function widgetConfigWindow(label: string): Promise<any | null> {
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		return await WebviewWindow.getByLabel(label).catch(e => {
+			logWidgetConfig(label, `window lookup failed: ${e}`);
+			return null;
+		});
+	}
+
+	/**
+	 * Wait for a module's window to be BUILT, not merely to exist.
+	 *
+	 * Polling rather than an event because the creation belongs to the driver,
+	 * which reports to itself; `built()` is the marker it settles, and the window
+	 * lookup is the second half because a create that failed leaves `built()`
+	 * false and a destroy leaves the label gone.
+	 */
+	async function waitForWidgetConfigWindow(
+		target: { label: string; built: () => boolean }
+	): Promise<any | null> {
+		const deadline = Date.now() + WIDGET_WINDOW_WAIT_MS;
+		for (;;) {
+			if (target.built()) {
+				const win = await widgetConfigWindow(target.label);
+				if (win) return win;
+			}
+			if (Date.now() >= deadline) return null;
+			await new Promise(r => setTimeout(r, WIDGET_WINDOW_POLL_MS));
+		}
+	}
+
+	async function startWidgetConfig(module: string): Promise<void> {
+		// The guard covers the whole function, the multi-second wait included: a
+		// second press then would re-derive against a half-built world, throw, and
+		// abandon the press that is still working. It is also what makes a
+		// duplicated listener (an HMR reload registers a second one; the layout
+		// never unmounts, so nothing removes the first) harmless.
+		if (widgetConfigStarting.has(module)) {
+			logWidgetConfig(module, 'a config session is already opening — ignoring the second press');
+			return;
+		}
+		widgetConfigStarting.add(module);
+		try {
+			await openWidgetConfig(module);
+		} finally {
+			widgetConfigStarting.delete(module);
+		}
+	}
+
+	async function openWidgetConfig(module: string): Promise<void> {
+		// "I have the request and I am working on it." Settings' opening deadline
+		// distinguishes a start that is merely SLOW — the window wait alone runs
+		// to 10 s — from one that nothing ever picked up, and only the second is
+		// safe to abandon: tearing the session down under a start still in flight
+		// would leave that start setting config mode on a window just torn down.
+		await getCurrentWebviewWindow()
+			.emit('widget-config-opening', { module })
+			.catch((e: any) => logWidgetConfig(module, `could not report the start to Settings: ${e}`));
+		const target = WIDGET_CONFIG_TARGETS[module];
+		if (!target) {
+			logWidgetConfig(module, 'no overlay window is registered for this module');
+			await abandonWidgetConfig(module);
+			return;
+		}
+		let win = await widgetConfigWindow(target.label);
+		const pre = {
+			shown: win ? await win.isVisible().catch(() => false) : false,
+			enabled: ssot.modules[target.moduleId] === true
+		};
+		const started = widgetConfigStart(widgetConfigSessions, module, pre);
+		// Recorded BEFORE the module flag moves, because `createTempleOverlay`
+		// reads it: a window built for this session must not run its
+		// not-focused-so-hide step.
+		widgetConfigSessions = started.sessions;
+		try {
+			if (started.actions.enableModule) {
+				// Through the session setter, never `setModuleEnabled`: this is a
+				// means to an end, not the user's preference, and persisting it
+				// leaves the module on at the next start if the app dies here. The
+				// rune is written synchronously either way, so the effect above
+				// asks the driver for the window now rather than a poll later.
+				await setModuleEnabledForSession(target.moduleId, true);
+			}
+			// Whenever there is no window yet — not only after an enable. A module
+			// that reads as on can still be mid-build (a restart, a retry after a
+			// failed create), and abandoning immediately would take the module down
+			// with it.
+			if (!win) win = await waitForWidgetConfigWindow(target);
+			if (!win) throw new Error(`the ${target.label} window did not appear`);
+			// Step 1: on screen. Unconditional rather than gated on
+			// `actions.showWindow`, because a window built during the wait ran its
+			// own focus check on the way up; on an already-visible window this is a
+			// no-op. The focus poller will not undo it — it acts on transitions,
+			// and Rust now also leaves a window in config mode alone.
+			await win.show();
+			// Step 2: the Rust flag BEFORE the event, so the mouse hook is already
+			// leaving the window alone — and so the host's catch-up query cannot
+			// answer false for a window created a moment ago.
+			await invoke('set_overlay_config_mode', { label: target.label, on: true });
+			// Step 3: webview-scoped, so a second module's host never hears it.
+			await emitTo(target.label, 'widget-config', { module, on: true });
+			// The acknowledgement Settings' deadline waits on. Without it, a
+			// listener that never registered (or a start that never ran) leaves the
+			// button on "Configuring…" with nothing ever answering.
+			await getCurrentWebviewWindow()
+				.emit('widget-config-open', { module })
+				.catch((e: any) => logWidgetConfig(module, `could not confirm config mode to Settings: ${e}`));
+		} catch (e) {
+			// Settings is sitting on "Configuring...", and nothing else will
+			// answer it: the host that emits `widget-config-end` is in the window
+			// that failed to open.
+			logWidgetConfig(module, `could not open config mode: ${e}`);
+			await abandonWidgetConfig(module);
+		}
+	}
+
+	async function endWidgetConfig(module: string): Promise<void> {
+		const target = WIDGET_CONFIG_TARGETS[module];
+		// The state of the world NOW, not when the session opened: if the game is
+		// back in front, the poller has already shown this window and wants it
+		// shown, and hiding it would cost the player their overlay until two more
+		// focus transitions. A status read that fails is treated as "not focused",
+		// which restores the pre-session state — the conservative answer, since the
+		// session only ever forced a show when the game was NOT focused.
+		const status = await invoke<any>('get_status').catch((e: any) => {
+			logWidgetConfig(module, `could not read game focus, assuming unfocused: ${e}`);
+			return null;
+		});
+		const ended = widgetConfigEnd(widgetConfigSessions, module, status?.game_focused === true);
+		widgetConfigSessions = ended.sessions;
+		if (!target) return;
+		if (ended.actions.hideWindow) {
+			const win = await widgetConfigWindow(target.label);
+			if (win) await win.hide().catch((e: any) => logWidgetConfig(module, `hide failed: ${e}`));
+		}
+		if (ended.actions.disableModule) await setModuleEnabledForSession(target.moduleId, false);
+	}
+
+	/** Undo the session and tell Settings, for a start that never got as far as a
+	 *  host. The echo the emit produces on our own listener is a no-op — the
+	 *  session is already closed by then. */
+	async function abandonWidgetConfig(module: string): Promise<void> {
+		await endWidgetConfig(module);
+		await getCurrentWebviewWindow()
+			.emit('widget-config-end', { module })
+			.catch((e: any) => logWidgetConfig(module, `could not report the failure to Settings: ${e}`));
+	}
+
+	// Registered at init with no cleanup, like every other listener in this file:
+	// the desktop layout never unmounts. Under `npm run dev` an HMR reload DOES
+	// leave the previous registration behind, so both handlers have to survive
+	// being called twice for one event — `startWidgetConfig`'s in-flight guard
+	// drops the duplicate, and `endWidgetConfig` finds no session the second time
+	// and does nothing.
+	listen<{ module?: string }>('widget-config-start', (event) => {
+		const module = event.payload?.module;
+		if (module) void startWidgetConfig(module);
+	}).catch(e => console.warn('[widget-config] listen for start failed:', e));
+
+	listen<{ module?: string }>('widget-config-end', (event) => {
+		const module = event.payload?.module;
+		if (module) void endWidgetConfig(module);
+	}).catch(e => console.warn('[widget-config] listen for end failed:', e));
 
 	// --- Merc verdict overlay (POE-199) ---
 	//

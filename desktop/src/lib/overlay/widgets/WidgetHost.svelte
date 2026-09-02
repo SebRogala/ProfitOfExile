@@ -142,6 +142,34 @@
 		loadStored();
 	});
 
+	/**
+	 * Re-read the map when Rust says it changed (POE-226).
+	 *
+	 * Settings' Show checkbox writes through `set_widget_geometry`, and without
+	 * this the widget it switched off stayed on screen until the overlay was next
+	 * rebuilt — a checkbox that looked like it had done nothing.
+	 *
+	 * IGNORED IN CONFIG MODE. The draft rectangles are what the user is dragging,
+	 * and `loadStored` replacing `stored` under a Save-in-progress would race the
+	 * commit that Save is making one widget at a time. Nothing writes the map
+	 * from outside a config session anyway except Settings, which does not offer
+	 * the checkbox and the arranging window at once.
+	 *
+	 * Window-scoped, because Rust sends this with `emit_to(module)`.
+	 */
+	$effect(() => {
+		const pending = getCurrentWebviewWindow().listen<{ module: string }>(
+			'widget-geometry-changed',
+			(event) => {
+				if (event.payload.module !== module || configMode) return;
+				void loadStored();
+			}
+		);
+		return () => {
+			pending.then((unlisten) => unlisten()).catch((e) => log(`unlisten failed: ${e}`));
+		};
+	});
+
 	/** The host's own box in CSS px — the bounds a drag is clamped to. */
 	let host = $state<HostSize>({ width: 0, height: 0 });
 	$effect(() => {

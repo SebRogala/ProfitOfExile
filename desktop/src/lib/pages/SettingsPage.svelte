@@ -1,14 +1,18 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { checkForUpdate } from '$lib/updater/check';
 	import { relaunch } from '@tauri-apps/plugin-process';
 	import { store } from '$lib/stores/status.svelte';
-	import { hasFeature, MERC_FEATURE } from '$lib/stores/entitlements.svelte';
+	import { hasFeature, MERC_FEATURE, TEMPLE_FEATURE } from '$lib/stores/entitlements.svelte';
 	import { ssot, fetchSsot } from '$lib/stores/ssot.svelte';
 	import { screenGeometryView } from '$lib/geometry/view';
 	import { MERC_OVERLAY_DEFAULTS, physicalGeometry } from '$lib/overlay/overlay-defaults';
+	import { overlayGroups, widgetGeometryText } from '$lib/overlay/widgets/overlay-groups';
+	import type { WidgetGeometry } from '$lib/overlay/widgets/widget-geometry';
+	import type { WidgetSpec } from '$lib/overlay/widgets/widget-registry';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
@@ -403,21 +407,265 @@
 	};
 
 	/**
-	 * The Overlay Positions rows, in display order.
+	 * The Overlay Positions groups, in display order (POE-226).
 	 *
-	 * The merc strip's row belongs to the merc MODULE, and a device without the
-	 * `merc` feature never sees that module (POE-203) — a control that places an
-	 * overlay it can never open is a dead row, so it is left out entirely rather
-	 * than disabled. `$derived`, not a constant: the entitlement answer lands
-	 * after this page is already mounted.
+	 * Lab / Merc / Temple, with the five per-window rows unchanged under the
+	 * first two and the temple's WIDGETS under the third. A group whose feature
+	 * this device lacks is left out entirely rather than disabled — a control
+	 * that places an overlay the user can never open is a dead row (POE-203) —
+	 * and which groups those are is decided in `$lib/overlay/widgets/overlay-groups`.
+	 *
+	 * `$derived`, not a constant: the entitlement answer lands after this page is
+	 * already mounted.
 	 */
-	const overlayRows = $derived([
-		{ name: 'comparator', label: 'Gems Compare' },
-		{ name: 'compass', label: 'Lab Compass' },
-		{ name: 'pathstrip', label: 'Lab Map' },
-		{ name: 'timer', label: 'Lab Timer' },
-		...(hasFeature(MERC_FEATURE) ? [{ name: 'mercenary', label: 'Merc Verdict' }] : [])
-	]);
+	const overlayGroupRows = $derived(
+		overlayGroups({ merc: hasFeature(MERC_FEATURE), temple: hasFeature(TEMPLE_FEATURE) })
+	);
+
+	/** The modules with widget rows on this page. Read inside handlers as well
+	 *  as the load effect, so it is a plain derived rather than a local. */
+	const widgetModules = $derived(
+		overlayGroupRows
+			.map((group) => group.configureModule)
+			.filter((module): module is string => module !== null)
+	);
+
+	/** The persisted widget placements, by widget id. A widget with no entry has
+	 *  never been placed and draws where the registry ships it. */
+	let widgetGeometries = $state<Record<string, WidgetGeometry>>({});
+
+	/** The module whose widgets are being arranged in its own overlay window
+	 *  right now, or null. Set when Configure is pressed, cleared by the host's
+	 *  `widget-config-end`. */
+	let widgetConfiguring = $state<string | null>(null);
+
+	/**
+	 * The scale factor of the monitor the widget overlay lives on.
+	 *
+	 * The PRIMARY monitor's, not this window's: a widget overlay is built at
+	 * `primaryMonitor()`'s position and size (`routes/(app)/+layout.svelte`), so
+	 * that is the display a widget's physical coordinates are measured against.
+	 * Reading this window's factor instead would be wrong by the ratio between
+	 * the two whenever the main window sits on a second display with different
+	 * scaling — and silently, since it agrees on a single-monitor machine.
+	 * `currentMonitor()` is the fallback for the same reason the layout uses it.
+	 *
+	 * Zero until it answers, and the Show toggle declines while it is: creating a
+	 * placement row means converting the registry's CSS defaults to the physical
+	 * pixels Rust stores, and doing that at zero would write the widget to the
+	 * origin.
+	 */
+	let widgetScaleFactor = $state(0);
+	$effect(() => {
+		(async () => {
+			const { currentMonitor, primaryMonitor } = await import('@tauri-apps/api/window');
+			const monitor =
+				(await primaryMonitor().catch(() => null)) ?? (await currentMonitor().catch(() => null));
+			if (monitor && monitor.scaleFactor > 0) widgetScaleFactor = monitor.scaleFactor;
+			else console.warn('[settings] no monitor scale factor — Show cannot place a widget yet');
+		})().catch((e: any) => console.warn('[settings] monitor lookup failed:', e));
+	});
+
+	/**
+	 * Re-read one or more modules' placements.
+	 *
+	 * Per module rather than wholesale, because `widget-config-end` names one:
+	 * the ids of the module being refreshed are dropped and replaced with what
+	 * Rust answers, and every other module's rows are left as they were. The
+	 * `"<module>."` prefix is the same rule Rust's `widgets_for_module` uses, and
+	 * `widget-registry.test.ts` pins that an id's halves agree with its module.
+	 *
+	 * The previous map is read through `untrack`: this runs from an effect, and a
+	 * tracked read of the state it writes would re-run itself forever.
+	 */
+	async function loadWidgetGeometries(modules: string[]): Promise<void> {
+		for (const module of modules) {
+			try {
+				const rows = await invoke<{ id: string; geometry: WidgetGeometry }[]>(
+					'get_widget_geometries',
+					{ module }
+				);
+				const next: Record<string, WidgetGeometry> = {};
+				for (const [id, geometry] of Object.entries(untrack(() => widgetGeometries))) {
+					if (!id.startsWith(`${module}.`)) next[id] = geometry;
+				}
+				for (const row of rows) next[row.id] = row.geometry;
+				widgetGeometries = next;
+			} catch (e) {
+				// The rows fall back to "Not set", which is what a widget with no
+				// placement genuinely shows — hence the log: otherwise a dead IPC
+				// reads as a user who never configured anything.
+				console.warn(`[settings] could not read the ${module} widget placements:`, e);
+			}
+		}
+	}
+
+	$effect(() => {
+		const modules = widgetModules;
+		if (modules.length > 0) loadWidgetGeometries(modules);
+	});
+
+	/**
+	 * Show or hide one widget, preserving everything else about its placement.
+	 *
+	 * A widget with no stored row gets one written from the registry's shipped
+	 * defaults, converted to physical pixels — and with a ZERO size, because that
+	 * is what the host reads back as "let the content decide" (`placementFor`).
+	 * Writing a measured size here would pin a widget the user never resized.
+	 *
+	 * The rune is updated first so the checkbox does not lag the click, and a
+	 * rejected write is undone by re-reading rather than by guessing what Rust
+	 * kept.
+	 */
+	async function setWidgetVisible(spec: WidgetSpec, visible: boolean): Promise<void> {
+		const current = widgetGeometries[spec.id];
+		let geometry: WidgetGeometry;
+		if (current) {
+			geometry = { ...current, visible };
+		} else {
+			if (widgetScaleFactor === 0) {
+				console.warn(`[settings] no scale factor yet — not placing ${spec.id}`);
+				return;
+			}
+			const at = physicalGeometry(spec.defaults, widgetScaleFactor);
+			geometry = { x: at.x, y: at.y, width: 0, height: 0, visible };
+		}
+		widgetGeometries = { ...widgetGeometries, [spec.id]: geometry };
+		try {
+			await invoke('set_widget_geometry', { id: spec.id, geometry });
+		} catch (e) {
+			console.warn(`[settings] could not save the ${spec.id} visibility:`, e);
+			await loadWidgetGeometries([spec.module]);
+		}
+	}
+
+	/**
+	 * Ask the layout to open config mode on a module's overlay window.
+	 *
+	 * Settings owns none of the three ordering steps itself
+	 * (`docs/OVERLAY-GUIDE.md`, "Config-mode ordering contract") — the layout
+	 * does, because it is the file that builds and owns that window. This emits
+	 * the request and then waits for `widget-config-end`, which the HOST sends
+	 * after Save or Cancel and the layout sends if it could not open the window
+	 * at all.
+	 *
+	 * Pressing it again while a session is live is deliberate, not a bug to
+	 * guard: it is the user's way out of a window that somehow missed the event,
+	 * and both entering config mode and this request are idempotent.
+	 */
+	/**
+	 * How long the button waits for the layout to say config mode is OPEN.
+	 *
+	 * Not a limit on the arranging session — that ends when the user presses Save
+	 * or Cancel, however long they take. This bounds the OPENING only, and it has
+	 * to sit above the layout's own bound on the same work: it waits up to 10 s
+	 * for the window to be built and then makes three more IPC calls, and every
+	 * failure it can see it already reports as `widget-config-end`. What is left
+	 * for this timer is the failure the layout cannot report — its listener never
+	 * registered, or the emit never arrived — which is exactly the case where
+	 * nothing else will ever clear the button.
+	 */
+	const WIDGET_CONFIG_ACK_MS = 20_000;
+	let widgetConfigAckTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Whether the layout has said it PICKED THE REQUEST UP (`widget-config-opening`)
+	 *  since this button was pressed. */
+	let widgetConfigPickedUp = false;
+
+	function clearWidgetConfigAck(): void {
+		if (widgetConfigAckTimer === null) return;
+		clearTimeout(widgetConfigAckTimer);
+		widgetConfigAckTimer = null;
+	}
+
+	/**
+	 * Arm the opening deadline.
+	 *
+	 * On expiry there are two different situations and only one of them may be
+	 * abandoned. If the layout never said it picked the request up, nothing is
+	 * running and nothing else will ever clear the button — end it. If it DID,
+	 * a start is still in flight (a hung IPC inside a 10 s window wait, say),
+	 * and tearing the session down now would leave that start setting config
+	 * mode on a window this very path had torn down. So the deadline is given
+	 * one more period, once, and the pick-up is forgotten so the second expiry
+	 * ends it either way.
+	 */
+	function armWidgetConfigAck(module: string): void {
+		clearWidgetConfigAck();
+		widgetConfigAckTimer = setTimeout(() => {
+			widgetConfigAckTimer = null;
+			if (widgetConfiguring !== module) return;
+			if (widgetConfigPickedUp) {
+				widgetConfigPickedUp = false;
+				console.warn(`[settings] ${module} config mode is slow to open — waiting once more`);
+				armWidgetConfigAck(module);
+				return;
+			}
+			console.warn(`[settings] no answer to widget config mode for ${module} — giving up`);
+			widgetConfiguring = null;
+			// Told, not just forgotten: if the layout DID force the module on and
+			// then went quiet, this is what gets it switched back off.
+			getCurrentWebviewWindow().emit('widget-config-end', { module }).catch(() => {});
+		}, WIDGET_CONFIG_ACK_MS);
+	}
+
+	async function configureWidgets(module: string): Promise<void> {
+		widgetConfiguring = module;
+		widgetConfigPickedUp = false;
+		armWidgetConfigAck(module);
+		try {
+			await getCurrentWebviewWindow().emit('widget-config-start', { module });
+		} catch (e) {
+			// Nothing is going to answer, so the button must not sit on
+			// "Configuring…" forever.
+			console.warn('[settings] could not ask for widget config mode:', e);
+			clearWidgetConfigAck();
+			widgetConfiguring = null;
+		}
+	}
+
+	$effect(() => {
+		// The layout has the request. It does not mean config mode is open — that
+		// is `widget-config-open` below — only that abandoning it now would be
+		// abandoning work in progress.
+		const picked = listen<{ module?: string }>('widget-config-opening', (event) => {
+			if (event.payload?.module === widgetConfiguring) widgetConfigPickedUp = true;
+		});
+		return () => {
+			picked.then((unlisten) => unlisten()).catch(() => {});
+		};
+	});
+
+	$effect(() => {
+		// The layout's acknowledgement that the window is interactive and the host
+		// has been told. The button stays on "Configuring…" — that state is now
+		// true rather than hopeful — and only the deadline is stood down.
+		const opened = listen<{ module?: string }>('widget-config-open', (event) => {
+			if (event.payload?.module !== widgetConfiguring) return;
+			clearWidgetConfigAck();
+			widgetConfigPickedUp = false;
+		});
+		return () => {
+			opened.then((unlisten) => unlisten()).catch(() => {});
+		};
+	});
+
+	$effect(() => {
+		const pending = listen<{ module?: string }>('widget-config-end', (event) => {
+			const module = event.payload?.module;
+			if (!module) return;
+			if (widgetConfiguring === module) {
+				widgetConfiguring = null;
+				clearWidgetConfigAck();
+				widgetConfigPickedUp = false;
+			}
+			// Save wrote through `set_widget_geometry` in the overlay window, and
+			// Cancel may have restored a map this page has a stale copy of.
+			loadWidgetGeometries([module]);
+		});
+		return () => {
+			pending.then((unlisten) => unlisten()).catch(() => {});
+		};
+	});
 
 	// Per-overlay state
 	let overlaySettings = $state<Record<string, { x: number; y: number; width: number; height: number } | null>>({
@@ -768,19 +1016,59 @@
 		<section>
 			<h2>Overlay Positions</h2>
 
-			{#each overlayRows as cfg (cfg.name)}
-				<div class="setting-row">
-					<span class="setting-label">{cfg.label}</span>
-					{#if positionOverlays[cfg.name]}
-						<span class="setting-value">Drag overlay to position...</span>
-						<Button variant="save" onclick={() => savePositionOverlay(cfg.name)}>Save</Button>
-						<Button onclick={() => cancelPositionOverlay(cfg.name)}>Cancel</Button>
-					{:else}
-						{@const s = overlaySettings[cfg.name]}
-						<span class="setting-value mono">{s ? `(${s.x}, ${s.y}) ${s.width}\u00d7${s.height}` : 'Not set'}</span>
-						<Button onclick={() => showPositionOverlay(cfg.name)} disabled={!!overlayVisible}>Configure</Button>
-					{/if}
-				</div>
+			{#each overlayGroupRows as group (group.id)}
+				<h3 class="group-heading">{group.heading}</h3>
+
+				{#each group.windows as cfg (cfg.name)}
+					<div class="setting-row">
+						<span class="setting-label">{cfg.label}</span>
+						{#if positionOverlays[cfg.name]}
+							<span class="setting-value">Drag overlay to position...</span>
+							<Button variant="save" onclick={() => savePositionOverlay(cfg.name)}>Save</Button>
+							<Button onclick={() => cancelPositionOverlay(cfg.name)}>Cancel</Button>
+						{:else}
+							{@const s = overlaySettings[cfg.name]}
+							<span class="setting-value mono">{s ? `(${s.x}, ${s.y}) ${s.width}\u00d7${s.height}` : 'Not set'}</span>
+							<Button onclick={() => showPositionOverlay(cfg.name)} disabled={!!overlayVisible}>Configure</Button>
+						{/if}
+					</div>
+				{/each}
+
+				{#each group.widgets as widget (widget.id)}
+					<div class="setting-row">
+						<span class="setting-label">{widget.label}</span>
+						<span class="widget-show">
+							Show
+							<Toggle
+								checked={widgetGeometries[widget.id]?.visible ?? true}
+								onchange={(next) => setWidgetVisible(widget, next)}
+							/>
+						</span>
+						<span class="setting-value mono">{widgetGeometryText(widgetGeometries[widget.id])}</span>
+					</div>
+				{/each}
+
+				{#if group.configureModule}
+					{@const module = group.configureModule}
+					<div class="setting-row">
+						<span class="setting-label"></span>
+						<span class="setting-value">
+							{widgetConfiguring === module ? 'Save or Cancel in the overlay' : ''}
+						</span>
+						<Button onclick={() => configureWidgets(module)}>
+							{widgetConfiguring === module ? 'Configuring\u2026' : 'Configure widgets'}
+						</Button>
+					</div>
+					<!-- Said out loud because it is a side effect on a switch the user
+					     owns elsewhere: arranging widgets needs the module's window,
+					     the window exists only while the module is on, and a module
+					     that turned itself on with no explanation is indistinguishable
+					     from a bug. The change is not written to disk either way. -->
+					<p class="setting-note">
+						Turns {group.heading} on while you arrange, if it is off — restored when you
+						Save or Cancel in the overlay.
+					</p>
+				{/if}
 			{/each}
 		</section>
 
@@ -940,6 +1228,31 @@
 		text-transform: uppercase;
 		color: var(--text-muted);
 		margin-bottom: 0.75rem;
+	}
+
+	/* A group inside Overlay Positions (POE-226). Quieter than the section's own
+	   h2 — it separates rows that already share a heading, it does not compete
+	   with it. It also BREAKS the `.setting-row + .setting-row` rule below, which
+	   is what stops a top border being drawn between two groups. */
+	.group-heading {
+		font-size: 0.7rem;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: var(--text-muted);
+		margin: 0.75rem 0 0.15rem;
+	}
+
+	.group-heading:first-of-type {
+		margin-top: 0;
+	}
+
+	.widget-show {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		flex-shrink: 0;
+		font-size: 0.75rem;
+		color: var(--text-muted);
 	}
 
 

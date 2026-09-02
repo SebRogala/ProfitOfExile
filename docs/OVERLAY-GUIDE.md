@@ -196,6 +196,13 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   mode then would be genuinely interactive with no Save and no Cancel on it. In
   config mode a widget with no content draws a placeholder carrying its name, so
   an empty frame is still identifiable and still draggable.
+- **A placement written from outside the window is announced.**
+  `set_widget_geometry` emits `widget-geometry-changed {module}` with
+  `emit_to(module)`, and the host re-reads its map on it — outside config mode
+  only, where the draft rectangles are the truth and a Save is committing one
+  widget at a time. Settings' Show checkbox is the writer this exists for:
+  without the notice, a widget switched off stayed on screen until the overlay
+  was next rebuilt, and the checkbox looked like it had done nothing.
 - A widget is CONTENT-SIZED until the user drags an edge: Save persists
   `width`/`height` of `0` unless that widget was resized in this config session
   or already had a non-zero stored size, and `placementFor` reads a zero size
@@ -208,16 +215,67 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
 ### Config-mode ordering contract
 
 Config mode is IN-WINDOW, not a `/overlay?sync=` copy, and the order the three
-steps happen in is what makes it recoverable. Settings (WI-C) does, in this
-order:
+steps happen in is what makes it recoverable. Settings asks for it — it emits
+`widget-config-start {module}` and nothing else — and `routes/(app)/+layout.svelte`
+does the steps, because that is the file that owns every overlay window's
+creation. In this order:
 
 1. Ensure the module's window EXISTS and is SHOWN — creating it force-shown if
    the module is off or the game is not focused, the `set_debug_mode` path for
    one label. A window that is not on screen cannot be arranged, and one that
-   does not exist has nothing to receive the event.
+   does not exist has nothing to receive the event. "Creating it" is switching
+   the MODULE FLAG on and waiting for the label: a module-coupled overlay is
+   built by `module-lifecycle.ts`'s driver off that flag, so a second creator
+   here would be two builders racing for one label.
 2. `set_overlay_config_mode(label, true)` — the Rust flag first, so the mouse
    hook is already leaving the window alone before it becomes interactive.
 3. Emit `widget-config {module, on: true}`, **webview-scoped** to that label.
+
+Whatever step 1 forced — the flag, the visibility, or both — is RECORDED and
+undone when the session ends, and the four shown × enabled combinations each
+restore differently (`$lib/overlay/widgets/widget-config-session.ts`). Both
+wrong answers are silent: disabling a module the user had on takes their
+overlay away with no toggle touched, and leaving one on that this flow enabled
+runs a screen-capture loop they never asked for. Two qualifiers on the restore:
+the module flag is forced through the NON-PERSISTING command
+(`set_module_enabled_transient`), because a session decision written to disk
+survives a crash as a module the user never enabled — and "non-persisting" is a
+property of the PROJECTION, not of who calls save: the owner map holds the
+effective state, so `AppState.transient_modules` records the forced id's
+pre-session value and `modules::persisted_view` substitutes it before
+`from_state` writes, or the next save by anything at all (a widget Save, a
+temple command persisting calibration) would make the force permanent; and the
+hide is vetoed
+when the game is focused by the time the session ends, because the poller has
+already shown that window and wants it shown — restoring "hidden" is a restore
+only while the reason for hiding still holds.
+
+A start that never reaches a host — no window appeared, or the command failed —
+restores the same way and emits `widget-config-end` itself, or Settings sits on
+`Configuring…` waiting for a window that does not exist. A start emits
+`widget-config-opening {module}` when it picks the request up and
+`widget-config-open {module}` when config mode is actually on; the first buys
+Settings' opening deadline one more period, the second stands it down. That
+deadline bounds the OPENING only and never the arranging session, which ends
+when the user presses Save or Cancel however long they take — and it must not
+abandon a start still in flight, which would set config mode on a window it had
+just torn down.
+Waiting for a window means waiting for the driver's `built()` marker, not for
+`getByLabel` to answer: the label exists the moment the constructor returns,
+while `tauri://created` — and the self-hide at the end of it — is still running.
+
+Three things then have to leave that window alone while it is being arranged,
+and each of them used to hide it or re-arm click-through underneath the user:
+the mouse hook (`config_mode` in the registry), the RUST FOCUS POLLER — whose
+hide branch now consults `overlay_hook::config_mode(label)` as well as debug
+mode, because it acts on TRANSITIONS and one `Other` window taking the
+foreground mid-session would hide the window for good — and the window's own
+creation path, which ends by hiding itself when the game is not focused and
+must skip that when it was built FOR a config session (the user is in Settings,
+so the game is never focused then). `get_overlay_config_mode` is hard-false off
+Windows: the flag lives in the mouse-hook registry, which is a Windows
+structure, so a Linux dev build never enters config mode through the catch-up
+path and only the event drives it there.
 
 The host ALSO queries `get_overlay_config_mode(label)` once on mount, chained
 onto its `widget-config` listener so the listener is registered FIRST — `listen`
@@ -237,8 +295,9 @@ rejected — and Cancel re-reads the persisted map rather than restoring a
 snapshot taken on the way in (config mode can begin before the first read has
 answered, and restoring an empty snapshot would wipe every placement). Both then
 call `set_overlay_config_mode(label, false)` and emit
-`widget-config-end {module}`, which is what Settings restores the window's
-previous shown/hidden state on. The five per-window config flows above are
+`widget-config-end {module}` — which is what the layout restores the window and
+the module flag on, and what Settings clears its `Configuring…` button and
+re-reads the placements on. The five per-window config flows above are
 untouched.
 
 ## Current data and lifecycle behavior
