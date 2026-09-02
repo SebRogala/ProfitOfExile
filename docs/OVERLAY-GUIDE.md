@@ -83,7 +83,8 @@ rectangle rather than a band measured from the edge.
 The hook pairs button-up with button-down: it consumes a release only when it
 consumed the matching press, so a drag that started on the game keeps its
 release. Two overlapping windows are resolved by **the most recently shown
-one** (POE-239): the hook cannot see z-order, so it uses the two show signals
+one** (POE-239) **(merged, not yet run on Windows — the POE-239 smoke bullet is
+the acceptance)**: the hook cannot see z-order, so it uses the two show signals
 Rust does receive — the window's registration, and the EDGE from empty to
 drawing in `set_overlay_has_content(label, true)` — and the later of the two
 wins. Only the false→true edge counts, never a repeat of `true`: the widget
@@ -128,7 +129,7 @@ the one thing that raises such a window without any module work running. They
 still appear in the Rust focus poller's game-focus show/hide list and in
 `set_debug_mode`'s force-show branch. Persisted geometry is independent of the
 coupling: the merc strip has `mercenary_overlay`, and the temple window has
-none because it IS the primary monitor (below).
+none because it IS the game monitor (below).
 
 The merc strip's **on-screen lifecycle** (owner decision, 2026-09-01) is: shown
 for as long as a recruit window is being worked — `scanning` (the burst after
@@ -270,13 +271,18 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   NOT in `RESIZABLE_OVERLAY_LABELS`: `fit_overlay_height` would shrink the canvas
   every widget's persisted coordinate is measured against. When the game moves to
   another display Rust emits `game-monitor-changed` to the main window and the
-  layout REBUILDS the window there through the driver's own off/on — guard 4's
+  layout REBUILDS the window there through the driver's own off/on **(merged, not
+  yet run on Windows — smoke item 10 is the acceptance)** — guard 4's
   "move, not recreate" is about repositioning within one display, and a different
   display is a different canvas: different size, different scale factor,
   different coordinate space for every widget in it. Two cases do NOT rebuild.
   A notice naming the display the window was already BUILT on only teaches it
-  the id (a window built before anything had seen the game window records id
-  `0`), so the layout records the id and stops. And a live widget-config session
+  the id, so the layout records the id and stops. The recorded id is the display
+  the window WENT ON, not the one Rust named: a build that fell back to the
+  primary — nothing had seen the game window yet, or the webview could not list
+  the display Rust named — records `0`, because recording the game's id there
+  would make the next notice's id guard return early and strand the overlay on
+  the wrong screen. And a live widget-config session
   DEFERS the rebuild to its end: a rebuild is a destroy, and that window is the
   surface the user is dragging widgets on — taking it down mid-session drops
   them into a window that no longer exists and leaves Settings on
@@ -739,6 +745,17 @@ touching the named path.
   the next alt-tab` line, and OCR keeps running off the primary. Only the one
   line — a repeat every tick means the stored display is not being cleared —
   and the next alt-tab into the game logs a fresh `game is on monitor` line.
+- **Two overlapping overlays, which one takes the click** (POE-239): raise two
+  registered overlay windows whose hot rects overlap — the temple widget window
+  is the whole game monitor, so any other overlay drawing a hot rect over it
+  qualifies (the comparator, the merc strip). `app.log` must carry one `overlay
+  hot rects overlap:` line per pair per registration. Click inside the overlap:
+  the window shown MOST RECENTLY must take it. Bring the older one back — toggle
+  it off and on, or let it go from empty to drawing — and the same click must
+  switch to it. The inverse matters as much: with both up and neither
+  re-shown, let the comparator take a price tick (it re-asserts
+  `set_overlay_has_content(label, true)` with no emptiness flip) and the click
+  must NOT move to it, because only the false→true EDGE restamps `shown_seq`.
 - **Hook re-install after a silent removal** (POE-238, item 9 of the POE-223
   smoke list): with the comparator open on a gem, make Windows drop the
   `WH_MOUSE_LL` hook — hold a debugger pause of at least 1 s on the app, or
@@ -767,7 +784,14 @@ touching the named path.
   POE-223 smoke list): with the temple module on and the game focused, stand in
   a map with no incursion running. The Temple page's status must read **on,
   waiting for Alva** and `app.log` must carry ONE `Temple: capture stood down`
-  line — one, not one a second. Then start an incursion: the log gets
+  line — one, not one a second. **TWO lines right after a module off→on toggle
+  are expected**, not a defect: the disarmed half of `gate_announcement` is
+  re-asserted whenever a foreign status write has moved the status off
+  `Waiting`, and the POE-171 finding-15 race is exactly that — a retiring loop's
+  `Stopping → Idle` publish landing after the new loop's `Waiting`. The second
+  line is the correction. What the check is actually looking for is a line per
+  SECOND, which means the gate is not latching at all. Then start an incursion:
+  the log gets
   `Temple: capture armed by Alva` (exactly one line — the capture loop owns the
   arm/disarm line, the Client.txt trigger writes state and says nothing), the
   status returns to `idle`, and opening the layout panel reads the board as

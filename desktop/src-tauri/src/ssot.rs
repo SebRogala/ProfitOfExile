@@ -2155,6 +2155,38 @@ mod tests {
         assert!(!slot.expect("the new screen is stored").verified_this_session);
     }
 
+    /// The startup path a persisted scale actually takes (WI-B2): the seed
+    /// fills an empty slot unverified — a file read looked at nothing this run
+    /// — and the session's first gold-frame fit of the SAME screen is what
+    /// makes the claim honest. The scales agree to within [`UI_SCALE_EPS`], so
+    /// nothing but the CUE has changed, and that is the point: `accepts` takes
+    /// `MercFrame` over anything standing, unconditionally. A rule that kept
+    /// the seed because the numbers already agreed would leave the Settings
+    /// card saying "remembered, unconfirmed" for the rest of a session that
+    /// has since confirmed it.
+    #[test]
+    fn a_remembered_seed_starts_unverified_and_a_matching_frame_measurement_verifies_it() {
+        let mut slot = None;
+        record_screen(&mut slot, measured_by(ScreenScaleSource::Remembered, 1.0));
+        assert!(
+            !slot.expect("the seed filled the empty slot").verified_this_session,
+            "the arrangement this test needs: the seed is in the slot, unverified",
+        );
+
+        let frame = ScreenSlice {
+            measured_at_ms: reference_screen().measured_at_ms + 5_000,
+            ..measured_by(ScreenScaleSource::MercFrame, 1.0 + UI_SCALE_EPS / 2.0)
+        };
+        record_screen(&mut slot, frame);
+
+        let standing = slot.expect("the frame measurement replaced the seed");
+        assert!(
+            standing.verified_this_session,
+            "the frame fit looked at the screen, so the slot says so",
+        );
+        assert_eq!(standing.source, ScreenScaleSource::MercFrame);
+    }
+
     /// Dragging the game to a second monitor of the same resolution changes
     /// nothing the other three terms compare — same size, same cue, same scale
     /// — so without the display in the discrete list the move would never wake

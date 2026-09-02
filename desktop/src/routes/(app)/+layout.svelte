@@ -609,7 +609,12 @@
 			logTemple('no monitor to build the overlay on — not creating it');
 			return false;
 		}
-		if (game && (monitor.position.x !== game.x || monitor.position.y !== game.y)) {
+		// Did the corner match actually land on the game's display, or did
+		// `chooseMonitor` fall back to the primary? Both the log below and the
+		// id recorded for the rebuild guard turn on this one answer.
+		const onGameMonitor =
+			!!game && monitor.position.x === game.x && monitor.position.y === game.y;
+		if (game && !onGameMonitor) {
 			// A real disagreement between the two enumerations, worth saying out
 			// loud: Rust placed the game window on a display this webview does
 			// not list, so the overlay is going on the primary and the widgets
@@ -618,12 +623,17 @@
 				`the game is on a monitor at ${game.x},${game.y} that this window cannot see — building on the primary`
 			);
 		}
-		// What a `game-monitor-changed` is compared against: the id Rust gave, and
-		// the corner of the display this window is actually going on — which are
-		// the SAME display only when the match above succeeded. `0` is "not built
-		// on a known display"; the corner is what stops that case from rebuilding
-		// a window that is already where the notice says the game is.
-		templeMonitorId = game?.id ?? 0;
+		// What a `game-monitor-changed` is compared against: the id of the display
+		// this window was ACTUALLY built on, and that display's corner. `0` is
+		// "not built on a known display" — recorded whenever the build fell back
+		// to the primary, either because nothing had seen PoE yet or because the
+		// webview could not list the display Rust named. Recording the game's id
+		// there would be a lie the guard believes: the very next notice carries
+		// that same id, the `id === templeMonitorId` line returns early, and the
+		// overlay is left on the wrong screen for the rest of the session. With
+		// `0` the notice falls through to the corner comparison, which rebuilds
+		// (corners differ) or just learns the id (the window is already there).
+		templeMonitorId = onGameMonitor ? game.id : 0;
 		templeMonitorAt = { x: monitor.position.x, y: monitor.position.y };
 		// Constructor dimensions are LOGICAL; a monitor reports PHYSICAL.
 		const sf = monitor.scaleFactor > 0 ? monitor.scaleFactor : 1;

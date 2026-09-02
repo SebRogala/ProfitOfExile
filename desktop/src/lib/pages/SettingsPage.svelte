@@ -473,27 +473,56 @@
 	 * placement row means converting the registry's CSS defaults to the physical
 	 * pixels Rust stores, and doing that at zero would write the widget to the
 	 * origin.
+	 *
+	 * RE-RESOLVED on `game-monitor-changed`, not read once at mount: the answer
+	 * is a property of whichever display the game is on, and the player moving
+	 * PoE to a screen with different scaling changes it. Holding the mount-time
+	 * factor would place every widget Show creates from then on by the old
+	 * display's ratio, into a canvas the layout has already rebuilt on the new
+	 * one.
 	 */
 	let widgetScaleFactor = $state(0);
+
+	async function resolveWidgetScaleFactor(): Promise<void> {
+		const { availableMonitors, currentMonitor, primaryMonitor } = await import(
+			'@tauri-apps/api/window'
+		);
+		const primary =
+			(await primaryMonitor().catch(() => null)) ?? (await currentMonitor().catch(() => null));
+		const game = await invoke<GameMonitorInfo | null>('get_game_monitor').catch((e: any) => {
+			console.warn('[settings] get_game_monitor failed, using the primary monitor:', e);
+			return null;
+		});
+		const listed = await availableMonitors().catch((e: any) => {
+			console.warn('[settings] availableMonitors failed, using the primary monitor:', e);
+			return [];
+		});
+		const monitor = chooseMonitor(game, listed, primary);
+		if (monitor && monitor.scaleFactor > 0) widgetScaleFactor = monitor.scaleFactor;
+		else console.warn('[settings] no monitor scale factor — Show cannot place a widget yet');
+	}
+
 	$effect(() => {
-		(async () => {
-			const { availableMonitors, currentMonitor, primaryMonitor } = await import(
-				'@tauri-apps/api/window'
+		resolveWidgetScaleFactor().catch((e: any) =>
+			console.warn('[settings] monitor lookup failed:', e)
+		);
+	});
+
+	$effect(() => {
+		// Window-scoped, because Rust sends this with `emit_to("main")` — a bare
+		// `listen` on the global bus never hears it (the guide's webview-scoped
+		// rule). The payload is deliberately unused: the id it carries is Rust's
+		// enumeration, and what this needs is the SAME display's scale factor out
+		// of the webview's enumeration, which is exactly what the resolve above
+		// asks `chooseMonitor` for.
+		const moved = getCurrentWebviewWindow().listen<GameMonitorInfo>('game-monitor-changed', () => {
+			resolveWidgetScaleFactor().catch((e: any) =>
+				console.warn('[settings] monitor lookup after a game-monitor-changed failed:', e)
 			);
-			const primary =
-				(await primaryMonitor().catch(() => null)) ?? (await currentMonitor().catch(() => null));
-			const game = await invoke<GameMonitorInfo | null>('get_game_monitor').catch((e: any) => {
-				console.warn('[settings] get_game_monitor failed, using the primary monitor:', e);
-				return null;
-			});
-			const listed = await availableMonitors().catch((e: any) => {
-				console.warn('[settings] availableMonitors failed, using the primary monitor:', e);
-				return [];
-			});
-			const monitor = chooseMonitor(game, listed, primary);
-			if (monitor && monitor.scaleFactor > 0) widgetScaleFactor = monitor.scaleFactor;
-			else console.warn('[settings] no monitor scale factor — Show cannot place a widget yet');
-		})().catch((e: any) => console.warn('[settings] monitor lookup failed:', e));
+		});
+		return () => {
+			moved.then((unlisten) => unlisten()).catch(() => {});
+		};
 	});
 
 	/**
