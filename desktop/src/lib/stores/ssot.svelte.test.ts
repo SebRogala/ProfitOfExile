@@ -1250,7 +1250,8 @@ const referenceScreen: ScreenSlice = {
 	height: 1200,
 	uiScale: 1.0,
 	source: 'merc-frame',
-	measuredAtMs: 1_700_000_000_000
+	measuredAtMs: 1_700_000_000_000,
+	verifiedThisSession: true
 };
 
 // A `ScreenSlice` carrying a source string Rust never emits. Deliberately not a

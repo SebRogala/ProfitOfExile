@@ -1751,6 +1751,11 @@ struct Session {
     vocab: MercVocab,
     state: LoopState,
     errors: OnceLog,
+    /// Screen measurements `ssot::accepts` turned down, said once each
+    /// (POE-240). Its OWN sink rather than [`Self::errors`] because a refusal
+    /// is the SSOT working as designed, not a failure, and it must not spend
+    /// the error budget that exists to keep real failures in the 50-entry log.
+    screen_refusals: OnceLog,
     /// The capture as last published — the hover tick mutates this copy.
     current: Option<MercCapture>,
     /// Pre-hover cell crops from the most recent detect, keyed `(row key, slot)`.
@@ -2288,6 +2293,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         vocab,
         state: LoopState::default(),
         errors: OnceLog::default(),
+        screen_refusals: OnceLog::default(),
         current: None,
         sigs: SigCache::new(),
         pending_confirm: None,
@@ -2907,6 +2913,60 @@ fn probe_tick(app: &AppHandle, session: &mut Session) -> (DetectTick, Option<ima
     (tick, hit.then_some(img))
 }
 
+/// The screen slice a detect tick publishes for `screen` at `scale`.
+///
+/// Pure and separate from the tick so both derived fields are pinned by tests:
+/// which SSOT cue a merc [`ScaleSource`] maps to, and — POE-240 — whether that
+/// cue counts as a VERIFICATION. Both are `ssot`'s rules, not this loop's; a
+/// literal here would be a second producer of a flag that already has one.
+fn published_screen(
+    screen: [u32; 2],
+    scale: f32,
+    cue: ScaleSource,
+    measured_at_ms: u64,
+) -> crate::ssot::ScreenSlice {
+    let source = crate::ssot::screen_scale_source(cue);
+    crate::ssot::ScreenSlice {
+        width: screen[0],
+        height: screen[1],
+        ui_scale: scale,
+        source,
+        measured_at_ms,
+        verified_this_session: crate::ssot::verifies_the_screen(source),
+    }
+}
+
+/// The line to log for a screen measurement `ssot::accepts` turned down, or
+/// `None` when it was taken — or when this same refusal has been said already.
+///
+/// Said once per rounded pair of scales, because the refusal repeats on every
+/// tick of an open recruit window for as long as the frame fit stays lost: the
+/// two printed `{:.2}` values ARE the dedup key, rounded the way the drift band
+/// is expressed. The cue is not part of that key and cannot be — only the OCR
+/// arm is ever refused, so `cue` is `Ocr` on every call that gets here. It is
+/// printed because that is the spelling every other scale line in this loop
+/// uses.
+///
+/// Pure but for the [`OnceLog`] it is handed, so the guard, the wording and the
+/// dedup are testable without an `AppHandle`; all the caller does with the
+/// answer is [`crate::app_log`] it.
+fn screen_refusal_log(
+    log: &mut OnceLog,
+    record: crate::ssot::ScreenRecord,
+    cue: ScaleSource,
+    refused: f32,
+) -> Option<String> {
+    if record.accepted {
+        return None;
+    }
+    log.admit(&format!(
+        "Merc: kept the standing screen scale of {:.2} — the {} reading of {:.2} is inside the drift band",
+        record.standing_ui_scale,
+        cue.label(),
+        refused,
+    ))
+}
+
 /// One detect tick: grab the screen, OCR it, and publish what it holds.
 ///
 /// `cursor` is the loop's ONE read for this iteration, taken before the hover
@@ -3208,20 +3268,26 @@ fn detect_tick(
     // reads a panel — a tick with no recruit window returns well above here —
     // and `ssot::screen_changed` is what keeps a re-measurement of the same
     // screen from waking every overlay's poll.
-    let published = crate::ssot::ScreenSlice {
-        width: screen[0],
-        height: screen[1],
-        ui_scale: layout.scale,
-        // Which cue this reports, and why `Held` is a frame measurement,
-        // is `ssot::screen_scale_source`'s call and is documented there.
-        source: crate::ssot::screen_scale_source(layout.scale_source),
-        // The tick's own clock read, a few ms before `build_capture` takes
-        // its `captured_at_ms` from the same source: this is when the scale
-        // was MEASURED, and publishing at the settle rather than after
-        // pass 2 keeps a cancelled tick's measurement from being lost.
-        measured_at_ms: now_ms(),
-    };
-    let screen_changed = crate::ssot::publish_screen(app, published);
+    // Which cue this reports, why `Held` is a frame measurement and which cues
+    // verify are `ssot`'s calls, made once in [`published_screen`]. The
+    // timestamp is the tick's own clock read, a few ms before `build_capture`
+    // takes its `captured_at_ms` from the same source: this is when the scale
+    // was MEASURED, and publishing at the settle rather than after pass 2 keeps
+    // a cancelled tick's measurement from being lost.
+    let published = published_screen(screen, layout.scale, layout.scale_source, now_ms());
+    let screen_record = crate::ssot::publish_screen(app, published);
+    // POE-240: `ssot::accepts` refused this measurement — an OCR reading that
+    // only re-states the screen scale already standing. The guard, the wording
+    // and the once-per-distinct-refusal dedup are [`screen_refusal_log`]'s;
+    // all that is left here is putting the line where a user can read it.
+    if let Some(line) = screen_refusal_log(
+        &mut session.screen_refusals,
+        screen_record,
+        layout.scale_source,
+        published.ui_scale,
+    ) {
+        crate::app_log(app, line);
+    }
     // POE-214 WI-B2: remember a frame measurement across restarts, so the next
     // session knows this screen's UI scale before — or without — a recruit
     // window ever opening. What the two-part gate buys, and why an OCR-derived
@@ -3233,7 +3299,7 @@ fn detect_tick(
     // returns, and `persist_settings` re-takes the owner mutexes through
     // `settings::from_state` — the same after-the-drop shape as
     // `temple::run::remember_calibration`.
-    if crate::ssot::should_remember_screen(screen_changed, published.source) {
+    if crate::ssot::should_remember_screen(screen_record.changed, published.source) {
         crate::persist_settings(app);
     }
     if debug_mode(app) {
@@ -5187,6 +5253,80 @@ mod tests {
         );
     }
 
+    // -- the screen a tick publishes ---------------------------------------
+
+    /// A refused measurement, as `ssot::record_screen` hands one back.
+    fn refused_over(standing: f32) -> crate::ssot::ScreenRecord {
+        crate::ssot::ScreenRecord { accepted: false, changed: false, standing_ui_scale: standing }
+    }
+
+    /// POE-240, the log side. The refusal repeats on EVERY tick of an open
+    /// recruit window for as long as the frame fit stays lost, and the OCR line
+    /// pitch wobbles a few thousandths each time — so the rounded scale is the
+    /// dedup key and 0.832 and 0.834 are the same thing said twice. Without the
+    /// rounding, one stuck panel fills the 50-entry LOGS buffer and pushes
+    /// every other diagnostic out of it.
+    #[test]
+    fn a_screen_refusal_repeated_at_the_same_rounded_scale_is_logged_once() {
+        let mut log = OnceLog::default();
+
+        assert!(
+            screen_refusal_log(&mut log, refused_over(1.0), ScaleSource::Ocr, 0.832).is_some(),
+            "the first refusal is worth saying",
+        );
+        assert_eq!(
+            screen_refusal_log(&mut log, refused_over(1.0), ScaleSource::Ocr, 0.834),
+            None,
+        );
+    }
+
+    /// Both numbers or the line is unreadable: "kept the standing screen scale"
+    /// on its own leaves a user who is debugging a mis-scaled overlay unable to
+    /// tell WHICH scale the session is holding, which is the one fact the line
+    /// exists to report.
+    #[test]
+    fn the_screen_refusal_line_names_both_scales() {
+        let mut log = OnceLog::default();
+
+        let line = screen_refusal_log(&mut log, refused_over(1.25), ScaleSource::Ocr, 0.83)
+            .expect("a first refusal is logged");
+
+        assert!(line.contains("1.25"), "the scale that survived is missing: {line:?}");
+        assert!(line.contains("0.83"), "the refused reading is missing: {line:?}");
+    }
+
+    /// The guard, from the other side: a tick whose measurement was TAKEN has
+    /// nothing to complain about. Logging one would put a refusal line on every
+    /// ordinary frame fit and burn the `OnceLog` slot the real refusal needs.
+    #[test]
+    fn an_accepted_screen_measurement_is_not_logged_as_a_refusal() {
+        let mut log = OnceLog::default();
+        let accepted =
+            crate::ssot::ScreenRecord { accepted: true, changed: true, standing_ui_scale: 0.83 };
+
+        assert_eq!(screen_refusal_log(&mut log, accepted, ScaleSource::Frame, 0.83), None);
+    }
+
+    /// POE-240: `verified_this_session` claims the gold frame was actually seen
+    /// this run, so it has to track the cue rather than be a literal at the
+    /// publish site. `Held` is the session's settled frame registration
+    /// re-applied a tick or two later — still a frame measurement — while the
+    /// OCR line pitch is the estimate that drifts and confirms nothing.
+    #[test]
+    fn the_published_screen_slice_is_verified_only_by_a_frame_cue() {
+        let at = 1_724_000_000_000;
+
+        assert!(published_screen([2560, 1440], 1.25, ScaleSource::Frame, at).verified_this_session);
+        assert!(
+            published_screen([2560, 1440], 1.25, ScaleSource::Held, at).verified_this_session,
+            "a held registration is a frame measurement, one or more ticks old",
+        );
+        assert!(
+            !published_screen([2560, 1440], 1.25, ScaleSource::Ocr, at).verified_this_session,
+            "the drifting cue confirms nothing",
+        );
+    }
+
     /// The hover box is mostly ABOVE the cursor, scaled with the panel — the
     /// numbers are the tooltip guess, and this is what makes them checkable
     /// against the first Windows dump.
@@ -6951,6 +7091,7 @@ mod tests {
             vocab: vocab(),
             state: LoopState::default(),
             errors: OnceLog::default(),
+            screen_refusals: OnceLog::default(),
             current: None,
             sigs: SigCache::new(),
             pending_confirm: None,

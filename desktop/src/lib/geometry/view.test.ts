@@ -8,7 +8,8 @@ const referenceScreen: ScreenSlice = {
 	height: 1200,
 	uiScale: 1.0,
 	source: 'merc-frame',
-	measuredAtMs: 1_700_000_000_000
+	measuredAtMs: 1_700_000_000_000,
+	verifiedThisSession: true
 };
 
 const NOW = new Date(1_700_000_000_000 + 2 * 60 * 60 * 1000);
@@ -27,6 +28,15 @@ describe('screenGeometryView', () => {
 		// number at all. (`Number('')` is 0, so the empty string fails this too.)
 		expect(Number.isNaN(Number(view.uiScale))).toBe(true);
 		expect(view.resolution).not.toMatch(/\d+×\d+/);
+	});
+
+	it('does not claim a verification for a screen nothing has measured', () => {
+		// "Yes" here would be the worst cell on the card: a confirmation of a
+		// screen the app has never looked at. The unmeasured branch owes a
+		// reason like the other three rows, not an answer.
+		const view = screenGeometryView(null, NOW);
+
+		expect(view.verified).toBe('Not measured yet');
 	});
 
 	it('prints the measured resolution and scale', () => {
@@ -61,6 +71,21 @@ describe('screenGeometryView', () => {
 		);
 
 		expect(view.source).toBe('lab-region');
+	});
+
+	it('says the screen was verified when a verifying cue measured it this run', () => {
+		const view = screenGeometryView(referenceScreen, NOW);
+
+		expect(view.verified).toBe('Yes');
+	});
+
+	it('names where an unverified number came from instead of just saying no', () => {
+		// A launch that has not opened a recruit window yet is running on last
+		// session's scale — normal, not broken. A bare "No" would read as a
+		// fault; the row has to say what the reader is actually looking at.
+		const view = screenGeometryView({ ...referenceScreen, verifiedThisSession: false }, NOW);
+
+		expect(view.verified).toBe('No — trusted from last session');
 	});
 
 	it('reports how long ago the measurement was taken, against the clock passed in', () => {

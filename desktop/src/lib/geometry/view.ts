@@ -23,11 +23,12 @@ import { formatTimeAgo } from '$lib/exchange/view';
  * The wire strings Rust's `ScreenScaleSource` serialises to, spelled out for a
  * reader.
  *
- * A LABEL, not a rank: the latest measurement wins whichever cue produced it, so
- * these say what looked, never how much to trust it. An unrecognised string is
- * shown verbatim rather than mapped to a guess — a source this table does not
- * know is a Rust-side addition, and inventing a friendly name for it would hide
- * that.
+ * These say what LOOKED, never how much to trust it — how far a reading is
+ * allowed to move the standing value is Rust's `ssot::accepts` rule and not a
+ * ranking a reader has to apply. How confident to be is the separate `verified`
+ * row below. An unrecognised string is shown verbatim rather than mapped to a
+ * guess — a source this table does not know is a Rust-side addition, and
+ * inventing a friendly name for it would hide that.
  */
 const SOURCE_LABELS: Record<string, string> = {
 	'merc-frame': 'merc support grid',
@@ -35,7 +36,7 @@ const SOURCE_LABELS: Record<string, string> = {
 	remembered: 'remembered from a previous run'
 };
 
-/** The four rows the Settings "Screen geometry" card prints. */
+/** The five rows the Settings "Screen geometry" card prints. */
 export interface ScreenGeometryView {
 	/** `"1920×1200"`, or why there is no answer. */
 	resolution: string;
@@ -45,6 +46,9 @@ export interface ScreenGeometryView {
 	source: string;
 	/** How long ago, relative. */
 	measured: string;
+	/** Whether a verifying cue confirmed this screen in THIS run (POE-240), and
+	 *  — when it did not — where the number came from instead. */
+	verified: string;
 	/** Nothing has measured a screen — every field above is a REASON, not a
 	 *  value, and the card renders them muted. */
 	unmeasured: boolean;
@@ -64,6 +68,7 @@ export function screenGeometryView(screen: ScreenSlice | null, now: Date): Scree
 			uiScale: 'Not measured yet — never treat as 1.0',
 			source: 'Nothing has measured this screen',
 			measured: 'Never',
+			verified: 'Not measured yet',
 			unmeasured: true
 		};
 	}
@@ -75,6 +80,11 @@ export function screenGeometryView(screen: ScreenSlice | null, now: Date): Scree
 		uiScale: screen.uiScale.toFixed(3),
 		source: SOURCE_LABELS[screen.source] ?? screen.source,
 		measured: formatTimeAgo(new Date(screen.measuredAtMs), now),
+		// The unverified wording names where the number came from instead, so
+		// the row is never a bare "No" the reader has to interpret as a fault:
+		// a trusted-from-last-session scale is the normal state of a launch that
+		// has not opened a recruit window yet, not a broken one.
+		verified: screen.verifiedThisSession ? 'Yes' : 'No — trusted from last session',
 		unmeasured: false
 	};
 }

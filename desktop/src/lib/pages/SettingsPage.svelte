@@ -1015,6 +1015,11 @@
 			</div>
 
 			<div class="setting-row">
+				<span class="setting-label">Verified this session</span>
+				<span class="setting-value" class:muted={screenGeometry.unmeasured}>{screenGeometry.verified}</span>
+			</div>
+
+			<div class="setting-row">
 				<span class="setting-label">Measured</span>
 				<span class="setting-value" class:muted={screenGeometry.unmeasured}>{screenGeometry.measured}</span>
 				<Button onclick={recalibrateGeometry} disabled={recalibrating}>Recalibrate</Button>

@@ -61,8 +61,11 @@ const POOLS = ['skill', 'transfigured'] as const;
  * Which cue measured `ScreenSlice.uiScale` (POE-214) — the wire strings Rust's
  * `ScreenScaleSource` serialises to, pinned from the Rust side by a serde test.
  *
- * A confidence LABEL, not a rank: merc is the sole writer and the latest
- * measurement wins, whichever cue produced it.
+ * A statement about the CUE, not a rank. Rust reads it to decide whether a new
+ * measurement may replace the standing one (`ssot::accepts`, POE-240): an
+ * OCR-derived reading that agrees with a frame-measured value is refused rather
+ * than ranked below it. Nothing here does that arithmetic — the webview reads
+ * the slice Rust settled on.
  */
 export type ScreenScaleSource = 'merc-frame' | 'merc-ocr' | 'remembered';
 
@@ -101,6 +104,18 @@ export interface ScreenSlice {
 	source: ScreenScaleSource;
 	/** Unix ms the measurement was taken at. */
 	measuredAtMs: number;
+	/**
+	 * Whether a cue that VERIFIES the screen produced this value in the CURRENT
+	 * app run (POE-240) — the merc gold frame does, the OCR line pitch and a
+	 * startup load from settings do not.
+	 *
+	 * `false` is not "wrong", it is "trusted from last session, unconfirmed".
+	 * It is what the lifecycle's two blind spots — a different monitor of the
+	 * same resolution, an in-game UI-scale change with no verifying panel on
+	 * screen — surface as, since the dimensions Rust prunes on cannot see
+	 * either. Never persisted: a restart always starts unverified.
+	 */
+	verifiedThisSession: boolean;
 }
 
 /** Serialized Rust `AppSsotSnapshot` — `league.name` is `string | null`. */
