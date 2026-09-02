@@ -18,6 +18,7 @@ import {
 	edgeFor,
 	gestureResized,
 	placementFor,
+	rebase,
 	resized,
 	seedRect,
 	sizeToPersist,
@@ -64,7 +65,7 @@ describe('physical pixels to CSS pixels', () => {
 	// by a pixel every time.
 	it('keeps a fractional result so a save-without-moving does not drift', () => {
 		const rect = cssRect({ x: 61, y: 61, width: 300, height: 300, visible: true }, 1.5);
-		expect(widgetGeometry(rect!, 1.5, true).x).toBe(61);
+		expect(widgetGeometry(rect!, 1.5, true, HOST).x).toBe(61);
 	});
 
 	// FAILS CLOSED, like `hot-rects.ts`. Substituting 1 for an unresolved factor
@@ -82,25 +83,159 @@ describe('physical pixels to CSS pixels', () => {
 
 describe('CSS pixels to a persistable geometry', () => {
 	it('scales and rounds every field on a 150 per cent display', () => {
-		expect(widgetGeometry({ x: 250, y: 40, w: 400, h: 200 }, 1.5, true)).toEqual({
+		expect(widgetGeometry({ x: 250, y: 40, w: 400, h: 200 }, 1.5, true, HOST)).toEqual({
 			x: 375,
 			y: 60,
 			width: 600,
 			height: 300,
-			visible: true
+			visible: true,
+			host_width: 2880,
+			host_height: 1620
 		});
 	});
 
 	it('carries the hidden flag through rather than defaulting it', () => {
-		expect(widgetGeometry({ x: 0, y: 0, w: 10, h: 10 }, 1, false).visible).toBe(false);
+		expect(widgetGeometry({ x: 0, y: 0, w: 10, h: 10 }, 1, false, HOST).visible).toBe(false);
 	});
 
 	// `PhysicalSize` is unsigned on the Rust side, so a negative measurement
 	// must not be sent as one.
 	it('floors a negative measurement at zero rather than sending it to Rust', () => {
-		expect(widgetGeometry({ x: 0, y: 0, w: -30, h: -30 }, 1, true)).toMatchObject({
+		expect(widgetGeometry({ x: 0, y: 0, w: -30, h: -30 }, 1, true, HOST)).toMatchObject({
 			width: 0,
 			height: 0
+		});
+	});
+
+	// The host is what makes the rectangle meaningful on the next monitor
+	// (`rebase`). It is stored in the same PHYSICAL px as the rectangle, so on a
+	// 150 % display a 1920x1080 CSS window is a 2880x1620 host — writing the CSS
+	// figure would make every later start rebase a monitor that never changed.
+	it('records the host in physical px, not the CSS box it was measured as', () => {
+		expect(widgetGeometry({ x: 0, y: 0, w: 10, h: 10 }, 1.5, true, HOST)).toMatchObject({
+			host_width: 2880,
+			host_height: 1620
+		});
+	});
+
+	// Zero is what `rebase` reads as "unknown, change nothing", and it is the
+	// only safe answer for a factor that is not a number: a `NaN` host would be
+	// persisted as JSON `null`, which Rust's `#[serde(default)]` would not save
+	// it from. Save already refuses at an unresolved factor, so this is the belt.
+	it('records an unknown host when the scale factor is NaN', () => {
+		expect(widgetGeometry({ x: 0, y: 0, w: 10, h: 10 }, NaN, true, HOST)).toMatchObject({
+			host_width: 0,
+			host_height: 0
+		});
+	});
+
+	// A separate guard from the `NaN` one: `NaN > 0` is false, so a positivity
+	// check alone rejects it, while `Infinity` passes that check and needs
+	// `Number.isFinite`. A test that only ever sends `NaN` cannot tell whether
+	// the second half of the condition is there.
+	it('records an unknown host when the scale factor is Infinity', () => {
+		expect(widgetGeometry({ x: 0, y: 0, w: 10, h: 10 }, Infinity, true, HOST)).toMatchObject({
+			host_width: 0,
+			host_height: 0
+		});
+	});
+});
+
+describe('rebasing a placement onto a different monitor', () => {
+	/** A widget placed two-thirds across and five-sixths down a 4K screen. */
+	const ON_4K = {
+		x: 3000,
+		y: 1800,
+		width: 800,
+		height: 400,
+		visible: true,
+		host_width: 3840,
+		host_height: 2160
+	};
+
+	it('scales a 4K placement into proportion on a 1080p monitor', () => {
+		expect(rebase(ON_4K, { width: 1920, height: 1080 }, 1)).toMatchObject({
+			x: 1500,
+			y: 900,
+			width: 400,
+			height: 200
+		});
+	});
+
+	it('records the host it was rebased onto, so the next comparison is against that one', () => {
+		expect(rebase(ON_4K, { width: 1920, height: 1080 }, 1)).toMatchObject({
+			host_width: 1920,
+			host_height: 1080
+		});
+	});
+
+	// The whole point of storing the host: the intent survives the trip. Two
+	// roundings, so two pixels is the budget on any field.
+	//
+	// The claim is about THIS function's arithmetic and nothing else. A real
+	// trip also goes through `cssRect`, `clampToHost` and `sizeToPersist`, none
+	// of which this composes, so it is not evidence about what config mode does
+	// to a widget end to end.
+	it('returns a 4K placement to within two pixels after a rebase through 1080p and back', () => {
+		const odd = { ...ON_4K, x: 3001, y: 1801, width: 801, height: 401 };
+
+		const back = rebase(rebase(odd, { width: 1920, height: 1080 }, 1), {
+			width: 3840,
+			height: 2160
+		}, 1);
+
+		expect(Math.abs(back.x - odd.x)).toBeLessThanOrEqual(2);
+		expect(Math.abs(back.y - odd.y)).toBeLessThanOrEqual(2);
+		expect(Math.abs(back.width - odd.width)).toBeLessThanOrEqual(2);
+		expect(Math.abs(back.height - odd.height)).toBeLessThanOrEqual(2);
+	});
+
+	// Every row written before the host was stored, and every row Settings' Show
+	// checkbox writes from a window that does not know the overlay's size.
+	it('leaves a row with no stored host exactly as it found it', () => {
+		const unknown = { x: 3000, y: 1800, width: 800, height: 400, visible: true };
+
+		expect(rebase(unknown, { width: 1920, height: 1080 }, 1)).toEqual(unknown);
+	});
+
+	it('leaves a row alone while the live host is unmeasured', () => {
+		expect(rebase(ON_4K, { width: 0, height: 0 }, 1)).toEqual(ON_4K);
+	});
+
+	// A zero size is the content-sizing contract (`sizeToPersist`), not a
+	// rectangle. Scaling it must not turn it into one — and the minimum-size
+	// floor below must not turn it into one either.
+	it('keeps a content-sized widget content-sized', () => {
+		const contentSized = { ...ON_4K, width: 0, height: 0 };
+
+		expect(rebase(contentSized, { width: 1920, height: 1080 }, 1)).toMatchObject({
+			width: 0,
+			height: 0
+		});
+	});
+
+	// Halving a 30 px widget gives 15, which is under the grab zone: `edgeAt`
+	// answers `null` for a box that small, so the widget could never be resized
+	// back and config mode is the only way to recover one. The floor is the same
+	// `MIN_WIDGET_SIDE_CSS` a live resize gesture stops at.
+	it('floors a sized widget at the smallest a resize could leave it', () => {
+		const small = { ...ON_4K, width: 30, height: 30 };
+
+		expect(rebase(small, { width: 1920, height: 1080 }, 1)).toMatchObject({
+			width: MIN_WIDGET_SIDE_CSS,
+			height: MIN_WIDGET_SIDE_CSS
+		});
+	});
+
+	// The floor is CSS px and the rectangle is physical, so on a 150 % display
+	// it is 36 physical px. Applying the CSS number to a physical rectangle
+	// would leave the widget under the minimum on every scaled display.
+	it('converts the floor with the scale factor rather than applying it as CSS px', () => {
+		const small = { ...ON_4K, width: 30, height: 30 };
+
+		expect(rebase(small, { width: 1920, height: 1080 }, 1.5)).toMatchObject({
+			width: 36,
+			height: 36
 		});
 	});
 });
@@ -396,6 +531,87 @@ describe('a stored placement the current monitor cannot hold', () => {
 			x: 3000,
 			y: 1800
 		});
+	});
+});
+
+describe('a stored placement made on a different monitor', () => {
+	/** The same 4K placement, far enough from the edges that a 1080p rebase
+	 *  lands entirely inside the window — so a clamp is visible as a clamp. */
+	const ON_4K = {
+		x: 3000,
+		y: 1600,
+		width: 800,
+		height: 400,
+		visible: true,
+		host_width: 3840,
+		host_height: 2160
+	};
+
+	// REBASE FIRST, CLAMP SECOND. Clamping the raw 4K rectangle pins it to the
+	// bottom-right corner (1120, 680) — a placement the user never made, and the
+	// one the next Save would write back permanently.
+	it('keeps its proportion instead of pinning to the corner', () => {
+		expect(placementFor(RESIZABLE, ON_4K, 1, HOST)).toMatchObject({
+			x: 1500,
+			y: 800,
+			width: 400,
+			height: 200
+		});
+	});
+
+	// 1920x1200 is 16:10, so the vertical ratio (1200/2160 = 0.5556) is not the
+	// horizontal one (1920/3840 = 0.5). Each axis takes its own: a widget keeps
+	// its proportion of the screen in both directions rather than its shape.
+	it('scales each axis by its own ratio when the monitor changes aspect', () => {
+		const clear = { ...ON_4K, y: 900 };
+
+		expect(placementFor(RESIZABLE, clear, 1, { width: 1920, height: 1200 })).toMatchObject({
+			x: 1500,
+			y: 500,
+			width: 400,
+			height: 222
+		});
+	});
+
+	// The aspect change is also what the clamp still exists for: y 1800 -> 1000
+	// and h 400 -> 222 puts the bottom edge 22 px past a 1200-px screen.
+	it('clamps what the rebase leaves hanging off an aspect-changed monitor', () => {
+		const low = { ...ON_4K, y: 1800 };
+
+		expect(placementFor(RESIZABLE, low, 1, { width: 1920, height: 1200 })).toMatchObject({
+			y: 1200 - 222,
+			height: 222
+		});
+	});
+
+	// The unit trap: the stored host is PHYSICAL and `HostSize` is CSS, so a
+	// 1920x1080 window on a 150 % display is a 2880x1620 host and nothing has
+	// changed. Comparing the CSS box against the stored one would rebase every
+	// widget by two thirds on the monitor it was saved on.
+	it('leaves a placement untouched on the same monitor at 150 per cent', () => {
+		const at150 = {
+			x: 1500,
+			y: 600,
+			width: 900,
+			height: 450,
+			visible: true,
+			host_width: 2880,
+			host_height: 1620
+		};
+
+		expect(placementFor(RESIZABLE, at150, 1.5, HOST)).toMatchObject({
+			x: 1000,
+			y: 400,
+			width: 600,
+			height: 300
+		});
+	});
+
+	// Config mode has to open the widget where it is being DRAWN. Seeding from
+	// the un-rebased rectangle would put the frame somewhere else on screen, and
+	// Save would then write that somewhere else back.
+	it('opens config mode at the rebased position, not the stored one', () => {
+		expect(seedRect(RESIZABLE, ON_4K, null, 1, HOST)).toMatchObject({ x: 1500, y: 800 });
 	});
 });
 

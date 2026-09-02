@@ -1452,13 +1452,21 @@ fn set_overlay_has_content(label: String, has_content: bool) {
 /// Replaces the right-edge interactive width: a page measures the elements it
 /// wants clickable and sends their rects, so nothing between them is taken from
 /// the game. Sending an empty list withdraws the claim.
+///
+/// Takes the handle so the overlap report `overlay_hook::set_hot_rects` returns
+/// reaches `app_log` — the in-app buffer and `app.log`. It cannot log itself:
+/// `env_logger` is initialised with no filter and `RUST_LOG` is unset, so
+/// anything below Error is dropped, and this is the diagnostic that explains a
+/// click going to the window the user did not mean.
 #[tauri::command]
-fn set_overlay_hot_rects(label: String, rects: Vec<overlay_hook::HotRect>) {
+fn set_overlay_hot_rects(label: String, rects: Vec<overlay_hook::HotRect>, app: AppHandle) {
     #[cfg(windows)]
-    overlay_hook::set_hot_rects(&label, rects);
+    for line in overlay_hook::set_hot_rects(&label, rects) {
+        app_log(&app, line);
+    }
 
     #[cfg(not(windows))]
-    let _ = (label, rects);
+    let _ = (label, rects, app);
 }
 
 /// Put `label` in or out of widget-configuration mode.

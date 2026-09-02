@@ -82,8 +82,37 @@ rectangle rather than a band measured from the edge.
 
 The hook pairs button-up with button-down: it consumes a release only when it
 consumed the matching press, so a drag that started on the game keeps its
-release. Two overlapping windows are resolved by registration order, first
-match wins — the hook cannot see z-order.
+release. Two overlapping windows are resolved by **the most recently shown
+one** (POE-239): the hook cannot see z-order, so it uses the two show signals
+Rust does receive — the window's registration, and the EDGE from empty to
+drawing in `set_overlay_has_content(label, true)` — and the later of the two
+wins. Only the false→true edge counts, never a repeat of `true`: the widget
+host sends the flag when emptiness flips, but the comparator re-asserts it from
+a `$effect` on every data change, so a repeat would hand the comparator a fresh
+top-of-stack claim on every price tick and let it out-rank a window the user had
+just opened. Registration order is the tiebreak and one
+monotonic counter cannot produce a tie, so it is there only to keep the answer
+total. The rule this replaces was first-registered-wins, which handed a shared
+click to the window built FIRST, i.e. the one most likely to be underneath.
+`set_overlay_hot_rects` logs one line per pair per registration when a window's
+rects land on another registered window's, so a click going to the window the
+user did not mean is something the log already named. Hot rects are
+window-relative and the two windows that declare them never share an origin
+(monitor-sized widget host at 0,0; a small comparator wherever the user put it),
+so both sides are translated by their window's cached rect and compared in
+SCREEN space. A pair is skipped, silently and without being marked reported,
+while either window's rect is unknown — a page declares its rects during the
+~1 s before its HWND resolves, and the next declaration after it does names the
+pair. The command routes the returned lines through `app_log`, not `log::warn!`:
+`env_logger` is initialised with no filter and `RUST_LOG` is unset, so anything
+below Error never reaches `app.log`.
+
+**Config mode is exclusive by construction, so no z rule applies to it.**
+`hit_test` skips a config-mode window because the webview is taking those
+clicks natively — the hook has nothing to award, not a lower priority to
+assign. Do not invert that skip into "config mode wins": consuming the click
+would re-emit it as an `overlay-click`, which is the one thing the window being
+arranged is not listening for.
 
 The capture/configuration overlay is deliberately interactive and has different
 drag, resize, save, and cancel behavior. Treat it as a third type.
@@ -275,9 +304,28 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   or already had a non-zero stored size, and `placementFor` reads a zero size
   back as "let the content decide" while applying the registry's shipped width
   as a `max-width`. Persisting the measured size on every Save would pin every
-  widget in the module the first time any one of them was moved. A stored
-  placement is also clamped to the CURRENT window on load, so a rectangle saved
-  on a larger monitor cannot render entirely off-screen.
+  widget in the module the first time any one of them was moved.
+- **A stored placement is REBASED first and clamped second** (POE-239). Every
+  placement carries the host size it was made against (`host_width` /
+  `host_height`, physical px, written on every Save), and `rebase()` scales the
+  rectangle by the two axis ratios before `clampToHost()` sees it, so a widget
+  placed two-thirds across a 3840×2160 monitor is two-thirds across a 1920×1080
+  one. The clamp stays as the LAST-RESORT safety — an unknown host, an aspect
+  change, a widget wider than the new screen — and nothing else: on its own it
+  could only pin the widget to an edge, and the next Save wrote that edge back
+  over the user's intent permanently. Run 4K → 1080p → 4K, `rebase()`'s OWN
+  arithmetic returns the rectangle to within the two pixels its two roundings
+  cost — a claim about that function and not about a real trip, which also goes
+  through `cssRect()`, the clamp and `sizeToPersist()` and is not measured
+  end to end. A widget that carries a size keeps at least `MIN_WIDGET_SIDE_CSS`
+  of it through the rebase (converted with the window's scale factor, the same
+  floor a live resize stops at), because a frame shrunk under its own grab zone
+  has no interior to drag and no edge to pull, and config mode is the only way
+  back; a content-sized `0 × 0` is not a size and stays `0 × 0`. A row with `0`
+  for either host field is UNKNOWN — every row
+  written before the field existed, and every row Settings' Show checkbox
+  writes from a window that does not know the overlay's size — and is never
+  rebased, so those behave exactly as they always did.
 
 ### Config-mode ordering contract
 

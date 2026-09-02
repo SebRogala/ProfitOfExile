@@ -196,6 +196,25 @@ pub struct Settings {
 /// `visible` is the user's Show checkbox, not a runtime state: a widget hidden
 /// here is not rendered at all, and one that has never been configured has no
 /// entry and renders at its shipped default.
+///
+/// `host_width`/`host_height` are the HOST WINDOW this rectangle was placed
+/// against, in the same physical pixels (POE-239). They exist because the
+/// rectangle alone does not say what it meant: a widget saved near the
+/// bottom-right of a 3840x2160 monitor is a pinned-to-the-edge widget on a
+/// 1920x1080 one, and the load-time clamp — the only thing that stopped it
+/// rendering off-screen — throws the intent away permanently the next time the
+/// user presses Save. With the host size stored, the frontend's `rebase()`
+/// scales the rectangle back into proportion first and the clamp goes back to
+/// being the last-resort safety it was meant to be.
+///
+/// `0` means UNKNOWN, which every row written before this field existed is:
+/// `#[serde(default)]` fills it in, and `rebase` leaves an unknown-host row
+/// exactly as it found it, so those rows behave as they always did.
+///
+/// snake_case on the wire, like the rest of this file. The webview mirror in
+/// `overlay/widgets/widget-geometry.ts` spells them the same way; the other
+/// four field names happen to be identical in both conventions, which is why
+/// there is no `rename_all` here to copy.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct WidgetGeometry {
     pub x: i32,
@@ -203,6 +222,10 @@ pub struct WidgetGeometry {
     pub width: u32,
     pub height: u32,
     pub visible: bool,
+    #[serde(default)]
+    pub host_width: u32,
+    #[serde(default)]
+    pub host_height: u32,
 }
 
 /// One entry of [`widgets_for_module`], in the shape the webview reads.
@@ -1442,13 +1465,24 @@ mod tests {
     /// the `x`/`y` pair is `i32` and the size pair is `u32`, so a field crossed
     /// in either projection puts the widget somewhere plausible rather than
     /// somewhere obviously wrong. Deliberately asymmetric numbers for the same
-    /// reason.
+    /// reason — the host pair included, which is a THIRD `u32` pair to cross
+    /// (POE-239) and the one whose loss is silent: a placement that comes back
+    /// with an unknown host is never rebased, so a 4K rectangle simply pins to
+    /// the edge of a 1080p monitor exactly as it did before the field existed.
     #[test]
     fn a_widget_placement_round_trips_through_state_and_the_file() {
         let saved_from = test_app_state();
         saved_from.widgets.lock().unwrap().insert(
             "temple.advice".to_string(),
-            WidgetGeometry { x: 250, y: 41, width: 402, height: 203, visible: true },
+            WidgetGeometry {
+                x: 250,
+                y: 41,
+                width: 402,
+                height: 203,
+                visible: true,
+                host_width: 3840,
+                host_height: 2160,
+            },
         );
 
         let text = serde_json::to_string(&from_state(&saved_from)).expect("must serialize");
@@ -1466,6 +1500,29 @@ mod tests {
         assert_eq!(placed.width, 402);
         assert_eq!(placed.height, 203);
         assert!(placed.visible, "a shown widget must not come back hidden");
+        assert_eq!(placed.host_width, 3840);
+        assert_eq!(placed.host_height, 2160);
+    }
+
+    /// Every settings.json written before POE-239 has widget rows with no host
+    /// size. They must load as UNKNOWN — the zero `rebase` refuses to scale
+    /// against — rather than failing the file or, worse, defaulting to some
+    /// plausible monitor and rebasing every existing placement on the next
+    /// start.
+    #[test]
+    fn a_widget_row_written_before_the_host_size_existed_loads_with_an_unknown_host() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"widgets":{"temple.board":{"x":40,"y":60,"width":0,"height":0,"visible":true}}}"#,
+        )
+        .expect("a row without the host pair must still parse");
+
+        let row = parsed.widgets.get("temple.board").copied().expect("the row must load");
+        assert_eq!((row.x, row.y), (40, 60), "the placement itself is untouched");
+        assert_eq!(
+            (row.host_width, row.host_height),
+            (0, 0),
+            "0 is what the frontend reads as 'never rebase this row'",
+        );
     }
 
     /// The Show checkbox is the half that is easy to lose: `false` is also
@@ -1477,7 +1534,15 @@ mod tests {
         let saved_from = test_app_state();
         saved_from.widgets.lock().unwrap().insert(
             "temple.board".to_string(),
-            WidgetGeometry { x: 40, y: 40, width: 200, height: 200, visible: false },
+            WidgetGeometry {
+                x: 40,
+                y: 40,
+                width: 200,
+                height: 200,
+                visible: false,
+                host_width: 0,
+                host_height: 0,
+            },
         );
 
         let text = serde_json::to_string(&from_state(&saved_from)).expect("must serialize");
@@ -1518,13 +1583,29 @@ mod tests {
         *state.screen.lock().unwrap() = None;
         state.widgets.lock().unwrap().insert(
             "temple.board".to_string(),
-            WidgetGeometry { x: 900, y: 120, width: 200, height: 200, visible: true },
+            WidgetGeometry {
+                x: 900,
+                y: 120,
+                width: 200,
+                height: 200,
+                visible: true,
+                host_width: 0,
+                host_height: 0,
+            },
         );
         // What the file still says — the placement before the user dragged it.
         let existing = Settings {
             widgets: [(
                 "temple.board".to_string(),
-                WidgetGeometry { x: 40, y: 40, width: 200, height: 200, visible: true },
+                WidgetGeometry {
+                    x: 40,
+                    y: 40,
+                    width: 200,
+                    height: 200,
+                    visible: true,
+                    host_width: 0,
+                    host_height: 0,
+                },
             )]
             .into_iter()
             .collect(),
@@ -1543,7 +1624,15 @@ mod tests {
 
     #[test]
     fn widgets_for_module_returns_only_that_module_s_placements() {
-        let placed = WidgetGeometry { x: 1, y: 2, width: 3, height: 4, visible: true };
+        let placed = WidgetGeometry {
+            x: 1,
+            y: 2,
+            width: 3,
+            height: 4,
+            visible: true,
+            host_width: 0,
+            host_height: 0,
+        };
         let widgets: std::collections::BTreeMap<String, WidgetGeometry> = [
             ("temple.advice".to_string(), placed),
             ("temple.board".to_string(), placed),
@@ -1567,7 +1656,15 @@ mod tests {
     fn widgets_for_module_does_not_collect_a_module_whose_name_merely_starts_the_same() {
         let widgets: std::collections::BTreeMap<String, WidgetGeometry> = [(
             "temple2.board".to_string(),
-            WidgetGeometry { x: 1, y: 2, width: 3, height: 4, visible: true },
+            WidgetGeometry {
+                x: 1,
+                y: 2,
+                width: 3,
+                height: 4,
+                visible: true,
+                host_width: 0,
+                host_height: 0,
+            },
         )]
         .into_iter()
         .collect();
