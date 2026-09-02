@@ -1074,15 +1074,6 @@
 							{widgetConfiguring === module ? 'Configuring\u2026' : 'Configure widgets'}
 						</Button>
 					</div>
-					<!-- Said out loud because it is a side effect on a switch the user
-					     owns elsewhere: arranging widgets needs the module's window,
-					     the window exists only while the module is on, and a module
-					     that turned itself on with no explanation is indistinguishable
-					     from a bug. The change is not written to disk either way. -->
-					<p class="setting-note">
-						Turns {group.heading} on while you arrange, if it is off — restored when you
-						Save or Cancel in the overlay.
-					</p>
 				{/if}
 			{/each}
 		</section>

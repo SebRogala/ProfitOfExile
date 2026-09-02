@@ -167,23 +167,6 @@ pub struct AppState {
     /// **effective** state (registry defaults overlaid with the persisted
     /// delta, written by `settings::apply_to_state`). See src/modules.rs.
     pub modules_enabled: Mutex<std::collections::HashMap<String, bool>>,
-    /// The modules some flow has forced for THIS RUN, mapped to the value they
-    /// held before it did (POE-226). Empty in the ordinary case.
-    ///
-    /// `modules_enabled` above holds the EFFECTIVE state, because the module
-    /// really does start and stop — and it is also what `settings::from_state`
-    /// projects onto disk. So a command that merely declined to call
-    /// `persist_settings` itself did not make its change transient: the next
-    /// unrelated save (`set_widget_geometry` on every widget Save, a temple
-    /// command persisting calibration on a live read) wrote the forced value
-    /// out, and the restore — equally unpersisted — never took it back.
-    ///
-    /// Transience therefore lives in the PROJECTION, not in who calls save:
-    /// `modules::persisted_view` substitutes the recorded pre-session value for
-    /// every id in here, so whatever runs, the file keeps saying what the user
-    /// last chose. An explicit user toggle drops the entry — their choice wins
-    /// over a session that is still open.
-    pub transient_modules: Mutex<std::collections::HashMap<String, bool>>,
     /// Currently running modules, keyed by module id. Acquired BEFORE
     /// `modules_enabled` — never the inverse (lock order, see src/modules.rs).
     pub module_handles: Mutex<std::collections::HashMap<String, modules::ModuleHandle>>,
@@ -3545,7 +3528,6 @@ pub fn run() {
         ui_prefs: Mutex::new(std::collections::HashMap::new()),
         ssot: Mutex::new(ssot::AppSsotSnapshot::default()),
         modules_enabled: Mutex::new(std::collections::HashMap::new()),
-        transient_modules: Mutex::new(std::collections::HashMap::new()),
         module_handles: Mutex::new(std::collections::HashMap::new()),
         modules_shutting_down: AtomicBool::new(false),
         mercenary: Mutex::new(mercenary::MercenarySlice::default()),
@@ -3578,7 +3560,6 @@ pub fn run() {
             ssot::refresh_league,
             ssot::geometry_recalibrate,
             modules::set_module_enabled,
-            modules::set_module_enabled_transient,
             get_pair_code,
             get_device_id,
             regenerate_pair_code,

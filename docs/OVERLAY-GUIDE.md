@@ -92,10 +92,14 @@ Temple (`temple`) and merc verdict (`mercenary`) are overlays COUPLED TO A
 MODULE FLAG rather than to an overlay setting: the module toggle creates and
 destroys the window, and `desktop/src/lib/overlay/module-lifecycle.ts` orders
 those transitions so a fast off→on→off cannot strand a transparent
-always-on-top window. They still appear in the Rust focus poller's game-focus
-show/hide list and in `set_debug_mode`'s force-show branch. Persisted geometry
-is independent of the coupling: the merc strip has `mercenary_overlay`, and the
-temple window has none because it IS the primary monitor (below).
+always-on-top window. The flag is not quite the whole desired state for a
+window with WIDGETS: a live config session is ORed into it so the user can
+arrange positions with the module off (the ordering contract below), which is
+the one thing that raises such a window without any module work running. They
+still appear in the Rust focus poller's game-focus show/hide list and in
+`set_debug_mode`'s force-show branch. Persisted geometry is independent of the
+coupling: the merc strip has `mercenary_overlay`, and the temple window has
+none because it IS the primary monitor (below).
 
 The merc strip's **on-screen lifecycle** (owner decision, 2026-09-01) is: shown
 for as long as a recruit window is being worked — `scanning` (the burst after
@@ -286,32 +290,35 @@ creation. In this order:
 1. Ensure the module's window EXISTS and is SHOWN — creating it force-shown if
    the module is off or the game is not focused, the `set_debug_mode` path for
    one label. A window that is not on screen cannot be arranged, and one that
-   does not exist has nothing to receive the event. "Creating it" is switching
-   the MODULE FLAG on and waiting for the label: a module-coupled overlay is
-   built by `module-lifecycle.ts`'s driver off that flag, so a second creator
-   here would be two builders racing for one label.
+   does not exist has nothing to receive the event. "Creating it" is the layout
+   RAISING THE MODULE WINDOW'S DESIRED STATE for the session and waiting for the
+   label: a module-coupled overlay's desired state is
+   `(module flag && feature grant) || widgetConfigLive(label)`, and
+   `module-lifecycle.ts`'s driver is the one builder either term goes through,
+   so a second creator here would be two builders racing for one label. **NO
+   MODULE WORK STARTS** (POE-241, owner decision): the window is raised, the
+   Rust module loop stays spawned by the module flag alone (`modules.rs`
+   reconcile), and arranging widget positions therefore runs no capture loop and
+   no OCR. Ending the session drops the record, which lowers the desired state
+   again and lets the driver tear the window down when the flag is off.
 2. `set_overlay_config_mode(label, true)` — the Rust flag first, so the mouse
    hook is already leaving the window alone before it becomes interactive.
 3. Emit `widget-config {module, on: true}`, **webview-scoped** to that label.
 
-Whatever step 1 forced — the flag, the visibility, or both — is RECORDED and
-undone when the session ends, and the four shown × enabled combinations each
-restore differently (`$lib/overlay/widgets/widget-config-session.ts`). Both
-wrong answers are silent: disabling a module the user had on takes their
-overlay away with no toggle touched, and leaving one on that this flow enabled
-runs a screen-capture loop they never asked for. Two qualifiers on the restore:
-the module flag is forced through the NON-PERSISTING command
-(`set_module_enabled_transient`), because a session decision written to disk
-survives a crash as a module the user never enabled — and "non-persisting" is a
-property of the PROJECTION, not of who calls save: the owner map holds the
-effective state, so `AppState.transient_modules` records the forced id's
-pre-session value and `modules::persisted_view` substitutes it before
-`from_state` writes, or the next save by anything at all (a widget Save, a
-temple command persisting calibration) would make the force permanent; and the
-hide is vetoed
+What step 1 forced — the visibility — is RECORDED and undone when the session
+ends (`$lib/overlay/widgets/widget-config-session.ts`). Both wrong answers are
+silent: forgetting the hide leaves an overlay standing over a game the user had
+it hidden for, and hiding one the poller has since shown takes their overlay
+away with no toggle touched. One qualifier on the restore: the hide is VETOED
 when the game is focused by the time the session ends, because the poller has
 already shown that window and wants it shown — restoring "hidden" is a restore
-only while the reason for hiding still holds.
+only while the reason for hiding still holds. The hide also runs BEFORE the
+record is dropped, since dropping it is what lets the driver destroy the window.
+
+**ADR-014 needs no exception for this flow.** Because the session raises the
+window and never the module flag, the work toggle still governs only the
+module's Rust background tasks and the view surface still costs nothing — the
+work/view separation the ADR decides is intact, not carved out.
 
 A start that never reaches a host — no window appeared, or the command failed —
 restores the same way and emits `widget-config-end` itself, or Settings sits on
@@ -363,8 +370,9 @@ nothing local changes until Rust confirms.** Both paths call
 `set_overlay_config_mode(label, false)` FIRST and keep local config mode — the
 widget frames, the draft rectangles and the Save/Cancel bar — until it resolves.
 Only then are the draft dropped and `widget-config-end {module}` emitted, which
-is what the layout restores the window and the module flag on, and what Settings
-clears its `Configuring…` button and re-reads the placements on.
+is what the layout restores the window's visibility and drops the session
+record on, and what Settings clears its `Configuring…` button and re-reads the
+placements on.
 
 Clearing config mode first was the bug (POE-227): it removed the only controls a
 monitor-sized overlay window has while the window was still interactive, and the
@@ -392,18 +400,18 @@ Configure in Settings. The decision is `configExitDecision` in
 **The layout puts a floor under a session that never ends.** Because the host
 can now decline to leave config mode, `widget-config-end` may never arrive —
 and everyone outside the window is waiting on it: Settings on `Configuring…`,
-the module flag possibly forced on, the window possibly force-shown. So
+the window force-shown, and a window that only the session is holding up. So
 `routes/(app)/+layout.svelte` arms a deadline where Settings' opening deadline
 stands down (on `widget-config-open`) and clears it in `endWidgetConfig`; if it
 fires, it logs and runs `abandonWidgetConfig`. Ten minutes: far above real
 arranging (the session ends when the user presses Save or Cancel, however long
 they take) and far below "for the rest of the process", which is what a
-forced-on module running a screen-capture loop would otherwise cost. A second
+monitor-sized interactive rectangle over the game would otherwise cost. A second
 Configure press re-arms it, which is the honest reading of the user saying they
 are still working.
 
 **An abandon has to reach the WINDOW, not just Settings.** The host listens for
-`widget-config` and nothing else, so restoring the module flag and the button
+`widget-config` and nothing else, so restoring the visibility and the button
 while saying nothing to the window would leave Rust's `config_mode` set — the
 re-assert above puts it back on a refused exit — and with it a monitor-sized
 interactive rectangle the mouse hook deliberately skips, now with no Settings
@@ -513,7 +521,8 @@ touching the named path.
 - **Leaving widget-config mode** (POE-227): with the temple widgets being
   arranged, press Save and then, in a second session, Cancel. Both must close
   the session — the frames go, the bar goes, Settings' `Configuring…` clears,
-  and the module flag and window visibility return to what they were. This is
+  and the window visibility returns to what it was (the module flag was never
+  touched: check the Modules row is exactly where you left it). This is
   the ORDERING check: `widget-config-exit.test.ts` pins only the decision, and
   the sequence that consumes it (invoke first, keep the bar, re-assert on a
   refusal, emit `widget-config-end` only on the Ok) is in `WidgetHost.svelte`,
@@ -529,9 +538,10 @@ touching the named path.
 - **A widget-config session that never ends** (POE-227): leave a session open
   past `WIDGET_CONFIG_SESSION_MAX_MS` (10 min) without pressing Save or Cancel.
   The layout must log that it is ending the session from its side and run
-  `abandonWidgetConfig`: Settings' button leaves `Configuring…`, a module this
-  flow force-enabled must go back off rather than keep capturing, and — the half
-  that is invisible from Settings — the WINDOW must come out of config mode
+  `abandonWidgetConfig`: Settings' button leaves `Configuring…`, a window this
+  flow raised for a module whose flag is off must go away rather than stay
+  standing, and — the half that is invisible from Settings — the WINDOW must
+  come out of config mode
   with it. Check the last part by clicking the game through where the widgets
   were: a click that does not reach the game means the abandon restored the
   outside and left the window interactive, which is the POE-227 N1 regression.

@@ -490,28 +490,6 @@ describe('module flags', () => {
 			expect(callsOf('set_module_enabled')).toEqual([{ id: 'mercenary', enabled: true }]);
 		});
 
-		it('writes a session toggle through the transient command instead', async () => {
-			// POE-226. The widget-config force path turns a module on only to have
-			// a window to arrange widgets in, and off again on Save or Cancel. Sent
-			// through the persisting command, a crash mid-session would leave the
-			// module enabled at the next start with the Modules row reading on and
-			// the user never having touched it.
-			seedModules({ temple: false });
-			await mod.setModuleEnabledForSession('temple', true);
-			expect(callsOf('set_module_enabled_transient')).toEqual([{ id: 'temple', enabled: true }]);
-			expect(callsOf('set_module_enabled')).toEqual([]);
-		});
-
-		it('mutates the flag for a session toggle too, so the window is asked for now', async () => {
-			// The layout depends on this: the synchronous rune write is what makes
-			// the overlay effect hand the driver its new desired state immediately
-			// rather than up to one 3 s poll later.
-			invokeMock.mockImplementation(() => new Promise<void>(() => {}));
-			seedModules({ temple: false });
-			void mod.setModuleEnabledForSession('temple', true);
-			expect(mod.ssot.modules.temple).toBe(true);
-		});
-
 		it('leaves the optimistic flag in place when the invoke rejects', async () => {
 			// Rust rejects an unregistered id with an Err, and IPC can fail on its
 			// own. Never throws — same catch-and-warn contract as fetchSsot.
