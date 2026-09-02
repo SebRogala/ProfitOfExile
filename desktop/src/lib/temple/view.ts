@@ -46,6 +46,7 @@ export type TempleTone = 'muted' | 'pass' | 'warn' | 'fail';
 export const TEMPLE_STATUS_LABEL: Record<TempleStatus, string> = {
 	off: 'module off',
 	idle: 'watching for the layout panel',
+	waiting: 'on, waiting for Alva',
 	panel_not_visible: 'no layout panel on screen',
 	reading: 'reading the board',
 	read: 'board read',
@@ -58,6 +59,7 @@ export const TEMPLE_STATUS_LABEL: Record<TempleStatus, string> = {
 export const TEMPLE_STATUS_TONE: Record<TempleStatus, TempleTone> = {
 	off: 'muted',
 	idle: 'muted',
+	waiting: 'muted',
 	panel_not_visible: 'muted',
 	reading: 'warn',
 	read: 'pass',
@@ -70,10 +72,10 @@ export const TEMPLE_STATUS_TONE: Record<TempleStatus, TempleTone> = {
  * The statuses with a board worth drawing.
  *
  * The overlay's whole visibility rule, in one place so the window and any
- * future surface cannot disagree: `off`, `idle`, `panel_not_visible` and
- * `unavailable` mean there is nothing on the temple's layout panel to advise
- * about, and `error` means the last attempt produced nothing to draw — the
- * message belongs on the page, not floating over the game.
+ * future surface cannot disagree: `off`, `idle`, `waiting`, `panel_not_visible`
+ * and `unavailable` mean there is nothing on the temple's layout panel to
+ * advise about, and `error` means the last attempt produced nothing to draw —
+ * the message belongs on the page, not floating over the game.
  */
 export const OVERLAY_VISIBLE_STATUSES: readonly TempleStatus[] = [
 	'reading',

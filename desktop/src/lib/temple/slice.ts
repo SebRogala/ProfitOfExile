@@ -29,10 +29,15 @@
  * `off` (module disabled — the SSOT composer forces it) and `unavailable` (no
  * capture or no OCR engine on this host) outrank everything the loop publishes.
  * `no_current_room` is the panel open between rooms: a layout, no advice.
+ * `waiting` (POE-242) is the module running and NOT capturing — nothing in
+ * Client.txt has put an incursion in scope — which is where a session spends
+ * nearly all of its time; `panel_not_visible` is the module having looked and
+ * seen nothing, which is a different answer to "why is nothing happening?".
  */
 export type TempleStatus =
 	| 'off'
 	| 'idle'
+	| 'waiting'
 	| 'panel_not_visible'
 	| 'reading'
 	| 'read'
@@ -51,6 +56,7 @@ export type TempleStatus =
 const TEMPLE_STATUS_MEMBERS: Record<TempleStatus, true> = {
 	off: true,
 	idle: true,
+	waiting: true,
 	panel_not_visible: true,
 	reading: true,
 	read: true,
@@ -60,7 +66,7 @@ const TEMPLE_STATUS_MEMBERS: Record<TempleStatus, true> = {
 };
 
 /**
- * Whether a value is one of the eight wire statuses.
+ * Whether a value is one of the nine wire statuses.
  *
  * `Object.hasOwn` rather than `in`: `in` walks the prototype chain, so a
  * payload carrying `"toString"` (or `"constructor"`, or any other

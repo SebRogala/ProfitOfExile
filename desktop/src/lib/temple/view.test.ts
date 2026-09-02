@@ -38,6 +38,7 @@ import { templeSliceDefault, type AdviceView, type LayoutView, type OfferView, t
 const ALL_STATUSES: TempleStatus[] = [
 	'off',
 	'idle',
+	'waiting',
 	'panel_not_visible',
 	'reading',
 	'read',
@@ -153,7 +154,14 @@ describe('overlayShowsBoard', () => {
 	});
 
 	it('shows nothing for every status with no board behind it', () => {
-		for (const status of ['off', 'idle', 'panel_not_visible', 'unavailable', 'error'] as const) {
+		for (const status of [
+			'off',
+			'idle',
+			'waiting',
+			'panel_not_visible',
+			'unavailable',
+			'error'
+		] as const) {
 			expect(overlayShowsBoard(status), status).toBe(false);
 		}
 	});

@@ -122,6 +122,13 @@ describe('isTempleStatus', () => {
 		expect(isTempleStatus('no_current_room')).toBe(true);
 	});
 
+	it('accepts the waiting status the arm gate publishes', () => {
+		// POE-242's status reaches the store like any other, so an entry
+		// missing from the membership table is a slice the store DROPS: the
+		// page would keep showing the last board while the module sat idle.
+		expect(isTempleStatus('waiting')).toBe(true);
+	});
+
 	it('rejects a status no Rust variant spells', () => {
 		expect(isTempleStatus('panel_missing')).toBe(false);
 	});

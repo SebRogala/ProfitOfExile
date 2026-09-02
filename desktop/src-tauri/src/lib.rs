@@ -413,6 +413,15 @@ pub struct AppState {
     /// per read and writes the calibration back, and the `temple_set_*`
     /// commands are what the user edits while that loop is running.
     pub temple_settings: Mutex<temple::slice::TempleSettings>,
+    /// Whether Client.txt has put an incursion in scope (POE-242) — the single
+    /// owner of "may the temple loop capture right now". Written by the log
+    /// watcher on every line and by `temple_rearm`; read once per loop
+    /// iteration. Acquired alone, like every other module-owned Mutex.
+    ///
+    /// Kept current even while the temple module is OFF: it is a fact about the
+    /// game, and a player who switches the module on inside a temple must get a
+    /// read without pressing anything.
+    pub temple_arm: Mutex<temple::trigger::TempleArm>,
     /// Bumped by `temple_rearm` (and by every settings command that invalidates
     /// the current advice). The loop's read gate watches it to force one full
     /// re-read of a board it would otherwise skip as unchanged. An atomic, not
@@ -3485,6 +3494,13 @@ fn spawn_log_watcher(app: AppHandle) {
             }
         }
 
+        // The temple trigger's own catch-up (POE-242), over the SAME 32 KB tail
+        // the lab replay's first step reads. `replay_recent_log` answers the
+        // lab's question and returns nav events, so an app started INSIDE the
+        // temple would otherwise sit disarmed for the whole run — no further
+        // Alva line, no further area change.
+        temple::trigger::catch_up(&app, std::path::Path::new(&client_txt));
+
         emit_status(&app);
 
         // The merc OCR trigger's NPC denylist (POE-198). Loaded once here
@@ -3557,6 +3573,14 @@ fn spawn_log_watcher(app: AppHandle) {
                     // construction: two string searches reject every other line
                     // before anything is locked.
                     mercenary::trigger::on_client_line(&app, &line, &merc_denylist);
+
+                    // --- Temple capture trigger (POE-242) ---
+                    // Alva's voice lines and the temple's own area line are what
+                    // arm the temple capture loop. Cheap by construction, and
+                    // deliberately NOT gated on the module flag: the arm state
+                    // is a fact about the game, so a module switched on inside a
+                    // temple finds it already armed.
+                    temple::trigger::on_client_line(&app, &line);
 
                     // --- Lab navigation events (outside state machine) ---
                     {
@@ -3841,6 +3865,7 @@ pub fn run() {
         merc_template_generation: AtomicU64::new(0),
         temple: Mutex::new(temple::slice::TempleSlice::default()),
         temple_settings: Mutex::new(temple::slice::TempleSettings::shipped()),
+        temple_arm: Mutex::new(temple::trigger::TempleArm::default()),
         temple_rearm: AtomicU64::new(0),
         merc_refit: AtomicU64::new(0),
         screen: Mutex::new(None),
