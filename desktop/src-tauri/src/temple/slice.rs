@@ -678,8 +678,8 @@ fn mode_label(mode: Mode) -> String {
 /// The status is derived here rather than passed in, because it is a *function
 /// of the read*: a board with no current room is `NoCurrentRoom` whoever asked
 /// for the read, and a board with one is `Read`. The loop's own transient
-/// states (`Idle`, `Reading`, `PanelNotVisible`, `Error`) never come through
-/// this function — they are written directly, with no board to project.
+/// states (`Idle`, `Waiting`, `Reading`, `PanelNotVisible`, `Error`) never come
+/// through this function — they are written directly, with no board to project.
 ///
 /// The settings echo is the read's own snapshot, so a setting changed while
 /// this read was running is echoed back at its OLD value for one tick; the
