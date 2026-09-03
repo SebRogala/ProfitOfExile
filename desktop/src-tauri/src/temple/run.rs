@@ -41,8 +41,8 @@
 //!    [`anchor::detect_cheap`], which is at most two correlations and touches
 //!    no OCR engine. It answers only "is anything plate-shaped on screen?",
 //!    and it is the gate that decides whether this tick pays for a
-//!    [`reader::read_layout_with_hint`] at all.
-//! 2. **The pixel gate** — the [`reader::read_layout_with_hint`] the detect
+//!    [`reader::read_layout_for_loop`] at all.
+//! 2. **The pixel gate** — the [`reader::read_layout_for_loop`] the detect
 //!    tick promoted to. Its fingerprint ([`slice::layout_signature`]) moves
 //!    when the player moves, when a corridor opens, and when the panel moves
 //!    or rescales.
@@ -79,6 +79,40 @@
 //! composition is testable without a screen. A cheap tick that says nothing is
 //! a MISS in the sense [`LoopState`] already meant it, so the retire-after-two
 //! rule and the status machine are unchanged by all of this.
+//!
+//! # The cold start (POE-234)
+//!
+//! All of the above assumes the cheap tick can SEE a panel that is on screen,
+//! and on a capture size nobody has measured it may not: its nominating scale
+//! is a guess, and a guess that misses is indistinguishable from an empty
+//! screen. Measured 2026-09-03 on a 1920x1080 laptop — panel open, true scale
+//! 1.000, guess 1.397, cheap score 0.66 against a 0.70 floor — the loop never
+//! promoted, never read, and sat on "looking for the layout panel" for the
+//! whole session.
+//!
+//! So a tick whose cheap detect did not verify an anchor buys a cold-start
+//! sweep — on the [`FULL_READ_EVERY_N_MISSES`] cadence, not once. Once is not
+//! enough: the loop arms on Client.txt when Alva speaks, which is seconds to
+//! minutes before the player opens the layout panel, so a single sweep almost
+//! always lands on a closed panel and finds nothing.
+//!
+//! [`SweepGate`] is that cadence. A screen with NO calibration sweeps on the
+//! first such tick and every Nth after; one WITH a calibration skips the first
+//! and keeps the cadence, because a hinted recheck that has missed for a whole
+//! cadence is the README's "the consuming module's own verification failing"
+//! and is the one shape of stale scale no prune can see. The sweep is the
+//! loop's longest blocking call (5.3 s on a 1920x1080 capture in the Linux
+//! container, release) and polls the stop signal inside itself.
+//!
+//! # The exhaustive sweep is not reachable from here
+//!
+//! `anchor::anchor_with_hint`'s last resort is `anchor::full_sweep`, measured
+//! at 28.4 s in the container and 347.8 s on the laptop. Every anchoring call
+//! in this file goes through the loop-facing chain instead —
+//! [`anchor::anchor_for_loop`] and [`reader::read_layout_for_loop`], which are
+//! that chain with the pyramid sweep in the last-resort slot. The exhaustive one
+//! stays reachable from `super::commands::temple_debug_capture`, where a user
+//! pressed a button and is waiting for it.
 //!
 //! The two timings above were taken by [`anchor::detect_cheap`]'s own
 //! measurement, described in that function's note: `cargo test --release --lib`
@@ -228,7 +262,7 @@ impl LoopState {
     /// How long to wait before the next pixel tick.
     ///
     /// One cadence whether or not a panel is live: the tick costs the same
-    /// either way — it is the same `read_layout_with_hint` call — so there is
+    /// either way — it is the same `read_layout_for_loop` call — so there is
     /// nothing for a second number to buy.
     pub fn detect_interval(&self) -> Duration {
         if self.backed_off {
@@ -311,6 +345,182 @@ impl LoopState {
     }
 }
 
+// ------------------------------------------------------- the cold sweep --
+
+/// The screen one cold-start sweep was run for.
+///
+/// Monitor id AND capture size, because either can change without the other:
+/// dragging the game to a second display of the same resolution changes only
+/// the id, and a resolution change changes only the size. `monitor_id` `0` is
+/// `crate::capture::Capture`'s unknown, and is carried here as an ordinary
+/// value rather than excluded — this is a "have I already tried this?" key, not
+/// an identity claim, so two unknown displays sharing a key costs one skipped
+/// sweep and never a wrong scale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SweepKey {
+    pub monitor_id: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// How often the cold-start sweep may run, and when it stops.
+///
+/// # What it is budgeting
+///
+/// The cold-start sweep is the expensive answer to "what scale is this
+/// screen?" —
+/// measured 5.3 s in the Linux container (release) on a 1920x1080 capture, and
+/// the exhaustive path it replaces measured 347.8 s on the laptop that reported
+/// the bug. It runs on the capture loop's own thread, so a loop that ran it on
+/// every cheap miss would spend its whole life sweeping a screen with no panel
+/// on it.
+///
+/// # Why a cadence and not once
+///
+/// The loop arms on Client.txt when Alva speaks (POE-242), and the player opens
+/// the layout panel seconds to minutes after that. A single sweep therefore
+/// almost always lands on a CLOSED panel, finds nothing correctly, and — if
+/// that were the end of it — would leave the screen exactly as blind as before
+/// when the panel does open, because on an uncalibrated screen the cheap tick's
+/// nominating scale is the guess that started all this.
+///
+/// So the sweep repeats, on
+/// [`FULL_READ_EVERY_N_MISSES`] — the same cadence, and for the same reason, as
+/// the periodic full read: it is the interval this loop already treats as "long
+/// enough that an expensive answer is worth re-asking". 30 ticks is 30 s at
+/// [`DETECT_INTERVAL`] and 90 s once [`DETECT_INTERVAL_SLOW`] has fired.
+///
+/// # What a calibration changes, and what it does not
+///
+/// It costs the screen its FIRST-tick sweep, and nothing else. A known scale
+/// means the cheap tick's hinted path re-anchors the panel in one windowed
+/// match, so a screen that has just been answered has nothing to discover and
+/// must not pay 5.3 s the moment Alva speaks — the panel is closed then, and
+/// the loop arms on every incursion.
+///
+/// It does not close the gate. `desktop/src/lib/README.md`'s "Screen Geometry
+/// (SSOT)" lifecycle re-measures on "the consuming module's own verification
+/// failing", and a calibration whose hinted recheck has missed for
+/// [`FULL_READ_EVERY_N_MISSES`] consecutive ticks IS that failure — it is the
+/// in-game UI-scale change [`FULL_READ_EVERY_N_MISSES`]'s own note describes,
+/// which no prune can see because the capture size never moved. So a calibrated
+/// screen keeps the cadence and loses only the head start.
+///
+/// # What that costs, at worst
+///
+/// One sweep is 5.3 s (Linux container, release, 1920x1080). The cadence caps
+/// it at one per [`FULL_READ_EVERY_N_MISSES`] ticks — 30 s at
+/// [`DETECT_INTERVAL`], 90 s once [`DETECT_INTERVAL_SLOW`] has fired — and only
+/// while the loop is ARMED, which POE-242 bounds to Alva's window rather than
+/// to the session. A player who never opens the layout panel during an
+/// incursion pays it at most twice.
+///
+/// # Why `temple_rearm` is not an input
+///
+/// It was, and that was wrong. The settings commands bump that counter on
+/// EVERY change (see [`wants_full_read`]), and none of those is a reason to pay
+/// 5.3 s — a user adjusting three settings would have bought three sweeps.
+/// What the user actually presses when the geometry is wrong is Recalibrate,
+/// and `ssot::geometry_recalibrate` reaches this gate the honest way: it clears
+/// the temple's calibration, so `calibrated` goes false, and a screen that has
+/// just LOST its scale restarts the countdown rather than serving out one some
+/// earlier state left running.
+///
+/// Pure over plain data — no `AppHandle`, no image — so the whole rule is
+/// testable without a screen.
+#[derive(Debug, Default)]
+pub struct SweepGate {
+    /// The screen the countdown belongs to. A different one starts over, which
+    /// is what makes a resolution or monitor change sweep immediately.
+    key: Option<SweepKey>,
+    /// Whether a calibration existed **as of the last non-verified tick**, so
+    /// the loss of one is detectable — that transition is how Recalibrate
+    /// reaches this gate.
+    ///
+    /// The caveat is load-bearing, because [`Self::allow`] is deliberately not
+    /// called on a tick whose hint verified. A Recalibrate pressed while the
+    /// layout panel is CONTINUOUSLY on screen therefore does not reach this
+    /// field at all: every tick in that window verifies, so the transition is
+    /// never observed here. Nothing is lost — `ssot::geometry_recalibrate` also
+    /// bumps `temple_rearm`, and [`wants_full_read`] spends that to force a read
+    /// on the next tick, which is the path that matters while a panel is up.
+    /// This gate is the recovery for the case where nothing is on screen to
+    /// re-read, and that case has non-verified ticks by definition.
+    calibrated: bool,
+    /// Ticks still owed before the next sweep on [`Self::key`]. `0` means the
+    /// next one sweeps.
+    countdown: u32,
+}
+
+impl SweepGate {
+    /// Whether this tick may pay for a cold-start sweep, spending the budget if
+    /// it may.
+    ///
+    /// Call it ONCE per tick, on every tick whose cheap detect did NOT verify
+    /// an anchor, and nowhere else.
+    ///
+    /// **Once**, because two paths in `tick` reach the same sweep — the cold
+    /// one calls it directly, and a promoted read reaches it as
+    /// [`anchor::anchor_for_loop`]'s last resort — so a budget consulted on
+    /// only one of them is not a budget: a screen whose background nominates
+    /// above [`anchor::COARSE_CANDIDATE_FLOOR`] promotes on every tick and
+    /// would pay 5.3 s on every tick through the other.
+    ///
+    /// **Not on a verified tick**, because a hint that re-matched IS the
+    /// calibration's own verification succeeding, and that is the event the
+    /// calibrated cadence counts the absence of. Letting a working panel
+    /// decrement the countdown would turn "N consecutive verification failures"
+    /// into "N ticks", which is a different and weaker thing.
+    pub fn allow(&mut self, key: SweepKey, calibrated: bool) -> bool {
+        // A new screen, or one that has just lost its calibration, starts its
+        // countdown over rather than serving out one that belonged to another
+        // state — losing a calibration is how Recalibrate reaches this gate.
+        if self.key != Some(key) || (self.calibrated && !calibrated) {
+            self.key = Some(key);
+            // An unknown scale is owed an answer NOW: `0` sweeps on this very
+            // tick. A known one is owed nothing until its own verification has
+            // failed a full cadence, so it starts a whole cadence away and the
+            // first sweep lands on tick N + 1.
+            self.countdown = if calibrated {
+                FULL_READ_EVERY_N_MISSES
+            } else {
+                0
+            };
+        }
+        self.calibrated = calibrated;
+        if self.countdown > 0 {
+            self.countdown -= 1;
+            return false;
+        }
+        // One short of the cadence: this call IS the first of the group, so
+        // `FULL_READ_EVERY_N_MISSES - 1` refusals put the next sweep exactly
+        // that many ticks later — the same arithmetic
+        // `LoopState::note_cheap_detect` does with `cheap_misses + 1`.
+        self.countdown = FULL_READ_EVERY_N_MISSES.saturating_sub(1);
+        true
+    }
+}
+
+/// Whether this tick's cheap result leaves anything for a cold-start sweep to
+/// answer.
+///
+/// `false` for a verified anchor and nothing else. [`anchor::CheapDetect::Anchored`]
+/// is a full-resolution match against [`anchor::NCC_FLOOR`] — the calibration's
+/// own verification succeeding — so that tick already has its scale and must not
+/// spend a budget kept for the ticks that do not. It is the event
+/// [`SweepGate`]'s calibrated cadence counts the ABSENCE of, which is what makes
+/// that cadence "N consecutive verification failures" rather than "N ticks".
+///
+/// `true` for the other two, because both can reach the sweep: a `Candidate`
+/// promotes to a read whose last resort is [`anchor::anchor_for_loop`]'s sweep,
+/// and `Nothing` is the cold path itself.
+///
+/// A function rather than a `matches!` at the call site so the rule has a seam:
+/// it is one line in [`tick`], which needs a screen and an `AppHandle`.
+pub fn sweep_could_help(cheap: &anchor::CheapDetect) -> bool {
+    !matches!(cheap, anchor::CheapDetect::Anchored(_))
+}
+
 /// The detect tick's whole decision: does this tick pay for the full read?
 ///
 /// Pure over both state machines so the composition is testable without a
@@ -321,14 +531,20 @@ impl LoopState {
 /// no panel is on screen would stay pending on every subsequent tick and pin
 /// the loop into the full read for the rest of the session. The settings
 /// commands re-arm on every change, so that is not a corner case.
+///
+/// `swept` is the cold-start sweep's answer (POE-234), folded in as a fifth way
+/// in rather than short-circuiting around this function: a sweep that anchored
+/// is a detection by any reading, and routing it through here is what keeps
+/// [`LoopState::cheap_misses`] and the re-arm bump with one owner apiece.
 pub fn wants_full_read(
     state: &mut LoopState,
     gate: &mut slice::ReadGate,
     cheap: &anchor::CheapDetect,
+    swept: bool,
     rearm: u64,
 ) -> bool {
     let rearmed = gate.rearm_pending(rearm);
-    let read = state.note_cheap_detect(cheap.worth_reading(), rearmed);
+    let read = state.note_cheap_detect(cheap.worth_reading() || swept, rearmed);
     if read && rearmed {
         gate.note_rearm(rearm);
     }
@@ -965,6 +1181,9 @@ struct Session {
     /// change, and a hint that is merely in the wrong PLACE costs one windowed
     /// correlation and is caught by the nominating pass on the same tick.
     cheap_hint: Option<CheapHint>,
+    /// How recently this session paid for a cold-start sweep on the screen it
+    /// is looking at, and whether that screen still needs one.
+    sweeps: SweepGate,
     /// The armed-ness the loop last announced, `None` before the first one.
     /// See [`gate_announcement`] — it is what makes `Waiting` one publish
     /// rather than one per nap. Not the only input: the slice's own status is
@@ -999,6 +1218,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         errors: ErrorLog::default(),
         last_panel_check: Instant::now(),
         cheap_hint: None,
+        sweeps: SweepGate::default(),
         gate_said: None,
     };
     // Backdated so the first iteration ticks immediately rather than after a
@@ -1137,12 +1357,14 @@ fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) 
             return false;
         }
     };
+    let monitor_id = grab.monitor_id;
     let img = grab.image;
     // Before ANY remembered geometry is read (POE-227): a screen scale measured
     // on another monitor is dropped from the shared slice on the first capture
     // whose dimensions disagree with it. The temple does not consume that slice
-    // yet — its unit ratio is unmeasured (see `ssot::ScreenSlice`) — but it does
-    // capture screens, and the prune belongs to whichever module looks first.
+    // yet — its unit ratio has a value but nothing converts through it (see
+    // `temple::anchor::TEMPLE_SCALE_PER_UI_SCALE`) — but it does capture
+    // screens, and the prune belongs to whichever module looks first.
     crate::ssot::drop_if_mismatched(app, (img.width(), img.height()), grab.monitor_id);
     // The ONLY place the loop obtains its settings, so the stale-hint prune
     // cannot be skipped without the compile failing.
@@ -1164,18 +1386,90 @@ fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) 
     // price of finding out the long way.
     let rearm = rearm_counter(app);
     let cheap = anchor::detect_cheap(&img, session.cheap_hint.as_ref());
-    if !wants_full_read(&mut session.state, &mut session.gate, &cheap, rearm) {
+
+    // The cold start (POE-234). The cheap tick's nominating scale is a GUESS on
+    // a capture size nobody has measured, and a guess that misses looks exactly
+    // like an empty screen: measured 2026-09-03 on a 1920x1080 laptop, the
+    // panel was open, the true scale was 1.000, the width-derived guess was
+    // 1.397 and the tick scored 0.66 — so the loop sat on "looking for the
+    // layout panel" for the whole session and never once paid to find out.
+    //
+    // So a tick buys a sweep on the `FULL_READ_EVERY_N_MISSES` cadence — see
+    // `SweepGate`, which owns that rule and the head start an uncalibrated
+    // screen gets on it. ONE decision, taken here, for BOTH the cold path below
+    // and the promoted read after it: those reach the same sweep, and a budget
+    // spent on only one of them leaves the other paying 5.3 s per tick on a
+    // screen whose background happens to nominate.
+    //
+    // Asked only when the cheap tick did NOT verify an anchor: a hint that
+    // re-matched is the calibration's own verification succeeding, and a tick
+    // that verified must not spend a budget kept for the ticks that could not.
+    // That is what makes the calibrated cadence mean "N consecutive
+    // verification failures" — the README's re-measure trigger — rather than
+    // "N ticks".
+    let calibrated = settings.calibration.is_some();
+    let may_sweep = sweep_could_help(&cheap)
+        && session.sweeps.allow(
+            SweepKey {
+                monitor_id,
+                width: img.width(),
+                height: img.height(),
+            },
+            calibrated,
+        );
+
+    let mut sweep_ran = false;
+    let mut swept = None;
+    if !cheap.worth_reading() && may_sweep {
+        sweep_ran = true;
+        swept = cold_sweep(app, &img, settings.calibration.as_ref(), cancel);
+    }
+
+    if !wants_full_read(
+        &mut session.state,
+        &mut session.gate,
+        &cheap,
+        swept.is_some(),
+        rearm,
+    ) {
         miss(app, session, false);
-        return false;
+        // A sweep that found nothing still COST what a promoted tick costs, so
+        // it is reported as one: `LoopState::note_tick_duration` ignores
+        // promoted ticks, and letting seconds of deliberate work trip the
+        // sticky `SLOW_TICK` backoff would slow the loop for the rest of the
+        // session on the strength of a price it chose to pay once.
+        return sweep_ran;
     }
 
     // A cheap tick that anchored has already done the expensive half of the
     // read's own first step, at full resolution and against the same floor —
     // so the promoted read takes that anchor instead of finding the plate a
-    // second time. Every other promotion has no anchor to hand over.
-    let layout = match cheap {
-        anchor::CheapDetect::Anchored(found) => reader::read_layout_at(&img, found),
-        _ => match reader::read_layout_with_hint(&img, settings.calibration.as_ref()) {
+    // second time. A sweep that anchored is the same fact from the cold path.
+    // Every other promotion has no anchor to hand over.
+    let layout = match (swept, cheap) {
+        (Some(found), _) | (None, anchor::CheapDetect::Anchored(found)) => {
+            reader::read_layout_at(&img, found)
+        }
+        // The sweep just paid for the pyramid on this frame. Re-running the
+        // chain would re-pay it, and the two steps ahead of it are the cheap
+        // ones: the same hint `detect_cheap` already tried in a window this
+        // tick, and the table row for a capture size the sweep just searched
+        // past. Nothing there can answer what the sweep could not.
+        (None, _) if sweep_ran => {
+            miss(app, session, false);
+            return true;
+        }
+        // `may_sweep` is still unspent here: the only way to reach this arm
+        // with a spent budget is the one above, which returns. So a promotion
+        // over an uncalibrated screen sweeps on the same cadence as the cold
+        // path, and a promotion that arrives between cadences does the hint and
+        // table steps and reports a miss rather than blocking for seconds.
+        (None, _) => match reader::read_layout_for_loop(
+            &img,
+            settings.calibration.as_ref(),
+            may_sweep,
+            &|| *cancel.borrow(),
+        ) {
             Ok(layout) => layout,
             Err(_) => {
                 // Not an error path: "no layout panel on screen" is the state
@@ -1230,6 +1524,62 @@ fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) 
         full_read(app, session, cancel, &img, layout, &settings, layout_sig, Some(read));
     }
     true
+}
+
+/// One cold-start sweep of this capture, logged either way.
+///
+/// `None` on a miss AND on a cancelled sweep — both mean "no anchor came out of
+/// this", which is what the caller needs. They are logged differently because
+/// they mean different things to a user reading `app.log`, and neither is an
+/// error: a screen with no layout panel on it is the state the loop lives in.
+///
+/// The miss line repeats on [`SweepGate`]'s cadence rather than once per
+/// screen, which is the honest reading of what it says: the loop IS still
+/// waiting for the panel, and one line every 30 s while an armed incursion has
+/// no readable board is the record of that. [`ErrorLog`] does not cap it,
+/// deliberately — this is not an error path and the cap exists for a failure
+/// that re-runs every second.
+///
+/// # Blocking
+///
+/// This is the loop's longest single call: 5.3 s on a 1920x1080 capture in the
+/// Linux container (release). `cancel` is polled inside it, between coarse
+/// correlations, so a module switched off mid-sweep stops within roughly a
+/// twenty-third of it rather than after all of it — see
+/// [`anchor::anchor_for_loop`].
+fn cold_sweep(
+    app: &AppHandle,
+    img: &DynamicImage,
+    hint: Option<&anchor::AnchorCalibration>,
+    cancel: &watch::Receiver<bool>,
+) -> Option<anchor::Anchor> {
+    // The whole loop-facing chain, hint included. A CALIBRATED screen reaches
+    // here too now — on its cadence tick, when its hinted recheck has been
+    // failing — and handing that calibration in is worth one coarse pass at
+    // that one scale: `anchor_for_loop` searches it over the WHOLE capture,
+    // where `detect_cheap`'s `recheck` only looked in a window around the
+    // remembered origin, so a plate that MOVED is found for a fraction of the
+    // sweep behind it. `anchor.rs` verifies the result against `NCC_FLOOR` like
+    // anything else, so a hint that is wrong is never believed, only tried
+    // first.
+    let found = anchor::anchor_for_loop(img, hint, true, &|| *cancel.borrow());
+    if *cancel.borrow() {
+        return None;
+    }
+    match found {
+        Ok(found) => Some(found),
+        Err(_) => {
+            crate::app_log(
+                app,
+                format!(
+                    "Temple: sweep found no layout panel at {}x{} — waiting for the panel",
+                    img.width(),
+                    img.height()
+                ),
+            );
+            None
+        }
+    }
 }
 
 /// A tick that produced no layout — nothing on screen, or the grab failed.
@@ -1326,10 +1676,22 @@ const UI_SCALE_REFERENCE_HEIGHT: f32 = 1200.0;
 /// against `anchor::REFERENCE_SCREEN_WIDTH` (1374, a WIDTH), the slice's against
 /// a 1920x1200 fixture whose scale tracks HEIGHT — and nothing in the repo can
 /// relate them offline, because every temple fixture is a crop of a panel rather
-/// than a whole screen. So the ratio is measured in play: one temple session
-/// prints this line, `k` is read off it, and the constant lands in a follow-up
-/// that switches the temple onto the shared slice. Until then a reader must NOT
-/// substitute one scale for the other.
+/// than a whole screen. So the ratio is taken in play: a laptop session on
+/// 2026-09-03 printed `k=1.1111`, committed as
+/// [`anchor::TEMPLE_SCALE_PER_UI_SCALE`] (POE-234).
+///
+/// **What that number is, exactly.** The temple scale in it is measured — 1.000,
+/// NCC 0.99999. The denominator is not: this line divides by
+/// `capture_height / 1200`, the shared unit's DEFINITION, and not by a
+/// `ui_scale` the merc module measured on that machine. The slice's writer
+/// accepts a reading within 0.01 of the standing one, which on a 0.90
+/// denominator is ~1% on `k`. So the constant is good to about a per cent, and
+/// the commit that makes the temple a slice writer has to recompute it against
+/// the slice's actual reading once one session carries both numbers.
+///
+/// The line stays, because a second machine's `k` is how that one point stops
+/// being one point. A reader must still NOT substitute one scale for the other
+/// — only convert through the constant, and only where a commit says so.
 ///
 /// Pure, and separated from the log call, so the arithmetic and the format are
 /// testable without a screen or an `AppHandle`.
@@ -1351,11 +1713,12 @@ fn full_read(
     already_read: Option<panel::PanelReading>,
 ) {
     publish(app, |slice| apply_status(slice, TickOutcome::Anchored));
-    // POE-227 D3 instrumentation, and the ONLY thing this batch does about the
-    // temple's unit: print the ratio between the two scales on a real board so
-    // the constant can be read off a live session's log. Nothing consumes it —
-    // the temple still measures and stores its own scale, and still does not
-    // write the shared screen slice.
+    // POE-227 D3 instrumentation: the ratio between the two scales, on a real
+    // board. Its first reading is now a constant
+    // (`anchor::TEMPLE_SCALE_PER_UI_SCALE`, POE-234) and this line is how a
+    // second machine's reading arrives. Nothing consumes either here — the
+    // temple still measures and stores its own scale, and still does not write
+    // the shared screen slice.
     crate::app_log(
         app,
         unit_ratio_line(layout.scale, img.width(), img.height()),
@@ -1554,6 +1917,186 @@ mod tests {
         anchor::CheapDetect::Nothing { best_ncc: 0.2 }
     }
 
+    // -------------------------------------------- the cold-start sweep gate --
+
+    fn screen(monitor_id: u32, width: u32, height: u32) -> SweepKey {
+        SweepKey {
+            monitor_id,
+            width,
+            height,
+        }
+    }
+
+    /// The first tick on a screen nobody has measured sweeps at once — this is
+    /// the bug POE-234 opened on, and a gate that made the user wait out a
+    /// cadence for the FIRST answer would leave it unfixed for 30 s.
+    #[test]
+    fn the_first_tick_on_an_uncalibrated_screen_sweeps_at_once() {
+        let mut gate = SweepGate::default();
+
+        assert!(gate.allow(screen(7, 1920, 1080), false));
+    }
+
+    /// …and the ticks after it wait out [`FULL_READ_EVERY_N_MISSES`] before the
+    /// next one. The sweep is seconds of work on the loop's own thread, so the
+    /// tick after a sweep must not buy another.
+    ///
+    /// Pinned as the exact tick the next sweep lands on, not as "eventually":
+    /// an off-by-one either sweeps twice in a row (2× the cost for one answer)
+    /// or drifts the cadence apart from the periodic full read it is
+    /// deliberately tied to.
+    #[test]
+    fn an_uncalibrated_screen_sweeps_again_only_after_the_cadence() {
+        let mut gate = SweepGate::default();
+        let laptop = screen(7, 1920, 1080);
+        assert!(gate.allow(laptop, false), "precondition: the first sweeps");
+
+        let mut swept_on = Vec::new();
+        for tick in 2..=(2 * FULL_READ_EVERY_N_MISSES) {
+            if gate.allow(laptop, false) {
+                swept_on.push(tick);
+            }
+        }
+
+        assert_eq!(
+            swept_on,
+            vec![FULL_READ_EVERY_N_MISSES + 1],
+            "the sweeps after the first landed on ticks {swept_on:?}, not on \
+             tick {} alone",
+            FULL_READ_EVERY_N_MISSES + 1
+        );
+    }
+
+    /// A screen whose scale is already known loses the FIRST-tick sweep and
+    /// keeps the cadence: refused for [`FULL_READ_EVERY_N_MISSES`] ticks, then
+    /// swept on the one after.
+    ///
+    /// Both halves are load-bearing and they pull opposite ways. Refusing the
+    /// first tick is what stops every armed incursion costing 5.3 s over a
+    /// closed panel the hint would have re-anchored anyway. Sweeping on the
+    /// cadence is `desktop/src/lib/README.md`'s "Screen Geometry (SSOT)"
+    /// lifecycle: a measurement is re-taken when the consuming module's own
+    /// verification fails, and a hinted recheck that has missed a whole cadence
+    /// is that failure — the in-game UI-scale change no prune can see, because
+    /// the capture size never moved.
+    ///
+    /// Fails both ways: a gate that refuses outright leaves that screen with no
+    /// automatic recovery at all, and one that sweeps at once makes the
+    /// calibration worthless.
+    #[test]
+    fn a_calibrated_screen_skips_the_first_tick_and_keeps_the_cadence() {
+        let mut gate = SweepGate::default();
+        let laptop = screen(7, 1920, 1080);
+
+        let mut swept_on = Vec::new();
+        for tick in 1..=(2 * FULL_READ_EVERY_N_MISSES) {
+            if gate.allow(laptop, true) {
+                swept_on.push(tick);
+            }
+        }
+
+        assert_eq!(
+            swept_on,
+            vec![FULL_READ_EVERY_N_MISSES + 1],
+            "a calibrated screen swept on ticks {swept_on:?}; it must skip the \
+             first and sweep once, on tick {}",
+            FULL_READ_EVERY_N_MISSES + 1
+        );
+    }
+
+    /// A screen that LOSES its calibration sweeps at once rather than serving
+    /// out a countdown that belonged to another state.
+    ///
+    /// This is how Recalibrate reaches this gate, and the only way it does:
+    /// `ssot::geometry_recalibrate` clears the temple's calibration, and the
+    /// `temple_rearm` counter it bumps alongside is deliberately NOT an input
+    /// here. Fails if the gate only restarts on a key change — the user would
+    /// press the button and wait 29 more ticks for the sweep it exists to buy.
+    #[test]
+    fn a_screen_that_loses_its_calibration_sweeps_without_waiting_out_the_cadence() {
+        let mut gate = SweepGate::default();
+        let laptop = screen(7, 1920, 1080);
+        assert!(gate.allow(laptop, false), "the uncalibrated screen sweeps");
+        assert!(!gate.allow(laptop, true), "then a calibration lands");
+
+        assert!(gate.allow(laptop, false), "and Recalibrate clears it");
+    }
+
+    /// Nothing else restarts the countdown. The settings commands bump
+    /// `temple_rearm` on every change and this gate cannot see it, so three
+    /// settings edits in a row cost no sweeps at all — which is the whole
+    /// reason that counter was taken out of the signature.
+    ///
+    /// Fails if a second input is reintroduced that resets the countdown:
+    /// re-running the same call must decrement, never restart.
+    #[test]
+    fn repeated_identical_ticks_only_ever_decrement_the_countdown() {
+        let mut gate = SweepGate::default();
+        let laptop = screen(7, 1920, 1080);
+        assert!(gate.allow(laptop, false), "precondition: the first sweeps");
+
+        let sweeps = (0..FULL_READ_EVERY_N_MISSES - 1)
+            .filter(|_| gate.allow(laptop, false))
+            .count();
+
+        assert_eq!(
+            sweeps, 0,
+            "{sweeps} of the {} ticks inside the cadence bought a sweep",
+            FULL_READ_EVERY_N_MISSES - 1
+        );
+    }
+
+    /// A different capture size is a different screen and sweeps immediately —
+    /// the scale is a property of the render resolution, so nothing measured at
+    /// 1920x1080 says anything about 2560x1440, and the countdown the old size
+    /// was part-way through does not apply to it.
+    #[test]
+    fn a_capture_size_change_sweeps_without_waiting_out_the_cadence() {
+        let mut gate = SweepGate::default();
+        assert!(gate.allow(screen(7, 1920, 1080), false));
+        assert!(
+            !gate.allow(screen(7, 1920, 1080), false),
+            "precondition: the cadence is running",
+        );
+
+        assert!(gate.allow(screen(7, 2560, 1440), false));
+    }
+
+    /// …and so is a different DISPLAY at the same resolution. Fails if the key
+    /// is the dimensions alone, which is the case POE-237 added the monitor id
+    /// for: two identical 1080p monitors are not one screen.
+    #[test]
+    fn a_monitor_change_at_the_same_resolution_sweeps_without_waiting() {
+        let mut gate = SweepGate::default();
+        assert!(gate.allow(screen(7, 1920, 1080), false));
+        assert!(
+            !gate.allow(screen(7, 1920, 1080), false),
+            "precondition: the cadence is running",
+        );
+
+        assert!(gate.allow(screen(9, 1920, 1080), false));
+    }
+
+    /// A tick whose hint re-anchored the panel has its scale, so it neither
+    /// needs a sweep nor may spend the budget for one — that is what keeps the
+    /// calibrated cadence counting verification FAILURES rather than ticks.
+    /// The other two outcomes can both reach the sweep and both count.
+    ///
+    /// Fails if the guard is inverted or dropped: a working panel would then
+    /// walk the countdown down and buy a 5.3 s sweep it has no use for.
+    #[test]
+    fn only_a_tick_that_verified_an_anchor_is_kept_off_the_sweep_budget() {
+        let anchored = anchor::CheapDetect::Anchored(anchor::Anchor {
+            origin: (960, 713),
+            scale: 1.0,
+            ncc: 0.99,
+        });
+
+        assert!(!sweep_could_help(&anchored), "a verified anchor needs no sweep");
+        assert!(sweep_could_help(&saw_something()), "a candidate can reach it");
+        assert!(sweep_could_help(&saw_nothing()), "and so can an empty screen");
+    }
+
     /// A cheap outcome that nominated something.
     fn saw_something() -> anchor::CheapDetect {
         anchor::CheapDetect::Candidate { coarse_ncc: 0.94 }
@@ -1573,19 +2116,19 @@ mod tests {
         let mut gate = slice::ReadGate::default();
 
         assert!(
-            !wants_full_read(&mut state, &mut gate, &saw_nothing(), 0),
+            !wants_full_read(&mut state, &mut gate, &saw_nothing(), false, 0),
             "precondition: a quiet screen is a cheap tick",
         );
 
         assert!(
-            wants_full_read(&mut state, &mut gate, &saw_nothing(), 1),
+            wants_full_read(&mut state, &mut gate, &saw_nothing(), false, 1),
             "the bump buys a read",
         );
         assert!(
-            !wants_full_read(&mut state, &mut gate, &saw_nothing(), 1),
+            !wants_full_read(&mut state, &mut gate, &saw_nothing(), false, 1),
             "and exactly one — the tick after it is cheap again",
         );
-        assert!(!wants_full_read(&mut state, &mut gate, &saw_nothing(), 1));
+        assert!(!wants_full_read(&mut state, &mut gate, &saw_nothing(), false, 1));
     }
 
     /// …and the read it forced actually happens. Fails if spending the bump
@@ -1600,12 +2143,36 @@ mod tests {
         gate.record(board, panel);
         assert!(!gate.layout_wants_read(board, 0), "precondition: already read");
 
-        assert!(wants_full_read(&mut state, &mut gate, &saw_something(), 1));
+        assert!(wants_full_read(&mut state, &mut gate, &saw_something(), false, 1));
 
         assert!(
             gate.layout_wants_read(board, 1),
             "the board the re-arm was pressed over must be read again",
         );
+    }
+
+    /// A sweep that anchored buys the read, whatever the cheap tick said.
+    ///
+    /// The cold path's whole point: on the screen POE-234 was opened on the
+    /// cheap tick reports NOTHING while the panel is open, so a promotion rule
+    /// that read only `CheapDetect::worth_reading` would throw the anchor the
+    /// sweep just paid 5.3 s for straight back into `miss` — no read, no
+    /// calibration persisted, and the next tick's sweep gated behind the
+    /// cadence.
+    ///
+    /// Fails if `|| swept` is dropped from the promotion.
+    #[test]
+    fn a_sweep_that_anchored_buys_the_read() {
+        let mut state = LoopState::default();
+        let mut gate = slice::ReadGate::default();
+
+        assert!(wants_full_read(
+            &mut state,
+            &mut gate,
+            &saw_nothing(),
+            true,
+            0
+        ));
     }
 
     /// A panel already on screen is read whatever the cheap tick says. It is
@@ -1624,7 +2191,7 @@ mod tests {
         };
         let mut gate = slice::ReadGate::default();
 
-        assert!(wants_full_read(&mut state, &mut gate, &saw_nothing(), 0));
+        assert!(wants_full_read(&mut state, &mut gate, &saw_nothing(), false, 0));
     }
 
     /// A cheap tick that saw something buys the full read. Fails if the

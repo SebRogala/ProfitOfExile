@@ -59,11 +59,10 @@ pub struct TempleLayout {
 /// Read a board from a capture of the **whole game window** with the temple's
 /// layout panel open.
 ///
-/// Not a crop of the panel: the anchor's first scale guess is
-/// `img.width() / anchor::REFERENCE_SCREEN_WIDTH`, so the capture's width has
-/// to be the game window's width for that seed to mean anything. A panel-sized
-/// crop seeds far too low, falls through to the (much slower) full sweep, and
-/// on a narrow enough crop finds nothing at all. POE-143's capture layer is the
+/// Not a crop of the panel: every attempt behind [`anchor::anchor_with_hint`]
+/// is keyed on the capture's own SIZE — the measured-scale row it looks up, and
+/// the sweep ceiling the width still sets. A panel-sized crop matches no row and
+/// falls through to the (much slower) full sweep. POE-143's capture layer is the
 /// intended caller and captures the window.
 #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub fn read_layout(img: &DynamicImage) -> Result<TempleLayout, ReadError> {
@@ -80,6 +79,25 @@ pub fn read_layout_with_hint(
     hint: Option<&AnchorCalibration>,
 ) -> Result<TempleLayout, ReadError> {
     Ok(read_layout_at(img, anchor::anchor_with_hint(img, hint)?))
+}
+
+/// Read a board with only the attempts a CAPTURE LOOP may pay for.
+///
+/// [`read_layout_with_hint`] with [`anchor::anchor_for_loop`] in place of
+/// [`anchor::anchor_with_hint`] — same board, same hint discipline, and no
+/// exhaustive sweep behind it. `super::run` is the only caller, and
+/// `may_sweep` is its per-tick sweep budget; see `anchor_for_loop` for what
+/// that gates, what the loop gives up, and where the two chains can disagree.
+pub fn read_layout_for_loop(
+    img: &DynamicImage,
+    hint: Option<&AnchorCalibration>,
+    may_sweep: bool,
+    stop: &dyn Fn() -> bool,
+) -> Result<TempleLayout, ReadError> {
+    Ok(read_layout_at(
+        img,
+        anchor::anchor_for_loop(img, hint, may_sweep, stop)?,
+    ))
 }
 
 /// Read a board from an anchor that has already been found.
@@ -198,9 +216,17 @@ mod tests {
             "D1-D2", "D1-E0", "D3-E2", "E0-E1",
         ],
         uncertain: &["A0-B0", "B0-B1", "B0-C0", "B0-C1"],
+        // The diagonal figure was 0.1600 until 2026-09-03, when POE-234 retired
+        // the width-seeded band. That band was stepped from `seed * 0.85`, so
+        // its scales were irrational offsets and this board anchored at
+        // 1.1320742; the exhaustive sweep it now falls through to is stepped
+        // from 0.80, so it anchors at exactly the 1.13 this fixture has always
+        // called its true scale. Same plate, same origin, same door sets — the
+        // calibrated diagonal threshold is the one derived statistic 0.002 of
+        // scale moves, and this is it re-measured, not a tolerance relaxed.
         thresholds: Thresholds {
             horizontal: 0.2233,
-            diagonal: 0.1600,
+            diagonal: 0.1678,
         },
     };
 
