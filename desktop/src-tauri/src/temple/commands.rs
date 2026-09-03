@@ -150,8 +150,8 @@ pub fn temple_set_profile(profile: TempleProfileSettings, app: AppHandle) -> Res
 ///
 /// The user's escape hatch: the gate deliberately does not re-read a board that
 /// looks identical, so a read that came out wrong — a mis-OCR'd plate, a
-/// diamond the estimated rect missed — would otherwise stand until the player
-/// moves.
+/// diamond the rect missed because the anchor was off — would otherwise stand
+/// until the player moves.
 #[tauri::command]
 pub fn temple_rearm(app: AppHandle) -> Result<(), String> {
     rearm(&app);
@@ -204,15 +204,15 @@ pub struct TempleDebugReport {
     pub ncc: Option<f32>,
     pub confidence: Option<String>,
     pub current: Option<String>,
-    /// The estimated diamond rect this build used — the number most likely to
-    /// be wrong, and the reason this dump writes the crop.
+    /// The diamond rect this build used, and the crop taken at it. Since
+    /// POE-230 all three regions below are placed from the Entrance origin and
+    /// the anchor's scale, so a rect that is wrong here is either a wrong anchor
+    /// or a constant that needs re-measuring — the dump is what tells the two
+    /// apart. The loop prints the same three on every read (`Temple: rois …`).
     pub diamond_rect: Option<[i32; 4]>,
-    /// The side panel's OCR region, as the loop computes it. Reported for the
-    /// same reason as `diamond_rect`: it is derived from the capture's right
-    /// edge and a windowed client moves it.
+    /// The side panel's OCR region — see `diamond_rect`.
     pub panel_rect: Option<[i32; 4]>,
-    /// The `N Incursions Remaining` OCR region. Anchored to the Entrance plate,
-    /// so this one follows the board rather than the screen.
+    /// The `N Incursions Remaining` OCR region — see `diamond_rect`.
     pub remaining_rect: Option<[i32; 4]>,
     /// Why the diamond read failed, when it did.
     pub marker_error: Option<String>,
@@ -357,10 +357,9 @@ fn debug_capture_blocking(
     report.confidence = Some(format!("{:?}", layout.confidence));
     report.current = layout.current.map(|s| s.as_str().to_string());
 
-    // The diamond crop is the whole reason this dump exists: the rect is an
-    // estimate from two screenshots, and re-measuring it needs the pixels it
-    // actually looked at, right or wrong.
-    let rect = super::run::diamond_rect((img.width(), img.height()), layout.scale);
+    // The diamond crop is the whole reason this dump exists: re-measuring the
+    // rect needs the pixels it actually looked at, right or wrong.
+    let rect = super::run::diamond_rect(layout.origin, layout.scale);
     report.diamond_rect = Some(rect);
     let [dx, dy, dw, dh] = rect;
     if dx >= 0 && dy >= 0 && (dx + dw) as u32 <= img.width() && (dy + dh) as u32 <= img.height() {
@@ -372,7 +371,7 @@ fn debug_capture_blocking(
             crate::app_log(&app, format!("Temple debug: {line}"));
         }
     } else {
-        let note = format!("the estimated diamond rect {rect:?} falls outside the capture");
+        let note = format!("the diamond rect {rect:?} falls outside the capture");
         crate::app_log(&app, format!("Temple debug: {note}"));
         report.notes.push(note);
     }
@@ -387,7 +386,7 @@ fn debug_capture_blocking(
     // is run to find.
     let started = std::time::Instant::now();
     let regions = [
-        ("panel", super::run::panel_rect((img.width(), img.height()), layout.scale)),
+        ("panel", super::run::panel_rect(layout.origin, layout.scale)),
         ("remaining", super::run::remaining_rect(layout.origin, layout.scale)),
     ];
     report.panel_rect = Some(regions[0].1);
