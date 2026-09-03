@@ -261,6 +261,24 @@ mod platform {
 
 pub use platform::*;
 
+/// The factor [`preprocess_for_ocr`] and [`preprocess_for_ocr_fast`] upscale
+/// every crop by, on both axes.
+///
+/// A constant rather than the two literals it replaced because a *caller* now
+/// has to undo it: `crate::ocr::recognize_lines` reports each line's box in the
+/// pixels of the image it was handed, so a caller that preprocesses first gets
+/// boxes at twice the crop's coordinates and has to divide them back
+/// (`temple::panel::descaled`, POE-243). One place multiplying and another
+/// dividing by independently-written 2s is one edit away from boxes at half or
+/// double the truth, which draws in the wrong place rather than failing.
+///
+/// The merc hover tick undoes the same upscale a DIFFERENT way — it measures
+/// the ratio off the processed image's own dimensions
+/// (`mercenary::run::tooltip_lines`) — and is deliberately left alone: it is
+/// already independent of this constant, so pointing it here would trade a
+/// working measurement for a shared assumption.
+pub const OCR_UPSCALE: u32 = 2;
+
 /// Pre-process a captured image for better OCR accuracy:
 /// - Convert to grayscale
 /// - Increase contrast
@@ -336,7 +354,12 @@ fn preprocess_with(
     // test_ocr_on_image debug
     // command can feed an arbitrary image — a 2× buffer of it is the accepted
     // cost of not special-casing a debug path.)
-    let upscaled = image::imageops::resize(&contrasted, w * 2, h * 2, filter);
+    let upscaled = image::imageops::resize(
+        &contrasted,
+        w * OCR_UPSCALE,
+        h * OCR_UPSCALE,
+        filter,
+    );
     image::DynamicImage::ImageLuma8(upscaled)
 }
 

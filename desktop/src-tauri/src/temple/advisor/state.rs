@@ -206,6 +206,20 @@ pub struct BoardState {
     /// plate both read and named different rooms. The plate is the one this
     /// board carries; the pair is kept so [`super::advise`] can say so.
     pub current_room_disagreement: Option<(&'static str, &'static str)>,
+    /// Whether the side panel's TITLE resolved to a known room (POE-243).
+    ///
+    /// Not a board fact, and it earns its place here for one reason: it is the
+    /// evidence that the side panel was on screen and legible. With no
+    /// architect block read at all, that is the only thing separating "the
+    /// panel printed two and neither survived OCR" — which
+    /// [`super::Warning::PartialArchitects`] must report — from "the crop
+    /// missed the panel entirely", which it must not, because there is then no
+    /// claim to make about what the panel printed.
+    ///
+    /// It rides on the board because [`BoardState::from_reading`] is already
+    /// the one place a [`PanelReading`] is turned into what the advisor sees;
+    /// `current_room_disagreement` above is the same kind of fact.
+    pub panel_title_read: bool,
 }
 
 impl BoardState {
@@ -220,6 +234,7 @@ impl BoardState {
             last_visited: None,
             current_tier: None,
             current_room_disagreement: None,
+            panel_title_read: false,
         }
     }
 
@@ -285,6 +300,10 @@ impl BoardState {
             last_visited: None,
             current_tier: current.identity.map(|id| id.tier()),
             current_room_disagreement: current.disagreement,
+            // The TITLE, not the seam's answer: the seam falls back to the
+            // plate, and a plate that read while the panel crop missed is not
+            // evidence that the panel was read.
+            panel_title_read: panel.room.identity().is_some(),
         }
     }
 
@@ -466,6 +485,7 @@ mod tests {
     fn panel_titled(room: &str, remaining: Option<u8>) -> PanelReading {
         PanelReading {
             room: rooms::match_room_name(room),
+            room_rect: None,
             architects: Vec::new(),
             incursions_remaining: remaining,
         }

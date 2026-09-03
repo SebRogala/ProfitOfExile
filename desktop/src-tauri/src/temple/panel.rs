@@ -9,6 +9,12 @@
 //!   the production implementation and is the only thing here that touches an
 //!   image; a test double replaces it wholesale.
 //!
+//! Both halves speak [`TextLine`] since POE-243: a line is its text plus, when
+//! the caller has one, the box the engine read it at in CAPTURE px. That is
+//! what lets the parsing stay pure — a `&str` is a `TextLine` with no box —
+//! while the production read groups by geometry and publishes each block's
+//! rect.
+//!
 //! # Why the file is not called `ocr.rs`
 //!
 //! The crate already has a root `ocr.rs` that owns the Windows.Media.Ocr
@@ -30,8 +36,10 @@
 //! the side panel, which is why [`read_panel`] takes a line VECTOR rather than
 //! one crop: it needs both regions' text in one list. POE-171's
 //! [`super::run::panel_text`] concatenates the two bounded crops — side panel
-//! first, budget line second, the order they are drawn in — and hands the
-//! result here. It is deliberately not "every line on screen": the parsing
+//! first, budget line second — and hands the result here. Since POE-243 the
+//! concatenation order is no longer load-bearing: the lines carry their boxes
+//! in CAPTURE px, so [`reading_order`] puts them back in the order the game
+//! drew them whichever crop they came out of. It is deliberately not "every line on screen": the parsing
 //! below only needs the panel's own lines in reading order, and a whole-frame
 //! OCR would both cost a 2× buffer of the monitor and feed the title rule every
 //! plate name on the board.
@@ -46,6 +54,7 @@ use strsim::jaro_winkler;
 
 use super::lattice::{Lattice, Slot};
 use super::rooms::{self, Match, OfferKind, RoomIdentity};
+use crate::mercenary::geometry::OcrLineBox;
 
 /// Jaro-Winkler score a single **word** must reach to count as one of the
 /// panel's fixed keywords (`kill`, `to`, `change`, `upgrade`, `incursions`,
@@ -147,6 +156,219 @@ pub struct ArchitectOffer {
     pub printed_target: String,
     /// That name matched against the closed vocabulary.
     pub target: Match,
+    /// `[x, y, w, h]` of the block on screen, in CAPTURE px — the union of the
+    /// boxes of the OCR lines the block was built from (POE-243).
+    ///
+    /// `None` when the lines carried no boxes, which is every text-only caller
+    /// (the tests, and [`parse_architect_block`], which is handed a string).
+    /// Nothing in the advisor reads it: it exists so a surface can point at the
+    /// block the advice is about without guessing where the panel drew it.
+    ///
+    /// Deliberately OUTSIDE [`super::slice::panel_signature`]: a box that
+    /// wobbles by a pixel between two reads of the same panel is not a changed
+    /// panel, and hashing it would re-read the board for a rounding difference.
+    pub rect: Option<[i32; 4]>,
+}
+
+/// How many architect blocks the incursion side panel prints.
+///
+/// **Always two**, MEASURED on every one of the eight reference boards and on
+/// the live captures since: the game offers a resident and a non-resident
+/// architect and draws them on opposite sides of the diamond. It is what makes
+/// a one-block read a *partial* read rather than a board with one architect —
+/// see `super::advisor::Warning::PartialArchitects`.
+pub const ARCHITECTS_PER_PANEL: usize = 2;
+
+/// One line of panel text as the parsers below read it: the string, and the
+/// box it was read at when the caller has one.
+///
+/// Two populations implement it, and the difference is the whole point:
+///
+/// - `str` / `String` — the text-only callers. Every parsing test in this file
+///   is one, and so is anything that only has a transcript. `rect` is `None`,
+///   and the grouping falls back to the order the lines were handed over in.
+/// - [`OcrLineBox`] — the production read. `crate::ocr::recognize_lines`
+///   reports a box per line, [`SystemOcr`] moves it out of the 2× preprocessed
+///   space and [`crop_lines`] moves it into CAPTURE px, so by the time it
+///   reaches here the box is where the game drew the text.
+///
+/// A blanket `impl<T: AsRef<str>>` is not possible alongside the
+/// [`OcrLineBox`] one — the compiler cannot rule out a future
+/// `impl AsRef<str> for OcrLineBox` — so the string cases are spelled out and
+/// one blanket over references covers `&&str`, `&String` and `&OcrLineBox`.
+pub trait TextLine {
+    fn text(&self) -> &str;
+    /// `[x, y, w, h]` in CAPTURE px, or `None` when nothing reported one.
+    fn rect(&self) -> Option<[i32; 4]> {
+        None
+    }
+}
+
+impl TextLine for str {
+    fn text(&self) -> &str {
+        self
+    }
+}
+
+impl TextLine for String {
+    fn text(&self) -> &str {
+        self
+    }
+}
+
+impl<T: TextLine + ?Sized> TextLine for &T {
+    fn text(&self) -> &str {
+        (**self).text()
+    }
+    fn rect(&self) -> Option<[i32; 4]> {
+        (**self).rect()
+    }
+}
+
+impl TextLine for OcrLineBox {
+    fn text(&self) -> &str {
+        &self.text
+    }
+    fn rect(&self) -> Option<[i32; 4]> {
+        Some([self.x, self.y, self.w, self.h])
+    }
+}
+
+/// The smallest box containing both.
+fn union(a: [i32; 4], b: [i32; 4]) -> [i32; 4] {
+    let x = a[0].min(b[0]);
+    let y = a[1].min(b[1]);
+    let right = (a[0] + a[2]).max(b[0] + b[2]);
+    let bottom = (a[1] + a[3]).max(b[1] + b[3]);
+    [x, y, right - x, bottom - y]
+}
+
+/// The lines' indices in READING order — top to bottom, then left to right.
+///
+/// **The hardening POE-243 exists for.** Windows OCR emits lines in its own
+/// order, and the panel wraps an offer over two or three of them; a
+/// continuation emitted before the `Architect` line it belongs to is silently
+/// dropped by the sequence-only grouping, and the offer is then either lost or
+/// truncated at the wrap. Ordering by the boxes first removes the engine's
+/// order from the answer entirely.
+///
+/// Reordering happens ONLY when every line carries a box. A partially-boxed
+/// list has no total order to sort by — a boxless line has no position to place
+/// the boxed ones around — and the production path never produces one:
+/// `crate::ocr::recognize_lines` DROPS a line whose words all failed to report
+/// a rect rather than emitting it at the origin. So a mixed list means a
+/// caller mixed a transcript into a read, and engine order is the only order
+/// that caller stated.
+///
+/// # Why the top alone is not the key
+///
+/// Two boxes on ONE visual row rarely share a top: they are glyph bounding
+/// boxes, so a row whose left half has no ascender starts a pixel or two lower
+/// than its right half. Sorting on the raw top then puts the right box first
+/// and joins `Hall of` / `Champions` as `Champions Hall of`, which scores 0.60
+/// against the vocabulary and reads as an unread plate.
+///
+/// So the sort is two-phase rather than one comparator: order by top, group the
+/// result into ROWS — a line joins the open row while its box overlaps the
+/// row's FIRST box vertically — then order each row left to right. Grouping
+/// against the row's first box and not its running span is what stops one tall
+/// line from chaining the whole panel into a single row.
+///
+/// A two-phase construction rather than a "same row ⇒ compare x, else compare
+/// y" comparator on purpose: that relation is not transitive (three boxes can
+/// overlap pairwise down a staircase), and `sort_by` on a non-total order is
+/// documented to panic or return nonsense.
+///
+/// # The premise the banding rests on, and which way it fails
+///
+/// **Line PITCH exceeds glyph HEIGHT.** The band is one box's own height, so
+/// two lines land in one row exactly when the second starts before the first
+/// ends — which is what "the same visual row" means only while the game leaves
+/// leading between lines. Every measurement to hand does: the laptop panel
+/// capture reviewed for POE-243 reads h 12 against a 13 px pitch.
+///
+/// That is **1 px of margin**, so name the failure direction rather than trust
+/// it. Where pitch ≤ height, a wrap bands into the row above it and the row is
+/// then ordered by x — so a wrapped line whose box starts further left than the
+/// line above would be emitted BEFORE it.
+///
+/// The two callers are not equally exposed:
+///
+/// - the **panel** path is safe either way. Both lines of a block share the
+///   panel's left edge, and the within-row key is `(x, y)` — so a banded wrap
+///   ties on x and falls back to y, which is the order it was already in. It
+///   also does not matter to [`architect_blocks`], which reads the sequence
+///   and not the row structure.
+/// - the **plate strip** ([`read_plate`]) is where it would show. That crop is
+///   a two-line name band and the whole point of the row rule there is to join
+///   the halves in order; a wrapped second line indented LEFT of the first
+///   would then join as `Workshop Gemcutter's`. Nothing measured does that —
+///   the names are left-aligned — but it is the case to check first if a plate
+///   starts reading Unknown on a client whose line spacing is tighter.
+fn reading_order<L: TextLine>(lines: &[L]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..lines.len()).collect();
+    let Some(rects) = lines.iter().map(|l| l.rect()).collect::<Option<Vec<_>>>() else {
+        return order;
+    };
+    // A stable sort, so two lines with the same box keep the order they came in.
+    order.sort_by_key(|&i| (rects[i][1], rects[i][0]));
+
+    let mut out: Vec<usize> = Vec::with_capacity(order.len());
+    let mut row: Vec<usize> = Vec::new();
+    let flush = |row: &mut Vec<usize>, out: &mut Vec<usize>| {
+        row.sort_by_key(|&i| (rects[i][0], rects[i][1]));
+        out.append(row);
+    };
+    for i in order {
+        let same_row = row
+            .first()
+            .is_some_and(|&first| rects[i][1] < rects[first][1] + rects[first][3]);
+        if !same_row {
+            flush(&mut row, &mut out);
+        }
+        row.push(i);
+    }
+    flush(&mut row, &mut out);
+    out
+}
+
+/// How far below a block's last line a wrapped continuation may start, as a
+/// multiple of THAT line's own glyph height, measured top to top.
+///
+/// **This number is the bound; the measurement is the band under it.** The
+/// laptop panel capture reviewed for POE-243 puts a wrap at 1.03 to 1.15 of the
+/// preceding line's height — glyph boxes, so the ratio moves with which letters
+/// the line happens to carry — and 1.5 is the round number above that band.
+/// What it has to stay under is the gap to the *next* block, which the game
+/// draws on the other side of the diamond and a full offer lower.
+///
+/// Only that one capture is behind the band, so treat it as a floor rather than
+/// as a population. A dump's `ocr-lines.json` (POE-243) carries every line's
+/// box, which is what to re-measure against before moving this.
+///
+/// It multiplies the PREVIOUS line's height and not the taller of the two,
+/// deliberately: the temple screen prints tall furniture — the `Enter
+/// Incursion` button is nearly twice a text line — and letting the candidate's
+/// own height widen the gate is exactly backwards. How far a wrap sits below
+/// the line it wraps is a fact about the line it wraps.
+const CONTINUATION_PITCH: f32 = 1.5;
+
+/// Whether `next` is the wrapped continuation of a block whose last line is
+/// `prev`: the same column, directly below.
+///
+/// Horizontal OVERLAP rather than a shared left edge, because the game indents
+/// neither the wrap nor the `(Kill to …` line consistently and the boxes are
+/// glyph bounding boxes, not text-field bounds. Two lines with no horizontal
+/// overlap at all are two columns, which the panel does draw: the two offers
+/// sit on opposite sides of the diamond.
+fn continues(prev: [i32; 4], next: [i32; 4]) -> bool {
+    let overlaps = next[0] < prev[0] + prev[2] && prev[0] < next[0] + next[2];
+    let pitch = prev[3].max(1) as f32;
+    let drop = (next[1] - prev[1]) as f32;
+    // Slightly-negative tolerance: two lines of one wrap can differ by a few px
+    // of ascender, and the horizontal overlap has already ruled out a
+    // side-by-side pair.
+    overlaps && drop > -pitch / 2.0 && drop <= CONTINUATION_PITCH * pitch
 }
 
 /// Whether a line opens an architect block.
@@ -202,13 +424,44 @@ fn kill_clause(words: &[Word<'_>]) -> Option<(usize, OfferKind)> {
 /// one, two or three lines and prints the closing bracket on the last of them.
 /// A "block" that reaches a fourth line has not been read as an offer — it is
 /// an `Architect`-scoring line that never closed.
+///
+/// # The four-line fixture is synthetic, and what it costs
+///
+/// `laptop_panel_with_map_fragment` in the tests builds a FOUR-line Hayoxi
+/// block: the architect's name wrapped (`Hayoxi, Architect of` /
+/// `Destruction`) **and** the clause wrapped (`(Kill to upgrade to Omnitect` /
+/// `Reactor Plant)`). No capture shows both wraps at once — each half is
+/// measured, the combination is a worst case constructed to put the map-info
+/// fragment inside an offer with room on either side of it.
+///
+/// It costs nothing there because [`Block::is_offer_text`] takes the PARSE as
+/// its strong evidence and only falls back to `closed && attached <=
+/// MAX_BLOCK_LINES` when there is none. So a genuine four-line offer is still
+/// recognised as block text — unless its room name ALSO failed the vocabulary,
+/// which is the one state this bound would reject. That state is doubly
+/// unmeasured, and the trade is the deliberate one: the bound exists to stop a
+/// mis-scored line latching onto a bracket several lines away and swallowing
+/// the panel title, which is a live failure with a live incident behind it.
 const MAX_BLOCK_LINES: usize = 3;
 
 /// One run of OCR lines that opened on an `Architect` word.
 struct Block {
-    /// Line indices the run covers, inclusive.
+    /// Positions in READING order (see [`reading_order`]) the run SPANS,
+    /// inclusive — NOT indices into the caller's array, and not the same thing
+    /// as the lines it took: a foreign line skipped inside the run (see
+    /// [`architect_blocks`] rule 2) falls in this range without being part of
+    /// the block.
+    ///
+    /// The range is what [`read_panel`] refuses to read a title from, and
+    /// covering a skipped line there is the conservative direction — a line
+    /// sitting between two lines of an architect block is not where the game
+    /// draws the panel title, which it prints above both blocks.
     start: usize,
     end: usize,
+    /// How many lines the run actually TOOK, the opener included. The length
+    /// bound below counts these and not the span, so a skipped line cannot
+    /// push a two-line offer past [`MAX_BLOCK_LINES`].
+    attached: usize,
     /// Whether the run ended on its own closing bracket, rather than at the
     /// next `Architect` line or at the end of the input.
     closed: bool,
@@ -228,40 +481,124 @@ impl Block {
     /// name OCR mangled past the vocabulary is still an offer and its lines
     /// still must not be read as the panel title.
     fn is_offer_text(&self) -> bool {
-        self.offer.is_some() || (self.closed && self.end - self.start < MAX_BLOCK_LINES)
+        self.offer.is_some() || (self.closed && self.attached <= MAX_BLOCK_LINES)
     }
 }
 
-/// Regroup OCR lines into whole architect blocks, keeping each block's span.
+/// Regroup OCR lines into whole architect blocks, keeping each block's span
+/// and the box it covers.
 ///
-/// The panel wraps each offer over two or three lines and the two offers sit
-/// on opposite sides of the diamond, so they never interleave in reading
-/// order. A block runs from an `Architect` line to the line that closes the
-/// parenthesis, or to the next `Architect` line if the bracket was never read.
-fn architect_blocks<S: AsRef<str>>(lines: &[S]) -> Vec<Block> {
+/// The panel wraps each offer over two or three lines, and the two offers sit
+/// on opposite sides of the diamond — so no line of one offer ever falls
+/// between two lines of the OTHER. That is the whole of what the geometry
+/// guarantees. It says nothing about FOREIGN text: the panel title, and
+/// whatever else the crop caught (see the note below), can and does land
+/// between an offer's lines in reading order, which is what rule 2 skips.
+///
+/// Two rules build a block out of that, and since POE-243 the first one is
+/// geometric wherever the lines carry boxes:
+///
+/// 1. **Order.** The lines are walked in [`reading_order`] — top, then left —
+///    rather than in the order the OCR engine emitted them. A boxless list
+///    keeps the engine's order, which is all it states.
+/// 2. **Attachment.** A non-`Architect` line joins the open block only when
+///    [`continues`] says it is in the same column and directly below the
+///    block's last line. A line that fails that test is SKIPPED — left as
+///    ordinary text, with the block still open behind it.
+///
+/// A line with no box attaches by sequence alone, which is the pre-POE-243
+/// rule and the one every text-only transcript is written against.
+///
+/// A block still runs to the line that closes the parenthesis, or to the next
+/// `Architect` line if the bracket was never read.
+///
+/// # Why a refused line is skipped and not a block boundary
+///
+/// The sequence-only rule read the "offers do not interleave" guarantee above
+/// as the stronger claim that NOTHING lands between an offer's lines. That is
+/// false: [`super::run::panel_rect`]'s right margin (POE-230) admits the map's
+/// own info block at the panel's edge, and a fragment of it sorts by its top
+/// into the middle of an offer. Closing the block there would drop every line
+/// of the offer that follows — including the `(Kill to …` clause, so the whole
+/// offer — which is the same lost-architect failure POE-243 exists to remove,
+/// arriving through the fix for it.
+///
+/// So the refusal is narrower than a boundary: it says "this line is not part
+/// of this block", which is exactly what was measured, and says nothing about
+/// what comes after it. The block still ends where it always ended — on its
+/// bracket, on the next `Architect` line, or at the end of the input.
+fn architect_blocks<L: TextLine>(lines: &[L]) -> Vec<Block> {
+    /// The run being built. `last` is the newest ATTACHED line's own box, which
+    /// is what [`continues`] measures the next line against — `rect`, the
+    /// running union, has already grown past it, and a skipped line never
+    /// touches either.
+    struct Open {
+        start: usize,
+        end: usize,
+        attached: usize,
+        text: String,
+        rect: Option<[i32; 4]>,
+        last: Option<[i32; 4]>,
+    }
+
     let mut out: Vec<Block> = Vec::new();
-    let mut current: Option<(usize, usize, String)> = None;
-    let mut close = |current: &mut Option<(usize, usize, String)>, closed: bool| {
-        if let Some((start, end, text)) = current.take() {
+    let mut current: Option<Open> = None;
+    let mut close = |current: &mut Option<Open>, closed: bool| {
+        if let Some(run) = current.take() {
+            let mut offer = parse_architect_block(&run.text);
+            if let Some(offer) = offer.as_mut() {
+                offer.rect = run.rect;
+            }
             out.push(Block {
-                start,
-                end,
+                start: run.start,
+                end: run.end,
+                attached: run.attached,
                 closed,
-                offer: parse_architect_block(&text),
-                text,
+                text: run.text,
+                offer,
             });
         }
     };
-    for (i, line) in lines.iter().enumerate() {
-        let line = line.as_ref();
+    for (at, &i) in reading_order(lines).iter().enumerate() {
+        let line = lines[i].text();
+        let rect = lines[i].rect();
         if starts_architect(line) {
             close(&mut current, false);
-            current = Some((i, i, line.trim().to_string()));
-        } else if let Some((_, end, text)) = current.as_mut() {
-            *end = i;
-            text.push(' ');
-            text.push_str(line.trim());
+            current = Some(Open {
+                start: at,
+                end: at,
+                attached: 1,
+                text: line.trim().to_string(),
+                rect,
+                last: rect,
+            });
         } else {
+            // Geometry decides attachment when BOTH lines placed themselves;
+            // otherwise the caller's sequence is the only evidence there is.
+            let attaches = match (current.as_ref().and_then(|run| run.last), rect) {
+                (Some(prev), Some(next)) => continues(prev, next),
+                _ => true,
+            };
+            let Some(run) = current.as_mut().filter(|_| attaches) else {
+                // Either nothing is open, or the line is not this block's —
+                // ordinary text either way, and the block (if any) stays open
+                // behind it. See the note above on why this is not a boundary.
+                continue;
+            };
+            run.end = at;
+            run.attached += 1;
+            run.text.push(' ');
+            run.text.push_str(line.trim());
+            run.rect = match (run.rect, rect) {
+                (Some(a), Some(b)) => Some(union(a, b)),
+                (a, b) => a.or(b),
+            };
+            run.last = rect;
+            // Only an ATTACHED line can close the run. A skipped line's
+            // bracket belongs to whatever else printed it.
+            if line.trim_end().ends_with(')') {
+                close(&mut current, true);
+            }
             continue;
         }
         if line.trim_end().ends_with(')') {
@@ -274,7 +611,7 @@ fn architect_blocks<S: AsRef<str>>(lines: &[S]) -> Vec<Block> {
 
 /// The architect blocks as text, in reading order.
 #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
-pub fn group_architect_blocks<S: AsRef<str>>(lines: &[S]) -> Vec<String> {
+pub fn group_architect_blocks<L: TextLine>(lines: &[L]) -> Vec<String> {
     architect_blocks(lines)
         .into_iter()
         .map(|block| block.text)
@@ -328,12 +665,15 @@ pub fn parse_architect_block(block: &str) -> Option<ArchitectOffer> {
         kind,
         target: rooms::match_room_name(&printed_target),
         printed_target,
+        // The block's own lines are what carry boxes, and this function is
+        // handed one joined string. `architect_blocks` fills it in.
+        rect: None,
     })
 }
 
 /// Every architect offer the OCR lines contain.
 #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
-pub fn parse_architects<S: AsRef<str>>(lines: &[S]) -> Vec<ArchitectOffer> {
+pub fn parse_architects<L: TextLine>(lines: &[L]) -> Vec<ArchitectOffer> {
     architect_blocks(lines)
         .into_iter()
         .filter_map(|block| block.offer)
@@ -352,9 +692,9 @@ pub fn parse_architects<S: AsRef<str>>(lines: &[S]) -> Vec<ArchitectOffer> {
 ///
 /// **Known limitation:** a count read with *no* surviving ASCII digit
 /// (`l Incursion Remaining`) is rejected rather than guessed at 1.
-pub fn parse_incursions_remaining<S: AsRef<str>>(lines: &[S]) -> Option<u8> {
+pub fn parse_incursions_remaining<L: TextLine>(lines: &[L]) -> Option<u8> {
     for line in lines {
-        let words = words(line.as_ref());
+        let words = words(line.text());
         let labelled = (0..words.len().saturating_sub(1)).any(|i| {
             (word_is(&words[i].key, "incursions") || word_is(&words[i].key, "incursion"))
                 && word_is(&words[i + 1].key, "remaining")
@@ -400,6 +740,13 @@ fn fold_count(key: &str) -> Option<u8> {
 pub struct PanelReading {
     /// The panel title — the room the player is standing in.
     pub room: Match,
+    /// `[x, y, w, h]` of the title line on screen, in CAPTURE px (POE-243).
+    ///
+    /// The box of the ONE line the title rule picked, not of every line that
+    /// scored: it is where the game printed the current room's name, which is
+    /// what a surface has to avoid covering. `None` when the title was unread,
+    /// or when the lines carried no boxes.
+    pub room_rect: Option<[i32; 4]>,
     /// Both architects, in reading order.
     pub architects: Vec<ArchitectOffer>,
     /// The remaining budget, when the layout panel's footer was legible.
@@ -497,33 +844,43 @@ pub fn is_screen_furniture(line: &str) -> bool {
 /// Two things a plain vocabulary match would accept are refused here:
 /// [`SCREEN_FURNITURE`], and a *fuzzy* read of one of the two fixed-slot names
 /// — see [`title_match`].
-pub fn read_panel<S: AsRef<str>>(lines: &[S]) -> PanelReading {
+pub fn read_panel<L: TextLine>(lines: &[L]) -> PanelReading {
+    // Every index below is a position in READING order, which is also the
+    // order the blocks' spans are recorded in — so `order[at]` is the one
+    // place a position becomes a line again.
+    let order = reading_order(lines);
     let blocks = architect_blocks(lines);
     let spans: Vec<(usize, usize)> = blocks
         .iter()
         .filter(|block| block.is_offer_text())
         .map(|block| (block.start, block.end))
         .collect();
-    let title_at = |i: usize| {
-        if spans.iter().any(|(start, end)| (*start..=*end).contains(&i)) {
-            return Match::Unknown;
+    // The title AND the box it was read at, so a surface can point at the line
+    // rather than re-derive where the panel drew it.
+    let title_at = |at: usize| -> Option<(Match, Option<[i32; 4]>)> {
+        if spans.iter().any(|(start, end)| (*start..=*end).contains(&at)) {
+            return None;
         }
-        title_match(lines[i].as_ref())
+        let line = &lines[order[at]];
+        match title_match(line.text()) {
+            Match::Unknown => None,
+            found => Some((found, line.rect())),
+        }
     };
 
     let above = blocks
         .iter()
         .find(|block| block.offer.is_some())
         .map_or(0, |block| block.start);
-    let room = (0..above)
+    let (room, room_rect) = (0..above)
         .rev()
-        .map(title_at)
-        .find(|m| *m != Match::Unknown)
-        .or_else(|| (0..lines.len()).map(title_at).find(|m| *m != Match::Unknown))
-        .unwrap_or(Match::Unknown);
+        .find_map(title_at)
+        .or_else(|| (0..order.len()).find_map(title_at))
+        .unwrap_or((Match::Unknown, None));
 
     PanelReading {
         room,
+        room_rect,
         architects: blocks.into_iter().filter_map(|block| block.offer).collect(),
         incursions_remaining: parse_incursions_remaining(lines),
     }
@@ -615,8 +972,62 @@ pub fn numeral_box(lattice: &Lattice, slot: Slot) -> [i32; 4] {
 /// The one OCR call this module makes, behind a trait so the parsers above can
 /// be tested without an OCR engine.
 pub trait TextRecognizer {
-    /// Recognised lines, top to bottom.
-    fn recognize(&self, img: &DynamicImage) -> Result<Vec<String>, String>;
+    /// Recognised lines, each with the box it was read at, in the pixels of
+    /// the image passed in — and in the ENGINE's own order, which
+    /// [`reading_order`] is what corrects.
+    ///
+    /// Boxes rather than bare strings since POE-243: a block's screen rect is
+    /// the union of its lines' boxes, and the grouping needs them to tell a
+    /// wrapped continuation from a line of some other column. Dropping them
+    /// here — which is what this method used to do — is what made both
+    /// unavailable.
+    fn recognize(&self, img: &DynamicImage) -> Result<Vec<OcrLineBox>, String>;
+}
+
+/// Move an OCR box out of [`crate::capture::preprocess_for_ocr`]'s upscaled
+/// space and back into the pixels of the image that was handed to it.
+///
+/// Rounded OUTWARD — near edge down, far edge up — so the box never excludes a
+/// pixel the glyph covered. The consumer is a surface that must not cover the
+/// text (POE-244), and a box one pixel too large costs nothing there while one
+/// a pixel too small is the failure it is trying to avoid.
+///
+/// The size is derived from the FAR EDGE (`x + w`) rather than scaled on its
+/// own, because rounding a size independently of where it starts loses the very
+/// pixel this rounds outward for: at 2×, `x = 1, w = 2` covers source columns
+/// 0 and 1, and a size-only ceiling gives `w = 1`, dropping column 1.
+///
+/// `upscale` is [`crate::capture::OCR_UPSCALE`] at every production call site;
+/// it is a parameter so the arithmetic can be checked against a factor the
+/// test states rather than against the constant the function already uses.
+pub fn descaled(line: OcrLineBox, upscale: i32) -> OcrLineBox {
+    let far = |v: i32| v.div_euclid(upscale) + i32::from(v.rem_euclid(upscale) != 0);
+    let x = line.x.div_euclid(upscale);
+    let y = line.y.div_euclid(upscale);
+    OcrLineBox {
+        x,
+        y,
+        w: (far(line.x + line.w) - x).max(1),
+        h: (far(line.y + line.h) - y).max(1),
+        text: line.text,
+    }
+}
+
+/// Move an OCR box out of a crop's pixels and into the capture's, given where
+/// the crop was taken from.
+///
+/// `origin` is the crop's top-left corner in capture px — the CLIPPED one that
+/// [`super::run::crop_clipped`] reports, not the rect that was asked for: a ROI
+/// hanging off the frame is cropped at 0 and a box placed against the
+/// unclipped rect would sit off-screen by however much was cut.
+pub fn translated(line: OcrLineBox, origin: (i32, i32)) -> OcrLineBox {
+    OcrLineBox {
+        x: line.x + origin.0,
+        y: line.y + origin.1,
+        w: line.w,
+        h: line.h,
+        text: line.text,
+    }
 }
 
 /// The production recogniser: the crate's Windows.Media.Ocr binding, through
@@ -626,16 +1037,36 @@ pub trait TextRecognizer {
 /// No `#[cfg(windows)]` here on purpose — `crate::ocr::recognize_lines` already
 /// has a non-Windows arm that returns `Err(UNAVAILABLE)`, so duplicating the
 /// gate would only add a second place for the two arms to diverge.
+///
+/// The 2× descale is HERE and nowhere else, because this is the only place
+/// that knows the engine was handed a preprocessed image rather than the crop
+/// itself. Its boxes are therefore in the CROP's pixels; [`crop_lines`] is
+/// what takes them the last step, into the capture's.
 pub struct SystemOcr;
 
 impl TextRecognizer for SystemOcr {
-    fn recognize(&self, img: &DynamicImage) -> Result<Vec<String>, String> {
+    fn recognize(&self, img: &DynamicImage) -> Result<Vec<OcrLineBox>, String> {
         let prepared = crate::capture::preprocess_for_ocr(img);
         Ok(crate::ocr::recognize_lines(&prepared)?
             .into_iter()
-            .map(|line| line.text)
+            .map(|line| descaled(line, crate::capture::OCR_UPSCALE as i32))
             .collect())
     }
+}
+
+/// One bounded crop's OCR lines, in CAPTURE px.
+///
+/// The single seam both readers of the panel's text go through — the capture
+/// loop (`super::run::panel_text`) and the debug dump
+/// (`super::commands::debug_capture_blocking`) — so the two cannot disagree
+/// about where a line is. `origin` is the crop's clipped top-left corner in
+/// capture px; see [`translated`].
+pub fn crop_lines(crop: &DynamicImage, origin: (i32, i32)) -> Result<Vec<OcrLineBox>, String> {
+    Ok(SystemOcr
+        .recognize(crop)?
+        .into_iter()
+        .map(|line| translated(line, origin))
+        .collect())
 }
 
 /// Read every plate's name off a board.
@@ -694,7 +1125,17 @@ fn read_plate(
     };
     // A wrapped name arrives as two lines; the plate holds one name, so
     // joining is right and matching each line separately would fail both.
-    let joined = lines.join(" ");
+    //
+    // Joined in READING order rather than in the engine's (POE-243). A plate
+    // name wraps within one narrow strip, so top-to-bottom is the order the
+    // game printed it in — `Gemcutter's` then `Workshop`. The engine emitting
+    // the tail first would otherwise produce `Workshop Gemcutter's`, which is
+    // 0.60 against the vocabulary entry and reads as an unread plate.
+    let joined = reading_order(&lines)
+        .into_iter()
+        .map(|i| lines[i].text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
     let numeral = read_numeral(recognizer, img, lattice, slot);
     rooms::cross_check_numeral(rooms::match_room_name(&joined), numeral)
 }
@@ -715,7 +1156,7 @@ fn read_numeral(
     }
     let crop = img.crop_imm(x, y, w, h);
     let lines = recognizer.recognize(&crop).ok()?;
-    lines.iter().find_map(|line| rooms::parse_numeral(line))
+    lines.iter().find_map(|line| rooms::parse_numeral(&line.text))
 }
 
 #[cfg(test)]
@@ -751,6 +1192,88 @@ mod tests {
         let found = parse_architects(lines);
         assert_eq!(found.len(), 1, "expected one offer in {lines:?}");
         found.into_iter().next().expect("one offer")
+    }
+
+    /// Glyph height of one panel line in the fixtures below, capture px.
+    const LINE_H: i32 = 20;
+    /// Top-to-top distance the panel wraps at — 1.15 line heights, which is
+    /// what the reference captures measure and what [`CONTINUATION_PITCH`] is
+    /// sized to clear.
+    const LINE_PITCH: i32 = 23;
+
+    /// One OCR line with a box, in capture px. Width tracks the text so two
+    /// lines of different lengths still overlap horizontally, which is what
+    /// [`continues`] tests.
+    fn boxed(text: &str, x: i32, y: i32) -> OcrLineBox {
+        OcrLineBox {
+            text: text.to_string(),
+            x,
+            y,
+            w: 8 * text.len() as i32,
+            h: LINE_H,
+        }
+    }
+
+    /// The PC side panel of `2026-09-03_13-56-40` — Armourer's Workshop at C2,
+    /// Quipolatl offering an upgrade and Atmohua a `change` whose target wraps
+    /// onto a second line. Boxes are the panel's own column: one x, one line
+    /// per [`LINE_PITCH`], the two offers a block apart.
+    ///
+    /// Returned in READING order; the tests that need the engine's wrong order
+    /// permute it.
+    fn pc_panel() -> Vec<OcrLineBox> {
+        const X: i32 = 1300;
+        vec![
+            boxed("Armourer's Workshop", X, 100),
+            boxed("Quipolatl, Architect of the Armoury", X, 140),
+            boxed("(Kill to upgrade to Armoury)", X, 140 + LINE_PITCH),
+            boxed("Atmohua, Architect of Iron", X, 210),
+            boxed("(Kill to change to Shrine of", X, 210 + LINE_PITCH),
+            boxed("Empowerment)", X, 210 + 2 * LINE_PITCH),
+        ]
+    }
+
+    /// [`pc_panel`] as the OCR engine emitted it on the machine that produced
+    /// the bad advice: the wrapped continuation `Empowerment)` BEFORE the
+    /// architect line it belongs to.
+    fn pc_panel_engine_order() -> Vec<OcrLineBox> {
+        let lines = pc_panel();
+        vec![
+            lines[0].clone(),
+            lines[1].clone(),
+            lines[2].clone(),
+            lines[5].clone(),
+            lines[3].clone(),
+            lines[4].clone(),
+        ]
+    }
+
+    /// A panel whose crop caught a fragment of the map's own info block at its
+    /// right edge — the shape [`super::super::run::panel_rect`]'s deliberately
+    /// tight right margin (POE-230) admits.
+    ///
+    /// The fragment's box is in a different COLUMN (x 1659 against the panel's
+    /// 1480) but its top, 130, sits between the architect line's wrap at 128
+    /// and the kill clause at 141 — so reading order puts it inside the offer.
+    fn laptop_panel_with_map_fragment() -> Vec<OcrLineBox> {
+        const X: i32 = 1480;
+        const H: i32 = 12;
+        let line = |text: &str, x: i32, y: i32| OcrLineBox { h: H, ..boxed(text, x, y) };
+        vec![
+            line("Tombs", X, 90),
+            line("Hayoxi, Architect of", X, 115),
+            line("Destruction", X, 128),
+            line("Area Level: 68", 1659, 130),
+            line("(Kill to upgrade to Omnitect", X, 141),
+            line("Reactor Plant)", X, 154),
+            line("Xopec, Architect of Power (Kill to change to Royal Meeting Room)", X, 200),
+        ]
+    }
+
+    /// The same six lines with their boxes thrown away — what the parsers saw
+    /// before POE-243, and what a transcript-only caller still sees.
+    fn texts(lines: &[OcrLineBox]) -> Vec<String> {
+        lines.iter().map(|l| l.text.clone()).collect()
     }
 
     // ------------------------------------------------------- architects --
@@ -942,6 +1465,342 @@ mod tests {
             .expect("the upgrade line");
         assert_eq!(built.display_name, "Sanctum of Unity");
         assert_eq!(built.built_tier, Tier::T2);
+    }
+
+    // -------------------------------------------- grouping by geometry --
+
+    // The 2026-09-03 PC board, with the wrap emitted out of order — the shape
+    // that produced advice for a board with one architect on it. Ordering by
+    // the boxes puts `Empowerment)` back under its own `(Kill to change to
+    // Shrine of` line, so the second offer names the room the panel printed.
+    //
+    // Fails if `architect_blocks` walks the caller's order instead of
+    // `reading_order`: the continuation is then read before the block that
+    // needs it, dropped, and the target truncates at the wrap.
+    #[test]
+    fn a_wrap_emitted_before_its_own_architect_line_is_grouped_by_its_box() {
+        let got = parse_architects(&pc_panel_engine_order());
+
+        assert_eq!(got.len(), 2, "the panel prints two offers: {got:?}");
+        assert_eq!(got[0].architect_name, "Quipolatl");
+        assert_eq!(got[0].printed_target, "Armoury");
+        assert_eq!(got[1].architect_name, "Atmohua");
+        assert_eq!(
+            got[1].printed_target, "Shrine of Empowerment",
+            "the wrapped tail belongs to Atmohua's offer",
+        );
+    }
+
+    // The same six lines with no boxes: the fallback is the caller's order,
+    // and this is what that costs on this input. `Empowerment)` arrives while
+    // no block is open, so it is dropped, and Atmohua's offer ends at the wrap
+    // — a target of `Shrine of`, which resolves to nothing.
+    //
+    // Documented rather than fixed: without a box there is no evidence the
+    // stray line belongs to the block that follows it. Fails if reordering is
+    // applied to a boxless list, which would be a guess dressed as geometry.
+    #[test]
+    fn the_same_lines_without_boxes_keep_the_engine_order_and_truncate_the_wrap() {
+        let got = parse_architects(&texts(&pc_panel_engine_order()));
+
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[1].architect_name, "Atmohua");
+        assert_eq!(
+            got[1].printed_target, "Shrine of",
+            "the offer ends at the wrap when nothing places the tail",
+        );
+        assert_eq!(
+            got[1].target,
+            Match::Unknown,
+            "and a truncated target resolves to no room at all",
+        );
+    }
+
+    // A line that is nowhere near the open block does not join it, even when
+    // it arrives directly after it. This is the other half of the geometry
+    // rule: sequence alone would sweep the budget line into Atmohua's offer
+    // and take `9 Incursions Remaining` for the target's second half.
+    //
+    // Fails if `continues` is dropped, or if its vertical bound is widened
+    // past the gap the panel leaves between blocks.
+    #[test]
+    fn a_line_far_below_the_open_block_is_not_swept_into_it() {
+        let mut lines = pc_panel();
+        // The budget line the layout panel prints, a long way under the side
+        // panel and to the left of it — a different column and a different
+        // block.
+        lines.remove(5);
+        lines.push(boxed("9 Incursions Remaining", 900, 700));
+
+        let got = parse_architects(&lines);
+
+        assert_eq!(got.len(), 2);
+        assert_eq!(
+            got[1].printed_target, "Shrine of",
+            "the offer is truncated because its own wrap is missing, not extended by the budget line",
+        );
+        assert_eq!(
+            parse_incursions_remaining(&lines),
+            Some(9),
+            "and the budget line is still ordinary text, still read",
+        );
+    }
+
+    // The failure the FIRST cut of this grouping introduced, and the reason a
+    // refused line is skipped rather than treated as a block boundary.
+    //
+    // POE-230's right margin on the panel ROI (20 ref px, deliberately tight)
+    // admits the map's own info block at the panel's right edge. In reading
+    // order that fragment sorts by its top INTO the middle of an offer — after
+    // the architect line, before the `(Kill to …` clause. Closing the block
+    // there drops the clause, so the offer never parses and the architect is
+    // lost: the exact failure POE-243 exists to remove, arriving through the
+    // fix for it.
+    //
+    // Fails if a refused line closes the run instead of being stepped over.
+    #[test]
+    fn a_foreign_line_between_two_lines_of_an_offer_is_skipped_not_a_boundary() {
+        let lines = laptop_panel_with_map_fragment();
+
+        let got = parse_architects(&lines);
+
+        assert_eq!(got.len(), 2, "the fragment costs no offer: {got:?}");
+        assert_eq!(got[0].architect_name, "Hayoxi");
+        assert_eq!(
+            got[0].printed_target, "Omnitect Reactor Plant",
+            "the clause below the fragment still belongs to Hayoxi's block",
+        );
+        assert_eq!(got[1].architect_name, "Xopec");
+        assert_eq!(got[1].printed_target, "Royal Meeting Room");
+    }
+
+    // …and the skipped line is not in the block either: the rect stops at the
+    // panel column, 1704, and does not reach the fragment's far edge at 1771.
+    // A surface pointing at this block would otherwise cover a strip of the
+    // map's info block as well.
+    //
+    // Fails if a refused line is swept into the union — which is what the
+    // sequence-only path does, and is the one thing geometry buys over it on
+    // this input.
+    #[test]
+    fn a_skipped_line_is_left_out_of_the_blocks_rect() {
+        let lines = laptop_panel_with_map_fragment();
+
+        let got = parse_architects(&lines);
+
+        // The four attached lines: tops 115..154, the widest right edge 1704.
+        assert_eq!(got[0].rect, Some([1480, 115, 224, 51]));
+    }
+
+    // Two boxes on ONE visual row are ordered left to right even when their
+    // tops disagree. Glyph boxes: a half-row with no ascender starts a pixel
+    // lower than its neighbour, and ordering on the raw top then reads the
+    // plate as `Champions Hall of` — 0.60 against the vocabulary, which is an
+    // unread plate and junk to the advisor.
+    //
+    // Fails if `reading_order` sorts on the top alone.
+    #[test]
+    fn two_boxes_on_one_row_are_ordered_left_to_right_despite_a_jittered_top() {
+        let img = blank(1374, 862);
+        let lattice = Lattice::new((673, 682), 0.99);
+        // The right half sits ONE px higher, which is enough to invert a
+        // top-only sort and is well inside one line height.
+        let jittered = Canned {
+            name: vec![boxed("Champions", 200, 99), boxed("Hall of", 100, 100)],
+            numeral: Vec::new(),
+        };
+
+        let board = read_board(&jittered, &img, &lattice, &|| false);
+
+        assert!(board
+            .iter()
+            .all(|r| r.identity.identity().map(|id| id.display_name())
+                == Some("Hall of Champions")));
+        assert_eq!(
+            super::super::rooms::match_room_name("Champions Hall of"),
+            Match::Unknown,
+            "the other order really is unreadable",
+        );
+    }
+
+    // The temple screen prints furniture much taller than a text line — the
+    // `Enter Incursion` button is nearly twice one — and a tall candidate must
+    // not widen the gap it is allowed to sit at. 43 px below a 20 px architect
+    // line is 2.15 of that line's height: over the 30 px `CONTINUATION_PITCH`
+    // allows, and under the 52.5 px it would allow if the BUTTON's own 35 px
+    // set the pitch.
+    //
+    // Fails if `continues` takes the taller of the two heights: the button's
+    // text is then appended to an open block, where it can be read as the
+    // target the `(Kill to …` clause never delivered.
+    #[test]
+    fn a_tall_line_below_an_open_block_does_not_widen_the_gap_it_may_sit_at() {
+        let lines = vec![
+            boxed("Xopec, Architect of Power", 1480, 310),
+            OcrLineBox { h: 35, ..boxed("Enter Incursion", 1480, 353) },
+        ];
+
+        assert_eq!(
+            group_architect_blocks(&lines),
+            vec!["Xopec, Architect of Power".to_string()],
+            "the button is screen furniture, not this offer's second line",
+        );
+    }
+
+    // ------------------------------------------------------ block rects --
+
+    // The rect a block publishes is the union of the boxes of the lines it was
+    // built from — computed here from the fixture's own numbers rather than
+    // from the function. Atmohua's block spans three lines: x from the widest,
+    // y from the first line's top to the last line's bottom.
+    //
+    // Fails if the union takes the first line's box, the last line's box, or
+    // the intersection.
+    #[test]
+    fn a_blocks_rect_is_the_union_of_its_lines_boxes() {
+        let lines = pc_panel();
+        let got = parse_architects(&lines);
+
+        let top = lines[3].y;
+        let bottom = lines[5].y + lines[5].h;
+        let widest = lines[3].w.max(lines[4].w).max(lines[5].w);
+        assert_eq!(
+            got[1].rect,
+            Some([lines[3].x, top, widest, bottom - top]),
+            "Atmohua's block covers its three lines",
+        );
+
+        // A single-line block is its own line's box, which is the boundary the
+        // union arithmetic has to get right too.
+        assert_eq!(
+            got[0].rect,
+            Some([
+                lines[1].x,
+                lines[1].y,
+                lines[1].w.max(lines[2].w),
+                lines[2].y + lines[2].h - lines[1].y,
+            ]),
+            "Quipolatl's block covers its two",
+        );
+    }
+
+    // A text-only read publishes no rect rather than a made-up one: there is
+    // nothing on a `&str` that says where the panel drew it. Fails if the rect
+    // defaults to a zero box, which a surface would draw at the screen origin.
+    #[test]
+    fn a_block_read_from_text_alone_publishes_no_rect() {
+        assert!(parse_architects(&CASE_1)
+            .iter()
+            .all(|offer| offer.rect.is_none()));
+    }
+
+    // The title's own box, for the surface that must not cover it (POE-244).
+    // It is the box of the ONE line the title rule picked — the room name —
+    // and not of the architect block above or below it.
+    //
+    // Fails if `read_panel` publishes the first boxed line's rect, or the
+    // union of everything it looked at.
+    #[test]
+    fn the_panel_title_carries_the_box_of_the_line_it_was_read_from() {
+        let lines = pc_panel();
+
+        let got = read_panel(&lines);
+
+        assert_eq!(got.identity_name(), Some("Armourer's Workshop"));
+        assert_eq!(
+            got.room_rect,
+            Some([lines[0].x, lines[0].y, lines[0].w, lines[0].h]),
+        );
+    }
+
+    // An unread title has no box to publish. Fails if `room_rect` is filled in
+    // from whichever line was looked at last.
+    #[test]
+    fn an_unread_title_publishes_no_box() {
+        let got = read_panel(&[boxed("Enter Incursion", 1300, 100)]);
+
+        assert_eq!(got.room, Match::Unknown);
+        assert_eq!(got.room_rect, None);
+    }
+
+    // ------------------------------------------- the coordinate spaces --
+
+    // `preprocess_for_ocr` upscales 2×, so every box `recognize_lines` reports
+    // is at twice the crop's coordinates. The expected numbers here are the
+    // definition — halve the origin, halve the size — not a second call to the
+    // function.
+    //
+    // Fails if the descale is dropped (boxes at 2× the truth), applied twice,
+    // or applied to the origin only.
+    #[test]
+    fn an_ocr_box_is_halved_out_of_the_2x_preprocessed_space() {
+        let got = descaled(
+            OcrLineBox { text: "Tombs".to_string(), x: 240, y: 500, w: 160, h: 40 },
+            2,
+        );
+
+        assert_eq!((got.x, got.y, got.w, got.h), (120, 250, 80, 20));
+        assert_eq!(got.text, "Tombs");
+    }
+
+    // The rounding direction, at the boundary: an odd box must come back
+    // covering the pixel it started on and the pixel it ended on, so the
+    // origin rounds DOWN and the size rounds UP. A surface that must not cover
+    // OCR text can afford a box a pixel too big and cannot afford one a pixel
+    // too small.
+    //
+    // Fails if the size truncates: 41/2 would be 20, and the box would end one
+    // px short of the glyphs.
+    #[test]
+    fn an_odd_ocr_box_rounds_outward_rather_than_truncating() {
+        let got = descaled(
+            OcrLineBox { text: "Tombs".to_string(), x: 241, y: 501, w: 161, h: 41 },
+            2,
+        );
+
+        assert_eq!((got.x, got.y), (120, 250), "the origin rounds down");
+        assert_eq!((got.w, got.h), (81, 21), "the size rounds up");
+    }
+
+    // The case a size-only ceiling gets wrong: an ODD origin with an EVEN size.
+    // `x = 1, w = 2` covers columns 1 and 2 of the 2× image, which is columns 0
+    // and 1 of the source — so the answer is `x = 0, w = 2`. Scaling the size
+    // on its own gives `w = 1` and drops the far column, which is the pixel the
+    // outward rounding exists to keep.
+    //
+    // Fails if the size is derived from `w` rather than from the far edge
+    // `x + w`.
+    #[test]
+    fn an_odd_origin_with_an_even_size_keeps_its_far_edge() {
+        let got = descaled(
+            OcrLineBox { text: "I".to_string(), x: 1, y: 3, w: 2, h: 2 },
+            2,
+        );
+
+        assert_eq!((got.x, got.y), (0, 1));
+        assert_eq!(
+            (got.w, got.h),
+            (2, 2),
+            "the box must still reach the source pixel its far edge covered",
+        );
+    }
+
+    // The second step: a crop's own pixels are not the capture's. The origin
+    // added here is the crop's CLIPPED top-left corner, so a box read at (12,
+    // 8) inside a panel crop taken at (1288, 92) sits at (1300, 100) on screen
+    // — which is where `pc_panel` says the title is.
+    //
+    // Fails if the translate is dropped (every rect at the crop's origin, i.e.
+    // the top-left of the screen for a full grab), or if it subtracts.
+    #[test]
+    fn a_crop_relative_box_moves_to_capture_px_by_the_crops_origin() {
+        let got = translated(
+            OcrLineBox { text: "Armourer's Workshop".to_string(), x: 12, y: 8, w: 152, h: 20 },
+            (1288, 92),
+        );
+
+        assert_eq!((got.x, got.y), (1300, 100));
+        assert_eq!((got.w, got.h), (152, 20), "a translate does not resize");
     }
 
     // --------------------------------------------- incursions remaining --
@@ -1254,25 +2113,25 @@ mod tests {
 
     // -------------------------------------------------------- the seam --
 
-    /// A recogniser that answers with fixed text, so the board walk can be
+    /// A recogniser that answers with fixed lines, so the board walk can be
     /// exercised without an OCR engine. The numeral crop is far narrower than
     /// the name band, which is how the double tells the two calls apart.
     struct Canned {
-        name: Vec<String>,
-        numeral: Vec<String>,
+        name: Vec<OcrLineBox>,
+        numeral: Vec<OcrLineBox>,
     }
 
     impl Canned {
         fn name(text: &str) -> Canned {
             Canned {
-                name: vec![text.to_string()],
+                name: vec![boxed(text, 0, 0)],
                 numeral: Vec::new(),
             }
         }
     }
 
     impl TextRecognizer for Canned {
-        fn recognize(&self, img: &DynamicImage) -> Result<Vec<String>, String> {
+        fn recognize(&self, img: &DynamicImage) -> Result<Vec<OcrLineBox>, String> {
             Ok(if img.width() < 60 {
                 self.numeral.clone()
             } else {
@@ -1284,7 +2143,7 @@ mod tests {
     struct Broken;
 
     impl TextRecognizer for Broken {
-        fn recognize(&self, _img: &DynamicImage) -> Result<Vec<String>, String> {
+        fn recognize(&self, _img: &DynamicImage) -> Result<Vec<OcrLineBox>, String> {
             Err("no OCR engine".to_string())
         }
     }
@@ -1300,7 +2159,7 @@ mod tests {
         let img = blank(1374, 862);
         let lattice = Lattice::new((673, 682), 0.99);
         let recognizer = Canned {
-            name: vec!["Gemcutter's".into(), "Workshop".into()],
+            name: vec![boxed("Gemcutter's", 0, 0), boxed("Workshop", 0, LINE_H)],
             numeral: Vec::new(),
         };
         let board = read_board(&recognizer, &img, &lattice, &|| false);
@@ -1313,6 +2172,35 @@ mod tests {
         assert_eq!(
             super::super::rooms::match_room_name("Gemcutter's"),
             Match::Unknown
+        );
+    }
+
+    // …and joined in the order the plate DREW them, not the order the engine
+    // emitted them (POE-243). `Workshop Gemcutter's` scores 0.60 against the
+    // vocabulary entry — under `rooms::MATCH` — so an engine that returns the
+    // tail first turns a read plate into an unread one, and an unread plate is
+    // junk to the advisor.
+    //
+    // Fails if `read_plate` joins `lines` as handed over.
+    #[test]
+    fn a_wrapped_plate_name_is_joined_top_line_first_whatever_order_ocr_returned() {
+        let img = blank(1374, 862);
+        let lattice = Lattice::new((673, 682), 0.99);
+        let reversed = Canned {
+            name: vec![boxed("Workshop", 0, LINE_PITCH), boxed("Gemcutter's", 0, 0)],
+            numeral: Vec::new(),
+        };
+
+        let board = read_board(&reversed, &img, &lattice, &|| false);
+
+        assert!(board
+            .iter()
+            .all(|r| r.identity.identity().map(|id| id.display_name())
+                == Some("Gemcutter's Workshop")));
+        // …and the other join really would have missed.
+        assert_eq!(
+            super::super::rooms::match_room_name("Workshop Gemcutter's"),
+            Match::Unknown,
         );
     }
 
@@ -1360,9 +2248,9 @@ mod tests {
             calls: Cell<usize>,
         }
         impl TextRecognizer for Counting {
-            fn recognize(&self, _img: &DynamicImage) -> Result<Vec<String>, String> {
+            fn recognize(&self, _img: &DynamicImage) -> Result<Vec<OcrLineBox>, String> {
                 self.calls.set(self.calls.get() + 1);
-                Ok(vec!["Tombs".to_string()])
+                Ok(vec![boxed("Tombs", 0, 0)])
             }
         }
 
@@ -1401,8 +2289,8 @@ mod tests {
         // The numeral crop answers "III" on every plate, so a tier-1 name is
         // contradicted while a tier-3 one is confirmed.
         let iii = |name: &str| Canned {
-            name: vec![name.to_string()],
-            numeral: vec!["III".to_string()],
+            name: vec![boxed(name, 0, 0)],
+            numeral: vec![boxed("III", 0, 0)],
         };
         let contradicted = read_board(&iii("Corruption Chamber"), &img, &lattice, &|| false);
         assert!(contradicted.iter().all(|r| r.identity == Match::Unknown));

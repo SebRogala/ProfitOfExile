@@ -53,6 +53,10 @@ pub fn offer(name: &str, kind: OfferKind, printed: &str) -> ArchitectOffer {
         kind,
         printed_target: printed.to_string(),
         target: rooms::match_room_name(printed),
+        // A hand-encoded board has no screen behind it, and nothing the
+        // advisor reads takes a rect: the field exists for the surfaces
+        // (POE-243/244), which these fixtures never reach.
+        rect: None,
     }
 }
 

@@ -19,6 +19,7 @@
 	import {
 		TEMPLE_STATUS_LABEL,
 		TEMPLE_STATUS_TONE,
+		forcedKillNote,
 		formatRisk,
 		gambleLabel,
 		incursionsText,
@@ -52,6 +53,10 @@
 	const unknownBadge = $derived(unknownRoomsBadge(temple));
 	const markerNotice = $derived(markerFallbackNotice(layout));
 	const leaveBanner = $derived(leaveMapBanner(advice));
+	/** Set when the read saw one of the panel's two architect blocks — every
+	 *  ranked kill below is then that one architect's, forced rather than
+	 *  chosen (POE-243). */
+	const forcedNote = $derived(forcedKillNote(advice));
 
 	// --- commands -------------------------------------------------------------
 
@@ -263,6 +268,10 @@
 					{#each advice.recommendations as move, i (`${i}-${move.headline}-${move.doorsLabel}`)}
 						<li class="move" class:top={i === 0}>
 							<span class="move-headline">{move.headline}</span>
+							<!-- The panel prints two architect blocks; when the read saw one,
+							     this kill was forced rather than chosen (POE-243). Marked on
+							     every rank, because the whole list is one architect's. -->
+							{#if forcedNote}<span class="forced">({forcedNote})</span>{/if}
 							<span class="move-doors">open {move.doorsLabel}</span>
 							<span class="meta">score {move.ev.toFixed(2)}</span>
 							<!-- The reasons ARE the audit trail: a bare score cannot be checked. -->
@@ -622,6 +631,13 @@
 	.move-headline {
 		font-size: 0.85rem;
 		font-weight: 600;
+	}
+
+	/* The "this was not a choice" mark, in the board's one unsettled colour —
+	   the same yellow the unread plate and the unresolved corridor carry. */
+	.forced {
+		font-size: 0.72rem;
+		color: var(--color-lab-yellow);
 	}
 
 	.move-doors {

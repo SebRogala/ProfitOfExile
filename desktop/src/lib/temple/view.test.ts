@@ -19,6 +19,7 @@ import {
 	latticeEdges,
 	latticePoints,
 	latticeViewBox,
+	forcedKillNote,
 	leadReason,
 	leaveMapBanner,
 	markerFallbackNotice,
@@ -101,6 +102,7 @@ function advice(over: Partial<AdviceView> = {}): AdviceView {
 		gambles: [],
 		mapAction: 'continue',
 		warnings: [],
+		forcedKill: false,
 		...over
 	};
 }
@@ -113,6 +115,7 @@ function offer(over: Partial<OfferView> = {}): OfferView {
 		printedTarget: "Sadist's Den",
 		displayName: 'Torment Cells',
 		builtTier: 2,
+		rect: null,
 		...over
 	};
 }
@@ -405,6 +408,27 @@ describe('risk and ranking wording', () => {
 
 	it('puts the kill and the doors in one line', () => {
 		expect(moveLine(ranked())).toBe('upgrade → Locus of Corruption · C1-C2');
+	});
+
+	it('marks a kill the read did not choose', () => {
+		// The side panel prints two architect blocks. With one read, the
+		// headline is the only kill there was — and a surface that showed it
+		// like a ranked choice would claim a decision nothing made.
+		expect(forcedKillNote(advice({ forcedKill: true }))).toBe('only architect read');
+	});
+
+	it('marks nothing when both architects were read', () => {
+		expect(forcedKillNote(advice({ forcedKill: false }))).toBeNull();
+		expect(forcedKillNote(null)).toBeNull();
+	});
+
+	it('marks nothing for a payload whose flag is missing rather than false', () => {
+		// A slice from an older build, or one a rename dropped the key from,
+		// reads `undefined` here. Marking every kill forced on that would be a
+		// warning the player learns to ignore — so the flag has to be the
+		// literal `true` before the mark is drawn.
+		const stale = { ...advice(), forcedKill: undefined } as unknown as AdviceView;
+		expect(forcedKillNote(stale)).toBeNull();
 	});
 
 	it('leads with the first reason, and reports none rather than an empty string', () => {

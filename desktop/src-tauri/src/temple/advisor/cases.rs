@@ -260,7 +260,62 @@ pub fn case_6_cloister() -> Case {
     }
 }
 
-/// All six, in order.
+// --- Case 7 — 2026-09-03_13-56-40, 6 left, in Armourer's Workshop I (C2) ---
+// The board POE-243 was opened on, and the reason it is here is what the app
+// SHOWED on it: `upgrade → Armoury · B1-C2`, which is the ranking with
+// Atmohua's block missing from the parsed panel. With both blocks read the kill
+// is not close — the `change` builds Sanctum of Unity II off a tier-1 room
+// (Contested Development), against an `upgrade` to a tier-2 Armoury on the line
+// the player is already standing on.
+//
+// This is a REGRESSION FIXTURE for the ranking, not a walked decision:
+// Sebastian did not play the board, the advisor did, and wrongly. The board is
+// hand-encoded from the screenshot; the door the chain picks is deliberately
+// not part of the claim.
+pub fn case_7_armourers_workshop() -> Case {
+    Case {
+        name: "7 ArmourersWorkshop-PC",
+        state: board(
+            &[
+                (B0, "house_of_the_others", 1),
+                (B1, "wealth_of_the_vaal", 1),
+                (C1, "conduit_of_lightning", 1),
+                // The room the player is standing in — tier 1, which is what
+                // makes the `change` land on tier 2.
+                (C2, "chamber_of_iron", 1),
+                (D0, "hall_of_champions", 1),
+                (D1, "apex_of_ascension", 1),
+                (D2, "storm_of_corruption", 1),
+                (D3, "gem", 2),
+                (E0, "court_of_sealed_death", 3),
+                (E2, "hybridisation_chamber", 3),
+            ],
+            &[
+                (C0, D1),
+                (D1, D2),
+                (D2, D3),
+                (D0, E0),
+                (D1, E0),
+                (D1, E1),
+                (D2, E2),
+            ],
+            C2,
+            6,
+        ),
+        offers: vec![
+            offer("Quipolatl", Upgrade, "Armoury"),
+            offer("Atmohua", Change, "Shrine of Empowerment"),
+        ],
+        keys: 1,
+        decision: "change → Sanctum of Unity (the overlay said upgrade → Armoury)",
+    }
+}
+
+/// The six WALKED boards, in order.
+///
+/// [`case_7_armourers_workshop`] is deliberately not among them: it records
+/// what the app got wrong rather than what Sebastian decided, and the suites
+/// that iterate this list assert against his play.
 pub fn retrospective() -> Vec<Case> {
     vec![
         case_1_tombs(),

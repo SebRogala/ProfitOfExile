@@ -939,14 +939,21 @@ pub fn remaining_rect(origin: (i32, i32), scale: f32) -> [i32; 4] {
     [origin.0 - half_w, top, 2 * half_w, bottom - top]
 }
 
-/// Crop `rect` from `img`, clipped to the frame. `None` when nothing overlaps.
+/// Crop `rect` from `img`, clipped to the frame, with the corner it was
+/// actually taken from. `None` when nothing overlaps.
 ///
 /// Clipped, unlike [`diamond_rect`]'s consumer: a text ROI that hangs off the
 /// frame still has readable text in the part that does not, and there is no
 /// count or angle here for a bad rect to corrupt — the worst a clipped crop
 /// does is read fewer lines. An empty intersection is `None` rather than a
 /// zero-sized image, which `preprocess_for_ocr` would panic on.
-pub fn crop_clipped(img: &DynamicImage, rect: [i32; 4]) -> Option<DynamicImage> {
+///
+/// The origin comes back with the image because the OCR boxes have to be moved
+/// out of the crop's pixels and into the capture's (POE-243), and the corner to
+/// add is the CLIPPED one, not `rect`'s: a ROI starting at −20 is cropped at 0,
+/// and placing its lines against −20 would put every box 20 px off screen.
+/// Returning both from the one function is what keeps the two from drifting.
+pub fn crop_clipped(img: &DynamicImage, rect: [i32; 4]) -> Option<(DynamicImage, (i32, i32))> {
     let [x, y, w, h] = rect;
     let x0 = x.max(0);
     let y0 = y.max(0);
@@ -955,11 +962,9 @@ pub fn crop_clipped(img: &DynamicImage, rect: [i32; 4]) -> Option<DynamicImage> 
     if x1 <= x0 || y1 <= y0 {
         return None;
     }
-    Some(img.crop_imm(
-        x0 as u32,
-        y0 as u32,
-        (x1 - x0) as u32,
-        (y1 - y0) as u32,
+    Some((
+        img.crop_imm(x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32),
+        (x0, y0),
     ))
 }
 
@@ -2193,11 +2198,13 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) {
     });
 }
 
-/// The panel's text: two bounded crops, as plain lines.
+/// The panel's text: two bounded crops, as lines carrying their boxes in
+/// CAPTURE px.
 ///
-/// Never the whole frame — see the module note. The side panel's region comes
-/// first and the budget line second, which is the order they are drawn in and
-/// the order [`panel::read_panel`]'s positional title rule reads them in.
+/// Never the whole frame — see the module note. The side panel's region is read
+/// first and the budget line second, the order they are drawn in; since POE-243
+/// that order is a convenience rather than a contract, because each line knows
+/// where it was read and [`panel::read_panel`] sorts by that.
 ///
 /// A crop that lands outside the capture contributes nothing rather than
 /// failing the read: the two regions are independent, and losing the budget
@@ -2207,19 +2214,18 @@ fn panel_text(
     session: &mut Session,
     img: &DynamicImage,
     layout: &TempleLayout,
-) -> Option<Vec<String>> {
+) -> Option<Vec<crate::mercenary::geometry::OcrLineBox>> {
     let regions = [
         panel_rect(layout.origin, layout.scale),
         remaining_rect(layout.origin, layout.scale),
     ];
     let mut lines = Vec::new();
     for rect in regions {
-        let Some(crop) = crop_clipped(img, rect) else {
+        let Some((crop, origin)) = crop_clipped(img, rect) else {
             continue;
         };
-        let prepared = crate::capture::preprocess_for_ocr(&crop);
-        match crate::ocr::recognize_lines(&prepared) {
-            Ok(read) => lines.extend(read.into_iter().map(|l| l.text)),
+        match panel::crop_lines(&crop, origin) {
+            Ok(read) => lines.extend(read),
             Err(e) => {
                 fail(app, session, format!("Temple: OCR failed — {e}"));
                 return None;
@@ -3505,8 +3511,15 @@ mod tests {
     fn a_text_rect_off_the_frame_is_clipped_and_one_fully_outside_is_none() {
         let img = DynamicImage::new_rgb8(100, 80);
 
-        let clipped = crop_clipped(&img, [-20, -10, 60, 40]).expect("the overlap is readable");
+        let (clipped, origin) =
+            crop_clipped(&img, [-20, -10, 60, 40]).expect("the overlap is readable");
         assert_eq!((clipped.width(), clipped.height()), (40, 30));
+        assert_eq!(
+            origin,
+            (0, 0),
+            "the corner the crop was taken from is the CLIPPED one — a box placed \
+             against the rect's own -20 would sit off screen",
+        );
 
         assert!(crop_clipped(&img, [100, 0, 40, 40]).is_none(), "no overlap, no crop");
         assert!(crop_clipped(&img, [0, -50, 40, 40]).is_none(), "no overlap, no crop");
@@ -3894,7 +3907,8 @@ mod tests {
 
         // Fully inside the capture, so the crop is the rect and `crop_clipped`
         // loses nothing. A windowed client is where that stops holding.
-        let crop = crop_clipped(&img, [x, y, w, h]).expect("the ROI overlaps the capture");
+        let (crop, origin) = crop_clipped(&img, [x, y, w, h]).expect("the ROI overlaps the capture");
+        assert_eq!(origin, (x, y), "nothing was clipped, so the corner is the rect's own");
         assert_eq!(
             (crop.width(), crop.height()),
             (w as u32, h as u32),

@@ -23,7 +23,7 @@ const RUST_DEFAULT_JSON =
 
 /** Rust: the fully populated sample, `SAMPLE_SLICE_JSON` in `slice.rs`. */
 const RUST_SAMPLE_JSON =
-	'{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]]},"panel":{"room":"Locus of Corruption","offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist\'s Den","displayName":"Torment Cells","builtTier":2}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible"]},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"lastError":"Temple: OCR failed"}';
+	'{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]]},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist\'s Den","displayName":"Torment Cells","builtTier":2,"rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"lastError":"Temple: OCR failed"}';
 
 describe('templeSliceDefault', () => {
 	it('is exactly what Rust sends for a slice nothing has written yet', () => {
@@ -100,11 +100,30 @@ describe('the Rust sample decodes into this mirror', () => {
 		expect(offer?.builtTier).toBe(2);
 	});
 
+	it('reads the screen rects the panel lines were OCR\'d at', () => {
+		// POE-243: capture px — the same unit as `layout.origin` above, so a
+		// surface drawing over the game needs no conversion. A mirror that
+		// renamed either key reads undefined here instead of pointing at the
+		// block the advice is about.
+		expect(slice.panel?.roomRect).toEqual([1300, 100, 152, 20]);
+		expect(slice.panel?.offers[0].rect).toEqual([1300, 140, 280, 43]);
+	});
+
+	it('reads the forced-kill flag next to the warning that explains it', () => {
+		// The two halves of one fact: the flag a surface branches on, and the
+		// prose it prints. A mirror carrying only the prose would leave every
+		// surface matching on wording.
+		expect(slice.advice?.forcedKill).toBe(true);
+		expect(slice.advice?.warnings).toContain(
+			'1 of 2 architects read — the kill shown is forced, not chosen'
+		);
+	});
+
 	it('reads the advice, its reasons and its map action', () => {
 		expect(slice.advice?.recommendations[0].reasons).toEqual(['R1: connects toward the top']);
 		expect(slice.advice?.gambles[0].risk).toBe(0.31);
 		expect(slice.advice?.mapAction).toBe('leaveMap');
-		expect(slice.advice?.warnings).toHaveLength(1);
+		expect(slice.advice?.warnings).toHaveLength(2);
 	});
 
 	it('reads the calibration under its snake_case keys', () => {
