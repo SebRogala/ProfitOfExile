@@ -94,10 +94,16 @@ pub enum ScreenScaleSource {
 /// 1920x1200 screen, is 1.0 by definition, and the 1080p machine measures
 /// 0.90 = 1080/1200 — the game's UI scales with screen HEIGHT. The temple's
 /// `AnchorCalibration::scale` is a DIFFERENT unit (relative to its own
-/// `REFERENCE_SCREEN_WIDTH`, 1374) and the ratio between the two is
-/// **unmeasured**, so the temple cannot read this slice until someone measures
-/// it. Said here rather than implied, because the two fields spell the same
-/// word.
+/// `REFERENCE_SCREEN_WIDTH`, 1374). The ratio between the two is
+/// `temple::anchor::TEMPLE_SCALE_PER_UI_SCALE`, 1.1111 (POE-234): a temple
+/// scale of 1.000 measured on a 1920x1080 capture, over `1080 / 1200` — this
+/// unit's DEFINITION on that screen, NOT a `ui_scale` the merc module read
+/// there. Since [`accepts`] tolerates 0.01 of drift on a 0.90 denominator, that
+/// coefficient is good to about 1%, and the commit that makes the temple a
+/// reader or writer of this slice must recompute it against a real reading.
+/// Nothing consumes it yet. Said here rather than implied, because the two
+/// fields spell the same word and substituting one for the other is an 11%
+/// error on a 1080p screen.
 ///
 /// **Reader rule.** A non-merc consumer reads THIS slice, never
 /// `mercenary.capture.scale`. Both are written from the same settled
