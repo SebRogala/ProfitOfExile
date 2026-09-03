@@ -126,9 +126,12 @@
 //! That function upscales 2× unconditionally, so a 4K capture would become a
 //! 33 Mpx buffer per tick; `capture.rs` states the invariant this module has to
 //! keep ("the live capture paths crop from the primary monitor, so dimensions
-//! stay bounded"). Both text ROIs — [`panel_rect`] and [`remaining_rect`] — are
-//! derived from the anchor's scale and stay a fixed size in reference px
-//! whatever the monitor is.
+//! stay bounded"). All three ROIs — [`panel_rect`], [`remaining_rect`] and
+//! [`diamond_rect`] — are placed from the anchor's origin and scale, so each
+//! stays a fixed size in reference px whatever the monitor is, and each lands
+//! where the game drew the panel rather than where the capture happens to end.
+//! [`full_read`] prints all three, once per distinct value (`Temple: rois …`),
+//! which is what makes a fallback traceable to a rect from `app.log` alone.
 //!
 //! On top of those, `temple_rearm` bumps a counter the gate watches, which is
 //! the user's own escape when a read looks wrong.
@@ -800,35 +803,102 @@ pub fn apply_status(slice: &mut TempleSlice, outcome: TickOutcome) {
 
 // ------------------------------------------------------------ text ROIs --
 
-/// Left edge of the side panel's OCR region, in reference px measured from the
-/// capture's RIGHT edge. The region runs from here to the right edge.
+/// The side panel's own border box, in reference px relative to the Entrance
+/// plate centre ([`TempleLayout::origin`]): `[left, top, right, bottom]`, `+x`
+/// right and `+y` down. The panel is drawn above and to the right of the
+/// Entrance, so both vertical figures are negative.
 ///
-/// **Measured** on all seven source screenshots (the five diamond fixtures'
-/// sources plus the two board fixtures'), by finding the panel's own left
-/// border column:
+/// **Measured** as the panel's border rectangle on the three captures whose
+/// origin AND scale are both recorded — the committed full frame and the two
+/// board fixtures' source screenshots:
 ///
-/// | source screenshot | width | scale | panel left, ref px from the right edge |
+/// | capture | size | scale | origin | panel border box | in ref px from the origin |
+/// |---|---|---|---|---|---|
+/// | `screen-live-1920x1080.png` | 1920x1080 | 1.0000 | (960, 713) | x 1171–1655, y 44–418 | +211, −669, +695, −295 |
+/// | `2026-08-02_22-22-38` | 1374x862 | 1.0000 | (673, 682) | x 884–1368, y 13–387 | +211, −669, +695, −295 |
+/// | `2026-08-07_19-28-36` | 1539x968 | 1.13 recorded | (745, 768) | x 980–1517, y 24–440 | +208, −658, +683, −290 |
+/// | …the same capture at the 1.111 its own border implies | | | | | +212, −670, +695, −295 |
+///
+/// The two scale-1.0 captures agree **to the pixel on all four edges**, a month
+/// apart and 546 px of capture width apart. That agreement is the constant.
+///
+/// The third row does NOT disagree with them — its ANCHOR does. Its panel
+/// border measures 537 x 416 px, and `537 / 484 = 1.1095`, `416 / 374 = 1.1123`:
+/// at scale **1.111** the box above reproduces that capture to under a pixel on
+/// every edge. The 1.13 it is recorded at is an anchor error of ~1.7%, which is
+/// [`DIAMOND_DX_REF`]'s anchor-accuracy note and POE-247's subject. So there is
+/// no board-to-board spread here — there is one error, the anchor's, and it is
+/// what [`PANEL_MARGIN_REF`] absorbs.
+///
+/// # Why the origin and not the capture's right edge
+///
+/// Until POE-230 this region was `540 × 430` ref px hung off the capture's
+/// top-RIGHT corner. Measured 2026-09-03 on the laptop (dump
+/// `temple-debug/1788438639673`, the frame committed as the fixture above): that
+/// put the crop at `[1380, 0, 540, 430]`, which cuts the panel in half. The
+/// title read `NG WORKSHOP`, and the lower-left architect block — Xopec, whose
+/// box on that frame is x 1189–1347 — was **entirely** outside the crop, so the
+/// dump reported one architect on a board that has two. The panel is drawn
+/// against the LAYOUT, not against the screen; the table above is that fact
+/// measured, and the third row is what a screen-edge offset was really tracking.
+pub const PANEL_BOX_REF: [f32; 4] = [211.0, -669.0, 695.0, -295.0];
+
+/// How far past [`PANEL_BOX_REF`] the OCR crop reaches on the left, top and
+/// bottom — in reference px. The right side is [`PANEL_RIGHT_MARGIN_REF`], which
+/// is smaller and says why.
+///
+/// What a margin has to absorb is **anchor error**, since the box itself is the
+/// same on every capture that reproduces its own scale. The recorded band is
+/// −4% (POE-247's hint chain answering 0.96 where the peak is 1.00) to +1.7%
+/// (the 1539 row of [`PANEL_BOX_REF`]'s table). Against a −669 ref px top offset
+/// −4% is 27 px, so 40 clears the worst recorded case on the axis where the
+/// offsets are largest, and it is also what the retired screen-edge constants
+/// documented (~46 horizontal, ~42 vertical), carried across.
+///
+/// Nothing sits outside the panel on those three sides on the committed fixture,
+/// so the only cost of 40 there is buffer size.
+pub const PANEL_MARGIN_REF: f32 = 40.0;
+
+/// The RIGHT margin, in reference px — smaller than [`PANEL_MARGIN_REF`] because
+/// it is the one side where the crop reaches into somebody else's text.
+///
+/// **Measured on the committed fixture.** The map's own info block is drawn
+/// BEHIND the panel; its leftmost glyph column sits **4 ref px** past the panel
+/// border (+699 against the border's +695), so *every* positive right margin
+/// admits a strip of it, and the volume is what the constant buys:
+///
+/// Offsets below are from the origin like everything else here, so the title's
+/// own band — absolute y 70–112 on the fixture — is **−643 … −601**. A "run" is
+/// a group of glyph rows merged across gaps of two rows or fewer; counting rows
+/// strictly adjacent gives a higher figure for the same ink.
+///
+/// | right margin | ink px admitted | row runs | runs inside the title's band |
 /// |---|---|---|---|
-/// | `2026-08-02_22-22-38` | 1374 | 1.0000 | 490.0 |
-/// | `2026-08-07_19-28-36` | 1539 | 1.1321 | 493.8 |
+/// | 40 | 1250 | 14 | −652 … −641 |
+/// | 20 | 622 | 12 | −643 … −641 |
+/// | 16 | 456 | 12 | −643 … −641 |
 ///
-/// The two hand-verified boards agree to 4 ref px; 540 gives ~46 ref px of
-/// margin, and the region was then checked to contain the whole panel — border,
-/// title, both architect blocks and the `Enter Incursion` button — on all seven.
-pub const PANEL_LEFT_REF: f32 = 540.0;
-/// Bottom edge of the side panel's OCR region, in reference px from the
-/// capture's TOP edge. The region starts at the top edge.
+/// The band matters because a run overlapping the title's rows can be grouped
+/// into the title LINE, and `rooms::match_room_name` rejects a run-together read
+/// by [`super::rooms::RATIO_MAX`] (1.45) — a short name like `Chasm` has the
+/// least room for an appended fragment. 40 was the worst case for that: its run
+/// starts 9 rows higher (−652 against −643), so it overlaps the band by more
+/// than the 3-row fragment the other two admit.
 ///
-/// Measured panel bottoms: 387.0 ref px (1374 board) and 388.7 (1539 board).
-/// 430 gives ~42 ref px of margin — see [`PANEL_LEFT_REF`].
-pub const PANEL_BOTTOM_REF: f32 = 430.0;
+/// **20, not 16.** The floor is not the ink, it is the Hayoxi block, whose own
+/// right edge is at +681: a −4% anchor puts the crop's right edge at
+/// `(695 + m) × 0.96`, so `m = 16` retains that text by **1.6 ref px** and
+/// `m = 20` by **5.4**. 16 is inside the rounding of the thing it has to
+/// protect. 20 halves 40's admitted ink, keeps the title-band overlap to the
+/// same 3-row fragment 16 does, and still clears the recorded anchor band.
+pub const PANEL_RIGHT_MARGIN_REF: f32 = 20.0;
 
 /// The `N Incursions Remaining` line's OCR region, relative to the Entrance
 /// plate centre ([`TempleLayout::origin`]), in reference px.
 ///
 /// The game centres this line under the Entrance plate, so it is keyed on the
-/// anchor rather than on a screen edge — which also makes it the one text ROI a
-/// windowed client cannot displace (see [`diamond_rect`]'s note).
+/// anchor rather than on a screen edge. It was the FIRST region keyed that way
+/// and the shape POE-230 moved the other two onto — see [`PANEL_BOX_REF`].
 ///
 /// **Measured** as the line's glyph bounding box on all seven source
 /// screenshots. Horizontal extent from the origin: −108.9 … +108.9 ref px
@@ -842,17 +912,22 @@ pub const REMAINING_TOP_REF: f32 = 58.0;
 /// Bottom of the budget line's region — see [`REMAINING_HALF_W_REF`].
 pub const REMAINING_BOTTOM_REF: f32 = 104.0;
 
-/// The side panel's region, given a capture size and the anchor's scale.
+/// The side panel's region, given the Entrance centre and the anchor's scale.
 ///
-/// `[x, y, w, h]`. Anchored to the capture's top-right corner, like
-/// [`diamond_rect`] and for the same measured reason — and carrying the same
-/// windowed-client failure mode, which here degrades to "the panel's text is
-/// not read" rather than to a wrong answer: [`panel::read_panel`] returns an
-/// unread title and no offers, and the advisor warns rather than inventing one.
-pub fn panel_rect(screen: (u32, u32), scale: f32) -> [i32; 4] {
-    let w = (PANEL_LEFT_REF * scale).round() as i32;
-    let h = (PANEL_BOTTOM_REF * scale).round() as i32;
-    [screen.0 as i32 - w, 0, w, h]
+/// `[x, y, w, h]`. Keyed on the anchor, like [`remaining_rect`] and
+/// [`diamond_rect`] and for the reason [`PANEL_BOX_REF`] measures: the game
+/// draws this panel against the layout. A crop that still misses — the panel is
+/// only partly captured — degrades to "the panel's text is not read" rather than
+/// to a wrong answer: [`crop_clipped`] hands back the readable part,
+/// [`panel::read_panel`] returns an unread title and whichever offers survived,
+/// and the advisor warns rather than inventing one.
+pub fn panel_rect(origin: (i32, i32), scale: f32) -> [i32; 4] {
+    let [left, top, right, bottom] = PANEL_BOX_REF;
+    let x0 = origin.0 + ((left - PANEL_MARGIN_REF) * scale).round() as i32;
+    let y0 = origin.1 + ((top - PANEL_MARGIN_REF) * scale).round() as i32;
+    let x1 = origin.0 + ((right + PANEL_RIGHT_MARGIN_REF) * scale).round() as i32;
+    let y1 = origin.1 + ((bottom + PANEL_MARGIN_REF) * scale).round() as i32;
+    [x0, y0, x1 - x0, y1 - y0]
 }
 
 /// The `N Incursions Remaining` region, given the Entrance centre and the
@@ -890,71 +965,149 @@ pub fn crop_clipped(img: &DynamicImage, rect: [i32; 4]) -> Option<DynamicImage> 
 
 // ------------------------------------------------------ the diamond rect --
 
-/// Diamond centre offset from the capture's TOP-RIGHT corner, in reference px
-/// (the [`super::anchor::REFERENCE_SCREEN_WIDTH`] = 1374 space).
+/// Diamond centre offset from the Entrance plate centre
+/// ([`TempleLayout::origin`]), in reference px. `+x` right, `+y` down — the
+/// diamond is drawn above the Entrance, so the vertical figure is negative.
 ///
-/// **Measured, provisional, and the weakest number in this module.**
+/// **Measured** on the two captures whose origin and scale are both recorded:
 ///
-/// Re-measured over all **five** committed diamond fixtures. Each crop box is
-/// the one `markers.rs`'s fixture table records, and the crops are cut centred
-/// on the diamond, so the box's centre IS the fitted centre. The scale is the
-/// one `reader::read_layout` recovers from the *source screenshot* (not from
-/// the requantised board fixture, which reads up to 0.01 lower):
-///
-/// | source screenshot | width | scale | diamond centre | dx from right edge | dy from top |
+/// | capture | size | scale | origin | diamond centre | in ref px from the origin |
 /// |---|---|---|---|---|---|
-/// | `2026-08-02_16-41-11` | 1352 | 1.0164 | (1128, 160) | 220.4 | 157.4 |
-/// | `2026-08-03_22-54-58` | 1358 | 1.0001 | (1122, 183) | 236.0 | 183.0 |
-/// | `2026-08-02_22-22-38` | 1374 | 1.0000 | (1126, 186) | 248.0 | 186.0 |
-/// | `2026-08-03_11-58-28` | 1376 | 1.0012 | (1126, 176) | 249.7 | 175.8 |
-/// | `2026-08-07_19-28-36` | 1539 | 1.1321 | (1249, 218) | 256.2 | 192.6 |
+/// | `screen-live-1920x1080.png` | 1920x1080 | 1.0000 | (960, 713) | (1413, 217) | +453, −496 |
+/// | `2026-08-02_22-22-38` | 1374x862 | 1.0000 | (673, 682) | (1126, 186) | +453, −496 |
 ///
-/// The band is **220–256 ref px** horizontally and **157–193 ref px**
-/// vertically — a 36 ref px spread on both axes, which is the same band the
-/// POE-169 tracker task's Delivery note recorded. The constants below sit near
-/// the top of it because the two widest boards are the two the fixtures were
-/// first cut from; they are a *first guess with a hard failure mode*, not a
-/// locator.
+/// Two independent captures, the same pair of numbers. The fixture's centre is
+/// the mean of its three opposite seal-pair midpoints as the shipped detector
+/// reports them — (1413.3, 218.5) — and of the gold outline's bounding box
+/// (x 1299–1529, y 126–312, centre (1414, 219)), which agree to ~1 px. The 1374
+/// row is the centre the retired screen-edge table already recorded for that
+/// board, re-expressed against its origin.
 ///
-/// # What this costs in practice
+/// That agreement is what the retired form could not produce. Its five-point
+/// table spanned **220–256 ref px** horizontally and **157–193** vertically — a
+/// 36 ref px band, and the reason its own note said the read was "expected to
+/// fall back on a share of real boards". The band was the capture's right edge
+/// moving under a panel that had not moved.
 ///
-/// A 36 ref px spread against a 242 × 200 ref px rect is roughly 15–18% of the
-/// rect on each axis, and the seals sit near its edges. So **v1 is expected to
-/// fall back to `doors − uncertain` on a share of real boards** — the two
-/// low-`dy` boards above are ~33 ref px off the constant, enough to clip or
-/// rotate the seal fan. That is a degraded read, not a wrong one (see below),
-/// but it is not rare enough to call an edge case.
+/// # Anchor accuracy, which is now the only error left
 ///
-/// # Why a wrong guess is safe
+/// `2026-08-07_19-28-36` (1539 px, origin (745, 768), diamond centre
+/// (1249, 218)) reads +446, −487 against its RECORDED scale of 1.13. It is not a
+/// third measurement of this constant — it is a measurement of the anchor. Its
+/// panel border is 537 x 416 px against the reference 484 x 374, which implies
+/// **1.1095 / 1.1123**; at 1.111 this constant puts the rect's centre at
+/// (1248, 217) against the measured (1249, 218), and [`PANEL_BOX_REF`] puts the
+/// border inside a pixel on every edge. The board is right and the anchor is
+/// ~1.7% high (POE-247's subject, recorded there as a hint chain answering 0.96
+/// where the peak is 1.00 — the same failure with the other sign).
 ///
-/// [`markers::read_door_markers`] fails on a seal count that does not equal the
-/// slot's lattice degree, and [`markers::assign_markers`] fails on any seal
-/// more than [`markers::MAX_RESIDUAL_DEG`] (22°) from every modelled corridor
-/// direction. A centre far enough off to rotate the fan therefore produces an
-/// **error**, not a confident wrong door set — and [`read_markers`] falls back
-/// to `doors − uncertain` with the incident corridors surfaced as unresolved.
-/// That property is what makes shipping a five-point estimate honest.
+/// The retired screen-edge table's five scales are worth keeping for that reason
+/// alone, as the anchor-accuracy record they turn out to be: **1.0164**
+/// (`2026-08-02_16-41-11`), **1.0001** (`2026-08-03_22-54-58`), **1.0000**
+/// (`2026-08-02_22-22-38`), **1.0012** (`2026-08-03_11-58-28`), **1.1321**
+/// (`2026-08-07_19-28-36`). Only two of those can be cross-checked from
+/// committed material: the 1374 row, whose panel border confirms 1.0000 exactly,
+/// and the 1539 row above. The other three — 1.0164, 1.0001 and 1.0012 — are the
+/// recorded anchor scales and nothing more; their panel borders have not been
+/// re-measured, because none of those screenshots is in the repository.
 ///
-/// # Follow-up
+/// # The locator follow-up is closed by this, not deferred by it
 ///
-/// The fix is a **diamond locator** — correlate the diamond's own outline the
-/// way [`super::anchor`] correlates the Entrance plate, or fit its four seal
-/// blobs — replacing this constant pair outright. A per-user calibration
-/// captured through `temple_debug_capture`, which dumps this crop for exactly
-/// that purpose, is the cheaper interim. Tracked as a POE-171 follow-up; do not
-/// tune these constants against a single new screenshot without re-measuring
-/// the other four.
-pub const DIAMOND_DX_REF: f32 = 253.6;
+/// The retired constant's own note called for a **diamond locator** — correlate
+/// the diamond outline the way [`super::anchor`] correlates the Entrance plate —
+/// to replace a five-point estimate. What that locator was for was finding the
+/// diamond when the screen edge could not; the anchor already finds it, and the
+/// table above is the same answer for a thousandth of the cost.
+///
+/// What is left is the anchor's own accuracy, and a locator would not have been
+/// the instrument for it either: the **panel border box is**. It is 484 x 374 ref
+/// px, it has a hard edge on all four sides, and dividing a capture's measured
+/// border by it recovers the scale directly — 537 x 416 → 1.1095 / 1.1123 on the
+/// board above, against an anchor that said 1.13. That is a cheap second opinion
+/// on any anchor, and it is the shape a follow-up should take.
+pub const DIAMOND_DX_REF: f32 = 453.0;
 /// Vertical half of [`DIAMOND_DX_REF`]'s offset — see that constant's note.
-pub const DIAMOND_DY_REF: f32 = 190.4;
-/// Diamond rect size in reference px. Measured 242×202 and 241×195 on the two
-/// widest fixtures above; the committed crops are cut centred on the diamond,
-/// so the crop IS the rect.
-pub const DIAMOND_W_REF: f32 = 242.0;
-/// See [`DIAMOND_W_REF`].
+pub const DIAMOND_DY_REF: f32 = -496.0;
+
+/// Diamond rect width in reference px, centred on [`DIAMOND_DX_REF`].
+///
+/// **The rect's centre is the projection's origin** —
+/// [`markers::assign_markers`] measures every seal's angle from `(x + w/2,
+/// y + h/2)` — so the rect stays symmetric about the measured centre and the
+/// size is the only free variable. Measured on `screen-live-1920x1080.png`,
+/// whose room (Lightning Workshop at C1) has the 6-neighbour shape, i.e. the
+/// widest fan the lattice draws.
+///
+/// # The right edge is what the width buys
+///
+/// The seals' ink spans x 1329–1501 and the upper-right architect block's ink —
+/// its second line is drawn in the same red as a closed seal — starts at
+/// x 1514, 13 px further right. At this width both ends of the horizontal
+/// envelope are that one edge: at dx −22 it has fallen to x 1491 and clips the
+/// rightmost seal past what survives [`markers::MIN_BLOB_HEIGHT`] (5 seals for
+/// a 6-neighbour room), and at dx +14 it has reached x 1527 and takes enough of
+/// the architect line to pass the same filters (7).
+///
+/// The LEFT edge never causes a failure, at any width in the table below — but
+/// at this one it comes close, sitting at x 1326 against the leftmost seal ink
+/// at 1329 when dx is at its +13 limit. So widening does not widen the
+/// envelope, it slides it; and past 208 it stops sliding cleanly, because the
+/// angular gate below starts firing before either edge reaches anything.
+///
+/// # Why 200
+///
+/// Measured on the fixture with [`markers::read_door_markers`] AND
+/// [`markers::assign_markers`] — the second one matters, because a rect can
+/// return six seals whose fan has been rotated past
+/// [`markers::MAX_RESIDUAL_DEG`] (22°) and the read then fails as `Unmappable`
+/// rather than on the count. Envelope of pure origin error at scale 1.0:
+///
+/// | width | dx | dy |
+/// |---|---|---|
+/// | 176 | −10 … +16 | −20 … +26 |
+/// | 192 | −18 … +20 | −27 … +30 |
+/// | **200** | **−22 … +13** | **−29 … +30** |
+/// | 208 | −25 … +9 | −29 … +30 |
+/// | 224 | −25 … +4 | −29 … +30 |
+/// | 240 | none — 7 markers at dx 0 (right edge 1533 admits the architect ink) | — |
+///
+/// From 200 up the dy column saturates at −29 … +30 and stops responding to the
+/// height, because past those the 22° gate fires before either horizontal edge
+/// reaches anything: the vertical limit is the fan ROTATING, not the rect
+/// clipping. dx keeps moving with the width because the right edge is what runs
+/// into the seals below and the architect ink above.
+///
+/// **200 gives the widest dx band that still holds the +1.7% anchor** — 208
+/// loses it at +2%, 224 and 240 lose more, and 192 and below start clipping
+/// seals. Its scale envelope, measured at 0.0005 steps around each end, is
+/// **0.962 … 1.024**: 0.9615 fails `Unmappable` at 22.1°, 1.025 reads a seventh
+/// marker off the architect block.
+///
+/// # POE-247's −4% is not a width problem
+///
+/// **No width holds 0.96.** At that scale the rect's centre is (1395, 237)
+/// whatever the width is — the centre is [`DIAMOND_DX_REF`] × scale and the
+/// width does not enter it — and the fan is rotated 22.1–22.8° about it. 176 and
+/// 192 fail on the count; 200, 208, 224 and 240 return six seals and fail the
+/// angular gate. Widening cannot fix a rotation, so POE-247's low anchor has to
+/// be fixed **at the anchor**; this constant only decides how much of the
+/// remaining budget the crop spends.
+///
+/// The two envelopes above also do not compose, which is why they are quoted
+/// per axis and the scale envelope is quoted separately: a scale error is a
+/// DIAGONAL displacement. 0.96 is (−18, +20), which sits inside dx −22 … +13 and
+/// inside dy −29 … +30, and still fails.
+///
+/// At scale 1.0 the rect leaves 16/12 ref px of margin past the fan
+/// horizontally and 29/24 vertically. Thinner than [`PANEL_MARGIN_REF`] because
+/// the game leaves less room here — 13 px between the fan and the architect ink
+/// is the whole horizontal budget, and it is shared with the anchor.
+pub const DIAMOND_W_REF: f32 = 200.0;
+/// See [`DIAMOND_W_REF`]. Square: dy is −29 … +30 at this height and does not
+/// widen with more of it, so height is not what the size decision is about.
 pub const DIAMOND_H_REF: f32 = 200.0;
 
-/// Where to look for the side panel's diamond, given a capture size and the
+/// Where to look for the side panel's diamond, given the Entrance centre and the
 /// anchor's scale.
 ///
 /// `[x, y, w, h]`, clamped to nothing — an off-screen rect is
@@ -962,27 +1115,24 @@ pub const DIAMOND_H_REF: f32 = 200.0;
 /// other error and not something to paper over by sliding the rect back into
 /// frame (a slid rect is a wrong rect that no longer trips the gate).
 ///
-/// # The windowed-client failure mode
+/// # What is left of the windowed-client failure mode
 ///
-/// The offset is taken from the CAPTURE's right edge, and
-/// [`crate::capture::capture_screen`] grabs a whole monitor — the game's since
-/// POE-237, the primary one before it. On a
-/// fullscreen (or borderless-fullscreen) client those two edges coincide, which
-/// is the case every fixture above was measured in. On a **windowed** client
-/// they do not: the game draws the panel against the window's right edge, the
-/// rect is computed from the monitor's, and the difference is however far the
-/// window sits from the screen edge — typically far more than the 36 ref px
-/// band the estimate already carries. The rect then lands on desktop or on the
-/// board, [`markers::read_door_markers`] finds the wrong number of seals, and
-/// the module falls back to `doors − uncertain` **permanently**, for as long as
-/// the client stays windowed. That is honest (nothing is reported as settled
-/// that was not) but it is also permanent: no re-arm, no re-read and no
-/// re-anchor recovers it. The diamond locator in [`DIAMOND_DX_REF`]'s follow-up
-/// is what closes it, because a locator does not depend on the capture's edges
-/// at all.
-pub fn diamond_rect(screen: (u32, u32), scale: f32) -> [i32; 4] {
-    let cx = screen.0 as f32 - DIAMOND_DX_REF * scale;
-    let cy = DIAMOND_DY_REF * scale;
+/// Keying on the anchor retires it as a *displacement*. The origin is found in
+/// the capture, so a client drawn anywhere inside the monitor carries this rect
+/// with it, and the offset a windowed client used to add is exactly what
+/// [`PANEL_BOX_REF`]'s note measures away.
+///
+/// What survives is CLIPPING: a window pushed far enough off the monitor's top
+/// or right that the panel is only partly captured. The rect then leaves the
+/// frame, [`markers::read_door_markers`] returns `RectOutsideImage`, and the
+/// module falls back to `doors − uncertain` with the incident corridors surfaced
+/// as unresolved — honest, and still permanent for as long as the window sits
+/// there. It is now a window half off the screen rather than a window merely not
+/// maximised, and [`full_read`]'s `Temple: rois` line prints the rect it used so
+/// the difference is readable from `app.log`.
+pub fn diamond_rect(origin: (i32, i32), scale: f32) -> [i32; 4] {
+    let cx = origin.0 as f32 + DIAMOND_DX_REF * scale;
+    let cy = origin.1 as f32 + DIAMOND_DY_REF * scale;
     let w = DIAMOND_W_REF * scale;
     let h = DIAMOND_H_REF * scale;
     [
@@ -1005,7 +1155,7 @@ pub fn read_markers(img: &DynamicImage, layout: &TempleLayout) -> Result<std::co
         return Err(markers::MarkerError::NoCurrentRoom.to_string());
     };
     let degree = lattice::neighbours(current).len();
-    let rect = diamond_rect((img.width(), img.height()), layout.scale);
+    let rect = diamond_rect(layout.origin, layout.scale);
     let read = markers::read_door_markers(img, rect, degree).map_err(|e| e.to_string())?;
     markers::apply_markers(layout, &read).map_err(|e| e.to_string())
 }
@@ -1559,6 +1709,13 @@ struct Session {
     /// holds for as long as the panel is on screen at that scale, and
     /// [`publish_anchor_scale`] is reached on every anchored tick.
     k_said: Option<String>,
+    /// The last [`rois_line`] announced, for the same reason and with a sharper
+    /// cost: `app_log` keeps 50 entries, [`full_read`] runs at up to 1 Hz for as
+    /// long as the panel is on screen, and an unconditional line there would
+    /// evict every other diagnostic in the buffer within a minute. The rects are
+    /// a function of `(origin, scale)` alone, so one line per distinct value
+    /// says everything a repeat would.
+    rois_said: Option<String>,
     /// Whether the shared slice has held a scale for this screen at any point in
     /// this session. [`cheap_hint_for`]'s second input, and it is what separates
     /// a slice that was EMPTIED — Recalibrate — from one that was never filled.
@@ -1603,6 +1760,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         gate_said: None,
         hint_said: None,
         k_said: None,
+        rois_said: None,
         slice_answered: false,
     };
     // Backdated so the first iteration ticks immediately rather than after a
@@ -2051,7 +2209,7 @@ fn panel_text(
     layout: &TempleLayout,
 ) -> Option<Vec<String>> {
     let regions = [
-        panel_rect((img.width(), img.height()), layout.scale),
+        panel_rect(layout.origin, layout.scale),
         remaining_rect(layout.origin, layout.scale),
     ];
     let mut lines = Vec::new();
@@ -2069,6 +2227,38 @@ fn panel_text(
         }
     }
     Some(lines)
+}
+
+/// The three ROIs this read is about to use, as one line for `app.log`.
+///
+/// POE-230's measurement instrument. The rects are placed from `(origin, scale)`
+/// and nothing else, so a fallback — an unread panel, a seal count that misses —
+/// is either explained by the rect printed here or is not a geometry problem at
+/// all. Before this, the only way to see a rect was to press the Debug button
+/// and read the dump, which is not something a user hits while the bad read is
+/// on screen.
+///
+/// `None` when the same line has already been said. `(origin, scale)` is stable
+/// while the player stands still, [`full_read`] can run every second, and
+/// `app_log`'s buffer is 50 entries deep — an unconditional line here would push
+/// every other diagnostic out of it inside a minute, which is the opposite of
+/// what a diagnostic is for.
+///
+/// Pure over plain data, with the "already said" memory passed in, so both the
+/// format and the once-per-value rule are testable without an `AppHandle` — the
+/// same shape [`hint_line`] uses.
+fn rois_line(said: &mut Option<String>, origin: (i32, i32), scale: f32) -> Option<String> {
+    let line = format!(
+        "Temple: rois panel {:?} diamond {:?} remaining {:?}",
+        panel_rect(origin, scale),
+        diamond_rect(origin, scale),
+        remaining_rect(origin, scale),
+    );
+    if said.as_deref() == Some(line.as_str()) {
+        return None;
+    }
+    *said = Some(line.clone());
+    Some(line)
 }
 
 /// The expensive half: 13 plates, the side panel, the diamond, the advisor.
@@ -2143,6 +2333,11 @@ fn full_read(
     already_read: Option<panel::PanelReading>,
 ) {
     publish(app, |slice| apply_status(slice, TickOutcome::Anchored));
+    // Before any crop, so a read that fails halfway still leaves the geometry it
+    // was working from in the log.
+    if let Some(line) = rois_line(&mut session.rois_said, layout.origin, layout.scale) {
+        crate::app_log(app, line);
+    }
 
     let panel = match already_read {
         Some(panel) => panel,
@@ -2724,56 +2919,145 @@ mod tests {
         );
     }
 
-    /// The diamond rect is measured from the capture's RIGHT edge and scales
-    /// with the anchor, so the same panel maps to the same reference offset at
-    /// two UI scales. Reproduces the two widest rows of [`DIAMOND_DX_REF`]'s
-    /// table — the two the constants were fitted to — at the scales
-    /// `read_layout` recovers from those source screenshots.
+    /// The rect reproduces the diamond centre measured on BOTH captures whose
+    /// origin and scale are recorded, at their own scales and window sizes —
+    /// [`DIAMOND_DX_REF`]'s table.
     ///
-    /// The other three rows are deliberately NOT asserted here: they are
-    /// 20–33 ref px from the constant, which is the whole point of that
-    /// constant's "expected to fall back on a share of real boards" note.
+    /// The tolerance is ±2 px, not the ±7 the screen-edge form needed: two
+    /// independent captures put this centre at the same reference offset, so
+    /// what is left is integer rounding. A constant nudged by 3 ref px fails
+    /// here, which is what the retired form could not detect.
     ///
-    /// NOTE (deferred, POE-171 finding 16): the ±7 px tolerance is wider than
-    /// the rounding it exists for and would swallow a small constant drift. It
-    /// tightens with the diamond LOCATOR, not before — re-fitting the tolerance
-    /// against a two-point estimate would only pin the estimate harder.
+    /// The third recorded board (`2026-08-07_19-28-36`) is asserted separately
+    /// in [`the_diamond_rect_reproduces_the_third_board_at_the_scale_its_panel_implies`],
+    /// at the scale its own panel border implies rather than the one its anchor
+    /// recorded.
     #[test]
     fn the_diamond_rect_reproduces_both_measured_centres() {
-        let [x, y, w, h] = diamond_rect((1374, 862), 1.0000);
+        // (origin, scale, measured diamond centre)
+        let boards = [
+            ((960i32, 713i32), 1.0000f32, (1413i32, 217i32)),
+            ((673, 682), 1.0000, (1126, 186)),
+        ];
+        for (origin, scale, want) in boards {
+            let [x, y, w, h] = diamond_rect(origin, scale);
+            let centre = (x + w / 2, y + h / 2);
+            assert!(
+                (centre.0 - want.0).abs() <= 2 && (centre.1 - want.1).abs() <= 2,
+                "{origin:?} @ {scale}: expected a centre at {want:?}, got {centre:?}",
+            );
+        }
+    }
+
+    /// The third recorded capture, at the scale its own panel border implies —
+    /// **1.111**, not the 1.13 its anchor recorded. See [`DIAMOND_DX_REF`]'s
+    /// anchor-accuracy note: 537 x 416 px of panel border against the reference
+    /// 484 x 374 gives 1.1095/1.1123, and at 1.111 this constant reproduces that
+    /// board's measured diamond centre to the same ±2 px the other two get.
+    ///
+    /// Which makes it a third measurement of the constant, not an exception to
+    /// it. Fails if the offsets are ever re-fitted to split the difference with
+    /// the anchor's 1.13, which would move them off all three captures at once.
+    #[test]
+    fn the_diamond_rect_reproduces_the_third_board_at_the_scale_its_panel_implies() {
+        let [x, y, w, h] = diamond_rect((745, 768), 1.111);
         let centre = (x + w / 2, y + h / 2);
+
         assert!(
-            (centre.0 - 1126).abs() <= 7 && (centre.1 - 186).abs() <= 7,
-            "1374px board: expected a centre near (1126, 186), got {centre:?}",
+            (centre.0 - 1249).abs() <= 2 && (centre.1 - 218).abs() <= 2,
+            "at 1.111 the 1539 board's diamond centre is (1249, 218), got {centre:?}",
+        );
+    }
+
+    /// What the same board costs at the scale it is actually ANCHORED at, which
+    /// is the error budget [`DIAMOND_W_REF`] is sized against: the rect lands
+    /// (8, −10) px off, and both of the things that bound its width still hold
+    /// from there.
+    ///
+    /// Three assertions, because three different wrong changes are in scope and
+    /// each breaks exactly one: the displacement pins the offsets, the fan check
+    /// fails if the width is trimmed, and the architect-ink check fails if it is
+    /// widened.
+    ///
+    /// The ink check is against the SURVIVAL bound, not the ink itself, and the
+    /// difference is the finding: a 1.7% high anchor puts this crop's right edge
+    /// **10 px past** where the board drew that ink. What keeps the read correct
+    /// is that a clipped text fragment fails [`markers::MIN_BLOB_HEIGHT`], which
+    /// [`DIAMOND_W_REF`]'s sweep measures as holding until the edge is 12 ref px
+    /// past the ink (x 1526 against 1514 on the fixture). So the real clearance
+    /// on this board is **3 ref px of filter tolerance**, not of geometry — which
+    /// is the honest reason the width cannot go up.
+    #[test]
+    fn the_anchors_own_error_on_that_board_stays_inside_the_rects_margins() {
+        let scale = 1.13f32;
+        let origin = (745i32, 768i32);
+        let [x, y, w, h] = diamond_rect(origin, scale);
+        let centre = (x + w / 2, y + h / 2);
+        let (off_x, off_y) = (centre.0 - 1249, centre.1 - 218);
+
+        assert!(
+            (off_x - 8).abs() <= 1 && (off_y + 10).abs() <= 1,
+            "a 1.7% high anchor displaces this rect by (8, -10), got ({off_x}, {off_y})",
         );
 
-        let [x, y, w, h] = diamond_rect((1539, 968), 1.1321);
-        let centre = (x + w / 2, y + h / 2);
+        // The fan is where the board drew it, so the rect has to cover it from
+        // wherever the anchor put the rect. Half-extents are DIAMOND_W_REF's
+        // measured ±88 x ±76 ref px, at the board's own scale.
+        let (fan_w, fan_h) = ((88.0 * 1.111) as i32, (76.0 * 1.111) as i32);
         assert!(
-            (centre.0 - 1249).abs() <= 7 && (centre.1 - 218).abs() <= 7,
-            "1539px board: expected a centre near (1249, 218), got {centre:?}",
+            w / 2 - off_x.abs() >= fan_w && h / 2 - off_y.abs() >= fan_h,
+            "an ({off_x}, {off_y}) px error leaves {}x{} of half-rect for a {fan_w}x{fan_h} fan",
+            w / 2 - off_x.abs(),
+            h / 2 - off_y.abs(),
+        );
+
+        // …and must still stop short of the point past the architect block's red
+        // second line where a clipped fragment stops failing the blob filters.
+        // Both offsets are taken at the scale the BOARD drew them at (1.111),
+        // since that is where the ink is; only the rect moves with the anchor.
+        let ink = origin.0 + ((DIAMOND_DX_REF + 101.0) * 1.111) as i32;
+        let survives_to = origin.0 + ((DIAMOND_DX_REF + 101.0 + 12.0) * 1.111) as i32;
+        assert!(
+            x + w <= survives_to,
+            "the crop reaches {}, {} px past the architect ink at {ink} and past the \
+             {survives_to} where a clipped fragment starts reading as a seal",
+            x + w,
+            x + w - ink,
         );
     }
 
     /// The rect scales with the UI, both in position and in size. Fails if a
     /// constant is applied unscaled — which would put the rect in the right
     /// place on a 1374px client and nowhere near it on a 4K one.
+    ///
+    /// The expected numbers come from the constants' definition (`origin +
+    /// offset × scale`, sized `W × scale`), not from a second call to the
+    /// function, so a sign flip or a dropped `scale` cannot satisfy both sides.
     #[test]
     fn the_diamond_rect_scales_with_the_anchor() {
-        let small = diamond_rect((1374, 773), 1.0);
-        let large = diamond_rect((2748, 1546), 2.0);
+        let origin = (673, 682);
+        let small = diamond_rect(origin, 1.0);
+        let large = diamond_rect(origin, 2.0);
 
+        assert_eq!(
+            (small[2], small[3]),
+            (DIAMOND_W_REF as i32, DIAMOND_H_REF as i32),
+            "at scale 1 the rect IS the reference box",
+        );
         assert_eq!(large[2], small[2] * 2, "the rect's width scales");
         assert_eq!(large[3], small[3] * 2, "the rect's height scales");
-        // ±1 px: the rect is rounded to integers and its centre is recovered
-        // by integer halving, so doubling the scale can shed a pixel of
-        // rounding. Anything larger is a constant applied unscaled.
-        let small_offset = 1374 - (small[0] + small[2] / 2);
-        let large_offset = 2748 - (large[0] + large[2] / 2);
-        assert!(
-            (large_offset - 2 * small_offset).abs() <= 1,
-            "the offset from the right edge must scale too: {small_offset} → {large_offset}",
-        );
+
+        for (rect, scale) in [(small, 1.0f32), (large, 2.0f32)] {
+            let centre = (rect[0] + rect[2] / 2, rect[1] + rect[3] / 2);
+            let want = (
+                origin.0 + (DIAMOND_DX_REF * scale) as i32,
+                origin.1 + (DIAMOND_DY_REF * scale) as i32,
+            );
+            assert!(
+                (centre.0 - want.0).abs() <= 1 && (centre.1 - want.1).abs() <= 1,
+                "scale {scale}: centre {centre:?} is not the origin plus the scaled offset {want:?}",
+            );
+        }
     }
 
     // ------------------------------------------------------- the arm gate --
@@ -3081,26 +3365,51 @@ mod tests {
     /// area. `preprocess_for_ocr` upscales 2× unconditionally, so a full-frame
     /// crop on 4K is a 33 Mpx buffer per tick.
     ///
-    /// Fails if either rect is ever computed from the capture rather than from
-    /// the anchor scale — the 4K rects below would then be ~9× the reference
-    /// ones instead of ~7.8× (the scale ratio squared).
+    /// Since POE-230 none of the three functions takes a capture size at all, so
+    /// "computed from the frame" is no longer something a test can catch — the
+    /// signature does. What is left to pin is the size itself: each rect must be
+    /// its constants' box times the scale, and the expected numbers here are
+    /// built from those constants rather than read back off the function, so a
+    /// rect that stopped scaling cannot satisfy both halves.
     #[test]
-    fn both_text_rois_stay_a_fixed_size_in_reference_px() {
+    fn all_three_rois_stay_a_fixed_size_in_reference_px() {
         // 4K at the same UI scale ratio the reference board was measured at.
         let uhd_scale = 3840.0 / 1374.0;
+        let [left, top, right, bottom] = PANEL_BOX_REF;
+        let panel_ref = (
+            (right - left + PANEL_MARGIN_REF + PANEL_RIGHT_MARGIN_REF) as i32,
+            (bottom - top + 2.0 * PANEL_MARGIN_REF) as i32,
+        );
 
-        let [_, _, pw, ph] = panel_rect((1374, 862), 1.0);
-        let [_, _, uw, uh] = panel_rect((3840, 2160), uhd_scale);
-        assert_eq!((pw, ph), (540, 430), "the reference-scale panel ROI is the measured box");
+        let [_, _, pw, ph] = panel_rect((673, 682), 1.0);
+        let [_, _, uw, uh] = panel_rect((1880, 1900), uhd_scale);
+        assert_eq!(
+            (pw, ph),
+            panel_ref,
+            "the reference-scale panel ROI is the measured border box plus its margin",
+        );
         assert!(
             (uw as f32 / pw as f32 - uhd_scale).abs() < 0.01
                 && (uh as f32 / ph as f32 - uhd_scale).abs() < 0.01,
-            "the panel ROI must scale with the anchor, not with the frame: {uw}×{uh}",
+            "the panel ROI must scale with the anchor: {uw}×{uh}",
+        );
+        // The biggest of the three, and the one that bounds the OCR buffer:
+        // 1520×1268 = 1.93 Mpx at this scale, 7.1% under the quarter-frame bound.
+        assert_bounded("the panel", uw, uh);
+
+        let [_, _, dw, dh] = diamond_rect((673, 682), 1.0);
+        let [_, _, udw, udh] = diamond_rect((1880, 1900), uhd_scale);
+        assert_eq!(
+            (dw, dh),
+            (DIAMOND_W_REF as i32, DIAMOND_H_REF as i32),
+            "the reference-scale diamond ROI is the measured box",
         );
         assert!(
-            (uw as u64 * uh as u64) < (3840 * 2160) / 4,
-            "a bounded ROI must be a small fraction of a 4K frame, got {uw}×{uh}",
+            (udw as f32 / dw as f32 - uhd_scale).abs() < 0.01
+                && (udh as f32 / dh as f32 - uhd_scale).abs() < 0.01,
+            "the diamond ROI must scale with the anchor: {udw}×{udh}",
         );
+        assert_bounded("the diamond", udw, udh);
 
         let [_, _, rw, rh] = remaining_rect((673, 682), 1.0);
         let [_, _, urw, urh] = remaining_rect((1880, 1900), uhd_scale);
@@ -3110,34 +3419,59 @@ mod tests {
                 && (urh as f32 / rh as f32 - uhd_scale).abs() < 0.02,
             "the budget ROI must scale with the anchor: {urw}×{urh}",
         );
+        assert_bounded("the budget line", urw, urh);
     }
 
-    /// The panel ROI covers the panel on both measured boards, with the margin
-    /// its constant claims. Reproduces the measurements in
-    /// [`PANEL_LEFT_REF`]'s table.
+    /// A 4K-anchored ROI must still be a small fraction of a 4K frame — the
+    /// module note's reason for having ROIs at all, since
+    /// `preprocess_for_ocr` upscales 2x and a full frame would be 33 Mpx a tick.
     ///
-    /// Fails if the region stops being anchored to the capture's RIGHT edge, or
-    /// if a constant is trimmed below what the panel actually occupies.
+    /// A quarter-frame is the bound the retired assertion used and the panel is
+    /// the one that approaches it: 1520×1268 = 1.93 Mpx of 2.07, i.e. 7.1% under
+    /// at the 3840/1374 scale.
+    fn assert_bounded(what: &str, w: i32, h: i32) {
+        assert!(
+            (w as u64 * h as u64) < (3840 * 2160) / 4,
+            "{what} ROI must stay a small fraction of a 4K frame, got {w}×{h}",
+        );
+    }
+
+    /// The panel ROI covers the panel's border box on all three captures whose
+    /// origin and scale are recorded, with the margin [`PANEL_MARGIN_REF`]
+    /// claims. Reproduces [`PANEL_BOX_REF`]'s table.
+    ///
+    /// This is the POE-230 regression test. The first row is the frame the bug
+    /// was measured on: its panel starts at x 1171 where the retired right-edge
+    /// crop started at 1380, so a region keyed on anything but the origin fails
+    /// here by 209 px.
+    ///
+    /// The 1539 capture appears twice on purpose. At **1.111**, the scale its own
+    /// border implies, it is a third measurement of [`PANEL_BOX_REF`]. At
+    /// **1.13**, the scale its anchor recorded, it is the margin's worst case —
+    /// the crop is computed from a scale 1.7% off the one the panel was drawn at,
+    /// and must still cover it. A trimmed margin fails the second row only.
     #[test]
-    fn the_panel_roi_contains_both_measured_panels() {
-        // (capture size, scale, measured panel box `[left, top, right, bottom]`)
+    fn the_panel_roi_contains_every_measured_panel() {
+        // (origin, scale, measured panel border box `[left, top, right, bottom]`)
         let boards = [
-            ((1374u32, 862u32), 1.0000f32, [884, 13, 1368, 387]),
-            ((1539, 968), 1.1321, [980, 24, 1517, 440]),
+            ((960i32, 713i32), 1.0000f32, [1171, 44, 1655, 418]),
+            ((673, 682), 1.0000, [884, 13, 1368, 387]),
+            ((745, 768), 1.111, [980, 24, 1517, 440]),
+            ((745, 768), 1.13, [980, 24, 1517, 440]),
         ];
-        for (screen, scale, [left, top, right, bottom]) in boards {
-            let [x, y, w, h] = panel_rect(screen, scale);
+        for (origin, scale, [l, t, r, b]) in boards {
+            let [x, y, w, h] = panel_rect(origin, scale);
             assert!(
-                x <= left && y <= top && x + w >= right && y + h >= bottom,
-                "{screen:?}: ROI {:?} does not contain the panel [{left}, {top}, {right}, {bottom}]",
+                x <= l && y <= t && x + w >= r && y + h >= b,
+                "{origin:?} @ {scale}: ROI {:?} does not contain the panel [{l}, {t}, {r}, {b}]",
                 [x, y, w, h],
             );
         }
     }
 
     /// The budget ROI covers the `N Incursions Remaining` glyph box on both
-    /// measured boards. Keyed on the Entrance centre, not on a screen edge —
-    /// so unlike the panel it survives a windowed client.
+    /// measured boards. Keyed on the Entrance centre, which since POE-230 is
+    /// what all three regions are keyed on.
     ///
     /// Fails if the vertical band is narrowed onto the Entrance plate's own
     /// bottom border (+42 ref px), which would put the plate's name in the
@@ -3451,8 +3785,9 @@ mod tests {
     /// [`LIVE_CAPTURE_ORIGIN`] (laptop dump `temple-debug/1788438639673`,
     /// 2026-09-03, NCC 0.99999).
     ///
-    /// The board fixtures are panel CROPS and cannot stand in: every rule under
-    /// test here reads the capture's own size.
+    /// The board fixtures are panel CROPS and cannot stand in: they carry no
+    /// diamond and only the lower part of the panel, and the rules under test
+    /// here read the capture's own size or the panel's own pixels.
     fn live_capture() -> DynamicImage {
         let path = format!(
             "{}/tests/fixtures/temple/screen-live-1920x1080.png",
@@ -3465,6 +3800,277 @@ mod tests {
     const LIVE_CAPTURE_SCALE: f32 = 1.00;
     /// See [`live_capture`].
     const LIVE_CAPTURE_ORIGIN: (i32, i32) = (960, 713);
+
+    // ------------------------------------- the ROIs on the live capture --
+
+    /// The layout the committed frame reads at its recorded anchor.
+    ///
+    /// Built from [`reader::read_layout_at`] with the measurement rather than
+    /// through a sweep: the anchor is what `anchor.rs` tests, and paying 5 s of
+    /// pyramid sweep here would test it twice and make these ROI assertions
+    /// depend on it.
+    fn live_layout(img: &DynamicImage) -> TempleLayout {
+        reader::read_layout_at(
+            img,
+            anchor::Anchor {
+                origin: LIVE_CAPTURE_ORIGIN,
+                scale: LIVE_CAPTURE_SCALE,
+                ncc: 0.99999,
+            },
+        )
+    }
+
+    /// Every block of text the panel read needs, as hand-measured glyph extents
+    /// on the live capture (2026-09-03) — and everything the retired screen-edge
+    /// constant claimed its region held.
+    const PANEL_TEXT_BOXES: [(&str, [u32; 4]); 4] = [
+        ("the title", [1222, 70, 1541, 112]),
+        ("the Hayoxi block", [1480, 115, 1641, 167]),
+        ("the Xopec block", [1189, 289, 1347, 327]),
+        ("the Enter Incursion button", [1314, 353, 1514, 388]),
+    ];
+
+    /// Glyph pixels in a box on the live capture — text against the panel's own
+    /// dark ground.
+    ///
+    /// Measured over the four text boxes below and over two 101x51 empty patches
+    /// of the same panel: the text boxes hold 858–1635 pixels above this
+    /// threshold and the empty patches hold **none**. That separation is what
+    /// makes this usable as "there is text here" without OCR — Tesseract is
+    /// Windows-only, so no assertion here may depend on it.
+    fn glyph_pixels(rgb: &image::RgbImage, [x0, y0, x1, y1]: [u32; 4]) -> usize {
+        let mut n = 0;
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let [r, g, b] = rgb.get_pixel(x, y).0;
+                let lum = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
+                if lum > 90.0 {
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
+    /// **The POE-230 bug, on the frame it was measured on.** The derived panel
+    /// ROI takes the whole panel and BOTH architect blocks; the retired
+    /// right-edge crop, `[1380, 0, 540, 430]` on this capture, took neither the
+    /// lower-left block nor the left half of the title.
+    ///
+    /// The four boxes are hand-measured glyph extents on the fixture
+    /// (2026-09-03), and they are everything the retired constant claimed its
+    /// region held — title, both architect blocks, the button:
+    ///
+    /// | box | glyph extent |
+    /// |---|---|
+    /// | `Lightning Workshop` | x 1222–1541, y 70–112 |
+    /// | `Hayoxi, Architect of / Destruction / (Kill to upgrade to Omnitect / Reactor Plant)` | x 1480–1641, y 115–167 |
+    /// | `Xopec, Architect of Power / (Kill to change to Explosives / Room)` | x 1189–1347, y 289–327 |
+    /// | the `Enter Incursion` button, frame included | x 1314–1514, y 353–388 |
+    ///
+    /// Each box is checked to HOLD text before it is checked to be inside the
+    /// crop, so a mis-measured box cannot pass by being empty. The panel's own
+    /// border box is not repeated here — it is the first row of
+    /// [`the_panel_roi_contains_every_measured_panel`].
+    #[test]
+    fn the_live_captures_panel_roi_takes_every_readable_block_of_the_panel() {
+        let img = live_capture();
+        let rgb = img.to_rgb8();
+        let [x, y, w, h] = panel_rect(LIVE_CAPTURE_ORIGIN, LIVE_CAPTURE_SCALE);
+
+        for (what, [bx0, by0, bx1, by1]) in PANEL_TEXT_BOXES {
+            assert!(
+                glyph_pixels(&rgb, [bx0, by0, bx1, by1]) > 700,
+                "{what} {:?} holds no text — the measurement is wrong, not the rect",
+                [bx0, by0, bx1, by1],
+            );
+            assert!(
+                x <= bx0 as i32 && y <= by0 as i32 && x + w >= bx1 as i32 && y + h >= by1 as i32,
+                "the panel ROI {:?} does not contain {what} {:?}",
+                [x, y, w, h],
+                [bx0, by0, bx1, by1],
+            );
+        }
+
+        // Fully inside the capture, so the crop is the rect and `crop_clipped`
+        // loses nothing. A windowed client is where that stops holding.
+        let crop = crop_clipped(&img, [x, y, w, h]).expect("the ROI overlaps the capture");
+        assert_eq!(
+            (crop.width(), crop.height()),
+            (w as u32, h as u32),
+            "the ROI hangs off the 1920x1080 frame it was measured on",
+        );
+    }
+
+    /// The margins survive the worst anchor error on record, which is what they
+    /// are sized for: at 0.96 — POE-247's hint chain answering 0.96 where the
+    /// peak is 1.00 — every block of panel text is still inside the crop.
+    ///
+    /// This is the assertion [`PANEL_RIGHT_MARGIN_REF`] is really making. The
+    /// right margin is the tight one (20 ref px against the other three sides'
+    /// 40) because everything past the panel border there is the map's own info
+    /// block, and the floor under it is the Hayoxi block at +681: at 0.96 the
+    /// crop's right edge lands at x 1646 against that block's 1641. A right
+    /// margin of 16 would leave 2 px there and 8 would cut the text outright.
+    #[test]
+    fn the_panel_roi_survives_the_worst_recorded_anchor_error() {
+        let img = live_capture();
+        let rgb = img.to_rgb8();
+        let [x, y, w, h] = panel_rect(LIVE_CAPTURE_ORIGIN, 0.96);
+
+        for (what, [bx0, by0, bx1, by1]) in PANEL_TEXT_BOXES {
+            assert!(
+                glyph_pixels(&rgb, [bx0, by0, bx1, by1]) > 700,
+                "{what} {:?} holds no text — the measurement is wrong, not the rect",
+                [bx0, by0, bx1, by1],
+            );
+            assert!(
+                x <= bx0 as i32 && y <= by0 as i32 && x + w >= bx1 as i32 && y + h >= by1 as i32,
+                "at a 4% low anchor the panel ROI {:?} loses {what} {:?}",
+                [x, y, w, h],
+                [bx0, by0, bx1, by1],
+            );
+        }
+    }
+
+    /// The derived diamond ROI settles every corridor of the room the player is
+    /// standing in, on the frame where the retired rect read five seals for a
+    /// six-neighbour room and fell back to the beam read.
+    ///
+    /// The board: Lightning Workshop at **C1**, six neighbours, six seals, one
+    /// of them green — the Omnitect Reactor Plant corridor at **C2**. So the
+    /// settled set must contain `C1-C2` and none of C1's other five corridors,
+    /// which is also the assertion that the fan is not merely counted but
+    /// mapped: a rect off far enough to rotate the fan puts the green seal on a
+    /// different neighbour.
+    ///
+    /// It is load-bearing over the fallback: the beam reader flags all six of
+    /// C1's corridors uncertain on this board, so `doors − uncertain` — what the
+    /// module publishes when this read fails — drops `C1-C2` and reports the one
+    /// open door as closed.
+    #[test]
+    fn the_live_captures_diamond_roi_settles_every_corridor_of_the_current_room() {
+        let img = live_capture();
+        let layout = live_layout(&img);
+        assert_eq!(layout.current, Some(lattice::Slot::C1), "the fixture's board");
+
+        let rect = diamond_rect(layout.origin, layout.scale);
+        let read = markers::read_door_markers(&img, rect, 6)
+            .expect("six seals for the six-neighbour room the fixture stands in");
+        assert_eq!(
+            read.markers.iter().filter(|m| m.open).count(),
+            1,
+            "one green seal on this board",
+        );
+
+        let settled = read_markers(&img, &layout).expect("the seals settle C1's corridors");
+        let incident: Vec<String> = settled
+            .iter()
+            .filter(|e| e.ends().0 == lattice::Slot::C1 || e.ends().1 == lattice::Slot::C1)
+            .map(|e| e.to_string())
+            .collect();
+        assert_eq!(incident, vec!["C1-C2".to_string()], "C1's only open corridor");
+
+        assert!(
+            layout.uncertain.contains(&lattice::Edge::new(
+                lattice::Slot::C1,
+                lattice::Slot::C2
+            )),
+            "the beam read leaves C1-C2 uncertain here, which is what makes the seal read \
+             the difference between an open door and a closed one",
+        );
+    }
+
+    /// A wrong anchor moves the diamond rect and nothing else, so the +1.7%
+    /// error the 1539 board records still settles the current room's corridors.
+    ///
+    /// The scale is applied to the RECT derivation, not to the image: the seals
+    /// stay where the game drew them and the crop arrives at the wrong place and
+    /// size, which is exactly what a mis-anchored read does. The beam data is
+    /// the true read's, because that is what [`markers::apply_markers`]
+    /// cross-checks against and it does not move with the anchor either.
+    #[test]
+    fn the_recorded_high_anchor_error_still_settles_the_current_rooms_corridors() {
+        let img = live_capture();
+        let layout = TempleLayout { scale: 1.017, ..live_layout(&img) };
+
+        let settled = read_markers(&img, &layout).expect("a 1.7% high anchor still reads");
+        let incident: Vec<String> = settled
+            .iter()
+            .filter(|e| e.ends().0 == lattice::Slot::C1 || e.ends().1 == lattice::Slot::C1)
+            .map(|e| e.to_string())
+            .collect();
+
+        assert_eq!(incident, vec!["C1-C2".to_string()], "C1's only open corridor");
+    }
+
+    /// **POE-247's low anchor is not a rect-size problem.** At 0.96 the fan is
+    /// rotated 22.7° about the rect's centre, past
+    /// [`markers::MAX_RESIDUAL_DEG`]'s 22°, and the read fails.
+    ///
+    /// Which is the behaviour worth pinning, in both halves. It fails rather
+    /// than naming the wrong neighbour — the property the whole fallback rests
+    /// on. And it fails at every width: the rect's centre is
+    /// `origin + DIAMOND_DX_REF × scale`, which the width does not enter, so
+    /// [`DIAMOND_W_REF`]'s table cannot buy this back and the anchor is where it
+    /// has to be fixed. A future change that "fixes" this by widening the rect
+    /// or by raising the angular gate makes this test pass for the wrong reason;
+    /// one that fixes the anchor makes it unreachable, which is the point.
+    #[test]
+    fn the_recorded_low_anchor_error_fails_the_diamond_read_rather_than_mapping_it_wrong() {
+        let img = live_capture();
+        let layout = TempleLayout { scale: 0.96, ..live_layout(&img) };
+
+        let err = read_markers(&img, &layout).expect_err("a 4% low anchor rotates the fan past 22°");
+        assert!(
+            err.contains("from every corridor direction"),
+            "the fan is rotated, so the failure must be the angular gate, got {err:?}",
+        );
+    }
+
+    /// The line POE-230 added to the full read names all three regions, in the
+    /// order the read uses them, with the numbers this capture produces.
+    ///
+    /// Pinned as a literal because its job is to be pasted back from `app.log`
+    /// by a user whose read fell back: a line that printed the same rect twice,
+    /// or dropped one, would still look plausible.
+    #[test]
+    fn the_roi_line_names_all_three_rects_of_the_live_capture() {
+        assert_eq!(
+            rois_line(&mut None, LIVE_CAPTURE_ORIGIN, LIVE_CAPTURE_SCALE).as_deref(),
+            Some(
+                "Temple: rois panel [1131, 4, 544, 454] diamond [1313, 117, 200, 200] \
+                 remaining [810, 771, 300, 46]"
+            ),
+        );
+    }
+
+    /// One line per distinct geometry, not one per read.
+    ///
+    /// `app_log` keeps 50 entries and `full_read` can run at 1 Hz for as long as
+    /// the panel is on screen, so a line said unconditionally here evicts every
+    /// other diagnostic in the buffer inside a minute — the failure this rule
+    /// exists to prevent. The third call is what stops the rule from being
+    /// "say it once ever": a board read at a new scale is new geometry and has
+    /// to be reported.
+    #[test]
+    fn the_roi_line_is_said_once_per_distinct_geometry() {
+        let mut said = None;
+
+        assert!(
+            rois_line(&mut said, LIVE_CAPTURE_ORIGIN, LIVE_CAPTURE_SCALE).is_some(),
+            "the first read of a geometry says it",
+        );
+        assert_eq!(
+            rois_line(&mut said, LIVE_CAPTURE_ORIGIN, LIVE_CAPTURE_SCALE),
+            None,
+            "the same rects a second later are not news",
+        );
+        assert!(
+            rois_line(&mut said, LIVE_CAPTURE_ORIGIN, 1.13).is_some(),
+            "a re-anchor at another scale moves every rect and must be reported",
+        );
+    }
 
     /// An anchor the capture's own height does not corroborate is WITHHELD from
     /// the shared slice, and says why.
@@ -3783,12 +4389,51 @@ mod tests {
     /// returning an empty (i.e. "everything closed") door set. This is the
     /// property the whole fallback rests on: a wrong rect errors, it does not
     /// lie.
+    ///
+    /// The frame is the live capture's size and origin so the derived rect lands
+    /// INSIDE it — which is the case under test. An origin high enough in the
+    /// frame to push the rect off the top is the other failure (`RectOutsideImage`),
+    /// and it is [`a_diamond_rect_off_the_top_of_the_frame_is_refused`]'s.
     #[test]
     fn a_diamond_rect_over_blank_pixels_fails_rather_than_reporting_no_doors() {
+        let img = DynamicImage::new_rgb8(1920, 1080);
+        let layout = blank_layout((960, 713), 1.0, (1920, 1080));
+
+        let err = read_markers(&img, &layout).expect_err("blank pixels carry no seals");
+        assert!(
+            err.contains("marker"),
+            "the failure must name the seal count, got {err:?}",
+        );
+    }
+
+    /// A panel drawn too near the capture's top edge — the window pushed part
+    /// way off the monitor — leaves the diamond rect outside the frame, and that
+    /// is reported as such rather than slid back in.
+    ///
+    /// Measured on the board fixture's own geometry: origin (673, 494) at scale
+    /// 0.99 puts the diamond centre 3 px below the top of the frame, so the rect
+    /// starts at y −100. A rect slid back into the frame would read whatever
+    /// happened to be at the top of the capture and could return a confident
+    /// door set from it.
+    #[test]
+    fn a_diamond_rect_off_the_top_of_the_frame_is_refused() {
         let img = DynamicImage::new_rgb8(1374, 773);
-        let layout = TempleLayout {
-            origin: (673, 494),
-            scale: 0.99,
+        let layout = blank_layout((673, 494), 0.99, (1374, 773));
+
+        assert!(
+            diamond_rect(layout.origin, layout.scale)[1] < 0,
+            "the case only exists while the rect leaves the top of the frame",
+        );
+        let err = read_markers(&img, &layout).expect_err("the rect is not in the capture");
+        assert_eq!(err, markers::MarkerError::RectOutsideImage.to_string());
+    }
+
+    /// A layout with no beam-read doors, for the rect tests that only need an
+    /// origin, a scale and a current room.
+    fn blank_layout(origin: (i32, i32), scale: f32, screen: (u32, u32)) -> TempleLayout {
+        TempleLayout {
+            origin,
+            scale,
             ncc: 0.94,
             confidence: crate::temple::doors::Confidence::High,
             current: Some(crate::temple::lattice::Slot::B0),
@@ -3797,16 +4442,10 @@ mod tests {
             slots: [(0, 0); 13],
             thresholds: crate::temple::doors::Thresholds { horizontal: 0.2, diagonal: 0.2 },
             calibration: crate::temple::anchor::AnchorCalibration {
-                screen_w: 1374,
-                screen_h: 773,
-                scale: 0.99,
+                screen_w: screen.0,
+                screen_h: screen.1,
+                scale,
             },
-        };
-
-        let err = read_markers(&img, &layout).expect_err("blank pixels carry no seals");
-        assert!(
-            err.contains("marker"),
-            "the failure must name the seal count, got {err:?}",
-        );
+        }
     }
 }

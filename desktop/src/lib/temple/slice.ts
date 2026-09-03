@@ -338,7 +338,9 @@ export interface TempleDebugReport {
 	ncc: number | null;
 	confidence: string | null;
 	current: SlotId | null;
-	/** `[x, y, w, h]` — the estimated diamond rect this build used. */
+	/** `[x, y, w, h]` — the diamond rect this build used. Since POE-230 all
+	 *  three rects below are placed from the Entrance origin and the anchor's
+	 *  scale, so a wrong one is a wrong anchor or a constant to re-measure. */
 	diamondRect: [number, number, number, number] | null;
 	panelRect: [number, number, number, number] | null;
 	remainingRect: [number, number, number, number] | null;

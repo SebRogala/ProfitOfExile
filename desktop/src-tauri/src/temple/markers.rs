@@ -684,6 +684,15 @@ mod tests {
 
     const ALL: [&Fixture; 5] = [&TOMBS, &CHASM_B0, &CHASM_B1, &CLOISTER, &LIVE_B0];
 
+    // All five crops are 240x200 or 272x220, the sizes they were hand-cut at.
+    // Production has not been that size since POE-230 sized `run::DIAMOND_W_REF`
+    // against the anchor rather than against the capture's edge: it is 200x200
+    // ref px. Every threshold in this file was therefore swept at FIXTURE sizes,
+    // and `run`'s `screen-live-1920x1080.png` is the one witness at the size the
+    // loop actually crops. What moves with the size is `merge` (`w / 16`),
+    // `min_ink`, `min_height` and `max_side` — all four are fractions of the
+    // rect, so a re-cut of these crops is what would retire the gap.
+
     fn load(f: &Fixture) -> DynamicImage {
         let path = format!(
             "{}/tests/fixtures/temple/{}",
