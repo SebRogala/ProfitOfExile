@@ -196,13 +196,14 @@ const RETIRE_AFTER: u8 = 2;
 /// forced anyway.
 ///
 /// [`anchor::detect_cheap`] recovers a panel that MOVED on the next tick, and
-/// [`settings_for_capture`] drops the remembered scale the moment the capture
-/// changes size, so this is not the recovery path for either of those. What it
-/// covers is the case neither of them can see: a capture that is still the same
-/// size and still holds a panel whose scale has drifted far enough from
-/// `width / REFERENCE_SCREEN_WIDTH` that the nominating pass no longer clears
-/// [`anchor::COARSE_CANDIDATE_FLOOR`] — the game's own UI-scale slider is the
-/// way that happens.
+/// `crate::ssot::drop_if_mismatched` drops the remembered scale the moment the
+/// capture changes size, so this is not the recovery path for either of those.
+/// What it covers is the case neither of them can see: a capture that is still
+/// the same size and still holds a panel whose scale has drifted far enough from
+/// the one the shared slice remembers — and from `anchor::height_seed_scale`,
+/// which is what the nominating pass falls back on — that the pass no longer
+/// clears [`anchor::COARSE_CANDIDATE_FLOOR`]. The game's own UI-scale slider is
+/// the way that happens.
 ///
 /// 30 ticks is 30 s at [`DETECT_INTERVAL`] and 90 s once
 /// [`DETECT_INTERVAL_SLOW`] has fired. Long, deliberately: the case is rare and
@@ -390,17 +391,33 @@ pub struct SweepKey {
 /// enough that an expensive answer is worth re-asking". 30 ticks is 30 s at
 /// [`DETECT_INTERVAL`] and 90 s once [`DETECT_INTERVAL_SLOW`] has fired.
 ///
-/// # What a calibration changes, and what it does not
+/// # What `calibrated` means since POE-234 WI-2, and what changed with it
 ///
-/// It costs the screen its FIRST-tick sweep, and nothing else. A known scale
-/// means the cheap tick's hinted path re-anchors the panel in one windowed
-/// match, so a screen that has just been answered has nothing to discover and
-/// must not pay 5.3 s the moment Alva speaks — the panel is closed then, and
-/// the loop arms on every incursion.
+/// It is "this tick has a hint" — [`hint_for_capture`] answered `Some`, which
+/// means the shared `crate::ssot::ScreenSlice` holds a scale for THIS screen. It
+/// was "the temple's own `settings.json` calibration is present"; that store is
+/// gone, and the provenance is wider now: ANY source counts, including a
+/// `Remembered` value the startup load put there and a `MercFrame` one the merc
+/// module measured, neither of which the temple has looked at.
+///
+/// **The head start moved with it, and that is a real delta.** A screen whose
+/// remembered value is WRONG but whose capture size has not changed — a scale
+/// carried in from a machine whose in-game UI slider differs, say — now counts
+/// as calibrated on the first tick and waits a whole
+/// [`FULL_READ_EVERY_N_MISSES`] cadence before its first sweep, where WI-1 swept
+/// on the first non-verified tick. That is the price of the hint being worth
+/// trying at all: it is one correlation against 5.3 s, and it is the case the
+/// whole WI exists for (a scale merc measured serving the temple with no
+/// search). The recovery is unchanged and one cadence away.
+///
+/// What a calibration buys, then, is the FIRST-tick sweep and nothing else: a
+/// hinted path that re-anchors the panel in one windowed match means a screen
+/// that has just been answered must not pay 5.3 s the moment Alva speaks — the
+/// panel is closed then, and the loop arms on every incursion.
 ///
 /// It does not close the gate. `desktop/src/lib/README.md`'s "Screen Geometry
 /// (SSOT)" lifecycle re-measures on "the consuming module's own verification
-/// failing", and a calibration whose hinted recheck has missed for
+/// failing", and a hint whose recheck has missed for
 /// [`FULL_READ_EVERY_N_MISSES`] consecutive ticks IS that failure — it is the
 /// in-game UI-scale change [`FULL_READ_EVERY_N_MISSES`]'s own note describes,
 /// which no prune can see because the capture size never moved. So a calibrated
@@ -421,10 +438,13 @@ pub struct SweepKey {
 /// EVERY change (see [`wants_full_read`]), and none of those is a reason to pay
 /// 5.3 s — a user adjusting three settings would have bought three sweeps.
 /// What the user actually presses when the geometry is wrong is Recalibrate,
-/// and `ssot::geometry_recalibrate` reaches this gate the honest way: it clears
-/// the temple's calibration, so `calibrated` goes false, and a screen that has
-/// just LOST its scale restarts the countdown rather than serving out one some
-/// earlier state left running.
+/// and `ssot::geometry_recalibrate` reaches this gate the honest way: it empties
+/// the shared screen scale, so [`hint_for_capture`] answers `None`, `calibrated`
+/// goes false, and a screen that has just LOST its scale restarts the countdown
+/// rather than serving out one some earlier state left running. That path needs
+/// [`cheap_hint_for`] to hold: a session still holding its remembered plate
+/// would re-anchor at the old scale on the next tick, and a verified tick never
+/// reaches this gate at all.
 ///
 /// Pure over plain data — no `AppHandle`, no image — so the whole rule is
 /// testable without a screen.
@@ -433,19 +453,22 @@ pub struct SweepGate {
     /// The screen the countdown belongs to. A different one starts over, which
     /// is what makes a resolution or monitor change sweep immediately.
     key: Option<SweepKey>,
-    /// Whether a calibration existed **as of the last non-verified tick**, so
-    /// the loss of one is detectable — that transition is how Recalibrate
-    /// reaches this gate.
+    /// Whether a hint existed **as of the last non-verified tick**, so the loss
+    /// of one is detectable — that transition is how Recalibrate reaches this
+    /// gate.
     ///
     /// The caveat is load-bearing, because [`Self::allow`] is deliberately not
-    /// called on a tick whose hint verified. A Recalibrate pressed while the
-    /// layout panel is CONTINUOUSLY on screen therefore does not reach this
-    /// field at all: every tick in that window verifies, so the transition is
-    /// never observed here. Nothing is lost — `ssot::geometry_recalibrate` also
-    /// bumps `temple_rearm`, and [`wants_full_read`] spends that to force a read
-    /// on the next tick, which is the path that matters while a panel is up.
-    /// This gate is the recovery for the case where nothing is on screen to
-    /// re-read, and that case has non-verified ticks by definition.
+    /// called on a tick whose cheap detect VERIFIED an anchor. What makes the
+    /// transition observable at all is [`cheap_hint_for`]: a Recalibrate empties
+    /// a slice that had answered, the remembered plate goes with it, and the
+    /// next tick's cheap detect therefore has nothing to re-match and cannot
+    /// verify — so it reaches this field with `calibrated` false even while the
+    /// layout panel is continuously on screen. Without that drop, every tick in
+    /// that window would verify at the pre-Recalibrate scale, the transition
+    /// would never be observed here, and the press would re-publish the number
+    /// the user asked the app to forget. `ssot::geometry_recalibrate` also bumps
+    /// `temple_rearm`, which [`wants_full_read`] spends to force the read
+    /// itself; the two are the sweep and the read halves of one press.
     calibrated: bool,
     /// Ticks still owed before the next sweep on [`Self::key`]. `0` means the
     /// next one sweeps.
@@ -1041,76 +1064,414 @@ pub fn settings_snapshot(app: &AppHandle) -> TempleSettings {
     settings
 }
 
-/// The settings one read should use, and whether the stored hint was stale.
+/// The anchor hint this capture's remembered screen scale implies (POE-234
+/// WI-2) — the temple's whole READ of `crate::ssot::ScreenSlice`.
 ///
-/// A calibration measured at another capture size is dropped HERE, before the
-/// anchor sees it. The anchor would ignore it anyway
-/// ([`super::anchor::AnchorCalibration::applies_to`]), so this is not about the
-/// read — it is about the two places the dead hint would otherwise sit
-/// forever: `settings.json`, and [`TempleSlice::calibration`], which the page
-/// renders as the scale in force. `true` means the caller must forget it in the
-/// owner and on disk too.
+/// The shared slice is the app's one store of "what scale is this screen drawn
+/// at", written by whichever module could see its own UI first. This converts it
+/// into the temple's own unit through [`anchor::scale_for_ui_scale`] and hands
+/// it to [`anchor::anchor_for_loop`] as the hint — a single-scale coarse pass
+/// over the whole capture, verified against [`anchor::NCC_FLOOR`] like any other
+/// candidate. So a scale the MERC module measured saves the temple its 5.3 s
+/// cold-start sweep, and a scale the temple anchored is what merc's next session
+/// starts from; neither module keeps a second answer to the same question. The
+/// temple had one until this commit (`Settings::temple_calibration`), and it is
+/// gone: [`anchor::AnchorCalibration`] is now derived state — produced by a read
+/// (`TempleLayout::calibration`), remembered within a session as
+/// [`anchor::CheapHint`]'s (scale, origin) pair, and produced HERE from the
+/// slice — never a second persisted store.
 ///
-/// Pure so the rule is testable without a screen, and taken by value so the
-/// loop cannot accidentally read the pre-prune settings — see [`tick`], where
-/// this is the only source of a `TempleSettings`.
-pub fn settings_for_capture(
-    stored: &TempleSettings,
-    screen: (u32, u32),
-) -> (TempleSettings, bool) {
-    let mut settings = stored.clone();
-    let pruned = settings.prune_calibration(screen);
-    (settings, pruned)
+/// # Four sources can be behind the number, and one of them drifts
+///
+/// `MercFrame`, `TempleAnchor` and a `Remembered` load are all measurements. The
+/// fourth is `MercOcr` — the line-pitch estimate POE-214 measured 6-12 px off
+/// the gold frame — which reaches the slice when it is the first value or when
+/// it is outside `ssot::accepts`' band. Nothing here filters it out, and that is
+/// deliberate: the bound is small and known. 0.01 of `ui_scale` is the band, so
+/// the worst hint an OCR seed can produce is `0.01 * k` = 0.011 of temple scale,
+/// about one [`anchor::SCALE_STEP`] — a single-scale search one step off the
+/// truth still clears [`anchor::NCC_FLOOR`] with room (0.9603 against the peak's
+/// 0.9936 on `board-ref-1374.png`).
+///
+/// What such a hint can NOT do is launder itself: the temple anchors at exactly
+/// the scale it was handed, so its republish reproduces the standing value,
+/// `ssot::accepts` refuses it as a restatement, and the slice keeps saying
+/// `merc-ocr`. An OCR seed is therefore a slightly worse starting point and
+/// never a promotion — and when the gold frame does land, the correction reaches
+/// the temple on the next tick through [`cheap_hint_for`].
+///
+/// `None` — no hint, and the caller is uncalibrated — in exactly three cases:
+///
+/// - nothing has measured a screen (fresh install, or the tick right after
+///   `ssot::geometry_recalibrate`);
+/// - the remembered measurement is not of THIS capture. The rule is
+///   `ssot::screen_matches`', reused rather than restated so the temple cannot
+///   grow its own opinion of what "the same screen" means — in particular the
+///   POE-237 one about `monitor_id == 0` being UNKNOWN and never compared as an
+///   identity. In the capture loop this branch is nearly unreachable, because
+///   `ssot::drop_if_mismatched` runs first on the same pixels and empties the
+///   slot; `super::commands::temple_debug_capture` is the caller that reaches
+///   it, since it can be handed an image file of any size;
+/// - the stored `ui_scale` cannot describe a screen. `settings::ScreenScaleSetting::is_sane`
+///   refuses those at load and both writers measure rather than invent, so this
+///   is the conversion being a total function rather than a claim that a zero
+///   is reachable — the cost of being sure is one comparison, and the cost of
+///   being wrong is a zero-size template.
+pub fn hint_for_capture(
+    screen: Option<&crate::ssot::ScreenSlice>,
+    capture: (u32, u32),
+    monitor_id: u32,
+) -> Option<anchor::AnchorCalibration> {
+    let screen = screen?;
+    if !crate::ssot::screen_matches(&Some(*screen), capture, monitor_id) {
+        return None;
+    }
+    if !screen.ui_scale.is_finite() || screen.ui_scale <= 0.0 {
+        return None;
+    }
+    Some(anchor::AnchorCalibration {
+        screen_w: capture.0,
+        screen_h: capture.1,
+        scale: anchor::scale_for_ui_scale(screen.ui_scale),
+    })
 }
 
-/// Drop the stored calibration from the OWNER only.
+/// The session's remembered plate, kept only while the shared slice still
+/// agrees with it (POE-234 WI-2).
 ///
-/// The pruning decision is [`settings_for_capture`]'s; this is only the clear.
+/// [`anchor::CheapHint`] is where the loop remembers WHERE it last saw the
+/// Entrance plate, and it carries the scale it saw it at. That makes it a second
+/// place a scale can live, and — until this function existed — one nothing could
+/// clear: `ssot::geometry_recalibrate` empties the shared slice, but a panel
+/// that is still on screen re-matches at the remembered scale on the very next
+/// tick, reports [`anchor::CheapDetect::Anchored`], keeps [`sweep_could_help`]
+/// from ever asking for a sweep, and hands [`publish_anchor_scale`] the number
+/// the user just asked the app to forget — which then goes back into the emptied
+/// slot and back into `settings.json`. Measured as unreachable it was not: it is
+/// the ordinary case of pressing Recalibrate with the layout panel open.
 ///
-/// Split out of [`forget_calibration`] so a caller that has its own file write
-/// does not have to make two (POE-227): `ssot::geometry_recalibrate` clears
-/// this alongside the shared screen scale and then writes settings.json ONCE,
-/// through `settings::persist_forgetting_screen_scale`, which rebuilds the file
-/// from `AppState` — this cleared owner included. Two writes there would have
-/// the first one (`crate::persist_settings`, whose `preserve_screen_scale`
-/// merge restores a stored measurement over an empty projection) put the stale
-/// scale back on disk, correct only for as long as the second write followed.
-pub(crate) fn clear_calibration(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    state
-        .temple_settings
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .calibration = None;
+/// So the slice is the authority over this too. Two rules, and the second is
+/// what makes it more than a Recalibrate fix:
+///
+/// - **A hint that disagrees by more than one [`anchor::SCALE_STEP`] wins.** One
+///   step is the finest disagreement this module can express, so anything larger
+///   is the slice describing a screen the remembered plate is not on. This is
+///   also what lets a merc frame fit CORRECT the temple mid-session: without it,
+///   a session that first anchored on a drifting `MercOcr` seed would re-verify
+///   its own copy of that scale for the rest of its life and never notice the
+///   gold frame's better answer landing in the slice beside it.
+/// - **A hint that was there and is GONE takes the plate with it.** That is the
+///   Recalibrate case, and `answered` is what makes it distinguishable from the
+///   other empty slice — the screen nothing has measured yet.
+///
+/// # Why the empty slice needs `answered` and cannot simply drop the plate
+///
+/// [`screen_from_anchor`] withholds a measurement the capture's height does not
+/// corroborate, so there is a real configuration — a non-default in-game
+/// UI-scale slider, on a machine whose recruit window is never opened — where
+/// the temple anchors correctly every tick and the slice stays empty forever.
+/// Dropping the plate on an empty slice alone would take the cheap tick's hinted
+/// path away from exactly that user for the whole session: every tick would fall
+/// to the nominating pass, whose seed is the one that is wrong there, and the
+/// board would be read once per [`FULL_READ_EVERY_N_MISSES`] sweep instead of
+/// once a second. `answered` costs one bool and confines the drop to a slice
+/// that HAS held a scale for this session — an emptying, which is a decision,
+/// rather than an emptiness, which is just an unanswered question.
+///
+/// The residue is honest and small: on that same machine Recalibrate cannot drop
+/// a plate, because the module has never put a scale into the shared store for
+/// the button to undo. What it does drop there is nothing, which is the correct
+/// number of things.
+///
+/// Pure over plain data — the two hints and one bool — so all of it is testable
+/// without a screen.
+fn cheap_hint_for(
+    hint: Option<anchor::AnchorCalibration>,
+    held: Option<anchor::CheapHint>,
+    answered: bool,
+) -> Option<anchor::CheapHint> {
+    let held = held?;
+    match hint {
+        Some(hint) => {
+            ((hint.scale - held.calibration.scale).abs() <= anchor::SCALE_STEP).then_some(held)
+        }
+        None => (!answered).then_some(held),
+    }
 }
 
-/// Drop the stored calibration from the owner AND from disk.
+/// The hint the loop should use for this capture, read under the slice's own
+/// lock and dropped before anything is done with it.
 ///
-/// The temple tick's own path: a capture whose dimensions disagree with the
-/// stored hint prunes it and has nothing else to write, so the clear and the
-/// save are one call.
-fn forget_calibration(app: &AppHandle) {
-    clear_calibration(app);
-    crate::persist_settings(app);
-}
-
-/// Store the calibration this capture measured, and persist it when it moved.
-///
-/// Persisting only on a change is what keeps a 1 Hz loop off the disk: the
-/// scale is stable for as long as the window size is.
-fn remember_calibration(app: &AppHandle, layout: &TempleLayout) {
-    let changed = {
+/// Lock-then-drop, like every other reader of an `AppState` mutex on this
+/// thread: the anchor search that follows takes seconds, and holding the screen
+/// slot across it would block `ssot::publish_screen` on the merc thread for all
+/// of them.
+fn hint_from_slice(
+    app: &AppHandle,
+    capture: (u32, u32),
+    monitor_id: u32,
+) -> (Option<anchor::AnchorCalibration>, Option<crate::ssot::ScreenScaleSource>) {
+    let screen = {
         let state = app.state::<AppState>();
-        let mut settings = state.temple_settings.lock().unwrap_or_else(|e| e.into_inner());
-        if settings.calibration == Some(layout.calibration) {
-            false
-        } else {
-            settings.calibration = Some(layout.calibration);
-            true
+        let slot = state.screen.lock().unwrap_or_else(|e| e.into_inner());
+        *slot
+    };
+    (
+        hint_for_capture(screen.as_ref(), capture, monitor_id),
+        screen.map(|s| s.source),
+    )
+}
+
+/// The line to log when the loop takes its hint from a scale ANOTHER module
+/// measured, or `None` when there is nothing to say.
+///
+/// Nothing to say covers three cases: no hint at all, a hint the loop already
+/// announced (the slice is stable for as long as the screen is, and this runs
+/// once a second), and a hint derived from the temple's own published value —
+/// converting a number this module put there and reading it back is not news,
+/// and saying so once a session per screen would still be one line claiming a
+/// cross-module handoff that did not happen.
+///
+/// The cue is printed as its Rust variant name (`{:?}`) rather than as the
+/// kebab-case wire string the Settings card renders: the source vocabulary
+/// already has three spellings (the enum, `serde`'s wire strings, and
+/// `geometry/view.ts`'s labels) and a fourth, hand-written one here would be the
+/// one that drifts.
+///
+/// Pure over plain data, with the "already said" memory passed in, so the
+/// once-per-value rule is testable without an `AppHandle`.
+fn hint_line(
+    said: &mut Option<anchor::AnchorCalibration>,
+    hint: Option<anchor::AnchorCalibration>,
+    source: Option<crate::ssot::ScreenScaleSource>,
+) -> Option<String> {
+    let hint = hint?;
+    if *said == Some(hint) {
+        return None;
+    }
+    let source = source?;
+    if source == crate::ssot::ScreenScaleSource::TempleAnchor {
+        // Still remembered: the temple's own value must not be re-announced if
+        // merc later replaces it with a number that converts to the same hint.
+        *said = Some(hint);
+        return None;
+    }
+    *said = Some(hint);
+    Some(format!(
+        "Temple: anchoring on the remembered screen scale ({source:?}, ui_scale {:.3}) — \
+         temple scale {:.3}, no search",
+        anchor::ui_scale_for_scale(hint.scale),
+        hint.scale
+    ))
+}
+
+/// Publish what this capture anchored onto the shared screen slice (POE-234
+/// WI-2) — the temple's whole WRITE of `crate::ssot::ScreenSlice`.
+///
+/// Called on every tick that produced a layout, which is every tick whose
+/// anchor cleared [`anchor::NCC_FLOOR`] — the temple's half of the README's
+/// "VERIFIED by the consuming module on first use". Two gates stand between an
+/// anchor and the shared slice: [`screen_from_anchor`]'s `k` check here, and
+/// `ssot::accepts` inside [`crate::ssot::publish_screen`], which refuses a
+/// temple reading that only re-states a standing merc measurement within the
+/// drift band. So calling this every tick is cheap by construction — a refusal
+/// at either gate and an unchanged value all stop here.
+///
+/// Same shape as `mercenary::run`'s publish, deliberately: `publish_screen`
+/// drops the screen guard before it returns, and `persist_settings` re-takes the
+/// owner mutexes through `settings::from_state`, so no lock is held across
+/// either.
+///
+/// **The early return on a withheld measurement is ahead of the persist, and
+/// nothing tests that ordering** — both halves need an `AppHandle`, so there is
+/// no seam to assert it through. What the tests do cover is the decision the
+/// return is taken on ([`screen_from_anchor`], pure) and the rule the persist is
+/// gated by (`ssot::should_remember_screen`, pure); the two-line composition
+/// between them is read, not asserted.
+///
+/// # The one case where the two writers can push against each other
+///
+/// A merc frame fit ALWAYS replaces, and a temple anchor replaces whenever it is
+/// outside the band. Both cannot happen at once any more — [`screen_from_anchor`]
+/// refuses to publish anything the capture's own height does not corroborate,
+/// and a temple scale within `K_TOLERANCE` of that is within the band of any
+/// merc reading that is too — so the loops cannot overwrite each other tick by
+/// tick. What is left is one publish apiece on a real change of screen.
+fn publish_anchor_scale(
+    app: &AppHandle,
+    session: &mut Session,
+    layout: &TempleLayout,
+    hint: Option<anchor::AnchorCalibration>,
+    capture: (u32, u32),
+    monitor_id: u32,
+    origin: (i32, i32),
+) {
+    let next = match screen_from_anchor(layout.scale, hint, capture, monitor_id, origin, now_ms())
+    {
+        Ok(next) => next,
+        Err(line) => {
+            // Once per distinct line, not once per tick: the condition holds for
+            // as long as the panel is on screen at that scale, and this loop
+            // runs at 1 Hz.
+            if session.k_said.as_deref() != Some(line.as_str()) {
+                session.k_said = Some(line.clone());
+                crate::app_log(app, line);
+            }
+            return;
         }
     };
-    if changed {
+    let record = crate::ssot::publish_screen(app, next);
+    if record.changed {
+        crate::app_log(
+            app,
+            format!(
+                "screen scale from temple anchor: ui_scale {:.3} (temple scale {:.3}, k {:.4})",
+                next.ui_scale,
+                layout.scale,
+                anchor::TEMPLE_SCALE_PER_UI_SCALE
+            ),
+        );
+    }
+    // WI-B2's rule, unchanged: a measurement is written to disk, an estimate is
+    // not, and the deadband inside `changed` is what keeps a 1 Hz loop off it.
+    if crate::ssot::should_remember_screen(record.changed, next.source) {
         crate::persist_settings(app);
+    }
+}
+
+/// The screen slice one temple anchor may publish, or the line saying why it may
+/// not.
+///
+/// # Why an anchor above [`anchor::NCC_FLOOR`] is not automatically publishable
+///
+/// [`anchor::sweep_range`]'s ceiling is SOFT: the fine pass refines one nominate
+/// step past the top nominee, so a capture whose true scale is above the ceiling
+/// does not fail, it anchors APPROXIMATELY. Measured 2026-09-03 on a synthetic
+/// plate at scale 2.10 against a 2.00 ceiling: the sweep answered **2.05 at NCC
+/// 0.9390**, well above the floor. Before this gate that number would have been
+/// converted through `k`, published as the screen's geometry, persisted, and
+/// then used by POE-233 to place the lab OCR rects — a 2.5% error in a module
+/// that never looked at a temple.
+///
+/// So the anchor has to be corroborated by something that is not the anchor, and
+/// there are two such things. In order:
+///
+/// 1. **The standing hint**, when the slice holds one. It is a measurement of
+///    this screen that did not come from this board, so an anchor within one
+///    [`anchor::SCALE_STEP`] of it is corroborated by the strongest evidence
+///    available — and, since the hint is what the anchor was searched at, this is
+///    the ordinary case. The publish then goes on to `ssot::accepts`, which
+///    refuses it as a restatement of the value it agrees with. That is the whole
+///    point: a merc-frame-measured screen with a non-default UI slider reaches
+///    the acceptance rule and is turned down there, instead of being stopped
+///    here by an arithmetic that knows nothing about the slider.
+/// 2. **The capture's own height**, when the slice is empty and there is nothing
+///    else to ask. At the game's DEFAULT UI scale the temple scale is
+///    `k * (height / 1200)` by both units' definitions, so a scale more than
+///    [`K_TOLERANCE`] from it is one the screen does not account for.
+///
+/// # What this makes the temple, stated plainly
+///
+/// **With this gate the temple can only ever publish a scale within 1% of the
+/// nominal one, or of a measurement already standing. It corroborates and
+/// persists a verified seed; it does not teach the slice a new number.**
+///
+/// Everything else follows from that sentence. An empty slice is filled only
+/// with a value the capture height predicts — which is what a temple-only
+/// machine at the default slider needs, and it is a real measurement rather
+/// than an assumption, because the anchor had to clear [`anchor::NCC_FLOOR`] to
+/// get here. A slice that already holds something is only ever confirmed. And
+/// the two cases the temple therefore cannot report are the two it cannot tell
+/// apart anyway: a soft-ceiling approximation, and a genuine off-nominal UI
+/// slider on a machine no other module has measured. The first must not be
+/// published; the second is a real number the temple is choosing not to be the
+/// sole source of. Merc's gold frame measures the slider case directly, and
+/// after it does, the temple corroborates it through arm 1 for the rest of the
+/// session.
+///
+/// A withheld measurement leaves a consumer failing closed, which the README's
+/// placement rule already requires; a wrong one mis-scales every rect derived
+/// from it with nothing on screen to say so.
+///
+/// Pure, so every arm is testable without a screen or an `AppHandle`.
+fn screen_from_anchor(
+    scale: f32,
+    hint: Option<anchor::AnchorCalibration>,
+    capture: (u32, u32),
+    monitor_id: u32,
+    origin: (i32, i32),
+    measured_at_ms: u64,
+) -> Result<crate::ssot::ScreenSlice, String> {
+    let withheld = match hint {
+        Some(hint) => hint_disagreement_line(scale, hint),
+        None => unit_ratio_line(scale, capture.0, capture.1),
+    };
+    match withheld {
+        Some(line) => Err(line),
+        None => Ok(anchored_screen(scale, capture, monitor_id, origin, measured_at_ms)),
+    }
+}
+
+/// The line to log when an anchor disagrees with the hint it was searched
+/// against, or `None` when the two corroborate each other.
+///
+/// One [`anchor::SCALE_STEP`] is the same threshold [`cheap_hint_for`] uses on
+/// the same two numbers, and for the same reason: it is the finest disagreement
+/// this module's scale grid can express. Inside it the anchor confirms the
+/// standing measurement; outside it, the anchor came from somewhere other than
+/// the hint — the table row, or the sweep after the hint missed — and the temple
+/// is not the module that gets to overrule a measurement of this screen with a
+/// board it read (see [`screen_from_anchor`]'s second section).
+///
+/// Pure, and separate from the height check, because the two withhold for
+/// genuinely different reasons and a user reading `app.log` needs to know which.
+fn hint_disagreement_line(scale: f32, hint: anchor::AnchorCalibration) -> Option<String> {
+    if (scale - hint.scale).abs() <= anchor::SCALE_STEP {
+        return None;
+    }
+    Some(format!(
+        "temple anchor not corroborated by the remembered screen scale: anchored at \
+         {scale:.3} against a hint of {:.3} (ui_scale {:.3}) — the measurement was \
+         withheld, and the shared screen scale is left to whatever else measures this \
+         screen",
+        hint.scale,
+        anchor::ui_scale_for_scale(hint.scale),
+    ))
+}
+
+/// The screen slice one temple anchor publishes.
+///
+/// Pure and separate from [`publish_anchor_scale`] so both derived fields are
+/// pinned by tests: the unit conversion (`ssot`'s unit is not this module's, and
+/// [`anchor::ui_scale_for_scale`] is the one place that crosses between them),
+/// and whether the cue VERIFIES the screen — `ssot::verifies_the_screen`'s call,
+/// not a literal here, for the same reason `mercenary::run::published_screen`
+/// asks rather than answers.
+///
+/// Whether it MAY be published is [`screen_from_anchor`]'s question, not this
+/// one: this builds the value, that decides the screen corroborates it.
+///
+/// `monitor_id` and `origin` come from the same `crate::capture::Capture` as the
+/// pixels and are copied through untouched (POE-237): they are what lets
+/// `ssot::screen_matches` tell a second 1920x1080 monitor from the remembered
+/// one, so they must never be re-derived from anything else.
+pub fn anchored_screen(
+    scale: f32,
+    capture: (u32, u32),
+    monitor_id: u32,
+    origin: (i32, i32),
+    measured_at_ms: u64,
+) -> crate::ssot::ScreenSlice {
+    let source = crate::ssot::ScreenScaleSource::TempleAnchor;
+    crate::ssot::ScreenSlice {
+        width: capture.0,
+        height: capture.1,
+        ui_scale: anchor::ui_scale_for_scale(scale),
+        source,
+        measured_at_ms,
+        verified_this_session: crate::ssot::verifies_the_screen(source),
+        monitor_id,
+        origin,
     }
 }
 
@@ -1190,6 +1551,26 @@ struct Session {
     /// read alongside it, so an announcement another thread wrote over comes
     /// back.
     gate_said: Option<bool>,
+    /// The slice-derived hint the loop last ANNOUNCED, so the line saying it is
+    /// running on another module's measurement is one line per value rather
+    /// than one per second. See [`hint_line`], which owns the rule.
+    hint_said: Option<anchor::AnchorCalibration>,
+    /// The last `k` disagreement announced, for the same reason: the condition
+    /// holds for as long as the panel is on screen at that scale, and
+    /// [`publish_anchor_scale`] is reached on every anchored tick.
+    k_said: Option<String>,
+    /// Whether the shared slice has held a scale for this screen at any point in
+    /// this session. [`cheap_hint_for`]'s second input, and it is what separates
+    /// a slice that was EMPTIED — Recalibrate — from one that was never filled.
+    ///
+    /// Per SCREEN, not per session: `tick` clears it whenever
+    /// `ssot::drop_if_mismatched` reports that the capture no longer matches the
+    /// remembered measurement, because after that the question "has anything
+    /// measured this screen?" starts over with a new answer. Without the reset a
+    /// player who moves the game to an unmeasured second monitor would carry the
+    /// first monitor's `true` across, and the plate would be dropped every tick
+    /// there on the strength of an emptying that belonged to another display.
+    slice_answered: bool,
 }
 
 fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
@@ -1220,6 +1601,9 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         cheap_hint: None,
         sweeps: SweepGate::default(),
         gate_said: None,
+        hint_said: None,
+        k_said: None,
+        slice_answered: false,
     };
     // Backdated so the first iteration ticks immediately rather than after a
     // full cadence of doing nothing.
@@ -1358,28 +1742,42 @@ fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) 
         }
     };
     let monitor_id = grab.monitor_id;
+    let origin = grab.origin;
     let img = grab.image;
+    let capture = (img.width(), img.height());
     // Before ANY remembered geometry is read (POE-227): a screen scale measured
-    // on another monitor is dropped from the shared slice on the first capture
-    // whose dimensions disagree with it. The temple does not consume that slice
-    // yet — its unit ratio has a value but nothing converts through it (see
-    // `temple::anchor::TEMPLE_SCALE_PER_UI_SCALE`) — but it does capture
-    // screens, and the prune belongs to whichever module looks first.
-    crate::ssot::drop_if_mismatched(app, (img.width(), img.height()), grab.monitor_id);
-    // The ONLY place the loop obtains its settings, so the stale-hint prune
-    // cannot be skipped without the compile failing.
-    let (settings, pruned) = settings_for_capture(&settings_snapshot(app), (img.width(), img.height()));
-    if pruned {
-        forget_calibration(app);
-        crate::app_log(
-            app,
-            format!(
-                "Temple: capture is now {}×{} — dropping the remembered calibration",
-                img.width(),
-                img.height()
-            ),
-        );
+    // on another monitor or at another resolution is dropped from the shared
+    // slice on the first capture that disagrees with it. FIRST, because the
+    // hint below is derived from that slice — a stale value read one line
+    // earlier would be the temple anchoring on the screen the game has left.
+    if crate::ssot::drop_if_mismatched(app, capture, monitor_id) {
+        // `slice_answered` is a claim about THIS screen, and this capture is a
+        // different one — so the emptying that just happened is a resolution or
+        // monitor change, not a Recalibrate, and the plate must not be dropped
+        // as though the user had asked for it. (It is dropped anyway on the same
+        // tick, by `anchor::AnchorCalibration::applies_to` inside the cheap
+        // detect, which is the rule that owns capture-size staleness.)
+        session.slice_answered = false;
     }
+    let settings = settings_snapshot(app);
+    // The temple's READ of the shared slice (POE-234 WI-2): whatever measured
+    // this screen — merc's gold frame, an earlier temple anchor, last session
+    // remembered, or the merc OCR line pitch, which is the one that drifts and
+    // is bounded to about one `SCALE_STEP` here (see `hint_for_capture`) —
+    // converted into this module's unit and handed to the anchor as its hint.
+    // There is no second store to prune any more; the prune above IS this
+    // module's prune.
+    let (hint, hint_source) = hint_from_slice(app, capture, monitor_id);
+    if let Some(line) = hint_line(&mut session.hint_said, hint, hint_source) {
+        crate::app_log(app, line);
+    }
+    // BEFORE the cheap tick, because the plate the session remembers carries a
+    // scale of its own and the slice is the authority over that too — see
+    // `cheap_hint_for`. Dropping it here is what makes Recalibrate work with the
+    // panel on screen, and what lets a merc frame fit correct a session that
+    // anchored on a worse seed.
+    session.cheap_hint = cheap_hint_for(hint, session.cheap_hint, session.slice_answered);
+    session.slice_answered |= hint.is_some();
     // The cheap gate. A closed panel is what this loop looks at nearly all the
     // time, and it is the most expensive input the reader has — see
     // `anchor::detect_cheap`, which answers "anything here?" for ~1/80 of the
@@ -1407,13 +1805,19 @@ fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) 
     // That is what makes the calibrated cadence mean "N consecutive
     // verification failures" — the README's re-measure trigger — rather than
     // "N ticks".
-    let calibrated = settings.calibration.is_some();
+    //
+    // "Calibrated" is "this tick has a hint", which since WI-2 means the shared
+    // slice holds a scale for this screen. That is the same transition the gate
+    // was built on — `ssot::geometry_recalibrate` empties the slice, so the hint
+    // goes with it and a screen that has just LOST its scale restarts the
+    // countdown — with one store instead of two behind it.
+    let calibrated = hint.is_some();
     let may_sweep = sweep_could_help(&cheap)
         && session.sweeps.allow(
             SweepKey {
                 monitor_id,
-                width: img.width(),
-                height: img.height(),
+                width: capture.0,
+                height: capture.1,
             },
             calibrated,
         );
@@ -1422,7 +1826,7 @@ fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) 
     let mut swept = None;
     if !cheap.worth_reading() && may_sweep {
         sweep_ran = true;
-        swept = cold_sweep(app, &img, settings.calibration.as_ref(), cancel);
+        swept = cold_sweep(app, &img, hint.as_ref(), cancel);
     }
 
     if !wants_full_read(
@@ -1466,7 +1870,7 @@ fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) 
         // table steps and reports a miss rather than blocking for seconds.
         (None, _) => match reader::read_layout_for_loop(
             &img,
-            settings.calibration.as_ref(),
+            hint.as_ref(),
             may_sweep,
             &|| *cancel.borrow(),
         ) {
@@ -1497,7 +1901,12 @@ fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) 
             ),
         );
     }
-    remember_calibration(app, &layout);
+    // The temple's WRITE of the shared slice (POE-234 WI-2). Here rather than in
+    // `full_read`, so all three anchor paths — the cheap tick's verified hint,
+    // the cold sweep, and the promoted read — publish, including the ticks whose
+    // board looked unchanged and bought no read. `ssot::accepts` is what makes
+    // that affordable on a 1 Hz loop.
+    publish_anchor_scale(app, session, &layout, hint, capture, monitor_id, origin);
     session.cheap_hint = Some(CheapHint {
         calibration: layout.calibration,
         origin: layout.origin,
@@ -1669,38 +2078,59 @@ fn panel_text(
 /// owner is [`crate::ssot::ScreenSlice`]'s unit note.
 const UI_SCALE_REFERENCE_HEIGHT: f32 = 1200.0;
 
-/// The line POE-227 D3 exists to print: `k`, the ratio between the temple's own
-/// scale unit and the shared `ui_scale` unit, on a board that actually anchored.
+/// The `k` CHECK (POE-234 WI-2): the line that fires when the ratio this board
+/// implies disagrees with the constant the app converts through — and, since it
+/// is [`screen_from_anchor`]'s gate, the reason a measurement is withheld from
+/// the shared slice.
 ///
-/// The two units are measured against different references — the temple's
-/// against `anchor::REFERENCE_SCREEN_WIDTH` (1374, a WIDTH), the slice's against
-/// a 1920x1200 fixture whose scale tracks HEIGHT — and nothing in the repo can
-/// relate them offline, because every temple fixture is a crop of a panel rather
-/// than a whole screen. So the ratio is taken in play: a laptop session on
-/// 2026-09-03 printed `k=1.1111`, committed as
-/// [`anchor::TEMPLE_SCALE_PER_UI_SCALE`] (POE-234).
+/// It was POE-227 D3's unconditional instrumentation line, printed on every full
+/// read so a second machine's `k` could be collected. That job is done — the
+/// reading is committed as [`anchor::TEMPLE_SCALE_PER_UI_SCALE`] and both
+/// directions of the conversion now run through it — so what is left worth
+/// saying is the DISAGREEMENT: this board's own `temple_scale / (height / 1200)`
+/// against the constant, when the two are more than [`K_TOLERANCE`] apart.
 ///
-/// **What that number is, exactly.** The temple scale in it is measured — 1.000,
-/// NCC 0.99999. The denominator is not: this line divides by
-/// `capture_height / 1200`, the shared unit's DEFINITION, and not by a
-/// `ui_scale` the merc module measured on that machine. The slice's writer
-/// accepts a reading within 0.01 of the standing one, which on a 0.90
-/// denominator is ~1% on `k`. So the constant is good to about a per cent, and
-/// the commit that makes the temple a slice writer has to recompute it against
-/// the slice's actual reading once one session carries both numbers.
+/// Why that is the right thing to print rather than the ratio itself: the
+/// constant is documented as good to about a per cent, which is one
+/// [`anchor::SCALE_STEP`] at scale 1.0 and lands well clear of
+/// [`anchor::NCC_FLOOR`]. Inside that, a printed ratio is noise the reader has
+/// to decide about; outside it, the anchor and the screen it came off disagree
+/// about the same fact, and that is worth both a line and a withheld publish.
 ///
-/// The line stays, because a second machine's `k` is how that one point stops
-/// being one point. A reader must still NOT substitute one scale for the other
-/// — only convert through the constant, and only where a commit says so.
+/// The denominator is the shared unit's DEFINITION (`height / 1200`), not the
+/// `ui_scale` standing in the slice. Deliberately, and it is what makes this a
+/// second opinion rather than a mirror: the slice's value may be one the temple
+/// itself published, and dividing a temple scale by a `ui_scale` derived from a
+/// temple scale would compare `k` with itself and never fire.
 ///
-/// Pure, and separated from the log call, so the arithmetic and the format are
-/// testable without a screen or an `AppHandle`.
-fn unit_ratio_line(scale: f32, capture_width: u32, capture_height: u32) -> String {
+/// Pure, and separated from the log call, so both the arithmetic and the
+/// threshold are testable without a screen or an `AppHandle`.
+fn unit_ratio_line(scale: f32, capture_width: u32, capture_height: u32) -> Option<String> {
     let k = scale / (capture_height as f32 / UI_SCALE_REFERENCE_HEIGHT);
-    format!(
-        "temple unit ratio k={k:.4} (scale {scale:.3}, capture {capture_width}x{capture_height})"
-    )
+    let off = (k - anchor::TEMPLE_SCALE_PER_UI_SCALE).abs() / anchor::TEMPLE_SCALE_PER_UI_SCALE;
+    if off <= K_TOLERANCE {
+        return None;
+    }
+    Some(format!(
+        "temple anchor not corroborated by the capture: unit ratio k={k:.4} differs from \
+         the {:.4} this app converts through by {:.1}% (scale {scale:.3}, capture \
+         {capture_width}x{capture_height}) — the measurement was withheld, and the shared \
+         screen scale is left to whatever else measures this screen",
+        anchor::TEMPLE_SCALE_PER_UI_SCALE,
+        off * 100.0
+    ))
 }
+
+/// How far this board's own unit ratio may sit from
+/// [`anchor::TEMPLE_SCALE_PER_UI_SCALE`] before [`unit_ratio_line`] says so.
+///
+/// One per cent, which is the accuracy the constant itself claims — see its doc
+/// for which half of it is measured and which is nominal — and one
+/// `anchor::SCALE_STEP` at scale 1.0. A hint that far off the truth still
+/// anchors well clear of [`anchor::NCC_FLOOR`] (0.9603 against the peak's 0.9936
+/// on `board-ref-1374.png`), so inside this the conversion is doing its job and
+/// there is nothing to report.
+const K_TOLERANCE: f32 = 0.01;
 
 fn full_read(
     app: &AppHandle,
@@ -1713,16 +2143,6 @@ fn full_read(
     already_read: Option<panel::PanelReading>,
 ) {
     publish(app, |slice| apply_status(slice, TickOutcome::Anchored));
-    // POE-227 D3 instrumentation: the ratio between the two scales, on a real
-    // board. Its first reading is now a constant
-    // (`anchor::TEMPLE_SCALE_PER_UI_SCALE`, POE-234) and this line is how a
-    // second machine's reading arrives. Nothing consumes either here — the
-    // temple still measures and stores its own scale, and still does not write
-    // the shared screen slice.
-    crate::app_log(
-        app,
-        unit_ratio_line(layout.scale, img.width(), img.height()),
-    );
 
     let panel = match already_read {
         Some(panel) => panel,
@@ -1787,11 +2207,11 @@ fn full_read(
             profile: settings.profile.clone(),
             read_at: now_ms(),
         },
-        // The calibration THIS capture measured, not the one the snapshot was
-        // taken with: on the first read after a resolution change the snapshot
-        // still carries the stale hint `remember_calibration` has just
-        // replaced, and publishing that would show the user a scale the reader
-        // no longer uses.
+        // The calibration THIS capture measured, which is what the page's
+        // "anchor calibration" row means: the scale the board in front of the
+        // user was actually read at, not a remembered one. Since POE-234 WI-2
+        // there is no remembered one to confuse it with — the module's only
+        // store is the shared screen slice, and this is the read's own answer.
         Some(layout.calibration),
     );
     session.gate.record(layout_sig, panel_sig);
@@ -1814,29 +2234,70 @@ mod tests {
         );
     }
 
-    /// The measurement POE-227 D3 exists to take. On the reference screen the
-    /// shared unit is 1.0 by definition, so `k` is the temple's own scale
-    /// unchanged — which makes this the case that pins the DIVISOR: an
-    /// instrumentation line that divided by the width, or by the wrong
-    /// reference, would print a number the follow-up commit would then bake in
-    /// as a wrong constant, with nothing downstream to contradict it.
+    /// The check says nothing while the constant holds — which is the state
+    /// every correctly-converting machine is in, so this is the assertion that
+    /// keeps `app.log` readable.
+    ///
+    /// The input is derived, not copied: `k * (height / 1200)` is the temple
+    /// scale a 1080p screen must anchor at IF the constant is right, so this is
+    /// the ratio agreeing with itself and the line must not fire.
     #[test]
-    fn on_the_reference_screen_the_unit_ratio_is_the_temple_scale_itself() {
-        let line = unit_ratio_line(0.9600, 1920, 1200);
+    fn a_board_that_agrees_with_the_constant_says_nothing() {
+        let scale = anchor::scale_for_ui_scale(1080.0 / UI_SCALE_REFERENCE_HEIGHT);
 
-        assert_eq!(line, "temple unit ratio k=0.9600 (scale 0.960, capture 1920x1200)");
+        assert_eq!(unit_ratio_line(scale, 1920, 1080), None);
     }
 
-    /// The case the ratio is FOR: a 1080p screen, where the shared unit is 0.90
-    /// and the temple's is not, so `k` and the scale visibly differ. Fails if
-    /// the height is ignored — which on the reference screen alone would look
-    /// exactly right.
+    /// The reference screen is the case that pins the DIVISOR: the shared unit
+    /// is 1.0 by definition at 1200 px, so a board anchoring there at exactly
+    /// `k` agrees, and one anchoring at the temple scale a 1080p screen would
+    /// give does not. A check that divided by the WIDTH, or by the wrong
+    /// reference height, gets both of these backwards.
     #[test]
-    fn a_shorter_screen_scales_the_unit_ratio_up() {
-        // 0.864 / (1080 / 1200) = 0.864 / 0.9 = 0.96.
-        let line = unit_ratio_line(0.864, 1920, 1080);
+    fn the_divisor_is_the_capture_height_against_the_shared_units_own_reference() {
+        assert_eq!(
+            unit_ratio_line(anchor::TEMPLE_SCALE_PER_UI_SCALE, 1920, 1200),
+            None,
+            "at the reference height the ratio IS the scale, and it agrees",
+        );
 
-        assert_eq!(line, "temple unit ratio k=0.9600 (scale 0.864, capture 1920x1080)");
+        let line = unit_ratio_line(anchor::TEMPLE_SCALE_PER_UI_SCALE, 1920, 1080)
+            .expect("the same scale on a shorter screen is a different ratio");
+        assert!(
+            line.contains("k=1.2346"),
+            "1.1111 / (1080/1200) = 1.2346, not {line}",
+        );
+    }
+
+    /// The threshold is `K_TOLERANCE` either side, and the line names the gap.
+    ///
+    /// Derived from the tolerance rather than from a literal ratio: half a
+    /// tolerance off must stay silent and two of them must not, so a constant
+    /// edited without its threshold cannot pass this by accident.
+    #[test]
+    fn only_a_ratio_outside_the_tolerance_is_worth_a_line() {
+        let agrees = 1080.0 / UI_SCALE_REFERENCE_HEIGHT;
+
+        assert_eq!(
+            unit_ratio_line(
+                anchor::scale_for_ui_scale(agrees) * (1.0 + K_TOLERANCE / 2.0),
+                1920,
+                1080,
+            ),
+            None,
+            "inside the accuracy the constant claims there is nothing to report",
+        );
+
+        let line = unit_ratio_line(
+            anchor::scale_for_ui_scale(agrees) * (1.0 + 2.0 * K_TOLERANCE),
+            1920,
+            1080,
+        )
+        .expect("twice the tolerance is worth saying");
+        assert!(
+            line.contains("2.0%"),
+            "the line must name the gap so a user can send back how far off it is: {line}",
+        );
     }
 
     /// A panel is not retired on its first miss — the anchor loses a fading
@@ -2008,10 +2469,12 @@ mod tests {
     /// out a countdown that belonged to another state.
     ///
     /// This is how Recalibrate reaches this gate, and the only way it does:
-    /// `ssot::geometry_recalibrate` clears the temple's calibration, and the
-    /// `temple_rearm` counter it bumps alongside is deliberately NOT an input
-    /// here. Fails if the gate only restarts on a key change — the user would
-    /// press the button and wait 29 more ticks for the sweep it exists to buy.
+    /// `ssot::geometry_recalibrate` empties the shared screen scale, so
+    /// [`hint_for_capture`] stops answering and `calibrated` goes false, while
+    /// the `temple_rearm` counter it bumps alongside is deliberately NOT an
+    /// input here. Fails if the gate only restarts on a key change — the user
+    /// would press the button and wait 29 more ticks for the sweep it exists to
+    /// buy.
     #[test]
     fn a_screen_that_loses_its_calibration_sweeps_without_waiting_out_the_cadence() {
         let mut gate = SweepGate::default();
@@ -2156,9 +2619,9 @@ mod tests {
     /// The cold path's whole point: on the screen POE-234 was opened on the
     /// cheap tick reports NOTHING while the panel is open, so a promotion rule
     /// that read only `CheapDetect::worth_reading` would throw the anchor the
-    /// sweep just paid 5.3 s for straight back into `miss` — no read, no
-    /// calibration persisted, and the next tick's sweep gated behind the
-    /// cadence.
+    /// sweep just paid 5.3 s for straight back into `miss` — no read, no scale
+    /// published to the shared slice, and the next tick's sweep gated behind
+    /// the cadence.
     ///
     /// Fails if `|| swept` is dropped from the promotion.
     #[test]
@@ -2715,56 +3178,575 @@ mod tests {
         assert!(crop_clipped(&img, [0, -50, 40, 40]).is_none(), "no overlap, no crop");
     }
 
-    // ------------------------------------------------ calibration pruning --
+    // ------------------------------- the shared screen scale, read and written --
 
-    /// A capture at a new size reads WITHOUT the remembered scale, and says so
-    /// so the caller can drop it from disk. The anchor would ignore it anyway;
-    /// what this stops is a dead hint sitting in `settings.json` and in the
-    /// slice's published `calibration` forever.
+    use crate::ssot::{ScreenScaleSource, ScreenSlice};
+
+    /// A remembered measurement of one screen, as the slice carries it.
+    fn remembered(
+        source: ScreenScaleSource,
+        width: u32,
+        height: u32,
+        ui_scale: f32,
+        monitor_id: u32,
+    ) -> ScreenSlice {
+        ScreenSlice {
+            width,
+            height,
+            ui_scale,
+            source,
+            measured_at_ms: 1_700_000_000_000,
+            verified_this_session: crate::ssot::verifies_the_screen(source),
+            monitor_id,
+            origin: (0, 0),
+        }
+    }
+
+    /// The one capture size where BOTH units have been measured, so the
+    /// conversion can be checked against something other than itself: a
+    /// 1920x1080 screen measures `ui_scale` 1080/1200 = 0.90 by the shared
+    /// unit's definition, and `anchor::MEASURED_SCALES` says the temple anchors
+    /// that capture at 1.000.
     ///
-    /// Fails if `settings_for_capture` hands the stored settings back
-    /// unpruned — which is exactly what "the loop forgot to prune" looks like,
-    /// since `tick` has no other source of a `TempleSettings`.
+    /// The expected hint is therefore the TABLE's number — not `0.90 * k`,
+    /// which is the arithmetic under test. The tolerance is `k`'s own stated
+    /// accuracy, ~1%, which is one `anchor::SCALE_STEP` at this scale.
+    ///
+    /// Fails if the conversion is inverted (0.90 / 1.1111 = 0.81, a 19% miss) or
+    /// if `k` is edited without a measurement behind it.
     #[test]
-    fn a_capture_at_a_new_size_reads_without_the_stale_hint() {
-        let stored = TempleSettings {
-            calibration: Some(crate::temple::anchor::AnchorCalibration {
-                screen_w: 1374,
-                screen_h: 862,
-                scale: 1.0,
-            }),
-            ..TempleSettings::shipped()
-        };
+    fn a_remembered_scale_for_this_screen_becomes_the_hint_the_table_measured() {
+        let screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, 0.90, 7);
 
-        let (settings, pruned) = settings_for_capture(&stored, (1539, 968));
+        let hint = hint_for_capture(Some(&screen), (1920, 1080), 7).expect("this screen has one");
 
-        assert!(pruned, "the caller must be told to forget it on disk too");
-        assert_eq!(settings.calibration, None, "the read must not carry it");
+        let measured = anchor::table_scale(1920, 1080).expect("1920x1080 is the measured row");
+        assert!(
+            (hint.scale - measured).abs() <= measured * 0.01,
+            "the shared unit's 0.90 on this screen must convert to the {measured} the temple \
+             measured there, not {}",
+            hint.scale,
+        );
+        assert_eq!((hint.screen_w, hint.screen_h), (1920, 1080));
+    }
+
+    /// A scale measured on ANOTHER display is not a hint, even at the same
+    /// resolution (POE-237). Fails if the temple compares dimensions alone,
+    /// which is what let a scale survive onto a second 1920x1080 monitor.
+    #[test]
+    fn a_scale_measured_on_another_display_is_not_a_hint() {
+        let screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, 0.90, 7);
+
+        assert_eq!(hint_for_capture(Some(&screen), (1920, 1080), 9), None);
+    }
+
+    /// `monitor_id == 0` is UNKNOWN, not an identity: a slice persisted before
+    /// POE-237 and a capture whose handle truncated to zero both carry it, and
+    /// comparing it as a real id would refuse every remembered scale on the
+    /// first capture after an upgrade. The dimensions decide instead.
+    ///
+    /// Fails if either side's unknown is read as "a display that differs".
+    #[test]
+    fn an_unknown_display_id_is_no_opinion_and_the_dimensions_decide() {
+        let no_id = remembered(ScreenScaleSource::Remembered, 1920, 1080, 0.90, 0);
+        let known = remembered(ScreenScaleSource::Remembered, 1920, 1080, 0.90, 7);
+
+        assert!(
+            hint_for_capture(Some(&no_id), (1920, 1080), 7).is_some(),
+            "a pre-POE-237 stored scale still hints on a capture of its size",
+        );
+        assert!(
+            hint_for_capture(Some(&known), (1920, 1080), 0).is_some(),
+            "a capture with no display id still gets the hint its size earns",
+        );
         assert_eq!(
-            settings.keys, stored.keys,
-            "only the calibration is pruned",
+            hint_for_capture(Some(&no_id), (2560, 1440), 7),
+            None,
+            "…and an unknown id does not excuse a different resolution",
         );
     }
 
-    /// The same capture size keeps the hint — the speed-up this whole
-    /// mechanism exists for. Fails if the prune fires unconditionally, which
-    /// would make every tick pay for a full scale sweep and rewrite
-    /// `settings.json` once a second.
+    /// A measurement of a different resolution is not a hint. The capture loop
+    /// reaches this only through `temple_debug_capture`'s image-file path —
+    /// `ssot::drop_if_mismatched` empties the slot first on a live tick — and
+    /// the answer has to be the same either way.
     #[test]
-    fn a_capture_at_the_remembered_size_keeps_the_hint() {
-        let stored = TempleSettings {
-            calibration: Some(crate::temple::anchor::AnchorCalibration {
-                screen_w: 1374,
-                screen_h: 862,
-                scale: 1.0,
-            }),
-            ..TempleSettings::shipped()
+    fn a_scale_measured_at_another_resolution_is_not_a_hint() {
+        let screen = remembered(ScreenScaleSource::MercFrame, 2560, 1440, 1.20, 7);
+
+        assert_eq!(hint_for_capture(Some(&screen), (1920, 1080), 7), None);
+    }
+
+    /// The whole Recalibrate path, through the decisions the tick actually
+    /// makes: the slice is empty, so there is no hint AND no remembered plate,
+    /// so the cheap detect cannot verify, so the gate sweeps at once — and the
+    /// anchor that sweep produces lands in the empty slot and is written back.
+    ///
+    /// The counterfactual is half the test and is what fails without
+    /// [`cheap_hint_for`]: with the plate kept, the same capture re-anchors at
+    /// the pre-Recalibrate scale, [`sweep_could_help`] answers false, the gate is
+    /// never asked, and `publish_anchor_scale` puts the forgotten number back —
+    /// with the layout panel on screen, which is when a user presses the button.
+    ///
+    /// Run on the real capture and through `anchor::detect_cheap`, not on a
+    /// hand-called `allow`: the property is a composition of four rules and
+    /// asserting the last one in isolation would pass with the first three
+    /// broken.
+    #[test]
+    fn recalibrate_leaves_the_temple_sweeping_and_republishing() {
+        let img = live_capture();
+        let capture = (img.width(), img.height());
+        let key = SweepKey { monitor_id: 7, width: capture.0, height: capture.1 };
+        // The state the button is pressed in: a panel on screen, anchored, and
+        // the session holding the plate it last saw.
+        let held = anchor::CheapHint {
+            calibration: anchor::AnchorCalibration {
+                screen_w: capture.0,
+                screen_h: capture.1,
+                scale: LIVE_CAPTURE_SCALE,
+            },
+            origin: LIVE_CAPTURE_ORIGIN,
+        };
+        assert!(
+            matches!(
+                anchor::detect_cheap(&img, Some(&held)),
+                anchor::CheapDetect::Anchored(_)
+            ),
+            "the pre-press state has to be a verifying tick, or this proves nothing",
+        );
+
+        // The press: `ssot::geometry_recalibrate` empties the slice. Everything
+        // below is what the next tick then decides.
+        let emptied: Option<&crate::ssot::ScreenSlice> = None;
+        let hint = hint_for_capture(emptied, capture, 7);
+        assert_eq!(hint, None, "an empty slice hints nothing");
+
+        // `true`: the slice HAD answered for this screen — that is what the
+        // press emptied, and what tells the loop this is a decision rather than
+        // a screen nothing has measured yet.
+        let plate = cheap_hint_for(hint, Some(held), true);
+        assert_eq!(plate, None, "…and the remembered plate goes with it");
+
+        let cheap = anchor::detect_cheap(&img, plate.as_ref());
+        assert!(
+            sweep_could_help(&cheap),
+            "with nothing to re-match, the tick cannot verify: got {cheap:?}",
+        );
+
+        let mut gate = SweepGate::default();
+        assert!(!gate.allow(key, true), "a calibrated screen owes a whole cadence");
+        assert!(
+            gate.allow(key, hint.is_some()),
+            "losing the shared scale must sweep on the very next tick",
+        );
+
+        // And what that sweep finds is published and written back.
+        let mut slot = None;
+        let swept =
+            screen_from_anchor(LIVE_CAPTURE_SCALE, hint, capture, 7, (0, 0), 1_700_000_000_002)
+                .expect("with the slice emptied, the capture height corroborates the anchor");
+        let record = crate::ssot::record_screen(&mut slot, swept);
+        assert!(record.accepted && record.changed, "the re-measurement must land and wake the app");
+        assert!(
+            crate::ssot::should_remember_screen(record.changed, swept.source),
+            "…and be written back, or the next launch starts blind again",
+        );
+    }
+
+    /// A merc frame fit landing in the slice CORRECTS a session that anchored on
+    /// a worse seed, on the next tick, by dropping the plate it was re-verifying.
+    ///
+    /// Without this the drifting `MercOcr` cue would lock a session: the temple
+    /// would re-match its own copy of that scale every tick, never fail
+    /// verification, never sweep, and never notice the gold frame's better answer
+    /// arriving beside it. One [`anchor::SCALE_STEP`] is the threshold, so the
+    /// per-frame wobble of a plate that has not moved keeps its hint.
+    #[test]
+    fn a_hint_that_moved_more_than_one_step_drops_the_remembered_plate() {
+        let held = anchor::CheapHint {
+            calibration: anchor::AnchorCalibration {
+                screen_w: 1920,
+                screen_h: 1080,
+                scale: 1.00,
+            },
+            origin: (960, 713),
+        };
+        let at = |scale| anchor::AnchorCalibration { screen_w: 1920, screen_h: 1080, scale };
+
+        assert_eq!(
+            cheap_hint_for(Some(at(1.00)), Some(held), true),
+            Some(held),
+            "a slice that agrees leaves the session where it is",
+        );
+        assert_eq!(
+            cheap_hint_for(Some(at(1.00 + anchor::SCALE_STEP)), Some(held), true),
+            Some(held),
+            "and so does one exactly a step away — that is the resolution of the grid",
+        );
+        assert_eq!(
+            cheap_hint_for(Some(at(1.00 + 2.0 * anchor::SCALE_STEP)), Some(held), true),
+            None,
+            "two steps is the slice describing a screen this plate is not on",
+        );
+    }
+
+    /// An empty slice takes the plate only when it was EMPTIED. A slice that has
+    /// never answered is a screen nothing has measured — including the machine
+    /// whose slider [`screen_from_anchor`] withholds a publish for — and the
+    /// plate is the only thing on it that knows the scale.
+    ///
+    /// Fails if the two empty slices are collapsed into one rule, which costs
+    /// that machine its hinted cheap tick for the whole session: every tick would
+    /// fall to a nominating seed that is wrong there, and the board would be read
+    /// once per sweep cadence instead of once a second.
+    ///
+    /// The third way into the `false` arm — moving the game to a screen nothing
+    /// has measured — has no pure seam and is not asserted here: `answered` is
+    /// reset in `tick`, on `ssot::drop_if_mismatched`'s return value, and both
+    /// sides of that need an `AppHandle`. What IS pinned is the rule the reset
+    /// feeds, which is this function.
+    #[test]
+    fn an_empty_slice_takes_the_plate_only_if_it_had_answered_before() {
+        let held = anchor::CheapHint {
+            calibration: anchor::AnchorCalibration {
+                screen_w: 1920,
+                screen_h: 1080,
+                scale: 1.00,
+            },
+            origin: (960, 713),
         };
 
-        let (settings, pruned) = settings_for_capture(&stored, (1374, 862));
+        assert_eq!(
+            cheap_hint_for(None, Some(held), true),
+            None,
+            "a slice that answered and is now empty was emptied on purpose",
+        );
+        assert_eq!(
+            cheap_hint_for(None, Some(held), false),
+            Some(held),
+            "a slice that never answered has no claim to overrule the plate with",
+        );
+    }
 
-        assert!(!pruned);
-        assert_eq!(settings.calibration, stored.calibration);
+    /// A `ui_scale` that cannot describe a screen produces no hint rather than a
+    /// zero-size template. `settings::ScreenScaleSetting::is_sane` refuses these
+    /// at load and both writers measure rather than invent, so this is the
+    /// conversion being total — one comparison against a template the anchor
+    /// would have to reject downstream.
+    #[test]
+    fn a_scale_that_cannot_describe_a_screen_is_not_a_hint() {
+        for bad in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            let screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, bad, 7);
+
+            assert_eq!(
+                hint_for_capture(Some(&screen), (1920, 1080), 7),
+                None,
+                "ui_scale {bad} is not a screen",
+            );
+        }
+    }
+
+    /// The one full-screen capture the module has: a 1920x1080 laptop frame with
+    /// the layout panel open, which anchors at [`LIVE_CAPTURE_SCALE`] and
+    /// [`LIVE_CAPTURE_ORIGIN`] (laptop dump `temple-debug/1788438639673`,
+    /// 2026-09-03, NCC 0.99999).
+    ///
+    /// The board fixtures are panel CROPS and cannot stand in: every rule under
+    /// test here reads the capture's own size.
+    fn live_capture() -> DynamicImage {
+        let path = format!(
+            "{}/tests/fixtures/temple/screen-live-1920x1080.png",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        image::open(&path).unwrap_or_else(|e| panic!("{path} loads: {e}"))
+    }
+
+    /// See [`live_capture`].
+    const LIVE_CAPTURE_SCALE: f32 = 1.00;
+    /// See [`live_capture`].
+    const LIVE_CAPTURE_ORIGIN: (i32, i32) = (960, 713);
+
+    /// An anchor the capture's own height does not corroborate is WITHHELD from
+    /// the shared slice, and says why.
+    ///
+    /// The measured case (2026-09-03): the sweep's ceiling is soft, so a plate at
+    /// true scale 2.10 against a 2.00 ceiling answers **2.05 at NCC 0.9390** —
+    /// above [`anchor::NCC_FLOOR`], and so a "successful" anchor by every test
+    /// this module applies to itself. Published, it would have become the
+    /// geometry POE-233 places the lab OCR rects from, in a module that never
+    /// looked at a temple, and persisted across restarts.
+    ///
+    /// The 1.000 row is the other arm: an anchor the height DOES corroborate is
+    /// published, so the gate is not simply refusing everything.
+    #[test]
+    fn an_anchor_the_capture_height_does_not_corroborate_is_not_published() {
+        let refused = screen_from_anchor(2.05, None, (1920, 1080), 7, (0, 0), 1_700_000_000_000)
+            .expect_err("2.05 on a 1080p capture is 2.28 of unit ratio against k's 1.11");
+        assert!(
+            refused.contains("not corroborated by the capture"),
+            "the withheld publish has to say why: {refused}",
+        );
+
+        let published = screen_from_anchor(
+            anchor::table_scale(1920, 1080).expect("the measured row"),
+            None,
+            (1920, 1080),
+            7,
+            (0, 0),
+            1_700_000_000_000,
+        )
+        .expect("the measured anchor on the capture it was measured from");
+        assert_eq!(published.source, crate::ssot::ScreenScaleSource::TempleAnchor);
+    }
+
+    /// A STANDING measurement corroborates an anchor the capture height alone
+    /// would refuse — and is the only thing that can.
+    ///
+    /// This is the machine whose in-game UI slider is off default: the scale is
+    /// real, the height check cannot know that, and merc's gold frame can. Once
+    /// the slice holds that reading the temple's anchor agrees with it, the
+    /// publish is offered, and `ssot::accepts` refuses it as a restatement —
+    /// which is where a value that says nothing new is supposed to be turned
+    /// down. Fails if the height check is applied over a standing hint, which
+    /// would stop the offer here and make `screen_from_anchor`'s own claim about
+    /// reaching `accepts` false.
+    ///
+    /// The second arm is the guard that survives: an anchor that disagrees with
+    /// the hint by more than a step did not come from the hint — the table row
+    /// or a sweep answered — and the temple does not overrule a measurement of
+    /// this screen with a board it read.
+    #[test]
+    fn a_standing_measurement_corroborates_an_anchor_the_height_would_refuse() {
+        // 1080p at a raised slider: ui_scale 1.00 where the height implies 0.90.
+        let slider = anchor::AnchorCalibration {
+            screen_w: 1920,
+            screen_h: 1080,
+            scale: anchor::scale_for_ui_scale(1.00),
+        };
+        assert!(
+            unit_ratio_line(slider.scale, 1920, 1080).is_some(),
+            "the case is only interesting if the height check refuses it on its own",
+        );
+
+        let published =
+            screen_from_anchor(slider.scale, Some(slider), (1920, 1080), 7, (0, 0), 1_700_000_000_000)
+                .expect("the standing measurement is what corroborates it");
+        let standing = crate::ssot::ScreenSlice {
+            ui_scale: 1.00,
+            ..remembered(ScreenScaleSource::MercFrame, 1920, 1080, 1.00, 7)
+        };
+        let mut slot = Some(standing);
+        assert!(
+            !crate::ssot::record_screen(&mut slot, published).accepted,
+            "…and `accepts` is where it is turned down, as a restatement",
+        );
+
+        let elsewhere = screen_from_anchor(
+            slider.scale + 2.0 * anchor::SCALE_STEP,
+            Some(slider),
+            (1920, 1080),
+            7,
+            (0, 0),
+            1_700_000_000_000,
+        )
+        .expect_err("an anchor two steps off the hint did not come from it");
+        assert!(
+            elsewhere.contains("not corroborated by the remembered screen scale"),
+            "the two withholdings must be distinguishable in the log: {elsewhere}",
+        );
+    }
+
+    /// What the temple publishes, in the SHARED unit and with the capture's own
+    /// display carried through.
+    ///
+    /// The scale is checked against the same two-sided measurement the hint test
+    /// uses, from the other direction: the temple's measured 1.000 at 1920x1080
+    /// is the shared unit's 1080/1200 = 0.90 there. Fails if the conversion is
+    /// inverted, if the cue does not verify (POE-240 — an anchor is a
+    /// full-resolution template match on this run's pixels), or if the monitor
+    /// is re-derived from anything but the capture that produced the pixels.
+    #[test]
+    fn an_anchor_publishes_the_scale_the_shared_unit_calls_it() {
+        let measured = anchor::table_scale(1920, 1080).expect("1920x1080 is the measured row");
+
+        let next = anchored_screen(measured, (1920, 1080), 7, (-1920, 0), 1_700_000_000_000);
+
+        let definition = 1080.0 / UI_SCALE_REFERENCE_HEIGHT;
+        assert!(
+            (next.ui_scale - definition).abs() <= definition * 0.01,
+            "the temple's {measured} on a 1080p screen is {definition} in the shared unit, \
+             not {}",
+            next.ui_scale,
+        );
+        assert_eq!(next.source, ScreenScaleSource::TempleAnchor);
+        assert!(next.verified_this_session, "an anchor looked at THIS run's pixels");
+        assert_eq!((next.width, next.height), (1920, 1080));
+        assert_eq!(next.monitor_id, 7);
+        assert_eq!(next.origin, (-1920, 0));
+    }
+
+    /// The three answers `ssot::accepts` gives a temple anchor, which is what
+    /// makes publishing on every anchored tick affordable.
+    ///
+    /// Restating a standing merc value is refused: the temple's number reaches
+    /// this unit through a `k` whose own accuracy IS that band, so it cannot
+    /// claim to improve on it, and taking it would flip `source` back and forth
+    /// for as long as both panels are open. A different DISPLAY is taken
+    /// whatever the band says — the standing value describes a screen the game
+    /// has left. An empty slot takes anything.
+    #[test]
+    fn a_temple_anchor_replaces_a_merc_value_only_when_the_band_cannot_explain_it() {
+        let merc = remembered(ScreenScaleSource::MercFrame, 1920, 1080, 0.900, 7);
+        let restated = anchored_screen(
+            anchor::scale_for_ui_scale(0.905),
+            (1920, 1080),
+            7,
+            (0, 0),
+            1_700_000_000_001,
+        );
+        let elsewhere = anchored_screen(
+            anchor::scale_for_ui_scale(0.905),
+            (1920, 1080),
+            9,
+            (-1920, 0),
+            1_700_000_000_001,
+        );
+        let disagreeing = anchored_screen(
+            anchor::scale_for_ui_scale(0.94),
+            (1920, 1080),
+            7,
+            (0, 0),
+            1_700_000_000_001,
+        );
+
+        let mut empty = None;
+        assert!(
+            crate::ssot::record_screen(&mut empty, restated).accepted,
+            "an empty slot takes anything — a machine whose recruit window never opens \
+             has only this",
+        );
+
+        let mut slot = Some(merc);
+        assert!(
+            !crate::ssot::record_screen(&mut slot, restated).accepted,
+            "0.005 apart is inside the drift band: nothing new was said",
+        );
+        assert_eq!(
+            slot.expect("the merc value stands").measured_at_ms,
+            merc.measured_at_ms,
+            "a refusal changes nothing at all, the stamp included",
+        );
+
+        let mut slot = Some(merc);
+        assert!(
+            crate::ssot::record_screen(&mut slot, elsewhere).accepted,
+            "a reading off another display is not the band's business",
+        );
+
+        let mut slot = Some(merc);
+        assert!(
+            crate::ssot::record_screen(&mut slot, disagreeing).accepted,
+            "0.04 apart is not drift — it is a different screen state",
+        );
+    }
+
+    /// The other module's half of the handoff: a temple-sourced value is a seed
+    /// merc treats like any other, and a gold-frame fit replaces it outright.
+    ///
+    /// Merc's own registration (`mercenary::run::next_fitted_scale`) reads its
+    /// session's fit and never this slice, so there is nothing there to
+    /// special-case a source label in. What merc DOES read is what `accepts`
+    /// leaves standing, and this pins that a temple value neither blocks a frame
+    /// fit nor is treated as more than the band-limited reading it is.
+    #[test]
+    fn a_merc_frame_fit_replaces_a_temple_sourced_value_like_any_other() {
+        let temple = anchored_screen(
+            anchor::table_scale(1920, 1080).expect("the measured row"),
+            (1920, 1080),
+            7,
+            (0, 0),
+            1_700_000_000_000,
+        );
+
+        let mut slot = Some(temple);
+        let frame = remembered(ScreenScaleSource::MercFrame, 1920, 1080, 0.8985, 7);
+        assert!(
+            crate::ssot::record_screen(&mut slot, frame).accepted,
+            "the gold frame always replaces — the temple's label buys it no protection",
+        );
+        assert_eq!(slot.expect("stored").source, ScreenScaleSource::MercFrame);
+
+        let mut slot = Some(temple);
+        let ocr = remembered(ScreenScaleSource::MercOcr, 1920, 1080, 0.8985, 7);
+        assert!(
+            !crate::ssot::record_screen(&mut slot, ocr).accepted,
+            "…and an OCR estimate inside the band may not walk the session off it either",
+        );
+    }
+
+    /// A temple anchor is written to disk and comes back as the ordinary
+    /// `remembered` seed — which is how a machine whose recruit window is never
+    /// opened hands merc a starting scale.
+    ///
+    /// Fails if `from_slice` refuses the new source (the value would be lost on
+    /// every restart) or if `to_slice` carries the verification across a launch,
+    /// which would have a file read claiming it looked at the screen.
+    #[test]
+    fn a_temple_anchor_survives_a_restart_as_a_remembered_seed() {
+        let next = anchored_screen(
+            anchor::table_scale(1920, 1080).expect("the measured row"),
+            (1920, 1080),
+            7,
+            (0, 0),
+            1_700_000_000_000,
+        );
+
+        assert!(
+            crate::ssot::should_remember_screen(true, next.source),
+            "a change measured by an anchor is worth a write",
+        );
+        let stored = crate::settings::ScreenScaleSetting::from_slice(&next)
+            .expect("a temple anchor is persistable");
+        let reloaded = stored.to_slice();
+
+        assert_eq!(reloaded.ui_scale, next.ui_scale, "the number must come back bit-equal");
+        assert_eq!(reloaded.monitor_id, 7);
+        assert_eq!(reloaded.source, ScreenScaleSource::Remembered);
+        assert!(!reloaded.verified_this_session, "a load is not a verification");
+    }
+
+    /// The hint line is said once per value, and never for the temple reading
+    /// back a number it published itself.
+    ///
+    /// One line per second for the life of a session is not a log, and a line
+    /// claiming a cross-module handoff that did not happen is worse than none.
+    #[test]
+    fn the_hint_line_is_said_once_per_value_and_never_for_the_temples_own() {
+        let hint = anchor::AnchorCalibration { screen_w: 1920, screen_h: 1080, scale: 1.0 };
+        let mut said = None;
+
+        let first = hint_line(&mut said, Some(hint), Some(ScreenScaleSource::MercFrame));
+        assert!(first.is_some_and(|l| l.contains("1.000")), "the first tick says so");
+        assert_eq!(
+            hint_line(&mut said, Some(hint), Some(ScreenScaleSource::MercFrame)),
+            None,
+            "and every tick after it stays quiet",
+        );
+
+        let mut said = None;
+        assert_eq!(
+            hint_line(&mut said, Some(hint), Some(ScreenScaleSource::TempleAnchor)),
+            None,
+            "reading back its own published scale is not a handoff",
+        );
+        assert_eq!(
+            hint_line(&mut said, Some(hint), Some(ScreenScaleSource::MercFrame)),
+            None,
+            "…and it is remembered, so merc republishing the same hint is not news either",
+        );
+
+        let mut said = None;
+        assert_eq!(hint_line(&mut said, None, None), None, "no hint, nothing to say");
     }
 
     /// A board read between rooms has no diamond to read. Fails if

@@ -33,6 +33,7 @@ import { formatTimeAgo } from '$lib/exchange/view';
 const SOURCE_LABELS: Record<string, string> = {
 	'merc-frame': 'merc support grid',
 	'merc-ocr': 'merc OCR line pitch',
+	'temple-anchor': 'temple Entrance plate',
 	remembered: 'remembered from a previous run'
 };
 

@@ -62,12 +62,14 @@ const POOLS = ['skill', 'transfigured'] as const;
  * `ScreenScaleSource` serialises to, pinned from the Rust side by a serde test.
  *
  * A statement about the CUE, not a rank. Rust reads it to decide whether a new
- * measurement may replace the standing one (`ssot::accepts`, POE-240): an
- * OCR-derived reading that agrees with a frame-measured value is refused rather
- * than ranked below it. Nothing here does that arithmetic — the webview reads
- * the slice Rust settled on.
+ * measurement may replace the standing one (`ssot::accepts`, POE-240): a reading
+ * that agrees with the standing value inside the drift band is refused rather
+ * than ranked below it, whether it came from the merc OCR line pitch or — since
+ * POE-234 — from a temple anchor converted through the two units' coefficient.
+ * Nothing here does that arithmetic — the webview reads the slice Rust settled
+ * on.
  */
-export type ScreenScaleSource = 'merc-frame' | 'merc-ocr' | 'remembered';
+export type ScreenScaleSource = 'merc-frame' | 'merc-ocr' | 'temple-anchor' | 'remembered';
 
 /**
  * The screen the game is drawn on and the game-UI scale measured on it
@@ -77,8 +79,9 @@ export type ScreenScaleSource = 'merc-frame' | 'merc-ocr' | 'remembered';
  * 1920x1200 screen is 1.0 by definition, and 1080p measures 0.90 = 1080/1200 —
  * the game's UI scales with screen HEIGHT. The temple's
  * `AnchorCalibration.scale` is a DIFFERENT unit (relative to its own 1374-px
- * reference width) and the ratio between the two is unmeasured, so the two
- * numbers must not be substituted for each other.
+ * reference width), so the two numbers must not be substituted for each other.
+ * The ratio between them is Rust's `temple::anchor::TEMPLE_SCALE_PER_UI_SCALE`,
+ * good to about a per cent, and Rust is the only side that converts through it.
  *
  * **Reader rule.** A non-merc consumer reads THIS slice, never
  * `ssot.mercenary.capture.scale`. Both are written from the same settled scale
@@ -87,11 +90,11 @@ export type ScreenScaleSource = 'merc-frame' | 'merc-ocr' | 'remembered';
  * on it would lose the screen's scale every time the player shuts the window.
  *
  * Rust-owned and read-only here. Projected onto `ssot.screen` for the Settings
- * "Screen geometry" card (POE-227); the two READERS POE-214 names are still to
- * come (the Lab `CaptureRegion` as fractions of this slice, and the temple once
- * its unit ratio is measured). The lifecycle — what is remembered, what
- * verifies it, and the three events that drop it — is normative in
- * `desktop/src/lib/README.md` → "Screen Geometry (SSOT)".
+ * "Screen geometry" card (POE-227). Both READERS POE-214 named now exist in
+ * Rust: the Lab `CaptureRegion`s (POE-233) and the temple, which reads this as
+ * its anchor hint and writes back what it anchors (POE-234). The lifecycle —
+ * what is remembered, what verifies it, and the three events that drop it — is
+ * normative in `desktop/src/lib/README.md` → "Screen Geometry (SSOT)".
  */
 export interface ScreenSlice {
 	/** Captured screen width in physical px. */

@@ -63,28 +63,62 @@ pub const REFERENCE_SCREEN_WIDTH: u32 = 1374;
 ///
 /// # Exactly what was measured, and what was not
 ///
-/// **Measured** (2026-09-03, laptop debug dump `temple-debug/1788438639673`):
-/// one half of it. A 1920x1080 capture anchors at temple scale **1.000**, NCC
-/// 0.99999.
+/// **Numerator, measured** (2026-09-03, laptop debug dump
+/// `temple-debug/1788438639673`): a 1920x1080 capture anchors at temple scale
+/// **1.000**, NCC 0.99999.
 ///
-/// **Nominal**, not measured: the other half. `k = 1.000 / (1080 / 1200) =
-/// 1.1111` divides by the shared unit's DEFINITION on a 1080 px screen, not by
-/// a `ui_scale` the merc module measured on that machine — no merc reading from
-/// that session was collected. The slice's own writer accepts a reading within
-/// 0.01 of the standing one ("the documented 6-12 px OCR drift over the 1200-px
-/// reference height"), and 0.01 on a 0.90 denominator is **~1% on k**.
+/// **Denominator, NOMINAL**: `1080 / 1200 = 0.90`, the shared unit's own
+/// DEFINITION on a 1080 px screen, giving `k = 1.000 / 0.90 = 1.1111`.
 ///
-/// So this is one anchored temple scale over a nominal denominator, and it is
-/// enough only under the assumption both units are linear in the capture height
-/// — which is what each is documented to be, and which no second measurement
-/// yet contradicts. **The commit that makes the temple a slice writer must
-/// recompute this against the slice's actual reading** once a session has both
-/// numbers on the same machine, and should not treat 1.1111 as better than ±1%.
+/// # Why it is still the nominal denominator after POE-234 WI-2
 ///
-/// Nothing in this module consumes it: the conversion belongs to that commit.
-/// It is defined here because this is where the temple's own unit is defined.
-#[allow(dead_code)] // Consumed by the slice writer, which is not this commit.
+/// WI-2 was to recompute this against a merc-MEASURED `ui_scale` at 1920x1080
+/// if the repo held one. It does: `tests/fixtures/merc-recruit-pc-1080p.png` is
+/// a 1920x1080 capture whose gold-frame fit lands at **0.8985**
+/// (`mercenary::cellfit`'s `GridPoint::beats` and `fit_cell_size` both name that
+/// number; the fixture's own test asserts it to ±0.01 of 0.90). That would give
+/// `k = 1.000 / 0.8985 = 1.1130`, **0.17% above** the nominal value.
+///
+/// It is not adopted, because that 0.17% is inside the measurement's own
+/// quantisation and so is not evidence: the fit searches pitch on a grid, and
+/// the PC fixture's two best grid points are one `P_STEP` apart at pitch 43.729
+/// and 43.879 — 0.8985 and 0.9016, i.e. **0.0031 of `ui_scale`, or 0.34% of
+/// k**, twice the correction it would make. Both numbers are recorded here so
+/// the next reading can be compared against both. Two further caveats stand:
+/// the two halves come from DIFFERENT machines (the temple's from the laptop,
+/// the fit from the PC fixture), which composes only if both ran the game's
+/// default UI-scale slider, and the whole coefficient rests on both units being
+/// linear in the capture height, which is what each is documented to be.
+///
+/// **Good to about 1%, and no better.** `crate::ssot::accepts` tolerates 0.01
+/// of `ui_scale` drift, which on a 0.90 denominator is that same ~1%, and it is
+/// why a `TempleAnchor` reading gets the band-limited acceptance rule rather
+/// than `MercFrame`'s unconditional one. One per cent is one [`SCALE_STEP`] at
+/// scale 1.0, and a hint one step off the truth still anchors well clear of
+/// [`NCC_FLOOR`] (measured on `board-ref-1374.png`: the peak 1.00 scores 0.9936
+/// and its neighbour 0.99 scores 0.9603), which is what makes converting
+/// through it cheaper than searching.
+///
+/// `super::run` converts in both directions through [`scale_for_ui_scale`] and
+/// [`ui_scale_for_scale`], so the arithmetic has one home each way.
 pub const TEMPLE_SCALE_PER_UI_SCALE: f32 = 1.1111;
+
+/// The temple scale a shared `ui_scale` implies — the slice → hint direction of
+/// [`TEMPLE_SCALE_PER_UI_SCALE`] (POE-234 WI-2).
+///
+/// One function rather than a `*` at the call sites so the conversion cannot be
+/// written the wrong way round anywhere: the two units spell the same word, and
+/// dividing where you meant to multiply is a 23% error rather than an obvious
+/// one.
+pub fn scale_for_ui_scale(ui_scale: f32) -> f32 {
+    ui_scale * TEMPLE_SCALE_PER_UI_SCALE
+}
+
+/// The shared `ui_scale` a temple scale implies — the anchor → slice direction.
+/// See [`scale_for_ui_scale`].
+pub fn ui_scale_for_scale(scale: f32) -> f32 {
+    scale / TEMPLE_SCALE_PER_UI_SCALE
+}
 
 /// Fine-score NCC below which an anchor is rejected outright.
 ///
@@ -94,7 +128,11 @@ pub const TEMPLE_SCALE_PER_UI_SCALE: f32 = 1.1111;
 pub const NCC_FLOOR: f32 = 0.88;
 
 /// Scale grid step, both in the seeded band and in the full sweep.
-const SCALE_STEP: f32 = 0.01;
+///
+/// `pub` since POE-234 WI-2: `super::run` measures the agreement between the
+/// shared screen scale and the session's remembered plate against it, because
+/// one grid step is the finest disagreement this module can express at all.
+pub const SCALE_STEP: f32 = 0.01;
 /// Narrowest scale the fallback sweep considers, and its widest before the
 /// seed-relative raise of the ceiling in [`full_sweep`]. The floor is fixed.
 const FULL_SWEEP: (f32, f32) = (0.80, 1.60);
@@ -463,8 +501,8 @@ pub enum CheapDetect {
     /// [`NCC_FLOOR`]. A real anchor, verified at full resolution.
     Anchored(Anchor),
     /// Nothing was verified, but the nominating pass found something
-    /// plate-shaped at the width-derived scale. A *candidate*, never an
-    /// anchor: coarse scores are the ones the whole module refuses to trust
+    /// plate-shaped at [`coarse_candidate`]'s one scale. A *candidate*, never
+    /// an anchor: coarse scores are the ones the whole module refuses to trust
     /// (see the file header), so this only means "worth the full read".
     Candidate { coarse_ncc: f32 },
     /// Neither. The tick can be skipped.
@@ -553,12 +591,15 @@ pub const COARSE_CANDIDATE_FLOOR: f32 = 0.70;
 /// recovery of a panel that moved or rescaled to one tick: without it a stale
 /// origin would hide the panel until the caller's periodic full read.
 ///
-/// **Step 2 is only as good as its one scale**, and on a capture size
-/// [`MEASURED_SCALES`] does not know, that scale is the width seed — which
-/// measured 1.397 against a true 1.000 on a 1920x1080 laptop and scored 0.66,
-/// below the floor, on a panel that was open (2026-09-03). The recovery from
-/// that is not here: it is [`anchor_for_loop`]'s cold-start sweep, which
-/// `super::run` runs on a cadence while nothing is remembered.
+/// **Step 2 is only as good as its one scale.** It was the WIDTH seed until
+/// POE-234, which measured 1.397 against a true 1.000 on a 1920x1080 laptop and
+/// scored 0.66 — below the floor, on a panel that was open (2026-09-03). It is
+/// now [`table_scale`]'s measurement, or [`height_seed_scale`] on a capture size
+/// nobody has measured. What it still cannot see is a non-default in-game
+/// UI-scale slider, and the recovery from that is not here: it is
+/// [`anchor_for_loop`]'s hint — the shared screen scale, which a merc reading
+/// can have measured — and the cold-start sweep behind it, both of which
+/// `super::run` reaches on a cadence.
 pub fn detect_cheap(img: &DynamicImage, hint: Option<&CheapHint>) -> CheapDetect {
     if let Some(h) = hint.filter(|h| h.calibration.applies_to(img)) {
         if let Some(found) = recheck(img, h) {
@@ -610,21 +651,28 @@ fn recheck(img: &DynamicImage, hint: &CheapHint) -> Option<Anchor> {
 /// The best ÷4 score at ONE nominating scale, over the whole capture.
 ///
 /// The scale is [`table_scale`]'s when this capture size has been measured, and
-/// the width seed otherwise. That order is the whole of the fix here: at
-/// 1920x1080 the width seed is 1.397 against a true 1.000 and this pass scored
-/// 0.66 — under [`COARSE_CANDIDATE_FLOOR`], so the loop never promoted and
-/// never found a panel that was on screen the whole time (measured 2026-09-03).
+/// [`height_seed_scale`]'s otherwise. That order is the whole of the fix here:
+/// at 1920x1080 the retired WIDTH seed was 1.397 against a true 1.000 and this
+/// pass scored 0.66 — under [`COARSE_CANDIDATE_FLOOR`], so the loop never
+/// promoted and never found a panel that was on screen the whole time
+/// (measured 2026-09-03).
 ///
-/// The width seed stays as the fallback because an unmeasured capture size has
-/// nothing better, and the ÷4 pass's scale-insensitivity means it is right
-/// often enough to be worth one correlation. When it is wrong, the capture
-/// loop's cold-start sweep ([`anchor_for_loop`]) is what recovers — not this.
+/// A height seed and not the width one, and not the shared slice either: the
+/// slice IS what `super::run` hands to [`anchor_for_loop`] as the hint, and it
+/// is the hint's job to convert. This pass runs on ticks that have no hint or
+/// whose hint just missed, so it needs the answer that costs nothing to know —
+/// and at the game's default UI scale [`height_seed_scale`] IS that answer,
+/// being `ui_scale * k` at the nominal unit. A player who moved the in-game
+/// slider is the case it misses, and the recovery for that is the capture
+/// loop's cold-start sweep ([`anchor_for_loop`]) and the hint step ahead of it
+/// — not this.
 ///
 /// `None` when that scale produces a template the coarse level cannot hold.
 fn coarse_candidate(img: &DynamicImage) -> Option<f32> {
     let level = coarse_level(img);
     let tmpl = template();
-    let scale = table_scale(img.width(), img.height()).unwrap_or_else(|| seed_scale(img.width()));
+    let scale =
+        table_scale(img.width(), img.height()).unwrap_or_else(|| height_seed_scale(img.height()));
     let size = (
         (tmpl.width() as f32 * scale / COARSE_DIVISOR as f32) as u32,
         (tmpl.height() as f32 * scale / COARSE_DIVISOR as f32) as u32,
@@ -647,11 +695,31 @@ fn coarse_candidate(img: &DynamicImage) -> Option<f32> {
 
 /// The scale the capture's own width implies.
 ///
-/// Not a seed any more — see [`REFERENCE_SCREEN_WIDTH`]. Two callers remain:
-/// [`full_sweep`]'s ceiling, and [`coarse_candidate`]'s nominating scale on a
-/// capture size nobody has measured.
+/// Not a seed any more — see [`REFERENCE_SCREEN_WIDTH`]. ONE caller remains:
+/// [`full_sweep`]'s ceiling, where it is a coverage rule ("sweep past anything
+/// a capture this wide could plausibly hold") and not a claim about where the
+/// scale is. It is out of every path that DECIDES a scale, which is what
+/// POE-234 measured it wrong at.
 fn seed_scale(width: u32) -> f32 {
     width as f32 / REFERENCE_SCREEN_WIDTH as f32
+}
+
+/// The scale the capture's own HEIGHT implies at the game's default UI scale.
+///
+/// `height / 1080`, and the divisor is [`SWEEP_REFERENCE_HEIGHT`] — the one
+/// full-screen capture ever measured, 1920x1080 anchoring at temple scale
+/// 1.000. So this reads 1.00 there by construction, which is the measurement,
+/// and not the 1.397 the retired width seed answered.
+///
+/// It is the same number the shared slice would give: `ui_scale * k` is
+/// `(height / 1200) * (1200 / 1080)` = `height / 1080` at the nominal unit
+/// [`TEMPLE_SCALE_PER_UI_SCALE`]'s denominator is taken from. That is why this
+/// is the right fallback for a screen nothing has measured — it is what the
+/// slice would say if the slice had an entry — and equally why it is only a
+/// FALLBACK: a real measurement of a non-default UI-scale slider disagrees with
+/// it, and that measurement reaches the anchor as the hint instead.
+fn height_seed_scale(height: u32) -> f32 {
+    height as f32 / SWEEP_REFERENCE_HEIGHT
 }
 
 /// The exhaustive sweep for a capture this wide, the last resort behind
@@ -1147,6 +1215,39 @@ mod tests {
         assert_eq!(fingerprint(t), 0xa569_90da_6194_0533);
     }
 
+    /// `k` is the measured temple scale over the NOMINAL shared unit.
+    ///
+    /// Fails if the constant is edited without its measurements behind it —
+    /// including to the `1.000 / 0.8985 = 1.1130` its own doc records from the
+    /// merc PC fixture and declines to adopt, because that correction is half of
+    /// the fit's own pitch-grid quantisation.
+    #[test]
+    fn the_unit_ratio_is_the_measured_scale_over_the_nominal_unit() {
+        let measured = table_scale(1920, 1080).expect("1920x1080 is the measured row");
+        let nominal_1080p = 1080.0 / 1200.0;
+
+        assert!(
+            (TEMPLE_SCALE_PER_UI_SCALE - measured / nominal_1080p).abs() < 5e-4,
+            "k is {TEMPLE_SCALE_PER_UI_SCALE}, and its doc says it is {measured} over \
+             {nominal_1080p}",
+        );
+    }
+
+    /// The two conversions are inverses, which is what every caller depends on:
+    /// a scale published to the shared slice and read back as a hint has to be
+    /// the scale that was anchored, or the temple would walk its own screen off
+    /// by `k` twice per round trip.
+    #[test]
+    fn a_scale_converted_to_the_shared_unit_and_back_is_itself() {
+        for scale in [0.80, 1.00, 1.13, 2.00] {
+            let round_trip = scale_for_ui_scale(ui_scale_for_scale(scale));
+            assert!(
+                (round_trip - scale).abs() < 1e-5,
+                "a scale published and read back must be itself: {scale} came back {round_trip}",
+            );
+        }
+    }
+
     /// The measured 1920x1080 row comes back, and its band is the measurement
     /// plus and minus exactly one [`SCALE_STEP`].
     ///
@@ -1525,38 +1626,76 @@ mod tests {
     }
 
     /// With no hint the tick nominates rather than anchors: one *unwindowed*
-    /// ÷4 correlation at the width-derived scale, above
-    /// [`COARSE_CANDIDATE_FLOOR`], on both boards.
+    /// ÷4 correlation at [`coarse_candidate`]'s one scale, above
+    /// [`COARSE_CANDIDATE_FLOOR`].
+    ///
+    /// Run on CAPTURES and no longer on the board crops (POE-234 WI-2). The
+    /// nominating scale is a property of the capture's own size, and a crop of
+    /// a panel is not a capture: `board-ref-1374.png` is 542 px tall, which
+    /// says nothing about the screen it was cut from. The crops passed this
+    /// against the retired WIDTH seed only because [`REFERENCE_SCREEN_WIDTH`]
+    /// was measured off one of them.
+    ///
+    /// Both branches of the scale choice are covered: 1920x1080 has a
+    /// [`MEASURED_SCALES`] row, and the resized capture does not, so it falls
+    /// to [`height_seed_scale`].
     ///
     /// One correlation, not the seeded band's fourteen: fails if the unhinted
     /// path is widened back into a band, and fails if it starts verifying at
     /// full resolution (which would register a windowed call).
     #[test]
-    fn an_unhinted_cheap_detect_nominates_both_boards_in_one_coarse_pass() {
-        for board in BOARDS {
-            let img = board.load();
+    fn an_unhinted_cheap_detect_nominates_a_capture_in_one_coarse_pass() {
+        for (what, img) in unhinted_captures() {
             let (found, tally) = search_tally(|| detect_cheap(&img, None));
 
             let CheapDetect::Candidate { coarse_ncc } = found else {
-                panic!("{}: expected a candidate, got {found:?}", board.file)
+                panic!("{what}: expected a candidate, got {found:?}")
             };
-            // The measured margin, not just the ordering: pinning this against
-            // `COARSE_CANDIDATE_FLOOR` alone would let the pass degrade all the
-            // way to 0.70 — into the band where a busy game screen lives —
-            // while still passing. Measured 0.939 and 0.938.
+            // The measured margin, not just the ordering: the two captures
+            // nominate at 0.9688 and 0.9495 (release, 2026-09-03), so pinning
+            // this against `COARSE_CANDIDATE_FLOOR` alone would let the pass
+            // degrade all the way to 0.70 — into the band where a busy game
+            // screen lives — while still passing.
             assert!(
                 coarse_ncc >= 0.90,
-                "{}: nominated at {coarse_ncc}; the measured boards score 0.938+, \
-                 and a pass that has drifted to the floor is not a detector",
-                board.file
+                "{what}: nominated at {coarse_ncc}; the measured captures score \
+                 0.9495+, and a pass that has drifted to the floor is not a \
+                 detector",
             );
-            assert_eq!(tally.calls, 1, "{}: one correlation", board.file);
+            assert_eq!(tally.calls, 1, "{what}: one correlation");
             assert_eq!(
                 tally.windowed_high_water, 0,
-                "{}: the unhinted path must not verify at full resolution",
-                board.file
+                "{what}: the unhinted path must not verify at full resolution",
             );
         }
+    }
+
+    /// The seed the unhinted pass falls back on is the capture's HEIGHT over
+    /// the one height ever measured — not its width.
+    ///
+    /// Derived from the two units rather than from the function: 1920x1080
+    /// anchors at [`MEASURED_SCALES`]' 1.000, and the shared slice's own
+    /// definition puts a 1200 px screen at `ui_scale` 1.0, whose temple scale is
+    /// [`TEMPLE_SCALE_PER_UI_SCALE`] by definition. A height-tied seed hits both
+    /// on the nose; the retired width seed answers 1.397 at the first and is
+    /// what POE-234 was filed for.
+    #[test]
+    fn the_nominating_seed_follows_the_capture_height_and_not_its_width() {
+        let measured = table_scale(1920, 1080).expect("1920x1080 is the measured row");
+        assert!(
+            (height_seed_scale(1080) - measured).abs() < 1e-6,
+            "the measured capture's own height must seed its measured scale, not {}",
+            height_seed_scale(1080),
+        );
+        assert!(
+            (height_seed_scale(1200) - scale_for_ui_scale(1.0)).abs() < 1e-4,
+            "at the shared unit's reference height the seed IS k, not {}",
+            height_seed_scale(1200),
+        );
+        assert!(
+            (seed_scale(1920) - 1.397).abs() < 0.001,
+            "the width seed still says 1.397 there — it is out of this path, not fixed",
+        );
     }
 
     /// A screen with no plate on it is `Nothing`, hint or no hint — otherwise
@@ -1564,25 +1703,31 @@ mod tests {
     /// nothing.
     #[test]
     fn a_capture_with_no_plate_is_nothing_with_or_without_a_hint() {
-        for board in BOARDS {
-            let img = board.load();
+        for (what, img) in unhinted_captures() {
             let empty = DynamicImage::ImageRgb8(noise(img.width(), img.height()));
+            let hint = CheapHint {
+                calibration: AnchorCalibration {
+                    screen_w: img.width(),
+                    screen_h: img.height(),
+                    scale: height_seed_scale(img.height()),
+                },
+                origin: (img.width() as i32 / 2, img.height() as i32 / 2),
+            };
 
-            for hint in [None, Some(board.hint(&img))] {
+            for hint in [None, Some(hint)] {
                 let found = detect_cheap(&empty, hint.as_ref());
                 let CheapDetect::Nothing { best_ncc } = found else {
-                    panic!("{}: expected nothing, got {found:?}", board.file)
+                    panic!("{what}: expected nothing, got {found:?}")
                 };
-                // Measured 0.204 and 0.203. Pinned as a margin for the same
-                // reason the boards are: a pass that crept up to 0.69 on an
-                // empty screen still clears this assertion against the floor
-                // alone, and has no headroom left for a real game background.
+                // Pinned as a margin and not against the floor alone: a pass
+                // that crept up to 0.69 on an empty screen still clears the
+                // floor and has no headroom left for a real game background.
                 assert!(
                     best_ncc <= 0.35,
-                    "{}: scored {best_ncc} on an empty screen; the measured \
-                     noise scores 0.21, and {COARSE_CANDIDATE_FLOOR} is the \
-                     floor this has to stay clear of",
-                    board.file
+                    "{what}: scored {best_ncc} on an empty screen; the measured \
+                     noise of these two sizes scores 0.2187 and 0.2488, and \
+                     {COARSE_CANDIDATE_FLOOR} is the floor this has to stay \
+                     clear of",
                 );
             }
         }
@@ -1594,21 +1739,28 @@ mod tests {
     /// This is what bounds the recovery of a moved or rescaled panel to one
     /// tick. Fails if the hinted path returns early on its own miss, which
     /// would hide the panel until the caller's periodic full read.
+    ///
+    /// On the CAPTURE, for [`an_unhinted_cheap_detect_nominates_a_capture_in_one_coarse_pass`]'s
+    /// reason: the fall-through it exercises is the nominating pass, whose scale
+    /// only means anything on a whole screen.
     #[test]
     fn a_hint_pointing_at_the_wrong_place_still_nominates_the_panel_it_moved_from() {
-        for board in BOARDS {
-            let img = board.load();
-            let mut stale = board.hint(&img);
-            stale.origin = (board.origin.0 - 200, board.origin.1 - 120);
+        let img = full_screen_1080p();
+        let stale = CheapHint {
+            calibration: AnchorCalibration {
+                screen_w: img.width(),
+                screen_h: img.height(),
+                scale: LIVE_SCREEN_SCALE,
+            },
+            origin: (LIVE_SCREEN_ORIGIN.0 - 200, LIVE_SCREEN_ORIGIN.1 - 120),
+        };
 
-            let found = detect_cheap(&img, Some(&stale));
+        let found = detect_cheap(&img, Some(&stale));
 
-            assert!(
-                matches!(found, CheapDetect::Candidate { .. }),
-                "{}: a stale origin must fall through to the nominating pass, got {found:?}",
-                board.file
-            );
-        }
+        assert!(
+            matches!(found, CheapDetect::Candidate { .. }),
+            "a stale origin must fall through to the nominating pass, got {found:?}",
+        );
     }
 
     /// The point of the whole tick, as a ratio against the path it replaces:
@@ -1669,14 +1821,41 @@ mod tests {
     /// anchor without the exhaustive sweep.
     ///
     /// The board fixtures are panel CROPS, so they cannot exercise a path whose
-    /// input is the capture's own size. This one is the frame the laptop dump
-    /// carried, at its own resolution.
+    /// input is the capture's own size — the cold-start sweep's range, and
+    /// [`coarse_candidate`]'s nominating scale. This one is the frame the laptop
+    /// dump carried, at its own resolution.
     fn full_screen_1080p() -> DynamicImage {
         let path = format!(
             "{}/tests/fixtures/temple/screen-live-1920x1080.png",
             env!("CARGO_MANIFEST_DIR")
         );
         image::open(&path).unwrap_or_else(|e| panic!("{path} loads: {e}"))
+    }
+
+    /// What [`full_screen_1080p`] anchors at: laptop dump
+    /// `temple-debug/1788438639673`, 2026-09-03, scale 1.000 at NCC 0.99999,
+    /// Entrance plate centre (960, 713). The [`MEASURED_SCALES`] row is this
+    /// same measurement.
+    const LIVE_SCREEN_SCALE: f32 = 1.00;
+    /// See [`LIVE_SCREEN_SCALE`].
+    const LIVE_SCREEN_ORIGIN: (i32, i32) = (960, 713);
+
+    /// The captures the unhinted nominating pass is exercised on: the measured
+    /// one, and the same screen resampled to a size [`MEASURED_SCALES`] has no
+    /// row for.
+    ///
+    /// Resampling is what makes the second one a fair test rather than a
+    /// synthetic one: the plate art shrinks with the frame, so the resized
+    /// capture's true temple scale is `900/1080` of the original's measured
+    /// 1.000 — which is exactly what [`height_seed_scale`] answers for it. A
+    /// seed tied to the WIDTH would answer 1.164 there and nominate nothing.
+    fn unhinted_captures() -> Vec<(&'static str, DynamicImage)> {
+        let measured = full_screen_1080p();
+        let resized = measured.resize_exact(1600, 900, FilterType::Triangle);
+        vec![
+            ("1920x1080 (a measured row)", measured),
+            ("1600x900 (no measured row — the height seed)", resized),
+        ]
     }
 
     /// The measurement the whole batch rests on: this capture anchors at scale
@@ -1698,13 +1877,14 @@ mod tests {
             .expect("the sweep anchors the capture");
 
         assert!(
-            (found.scale - 1.00).abs() <= SCALE_STEP,
-            "recovered scale {}, measured 1.000",
+            (found.scale - LIVE_SCREEN_SCALE).abs() <= SCALE_STEP,
+            "recovered scale {}, measured {LIVE_SCREEN_SCALE}",
             found.scale
         );
         assert!(
-            (found.origin.0 - 960).abs() <= 2 && (found.origin.1 - 713).abs() <= 2,
-            "recovered origin {:?}, measured (960, 713)",
+            (found.origin.0 - LIVE_SCREEN_ORIGIN.0).abs() <= 2
+                && (found.origin.1 - LIVE_SCREEN_ORIGIN.1).abs() <= 2,
+            "recovered origin {:?}, measured {LIVE_SCREEN_ORIGIN:?}",
             found.origin
         );
         assert!(

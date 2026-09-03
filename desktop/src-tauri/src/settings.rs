@@ -113,13 +113,6 @@ pub struct Settings {
     /// absent-field case; `modules_or_default` covers a present-but-wrong one.
     #[serde(default, deserialize_with = "modules_or_default")]
     pub modules: std::collections::HashMap<String, bool>,
-    /// The temple reader's remembered anchor scale (POE-171 D0), keyed on the
-    /// capture dimensions it was measured at. Self-invalidating: the reader
-    /// ignores it at any other capture size and re-verifies it against the NCC
-    /// floor every time, so a stale one costs one extra match and never a wrong
-    /// board. `None` on a fresh install and after a resolution change.
-    #[serde(default)]
-    pub temple_calibration: Option<crate::temple::anchor::AnchorCalibration>,
     /// The four tunable fields of the temple strategy profile. Absent means the
     /// Locus/Doryani Rush's own values — see `TempleProfileSettings::default`.
     ///
@@ -174,11 +167,12 @@ pub struct Settings {
     /// (POE-214 D2), remembered across restarts. `None` on a fresh install and
     /// until the first recruit window is fitted.
     ///
-    /// Loaded back as [`crate::ssot::ScreenScaleSource::Remembered`], which is
-    /// the label a consumer weighs "not measured this run" by. It is NOT
-    /// self-invalidating the way `temple_calibration` is — nothing re-verifies
-    /// it — so a value carried over from another monitor stays readable until
-    /// the merc module measures this one; see `apply_to_state`.
+    /// Written by whichever module measured the screen — the merc gold frame,
+    /// or a temple Entrance-plate anchor since POE-234 WI-2, which also retired
+    /// the `temple_calibration` field this used to sit beside. It is the ONE
+    /// remembered geometry now: nothing re-verifies it at load, so a value
+    /// carried over from another monitor stays readable until some module
+    /// captures this one; see `apply_to_state`.
     #[serde(default)]
     pub screen_scale: Option<ScreenScaleSetting>,
     /// Where the user put each overlay WIDGET (POE-225), keyed
@@ -342,6 +336,13 @@ impl ScreenScaleSetting {
     ///
     /// - `MercFrame` — stored. The gold frame is the cue POE-214 exists to
     ///   measure.
+    /// - `TempleAnchor` — stored, for the same reason (POE-234 WI-2): it is a
+    ///   full-resolution template match against `anchor::NCC_FLOOR`, not an
+    ///   estimate. The `k` it converts through is good to about a per cent, and
+    ///   that per cent is the reason `ssot::accepts` will not let it displace a
+    ///   standing merc reading — but it is not a reason to forget the ONLY
+    ///   measurement a machine whose recruit window never opens will ever have.
+    ///   It is read back as `Remembered`, like every other stored value.
     /// - `MercOcr` — refused. It is the line-pitch estimate that sits 6-12 px
     ///   off the frame, and next session would read it back under the same
     ///   `remembered` label a real measurement gets, with no way to tell them
@@ -359,6 +360,7 @@ impl ScreenScaleSetting {
         match slice.source {
             crate::ssot::ScreenScaleSource::MercOcr => None,
             crate::ssot::ScreenScaleSource::MercFrame
+            | crate::ssot::ScreenScaleSource::TempleAnchor
             | crate::ssot::ScreenScaleSource::Remembered => Some(Self {
                 width: slice.width,
                 height: slice.height,
@@ -395,10 +397,11 @@ impl ScreenScaleSetting {
     /// Whether these numbers can describe a screen at all.
     ///
     /// Every consumer of the slice multiplies a rect by `ui_scale`, so a
-    /// hand-edited `0` would not degrade an answer, it would erase one — and
-    /// unlike `temple_calibration`, which its reader re-verifies against the
-    /// NCC floor on every board, nothing downstream re-checks this value.
-    /// Refused at load instead; see `apply_to_state`.
+    /// hand-edited `0` would not degrade an answer, it would erase one, and
+    /// nothing downstream re-checks this value: the temple re-verifies the hint
+    /// it DERIVES from this against `anchor::NCC_FLOOR` on every board, but a
+    /// zero never becomes a hint at all. Refused at load instead; see
+    /// `apply_to_state`.
     ///
     /// `> 0.0` already refuses `NaN` (every comparison with it is false), but
     /// NOT an infinity: serde deserialises an `f32` through `f64` and narrows
@@ -539,7 +542,6 @@ impl Default for Settings {
             show_low_confidence: true,
             ui_prefs: std::collections::HashMap::new(),
             modules: std::collections::HashMap::new(),
-            temple_calibration: None,
             temple_profile: Default::default(),
             temple_config: Default::default(),
             temple_keys: default_temple_keys(),
@@ -718,7 +720,6 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         // One AppState Mutex, four settings fields: the aggregate is what the
         // loop and the commands share, but splitting it on disk keeps a
         // hand-edited file readable and lets one bad field default on its own.
-        temple_calibration: temple.calibration,
         temple_profile: temple.profile,
         temple_config: temple.config,
         temple_keys: temple.keys,
@@ -730,7 +731,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         ),
         merc_trade_auto: *state.merc_trade_auto.lock().unwrap_or_else(|e| e.into_inner()),
         merc_tier_floor: *state.merc_tier_floor.lock().unwrap_or_else(|e| e.into_inner()),
-        // Read here — beside the temple's calibration and for the same reason:
+        // Read here, like every other owner-held field and for the same reason:
         // `persist_settings` rewrites the WHOLE file from this function and
         // `Settings` has no `skip_serializing_if`, so a field not read here is
         // nulled by the next save from any unrelated command. What is
@@ -1003,11 +1004,6 @@ mod tests {
     fn temple_settings_round_trip_through_state() {
         let state = test_app_state();
         let chosen = crate::temple::slice::TempleSettings {
-            calibration: Some(crate::temple::anchor::AnchorCalibration {
-                screen_w: 1539,
-                screen_h: 865,
-                scale: 1.13,
-            }),
             profile: crate::temple::slice::TempleProfileSettings {
                 apex_score: 6.5,
                 path_cost: 0.75,
@@ -1024,7 +1020,6 @@ mod tests {
 
         let saved = from_state(&state);
         assert_eq!(saved.temple_keys, 2);
-        assert_eq!(saved.temple_calibration, chosen.calibration);
 
         // Next launch: a fresh state loads that file.
         let reloaded = test_app_state();
@@ -1580,40 +1575,6 @@ mod tests {
         assert_eq!((comparator.x, comparator.y), (1500, 200));
     }
 
-    /// The third half, and the reason Recalibrate is ONE write (POE-227): the
-    /// temple's calibration is cleared in its OWNER
-    /// (`temple::run::clear_calibration`) and reaches the file through
-    /// `from_state`'s projection, so the save-time composition must not carry
-    /// the stored one forward the way it carries the window rows.
-    ///
-    /// Fails if `temple_calibration` is ever added to `persist_overlay_settings`
-    /// — which would leave Recalibrate clearing the owner while settings.json
-    /// kept the hint, and the next start loading it straight back.
-    #[test]
-    fn forget_screen_scale_does_not_carry_a_cleared_temple_calibration_back() {
-        let state = test_app_state();
-        *state.screen.lock().unwrap() = None;
-        // What `clear_calibration` leaves behind: the owner's hint is gone, the
-        // rest of the temple's settings are untouched.
-        state.temple_settings.lock().unwrap().calibration = None;
-        let existing = Settings {
-            temple_calibration: Some(crate::temple::anchor::AnchorCalibration {
-                screen_w: 2560,
-                screen_h: 1440,
-                scale: 0.99,
-            }),
-            ..Settings::default()
-        };
-        let mut about_to_save = from_state(&state);
-
-        forget_screen_scale(&existing, &mut about_to_save);
-
-        assert_eq!(
-            about_to_save.temple_calibration, None,
-            "the owner's clear is what reaches the file — one write, not two",
-        );
-    }
-
     /// A placement written by `set_widget_geometry` has to be there on the next
     /// start, so the whole chain is exercised: owner → [`from_state`] → the
     /// JSON text that actually reaches the disk → [`apply_to_state`] → owner.
@@ -1727,8 +1688,8 @@ mod tests {
     }
 
     /// The widget map is OWNED by an `AppState` mutex, so the save-time
-    /// composition must let [`from_state`]'s copy stand — exactly like
-    /// `temple_calibration` above and unlike the window and overlay rows.
+    /// composition must let [`from_state`]'s copy stand — unlike the window and
+    /// overlay rows, which no `AppState` mutex holds.
     ///
     /// Fails if `widgets` is ever added to [`persist_overlay_settings`], which
     /// would carry the file's stale placement back over the one
@@ -2485,7 +2446,6 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
     // `rejected`, because the file and the running value now disagree.
     *state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()) =
         crate::temple::slice::TempleSettings {
-            calibration: settings.temple_calibration,
             profile: match settings.temple_profile.validate() {
                 Ok(()) => settings.temple_profile.clone(),
                 Err(why) => {

@@ -64,6 +64,17 @@ describe('screenGeometryView', () => {
 		expect(view.source).toBe('merc OCR line pitch');
 	});
 
+	it('names the temple as a cue of its own, not as a merc one', () => {
+		// The temple became a writer of this slice in POE-234, and the card is
+		// where a user sees WHICH module answered. A source Rust emits that this
+		// table does not know falls through to the verbatim branch below, which
+		// would print the wire string — legible, but it would stop saying what
+		// looked at the screen.
+		const view = screenGeometryView({ ...referenceScreen, source: 'temple-anchor' }, NOW);
+
+		expect(view.source).toBe('temple Entrance plate');
+	});
+
 	it('shows an unrecognised source verbatim rather than inventing a name for it', () => {
 		// A source this table does not know is a Rust-side addition. Mapping it
 		// to a friendly guess would hide exactly the fact worth seeing.

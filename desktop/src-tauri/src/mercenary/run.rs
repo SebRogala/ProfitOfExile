@@ -3320,7 +3320,7 @@ fn detect_tick(
     // Still no lock held here: `publish_screen` drops its guard before it
     // returns, and `persist_settings` re-takes the owner mutexes through
     // `settings::from_state` — the same after-the-drop shape as
-    // `temple::run::remember_calibration`.
+    // `temple::run::publish_anchor_scale`.
     if crate::ssot::should_remember_screen(screen_record.changed, published.source) {
         crate::persist_settings(app);
     }

@@ -82,6 +82,18 @@ pub enum ScreenScaleSource {
     /// a session whose fit never landed is running on, and a consumer that
     /// cares how exact its rects are has to be able to see that.
     MercOcr,
+    /// Converted from a temple Entrance-plate anchor that cleared
+    /// `temple::anchor::NCC_FLOOR` (POE-234 WI-2), through
+    /// `temple::anchor::TEMPLE_SCALE_PER_UI_SCALE`.
+    ///
+    /// A cue that VERIFIES ([`verifies_the_screen`]) — it is a full-resolution
+    /// template match on this run's pixels, not a file read — but one whose
+    /// number reaches THIS unit through `k`, a coefficient documented as good
+    /// to about a per cent. That is why [`accepts`] gives it the same
+    /// band-limited rule as [`Self::MercOcr`] rather than `MercFrame`'s
+    /// unconditional one: the two carry different uncertainties of the same
+    /// size, and neither may walk a session off the other inside it.
+    TempleAnchor,
     /// Loaded from settings at startup, not measured this run (WI-B2).
     Remembered,
 }
@@ -95,15 +107,13 @@ pub enum ScreenScaleSource {
 /// 0.90 = 1080/1200 — the game's UI scales with screen HEIGHT. The temple's
 /// `AnchorCalibration::scale` is a DIFFERENT unit (relative to its own
 /// `REFERENCE_SCREEN_WIDTH`, 1374). The ratio between the two is
-/// `temple::anchor::TEMPLE_SCALE_PER_UI_SCALE`, 1.1111 (POE-234): a temple
-/// scale of 1.000 measured on a 1920x1080 capture, over `1080 / 1200` — this
-/// unit's DEFINITION on that screen, NOT a `ui_scale` the merc module read
-/// there. Since [`accepts`] tolerates 0.01 of drift on a 0.90 denominator, that
-/// coefficient is good to about 1%, and the commit that makes the temple a
-/// reader or writer of this slice must recompute it against a real reading.
-/// Nothing consumes it yet. Said here rather than implied, because the two
-/// fields spell the same word and substituting one for the other is an 11%
-/// error on a 1080p screen.
+/// `temple::anchor::TEMPLE_SCALE_PER_UI_SCALE`, 1.1111 (POE-234), which is good
+/// to about 1% — its own doc states which half of it is measured and which is
+/// nominal. The temple converts through it in BOTH directions (POE-234 WI-2):
+/// it derives its anchor hint from this slice, and publishes what it anchors
+/// back onto it under [`ScreenScaleSource::TempleAnchor`]. Said here rather
+/// than implied, because the two fields spell the same word and substituting
+/// one for the other is an 11% error on a 1080p screen.
 ///
 /// **Reader rule.** A non-merc consumer reads THIS slice, never
 /// `mercenary.capture.scale`. Both are written from the same settled
@@ -112,13 +122,21 @@ pub enum ScreenScaleSource {
 /// closes, so a reader keyed on it would lose the screen's scale every time the
 /// player shuts the window. This slice outlives the capture.
 ///
-/// **Writer.** The merc detect tick is the SOLE writer, through
-/// [`publish_screen`]; the startup load of a persisted value comes in under
-/// [`ScreenScaleSource::Remembered`] (WI-B2). There is still no rank between
-/// writers because there is only one — but not every measurement it offers is
-/// taken: [`accepts`] refuses a `MercOcr` reading that only re-states the
-/// `MercFrame` value already standing (POE-240), so a session whose fit landed
-/// once is not walked off it by the drifting cue for the rest of its life.
+/// **Writers.** Two detect ticks write here through [`publish_screen`] — the
+/// merc one and, since POE-234 WI-2, the temple's — and the startup load of a
+/// persisted value comes in under [`ScreenScaleSource::Remembered`] (WI-B2).
+/// The temple gates its own OFFER before this rule ever sees it
+/// (`temple::run::screen_from_anchor`): an anchor has to be corroborated by the
+/// standing measurement, or by the capture's height when there is none, so what
+/// arrives here is a scale within a per cent of something already known. That is
+/// a writer declining to teach, not a second acceptance rule — [`accepts`] below
+/// is still the only thing that decides what stands.
+/// There is still no rank between them: not every measurement either offers is
+/// taken, and [`accepts`] is the whole of that rule. It refuses a `MercOcr` or
+/// `TempleAnchor` reading that only re-states the value already standing
+/// (POE-240), so a session whose merc fit landed once is not walked off it by
+/// the drifting cue, nor by a temple number that reached this unit through a
+/// coefficient of the same accuracy as the gap between them.
 ///
 /// **No `PartialEq`, deliberately.** Whole-struct equality would compare
 /// `measured_at_ms` and `ui_scale` exactly — the two fields the publish gate
@@ -482,29 +500,51 @@ fn different_monitor(a: u32, b: u32) -> bool {
     a != 0 && b != 0 && a != b
 }
 
-/// The drift [`ScreenScaleSource::MercOcr`] is documented to carry, in
-/// `ui_scale` units.
+/// How far from the standing value a reading may sit and still be explained by
+/// the way it was taken, in `ui_scale` units. The band [`accepts`] holds
+/// [`ScreenScaleSource::MercOcr`] and [`ScreenScaleSource::TempleAnchor`] to.
 ///
-/// POE-214 measured the line-pitch estimate at 6-12 px off the gold frame. The
-/// unit's denominator is the reference HEIGHT, 1200 px, so the wide end of that
-/// range is `12 / 1200 = 0.01` of `ui_scale`. An OCR reading further from the
-/// standing value than this is describing something the drift cannot explain —
-/// a real change of screen — and [`accepts`] takes it.
+/// Two different uncertainties, and they are the same size — which is why one
+/// constant serves both rather than two that would be maintained apart:
+///
+/// - **OCR line pitch.** POE-214 measured the estimate at 6-12 px off the gold
+///   frame. The unit's denominator is the reference HEIGHT, 1200 px, so the
+///   wide end of that range is `12 / 1200 = 0.01` of `ui_scale`.
+/// - **A temple anchor converted through `k`.** The anchor itself is exact to a
+///   `SCALE_STEP` of its own unit, but `temple::anchor::TEMPLE_SCALE_PER_UI_SCALE`
+///   is documented as good to about a per cent, and a per cent of the 0.90 a
+///   1080p screen measures is 0.009.
+///
+/// A reading further from the standing value than this is describing something
+/// neither can explain — a real change of screen — and [`accepts`] takes it.
 const OCR_DRIFT_BAND: f32 = 0.01;
 
 /// Whether a cue that VERIFIES the screen is what produced a measurement
 /// (POE-240) — the one rule behind [`ScreenSlice::verified_this_session`].
 ///
-/// Only the gold frame does. `MercOcr` is the line-pitch estimate that sits
-/// within [`OCR_DRIFT_BAND`] of the truth at best, and `Remembered` is a file
-/// read: neither looked at anything this run that could confirm the screen is
-/// the screen the number was measured on.
+/// Two cues do: the merc gold frame, and a temple Entrance-plate anchor that
+/// cleared `temple::anchor::NCC_FLOOR` (POE-234 WI-2). Both looked at THIS
+/// run's pixels of THIS screen and matched art against a template, which is
+/// what the flag claims. `MercOcr` is the line-pitch estimate that sits within
+/// [`OCR_DRIFT_BAND`] of the truth at best, and `Remembered` is a file read:
+/// neither looked at anything this run that could confirm the screen is the
+/// screen the number was measured on.
 ///
-/// Pure, and called by BOTH writers — `mercenary::run`'s publish and
-/// [`crate::settings::ScreenScaleSetting::to_slice`] — so the flag has one
-/// producer rather than a literal at each site that can drift apart.
+/// **Verifying is not the same question as replacing**, and this is the one
+/// place the two visibly part company: `TempleAnchor` answers `true` here and
+/// still gets [`accepts`]' band-limited rule, because "something looked at this
+/// screen" and "this number is better than the one standing" are different
+/// claims. The second is what `k`'s accuracy bounds.
+///
+/// Pure, and called by all three writers — `mercenary::run`'s publish,
+/// `temple::run`'s, and [`crate::settings::ScreenScaleSetting::to_slice`] — so
+/// the flag has one producer rather than a literal at each site that can drift
+/// apart.
 pub fn verifies_the_screen(source: ScreenScaleSource) -> bool {
-    matches!(source, ScreenScaleSource::MercFrame)
+    matches!(
+        source,
+        ScreenScaleSource::MercFrame | ScreenScaleSource::TempleAnchor
+    )
 }
 
 /// Whether `next` may replace what is already in the screen slot (POE-240).
@@ -513,16 +553,23 @@ pub fn verifies_the_screen(source: ScreenScaleSource) -> bool {
 ///
 /// - **`MercFrame`** — always. It is the measurement everything else is a
 ///   stand-in for, and a fresh one is never worse than what it replaces.
-/// - **`MercOcr`** — only when it is saying something the drift cannot explain:
-///   a different DISPLAY ([`different_monitor`], POE-237), different
-///   dimensions, or a `ui_scale` further than [`OCR_DRIFT_BAND`] from the
-///   standing value. Inside the band, on the same screen, it is that screen
-///   re-described 6-12 px worse, and taking it would walk a session off a
-///   landed frame fit for every remaining tick of an open recruit window — the
-///   bug POE-240 was filed for. A different display is not that case at all:
-///   the standing value describes a screen the game has left, so even a
-///   drift-grade reading of the one it is on now is the better answer, and the
-///   band must not be allowed to hold the old monitor's number in place.
+/// - **`MercOcr` and `TempleAnchor`** — only when saying something their own
+///   uncertainty cannot explain: a different DISPLAY ([`different_monitor`],
+///   POE-237), different dimensions, or a `ui_scale` further than
+///   [`OCR_DRIFT_BAND`] from the standing value. Inside the band, on the same
+///   screen, an OCR reading is that screen re-described 6-12 px worse, and
+///   taking it would walk a session off a landed frame fit for every remaining
+///   tick of an open recruit window — the bug POE-240 was filed for. A temple
+///   anchor inside the band is the same shape of non-news for a different
+///   reason (POE-234 WI-2): it converts through `k`, whose own accuracy is
+///   about this band, so it cannot claim to improve on the number standing —
+///   and re-publishing it would flip `source` back and forth between the two
+///   modules for as long as both panels are open, each change waking every
+///   overlay's poll and spending a settings write. A different display is not
+///   that case at all: the standing value describes a screen the game has left,
+///   so even a band-grade reading of the one it is on now is the better answer,
+///   and the band must not be allowed to hold the old monitor's number in
+///   place.
 /// - **`Remembered`** — never over anything. It is the startup seed: it fills
 ///   an empty slot and has nothing to say about a screen that has since been
 ///   measured.
@@ -544,7 +591,7 @@ pub(crate) fn accepts(current: Option<&ScreenSlice>, next: &ScreenSlice) -> bool
     match next.source {
         ScreenScaleSource::MercFrame => true,
         ScreenScaleSource::Remembered => false,
-        ScreenScaleSource::MercOcr => {
+        ScreenScaleSource::MercOcr | ScreenScaleSource::TempleAnchor => {
             different_monitor(current.monitor_id, next.monitor_id)
                 || current.width != next.width
                 || current.height != next.height
@@ -604,7 +651,7 @@ pub(crate) fn record_screen(current: &mut Option<ScreenSlice>, next: ScreenSlice
 /// Publish a screen measurement into the SSOT, emitting only on a real change.
 ///
 /// Lock-then-drop-then-emit, the shape `mercenary::run::publish` and
-/// `temple::run::remember_calibration` both use: the `screen` guard is scoped
+/// `temple::run::publish_anchor_scale` both use: the `screen` guard is scoped
 /// to the block below, so it is dropped before `emit_ssot` — which re-takes it
 /// inside `build_snapshot` — and no other mutex is held while it is open.
 ///
@@ -647,17 +694,31 @@ pub fn publish_screen(app: &AppHandle, next: ScreenSlice) -> ScreenRecord {
 ///   `crate::persist_settings` is a settings read plus a whole-file write, both
 ///   blocking, on the detect thread; without this the loop would pay two disk
 ///   ops per tick for as long as a recruit window is open.
-/// - **`MercFrame` only** — the cheap half of one rule that
+/// - **A cue that measured something** — the cheap half of one rule that
 ///   [`crate::settings::ScreenScaleSetting::from_slice`] owns and states in
 ///   full: an OCR-derived scale is not persistable, so triggering a save on one
-///   would spend a whole-file write to null the stored value. `Remembered` is
-///   refused here for a different reason — it is what was just LOADED, and
-///   nothing is learned by writing it straight back.
+///   would spend a whole-file write to null the stored value. `TempleAnchor` is
+///   persistable for the same reason `MercFrame` is — it is a template match
+///   against [`ScreenSlice::verified_this_session`]'s bar, not an estimate —
+///   and remembering it is what lets the temple hand the next session's merc a
+///   seed on a machine whose recruit window has never been opened (POE-234
+///   WI-2). `Remembered` is refused here for a different reason — it is what
+///   was just LOADED, and nothing is learned by writing it straight back.
+///
+/// The variant set here is the same one [`verifies_the_screen`] answers `true`
+/// for, and it is spelled out again rather than delegated: "may be written to
+/// disk" is a different question from "looked at the screen this run", and a
+/// future cue that verified without being persistable would have to be able to
+/// say so in one of the two places without silently moving the other.
 ///
 /// Pure so the trigger is unit-testable without an `AppHandle`, the same reason
 /// [`should_flag_unreachable`] and [`record_screen`] are extracted.
 pub fn should_remember_screen(changed: bool, source: ScreenScaleSource) -> bool {
-    changed && matches!(source, ScreenScaleSource::MercFrame)
+    changed
+        && matches!(
+            source,
+            ScreenScaleSource::MercFrame | ScreenScaleSource::TempleAnchor
+        )
 }
 
 /// Whether a remembered measurement still describes the screen just captured
@@ -711,8 +772,9 @@ pub fn screen_matches(
 /// size the screen is, so a value carried over from another monitor stays
 /// readable until someone captures one. Every detect tick that grabs a screen
 /// calls this first, which makes the FIRST capture after a resolution change the
-/// moment the stale value dies — the temple's `settings_for_capture` /
-/// `forget_calibration` pair, generalised to the shared slice.
+/// moment the stale value dies. It was the temple's own `settings_for_capture` /
+/// `forget_calibration` pair before POE-234 WI-2 generalised it here; the temple
+/// now derives its hint from this slice, so this prune IS the temple's prune.
 ///
 /// Dropping means dropping BOTH copies. The owner is cleared here, and
 /// [`crate::settings::persist_forgetting_screen_scale`] writes the file with the
@@ -756,16 +818,28 @@ pub fn drop_if_mismatched(app: &AppHandle, capture: (u32, u32), monitor_id: u32)
 /// fails. This is what a user presses when neither fired and the numbers are
 /// still wrong.
 ///
-/// Both remembered geometries go, because a user who says "measure it again"
-/// means the geometry, not one module's copy of it: the shared screen scale
-/// (owner + file) and the temple's `AnchorCalibration` (its own unit, and its
-/// own store — see the unit note on [`ScreenSlice`]).
+/// There is ONE remembered geometry to go (POE-234 WI-2, which retired the
+/// temple's separate `temple_calibration` store): the shared screen scale, in
+/// its owner and in the file. The temple's hint is derived from this slice
+/// through `k` on every tick, so emptying the slice is what un-calibrates the
+/// temple — there is no second store left to clear, and none to forget to.
 ///
-/// Clearing them is not enough on its own, because neither module re-measures
+/// Clearing it is not enough on its own, because neither module re-measures
 /// just because the store is empty:
 ///
 /// - the temple's read gate skips a board that looks unchanged, so
-///   `temple_rearm` is bumped to force one full re-read;
+///   `temple_rearm` is bumped to force one full re-read. Its `SweepGate` needs
+///   no bump: the gate's `calibrated` input is "this tick has a hint", the hint
+///   is this slice, so emptying it is the calibration LOSS that gate restarts
+///   its countdown on (`temple::run::SweepGate::allow`). The session's OTHER
+///   memory of a scale — the plate `anchor::CheapHint` remembers, which a panel
+///   still on screen would re-match at the old scale and republish here — is
+///   dropped by `temple::run::cheap_hint_for` on the same tick, off the same
+///   emptied slot. Without it this press would be a no-op for the temple
+///   whenever the layout panel is up, which is when it is pressed. That drop is
+///   an EMPTYING and not an emptiness: a slice this session never filled leaves
+///   the plate alone, because there the button has nothing of the module's to
+///   undo (see that function for the machine it matters on);
 /// - the merc session HOLDS the frame registration it settled on and carries it
 ///   across every tick that cannot see the frame (`mercenary::run`'s
 ///   `next_fitted_scale` keeps it, `cellfit::apply_held` re-applies it). The
@@ -773,12 +847,10 @@ pub fn drop_if_mismatched(app: &AppHandle, capture: (u32, u32), monitor_id: u32)
 ///   number onto this slice and persist it again. `merc_refit` is bumped so
 ///   that tick drops `session.fitted` first and measures the panel afresh.
 ///
-/// ONE settings write, not two: the temple's calibration is cleared in its
-/// owner (`temple::run::clear_calibration`) and
-/// `settings::persist_forgetting_screen_scale` then rebuilds the whole file
-/// from `AppState` with the screen scale explicitly emptied. Persisting the
-/// temple's clear separately would go through `crate::persist_settings`, whose
-/// `preserve_screen_scale` merge writes the stale scale back out.
+/// ONE settings write: `settings::persist_forgetting_screen_scale` rebuilds the
+/// whole file from `AppState` with the screen scale explicitly emptied. Plain
+/// `crate::persist_settings` cannot be used, because its `preserve_screen_scale`
+/// merge writes the stale scale back out.
 ///
 /// # Both re-arms are bumped BEFORE the write, and that order is load-bearing
 ///
@@ -797,7 +869,6 @@ pub fn geometry_recalibrate(app: AppHandle) {
         let state = app.state::<AppState>();
         *state.screen.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
-    crate::temple::run::clear_calibration(&app);
     {
         let state = app.state::<AppState>();
         state
@@ -810,8 +881,8 @@ pub fn geometry_recalibrate(app: AppHandle) {
     crate::settings::persist_forgetting_screen_scale(&app);
     crate::app_log(
         &app,
-        "Recalibrate: dropped the remembered screen scale and temple calibration — \
-         the next capture re-measures"
+        "Recalibrate: dropped the remembered screen scale — the next capture of \
+         either module re-measures"
             .to_string(),
     );
     emit_ssot(&app);
@@ -1829,10 +1900,11 @@ mod tests {
         assert_eq!(json["screen"]["origin"], serde_json::json!([0, 0]));
     }
 
-    /// The three source strings, exactly. They are read by a TS union and by
-    /// the WI-B2 settings round-trip, so a rename here is a silent break on
-    /// both sides — and `kebab-case` is the one `rename_all` that produces
-    /// them, so this pins the attribute as much as the variants.
+    /// The four source strings, exactly. They are read by a TS union
+    /// (`stores/ssot.svelte.ts`), rendered by `geometry/view.ts` and used by the
+    /// WI-B2 settings round-trip, so a rename here is a silent break on all
+    /// three — and `kebab-case` is the one `rename_all` that produces them, so
+    /// this pins the attribute as much as the variants.
     #[test]
     fn the_screen_scale_sources_serialise_as_their_wire_strings() {
         let wire = |source| {
@@ -1845,6 +1917,7 @@ mod tests {
 
         assert_eq!(wire(ScreenScaleSource::MercFrame), "merc-frame");
         assert_eq!(wire(ScreenScaleSource::MercOcr), "merc-ocr");
+        assert_eq!(wire(ScreenScaleSource::TempleAnchor), "temple-anchor");
         assert_eq!(wire(ScreenScaleSource::Remembered), "remembered");
     }
 
@@ -2126,13 +2199,25 @@ mod tests {
 
     // ------------------------------------------- verified this session --
 
-    /// Only the gold frame verifies. The OCR line pitch is the estimate that
-    /// drifts and a load looked at nothing this run, so neither may claim the
-    /// screen was confirmed — this is the rule both writers (the merc publish
-    /// and `settings::ScreenScaleSetting::to_slice`) seed the flag from.
+    /// Only a cue that matched art on THIS run's pixels verifies: the gold
+    /// frame, and the temple's Entrance-plate anchor. The OCR line pitch is the
+    /// estimate that drifts and a load looked at nothing this run, so neither
+    /// may claim the screen was confirmed — this is the rule all three writers
+    /// (the two publishes and `settings::ScreenScaleSetting::to_slice`) seed the
+    /// flag from.
+    ///
+    /// The temple row is deliberately NOT the same answer [`accepts`] gives it
+    /// (POE-234 WI-2): an anchor confirms the screen and still may not displace
+    /// a standing merc value inside the band, because "something looked" and
+    /// "this number is better" are different claims. Fails if the two rules are
+    /// ever folded into one.
     #[test]
-    fn only_a_frame_measurement_verifies_the_screen() {
+    fn a_cue_verifies_the_screen_only_if_it_looked_at_it_this_run() {
         assert!(verifies_the_screen(ScreenScaleSource::MercFrame));
+        assert!(
+            verifies_the_screen(ScreenScaleSource::TempleAnchor),
+            "an anchor is a full-resolution template match on this run's pixels",
+        );
         assert!(
             !verifies_the_screen(ScreenScaleSource::MercOcr),
             "the drifting cue confirms nothing",
@@ -2140,6 +2225,13 @@ mod tests {
         assert!(
             !verifies_the_screen(ScreenScaleSource::Remembered),
             "a file read is not a look at the screen",
+        );
+
+        let standing = measured_by(ScreenScaleSource::MercFrame, 0.90);
+        let restated = measured_by(ScreenScaleSource::TempleAnchor, 0.905);
+        assert!(
+            !accepts(Some(&standing), &restated),
+            "verifying the screen must not have become a licence to replace",
         );
     }
 
@@ -2266,12 +2358,27 @@ mod tests {
     /// `settings::ScreenScaleSetting::from_slice`) must not spend a write that
     /// could only null the stored value. `Remembered` is what was just loaded,
     /// so writing it back learns nothing.
+    ///
+    /// `TempleAnchor` is persistable for the same reason `MercFrame` is (POE-234
+    /// WI-2): it is a template match, not an estimate, and on a machine whose
+    /// recruit window is never opened it is the only measurement there will ever
+    /// be. Fails if a source is added to this rule without being added to
+    /// `from_slice`'s, or the other way round — the two are one rule, stated in
+    /// full there.
     #[test]
-    fn only_a_changed_frame_measurement_is_worth_remembering() {
+    fn only_a_changed_measurement_from_a_cue_that_looked_is_worth_remembering() {
         assert!(should_remember_screen(true, ScreenScaleSource::MercFrame));
+        assert!(
+            should_remember_screen(true, ScreenScaleSource::TempleAnchor),
+            "an anchor is the only measurement some machines will ever have",
+        );
         assert!(
             !should_remember_screen(false, ScreenScaleSource::MercFrame),
             "a re-measurement of the same screen must not reach the disk",
+        );
+        assert!(
+            !should_remember_screen(false, ScreenScaleSource::TempleAnchor),
+            "…and neither must a re-anchor of the same board",
         );
         assert!(
             !should_remember_screen(true, ScreenScaleSource::MercOcr),
