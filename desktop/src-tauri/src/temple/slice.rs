@@ -37,7 +37,7 @@ use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
-use super::advisor::{self, Advice, MapAction};
+use super::advisor::{self, Advice, MapAction, Warning};
 use super::anchor::AnchorCalibration;
 use super::doors::Confidence;
 use super::lattice::{Edge, Slot};
@@ -312,6 +312,14 @@ pub struct OfferView {
     pub display_name: Option<String>,
     /// The tier the kill guarantees. An `upgrade` also rolls one more at 50%.
     pub built_tier: Option<u8>,
+    /// `[x, y, w, h]` of the block on screen, CAPTURE px — the union of the
+    /// boxes of the OCR lines it was read from (POE-243). `null` when the read
+    /// carried no boxes.
+    ///
+    /// Capture px is whole-primary-monitor px, which is also window-relative px
+    /// for a monitor-sized overlay: the same unit as `LayoutView::origin` and
+    /// `centres`, and no conversion for a surface drawing over the game.
+    pub rect: Option<[i32; 4]>,
 }
 
 /// The side panel, as text gave it.
@@ -320,6 +328,10 @@ pub struct OfferView {
 pub struct PanelView {
     /// The panel's title — the current room's name.
     pub room: Option<String>,
+    /// `[x, y, w, h]` of the title line on screen, CAPTURE px — the same unit
+    /// and the same purpose as [`OfferView::rect`]. `null` when the title was
+    /// unread or the read carried no boxes.
+    pub room_rect: Option<[i32; 4]>,
     pub offers: Vec<OfferView>,
     /// `None` means the line was not legible; every rollout then terminates
     /// immediately and the scores are the board as it stands.
@@ -358,6 +370,24 @@ pub struct AdviceView {
     /// as prominent as the kill when it says leave.
     pub map_action: String,
     pub warnings: Vec<String>,
+    /// Whether the kill on the top recommendation is the ONLY kill the read
+    /// saw, rather than the best of the two the panel prints (POE-243).
+    ///
+    /// The typed half of `Warning::PartialArchitects`: `warnings` carries its
+    /// prose, which is what a surface prints, and this carries the fact, which
+    /// is what a surface branches on. A page that had to recognise the warning
+    /// by its text would break the first time the wording changed.
+    ///
+    /// False when nothing was read at all, and false when the one block that
+    /// was read did not resolve — there is no kill on the headline to qualify
+    /// in either case, and the warning says what happened in its own words.
+    ///
+    /// `serde(default)` so a payload from a build before POE-243 decodes as
+    /// "not forced" rather than failing the whole slice. The webview mirror
+    /// treats a missing value the same way (`forcedKillNote`), so the two ends
+    /// agree about what silence means.
+    #[serde(default)]
+    pub forced_kill: bool,
 }
 
 /// The `temple` SSOT slice (POE-171).
@@ -596,6 +626,10 @@ fn offer_view(index: usize, offer: &ArchitectOffer, current_tier: Option<Tier>) 
         printed_target: offer.printed_target.clone(),
         display_name: resolved.as_ref().map(|r| r.display_name.to_string()),
         built_tier: resolved.as_ref().map(|r| r.built_tier.get()),
+        // Published verbatim: the reader already put it in capture px, and
+        // re-deriving a rect from anything else here would be a second answer
+        // to where the panel drew the block.
+        rect: offer.rect,
     }
 }
 
@@ -607,6 +641,7 @@ fn panel_view(read: &ReadResult<'_>) -> PanelView {
             .room
             .identity()
             .map(|id| id.display_name().to_string()),
+        room_rect: read.panel.room_rect,
         offers: read
             .panel
             .architects
@@ -651,6 +686,27 @@ fn advice_view(advice: &Advice) -> AdviceView {
             MapAction::LeaveMap => "leaveMap".to_string(),
         },
         warnings: advice.warnings.iter().map(|w| w.describe()).collect(),
+        // Two conditions, and the second is not redundant.
+        //
+        // A partial read with `read > 0` is not on its own enough: the one
+        // block that WAS read can still fail to resolve, and the ranking then
+        // falls back to the architect-free `kill either`. Marking THAT forced
+        // renders "kill either (only architect read)", which points at an
+        // architect the advice is not recommending. So the flag also asks
+        // whether the top recommendation actually carries a kill.
+        //
+        // The top one alone decides, because with one resolved offer every
+        // ranked option carries the same architect — there is only one to
+        // carry — which is what lets a surface mark the whole list from one
+        // flag.
+        forced_kill: advice
+            .warnings
+            .iter()
+            .any(|w| matches!(w, Warning::PartialArchitects { read, .. } if *read > 0))
+            && advice
+                .recommendations
+                .first()
+                .is_some_and(|r| r.option.architect.is_some()),
     }
 }
 
@@ -805,6 +861,16 @@ pub fn layout_signature(layout: &TempleLayout) -> u64 {
 /// and printed target, and the budget. A published field left out of the hash
 /// is a change the gate can never see, so the slice would keep showing the
 /// pre-kill panel until something else re-armed the read.
+///
+/// **One carve-out, and it is deliberate: the rects** (`room_rect`,
+/// `ArchitectOffer::rect`, POE-243). They are published and they are NOT
+/// hashed. A glyph bounding box moves by a pixel between two reads of a panel
+/// that has not changed — anti-aliasing on a frame the game redrew, a
+/// sub-pixel anchor difference — and hashing it would spend a 27-OCR-call full
+/// read on that. What the rects describe is where text was drawn, which is a
+/// property of the same panel this hash is asking about; when the panel really
+/// changes, one of the fields above moves with it and the rects come along on
+/// the re-read.
 pub fn panel_signature(panel: &PanelReading) -> u64 {
     let mut hasher = DefaultHasher::new();
     // The identity, not the OCR text: `panel_view` publishes the identity, so
@@ -915,7 +981,6 @@ impl ReadGate {
 mod tests {
     use super::*;
     use crate::temple::advisor::rules::ArchitectChoice;
-    use crate::temple::advisor::Warning;
     use crate::temple::doors::Thresholds;
     use crate::temple::lattice::{Lattice, Slot};
     use crate::temple::rooms::{match_room_name, resolve_name};
@@ -974,6 +1039,7 @@ mod tests {
     fn panel(room: &str, remaining: Option<u8>, offers: Vec<ArchitectOffer>) -> PanelReading {
         PanelReading {
             room: match_room_name(room),
+            room_rect: None,
             architects: offers,
             incursions_remaining: remaining,
         }
@@ -985,6 +1051,7 @@ mod tests {
             kind,
             printed_target: target.to_string(),
             target: match_room_name(target),
+            rect: None,
         }
     }
 
@@ -1239,6 +1306,172 @@ mod tests {
         assert!(
             view.warnings.iter().any(|w| w.contains("incursions remaining")),
             "the warning must reach the page as prose, got {:?}",
+            view.warnings,
+        );
+    }
+
+    /// The block rects the reader measured reach the slice unchanged, in
+    /// capture px, so a surface can point at the block without re-deriving
+    /// where the panel drew it (POE-243; POE-244 is the consumer).
+    ///
+    /// Fails if `offer_view` or `panel_view` drops the rect, or invents one
+    /// from the layout geometry — which would be a second answer to a question
+    /// the OCR already answered.
+    #[test]
+    fn the_panel_publishes_the_screen_rects_its_lines_were_read_at() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let mut panel = panel(
+            "Chasm",
+            Some(6),
+            vec![offer("Quipolatl", "Armoury", OfferKind::Upgrade)],
+        );
+        panel.room_rect = Some([1300, 100, 152, 20]);
+        panel.architects[0].rect = Some([1300, 140, 280, 43]);
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        let view = slice.panel.expect("a read publishes its panel");
+        assert_eq!(view.room_rect, Some([1300, 100, 152, 20]));
+        assert_eq!(
+            view.offers.first().expect("one block").rect,
+            Some([1300, 140, 280, 43]),
+        );
+    }
+
+    /// A read with no boxes publishes no rects rather than zeroes. Fails if
+    /// the projection defaults them, which a surface would draw at the screen
+    /// origin — over the game's own UI and nowhere near the block.
+    #[test]
+    fn a_read_with_no_boxes_publishes_no_rects() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let panel = panel(
+            "Chasm",
+            Some(6),
+            vec![offer("Quipolatl", "Armoury", OfferKind::Upgrade)],
+        );
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        let view = slice.panel.expect("a read publishes its panel");
+        assert_eq!(view.room_rect, None);
+        assert_eq!(view.offers.first().expect("one block").rect, None);
+    }
+
+    /// A one-of-two read reaches the surfaces BOTH ways: as prose in
+    /// `warnings`, which the overlay prints, and as `forced_kill`, which it
+    /// branches on to mark the headline. A surface that had to recognise the
+    /// warning by its text would break the first time the wording changed.
+    ///
+    /// Fails if `advice_view` drops either half.
+    #[test]
+    fn a_one_of_two_architect_read_reaches_the_slice_as_prose_and_as_a_flag() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let panel = panel(
+            "Chasm",
+            Some(6),
+            vec![offer("Quipolatl", "Armoury", OfferKind::Upgrade)],
+        );
+        let advice =
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).expect("ranks");
+        assert!(
+            advice.warnings.contains(&Warning::PartialArchitects { read: 1, expected: 2 }),
+            "precondition: one block of two warns, got {:?}",
+            advice.warnings,
+        );
+
+        let view = advice_view(&advice);
+
+        assert!(view.forced_kill, "the kill on screen is the only kill there was");
+        assert!(
+            view.warnings.iter().any(|w| w.contains("1 of 2 architects read")),
+            "the same fact must be printable, got {:?}",
+            view.warnings,
+        );
+    }
+
+    /// One block read, and it did not resolve: the ranking falls back to the
+    /// architect-free `kill either`, so there is no kill on the headline for
+    /// the mark to qualify. The partial read is still REPORTED — both warnings
+    /// are there — it is only the headline mark that is withheld.
+    ///
+    /// Fails if `forced_kill` keys on the partial-read warning alone: the
+    /// overlay then renders "kill either (only architect read)", which points
+    /// at an architect the advice is not recommending.
+    #[test]
+    fn a_single_unresolvable_block_is_reported_but_leaves_the_headline_unmarked() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let panel = panel(
+            "Chasm",
+            Some(6),
+            vec![offer("Nobody", "Definitely Not A Room", OfferKind::Change)],
+        );
+        let advice =
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).expect("ranks");
+        assert!(
+            advice
+                .recommendations
+                .first()
+                .is_some_and(|r| r.option.architect.is_none()),
+            "precondition: nothing resolved, so the top move carries no kill",
+        );
+
+        let view = advice_view(&advice);
+
+        assert!(!view.forced_kill, "there is no kill on the headline to mark");
+        assert!(
+            view.warnings.iter().any(|w| w.contains("1 of 2 architects read")),
+            "the partial read is still reported, got {:?}",
+            view.warnings,
+        );
+        assert!(
+            view.warnings.iter().any(|w| w.contains("Definitely Not A Room")),
+            "and so is the reason the one block was no use, got {:?}",
+            view.warnings,
+        );
+    }
+
+    /// Both blocks read: no flag, so the headline is presented as the choice it
+    /// is. Fails if `forced_kill` is hard-coded true, or keyed on anything
+    /// other than the partial-read warning.
+    #[test]
+    fn a_two_of_two_architect_read_is_not_marked_forced() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let panel = panel(
+            "Chasm",
+            Some(6),
+            vec![
+                offer("Quipolatl", "Armoury", OfferKind::Upgrade),
+                offer("Atmohua", "Shrine of Empowerment", OfferKind::Change),
+            ],
+        );
+        let advice =
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).expect("ranks");
+
+        assert!(!advice_view(&advice).forced_kill);
+    }
+
+    /// Nothing read at all is NOT a forced kill: there is no kill on screen to
+    /// qualify, and the warning says so in its own words. Fails if
+    /// `forced_kill` keys on "fewer than two" rather than on "one or more".
+    #[test]
+    fn a_read_with_no_architect_block_is_warned_about_but_not_marked_forced() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let panel = panel("Chasm", Some(6), Vec::new());
+        let advice =
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).expect("ranks");
+
+        let view = advice_view(&advice);
+
+        assert!(!view.forced_kill);
+        assert!(
+            view.warnings.iter().any(|w| w.contains("no architect block was read")),
+            "the read is still reported as partial, got {:?}",
             view.warnings,
         );
     }
@@ -2010,6 +2243,7 @@ mod tests {
                 gambles: Vec::new(),
                 map_action: "leaveMap".to_string(),
                 warnings: Vec::new(),
+                forced_kill: false,
             }),
             mode: Some("chase".to_string()),
             unknown_rooms: vec!["A0".to_string()],
@@ -2156,6 +2390,10 @@ mod tests {
             }),
             panel: Some(PanelView {
                 room: Some("Locus of Corruption".to_string()),
+                // Capture px, as the reader publishes them (POE-243): the
+                // title's own line, and the union of the two lines the offer
+                // wrapped over.
+                room_rect: Some([1300, 100, 152, 20]),
                 offers: vec![OfferView {
                     index: 0,
                     architect_name: "Guatelitzi".to_string(),
@@ -2163,6 +2401,7 @@ mod tests {
                     printed_target: "Sadist's Den".to_string(),
                     display_name: Some("Torment Cells".to_string()),
                     built_tier: Some(2),
+                    rect: Some([1300, 140, 280, 43]),
                 }],
                 incursions_remaining: Some(6),
             }),
@@ -2186,7 +2425,17 @@ mod tests {
                     reasons: vec!["RV: excluded above the risk threshold".to_string()],
                 }],
                 map_action: "leaveMap".to_string(),
-                warnings: vec!["the incursion budget was not legible".to_string()],
+                // Two warnings, and the second is the one `forced_kill`
+                // mirrors. Hand-built, like every other field of this sample —
+                // the pin is a check on the wire SHAPE, and nothing here
+                // asserts the projection would pair these particular values.
+                // `a_one_of_two_architect_read_reaches_the_slice_as_prose_and_as_a_flag`
+                // is what asserts the pairing.
+                warnings: vec![
+                    "the incursion budget was not legible".to_string(),
+                    "1 of 2 architects read — the kill shown is forced, not chosen".to_string(),
+                ],
+                forced_kill: true,
             }),
             mode: Some("chase".to_string()),
             keys: 2,
@@ -2208,7 +2457,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]]},"panel":{"room":"Locus of Corruption","offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible"]},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]]},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///

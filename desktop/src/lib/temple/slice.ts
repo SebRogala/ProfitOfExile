@@ -113,6 +113,16 @@ export interface SlotView {
 /** One plate centre in capture px — `[x, y]`. */
 export type PlateCentre = [number, number];
 
+/**
+ * A rectangle on screen in CAPTURE px — `[x, y, w, h]`.
+ *
+ * The same unit as `LayoutView.origin` and `centres`: whole-primary-monitor
+ * px, which is also window-relative px for a monitor-sized overlay, so no
+ * conversion. NOT reference px and NOT CSS px (divide by `scaleFactor()` for
+ * those).
+ */
+export type CaptureRect = [number, number, number, number];
+
 /** Exactly the 13 plate centres Rust publishes, in `Slot::ALL` order.
  *
  *  A TUPLE, not an array: Rust's `LayoutView.centres` is `[[i32; 2]; 13]` and
@@ -182,11 +192,19 @@ export interface OfferView {
 	displayName: string | null;
 	/** The tier the kill guarantees. An `upgrade` also rolls one more at 50%. */
 	builtTier: number | null;
+	/** Where the block sits on screen — the union of the boxes of the OCR lines
+	 *  it was read from (POE-243). Null when the read carried no boxes, which
+	 *  is what a surface must test before drawing: a missing rect is not the
+	 *  screen origin. */
+	rect: CaptureRect | null;
 }
 
 /** The side panel, as text gave it. */
 export interface PanelView {
 	room: string | null;
+	/** Where the title line sits on screen — same unit and same null rule as
+	 *  `OfferView.rect`. Null also when the title itself was unread. */
+	roomRect: CaptureRect | null;
 	offers: OfferView[];
 	/** Null means the line was not legible — every rollout then terminates
 	 *  immediately and the scores are the board as it stands. */
@@ -223,6 +241,14 @@ export interface AdviceView {
 	 *  like `TempleStatus`. */
 	mapAction: string;
 	warnings: string[];
+	/** Whether the kill on the top recommendation is the ONLY kill the read saw
+	 *  — the panel prints two architect blocks and only one was read (POE-243).
+	 *
+	 *  The typed half of the partial-read warning: `warnings` carries the prose
+	 *  a surface PRINTS, this carries the fact a surface BRANCHES on, so no
+	 *  surface has to recognise a warning by its wording. False when nothing
+	 *  was read at all — there is then no kill on screen to call forced. */
+	forcedKill: boolean;
 }
 
 /**

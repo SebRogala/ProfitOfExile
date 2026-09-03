@@ -37,12 +37,18 @@
 	 * actually looking at while deciding is this one, and a recommendation that
 	 * hides what it is uncertain about is the failure mode POE-171 is written
 	 * against.
+	 *
+	 * POE-243 adds the sharpest case of that to the HEADLINE rather than to the
+	 * warning list: a one-of-two architect read produces a kill that was forced,
+	 * not chosen, and printing it as an ordinary recommendation is the same
+	 * failure one line higher up.
 	 */
 	import { invoke } from '@tauri-apps/api/core';
 	import TempleLattice from '$lib/temple/TempleLattice.svelte';
 	import WidgetHost from '$lib/overlay/widgets/WidgetHost.svelte';
 	import { TEMPLE_WINDOW_LABEL } from '$lib/overlay/manager';
 	import {
+		forcedKillNote,
 		formatRisk,
 		gambleLabel,
 		leadReason,
@@ -66,6 +72,9 @@
 	const markerNotice = $derived(markerFallbackNotice(temple.layout));
 	const lowConfidence = $derived(temple.layout?.confidence === 'low');
 	const warnings = $derived(temple.advice?.warnings ?? []);
+	// The side panel prints two architect blocks. When the read saw one, the
+	// headline is the only kill there was — see `forcedKillNote`.
+	const forcedNote = $derived(forcedKillNote(temple.advice));
 
 	/**
 	 * Whether to draw the hot-rect probe button.
@@ -119,7 +128,9 @@
 					<p class="leave">{leaveBanner}</p>
 				{/if}
 				{#if move}
-					<p class="headline">{moveLine(move)}</p>
+					<p class="headline">
+						{moveLine(move)}{#if forcedNote}<span class="forced">({forcedNote})</span>{/if}
+					</p>
 					{#if leadReason(move)}
 						<p class="reason">{leadReason(move)}</p>
 					{/if}
@@ -210,6 +221,16 @@
 		font-size: 15px;
 		font-weight: 700;
 		color: var(--color-lab-purple);
+	}
+
+	/* Inside the headline, not under it: the whole point is that the kill is
+	   not a ranked choice, and a note the eye reads as a separate line is one
+	   the eye skips. Yellow is the board's one "this is not settled" colour. */
+	.forced {
+		margin-left: 5px;
+		font-size: 11px;
+		font-weight: 400;
+		color: var(--color-lab-yellow);
 	}
 
 	.reason {

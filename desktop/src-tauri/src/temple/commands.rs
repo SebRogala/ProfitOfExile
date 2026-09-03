@@ -2,7 +2,10 @@
 //!
 //! Five commands, all of them thin: four setters that validate, persist and
 //! nudge the SSOT, and one debug dump that runs the whole read path over a real
-//! screen (or a saved PNG) and writes every intermediate to disk.
+//! screen (or a saved PNG) and writes every intermediate to disk — including
+//! (POE-243) `ocr-lines.json`, every OCR line with its box in the ENGINE's own
+//! order, which is what settles whether a missing architect was cropped out or
+//! emitted out of order.
 //!
 //! # Why the setters do not touch the loop
 //!
@@ -391,9 +394,10 @@ fn debug_capture_blocking(
     ];
     report.panel_rect = Some(regions[0].1);
     report.remaining_rect = Some(regions[1].1);
-    let mut lines: Vec<String> = Vec::new();
+    let mut lines: Vec<crate::mercenary::geometry::OcrLineBox> = Vec::new();
+    let mut dumped: Vec<DumpRegion> = Vec::new();
     for (name, rect) in regions {
-        let Some(crop) = super::run::crop_clipped(&img, rect) else {
+        let Some((crop, origin)) = super::run::crop_clipped(&img, rect) else {
             let note = format!("the {name} text region {rect:?} falls outside the capture");
             crate::app_log(&app, format!("Temple debug: {note}"));
             report.notes.push(note);
@@ -403,9 +407,18 @@ fn debug_capture_blocking(
         if let Some(line) = note_write(&mut report, &file, crop.save(dir.join(&file))) {
             crate::app_log(&app, format!("Temple debug: {line}"));
         }
-        let prepared = crate::capture::preprocess_for_ocr(&crop);
-        match crate::ocr::recognize_lines(&prepared) {
-            Ok(read) => lines.extend(read.into_iter().map(|l| l.text)),
+        // The loop's own seam, so the dump's coordinates are the loop's
+        // coordinates and not a second conversion that could disagree.
+        match panel::crop_lines(&crop, origin) {
+            Ok(read) => {
+                dumped.push(DumpRegion {
+                    region: name.to_string(),
+                    rect,
+                    origin: [origin.0, origin.1],
+                    lines_in_engine_order: read.iter().map(dump_line).collect(),
+                });
+                lines.extend(read);
+            }
             Err(e) => {
                 let note = format!("{name} OCR failed — {e}");
                 crate::app_log(&app, format!("Temple debug: {note}"));
@@ -441,7 +454,36 @@ fn debug_capture_blocking(
         panel_reading.architects.len(),
         panel_reading.incursions_remaining
     ));
-    report.notes.extend(lines.iter().take(60).cloned());
+    report.notes.extend(lines.iter().take(60).map(|l| l.text.clone()));
+
+    // The whole read, next to the summary rather than instead of it: `notes`
+    // is what a user pastes into a bug report, this is what answers a question
+    // the summary raised. Written before `report.json`, which names it.
+    let dump = OcrLinesDump {
+        regions: dumped,
+        title: panel_reading
+            .room
+            .identity()
+            .map(|id| id.display_name().to_string()),
+        title_rect: panel_reading.room_rect,
+        blocks: panel_reading.architects.iter().map(dump_block).collect(),
+    };
+    match serde_json::to_string_pretty(&dump) {
+        Ok(json) => {
+            if let Some(line) = note_write(
+                &mut report,
+                OCR_LINES_FILE,
+                std::fs::write(dir.join(OCR_LINES_FILE), json),
+            ) {
+                crate::app_log(&app, format!("Temple debug: {line}"));
+            }
+        }
+        Err(e) => {
+            let note = format!("{OCR_LINES_FILE} could not be serialised: {e}");
+            crate::app_log(&app, format!("Temple debug: {note}"));
+            report.notes.push(note);
+        }
+    }
 
     write_report(&app, &dir, &mut report);
     crate::app_log(
@@ -458,6 +500,89 @@ fn debug_capture_blocking(
 
 /// The report's own file name, in the file list and on disk.
 pub const REPORT_FILE: &str = "report.json";
+
+/// The OCR-line dump's file name (POE-243).
+pub const OCR_LINES_FILE: &str = "ocr-lines.json";
+
+/// One OCR line, as the engine gave it and where it sits on screen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DumpLine {
+    pub text: String,
+    /// `[x, y, w, h]` in CAPTURE px — already through the 2× descale and the
+    /// crop-origin translate, so it can be compared with `panelRect` and
+    /// `remainingRect` in `report.json` without arithmetic.
+    pub rect: [i32; 4],
+}
+
+/// One text region's lines, in the ENGINE's own order.
+///
+/// Engine order, deliberately and stated in the field name's doc rather than
+/// implied: the whole question POE-243 was opened on is whether the engine
+/// emits a wrapped continuation before the line it belongs to, and a dump that
+/// had already sorted the lines could not answer it. `panel::reading_order` is
+/// what the parser applies afterwards.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DumpRegion {
+    /// `"panel"` or `"remaining"`.
+    pub region: String,
+    /// The ROI this region was cropped at, capture px.
+    pub rect: [i32; 4],
+    /// The crop's clipped top-left corner — what the line boxes were offset by.
+    pub origin: [i32; 2],
+    pub lines_in_engine_order: Vec<DumpLine>,
+}
+
+/// One architect block the parser built out of those lines.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DumpBlock {
+    pub architect_name: String,
+    /// `"change"` or `"upgrade"`.
+    pub kind: String,
+    pub printed_target: String,
+    /// The union of the boxes of the lines the block was built from.
+    pub rect: Option<[i32; 4]>,
+}
+
+/// What `ocr-lines.json` holds.
+///
+/// The whole read, not `report.json`'s first-60-texts summary: every line with
+/// its box, per region, plus what the parser made of them. A bug report about
+/// a missing architect is answerable from this file alone — the lines are
+/// there, in the order they arrived, with the geometry that decides how they
+/// group.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrLinesDump {
+    pub regions: Vec<DumpRegion>,
+    /// The panel title the read settled on, and the line it came off.
+    pub title: Option<String>,
+    pub title_rect: Option<[i32; 4]>,
+    pub blocks: Vec<DumpBlock>,
+}
+
+/// One OCR line, for the dump.
+fn dump_line(line: &crate::mercenary::geometry::OcrLineBox) -> DumpLine {
+    DumpLine {
+        text: line.text.clone(),
+        rect: [line.x, line.y, line.w, line.h],
+    }
+}
+
+/// One parsed architect block, for the dump.
+fn dump_block(offer: &panel::ArchitectOffer) -> DumpBlock {
+    DumpBlock {
+        architect_name: offer.architect_name.clone(),
+        kind: match offer.kind {
+            super::rooms::OfferKind::Change => "change".to_string(),
+            super::rooms::OfferKind::Upgrade => "upgrade".to_string(),
+        },
+        printed_target: offer.printed_target.clone(),
+        rect: offer.rect,
+    }
+}
 
 /// Fold one write's outcome into the report, and hand back the line to log.
 ///
@@ -578,6 +703,73 @@ mod tests {
 
         assert_eq!(report.files, vec!["screen.png".to_string()]);
         assert!(report.notes.is_empty());
+    }
+
+    /// The dump's own wire shape, round-tripped.
+    ///
+    /// `ocr-lines.json` is read by a person and by whatever reads a bug report
+    /// next, so its keys are a contract: camelCase like every other wire struct
+    /// in this module, `linesInEngineOrder` saying which order it is in, and
+    /// the offer kind as the same `"change"`/`"upgrade"` strings `OfferView`
+    /// publishes rather than a Rust enum.
+    ///
+    /// Fails if a `rename_all` is dropped, a field is renamed, or `dump_block`
+    /// starts serialising `OfferKind` directly — all three of which leave the
+    /// file readable and the reader looking for a key that is not there.
+    #[test]
+    fn the_ocr_line_dump_round_trips_through_its_camel_case_keys() {
+        let dump = OcrLinesDump {
+            regions: vec![DumpRegion {
+                region: "panel".to_string(),
+                rect: [1288, 92, 400, 300],
+                origin: [1288, 92],
+                lines_in_engine_order: vec![DumpLine {
+                    text: "Empowerment)".to_string(),
+                    rect: [1300, 256, 96, 20],
+                }],
+            }],
+            title: Some("Armourer's Workshop".to_string()),
+            title_rect: Some([1300, 100, 152, 20]),
+            blocks: vec![
+                dump_block(&panel::ArchitectOffer {
+                    architect_name: "Atmohua".to_string(),
+                    kind: super::super::rooms::OfferKind::Change,
+                    printed_target: "Shrine of Empowerment".to_string(),
+                    target: super::super::rooms::match_room_name("Shrine of Empowerment"),
+                    rect: Some([1300, 210, 224, 66]),
+                }),
+                dump_block(&panel::ArchitectOffer {
+                    architect_name: "Quipolatl".to_string(),
+                    kind: super::super::rooms::OfferKind::Upgrade,
+                    printed_target: "Armoury".to_string(),
+                    target: super::super::rooms::match_room_name("Armoury"),
+                    rect: None,
+                }),
+            ],
+        };
+
+        let json = serde_json::to_string(&dump).expect("the dump serialises");
+
+        assert!(
+            json.contains(r#""linesInEngineOrder":[{"text":"Empowerment)","rect":[1300,256,96,20]}]"#),
+            "the engine-order lines carry their boxes under camelCase keys: {json}",
+        );
+        assert!(
+            json.contains(r#""titleRect":[1300,100,152,20]"#),
+            "the title's own box is published: {json}",
+        );
+        assert!(
+            json.contains(r#""kind":"change""#) && json.contains(r#""kind":"upgrade""#),
+            "both offer kinds are the wire strings, not enum variants: {json}",
+        );
+        assert!(
+            json.contains(r#""architectName":"Atmohua""#) && json.contains(r#""rect":null"#),
+            "a block with no box publishes null rather than a zero box: {json}",
+        );
+        assert_eq!(
+            serde_json::from_str::<OcrLinesDump>(&json).expect("and decodes again"),
+            dump,
+        );
     }
 
     /// Dumps accumulate rather than overwrite — comparing two runs is the

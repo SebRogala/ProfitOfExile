@@ -1629,6 +1629,7 @@ mod tests {
                 gambles: Vec::new(),
                 map_action: "leaveMap".to_string(),
                 warnings: Vec::new(),
+                forced_kill: false,
             }),
             mode: Some("chase".to_string()),
             unknown_rooms: vec!["A0".to_string()],

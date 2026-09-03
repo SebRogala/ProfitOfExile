@@ -947,7 +947,12 @@ describe('temple slice', () => {
 					[1110, 881]
 				]
 			},
-			panel: { room: 'Locus of Corruption', offers: [], incursionsRemaining: 6 },
+			panel: {
+				room: 'Locus of Corruption',
+				roomRect: [1300, 100, 152, 20],
+				offers: [],
+				incursionsRemaining: 6
+			},
 			advice: {
 				recommendations: [
 					{
@@ -962,7 +967,8 @@ describe('temple slice', () => {
 				],
 				gambles: [],
 				mapAction: 'continue',
-				warnings: []
+				warnings: [],
+				forcedKill: false
 			},
 			mode: 'chase',
 			keys: 2,

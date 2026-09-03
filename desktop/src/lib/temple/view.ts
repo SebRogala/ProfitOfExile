@@ -370,6 +370,23 @@ export function moveLine(ranked: RankedView): string {
 	return `${ranked.headline} · ${ranked.doorsLabel}`;
 }
 
+/**
+ * The mark a forced kill carries, or null when the kill was chosen.
+ *
+ * The side panel always prints two architect blocks (POE-243). When the read
+ * produced one, the kill on the headline is not the better of two — it is the
+ * only one there was, and a surface that shows it with the same weight as a
+ * ranked choice is telling the player a decision was made that was not. The
+ * ranking itself is untouched: what changes is what the headline claims.
+ *
+ * Derived from `AdviceView.forcedKill`, the typed half of the warning, rather
+ * than from the warning's own prose — which is printed alongside and would
+ * break this the first time it was reworded.
+ */
+export function forcedKillNote(advice: AdviceView | null): string | null {
+	return advice?.forcedKill === true ? 'only architect read' : null;
+}
+
 /** The first reason, for surfaces with one line to spare. The page shows all. */
 export function leadReason(ranked: RankedView): string | null {
 	return ranked.reasons[0] ?? null;

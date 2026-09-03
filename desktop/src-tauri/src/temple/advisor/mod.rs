@@ -65,7 +65,7 @@ pub mod state;
 use std::collections::BTreeSet;
 
 use crate::temple::lattice::{Edge, Slot};
-use crate::temple::panel::ArchitectOffer;
+use crate::temple::panel::{self, ArchitectOffer};
 use crate::temple::rooms::{self, OfferKind};
 use crate::temple::strategy::{Mode, StrategyProfile, TempleConfig, Tier};
 
@@ -121,6 +121,18 @@ pub enum Warning {
     /// No architect block resolved to a known room, so only the door half of
     /// the advice is modelled.
     UnresolvedArchitects,
+    /// Fewer architect blocks were READ off the panel than the panel prints
+    /// (POE-243).
+    ///
+    /// A different claim from [`Warning::UnresolvedArchitects`], which is about
+    /// the vocabulary: this one is about the OCR. The panel always prints
+    /// [`crate::temple::panel::ARCHITECTS_PER_PANEL`], so a read that produced
+    /// one block did not see the other — and every kill the ranking then offers
+    /// is the only kill there was, presented with the same confidence as a
+    /// chosen one. That was invisible before this variant: a block that never
+    /// parsed produced no warning at all, because `UnresolvedArchitects` fires
+    /// only when EVERY offer is missing.
+    PartialArchitects { read: usize, expected: usize },
     /// One architect's printed target did not resolve.
     UnresolvedOffer { printed: String },
     /// More keys than there are corridors worth opening.
@@ -152,6 +164,18 @@ impl Warning {
                 "neither architect's target was readable; only the door advice is modelled"
                     .to_string()
             }
+            // Two wordings because the two states differ in what the player can
+            // do about them. With one block read there IS a kill on screen and
+            // the honest thing to say is that it was not chosen; with none, the
+            // advice is doors only and saying "the kill shown is forced" would
+            // point at a kill that is not there.
+            Warning::PartialArchitects { read: 0, expected } => format!(
+                "no architect block was read — the panel prints {expected}, so only the \
+                 door advice is modelled"
+            ),
+            Warning::PartialArchitects { read, expected } => format!(
+                "{read} of {expected} architects read — the kill shown is forced, not chosen"
+            ),
             Warning::UnresolvedOffer { printed } => {
                 format!("architect target {printed:?} is not a known room")
             }
@@ -224,6 +248,18 @@ pub fn advise(
             warnings,
         };
     };
+
+    // Before resolution, because this is a claim about the OCR and not about
+    // the vocabulary: it is true whether or not the block that WAS read
+    // resolves. The gate is the evidence that the panel was on screen at all —
+    // one block read is that evidence on its own; with none, the title is
+    // (see `BoardState::panel_title_read`).
+    if offers.len() < panel::ARCHITECTS_PER_PANEL && (!offers.is_empty() || board.panel_title_read) {
+        warnings.push(Warning::PartialArchitects {
+            read: offers.len(),
+            expected: panel::ARCHITECTS_PER_PANEL,
+        });
+    }
 
     let architects = resolve_architects(offers, board.current_tier, &mut warnings);
     let choices: Vec<Option<ArchitectChoice>> = if architects.is_empty() {
@@ -1870,6 +1906,152 @@ mod tests {
         assert!(advice.warnings.contains(&Warning::UnresolvedArchitects));
         assert!(!advice.recommendations.is_empty());
         assert!(advice.recommendations[0].option.architect.is_none());
+    }
+
+    // The invisible state POE-243 exists for: the panel prints two blocks and
+    // the read produced one. The kill on offer is then the only kill there
+    // was, and the advice has to say so — before this, a block that never
+    // parsed produced NO warning at all, because `UnresolvedArchitects` fires
+    // only when every offer is missing.
+    //
+    // Fails if the check is dropped, or keyed on the offers that RESOLVED
+    // rather than on the blocks that were read.
+    #[test]
+    fn a_panel_read_that_produced_one_architect_block_says_the_kill_was_forced() {
+        let state = board(&[], &[(D1, E1), (E1, E2)], D1, 5);
+        let offers = vec![offer("Quipolatl", Upgrade, "Armoury")];
+
+        let advice = advise(&state, &offers, 0, &rush(), &TempleConfig::default(), N, SEED);
+
+        assert!(
+            advice.warnings.contains(&Warning::PartialArchitects { read: 1, expected: 2 }),
+            "one block read of the two the panel prints: {:?}",
+            advice.warnings,
+        );
+        assert!(
+            !advice.warnings.contains(&Warning::UnresolvedArchitects),
+            "the block that WAS read resolved fine; the complaint is about the missing one",
+        );
+    }
+
+    // The other side of the same gate: both blocks read, nothing to warn
+    // about. Fails if the warning fires on every read, which would make it
+    // noise the player learns to ignore.
+    #[test]
+    fn a_panel_read_that_produced_both_blocks_says_nothing_about_a_partial_read() {
+        let state = board(&[], &[(D1, E1), (E1, E2)], D1, 5);
+
+        let advice = advise(
+            &state,
+            &junk_offers(),
+            0,
+            &rush(),
+            &TempleConfig::default(),
+            N,
+            SEED,
+        );
+
+        assert!(
+            !advice
+                .warnings
+                .iter()
+                .any(|w| matches!(w, Warning::PartialArchitects { .. })),
+            "two of two is a whole read: {:?}",
+            advice.warnings,
+        );
+    }
+
+    // Zero blocks read, and the panel title proves the panel WAS on screen —
+    // so the silence is the OCR's, not the crop's, and it is reportable. The
+    // wording differs from the one-block case because there is no kill on
+    // screen to call forced.
+    //
+    // Fails if the zero case is excluded, which is the state that reached the
+    // 2026-09-03 laptop board: no offers, no warning, doors-only advice
+    // rendered with full confidence.
+    #[test]
+    fn a_legible_title_with_no_architect_block_at_all_is_still_a_partial_read() {
+        let mut state = board(&[], &[(D1, E1), (E1, E2)], D1, 5);
+        state.panel_title_read = true;
+
+        let advice = advise(&state, &[], 0, &rush(), &TempleConfig::default(), N, SEED);
+
+        let partial = advice
+            .warnings
+            .iter()
+            .find(|w| matches!(w, Warning::PartialArchitects { .. }))
+            .unwrap_or_else(|| panic!("a partial read must be reported: {:?}", advice.warnings));
+        assert_eq!(*partial, Warning::PartialArchitects { read: 0, expected: 2 });
+        assert!(
+            partial.describe().contains("no architect block was read"),
+            "with no kill on screen the wording must not call one forced, got {:?}",
+            partial.describe(),
+        );
+    }
+
+    // …and with nothing read AND no title, there is no evidence the panel was
+    // ever in the crop, so there is no claim to make about what it printed.
+    // Fails if the zero case is unconditional: every read taken between rooms,
+    // or with the panel crop off target, would then assert that two architects
+    // were printed and missed.
+    #[test]
+    fn a_read_with_neither_a_title_nor_a_block_claims_nothing_about_the_panel() {
+        let state = board(&[], &[(D1, E1), (E1, E2)], D1, 5);
+        assert!(!state.panel_title_read, "nothing named the room");
+
+        let advice = advise(&state, &[], 0, &rush(), &TempleConfig::default(), N, SEED);
+
+        assert!(
+            !advice
+                .warnings
+                .iter()
+                .any(|w| matches!(w, Warning::PartialArchitects { .. })),
+            "{:?}",
+            advice.warnings,
+        );
+    }
+
+    // The acceptance board for POE-243 (2026-09-03, PC): with BOTH architect
+    // blocks read, the kill is the `change`. The overlay showed
+    // `upgrade → Armoury` on this board, and the only state that reproduces
+    // that output is Atmohua's block missing from the parsed panel — so this
+    // is the assertion that says the ranking was never the problem.
+    //
+    // The `change` wins because Contested Development prices it off the room
+    // the player is standing IN: a tier-1 Armourer's Workshop taking
+    // "Shrine of Empowerment" builds Sanctum of Unity II, against an `upgrade`
+    // to a tier-2 Armoury on the line already under the player.
+    //
+    // The DOOR is deliberately not asserted. The rule chain picks it, no one
+    // walked this board, and pinning a corridor nobody chose would make this a
+    // change-detector for the chain rather than a check on the kill.
+    #[test]
+    fn the_pc_board_kills_the_change_architect_once_both_blocks_are_read() {
+        let case = cases::case_7_armourers_workshop();
+
+        let advice = advise_case(&case);
+
+        let top = advice.recommendations.first().expect("the board ranks");
+        let architect = top
+            .option
+            .architect
+            .as_ref()
+            .unwrap_or_else(|| panic!("{}: the top move must carry a kill", case.name));
+        assert_eq!(
+            (architect.offer_index, architect.kind, architect.display_name),
+            (1, Change, "Sanctum of Unity"),
+            "{}: Sebastian's read was {}, and the overlay said upgrade → Armoury",
+            case.name,
+            case.decision,
+        );
+        assert!(
+            !advice
+                .warnings
+                .iter()
+                .any(|w| matches!(w, Warning::PartialArchitects { .. })),
+            "precondition: both blocks are read on this fixture, {:?}",
+            advice.warnings,
+        );
     }
 
     // An illegible footer must not read as an optimistic forecast.
