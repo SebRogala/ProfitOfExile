@@ -287,15 +287,21 @@ fn debug_capture_blocking(
     std::fs::create_dir_all(&dir).map_err(|e| abort(&app, format!("cannot create {dir:?}: {e}")))?;
 
     let started = std::time::Instant::now();
-    let (img, source) = match &image_path {
+    // The display the pixels came off, so the hint below can be checked against
+    // the screen the remembered scale was measured on (POE-237). An image FILE
+    // has no display: `0` is `crate::capture::Capture`'s unknown, and
+    // `ssot::screen_matches` falls back to the dimensions alone for it, which is
+    // the right rule for a dump somebody dragged in from another machine.
+    let (img, monitor_id, source) = match &image_path {
         Some(path) => (
             image::open(path).map_err(|e| abort(&app, format!("{path}: {e}")))?,
+            0,
             path.clone(),
         ),
-        None => (
-            crate::capture::capture_screen(&app).map_err(|e| abort(&app, e))?.image,
-            "screen".to_string(),
-        ),
+        None => {
+            let grab = crate::capture::capture_screen(&app).map_err(|e| abort(&app, e))?;
+            (grab.image, grab.monitor_id, "screen".to_string())
+        }
     };
     // The report is built before the first write, so every write in this
     // function goes through the one owner of the `files` claim (`note_write`).
@@ -323,9 +329,17 @@ fn debug_capture_blocking(
         crate::app_log(&app, format!("Temple debug: {line}"));
     }
 
-    let settings = super::run::settings_snapshot(&app);
+    // The same hint the capture loop uses, from the same shared slice (POE-234
+    // WI-2): the button's whole point is to reproduce what the loop sees, and it
+    // reaches the exhaustive sweep behind it either way, so a hint that misses
+    // costs one correlation and never an answer.
+    let hint = {
+        let state = app.state::<crate::AppState>();
+        let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
+        super::run::hint_for_capture(screen.as_ref(), (img.width(), img.height()), monitor_id)
+    };
     let started = std::time::Instant::now();
-    let layout = reader::read_layout_with_hint(&img, settings.calibration.as_ref());
+    let layout = reader::read_layout_with_hint(&img, hint.as_ref());
     report.timings.push(timing("anchor+doors", started));
 
     let layout = match layout {

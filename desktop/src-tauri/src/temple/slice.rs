@@ -124,21 +124,25 @@ impl TempleProfileSettings {
     }
 }
 
-/// Everything the temple module persists — the D0 calibration, the user's
-/// profile tuning, the two config flags and the key count.
+/// Everything the temple module persists — the user's profile tuning, the two
+/// config flags and the key count.
 ///
 /// One `AppState` Mutex holds this whole struct while `settings.json` keeps
-/// four separate fields, so a hand-edited file stays readable and one bad
+/// three separate fields, so a hand-edited file stays readable and one bad
 /// field defaults on its own (`#[serde(default)]` per field on `Settings`).
+///
+/// **No calibration field.** It held one until POE-234 WI-2 — the remembered
+/// anchor scale, keyed on the capture size — and that was the app's SECOND
+/// store of one fact: what scale this screen draws the game's UI at. The shared
+/// `crate::ssot::ScreenSlice` is the first and now the only one; the temple
+/// derives its hint from it through `anchor::TEMPLE_SCALE_PER_UI_SCALE` on every
+/// tick (`super::run::hint_for_capture`) and publishes what it anchors back.
+/// [`AnchorCalibration`] survives as what it always described — a (screen size,
+/// scale) pair produced BY a read — on [`super::reader::TempleLayout`],
+/// [`super::anchor::CheapHint`] and [`TempleSlice::calibration`].
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TempleSettings {
-    /// Remembered anchor scale, keyed on the capture dimensions it was
-    /// measured at. Self-invalidating: [`super::anchor::anchor_with_hint`]
-    /// ignores it at any other capture size, and verifies it against
-    /// [`super::anchor::NCC_FLOOR`] like any other candidate, so a stale one
-    /// costs one extra match and never a wrong board.
-    pub calibration: Option<AnchorCalibration>,
     pub profile: TempleProfileSettings,
     pub config: TempleConfig,
     /// Opening stones this incursion dropped. The panel does not print it, so
@@ -157,25 +161,9 @@ impl TempleSettings {
     /// legal but uncommon board — go through here, never through the derive.
     pub fn shipped() -> TempleSettings {
         TempleSettings {
-            calibration: None,
             profile: TempleProfileSettings::default(),
             config: TempleConfig::default(),
             keys: default_keys(),
-        }
-    }
-
-    /// Drop a calibration measured at a different capture size.
-    ///
-    /// The reader would ignore it anyway — this is the *settings* half, so a
-    /// resolution change does not leave a permanently dead hint in the file
-    /// and the slice does not advertise a calibration that can never apply.
-    pub fn prune_calibration(&mut self, screen: (u32, u32)) -> bool {
-        match self.calibration {
-            Some(cal) if cal.screen_w != screen.0 || cal.screen_h != screen.1 => {
-                self.calibration = None;
-                true
-            }
-            _ => false,
         }
     }
 }
@@ -2304,12 +2292,11 @@ mod tests {
 
     // ------------------------------------------------ settings round-trip --
 
-    /// The whole settings block survives a JSON round-trip, calibration
-    /// included. Fails if a field is `skip`ped or renamed on one side only.
+    /// The whole settings block survives a JSON round-trip. Fails if a field is
+    /// `skip`ped or renamed on one side only.
     #[test]
     fn temple_settings_round_trip_through_json() {
         let settings = TempleSettings {
-            calibration: Some(calibration()),
             profile: TempleProfileSettings {
                 apex_score: 9.0,
                 path_cost: 1.5,
@@ -2382,29 +2369,6 @@ mod tests {
         assert_eq!(parsed.path_cost, rush.path_cost);
         assert_eq!(parsed.reroll_until_favourable, rush.reroll_until_favourable);
         assert_eq!(parsed.r4_keep_upgrade_targets, rush.r4_keep_upgrade_targets);
-    }
-
-    /// A calibration measured on a different screen is discarded, and one
-    /// measured on this screen is kept. Fails if `prune_calibration` compares
-    /// only one axis, or discards unconditionally.
-    #[test]
-    fn a_calibration_from_another_screen_size_is_discarded() {
-        let mut settings = TempleSettings {
-            calibration: Some(calibration()),
-            ..TempleSettings::shipped()
-        };
-
-        assert!(!settings.prune_calibration((1374, 773)), "the same size is kept");
-        assert!(settings.calibration.is_some());
-
-        assert!(settings.prune_calibration((1539, 865)), "a different width is stale");
-        assert_eq!(settings.calibration, None);
-
-        settings.calibration = Some(calibration());
-        assert!(
-            settings.prune_calibration((1374, 865)),
-            "a different HEIGHT at the same width is stale too",
-        );
     }
 
     /// Fresh install defaults: one key, not zero. Fails if a caller reaches

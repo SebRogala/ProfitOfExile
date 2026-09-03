@@ -76,10 +76,11 @@
 
 	let recalibrating = $state(false);
 
-	// Drops the remembered screen scale AND the temple's calibration, and forces
-	// the temple's next read. Rust owns the whole sequence — see
-	// `ssot::geometry_recalibrate` — so this only asks and then re-reads the
-	// snapshot, rather than waiting up to a poll interval for the eager nudge.
+	// Drops the one remembered screen scale and re-arms both modules that
+	// measure it, so the next capture of either re-measures. Rust owns the whole
+	// sequence — see `ssot::geometry_recalibrate` — so this only asks and then
+	// re-reads the snapshot, rather than waiting up to a poll interval for the
+	// eager nudge.
 	async function recalibrateGeometry() {
 		recalibrating = true;
 		try {
