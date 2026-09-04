@@ -3,7 +3,7 @@
 Committed ground truth for `lib/mercenaries/rulesets.ts`. The typed rulesets are a
 transcription of these files; `rulesets.test.ts` asserts the transcription against
 them, so a typo in the data module fails against raw GGG JSON rather than against
-itself — for the 21 GGG-saved files. The four authored `guide-c-*.json` files are the
+itself — for the 27 GGG-saved files. The four authored `guide-c-*.json` files are the
 builder's own output, and what that check is worth for them is stated under "Authored
 queries (guide-c)".
 
@@ -45,12 +45,26 @@ its own hash in the top-level `id` field. The human-facing page for the same sea
 | `jWRDpypkCX.json` | guide-b | Wild Strike ladder — Endgame |
 | `bGDrZYZaCL.json` | guide-b | Wild Strike ladder — GG Merc |
 | `4mKr0Jbwh9.json` | guide-d | Kinetist ladder — budget |
+| `8r8JqonVIV.json` | guide-f | Multishot ladder — Cheap |
+| `veYJp9gZhE.json` | guide-f | Multishot ladder — Expensive |
+| `PPGnKVv7UL.json` | guide-f | Combatant ladder — Cheap |
+| `yYvmr6rjcR.json` | guide-f | Combatant ladder — Expensive |
+| `d80ePvdvhJ.json` | guide-f | Kineticist ladder — Cheap |
+| `rPogYW44uQ.json` | guide-f | Kineticist ladder — Expensive |
 
 **Decoded:** the four Manyshot files and the nine Combatant files, 2026-08-26;
-`4mKr0Jbwh9.json`, 2026-08-28. The four Manyshot files are the only ones here that carry
-no `filters` block at all — no item-level floor — so `rulesets.ts` leaves `ilvlMin`
-absent on those rungs and the fidelity test reads the key as optional. The nine
-Combatant files set `ilvl` 83 like everything else, and so does `4mKr0Jbwh9.json`.
+`4mKr0Jbwh9.json`, 2026-08-28; the six guide-f files, 2026-09-04. The four Manyshot
+files are the only ones here that carry no `filters` block at all — no item-level floor
+— so `rulesets.ts` leaves `ilvlMin` absent on those rungs and the fidelity test reads
+the key as optional. The nine Combatant files set `ilvl` 83 like everything else, and so
+do `4mKr0Jbwh9.json` and all six guide-f files.
+
+**Guide-f spells its archetypes its own way.** "Multishot" is the Manyshot archetype and
+"Kineticist" the Kinetist one — the rows above use the author's spelling, `rulesets.ts`
+keys the app's. `veYJp9gZhE.json` writes an explicit `"disabled": false` (on Hatred), as
+eight other files here do, and that is the same thing as leaving the key out — GGG writes
+both forms; the round-trip normaliser in `trade-links.test.ts` is what forgives the
+difference.
 
 **One file, two rulesets.** `7nRvBzl2S5.json` is the oracle of BOTH
 `guide-b-kinetist-mv` and `guide-d-kinetist-20d`: XTheFarmerX's sheet republishes
@@ -92,13 +106,23 @@ re-fetchable if you can find the search it came from again.
   <https://docs.google.com/spreadsheets/d/1c-9qyowK9jp8OIR0bwh8G0V3qjY8U6lEDAxA6xOUMdU/edit?gid=586502310>.
   The budget hash is not in that sheet — see "One file, two rulesets" and
   "`4mKr0Jbwh9` is a TYPED hash" above.
+- guide-f — one page, all six searches:
+  <https://mobalytics.gg/poe/builds/mercenary-support-luminary-path-of-evening>. The
+  page is **Cloudflare-gated**: it answers 403 to every fetch from this repo, so its
+  prose has never been read here and no re-check against sentences is possible — only
+  the searches themselves are. The six hashes were pasted by the owner 2026-09-04 and
+  each search was then fetched from GGG by hash the way every other file here was, so
+  the FIXTURES are ordinary ground truth; what is missing is the author's commentary.
+  That absence is why no guide-f entry carries `buyerContextual`: the flag needs the
+  author calling an entry optional, and the Kineticist rungs' Haste and Inspiring Cry
+  are transcribed as the live gates the search makes them.
 
 Each guide-b video's description is the only place its trade links exist; the rung-level
 `guideUrl` in `rulesets.ts` names which of those videos published which link. It is one
 video per LADDER for the first two and one video for BOTH Combatant ladders, so the
 guide URL cannot be derived from the ladder key. Guide-d needs none of that: one video
-publishes both its rungs, so they inherit the source URL the way guide-a's and guide-c's
-rulesets do.
+publishes both its rungs, so they inherit the source URL the way guide-a's, guide-c's and
+guide-f's rulesets do.
 
 The Combatant description carries one prose note, about all nine searches rather than
 any one of them, so no rung takes it as an `authorNote`: "Please play around yourself
@@ -128,8 +152,8 @@ skills and support links in sentences and publishes no trade link for any of the
 They are written in the same body shape a saved search comes back in — `{"id": …,
 "query": {…}}`, with the `id` naming the file rather than a hash and no `filters` block,
 because the prose sets no item-level floor — so `rulesets.test.ts` reads them through the
-same `fromFixture` reader as the other twenty-one and the fidelity sweep covers all
-twenty-six rulesets.
+same `fromFixture` reader as the other twenty-seven and the fidelity sweep covers all
+thirty-two rulesets.
 
 **What that check is worth, and what it is not.** It fails on a typed-model edit nobody
 meant to make. It cannot fail on a MISREADING of the guide: both sides of the comparison

@@ -33,6 +33,12 @@ import guideCKinetist from './__fixtures__/guide-c-kinetist.json';
 import guideCManyshot from './__fixtures__/guide-c-manyshot.json';
 import guideCBladeAmbusher from './__fixtures__/guide-c-blade-ambusher.json';
 import guideCCombatant from './__fixtures__/guide-c-combatant.json';
+import n8r8JqonVIV from './__fixtures__/8r8JqonVIV.json';
+import veYJp9gZhE from './__fixtures__/veYJp9gZhE.json';
+import PPGnKVv7UL from './__fixtures__/PPGnKVv7UL.json';
+import yYvmr6rjcR from './__fixtures__/yYvmr6rjcR.json';
+import d80ePvdvhJ from './__fixtures__/d80ePvdvhJ.json';
+import rPogYW44uQ from './__fixtures__/rPogYW44uQ.json';
 
 /** Keyed by the oracle the ruleset declares — the `rulesets.test.ts` idiom. */
 const FIXTURES: Record<string, { id: string; query: unknown }> = {
@@ -60,7 +66,13 @@ const FIXTURES: Record<string, { id: string; query: unknown }> = {
 	'guide-c-kinetist': guideCKinetist,
 	'guide-c-manyshot': guideCManyshot,
 	'guide-c-blade-ambusher': guideCBladeAmbusher,
-	'guide-c-combatant': guideCCombatant
+	'guide-c-combatant': guideCCombatant,
+	'8r8JqonVIV': n8r8JqonVIV,
+	veYJp9gZhE,
+	PPGnKVv7UL,
+	yYvmr6rjcR,
+	d80ePvdvhJ,
+	rPogYW44uQ
 };
 
 /**
@@ -139,11 +151,11 @@ describe('rulesets transcribed from prose', () => {
 		]);
 	});
 
-	// The positive control the assertion above needs: the other twenty-two
+	// The positive control the assertion above needs: the other twenty-eight
 	// rulesets DO carry a hash, so an empty authored list would not be the two
 	// sides agreeing that nothing is authored.
-	it('leaves the twenty-two saved searches addressable by hash', () => {
-		expect(SAVED.length).toBe(22);
+	it('leaves the twenty-eight saved searches addressable by hash', () => {
+		expect(SAVED.length).toBe(28);
 		expect(SAVED.every((r) => r.authored === undefined)).toBe(true);
 	});
 
@@ -157,20 +169,27 @@ describe('rulesets transcribed from prose', () => {
 });
 
 describe('source guide links', () => {
-	// The first three identified 2026-08-26, guide D 2026-08-28. Guide A's, guide
-	// B's and guide D's saved-search hashes are exactly the trade links on that
-	// page / in those video descriptions; guide B's URL is the CHANNEL, because
-	// its ladders come from different videos of it and pointing the source at one
-	// would misattribute the others' links, while guide D's is a single VIDEO
-	// because both of its rungs came out of that one. Guide C's page publishes no
-	// links at all — the URL is where the PROSE is, so a reader can re-check the
-	// transcription against the sentences it came from.
+	// The first three identified 2026-08-26, guide D 2026-08-28, guide F
+	// 2026-09-04. Guide A's, guide B's and guide D's saved-search hashes are
+	// exactly the trade links on that page / in those video descriptions; guide
+	// B's URL is the CHANNEL, because its ladders come from different videos of
+	// it and pointing the source at one would misattribute the others' links,
+	// while guide D's is a single VIDEO because both of its rungs came out of
+	// that one. Guide C's page publishes no links at all — the URL is where the
+	// PROSE is, so a reader can re-check the transcription against the sentences
+	// it came from. Guide F's page carries all six of its links but answers 403
+	// to this repo, so its URL is the only re-check a reader has and a stale one
+	// would leave six searches unattributable.
 	it('points each source at the page its rules were taken from', () => {
 		expect(MERC_SOURCES.map((s) => [s.id, s.guideUrl])).toEqual([
 			['guide-a', 'https://wealthyexile.com/strategies/7062/alchgo_astrolabe__merc_boss_rushing'],
 			['guide-b', 'https://www.youtube.com/channel/UCqIRIXItoDOlET2oeFn6WKA'],
 			['guide-c', 'https://mobalytics.gg/poe/builds/captainlance9-luminary-merc-bot'],
-			['guide-d', 'https://www.youtube.com/watch?v=LXoJCRmUaJI']
+			['guide-d', 'https://www.youtube.com/watch?v=LXoJCRmUaJI'],
+			[
+				'guide-f',
+				'https://mobalytics.gg/poe/builds/mercenary-support-luminary-path-of-evening'
+			]
 		]);
 	});
 });
@@ -203,10 +222,12 @@ describe('per-ruleset guide URLs', () => {
 		]);
 	});
 
-	// Guide A's, guide C's and guide D's rulesets each come off ONE page or video,
-	// so they inherit the source URL rather than repeating it per ruleset.
+	// Guide A's, guide C's, guide D's and guide F's rulesets each come off ONE
+	// page or video, so they inherit the source URL rather than repeating it per
+	// ruleset. Guide F is six searches on one page, which is the most this can
+	// carry and still be true.
 	it('leaves a one-page source’s rulesets without a URL of their own', () => {
-		const onePage = ['guide-a', 'guide-c', 'guide-d'].flatMap(
+		const onePage = ['guide-a', 'guide-c', 'guide-d', 'guide-f'].flatMap(
 			(id) => (MERC_SOURCES.find((s) => s.id === id) as MercSource).rulesets
 		);
 		expect(onePage.map((r) => `${r.id} ${r.guideUrl ?? 'inherits the source URL'}`)).toEqual([
@@ -218,7 +239,13 @@ describe('per-ruleset guide URLs', () => {
 			'guide-c-blade-ambusher inherits the source URL',
 			'guide-c-combatant inherits the source URL',
 			'guide-d-kinetist-budget inherits the source URL',
-			'guide-d-kinetist-20d inherits the source URL'
+			'guide-d-kinetist-20d inherits the source URL',
+			'guide-f-manyshot-cheap inherits the source URL',
+			'guide-f-manyshot-expensive inherits the source URL',
+			'guide-f-combatant-cheap inherits the source URL',
+			'guide-f-combatant-expensive inherits the source URL',
+			'guide-f-kinetist-cheap inherits the source URL',
+			'guide-f-kinetist-expensive inherits the source URL'
 		]);
 	});
 });
@@ -269,7 +296,7 @@ describe('round-trip normaliser', () => {
 
 describe('rulesetQuery', () => {
 	for (const ruleset of allRulesets()) {
-		// For the twenty-two saved searches the oracle is GGG's own JSON: the builder
+		// For the twenty-eight saved searches the oracle is GGG's own JSON: the builder
 		// walks the typed data model, and what comes out has to be the response
 		// returned for that hash. For guide-c's four the fixture is this builder's
 		// own output — a weaker check, and the only one available, since there is

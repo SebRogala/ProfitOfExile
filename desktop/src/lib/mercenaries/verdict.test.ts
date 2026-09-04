@@ -216,6 +216,30 @@ function kinetistCapture(row0Supports: string[] = []): MercCapture {
 	]);
 }
 
+/**
+ * The same Kinetist mercenary carrying the two buffs Path of Evening gates on —
+ * Haste and Inspiring Cry, live filters of its lead `and` group alongside
+ * Greater Kinetic Blast.
+ *
+ * Its own capture because no existing one pairs the two auras on a Kinetic
+ * Blast row: `kinetistCapture` carries neither, and `frostBladesCapture` /
+ * `wildStrikeCapture` carry Inspiring Cry on a Frost Blades / Wild Strike row
+ * with no Haste. Return on the Kinetic Blast row answers the expensive rung's
+ * live group and revives the cheap rung's parked one.
+ */
+function pathOfEveningKinetistCapture(): MercCapture {
+	return captureOf([
+		row(
+			0,
+			skillRead(KINETIC_BLAST_OF_CLUSTERING),
+			supportsOf([RETURN, GREATER_FORK, CHAIN, GREATER_EDWA, CRITICAL_DAMAGE])
+		),
+		row(1, skillRead(GREATER_KINETIC_BLAST)),
+		row(2, skillRead(HASTE)),
+		row(3, skillRead(INSPIRING_CRY))
+	]);
+}
+
 /** Both Manyshot rows read cleanly: Ice Shot + Return, Vaal Ice Shot + Return. */
 function manyshotCapture(row0Supports: string[] = []): MercCapture {
 	return captureOf([
@@ -514,7 +538,13 @@ describe('sources are evaluated independently', () => {
 			// Barrage the way guide B does. Its budget rung requires Greater
 			// Multiple Projectiles this mercenary has not got, and a source is
 			// worth as soon as one of its rungs passes.
-			['guide-d', 'worth']
+			['guide-d', 'worth'],
+			// Guide F wants the same Kinetic Blast links AND Greater Kinetic Blast,
+			// Haste and Inspiring Cry as live gates in one `and` group. This
+			// mercenary's second skill is Barrage, so all three are missing and
+			// both its rungs fail — a fifth opinion that turns on the buffs
+			// rather than on the links.
+			['guide-f', 'skip']
 		]);
 		expect(sourceOf(verdict, 'guide-b').best).toEqual(['guide-b-kinetist-mv']);
 	});
@@ -786,6 +816,10 @@ describe('the row anchor of a `mercenary` group', () => {
 		['kinetist', kinetistCapture()],
 		['kinetist + GMP', kinetistCapture([GMP])],
 		['kinetist + Pierce', kinetistCapture([PIERCE])],
+		// The only capture that reaches guide-f, and the one that exercises its
+		// cheap rung's PARKED `return` group — `min: 2` revived by a fired Return
+		// bonus, which is the shape both measured bugs above had.
+		['path of evening kineticist', pathOfEveningKinetistCapture()],
 		['manyshot', manyshotCapture()],
 		['manyshot + GMP', manyshotCapture([GMP])],
 		['manyshot GG', manyshotGgCapture()],
@@ -819,8 +853,9 @@ describe('the row anchor of a `mercenary` group', () => {
 
 	// A sweep that stopped passing anything would report no offenders and look
 	// green, so what it reached is asserted as well as what it found. Every
-	// guide-b ladder, both guide-d rungs, both untiered guide-a rulesets and all
-	// four guide-c rulesets that any of these captures can answer are in here.
+	// guide-b ladder, both guide-d rungs, both guide-f Kineticist rungs, both
+	// untiered guide-a rulesets and all four guide-c rulesets that any of these
+	// captures can answer are in here.
 	it('sweeps a passing rung of every ladder, both guide-a archetypes and all four guide-c rulesets', () => {
 		expect([...new Set(sweep().visited)].sort()).toEqual([
 			'guide-a-combatant',
@@ -847,7 +882,9 @@ describe('the row anchor of a `mercenary` group', () => {
 			'guide-c-kinetist',
 			'guide-c-manyshot',
 			'guide-d-kinetist-20d',
-			'guide-d-kinetist-budget'
+			'guide-d-kinetist-budget',
+			'guide-f-kinetist-cheap',
+			'guide-f-kinetist-expensive'
 		]);
 	});
 

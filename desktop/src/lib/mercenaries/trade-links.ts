@@ -67,9 +67,9 @@ export interface TradeStatGroup {
 
 /**
  * The `query` object of a trade search — the same shape the saved-search
- * fixtures carry under their own `query` key. No `sort`: none of the twenty-one
- * saved searches has one, and adding one here would make the derived search
- * order differently from the search it was derived from.
+ * fixtures carry under their own `query` key. No `sort`: none of the
+ * twenty-seven saved searches has one, and adding one here would make the
+ * derived search order differently from the search it was derived from.
  *
  * Both filter blocks are optional because the app builds queries from two
  * places and each names one of them: `rulesetQuery` below carries a guide's
