@@ -8,6 +8,7 @@ This is the documentation entry point. Documents are classified so historical pl
 - [Product vision](product-vision.md) — historical strategy-simulation domain and future scope; not current architecture.
 - [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — current workflows plus clearly labeled reliability targets for collection, native trade, contributions, optional server trading, pairing, and Mercure.
 - [Overlay Guide](OVERLAY-GUIDE.md) — maintained Windows/Tauri overlay mechanics and regression guards.
+- [Temple Lifecycle](TEMPLE-LIFECYCLE.md) — normative order of arming, detection, OCR and overlay show/hide for the temple module (POE-249); each rule tagged shipped or planned.
 - [Collector Endpoint Guide](COLLECTOR-ENDPOINTS.md) — current cross-layer recipe for adding a market-data source.
 - [Gem and Item Icons](GEM-ICONS.md) — current procedure for adding or changing an icon, and why seeding precedes deploy.
 - [Deployment](DEPLOY.md) — how main reaches production, why the deploy is path-filtered, and what a green pipeline does not tell you, desktop release channels (stable / beta by device role), the public-repo rules for beta testers, and the one-off POE-215 merc registration-reset runbook.
