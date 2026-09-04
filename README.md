@@ -70,6 +70,8 @@ make migration name=add_foo   # Generate new migration pair
 
 Single domain via Traefik: `/api` routes to Go, everything else to Vite dev server.
 
+Fresh machine (WSL prerequisites, shared infra, Windows toolchain, `desktop/` sync, `npx tauri dev`): [docs/DEV-SETUP.md](docs/DEV-SETUP.md).
+
 ## Documentation
 
 - [Documentation Index](docs/README.md) — canonical guides, accepted ADRs, proposed specifications, dated research, and historical plans.
