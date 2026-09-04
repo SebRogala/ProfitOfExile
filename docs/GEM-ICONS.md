@@ -279,24 +279,30 @@ the same treatment against its own sub-directory. `PROD_HOST` and
 ### Migration to content-addressed names
 
 Status: pending as of 2026-09-04. POE-136 changed the cache filename from
-`<safe name>.png` to `<safe name>-<16 hex of the URL's SHA-256>.png`. Every file
-already in production carries the old name, so after the deploy the server looks
-for names that are not there, and it cannot recover by fetching — poewiki 403s
-the VPS (ADR-012 decision 1). Unmigrated, the deploy answers `502` for **every**
-icon in **both** sets.
+`<safe name>.png` to `<safe name>-<16 hex of the URL's SHA-256>.png`. Every gem
+file already in production carries the old name, so after the deploy the server
+looks for names that are not there, and it cannot recover by fetching — poewiki
+403s the VPS (ADR-012 decision 1). Unmigrated, the deploy answers `502` for
+**every** gem icon. The item set is not part of this premise: it has never been
+seeded on production (see [below](#the-one-time-migration-to-a-single-volume-poe-221-and-to-content-addressed-names-poe-136))
+and already answers `502` for every icon regardless of this rename.
 
 > **DEPLOY-BLOCKER:** do not push main until both icon sub-dirs on prod hold the
 > new `<safe>-<hex>.png` names (run `migrate` on the existing files, then `pull`
 > for anything missing, then `prune`).
 
 The rename needs no re-crawl: the bytes are already on disk and only the filename
-changes, which is what `migrate` does.
+changes, which is what `migrate` does. That applies to the gem set — the only
+set with old-named files on prod:
 
 ```
 python3 scripts/download-gem-icons.py migrate icons-cache/gems
-python3 scripts/download-gem-icons.py migrate icons-cache/currency-exchange \
-  --map internal/exchange/itemdata/icon-urls.json
 ```
+
+The item set has never been seeded on production, so there are no old-named
+files there to rename. `migrate` on `icons-cache/currency-exchange` is a no-op
+in that case — skip it unless a prior seed exists on disk. The chain's full
+`pull` (below) is what populates the item set from scratch.
 
 `migrate` renames a file only when the old name exists and the new one does not,
 so it is idempotent and safe to re-run. It touches no network, and it reports
@@ -311,7 +317,10 @@ three counts against the map's entry count. Read them as a sanity check:
   entries: the staging copy is incomplete (or the map is the wrong one for this
   directory). `pull` in the next step fetches whatever is genuinely new, but a
   large `no_old_file` on a directory you just copied down is a copy that lost
-  files, and worth stopping for.
+  files, and worth stopping for. **Exception:** for a set that was never seeded
+  on production — the item set, as of 2026-09-04 — `no_old_file` == map size is
+  EXPECTED on a first run: there is nothing to rename yet, and `pull` is what
+  actually populates it.
 
 **The single-volume migration below has not run yet either, so the two are one
 chain, not two.** Run them together in the order that section gives; it already

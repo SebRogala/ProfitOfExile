@@ -249,7 +249,7 @@ carries the commands.
 
 ## Amended 2026-09-04 (POE-135)
 
-Status of this section: current behaviour.
+Status of this section: current behaviour (Decision 3's status is superseded by the fourth amendment below).
 
 **The gem set's source map is a directory of category files.**
 `internal/gemicon/gem-icon-urls.json` is replaced by
@@ -263,8 +263,8 @@ the single file held: 765 entries, same keys, same URLs.
 
 **Layout only; every decision above stands.** The map is still compiled into the
 binary, so Decision 1 (production never fetches) and Decision 2 (seed before
-deploy) are untouched, adding an icon is still a code change requiring a deploy,
-and Decision 3 is still accepted and still unimplemented. The runtime lookup is
+deploy) are untouched, and adding an icon is still a code change requiring a
+deploy. The runtime lookup is
 unchanged — one flat map, no categories — so nothing about 404s, 502s, caching
 headers or the cache-filename scheme moves. There is still no runtime filesystem
 read on the production path.
