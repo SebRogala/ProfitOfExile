@@ -11,7 +11,14 @@ corroborates, and never teaches the slice a new number.
 ## Status
 
 Accepted (POE-234, commits `29ac1b9` + `0691be5`, 2026-09-03). Written up in the
-POE-223 follow-up audit, 2026-09-04. Extends the module contract in
+POE-223 follow-up audit, 2026-09-04.
+
+Amended 2026-09-04 (POE-233) — see
+[the amendment at the end](#amendment-the-lab-ocr-regions-are-the-one-consumer-that-assumes-1080p-2026-09-04):
+the slice's second consumer is named, and it is the one place a `null` slice
+does not fail closed.
+
+Extends the module contract in
 [ADR-014](014-desktop-features-are-modules-with-a-work-toggle-and-a-view-page.md):
 that ADR made shared state flow only through SSOT slices; this one says what a
 module may do to the ONE slice that describes the screen.
@@ -210,3 +217,40 @@ and the read runs at up to 1 Hz.
   they are also the set nothing the module draws may cover, so a rect that is
   wrong here is wrong twice — a bad read, and a surface placed clear of a
   rectangle that is not where it thinks it is.
+
+## Amendment: the lab OCR regions are the one consumer that assumes 1080p (2026-09-04)
+
+POE-233 (`a7abbed`), written up in the POE-223 follow-up audit. Nothing in the
+Decision moves; the second consumer of the slice is named, and with it the ONE
+place a `null` slice does not fail closed.
+
+**Placement, stated once for both consumers.** A consumer expresses its rects in
+REFERENCE px and derives physical rects from `ui_scale`; it never hard-codes a
+resolution's pixels. There are two. The widget geometry engine
+([ADR-021](021-a-module-draws-one-window-on-the-game-monitor-and-widgets-inside-it.md))
+is the first: a widget it places from this slice is `anchored` and carries no
+persisted position and no Configure placement — only a Show row in Settings —
+because the game decides where it goes. The lab OCR `CaptureRegion`s are the
+second — `lib.rs`'s `GEM_REGION_REF` and
+`FONT_PANEL_REF` hold the gem-tooltip and font-panel rects in reference px,
+`effective_region(user, reference, ui_scale)` is the one place a physical rect is
+derived from them, and a rect the user placed in Settings still wins over both.
+
+**The departure.** Decision §1 says `null` means nothing has measured a screen
+and no consumer may read it as 1.0. The lab regions are the one documented
+exception and it is NOT a substituted scale: with no measurement they **assume
+1080p**, which is precisely the rect the app cropped before POE-233. The reason
+is a difference in what failing closed costs — a widget that fails closed is
+merely not drawn, while an OCR loop that fails closed reads nothing at all, so
+for the lab loops fail-closed would be a regression from shipped behaviour
+rather than a safeguard. The exception is bounded by being VISIBLE: each scan
+loop says so once per session in the app log.
+
+**UNVERIFIED — the reference rects themselves are DERIVED, not measured.** They
+are the shipped 1080p literals divided by 0.90, and they are provisional until
+both smoke machines confirm them. `ui_scale` is height-tied, so a non-16:9
+monitor is an unverified case with no centring model behind it. The smoke item
+that settles them is a gem-tooltip and a font-panel read on each machine at its
+own resolution; until it runs, this consumer's placement is arithmetic and not a
+measurement. See `desktop/src/lib/README.md`'s Screen Geometry (SSOT)
+"Placement" paragraph, which is normative for the mechanics.
