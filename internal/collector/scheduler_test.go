@@ -1627,6 +1627,105 @@ func TestScheduler_panicInFetchFuncDoesNotCrashOtherEndpoints(t *testing.T) {
 	}
 }
 
+// logCapture records every slog.Record emitted through it. Scheduler takes its
+// logger as an injected field, so the capture is wired in at construction — no
+// slog.SetDefault, and therefore no global state shared between tests.
+//
+// mu and entries are held behind a pointer (via *sync.Mutex and a slice header
+// copied by value into every WithAttrs child) so a handler tree rooted at one
+// logCapture shares a single record store: a production refactor that moves
+// an attr like "endpoint" into logger.With(...) still lands its records here.
+type logCapture struct {
+	mu      *sync.Mutex
+	entries *[]slog.Record
+	attrs   []slog.Attr
+}
+
+// newLogCapture returns a root logCapture with its own backing store.
+func newLogCapture() *logCapture {
+	return &logCapture{mu: &sync.Mutex{}, entries: &[]slog.Record{}}
+}
+
+// Enabled accepts every level so Info records land in the capture too: the
+// no-warning test needs to see the age-aware Info to prove it observed the call.
+func (c *logCapture) Enabled(context.Context, slog.Level) bool { return true }
+
+func (c *logCapture) Handle(_ context.Context, r slog.Record) error {
+	rec := r.Clone()
+	if len(c.attrs) > 0 {
+		rec.AddAttrs(c.attrs...)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	*c.entries = append(*c.entries, rec)
+	return nil
+}
+
+// WithAttrs returns a child handler that shares this capture's mutex and
+// record slice but carries the accumulated attrs forward, per the slog.Handler
+// contract: Handle on the child must prepend those attrs into every record it
+// stores, so logger.With("endpoint", ep.Name).Warn(...) is captured the same
+// as logger.Warn("endpoint", ep.Name, ...).
+func (c *logCapture) WithAttrs(attrs []slog.Attr) slog.Handler {
+	if len(attrs) == 0 {
+		return c
+	}
+	merged := make([]slog.Attr, 0, len(c.attrs)+len(attrs))
+	merged = append(merged, c.attrs...)
+	merged = append(merged, attrs...)
+	return &logCapture{mu: c.mu, entries: c.entries, attrs: merged}
+}
+
+// WithGroup returns the receiver unchanged: no test asserts on grouped attrs,
+// so a real child (with group-qualified keys) would add complexity no test needs.
+func (c *logCapture) WithGroup(string) slog.Handler { return c }
+
+// records returns a snapshot of everything captured so far.
+func (c *logCapture) records() []slog.Record {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]slog.Record(nil), *c.entries...)
+}
+
+// recordsWithMessage returns every captured record whose message is exactly msg.
+// Exact equality is deliberate: a silently reworded log line is as much a
+// regression for the operator grepping for it as a deleted one.
+func recordsWithMessage(c *logCapture, msg string) []slog.Record {
+	var found []slog.Record
+	for _, rec := range c.records() {
+		if rec.Message == msg {
+			found = append(found, rec)
+		}
+	}
+	return found
+}
+
+// logAttr returns the value logged under key, and whether it was present at all.
+func logAttr(rec slog.Record, key string) (slog.Value, bool) {
+	var (
+		val   slog.Value
+		found bool
+	)
+	rec.Attrs(func(a slog.Attr) bool {
+		if a.Key == key {
+			val, found = a.Value, true
+			return false
+		}
+		return true
+	})
+	return val, found
+}
+
+// newCapturedScheduler returns the same minimal Scheduler as new304Scheduler
+// plus the capture its logger writes to, for tests that assert on log output.
+func newCapturedScheduler() (*Scheduler, *logCapture) {
+	capture := newLogCapture()
+	return &Scheduler{
+		logger:     slog.New(capture),
+		semaphores: map[string]chan struct{}{},
+	}, capture
+}
+
 // new304Scheduler returns a minimal Scheduler suitable for fetchAndStore unit tests.
 func new304Scheduler() *Scheduler {
 	return &Scheduler{
@@ -1769,5 +1868,131 @@ func TestScheduler_304ResetsRetryCountOnAgeAwarePath(t *testing.T) {
 		if state.retryCount != 0 {
 			t.Errorf("iter %d retryCount = %d, want 0 (consecutive 304s with AgePresent must not accumulate)", i, state.retryCount)
 		}
+	}
+}
+
+// --- the AgePresent=false warnings ----------------------------------------
+//
+// The two Warn lines in the Age-header-absent branch are the operator's only
+// signal that the upstream stopped sending Age (POE-109 promoted them from Info
+// for exactly that reason). Nothing else observes them, so a refactor that
+// downgrades or drops one is invisible without these tests.
+
+func TestScheduler_304WithoutAgeHeader_warnsOnEveryBurstRetry(t *testing.T) {
+	s, capture := newCapturedScheduler()
+	ep := new304Endpoint(0, false)
+	state := &endpointState{}
+
+	for i := 1; i <= ep.MaxRetries; i++ {
+		s.fetchAndStore(context.Background(), ep, state)
+	}
+
+	const msg = "source returned '304 Not Modified' without Age header"
+	got := recordsWithMessage(capture, msg)
+	if len(got) != ep.MaxRetries {
+		t.Fatalf("records with message %q = %d, want %d (one per burst retry)", msg, len(got), ep.MaxRetries)
+	}
+	for i, rec := range got {
+		if rec.Level != slog.LevelWarn {
+			t.Errorf("burst record %d level = %v, want %v (the Age-header regression must stay a warning)", i+1, rec.Level, slog.LevelWarn)
+		}
+		endpoint, ok := logAttr(rec, "endpoint")
+		if !ok {
+			t.Errorf("burst record %d has no %q attr", i+1, "endpoint")
+		} else if endpoint.String() != ep.Name {
+			t.Errorf("burst record %d endpoint = %q, want %q", i+1, endpoint.String(), ep.Name)
+		}
+		retries, ok := logAttr(rec, "retries")
+		if !ok {
+			t.Errorf("burst record %d has no %q attr", i+1, "retries")
+			continue
+		}
+		if retries.Kind() != slog.KindInt64 {
+			t.Errorf("burst record %d retries kind = %v, want %v (must stay an integer count)", i+1, retries.Kind(), slog.KindInt64)
+			continue
+		}
+		if want := int64(i + 1); retries.Int64() != want {
+			t.Errorf("burst record %d retries = %d, want %d (the count operators read the burst depth from)", i+1, retries.Int64(), want)
+		}
+	}
+}
+
+func TestScheduler_304WithoutAgeHeader_warnsOnceWhenRetriesAreExhausted(t *testing.T) {
+	// The exhaustion warn is nested inside the burst branch, so the last call
+	// emits both. This test owns only the exhaustion line; the burst count is
+	// asserted by TestScheduler_304WithoutAgeHeader_warnsOnEveryBurstRetry.
+	s, capture := newCapturedScheduler()
+	ep := new304Endpoint(0, false)
+	state := &endpointState{}
+
+	for i := 0; i <= ep.MaxRetries; i++ {
+		s.fetchAndStore(context.Background(), ep, state)
+	}
+
+	const msg = "max consecutive '304 Not Modified' responses reached, falling back to long sleep"
+	got := recordsWithMessage(capture, msg)
+	if len(got) != 1 {
+		t.Fatalf("records with message %q = %d, want 1 (once, on the call that crosses MaxRetries)", msg, len(got))
+	}
+	rec := got[0]
+	if rec.Level != slog.LevelWarn {
+		t.Errorf("exhaustion record level = %v, want %v", rec.Level, slog.LevelWarn)
+	}
+	if endpoint, ok := logAttr(rec, "endpoint"); !ok {
+		t.Errorf("exhaustion record has no %q attr", "endpoint")
+	} else if endpoint.String() != ep.Name {
+		t.Errorf("exhaustion record endpoint = %q, want %q", endpoint.String(), ep.Name)
+	}
+	fallback, ok := logAttr(rec, "fallback")
+	if !ok {
+		t.Fatalf("exhaustion record has no %q attr", "fallback")
+	}
+	if want := ep.FallbackInterval.String(); fallback.String() != want {
+		t.Errorf("exhaustion record fallback = %q, want %q (the sleep the endpoint actually backs off to)", fallback.String(), want)
+	}
+}
+
+func TestScheduler_304WithAgeHeader_emitsNoWarning(t *testing.T) {
+	// The age-aware path is the healthy case: it must stay at Info, or every
+	// normal 304 cycle becomes a warning and the AgePresent=false signal drowns.
+	s, capture := newCapturedScheduler()
+	ep := new304Endpoint(30, true)
+	state := &endpointState{}
+
+	s.fetchAndStore(context.Background(), ep, state)
+
+	records := capture.records()
+	if len(records) == 0 {
+		t.Fatal("captured no records at all — the age-aware 304 must still log its sleep at Info")
+	}
+	for _, rec := range records {
+		if rec.Level >= slog.LevelWarn {
+			t.Errorf("record %q logged at %v, want below %v (a 304 with an Age header is not an incident)", rec.Message, rec.Level, slog.LevelWarn)
+		}
+	}
+}
+
+// TestLogCapture_withAttrsPrependsAttrsIntoStoredRecords guards the
+// slog.Handler contract on logCapture.WithAttrs: a handler returned from
+// logger.With(...) must carry those attrs into every record it stores. If a
+// future refactor moves "endpoint", ep.Name from the Warn call site into
+// s.logger.With(...), this is what keeps the burst/exhaustion tests observing
+// the attr instead of silently losing it.
+func TestLogCapture_withAttrsPrependsAttrsIntoStoredRecords(t *testing.T) {
+	capture := newLogCapture()
+	child := capture.WithAttrs([]slog.Attr{slog.String("endpoint", "x")})
+
+	slog.New(child).Info("via With")
+
+	got := capture.records()
+	if len(got) != 1 {
+		t.Fatalf("captured %d records, want 1", len(got))
+	}
+	endpoint, ok := logAttr(got[0], "endpoint")
+	if !ok {
+		t.Fatal("stored record has no \"endpoint\" attr — WithAttrs must be honoured by Handle")
+	}
+	if got := endpoint.String(); got != "x" {
+		t.Errorf("endpoint = %q, want %q", got, "x")
 	}
 }
