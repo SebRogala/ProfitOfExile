@@ -64,9 +64,10 @@ export interface WidgetSpec {
 	 * lists it with `placeable: false`) — an anchored widget the user cannot
 	 * switch off would be the one overlay surface with no control at all.
 	 *
-	 * `temple.advice` is the first (POE-244). The host does not place it —
-	 * nothing generic can, because where it goes is a function of where the game
-	 * drew the thing it points at — so the host renders anchored widgets through
+	 * `temple.offers` is the only one — POE-244's `temple.advice` under a new
+	 * id since POE-249. The host does not place it — nothing generic can,
+	 * because where it goes is a function of where the game drew the thing it
+	 * points at — so the host renders anchored widgets through
 	 * a SECOND snippet, into a layer the size of the whole window, and the
 	 * module positions its own content inside that. What the host still supplies
 	 * is everything the two kinds share: the same window, the same `data-hot`
@@ -91,9 +92,14 @@ export interface WidgetSpec {
  *   anything read — the answer to "is this thing on?" while the sheet is still
  *   shut — and it is gone the moment there is a board to look at
  *   (`overlayShowsWaiting`). Placed by the USER.
- * - `temple.advice` is the kill callout: which architect block to click, while
- *   the sheet is open. Placed against the GAME (`anchored`), because a box that
- *   points at an architect block has to be wherever that block is.
+ * - `temple.offers` is the pair of offer boxes (POE-249): both architect
+ *   blocks, stacked in the sheet's left margin, with the advisor's pick
+ *   framed in cyan — which architect to click and what taking either one
+ *   builds, while the sheet is open. Placed against the GAME (`anchored`),
+ *   because a column that mirrors the panel's own block order has to be
+ *   wherever the game drew those blocks. It REPLACES `temple.advice`, the
+ *   single kill callout, which named one block and left the other — half the
+ *   decision — off the overlay.
  * - `temple.door` is the room widget: which door to open, drawn on the room's
  *   own shape. Placed by the USER, because it is the surface that stays up
  *   after the panel is gone — and past the capture standing down (POE-248) —
@@ -105,6 +111,16 @@ export interface WidgetSpec {
  * `TempleLattice.svelte` survives on the Temple page, which is the surface for
  * reading.
  *
+ * `temple.advice` — the kill callout POE-249 replaced — is gone the same way,
+ * and its persisted ROW goes INERT rather than being migrated out: Rust does
+ * not validate widget ids against this registry (`set_widget_geometry` says
+ * why) and the host looks placements up BY SPEC, so a row nothing declares is
+ * never read. Nothing of it survives, including the one part of a stored
+ * anchored row that WAS still live — its `visible` flag. The Show checkbox now
+ * writes `temple.offers`'s own row, and a machine that had switched the callout
+ * off sees the offer boxes on, which is the honest answer for a surface that
+ * did not exist when that switch was flipped.
+ *
  * **The order of this list is the order Settings draws the rows in**, within
  * each kind: `widgetsFor` preserves it, and `overlayGroups` lists the placeable
  * rows first and the anchored ones after. So moving an entry here moves a row
@@ -112,16 +128,18 @@ export interface WidgetSpec {
  */
 export const WIDGETS: readonly WidgetSpec[] = [
 	{
-		id: 'temple.advice',
+		id: 'temple.offers',
 		module: 'temple',
-		label: 'Temple kill callout',
-		// ANCHORED: only `w` is read, as the wrap ceiling for the callout's own
-		// text. A callout wider than this reads as a paragraph over the game,
-		// which is the thing POE-244 replaced. The position is never used —
-		// `overlay-geometry.ts`'s `calloutPlacement` decides it per read — but
-		// the registry's own invariant is that every default is a real
-		// rectangle, so the numbers are the ones the box would occupy.
-		defaults: { x: 250, y: 40, w: 320, h: 90 },
+		label: 'Temple offer boxes',
+		// ANCHORED: only `w` is read, as the wrap ceiling for each box's own
+		// text. A box wider than this reads as a paragraph over the game, which
+		// is the thing POE-244 replaced and POE-249 kept. The position is never
+		// used — `overlay-geometry.ts`'s `offerStackPlacement` decides it per
+		// read, in the sheet's left margin — but the registry's own invariant is
+		// that every default is a real rectangle, so the numbers are the ones
+		// ONE box would occupy: 260 wide, and tall enough for the four lines a
+		// box carries (headline, what it builds, the rating, one reason).
+		defaults: { x: 40, y: 115, w: 260, h: 200 },
 		resizable: false,
 		anchored: true
 	},

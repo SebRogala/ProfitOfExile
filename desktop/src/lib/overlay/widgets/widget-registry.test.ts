@@ -40,7 +40,7 @@ describe('every declared widget', () => {
 	// user reads.
 	it('ships exactly the three temple widgets, in registry order, without the board', () => {
 		expect(WIDGETS.map((widget) => widget.id)).toEqual([
-			'temple.advice',
+			'temple.offers',
 			'temple.door',
 			'temple.waiting'
 		]);
@@ -80,17 +80,17 @@ describe('every declared widget', () => {
 });
 
 describe('the temple module', () => {
-	it('declares the callout, the door diamond and the waiting notice under its window label', () => {
+	it('declares the offer boxes, the door diamond and the waiting notice under its window label', () => {
 		expect(widgetsFor(TEMPLE_WINDOW_LABEL).map((widget) => widget.id)).toEqual([
-			'temple.advice',
+			'temple.offers',
 			'temple.door',
 			'temple.waiting'
 		]);
 	});
 
-	// The callout is placed by the module against the game, so a resize handle
-	// on it would offer a size `placementFor` never applies and a drag the next
-	// read would undo. The waiting notice is placed by the user but is ONE LINE
+	// The offer boxes are placed by the module against the game, so a resize
+	// handle on them would offer a size `placementFor` never applies and a drag
+	// the next read would undo. The waiting notice is placed by the user but is ONE LINE
 	// of fixed text — there is no size to choose, and a resizable widget the
 	// user has dragged an edge on is drawn at the stored size ever after
 	// (`placementFor`), which for this one is a box cropping its own sentence.
@@ -99,7 +99,7 @@ describe('the temple module', () => {
 		expect(
 			widgetsFor(TEMPLE_WINDOW_LABEL).map((widget) => [widget.id, widget.resizable])
 		).toEqual([
-			['temple.advice', false],
+			['temple.offers', false],
 			['temple.door', true],
 			['temple.waiting', false]
 		]);
@@ -129,9 +129,10 @@ describe('the temple module', () => {
 	// `ships the advice widget clear of the board` was deleted with POE-244 and
 	// deliberately not replaced. It asserted that two widgets did not overlap at
 	// their shipped defaults, which was a real invariant while both were placed
-	// side by side by the registry; neither half of that survives. The callout is
-	// ANCHORED — its shipped position is never used, `calloutPlacement` decides
-	// it per read — and the door diamond is the only placeable widget left, so
+	// side by side by the registry; neither half of that survives. The panel-side
+	// advice widget is ANCHORED — its shipped position is never used,
+	// `offerStackPlacement` decides it per read — and the door diamond is the
+	// only placeable widget left, so
 	// there is no second rectangle for it to be clear of. The overlap rule that
 	// replaced it is `avoidRects`, and it is about read regions rather than about
 	// other widgets.
@@ -150,7 +151,7 @@ describe('the widgets a host actually places', () => {
 			'temple.door',
 			'temple.waiting'
 		]);
-		expect(anchoredWidgetsFor(TEMPLE_WINDOW_LABEL).map((w) => w.id)).toEqual(['temple.advice']);
+		expect(anchoredWidgetsFor(TEMPLE_WINDOW_LABEL).map((w) => w.id)).toEqual(['temple.offers']);
 		expect(
 			placeableWidgetsFor(TEMPLE_WINDOW_LABEL).length +
 				anchoredWidgetsFor(TEMPLE_WINDOW_LABEL).length
@@ -168,23 +169,35 @@ describe('the widgets a host actually places', () => {
 });
 
 describe('a placement stored for a widget the registry no longer declares', () => {
-	// POE-244 retires `temple.board`. Its persisted rectangle stays in
-	// `Settings.widgets` on every machine that ever arranged the widgets — Rust
-	// does not validate ids against the frontend registry (`set_widget_geometry`
-	// says why), and `get_widget_geometries` returns every row with the module's
-	// prefix. The migration is therefore that the row is INERT, not that it is
-	// removed, and this is what pins it: the host looks placements up BY SPEC,
-	// so a row nothing declares is never read.
+	// TWO of them now. POE-244 retired `temple.board`; POE-249 retired
+	// `temple.advice`, whose id the offer boxes did not inherit. Both rows stay
+	// in `Settings.widgets` on every machine that ever arranged the widgets —
+	// Rust does not validate ids against the frontend registry
+	// (`set_widget_geometry` says why), and `get_widget_geometries` returns
+	// every row with the module's prefix. The migration is therefore that the
+	// row is INERT, not that it is removed, and this is what pins it: the host
+	// looks placements up BY SPEC, so a row nothing declares is never read.
+	//
+	// `temple.advice`'s row is the stronger case of the two, and that is why it
+	// is here rather than assumed. It was an ANCHORED widget, so its rectangle
+	// was already never consulted — what a stored row for one of those was
+	// still for was its `visible` flag, which the Show checkbox wrote and the
+	// host honoured. With nothing declaring the id, that half is inert as well:
+	// the checkbox now writes `temple.offers`'s own row, and a machine that had
+	// switched the callout off sees the offer boxes ON.
 	const host = { width: 1920, height: 1080 };
-	/** A map with EVERY declared placeable widget's row in it as well as the
-	 *  retired one, so the lookup being exercised is a real one. The previous
+	/** A map with EVERY declared placeable widget's row in it as well as the two
+	 *  retired ones, so the lookup being exercised is a real one. The previous
 	 *  version of this test passed `stale[spec.id]`, which is `undefined` for
 	 *  every declared spec — it compared `placementFor(spec, undefined)` with
 	 *  itself and would have passed against any implementation at all. */
 	const stored: Record<string, WidgetGeometry> = {
 		'temple.door': { x: 900, y: 700, width: 0, height: 0, visible: true },
 		'temple.waiting': { x: 120, y: 60, width: 0, height: 0, visible: true },
-		'temple.board': { x: 40, y: 40, width: 200, height: 200, visible: true }
+		'temple.board': { x: 40, y: 40, width: 200, height: 200, visible: true },
+		// `visible: false` on purpose: the flag is the one part of an anchored
+		// widget's stored row that used to be live.
+		'temple.advice': { x: 250, y: 40, width: 320, height: 90, visible: false }
 	};
 
 	/** Where each declared widget's own row puts it — a second list, not read
@@ -217,11 +230,12 @@ describe('a placement stored for a widget the registry no longer declares', () =
 	});
 
 	it('is invisible to the placement of every widget that still exists', () => {
-		// The migration itself: adding the retired row to the map changes
-		// nothing, because the host looks up BY SPEC and no spec names it.
+		// The migration itself: adding the retired rows to the map changes
+		// nothing, because the host looks up BY SPEC and no spec names them.
 		const withStale = { ...stored };
 		const withoutStale = { ...stored };
 		delete withoutStale['temple.board'];
+		delete withoutStale['temple.advice'];
 		for (const spec of placeableWidgetsFor(TEMPLE_WINDOW_LABEL)) {
 			expect(placementFor(spec, withStale[spec.id], 1, host)).toEqual(
 				placementFor(spec, withoutStale[spec.id], 1, host)
@@ -230,10 +244,14 @@ describe('a placement stored for a widget the registry no longer declares', () =
 	});
 
 	it('is not something any surface can look up, because nothing declares it', () => {
-		expect(WIDGETS.map((widget) => widget.id)).not.toContain('temple.board');
-		expect(placeableWidgetsFor(TEMPLE_WINDOW_LABEL).map((w) => w.id)).not.toContain(
-			'temple.board'
-		);
+		for (const retired of ['temple.board', 'temple.advice']) {
+			expect(WIDGETS.map((widget) => widget.id)).not.toContain(retired);
+			// Both lists, because the two retired ids were of different kinds:
+			// the board was placeable and the callout was anchored, so a spec
+			// left behind in either filter is a row the host would still draw.
+			expect(placeableWidgetsFor(TEMPLE_WINDOW_LABEL).map((w) => w.id)).not.toContain(retired);
+			expect(anchoredWidgetsFor(TEMPLE_WINDOW_LABEL).map((w) => w.id)).not.toContain(retired);
+		}
 	});
 });
 

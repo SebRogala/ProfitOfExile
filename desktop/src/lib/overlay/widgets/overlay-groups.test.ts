@@ -66,16 +66,18 @@ describe('the Overlay Positions groups', () => {
 	});
 
 	it('lists an anchored widget too, so it keeps a Show switch', () => {
-		// POE-244 review: the callout is placed by the module, so it has no
-		// stored rectangle — but dropping its row took away the only control the
-		// user has for that surface, and it became the one overlay thing with no
-		// way to switch it off. The row is here; the FLAG is what tells the page
-		// not to print a placement it does not have.
+		// POE-244 review: the panel-side advice widget is placed by the module,
+		// so it has no stored rectangle — but dropping its row took away the
+		// only control the user has for that surface, and it became the one
+		// overlay thing with no way to switch it off. The row is here; the FLAG
+		// is what tells the page not to print a placement it does not have.
+		// (POE-249 replaced the kill callout with `temple.offers`; the row's
+		// shape is unchanged, and the id is what moved.)
 		const temple = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Temple');
 		expect(temple?.widgets.map((row) => [row.spec.id, row.placeable])).toEqual([
 			['temple.door', true],
 			['temple.waiting', true],
-			['temple.advice', false]
+			['temple.offers', false]
 		]);
 	});
 

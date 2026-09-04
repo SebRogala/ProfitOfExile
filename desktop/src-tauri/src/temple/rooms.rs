@@ -60,8 +60,9 @@ pub enum Grade {
 }
 
 impl Grade {
-    /// The grade as it is written on the sheet.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
+    /// The grade as it is written on the sheet — the wire form of this enum
+    /// (`slice::OfferView::grade`, POE-249), because `Grade` itself is a
+    /// reasoning type with a derived worst-first `Ord` and no `Serialize`.
     pub fn as_str(self) -> &'static str {
         match self {
             Grade::D => "D",
@@ -116,8 +117,9 @@ impl RoomLine {
         }
     }
 
-    /// Vertolka's grade for this line's tier-3 room.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
+    /// Vertolka's grade for this line's tier-3 room. Published per offer since
+    /// POE-249 (`slice::offer_view`), paired with the tier-3 name so the letter
+    /// is never read as a grade of the room the kill actually builds.
     pub fn grade(self) -> Grade {
         self.grade
     }

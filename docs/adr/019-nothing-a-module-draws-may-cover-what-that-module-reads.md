@@ -73,8 +73,8 @@ Two facts about the failure decided the shape of the rule:
   three placers state this themselves rather than inheriting it from a null
   anchor (`calloutPlacement`, `bannerPlacement`, `doorDefaultPlacement`), and
   the door's caller repeats it so no default is offered to the host at all.
-  *(FOUR placers and two such callers since 2026-09-04 — see the POE-249
-  amendment at the end.)*
+  *(FOUR placers and two such callers since 2026-09-04, and `calloutPlacement`
+  is now `offerStackPlacement` — see the POE-249 amendments at the end.)*
 - **`avoidRects` is the arithmetic, and `null` is a real answer.** The nearest
   position clear of every obstacle, or nothing. A box that cannot be placed
   clear is NOT drawn: the game's own panel is on screen either way, and a callout
@@ -97,8 +97,8 @@ Two facts about the failure decided the shape of the rule:
 where the module is looking and answers where a surface goes, and the player
 never saw the arithmetic. That is the whole class this ADR governs —
 `calloutPlacement`, `bannerPlacement`, `doorDefaultPlacement` today.
-*(And `waitingDefaultPlacement` since 2026-09-04 — see the POE-249 amendment at
-the end.)*
+*(And `waitingDefaultPlacement` since 2026-09-04; `calloutPlacement` is now
+`offerStackPlacement` — see the POE-249 amendments at the end.)*
 
 **A rectangle the USER owns is not a placer's output and is outside the rule.**
 Two of those, and they are the same thing at different ages:
@@ -157,8 +157,9 @@ does not depend on the board is the one that shows the difference.
   `desktop/src/lib/temple/overlay-geometry.ts` and
   `desktop/src/lib/overlay/widgets/widget-avoid.ts`, which is the only form a
   test can reach — an overlay window has no devtools. The components
-  (`TempleKillCallout.svelte`, the temple overlay route) call them and add no
-  arithmetic of their own; a `.svelte` file that computed a position would put
+  (`TempleKillCallout.svelte` — `TempleOfferBoxes.svelte` since 2026-09-04, see
+  the POE-249 amendments at the end — the temple overlay route) call them and
+  add no arithmetic of their own; a `.svelte` file that computed a position would put
   this rule somewhere nothing can assert it.
 - **The check that verifies it is a Debug-capture DIFF, not an eye.** The
   capture is a real grab, so the overlay is in it: dump with the overlay up and
@@ -222,3 +223,10 @@ second caller, alongside `doorDefaults`, that refuses an empty never-cover set
 rather than offering the host a default. Read the two lists above as four and
 two. Nothing else moves: the notice's registry rectangle is the shipped-default
 half of the user-owned carve-out, exactly as the door's fallback is.
+
+POE-249 also retired the first member of that list: `calloutPlacement` and
+`TempleKillCallout.svelte` are deleted, and the offer boxes' `offerStackPlacement`
+(`TempleOfferBoxes.svelte`) is the placer in their place, under the same
+never-cover set, the same empty-set refusal and the same `null`-means-not-drawn
+answer — per BOX, so one that cannot be placed clear is dropped while its
+neighbour is still drawn.

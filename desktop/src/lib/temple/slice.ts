@@ -304,6 +304,15 @@ export interface OfferView {
 	displayName: string | null;
 	/** The tier the kill guarantees. An `upgrade` also rolls one more at 50%. */
 	builtTier: number | null;
+	/** Vertolka's letter for the LINE this kill builds into, as his sheet spells
+	 *  it — `"A++"`, `"C-"` (POE-249). It grades the FAMILY, so a kill landing on
+	 *  tier 2 carries the same letter as one landing on tier 3; `lineTop` is the
+	 *  room it was given for. Null when the printed target did not resolve —
+	 *  there is no line to have a grade. */
+	grade: string | null;
+	/** The tier-3 room of that line — what `grade` is a grade OF. Null on the
+	 *  same failure. */
+	lineTop: string | null;
 	/** Where the block sits on screen — the union of the boxes of the OCR lines
 	 *  it was read from (POE-243). Null when the read carried no boxes, which
 	 *  is what a surface must test before drawing: a missing rect is not the

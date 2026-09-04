@@ -32,7 +32,7 @@
 	 * `temple.waiting` is PLACEABLE: `WidgetHost` positions it, from the user's
 	 * stored rectangle or from the default the route offers through
 	 * `defaultsFor` (`waitingDefaultPlacement`). That is the difference between
-	 * this component and `TempleKillCallout.svelte`, which is anchored and
+	 * this component and `TempleOfferBoxes.svelte`, which is anchored and
 	 * therefore has to measure and place itself.
 	 */
 </script>

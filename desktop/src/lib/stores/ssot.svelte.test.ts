@@ -1078,6 +1078,45 @@ describe('temple slice', () => {
 			expect(mod.ssot.temple.waitingForPanel).toBe(false);
 		});
 
+		it('defaults an offer\'s missing grade and lineTop to null, never undefined', () => {
+			// The same rule one level deeper (POE-249). Both fields are
+			// `serde(default)` in Rust, so a payload from a build before them
+			// carries an offer without them — and `offerBoxes` decides whether
+			// to print a rating line by testing `grade === null`. An
+			// `undefined` there is falsy by accident, and it makes the declared
+			// `string | null` a lie.
+			const stale = {
+				...readSlice(),
+				panel: {
+					room: 'Locus of Corruption',
+					roomRect: null,
+					// An offer as a pre-POE-249 build sends it: no `grade`, no
+					// `lineTop`. Cast because the declared type is exactly what
+					// this payload does not satisfy.
+					offers: [
+						{
+							index: 0,
+							architectName: 'Guatelitzi',
+							kind: 'upgrade',
+							printedTarget: "Sadist's Den",
+							displayName: 'Torment Cells',
+							builtTier: 2,
+							rect: null
+						}
+					],
+					incursionsRemaining: 6
+				}
+			} as unknown as TempleSlice;
+			mod.applySnapshot({ league, temple: stale });
+			const offer = mod.ssot.temple.panel?.offers[0];
+			expect(offer?.grade).toBeNull();
+			expect(offer?.lineTop).toBeNull();
+			// The fields that WERE sent are untouched, so the filling cannot be
+			// passing by blanking the offer.
+			expect(offer?.architectName).toBe('Guatelitzi');
+			expect(offer?.builtTier).toBe(2);
+		});
+
 		it('keeps the payload\'s own value for a field it does carry', () => {
 			// The filling above must not reach a field that IS present, or a
 			// board would be blanked by the very code meant to type it honestly.

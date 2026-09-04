@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Temple builder overlay — a waiting notice, a kill callout and a room
+	 * Temple builder overlay — a waiting notice, two offer boxes and a room
 	 * widget (POE-244, reworked in POE-248, POE-249).
 	 *
 	 * The window is the whole game monitor and click-through everywhere; what
@@ -15,10 +15,24 @@
 	 *   gone the moment there is a board (`overlayShowsWaiting`). USER-PLACED,
 	 *   with a shipped position measured clear of the board's read regions — see
 	 *   `widgetDefaults` below.
-	 * - `temple.advice` is the KILL CALLOUT: a box carrying the architect's name
-	 *   and one reason, placed level with the block the advisor chose and just
-	 *   outside the game's own side panel. ANCHORED — the module places it,
-	 *   because where it goes is a function of where the game drew the block.
+	 * - `temple.offers` is the pair of OFFER BOXES (POE-249): one box per
+	 *   architect block, stacked in the sheet's LEFT MARGIN to mirror the side
+	 *   panel's own block order, each carrying what that kill builds, Vertolka's
+	 *   rating for the line it builds into and the advisor's first reason for
+	 *   that block — with the advisor's pick framed in cyan and the other box
+	 *   faint. The frame IS the pointer (owner: no arrows anywhere). ANCHORED —
+	 *   the module places it, because a column that mirrors the panel has to be
+	 *   wherever the game drew those blocks.
+	 *
+	 *   It REPLACES `temple.advice`, the single kill callout, on the owner's
+	 *   ask: the callout named the block the advisor chose and said one reason
+	 *   about it, and the block the player is choosing AGAINST was not on the
+	 *   overlay at all — so the comparison happened in the game's own panel, in
+	 *   text, which is the reading this overlay exists to spare. The callout's
+	 *   forced note and reason survive inside a box, and its panel-fallback
+	 *   anchor as the first box's fallback top; what was DROPPED is its
+	 *   `KILL … →` title and that title's `kill either` fallback — the
+	 *   architect and the kind lead each box's own headline instead.
 	 * - `temple.door` is the ROOM WIDGET: the same isometric rectangle the panel
 	 *   draws next to the room name, with the OPEN doors green, the advisor's
 	 *   door bigger and purple, and the kill marked as a cyan glyph on the
@@ -50,7 +64,7 @@
 	 * one still on screen while the player is acting. The `leaveMap` banner
 	 * stays for the same reason — it is a decision about the map, not a reading.
 	 *
-	 * Retired again in POE-248, after the first live session: the callout's
+	 * Retired again in POE-248, after the first live session: the kill callout's
 	 * ARROW (owner: no arrows anywhere), the room widget's two text lines
 	 * (`KILL <architect> → <room>` and `open <edge>`), and the red and grey
 	 * seals. What is left on the widget is the outline, the open doors, the
@@ -83,7 +97,7 @@
 	 */
 	import { invoke } from '@tauri-apps/api/core';
 	import TempleDoorDiamond from '$lib/temple/TempleDoorDiamond.svelte';
-	import TempleKillCallout from '$lib/temple/TempleKillCallout.svelte';
+	import TempleOfferBoxes from '$lib/temple/TempleOfferBoxes.svelte';
 	import TempleWaitingNotice from '$lib/temple/TempleWaitingNotice.svelte';
 	import WidgetHost from '$lib/overlay/widgets/WidgetHost.svelte';
 	import { TEMPLE_WINDOW_LABEL } from '$lib/overlay/manager';
@@ -101,8 +115,8 @@
 	import {
 		chosenOffer,
 		doorWarning,
-		killCallout,
 		leaveMapBanner,
+		offerBoxes,
 		overlayShowsBoard,
 		overlayShowsDoors,
 		overlayShowsWaiting,
@@ -112,18 +126,24 @@
 	import { ssot } from '$lib/stores/ssot.svelte';
 
 	const temple = $derived(ssot.temple);
-	/** The callout's gate: the panel is on screen and there is a ranking. */
-	const calloutVisible = $derived(overlayShowsBoard(temple.status));
+	/** The offer boxes' gate: there is a panel on screen. Whether there is
+	 *  anything to SAY about it is `offerBoxes`, which is empty without advice —
+	 *  so the leave-the-map banner inside this same snippet survives a read that
+	 *  produced a map verdict and no ranking, which is what it is gated on. */
+	const offersVisible = $derived(overlayShowsBoard(temple.status));
 	/** The room widget's gate, and deliberately not a status one (POE-248):
-	 *  there is a move to make and a room to draw it on. The callout lives with
-	 *  the PANEL, this lives with the INCURSION. */
+	 *  there is a move to make and a room to draw it on. The offer boxes live
+	 *  with the PANEL, this lives with the INCURSION. */
 	const doorVisible = $derived(overlayShowsDoors(temple));
 	/** The notice's gate (POE-249): Rust heard a start phrase and there is no
 	 *  board on screen yet. Both halves are `view.ts`'s — Alva can speak over an
 	 *  open sheet, and a notice that blinks over a board the player is reading
 	 *  is the failure POE-246 fixed one layer down. */
 	const waitingVisible = $derived(overlayShowsWaiting(temple));
-	const callout = $derived(killCallout(temple));
+	/** One box per architect block the panel printed, in the panel's own order.
+	 *  Empty without advice or without a panel, which is what takes the boxes
+	 *  off screen between the reads of a new cycle. */
+	const boxes = $derived(offerBoxes(temple));
 	/** The architect block the ranking chose, and every block this read parsed.
 	 *  The room widget needs both: the chosen block's own OCR rect is what says
 	 *  which half of the room the game drew its icon in, and one rect with no
@@ -138,7 +158,7 @@
 	const leaveBanner = $derived(leaveMapBanner(temple.advice));
 
 	/** The banner's measured box, CSS px. Zero until the first frame — the same
-	 *  measure-then-place trick the callout and the config bar use, and for the
+	 *  measure-then-place trick the offer boxes and the config bar use, and for the
 	 *  same reason: its width is what decides whether it clears the panel. */
 	let bannerWidth = $state(0);
 	let bannerHeight = $state(0);
@@ -154,9 +174,10 @@
 	 * is already on, so the smoke check is: turn debug mode on, toggle the temple
 	 * module off and on, and the button is there.
 	 *
-	 * It sits in the DOOR widget since POE-244. The callout is anchored, which
-	 * means it is not drawn in config mode and is not placed by the user — the
-	 * probe belongs on the surface that behaves like every other widget.
+	 * It sits in the DOOR widget since POE-244. The offer boxes are anchored,
+	 * which means they are not drawn in config mode and are not placed by the
+	 * user — the probe belongs on the surface that behaves like every other
+	 * widget.
 	 *
 	 * That moved its precondition with it. The probe now needs a published
 	 * `layout.diamond` — a read that settled a CURRENT ROOM — where before it
@@ -184,12 +205,15 @@
 		}).catch((e) => console.error('[widgets] probe log unreachable:', e));
 	}
 
-	/** The chosen architect block in CSS px, or null when the read carried no
-	 *  boxes. A missing rect is NOT the screen origin — it is "place the box
-	 *  against the panel instead", which `calloutPlacement` does. */
-	function targetRect(scaleFactor: number): WidgetRect | null {
-		const rect = callout?.target?.rect;
-		return rect ? captureToCss(rect, scaleFactor) : null;
+	/** Each offer's own block in CSS px, in the same order as the boxes — null
+	 *  for a read that carried no rect for it. A missing rect is NOT the screen
+	 *  origin: `offerStackPlacement` stacks that box under the one above it, or
+	 *  places it at the panel crop's top when it is the first. */
+	function blockRects(scaleFactor: number): (WidgetRect | null)[] {
+		return boxes.map((box) => {
+			const rect = box.offer.rect;
+			return rect ? captureToCss(rect, scaleFactor) : null;
+		});
 	}
 
 	/**
@@ -204,7 +228,7 @@
 	 * A widget the user HAS placed never reaches this: `placementFor` consults a
 	 * default only when there is no stored row. The consequence for one that has
 	 * not been placed is that it follows the panel as the panel moves, which is
-	 * the same thing the callout does and is what "shipped next to the game's
+	 * the same thing the offer boxes do and is what "shipped next to the game's
 	 * diamond" has to mean.
 	 */
 	function doorDefaults(spec: WidgetSpec, frame: HostFrame): OverlayDefaultGeometry | null {
@@ -265,8 +289,8 @@
 	 * widget's shipped position is its own argument — the door wants the game's
 	 * diamond, the notice wants the top centre — and each states the empty-set
 	 * rule itself, which is what keeps that rule a property of the function a
-	 * future third widget would be written beside. The anchored callout is never
-	 * asked (`defaultsFor` runs over placed widgets), and an id nothing here
+	 * future third widget would be written beside. The anchored offer boxes are
+	 * never asked (`defaultsFor` runs over placed widgets), and an id nothing here
 	 * names answers null, which is "use the registry's number".
 	 */
 	function widgetDefaults(spec: WidgetSpec, frame: HostFrame): OverlayDefaultGeometry | null {
@@ -310,7 +334,7 @@
 	{/snippet}
 
 	{#snippet anchored(spec, frame)}
-		{#if spec.id === 'temple.advice' && calloutVisible}
+		{#if spec.id === 'temple.offers' && offersVisible}
 			{@const obstacles = neverCoverRects(temple.layout, frame.scaleFactor)}
 			{#if leaveBanner}
 				{@const at = bannerPlacement({
@@ -336,16 +360,14 @@
 					{leaveBanner}
 				</p>
 			{/if}
-			{#if callout}
-				<TempleKillCallout
-					{callout}
-					{obstacles}
-					target={targetRect(frame.scaleFactor)}
-					panel={roiRect(temple.layout, 'panel', frame.scaleFactor)}
-					host={frame.host}
-					maxWidth={spec.defaults.w}
-				/>
-			{/if}
+			<TempleOfferBoxes
+				{boxes}
+				{obstacles}
+				blocks={blockRects(frame.scaleFactor)}
+				panel={roiRect(temple.layout, 'panel', frame.scaleFactor)}
+				host={frame.host}
+				maxWidth={spec.defaults.w}
+			/>
 		{/if}
 	{/snippet}
 </WidgetHost>
