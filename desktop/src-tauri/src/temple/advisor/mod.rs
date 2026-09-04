@@ -513,8 +513,10 @@ impl Conditional {
 /// (POE-248).
 ///
 /// The overlay draws it as a faint purple seal beside the bright one, so the
-/// player who finds a second stone mid-incursion already knows where it goes
-/// and the `temple_keys` setting does not have to be configured ahead of time.
+/// player who finds a second stone mid-incursion already knows where it goes.
+/// Since POE-253 this is the ONLY way a second stone is planned for: the
+/// "opening stones dropped" setting is gone (stones drop after the sheet is
+/// read, so it was a guess), and the caller always ranks with one key in hand.
 ///
 /// # It is CONDITIONAL, and that is the whole definition
 ///

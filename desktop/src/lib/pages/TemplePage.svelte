@@ -14,7 +14,6 @@
 	 * them and this file lays them out.
 	 */
 	import Button from '$lib/components/Button.svelte';
-	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
 	import TempleLattice from '$lib/temple/TempleLattice.svelte';
 	import {
 		TEMPLE_STATUS_LABEL,
@@ -37,7 +36,6 @@
 	import {
 		rearmTemple,
 		setTempleConfig,
-		setTempleKeys,
 		setTempleProfile,
 		ssot,
 		templeDebugCapture
@@ -98,13 +96,6 @@
 	}
 
 	// --- settings controls ----------------------------------------------------
-
-	/** 0 is legal (every passage already open) and 2 is the game's maximum. */
-	const KEY_OPTIONS = [
-		{ value: '0', label: '0' },
-		{ value: '1', label: '1' },
-		{ value: '2', label: '2' }
-	];
 
 	/** Write one config flag, carrying the other one through unchanged. */
 	function setConfigFlag(field: keyof TempleConfig, value: boolean): void {
@@ -349,23 +340,12 @@
 		{/if}
 	</section>
 
-	<!-- 5. Settings: the board fact the panel does not print, and the profile. -->
+	<!-- 5. Settings: the two map rules and the strategy profile. -->
 	<section class="card settings-card">
 		<h2 class="card-title">Settings</h2>
 		{#if settingsError}
 			<p class="error">{settingsError}</p>
 		{/if}
-
-		<div class="setting">
-			<span class="setting-label">Opening stones dropped</span>
-			<SegmentedButtons
-				value={String(temple.keys)}
-				options={KEY_OPTIONS}
-				onselect={(v) => void apply(() => setTempleKeys(Number(v)))}
-				title="The panel does not print how many keys this incursion dropped, so you set it. 1 is the common case."
-			/>
-			<span class="meta">The panel does not print this; 1 is the common case.</span>
-		</div>
 
 		<div class="setting">
 			<span class="setting-label">Map rules</span>

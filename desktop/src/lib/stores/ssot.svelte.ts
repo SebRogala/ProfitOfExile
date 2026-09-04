@@ -30,8 +30,8 @@
  *   // Write: setNormalVariant(v) / setDedicationSelection(variant, pool)
  *   // Write: setModuleEnabled(id, enabled)
  *   // Write: setMercSourcesOff(offList) — which guides take part in the verdict
- *   // Write: setTempleKeys(n) / setTempleConfig(c) / setTempleProfile(p) / rearmTemple()
- *   //   (these four return the rejection message instead of throwing — Rust
+ *   // Write: setTempleConfig(c) / setTempleProfile(p) / rearmTemple()
+ *   //   (these three return the rejection message instead of throwing — Rust
  *   //    validates them, so the page renders what it said no to)
  *   // Main window: call startSsotStore() top-level (like initStatusStore()).
  *   // Overlay windows: call startSsotStore() from an $effect and return its
@@ -162,7 +162,7 @@ export interface SsotSnapshot {
 	/** Merc OCR module state + the last capture (POE-165). Rust-owned, read-only here. */
 	mercenary?: MercenarySlice;
 	/** Temple builder module state + the last board read (POE-171). Rust-owned,
-	 *  read-only here — the four `setTemple*` writers below go through commands
+	 *  read-only here — the three `setTemple*` writers below go through commands
 	 *  that write `temple_settings`, and Rust echoes the result back into this
 	 *  slice. Nothing in the webview assigns it except `applyTemple`. */
 	temple?: TempleSlice;
@@ -475,7 +475,6 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 					},
 		advice: incoming.advice ?? null,
 		mode: incoming.mode ?? null,
-		keys: incoming.keys ?? fresh.keys,
 		config: incoming.config ?? fresh.config,
 		profile: incoming.profile ?? fresh.profile,
 		unknownRooms: incoming.unknownRooms ?? [],
@@ -660,7 +659,7 @@ export async function setModuleEnabled(id: string, enabled: boolean): Promise<vo
  *
  * `console.warn` alone is what the market setters do, and it is enough for
  * them: their only failure mode is IPC. These commands are different — Rust
- * REJECTS values (`validate_keys`, `TempleProfileSettings::validate`,
+ * REJECTS values (`TempleProfileSettings::validate`,
  * `validate_sources_off`), so a failure here is a thing the user did and must
  * be told about. So the message goes to the persistent app log (the LOGS
  * channel the README names as the one place a desktop error must reach) AND
@@ -749,11 +748,6 @@ export function setMercTierFloor(floor: number): Promise<string | null> {
 
 function templeCommand(command: string, args: Record<string, unknown>): Promise<string | null> {
 	return sliceCommand('temple', command, args);
-}
-
-/** Set how many opening stones this incursion dropped (0, 1 or 2). */
-export function setTempleKeys(keys: number): Promise<string | null> {
-	return templeCommand('temple_set_keys', { keys });
 }
 
 /** Set the two temple config flags — the Atlas passive and the scarab. */

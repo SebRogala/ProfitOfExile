@@ -976,7 +976,6 @@ describe('temple slice', () => {
 				forcedKill: false
 			},
 			mode: 'chase',
-			keys: 2,
 			unknownRooms: ['D3'],
 			lastReadAt: 1_700_000_000_000
 		};
@@ -1005,7 +1004,6 @@ describe('temple slice', () => {
 			expect(mod.ssot.temple.advice?.recommendations[0].reasons).toEqual([
 				'R1: connects toward the top'
 			]);
-			expect(mod.ssot.temple.keys).toBe(2);
 		});
 
 		it('keeps the last known slice when the snapshot carries no temple field', () => {
@@ -1023,7 +1021,7 @@ describe('temple slice', () => {
 			mod.applySnapshot({ league, temple: readSlice() });
 			mod.applySnapshot({
 				league,
-				temple: { ...templeSliceDefault(), status: 'panel_not_visible', keys: 2 },
+				temple: { ...templeSliceDefault(), status: 'panel_not_visible' },
 			});
 			expect(mod.ssot.temple.status).toBe('panel_not_visible');
 			expect(mod.ssot.temple.layout).toBeNull();
@@ -1041,7 +1039,7 @@ describe('temple slice', () => {
 			mod.applySnapshot({ league, temple: readSlice() });
 			mod.applySnapshot({
 				league,
-				temple: { status: 'idle', keys: 1 } as unknown as TempleSlice,
+				temple: { status: 'idle' } as unknown as TempleSlice,
 			});
 			expect(mod.ssot.temple.status).toBe('idle');
 			expect(mod.ssot.temple.layout).toBeNull();
@@ -1055,7 +1053,7 @@ describe('temple slice', () => {
 			// would land in the surface rather than here.
 			mod.applySnapshot({
 				league,
-				temple: { status: 'idle', keys: 1 } as unknown as TempleSlice,
+				temple: { status: 'idle' } as unknown as TempleSlice,
 			});
 			expect(mod.ssot.temple.panel).toBeNull();
 			expect(mod.ssot.temple.mode).toBeNull();
@@ -1073,7 +1071,7 @@ describe('temple slice', () => {
 			// as one.
 			mod.applySnapshot({
 				league,
-				temple: { status: 'idle', keys: 1 } as unknown as TempleSlice,
+				temple: { status: 'idle' } as unknown as TempleSlice,
 			});
 			expect(mod.ssot.temple.waitingForPanel).toBe(false);
 		});
@@ -1194,11 +1192,6 @@ describe('temple slice', () => {
 	});
 
 	describe('the settings commands', () => {
-		it('sends the key count under the argument name the command takes', async () => {
-			expect(await mod.setTempleKeys(2)).toBeNull();
-			expect(callsOf('temple_set_keys')).toEqual([{ keys: 2 }]);
-		});
-
 		it('sends the config flags as one nested object', async () => {
 			const config = { artefactsOfTheVaal: false, scarabOfTimelines: true };
 			expect(await mod.setTempleConfig(config)).toBeNull();
@@ -1226,7 +1219,7 @@ describe('temple slice', () => {
 			// updates when a snapshot comes back. Without this the checkbox
 			// would sit at its old value for up to a poll interval.
 			const before = callsOf('get_ssot').length;
-			await mod.setTempleKeys(0);
+			await mod.setTempleConfig({ artefactsOfTheVaal: false, scarabOfTimelines: true });
 			expect(callsOf('get_ssot').length).toBe(before + 1);
 		});
 
@@ -1234,11 +1227,11 @@ describe('temple slice', () => {
 			// Nothing changed in Rust, so there is nothing to fetch — and a
 			// fetch here would overwrite nothing while costing a round trip.
 			invokeMock.mockImplementation(async (command: string) => {
-				if (command === 'temple_set_keys') throw new Error('rejected');
+				if (command === 'temple_set_config') throw new Error('rejected');
 				return command === 'get_ssot' ? { league } : undefined;
 			});
 			const before = callsOf('get_ssot').length;
-			await mod.setTempleKeys(9);
+			await mod.setTempleConfig({ artefactsOfTheVaal: false, scarabOfTimelines: true });
 			expect(callsOf('get_ssot').length).toBe(before);
 		});
 	});
@@ -1253,10 +1246,15 @@ describe('temple slice', () => {
 		}
 
 		it('hands the rejection back to the caller instead of throwing', async () => {
-			rejectWith('temple_set_keys', 'an incursion drops at most 2 opening stones, got 9');
+			rejectWith('temple_set_profile', 'apex_score must be a finite number ≥ 0, got NaN');
 			// Never throws — a rejected setting must not take the page with it.
-			const error = await mod.setTempleKeys(9);
-			expect(error).toContain('at most 2 opening stones');
+			const error = await mod.setTempleProfile({
+				apexScore: Number.NaN,
+				pathCost: 0,
+				rerollUntilFavourable: false,
+				r4KeepUpgradeTargets: true,
+			});
+			expect(error).toContain('apex_score must be a finite number');
 		});
 
 		it('reaches the app log, which is the only channel a shipped build has', async () => {

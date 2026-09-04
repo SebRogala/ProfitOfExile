@@ -449,12 +449,10 @@ export interface TempleSlice {
 	advice: AdviceView | null;
 	/** `"chase"` or `"scarab"`, from the profile's own selector. */
 	mode: string | null;
-	/** The user's key count, echoed so a surface renders its control from one
-	 *  source. Settings, not a reading: it survives the module being off. */
-	keys: number;
-	/** The config flags in force. Same ownership as `keys`. */
+	/** The config flags in force. Settings, not a reading: they survive the
+	 *  module being off. */
 	config: TempleConfig;
-	/** The four tunable profile fields in force. Same ownership as `keys`. */
+	/** The four tunable profile fields in force. Same ownership as `config`. */
 	profile: TempleProfile;
 	/** Slots whose plate did not resolve, by key. Surfaced, never hidden. */
 	unknownRooms: SlotId[];
@@ -480,10 +478,9 @@ export interface TempleSlice {
  * What the store shows before Rust has answered a poll.
  *
  * Every value here is `TempleSlice::default()`'s, pinned character for
- * character by the Rust side and re-asserted in `slice.test.ts`. In particular
- * `keys` is **0**, not the shipped 1: the derive default is what a window sees
- * before `apply_to_state` seeds the echo, and claiming 1 here would be a
- * different number from the one Rust would send.
+ * character by the Rust side and re-asserted in `slice.test.ts`: the derive
+ * default is what a window sees before `apply_to_state` seeds the echo, and a
+ * value invented here would be one Rust never sends.
  */
 export function templeSliceDefault(): TempleSlice {
 	return {
@@ -493,7 +490,6 @@ export function templeSliceDefault(): TempleSlice {
 		panel: null,
 		advice: null,
 		mode: null,
-		keys: 0,
 		config: { artefactsOfTheVaal: true, scarabOfTimelines: false },
 		profile: {
 			apexScore: 2.0,

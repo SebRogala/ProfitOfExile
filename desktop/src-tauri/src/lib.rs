@@ -403,15 +403,16 @@ pub struct AppState {
     /// every detect tick and never read together with the store.
     pub merc_template_generation: AtomicU64,
     /// Temple builder state (POE-171) — the owner of the `temple` SSOT slice.
-    /// Written by the temple capture loop and by `temple_set_keys`, projected
-    /// read-only into every snapshot by `ssot::build_snapshot`. Acquired alone,
-    /// never inside a module lock (lock order — see src/modules.rs).
+    /// Written by the temple capture loop and by the `temple_set_*` commands,
+    /// projected read-only into every snapshot by `ssot::build_snapshot`.
+    /// Acquired alone, never inside a module lock (lock order — see
+    /// src/modules.rs).
     pub temple: Mutex<temple::slice::TempleSlice>,
     /// The temple module's persisted settings: the cached anchor calibration,
-    /// the four tunable profile fields, the two config flags and the key count.
-    /// Shared because two owners need it — the capture loop reads a snapshot
-    /// per read and writes the calibration back, and the `temple_set_*`
-    /// commands are what the user edits while that loop is running.
+    /// the four tunable profile fields and the two config flags. Shared because
+    /// two owners need it — the capture loop reads a snapshot per read and
+    /// writes the calibration back, and the `temple_set_*` commands are what
+    /// the user edits while that loop is running.
     pub temple_settings: Mutex<temple::slice::TempleSettings>,
     /// Whether Client.txt has put an incursion in scope (POE-242) — with, since
     /// POE-246, the stamp of the last area change that took the player away from
@@ -3891,7 +3892,7 @@ pub fn run() {
         merc_burst: Mutex::new(mercenary::trigger::BurstGate::default()),
         merc_template_generation: AtomicU64::new(0),
         temple: Mutex::new(temple::slice::TempleSlice::default()),
-        temple_settings: Mutex::new(temple::slice::TempleSettings::shipped()),
+        temple_settings: Mutex::new(temple::slice::TempleSettings::default()),
         temple_arm: Mutex::new(temple::trigger::ArmState::default()),
         temple_rearm: AtomicU64::new(0),
         temple_epoch: AtomicU64::new(0),
@@ -3949,7 +3950,6 @@ pub fn run() {
             mercenary::sources::merc_set_sources_off,
             mercenary::search::merc_set_trade_auto,
             mercenary::search::merc_set_tier_floor,
-            temple::commands::temple_set_keys,
             temple::commands::temple_set_config,
             temple::commands::temple_set_profile,
             temple::commands::temple_rearm,

@@ -2468,12 +2468,11 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
     crate::report_ocr_engine(&app);
 
     // The user's settings belong on the slice from the first frame — the page
-    // and the overlay render their own controls from them, and a zeroed key
-    // count would read as "you have no keys" rather than "not loaded yet".
+    // and the overlay render their own controls from them, and a derive-default
+    // flag would read as a setting the user chose rather than "not loaded yet".
     let settings = settings_snapshot(&app);
     publish(&app, |slice| {
         slice.status = TempleStatus::Idle;
-        slice.keys = settings.keys;
         slice.config = settings.config.clone();
         slice.profile = settings.profile.clone();
         slice.last_error = None;
@@ -3455,7 +3454,6 @@ fn full_read(
             // mid-read echoes its new value onto the slice and then loses it
             // again for one tick when this projection overwrites it — the
             // setters' own `rearm` forces the next read, which restores it.
-            keys: settings.keys,
             config: settings.config.clone(),
             profile: settings.profile.clone(),
             read_at: now_ms(),
