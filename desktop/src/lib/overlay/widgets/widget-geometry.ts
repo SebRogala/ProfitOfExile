@@ -13,7 +13,8 @@
  *
  * - **Physical, window-relative pixels** — what Rust persists (`WidgetGeometry`)
  *   and what a game-anchored widget will be placed in, since the window is the
- *   primary monitor and so is every capture.
+ *   GAME monitor (POE-237) and so is every capture, which is what makes the
+ *   two one unit.
  * - **CSS pixels** — what the page actually lays out in, and what the shipped
  *   defaults in `widget-registry.ts` are reasoned in.
  *
@@ -68,6 +69,20 @@ export type WidgetRect = OverlayDefaultGeometry;
 export interface HostSize {
 	width: number;
 	height: number;
+}
+
+/**
+ * What the host can tell a module about the window it is drawing in.
+ *
+ * The two facts a GAME-ANCHORED placement needs and cannot get for itself: the
+ * scale factor that turns capture px into CSS px, and the box a result has to
+ * stay inside. The host already resolves both — asking the window a second time
+ * from the module's route would be a second answer that can disagree for the
+ * frames before either resolves.
+ */
+export interface HostFrame {
+	scaleFactor: number;
+	host: HostSize;
 }
 
 /** The eight directions a resize can go, spelled as Tauri's `startResizeDragging`

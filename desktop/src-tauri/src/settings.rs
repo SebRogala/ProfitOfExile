@@ -176,7 +176,8 @@ pub struct Settings {
     #[serde(default)]
     pub screen_scale: Option<ScreenScaleSetting>,
     /// Where the user put each overlay WIDGET (POE-225), keyed
-    /// `"<module>.<widget>"` — `"temple.board"`, `"temple.advice"`.
+    /// `"<module>.<widget>"` — `"temple.door"`, and `"temple.board"` on any
+    /// machine that arranged the widgets before POE-244 retired that one.
     ///
     /// A map rather than a field per widget because the widgets are declared in
     /// the frontend registry (`src/lib/overlay/widgets/widget-registry.ts`) and
@@ -186,6 +187,14 @@ pub struct Settings {
     /// pruned: an id is dropped only when its module is removed, and silently
     /// deleting placements on a downgrade is worse than keeping a few dead
     /// rows.
+    ///
+    /// That rule is also the whole migration for a RETIRED widget, and
+    /// `temple.board` is the first (POE-244). Its row keeps loading, keeps
+    /// being written back, and is never read: the frontend host looks
+    /// placements up BY SPEC and Settings lists only what the registry
+    /// declares, so an id nothing declares reaches no surface. Inert, not
+    /// removed — and a downgrade to a build that still draws the lattice finds
+    /// the user's placement where they left it.
     ///
     /// `BTreeMap`, so the file is written in a stable order and a diff of
     /// settings.json is readable.

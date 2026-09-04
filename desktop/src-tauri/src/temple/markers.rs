@@ -148,27 +148,120 @@ pub const AXIS_Y: (f64, f64) = (1.410_81, 1.249_54);
 /// this rather than producing a confident, wrong door set.
 pub const MAX_RESIDUAL_DEG: f64 = 22.0;
 
-/// Which way `to`'s seal sits from the diamond's centre, as a unit vector.
+/// `to`'s offset from `from` in **half-columns and ROW INDICES**, which is the
+/// space [`AXIS_X`] and [`AXIS_Y`] project out of.
 ///
-/// The board offset is taken in **half-columns and ROW INDICES**, not in
-/// pixels. That distinction is measured, not tidiness: the Entrance plate is
-/// drawn 19 px lower than its two row-E siblings, and feeding that drop
-/// through the projection moves the predicted seal for a D1→E1 corridor by
-/// 3.4° — away from where the seal on `2026-08-03_11-58-28` actually sits.
-/// The diamond is a picture of the *room*, so its doors follow the board's
-/// logical directions and ignore the layout panel's drawing quirk.
+/// That the row half is an INDEX and not a pixel distance is measured, not
+/// tidiness: the Entrance plate is drawn 19 px lower than its two row-E
+/// siblings, and feeding that drop through the projection moves the predicted
+/// seal for a D1→E1 corridor by 3.4° — away from where the seal on
+/// `2026-08-03_11-58-28` actually sits. The diamond is a picture of the *room*,
+/// so its doors follow the board's logical directions and ignore the layout
+/// panel's drawing quirk.
 ///
-/// The capture scale cancels in the normalisation, so this is the same vector
-/// at any UI scale.
-pub fn neighbour_direction(lattice: &Lattice, from: Slot, to: Slot) -> (f64, f64) {
+/// The column half is read off the lattice rather than off a table so there is
+/// one answer to where a plate is; the capture scale divides straight back out.
+pub fn board_offset(lattice: &Lattice, from: Slot, to: Slot) -> (f64, f64) {
     let (fx, _) = lattice.centre(from);
     let (tx, _) = lattice.centre(to);
     let bx = (tx - fx) as f64 / (lattice::COL_PITCH / 2.0 * lattice.scale as f64);
     let by = row_index(to) - row_index(from);
-    let x = AXIS_X.0 * bx + AXIS_Y.0 * by;
-    let y = AXIS_X.1 * bx + AXIS_Y.1 * by;
+    (bx, by)
+}
+
+/// A board offset through the isometric projection. Screen px units of the
+/// panel's own drawing, `+y` down; not normalised.
+fn project(offset: (f64, f64)) -> (f64, f64) {
+    let (bx, by) = offset;
+    (
+        AXIS_X.0 * bx + AXIS_Y.0 * by,
+        AXIS_X.1 * bx + AXIS_Y.1 * by,
+    )
+}
+
+/// Which way `to`'s seal sits from the diamond's centre, as a unit vector.
+///
+/// The capture scale cancels in the normalisation, so this is the same vector
+/// at any UI scale. See [`board_offset`] for the space it measures in.
+pub fn neighbour_direction(lattice: &Lattice, from: Slot, to: Slot) -> (f64, f64) {
+    let (x, y) = project(board_offset(lattice, from, to));
     let norm = (x * x + y * y).sqrt();
     (x / norm, y / norm)
+}
+
+/// The seal ring's radius, as a fraction of the diamond rect's **shorter side**.
+///
+/// The seals are drawn at one distance from the diamond's centre, not at a
+/// distance that depends on which wall they are on. MEASURED through the
+/// shipped detector on all five committed crops — 21 seals, 5 slot shapes,
+/// 2 crop sizes:
+///
+/// | crop | short side | detected radii | ratio |
+/// |---|---|---|---|
+/// | `diamond-ref-d3-1374.png` | 200 | 72.1 – 79.1 | 1.10 |
+/// | `diamond-ref-b0-1358.png` | 200 | 67.7 – 81.3 | 1.20 |
+/// | `diamond-ref-b1-1352.png` | 200 | 71.2 – 82.5 | 1.16 |
+/// | `diamond-ref-d1-1376.png` | 200 | 67.7 – 82.5 | 1.22 |
+/// | `diamond-live-b0-1539.png` | 220 | 75.3 – 92.9 | 1.23 |
+///
+/// Swept 0.360 … 0.400 in 0.002 steps against the POSITIONAL residual
+/// `|predicted − detected|`. **0.382 is the min-max optimum: rms 5.44 px, max
+/// 8.94 px** (0.380 is the rms optimum at 5.43/9.38, and the max is what the
+/// acceptance test spends, so the min-max point is the one taken).
+/// `the_committed_crops_land_within_ten_px_of_the_seal_ring` is that test.
+///
+/// # What this replaced, and why the first model was wrong
+///
+/// POE-244 first placed a seal on the parallelogram spanned by [`AXIS_X`] and
+/// [`AXIS_Y`], which puts a same-row corridor at HALF the radius of a diagonal
+/// one — a 2.24 : 1 spread. The panel does not draw them that way: the six
+/// radii on `diamond-ref-d1-1376.png` run 67.7 … 82.5 px, a spread of **1.22**.
+/// Fitted end to end that model is rms 22.2 px, max 44.5 px — four times worse
+/// than one constant. The mistake was reading [`AXIS_X`] / [`AXIS_Y`] as a
+/// description of the SHAPE when they are a fit of DIRECTIONS only, which is
+/// all [`neighbour_direction`] ever claimed and all the door reader ever used.
+///
+/// Only the test reaches this: nothing that SHIPS converts a seal to screen
+/// pixels, because the widget draws the diamond in its own unit space where the
+/// ring is 1 by construction. It is here because it is the measurement
+/// [`DIAMOND_HALF_W`] and [`neighbour_direction`]'s unit length are both
+/// expressed against — a number the code needs to be checkable against the
+/// panel, per this module's per-item allow convention.
+#[allow(dead_code)]
+pub const SEAL_RING_FRACTION: f64 = 0.382;
+
+/// Half-width of the room's outline, in units of the seal ring's radius.
+///
+/// The rhombus `|x| / A + |y| / B = 1` least-squares-fitted to the same 21
+/// detected seals gives `a = 0.5565` and `b = 0.4407` of the shorter side —
+/// `1.457` and `1.154` ring radii, an aspect of **1.263**, which is the
+/// isometric squash the game draws the room at.
+///
+/// The seals are NOT on this outline by construction, and saying so is the
+/// point: a ring fits the measurements better than the rhombus does
+/// (rms 5.44 / max 8.94 against rms 5.56 / max 11.41), so the ring is what
+/// places them and this is what draws the walls. At the six angles a corridor
+/// can actually take, the outline's own radius is 1.125, 0.959 and 0.918 ring
+/// radii — **averaging 1.000** — so the seals sit on the walls to the eye
+/// while each one stays where the panel really puts it.
+pub const DIAMOND_HALF_W: f64 = 1.457;
+/// Half-height of the room's outline — see [`DIAMOND_HALF_W`].
+pub const DIAMOND_HALF_H: f64 = 1.154;
+
+/// The room's isometric outline, as four corners in ring order, `+y` down and
+/// the centre at the origin, in units of the seal ring's radius.
+///
+/// Ring order is by screen angle — right, bottom, left, top — so a consumer can
+/// draw it as a polygon without sorting. A seal goes at
+/// [`neighbour_direction`], which is a unit vector, so it lands on the ring of
+/// radius 1 inside this shape; see [`DIAMOND_HALF_W`] for how the two relate.
+pub fn diamond_corners() -> [(f64, f64); 4] {
+    [
+        (DIAMOND_HALF_W, 0.0),
+        (0.0, DIAMOND_HALF_H),
+        (-DIAMOND_HALF_W, 0.0),
+        (0.0, -DIAMOND_HALF_H),
+    ]
 }
 
 /// Row of a slot as an index, `A` = 0 … `E` = 4.
@@ -927,6 +1020,102 @@ mod tests {
             "the tolerance can reach a neighbouring corridor"
         );
     }
+
+    /// The seal model against the SHIPPED DETECTOR on every committed crop
+    /// (POE-244).
+    ///
+    /// The test the first version of this geometry did not have and needed: the
+    /// one it shipped with asserted the model against its own algebra, which a
+    /// model that is wrong about the panel passes perfectly. This one predicts
+    /// `centre + SEAL_RING_FRACTION × short_side × neighbour_direction` and
+    /// compares it to where `read_door_markers` actually found the ink — 21
+    /// seals, 5 slot shapes, 2 crop sizes, both scale families.
+    ///
+    /// 10 px on a 200 px rect is 5 % of the shape, which is inside a seal's own
+    /// 11–25 px diameter: a prediction this close is one the eye reads as being
+    /// on the same wall. Measured worst case is 8.94 px, so the bound has about
+    /// a pixel of headroom and a re-fit that loses more than that fails here.
+    #[test]
+    fn the_committed_crops_land_within_ten_px_of_the_seal_ring() {
+        let mut worst = (0.0_f64, "");
+        for f in ALL {
+            let read = read(f);
+            let assigned = assign_markers(&lattice(), f.current, &read)
+                .unwrap_or_else(|e| panic!("{} ({}): {e}", f.file, f.case));
+            let img = load(f);
+            let short = img.width().min(img.height()) as f64;
+            let radius = SEAL_RING_FRACTION * short;
+            for (slot, marker) in assigned {
+                let (ux, uy) = neighbour_direction(&lattice(), f.current, slot);
+                let px = read.centre.0 as f64 + ux * radius;
+                let py = read.centre.1 as f64 + uy * radius;
+                let err = (px - marker.position.0 as f64).hypot(py - marker.position.1 as f64);
+                assert!(
+                    err < 10.0,
+                    "{}: {} -> {} predicted ({px:.1}, {py:.1}), detected {:?}, off by {err:.2} px",
+                    f.file,
+                    f.current.as_str(),
+                    slot.as_str(),
+                    marker.position,
+                );
+                if err > worst.0 {
+                    worst = (err, f.file);
+                }
+            }
+        }
+        // Pinned as a floor as well as a ceiling: a change that quietly made
+        // every seal land at zero error would mean the prediction had stopped
+        // being independent of the detection.
+        assert!(
+            worst.0 > 1.0,
+            "every seal predicted to under a pixel ({:.2} on {}) — the two sides are no longer independent",
+            worst.0,
+            worst.1,
+        );
+    }
+
+    /// A seal is on the ring, which is the whole placement rule now that the
+    /// outline no longer defines it.
+    #[test]
+    fn every_modelled_seal_sits_at_one_ring_radius() {
+        let lattice = lattice();
+        for slot in Slot::ALL {
+            for to in lattice::neighbours(slot) {
+                let (x, y) = neighbour_direction(&lattice, slot, to);
+                assert!(
+                    (x.hypot(y) - 1.0).abs() < 1e-12,
+                    "{} -> {} is at radius {}",
+                    slot.as_str(),
+                    to.as_str(),
+                    x.hypot(y)
+                );
+            }
+        }
+    }
+
+    /// The outline is a real convex quadrilateral in ring order — the property
+    /// a consumer drawing it as an SVG `polygon` relies on, and the one a
+    /// re-ordering of [`diamond_corners`] would break silently (an hourglass
+    /// renders, it just renders wrong).
+    #[test]
+    fn the_diamond_corners_wind_one_way_around_a_convex_shape() {
+        let corners = diamond_corners();
+        let cross = |i: usize| {
+            let (ax, ay) = corners[i];
+            let (bx, by) = corners[(i + 1) % 4];
+            let (cx, cy) = corners[(i + 2) % 4];
+            (bx - ax) * (cy - by) - (by - ay) * (cx - bx)
+        };
+        let first = cross(0);
+        assert!(first.abs() > 0.1, "degenerate outline: {corners:?}");
+        for i in 1..4 {
+            assert!(
+                cross(i) * first > 0.0,
+                "corner {i} turns the other way: {corners:?}"
+            );
+        }
+    }
+
 
     // Calibration regression: AXIS_X/AXIS_Y were fitted on one board, and this
     // is what they are worth on the other four, through the shipped detector

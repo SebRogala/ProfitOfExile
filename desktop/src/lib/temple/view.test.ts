@@ -28,10 +28,16 @@ import {
 	offerBuilds,
 	offerHeadline,
 	overlayShowsBoard,
+	overlayShowsDoors,
 	plateGlyph,
+	suggestedDoors,
 	topGamble,
 	topRecommendation,
-	unknownRoomsBadge
+	unknownRoomsBadge,
+	DOOR_VISIBLE_STATUSES,
+	chosenOffer,
+	doorWarning,
+	killCallout
 } from './view';
 import { templeSliceDefault, type AdviceView, type LayoutView, type OfferView, type RankedView, type SlotId, type SlotView, type TempleStatus } from './slice';
 
@@ -79,6 +85,11 @@ function layout(over: Partial<LayoutView> = {}): LayoutView {
 			[0, 0],
 			[0, 0]
 		],
+		// The never-cover set and the room's diamond (POE-244). Empty here:
+		// nothing in `view.ts` reads either — `overlay-geometry.ts` does — and a
+		// fixture that carried 42 rects nothing asserts on would be noise.
+		rois: [],
+		diamond: null,
 		...over
 	};
 }
@@ -517,5 +528,262 @@ describe('badges', () => {
 		// nothing where the mode belongs.
 		expect(modeLabel('ritual')).toBe('ritual');
 		expect(modeLabel(null)).toBeNull();
+	});
+});
+
+
+describe('overlayShowsDoors', () => {
+	it('keeps the door widget up through the incursion, when the panel is gone', () => {
+		// The whole point of the second list. The door is opened INSIDE the
+		// room, and by then the layout panel is off screen — `panel_not_visible`
+		// is what the module reports for the length of that, and the board
+		// widget's own list stops exactly there.
+		expect(overlayShowsDoors('panel_not_visible')).toBe(true);
+		expect(overlayShowsBoard('panel_not_visible')).toBe(false);
+	});
+
+	it('shows the doors for everything the board shows them for', () => {
+		for (const status of OVERLAY_VISIBLE_STATUSES) {
+			expect(overlayShowsDoors(status), status).toBe(true);
+		}
+	});
+
+	it('stands down once the module stops looking', () => {
+		// `waiting` is the arm having lapsed (POE-246's PANEL_TAIL_MS), which is
+		// what bounds how stale the room on the widget can be: a board from two
+		// minutes ago at the outside, never one from the last map.
+		expect(overlayShowsDoors('waiting')).toBe(false);
+		for (const status of ['off', 'idle', 'unavailable', 'error'] as const) {
+			expect(overlayShowsDoors(status), status).toBe(false);
+		}
+		expect(DOOR_VISIBLE_STATUSES).toEqual([
+			'reading',
+			'read',
+			'no_current_room',
+			'panel_not_visible'
+		]);
+	});
+});
+
+describe('chosenOffer', () => {
+	const panel = (offers: OfferView[]) => ({
+		room: 'Chamber of Iron',
+		roomRect: null,
+		offers,
+		incursionsRemaining: 6
+	});
+
+	it('finds the block the top recommendation names, not the first one', () => {
+		const slice = {
+			...templeSliceDefault(),
+			advice: advice({ recommendations: [ranked({ architectIndex: 1 })] }),
+			panel: panel([offer(), offer({ index: 1, architectName: 'Atmohua' })])
+		};
+		expect(chosenOffer(slice)?.architectName).toBe('Atmohua');
+	});
+
+	it('is null when the ranking named no architect', () => {
+		const slice = {
+			...templeSliceDefault(),
+			advice: advice({ recommendations: [ranked({ architectIndex: null })] }),
+			panel: panel([offer()])
+		};
+		expect(chosenOffer(slice)).toBeNull();
+	});
+
+	it('is null when the named block is not in the panel view', () => {
+		// An index past the end is a read the two halves disagree about. Null is
+		// "nothing to point at", which is a state the callout already draws;
+		// an undefined offer reaching a surface is not.
+		const slice = {
+			...templeSliceDefault(),
+			advice: advice({ recommendations: [ranked({ architectIndex: 3 })] }),
+			panel: panel([offer()])
+		};
+		expect(chosenOffer(slice)).toBeNull();
+	});
+});
+
+describe('killCallout', () => {
+	const panel = (offers: OfferView[]) => ({
+		room: 'Chamber of Iron',
+		roomRect: null,
+		offers,
+		incursionsRemaining: 6
+	});
+
+	it('leads with the architect and names the room the kill builds', () => {
+		// Both halves, because the overlay has no other surface that carries the
+		// ranked ACTION since POE-244 retired the advice panel: without the
+		// target the box says which block to click and never says what taking it
+		// does.
+		const slice = {
+			...templeSliceDefault(),
+			advice: advice(),
+			panel: panel([offer({ architectName: 'Atmohua', displayName: 'Armoury' })])
+		};
+		const callout = killCallout(slice)!;
+		expect(callout.title).toBe('KILL Atmohua → Armoury');
+		expect(callout.reason).toBe('R1: connects toward the top');
+		expect(callout.target?.architectName).toBe('Atmohua');
+	});
+
+	it('names the RESOLVED room, not the one the panel printed', () => {
+		// POE-169: Contested Development prints one line and builds
+		// `currentTier + 1` of it, so a callout showing the printed target is
+		// showing the player a room they are not getting.
+		const slice = {
+			...templeSliceDefault(),
+			advice: advice(),
+			panel: panel([
+				offer({
+					architectName: 'Quipolatl',
+					printedTarget: 'Sadist\'s Den',
+					displayName: 'Torment Cells'
+				})
+			])
+		};
+		expect(killCallout(slice)?.title).toBe('KILL Quipolatl → Torment Cells');
+	});
+
+	it('drops the target half when the printed name did not resolve', () => {
+		// There is no room to name, and inventing one is the failure
+		// `offerBuilds` exists to prevent. The architect still identifies the
+		// block, which is the half the arrow needs.
+		const slice = {
+			...templeSliceDefault(),
+			advice: advice(),
+			panel: panel([offer({ architectName: 'Atmohua', displayName: null })])
+		};
+		expect(killCallout(slice)?.title).toBe('KILL Atmohua');
+	});
+
+	it('falls back to the advisor\'s own wording when no architect was chosen', () => {
+		// `kill either` is already the whole instruction, and prefixing it with
+		// KILL would read as an architect called Either.
+		const slice = {
+			...templeSliceDefault(),
+			advice: advice({
+				recommendations: [ranked({ headline: 'kill either', architectIndex: null })]
+			}),
+			panel: panel([offer()])
+		};
+		const callout = killCallout(slice)!;
+		expect(callout.title).toBe('kill either');
+		expect(callout.target).toBeNull();
+	});
+
+	it('marks a kill that was forced rather than chosen', () => {
+		const slice = {
+			...templeSliceDefault(),
+			advice: advice({ forcedKill: true }),
+			panel: panel([offer({ architectName: 'Atmohua' })])
+		};
+		expect(killCallout(slice)?.forced).toBe('only architect read');
+	});
+
+	it('leaves the note off a kill the advisor actually chose between two', () => {
+		const slice = {
+			...templeSliceDefault(),
+			advice: advice({ forcedKill: false }),
+			panel: panel([offer()])
+		};
+		expect(killCallout(slice)?.forced).toBeNull();
+	});
+
+	it('is null when there is nothing ranked to say', () => {
+		expect(killCallout(templeSliceDefault())).toBeNull();
+		expect(killCallout({ ...templeSliceDefault(), advice: advice({ recommendations: [] }) })).toBeNull();
+	});
+});
+
+describe('suggestedDoors', () => {
+	it('takes the doors of the top recommendation only', () => {
+		const doors = suggestedDoors(
+			advice({
+				recommendations: [ranked({ doors: ['C1-C2'] }), ranked({ doors: ['B0-C1'] })]
+			})
+		);
+		expect(doors).toEqual(['C1-C2']);
+	});
+
+	it('is empty for a kill the advisor wants no door with', () => {
+		// R3 can rank a kill with no corridor to open, and an empty list is that
+		// answer — the widget then prints no door line rather than a blank one.
+		expect(suggestedDoors(advice({ recommendations: [ranked({ doors: [] })] }))).toEqual([]);
+		expect(suggestedDoors(null)).toEqual([]);
+	});
+});
+
+
+describe('doorWarning', () => {
+	it('says nothing about a read that settled the doors', () => {
+		expect(doorWarning(layout())).toBeNull();
+	});
+
+	it('says do not act on the doors when the panel read was low-confidence', () => {
+		// The overlay lost its warning list to POE-244's callout, and this is
+		// the one line that did not move to the page: it says do not act on the
+		// widget that is still on screen inside the room.
+		expect(doorWarning(layout({ confidence: 'low' }))).toBe(
+			'low-confidence read — do not act on these doors'
+		);
+	});
+
+	it('names the beam fallback when the seals were unread', () => {
+		expect(doorWarning(layout({ markerError: 'the diamond rect fell outside' }))).toBe(
+			'seals unread — doors are a beam-read fallback'
+		);
+	});
+
+	it('prefers the low-confidence line when both are true', () => {
+		// One line, so a precedence is needed, and the stronger statement wins:
+		// `Confidence::Low` is the beam read itself being a best effort, which
+		// the narrower "the seals were unread" sits inside.
+		expect(
+			doorWarning(layout({ confidence: 'low', markerError: 'the diamond rect fell outside' }))
+		).toBe('low-confidence read — do not act on these doors');
+	});
+
+	it('says nothing with no board at all', () => {
+		expect(doorWarning(null)).toBeNull();
+	});
+});
+
+
+describe('the door widget through a whole incursion', () => {
+	// POE-244's core regression, from the review: `panel_not_visible` is reached
+	// ONLY through the capture loop's retire, which is what the incursion itself
+	// looks like — the player stepped through the door and the panel closed. The
+	// Rust side keeps `advice` alive across that (`run::apply_status` on
+	// `NoPanel`); this is the webview half, that the three things the door widget
+	// draws are all still derivable from the slice it is left holding.
+	const inRoom = () => ({
+		...templeSliceDefault(),
+		status: 'panel_not_visible' as const,
+		layout: layout({ current: 'C1', doors: ['C1-C2'] }),
+		advice: advice({ recommendations: [ranked({ doors: ['C1-C2'] })] }),
+		panel: {
+			room: 'Chamber of Iron',
+			roomRect: null,
+			offers: [offer({ architectName: 'Atmohua', displayName: 'Armoury' })],
+			incursionsRemaining: 6
+		}
+	});
+
+	it('still shows the widget once the panel has closed behind the player', () => {
+		expect(overlayShowsDoors(inRoom().status)).toBe(true);
+	});
+
+	it('still names the kill, which is the only place it is named by then', () => {
+		// The callout's target block is off screen inside the room, so the
+		// diamond's line is the last thing carrying the architect.
+		expect(killCallout(inRoom())?.title).toBe('KILL Atmohua → Armoury');
+	});
+
+	it('still marks the door the advisor wants opened', () => {
+		// The purple seal. Empty here would mean the widget draws a room with no
+		// recommendation in it at the moment the door is actually opened.
+		expect(suggestedDoors(inRoom().advice)).toEqual(['C1-C2']);
 	});
 });

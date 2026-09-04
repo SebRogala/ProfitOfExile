@@ -325,8 +325,92 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   unit is also capture pixels, because the window and every capture are the same
   monitor — the game's, by construction on both sides since POE-237 (the window
   is built on it, `capture::capture_screen` grabs it, and `ssot.screen` carries
-  its id and origin) — so a user-placed widget and a future game-anchored one
-  need no conversion between them.
+  its id and origin) — so a user-placed widget and a game-anchored one need no
+  conversion between them beyond the window's own scale factor.
+- **The shipped widget list.** Two, both the temple's:
+  `temple.advice` — the KILL CALLOUT (POE-244), `anchored`, a box carrying the
+  architect's name and one reason with an arrow into the block the advisor chose;
+  and `temple.door` — the ROOM DIAMOND, user-placed and persisted, the same
+  isometric shape the side panel draws with the advisor's door bigger and purple.
+  **What the temple overlay deliberately stopped showing in POE-244**, all of it
+  still on the Temple page: the reader's status lines (`reading…`, `between
+  rooms — layout only`), the top gamble and its risk %, the unread-plate badge,
+  the marker-fallback notice in full, and the advisor's `warnings` list. The
+  overlay is for seeing; the page is for reading. Two things did NOT move —
+  `doorWarning()`, on the door widget, because it says do not act on the shape
+  it sits under and that widget is the one still on screen while the player is
+  acting; and the `leaveMap` banner, which is a decision about the map rather
+  than a reading.
+  `temple.board` (the lattice redrawn over the game, POE-225) is RETIRED: the
+  board is already on screen behind the window, and the copy cost space that has
+  to be kept clear of the module's own OCR crops. Its persisted rectangle is left
+  INERT rather than removed — Rust does not validate widget ids against the
+  frontend registry (`set_widget_geometry` says why) and the host looks
+  placements up by spec, so a row nothing declares is never read. **The same is
+  true of `temple.advice`'s stored RECTANGLE**, which every machine that arranged
+  the widgets before POE-244 also has: the widget still exists but is now
+  anchored, so its `x`/`y`/`width`/`height` are never consulted again. Its
+  `visible` flag is NOT inert — the Show checkbox still writes it and the host
+  still honours it, which is the one thing a stored row for an anchored widget is
+  still for.
+- **Two kinds of widget, and the host draws them differently.** A PLACEABLE
+  widget gets a positioned box from `placementFor`, a Settings row, a persisted
+  rectangle and a config-mode frame. An `anchored` one gets none of those: the
+  host renders it through a second `anchored` snippet into a layer the size of
+  the whole window, and the MODULE positions its own content inside that. The
+  host cannot place one — where a callout goes is a function of where the game
+  drew the thing it points at — so what it contributes is the window, the frame
+  (`HostFrame`: the scale factor and the host box, both already resolved here, so
+  the module does not ask the window a second time), the same `data-hot` claim,
+  and the exclusion from Settings' POSITION column and from placement
+  persistence. Anchored widgets are NOT drawn in config mode: there is nothing to
+  arrange, and a box beside the red frames over the dimmed host would say
+  otherwise. They DO keep a Settings row and a Show checkbox — an anchored widget
+  the user cannot switch off is the one overlay surface with no control at all —
+  so `overlayGroups()` lists them with `placeable: false`, which is what tells
+  the page to print `placed by the game` where a rectangle would go, and the host
+  honours `visible` in the anchored branch as well as the placed one.
+- **A module may override an unconfigured widget's shipped position**
+  (`defaultsFor`, POE-244). The registry's numbers are fixed CSS px, which is
+  right for a widget whose default has nothing to do with the game; the temple's
+  door diamond is the other case — it ships "beside the game's own diamond, below
+  the panel, and clear of every read region", which depends on a board the host
+  knows nothing about. The hook answers with a replacement `defaults` and is used
+  exactly where `spec.defaults` would have been, for an unstored widget's position
+  and for what config mode seeds one at. A STORED placement outranks it: the user's
+  placement is never overridden by a default, game-anchored or not. The
+  consequence for a widget nobody has placed is that it FOLLOWS the panel as the
+  panel moves, which is what "ships next to the game's diamond" has to mean.
+  **The host REMEMBERS the last answer** (`lastDefaults`), and that is not a
+  cache for speed. A widget-config session raises the window without starting the
+  module's work (POE-241), so there is no board while the user is arranging and
+  the hook answers null — config mode would seed the frame from the registry's
+  fixed number while in play the widget sits beside the game's diamond, and Save
+  would persist a position the widget has never been in. The remembered answer is
+  the seed instead. When there has been no board at all this session the registry
+  number is still the seed, and the config bar says so rather than pretending.
+- **Nothing may cover a read region** (POE-244). The temple OCRs the side panel,
+  the budget line and the panel's diamond, both boxes on every plate, and the beam
+  patch at every corridor midpoint — 42 rectangles on a full board, published as
+  `layout.rois` from `temple::run::read_rois`, which is the ONE builder over the
+  five Rust functions that own them. A surface drawn over one is OCR input the app
+  wrote itself: a confident, wrong board with nothing anywhere reporting a
+  failure. `overlay/widgets/widget-avoid.ts`'s `avoidRects` is the rule — the
+  nearest position clear of every obstacle, or `null` — and `null` means the box
+  is NOT drawn. Everything placed goes through it, the leave-the-map banner
+  included: pinned top-centre it reached x 1200 on the committed 1920×1080 frame
+  where the panel's crop starts at 1131. The arrow is the ONE bounded exception,
+  and its bound is explicit: a 3 px LINE crossing a crop is not what breaks an
+  OCR read, but the arrowHEAD is a filled triangle, so `calloutArrow` stops the
+  line `ARROW_STANDOFF_CSS` (10 px) short of the block and the head is 8 px in
+  USER units (`markerUnits="userSpaceOnUse"` — the default is `strokeWidth`,
+  which multiplied an 8 px head by the 3 px stroke into a 24 px triangle sitting
+  on the block's first glyphs). The point lands about 9 px clear of the text. The rects are published
+  rather than recomputed in TypeScript for the usual reason — a copy of any of the
+  five constants would drift with nothing to fail — and `neverCoverRects` returns
+  an EMPTY list both when there is no layout and when the scale factor has not
+  resolved, which the callers must read as "place nothing yet" and never as "the
+  screen is free".
 - `WidgetHost.svelte` owns placement, hot rects and click routing. Any element a
   widget draws with `data-hot` is claimed; one that also carries `data-action`
   is dispatched through `elementFromPoint`. The window declares nothing of its
@@ -641,16 +725,22 @@ touching the named path.
   module on and the game focused, click the game through an empty part of the
   fullscreen window AND through a widget — both must reach the game. Then start
   the app in debug mode and toggle the module off and on, so the window is built
-  with `?debug` and the temple advice widget draws its `data-hot` probe: a click
+  with `?debug` and the temple DOOR widget draws its `data-hot` probe: a click
   on the probe must log `hot-rect probe clicked`, and a click one pixel outside
   it must reach the game. A probe that does nothing means the declaration or the
   `overlay-click` listener is wrong; a click beside it that does NOT reach the
   game means the withdrawn/declared rect is too big. **This needs a live temple
-  board on screen**, not just the module enabled: the probe sits inside the
-  advice widget's snippet, which the route draws only when there is a board
-  worth drawing (`overlayShowsBoard`). Outside a temple the window is up and the
-  widget renders nothing, so there is no rect to click and the check proves
-  nothing.
+  board on screen**, not just the module enabled: the probe sits inside the door
+  widget's snippet, which the route draws only when there is a room read
+  (`overlayShowsDoors` plus a published diamond). Outside a temple the window is
+  up and the widget renders nothing, so there is no rect to click and the check
+  proves nothing. Since POE-244 the probe is on the DOOR widget and not the
+  advice one: the callout is anchored, so it is not placed by the user and is
+  not drawn in config mode, and the probe belongs on a surface that behaves like
+  every other widget. That moved its precondition too — the door widget needs a
+  published `layout.diamond`, which means a read that settled a CURRENT ROOM, so
+  **run this standing IN a room**. A board read between rooms
+  (`no_current_room`) draws no diamond and therefore no probe.
 - **Click-through actually applied, on every overlay** (POE-227): the command
   now awaits its own setup and returns a failure, but only Windows can produce
   one. Toggle each overlay on with the game focused and click the game through
@@ -940,6 +1030,94 @@ touching the named path.
      Re-arm? If it needs Re-arm, a hideout arm is a follow-up — the premise that
      the panel is only ever opened with an Alva line or the temple area in scope
      is UNVERIFIED (see `temple/trigger.rs`).
+
+- **The kill callout points at the right block, on both machines** (POE-244):
+  open a temple layout panel with two architect blocks. A box must appear beside
+  the panel reading `KILL <architect>` with one reason under it, and its arrow
+  must land on the block whose name the box carries — not the other one, and not
+  between them. Check on BOTH machines (1920×1080 laptop and the desktop): the
+  block rect is the union of that block's OCR line boxes in capture px, and the
+  only step to CSS is the window's own scale factor, so a display at anything but
+  100 % is where a missing or doubled conversion shows. Then close one block's
+  read (a one-of-two read, which the panel produces on its own often enough —
+  or force it by covering the lower block): the box must carry
+  `(only architect read)` inside the title line. A read with no block rect at all
+  draws the box beside the panel with NO arrow, which is correct and not a bug —
+  there is nothing on screen it could honestly point at.
+- **Nothing is drawn over what the module reads** (POE-244) — the check the
+  static gates cannot reach, because the failure is the app reading its own
+  overlay back as game pixels. With the callout and the door diamond both on
+  screen over a live panel, press **Debug capture** in the Temple page and open
+  the dump: the capture is a real screen grab, so the overlay is IN it. Then
+  compare `report.json` against a dump taken with the temple module's overlay
+  toggled off on the same board — the room title, both architect blocks, the
+  incursion count, `current`, `doors` and `unknownRooms` must be identical. Any
+  difference is a surface sitting on a crop, and the first suspects are the
+  callout's box (the arrow may cross text; the box may not) and a door diamond
+  the user has dragged onto a plate. `avoidRects` cannot protect the second one —
+  once the user places the widget it goes where they put it — so a difference
+  that only appears after a drag is the user's placement and not a defect.
+- **The door diamond survives the incursion, WITH its advice** (POE-244, needs
+  POE-246's arming): with the panel open and a room read, note the diamond, the
+  purple seal, the `open <edge>` line and the kill line under it, then click
+  *Enter Incursion*. All four must STAY for the whole timed run — the layout
+  panel and the game's own diamond are gone by then, and this is the only thing
+  still naming the architect. The shape alone is not a pass: the review that
+  caught this found the widget drawing a room with **no purple seal, no door
+  line and no kill name**, because the capture loop's retire dropped `advice`
+  and `panel_not_visible` is reached only through that retire. `app.log` should
+  show the status going to `panel_not_visible` rather than `waiting`. It is
+  expected to go away roughly two minutes after the panel was last on screen,
+  and the advice goes with the STAND-DOWN and not before.
+- **The diamond is the room, in the game's orientation** (POE-244): with the
+  panel open, hold the widget beside the game's own diamond. The two must be the
+  same shape at the same rotation, with a seal in the same direction for every
+  corridor — green where the game draws green, red where it draws red — and the
+  advisor's door the one drawn bigger and purple. The Rust side pins the
+  geometry against the committed crops through the shipped detector
+  (`the_committed_crops_land_within_ten_px_of_the_seal_ring`, worst measured
+  case 8.94 px on a 200 px rect), so what this check adds is the two things a
+  fixture cannot see: that the OUTLINE reads as the same shape at widget size,
+  and that the ring and the outline still look like one drawing. A widget
+  rotated as a whole means `AXIS_X` / `AXIS_Y` were re-fitted; seals at visibly
+  different distances from the centre mean something reintroduced a per-wall
+  radius, which is the model POE-244 shipped and the review measured as wrong
+  (rms 22.2 px, max 44.5 px against the panel).
+- **The arrowhead does not sit on the block's text** (POE-244): with the callout
+  up, look at where the arrow ends. The point must stop clearly SHORT of the
+  architect block's first glyphs, not on them — about 9 px at 100 % scale — and
+  the head must be a small triangle rather than a large one. A head that has
+  swallowed the first word means `markerUnits` has gone back to its
+  `strokeWidth` default, which multiplies the 8 px head by the 3 px stroke.
+  Confirm with the Debug-capture diff below: the block still reads.
+- **The leave-the-map banner clears the panel** (POE-244): get a `leaveMap`
+  verdict with the layout panel open (R5 fires when the temple has what it needs
+  from the map). The yellow banner must not overlap the side panel — at 1920×1080
+  a centred banner reaches x 1200 and the panel's crop starts at 1131, so it will
+  have moved up or left. Verify with the Debug-capture diff below rather than by
+  eye: the panel's title and both architect blocks must still read.
+- **The Show checkbox reaches the callout** (POE-244): Settings → Overlay
+  Positions → Temple lists BOTH widgets. The kill callout's row shows
+  `placed by the game` where the door diamond shows a rectangle, and clearing its
+  Show toggle must take the callout AND its arrow off the screen while leaving
+  the door diamond up. A row that is missing, or a toggle that does nothing, is
+  the regression: an anchored widget with no switch is the only overlay surface
+  the user cannot turn off.
+- **Config mode seeds the door widget where it actually sits** (POE-244): open a
+  temple and let the widget be placed beside the game's diamond, then leave the
+  temple and press Configure in Settings. The red frame must appear where the
+  widget has been sitting, not at the shipped default in the top-left, and the
+  bar must NOT carry the "shipped default" note. Then restart the app without
+  opening a temple and press Configure: the frame is now at the shipped default
+  and the bar must say so. Saving in the first case and re-entering a temple must
+  leave the widget where it was saved.
+- **The door widget ships somewhere sensible on a fresh profile** (POE-244):
+  with no stored placement for `temple.door` (a fresh install, or the row deleted
+  from `settings.json`), open a panel. The widget must appear below the panel and
+  in the game diamond's column, over nothing the module reads. It follows the
+  panel while it is unplaced, which is intended; the moment it is dragged and
+  saved it stops moving, and THAT is the check — drag it, Save, re-open the
+  panel on a different board, and it must stay where it was put.
 
 ## Adding an overlay
 

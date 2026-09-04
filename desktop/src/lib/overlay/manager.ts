@@ -22,8 +22,8 @@
  * The four lab overlays are created in `routes/(app)/+layout.svelte` from their
  * persisted settings; this window is created by the same file but from the
  * `temple` MODULE flag instead. The WINDOW persists no geometry of its own — it
- * is the primary monitor (POE-225) — while the widgets inside it are persisted
- * per widget in `Settings.widgets`.
+ * is the GAME monitor (POE-225 D8, moved off the primary in POE-237) — while
+ * the widgets inside it are persisted per widget in `Settings.widgets`.
  */
 export const TEMPLE_WINDOW_LABEL = 'temple';
 

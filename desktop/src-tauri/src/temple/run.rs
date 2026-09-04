@@ -946,6 +946,34 @@ pub fn apply_status(slice: &mut TempleSlice, outcome: TickOutcome) {
     }
 }
 
+/// Fold one ARM-GATE event into the slice: the status, and the advice the gate
+/// event ends.
+///
+/// [`apply_status`] plus the one thing only this transition may do — and the
+/// split is POE-244's, so the boundary is in a pure function rather than in a
+/// publish closure no test can reach.
+///
+/// **The advice ends at the stand-down and nowhere earlier.** It used to end at
+/// [`miss`]'s retire, which is wrong for the reason that function's note gives:
+/// [`TempleStatus::PanelNotVisible`] is what the whole INCURSION looks like, and
+/// the door widget is the only surface on screen then. A stand-down is the
+/// honest boundary instead — nothing has put an incursion in scope for
+/// [`super::trigger::PANEL_TAIL_MS`], the loop has stopped looking, and the
+/// overlay is hidden for [`TempleStatus::Waiting`] anyway. The reasoning is
+/// [`slice::force_off`]'s: a move under a badge that says the module is not
+/// looking is still a move the player could act on.
+///
+/// [`TickOutcome::Armed`] leaves it alone. Arming publishes `Idle` and the next
+/// read replaces the whole slice, so clearing there would blank the page for
+/// the seconds between the voice line and the first anchor.
+pub fn apply_gate(slice: &mut TempleSlice, outcome: TickOutcome) {
+    apply_status(slice, outcome);
+    if outcome == TickOutcome::Disarmed {
+        slice.advice = None;
+        slice.mode = None;
+    }
+}
+
 // ------------------------------------------------------------ text ROIs --
 
 /// The side panel's own border box, in reference px relative to the Entrance
@@ -1291,6 +1319,68 @@ pub fn diamond_rect(origin: (i32, i32), scale: f32) -> [i32; 4] {
         w.round() as i32,
         h.round() as i32,
     ]
+}
+
+/// Every rectangle a read takes its INPUT from, given the anchor.
+///
+/// The never-cover set POE-244's overlay places itself against, and the reason
+/// it is built here: five sources own these rects — [`panel_rect`],
+/// [`diamond_rect`] and [`remaining_rect`] above, [`panel::name_strip`] /
+/// [`panel::numeral_box`], and [`Lattice::edge_midpoint`] with
+/// [`lattice::PATCH_HALF`] — and the overlay needs all five at once. A second
+/// list of them anywhere (least of all in TypeScript, which cannot import
+/// these) drifts silently: a constant moves, the module still reads correctly,
+/// and the overlay quietly starts drawing over the crop it is reading.
+///
+/// The two OCR boxes per plate are published as their UNION, one rect per
+/// plate. It is a superset of both — the numeral's band starts above the name's
+/// and the name's ends at the plate's bottom edge — and a superset is the safe
+/// direction for a rule whose only job is to keep something OUT: the cost is a
+/// few px of screen the overlay will not use, and the alternative is 26 rects
+/// carrying a distinction no consumer of this list makes.
+///
+/// 42 rects on a full board: 3 panel regions, 13 plates, 26 corridors.
+pub fn read_rois(origin: (i32, i32), scale: f32) -> Vec<slice::RoiView> {
+    let lattice = Lattice::new(origin, scale);
+    let mut out = vec![
+        slice::RoiView { kind: "panel".to_string(), of: None, rect: panel_rect(origin, scale) },
+        slice::RoiView { kind: "diamond".to_string(), of: None, rect: diamond_rect(origin, scale) },
+        slice::RoiView {
+            kind: "remaining".to_string(),
+            of: None,
+            rect: remaining_rect(origin, scale),
+        },
+    ];
+    for slot in lattice::Slot::ALL {
+        out.push(slice::RoiView {
+            kind: "plate".to_string(),
+            of: Some(slot.as_str().to_string()),
+            rect: union_rect(panel::name_strip(&lattice, slot), panel::numeral_box(&lattice, slot)),
+        });
+    }
+    // The same half-width the beam sampler uses, taken from the same constant
+    // and truncated the same way — `doors::read_doors` computes `hw` exactly
+    // like this, and a rect one pixel short of the patch is a rect that admits
+    // ink into the read.
+    let hw = (lattice::PATCH_HALF * scale as f64) as i32;
+    for edge in lattice::edges() {
+        let (mx, my) = lattice.edge_midpoint(edge);
+        out.push(slice::RoiView {
+            kind: "corridor".to_string(),
+            of: Some(edge.to_string()),
+            rect: [mx - hw, my - hw, 2 * hw, 2 * hw],
+        });
+    }
+    out
+}
+
+/// The smallest `[x, y, w, h]` containing both. Used only by [`read_rois`].
+fn union_rect(a: [i32; 4], b: [i32; 4]) -> [i32; 4] {
+    let x = a[0].min(b[0]);
+    let y = a[1].min(b[1]);
+    let right = (a[0] + a[2]).max(b[0] + b[2]);
+    let bottom = (a[1] + a[3]).max(b[1] + b[3]);
+    [x, y, right - x, bottom - y]
 }
 
 /// Settle the current room's corridors with the side panel's seals, or say why
@@ -1957,7 +2047,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             let mut announced = None;
             publish(&app, |slice| {
                 if let Some(outcome) = gate_announcement(said, armed, slice.status) {
-                    apply_status(slice, outcome);
+                    apply_gate(slice, outcome);
                     announced = Some(outcome);
                 }
             });
@@ -2346,6 +2436,24 @@ fn cold_sweep(
 /// page for the rest of the session. [`next_status`] moves the status in the
 /// same publish, because clearing the message while leaving `error` standing
 /// leaves the page red with nothing under it.
+///
+/// # A retire keeps the ADVICE (POE-244)
+///
+/// It used to drop `advice` and `mode`, on the reasoning that a recommendation
+/// is a move the player could still act on while the board is only a record.
+/// That reasoning had the case backwards. `TempleStatus::PanelNotVisible` is
+/// reached ONLY through this function, after [`RETIRE_AFTER`]
+/// misses — which is to say it is what the whole INCURSION looks like, the
+/// panel being closed the moment the player steps through the door. Dropping
+/// the advice there left POE-244's door widget with no purple seal, no
+/// `open <edge>` line and no architect name at exactly the point those are the
+/// only things still on screen.
+///
+/// So the advice now outlives the panel, and the two things that end it are the
+/// two that should: the next anchored read REPLACES it (`slice::project` writes
+/// the whole slice), and a stand-down drops it with the module — which is also
+/// when the overlay hides, so nothing stale is ever drawn. The bound on how
+/// stale it can be is [`super::trigger::PANEL_TAIL_MS`], not this function.
 fn miss(app: &AppHandle, session: &mut Session, errored: bool) {
     // `None`: a tick that found nothing leaves `panel_seen_ms` where it was, so
     // a miss can never extend the arm (POE-246).
@@ -2366,17 +2474,7 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) {
     } else {
         TickOutcome::NoPanel
     };
-    publish(app, |slice| {
-        apply_status(slice, outcome);
-        if retired {
-            // The advice goes, the layout and panel stay. A recommendation is
-            // a move the player could still act on; the board is a record of
-            // what was last read, and keeping it is what lets the overlay stay
-            // useful for the seconds after the panel closes.
-            slice.advice = None;
-            slice.mode = None;
-        }
-    });
+    publish(app, |slice| apply_status(slice, outcome));
 }
 
 /// The panel's text: two bounded crops, as lines carrying their boxes in
@@ -3608,6 +3706,98 @@ mod tests {
         apply_status(&mut slice, TickOutcome::Disarmed);
 
         assert_eq!(slice.status, TempleStatus::Waiting);
+    }
+
+    /// POE-244's core fix. The panel leaving the screen is what an INCURSION
+    /// looks like — the player stepped through the door and the layout panel
+    /// closed behind them — and `PanelNotVisible` is reached only through
+    /// `miss`'s retire. Dropping the advice there left the door widget with no
+    /// purple seal, no `open <edge>` line and no architect name at exactly the
+    /// point they are the only things still on screen.
+    ///
+    /// **What this pins is [`apply_status`], not [`miss`]'s publish closure.**
+    /// That closure takes an `AppHandle` and the slice mutex, so it has no unit
+    /// seam here; what it does now is call this function and nothing else, and
+    /// this is the assertion that the function it calls leaves the advice
+    /// alone. A future edit that put a `slice.advice = None` back inside the
+    /// closure would pass this test — the guard against that is the reviewed
+    /// diff and the incursion smoke item in `docs/OVERLAY-GUIDE.md`, which is
+    /// where the original defect was found.
+    #[test]
+    fn a_panel_that_left_the_screen_keeps_the_advice_it_was_read_with() {
+        let mut slice = TempleSlice {
+            status: TempleStatus::Read,
+            advice: Some(slice::AdviceView {
+                recommendations: Vec::new(),
+                gambles: Vec::new(),
+                map_action: "continue".to_string(),
+                warnings: Vec::new(),
+                forced_kill: false,
+            }),
+            mode: Some("chase".to_string()),
+            ..TempleSlice::default()
+        };
+
+        apply_status(&mut slice, TickOutcome::NoPanel);
+
+        assert_eq!(slice.status, TempleStatus::PanelNotVisible);
+        assert!(slice.advice.is_some(), "the door widget has nothing to draw without it");
+        assert_eq!(slice.mode.as_deref(), Some("chase"));
+    }
+
+    /// And the boundary that DOES end it: the loop has stopped looking, so a
+    /// recommendation under a "waiting for Alva" badge is a move the player
+    /// could still act on with nothing behind it. Fails if the drop is moved
+    /// back to the retire, or dropped altogether.
+    #[test]
+    fn standing_the_loop_down_ends_the_advice_with_it() {
+        let mut slice = TempleSlice {
+            status: TempleStatus::PanelNotVisible,
+            advice: Some(slice::AdviceView {
+                recommendations: Vec::new(),
+                gambles: Vec::new(),
+                map_action: "continue".to_string(),
+                warnings: Vec::new(),
+                forced_kill: false,
+            }),
+            mode: Some("chase".to_string()),
+            ..TempleSlice::default()
+        };
+
+        apply_gate(&mut slice, TickOutcome::Disarmed);
+
+        assert_eq!(slice.status, TempleStatus::Waiting);
+        assert_eq!(slice.advice, None);
+        assert_eq!(slice.mode, None);
+    }
+
+    /// Arming does NOT clear it: the next read replaces the whole slice, and
+    /// blanking here would empty the page for the seconds between Alva's line
+    /// and the first anchor.
+    #[test]
+    fn arming_leaves_the_standing_advice_for_the_next_read_to_replace() {
+        let mut slice = TempleSlice {
+            status: TempleStatus::Waiting,
+            // The advice itself, not just the mode label beside it: a fixture
+            // that left this `None` would assert nothing about the field the
+            // test is named for, and would pass against a version that cleared
+            // it (review, POE-244).
+            advice: Some(slice::AdviceView {
+                recommendations: Vec::new(),
+                gambles: Vec::new(),
+                map_action: "continue".to_string(),
+                warnings: Vec::new(),
+                forced_kill: false,
+            }),
+            mode: Some("chase".to_string()),
+            ..TempleSlice::default()
+        };
+
+        apply_gate(&mut slice, TickOutcome::Armed);
+
+        assert_eq!(slice.status, TempleStatus::Idle);
+        assert!(slice.advice.is_some(), "arming must not blank the standing board");
+        assert_eq!(slice.mode.as_deref(), Some("chase"));
     }
 
     /// Arming returns the module to `Idle` BEFORE the first read, so a board
