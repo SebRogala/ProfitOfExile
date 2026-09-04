@@ -393,7 +393,9 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   the budget line and the panel's diamond, both boxes on every plate, and the beam
   patch at every corridor midpoint — 42 rectangles on a full board, published as
   `layout.rois` from `temple::run::read_rois`, which is the ONE builder over the
-  five Rust functions that own them. A surface drawn over one is OCR input the app
+  six functions that own them (`run::panel_rect`, `run::diamond_rect`,
+  `run::remaining_rect`, `panel::name_strip` + `panel::numeral_box` unioned per
+  plate, and `Lattice::edge_midpoint` with `lattice::PATCH_HALF`). A surface drawn over one is OCR input the app
   wrote itself: a confident, wrong board with nothing anywhere reporting a
   failure. `overlay/widgets/widget-avoid.ts`'s `avoidRects` is the rule — the
   nearest position clear of every obstacle, or `null` — and `null` means the box
@@ -410,7 +412,17 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   five constants would drift with nothing to fail — and `neverCoverRects` returns
   an EMPTY list both when there is no layout and when the scale factor has not
   resolved, which the callers must read as "place nothing yet" and never as "the
-  screen is free".
+  screen is free". **All three placers state that themselves rather than
+  inheriting it**: `calloutPlacement`, `bannerPlacement` and
+  `doorDefaultPlacement` each return null on an empty set, and `doorDefaults` in
+  the route repeats it so no default is offered to the host at all. The banner is
+  why the rule is stated per placer instead of once at the caller — its wanted
+  position (top centre) is a function of the HOST alone, so an empty obstacle list
+  did not withhold it, it PLACED it, straight over the panel crop the next tick
+  reads. A `null` anchor covering the same case in the callout was a coincidence,
+  not the rule. What the rule does NOT bind is a rectangle the USER owns — a
+  stored placement, or the registry default `placementFor` falls back to. Those
+  are visible, attributable and one drag from fixed; see ADR-019's carve-out.
 - `WidgetHost.svelte` owns placement, hot rects and click routing. Any element a
   widget draws with `data-hot` is claimed; one that also carries `data-action`
   is dispatched through `elementFromPoint`. The window declares nothing of its
@@ -985,16 +997,101 @@ touching the named path.
      portal) and the `You have entered` line must stand the loop down on the next
      iteration, NOT two minutes later — the sighting is a claim about a screen
      the player has left.
+- **The panel and diamond crops land on the real panel** (POE-230): the check the
+  fixtures cannot make, because the repository has exactly one full-frame temple
+  capture and the bug was a property of a frame's SIZE. With a layout panel open,
+  read the Temple page: the corridor line must not carry
+  `Door markers unread — corridors fall back to the beam read (…)`, and the room
+  must show its corridors from the DIAMOND rather than from the beam fallback —
+  all six seals, which is the read POE-230's measured failure got 5 of. Then press **Debug capture** and open the dump:
+  `report.json`'s notes must carry `panel — 2 architect block(s), …` on a
+  two-architect panel (1 is the POE-230 failure exactly: the old crop cut the
+  lower-left block off) and `marker_error` must be absent. Cross-check the rects
+  in `app.log`'s `Temple: rois panel […] diamond […] remaining […]` line against
+  `panel.png` and `diamond.png` in the dump — a crop that is half a panel is
+  visible there and nowhere else. Run it on BOTH machines: the rects are keyed on
+  the Entrance anchor now, so a screen whose panel sits at a different offset from
+  the capture's right edge is the case that used to fail and the case this proves.
+
+  **The honesty half** (POE-223 follow-up audit): run the game WINDOWED, small
+  enough that the panel's crop falls off the capture entirely. The Temple page
+  must print `Temple: panel ROI [x, y, w, h] is outside the capture — windowed
+  client?` as a YELLOW notice — not as the red "Last error", because the read
+  completed and the board is real — and `app.log` must carry it ONCE, not once a
+  second and not once per position while the window is dragged. Maximise the game
+  again and the notice must go away on the next read. Before this the crop was
+  stepped over in silence and the panel simply read as having no architects on it.
+- **The temple anchors from the shared screen scale, and writes back to it**
+  (POE-234): four reads on one machine.
+
+  1. **A cold screen anchors in seconds, with no Debug capture.** Start from a
+     fresh install (or press **Recalibrate** in Settings → Screen geometry) so the
+     slice is empty, then open a layout panel. The board must be read within a few
+     seconds — one pyramid sweep, ~5 s in the release container — and `app.log`
+     must NOT show the exhaustive sweep's minutes. Before POE-234 the loop never
+     swept at all on the reporting laptop (`detect_cheap` peaked at 0.66 against
+     the 0.70 floor) and the only way to a board was the Debug button.
+  2. **A remembered scale is used, and said once.** Restart with the panel closed,
+     then open it. `app.log` must carry ONE
+     `Temple: anchoring on the remembered screen scale (…, ui_scale …) — temple
+     scale …, no search` line, not one per second — and none at all when the
+     remembered value is the temple's OWN (the line names the cue, and the temple
+     does not announce itself back).
+  3. **A monitor change re-measures exactly once.** Move the game to another
+     display. `app.log` must carry ONE
+     `screen is now W×H on monitor N — dropping the remembered scale (was …)` and
+     then one fresh anchor — not a line per tick, which is what an un-keyed drop
+     produces.
+  4. **The card names the temple as the cue.** On a machine whose merc recruit
+     window has never been opened, read a temple board and then open Settings →
+     Screen geometry. The source row must read `temple Entrance plate` and the
+     Verified row `Yes` (not `No — trusted from last session`). This is the half
+     that proves the WRITE, and it has one EXPECTED non-failure: an anchor that
+     agrees with a `remembered` startup seed inside the acceptance band is
+     REFUSED, and the card correctly keeps saying `remembered from a previous
+     run` — the temple confirmed the number rather than replacing it. So run this
+     read after a Recalibrate, when the slice is empty and there is nothing to
+     agree with. A card that stays `remembered` from an EMPTY slice is the real
+     failure: `screen_from_anchor` withholds an anchor the capture height does not
+     corroborate, so check `app.log` for a
+     `temple anchor not corroborated by the capture: unit ratio k=… — the
+     measurement was withheld` line before assuming the publish is broken.
+- **A one-of-two architect read says so, and the two-block read is right**
+  (POE-243): open the layout panel on a board with two architects. The kill
+  callout's title must NOT carry `(only architect read)`, and on the PC's
+  Armourer's Workshop board (2026-09-03, Quipolatl `upgrade → Armoury` against
+  Atmohua `change → Shrine of Empowerment`, standing in a tier-1 room) the advice
+  must be the **change → Sanctum of Unity** — that board is pinned as advisor case
+  7 at both the suite's constants and the app's own, and `upgrade → Armoury` on
+  screen means the PANEL lost Atmohua's block, not that the ranking is wrong. Then
+  force a one-of-two read (cover the lower block, or catch a panel the OCR half
+  reads): the callout and the Temple page must both mark the headline
+  `(only architect read)` rather than showing a forced kill with the confidence of
+  a chosen one. Finally press **Debug capture** on a board whose `change` offer
+  WRAPS onto a second line and open `ocr-lines.json`: the block must appear in
+  `blocks` with its rect and its whole wrapped target, and the engine-order lines
+  above it must show which line the grouping attached. A block that stops at the
+  wrap is the geometry rule failing, and this file is the only place that is
+  visible.
 - **The config bar is findable at 1080p and 1440p** (POE-245): press Configure
   in Settings → Overlay Positions → Temple. The whole monitor must dim, and the
   bar must appear next to the widgets with 14 px copy and buttons at least 32 px
   tall. The anchor is the BOUNDING BOX of every widget being arranged, not one
-  of them: both temple widgets ship at y = 40, so on shipped defaults the bar
-  sits BELOW the pair and centred on the pair, not on the screen. To flip it,
-  drag both widgets down past about a quarter of the screen height and press
-  Configure again — the bar must now sit ABOVE them. Then drag one to the
-  bottom-right corner and re-enter: the bar must stay fully on screen, Save
-  included.
+  of them, and config mode arranges only the PLACEABLE widgets — since POE-244
+  that is one, `temple.door`, shipping at y = 300. So on shipped defaults the bar
+  sits ABOVE it and centred on it, not on the screen: 300 leaves room for a bar
+  plus the 16 px gap, which is the first branch of `configBarAnchor`. (This item
+  said BELOW until the POE-223 follow-up audit — it was written against POE-245's
+  two-widget registry, where `temple.advice` shipped at y = 40 and pinned the
+  cluster's top to the top of the screen. POE-244 made that widget anchored, so
+  it is neither persisted nor arranged, and the item inverted.)
+
+  To flip it, drag the door widget UP to the top edge and press Configure again:
+  with less than a bar's height above the cluster the bar must now sit BELOW it.
+  Then drag it to the bottom-right corner and re-enter — the bar must stay fully
+  on screen, Save included. A third widget added to the temple later moves the
+  shipped answer again, because the anchor is the union of every widget being
+  arranged: re-read `configBarAnchor`, not this paragraph.
 - **A monitor change that arrives mid-build** (POE-245): with the temple module
   already on in settings, start the app with PoE running on a non-primary
   display but NOT in the foreground, then alt-tab into the game within a couple

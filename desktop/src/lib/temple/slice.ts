@@ -380,6 +380,18 @@ export interface TempleSlice {
 	/** Unix ms of the last completed read. */
 	lastReadAt: number | null;
 	calibration: AnchorCalibration | null;
+	/**
+	 * Something the last read could not do, worded as a WARNING.
+	 *
+	 * Today: a text OCR region that fell entirely outside the capture, which
+	 * produces an empty panel read that looks exactly like a panel with nothing
+	 * printed on it. Deliberately not `lastError` — that belongs to the
+	 * status/message machine and is rendered in red as "Last error", and a read
+	 * that completed and published a board is not a failure. Rust sets and
+	 * clears it in `slice::project`, so it describes the LAST read and never
+	 * outlives it.
+	 */
+	readNotice: string | null;
 	lastError: string | null;
 }
 
@@ -410,6 +422,7 @@ export function templeSliceDefault(): TempleSlice {
 		unknownRooms: [],
 		lastReadAt: null,
 		calibration: null,
+		readNotice: null,
 		lastError: null
 	};
 }

@@ -502,6 +502,21 @@ pub struct TempleSlice {
     pub last_read_at: Option<u64>,
     /// The anchor scale in force, keyed on the capture size it was measured at.
     pub calibration: Option<AnchorCalibration>,
+    /// Something the last read could not do, stated as a WARNING rather than as
+    /// a failure (POE-230 follow-up): today, a text ROI that fell entirely
+    /// outside the capture, which produces an empty panel read that looks
+    /// exactly like a panel with nothing printed on it.
+    ///
+    /// Deliberately NOT [`Self::last_error`]. That field belongs to the
+    /// status/message machine — `super::run::fail` writes it together with
+    /// [`TempleStatus::Error`], and the page renders it in red as "Last error".
+    /// A read that COMPLETED and published a board is not an error and must not
+    /// wear one; the difference between "this module is broken" and "this read
+    /// was short one region" is the whole point of a second field. Written and
+    /// cleared by [`project`] alone, from the read it describes, so it can
+    /// never outlive the read the way a status-machine field can.
+    #[serde(default)]
+    pub read_notice: Option<String>,
     pub last_error: Option<String>,
 }
 
@@ -520,6 +535,10 @@ pub struct ReadResult<'a> {
     pub settled: Option<&'a BTreeSet<Edge>>,
     /// Why the diamond read failed, when it did.
     pub marker_error: Option<String>,
+    /// A warning about this read that is not a failure of it — see
+    /// [`TempleSlice::read_notice`]. `None` on a read with nothing to report,
+    /// which is what CLEARS the field on the slice.
+    pub read_notice: Option<String>,
     pub advice: Option<&'a Advice>,
     pub keys: u8,
     /// The config flags this read was ranked under — echoed onto the slice, not
@@ -854,6 +873,10 @@ pub fn project(read: &ReadResult<'_>, calibration: Option<AnchorCalibration>) ->
         unknown_rooms: unknown_rooms(read.rooms),
         last_read_at: Some(read.read_at),
         calibration,
+        // Set AND cleared here: every read states its own notice, so a
+        // condition that has gone away takes its warning off the page on the
+        // next read rather than standing until something else writes the slice.
+        read_notice: read.read_notice.clone(),
         last_error: None,
     }
 }
@@ -912,6 +935,8 @@ pub fn advise_read(
 /// `last_error` goes with it for the same reason: the message describes a read
 /// the disabled module is no longer attempting, and a red line under an "off"
 /// badge reads as "this module is broken" rather than "you switched it off".
+/// [`TempleSlice::read_notice`] goes with them on the same argument — it is a
+/// warning about an attempt nobody is making any more.
 ///
 /// What does NOT go is the settings echo (`keys`, `config`, `profile`). Those
 /// are not something the module read — they are what the user set, and the page
@@ -921,6 +946,7 @@ pub fn force_off(slice: &mut TempleSlice) {
     slice.status = TempleStatus::Off;
     slice.advice = None;
     slice.mode = None;
+    slice.read_notice = None;
     slice.last_error = None;
 }
 
@@ -1177,6 +1203,7 @@ mod tests {
             panel,
             settled,
             marker_error: None,
+            read_notice: None,
             advice,
             keys: 1,
             config: TempleConfig::default(),
@@ -2400,6 +2427,54 @@ mod tests {
         assert_eq!(s.profile, profile);
     }
 
+    /// A read that lost a text region says so on the SLICE, as a notice and not
+    /// as an error.
+    ///
+    /// The failure this closes: the panel crop falls entirely outside the
+    /// capture, `run::panel_text` steps over it, and the read completes with an
+    /// empty offer list that is indistinguishable on screen from a panel with
+    /// no architects printed on it. The board is real — the plates come off the
+    /// lattice and are unaffected — so the read is not a failure and
+    /// `last_error` (red, "Last error", written by the status machine beside
+    /// `TempleStatus::Error`) is the wrong channel for it.
+    ///
+    /// Fails if `project` drops the field, or if it routes the notice into
+    /// `last_error`.
+    #[test]
+    fn a_read_that_lost_a_text_region_publishes_it_as_a_notice_not_an_error() {
+        let layout = layout(Some(Slot::E1), &[], &[]);
+        let rooms = board_rooms(&[(Slot::E1, "Chamber of Iron")]);
+        let panel = panel("Chamber of Iron", None, Vec::new());
+        let notice = "Temple: panel ROI [1920, 4, 544, 454] is outside the capture — windowed client?";
+        let result = ReadResult {
+            read_notice: Some(notice.to_string()),
+            ..read(&layout, &rooms, &panel, None, None)
+        };
+
+        let s = project(&result, None);
+
+        assert_eq!(s.read_notice.as_deref(), Some(notice));
+        assert_eq!(s.last_error, None, "a completed read is not an error");
+        assert_eq!(s.status, TempleStatus::Read, "and it is not an error STATUS either");
+    }
+
+    /// …and the next read that gets its regions back clears it.
+    ///
+    /// `project` writes the whole slice, so this is what makes the notice a
+    /// STATE rather than a history: a warning that outlived the condition would
+    /// have the player chasing a windowed client they have already maximised.
+    /// Fails if `read_notice` is only ever set.
+    #[test]
+    fn a_read_with_every_region_in_frame_clears_the_notice() {
+        let layout = layout(Some(Slot::E1), &[], &[]);
+        let rooms = board_rooms(&[(Slot::E1, "Chamber of Iron")]);
+        let panel = panel("Chamber of Iron", Some(6), Vec::new());
+
+        let s = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        assert_eq!(s.read_notice, None);
+    }
+
     /// A completed read republishes the settings it was ranked under.
     ///
     /// `project` writes the WHOLE slice (`*slice = projected` in `run`), so a
@@ -2631,7 +2706,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"status":"idle","layout":null,"panel":null,"advice":null,"mode":null,"keys":0,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"lastError":null}"#,
+            r#"{"status":"idle","layout":null,"panel":null,"advice":null,"mode":null,"keys":0,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
         );
     }
 
@@ -2769,6 +2844,10 @@ mod tests {
             unknown_rooms: vec!["D3".to_string()],
             last_read_at: Some(1_700_000_000_000),
             calibration: Some(AnchorCalibration { screen_w: 2560, screen_h: 1440, scale: 0.99 }),
+            read_notice: Some(
+                "Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?"
+                    .to_string(),
+            ),
             last_error: Some("Temple: OCR failed".to_string()),
         };
 
@@ -2777,7 +2856,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.457,0.0],[0.0,1.154],[-1.457,0.0],[0.0,-1.154]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[0.74663,-0.66524]}]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.457,0.0],[0.0,1.154],[-1.457,0.0],[0.0,-1.154]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[0.74663,-0.66524]}]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///

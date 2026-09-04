@@ -1574,6 +1574,43 @@ mod tests {
         assert_eq!(got[1].printed_target, "Royal Meeting Room");
     }
 
+    // The bracket half of the same rule: a `)` on a REFUSED line does not close
+    // the block.
+    //
+    // The sibling test above uses a fragment with no bracket in it, so it
+    // exercises only the "not a boundary" half — the block survives because
+    // nothing asked it to end. The map's info block prints brackets of its own
+    // (`Area Level: 68 (Merciless)` is one line of it), and a `)` read off THAT
+    // is a claim about the map panel, not about the offer. Closing on it drops
+    // the `(Kill to …` clause below, so Hayoxi's block never parses and the
+    // architect is lost — the same POE-243 failure by the other door.
+    //
+    // Fails if the geometric `attaches` filter is dropped — which is the change
+    // this guards, because it is the one a reader would call a simplification.
+    // Without it the fragment ATTACHES, its `)` closes Hayoxi's run at
+    // `Hayoxi, Architect of Destruction Area Level: 68 (Merciless)`, that text
+    // parses to no offer, the `(Kill to …` clause below is left with nothing
+    // open to join, and `got.len() == 1` with only `Xopec` in it.
+    //
+    // (Moving the close check out of the attached branch fails this too, by the
+    // same arithmetic. It is named second because nobody writes that edit by
+    // accident — the branch carries a comment saying why it is there.)
+    #[test]
+    fn a_bracket_on_a_refused_line_does_not_close_the_block() {
+        let mut lines = laptop_panel_with_map_fragment();
+        // The same fragment, at the same place, now ending in a bracket.
+        lines[3] = OcrLineBox { h: 12, ..boxed("Area Level: 68 (Merciless)", 1659, 130) };
+
+        let got = parse_architects(&lines);
+
+        assert_eq!(got.len(), 2, "the fragment's bracket costs no offer: {got:?}");
+        assert_eq!(got[0].architect_name, "Hayoxi");
+        assert_eq!(
+            got[0].printed_target, "Omnitect Reactor Plant",
+            "the clause below the bracket still belongs to Hayoxi's block",
+        );
+    }
+
     // …and the skipped line is not in the block either: the rect stops at the
     // panel column, 1704, and does not reach the fragment's far edge at 1771.
     // A surface pointing at this block would otherwise cover a strip of the

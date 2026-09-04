@@ -216,6 +216,23 @@ describe('calloutPlacement', () => {
 			})
 		).toBeNull();
 	});
+
+	it('is null with an empty never-cover set even when a block rect is offered', () => {
+		// The rule stated at this function rather than left to the anchor. In
+		// the shipped route an unresolved scale factor nulls the target and the
+		// panel too, so this input cannot arise today — which is exactly why it
+		// is pinned: the coincidence is one refactor from ending, and "empty
+		// means place nothing yet" must not depend on it.
+		expect(
+			calloutPlacement({
+				target: BLOCK,
+				panel: PANEL,
+				box: { w: 60, h: 20 },
+				obstacles: [],
+				host: HOST
+			})
+		).toBeNull();
+	});
 });
 
 describe('calloutArrow', () => {
@@ -269,9 +286,28 @@ describe('calloutArrow', () => {
 
 describe('bannerPlacement', () => {
 	it('centres the banner at the top of the host when that is clear', () => {
+		// A published set that is nowhere near the top centre — the plate crop
+		// from `ROIS`, bottom-left. "Clear" has to be demonstrated against a
+		// real never-cover set: an EMPTY one is not a clear screen, it is a
+		// conversion that has not happened, and the case below is what that
+		// answers.
 		expect(
-			bannerPlacement({ box: { w: 400, h: 30 }, obstacles: [], host: HOST })
+			bannerPlacement({
+				box: { w: 400, h: 30 },
+				obstacles: [{ x: 200, y: 700, w: 120, h: 60 }],
+				host: HOST
+			})
 		).toEqual({ x: 760, y: BANNER_TOP_CSS, w: 400, h: 30 });
+	});
+
+	it('is null with an empty never-cover set, which is not a free screen', () => {
+		// `neverCoverRects` is empty for a layout that is absent and for a scale
+		// factor that has not resolved. Placing on that input put the one
+		// unmissable line in the overlay top-centre — which on the committed
+		// 1920x1080 frame is over the panel crop the very next tick reads. A
+		// full board publishes 42 rects, so an empty list is never "the screen
+		// happens to be free".
+		expect(bannerPlacement({ box: { w: 400, h: 30 }, obstacles: [], host: HOST })).toBeNull();
 	});
 
 	it('moves it off the side panel rather than centring over the read', () => {
@@ -353,6 +389,26 @@ describe('doorDefaultPlacement', () => {
 				diamond: DIAMOND,
 				box: { w: 190, h: 215 },
 				obstacles: [DIAMOND],
+				host: HOST
+			})
+		).toBeNull();
+	});
+
+	it('is null with an empty never-cover set, even with a panel to sit below', () => {
+		// The rule stated at the function, not only at `doorDefaults` in the
+		// route. The panel rect here is non-null while the obstacle set is
+		// empty, which is a combination the shipped caller cannot produce
+		// (both come from the same conversion) — and that is the point: a
+		// second caller must inherit the refusal rather than have to remember
+		// it. The registry's shipped default is what the caller falls back to,
+		// and that is a user-visible rectangle rather than a game-derived
+		// placement (ADR-019).
+		expect(
+			doorDefaultPlacement({
+				panel: PANEL,
+				diamond: DIAMOND,
+				box: { w: 190, h: 215 },
+				obstacles: [],
 				host: HOST
 			})
 		).toBeNull();
