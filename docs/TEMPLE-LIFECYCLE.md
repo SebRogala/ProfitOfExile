@@ -21,9 +21,9 @@ OCR read happens once per board, with bounded retries, and then stops.
 | # | Event | Capture / OCR | Overlay | Status |
 |---|---|---|---|---|
 | 1 | **Alva voice line** (either) while `idle` | arm the loop (`trigger.rs`, POE-242: speaker match, 120 s tail from the line's stamp); cheap presence tick every **650 ms** (screen grab + one hinted correlation at the remembered screen scale, ADR-020) | centre **"waiting for the temple panel"** info overlay, toggleable in config | arm **shipped** (0dde882 / eb760c2); 650 ms and the info overlay **planned** (today 1000 ms, no info overlay) |
-| 2 | **Sheet detected** (cheap tick anchors) | full read: anchor + 13 plates + panel + budget line + door markers, all regions keyed on the Entrance anchor (POE-230, 71df527). Regions that did not read cleanly (unknown plate, unresolved offer, marker count mismatch, unread budget) are re-captured on following ticks **at most 2 more times**; then **all OCR stops** — only the cheap presence tick continues. No periodic panel re-OCR. | hide the info overlay; show the sheet-bound overlays (offer boxes with the cyan frame on the advisor's pick, POE-249) and the room overlay (POE-244/248) | full read + signature gate **shipped** (07cf80c, 71df527); bounded retries and "no OCR after a clean read" **planned** (today: panel text re-OCR every 4 s while the sheet is up, `PANEL_RECHECK_INTERVAL`) |
-| 3 | **Sheet gone** (first missed cheap tick) | keep the cheap tick (armed by the panel tail, POE-246: 120 s from the last sighting) so a reopened sheet is noticed; reopening re-shows the same data, no new OCR unless the board signature changed | hide every sheet-bound overlay **on the first miss**; the **room overlay stays** (the player is inside the room, which is exactly when it is needed) | room-overlay persistence **planned** (POE-248 item 1; today advice is dropped at stand-down); first-miss hide **planned** (today `RETIRE_AFTER = 2` ticks) |
-| 4 | **Alva voice line again, or zone change** | stand down: stop capturing, clear all read state (`left_area_ms` stamp on zone change, POE-246; the Alva clear is POE-248) | clear and hide every overlay — the incursion is finished or the player died, which is finished either way | zone change **shipped** (0dde882); Alva-line clear **planned** (POE-248) |
+| 2 | **Sheet detected** (cheap tick anchors) | full read: anchor + 13 plates + panel + budget line + door markers, all regions keyed on the Entrance anchor (POE-230, 71df527). Regions that did not read cleanly (unknown plate, unresolved offer, marker count mismatch, unread budget) are re-captured on following ticks **at most 2 more times**; then **all OCR stops** — only the cheap presence tick continues. No periodic panel re-OCR. | hide the info overlay; show the sheet-bound overlays (offer boxes with the cyan frame on the advisor's pick, POE-249) and the room overlay (POE-244/248: the room's outline, the open doors green, the advisor's door purple, and the kill as a cyan glyph on that architect's own icon spot) | full read + signature gate **shipped** (07cf80c, 71df527); bounded retries and "no OCR after a clean read" **planned** (today: panel text re-OCR every 4 s while the sheet is up, `PANEL_RECHECK_INTERVAL`) |
+| 3 | **Sheet gone** (first missed cheap tick) | keep the cheap tick (armed by the panel tail, POE-246: 120 s from the last sighting) so a reopened sheet is noticed; reopening re-shows the same data, no new OCR unless the board signature changed | hide every sheet-bound overlay **on the first miss**; the **room overlay stays** (the player is inside the room, which is exactly when it is needed) | room-overlay persistence **shipped** (POE-248, uncommitted at the time of writing): `run::apply_gate` no longer drops the advice at stand-down, and `view.ts`'s `overlayShowsDoors` gates on the ADVICE plus a published room rather than on the status — so the widget also survives the stand-down itself, which on the live board landed mid-incursion (`12:39:05 capture stood down`). First-miss hide **planned** (today `RETIRE_AFTER = 2` ticks) |
+| 4 | **Alva voice line again, or zone change** | stand down: stop capturing, clear all read state (`left_area_ms` stamp on zone change, POE-246; the Alva clear is POE-248) | clear and hide every overlay — the incursion is finished or the player died, which is finished either way | zone change **shipped** (0dde882); Alva-line clear **shipped** (POE-248, uncommitted at the time of writing): `trigger::advice_end` is the pure decision over the line — a `You have entered <not the temple>` line, or an `ALVA_SPEAKER` line stamped AFTER the read (the line that armed the read is spoken seconds before it, so an unconditional clear would blank the board the same line was the reason for reading) — and `slice::clear_advice` is the one writer. Read state other than the advice is kept: the Temple PAGE goes on showing the last board under its own timestamp, which is what it already does between reads |
 
 Consequences that follow from the order, not from extra rules:
 
@@ -37,22 +37,38 @@ Consequences that follow from the order, not from extra rules:
 
 ## Alva's lines, as measured (Client.txt)
 
-Mined from the laptop's Client.txt on 2026-09-04 (its whole history, 9 lines) and the PC's on
-2026-09-02 (3 incursions, `trigger.rs`). Counts are the laptop's:
+PC log, 2026-01-29 → 2026-09-04 (mined on the PC 2026-09-04): **684 Alva lines across 144 map
+instances**. Laptop (whole history, 9 lines) agrees on every line it has.
 
-| moment | line | count |
+| line | PC count | role |
 |---|---|---|
-| portal opens (cycle START) | `Time to go.` | 3 |
-| portal opens | `It's time!` | 1 |
-| incursion over (cycle END) | `Good job, exile.` | 2 |
-| incursion over | `Good job.` | 1 |
-| temple banter, not a cycle event | `No wonder it's lost. It's in the middle of the jungle! Shouldn't be too far from here though.` / `At last... Atzoatl.` | 1 each |
+| `Time to go.` | 122 | start (portal opens) |
+| `Let's go.` | 118 | start |
+| `It's time!` | 101 | start |
+| `Good job.` | 168 | end |
+| `Good job, exile.` | 174 | end |
+| `Just in time.` | 1 | ignore (no incursion followed) |
+| `No wonder it's lost…` / `At last... Atzoatl.` | — | temple-zone banter, not a cycle event |
 
-`Time to go, exile.` has not been observed on either machine; the `, exile` variant appears on the
-END line. This is why the trigger matches the **speaker**, not phrases (POE-242): the cycle state
-decides whether a line starts or ends an incursion, so an unheard variant costs nothing. The
-banter lines fire in the temple zone itself, where the loop is already stood down by the zone
-change, so they cannot start a cycle.
+Facts that shape the rules (PC mining):
+
+- The three start lines are used about equally — a phrase gate needs all three; any one alone
+  misses two thirds of incursions. Starts and ends pair 341 : 342 (one orphan end).
+- The start line fires **when the portal opens** (the Alva click), not when the player steps
+  through. Start → end is typically ~34 s; 9 cases ran over two minutes and one ran **22 min**
+  (map cleared first). So the arm must hold until an end line or a zone change, never a fixed
+  burst — the panel-on-screen clock (POE-246) and the incursion context (POE-248) are what do that.
+- **End lines can arrive after a zone change** (3 of 342: the player left the map mid-incursion
+  and `Good job` fired seconds after re-entering). The zone change has already cleared the cycle
+  by then; the late end line must NOT start a new one → **a cycle starts only on a known START
+  phrase** (`Time to go.` / `Let's go.` / `It's time!`); **any** Alva line ends one. An unheard
+  start variant costs a Re-arm (the existing fallback), never a false "waiting" overlay.
+- One incursion in 342 had **no start line at all** — keep Re-arm.
+- 1–3 incursions per map instance (81 instances had all three, never 4): the gate re-arms
+  several times per map.
+- `Time to go, exile.` does not exist in either log; the `, exile` variant is on the END line.
+- Not verified against the wiki's canonical list (fetch blocked); rarer variants cannot be ruled
+  out — a missed one degrades to Re-arm by the rule above.
 
 ## Cadences and budgets (measured numbers, where they exist)
 
@@ -72,7 +88,8 @@ change, so they cannot start a cycle.
 | what arms / disarms, the three clocks | `temple/trigger.rs` (`arm_source`, `ArmState`) |
 | tick order: prune → hint → cheap detect → sweep gate → promote → full read → publish | `temple/run.rs` (`tick`, `wants_full_read`, `full_read`, `SweepGate`) |
 | the read gate (signature-based "did the board change") | `temple/slice.rs` (`layout_signature`, `panel_signature`, `ReadGate`) |
-| which overlay shows on which status / context | `desktop/src/lib/temple/view.ts` (`overlayShowsBoard`, `overlayShowsDoors`) |
+| which overlay shows on which status / context | `desktop/src/lib/temple/view.ts` — `overlayShowsBoard(status)` for the sheet-bound surfaces, `overlayShowsDoors(slice)` for the room widget, which since POE-248 reads the ADVICE and not the status |
+| what ENDS the advice (and with it the room widget) | `temple/trigger.rs` (`advice_end`) decides, `temple/slice.rs` (`clear_advice`, `force_off`) writes |
 | never-cover set and placement | `temple/run.rs::read_rois` → `layout.rois`; `desktop/src/lib/temple/overlay-geometry.ts` (ADR-019) |
 | smoke items per rule | `OVERLAY-GUIDE.md` "Windows smoke checks" |
 
