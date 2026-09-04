@@ -55,9 +55,12 @@ Facts that shape the rules (PC mining):
 - The three start lines are used about equally — a phrase gate needs all three; any one alone
   misses two thirds of incursions. Starts and ends pair 341 : 342 (one orphan end).
 - The start line fires **when the portal opens** (the Alva click), not when the player steps
-  through. Start → end is typically ~34 s; 9 cases ran over two minutes and one ran **22 min**
-  (map cleared first). So the arm must hold until an end line or a zone change, never a fixed
-  burst — the panel-on-screen clock (POE-246) and the incursion context (POE-248) are what do that.
+  through. Start → end is typically ~34 s; 9 cases ran over two minutes and one **22 min** — the
+  long ones are not long incursions but the player being away from the PC with the portal
+  waiting (owner): nothing in the game times out an open portal, so the gap between the start
+  line and entering is **unbounded**. The arm must therefore hold until an end line or a zone
+  change, never a fixed burst — the panel-on-screen clock (POE-246) and the incursion context
+  (POE-248) are what do that.
 - **End lines can arrive after a zone change** (3 of 342: the player left the map mid-incursion
   and `Good job` fired seconds after re-entering). The zone change has already cleared the cycle
   by then; the late end line must NOT start a new one → **a cycle starts only on a known START
