@@ -35,6 +35,25 @@ Consequences that follow from the order, not from extra rules:
 - The keys setting (`temple_keys`) is orthogonal; POE-248 item 9 (the faint second-stone door)
   is what makes it unnecessary.
 
+## Alva's lines, as measured (Client.txt)
+
+Mined from the laptop's Client.txt on 2026-09-04 (its whole history, 9 lines) and the PC's on
+2026-09-02 (3 incursions, `trigger.rs`). Counts are the laptop's:
+
+| moment | line | count |
+|---|---|---|
+| portal opens (cycle START) | `Time to go.` | 3 |
+| portal opens | `It's time!` | 1 |
+| incursion over (cycle END) | `Good job, exile.` | 2 |
+| incursion over | `Good job.` | 1 |
+| temple banter, not a cycle event | `No wonder it's lost. It's in the middle of the jungle! Shouldn't be too far from here though.` / `At last... Atzoatl.` | 1 each |
+
+`Time to go, exile.` has not been observed on either machine; the `, exile` variant appears on the
+END line. This is why the trigger matches the **speaker**, not phrases (POE-242): the cycle state
+decides whether a line starts or ends an incursion, so an unheard variant costs nothing. The
+banter lines fire in the temple zone itself, where the loop is already stood down by the zone
+change, so they cannot start a cycle.
+
 ## Cadences and budgets (measured numbers, where they exist)
 
 - Cheap presence tick: 650 ms **planned** (today `DETECT_INTERVAL` 1000 ms, `DETECT_INTERVAL_SLOW`
