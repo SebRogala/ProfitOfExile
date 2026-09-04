@@ -174,8 +174,10 @@ BACKOFF_BASE_SECONDS = 1.0
 CONSECUTIVE_FAILURE_LIMIT = 10
 
 # safeFileName in internal/gemicon: runs of non-alphanumerics collapse to "_",
-# leading and trailing ones are trimmed. The cache filename for an id is derived
-# with this exact scheme on both sides, so the two must not drift apart.
+# leading and trailing ones are trimmed. This is the NAME half of the cache
+# filename on both sides; since POE-136 a "-<16 hex of sha256(url)>" suffix
+# follows it (short_hash / cache_file_name in scripts/download-gem-icons.py).
+# Neither half may drift apart from the server's.
 _UNSAFE = re.compile(r"[^A-Za-z0-9]+")
 
 
@@ -520,9 +522,12 @@ def load_existing_icons(path: str):
 def check_safe_name_uniqueness(items: dict) -> list:
     """Return the safe-name collisions, if any.
 
-    The server derives an icon's cache filename from the id with the same
-    scheme. Two ids collapsing to one token would serve one item's icon for the
-    other, silently.
+    The server derives the name half of an icon's cache filename from the id
+    with the same scheme. Since POE-136 a hash of the source URL follows it, so
+    two ids collapsing to one token only collide when they also share a URL —
+    in which case they legitimately share artwork anyway. The check stays as
+    defence in depth: a colliding token is still an unreadable cache directory
+    and a sign the id space grew a shape this scheme was not written for.
     """
     by_token = defaultdict(list)
     for item_id in items:

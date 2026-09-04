@@ -39,10 +39,11 @@ and therefore the one `gems/` directory.
 The sub-directories are load-bearing, not tidiness. Both sets run through the
 same cache-filename scheme and their key spaces are generated independently, so
 a flat root would let a gem name and a metadata id that reduce to the same
-filename serve each other's artwork. `internal/server` derives the two paths
-from the root (`gemIconSubdir`, `currencyExchangeIconSubdir`); nothing is ever
-cached in the root itself, and a new icon set gets a new sub-directory rather
-than a new volume.
+**safe name**, and only if they also share a source URL, serve each other's
+artwork.
+`internal/server` derives the two paths from the root (`gemIconSubdir`,
+`currencyExchangeIconSubdir`); nothing is ever cached in the root itself, and a
+new icon set gets a new sub-directory rather than a new volume.
 
 ## Adding an icon
 
@@ -71,10 +72,10 @@ name, cannot fetch it, and returns `502`.
    `*.json` file in the same directory and needs no code change; the same key
    must not appear in two of them, or construction fails.
 
-3. **Pull the new file(s).** The puller writes using the server's exact cache-filename scheme and skips files already present, so it is safe to re-run. Hand it the whole directory — it merges the category files the way the server does:
+3. **Pull the new file(s).** The puller writes using the server's exact cache-filename scheme — `<safe name>-<16 hex of the URL's SHA-256>.png` — and skips files already present under that name, so it is safe to re-run. Hand it the whole directory: it merges the category files the way the server does.
 
    ```
-   python3 scripts/download-gem-icons.py internal/gemicon/urls icons-cache/gems
+   python3 scripts/download-gem-icons.py pull internal/gemicon/urls icons-cache/gems
    ```
 
    To pull only new entries, hand it a JSON file containing just those keys.
@@ -112,14 +113,51 @@ name, cannot fetch it, and returns `502`.
 
 ## Changing an icon
 
-Until ADR-012 decision 3 lands, this needs an extra manual step. `load()` returns
-the disk copy unconditionally when the file exists, and the filename derives from
-the gem **name**, not the URL — so correcting the map alone changes nothing and
-the old artwork is served indefinitely.
+Since POE-136 this is the same six steps as [Adding an icon](#adding-an-icon),
+with no extra manual step. The cache filename carries a hash of the source URL —
+`<safe name>-<16 hex of the URL's SHA-256>.png` — so a corrected URL is a
+different filename, which misses the cache and fetches. Edit the map entry, pull,
+seed, deploy, verify.
 
-Update the map entry, **delete the stale file from the production volume**, then
-deploy. Once cache filenames are content-addressed, the map edit alone will
-suffice.
+Until POE-136 it needed a third, invisible step: `load()` returns the disk copy
+unconditionally when the file exists, and the filename derived from the gem
+**name** alone, so correcting the map changed nothing and the old artwork was
+served indefinitely unless you also deleted the stale file from the production
+volume by hand.
+
+The file under the old URL's hash stays behind — nothing reads it and nothing
+removes it. See [Superseded files](#superseded-files).
+
+## Superseded files
+
+A URL change leaves the previous file in the volume under its old hash. It is
+never read again: the server only ever builds the path for the URL the current
+map holds. Growth is bounded by how often upstream renames artwork, which is
+rare, so this is a sweep you run when convenient, not on a timer.
+
+The wanted set is a pure function of the current map, which is what makes the
+sweep safe to re-run:
+
+```
+python3 scripts/download-gem-icons.py prune icons-cache/gems --dry-run
+python3 scripts/download-gem-icons.py prune icons-cache/gems
+```
+
+`--dry-run` lists every file the map does not produce and deletes nothing; run it
+first, and read the list. Pass `--map internal/exchange/itemdata/icon-urls.json`
+when sweeping `icons-cache/currency-exchange` — pruning a directory against the
+other set's map would produce a wanted set disjoint from everything on disk. That
+one is caught rather than trusted: `prune` refuses when none of the on-disk
+files, or under half of them, are produced by the map, printing the map, the
+directory and the counts, and it refuses under `--dry-run` too so a wrong pairing
+cannot get talked through on a plausible-looking list. `--force` overrides, for
+the rare map that legitimately dropped most of its entries.
+
+`prune` works on a directory, so sweep the staging copy before shipping it,
+rather than trying to run the script on the production host. **On production the
+superseded files are therefore cleared only by the re-upload chain** — nothing on
+the VPS sweeps, and the server never deletes — so a stranded file sits in the
+volume until a run of this sweep against a staging copy is uploaded over it.
 
 ## Currency Exchange items
 
@@ -139,7 +177,7 @@ Everything above about 404s, 502s, `no-store`, caching headers and seed-before-
 deploy applies unchanged, and so does the one-root/one-sub-directory layout: the
 two sets share a volume but never a directory, because they share the
 cache-filename scheme and a gem name and an item id could reduce to the same
-file.
+safe name — and, only if they also share a source URL, to the same file.
 
 What is different is where the map comes from. There is no hand-edited JSON to
 add a row to: `internal/exchange/itemdata/items.json` (names, icons and
@@ -188,7 +226,7 @@ the same treatment against its own sub-directory. `PROD_HOST` and
    sub-directory:
 
    ```
-   python3 scripts/download-gem-icons.py \
+   python3 scripts/download-gem-icons.py pull \
      internal/exchange/itemdata/icon-urls.json icons-cache/currency-exchange
    ```
 
@@ -238,74 +276,166 @@ the same treatment against its own sub-directory. `PROD_HOST` and
    destination does the same thing under a different name. Use step 2 instead
    whenever you are not certain the mount is there.
 
-### The one-time migration to a single volume (POE-221)
+### Migration to content-addressed names
 
-Status: pending as of 2026-09-01. Production still runs the old layout — one
+Status: pending as of 2026-09-04. POE-136 changed the cache filename from
+`<safe name>.png` to `<safe name>-<16 hex of the URL's SHA-256>.png`. Every file
+already in production carries the old name, so after the deploy the server looks
+for names that are not there, and it cannot recover by fetching — poewiki 403s
+the VPS (ADR-012 decision 1). Unmigrated, the deploy answers `502` for **every**
+icon in **both** sets.
+
+> **DEPLOY-BLOCKER:** do not push main until both icon sub-dirs on prod hold the
+> new `<safe>-<hex>.png` names (run `migrate` on the existing files, then `pull`
+> for anything missing, then `prune`).
+
+The rename needs no re-crawl: the bytes are already on disk and only the filename
+changes, which is what `migrate` does.
+
+```
+python3 scripts/download-gem-icons.py migrate icons-cache/gems
+python3 scripts/download-gem-icons.py migrate icons-cache/currency-exchange \
+  --map internal/exchange/itemdata/icon-urls.json
+```
+
+`migrate` renames a file only when the old name exists and the new one does not,
+so it is idempotent and safe to re-run. It touches no network, and it reports
+three counts against the map's entry count. Read them as a sanity check:
+
+- **`renamed` ≈ map size** is what a first run on an old-named directory looks
+  like.
+- **`already_addressed` ≈ map size, `renamed` 0** is a re-run, and is healthy —
+  the files are already under their content-addressed names. On a *first* run it
+  means the directory was migrated before, not that the map is wrong.
+- **`no_old_file` > 0 on a first run** means neither name is on disk for those
+  entries: the staging copy is incomplete (or the map is the wrong one for this
+  directory). `pull` in the next step fetches whatever is genuinely new, but a
+  large `no_old_file` on a directory you just copied down is a copy that lost
+  files, and worth stopping for.
+
+**The single-volume migration below has not run yet either, so the two are one
+chain, not two.** Run them together in the order that section gives; it already
+carries the `migrate`, `pull` and `prune` steps in place.
+
+### The one-time migration to a single volume (POE-221) and to content-addressed names (POE-136)
+
+Status: pending as of 2026-09-04. Production still runs the old layout — one
 volume mounted at `/data/gem-icons-cache` under `GEM_ICON_CACHE_DIR`, no volume
 and no variable for the item set, and every
-`GET /api/currency-exchange/icon/<id>` answering `502`. That is the symptom this
-change exists to fix; the code no longer reads either old variable, so the
-migration below is not optional once the new binary deploys.
+`GET /api/currency-exchange/icon/<id>` answering `502` — and its gem files still
+carry the old name-only filenames. The code no longer reads either old variable
+and no longer looks for the old filenames, so the migration below is not optional
+once the new binary deploys. Both changes are unreleased, which is why this is
+one chain: the volume move and the rename touch the same files once.
 
 Order matters for the same ADR-012 reason as everything above: **seed before the
 deploy that reads `ICON_CACHE_DIR`.** The whole chain is
 
-> create the volume → seed **both** sub-directories from the host → set
-> `ICON_CACHE_DIR` → deploy → verify one gem icon *and* one item icon → only
-> then remove `GEM_ICON_CACHE_DIR` and the old volume.
+> create the volume → pull the existing gem files down to a staging copy →
+> `migrate` them to content-addressed names → `pull` both sets for anything
+> missing → `prune` both staging copies → upload **both** sub-directories to the
+> host → set `ICON_CACHE_DIR` → deploy → verify one gem icon *and* one item icon
+> → only then remove `GEM_ICON_CACHE_DIR` and the old volume.
 
-Both seeding steps are **host-side**, and that is not a stylistic choice. A
+Both upload steps are **host-side**, and that is not a stylistic choice. A
 container's mounts are fixed when it is created, so the new volume is not
 visible inside the server container that is running now — it appears on the
-deploy in step 4. `docker cp` into `/data/icons-cache/...` before that deploy
+deploy in step 7. `docker cp` into `/data/icons-cache/...` before that deploy
 either fails outright or, without a trailing slash on the destination, silently
 writes into the container's writable layer, where the deploy throws it away.
 The `docker cp` recipe in [Pre-seeding production](#pre-seeding-production)
 step 4 is for top-ups *after* this migration, not for it.
 
+The renaming and the sweep happen on a **staging copy on your own machine**, not
+on the production host: the puller needs the repo's maps, and prod has neither
+the repo nor a reason to grow one. The gem bytes come down once, are renamed
+offline, and go back up under their new names.
+
 1. **Create the Coolify persistent volume** `$SERVER_SERVICE_ID-profitofexile-icons`
    on the server service, mounted at `/data/icons-cache`.
 
-2. **Move the existing gem files into `gems/`.** They are already on the host in
-   the old volume's `_data/` directory — 764 files as of 2026-09-01 — and moving
-   them costs nothing, where re-pulling costs a full poewiki crawl:
+2. **Pull the existing gem files down to a staging copy.** They are already on
+   the host in the old volume's `_data/` directory — 764 files as of 2026-09-01
+   — and moving bytes costs nothing, where re-pulling costs a full poewiki
+   crawl. They come to your machine rather than straight across because their
+   names are about to change:
 
    ```
    OLD_VOL=/var/lib/docker/volumes/$SERVER_SERVICE_ID-profitofexile-gem-icons
    NEW_VOL=/var/lib/docker/volumes/$SERVER_SERVICE_ID-profitofexile-icons
-   ssh "$PROD_HOST" "mkdir -p $NEW_VOL/_data/gems && \
-     mv $OLD_VOL/_data/*.png $NEW_VOL/_data/gems/"
+   mkdir -p icons-cache/gems
+   ssh "$PROD_HOST" "tar czf - -C $OLD_VOL/_data ." | tar xzf - -C icons-cache/gems
    ```
 
-   Both are host paths under Docker's volume root (`/var/lib/docker/volumes/<name>`); the private
-   ops notes carry the exact names. Nothing in the new layout reads the root, so a file
-   left behind in `_data/` is invisible rather than wrong.
+   Both `$OLD_VOL` and `$NEW_VOL` are host paths under Docker's volume root
+   (`/var/lib/docker/volumes/<name>`); the private ops notes carry the exact
+   names.
 
-3. **Seed `currency-exchange/` the same way** — host-side, symmetric with the
-   gem move in step 2. This has never been seeded on production, so it is a
-   full pull from an allowed IP, not a top-up: run the puller per
-   [Pre-seeding production](#pre-seeding-production) step 1, then untar the
-   result onto the volume, exactly as its step 2 does:
+3. **Rename them to content-addressed names** (POE-136). Offline, no network,
+   idempotent:
 
    ```
+   python3 scripts/download-gem-icons.py migrate icons-cache/gems
+   ```
+
+   This is a first run on an old-named directory, so expect `renamed` to be
+   close to the 764 files that came down and `no_old_file` to be small — only
+   map entries added since production was last seeded. `renamed` 0 with
+   `no_old_file` at the map size means the staging directory or the map is wrong
+   — stop and check. `already_addressed` at the map size instead means this
+   directory has already been migrated, which is fine on a re-run and a sign you
+   copied the wrong directory down on a first one.
+
+4. **Pull anything still missing, for both sets** — from a machine poewiki does
+   not block. The gem run is a top-up: `pull` skips every file step 3 already
+   put under its content-addressed name, so it fetches only genuinely new
+   entries. The item set has never been seeded on production, so its run is a
+   full pull.
+
+   ```
+   python3 scripts/download-gem-icons.py pull internal/gemicon/urls icons-cache/gems
+   python3 scripts/download-gem-icons.py pull \
+     internal/exchange/itemdata/icon-urls.json icons-cache/currency-exchange
+   ```
+
+5. **Sweep what the maps no longer produce.** Old-named leftovers from step 2 —
+   files for names the map has since dropped, which `migrate` left alone — must
+   not be shipped. Read the `--dry-run` list before deleting:
+
+   ```
+   python3 scripts/download-gem-icons.py prune icons-cache/gems --dry-run
+   python3 scripts/download-gem-icons.py prune icons-cache/gems
+   python3 scripts/download-gem-icons.py prune icons-cache/currency-exchange \
+     --map internal/exchange/itemdata/icon-urls.json
+   ```
+
+   Every remaining file in each directory is now exactly what the deployed
+   binary will look for.
+
+6. **Upload both sub-directories** — host-side, into the new volume:
+
+   ```
+   tar czf new-gem-icons.tgz -C icons-cache/gems .
    tar czf new-item-icons.tgz -C icons-cache/currency-exchange .
-   scp new-item-icons.tgz "$PROD_HOST":/tmp/
-   ssh "$PROD_HOST" "mkdir -p $NEW_VOL/_data/currency-exchange && \
+   scp new-gem-icons.tgz new-item-icons.tgz "$PROD_HOST":/tmp/
+   ssh "$PROD_HOST" "mkdir -p $NEW_VOL/_data/gems $NEW_VOL/_data/currency-exchange && \
+     tar xzf /tmp/new-gem-icons.tgz -C $NEW_VOL/_data/gems/ && \
      tar xzf /tmp/new-item-icons.tgz -C $NEW_VOL/_data/currency-exchange/"
    ```
 
-   The `mkdir -p` is on the host path, for the same reason step 2's is: the
-   server creates both sub-directories on startup, but not until the deploy in
-   step 4 gives it the mount.
+   The `mkdir -p` is on the **host** path and is load-bearing: the server creates
+   both sub-directories on startup, but not until the deploy in step 7 gives it
+   the mount. Nothing in the layout reads the volume root, so files left in
+   `_data/` are invisible rather than wrong.
 
-4. **Set `ICON_CACHE_DIR=/data/icons-cache`** in the Coolify environment. There
+7. **Set `ICON_CACHE_DIR=/data/icons-cache`** in the Coolify environment. There
    is no alias: leaving `ICON_CACHE_DIR` unset resolves the default
    `./data/icons-cache` inside the container's writable layer — no error, no
    icons, and everything gone on the next deploy. `GEM_ICON_CACHE_DIR` is dead
    in the code, so leaving it set for now changes nothing; it comes out in
-   step 5, once the new layout is proven.
+   step 8, once the new layout is proven.
 
-5. **Deploy, verify, then drop the old variable and volume.** Verify both routes
+8. **Deploy, verify, then drop the old variable and volume.** Verify both routes
    before removing anything:
 
    ```
@@ -315,9 +445,10 @@ step 4 is for top-ups *after* this migration, not for it.
      "https://profitofexile.top/api/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare"
    ```
 
-   The first `200` proves the gem move landed, the second that the item seed is
-   readable — one alone proves half a migration. Only after both do you remove
-   `GEM_ICON_CACHE_DIR` from the environment and drop
+   The first `200` proves the gem move *and* the rename landed — a `502` there
+   is the unmigrated-filename symptom, not a missing volume — and the second
+   proves the item seed is readable. One alone proves half a migration. Only
+   after both do you remove `GEM_ICON_CACHE_DIR` from the environment and drop
    `$SERVER_SERVICE_ID-profitofexile-gem-icons`.
 
 ## What "missing" looks like

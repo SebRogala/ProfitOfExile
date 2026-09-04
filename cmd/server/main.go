@@ -536,7 +536,8 @@ func main() {
 		// forever). ONE volume holds every icon set: internal/server derives a
 		// sub-directory per set beneath this root, because the sets share the
 		// cache-filename scheme and one flat directory would let a gem name and
-		// an item id reduce to the same file.
+		// an item id reduce to the same file — and only if they also share a
+		// source URL, since the filename carries a hash of that URL too.
 		IconCacheDir: getEnvDefault("ICON_CACHE_DIR", server.DefaultIconCacheDir),
 	}
 

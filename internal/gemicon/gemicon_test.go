@@ -40,6 +40,26 @@ func newStubUpstream() *stubUpstream {
 	return s
 }
 
+// newStubUpstreamPerPath is newStubUpstream with the body keyed on the request
+// path, so a test that maps one name to two different URLs can tell WHICH of
+// them the cache went and fetched. newStubUpstream serves one payload for every
+// path, which cannot distinguish "refetched from the new URL" from "served the
+// old bytes back".
+func newStubUpstreamPerPath() *stubUpstream {
+	s := &stubUpstream{}
+	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&s.hits, 1)
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(append(append([]byte{}, fakePNG...), r.URL.Path...))
+	}))
+	return s
+}
+
+// bytesForPath is what newStubUpstreamPerPath answers for path.
+func bytesForPath(path string) []byte {
+	return append(append([]byte{}, fakePNG...), path...)
+}
+
 func (s *stubUpstream) hitCount() int64 { return atomic.LoadInt64(&s.hits) }
 func (s *stubUpstream) close()          { s.server.Close() }
 
@@ -102,7 +122,10 @@ func TestHandler_FirstRequestWritesIconToCacheDir(t *testing.T) {
 		t.Fatalf("status = %d, want 200", code)
 	}
 
-	onDisk, err := os.ReadFile(filepath.Join(dir, "Absolution.png"))
+	// The filename itself is pinned by TestFilePath_isSafeNameDashURLHashPNG;
+	// here the production builder is used so this test keeps asserting the
+	// BYTES on disk rather than re-stating the scheme.
+	onDisk, err := os.ReadFile(c.filePath("Absolution", up.server.URL))
 	if err != nil {
 		t.Fatalf("expected the icon persisted to the cache dir: %v", err)
 	}
@@ -226,7 +249,7 @@ func TestHandler_UpstreamFailureIsNotCachedSoRetrySucceeds(t *testing.T) {
 	if code := serve(c, "Absolution").Code; code != http.StatusBadGateway {
 		t.Fatalf("first (failing) request status = %d, want %d", code, http.StatusBadGateway)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "Absolution.png")); !os.IsNotExist(err) {
+	if _, err := os.Stat(c.filePath("Absolution", upstream.URL)); !os.IsNotExist(err) {
 		t.Fatalf("a failed fetch must not write a cache file, stat err = %v", err)
 	}
 
@@ -238,6 +261,126 @@ func TestHandler_UpstreamFailureIsNotCachedSoRetrySucceeds(t *testing.T) {
 	}
 	if !bytes.Equal(retry.Body.Bytes(), fakePNG) {
 		t.Errorf("retry body = %q, want the recovered image bytes", retry.Body.Bytes())
+	}
+}
+
+// pinnedIconURL and pinnedShortHash are the shared vector for the
+// cache-filename scheme. The same URL, the same 16 hex characters and the same
+// full filename are pinned in scripts/download-gem-icons.py's import-time
+// _self_check(), because the seeding path is Python and production only ever
+// reads what that script wrote — a scheme that drifts between the two languages
+// seeds a volume of files the server never looks for, and ADR-012 says
+// production cannot recover by fetching.
+const (
+	pinnedIconURL   = "https://www.poewiki.net/images/c/c6/Absolution_inventory_icon.png"
+	pinnedShortHash = "e2b9dfdb1dd1d6a0"
+)
+
+// The golden filename. Every part of the scheme is load-bearing and this is the
+// only place all of them are asserted at once: the safe name, the "-" joiner
+// (safeFileName never emits one, so the last "-" always starts the hash), the
+// 16-hex URL hash and the constant ".png". Change any of them and the seeded
+// production volume stops matching what the server reads.
+func TestFilePath_isSafeNameDashURLHashPNG(t *testing.T) {
+	c := newCache(nil, nil, "/icons-cache/gems")
+
+	got := c.filePath("Absolution", pinnedIconURL)
+
+	want := filepath.Join("/icons-cache/gems", "Absolution-"+pinnedShortHash+".png")
+	if got != want {
+		t.Errorf("filePath = %q, want %q", got, want)
+	}
+}
+
+// The hash half of the vector on its own, so a change to the algorithm or the
+// truncation length fails here and names itself, rather than only failing the
+// golden filename above where it reads as a joiner problem.
+func TestShortHash_pinnedVector(t *testing.T) {
+	got := shortHash(pinnedIconURL)
+
+	if got != pinnedShortHash {
+		t.Errorf("shortHash(%q) = %q, want %q — scripts/download-gem-icons.py pins the same value",
+			pinnedIconURL, got, pinnedShortHash)
+	}
+	// The truncation is checked on a URL the golden value does NOT cover.
+	// Asserting len(got) would be dead: got either equals the 16-character
+	// pinned vector, in which case the length is already settled, or the check
+	// above has already failed. A second, unpinned input is what actually
+	// guards "16 hex for every URL" rather than "16 hex for this one".
+	const otherURL = "https://example.invalid/other.png"
+	if n := len(shortHash(otherURL)); n != 16 {
+		t.Errorf("shortHash(%q) returned %d hex characters, want 16", otherURL, n)
+	}
+}
+
+// The bug this task exists for. Before content-addressing, correcting a URL in
+// the map changed nothing: the filename came from the name alone, the disk copy
+// was returned unconditionally, and the old artwork was served forever with no
+// error and no log. The two Caches over one directory are the deploy that
+// carries the corrected map onto the existing cache volume.
+func TestHandler_urlChangeForTheSameName_fetchesFreshBytes(t *testing.T) {
+	up := newStubUpstreamPerPath()
+	defer up.close()
+	dir := t.TempDir()
+	const wrongPath, correctedPath = "/wrong.png", "/corrected.png"
+
+	before := newCache(map[string]string{"Absolution": up.server.URL + wrongPath}, up.server.Client(), dir)
+	if w := serve(before, "Absolution"); w.Code != http.StatusOK ||
+		!bytes.Equal(w.Body.Bytes(), bytesForPath(wrongPath)) {
+		t.Fatalf("warm request status = %d body = %q, want 200 and the wrong-URL bytes", w.Code, w.Body.Bytes())
+	}
+
+	// Map corrected, same cache directory — the deploy after a URL fix.
+	after := newCache(map[string]string{"Absolution": up.server.URL + correctedPath}, up.server.Client(), dir)
+	w := serve(after, "Absolution")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status after the URL correction = %d, want 200", w.Code)
+	}
+	if !bytes.Equal(w.Body.Bytes(), bytesForPath(correctedPath)) {
+		t.Errorf("served %q, want the corrected URL's bytes %q — the stale file was served instead",
+			w.Body.Bytes(), bytesForPath(correctedPath))
+	}
+	if up.hitCount() != 2 {
+		t.Errorf("upstream hit %d times, want 2 — a corrected URL must miss the cache and refetch", up.hitCount())
+	}
+}
+
+// The name stays in the filename, so the hash is a tiebreaker and never the
+// identity. Two names legitimately share a URL (a Vaal alias pointing at the
+// base gem's artwork is the case docs/GEM-ICONS.md describes), and each must
+// keep its own file: one shared file would make the cache unreadable as a map
+// of what is seeded, and pruning or replacing one name's icon would silently
+// take the other's with it.
+func TestHandler_twoNamesOneURL_writeTwoDistinctFiles(t *testing.T) {
+	up := newStubUpstream()
+	defer up.close()
+	dir := t.TempDir()
+	c := newCache(map[string]string{
+		"Absolution":      up.server.URL,
+		"Vaal Absolution": up.server.URL,
+	}, up.server.Client(), dir)
+
+	for _, name := range []string{"Absolution", "Vaal%20Absolution"} {
+		if code := serve(c, name).Code; code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, want 200", name, code)
+		}
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read cache dir: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("cache dir holds %d files, want 2 — the two names collapsed onto one file", len(entries))
+	}
+	for _, name := range []string{"Absolution", "Vaal Absolution"} {
+		if _, err := os.Stat(c.filePath(name, up.server.URL)); err != nil {
+			t.Errorf("no cache file for %q: %v", name, err)
+		}
+	}
+	if up.hitCount() != 2 {
+		t.Errorf("upstream hit %d times, want 2 — each name owns its own cache file", up.hitCount())
 	}
 }
 
@@ -464,7 +607,7 @@ func TestHandler_ConditionalRequestAnsweredWithoutReadingOrFetching(t *testing.T
 		t.Fatal("warm response carried no ETag to revalidate with")
 	}
 
-	if err := os.Remove(filepath.Join(dir, "Absolution.png")); err != nil {
+	if err := os.Remove(c.filePath("Absolution", up.server.URL)); err != nil {
 		t.Fatalf("remove disk copy: %v", err)
 	}
 	up.close()
@@ -771,8 +914,9 @@ func TestNewWithMap_KeyOutsideTheSuppliedMapReturns404WithoutFetching(t *testing
 
 // Each map needs its OWN directory: two maps sharing one would share the
 // filename scheme, and any pair of keys reducing to the same safeFileName would
-// serve one set's artwork under the other's name. So an empty dir is an
-// unconfigured caller, not a request for a default.
+// serve one set's artwork under the other's name, but only when they also share
+// a source URL. So an empty dir is an unconfigured caller, not a request for a
+// default.
 func TestNewWithMap_EmptyCacheDirIsRejected(t *testing.T) {
 	c, err := NewWithMap(map[string]string{chaosIconKey: "https://example.invalid/icon.png"}, "")
 

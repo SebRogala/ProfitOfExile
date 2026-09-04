@@ -6,11 +6,12 @@ uid: 5daeb06f-ad96-499d-a640-f66bac72b04c
 
 ## Status
 
-Accepted. Decisions 1 and 2 describe current behaviour. **Decision 3
-(content-addressed cache filenames) is accepted but not yet implemented** —
-`safeFileName` still keys on the gem name alone. Until it lands, changing an
-icon's URL also requires deleting the stale file from the production volume by
-hand.
+Accepted. All three decisions describe current behaviour. **Decision 3
+(content-addressed cache filenames) was implemented 2026-09-04 (POE-136)** —
+the cache filename is `<safeFileName(name)>-<shortHash(srcURL)>.png`, so
+correcting an icon's URL in the map is now a one-step change. The production
+volume must be migrated to those names before the deploy that carries it; see
+the fourth amendment.
 
 Amended 2026-08-19 (POE-177) — see the amendment at the end: a second icon set
 now shares this mechanism, and one factual claim in Context below is corrected.
@@ -22,6 +23,10 @@ amendment at the end.
 Amended 2026-09-04 (POE-135) — the gem set's source map became a directory of
 category files merged at construction. Layout only; every decision below
 stands. See the third amendment at the end.
+
+Amended 2026-09-04 (POE-136) — Decision 3 is implemented. See the fourth
+amendment at the end for the scheme, what it does and does not fix, and the
+one-time production migration it requires.
 
 ## Context
 
@@ -79,6 +84,16 @@ truth for which bytes a name resolves to, and updating an icon is a one-step
 change again. Superseded files linger as garbage in the volume; they are pruned
 by sweeping files whose hash does not appear in the current map.
 
+Concretely (POE-136): `<safeFileName(name)>-<shortHash(srcURL)>.png`, where
+`shortHash` is the first 16 hex characters of the SHA-256 of the URL. 16 hex is
+short for a global identifier and ample here, because the suffix only has to
+discriminate WITHIN one `safeFileName` bucket — the set of URLs one name has
+ever mapped to, normally exactly one. Even read as a global namespace over the
+whole 765-entry map, the 64-bit birthday bound is about 1.6e-14. The name stays
+in the filename, so two names sharing one URL still get one file each. The `-`
+is unambiguous because `safeFileName` emits `[A-Za-z0-9_]` only, which is what
+lets a cache filename be split back into its two halves.
+
 ## Consequences
 
 - Adding or changing an icon is a code change requiring a deploy. This is
@@ -133,9 +148,12 @@ map deploys. The puller is the existing one — the asset ships a flat
 `id → URL` map for exactly this:
 
 ```
-python3 scripts/download-gem-icons.py \
+python3 scripts/download-gem-icons.py pull \
   internal/exchange/itemdata/icon-urls.json currency-exchange-icons-cache
 ```
+
+(The `pull` sub-command is the 2026-09-04 (POE-136) CLI; the invocation was
+positional-only when this amendment was written.)
 
 The gem seeding steps do not transfer verbatim: they hardcode the gem directory
 and the gem volume. The item set needs a second persistent volume, its own
@@ -226,7 +244,7 @@ existing gem files into `gems/` (764 files as of 2026-09-01 — a move, not a
 re-crawl), seed `currency-exchange/` from an allowed IP, set `ICON_CACHE_DIR`,
 then deploy, then drop the old volume. Seeding before the deploy is the same
 Decision 2 ordering as any icon addition, for the same reason.
-[GEM-ICONS.md → The one-time migration to a single volume](../GEM-ICONS.md#the-one-time-migration-to-a-single-volume-poe-221)
+[GEM-ICONS.md → The one-time migration to a single volume](../GEM-ICONS.md#the-one-time-migration-to-a-single-volume-poe-221-and-to-content-addressed-names-poe-136)
 carries the commands.
 
 ## Amended 2026-09-04 (POE-135)
@@ -277,3 +295,55 @@ Both are left for the owner: the installed desktop builds call the current
 route, so a rename without an alias breaks them on the next server deploy, and
 the package's own doc comment records a later (POE-177) decision to keep its
 name for its origin.
+
+## Amended 2026-09-04 (POE-136)
+
+Status of this section: current behaviour, except the production migration,
+which is pending.
+
+**Decision 3 is implemented.** `internal/gemicon`'s cache filename is
+`<safeFileName(name)>-<shortHash(srcURL)>.png`, built by `filePath(name,
+srcURL)`; `load` passes the mapped URL through, so a URL edit resolves to a
+different file, misses, and refetches. The scheme and the 16-hex rationale are
+written into Decision 3 above. Both icon sets get it at once — the Currency
+Exchange set runs on the same `Cache` through `NewWithMap`, so there is no
+second code path and no second decision.
+
+**What it fixes, and what it does not.** The POE-177 amendment's correction
+still binds: MediaWiki derives the `/images/<h>/<hh>/` path from the MD5 of the
+image's FILE name, so a re-upload under the same name keeps the URL and remains
+invisible here. What this closes is the case the ADR was written for — a
+corrected or renamed URL in the map now takes effect on deploy instead of being
+silently ignored — and with it the third manual step ("delete the stale file
+from the production volume") that Context describes.
+
+**The per-set sub-directories stay.** Two keys that reduce to the same
+`safeFileName` can now only collide when they ALSO share a source URL, which
+narrows the hazard the POE-177 and POE-221 amendments describe but does not
+remove the split: it is defence in depth, and the two sets are seeded, migrated
+and verified as separate operator steps against separate directories. The
+current-behaviour sites that state the hazard carry the qualifier inline —
+`internal/gemicon`, `internal/server`, their tests, the seeding script and
+docs/GEM-ICONS.md — while the dated POE-177 and POE-221 amendments above keep
+their original unqualified wording, because an amendment records what was true
+when it was written.
+
+**One scheme, two languages, one pinned vector.** `scripts/download-gem-icons.py`
+reimplements the scheme (`short_hash`, `cache_file_name`) because seeding is a
+Python path and production reads only what it writes. Drift is caught on both
+sides: the Go tests pin `Absolution-e2b9dfdb1dd1d6a0.png`, and the script pins
+the same full filename in an import-time `_self_check()` that raises before a
+single file is written. A change consistent across both languages is caught at
+the next seed run, which Decision 2 forces before every deploy.
+
+**The volume must be migrated before the deploy that carries this.** Every
+existing cache file uses the old name-only scheme and will miss, and production
+cannot refetch (Decision 1), so a push without the migration answers 502 for
+every icon in both sets. The migration is offline and does not need a re-crawl:
+`scripts/download-gem-icons.py migrate` renames the files in place, `pull` fills
+anything genuinely missing from an allowed IP, and `prune` sweeps what the
+current map no longer produces (Decision 3's garbage sweep; the "small script"
+the task called for, not a timer).
+[GEM-ICONS.md → Migration to content-addressed names](../GEM-ICONS.md#migration-to-content-addressed-names)
+carries the ordered chain, composed with the still-pending POE-221 single-volume
+migration so the two are run as one.
