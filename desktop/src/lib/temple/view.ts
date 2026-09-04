@@ -10,6 +10,17 @@
  * leave-the-map verdict are the Rust advisor's (POE-170); this file words them,
  * places the 13 plates and picks the class one corridor is drawn in.
  *
+ * # What it words for the overlay, since POE-249
+ *
+ * `offerBoxes()` is the overlay's advice surface: ONE box per architect block
+ * on the panel, in the panel's own order, each carrying what the kill builds,
+ * Vertolka's rating for the line it builds into, and the advisor's first reason
+ * for that block. `killCallout()`, `KillCallout` and `killTitle()` are GONE
+ * with it — they said one thing about one block and left the block the player
+ * is choosing against unnamed. What survives from them is used by the boxes and
+ * by the room widget: `chosenOffer`, `leadReason`, `forcedKillNote`,
+ * `offerHeadline` and `offerBuilds`, none of them reworded.
+ *
  * # The geometry is a transcription, not a design
  *
  * The slot offsets below are `src-tauri/src/temple/lattice.rs`'s measured
@@ -115,8 +126,9 @@ export function overlayShowsWaiting(slice: TempleSlice): boolean {
  * `panel_not_visible` — and the first live session showed what that costs:
  * `12:32:10 capture armed by the panel on screen` … `12:39:05 capture stood
  * down`, and the diamond went off screen with the status while the player was
- * still standing in the room it described. Owner: the kill callout lives with
- * the PANEL and the room widget lives with the INCURSION.
+ * still standing in the room it described. Owner: the panel-side advice — the
+ * kill callout then, the offer boxes since POE-249 — lives with the PANEL, and
+ * the room widget lives with the INCURSION.
  *
  * A status is a statement about whether anything is LOOKING at the screen, and
  * that is the wrong question here: the layout panel is shut for the whole
@@ -467,64 +479,142 @@ export function chosenOffer(slice: TempleSlice): OfferView | null {
 	return slice.panel?.offers[index] ?? null;
 }
 
-/** What the kill callout says. Null when there is no ranked move to say it about. */
-export interface KillCallout {
-	/** `"KILL Quipolatl → Armoury"` — the architect to click and the room the
-	 *  kill actually BUILDS. The arrow half is dropped when the printed target
-	 *  did not resolve, and the whole title falls back to the advisor's own
-	 *  headline when the ranking named no architect — which is `"kill either"`,
-	 *  and is already the whole instruction. */
-	title: string;
-	/** The one reason the box has room for. */
+/**
+ * One offer box — everything the decision about ONE architect block needs
+ * (POE-249).
+ *
+ * The owner's ask, verbatim: *"two offer boxes on the LEFT margin of the temple
+ * sheet, stacked to mirror the side panel's own block order, each with
+ * everything the decision needs: the room the kill builds and its tier,
+ * Vertolka's rating line, the advisor's first reason. The advisor's pick gets a
+ * cyan frame — that frame IS the pointer; no arrows anywhere."*
+ *
+ * This replaces the single kill callout, which said one thing about ONE block
+ * and left the other block — the one the player is choosing against — unnamed
+ * on the overlay. Two boxes state both offers and mark which one the advisor
+ * took, which is the comparison the player is actually making.
+ */
+export interface OfferBox {
+	/** The block this box is about, so a surface can point at it. */
+	offer: OfferView;
+	/** `"Guatelitzi · upgrade"` — which architect, and which kill. */
+	headline: string;
+	/** `"Locus of Corruption (tier 3)"`, or the honest refusal when the printed
+	 *  target did not resolve. */
+	builds: string;
+	/** `"Vertolka A++"`, with ` · T3 <room>` appended when the kill lands below
+	 *  tier 3. Null when the offer carried no grade — there is no line, so there
+	 *  is nothing graded, and a blank rating is better than an invented one. */
+	rating: string | null;
+	/** The advisor's first reason for the ranked entry that names THIS block, or
+	 *  null when the ranking named no entry for it — EXCEPT on a `kill either`
+	 *  board, where the top recommendation names no architect and its own lead
+	 *  reason (the door instruction, which is still valid whichever block the
+	 *  player kills) goes on every box. See [`offerReason`]. */
 	reason: string | null;
-	/** `"only architect read"` when the kill was forced, else null. */
+	/** Whether this is the block the top recommendation chose — the cyan frame,
+	 *  which is the whole of the pointer. */
+	pick: boolean;
+	/** `"only architect read"` on the pick when the kill was forced rather than
+	 *  chosen, else null.
+	 *
+	 *  Riding on the pick loses nothing: a forced kill with no named index is
+	 *  UNREACHABLE, because `slice.rs` sets `forced_kill` only when
+	 *  `recommendations.first()` carries an architect (its own comment says why
+	 *  — `kill either (only architect read)` would point at an architect the
+	 *  advice is not recommending). So a board with the note always has a pick
+	 *  to carry it; this is not an accepted narrowing. */
 	forced: string | null;
-	/** The block to point the arrow at, or null for a read that carried no
-	 *  boxes — which is not the same as no architect, and both draw the box
-	 *  without an arrow. */
-	target: OfferView | null;
 }
 
 /**
- * `KILL <architect> → <room the kill builds>`.
+ * The rating line, or null when this offer has no line to rate.
  *
- * The architect leads because it is what is printed on screen beside the block
- * the player has to click. The target follows because without it the overlay
- * says WHICH block and never says what taking it does — the ranked action would
- * be absent from every overlay surface, which is the thing the old advice
- * widget's headline did carry.
+ * The grade is the LINE's — Vertolka ranks the 25 families by what their
+ * tier-3 room is worth — so a kill that lands below tier 3 prints the tier-3
+ * room's name beside the letter. Without it the box would credit the room in
+ * hand with a rating it was never given.
  *
- * `displayName` and not `printedTarget`: POE-169's whole point is that the two
- * differ, and Contested Development prints one line while building
- * `currentTier + 1` of it. When nothing resolved there is no room to name and
- * the title is the architect alone — `offerBuilds()` says so in full on the
- * page, which has the space for it.
+ * At tier 3 the suffix is dropped: `builds` already names that exact room, and
+ * repeating it is noise on a box read at arm's length over a game.
  */
-function killTitle(target: OfferView): string {
-	const head = `KILL ${target.architectName}`;
-	return target.displayName === null ? head : `${head} → ${target.displayName}`;
+function offerRating(offer: OfferView): string | null {
+	if (offer.grade === null) return null;
+	const rating = `Vertolka ${offer.grade}`;
+	if (offer.builtTier !== 3 && offer.lineTop !== null) return `${rating} · T3 ${offer.lineTop}`;
+	return rating;
 }
 
 /**
- * The kill, as the pointer callout says it (POE-244).
+ * The reason the ranking gave for the entry that names THIS block, or null.
  *
- * The owner's ask is that the overlay be seen rather than read: the name and
- * the target lead, and the reason follows as the one line that justifies the
- * choice. Everything else the old advice widget printed — the gamble, the
- * unread-plate badge, the advisor's warning list — stays on the Temple page,
- * which is the surface for reading. The one honesty line that did NOT move is
- * `doorWarning()`; see its note.
+ * Recommendations first, then gambles, because a block can appear on both
+ * sides and the recommended reading is the one the box is drawn to carry. A
+ * block the ranking named nowhere gets NO line rather than a borrowed one: the
+ * advisor ranks moves, not architects, and attributing one block's argument to
+ * the other is the failure this lookup exists to avoid.
+ *
+ * # `kill either` is the one board where every box gets the same line
+ *
+ * When the top recommendation carries no `architectIndex` the ranking is saying
+ * the kill does not matter — and its lead reason is then the DOOR instruction
+ * (`R3: … open D3-C2`), which is computed, still valid, and about neither
+ * block. Looking it up by index would leave every box with nothing under its
+ * rating while the only instruction on the board went unsaid; on a read where
+ * neither offer resolved that is a pair of boxes carrying "does not resolve to
+ * a known room" and no advice at all.
+ *
+ * The attribution is unambiguous precisely because no architect is named: the
+ * advisor says either kill is fine, so the same line on both boxes is what it
+ * said rather than a borrowed one. That is why this branch is keyed on the TOP
+ * recommendation naming no architect and not on a per-box miss — a board that
+ * named some OTHER index has an opinion about which block to kill, and a box it
+ * did not name still gets silence.
  */
-export function killCallout(slice: TempleSlice): KillCallout | null {
-	const move = topRecommendation(slice.advice);
-	if (move === null) return null;
-	const target = chosenOffer(slice);
-	return {
-		title: target === null ? move.headline : killTitle(target),
-		reason: leadReason(move),
-		forced: forcedKillNote(slice.advice),
-		target
-	};
+function offerReason(advice: AdviceView, index: number): string | null {
+	const top = topRecommendation(advice);
+	if (top !== null && (top.architectIndex ?? null) === null) return leadReason(top);
+	const ranked = [...advice.recommendations, ...advice.gambles].find(
+		(entry) => entry.architectIndex === index
+	);
+	return ranked ? leadReason(ranked) : null;
+}
+
+/**
+ * One box per architect block on the panel, in the panel's own order.
+ *
+ * **Panel order, not "upgrade first".** `PanelView.offers` is reading order
+ * top-to-bottom, and a real board can print two `change` offers
+ * (`panel.rs`'s own fixture does), so box `i` mirrors `offers[i]` and each box
+ * says its own kind in its headline. The stack's geometry follows the same
+ * rule: `offerStackPlacement` puts box `i` level with block `i`.
+ *
+ * Empty when there is no advice or no panel. The boxes carry the advisor's PICK
+ * and its reason, so a panel read with no ranking behind it yet — the gap
+ * between a sighting and a completed read in a new cycle — has nothing to draw
+ * and draws nothing, rather than showing two unmarked boxes the player could
+ * read as "the advisor has no preference".
+ */
+export function offerBoxes(slice: TempleSlice): OfferBox[] {
+	const advice = slice.advice;
+	const panel = slice.panel;
+	if (advice === null || panel === null) return [];
+	const chosenIndex = topRecommendation(advice)?.architectIndex ?? null;
+	return panel.offers.map((offer) => {
+		const pick = chosenIndex !== null && chosenIndex === offer.index;
+		return {
+			offer,
+			headline: offerHeadline(offer),
+			builds: offerBuilds(offer),
+			rating: offerRating(offer),
+			reason: offerReason(advice, offer.index),
+			pick,
+			// Only on the pick: the note says the kill on the frame was the only
+			// one there was, and a note on the block the advisor did NOT choose
+			// would be saying that about the wrong box.
+			forced: pick ? forcedKillNote(advice) : null
+		};
+	});
 }
 
 /** The corridors the top recommendation wants opened. Empty is a real answer —

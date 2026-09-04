@@ -38,7 +38,7 @@ import {
 	unknownRoomsBadge,
 	chosenOffer,
 	doorWarning,
-	killCallout
+	offerBoxes
 } from './view';
 import { templeSliceDefault, type AdviceView, type LayoutView, type OfferView, type RankedView, type SlotId, type SlotView, type TempleStatus } from './slice';
 
@@ -149,6 +149,12 @@ function offer(over: Partial<OfferView> = {}): OfferView {
 		printedTarget: "Sadist's Den",
 		displayName: 'Torment Cells',
 		builtTier: 2,
+		// The sadist's-den line's real pair (POE-249), so an offer built by this
+		// fixture is one Rust could have published: the letter is the LINE's and
+		// the name is the tier-3 room it was given for, which is NOT the tier-2
+		// room `displayName` carries.
+		grade: 'C',
+		lineTop: "Sadist's Den",
 		rect: null,
 		...over
 	};
@@ -683,96 +689,198 @@ describe('chosenOffer', () => {
 	});
 });
 
-describe('killCallout', () => {
+describe('offerBoxes', () => {
 	const panel = (offers: OfferView[]) => ({
 		room: 'Chamber of Iron',
 		roomRect: null,
 		offers,
 		incursionsRemaining: 6
 	});
-
-	it('leads with the architect and names the room the kill builds', () => {
-		// Both halves, because the overlay has no other surface that carries the
-		// ranked ACTION since POE-244 retired the advice panel: without the
-		// target the box says which block to click and never says what taking it
-		// does.
-		const slice = {
-			...templeSliceDefault(),
-			advice: advice(),
-			panel: panel([offer({ architectName: 'Atmohua', displayName: 'Armoury' })])
-		};
-		const callout = killCallout(slice)!;
-		expect(callout.title).toBe('KILL Atmohua → Armoury');
-		expect(callout.reason).toBe('R1: connects toward the top');
-		expect(callout.target?.architectName).toBe('Atmohua');
+	/** A slice with a read panel and a ranking over it. */
+	const slice = (offers: OfferView[], over: Partial<AdviceView> = {}) => ({
+		...templeSliceDefault(),
+		advice: advice(over),
+		panel: panel(offers)
 	});
 
-	it('names the RESOLVED room, not the one the panel printed', () => {
-		// POE-169: Contested Development prints one line and builds
-		// `currentTier + 1` of it, so a callout showing the printed target is
-		// showing the player a room they are not getting.
-		const slice = {
-			...templeSliceDefault(),
-			advice: advice(),
-			panel: panel([
+	it('draws one box per architect block, in the panel\'s own order', () => {
+		// PANEL order and not "upgrade first": `offers` is reading order
+		// top-to-bottom and a real board can print two `change` blocks
+		// (`panel.rs`'s own fixture does), so box i mirrors offers[i] and each
+		// box says its own kind.
+		const boxes = offerBoxes(
+			slice([
+				offer({ index: 0, architectName: 'Guatelitzi', kind: 'change' }),
+				offer({ index: 1, architectName: 'Atmohua', kind: 'change' })
+			])
+		);
+		expect(boxes.map((box) => box.headline)).toEqual([
+			'Guatelitzi · change',
+			'Atmohua · change'
+		]);
+	});
+
+	it('names the room each kill BUILDS, not the one its block printed', () => {
+		// POE-169 again, on the surface that has the room: Contested Development
+		// prints one line and builds `currentTier + 1` of it.
+		const boxes = offerBoxes(
+			slice([offer({ printedTarget: "Sadist's Den", displayName: 'Torment Cells', builtTier: 2 })])
+		);
+		expect(boxes[0].builds).toBe('Torment Cells (tier 2)');
+	});
+
+	it('marks the advisor\'s block as the pick, and only that one', () => {
+		// The cyan frame is the whole pointer (owner: no arrows anywhere), so
+		// exactly one box may carry it — a second would point at two blocks and
+		// none would point at one.
+		const boxes = offerBoxes(
+			slice([offer({ index: 0 }), offer({ index: 1 })], {
+				recommendations: [ranked({ architectIndex: 1 })]
+			})
+		);
+		expect(boxes.map((box) => box.pick)).toEqual([false, true]);
+	});
+
+	it('marks nothing when the ranking named no architect', () => {
+		// `kill either` points at neither block, and framing one would invent a
+		// preference the advisor did not state.
+		const boxes = offerBoxes(
+			slice([offer({ index: 0 }), offer({ index: 1 })], {
+				recommendations: [ranked({ headline: 'kill either', architectIndex: null })]
+			})
+		);
+		expect(boxes.map((box) => box.pick)).toEqual([false, false]);
+	});
+
+	it('gives each box the reason of the ranked entry that names ITS block', () => {
+		// The lookup is by index, over recommendations and then gambles — so a
+		// board whose recommendation is about block 1 and whose gamble is about
+		// block 0 puts each reason on its own box. A positional read of the two
+		// lists would swap them, which is the failure this arrangement exists to
+		// catch.
+		const boxes = offerBoxes(
+			slice([offer({ index: 0 }), offer({ index: 1 })], {
+				recommendations: [ranked({ architectIndex: 1, reasons: ['R1: connects toward the top'] })],
+				gambles: [ranked({ architectIndex: 0, risk: 0.31, reasons: ['RV: above the risk threshold'] })]
+			})
+		);
+		expect(boxes.map((box) => box.reason)).toEqual([
+			'RV: above the risk threshold',
+			'R1: connects toward the top'
+		]);
+	});
+
+	it('leaves the reason off a block the ranking named nowhere', () => {
+		// The advisor ranks MOVES, not architects: a ranking whose only entry is
+		// about block 1 says nothing about block 0, and a borrowed reason would
+		// attribute block 1's argument to it. This is an UNNAMED block and not
+		// the `kill either` shape — that one names no index at all and is the
+		// case below.
+		const boxes = offerBoxes(
+			slice([offer({ index: 0 }), offer({ index: 1 })], {
+				recommendations: [ranked({ architectIndex: 1, reasons: ['R1: connects toward the top'] })]
+			})
+		);
+		expect(boxes[0].reason).toBeNull();
+	});
+
+	it('puts the top recommendation\'s own reason on every box when the ranking names no architect', () => {
+		// `kill either` names no index, so its lead reason is the DOOR
+		// instruction — computed, still valid, and about neither block. Looked
+		// up by index it would be dropped, and on a board where neither offer
+		// resolved that leaves two boxes saying "does not resolve to a known
+		// room" and nothing else while the one instruction there is goes
+		// unsaid. The attribution is unambiguous precisely because no architect
+		// is named: the advisor said either kill is fine.
+		const boxes = offerBoxes(
+			slice([offer({ index: 0 }), offer({ index: 1 })], {
+				recommendations: [
+					ranked({
+						headline: 'kill either',
+						architectIndex: null,
+						reasons: ['R3: the doors are the whole board — open D3-C2']
+					})
+				]
+			})
+		);
+		expect(boxes.map((box) => box.reason)).toEqual([
+			'R3: the doors are the whole board — open D3-C2',
+			'R3: the doors are the whole board — open D3-C2'
+		]);
+	});
+
+	it('prints the line\'s grade with the tier-3 room it was given for', () => {
+		// The grade is the LINE's. A kill landing on tier 2 carries the family's
+		// letter, so the box names the room that letter is about — without it
+		// the rating reads as a rating of `Torment Cells`.
+		const boxes = offerBoxes(
+			slice([
 				offer({
-					architectName: 'Quipolatl',
-					printedTarget: 'Sadist\'s Den',
-					displayName: 'Torment Cells'
+					displayName: 'Torment Cells',
+					builtTier: 2,
+					grade: 'C',
+					lineTop: "Sadist's Den"
 				})
 			])
-		};
-		expect(killCallout(slice)?.title).toBe('KILL Quipolatl → Torment Cells');
+		);
+		expect(boxes[0].rating).toBe("Vertolka C · T3 Sadist's Den");
 	});
 
-	it('drops the target half when the printed name did not resolve', () => {
-		// There is no room to name, and inventing one is the failure
-		// `offerBuilds` exists to prevent. The architect still identifies the
-		// block, which is the half the arrow needs.
-		const slice = {
-			...templeSliceDefault(),
-			advice: advice(),
-			panel: panel([offer({ architectName: 'Atmohua', displayName: null })])
-		};
-		expect(killCallout(slice)?.title).toBe('KILL Atmohua');
+	it('drops the tier-3 name when the kill lands on it', () => {
+		// `builds` already names that exact room, and repeating it is noise on a
+		// box read at arm's length over a game.
+		const boxes = offerBoxes(
+			slice([
+				offer({
+					displayName: 'Locus of Corruption',
+					builtTier: 3,
+					grade: 'A++',
+					lineTop: 'Locus of Corruption'
+				})
+			])
+		);
+		expect(boxes[0].rating).toBe('Vertolka A++');
 	});
 
-	it('falls back to the advisor\'s own wording when no architect was chosen', () => {
-		// `kill either` is already the whole instruction, and prefixing it with
-		// KILL would read as an architect called Either.
-		const slice = {
-			...templeSliceDefault(),
-			advice: advice({
-				recommendations: [ranked({ headline: 'kill either', architectIndex: null })]
-			}),
-			panel: panel([offer()])
-		};
-		const callout = killCallout(slice)!;
-		expect(callout.title).toBe('kill either');
-		expect(callout.target).toBeNull();
+	it('prints no rating for an offer that resolved to no line', () => {
+		// No line, nothing graded. A blank rating line is better than a letter
+		// invented for a room the app could not name.
+		const boxes = offerBoxes(
+			slice([offer({ displayName: null, builtTier: null, grade: null, lineTop: null })])
+		);
+		expect(boxes[0].rating).toBeNull();
+		expect(boxes[0].builds).toBe('does not resolve to a known room');
 	});
 
-	it('marks a kill that was forced rather than chosen', () => {
-		const slice = {
-			...templeSliceDefault(),
-			advice: advice({ forcedKill: true }),
-			panel: panel([offer({ architectName: 'Atmohua' })])
-		};
-		expect(killCallout(slice)?.forced).toBe('only architect read');
+	it('marks a forced kill on the pick alone', () => {
+		// The note says the kill on the frame was the only block read, which is
+		// a statement about the CHOSEN box. On the other box it would be saying
+		// it about the wrong one.
+		const boxes = offerBoxes(
+			slice([offer({ index: 0 }), offer({ index: 1 })], {
+				forcedKill: true,
+				recommendations: [ranked({ architectIndex: 1 })]
+			})
+		);
+		expect(boxes.map((box) => box.forced)).toEqual([null, 'only architect read']);
 	});
 
-	it('leaves the note off a kill the advisor actually chose between two', () => {
-		const slice = {
-			...templeSliceDefault(),
-			advice: advice({ forcedKill: false }),
-			panel: panel([offer()])
-		};
-		expect(killCallout(slice)?.forced).toBeNull();
+	it('leaves the note off a kill the advisor chose between two', () => {
+		const boxes = offerBoxes(slice([offer({ index: 0 })], { forcedKill: false }));
+		expect(boxes[0].forced).toBeNull();
 	});
 
-	it('is null when there is nothing ranked to say', () => {
-		expect(killCallout(templeSliceDefault())).toBeNull();
-		expect(killCallout({ ...templeSliceDefault(), advice: advice({ recommendations: [] }) })).toBeNull();
+	it('draws nothing until there is a ranking to draw', () => {
+		// The boxes carry the PICK, so a panel read with no advice behind it —
+		// the gap between a sighting and a completed read in a new cycle — has
+		// nothing to say. Two unmarked boxes would read as "the advisor has no
+		// preference", which is a different claim.
+		expect(offerBoxes({ ...templeSliceDefault(), panel: panel([offer()]) })).toEqual([]);
+	});
+
+	it('draws nothing with no panel to draw about', () => {
+		expect(offerBoxes({ ...templeSliceDefault(), advice: advice() })).toEqual([]);
+		expect(offerBoxes(templeSliceDefault())).toEqual([]);
 	});
 });
 
@@ -886,10 +994,13 @@ describe('the door widget through a whole incursion', () => {
 		expect(overlayShowsDoors(inRoom())).toBe(true);
 	});
 
-	it('still names the kill, which is the only place it is named by then', () => {
-		// The callout's target block is off screen inside the room, so the
-		// diamond's line is the last thing carrying the architect.
-		expect(killCallout(inRoom())?.title).toBe('KILL Atmohua → Armoury');
+	it('still resolves the architect the widget marks with its kill glyph', () => {
+		// The offer boxes are gone by now — they live with the PANEL, and the
+		// panel closed behind the player — so the room widget's cyan glyph is
+		// the last thing on screen naming the kill, and `chosenOffer` is what
+		// picks the block it is drawn on.
+		expect(chosenOffer(inRoom())?.architectName).toBe('Atmohua');
+		expect(offerBuilds(chosenOffer(inRoom())!)).toBe('Armoury (tier 2)');
 	});
 
 	it('still marks the door the advisor wants opened', () => {

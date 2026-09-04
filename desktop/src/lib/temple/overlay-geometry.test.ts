@@ -2,7 +2,7 @@
  * Where the temple's overlay surfaces go (POE-244).
  *
  * The obstacle geometry below is hand-built and round — a panel crop at
- * 480..680 × 100..400 with the chosen block inside it — so every expected
+ * 480..680 × 100..400 with the panel's own diamond inside it — so every expected
  * position is arithmetic a reader can redo from the numbers in the comment.
  * That matters more here than in most files: the failure this places against is
  * a box a few pixels into an OCR crop, which on screen is indistinguishable from
@@ -16,18 +16,21 @@ import {
 	SEAL_RADIUS,
 	SEAL_RADIUS_SECONDARY,
 	SEAL_RADIUS_SUGGESTED,
+	STACK_GAP_CSS,
 	bannerPlacement,
-	calloutPlacement,
 	captureToCss,
 	diamondGeometry,
 	doorDefaultPlacement,
 	killGlyphs,
 	neverCoverRects,
+	offerStackPlacement,
 	roiRect,
 	sealVisible,
 	waitingDefaultPlacement
 } from './overlay-geometry';
+import { latticeEdges, latticePoints } from './view';
 import { rectIsClear } from '$lib/overlay/widgets/widget-avoid';
+import type { WidgetRect } from '$lib/overlay/widgets/widget-geometry';
 import { widgetsFor } from '$lib/overlay/widgets/widget-registry';
 import { TEMPLE_WINDOW_LABEL } from '$lib/overlay/manager';
 import type { CaptureRect, DiamondView, LayoutView, RoiView } from './slice';
@@ -38,8 +41,18 @@ const HOST = { width: 1920, height: 1080 };
 const PANEL = { x: 480, y: 100, w: 200, h: 300 };
 /** The panel's own diamond, inside it. */
 const DIAMOND = { x: 600, y: 120, w: 100, h: 100 };
-/** The architect block the advisor chose, inside the panel. */
-const BLOCK = { x: 500, y: 200, w: 100, h: 40 };
+/**
+ * The side panel's OCR crop on the committed 1920x1080 frame: the real extent
+ * of `panel_rect((960, 713), 1.0)` — x0 `origin.x + 171` = 1131, y0 4, x1 1675,
+ * y1 458 — and not the panel's border box.
+ *
+ * One declaration for the two suites that use it: `offerStackPlacement`'s,
+ * where it is the first box's fallback top and one of the 42 read regions, and
+ * `waitingDefaultPlacement`'s, where it is the crop the shipped notice has to
+ * clear. Two copies of one measured rectangle would let one suite go on
+ * passing against a number the other had corrected.
+ */
+const COMMITTED_PANEL = { x: 1131, y: 4, w: 544, h: 454 };
 
 function layout(rois: RoiView[]): LayoutView {
 	return {
@@ -137,105 +150,305 @@ describe('roiRect', () => {
 	});
 });
 
-describe('calloutPlacement', () => {
-	const obstacles = [PANEL, DIAMOND];
+describe('offerStackPlacement', () => {
+	/**
+	 * The read regions of the COMMITTED 1920x1080 frame, in CSS px at scale
+	 * factor 1 — all 42 of them, derived rather than typed in.
+	 *
+	 * The three panel-side rects are `run::panel_rect`, `run::diamond_rect` and
+	 * `run::remaining_rect` at Entrance centre (960, 713): the same panel crop
+	 * `waitingDefaultPlacement`'s suite below measures against, and the budget
+	 * line `slice.rs`'s own sample prints as `[810, 771, 300, 46]`. The 13
+	 * plates and the 26 corridor patches come off `view.ts`'s lattice — which is
+	 * `lattice.rs`'s table, pinned by its own tests on both sides — with
+	 * `panel::name_strip` unioned with `panel::numeral_box` for a plate
+	 * (`cx - 86`, `cy - 35`, 172 x 77 at scale 1, the halves TRUNCATED the way
+	 * `Lattice::plate_half` truncates) and `lattice::PATCH_HALF` for a patch.
+	 *
+	 * It is a reconstruction and not a capture, which is why nothing here
+	 * asserts a rect of it: what the cases below use is its LEFT EDGE, and that
+	 * edge is one number a reader can check by hand — 960 - 318 - 86.
+	 */
+	function committedRegions(): WidgetRect[] {
+		const [ox, oy] = [960, 713];
+		const out: WidgetRect[] = [
+			{ x: 1131, y: 4, w: 544, h: 454 },
+			{ x: 1313, y: 117, w: 200, h: 200 },
+			{ x: 810, y: 771, w: 300, h: 46 }
+		];
+		for (const point of latticePoints()) {
+			out.push({ x: ox + point.x - 86, y: oy + point.y - 35, w: 172, h: 77 });
+		}
+		for (const edge of latticeEdges()) {
+			// Absolute first, then halved, because Rust halves the two CAPTURE
+			// coordinates and floor division of a negative offset would land a
+			// pixel off.
+			const mx = Math.floor((ox + edge.x1 + (ox + edge.x2)) / 2);
+			const my = Math.floor((oy + edge.y1 + (oy + edge.y2)) / 2);
+			out.push({ x: mx - 14, y: my - 14, w: 28, h: 28 });
+		}
+		return out;
+	}
 
-	it('sits beside the architect block, clear of the panel it is drawn in', () => {
-		// Wanted: x = 500 − 16 − 60 = 424, y = 200 + 20 − 10 = 210 (centred on
-		// the block). That overlaps the panel's crop by 4 px, so the box slides
-		// to x = 420, flush against the panel's left edge — the nearest legal
-		// position and the one the owner's mock draws.
+	/** Both architect blocks as the panel drew them, inside the panel's crop. */
+	const BLOCKS = [
+		{ x: 1140, y: 150, w: 280, h: 43 },
+		{ x: 1140, y: 260, w: 280, h: 43 }
+	];
+	/** What one box measures once it has rendered its four lines. */
+	const BOX = { w: 260, h: 96 };
+
+	it('stacks both boxes in the left margin, each level with its own block', () => {
+		const obstacles = committedRegions();
+		expect(obstacles).toHaveLength(42);
+		// The measurement the placement is built on: the leftmost thing the
+		// module reads on this frame is the D0 plate's crop at 960 - 318 - 86.
+		// Every corridor patch is further right (the leftmost is at 681) and the
+		// panel, its diamond and the budget line are on the right half.
+		expect(Math.min(...obstacles.map((rect) => rect.x))).toBe(556);
+		// So the column wants x = 556 - 16 - 260 = 280, and each box takes its
+		// own block's y — 110 px apart, further than the 96 + 8 the stack needs,
+		// so neither is pushed.
 		expect(
-			calloutPlacement({
-				target: BLOCK,
-				panel: PANEL,
-				box: { w: 60, h: 20 },
+			offerStackPlacement({
+				blocks: BLOCKS,
+				panel: COMMITTED_PANEL,
+				boxes: [BOX, BOX],
 				obstacles,
 				host: HOST
 			})
-		).toEqual({ x: 420, y: 210, w: 60, h: 20 });
+		).toEqual([
+			{ x: 280, y: 150, ...BOX },
+			{ x: 280, y: 260, ...BOX }
+		]);
 	});
 
-	it('opens a gap rather than touching the block when there is room', () => {
-		// A block outside every read region: the box lands exactly
-		// CALLOUT_GAP_CSS to its left, vertically centred, with nothing to slide
-		// off. 1200 − 16 − 60 = 1124; 500 + 20 − 10 = 510.
+	it('pushes the lower box below the upper when the blocks are closer than a box is tall', () => {
+		// Blocks 20 px apart: level-with-the-block would draw the second box
+		// across the first. The stack wins, at 150 + 96 + STACK_GAP_CSS.
 		expect(
-			calloutPlacement({
-				target: { x: 1200, y: 500, w: 100, h: 40 },
-				panel: PANEL,
-				box: { w: 60, h: 20 },
-				obstacles,
+			offerStackPlacement({
+				blocks: [BLOCKS[0], { ...BLOCKS[1], y: 170 }],
+				panel: COMMITTED_PANEL,
+				boxes: [BOX, BOX],
+				obstacles: committedRegions(),
 				host: HOST
 			})
-		).toEqual({ x: 1200 - CALLOUT_GAP_CSS - 60, y: 510, w: 60, h: 20 });
+		).toEqual([
+			{ x: 280, y: 150, ...BOX },
+			{ x: 280, y: 150 + BOX.h + STACK_GAP_CSS, ...BOX }
+		]);
 	});
 
-	it('falls back to the panel when the read carried no block rect', () => {
-		// A text-only read still gets a box; it is anchored to the panel's left
-		// edge at the panel's TOP, because centring on a 300-px-tall crop would
-		// put it halfway down the screen for no reason.
+	it('falls back to the top of the panel crop when the read carried no block rects', () => {
+		// A text-only read still gets its boxes: there is no block to be level
+		// with, so the first goes at the panel crop's top and the second stacks
+		// under it. The whole COLUMN survives a read with no boxes, which is
+		// what the callout's own panel fallback did for its single box.
 		expect(
-			calloutPlacement({
-				target: null,
-				panel: PANEL,
-				box: { w: 60, h: 20 },
-				obstacles,
+			offerStackPlacement({
+				blocks: [null, null],
+				panel: COMMITTED_PANEL,
+				boxes: [BOX, BOX],
+				obstacles: committedRegions(),
 				host: HOST
 			})
-		).toEqual({ x: 480 - CALLOUT_GAP_CSS - 60, y: 100, w: 60, h: 20 });
+		).toEqual([
+			{ x: 280, y: COMMITTED_PANEL.y, ...BOX },
+			{ x: 280, y: COMMITTED_PANEL.y + BOX.h + STACK_GAP_CSS, ...BOX }
+		]);
 	});
 
-	it('is null with nothing on screen to be beside', () => {
-		// No block and no panel means no board. A box placed against nothing is
-		// a box placed over whatever happens to be there.
+	it('ships the first box at the banner top when the read carried neither a block nor a panel crop', () => {
+		// The last rung of the fallback chain, and the only one nothing else
+		// pins: no block to be level with, no panel crop to take the top of, and
+		// no box above to stack under. `BANNER_TOP_CSS` is the same top edge the
+		// leave-the-map banner and the waiting notice ship at, so the boxes
+		// appear where the overlay's other top-of-screen surfaces do rather than
+		// flush against the window's own edge.
 		expect(
-			calloutPlacement({
-				target: null,
+			offerStackPlacement({
+				blocks: [null],
 				panel: null,
-				box: { w: 60, h: 20 },
+				boxes: [BOX],
+				obstacles: committedRegions(),
+				host: HOST
+			})
+		).toEqual([{ x: 280, y: BANNER_TOP_CSS, ...BOX }]);
+	});
+
+	it('clamps the column to the screen edge on a capture with no margin, and still draws', () => {
+		// The narrow-capture case, and the answer is NOT null. A 1374-wide
+		// windowed capture puts the leftmost read region at 269, so the column
+		// wants x = 269 - 16 - 260 = -7 and the clamp pins it to 8. `avoidRects`
+		// then takes that position because it IS clear — 8..268 stops one pixel
+		// short of 269 — so both boxes are drawn, level with their blocks, in a
+		// margin narrower than the boxes themselves.
+		const obstacles = [
+			{ x: 269, y: 120, w: 700, h: 500 },
+			{ x: 990, y: 4, w: 380, h: 400 }
+		];
+		expect(
+			offerStackPlacement({
+				blocks: [
+					{ x: 1000, y: 150, w: 280, h: 43 },
+					{ x: 1000, y: 300, w: 280, h: 43 }
+				],
+				panel: { x: 990, y: 4, w: 380, h: 400 },
+				boxes: [BOX, BOX],
 				obstacles,
+				host: { width: 1374, height: 773 }
+			})
+		).toEqual([
+			{ x: 8, y: 150, ...BOX },
+			{ x: 8, y: 300, ...BOX }
+		]);
+	});
+
+	it('relocates a box off the margin when the clamped column is not clear', () => {
+		// The other half of that chain: `avoidRects` does not answer null
+		// because a position is blocked, it answers the nearest FREE one. Here a
+		// read region covers the whole left side of the 1374-wide capture, so
+		// the clamped column at x 8 is inside it and both boxes leave the margin
+		// altogether — flush past its right edge at 600, still level with their
+		// own blocks. They stop being a left-margin column, which is the trade
+		// the placement takes: the cyan frame is the pointer, not the distance.
+		const obstacles = [
+			{ x: 0, y: 0, w: 600, h: 773 },
+			{ x: 990, y: 4, w: 380, h: 400 }
+		];
+		expect(
+			offerStackPlacement({
+				blocks: [
+					{ x: 1000, y: 150, w: 280, h: 43 },
+					{ x: 1000, y: 300, w: 280, h: 43 }
+				],
+				panel: { x: 990, y: 4, w: 380, h: 400 },
+				boxes: [BOX, BOX],
+				obstacles,
+				host: { width: 1374, height: 773 }
+			})
+		).toEqual([
+			{ x: 600, y: 150, ...BOX },
+			{ x: 600, y: 300, ...BOX }
+		]);
+	});
+
+	it('stacks the second box under where the first was PLACED, not where it wanted to be', () => {
+		// The first box's wanted position is blocked, so the avoidance slides it
+		// down; the second must then follow the ANSWER rather than the wish, or
+		// the two overlap. The blocker is a synthetic read region at the screen's
+		// own left edge — a shape the committed frame has nothing like, which is
+		// the point of the margin — and it moves the column twice: it becomes
+		// the leftmost region, so the wanted x is 0 - 16 - 260 clamped up to 8,
+		// and it then sits across the first box's wanted band. Sliding DOWN
+		// (70 px, to its bottom edge) beats sliding sideways (292 px, to its
+		// right edge).
+		const obstacles = [...committedRegions(), { x: 0, y: 100, w: 300, h: 120 }];
+		const placed = offerStackPlacement({
+			blocks: BLOCKS,
+			panel: COMMITTED_PANEL,
+			boxes: [BOX, BOX],
+			obstacles,
+			host: HOST
+		});
+		expect(placed).toEqual([
+			{ x: 8, y: 220, ...BOX },
+			{ x: 8, y: 220 + BOX.h + STACK_GAP_CSS, ...BOX }
+		]);
+		// Stated as the property as well as the numbers: whatever the avoidance
+		// answers, two drawn boxes never share a pixel.
+		const [upper, lower] = placed as WidgetRect[];
+		expect(lower.y).toBeGreaterThanOrEqual(upper.y + upper.h);
+	});
+
+	it('keeps the second box off the first when the avoidance would slide it back up', () => {
+		// The stacking floor alone does NOT make this safe. It puts the second
+		// box's WANTED position below the first, and `avoidRects` then MOVES
+		// that position — here off a read region across the second box's band,
+		// whose nearest escape upward lands on the box already drawn. So the
+		// boxes placed so far go in as obstacles too, and the answer is the
+		// escape downward instead.
+		//
+		// A NARROW-margin frame, which is what the collision needs: on the
+		// committed 1920 frame the margin is 556 px wide and the column never
+		// reaches anything. Here the leftmost region is at 200, so the wanted x
+		// is clamped to 8 and the column sits across the board's own left edge —
+		// the windowed capture the placement's doc says may simply not fit.
+		const obstacles = [
+			{ x: 200, y: 250, w: 200, h: 200 },
+			{ x: 1131, y: 4, w: 544, h: 454 }
+		];
+		const placed = offerStackPlacement({
+			blocks: BLOCKS,
+			panel: COMMITTED_PANEL,
+			boxes: [BOX, BOX],
+			obstacles,
+			host: HOST
+		}) as WidgetRect[];
+		expect(placed[0]).toEqual({ x: 8, y: 150, ...BOX });
+		// Flush under the region it had to clear (250 + 200), and not at y 154,
+		// which is 84 px NEARER to what it wanted and four pixels into the box
+		// above it — the answer without the first box in the obstacle set.
+		expect(placed[1]).toEqual({ x: 8, y: 450, ...BOX });
+		expect(rectIsClear(placed[1], [placed[0]])).toBe(true);
+	});
+
+	it('withholds a box that has not measured itself, and places the other anyway', () => {
+		// The frame between render and measurement. A zero-size box is not an
+		// obstacle either — treating it as one would stack the box below it at a
+		// position that jumps as soon as the first one measures.
+		expect(
+			offerStackPlacement({
+				blocks: BLOCKS,
+				panel: COMMITTED_PANEL,
+				boxes: [{ w: 0, h: 0 }, BOX],
+				obstacles: committedRegions(),
 				host: HOST
 			})
-		).toBeNull();
+		).toEqual([null, { x: 280, y: 260, ...BOX }]);
 	});
 
-	it('is null before the box has measured itself', () => {
-		// The frame between render and measurement. A zero-sized box would be
-		// placed at a position its real size does not fit, and the next frame
-		// would jump it.
+	it('withholds a box that cannot be placed clear, and places the other anyway', () => {
+		// One box per answer, which is the whole reason this returns a list
+		// rather than a placement for the stack. The second box is larger than
+		// the host in both directions — `avoidRects`'s own documented degenerate
+		// input: it is clamped to the origin, it covers the panel's crop
+		// wherever it is put, and the answer is null, so it is NOT drawn
+		// (ADR-019). The first still is, at x 8: the column's x comes off the
+		// WIDEST box and is clamped up rather than sent off the left of the
+		// screen.
+		//
+		// It takes a box that big because the left margin on this frame is
+		// genuinely empty — 556 px of it — so no ordinary box fails to fit
+		// there. That is the measurement the placement is built on, stated from
+		// the other side.
 		expect(
-			calloutPlacement({ target: BLOCK, panel: PANEL, box: { w: 0, h: 0 }, obstacles, host: HOST })
-		).toBeNull();
-	});
-
-	it('is null rather than drawn over a read region when nothing is free', () => {
-		expect(
-			calloutPlacement({
-				target: BLOCK,
-				panel: PANEL,
-				box: { w: 60, h: 20 },
-				obstacles: [{ x: 0, y: 0, w: 1920, h: 1080 }],
+			offerStackPlacement({
+				blocks: BLOCKS,
+				panel: COMMITTED_PANEL,
+				boxes: [BOX, { w: 2400, h: 1000 }],
+				obstacles: committedRegions(),
 				host: HOST
 			})
-		).toBeNull();
+		).toEqual([{ x: 8, y: 150, ...BOX }, null]);
 	});
 
-	it('is null with an empty never-cover set even when a block rect is offered', () => {
-		// The rule stated at this function rather than left to the anchor. In
-		// the shipped route an unresolved scale factor nulls the target and the
-		// panel too, so this input cannot arise today — which is exactly why it
-		// is pinned: the coincidence is one refactor from ending, and "empty
-		// means place nothing yet" must not depend on it.
+	it('places nothing at all with an empty never-cover set', () => {
+		// The rule this file's other three placers state, and the one this
+		// placer needs most: `boardLeft` is a minimum over that set, so an empty
+		// one has no left edge to be beside. Empty means the layout is absent or
+		// the scale factor has not resolved — "place nothing yet", never "the
+		// screen is free".
 		expect(
-			calloutPlacement({
-				target: BLOCK,
-				panel: PANEL,
-				box: { w: 60, h: 20 },
+			offerStackPlacement({
+				blocks: BLOCKS,
+				panel: COMMITTED_PANEL,
+				boxes: [BOX, BOX],
 				obstacles: [],
 				host: HOST
 			})
-		).toBeNull();
+		).toEqual([null, null]);
 	});
 });
 
@@ -309,10 +522,6 @@ describe('waitingDefaultPlacement', () => {
 	 *  what the two cases below expect to come back UNTOUCHED. Derived from the
 	 *  registry for the same reason `NOTICE` is. */
 	const WANTED = { x: HOST.width / 2 - NOTICE.w / 2, y: BANNER_TOP_CSS, ...NOTICE };
-	/** The side panel's OCR crop on the committed 1920x1080 frame: the real
-	 *  extent of `panel_rect((960, 713), 1.0)` — x0 `origin.x + 171` = 1131,
-	 *  y0 4, x1 1675, y1 458 — and not the panel's border box. */
-	const COMMITTED_PANEL = { x: 1131, y: 4, w: 544, h: 454 };
 
 	it('ships the notice at the top centre of the host when that is clear', () => {
 		// Host centre minus half the box, at `BANNER_TOP_CSS` — 830 on the

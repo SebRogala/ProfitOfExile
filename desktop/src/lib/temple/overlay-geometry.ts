@@ -36,6 +36,11 @@ import { edgeState, type EdgeState } from './view';
 /** Gap between a placed box and the thing it is placed against, CSS px. */
 export const CALLOUT_GAP_CSS = 16;
 
+/** Gap between two stacked offer boxes, CSS px (POE-249). Smaller than
+ *  [`CALLOUT_GAP_CSS`]: that one separates a surface from the GAME, and this
+ *  one separates two boxes of one column, which have to read as a pair. */
+export const STACK_GAP_CSS = 8;
+
 /** How far below the top of the host a top-centred surface wants to sit — the
  *  leave-the-map banner, and since POE-249 the waiting notice's shipped
  *  default. The name is the banner's because it was the first. */
@@ -60,9 +65,10 @@ export function captureToCss(rect: CaptureRect, scaleFactor: number): WidgetRect
  * every position legal, which is exactly the wrong answer when the reason it is
  * empty is that the conversion failed.
  *
- * Every placer states that itself — [`calloutPlacement`], [`bannerPlacement`],
- * [`doorDefaultPlacement`] and [`waitingDefaultPlacement`] — and the two
- * default-offering callers repeat it. Leaving it to the callers was not enough:
+ * Every placer states that itself — [`offerStackPlacement`],
+ * [`bannerPlacement`], [`doorDefaultPlacement`] and
+ * [`waitingDefaultPlacement`] — and the two default-offering callers repeat
+ * it. Leaving it to the callers was not enough:
  * the banner's wanted position is a function of the host alone, so it had no
  * anchor to be null and drew top-centre over the panel crop. The waiting
  * notice's default wants that same position, which is why it states the rule
@@ -101,63 +107,120 @@ export interface BoxSize {
 }
 
 /**
- * Where the kill callout goes.
+ * Where the two offer boxes go (POE-249).
  *
- * Wanted position: immediately LEFT of the architect block, vertically centred
- * on it — a box beside the panel, level with the block it is about.
- * `avoidRects` then slides it off whatever it lands on, and the first thing it
- * lands on is the side panel's own OCR crop, which is what puts the box clear
- * of the panel rather than on top of the text it is naming.
+ * The owner's ask: two boxes on the **left margin of the temple sheet**,
+ * stacked to mirror the side panel's own block order, the advisor's pick framed
+ * in cyan — *"that frame IS the pointer; no arrows anywhere"*. So this places a
+ * COLUMN, not two independent boxes: one x for the stack, and box `i` level
+ * with the architect block it is about.
  *
- * There is no longer a LINE from the box to the block (POE-248, owner: no
- * arrows anywhere). Being level with the block, and outside the panel it
- * belongs to, is the whole of what points at it; the kill glyph on the room
- * widget is the pointer that survives the panel closing.
+ * # Why the far-left margin
  *
- * With no block rect (a text-only read, or a read whose OCR carried no boxes)
- * the panel crop is the anchor instead: the box goes to its left, at its top.
- * With neither — no layout at all — there is nothing to be beside and nothing
- * to avoid, and the answer is null rather than a corner, because a callout
- * placed against nothing is a callout placed over whatever is there.
+ * The game draws the incursion sheet across the middle of the screen with its
+ * side panel on the right, and the module reads all of it — 42 rectangles. The
+ * left margin is the one stretch of the screen that is wide, empty and outside
+ * every one of them while the sheet is up: the player's buff bar is at the
+ * top-left and the sheet is drawn over it, so the space is free exactly when
+ * these boxes exist. `boardLeft` is the leftmost published read region, and the
+ * stack sits a `CALLOUT_GAP_CSS` clear of it.
  *
- * `null` also when the avoidance finds no free position. The box is then not
- * drawn: the board is on screen either way, and a callout that costs the module
- * its read is the worse trade.
+ * MEASURED, on the committed 1920x1080 frame (Entrance centre (960, 713), scale
+ * 1.0): `boardLeft` is **556**, the left edge of the D0 plate's crop
+ * (960 − 318 − 86). Nothing published reaches further left — the leftmost
+ * corridor patch is at 681, and the panel, its diamond and the budget line are
+ * all on the right half — so a 260 px box wants x = 556 − 16 − 260 = **280**.
+ * That is about 280 px of clear margin to the left of the board and roughly 900
+ * px from the blocks the boxes describe, which is what "the left margin" means
+ * on this screen: proximity is not the pointer, the cyan frame and the
+ * architect's own name in the headline are.
  *
- * …and `null` for an EMPTY never-cover set, stated here rather than left to
- * fall out of a null anchor. An empty set means the layout is absent or the
- * scale factor has not resolved, which is "place nothing yet" and never "the
- * screen is free" — and today both of those also null the anchor, so the guard
- * is currently redundant. That redundancy is the point: the anchor going
- * non-null on an unresolved conversion is one refactor away, and a rule that
- * only holds by coincidence is a rule nothing enforces.
+ * On a narrower capture the margin can simply not be there, and the answer is
+ * NOT "no box". `boardLeft - CALLOUT_GAP_CSS - widest` goes negative, the clamp
+ * below pins the column's x to 8, and `avoidRects` then does what it always
+ * does: it takes that position if it is clear, and otherwise moves the box to
+ * the nearest free one ANYWHERE in the host. So on a cramped frame these stop
+ * being a left-margin column and land wherever there is room — acceptable
+ * because proximity was never the pointer: the cyan frame and the architect's
+ * own name in the headline are.
+ *
+ * `null` — the box NOT drawn (ADR-019) — is what comes back when no position in
+ * the host is clear of every read region, which on a real board takes a box
+ * bigger than the screen. That refusal is still the rule, and it is per BOX:
+ * one that cannot be placed is dropped while the other is still drawn.
+ *
+ * # The stacking rule
+ *
+ * Box `i` wants to be level with block `i`, which is what makes the column
+ * mirror the panel without any arrow between them. Two blocks closer together
+ * than the upper box is tall would put the boxes on top of each other, so each
+ * one is also pushed below the one above it (`STACK_GAP_CSS`), and each goes
+ * through `avoidRects` against the read regions AND the boxes already placed —
+ * the second box avoids the first, or it is not drawn.
+ *
+ * A box with no size yet is `null` and does not block the others: it has not
+ * measured itself, and treating a zero-size rect as an obstacle would place the
+ * box below it at a position that jumps on the next frame.
+ *
+ * Null everywhere on an EMPTY never-cover set, the rule all four of this file's
+ * placers state themselves: empty means the layout is absent or the scale
+ * factor has not resolved, which is "place nothing yet" and never "the screen
+ * is free". Here it is not even a redundancy — `boardLeft` is a minimum over
+ * that set, and over an empty one there is no left edge to be beside.
  */
-export function calloutPlacement(input: {
-	/** The chosen block's rect in CSS px, or null. */
-	target: WidgetRect | null;
-	/** The side panel's OCR crop in CSS px, or null. */
+export function offerStackPlacement(input: {
+	/** Each offer's own block rect in CSS px, `blocks[i]` for box `i`, or null
+	 *  for a read that carried no boxes. */
+	blocks: readonly (WidgetRect | null)[];
+	/** The side panel's OCR crop in CSS px — the top the first box falls back
+	 *  to when the read carried no block rect. */
 	panel: WidgetRect | null;
-	/** What the box measures. */
-	box: BoxSize;
+	/** What each box measures, in the same order. */
+	boxes: readonly BoxSize[];
 	/** The never-cover set, CSS px. */
 	obstacles: readonly WidgetRect[];
 	host: HostSize;
-}): WidgetRect | null {
-	const { target, panel, box, obstacles, host } = input;
-	if (box.w <= 0 || box.h <= 0) return null;
-	if (obstacles.length === 0) return null;
-	const anchor = target ?? panel;
-	if (anchor === null) return null;
-	const wanted: WidgetRect = {
-		x: anchor.x - CALLOUT_GAP_CSS - box.w,
-		// Centred on the block when there is one; on a whole panel crop that
-		// would put the box halfway down the screen, so an anchor that is only
-		// the panel is aligned to its top instead.
-		y: target ? target.y + target.h / 2 - box.h / 2 : anchor.y,
-		w: box.w,
-		h: box.h
-	};
-	return avoidRects(wanted, obstacles, host);
+}): (WidgetRect | null)[] {
+	const { blocks, panel, boxes, obstacles, host } = input;
+	if (obstacles.length === 0) return boxes.map(() => null);
+	const boardLeft = Math.min(...obstacles.map((rect) => rect.x));
+	// ONE x for the stack, off the WIDEST box: a column whose boxes started at
+	// different x would read as two unrelated surfaces. Clamped to 8 rather than
+	// allowed off screen — `avoidRects` would clamp it to 0 anyway, and a box
+	// flush against the screen edge reads as clipped.
+	const widest = Math.max(0, ...boxes.map((box) => box.w));
+	const x = Math.max(8, boardLeft - CALLOUT_GAP_CSS - widest);
+	const placed: (WidgetRect | null)[] = [];
+	// The last box that actually GOT a position — what the next one stacks
+	// under. A box that was not measured or could not be placed is not one, so
+	// it neither pushes the next box down nor blocks it.
+	let previous: WidgetRect | null = null;
+	for (let i = 0; i < boxes.length; i++) {
+		const box = boxes[i];
+		if (box.w <= 0 || box.h <= 0) {
+			placed.push(null);
+			continue;
+		}
+		const block = blocks[i] ?? null;
+		// Level with this box's own block. With no block rect the first box
+		// takes the panel crop's top — there is no block to be level with — and
+		// a later one takes the bottom of the box above it, which is the only
+		// order the panel itself states.
+		const floor = previous === null ? null : previous.y + previous.h + STACK_GAP_CSS;
+		const wantedY = block ? block.y : (floor ?? panel?.y ?? BANNER_TOP_CSS);
+		const y = floor === null ? wantedY : Math.max(wantedY, floor);
+		const at = avoidRects(
+			{ x, y, w: box.w, h: box.h },
+			// The boxes already placed are obstacles too: two boxes level with
+			// two blocks a hair apart would otherwise overlap after the
+			// avoidance moved one of them.
+			[...obstacles, ...placed.filter((rect): rect is WidgetRect => rect !== null)],
+			host
+		);
+		placed.push(at);
+		if (at !== null) previous = at;
+	}
+	return placed;
 }
 
 /**
@@ -230,7 +293,7 @@ export function doorDefaultPlacement(input: {
  * rect clear because nothing was passed to it, and the banner drew top-centre
  * — straight over where the panel crop is about to be. That is the violation
  * ADR-019 was written from, and it is why the rule is stated at each placer
- * rather than left to an anchor: [`calloutPlacement`] and
+ * rather than left to an anchor: [`offerStackPlacement`] and
  * [`doorDefaultPlacement`] refuse on the same input, and so do the route's two
  * default-offering callers (`doorDefaults`, `waitingDefaults`). Empty means
  * place nothing yet.

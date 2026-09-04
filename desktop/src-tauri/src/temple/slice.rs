@@ -418,6 +418,26 @@ pub struct OfferView {
     pub display_name: Option<String>,
     /// The tier the kill guarantees. An `upgrade` also rolls one more at 50%.
     pub built_tier: Option<u8>,
+    /// Vertolka's grade for the LINE this kill builds into, as it is written on
+    /// his sheet — `"A++"`, `"C-"` (POE-249). The grade is the LINE's and not
+    /// the built room's: he ranks each of the 25 families by what its tier-3
+    /// room is worth, so a `change` that lands on tier 2 carries the same
+    /// letter as one that lands on tier 3. [`line_top`](Self::line_top) is the
+    /// room that letter is about.
+    ///
+    /// `None` when the printed target did not resolve — the same silence as
+    /// [`display_name`](Self::display_name), and for the same reason: there is
+    /// no line to have a grade.
+    ///
+    /// A string and not the `Grade` enum because `Grade` is a reasoning type
+    /// with a derived `Ord` (worst first) and no `Serialize`; the sheet's own
+    /// spelling is the wire form.
+    #[serde(default)]
+    pub grade: Option<String>,
+    /// The tier-3 room of the line this kill builds into — what
+    /// [`grade`](Self::grade) is a grade OF. `None` on the same failure.
+    #[serde(default)]
+    pub line_top: Option<String>,
     /// `[x, y, w, h]` of the block on screen, CAPTURE px — the union of the
     /// boxes of the OCR lines it was read from (POE-243). `null` when the read
     /// carried no boxes.
@@ -836,6 +856,13 @@ fn offer_view(index: usize, offer: &ArchitectOffer, current_tier: Option<Tier>) 
         printed_target: offer.printed_target.clone(),
         display_name: resolved.as_ref().map(|r| r.display_name.to_string()),
         built_tier: resolved.as_ref().map(|r| r.built_tier.get()),
+        // Both off the resolved LINE rather than off the built room: the sheet
+        // grades families, so an offer that builds tier 2 still publishes the
+        // family's letter and the tier-3 name that letter was given for. A
+        // surface printing the grade beside a tier-2 room without the tier-3
+        // name would be attributing the family's rating to the room in hand.
+        grade: resolved.as_ref().map(|r| r.line.grade().as_str().to_string()),
+        line_top: resolved.as_ref().and_then(|r| r.line.name(Tier::T3).map(|n| n.to_string())),
         // Published verbatim: the reader already put it in capture px, and
         // re-deriving a rect from anything else here would be a second answer
         // to where the panel drew the block.
@@ -2153,6 +2180,83 @@ mod tests {
             first.printed_target, "Qwertz Chamber",
             "what the panel printed is still shown — it is what the player sees",
         );
+    }
+
+    /// A resolved offer publishes Vertolka's letter for the LINE it builds into
+    /// and the tier-3 room that letter was given for (POE-249) — the two halves
+    /// of the rating line the offer boxes print.
+    ///
+    /// The corruption line is asserted literally because a grade read off
+    /// `LINES` at test time would pass against any mapping at all, including
+    /// none: `A++` is what the sheet says about Locus of Corruption, and it is
+    /// the one letter a wrong lookup could not produce by accident.
+    #[test]
+    fn a_resolved_offer_publishes_its_line_grade_and_the_tier_three_room() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        // Tier 2 in hand, so Contested Development's +1 lands the kill on the
+        // line's own tier-3 room.
+        let rooms = board_rooms(&[(Slot::B0, "Catalyst of Corruption")]);
+        let panel = panel(
+            "Catalyst of Corruption",
+            Some(6),
+            vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
+        );
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        let first = slice.panel.expect("panel").offers.into_iter().next().expect("one block");
+        assert_eq!(first.grade.as_deref(), Some("A++"));
+        assert_eq!(first.line_top.as_deref(), Some("Locus of Corruption"));
+        assert_eq!(
+            first.built_tier,
+            Some(3),
+            "precondition: this kill lands on the tier the grade is about",
+        );
+    }
+
+    /// An offer whose printed target is not in the vocabulary publishes NO
+    /// rating rather than a default one. There is no line, so there is nothing
+    /// graded; a letter here would be a rating invented for a room the app
+    /// could not name.
+    #[test]
+    fn an_unresolvable_offer_publishes_no_grade_and_no_line_top() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let panel = panel(
+            "Chasm",
+            Some(6),
+            vec![offer("Guatelitzi", "Qwertz Chamber", OfferKind::Upgrade)],
+        );
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        let first = slice.panel.expect("panel").offers.into_iter().next().expect("one block");
+        assert_eq!(first.grade, None);
+        assert_eq!(first.line_top, None);
+    }
+
+    /// The rating is about the LINE, not about the room the kill hands over.
+    /// A `change` taken on a tier-1 room builds tier 2, and the published
+    /// `line_top` is still the family's tier-3 room — which is what makes the
+    /// letter beside it honest. Fails if `offer_view` ever names
+    /// `display_name`'s own tier here.
+    #[test]
+    fn a_change_resolved_at_tier_two_still_names_the_lines_tier_three_room() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Corruption Chamber")]);
+        let panel = panel(
+            "Corruption Chamber",
+            Some(6),
+            vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
+        );
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        let first = slice.panel.expect("panel").offers.into_iter().next().expect("one block");
+        assert_eq!(first.display_name.as_deref(), Some("Catalyst of Corruption"));
+        assert_eq!(first.built_tier, Some(2));
+        assert_eq!(first.line_top.as_deref(), Some("Locus of Corruption"));
+        assert_eq!(first.grade.as_deref(), Some("A++"));
     }
 
     // ------------------------------------------- POE-229: the current room --
@@ -3694,6 +3798,14 @@ mod tests {
                     printed_target: "Sadist's Den".to_string(),
                     display_name: Some("Torment Cells".to_string()),
                     built_tier: Some(2),
+                    // The sadist's-den line's own letter and its tier-3 room
+                    // (POE-249). Hand-built like every other value here, but
+                    // taken from `LINES` rather than invented, so the pair
+                    // still reads as a real offer: the grade is the LINE's, and
+                    // `lineTop` is the room it was given for — which is not the
+                    // tier-2 room `displayName` names.
+                    grade: Some("C".to_string()),
+                    line_top: Some("Sadist's Den".to_string()),
                     rect: Some([1300, 140, 280, 43]),
                 }],
                 incursions_remaining: Some(6),
@@ -3762,7 +3874,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///

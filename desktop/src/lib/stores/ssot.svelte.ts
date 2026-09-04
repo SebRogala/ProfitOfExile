@@ -454,7 +454,25 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 										bottomIcon: incoming.layout.diamond.bottomIcon ?? null
 									}
 					},
-		panel: incoming.panel ?? null,
+		// The panel's OFFERS go through the same rule one level deeper
+		// (POE-249): `grade` and `lineTop` are `serde(default)` on the Rust
+		// side, so a payload from a build before them carries neither, and
+		// `offerBoxes` tests `grade === null` to decide whether the box prints
+		// a rating line at all. `undefined` there is falsy by accident rather
+		// than by contract, and it makes the declared `string | null` a lie for
+		// anything that later reads it as one. Nothing else on the offer is
+		// touched: the rest has been on the wire since POE-243.
+		panel:
+			incoming.panel == null
+				? null
+				: {
+						...incoming.panel,
+						offers: (incoming.panel.offers ?? []).map((offer) => ({
+							...offer,
+							grade: offer.grade ?? null,
+							lineTop: offer.lineTop ?? null
+						}))
+					},
 		advice: incoming.advice ?? null,
 		mode: incoming.mode ?? null,
 		keys: incoming.keys ?? fresh.keys,

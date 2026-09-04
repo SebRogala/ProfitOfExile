@@ -108,7 +108,7 @@ function boundingBox(rects: readonly WidgetRect[]): WidgetRect | null {
  * centred. That is not the Show checkbox — `seedRect` ignores `visible`, so a
  * hidden widget still gets a frame to place. Nor is it the ANCHORED widgets:
  * `enterConfig` seeds `placeableWidgetsFor(module)`, and an anchored widget
- * (`temple.advice`) is neither persisted nor arranged, so it is absent by
+ * (`temple.offers`) is neither persisted nor arranged, so it is absent by
  * design rather than missing. It is an UNRESOLVED SCALE FACTOR: `seedRect`
  * returns `null` for a widget that has a stored placement it cannot convert,
  * and with every placeable widget stored that is an empty draft. There is then
