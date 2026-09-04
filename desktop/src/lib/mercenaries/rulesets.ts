@@ -3300,14 +3300,14 @@ const GUIDE_D_KINETIST_20D: MercRuleset = {
 export const MERC_SOURCES: MercSource[] = [
 	{
 		id: 'guide-a',
-		label: 'Guide A',
+		label: 'ckaiba',
 		description: "ckaiba's seller-side floors — wealthyexile strategy 7062",
 		guideUrl: 'https://wealthyexile.com/strategies/7062/alchgo_astrolabe__merc_boss_rushing',
 		rulesets: [GUIDE_A_MANYSHOT, GUIDE_A_KINETIST_V1, GUIDE_A_COMBATANT]
 	},
 	{
 		id: 'guide-b',
-		label: 'Guide B',
+		label: 'Nerotox',
 		description: "Nerotox's tiered saved searches — three videos, four ladders",
 		// The CHANNEL: this source's ladders come from different videos, and each
 		// rung names its own (`MercRuleset.guideUrl`).

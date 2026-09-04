@@ -1170,8 +1170,8 @@ describe('source registry', () => {
 	// otherwise tell a seller's floor from a buyer's shopping list.
 	it('says whose rules each source carries and which side of the trade they take', () => {
 		expect(MERC_SOURCES.map((s) => `${s.label}: ${s.description ?? 'none'}`)).toEqual([
-			"Guide A: ckaiba's seller-side floors — wealthyexile strategy 7062",
-			"Guide B: Nerotox's tiered saved searches — three videos, four ladders",
+			"ckaiba: ckaiba's seller-side floors — wealthyexile strategy 7062",
+			"Nerotox: Nerotox's tiered saved searches — three videos, four ladders",
 			"CaptainLance: CaptainLance's buyer-side ideal links for a Luminary merc bot — no prices, no floors",
 			"XTheFarmerX: XTheFarmerX's budget life-stacking KB merc — two saved searches, the upper one Nerotox's own link"
 		]);
