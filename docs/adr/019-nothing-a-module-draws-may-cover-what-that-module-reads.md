@@ -9,6 +9,11 @@ uid: e3a56433-a589-49b2-8cf4-b32e6805e777
 Accepted (POE-244, commit `c175946`, 2026-09-02). Written up in the POE-223
 follow-up audit, 2026-09-04, together with the violation it closes.
 
+Amended 2026-09-04 (POE-248) — see [the amendment at the end](#amendment-the-line-exception-is-retired-2026-09-04):
+the one carve-out this ADR took for a PLACER's own output, the kill callout's
+arrow, is gone with the arrow. The stored-placement carve-out below is
+untouched.
+
 Scope: every overlay surface a module draws over a screen the same module OCRs
 or samples. Today that is the temple; the merc verdict strip and the lab
 overlays are the next candidates, and the rule is written for them rather than
@@ -73,11 +78,13 @@ Two facts about the failure decided the shape of the rule:
   clear is NOT drawn: the game's own panel is on screen either way, and a callout
   that costs the module its read is the worse trade.
 - **One bounded exception: a thin LINE may cross a read region; a FILLED shape
-  may not.** A 3 px stroke over a glyph is not what breaks an OCR read; a panel
-  sitting on the text is, and so is an arrowhead, which is a solid triangle. So
-  the arrow is allowed and the head is not: `calloutArrow` stops the line
-  `ARROW_STANDOFF_CSS` (10 px) short of the block, and the head is 8 px in USER
-  units (`markerUnits="userSpaceOnUse"`; the default is `strokeWidth`, which
+  may not.** *(RETIRED 2026-09-04 — see the amendment at the end. Kept as
+  written because the reasoning is what the amendment answers.)* A 3 px stroke
+  over a glyph is not what breaks an OCR read; a panel sitting on the text is,
+  and so is an arrowhead, which is a solid triangle. So the arrow is allowed and
+  the head is not: `calloutArrow` stops the line `ARROW_STANDOFF_CSS` (10 px)
+  short of the block, and the head is 8 px in USER units
+  (`markerUnits="userSpaceOnUse"`; the default is `strokeWidth`, which
   multiplied an 8 px head by the 3 px stroke into a 24 px triangle on the
   block's first glyphs). The point lands about 9 px clear of the text. The
   exception is bounded where it is TAKEN, not where the rule is enforced —
@@ -156,10 +163,9 @@ does not depend on the board is the one that shows the difference.
   `unknownRooms` must be identical. The Windows smoke items in
   `docs/OVERLAY-GUIDE.md` carry this; a visual "it looks clear" proves nothing,
   because the failure mode is that it looks clear.
-- **Widening the arrow exception re-opens this ADR.** The bound is "thin line
-  yes, filled ink no", with a stated standoff. A thicker stroke, a larger head,
-  a filled label on the line, or a second surface claiming the same licence is a
-  new decision.
+- **Widening the arrow exception re-opens this ADR.** *(Moot since 2026-09-04:
+  the exception is retired, and TAKING one again is now the new decision.)* The
+  bound was "thin line yes, filled ink no", with a stated standoff.
 - **Cost accepted: the module sometimes says nothing.** On a board where nothing
   is free the callout is not drawn and the banner is not drawn. That is the
   intended trade — the information is on the Temple page and in the game's own
@@ -169,3 +175,35 @@ does not depend on the board is the one that shows the difference.
   [ADR-020](020-one-shared-screen-scale-a-module-corroborates-or-withholds.md)'s
   read-region clause, which is the rule that keeps them keyed on the layout
   anchor rather than on the screen edge.
+
+## Amendment: the line exception is retired (2026-09-04)
+
+POE-248, from the owner's first live session on the v2 overlay. The decision is
+a product one and the ADR only follows it: **no arrows anywhere** on the temple
+overlay. The kill callout keeps its box and its placement — level with the
+architect block, immediately outside the panel — and the thing that points once
+the panel closes is the cyan kill glyph on the room widget, drawn on the same
+spot inside the room where the game draws that architect's own icon.
+
+What changes here is narrower than it looks, and worth stating because the
+carve-out was the only soft edge this rule had:
+
+- **No placer output crosses a read region any more.** Everything the module
+  derives a position for goes through `avoidRects` and is outside every
+  published rect; there is no "allowed to cross" class left, so no bound to
+  argue about and no standoff to keep correct. This is the class the rule binds
+  — a rectangle the USER placed is still outside it, exactly as the
+  stored-placement carve-out above says, and dragging the room widget onto a
+  plate still covers that plate.
+- **`calloutArrow` and `ARROW_STANDOFF_CSS` are deleted**, not left dead. A pure
+  helper nothing calls is an invitation to call it, and the invitation here is
+  to re-take an exception the rule no longer has.
+- **Taking a line exception again is a new decision**, and it needs this ADR
+  amended rather than a comment: the original reasoning (a 3 px stroke does not
+  break OCR; a filled shape does) was sound and is still available above, but it
+  bought a pointer the overlay no longer needs, and an exception nothing uses is
+  strictly worse than none.
+
+Nothing else in this ADR moves. The never-cover set, the empty-set rule, the
+`null` answer, the stored-placement carve-out and the Debug-capture diff are
+untouched.

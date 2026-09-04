@@ -151,7 +151,16 @@ export interface LayoutView {
 	slots: SlotView[];
 	/** Corridors to act on — settled, or `doors − uncertain` on the fallback. */
 	doors: EdgeId[];
-	/** Corridors the current room's selection frame covers. */
+	/** Every corridor incident to the current room — a DIAGNOSTIC about the read,
+	 *  never a door state (POE-248).
+	 *
+	 *  The beam sampler puts all of them here unconditionally, before any
+	 *  open/closed judgement, because the gold selection frame covers their
+	 *  midpoints (`doors.rs`). What settles them is the diamond read, and its
+	 *  answer is already in `doors`. `edgeState` used to test this list and
+	 *  coloured a corridor the seals had read GREEN as an unsettled grey —
+	 *  see its note. No surface may read it as a state again; the honest
+	 *  "nothing settled this" signal is `unresolvedIncident`. */
 	uncertain: EdgeId[];
 	/** Corridors incident to the current room that NOTHING settled. Populated
 	 *  only on the diamond-read fallback: surfaced, never guessed. */
@@ -216,9 +225,13 @@ export interface RoiView {
  * point: during the incursion the panel and its diamond are gone, and the door
  * the advisor named still has to be identifiable.
  *
- * Both fields are in one space — centre at the origin, `+y` down — so a
- * consumer fits `corners` into its box and puts every seal through the same
- * transform.
+ * A ROTATED RECTANGLE since POE-248, not a rhombus: the game draws the room in
+ * isometric view with two long walls carrying two doors each and two short
+ * walls with one, which is what makes a six-door room readable at a glance.
+ *
+ * Every field is in one space — centre at the origin, `+y` down — so a consumer
+ * fits `corners` into its box and puts every seal and both icon spots through
+ * the same transform.
  */
 export interface DiamondView {
 	/** The outline, four corners in ring order. */
@@ -230,13 +243,33 @@ export interface DiamondView {
 	];
 	/** One seal per corridor the current room has. */
 	seals: SealView[];
+	/** The architect icon spot in the room's TOP-RIGHT half, in `corners`'
+	 *  units (POE-248) — the one the panel's first (topmost) architect block
+	 *  belongs to, and where the overlay marks the kill.
+	 *
+	 *  Published rather than derived here for the reason `corners` is: it is a
+	 *  MEASUREMENT of the panel (`markers::ARCHITECT_ICON_OFFSET`), and a
+	 *  TypeScript copy would be a second answer a re-measure leaves behind.
+	 *
+	 *  Named for the HALF and not for a kind of kill: which architect's icon
+	 *  the game draws where is what the measurement does NOT settle, so
+	 *  `killGlyph` keys on the chosen block's own OCR rect.
+	 *
+	 *  OPTIONAL on the wire and normalised to `null` by `normaliseTemple`, the
+	 *  same rule `rois` and `diamond` follow: a snapshot from a build before
+	 *  POE-248 carries neither icon, and the glyph is simply not drawn. */
+	topIcon?: [number, number] | null;
+	/** The spot in the room's BOTTOM-LEFT half — the mirror of `topIcon`
+	 *  through the room's centre, and the second block's. Same wire-optionality
+	 *  rule. */
+	bottomIcon?: [number, number] | null;
 }
 
 /**
  * One seal on the room's diamond.
  *
- * Deliberately carries no colour and no recommendation. Open/closed/uncertain
- * is `edgeState(seal.edge, layout)` — the rule every temple surface already
+ * Deliberately carries no colour and no recommendation. Open or not is
+ * `edgeState(seal.edge, layout)` — the rule every temple surface already
  * shares — and whether the advisor wants this door opened is membership of
  * `recommendations[0].doors`. Repeating either here would be a second answer to
  * a question the slice already answers.
@@ -246,7 +279,13 @@ export interface SealView {
 	neighbour: SlotId;
 	/** The corridor itself — `"C1-C2"`, the key `doors` and `uncertain` use. */
 	edge: EdgeId;
-	/** `[x, y]` on the unit diamond, in `corners`' units. */
+	/** `[x, y]` ON THE ROOM'S WALL, in `corners`' units (POE-248).
+	 *
+	 *  Not a unit vector: the room is a rectangle, a door is a hole in one of
+	 *  its four walls, and this is where the corridor's own direction leaves
+	 *  the outline. The two same-row corridors land at exactly 1.0 — the
+	 *  midpoint of a short wall — and the four diagonals at 0.938 and 1.034,
+	 *  two to each long wall. */
 	pos: [number, number];
 }
 

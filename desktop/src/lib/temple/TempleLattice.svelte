@@ -4,8 +4,8 @@
 	 *
 	 * Shared by `TemplePage` and the `/overlay/temple` window, which is the
 	 * whole reason it is a component: the two must agree about which corridor is
-	 * open, which is a guess and which could not be read, and two copies of that
-	 * mapping would not stay in step.
+	 * open and which could not be read, and two copies of that mapping would not
+	 * stay in step.
 	 *
 	 * Every coordinate comes from `$lib/temple/view` in the reader's own
 	 * reference pixels, and the `viewBox` does the scaling — nothing here
@@ -133,12 +133,6 @@
 	/* A settled door is the only corridor drawn solid and bright. */
 	.edge-open {
 		stroke: var(--color-lab-green);
-	}
-
-	/* Reported open, but the selection frame covers it — a guess, drawn as one. */
-	.edge-uncertain {
-		stroke: var(--color-lab-green-muted);
-		stroke-dasharray: 14 10;
 	}
 
 	/* Nothing settled it. Marked loudly: "could not be read" must never look

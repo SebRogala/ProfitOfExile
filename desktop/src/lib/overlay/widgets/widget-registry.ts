@@ -88,9 +88,10 @@ export interface WidgetSpec {
  *
  * What is left is one of each kind. `temple.advice` is the kill callout, placed
  * against the game (`anchored`), because a box that points at an architect
- * block has to be wherever that block is. `temple.door` is the room's diamond,
+ * block has to be wherever that block is. `temple.door` is the room widget,
  * placed by the USER, because it is the surface that stays up after the panel is
- * gone and only the player knows what their screen is free of at that point.
+ * gone — and past the capture standing down (POE-248) — and only the player
+ * knows what their screen is free of at that point.
  */
 export const WIDGETS: readonly WidgetSpec[] = [
 	{
@@ -115,8 +116,11 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		// The shipped POSITION is the last resort — the module offers the host a
 		// game-anchored default that clears every read region, and this applies
 		// only when there is no board to anchor to (see `WidgetHost`'s
-		// `defaultsFor`). The width is also the wrap ceiling for the room name
-		// and the kill line under the diamond.
+		// `defaultsFor`). The width is also the wrap ceiling for the two text
+		// lines the widget still has: the room's name, and `doorWarning`'s one
+		// line. The kill is a GLYPH inside the shape since POE-248, not a line
+		// under it, so the box is fuller than these numbers were sized for and
+		// the height is now slack rather than a fit.
 		defaults: { x: 40, y: 300, w: 190, h: 215 },
 		resizable: true
 	}

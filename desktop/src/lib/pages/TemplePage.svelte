@@ -224,7 +224,6 @@
 			{/if}
 			<span class="legend">
 				<span class="legend-item legend-open">— open</span>
-				<span class="legend-item legend-uncertain">-- reported open, hidden by the frame</span>
 				<span class="legend-item legend-unresolved">·· could not be read</span>
 				<span class="legend-item legend-recommended">— recommended</span>
 			</span>
@@ -580,10 +579,6 @@
 
 	.legend-open {
 		color: var(--color-lab-green);
-	}
-
-	.legend-uncertain {
-		color: var(--color-lab-green-muted);
 	}
 
 	.legend-unresolved {

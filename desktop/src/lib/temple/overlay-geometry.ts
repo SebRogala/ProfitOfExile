@@ -1,6 +1,6 @@
 /**
- * Where the temple's two overlay surfaces go, and what shape the door diamond
- * is (POE-244).
+ * Where the temple's two overlay surfaces go, and what shape the room widget
+ * draws (POE-244, POE-248).
  *
  * The sibling of `view.ts`: that file words the advice, this one places it. Both
  * exist because a `.svelte` file has no unit-test harness in this app and an
@@ -35,18 +35,6 @@ import { edgeState, type EdgeState } from './view';
 
 /** Gap between a placed box and the thing it is placed against, CSS px. */
 export const CALLOUT_GAP_CSS = 16;
-
-/**
- * How far short of the architect block the arrow STOPS, CSS px.
- *
- * The arrowhead is drawn at the line's end, so a line that ran all the way to
- * the block's edge put a filled triangle on top of the first glyphs of the
- * block — over OCR input, which is the one thing this whole file exists to
- * prevent. The head is 8 px and its tip reaches half a pixel past the line end,
- * so a 10 px standoff lands the tip about 9 px clear of the text while still
- * unmistakably touching the block.
- */
-export const ARROW_STANDOFF_CSS = 10;
 
 /** How far below the top of the host the leave-the-map banner wants to sit. */
 export const BANNER_TOP_CSS = 16;
@@ -112,11 +100,15 @@ export interface BoxSize {
  * Where the kill callout goes.
  *
  * Wanted position: immediately LEFT of the architect block, vertically centred
- * on it — which is the owner's mock, a box beside the panel with an arrow into
- * the block. `avoidRects` then slides it off whatever it lands on, and the
- * first thing it lands on is the side panel's own OCR crop, which is what puts
- * the box clear of the panel rather than on top of the text the arrow points
- * at.
+ * on it — a box beside the panel, level with the block it is about.
+ * `avoidRects` then slides it off whatever it lands on, and the first thing it
+ * lands on is the side panel's own OCR crop, which is what puts the box clear
+ * of the panel rather than on top of the text it is naming.
+ *
+ * There is no longer a LINE from the box to the block (POE-248, owner: no
+ * arrows anywhere). Being level with the block, and outside the panel it
+ * belongs to, is the whole of what points at it; the kill glyph on the room
+ * widget is the pointer that survives the panel closing.
  *
  * With no block rect (a text-only read, or a read whose OCR carried no boxes)
  * the panel crop is the anchor instead: the box goes to its left, at its top.
@@ -162,74 +154,6 @@ export function calloutPlacement(input: {
 		h: box.h
 	};
 	return avoidRects(wanted, obstacles, host);
-}
-
-/** A straight arrow, CSS px, from a box edge to a block edge. */
-export interface CalloutArrow {
-	x1: number;
-	y1: number;
-	x2: number;
-	y2: number;
-}
-
-/** The four edge midpoints of a rectangle, in N/E/S/W order. */
-function edgeMidpoints(rect: WidgetRect): [number, number][] {
-	return [
-		[rect.x + rect.w / 2, rect.y],
-		[rect.x + rect.w, rect.y + rect.h / 2],
-		[rect.x + rect.w / 2, rect.y + rect.h],
-		[rect.x, rect.y + rect.h / 2]
-	];
-}
-
-/** The centre of a rectangle. */
-function centreOf(rect: WidgetRect): [number, number] {
-	return [rect.x + rect.w / 2, rect.y + rect.h / 2];
-}
-
-/** Whichever of `points` is nearest `[px, py]`. Ties keep the earlier one, so
- *  the N/E/S/W order above is the tie-break and the result is deterministic. */
-function nearest(points: [number, number][], px: number, py: number): [number, number] {
-	let best = points[0];
-	let bestDistance = Infinity;
-	for (const [x, y] of points) {
-		const distance = (x - px) ** 2 + (y - py) ** 2;
-		if (distance < bestDistance) {
-			best = [x, y];
-			bestDistance = distance;
-		}
-	}
-	return best;
-}
-
-/**
- * The arrow from the callout to the block it is about.
- *
- * Edge MIDPOINTS at both ends rather than the geometrically shortest segment
- * between the two rectangles: the shortest segment between two boxes that
- * nearly line up is a stub a few pixels long against a corner, which reads as a
- * smudge. A midpoint-to-midpoint line always leaves the box from a side and
- * always arrives at the middle of a side, which is the shape that reads as
- * "this one".
- *
- * The target end is chosen first — nearest the box's centre — and the box end
- * then follows it, so the line does not start on the far side of the box from
- * where it is going.
- */
-export function calloutArrow(box: WidgetRect, target: WidgetRect): CalloutArrow {
-	const [bcx, bcy] = centreOf(box);
-	const [tx, ty] = nearest(edgeMidpoints(target), bcx, bcy);
-	const [x1, y1] = nearest(edgeMidpoints(box), tx, ty);
-	// Stop short of the block: the head is drawn AT the line's end, and a line
-	// that reached the edge put a filled triangle over the block's first
-	// glyphs. Pulled back along the line itself, so the direction is unchanged.
-	const dx = tx - x1;
-	const dy = ty - y1;
-	const length = Math.hypot(dx, dy);
-	// A degenerate line (the box's chosen edge midpoint IS the target's) has no
-	// direction to pull back along; leave it, since there is nothing to draw.
-	const pull = length > ARROW_STANDOFF_CSS ? ARROW_STANDOFF_CSS / length : 0;
-	return { x1, y1, x2: tx - dx * pull, y2: ty - dy * pull };
 }
 
 /**
@@ -318,18 +242,19 @@ export function bannerPlacement(input: {
 	);
 }
 
-// ------------------------------------------------------- the door diamond --
+// --------------------------------------------------------- the room shape --
 
 /**
- * How big a seal is drawn, as a radius in the diamond's own units — which are
- * SEAL RING radii, so every seal centre is at exactly 1.0 from the origin
- * (`markers::SEAL_RING_FRACTION`).
+ * How big a seal is drawn, as a radius in the room's own units — which are
+ * HALF-LONG-WALLS, so a same-row corridor's seal is at exactly 1.0 from the
+ * centre and the four diagonals at 0.938 and 1.034
+ * (`markers::ROOM_LONG_FRACTION`).
  *
  * The panel's own seals are 11-25 px across in a 200 px rect, i.e. a radius of
- * about 0.15 ring radii. This is deliberately larger: the widget is roughly a
- * fifth of the panel's size and is glanced at mid-incursion, so fidelity to the
- * game's proportions loses to being able to see the thing. The RATIO to
- * [`SEAL_RADIUS_SUGGESTED`] is what has to be unmistakable.
+ * about 0.15 of the same unit. This is deliberately larger: the widget is
+ * roughly a fifth of the panel's size and is glanced at mid-incursion, so
+ * fidelity to the game's proportions loses to being able to see the thing. The
+ * RATIO to [`SEAL_RADIUS_SUGGESTED`] is what has to be unmistakable.
  */
 export const SEAL_RADIUS = 0.2;
 /** The advisor's door, drawn to be found rather than read. */
@@ -342,8 +267,9 @@ export interface PlacedSeal {
 	x: number;
 	y: number;
 	radius: number;
-	/** `open` / `uncertain` / `unresolved` / `closed` — the SAME rule the board
-	 *  and the page use (`view.ts`), never a second reading of `doors`. */
+	/** `open` / `unresolved` / `closed` — the SAME rule the board and the page
+	 *  use (`view.ts`), never a second reading of `doors`. Which of the three
+	 *  actually get DRAWN is [`sealVisible`]. */
 	state: EdgeState;
 	/** Whether the top recommendation says to open this one. */
 	suggested: boolean;
@@ -368,17 +294,21 @@ export interface DiamondGeometry {
 }
 
 /**
- * The current room's diamond, ready to draw.
+ * The current room's shape, ready to draw.
  *
  * Every number here comes from Rust: `diamond.corners` is
- * `markers::diamond_corners()` and `seal.pos` is `markers::seal_position()`,
- * which is the fitted projection the door READER measures angles with. Nothing
- * in this file re-derives a position — the whole reason the slice carries the
+ * `markers::diamond_corners()` — a rotated RECTANGLE since POE-248, measured
+ * off the panel's gold outline — and `seal.pos` is `markers::seal_position()`,
+ * the point where each corridor's own direction leaves that rectangle. Nothing
+ * in this file re-derives a position: the whole reason the slice carries the
  * shape is that the alternative was a TypeScript copy of `AXIS_X` / `AXIS_Y`
  * that a re-fit would leave behind.
  *
  * The viewBox is the corners' bounding box grown by the largest seal radius, so
- * a suggested seal on a corner is not clipped by the edge of the element.
+ * a suggested seal on a corner is not clipped by the edge of the element. It is
+ * what makes the widget's aspect follow the shape rather than a number in a
+ * stylesheet — which matters more now that the shape is not symmetric about
+ * either screen axis.
  */
 export function diamondGeometry(
 	diamond: DiamondView,
@@ -409,4 +339,104 @@ export function diamondGeometry(
 		}),
 		viewBox: `${minX} ${minY} ${width} ${height}`
 	};
+}
+
+/**
+ * Whether a seal is drawn at all (POE-248).
+ *
+ * The owner's rule, and it is subtractive: the room widget shows the outline,
+ * the OPEN doors in the game's own green, and the advisor's door bigger and
+ * purple. A closed corridor and one the read could not settle are both DRAWN
+ * NOWHERE — *"the closed/uncertain seals add chaos"* — which leaves the widget
+ * saying only the two things a player acts on: where the walls are, and which
+ * hole in them to buy.
+ *
+ * Not "hide everything but the suggestion": open is the game's own semantics
+ * and the thing the suggestion is read against, so it stays.
+ */
+export function sealVisible(seal: PlacedSeal): boolean {
+	return seal.suggested || seal.state === 'open';
+}
+
+/** Which of the two architect blocks a kill is. The wire strings, exactly. */
+export type ArchitectKind = 'upgrade' | 'change';
+
+/** The kill, as a mark inside the room. */
+export interface KillGlyph {
+	/** The icon spot, in `DiamondView.corners`' units — the same space the
+	 *  outline and the seals are in, so one transform places all three. */
+	position: { x: number; y: number };
+	/** Which glyph to draw: an up-arrow for an upgrade, a two-way arrow for a
+	 *  change. The component owns the paths; this owns which one. */
+	kind: ArchitectKind;
+}
+
+/** The half of an offer that placing its glyph needs. */
+interface GlyphOffer {
+	kind: string;
+	rect: CaptureRect | null;
+}
+
+/**
+ * Where to mark the kill on the room widget, or null when there is nothing to
+ * mark (POE-248).
+ *
+ * The kill used to be a LINE of text under the diamond — `KILL <architect> →
+ * <room>`. Owner, after the first live session: a mark, not a sentence. The
+ * game's own panel prints one architect icon in each half of the room diamond,
+ * so marking the right half says which block to click, and the glyph's SHAPE
+ * says which kind of kill it is — both at a glance, with nothing to read.
+ *
+ * # Which half, and why it is the RECT that decides
+ *
+ * The two spots are Rust's (`markers::architect_icons`, measured on the crops)
+ * and arrive on the diamond as `topIcon` / `bottomIcon`; nothing here
+ * re-derives one. What the measurement does NOT settle is which architect's
+ * icon the panel draws in which half — the one board it was taken from had the
+ * `upgrade` block on top, so "upgrade is the top-right one" and "the top block
+ * is the top-right one" are indistinguishable on it.
+ *
+ * So the POSITIONAL reading is the one used: the panel prints its blocks top to
+ * bottom (`panel::reading_order` sorts on the box top) and POE-243 publishes
+ * each block's own OCR rect, so the chosen block's `rect` against its siblings'
+ * is a fact about THIS panel rather than an assumption carried from another.
+ * Two rects are needed for it to mean anything — one block read alone could be
+ * either — and `kind` is the fallback below that, which is what a text-only
+ * read (no boxes at all) gets.
+ *
+ * Null when the ranking named no architect, when the offer's `kind` is not one
+ * of the two wire strings, or when the payload predates POE-248 and has no
+ * spots — a glyph drawn at the origin would sit in the middle of the room and
+ * claim a block nobody chose.
+ */
+export function killGlyph(
+	diamond: DiamondView,
+	offer: GlyphOffer | null,
+	offers: readonly GlyphOffer[] = []
+): KillGlyph | null {
+	if (offer === null) return null;
+	if (offer.kind !== 'upgrade' && offer.kind !== 'change') return null;
+	const kind: ArchitectKind = offer.kind;
+	// The rect when the read can order the blocks, the kind when it cannot.
+	const top = topBlock(offer, offers) ?? kind === 'upgrade';
+	const spot = top ? diamond.topIcon : diamond.bottomIcon;
+	if (spot === null || spot === undefined) return null;
+	return { position: { x: spot[0], y: spot[1] }, kind };
+}
+
+/**
+ * Whether `offer` is the block the panel printed first, or null when the read
+ * cannot say.
+ *
+ * Identity-free on purpose — it compares the chosen rect's top against the
+ * smallest top among every offer that has one, rather than against "the other
+ * offers", so a caller that rebuilt the list does not silently get `false`.
+ */
+function topBlock(offer: GlyphOffer, offers: readonly GlyphOffer[]): boolean | null {
+	if (offer.rect === null) return null;
+	const tops = offers.map((o) => o.rect).filter((r): r is CaptureRect => r !== null);
+	// One rect orders nothing: a single block read could be either of the two
+	// the panel drew, and POE-243's `forcedKill` is exactly that case.
+	if (tops.length < 2) return null;
+	return offer.rect[1] <= Math.min(...tops.map((r) => r[1]));
 }

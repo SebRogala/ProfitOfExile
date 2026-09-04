@@ -946,32 +946,31 @@ pub fn apply_status(slice: &mut TempleSlice, outcome: TickOutcome) {
     }
 }
 
-/// Fold one ARM-GATE event into the slice: the status, and the advice the gate
-/// event ends.
+/// Fold one ARM-GATE event into the slice.
 ///
-/// [`apply_status`] plus the one thing only this transition may do — and the
-/// split is POE-244's, so the boundary is in a pure function rather than in a
-/// publish closure no test can reach.
+/// **Nothing but the status, since POE-248** — and the function survives its
+/// own body for the same reason it was written: the loop's gate publish goes
+/// through one named seam, so what a gate event may touch is a question with a
+/// place to be answered rather than a line in a closure no test can reach.
 ///
-/// **The advice ends at the stand-down and nowhere earlier.** It used to end at
-/// [`miss`]'s retire, which is wrong for the reason that function's note gives:
-/// [`TempleStatus::PanelNotVisible`] is what the whole INCURSION looks like, and
-/// the door widget is the only surface on screen then. A stand-down is the
-/// honest boundary instead — nothing has put an incursion in scope for
-/// [`super::trigger::PANEL_TAIL_MS`], the loop has stopped looking, and the
-/// overlay is hidden for [`TempleStatus::Waiting`] anyway. The reasoning is
-/// [`slice::force_off`]'s: a move under a badge that says the module is not
-/// looking is still a move the player could act on.
+/// # What it stopped doing, and why
 ///
-/// [`TickOutcome::Armed`] leaves it alone. Arming publishes `Idle` and the next
-/// read replaces the whole slice, so clearing there would blank the page for
-/// the seconds between the voice line and the first anchor.
+/// POE-244 dropped the advice here, at the stand-down. It was already the
+/// second guess at where a move expires — [`miss`]'s retire was the first, and
+/// that note explains why it was wrong — and it is wrong for the same reason
+/// one step further out. Owner, 2026-09-04, on the first live session: the door
+/// diamond *"disappeared when the layout panel closed"*, and the log says why —
+/// `12:32:10 capture armed by the panel on screen` … `12:39:05 capture stood
+/// down`, with the player still in the room the widget was describing.
+///
+/// The rule now is that the kill callout lives with the PANEL and the room
+/// widget lives with the INCURSION. A gate is a statement about whether
+/// anything is LOOKING at the screen, and the incursion is not over because the
+/// module stopped looking. What ends the advice is a fact about the game:
+/// [`super::trigger::advice_end`]'s zone change or next Alva line, a read that
+/// replaces it, or the module being switched off ([`slice::force_off`]).
 pub fn apply_gate(slice: &mut TempleSlice, outcome: TickOutcome) {
     apply_status(slice, outcome);
-    if outcome == TickOutcome::Disarmed {
-        slice.advice = None;
-        slice.mode = None;
-    }
 }
 
 // ------------------------------------------------------------ text ROIs --
@@ -3871,12 +3870,17 @@ mod tests {
         assert_eq!(slice.mode.as_deref(), Some("chase"));
     }
 
-    /// And the boundary that DOES end it: the loop has stopped looking, so a
-    /// recommendation under a "waiting for Alva" badge is a move the player
-    /// could still act on with nothing behind it. Fails if the drop is moved
-    /// back to the retire, or dropped altogether.
+    /// …and the stand-down does not end it either, since POE-248.
+    ///
+    /// The measured failure: `12:32:10 capture armed by the panel on screen` …
+    /// `12:39:05 capture stood down`, and the door diamond went with it while
+    /// the player was still in the room it described. A gate says whether
+    /// anything is LOOKING; the incursion is not over because the module
+    /// stopped looking. Fails if the POE-244 drop is put back.
+    ///
+    /// The two lines that DO end it are `trigger::advice_end`'s, tested there.
     #[test]
-    fn standing_the_loop_down_ends_the_advice_with_it() {
+    fn standing_the_loop_down_leaves_the_room_widget_its_advice() {
         let mut slice = TempleSlice {
             status: TempleStatus::PanelNotVisible,
             advice: Some(slice::AdviceView {
@@ -3893,8 +3897,11 @@ mod tests {
         apply_gate(&mut slice, TickOutcome::Disarmed);
 
         assert_eq!(slice.status, TempleStatus::Waiting);
-        assert_eq!(slice.advice, None);
-        assert_eq!(slice.mode, None);
+        assert!(
+            slice.advice.is_some(),
+            "the room widget lives with the incursion, not with the capture",
+        );
+        assert_eq!(slice.mode.as_deref(), Some("chase"));
     }
 
     /// Arming does NOT clear it: the next read replaces the whole slice, and

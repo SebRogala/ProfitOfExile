@@ -329,9 +329,12 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   conversion between them beyond the window's own scale factor.
 - **The shipped widget list.** Two, both the temple's:
   `temple.advice` — the KILL CALLOUT (POE-244), `anchored`, a box carrying the
-  architect's name and one reason with an arrow into the block the advisor chose;
-  and `temple.door` — the ROOM DIAMOND, user-placed and persisted, the same
-  isometric shape the side panel draws with the advisor's door bigger and purple.
+  architect's name and one reason, placed level with the block the advisor chose
+  and just outside the game's own side panel; and `temple.door` — the ROOM
+  WIDGET, user-placed and persisted, the same isometric rectangle the side panel
+  draws, with the OPEN doors green, the advisor's door bigger and purple, and the
+  kill marked by a cyan glyph on the chosen architect's own icon spot inside the
+  room (POE-248).
   **What the temple overlay deliberately stopped showing in POE-244**, all of it
   still on the Temple page: the reader's status lines (`reading…`, `between
   rooms — layout only`), the top gamble and its risk %, the unread-plate badge,
@@ -341,6 +344,12 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   it sits under and that widget is the one still on screen while the player is
   acting; and the `leaveMap` banner, which is a decision about the map rather
   than a reading.
+  **Retired again in POE-248**, after the first live session: the callout's
+  ARROW (owner: no arrows anywhere — placement points, and the room widget's
+  glyph is what survives the panel closing), the room widget's two text lines
+  (`KILL <architect> → <room>` and `open <edge>`), and its red CLOSED and grey
+  UNSETTLED seals. A corridor the read could not settle is now drawn nowhere at
+  all, and `doorWarning()` is what says so in words.
   `temple.board` (the lattice redrawn over the game, POE-225) is RETIRED: the
   board is already on screen behind the window, and the copy cost space that has
   to be kept clear of the module's own OCR crops. Its persisted rectangle is left
@@ -401,13 +410,15 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   nearest position clear of every obstacle, or `null` — and `null` means the box
   is NOT drawn. Everything placed goes through it, the leave-the-map banner
   included: pinned top-centre it reached x 1200 on the committed 1920×1080 frame
-  where the panel's crop starts at 1131. The arrow is the ONE bounded exception,
-  and its bound is explicit: a 3 px LINE crossing a crop is not what breaks an
-  OCR read, but the arrowHEAD is a filled triangle, so `calloutArrow` stops the
-  line `ARROW_STANDOFF_CSS` (10 px) short of the block and the head is 8 px in
-  USER units (`markerUnits="userSpaceOnUse"` — the default is `strokeWidth`,
-  which multiplied an 8 px head by the 3 px stroke into a 24 px triangle sitting
-  on the block's first glyphs). The point lands about 9 px clear of the text. The rects are published
+  where the panel's crop starts at 1131. **There is no longer an exception.**
+  POE-244 carved one out for the callout's arrow — a 3 px line may cross a crop
+  where a filled box may not, with the arrowHEAD stopped `ARROW_STANDOFF_CSS`
+  short of the block so the triangle did not land on its first glyphs — and
+  POE-248 removed the arrow (owner: no arrows anywhere), and the exception with
+  it: no PLACER output crosses a read region any more. That is the class this
+  rule binds — a rectangle the user dragged is still outside it, which is why
+  the Debug-capture item below tells you to blame a drag rather than a defect.
+  The rects are published
   rather than recomputed in TypeScript for the usual reason — a copy of any of the
   five constants would drift with nothing to fail — and `neverCoverRects` returns
   an EMPTY list both when there is no layout and when the scale factor has not
@@ -721,6 +732,9 @@ runtime failure mode:
 Do not delete these observations merely because a future code path appears
 simpler; reproduce the Windows behavior first or supersede them with a dated
 regression test/decision.
+
+> The temple module's arming / detection / OCR / show-hide ORDER is normative in
+> [TEMPLE-LIFECYCLE.md](TEMPLE-LIFECYCLE.md) (POE-249); the smoke items below test the rules it names.
 
 ## Windows smoke checks
 
@@ -1156,19 +1170,20 @@ touching the named path.
      the panel is only ever opened with an Alva line or the temple area in scope
      is UNVERIFIED (see `temple/trigger.rs`).
 
-- **The kill callout points at the right block, on both machines** (POE-244):
-  open a temple layout panel with two architect blocks. A box must appear beside
-  the panel reading `KILL <architect>` with one reason under it, and its arrow
-  must land on the block whose name the box carries — not the other one, and not
-  between them. Check on BOTH machines (1920×1080 laptop and the desktop): the
-  block rect is the union of that block's OCR line boxes in capture px, and the
-  only step to CSS is the window's own scale factor, so a display at anything but
-  100 % is where a missing or doubled conversion shows. Then close one block's
-  read (a one-of-two read, which the panel produces on its own often enough —
-  or force it by covering the lower block): the box must carry
-  `(only architect read)` inside the title line. A read with no block rect at all
-  draws the box beside the panel with NO arrow, which is correct and not a bug —
-  there is nothing on screen it could honestly point at.
+- **The kill callout sits level with the right block, on both machines**
+  (POE-244, arrow removed in POE-248): open a temple layout panel with two
+  architect blocks. A box must appear beside the panel reading
+  `KILL <architect>` with one reason under it, VERTICALLY CENTRED on the block
+  whose name it carries — not on the other one, and not between them. There is
+  no arrow any more; the placement is the whole pointer. Check on BOTH machines
+  (1920×1080 laptop and the desktop): the block rect is the union of that
+  block's OCR line boxes in capture px, and the only step to CSS is the window's
+  own scale factor, so a display at anything but 100 % is where a missing or
+  doubled conversion shows. Then close one block's read (a one-of-two read,
+  which the panel produces on its own often enough — or force it by covering the
+  lower block): the box must carry `(only architect read)` inside the title
+  line. A read with no block rect at all puts the box at the panel crop's top
+  instead, which is correct and not a bug — there is no block to be level with.
 - **Nothing is drawn over what the module reads** (POE-244) — the check the
   static gates cannot reach, because the failure is the app reading its own
   overlay back as game pixels. With the callout and the door diamond both on
@@ -1178,43 +1193,72 @@ touching the named path.
   toggled off on the same board — the room title, both architect blocks, the
   incursion count, `current`, `doors` and `unknownRooms` must be identical. Any
   difference is a surface sitting on a crop, and the first suspects are the
-  callout's box (the arrow may cross text; the box may not) and a door diamond
-  the user has dragged onto a plate. `avoidRects` cannot protect the second one —
+  callout's box and a room widget the user has dragged onto a plate.
+  `avoidRects` cannot protect the second one —
   once the user places the widget it goes where they put it — so a difference
   that only appears after a drag is the user's placement and not a defect.
-- **The door diamond survives the incursion, WITH its advice** (POE-244, needs
-  POE-246's arming): with the panel open and a room read, note the diamond, the
-  purple seal, the `open <edge>` line and the kill line under it, then click
-  *Enter Incursion*. All four must STAY for the whole timed run — the layout
-  panel and the game's own diamond are gone by then, and this is the only thing
-  still naming the architect. The shape alone is not a pass: the review that
-  caught this found the widget drawing a room with **no purple seal, no door
-  line and no kill name**, because the capture loop's retire dropped `advice`
-  and `panel_not_visible` is reached only through that retire. `app.log` should
-  show the status going to `panel_not_visible` rather than `waiting`. It is
-  expected to go away roughly two minutes after the panel was last on screen,
-  and the advice goes with the STAND-DOWN and not before.
-- **The diamond is the room, in the game's orientation** (POE-244): with the
-  panel open, hold the widget beside the game's own diamond. The two must be the
-  same shape at the same rotation, with a seal in the same direction for every
-  corridor — green where the game draws green, red where it draws red — and the
-  advisor's door the one drawn bigger and purple. The Rust side pins the
-  geometry against the committed crops through the shipped detector
-  (`the_committed_crops_land_within_ten_px_of_the_seal_ring`, worst measured
-  case 8.94 px on a 200 px rect), so what this check adds is the two things a
-  fixture cannot see: that the OUTLINE reads as the same shape at widget size,
-  and that the ring and the outline still look like one drawing. A widget
-  rotated as a whole means `AXIS_X` / `AXIS_Y` were re-fitted; seals at visibly
-  different distances from the centre mean something reintroduced a per-wall
-  radius, which is the model POE-244 shipped and the review measured as wrong
-  (rms 22.2 px, max 44.5 px against the panel).
-- **The arrowhead does not sit on the block's text** (POE-244): with the callout
-  up, look at where the arrow ends. The point must stop clearly SHORT of the
-  architect block's first glyphs, not on them — about 9 px at 100 % scale — and
-  the head must be a small triangle rather than a large one. A head that has
-  swallowed the first word means `markerUnits` has gone back to its
-  `strokeWidth` default, which multiplies the 8 px head by the 3 px stroke.
-  Confirm with the Debug-capture diff below: the block still reads.
+- **The room widget survives the incursion, and the stand-down** (POE-244,
+  POE-246's arming, rewritten in POE-248): with the panel open and a room read,
+  note the outline, the green open seals, the purple suggested seal and the cyan
+  kill glyph, then click *Enter Incursion*. All four must STAY for the whole
+  timed run — the layout panel and the game's own diamond are gone by then, and
+  this widget is the only surface left.
+  **And they must still be there after `Temple: capture stood down` appears in
+  `app.log`**, which is the POE-248 half. That line arrives roughly two minutes
+  after the panel was last on screen — mid-incursion, in the live session that
+  produced this item (`12:32:10 capture armed by the panel on screen` …
+  `12:39:05 capture stood down`, widget gone). The capture stopping is a
+  statement about whether anything is LOOKING; the incursion is not over because
+  of it. What DOES take the widget down is a zone change, the next Alva voice
+  line after the read, a new read, or the module switch — look for
+  `Temple: advice cleared — <reason>` in `app.log` and check the widget went at
+  that line and no earlier.
+  The shape alone is not a pass, either: an earlier review found the widget
+  drawing a room with **no purple seal and no kill**, because the capture loop's
+  retire dropped `advice`.
+- **The widget is the room, in the game's orientation** (POE-244, reshaped in
+  POE-248): with the panel open, hold the widget beside the game's own diamond.
+  The two must be the same shape at the same rotation — a RECTANGLE, wider along
+  one isometric axis than the other, with its two long walls carrying two doors
+  each and its two short walls one each. Green where the game draws green;
+  nothing at all where the game draws red, which is intended (POE-248) and is the
+  fastest way to tell this build from the previous one. The advisor's door is the
+  bigger purple seal, and the cyan glyph sits on the same spot inside the room as
+  the chosen architect's icon does in the game's own diamond — top-right for an
+  upgrade, bottom-left for a change.
+  The Rust side pins the geometry against the committed crops through the
+  shipped detector (`the_committed_crops_land_within_seven_px_of_the_room_wall`,
+  worst measured case 6.40 px on a 200 px rect), so what this check adds is the
+  two things a fixture cannot see: that the OUTLINE reads as the same shape at
+  widget size, and that the seals still look like holes in its walls. A widget
+  rotated as a whole means `AXIS_X` / `AXIS_Y` were re-fitted; a widget that
+  looks SQUARE means `ROOM_ASPECT` was lost and the rhombus is back; seals
+  floating off the outline mean something reintroduced the constant ring POE-244
+  shipped (the retired `SEAL_RING_FRACTION`), which POE-248 measured as the
+  worse fit — rms 5.5 px / max 9.9 px against the rectangle's 3.2 / 6.4 on the
+  same detections.
+- **The kill glyph is on the right half of the room** (POE-248): with a panel
+  open and a kill ranked, compare the widget with the game's own diamond. The
+  cyan mark must sit where THAT architect's icon is drawn, and the other half
+  must be empty. The half is keyed on the chosen block's own OCR rect — the
+  block printed FIRST gets the top-right spot — so the check is: which of the
+  two blocks did the advisor pick (the Temple page names it), and is the mark in
+  the half the game drew that block's icon in? NO mark at all with a kill ranked
+  means the icon spots did not reach the slice: a build from before POE-248, or
+  a normalisation that dropped them.
+- **A panel with the CHANGE block on top** (POE-248, the falsifier — look for
+  one): the positional rule and the one-sample upgrade/change reading disagree
+  only there, so it is the board that settles which is right. If the mark lands
+  on the block the advisor did NOT pick, the positional rule is wrong and
+  `killGlyph` should key on `kind` instead; record the board either way, because
+  one sample is what the current mapping rests on
+  (`markers::ARCHITECT_ICON_OFFSET`).
+- **The change glyph reads as two-way, not a bar** (POE-248): on a `change`
+  kill, the mark is two opposed arrows with daylight between their shafts —
+  about 12 px at the shipped widget width. If it reads as one thick bar the
+  shafts or the dark halo have been retuned past what the widget's own size
+  supports (`SHAFT` and `.kill-shadow` in `TempleDoorDiamond.svelte`), and an
+  `upgrade` mark then looks the same as a `change` one at a glance.
 - **The leave-the-map banner clears the panel** (POE-244): get a `leaveMap`
   verdict with the layout panel open (R5 fires when the temple has what it needs
   from the map). The yellow banner must not overlap the side panel — at 1920×1080
@@ -1224,8 +1268,8 @@ touching the named path.
 - **The Show checkbox reaches the callout** (POE-244): Settings → Overlay
   Positions → Temple lists BOTH widgets. The kill callout's row shows
   `placed by the game` where the door diamond shows a rectangle, and clearing its
-  Show toggle must take the callout AND its arrow off the screen while leaving
-  the door diamond up. A row that is missing, or a toggle that does nothing, is
+  Show toggle must take the callout off the screen while leaving the room widget
+  up. A row that is missing, or a toggle that does nothing, is
   the regression: an anchored widget with no switch is the only overlay surface
   the user cannot turn off.
 - **Config mode seeds the door widget where it actually sits** (POE-244): open a

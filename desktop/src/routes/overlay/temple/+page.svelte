@@ -1,20 +1,24 @@
 <script lang="ts">
 	/**
-	 * Temple builder overlay — a pointer callout and a room diamond (POE-244).
+	 * Temple builder overlay — a kill callout and a room widget (POE-244,
+	 * reworked in POE-248).
 	 *
 	 * The window is the whole game monitor and click-through everywhere; what
 	 * the player sees is two widgets inside it, and since POE-244 they are of
 	 * the two different kinds the engine supports.
 	 *
 	 * - `temple.advice` is the KILL CALLOUT: a box carrying the architect's name
-	 *   and one reason, with an arrow into the block the advisor chose, in the
-	 *   game's own side panel. ANCHORED — the module places it, because where it
-	 *   goes is a function of where the game drew the block.
-	 * - `temple.door` is the ROOM DIAMOND: the same isometric shape the panel
-	 *   draws next to the room name, with the advisor's door bigger and purple.
-	 *   USER-PLACED and persisted, and it stays up through the whole incursion
-	 *   (`overlayShowsDoors`), which is when the panel and its own diamond are
-	 *   gone and the callout has nothing left to point at.
+	 *   and one reason, placed level with the block the advisor chose and just
+	 *   outside the game's own side panel. ANCHORED — the module places it,
+	 *   because where it goes is a function of where the game drew the block.
+	 * - `temple.door` is the ROOM WIDGET: the same isometric rectangle the panel
+	 *   draws next to the room name, with the OPEN doors green, the advisor's
+	 *   door bigger and purple, and the kill marked as a cyan glyph on the
+	 *   chosen architect's own icon spot inside the room. USER-PLACED and
+	 *   persisted, and it stays up for as long as there is a move to make
+	 *   (`overlayShowsDoors`, POE-248) — through the whole incursion and past
+	 *   the capture standing down, which is when the panel and its own diamond
+	 *   are long gone.
 	 *
 	 * `temple.board` — the lattice redrawn over the game — is gone. The board is
 	 * already on screen behind this window, and the copy cost space that has to
@@ -37,6 +41,12 @@
 	 * widget: it says do not act on the shape above it, and that widget is the
 	 * one still on screen while the player is acting. The `leaveMap` banner
 	 * stays for the same reason — it is a decision about the map, not a reading.
+	 *
+	 * Retired again in POE-248, after the first live session: the callout's
+	 * ARROW (owner: no arrows anywhere), the room widget's two text lines
+	 * (`KILL <architect> → <room>` and `open <edge>`), and the red and grey
+	 * seals. What is left on the widget is the outline, the open doors, the
+	 * advisor's door and one cyan mark.
 	 *
 	 * # The rule that outranks everything else here
 	 *
@@ -78,6 +88,7 @@
 		roiRect
 	} from '$lib/temple/overlay-geometry';
 	import {
+		chosenOffer,
 		doorWarning,
 		killCallout,
 		leaveMapBanner,
@@ -90,9 +101,17 @@
 	const temple = $derived(ssot.temple);
 	/** The callout's gate: the panel is on screen and there is a ranking. */
 	const calloutVisible = $derived(overlayShowsBoard(temple.status));
-	/** The diamond's gate: one status wider, so it survives the incursion. */
-	const doorVisible = $derived(overlayShowsDoors(temple.status));
+	/** The room widget's gate, and deliberately not a status one (POE-248):
+	 *  there is a move to make and a room to draw it on. The callout lives with
+	 *  the PANEL, this lives with the INCURSION. */
+	const doorVisible = $derived(overlayShowsDoors(temple));
 	const callout = $derived(killCallout(temple));
+	/** The architect block the ranking chose, and every block this read parsed.
+	 *  The room widget needs both: the chosen block's own OCR rect is what says
+	 *  which half of the room the game drew its icon in, and one rect with no
+	 *  siblings orders nothing. */
+	const chosen = $derived(chosenOffer(temple));
+	const offers = $derived(temple.panel?.offers ?? []);
 	const suggested = $derived(suggestedDoors(temple.advice));
 	const leaveBanner = $derived(leaveMapBanner(temple.advice));
 
@@ -144,7 +163,8 @@
 	}
 
 	/** The chosen architect block in CSS px, or null when the read carried no
-	 *  boxes. A missing rect is NOT the screen origin — it is "no arrow". */
+	 *  boxes. A missing rect is NOT the screen origin — it is "place the box
+	 *  against the panel instead", which `calloutPlacement` does. */
 	function targetRect(scaleFactor: number): WidgetRect | null {
 		const rect = callout?.target?.rect;
 		return rect ? captureToCss(rect, scaleFactor) : null;
@@ -194,7 +214,8 @@
 				layout={temple.layout}
 				{suggested}
 				room={temple.panel?.room ?? null}
-				kill={callout?.title ?? null}
+				offer={chosen}
+				{offers}
 				warning={doorWarning(temple.layout)}
 			/>
 			{#if debugProbe}
