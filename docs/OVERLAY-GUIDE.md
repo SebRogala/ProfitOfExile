@@ -724,6 +724,34 @@ regression test/decision.
 
 ## Windows smoke checks
 
+### Replaying a saved capture (no game needed)
+
+The Temple page's **Debug capture** takes an optional file path (POE-124, ad18695): paste the
+full path of a dump's `screen.png` and the button reads **Debug read file** — the whole read
+path (anchor, ROIs, marker read, panel OCR, advisor) runs on that image on the real WinRT OCR
+engine and writes a new dump. The regression board is the 2026-09-03 laptop capture,
+`%APPDATA%\profitofexile\temple-debug\1788438639673\screen.png` (1920×1080, Lightning
+Workshop at C1). A pass (measured 2026-09-04 at 4b3e8dc): anchored at temple scale ≈ 1.0 with
+no search (`anchoring on the remembered screen scale …` or the scale table), `panelRect`
+≈ [1131,5,543,453], `diamondRect` ≈ [1312,118,200,200], `markerError` null (6/6 seals),
+`panel — 2 architect block(s)` naming Hayoxi (upgrade → Omnitect Reactor Plant) and Xopec
+(change → Explosives Room) with rects in `ocr-lines.json`, title Lightning Workshop.
+
+To drive it without touching the UI (from WSL, while `npx tauri dev` runs): start a SECOND
+instance of the debug exe with its own WebView2 browser process and a devtools port —
+
+```
+powershell.exe -NoProfile -Command "$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--remote-debugging-port=9222'; $env:WEBVIEW2_USER_DATA_FOLDER='C:\Users\<you>\AppData\Local\profitofexile-smoke'; Start-Process '<win repo>\src-tauri\target\debug\ProfitOfExile.exe' -WorkingDirectory '<win repo>\src-tauri' -PassThru"
+```
+
+(without the private user-data folder the argument is ignored — WebView2 shares one browser
+process per folder), then run `desktop/scripts/smoke-cdp.mjs` ON WINDOWS
+(`cmd.exe /c "cd /d <win repo> && node scripts\smoke-cdp.mjs <screen.png>"`): it finds the
+`localhost:1420` page target and invokes `temple_debug_capture` with the path, printing the
+report. **Stop the second instance before any Rust rebuild** — a running exe blocks
+`tauri dev`'s relink. This is how POE-230/234/243 were accepted on real pixels after the
+temple session was gone.
+
 Before any Windows build, run `make desktop-check-windows`: it type-checks the
 `cfg(windows)` half of the crate (overlay hook, click-through setup, capture)
 against the `x86_64-pc-windows-gnu` target inside the desktop image, which the
