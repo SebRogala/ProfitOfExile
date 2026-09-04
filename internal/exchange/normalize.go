@@ -128,7 +128,7 @@ func Normalize(p *HourPayload) ([]Row, Stats) {
 		// Both pairs are judged, independently of each other and of whether the
 		// row prices: the counter reports what the feed sent, not what the
 		// engine can use.
-		for i, pair := range [2][2]int64{
+		for side, pair := range [2][2]int64{
 			{row.LowestRatioA, row.LowestRatioB},
 			{row.HighestRatioA, row.HighestRatioB},
 		} {
@@ -139,7 +139,7 @@ func Normalize(p *HourPayload) ([]Row, Stats) {
 			if stats.NonReduced == 1 {
 				firstNonReducedMarket = row.MarketID
 				firstNonReducedPair = fmt.Sprintf("%d/%d", pair[0], pair[1])
-				if i == 0 {
+				if side == 0 {
 					firstNonReducedSide = "lowest"
 				} else {
 					firstNonReducedSide = "highest"
