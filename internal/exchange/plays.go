@@ -91,9 +91,15 @@ type Leg struct {
 	// is false Fair is 0 and Suspect is false: with no anchor there is nothing
 	// to call the extreme suspect against.
 	FairOK bool `json:"fairOk"`
-	// Tick is this market's price resolution in the hour, as a fraction of the
-	// price: 0.5 means the next representable price is 50% away. See tickOf for
-	// why it is the strongest predictor of a fake spread.
+	// Tick is this market's price resolution, as a fraction of the price: 0.5
+	// means the next representable price is 50% away. See tickOf for why it is
+	// the strongest predictor of a fake spread.
+	//
+	// WHICH HOUR it reads is the scored one on every leg that had a live hour of
+	// its own — a window-PRICED leg included, whose step deliberately stays
+	// current while its price does not (WindowPriced). On a RESCUED leg there is
+	// no such hour, so this is the newest contributing window row's step, as old
+	// as the price beside it and no older.
 	Tick float64 `json:"tick"`
 	// Volume is the units of Item traded on this market in the hour.
 	Volume float64 `json:"volume"`
@@ -140,10 +146,19 @@ type Leg struct {
 	// posted. It is a MARK and never an order (ADR-018) and never a hide
 	// (ADR-017).
 	//
-	// What does NOT move with it: Tick, Volume and Stock stay the scored hour's,
-	// so on such a leg Tick is no longer 1/max(PriceItemQty, PriceQuoteQty) —
-	// the price and the step come from different hours on purpose, because the
-	// step is what the market can express NOW.
+	// What does NOT move with it depends on WHICH KIND of window-priced leg this
+	// is (obs, in direct.go). On an HOUR-LIVE one — an hour that traded, and
+	// traded too little to print two sides — Tick, Volume and Stock stay the
+	// SCORED hour's, so the price and the step come from different hours on
+	// purpose, because the step is what the market can express NOW. On a RESCUED
+	// one — no row this hour, or one that traded under Config.MinVolumePerHour —
+	// there is no such hour, so all three come from the newest CONTRIBUTING
+	// window row instead, no older than the price beside them.
+	//
+	// Either way Tick need not be 1/max(PriceItemQty, PriceQuoteQty): tickOf
+	// takes the COARSER of the source row's two pairs, and a rescued leg's price
+	// may have been printed by an older contributing row than the one the step
+	// was read from. The identity is not a wire invariant on any leg.
 	//
 	// What does move with it: Fair, which becomes the window's POOLED
 	// volume-weighted price so the suspect bands compare like with like. A
@@ -164,10 +179,12 @@ type Leg struct {
 // Play is one ranked opportunity: ONE hour's PRICES, plus two cross-hour
 // readings of how the recipe has been behaving.
 //
-// Every price-shaped number a Play carries comes from a single feed hour, the
-// one LastHour names — and for a served play that is the window's NEWEST hour,
-// the last snapshot, because BestPlays drops any recipe the feed did not price
-// there. No price is blended across hours, because a blend is a trade
+// Every price-shaped number a Play carries comes from a single feed hour — the
+// one LastHour names on a play priced in its own scored hour, and one of the
+// hours inside the trailing clock window on a WindowPriced one. Either way a
+// served recipe cleared the window's NEWEST hour, the last snapshot, because
+// BestPlays drops any recipe that did not clear there.
+// No price is blended across hours, because a blend is a trade
 // nobody could have made: Mawr Blaidd/Chaos printed lows of 62.5-81 chaos in
 // four consecutive hours against a VWAP near 250, which is why a price shown
 // here belongs to one hour.
@@ -182,10 +199,13 @@ type Leg struct {
 // and neither replaces one — the legs, RoiPct, Roi and Investment stay the last
 // snapshot's, and ADR-016 scopes the exception.
 //
-// RoiPct, Roi, Investment, Tick and Depth are arithmetic on that one hour's
-// legs — a ratio, a product, a min or a max across them — so a client can
-// recheck them from what it shows; Turnover is the same hour's quote-side volume
-// valued in chaos, which the legs do not carry. The simulation's four —
+// RoiPct, Roi, Investment, Tick and Depth are arithmetic on the SERVED legs — a
+// ratio, a product, a min or a max across them — so a client can recheck them
+// from what it shows, whichever hour those legs read: on a WindowPriced play the
+// prices they are computed from are the trailing window's, and on a rescued leg
+// the Tick and Volume they are computed from are the newest contributing window
+// row's. Turnover is those same legs' quote-side volume valued in chaos, which
+// the legs do not carry. The simulation's four —
 // ExpectedRoi, ExpectedRoiPct, SimEntries and LowCoverage — are the fields a
 // client CANNOT recheck from the row, because their inputs are hours the row
 // does not carry. LowLiquidity is the odd one: its input is this row's own
@@ -285,9 +305,13 @@ type Play struct {
 	// inside the last Config.WindowPriceHours clock hours, and WindowHours says
 	// how many of those hours priced.
 	//
-	// LastHour, Tick and the result's DivineChaosRate stay the SCORED hour's,
-	// and so does ExpectedRoi — the fill simulation reads the legs' hour
-	// channels only, which is what keeps ADR-016's calibration intact.
+	// LastHour and the result's DivineChaosRate stay the SCORED hour's, and so
+	// does ExpectedRoi — the fill simulation reads the legs' hour channels only,
+	// which is what keeps ADR-016's calibration intact. Tick stays the scored
+	// hour's on every leg that HAD one, which is the whole of a window-PRICED
+	// play; on a RESCUED leg (no row this hour, or one under
+	// Config.MinVolumePerHour) there is no such hour, so that leg's step comes
+	// from the newest contributing window row (Leg.Tick).
 	WindowPriced bool `json:"windowPriced"`
 	// WindowHours is the widest window-priced leg's contributing-hour count, 0
 	// when the play is not window-priced. It is the span the reader judges the
@@ -336,11 +360,22 @@ type Play struct {
 	// and "we measured this and it is bad" are different claims and only the
 	// second deserves a place in the order.
 	LowCoverage bool `json:"lowCoverage"`
-	// LastHour is the hour every price above was read from, UTC. For a served
-	// play it is always the window's NEWEST hour: BestPlays drops a recipe that
-	// did not clear in the last snapshot, so a stale row can never present
-	// itself as a current price. HoursSeen, not this field, is what says how
-	// long the recipe has been holding up.
+	// LastHour is the hour this recipe was SCORED at, UTC — and on a play whose
+	// every leg had a live hour of its own it is also the hour every price above
+	// printed in.
+	//
+	// For a served play it is always the window's NEWEST hour: BestPlays drops a
+	// recipe that did not clear in the last snapshot, where clearing since
+	// POE-252 means clearing on the recipe's own rows OR on the trailing windows
+	// carrying them (windowRescued) — so a stale row can never present itself as
+	// a current price. The chaos valuation belongs to this hour: the result's
+	// DivineChaosRate is its rate, and Investment, Roi and Turnover are priced at
+	// it.
+	//
+	// On a WindowPriced play it is NOT the hour the prices printed in. Those are
+	// realized trades from inside the trailing clock window, and their age is
+	// carried by WindowHours beside the mark, never by this field. HoursSeen, not
+	// this field, is what says how long the recipe has been holding up.
 	LastHour time.Time `json:"lastHour"`
 }
 
@@ -415,12 +450,26 @@ type Config struct {
 	// the two knobs are in one currency, and the feed publishes no count of
 	// distinct trades to read instead.
 	//
-	// It must be set ABOVE MinVolumePerHour to do anything: an hour thin enough
-	// to fall under both was already dropped by gatedLeg's liveness gate, so at
-	// ThinHourVolume <= MinVolumePerHour the window path is inert. The
-	// comparison is deliberately not written as a max() of the two — they answer
-	// different questions, and coupling them would hide the misconfiguration
-	// instead of leaving it inspectable.
+	// THE TWO HALVES OF THE WINDOW PATH ARM AT DIFFERENT LEVELS, and only an
+	// explicit 0 disarms both.
+	//
+	// The PRICING half — repricing a leg whose own hour was live — must be set
+	// ABOVE MinVolumePerHour to do anything. What it catches is an hour that
+	// traded in [MinVolumePerHour, ThinHourVolume): live enough to count, too
+	// thin to have printed two sides. At ThinHourVolume <= MinVolumePerHour that
+	// interval is empty, so no HOUR-LIVE leg is ever window-priced.
+	//
+	// The RESCUE half arms at ANY positive value, because a row that traded under
+	// MinVolumePerHour — or no row at all, which counts as volume 0 — is under
+	// this too. Such a leg takes the window whenever the window prices
+	// (windowRescued, and gatedLeg's rescued-and-unpriced drop), and it carries
+	// the window mark for the same reason: it has no price of its own to keep. So
+	// ThinHourVolume 1 against MinVolumePerHour 1 is not inert — it reprices no
+	// live hour and still relaxes liveness across the whole feed.
+	//
+	// The comparison with MinVolumePerHour is deliberately not written as a max()
+	// of the two — they answer different questions, and coupling them would hide
+	// the misconfiguration instead of leaving it inspectable.
 	//
 	// withDefaults clamps this one on a NEGATIVE only, not on <= 0 like the
 	// counts around it: an explicit 0 means "nothing is ever thin" and disarms
@@ -947,7 +996,19 @@ func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 			// and feeding them to the simulation would widen the sim window with
 			// the horizon — the one thing the shared expectation depends on not
 			// happening.
-			if i < simHours {
+			// A window-RESCUED hour is neither an entry nor a fill: it has no
+			// prices of its own, and recordSim reads only the hour channels
+			// (ADR-016's calibration lock, C3). Recording a zero would be worse
+			// than recording nothing — it would enter the mean. This is what
+			// leaves every pre-POE-252 ExpectedRoi bit-identical while the
+			// liveness relaxation reaches every market in the feed; the
+			// Apocalypse card's own quiet hour, three back in the corpus, is the
+			// case that would otherwise have moved.
+			//
+			// An hour-live hour that was merely window-PRICED still records its
+			// entry from its own hour channels, exactly as it did before.
+			rescued := c.windowRescued()
+			if i < simHours && !rescued {
 				recordSim(series, c, hour, hourRate, hourRateOK)
 			}
 			if !ranking {
@@ -963,7 +1024,7 @@ func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 				a = &aggregate{}
 				merged[c.key] = a
 			}
-			a.add(play)
+			a.add(play, !rescued)
 		}
 	}
 	if !anyRate {
@@ -985,7 +1046,33 @@ func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 	newestHour := hourAt[stamps[0]]
 	for _, key := range sortedIDs(merged) {
 		a := merged[key]
-		if a.hoursCleared < minHoursSeen {
+		// What MinHoursSeen defends is PERSISTENCE: a recipe the feed priced
+		// once in a wide window is a ghost. A window-priced row is not that. Its
+		// liveness is the window's, which is bounded at Config.WindowPriceHours,
+		// floored at Config.MinWindowVolume and disclosed on the row itself by
+		// the span mark, so the reader is told how thin the evidence is instead
+		// of the engine guessing on their behalf.
+		//
+		// At DefaultConfig this exemption is INERT, and that is worth stating
+		// rather than discovering: WindowPriceHours (6) equals the recent
+		// horizon's WindowHours (6) and both count hours by the same
+		// MinVolumePerHour predicate, so every hour that contributed to a served
+		// row's window is itself a counted hour inside the ranking window. It is
+		// defence for the configuration where the price window reaches back PAST
+		// the ranking window, where the contributing hours are outside what
+		// hoursCleared can count —
+		// TestCorpus_marketRescuedPastTheRankingWindow_isStillServed builds
+		// exactly that and is what would go red if this clause were deleted as
+		// dead code.
+		//
+		// The clause reads Play.WindowPriced, which is the mark and not the
+		// rescue, so at MinHoursSeen >= 2 it would also carry an HOUR-LIVE
+		// window-priced play whose counted hours fall under the floor. That is
+		// stated so it is not discovered: it follows the same rationale — such a
+		// play's evidence is its window's, bounded and disclosed on the row — and
+		// no shipped horizon reaches it, both DefaultHorizons entries setting
+		// MinHoursSeen 1.
+		if a.hoursCleared < minHoursSeen && !a.newest.WindowPriced {
 			continue
 		}
 		// The prices a served play shows must be the last snapshot's. A recipe
@@ -1274,19 +1361,30 @@ func roiPctOf(mode Mode, prices []float64) (float64, bool) {
 type aggregate struct {
 	newest       Play
 	hoursCleared int
+	// has says a Play has been folded in at all. It is a field of its own rather
+	// than hoursCleared == 0 because since POE-252 an hour can be served without
+	// being counted: a window-RESCUED hour replaces newest when it is newer and
+	// leaves the counter alone, so reusing the counter as the empty test would
+	// make the first rescued hour overwrite itself on the next add.
+	has bool
 }
 
 // add folds in one hour that cleared. The kept Play is replaced only by a
 // strictly newer hour, so which hour is served does not depend on the order the
-// hours arrive in; every cleared hour raises the count.
+// hours arrive in.
 //
-// The zero aggregate has no Play, and a Play's LastHour is never the zero time
-// (evaluate stamps it with the hour it scored), so the first add always takes.
-func (a *aggregate) add(play Play) {
-	if a.hoursCleared == 0 || play.LastHour.After(a.newest.LastHour) {
+// counted says the hour cleared ON ITS OWN PRICES — it is false on a
+// window-rescued hour, whose liveness came from the trailing window rather than
+// from a row of its own. Only a counted hour raises hoursCleared, which is what
+// keeps Play.HoursSeen meaning exactly what it meant before POE-252.
+func (a *aggregate) add(play Play, counted bool) {
+	if !a.has || play.LastHour.After(a.newest.LastHour) {
 		a.newest = play
 	}
-	a.hoursCleared++
+	a.has = true
+	if counted {
+		a.hoursCleared++
+	}
 }
 
 // modeRank orders modes for the ranking tie-break: the direct flip wins a tie

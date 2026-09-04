@@ -32,9 +32,19 @@ import "sort"
 //
 // Each leg also carries its OWN market's trailing window: gatedLeg reads the
 // view under the row's market id, so a thin leg of a triangle prices from the
-// window of the market it trades on and its two siblings are unaffected. The
-// route is still enumerated from ONE hour's rows — all three markets must have
-// traded in the scored hour for the triangle to exist at all.
+// window of the market it trades on and its two siblings are unaffected.
+//
+// ONE-HOP ENUMERATION IS NOT WINDOW-BOUNDED, and the asymmetry with
+// directCandidates is deliberate rather than an oversight. This function builds
+// its triangles out of the pairs present in ONE hour's rows, so a route needs
+// all three of its markets to have PUBLISHED a row in the scored hour to exist
+// at all; POE-252 relaxed which hours a market may be PRICED and kept alive
+// from, and did not widen which routes are searched for. The consequence is the
+// smallest consistent one: a triangle leg prices from its window, and is carried
+// by it when its own row traded nothing, but a triangle one of whose markets is
+// simply missing this hour is not enumerated. Widening this would mean
+// reconstructing a triangle out of three different hours' pair lists, which is a
+// different claim about what the reader can execute and is not made here.
 //
 // Output order does not depend on the order of rows: markets are indexed by
 // unordered pair, and both the items and their currency sides are sorted before
@@ -65,23 +75,34 @@ func crossQuoteCandidates(rows []Row, view windowView, cfg Config) []candidate {
 		for i := 0; i < len(quotes); i++ {
 			for j := i + 1; j < len(quotes); j++ {
 				a, b := quotes[i], quotes[j]
-				rowAB, ok := byPair[pairKey(a, b)]
-				if !ok {
+				if _, ok := byPair[pairKey(a, b)]; !ok {
 					continue
 				}
-				rowXA := byPair[pairKey(x, a)]
-				rowXB := byPair[pairKey(x, b)]
+				legAB := scoredLeg(byPair, a, b)
+				legXA := scoredLeg(byPair, x, a)
+				legXB := scoredLeg(byPair, x, b)
 
-				if c, ok := oneHopCandidate(x, a, b, rowXA, rowXB, rowAB, view, cfg); ok {
+				if c, ok := oneHopCandidate(x, a, b, legXA, legXB, legAB, view, cfg); ok {
 					candidates = append(candidates, c)
 				}
-				if c, ok := oneHopCandidate(x, b, a, rowXB, rowXA, rowAB, view, cfg); ok {
+				if c, ok := oneHopCandidate(x, b, a, legXB, legXA, legAB, view, cfg); ok {
 					candidates = append(candidates, c)
 				}
 			}
 		}
 	}
 	return candidates
+}
+
+// scoredLeg reads one market's scored-hour row out of the hour's pair index.
+//
+// A pair the hour did not publish yields a legRow with present false and an
+// EMPTY market id, which is what keeps one-hop enumeration inside the scored
+// hour: gatedLeg looks the window up by that id, windowView.rowsFor refuses the
+// empty one, and the route is dropped exactly as it was before POE-252.
+func scoredLeg(byPair map[string]Row, x, y string) legRow {
+	row, present := byPair[pairKey(x, y)]
+	return legRow{marketID: row.MarketID, row: row, present: present}
 }
 
 // oneHopCandidate builds the route A -> X -> B -> A: buy the item X against
@@ -92,7 +113,7 @@ func crossQuoteCandidates(rows []Row, view windowView, cfg Config) []candidate {
 // It returns ok == false when any of the three prices is unavailable or any leg
 // fails its depth gate. The mirror route is the same call with a and b (and the
 // two X rows) swapped.
-func oneHopCandidate(x, a, b string, rowXA, rowXB, rowAB Row, view windowView, cfg Config) (candidate, bool) {
+func oneHopCandidate(x, a, b string, rowXA, rowXB, rowAB legRow, view windowView, cfg Config) (candidate, bool) {
 	buyX, ok := gatedLeg("buy", x, a, rowXA, view, cfg)
 	if !ok {
 		return candidate{}, false

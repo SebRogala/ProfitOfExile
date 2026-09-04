@@ -531,3 +531,32 @@ func TestCrossQuoteCandidates_shuffledRows_produceTheIdenticalOutput(t *testing.
 		}
 	}
 }
+
+func TestCrossQuoteCandidates_untradedClosingMarket_isCarriedByItsOwnWindow(t *testing.T) {
+	// POE-252 reaches a triangle one LEG at a time. The chaos/divine market that
+	// closes every route here published a row this hour and nobody traded in it,
+	// so leg 2 has no liveness of its own and the hours behind that market carry
+	// it. The identical row against an empty window empties the hour —
+	// TestCrossQuoteCandidates_unusableClosingMarket_dropsEveryRouteThroughIt is
+	// that case — so what is read here is the window and not some other survival.
+	untraded := chaosDivineSpec()
+	untraded.volume = [2]int64{0, 0}
+	rows := []Row{cardChaosSpec().row(), cardDivineSpec().row(), untraded.row()}
+	window := []StoredRow{
+		storedBack(0, untraded),
+		storedBack(1, chaosDivineSpec()),
+		storedBack(2, chaosDivineSpec()),
+	}
+
+	got := crossQuoteCandidates(rows, viewAt(feedHour, window), DefaultConfig())
+
+	c := candidateByKey(t, got, oneHopKey(cardID, chaosID, divineID))
+	if !c.legs[2].obs.rescued {
+		t.Errorf("closing leg rescued = false, want the window to have carried the leg whose own hour traded nothing")
+	}
+	// Its two siblings traded in the scored hour and must be untouched: a rescue
+	// is per MARKET, so one silent leg prices one leg's window and no more.
+	if c.legs[0].obs.rescued || c.legs[1].obs.rescued {
+		t.Errorf("legs 0/1 rescued = %v/%v, want both false — each read its own live hour", c.legs[0].obs.rescued, c.legs[1].obs.rescued)
+	}
+}
