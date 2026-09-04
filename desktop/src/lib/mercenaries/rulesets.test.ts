@@ -39,6 +39,12 @@ import guideCKinetist from './__fixtures__/guide-c-kinetist.json';
 import guideCManyshot from './__fixtures__/guide-c-manyshot.json';
 import guideCBladeAmbusher from './__fixtures__/guide-c-blade-ambusher.json';
 import guideCCombatant from './__fixtures__/guide-c-combatant.json';
+import n8r8JqonVIV from './__fixtures__/8r8JqonVIV.json';
+import veYJp9gZhE from './__fixtures__/veYJp9gZhE.json';
+import PPGnKVv7UL from './__fixtures__/PPGnKVv7UL.json';
+import yYvmr6rjcR from './__fixtures__/yYvmr6rjcR.json';
+import d80ePvdvhJ from './__fixtures__/d80ePvdvhJ.json';
+import rPogYW44uQ from './__fixtures__/rPogYW44uQ.json';
 import mercenaryStats from './__fixtures__/mercenary-stats.json';
 
 /**
@@ -103,7 +109,13 @@ const FIXTURES: Record<string, RawSavedSearch> = {
 	'guide-c-kinetist': guideCKinetist as unknown as RawSavedSearch,
 	'guide-c-manyshot': guideCManyshot as unknown as RawSavedSearch,
 	'guide-c-blade-ambusher': guideCBladeAmbusher as unknown as RawSavedSearch,
-	'guide-c-combatant': guideCCombatant as unknown as RawSavedSearch
+	'guide-c-combatant': guideCCombatant as unknown as RawSavedSearch,
+	'8r8JqonVIV': n8r8JqonVIV as unknown as RawSavedSearch,
+	veYJp9gZhE: veYJp9gZhE as unknown as RawSavedSearch,
+	PPGnKVv7UL: PPGnKVv7UL as unknown as RawSavedSearch,
+	yYvmr6rjcR: yYvmr6rjcR as unknown as RawSavedSearch,
+	d80ePvdvhJ: d80ePvdvhJ as unknown as RawSavedSearch,
+	rPogYW44uQ: rPogYW44uQ as unknown as RawSavedSearch
 };
 
 /** GGG's Mercenary stat vocabulary: stat id -> display text. */
@@ -172,6 +184,28 @@ function shape(ruleset: MercRuleset): string[] {
 	return ruleset.groups.map(
 		(g) => `${g.id} ${g.type} enabled=${g.enabledInSearch} min=${g.min ?? '-'}`
 	);
+}
+
+/**
+ * Every switch of one rung as a flat map, so two rungs of a ladder can be
+ * diffed key by key: `<groupId>.enabled`, `<groupId>.min`, and
+ * `<groupId>/<entryId>.enabled`.
+ *
+ * Module scope because two ladders are diffed this way — guide-b's Kinetist
+ * rungs against the tier table, and guide-f's rung pairs against their one
+ * declared lever — and a second copy would let the two notions of "what a rung
+ * IS" drift apart while both looked pinned.
+ */
+function flatten(ruleset: MercRuleset): Record<string, unknown> {
+	const flat: Record<string, unknown> = {};
+	for (const group of ruleset.groups) {
+		flat[`${group.id}.enabled`] = group.enabledInSearch;
+		flat[`${group.id}.min`] = group.min ?? null;
+		for (const entry of group.entries) {
+			flat[`${group.id}/${entry.id}.enabled`] = entry.enabledInSearch;
+		}
+	}
+	return flat;
 }
 
 describe('query transcription', () => {
@@ -478,7 +512,7 @@ describe('the oracle a ruleset is checked against', () => {
 	 * from being handed a guide-c ruleset and building a trade link to a hash GGG
 	 * never issued — so which rulesets are on which side is pinned, not implied.
 	 */
-	it('gives the three saved-search guides a hash and guide-c a fixture file', () => {
+	it('gives the four saved-search guides a hash and guide-c a fixture file', () => {
 		const byKind = allRulesets().map(
 			(r) => `${r.id} ${r.savedSearch ? `saved=${r.savedSearch.hash}` : `authored=${r.authored?.file}`}`
 		);
@@ -488,7 +522,7 @@ describe('the oracle a ruleset is checked against', () => {
 			'guide-c-blade-ambusher authored=guide-c-blade-ambusher',
 			'guide-c-combatant authored=guide-c-combatant'
 		]);
-		expect(byKind.filter((row) => row.includes('saved=')).length).toBe(22);
+		expect(byKind.filter((row) => row.includes('saved=')).length).toBe(28);
 	});
 
 	it('resolves a saved ruleset to its GGG hash', () => {
@@ -561,18 +595,6 @@ describe('Kinetist ladder', () => {
 		'auras.enabled': [true, false, true, true],
 		'damage.min': [2, 2, 3, 2]
 	};
-
-	function flatten(ruleset: MercRuleset): Record<string, unknown> {
-		const flat: Record<string, unknown> = {};
-		for (const group of ruleset.groups) {
-			flat[`${group.id}.enabled`] = group.enabledInSearch;
-			flat[`${group.id}.min`] = group.min ?? null;
-			for (const entry of group.entries) {
-				flat[`${group.id}/${entry.id}.enabled`] = entry.enabledInSearch;
-			}
-		}
-		return flat;
-	}
 
 	it('lists the four rungs cheapest first', () => {
 		expect(ladderNamed('kinetist').map((r) => r.tier)).toEqual([...TIERS]);
@@ -835,7 +857,16 @@ describe('rungs whose tier key does not name them', () => {
 			// naming: XTheFarmerX calls his two searches "budget" and "20D", and
 			// 'mv'/'mid' would put words in his mouth about what they cost.
 			'guide-d-kinetist-budget budget',
-			'guide-d-kinetist-20d 20D'
+			'guide-d-kinetist-20d 20D',
+			// Every guide-f rung carries one: this author publishes exactly two
+			// searches per archetype and names them by price, so 'mv'/'end' — which
+			// is only how the ladder RANKS them — would be the app's word, not his.
+			'guide-f-manyshot-cheap Cheap',
+			'guide-f-manyshot-expensive Expensive',
+			'guide-f-combatant-cheap Cheap',
+			'guide-f-combatant-expensive Expensive',
+			'guide-f-kinetist-cheap Cheap',
+			'guide-f-kinetist-expensive Expensive'
 		]);
 	});
 });
@@ -951,6 +982,109 @@ describe('guide-d Kinetist ladder', () => {
 		expect(guideDRungs().map((r) => `${r.id} ${r.floor ?? 'no floor'}`)).toEqual([
 			'guide-d-kinetist-budget no floor',
 			'guide-d-kinetist-20d no floor'
+		]);
+	});
+});
+
+/**
+ * Path of Evening's three two-rung ladders.
+ *
+ * What is worth pinning here is the UPGRADE: this author publishes a cheap and
+ * an expensive search per archetype and no readable prose about either (the page
+ * 403s — see `rulesets.ts`), so the only statement he makes about what a dearer
+ * mercenary is worth paying for is the difference between the two searches. That
+ * difference is asserted as data — every key that moves, and by implication every
+ * key that does not — rather than described in a comment nothing checks.
+ *
+ * The group ids are pinned as well, for the reason the guide-d block gives: they
+ * exist only in `rulesets.ts`, so the fixture-fidelity sweep cannot see them.
+ */
+describe('guide-f ladders', () => {
+	const GUIDE_F = MERC_SOURCES.find((s) => s.id === 'guide-f') as MercSource;
+
+	/** One guide-f ladder's rungs, cheap first. */
+	function guideFLadder(key: string): MercRuleset[] {
+		const found = ladders(GUIDE_F).find((rungs) => rungs[0].ladder === key);
+		if (!found) throw new Error(`guide-f declares no ladder ${key}`);
+		return found;
+	}
+
+	/** Every switch that differs between a ladder's two rungs, `key: cheap -> expensive`. */
+	function upgrade(key: string): string[] {
+		const [cheap, expensive] = guideFLadder(key).map(flatten);
+		const keys = [...new Set([...Object.keys(cheap), ...Object.keys(expensive)])].sort();
+		return keys
+			.filter((k) => cheap[k] !== expensive[k])
+			.map((k) => `${k}: ${cheap[k] ?? 'absent'} -> ${expensive[k] ?? 'absent'}`);
+	}
+
+	it('lists three ladders, each cheap rung before its expensive one', () => {
+		expect(ladders(GUIDE_F).map((rungs) => rungs.map((r) => `${r.id} ${r.tier}`))).toEqual([
+			['guide-f-manyshot-cheap mv', 'guide-f-manyshot-expensive end'],
+			['guide-f-combatant-cheap mv', 'guide-f-combatant-expensive end'],
+			['guide-f-kinetist-cheap mv', 'guide-f-kinetist-expensive end']
+		]);
+	});
+
+	it('slots the Combatant rungs under the same five ids', () => {
+		expect(guideFLadder('combatant').map((r) => r.groups.map((g) => g.id))).toEqual([
+			['required-skills', 'damage', 'return', 'secondary-links', 'deny-supports'],
+			['required-skills', 'damage', 'return', 'secondary-links', 'deny-supports']
+		]);
+	});
+
+	it('slots the Kineticist rungs under the same five ids', () => {
+		expect(guideFLadder('kinetist').map((r) => r.groups.map((g) => g.id))).toEqual([
+			['required-skills', 'deny-supports', 'behavior', 'damage', 'return'],
+			['required-skills', 'deny-supports', 'behavior', 'damage', 'return']
+		]);
+	});
+
+	it('gives the expensive Multishot rung a sixth group the cheap one has no slot for', () => {
+		expect(guideFLadder('manyshot').map((r) => r.groups.map((g) => g.id))).toEqual([
+			['required-skills', 'damage', 'return', 'deny', 'projectiles'],
+			['required-skills', 'damage', 'return', 'deny', 'vaal-damage', 'projectiles']
+		]);
+	});
+
+	// The lever, and the whole lever: the two searches are the same filters with
+	// the Frost Blades Return group parked at Cheap and live at Expensive.
+	it('upgrades the Combatant search by switching its Return group on', () => {
+		expect(upgrade('combatant')).toEqual(['return.enabled: false -> true']);
+	});
+
+	it('upgrades the Kineticist search by switching its Return group on', () => {
+		expect(upgrade('kinetist')).toEqual(['return.enabled: false -> true']);
+	});
+
+	// Multishot is the exception, and the reason the upgrade is asserted per
+	// ladder rather than once: Return is live on BOTH its rungs, and what the
+	// dearer search adds is Hatred, a Vaal Ice Shot row group of its own, and a
+	// projectile group that no longer counts Lesser Chain (Tier 1) — dropped
+	// from the search, not parked in it.
+	it('upgrades the Multishot search by three levers, none of them the Return group', () => {
+		expect(upgrade('manyshot')).toEqual([
+			'projectiles/mercenary.support_14317.enabled: true -> absent',
+			'required-skills/mercenary.skill_24482.enabled: false -> true',
+			'vaal-damage.enabled: absent -> true',
+			'vaal-damage.min: absent -> 3',
+			'vaal-damage/mercenary.skill_16381.enabled: absent -> true',
+			'vaal-damage/mercenary.support_28416.enabled: absent -> true',
+			'vaal-damage/mercenary.support_44886.enabled: absent -> true',
+			'vaal-damage/mercenary.support_5293.enabled: absent -> true'
+		]);
+	});
+
+	// The buyer's-list reading, as on guide-d: this author quotes no price for
+	// either rung of anything, so nothing here may print one as his.
+	it('quotes no price floor on any rung', () => {
+		expect(GUIDE_F.rulesets.map((r) => `${r.id} ${r.floor ?? 'no floor'}`)).toEqual([
+			'guide-f-manyshot-cheap no floor',
+			'guide-f-manyshot-expensive no floor',
+			'guide-f-combatant-cheap no floor',
+			'guide-f-combatant-expensive no floor',
+			'guide-f-kinetist-cheap no floor',
+			'guide-f-kinetist-expensive no floor'
 		]);
 	});
 });
@@ -1173,7 +1307,8 @@ describe('source registry', () => {
 			"ckaiba: ckaiba's seller-side floors — wealthyexile strategy 7062",
 			"Nerotox: Nerotox's tiered saved searches — three videos, four ladders",
 			"CaptainLance: CaptainLance's buyer-side ideal links for a Luminary merc bot — no prices, no floors",
-			"XTheFarmerX: XTheFarmerX's budget life-stacking KB merc — two saved searches, the upper one Nerotox's own link"
+			"XTheFarmerX: XTheFarmerX's budget life-stacking KB merc — two saved searches, the upper one Nerotox's own link",
+			"Path of Evening: Path of Evening's buyer-side saved searches — three archetypes, a cheap and an expensive rung each"
 		]);
 	});
 });
@@ -1190,8 +1325,15 @@ describe('buyer-contextual entries', () => {
 	 * the search, not about whoever published it, so guide-d's 20D rung — the
 	 * same hash as guide-b's MV rung, Barrage live in a `count` of one, byte for
 	 * byte — carries it too.
+	 *
+	 * Gating on Haste is NOT on its own enough to earn the flag: guide-f's two
+	 * Kineticist rungs gate on Haste and Inspiring Cry both, and neither is
+	 * listed. What the flagged ones have is the AUTHOR saying the aura is the
+	 * buyer's call ("depending on your spectres"); Path of Evening publishes no
+	 * prose this repo can read, so its switches are transcribed as saved rather
+	 * than softened on a guess.
 	 */
-	it('flags Haste on every ruleset that gates on it, plus Barrage on the MV search', () => {
+	it('flags Haste on every ruleset whose author calls it optional, plus Barrage on the MV search', () => {
 		const flagged = allRulesets().flatMap((ruleset) =>
 			ruleset.groups.flatMap((group) =>
 				group.entries

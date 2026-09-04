@@ -1,9 +1,9 @@
 /**
  * Mercenary rulesets — the declarative data model behind the Mercenaries view page.
  *
- * FOUR sources, and they do not all come from the same kind of thing. Guide-a,
- * guide-b and guide-d are transcriptions of GGG trade SAVED SEARCHES: the raw
- * responses live in `__fixtures__/<hash>.json` (see that directory's README for
+ * FIVE sources, and they do not all come from the same kind of thing. Guide-a,
+ * guide-b, guide-d and guide-f are transcriptions of GGG trade SAVED SEARCHES:
+ * the raw responses live in `__fixtures__/<hash>.json` (see that README for
  * provenance and re-fetch commands) and `rulesets.test.ts` asserts this file
  * against them, so the fixtures — not this file — are the ground truth.
  * Guide-c is a transcription of PROSE: CaptainLance's "Ideal Merc Options"
@@ -17,11 +17,13 @@
  * file.
  *
  * The two kinds also point in opposite directions. Guide-a's rulesets are
- * seller-side (its author states price floors), guide-b's and guide-d's are
- * buyers' tier ladders, and guide-c is a buyer's IDEAL: CaptainLance is telling
- * a Luminary merc-bot player what links to look for, with no prices and no
- * floors. So a guide-c pass says "this mercenary is what the build wants", never
- * "this is what it is worth".
+ * seller-side (its author states price floors), guide-b's, guide-d's and
+ * guide-f's are buyers' tier ladders — guide-f's read off the absence of a
+ * price floor on any of its six rungs, since its prose is unreadable — and
+ * guide-c is a buyer's IDEAL:
+ * CaptainLance is telling a Luminary merc-bot player what links to look for,
+ * with no prices and no floors. So a guide-c pass says "this mercenary is what
+ * the build wants", never "this is what it is worth".
  *
  * Entry `name` values are copied verbatim from `__fixtures__/mercenary-stats.json`
  * (GGG's Mercenary stat vocabulary), `(Tier N)` suffix included. They are display
@@ -84,11 +86,28 @@
  * fixture file. That is provenance rather than duplication — two guides
  * endorsing one search is a fact about the market, and a mercenary passing it
  * reads WORTH from both of them.
+ *
+ * Guide-f is the "Path of Evening" mercenary-support build page: ONE page, six
+ * saved searches, three archetypes with a cheap and an expensive rung each, so
+ * its rungs inherit the source URL the way guide-d's do. It is the only source
+ * here whose PROSE this repo cannot read — the page answers 403 to every fetch
+ * (Cloudflare), and the six hashes were pasted by the owner 2026-09-04 and then
+ * fetched from GGG by hash. The fixtures are therefore as good as any other
+ * saved search here; what is missing is the author explaining himself, and that
+ * absence is a ruling: no `buyerContextual` anywhere in guide-f. The flag is a
+ * selling-side call that needs the author saying an entry is optional, and the
+ * Kineticist rungs' Haste and Inspiring Cry — live gates in the lead group —
+ * are transcribed exactly as saved rather than softened on a guess.
+ *
+ * Its two rungs per ladder differ by ONE lever on Combatant and on Kineticist:
+ * the `[core skill, Return (Tier 3)]` group, parked at Cheap and live at
+ * Expensive, and nothing else. Multishot — this author's spelling of Manyshot —
+ * is the exception and moves three things at once; its rung comments say which.
  */
 
 import type { MercAuthoredQuery, MercSavedSearch } from './trade-links';
 
-export const SOURCE_IDS = ['guide-a', 'guide-b', 'guide-c', 'guide-d'] as const;
+export const SOURCE_IDS = ['guide-a', 'guide-b', 'guide-c', 'guide-d', 'guide-f'] as const;
 export type MercSourceId = (typeof SOURCE_IDS)[number];
 
 export const ARCHETYPES = ['manyshot', 'kinetist', 'combatant', 'blade-ambusher'] as const;
@@ -3297,6 +3316,806 @@ const GUIDE_D_KINETIST_20D: MercRuleset = {
 	]
 };
 
+/**
+ * The "Path of Evening" mercenary-support build page. Six saved searches on ONE
+ * page, so no ruleset here carries a `guideUrl` of its own.
+ *
+ * The page itself answers 403 to every fetch this repo can make (Cloudflare), so
+ * the six hashes were pasted by the owner 2026-09-04 and each search was then
+ * fetched from GGG by hash — which is why the fixtures are as trustworthy as any
+ * other saved search here while the PROSE around them is unavailable. Nothing
+ * below is transcribed from sentences: where a switch needs a reading, it is
+ * read off the search, and the author's own wording survives only in the rung
+ * labels ("Cheap"/"Expensive") and in the archetype names he uses.
+ */
+const PATH_OF_EVENING_BUILD =
+	'https://mobalytics.gg/poe/builds/mercenary-support-luminary-path-of-evening';
+
+/**
+ * The Multishot ladder's cheap rung, hash `8r8JqonVIV`.
+ *
+ * "Multishot" is this author's spelling of the archetype every other source here
+ * calls Manyshot — the `archetype` key is the app's, the spelling is noted so a
+ * reader comparing the page to the guide is not looking for a fourth archetype.
+ *
+ * What it asks for: Vaal Ice Shot and Grace on the mercenary, no Icicle Rain,
+ * and on the Ice Shot row three of the elemental-damage and Hypothermia links,
+ * Return, and two of the chain/fork/projectile links. Frigid Forkshot and Hatred
+ * are parked in the lead group.
+ */
+const GUIDE_F_MANYSHOT_CHEAP: MercRuleset = {
+	id: 'guide-f-manyshot-cheap',
+	// `label` carries the app's archetype word so this rung sits in the same
+	// column as guide-b's Manyshot ladder; the author's "Multishot" is recorded
+	// in the rung comment above rather than put into a label.
+	label: 'Manyshot',
+	archetype: 'manyshot',
+	ladder: 'manyshot',
+	// `TIERS` ranks rungs; it does not name them. This author spells his two
+	// "Cheap" and "Expensive", and 'mv'/'end' would put a price on searches he
+	// never quoted one for.
+	tier: 'mv',
+	tierLabel: 'Cheap',
+	savedSearch: { league: ALLFLAME, hash: '8r8JqonVIV' },
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills and auras',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.skill_18232', name: 'Frigid Forkshot', enabledInSearch: false },
+				{ id: 'mercenary.skill_2792', name: 'Grace', enabledInSearch: true },
+				{ id: 'mercenary.skill_24482', name: 'Hatred', enabledInSearch: false }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Ice Shot damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'return',
+			label: 'Ice Shot + Return',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny',
+			label: 'Denied skills',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_24409', name: 'Icicle Rain', enabledInSearch: true }]
+		},
+		{
+			id: 'projectiles',
+			label: 'Ice Shot projectile links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true },
+				{ id: 'mercenary.support_32052', name: 'Greater Fork (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_14317', name: 'Lesser Chain (Tier 1)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_12054',
+					name: 'Multiple Projectiles (Tier 1)',
+					enabledInSearch: true
+				}
+			]
+		}
+	]
+};
+
+/**
+ * The Multishot ladder's expensive rung, hash `veYJp9gZhE`.
+ *
+ * The one ladder here whose upper rung is not the cheap search with one switch
+ * flipped. It asks for everything the cheap rung asks for and then THREE more
+ * things: Hatred goes live in the lead group, a new Vaal Ice Shot row group
+ * wants three of the four — Vaal Ice Shot, its two damage links and Return —
+ * and the projectile group drops Lesser Chain (Tier 1), so a Tier-1 chain no
+ * longer counts toward its two. Return on the plain Ice Shot row is live on
+ * BOTH rungs, unlike the other two ladders.
+ */
+const GUIDE_F_MANYSHOT_EXPENSIVE: MercRuleset = {
+	id: 'guide-f-manyshot-expensive',
+	label: 'Manyshot',
+	archetype: 'manyshot',
+	ladder: 'manyshot',
+	tier: 'end',
+	tierLabel: 'Expensive',
+	savedSearch: { league: ALLFLAME, hash: 'veYJp9gZhE' },
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills and auras',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.skill_18232', name: 'Frigid Forkshot', enabledInSearch: false },
+				{ id: 'mercenary.skill_2792', name: 'Grace', enabledInSearch: true },
+				// The search spells this one `disabled: false` rather than leaving the
+				// key out, which is the same thing — GGG writes both.
+				{ id: 'mercenary.skill_24482', name: 'Hatred', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Ice Shot damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'return',
+			label: 'Ice Shot + Return',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny',
+			label: 'Denied skills',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_24409', name: 'Icicle Rain', enabledInSearch: true }]
+		},
+		{
+			// The rung's own group: the cheap search asks nothing of the Vaal Ice
+			// Shot row beyond having it. Return sits inside it rather than in a
+			// second Vaal group, so this one slot carries both.
+			id: 'vaal-damage',
+			label: 'Vaal Ice Shot damage links + Return',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			// Lesser Chain (Tier 1) is DECLARED nowhere on this rung, not parked:
+			// the author removed the filter rather than switching it off.
+			id: 'projectiles',
+			label: 'Ice Shot projectile links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true },
+				{ id: 'mercenary.support_32052', name: 'Greater Fork (Tier 3)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_12054',
+					name: 'Multiple Projectiles (Tier 1)',
+					enabledInSearch: true
+				}
+			]
+		}
+	]
+};
+
+/**
+ * The Combatant ladder's cheap rung, hash `PPGnKVv7UL`.
+ *
+ * What it asks for: Frost Blades, Static Strike and Wrath on the mercenary,
+ * neither Pierce nor Multistrike at any tier, four of the eight damage-and-speed
+ * links on the Frost Blades row, and two of the Static Strike links. Purity of
+ * Ice is parked in the lead group, the three More Duration tiers inside the
+ * Static Strike group, and the whole Return group is switched off — which is
+ * this ladder's only lever.
+ */
+const GUIDE_F_COMBATANT_CHEAP: MercRuleset = {
+	id: 'guide-f-combatant-cheap',
+	label: 'Combatant',
+	archetype: 'combatant',
+	ladder: 'combatant',
+	tier: 'mv',
+	tierLabel: 'Cheap',
+	savedSearch: { league: ALLFLAME, hash: 'PPGnKVv7UL' },
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills and auras',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true },
+				{ id: 'mercenary.skill_38326', name: 'Wrath', enabledInSearch: true },
+				{ id: 'mercenary.skill_13693', name: 'Purity of Ice', enabledInSearch: false }
+			]
+		},
+		{
+			// One group where Nerotox's Frost Blades ladder has two: the speed links
+			// are counted alongside the damage ones rather than asked for separately,
+			// so four of ANY eight satisfies it.
+			id: 'damage',
+			label: 'Frost Blades damage and speed links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 4,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_50485',
+					name: 'Greater Faster Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			// The lever. Switched off here and on at Expensive, and it is the ONLY
+			// difference between the two Combatant searches.
+			id: 'return',
+			label: 'Frost Blades + Return',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'secondary-links',
+			label: 'Static Strike links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true },
+				{ id: 'mercenary.support_14317', name: 'Lesser Chain (Tier 1)', enabledInSearch: true },
+				{ id: 'mercenary.support_50222', name: 'More Duration (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_2602',
+					name: 'Lesser More Duration (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_26568',
+					name: 'Greater More Duration (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			id: 'deny-supports',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true },
+				{ id: 'mercenary.support_6040', name: 'Lesser Pierce (Tier 1)', enabledInSearch: true },
+				{ id: 'mercenary.support_27970', name: 'Greater Pierce (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_10482', name: 'Gilded Pierce (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_62638', name: 'Multistrike (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_25973',
+					name: 'Greater Multistrike (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		}
+	]
+};
+
+/**
+ * The Combatant ladder's expensive rung, hash `yYvmr6rjcR`.
+ *
+ * The cheap search with ONE lever pulled: the `return` group goes live, so the
+ * Frost Blades row must carry Return (Tier 3). Everything else — the parked
+ * Purity of Ice, the four-of-eight damage minimum, the parked More Duration
+ * tiers, the denial list — is the cheap rung's, filter for filter.
+ */
+const GUIDE_F_COMBATANT_EXPENSIVE: MercRuleset = {
+	id: 'guide-f-combatant-expensive',
+	label: 'Combatant',
+	archetype: 'combatant',
+	ladder: 'combatant',
+	tier: 'end',
+	tierLabel: 'Expensive',
+	savedSearch: { league: ALLFLAME, hash: 'yYvmr6rjcR' },
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills and auras',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true },
+				{ id: 'mercenary.skill_38326', name: 'Wrath', enabledInSearch: true },
+				{ id: 'mercenary.skill_13693', name: 'Purity of Ice', enabledInSearch: false }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Frost Blades damage and speed links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 4,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_50485',
+					name: 'Greater Faster Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			// The lever, pulled. Same group, same two filters, same minimum as the
+			// cheap rung's — only the group switch differs.
+			id: 'return',
+			label: 'Frost Blades + Return',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'secondary-links',
+			label: 'Static Strike links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true },
+				{ id: 'mercenary.support_14317', name: 'Lesser Chain (Tier 1)', enabledInSearch: true },
+				{ id: 'mercenary.support_50222', name: 'More Duration (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_2602',
+					name: 'Lesser More Duration (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_26568',
+					name: 'Greater More Duration (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			id: 'deny-supports',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true },
+				{ id: 'mercenary.support_6040', name: 'Lesser Pierce (Tier 1)', enabledInSearch: true },
+				{ id: 'mercenary.support_27970', name: 'Greater Pierce (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_10482', name: 'Gilded Pierce (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_62638', name: 'Multistrike (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_25973',
+					name: 'Greater Multistrike (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		}
+	]
+};
+
+/**
+ * The Kineticist ladder's cheap rung, hash `d80ePvdvhJ`.
+ *
+ * "Kineticist" is this author's spelling of the archetype the app keys
+ * `kinetist`.
+ *
+ * What it asks for: Kinetic Blast of Clustering, Greater Kinetic Blast, Haste
+ * and Inspiring Cry all on the mercenary, no Pierce at any tier, two of the
+ * chain/fork links on the Kinetic Blast row and three of its critical and
+ * elemental-damage links. The Return group is switched off — this ladder's only
+ * lever.
+ *
+ * Haste and Inspiring Cry are live GATES here, not bonuses, and they stay that
+ * way: `buyerContextual` is a selling-side ruling that needs the author saying
+ * the aura is optional (Nerotox's "depending on your spectres"), and this page
+ * publishes no prose this repo can read. Transcribed as saved.
+ */
+const GUIDE_F_KINETIST_CHEAP: MercRuleset = {
+	id: 'guide-f-kinetist-cheap',
+	label: 'Kinetist',
+	archetype: 'kinetist',
+	ladder: 'kinetist',
+	tier: 'mv',
+	tierLabel: 'Cheap',
+	savedSearch: { league: ALLFLAME, hash: 'd80ePvdvhJ' },
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills and buffs',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.skill_44258', name: 'Greater Kinetic Blast', enabledInSearch: true },
+				{ id: 'mercenary.skill_52155', name: 'Haste', enabledInSearch: true },
+				{ id: 'mercenary.skill_65473', name: 'Inspiring Cry', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny-supports',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.support_6040', name: 'Lesser Pierce (Tier 1)', enabledInSearch: true },
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true },
+				{ id: 'mercenary.support_27970', name: 'Greater Pierce (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_10482', name: 'Gilded Pierce (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'behavior',
+			label: 'Projectile behaviour links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_32052', name: 'Greater Fork (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_14317', name: 'Lesser Chain (Tier 1)', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Damage and critical links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_61471', name: 'Critical Chance (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_62220',
+					name: 'Greater Critical Chance (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_32189', name: 'Critical Damage (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_55659',
+					name: 'Greater Critical Damage (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_30688',
+					name: 'Lesser Critical Damage (Tier 1)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_23209',
+					name: 'Lesser Critical Chance (Tier 1)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			// The lever. Switched off here and on at Expensive, and it is the ONLY
+			// difference between the two Kineticist searches.
+			id: 'return',
+			label: 'Kinetic Blast + Return',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 2,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		}
+	]
+};
+
+/**
+ * The Kineticist ladder's expensive rung, hash `rPogYW44uQ`.
+ *
+ * The cheap search with ONE lever pulled: the `return` group goes live, so the
+ * Kinetic Blast row must carry Return (Tier 3). The denial list, both minimums
+ * and all four lead-group gates are the cheap rung's, filter for filter.
+ */
+const GUIDE_F_KINETIST_EXPENSIVE: MercRuleset = {
+	id: 'guide-f-kinetist-expensive',
+	label: 'Kinetist',
+	archetype: 'kinetist',
+	ladder: 'kinetist',
+	tier: 'end',
+	tierLabel: 'Expensive',
+	savedSearch: { league: ALLFLAME, hash: 'rPogYW44uQ' },
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills and buffs',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.skill_44258', name: 'Greater Kinetic Blast', enabledInSearch: true },
+				{ id: 'mercenary.skill_52155', name: 'Haste', enabledInSearch: true },
+				{ id: 'mercenary.skill_65473', name: 'Inspiring Cry', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny-supports',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.support_6040', name: 'Lesser Pierce (Tier 1)', enabledInSearch: true },
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true },
+				{ id: 'mercenary.support_27970', name: 'Greater Pierce (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_10482', name: 'Gilded Pierce (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'behavior',
+			label: 'Projectile behaviour links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_32052', name: 'Greater Fork (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_14317', name: 'Lesser Chain (Tier 1)', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Damage and critical links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_61471', name: 'Critical Chance (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_62220',
+					name: 'Greater Critical Chance (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_32189', name: 'Critical Damage (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_55659',
+					name: 'Greater Critical Damage (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_30688',
+					name: 'Lesser Critical Damage (Tier 1)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_23209',
+					name: 'Lesser Critical Chance (Tier 1)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			// The lever, pulled. Same group, same two filters, same minimum as the
+			// cheap rung's — only the group switch differs.
+			id: 'return',
+			label: 'Kinetic Blast + Return',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		}
+	]
+};
+
 export const MERC_SOURCES: MercSource[] = [
 	{
 		id: 'guide-a',
@@ -3356,6 +4175,26 @@ export const MERC_SOURCES: MercSource[] = [
 		// own — unlike guide-b, whose ladders come off different videos.
 		guideUrl: XTHEFARMERX_KB_VIDEO,
 		rulesets: [GUIDE_D_KINETIST_BUDGET, GUIDE_D_KINETIST_20D]
+	},
+	{
+		id: 'guide-f',
+		label: 'Path of Evening',
+		// "Buyer-side" is read off the searches, not the prose this repo cannot
+		// fetch: no rung of the six quotes a price floor, which `rulesets.test.ts`
+		// pins as `quotes no price floor on any rung`.
+		description:
+			"Path of Evening's buyer-side saved searches — three archetypes, a cheap and an expensive rung each",
+		// One page publishes all six searches, so no ruleset here carries a
+		// `guideUrl` of its own — the guide-c and guide-d shape, not guide-b's.
+		guideUrl: PATH_OF_EVENING_BUILD,
+		rulesets: [
+			GUIDE_F_MANYSHOT_CHEAP,
+			GUIDE_F_MANYSHOT_EXPENSIVE,
+			GUIDE_F_COMBATANT_CHEAP,
+			GUIDE_F_COMBATANT_EXPENSIVE,
+			GUIDE_F_KINETIST_CHEAP,
+			GUIDE_F_KINETIST_EXPENSIVE
+		]
 	}
 ];
 
