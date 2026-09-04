@@ -49,12 +49,12 @@
 	 * elements while `widths`/`heights` still held the last board's numbers, and
 	 * `bind:offsetWidth` only writes back after the DOM has updated: the first
 	 * frame of every read was placed from the PREVIOUS board's sizes, non-null
-	 * and therefore visible. So the arrays are cleared and the key is the box's
-	 * own content, both off `signatures` below — a pair rather than a belt and
-	 * braces, and each with an identity the other cannot borrow: the key is the
-	 * per-box STRING and the reset's trigger is those strings JOINED, because an
-	 * array rebuilt on every poll always compares unequal. See the comments
-	 * there; that is where the reasoning lives.
+	 * and therefore visible. So the arrays are cleared and the nodes are
+	 * recreated together, both off the JOINED `signature` below — a pair rather
+	 * than a belt and braces, with the same reach and the same identity: a
+	 * primitive string, because an array rebuilt on every poll always compares
+	 * unequal, and one string for every box, because the reset clears every
+	 * box. See the comments there; that is where the reasoning lives.
 	 */
 	import { offerStackPlacement } from './overlay-geometry';
 	import type { OfferBox } from './view';
@@ -140,11 +140,17 @@
 	// hidden. A newly observed element always gets one initial callback, so
 	// recreating the node is what re-arms the measurement.
 	//
-	// So the two have to move together, and they have to keep their two
-	// IDENTITIES: the key stays the per-box string (by value, so an unchanged
-	// read keeps its nodes) and the trigger stays the joined primitive (by
-	// value, so an unchanged read does not clear). Give the effect the array and
-	// the deadlock above comes back — cleared every tick, never re-observed.
+	// So the two have to move together, and they have to have the SAME reach:
+	// the reset clears every box's size, so every box's node has to be
+	// recreated when it fires — the `{#each}` key is therefore the joined
+	// primitive plus the box's index, not the box's own string. A per-box key
+	// (the first cut, caught by the delivery audit) left a box whose own text
+	// did not change with its old node, never re-observed, hidden for the rest
+	// of the board — reachable on a retry merge that resolves one offer and
+	// leaves the other's lines as they were. By value on both sides, so an
+	// unchanged read keeps its nodes and does not clear. Give the effect the
+	// array instead and the deadlock above comes back — cleared every tick,
+	// never re-observed.
 	$effect(() => {
 		signature;
 		widths = [];
@@ -162,7 +168,7 @@
 	);
 </script>
 
-{#each boxes as box, i (signatures[i])}
+{#each boxes as box, i (signature + "|" + box.offer.index)}
 	<div
 		class="box"
 		class:pick={box.pick}
