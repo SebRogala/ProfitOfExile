@@ -493,6 +493,162 @@ func TestNormalize_wellFormedHour_logsNothing(t *testing.T) {
 	}
 }
 
+func TestNormalize_nonReducedLowestPair_countsOne(t *testing.T) {
+	spec := validSpec()
+	// 4:6 shares a factor of 2; the highest pair stays in lowest terms.
+	spec.lowestRatio = [2]int64{4, 6}
+
+	_, stats := Normalize(&HourPayload{NextChangeID: 1787119200, Markets: []Market{spec.market()}})
+
+	if stats.NonReduced != 1 {
+		t.Errorf("Stats.NonReduced = %d, want 1: only the lowest pair shares a factor", stats.NonReduced)
+	}
+}
+
+func TestNormalize_nonReducedLowestPair_keepsTheFeedValues(t *testing.T) {
+	spec := validSpec()
+	// 4:6 shares a factor of 2; the highest pair stays in lowest terms.
+	spec.lowestRatio = [2]int64{4, 6}
+
+	rows, _ := Normalize(&HourPayload{NextChangeID: 1787119200, Markets: []Market{spec.market()}})
+
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want the market kept", len(rows))
+	}
+	row := rows[0]
+	// Detecting must never repair: the stored pair is 4:6, not 2:3.
+	if row.LowestRatioA != 4 || row.LowestRatioB != 6 {
+		t.Errorf("lowest ratio = %d:%d, want the feed's own 4:6", row.LowestRatioA, row.LowestRatioB)
+	}
+	if row.HighestRatioA != 196 || row.HighestRatioB != 1 {
+		t.Errorf("highest ratio = %d:%d, want 196:1", row.HighestRatioA, row.HighestRatioB)
+	}
+	if !row.PriceValid {
+		t.Errorf("PriceValid = false (InvalidReason %q), want true: a non-reduced pair still prices", row.InvalidReason)
+	}
+}
+
+func TestNormalize_bothPairsNonReduced_countsTwo(t *testing.T) {
+	spec := validSpec()
+	spec.lowestRatio = [2]int64{4, 6}
+	spec.highestRatio = [2]int64{10, 4}
+
+	_, stats := Normalize(&HourPayload{NextChangeID: 1787119200, Markets: []Market{spec.market()}})
+
+	if stats.NonReduced != 2 {
+		t.Errorf("Stats.NonReduced = %d, want 2: the two pairs of one row are counted independently", stats.NonReduced)
+	}
+}
+
+func TestNormalize_nonReducedPair_warnsOnceWithTheCount(t *testing.T) {
+	logs := captureLogs(t)
+
+	clean := validSpec()
+	firstOffender := validSpec()
+	firstOffender.itemA = omenID
+	firstOffender.lowestRatio = [2]int64{4, 6}
+	secondOffender := validSpec()
+	secondOffender.itemA = cardID
+	secondOffender.highestRatio = [2]int64{10, 4}
+
+	_, stats := Normalize(&HourPayload{
+		NextChangeID: 1787119200,
+		Markets:      []Market{clean.market(), firstOffender.market(), secondOffender.market()},
+	})
+	if stats.NonReduced != 2 {
+		t.Fatalf("Stats.NonReduced = %d, want 2: the arrangement did not produce two offending pairs", stats.NonReduced)
+	}
+
+	records := logs.records()
+	if len(records) != 1 {
+		t.Fatalf("got %d log records, want exactly one report for the hour: %+v", len(records), records)
+	}
+	rec := records[0]
+	if rec.Message != "currency-exchange: non-reduced quantity pairs in feed" {
+		t.Errorf("message = %q, want the non-reduced report", rec.Message)
+	}
+	if rec.Level != slog.LevelWarn {
+		t.Errorf("level = %v, want %v", rec.Level, slog.LevelWarn)
+	}
+	if got := attrInt64(t, rec, "non_reduced"); got != 2 {
+		t.Errorf("non_reduced attr = %d, want 2", got)
+	}
+	wantMarket := omenID + "|" + divineID
+	if got := attrString(t, rec, "first_market_id"); got != wantMarket {
+		t.Errorf("first_market_id attr = %q, want %q (the first offender, not the first market)", got, wantMarket)
+	}
+	if got := attrString(t, rec, "first_pair"); got != "4/6" {
+		t.Errorf("first_pair attr = %q, want %q", got, "4/6")
+	}
+	if got := attrString(t, rec, "first_pair_side"); got != "lowest" {
+		t.Errorf("first_pair_side attr = %q, want %q", got, "lowest")
+	}
+}
+
+func TestNormalize_nonReducedHighestPair_warnsWithTheHighestSide(t *testing.T) {
+	logs := captureLogs(t)
+
+	spec := validSpec()
+	// Only the highest pair offends; the lowest pair stays reduced.
+	spec.highestRatio = [2]int64{10, 4}
+
+	_, stats := Normalize(&HourPayload{NextChangeID: 1787119200, Markets: []Market{spec.market()}})
+	if stats.NonReduced != 1 {
+		t.Fatalf("Stats.NonReduced = %d, want 1", stats.NonReduced)
+	}
+
+	rec := recordWithMessage(t, logs, "currency-exchange: non-reduced quantity pairs in feed")
+	if got := attrString(t, rec, "first_pair_side"); got != "highest" {
+		t.Errorf("first_pair_side attr = %q, want %q", got, "highest")
+	}
+}
+
+func TestNormalize_zeroRatioPair_isInvalidNotNonReduced(t *testing.T) {
+	logs := captureLogs(t)
+
+	spec := validSpec()
+	// gcd(0, 5) == 5 would read as drift; a non-positive side is the zero-ratio
+	// path instead.
+	spec.lowestRatio = [2]int64{0, 5}
+
+	_, stats := Normalize(&HourPayload{NextChangeID: 1787119200, Markets: []Market{spec.market()}})
+
+	if stats.Invalid != 1 {
+		t.Errorf("Stats.Invalid = %d, want 1", stats.Invalid)
+	}
+	if stats.NonReduced != 0 {
+		t.Errorf("Stats.NonReduced = %d, want 0: a pair with a non-positive side is not feed drift", stats.NonReduced)
+	}
+	if records := logs.records(); len(records) != 0 {
+		t.Errorf("got %d log records, want none: %+v", len(records), records)
+	}
+}
+
+func TestNormalize_invalidRowWithNonReducedHighestPair_stillCounts(t *testing.T) {
+	spec := validSpec()
+	spec.lowestRatio = [2]int64{0, 5}
+	spec.highestRatio = [2]int64{4, 6}
+
+	_, stats := Normalize(&HourPayload{NextChangeID: 1787119200, Markets: []Market{spec.market()}})
+
+	if stats.Invalid != 1 {
+		t.Errorf("Stats.Invalid = %d, want 1", stats.Invalid)
+	}
+	// NonReduced reports what the feed sent, not what the engine can price: the
+	// unusable lowest pair does not excuse the usable highest one.
+	if stats.NonReduced != 1 {
+		t.Errorf("Stats.NonReduced = %d, want 1 on an Invalid row whose highest pair shares a factor", stats.NonReduced)
+	}
+}
+
+func TestNormalize_recordedHour_hasNoNonReducedPairs(t *testing.T) {
+	_, stats := Normalize(loadFixtureHour(t))
+
+	if stats.NonReduced != 0 {
+		t.Errorf("Stats.NonReduced = %d, want 0: every recorded pair is in lowest terms", stats.NonReduced)
+	}
+}
+
 func TestNormalize_fixtureHour_statsMatchTheReturnedRows(t *testing.T) {
 	rows, stats := Normalize(loadFixtureHour(t))
 
@@ -560,7 +716,7 @@ func TestNormalize_emptyPayload_returnsNoRowsAndZeroStats(t *testing.T) {
 	if len(rows) != 0 {
 		t.Errorf("got %d rows, want 0", len(rows))
 	}
-	if stats.Rows != 0 || stats.Invalid != 0 || stats.Skipped != 0 {
+	if stats.Rows != 0 || stats.Invalid != 0 || stats.Skipped != 0 || stats.NonReduced != 0 {
 		t.Errorf("stats = %+v, want all counters 0", stats)
 	}
 	if len(stats.Leagues) != 0 {
@@ -577,7 +733,7 @@ func TestNormalize_nilPayload_returnsNoRowsAndZeroStats(t *testing.T) {
 	if len(rows) != 0 {
 		t.Errorf("got %d rows, want 0", len(rows))
 	}
-	if stats.Rows != 0 || stats.Invalid != 0 || stats.Skipped != 0 {
+	if stats.Rows != 0 || stats.Invalid != 0 || stats.Skipped != 0 || stats.NonReduced != 0 {
 		t.Errorf("stats = %+v, want all counters 0", stats)
 	}
 	if stats.Leagues == nil {
@@ -633,6 +789,26 @@ func attrInt64(t *testing.T, rec slog.Record, key string) int64 {
 			return true
 		}
 		value, found = a.Value.Int64(), true
+		return false
+	})
+	if !found {
+		t.Fatalf("record %q carries no %q attribute", rec.Message, key)
+	}
+	return value
+}
+
+// attrString returns the named string attribute of a captured record.
+func attrString(t *testing.T, rec slog.Record, key string) string {
+	t.Helper()
+	var (
+		value string
+		found bool
+	)
+	rec.Attrs(func(a slog.Attr) bool {
+		if a.Key != key {
+			return true
+		}
+		value, found = a.Value.String(), true
 		return false
 	})
 	if !found {

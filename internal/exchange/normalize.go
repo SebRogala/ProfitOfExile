@@ -1,6 +1,9 @@
 package exchange
 
-import "log/slog"
+import (
+	"fmt"
+	"log/slog"
+)
 
 // reasonZeroRatio marks a row whose ratio quantities cannot produce a price.
 const reasonZeroRatio = "zero_ratio"
@@ -52,11 +55,18 @@ type Row struct {
 // Rows is the number of returned rows, Invalid the subset kept with
 // PriceValid == false, Skipped the malformed markets dropped entirely, and
 // Leagues the kept-row count per league (no league filtering happens here).
+//
+// NonReduced counts PAIRS, not rows: a kept row carries a lowest and a highest
+// ratio pair, each judged on its own, so one row contributes 0, 1 or 2. It
+// reports feed drift rather than pricing eligibility — a row whose other pair
+// made it Invalid still has its other pair counted — and nothing is rewritten
+// when it fires (see isReduced).
 type Stats struct {
-	Rows    int
-	Invalid int
-	Skipped int
-	Leagues map[string]int
+	Rows       int
+	Invalid    int
+	Skipped    int
+	NonReduced int
+	Leagues    map[string]int
 }
 
 // Normalize turns a raw hour payload into rows and per-hour counters.
@@ -74,11 +84,20 @@ type Stats struct {
 // counted in Stats.Invalid. One flag covers both ratio maps deliberately: in the
 // live payload for hour 1787119200 all 209 zero-ratio Allflame rows carried
 // zeros in both maps, so a partial zero is treated conservatively as invalid.
+//
+// Every quantity pair a kept row carries is also checked against the feed's
+// promise that it publishes pairs in lowest terms: a pair that is not is
+// counted in Stats.NonReduced and reported once per hour with slog.Warn. The
+// pair is stored exactly as the feed sent it either way — the counter is a
+// drift alarm, not a repair (isReduced; pricePoint in pricing.go).
 func Normalize(p *HourPayload) ([]Row, Stats) {
 	stats := Stats{Leagues: make(map[string]int)}
 	if p == nil || len(p.Markets) == 0 {
 		return nil, stats
 	}
+
+	// First offending pair, for the once-per-hour warn.
+	var firstNonReducedMarket, firstNonReducedPair, firstNonReducedSide string
 
 	rows := make([]Row, 0, len(p.Markets))
 	for i := range p.Markets {
@@ -106,6 +125,28 @@ func Normalize(p *HourPayload) ([]Row, Stats) {
 			HighestRatioB: m.HighestRatio[itemB],
 		}
 
+		// Both pairs are judged, independently of each other and of whether the
+		// row prices: the counter reports what the feed sent, not what the
+		// engine can use.
+		for i, pair := range [2][2]int64{
+			{row.LowestRatioA, row.LowestRatioB},
+			{row.HighestRatioA, row.HighestRatioB},
+		} {
+			if isReduced(pair[0], pair[1]) {
+				continue
+			}
+			stats.NonReduced++
+			if stats.NonReduced == 1 {
+				firstNonReducedMarket = row.MarketID
+				firstNonReducedPair = fmt.Sprintf("%d/%d", pair[0], pair[1])
+				if i == 0 {
+					firstNonReducedSide = "lowest"
+				} else {
+					firstNonReducedSide = "highest"
+				}
+			}
+		}
+
 		lowest, lowestOK := PriceOf(m.LowestRatio, itemB, itemA)
 		highest, highestOK := PriceOf(m.HighestRatio, itemB, itemA)
 		if lowestOK && highestOK {
@@ -126,7 +167,35 @@ func Normalize(p *HourPayload) ([]Row, Stats) {
 		slog.Warn("currency-exchange: skipped malformed markets",
 			"next_change_id", p.NextChangeID, "skipped", stats.Skipped, "markets", len(p.Markets))
 	}
+	if stats.NonReduced > 0 {
+		slog.Warn("currency-exchange: non-reduced quantity pairs in feed",
+			"next_change_id", p.NextChangeID, "non_reduced", stats.NonReduced,
+			"first_market_id", firstNonReducedMarket, "first_pair", firstNonReducedPair,
+			"first_pair_side", firstNonReducedSide)
+	}
 	return rows, stats
+}
+
+// isReduced reports whether a feed quantity pair is already in lowest terms,
+// i.e. gcd(a, b) == 1.
+//
+// It DETECTS and never rewrites: the pair Normalize stores is the feed's own,
+// because the engine reads a pair exactly once and reducing it here would be
+// the second source of truth the package refuses — see the pricePoint doc in
+// pricing.go, and tickOf, which has read the stored pair as reduced since
+// POE-184.
+//
+// A pair with either side non-positive reads as reduced because it cannot be
+// judged: gcd(0, n) == n would report every zero-ratio pair as feed drift, and
+// such a pair is already reported as Stats.Invalid with reasonZeroRatio.
+func isReduced(a, b int64) bool {
+	if a <= 0 || b <= 0 {
+		return true
+	}
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a == 1
 }
 
 // Ratio prices one item in quote units from a pair of feed quantities: it

@@ -34,7 +34,9 @@ const (
 // would also put this file out of step with tickOf, which has read the stored
 // pair as reduced since POE-184 — 1/max(x, y) is the true step only on a
 // reduced pair — and two readings of one pair is exactly the second source of
-// truth the package refuses elsewhere.
+// truth the package refuses elsewhere. Drift in that assumption is loud rather
+// than silent: Normalize counts every non-reduced pair it stores in
+// Stats.NonReduced and warns once per hour, without reducing anything (POE-197).
 type pricePoint struct {
 	price    float64
 	itemQty  int64
@@ -139,6 +141,9 @@ func vwapIn(r Row, item, quote string) (float64, bool) {
 // on a pair (x, y) the smallest representable move is one unit of the larger
 // quantity: 1/max(x, y). The row carries two pairs (the hour's lowest and its
 // highest ratio) and the coarser of the two bounds everything derived from it.
+// This is the consumer that a non-reduced pair would quietly mislead — it would
+// understate the step — so Normalize counts such pairs in Stats.NonReduced and
+// warns rather than reducing them under this function (POE-197).
 //
 // This is the single strongest predictor of an apparent spread: over 26 hours of
 // Allflame, corr(ln edge, ln tick) = +0.42, median tick 14.3%, p75 50%. A 1:2

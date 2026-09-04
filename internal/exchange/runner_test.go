@@ -659,6 +659,30 @@ func TestRunOnce_mixedLeaguePayload_countsTheDroppedRowsInTheHourLog(t *testing.
 	}
 }
 
+func TestRunOnce_hourStored_carriesTheNonReducedCount(t *testing.T) {
+	limit := cursorHour + secondsPerHour
+	spec := validSpec()
+	// 4:6 shares a factor of 2; the highest pair stays in lowest terms.
+	spec.lowestRatio = [2]int64{4, 6}
+	payload := &HourPayload{NextChangeID: limit, Markets: []Market{spec.market()}}
+	fetcher := newFetcher(func(hour int64) (*HourPayload, error) {
+		if hour >= limit {
+			return nil, &ErrNotPublished{NextChangeID: hour}
+		}
+		return payload, nil
+	})
+	runner, logs := newRunner(t, fetcher, storeAt(cursorHour), &fakePublisher{}, RunnerConfig{Scope: runnerScope})
+
+	if _, err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	record := recordWithMessage(t, logs, "currency-exchange: hour stored")
+	if got := attrInt64(t, record, "non_reduced"); got != 1 {
+		t.Errorf("log non_reduced = %d, want 1", got)
+	}
+}
+
 func TestRunOnce_hourWithOnlyOtherLeagueRows_advancesPastItWithZeroRows(t *testing.T) {
 	// Hour one belongs entirely to another league; hour two is ours. If the
 	// zero-row hour did not advance the cursor, hour two would never be reached.
