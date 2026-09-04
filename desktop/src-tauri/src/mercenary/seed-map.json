@@ -6,7 +6,7 @@
     "Support), then rule 1 '<family> Support' (46 hits), then rule 2 '<family> Damage Support'",
     "(4: Added Chaos/Cold/Fire/Lightning). family = merc display text minus '(Tier N)' minus a",
     "leading Lesser/Greater/Gilded, then the family alias table (vocab.rs). gem is a key of",
-    "internal/gemicon/gem-icon-urls.json.",
+    "one of the category maps under internal/gemicon/urls/.",
     "tier: the family's LOWEST vocabulary tier — one seed per family, under one key.",
     "verified: 'corpus' = every clean corpus crop of this family resolves to it through the real",
     "matcher (the acceptance test re-checks every ENABLED row that claims it, and re-derives the",

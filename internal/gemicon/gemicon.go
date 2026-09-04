@@ -13,14 +13,15 @@
 // Support"). The correct poewiki image URL is an /images/<h>/<hh>/ path that
 // MediaWiki derives from the MD5 of the image's FILE name — stable for that
 // name, so a re-upload keeps the URL, but not constructible from the gem's
-// display name — so a name→URL map is embedded from
-// gem-icon-urls.json. On the first request for a gem the upstream image is
-// fetched once and written to a persistent on-disk cache directory ("our own
-// copy"); every subsequent request — including after a server restart — is
-// served straight from disk with no upstream fetch. poewiki is therefore hit at
-// most once, ever, per gem. Clients additionally cache aggressively via a long
-// immutable Cache-Control header, so icons are not re-downloaded on every app
-// open.
+// display name — so a name→URL map is embedded from the category files under
+// urls/ (gems.json, items.json), merged into one flat map by loadURLMap, which
+// discovers whatever *.json is there. On the first request for a gem the
+// upstream image is fetched once and written to a persistent on-disk cache
+// directory ("our own copy"); every subsequent request — including after a
+// server restart — is served straight from disk with no upstream fetch. poewiki
+// is therefore hit at most once, ever, per gem. Clients additionally cache
+// aggressively via a long immutable Cache-Control header, so icons are not
+// re-downloaded on every app open.
 //
 // Only URLs live in the repo (the embedded map). The fetched image bytes are
 // never committed — they are copyrighted and heavy — so the cache directory is
@@ -31,17 +32,19 @@ package gemicon
 import (
 	"context"
 	"crypto/sha256"
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -49,8 +52,23 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-//go:embed gem-icon-urls.json
-var iconURLsJSON []byte
+// urlFiles carries the source name→URL maps, split by category, one file per
+// category. The split is source-side only: the runtime lookup is the single
+// flat map loadURLMap merges them into, because the handler's key is whatever
+// the route parameter carries and knows nothing about categories.
+//
+// Embedding (rather than reading the directory at runtime) is ADR-012: the icon
+// set stays versioned with the binary that serves it, and production — which
+// cannot fetch from poewiki at all — never depends on a file being present next
+// to the binary.
+//
+//go:embed urls/*.json
+var urlFiles embed.FS
+
+// urlsDir is the directory inside urlFiles the category files live in. Adding a
+// category is one new *.json file there and no change here: loadURLMap
+// discovers the files rather than naming them.
+const urlsDir = "urls"
 
 // maxImageBytes bounds a single upstream fetch. Inventory icons are a few KB;
 // this cap guards against a misbehaving or unexpected upstream response.
@@ -104,9 +122,10 @@ type Cache struct {
 	etags  map[string]string
 }
 
-// New builds a Cache from the embedded gem name→URL map and ensures cacheDir
-// exists. It returns an error if the embedded JSON is malformed (a build-time
-// defect), cacheDir is empty, or the cache directory cannot be created.
+// New builds a Cache from the embedded category files (see urlFiles) and
+// ensures cacheDir exists. It returns an error if those files are missing,
+// malformed, empty or share a key across two of them — all build-time defects,
+// see loadURLMap — or if cacheDir is empty or cannot be created.
 //
 // cacheDir is required here for the same reason NewWithMap requires it, and
 // this package deliberately holds no default: any default it held would be the
@@ -114,11 +133,72 @@ type Cache struct {
 // caller owns the layout — internal/server derives one sub-directory per map
 // from a single configured cache root (POE-221).
 func New(cacheDir string) (*Cache, error) {
-	var urls map[string]string
-	if err := json.Unmarshal(iconURLsJSON, &urls); err != nil {
-		return nil, fmt.Errorf("gemicon: parse embedded url map: %w", err)
+	urls, err := loadURLMap(urlFiles, urlsDir)
+	if err != nil {
+		return nil, err
 	}
 	return NewWithMap(urls, cacheDir)
+}
+
+// loadURLMap merges every *.json file directly under dir in fsys into one flat
+// key→URL map. Each file is a category (gems.json, items.json, …) and none of
+// them is named here, so a new category is one new file and no Go change.
+//
+// A key present in two files is an ERROR naming the key and both files, not a
+// last-writer-wins merge. That silent winner is the one real hazard of a flat
+// runtime map: the category files are edited and generated independently, so
+// the loser's artwork would quietly be served under the winner's URL with
+// nothing anywhere to show for it. A duplicate key WITHIN one file is a
+// different, unguarded hazard: every loader that reads it (encoding/json here,
+// json.load in the puller, serde's BTreeMap in the desktop test) still
+// resolves it last-writer-wins with no error, so that case is guarded only by
+// the sorted-one-key-per-line file convention, not by code.
+//
+// Zero matching files and zero merged entries are errors too. Both produce a
+// Cache that answers 404 for every name — a broken build that would otherwise
+// present as "the icons stopped working" at runtime, which ADR-012's
+// seed-before-deploy ordering makes expensive to diagnose.
+//
+// Both file names in the duplicate error are deterministic: fs.Glob walks
+// fs.ReadDir, whose order is documented sorted, and the keys of each file are
+// visited in sorted order rather than in map order.
+func loadURLMap(fsys fs.FS, dir string) (map[string]string, error) {
+	files, err := fs.Glob(fsys, dir+"/*.json")
+	if err != nil {
+		return nil, fmt.Errorf("gemicon: list url maps in %s: %w", dir, err)
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("gemicon: no url map files matched %s/*.json", dir)
+	}
+
+	urls := make(map[string]string)
+	sourceFile := make(map[string]string)
+	for _, file := range files {
+		raw, err := fs.ReadFile(fsys, file)
+		if err != nil {
+			return nil, fmt.Errorf("gemicon: read url map %s: %w", file, err)
+		}
+		var part map[string]string
+		if err := json.Unmarshal(raw, &part); err != nil {
+			return nil, fmt.Errorf("gemicon: parse url map %s: %w", file, err)
+		}
+		keys := make([]string, 0, len(part))
+		for key := range part {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if first, dup := sourceFile[key]; dup {
+				return nil, fmt.Errorf("gemicon: duplicate icon key %q in %s and %s", key, first, file)
+			}
+			sourceFile[key] = file
+			urls[key] = part[key]
+		}
+	}
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("gemicon: url maps under %s hold no entries", dir)
+	}
+	return urls, nil
 }
 
 // NewWithMap builds a Cache over an arbitrary key→upstream-URL map, ensuring
@@ -244,10 +324,10 @@ func writeIconHeaders(w http.ResponseWriter, etag string) {
 // refetches the same mapped URL and gets the same bytes back.
 //
 // The memo is only ever written for a name that resolved in the embedded map, so
-// it cannot grow past that map's size (762 entries, ~100 KB) no matter what a
+// it cannot grow past that map's size (765 entries, ~100 KB) no matter what a
 // client requests. That bound is why this is a name→ETag memo rather than a
 // name→bytes cache: caching the bodies too would remove the disk read as well,
-// but costs ~6 MB (measured: 8.2 KB mean over 116 cached icons × 762 entries) to
+// but costs ~6 MB (measured: 8.2 KB mean over 116 cached icons × 765 entries) to
 // avoid a page-cache-warm read of bytes that are about to be written to the wire
 // anyway. The SHA-256 was the per-request cost worth removing; the read is not.
 func (c *Cache) etagOf(name string) (string, bool) {

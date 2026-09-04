@@ -50,3 +50,6 @@ desktop/build/
 # Tauri signing keys (private key MUST NOT be committed)
 desktop/.tauri/
 .env.local
+
+# Python bytecode from the seed scripts
+__pycache__/
