@@ -275,11 +275,14 @@ func TestNewRouter_CurrencyExchangeIconRouteServesFromTheDefaultRootWhenNoneIsCo
 
 	// The seed path restates DefaultIconCacheDir's value and gemicon's filename
 	// scheme literally, as an independent oracle: deriving it from the constant
-	// would move the seed in lockstep with the value under test.
+	// would move the seed in lockstep with the value under test. The suffix is
+	// the first 16 hex characters of the SHA-256 of the URL the embedded item
+	// map holds for this id — the same vector the sub-directory test pins.
 	const itemID = "Metadata/Items/Currency/CurrencyRerollRare"
 	itemBytes := []byte("\x89PNG\r\n\x1a\nseeded-under-the-default-icon-cache-root")
+	// sha256("https://www.poewiki.net/images/9/9c/Chaos_Orb_inventory_icon.png")[:8]
 	seedPath := filepath.Join("data", "icons-cache", "currency-exchange",
-		"Metadata_Items_Currency_CurrencyRerollRare.png")
+		"Metadata_Items_Currency_CurrencyRerollRare-41db757a2f323113.png")
 	writeIconFile(t, seedPath, itemBytes)
 
 	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
@@ -323,7 +326,8 @@ func chdirToEmptyDir(t *testing.T) {
 
 // The two icon sets share one cache root and one cache-filename scheme, so the
 // per-set sub-directory is the only thing keeping a gem name and a metadata id
-// that reduce to the same filename from serving each other's artwork.
+// that reduce to the same safe name — and only if they also share a source URL —
+// from serving each other's artwork.
 //
 // A pre-placed file per sub-directory is what makes that observable with no
 // network at all: gemicon's load() returns the disk copy when it exists and only
@@ -336,9 +340,14 @@ func chdirToEmptyDir(t *testing.T) {
 // rather than taken from the production constants and helpers, deliberately, as
 // an independent oracle. Seeding through gemIconSubdir would move the seed
 // whenever the constant moved and the swap above would go undetected; the file
-// names restate gemicon.safeFileName's scheme (runs of [^A-Za-z0-9] collapsed to
-// "_") for the same reason, and because the seeding script and the operator
-// runbook both hard-depend on that scheme staying put.
+// names restate gemicon's whole cache-filename scheme — the safe name (runs of
+// [^A-Za-z0-9] collapsed to "_"), a "-", the first 16 hex characters of the
+// SHA-256 of the entry's SOURCE URL, and ".png" — for the same reason, and
+// because the seeding script and the operator runbook both hard-depend on that
+// scheme staying put. The two hashes below are of the URLs the embedded maps
+// really carry for these keys, so a URL edit in either map is expected to fail
+// this test: that is the point of content-addressing, and the fix is to reseed
+// and repin, never to relax the assertion.
 func TestNewRouter_EachIconRouteServesFromItsOwnSubdirectoryOfTheCacheRoot(t *testing.T) {
 	const (
 		// A key each embedded map really carries — the maps are what decide 404
@@ -355,8 +364,10 @@ func TestNewRouter_EachIconRouteServesFromItsOwnSubdirectoryOfTheCacheRoot(t *te
 	root := t.TempDir()
 	gemDir := filepath.Join(root, "gems")
 	itemDir := filepath.Join(root, "currency-exchange")
-	writeIconFile(t, filepath.Join(gemDir, "Absolution.png"), gemBytes)
-	writeIconFile(t, filepath.Join(itemDir, "Metadata_Items_Currency_CurrencyRerollRare.png"), itemBytes)
+	// sha256("https://www.poewiki.net/images/c/c6/Absolution_inventory_icon.png")[:8]
+	writeIconFile(t, filepath.Join(gemDir, "Absolution-e2b9dfdb1dd1d6a0.png"), gemBytes)
+	// sha256("https://www.poewiki.net/images/9/9c/Chaos_Orb_inventory_icon.png")[:8]
+	writeIconFile(t, filepath.Join(itemDir, "Metadata_Items_Currency_CurrencyRerollRare-41db757a2f323113.png"), itemBytes)
 
 	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{IconCacheDir: root})
 

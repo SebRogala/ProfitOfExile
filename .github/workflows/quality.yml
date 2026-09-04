@@ -117,6 +117,42 @@ jobs:
       - name: Integration tests
         run: make test-integration
 
+  # The icon cache filename scheme is implemented twice — Go
+  # (internal/gemicon.filePath) and Python (scripts/download-gem-icons.py) — and
+  # production reads only what the Python side writes, from a volume the server
+  # may not refetch (ADR-012: poewiki 403s the VPS). So a scheme that drifts
+  # between the two languages seeds files the server never looks for, and the
+  # symptom is a 502 per icon with no way back except a re-crawl from an allowed
+  # IP. The Go half of the vector is pinned by TestShortHash_pinnedVector in the
+  # `backend` job; this is the Python half.
+  #
+  # The expected value is restated here rather than imported from the script, as
+  # an independent oracle: the script's own import-time _self_check() asserts the
+  # same vector, so a check that asked the script what it expected would go green
+  # on a commit that changed the scheme and the self-check together — which is
+  # exactly the change this gate exists to stop.
+  #
+  # No docker, no Go toolchain: ubuntu-latest ships python3, and the script
+  # imports nothing outside the standard library.
+  icon-cache-filename-scheme:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # PYTHONDONTWRITEBYTECODE keeps the import from leaving __pycache__ in the
+      # checkout; importing the module also runs its _self_check().
+      - name: Python cache-filename vector
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          got="$(python3 -c "
+          import importlib.util
+          spec = importlib.util.spec_from_file_location('dl', 'scripts/download-gem-icons.py')
+          m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+          print(m.cache_file_name('Absolution','https://www.poewiki.net/images/c/c6/Absolution_inventory_icon.png'))
+          ")"
+          echo "$got"
+          test "$got" = "Absolution-e2b9dfdb1dd1d6a0.png"
+
   frontend:
     runs-on: ubuntu-latest
     steps:

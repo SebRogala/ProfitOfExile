@@ -213,11 +213,12 @@ func loadURLMap(fsys fs.FS, dir string) (map[string]string, error) {
 // Each map needs its OWN directory. Two maps sharing one directory would share
 // the filename scheme too, so any pair of keys that reduce to the same
 // safeFileName — across the two maps, where neither generator can see the
-// other's keys — would serve one set's artwork under the other's name.
-// cacheDir is therefore required: an empty one is an unconfigured caller, not a
-// request for a default. Since POE-221 those directories are sub-directories of
-// one configured cache root, which is what lets production mount a single
-// volume without reintroducing the collision.
+// other's keys — would serve one set's artwork under the other's name, but only
+// when they also share a source URL. cacheDir is therefore required: an empty
+// one is an unconfigured caller, not a request for a default. Since POE-221
+// those directories are sub-directories of one configured cache root, which is
+// what lets production mount a single volume without reintroducing the
+// collision.
 func NewWithMap(urls map[string]string, cacheDir string) (*Cache, error) {
 	if cacheDir == "" {
 		return nil, errors.New("gemicon: cache dir is required")
@@ -347,8 +348,12 @@ func (c *Cache) rememberETag(name, etag string) {
 
 // load returns the icon bytes for name, reading the persistent disk copy when it
 // exists and otherwise fetching from srcURL exactly once and writing it to disk.
+//
+// srcURL is part of the cache path, not only of the fetch: correcting a URL in
+// the map changes the filename, so the old file is not found, the new bytes are
+// fetched, and the map alone decides what a name serves (ADR-012 decision 3).
 func (c *Cache) load(ctx context.Context, name, srcURL string) ([]byte, error) {
-	path := c.filePath(name)
+	path := c.filePath(name, srcURL)
 	if body, err := os.ReadFile(path); err == nil {
 		return body, nil // served from our own disk copy — no upstream hit
 	}
@@ -359,7 +364,9 @@ func (c *Cache) load(ctx context.Context, name, srcURL string) ([]byte, error) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	// Another goroutine may have fetched and written it while we waited.
+	// Another goroutine may have fetched and written it while we waited. The
+	// same (name, srcURL) yields the same path, so this is the same file the
+	// first read missed.
 	if body, err := os.ReadFile(path); err == nil {
 		return body, nil
 	}
@@ -416,9 +423,30 @@ func (c *Cache) writeFile(path string, body []byte) error {
 	return os.Rename(tmpName, path)
 }
 
-// filePath returns the on-disk cache path for a gem name.
-func (c *Cache) filePath(name string) string {
-	return filepath.Join(c.dir, safeFileName(name)+".png")
+// filePath returns the on-disk cache path for a gem name fetched from srcURL:
+// "<safeFileName(name)>-<shortHash(srcURL)>.png".
+//
+// The URL is in the filename because the cache has no other invalidation at all
+// — load returns the disk copy unconditionally when the file exists, and
+// production may not re-fetch (ADR-012: poewiki 403s the VPS). Keying on the
+// name alone meant a corrected URL kept serving the old artwork forever, with no
+// error and no log. Keying on both makes a URL edit a different file, hence a
+// miss, hence a fetch, so the map is the single source of truth for what a name
+// serves. It also keeps the name in the filename, so two names sharing one URL
+// still get one file each and neither can be mistaken for the other on disk.
+//
+// The "-" separator is load-bearing. safeFileName emits [A-Za-z0-9_] only
+// (unsafeFileChars collapses every other run to "_", then the ends are
+// trimmed), so it can neither contain nor end in "-": the LAST "-" in the
+// filename always starts the hash, which is what lets an operator — or the
+// prune mode of scripts/download-gem-icons.py — split a cache filename back
+// into its two parts unambiguously.
+//
+// ".png" is hardcoded rather than taken from the URL: every source is a poewiki
+// "*_inventory_icon.png", writeIconHeaders serves a constant image/png, and a
+// future non-PNG icon set has to change both together.
+func (c *Cache) filePath(name, srcURL string) string {
+	return filepath.Join(c.dir, safeFileName(name)+"-"+shortHash(srcURL)+".png")
 }
 
 // lockFor returns the per-gem mutex, creating it on first use.
@@ -436,6 +464,32 @@ func (c *Cache) lockFor(name string) *sync.Mutex {
 // safeFileName reduces a gem name to a filesystem-safe token.
 func safeFileName(name string) string {
 	return strings.Trim(unsafeFileChars.ReplaceAllString(name, "_"), "_")
+}
+
+// shortHash returns the first 16 hex characters (8 bytes) of the SHA-256 of
+// srcURL, for use as the discriminating half of a cache filename.
+//
+// 16 hex is short for a global identifier and ample for this one, because the
+// suffix only has to discriminate WITHIN one safeFileName bucket — the set of
+// URLs a single name has ever mapped to, normally exactly one. Even treated as
+// a global namespace over the whole 765-entry map, the 64-bit birthday bound is
+// about 1.6e-14. The name stays in the filename, so this is a tiebreaker, never
+// the identity.
+//
+// The URL, not the bytes: production cannot fetch (ADR-012), so the bytes are
+// not available to it offline and the URL is the only identity it can evaluate.
+// That also bounds what this fixes — poewiki's /images/<h>/<hh>/ path is the MD5
+// of the FILE name, so a re-upload under the same name keeps the URL and is
+// still invisible here. Renaming the file upstream, or correcting a wrong entry,
+// is the case this catches.
+//
+// scripts/download-gem-icons.py reimplements this scheme (short_hash /
+// cache_file_name) because the seeding path is Python and production reads what
+// it writes. Both sides pin the same vector: TestShortHash_pinnedVector below
+// and the script's import-time _self_check().
+func shortHash(srcURL string) string {
+	sum := sha256.Sum256([]byte(srcURL))
+	return fmt.Sprintf("%x", sum[:8])
 }
 
 // etagFor returns a strong, quoted ETag derived from the image bytes.
