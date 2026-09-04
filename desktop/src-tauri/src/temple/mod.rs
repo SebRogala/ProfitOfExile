@@ -25,6 +25,18 @@
 //! - [`advisor`] (POE-170) — the board graph, the Monte-Carlo rollout and the
 //!   rule layer that ranks `(architect kill, door set)` and decides whether to
 //!   leave the map. Consumes every module above it and is pure.
+//! Later changes that moved where things live (2026-09-03/04):
+//! - POE-234: the anchor's cold start is `anchor::Scene::pyramid_sweep` behind
+//!   `anchor_for_loop` (hint → `MEASURED_SCALES` → pyramid); the temple reads and
+//!   writes the shared screen scale (`run::hint_for_capture`,
+//!   `run::publish_anchor_scale`, gate `run::screen_from_anchor`) — ADR-020.
+//! - POE-230: `run::panel_rect` / `run::diamond_rect` are keyed on the Entrance
+//!   anchor, never the capture's edge; `run::read_rois` is the never-cover set.
+//! - POE-243: [`panel`] reads BOXED lines; blocks group by geometry, offers and
+//!   the title carry screen rects; `Warning::PartialArchitects`.
+//! - POE-246: [`trigger`]'s clock measures absence (panel tail, start-up probe).
+//! - POE-244: [`markers`] publishes the seal ring / rhombus the overlay draws — ADR-019.
+//!
 //! - [`trigger`] (POE-242) — what puts an incursion in scope, and so whether
 //!   [`run`]'s loop may capture at all: a pure state machine over the Client.txt
 //!   lines Alva and the temple area write, plus a thin `AppState` wrapper.
