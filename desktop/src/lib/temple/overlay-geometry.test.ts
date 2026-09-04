@@ -24,9 +24,12 @@ import {
 	killGlyphs,
 	neverCoverRects,
 	roiRect,
-	sealVisible
+	sealVisible,
+	waitingDefaultPlacement
 } from './overlay-geometry';
 import { rectIsClear } from '$lib/overlay/widgets/widget-avoid';
+import { widgetsFor } from '$lib/overlay/widgets/widget-registry';
+import { TEMPLE_WINDOW_LABEL } from '$lib/overlay/manager';
 import type { CaptureRect, DiamondView, LayoutView, RoiView } from './slice';
 
 const HOST = { width: 1920, height: 1080 };
@@ -289,6 +292,88 @@ describe('bannerPlacement', () => {
 
 	it('is null before the banner has measured itself', () => {
 		expect(bannerPlacement({ box: { w: 0, h: 0 }, obstacles: [], host: HOST })).toBeNull();
+	});
+});
+
+describe('waitingDefaultPlacement', () => {
+	/** The registry's shipped box for `temple.waiting`, READ OUT OF the registry
+	 *  rather than copied from it. What the route passes is `spec.defaults`, so
+	 *  a literal here would be a second copy of the shipped size — and the
+	 *  clearance case below, which is this suite's only guard on that size
+	 *  growing into the panel's crop, would go on passing against the old
+	 *  numbers while the app shipped the new ones. */
+	const spec = widgetsFor(TEMPLE_WINDOW_LABEL).find((widget) => widget.id === 'temple.waiting');
+	if (!spec) throw new Error('the registry no longer declares temple.waiting');
+	const NOTICE = { w: spec.defaults.w, h: spec.defaults.h };
+	/** Where a box that size WANTS to go — the top centre of the host, which is
+	 *  what the two cases below expect to come back UNTOUCHED. Derived from the
+	 *  registry for the same reason `NOTICE` is. */
+	const WANTED = { x: HOST.width / 2 - NOTICE.w / 2, y: BANNER_TOP_CSS, ...NOTICE };
+	/** The side panel's OCR crop on the committed 1920x1080 frame: the real
+	 *  extent of `panel_rect((960, 713), 1.0)` — x0 `origin.x + 171` = 1131,
+	 *  y0 4, x1 1675, y1 458 — and not the panel's border box. */
+	const COMMITTED_PANEL = { x: 1131, y: 4, w: 544, h: 454 };
+
+	it('ships the notice at the top centre of the host when that is clear', () => {
+		// Host centre minus half the box, at `BANNER_TOP_CSS` — 830 on the
+		// shipped 260. The obstacle is a real published rect nowhere near the
+		// top centre (a plate crop, bottom-left): "clear" has to be shown
+		// against a non-empty set, because an EMPTY one is the case below.
+		expect(
+			waitingDefaultPlacement({
+				box: NOTICE,
+				obstacles: [{ x: 200, y: 700, w: 120, h: 60 }],
+				host: HOST
+			})
+		).toEqual(WANTED);
+	});
+
+	it('clears the committed frame\'s panel crop at the shipped width', () => {
+		// The measurement the 260 px default was chosen from (POE-249 A6): a box
+		// that wide centred on this host ends at 1090 and the crop starts at
+		// 1131, so the wanted position stands UNTOUCHED with 41 px to spare.
+		// Both sides come off the registry, so this is the assertion that fails
+		// when the shipped default grows past that margin — the failure that
+		// otherwise happens silently, on screen, inside the module's own read.
+		// (At 400 px wide the wanted rect starts at 760, runs to 1160, and
+		// `avoidRects` slides it left to 731: not `WANTED`, and red here.)
+		expect(
+			waitingDefaultPlacement({ box: NOTICE, obstacles: [COMMITTED_PANEL], host: HOST })
+		).toEqual(WANTED);
+	});
+
+	it('slides a box too wide for that margin off the crop instead of covering it', () => {
+		// 400 px centred runs 760..1160, over a crop that starts at 1131. The
+		// escape is sideways and not upward — the crop reaches y 4, so there is
+		// no room above it — and the answer is flush against its left edge:
+		// 1131 - 400 = 731, at the same top.
+		expect(
+			waitingDefaultPlacement({
+				box: { w: 400, h: 40 },
+				obstacles: [COMMITTED_PANEL],
+				host: HOST
+			})
+		).toEqual({ x: 731, y: BANNER_TOP_CSS, w: 400, h: 40 });
+	});
+
+	it('is null with an empty never-cover set, which is not a free screen', () => {
+		// The same rule its siblings state, and the one this placer needs most:
+		// its wanted position is a function of the HOST alone, so with nothing
+		// passed to `avoidRects` the top centre comes back "clear" — over the
+		// crop the next tick reads. The registry's fixed rectangle is what the
+		// caller falls back to (ADR-019's user-owned carve-out), which is the
+		// cold start this widget exists for.
+		expect(waitingDefaultPlacement({ box: NOTICE, obstacles: [], host: HOST })).toBeNull();
+	});
+
+	it('is null before the box has a size', () => {
+		// Against a real obstacle set, so what is being pinned is the BOX guard
+		// and not the empty-set one: a zero-size rect overlaps nothing, so
+		// without this it would answer the top centre for a widget that has no
+		// width to be centred.
+		expect(
+			waitingDefaultPlacement({ box: { w: 0, h: 0 }, obstacles: [COMMITTED_PANEL], host: HOST })
+		).toBeNull();
 	});
 });
 

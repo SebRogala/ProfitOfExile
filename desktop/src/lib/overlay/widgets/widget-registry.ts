@@ -59,8 +59,10 @@ export interface WidgetSpec {
 	resizable: boolean;
 	/**
 	 * Placed against the GAME rather than by the user, and therefore by the
-	 * module's own geometry: no Settings row, no persisted rectangle, and no
-	 * config-mode frame.
+	 * module's own geometry: no Configure placement, no persisted rectangle, and
+	 * no config-mode frame. It keeps a Show row in Settings (`overlay-groups.ts`
+	 * lists it with `placeable: false`) — an anchored widget the user cannot
+	 * switch off would be the one overlay surface with no control at all.
 	 *
 	 * `temple.advice` is the first (POE-244). The host does not place it —
 	 * nothing generic can, because where it goes is a function of where the game
@@ -80,18 +82,33 @@ export interface WidgetSpec {
 /**
  * Every widget every module declares.
  *
- * The temple's two are POE-244's rebuild. `temple.board` — the lattice diagram
- * this file shipped in POE-225 — is GONE from the overlay: the board is already
- * on screen behind it, and redrawing it there cost space that had to be kept
- * clear of the module's own OCR crops. `TempleLattice.svelte` survives on the
- * Temple page, which is the surface for reading.
+ * The temple's three are POE-244's rebuild plus POE-249's notice. Each answers
+ * a different question the player has at a different moment of one incursion
+ * cycle, which is why they are three widgets and not three lines in one box:
  *
- * What is left is one of each kind. `temple.advice` is the kill callout, placed
- * against the game (`anchored`), because a box that points at an architect
- * block has to be wherever that block is. `temple.door` is the room widget,
- * placed by the USER, because it is the surface that stays up after the panel is
- * gone — and past the capture standing down (POE-248) — and only the player
- * knows what their screen is free of at that point.
+ * - `temple.waiting` (POE-249) says the module HEARD Alva and is waiting for
+ *   the layout panel. It is the only surface that exists before there is
+ *   anything read — the answer to "is this thing on?" while the sheet is still
+ *   shut — and it is gone the moment there is a board to look at
+ *   (`overlayShowsWaiting`). Placed by the USER.
+ * - `temple.advice` is the kill callout: which architect block to click, while
+ *   the sheet is open. Placed against the GAME (`anchored`), because a box that
+ *   points at an architect block has to be wherever that block is.
+ * - `temple.door` is the room widget: which door to open, drawn on the room's
+ *   own shape. Placed by the USER, because it is the surface that stays up
+ *   after the panel is gone — and past the capture standing down (POE-248) —
+ *   and only the player knows what their screen is free of at that point.
+ *
+ * `temple.board` — the lattice diagram this file shipped in POE-225 — is GONE
+ * from the overlay: the board is already on screen behind it, and redrawing it
+ * there cost space that had to be kept clear of the module's own OCR crops.
+ * `TempleLattice.svelte` survives on the Temple page, which is the surface for
+ * reading.
+ *
+ * **The order of this list is the order Settings draws the rows in**, within
+ * each kind: `widgetsFor` preserves it, and `overlayGroups` lists the placeable
+ * rows first and the anchored ones after. So moving an entry here moves a row
+ * in Settings → Overlay Positions and nothing else.
  */
 export const WIDGETS: readonly WidgetSpec[] = [
 	{
@@ -123,6 +140,51 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		// the height is now slack rather than a fit.
 		defaults: { x: 40, y: 300, w: 190, h: 215 },
 		resizable: true
+	},
+	{
+		id: 'temple.waiting',
+		module: 'temple',
+		label: 'Temple waiting notice',
+		// TOP-CENTRE on a 1920-wide host (830 = 960 − 260/2), and deliberately
+		// not screen-centre, which the owner asked for: at 1920x1080 the middle
+		// of the screen is on plates C1/D1/D2, and a box there is OCR input the
+		// app wrote itself (ADR-019). Top-centre is measured clear instead.
+		//
+		// MEASURED, on the ONE full-screen capture this repository holds
+		// (`screen-live-1920x1080.png`, Entrance centre (960, 713) at scale
+		// 1.0): the crop this has to miss is `panel_rect` — `origin.x +
+		// 171·scale`, not the panel's border box — which starts at x 1131, and
+		// a 260 px box centred on a 1920-wide host ends at 1090. That 41 px is
+		// the clearance any decision to widen this box is budgeted against.
+		//
+		// NOT measured, and this comment used to claim otherwise: the 27 px and
+		// 36 px clearances it quoted for "the 1374 and 1539 captures" were
+		// DERIVED at reference scale from a synthetic origin, not read off a
+		// monitor. `board-ref-1374.png` (1374×542) and `board-live-1539.png`
+		// (1539×613) are BOARD CROPS rather than screens — there is no second
+		// screen width in this repository — and the 844 those figures started
+		// from is `673 + 171`, the unit tests' own origin. A second row here
+		// needs a second real capture.
+		//
+		// The DRAWN box is SMALLER than this rectangle, deliberately. The widget
+		// is not resizable, so `placementFor` returns no width and the component
+		// sizes itself to its one line — on the order of 212×31 CSS px at 14 px
+		// type, drawing 830…1042 and centred nearer 936 than 960. Oversizing is
+		// the SAFE direction: these numbers are what `waitingDefaultPlacement`
+		// hands `avoidRects`, so a box declared wider than the ink keeps MORE
+		// margin from the crop than the notice needs. Do not "fix" the 260 down
+		// to the measured text width; that spends the margin.
+		//
+		// It is one drag from the centre if the player wants it there, and that
+		// drag is then their own placement.
+		//
+		// The shipped position is also the LAST RESORT here, the same as the
+		// door's: `defaultsFor` in the temple route offers `waitingDefaultPlacement`
+		// against the last board's read regions whenever there is one, and this
+		// fixed rectangle applies when there is not — which is the cold start
+		// this widget exists for.
+		defaults: { x: 830, y: 16, w: 260, h: 40 },
+		resizable: false
 	}
 ];
 

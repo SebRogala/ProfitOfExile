@@ -73,6 +73,8 @@ Two facts about the failure decided the shape of the rule:
   three placers state this themselves rather than inheriting it from a null
   anchor (`calloutPlacement`, `bannerPlacement`, `doorDefaultPlacement`), and
   the door's caller repeats it so no default is offered to the host at all.
+  *(FOUR placers and two such callers since 2026-09-04 — see the POE-249
+  amendment at the end.)*
 - **`avoidRects` is the arithmetic, and `null` is a real answer.** The nearest
   position clear of every obstacle, or nothing. A box that cannot be placed
   clear is NOT drawn: the game's own panel is on screen either way, and a callout
@@ -95,6 +97,8 @@ Two facts about the failure decided the shape of the rule:
 where the module is looking and answers where a surface goes, and the player
 never saw the arithmetic. That is the whole class this ADR governs —
 `calloutPlacement`, `bannerPlacement`, `doorDefaultPlacement` today.
+*(And `waitingDefaultPlacement` since 2026-09-04 — see the POE-249 amendment at
+the end.)*
 
 **A rectangle the USER owns is not a placer's output and is outside the rule.**
 Two of those, and they are the same thing at different ages:
@@ -207,3 +211,14 @@ carve-out was the only soft edge this rule had:
 Nothing else in this ADR moves. The never-cover set, the empty-set rule, the
 `null` answer, the stored-placement carve-out and the Debug-capture diff are
 untouched.
+
+## Amendment: a fourth placer, and a second refusing caller (2026-09-04)
+
+POE-249. `waitingDefaultPlacement` — where the temple's waiting notice SHIPS —
+is the fourth member of the placer class this ADR binds, and it wants the same
+host-supplied top centre `bannerPlacement` does, which is the position the
+empty-set rule exists for; the temple overlay route's `waitingDefaults` is the
+second caller, alongside `doorDefaults`, that refuses an empty never-cover set
+rather than offering the host a default. Read the two lists above as four and
+two. Nothing else moves: the notice's registry rectangle is the shipped-default
+half of the user-owned carve-out, exactly as the door's fallback is.

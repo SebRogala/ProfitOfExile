@@ -327,17 +327,26 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   is built on it, `capture::capture_screen` grabs it, and `ssot.screen` carries
   its id and origin) — so a user-placed widget and a game-anchored one need no
   conversion between them beyond the window's own scale factor.
-- **The shipped widget list.** Two, both the temple's:
+- **The shipped widget list.** Three, all the temple's:
   `temple.advice` — the KILL CALLOUT (POE-244), `anchored`, a box carrying the
   architect's name and one reason, placed level with the block the advisor chose
-  and just outside the game's own side panel; and `temple.door` — the ROOM
+  and just outside the game's own side panel; `temple.door` — the ROOM
   WIDGET, user-placed and persisted, the same isometric rectangle the side panel
   draws, with every corridor the read settled in the game's own colours (green
   open, red closed), the advisor's door bigger and purple, the door a SECOND
   Stone of Passage would buy in the same purple at half opacity and a radius
   between the two, and BOTH kills marked by a cyan glyph on their own architect
   icon spots inside the room — the block the advisor did NOT choose at a quarter
-  opacity (POE-248).
+  opacity (POE-248); and `temple.waiting` — the WAITING NOTICE (POE-249), one
+  line saying the module heard Alva's start phrase and the layout sheet is not
+  up yet. It is PLACEABLE like the door — the ordinary pair of Settings
+  controls, a Show checkbox and a persisted rectangle — and it ships top-centre,
+  (830, 16) 260×40 on a 1920-wide host, which is measured clear of the panel's
+  OCR crop rather than eye-level. It is the only surface that exists before
+  anything has been read, and it is gone the moment there is a board.
+  (NOT SHIPPED, tracked in POE-249: the kill callout is due to be replaced by
+  per-offer boxes drawn on the architect blocks themselves. Until that lands
+  this list is what the registry declares.)
   **Faint is the alternative** is one rule across that widget: the conditional
   door and the unchosen kill are both drawn and both dimmed, so everything at
   full strength is a thing to do now. It is the read that check items below
@@ -1131,21 +1140,34 @@ touching the named path.
   in Settings → Overlay Positions → Temple. The whole monitor must dim, and the
   bar must appear next to the widgets with 14 px copy and buttons at least 32 px
   tall. The anchor is the BOUNDING BOX of every widget being arranged, not one
-  of them, and config mode arranges only the PLACEABLE widgets — since POE-244
-  that is one, `temple.door`, shipping at y = 300. So on shipped defaults the bar
-  sits ABOVE it and centred on it, not on the screen: 300 leaves room for a bar
-  plus the 16 px gap, which is the first branch of `configBarAnchor`. (This item
-  said BELOW until the POE-223 follow-up audit — it was written against POE-245's
-  two-widget registry, where `temple.advice` shipped at y = 40 and pinned the
-  cluster's top to the top of the screen. POE-244 made that widget anchored, so
-  it is neither persisted nor arranged, and the item inverted.)
+  of them, and config mode arranges only the PLACEABLE widgets — since POE-249
+  that is two, `temple.door` at y = 300 and `temple.waiting` at y = 16. The
+  cluster's top edge is therefore 16 px from the top of the monitor, a bar plus
+  the 16 px gap does not fit above it, and on shipped defaults the bar sits
+  BELOW the cluster and centred on the UNION of the two — the second branch of
+  `configBarAnchor`, at {405, 531} on 1920×1080 for the 320×56 bar the suite
+  measures. The union spans x 40…1090, so that centre is in the empty span
+  BETWEEN the two widgets rather than beside either of them. (This item said
+  ABOVE between POE-244 and POE-249, when the door was the only placeable
+  widget, and BELOW before that, against POE-245's registry where
+  `temple.advice` shipped at y = 40. The branch follows whatever is nearest the
+  top edge, so a widget added or moved there inverts it again:
+  read `configBarAnchor` and the shipped-defaults case in
+  `widget-config-bar.test.ts`, not this paragraph.)
 
-  To flip it, drag the door widget UP to the top edge and press Configure again:
-  with less than a bar's height above the cluster the bar must now sit BELOW it.
-  Then drag it to the bottom-right corner and re-enter — the bar must stay fully
-  on screen, Save included. A third widget added to the temple later moves the
-  shipped answer again, because the anchor is the union of every widget being
-  arranged: re-read `configBarAnchor`, not this paragraph.
+  To flip it, drag the WAITING NOTICE down out of the top band — past the door,
+  anywhere below y = 300 — and leave the door where it is, then press Configure
+  again: the cluster's top is now the door's y = 300, which leaves room for a
+  bar plus the gap, and the bar must sit ABOVE the cluster. Drag the notice back
+  to the top and re-enter: BELOW again. Then drag a widget to the bottom-right
+  corner and re-enter — the bar must stay fully on screen, Save included.
+
+  **Owner judgement, not arithmetic**: with the shipped pair the bar lands in
+  the gap between the two widgets rather than beside one of them. The numbers
+  are pinned by the test; what this item asks is whether that READS as the
+  config bar for both widgets when it is on screen over the game, or whether it
+  looks like it belongs to neither. If it reads badly the fix is a product
+  decision about the shipped defaults, not a change to `configBarAnchor`.
 - **A monitor change that arrives mid-build** (POE-245): with the temple module
   already on in settings, start the app with PoE running on a non-primary
   display but NOT in the foreground, then alt-tab into the game within a couple

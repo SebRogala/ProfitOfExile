@@ -74,6 +74,7 @@ describe('the Overlay Positions groups', () => {
 		const temple = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Temple');
 		expect(temple?.widgets.map((row) => [row.spec.id, row.placeable])).toEqual([
 			['temple.door', true],
+			['temple.waiting', true],
 			['temple.advice', false]
 		]);
 	});
