@@ -258,12 +258,27 @@ type Play struct {
 	// hour's quote-side volume valued in chaos. It is the liquidity reading;
 	// unit volume is not one (corr(ln edge, ln units) = +0.06 against -0.30 for
 	// chaos turnover).
+	//
+	// WHICH HOUR'S volume, on a leg the window RESCUED (no row this hour, or one
+	// under Config.MinVolumePerHour), is the newest CONTRIBUTING window row's —
+	// the same row the prices, tick, stock and identity come from, and no older
+	// than they are. The scored hour traded nothing on such a leg, so reading it
+	// would report 0 turnover for a market the window is serving precisely
+	// because it is alive. The chaos valuation is still the SCORED hour's rate
+	// (Result.DivineChaosRate).
 	Turnover float64 `json:"turnover"`
 	// Tick is the coarsest price resolution among the legs: the worst step the
 	// recipe has to live with.
 	Tick float64 `json:"tick"`
 	// Depth is the thinnest leg's Volume — the units per hour the whole recipe
-	// can absorb.
+	// can absorb. On a window-RESCUED leg that Volume is read from the newest
+	// contributing window row rather than from the scored hour, for the reason
+	// Turnover states: the scored hour traded nothing there, so a 0 would report
+	// a market with no depth on exactly the rows the window exists to serve. What
+	// a 0 costs the reader downstream is the WAIT — the desktop's Scale column
+	// divides its run by Depth and prints a dash for the hours when it cannot
+	// (worthwhileScale, view.ts) — and, on Turnover, an armed minTurnover gate
+	// would drop the row outright.
 	Depth float64 `json:"depth"`
 	// Suspect is true when ANY leg is: one unrepeatable extreme is enough to
 	// make the whole percentage a story. Suspect plays rank after every clean
@@ -332,6 +347,16 @@ type Play struct {
 	// recipe" rather than "hours it was worth acting on". The narrower reading is
 	// no longer reported by any field; ExpectedRoi is what says whether the hours
 	// were worth anything, over its own window.
+	//
+	// A window-RESCUED hour — one that cleared ONLY because the trailing window
+	// carried its liveness, its own row absent or under Config.MinVolumePerHour
+	// (windowRescued) — never counts here, so this field keeps the meaning above
+	// exactly as it had it before POE-252: hours the feed priced this recipe on
+	// THAT hour's own prices. An hour-live hour counts whether or not it was thin
+	// enough to take a window PRICE, which is why the count is unchanged for every
+	// market that existed before the window path. It is also why a market rescued
+	// throughout can be served with HoursSeen 0 — see the MinHoursSeen exemption
+	// in BestPlays, which is the cut that yields for it.
 	HoursSeen int `json:"hoursSeen"`
 	// ExpectedRoi is the chaos one exchanged unit ACTUALLY returned, averaged
 	// over the simulated entries of the last Config.SimWindowHours hours: post
@@ -828,12 +853,26 @@ func (c Config) withDefaults() Config {
 //
 // Rows are grouped by feed hour and the newest Config.WindowHours distinct hours
 // are kept. Each hour is then scored ALONE: direct flips and one-hop triangles
-// are built from that hour's rows, each leg gated on that hour's traded volume
-// and stock, and evaluate turns each surviving candidate into a whole Play — leg
-// prices, undercut return, chaos payout, gates and all — out of that one hour.
-// No PRICE mixes hours. The merge by recipe key keeps two things and nothing
-// else: the NEWEST hour's Play, which is what gets served, and a COUNT of the
-// hours that cleared, which becomes HoursSeen and is what MinHoursSeen judges.
+// are built for that hour, each leg gated on traded volume and stock, and
+// evaluate turns each surviving candidate into a whole Play — leg prices,
+// undercut return, chaos payout, gates and all — out of that hour's readings. No
+// price a reader is shown is COMPUTED ACROSS hours: every one of them is a single
+// row's realized print with that row's own posted pair, and the two exceptions to
+// where such a print may come from are stated in doc.go and owned by ADR-016. The
+// merge by recipe key keeps two things and nothing else: the NEWEST hour's Play,
+// which is what gets served, and a COUNT of the hours that cleared ON THEIR OWN
+// PRICES, which becomes HoursSeen and is what MinHoursSeen judges.
+//
+// WHICH MARKETS AN HOUR CONSIDERS is wider than that hour's rows since POE-252,
+// and the width is bounded by the same trailing clock window the thin-hour price
+// path reads. directCandidates walks the scored hour's HOUR-LIVE rows first —
+// byte-for-byte the pre-POE-252 loop — then that hour's rescued present rows,
+// then, in sorted id order, every remaining market the window index carries, each
+// priced window-only. The sub-pass order is load-bearing: the per-hour seen map
+// keeps the FIRST candidate under a key, so walking live rows first is what keeps
+// a row that traded winning its key over a copy of the same hour that did not.
+// crossQuoteCandidates is deliberately NOT widened — a triangle still needs all
+// three of its markets present in the scored hour — and says so in its own doc.
 //
 // One reading is deliberately taken across hours, and it is not a price. Over a
 // SECOND window — the newest Config.SimWindowHours hours, independent of the
@@ -845,12 +884,16 @@ func (c Config) withDefaults() Config {
 // (ADR-016).
 //
 // A play is then served only if it cleared in the window's newest hour — the
-// last snapshot. The readings are deliberately separate: the PRICES are the last
-// snapshot's and nothing older, while PERSISTENCE is a count over the whole
-// window and the EXPECTATION is a simulation over the sim window. A recipe that
-// cleared four hours ago and has not cleared since is not a current price and
-// does not appear, however many hours it once held; one that cleared in the
-// last snapshot appears with HoursSeen saying how long it has been holding up.
+// last snapshot, where clearing means clearing on the recipe's own rows OR on the
+// trailing windows carrying them (windowRescued, direct.go). The readings are
+// deliberately separate: the PRICES are the last snapshot's, or — on a row MARKED
+// WindowPriced — that market's own realized prints from inside the last
+// Config.WindowPriceHours clock hours and nothing older, while PERSISTENCE is a
+// count over the whole window and the EXPECTATION is a simulation over the sim
+// window. A recipe that cleared four hours ago and has not cleared since is not a
+// current price and does not appear, however many hours it once held; one that
+// cleared in the last snapshot appears with HoursSeen saying how long it has been
+// holding up.
 // Because the newest-hour check compares against the window's newest hour
 // rather than against whatever arrived last, the result does not depend on the
 // order rows come in.
@@ -874,11 +917,18 @@ func (c Config) withDefaults() Config {
 // What comes back has passed, per hour: Turnover >= MinTurnoverChaos, Tick <=
 // MaxTick, and — only where the reader armed them — RoiPct >= MinEdgeTickRatio *
 // Tick and Roi >= MinROIChaos; and then, across the window, HoursSeen >=
-// MinHoursSeen (capped at the hours present). At DefaultConfig NONE of those
+// MinHoursSeen (capped at the hours present), which a play window-priced in the
+// scored hour is EXEMPT from. That exemption is what yields for such a row: a
+// market rescued in every ranking hour has cleared no hour on its own prices, and
+// what MinHoursSeen defends is persistence against a one-off ghost, which a row
+// whose liveness is a bounded, floored and DISCLOSED window is not. It is inert
+// at DefaultConfig and armed only where WindowPriceHours reaches past WindowHours
+// — the cut itself carries the full reasoning. At DefaultConfig NONE of those
 // binds: the quality judgement has been the client's since POE-191, and
 // MinHoursSeen's default of 1 cannot drop a served play either. What the engine
-// serves is therefore every recipe the feed PRICED in its newest hour, with how
-// long it has been holding up reported rather than demanded.
+// serves is therefore every recipe the feed PRICED in its newest hour — on that
+// hour's rows or on the window behind them — with how long it has been holding up
+// reported rather than demanded.
 //
 // MinEdge left that list on 2026-08-22. It is now where Play.LowLiquidity flips:
 // an hour that priced the recipe and showed no spread worth taking is served

@@ -39,10 +39,25 @@
 // Rows are grouped by feed hour, the newest Config.WindowHours distinct hours are
 // kept, and each of those hours is scored ALONE — candidates built from that
 // hour's rows, and evaluate turning each candidate into a finished Play (leg
-// prices, undercut return, chaos payout, every gate) out of that one hour. No
-// PRICE mixes hours. The merge by recipe key keeps exactly two things: the NEWEST
-// cleared hour's Play, which is what gets served, and a COUNT of the hours that
-// cleared, which becomes HoursSeen.
+// prices, undercut return, chaos payout, every gate) out of that one hour.
+//
+// THE PRICE RULE, with both of its exceptions in one place. A price a reader is
+// shown is ONE hour's realized print, carrying that row's own posted quantity
+// pair — never a figure computed across hours, so no median, no average and no
+// clamp. The FIRST exception is a price from a DIFFERENT hour, not a mixed one: a
+// market whose scored hour traded under Config.ThinHourVolume units cannot print
+// a spread, because one trade collapses the low and the high onto the same
+// number, so its legs are priced from the extremes that market REALIZED over the
+// trailing Config.WindowPriceHours clock hours — each extreme still one row's
+// whole print — and the row is MARKED with the span it read (Play.WindowPriced,
+// POE-252). The SECOND is not a price at all: the fill simulation below is a
+// labelled cross-hour STATISTIC, in the same category as HoursSeen, and nobody is
+// shown it as a price or asked to trade at it. ADR-016 owns the doctrine and
+// records both.
+//
+// The merge by recipe key keeps exactly two things: the NEWEST cleared hour's
+// Play, which is what gets served, and a COUNT of the hours that cleared on their
+// OWN prices, which becomes HoursSeen.
 //
 // Beside that, over a SECOND and independent window, the fill simulation reads
 // what those orders would have realized — see "# Expected ROI" below. It is the
@@ -56,8 +71,25 @@
 // newest hour rather than against whatever arrived last, so the answer does not
 // depend on the order rows come in.
 //
+// WHAT "CLEARED" MEANS THERE was relaxed inside the same clock window (POE-252),
+// and only inside it. A market that published no row in the newest hour, or one
+// that traded under Config.MinVolumePerHour, is still enumerated and still served
+// when the trailing window prices it — window-RESCUED (windowRescued, direct.go)
+// — because the measured pair published no row at all in nine of twenty-six clock
+// hours, and ten of the SEVENTEEN shifts the acceptance test scores land on an
+// hour it either did not publish or published untraded, every one of which served
+// nothing before this (TestCorpus_apocalypseWindow_isServedInAllSeventeenShifts).
+// The bound is
+// the window itself: a window with no realized print inside it prices nothing, so
+// a market that has genuinely stopped trading is still absent, and the oldest
+// print any row can carry is Config.WindowPriceHours-1 hours old. LastHour stays
+// the SCORED hour on such a row, so a stale price can never present itself as a
+// current one; the age is carried by Play.WindowHours and by the mark.
+//
 // Prices are one hour's because a cross-hour median served Mawr Blaidd/Chaos as
-// "buy at 80.50" against a VWAP near 250 (POE-188).
+// "buy at 80.50" against a VWAP near 250 (POE-188). That measurement is also why
+// the window exception takes WHOLE realized prints rather than a statistic over
+// them.
 //
 // What one hour observes about one leg (the obs struct in direct.go, filled by
 // gatedLeg): the hour's cheapest and dearest realized price of the item in its
@@ -583,20 +615,36 @@
 // market, in which case no divine-quoted play is in the list), count and plays.
 // Each play carries key, mode, legs, roiPct, edge (its deprecated alias),
 // roiPctRaw, roi, investment, turnover, tick, depth, suspect, lowLiquidity,
-// hoursSeen,
+// windowPriced, windowHours, windowVolume, hoursSeen,
 // lastHour and the simulation's four — expectedRoi, expectedRoiPct, simEntries
 // and lowCoverage, the ranking's own key and the only fields a client cannot
 // recheck from the row, expectedRoi being signed. lowLiquidity says the newest
 // hour priced the recipe and printed no spread worth taking (roiPct under the
 // server's MinEdge, so roiPct can be negative on a served row); it is a reading
 // of the row's own hour against a server-side level the row does not carry, and
-// it hides nothing. Each leg carries action, item, quote,
+// it hides nothing. windowPriced says the opposite half of the same market's
+// story: the hour was too thin to price at all (under Config.ThinHourVolume
+// units), so these leg prices are the trailing clock window's realized extremes
+// rather than that hour's, with windowHours as the span behind them and
+// windowVolume as the item-side mass they were drawn from. The two flags are
+// independent readings: one is the spread, the other is which hour the spread
+// came from. What keeps them apart is the mechanism and not a frequency — a row
+// is window-priced BECAUSE its own hour showed no spread, and lowLiquidity is
+// then judged on the WINDOW's spread, which clears MinEdge unless the window is
+// flat too. It is
+// a MARK — in neither comparator (ADR-018) and read by no default gate
+// (ADR-017) — and lastHour, tick and divineChaosRate stay the scored hour's
+// beside it. Each leg carries action, item, quote,
 // price, priceItemQty, priceQuoteQty, fair, fairOk, tick, volume, stock,
-// depletedSide and
-// suspect. stock counts the book side the leg EXECUTES AGAINST — the item side
-// of a buy, the quote side of a sell — and depletedSide says the opposite side
-// of that book carried nothing in the hour, which is a mark on a served row and
-// never a reason one is missing (ADR-017). Every served body also
+// depletedSide, suspect, windowPriced, windowHours and windowVolume, in that
+// struct order. stock counts the book side the leg EXECUTES AGAINST — the item
+// side of a buy, the quote side of a sell — and depletedSide says the opposite
+// side of that book carried nothing in the hour, which is a mark on a served row
+// and never a reason one is missing (ADR-017). On a window-priced leg fair is the
+// window's POOLED volume-weighted price rather than one hour's, so the suspect
+// bands judge a window spread against that window's own traded mass; such a leg
+// is therefore often suspect too, for the ordinary reason that the spread is
+// wide. Every served body also
 // carries categories, the sidebar's sixteen in sidebar order — the whole
 // taxonomy, independent of the plays in this one, so the client's filter is not
 // a function of the ranking.

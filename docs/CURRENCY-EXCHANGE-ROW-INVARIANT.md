@@ -2,11 +2,26 @@
 
 Status: CURRENT. Normative for the desktop Currency Exchange table.
 
-Last verified: 2026-09-01 against `main@7e3fddd` — `desktop/src/lib/exchange/view.ts`,
-`filters.ts`, `internal/exchange/plays.go`, `desktop/src/lib/tooltips.ts`. The
-divine trash-price knob that the 2026-08-23 stamp carried as uncommitted landed
-in `c43e76f`; POE-220 (`c175941`) then edited §4's sort ruling, which is what
-this re-stamp covers.
+Last verified: 2026-09-05 against `poe-252@725dbe3` — `desktop/src/lib/exchange/view.ts`,
+`filters.ts`, `desktop/src/lib/pages/CurrencyExchangePage.svelte`,
+`desktop/src/lib/components/ExchangeRoute.svelte`, `desktop/src/lib/tooltips.ts`,
+`internal/exchange/plays.go`, `internal/exchange/direct.go`. EVERY `file:line`
+reference below was re-checked against that commit and re-pointed where it had
+drifted — the earlier `poe-252@6f76efd` re-stamp moved the date without moving
+the offsets, which is the failure this line now forecloses. Each reference names
+the SYMBOL beside its offset, so the next drift is found by grepping the name.
+The divine trash-price knob that the 2026-08-23
+stamp carried as uncommitted landed in `c43e76f`; POE-220 (`c175941`) then edited
+§4's sort ruling.
+
+This re-stamp covers **POE-252**: a market whose scored hour traded under
+`Config.ThinHourVolume` units prices its legs from a trailing CLOCK WINDOW instead
+of from that hour, and the row ships three fields saying so — `windowPriced`,
+`windowHours`, `windowVolume`, on the play and on each leg. That moves WHICH HOUR
+a price belongs to and nothing else: no equation in §3 changes, no rendering rule
+in §4 changes, and the scale rule of §1 reads the same field it always did. What
+it touched here is §2 (the symbols' hours), §4's closing note on `fair`, the new
+§6.6, and §7's enforcement.
 
 This document is the single normative statement of what the numbers on one
 Currency Exchange row mean and how they must agree. It is normative because the
@@ -28,7 +43,9 @@ Referenced from: `desktop/src/lib/exchange/view.ts` header comment (the only
 emitter of the mechanical numbers), and `docs/README.md`.
 
 Related: ADR-015 (quality gates live client-side), ADR-016 (Expected ROI is a
-cross-hour simulation; displayed prices stay single-hour), ADR-017 (no default
+cross-hour simulation; displayed prices stay single-hour — and, since its
+2026-09-04 amendment, the trailing window a thin pair prices from), ADR-018
+(flags mark, they never order), ADR-017 (no default
 engine floor may hide a live market).
 
 ---
@@ -104,7 +121,8 @@ they were.
 **BASIS.** Every MECHANICAL number on a row is priced at the UNDERCUT FILL
 PRICES — the price an order that actually gets taken is posted at:
 `Price*(1+Tick)` on a buy leg, `Price*(1-Tick)` on a sell leg
-(`internal/exchange/plays.go:38-41`, computed at `plays.go:964-966`). The raw
+(`Leg`, `internal/exchange/plays.go:38-41`; computed in `evaluate`,
+`plays.go:1254-1256`). The raw
 hourly extremes appear on the row in exactly one place, the step hovers, worded
 as what the market PRINTED rather than as what to post.
 
@@ -122,25 +140,62 @@ For one play, with `divineChaosRate` from the same response:
 
 | Symbol | Definition | Source |
 | --- | --- | --- |
-| `N` | `displayScale(play).units`: the buy market's own posting, or `1` where that market posted no usable pair | `view.ts:633-638` |
-| `F` | `worthwhileScale(play).flips` — the RUN, which the Scale column prints on every row and which no rule makes equal to `N` any more; where the two coincide it is a market's lot happening to land on a flip count | `view.ts:525-536` |
-| `r` | chaos per unit of the ENTRY quote: `1` for chaos, `divineChaosRate` for divine | `chaosPerQuote`, `view.ts:1037-1041` |
+| `N` | `displayScale(play).units`: the buy market's own posting, or `1` where that market posted no usable pair | `displayScale`, `view.ts:680-685` |
+| `F` | `worthwhileScale(play).flips` — the RUN, which the Scale column prints on every row and which no rule makes equal to `N` any more; where the two coincide it is a market's lot happening to land on a flip count | `worthwhileScale`, `view.ts:572-583` |
+| `r` | chaos per unit of the ENTRY quote: `1` for chaos, `divineChaosRate` for divine | `chaosPerQuote`, `view.ts:1266-1270` |
 | `u0` | undercut buy price of leg 1, in entry-quote units per item: `legs[0].price * (1 + legs[0].tick)` | wire |
 | `u1` | undercut sell price of leg 2, in leg 2's own quote per item: `legs[1].price * (1 - legs[1].tick)` | wire |
 | `u2` | undercut price of leg 3 (1-hop only), entry-quote per unit of the intermediate: `legs[2].price * (1 - legs[2].tick)` | wire |
-| `I` | `moneyColumns(play).investment` = `play.investment · N` — chaos the row ties up | `view.ts:684-691` |
-| `R` | `moneyColumns(play).roi` = `play.roi · N` — chaos the row gains at the hour's BEST-CASE prices | `view.ts:684-691` |
-| `X` | `moneyColumns(play).expectedRoi` = `play.expectedRoi · N` — chaos the row is MEASURED to pay | `view.ts:684-691` |
-| `I_run` | `runInvestment(play)` = `worthwhileScale(play).investment`, or `play.investment` with no run — what the RUN ties up, sized by `F` on every row and the only money figure outside the Scale column that still is | `view.ts:558-560` |
+| `I` | `moneyColumns(play).investment` = `play.investment · N` — chaos the row ties up | `moneyColumns`, `view.ts:731-738` |
+| `R` | `moneyColumns(play).roi` = `play.roi · N` — chaos the row gains at the hour's BEST-CASE prices | `moneyColumns`, `view.ts:731-738` |
+| `X` | `moneyColumns(play).expectedRoi` = `play.expectedRoi · N` — chaos the row is MEASURED to pay | `moneyColumns`, `view.ts:731-738` |
+| `I_run` | `runInvestment(play)` = `worthwhileScale(play).investment`, or `play.investment` with no run — what the RUN ties up, sized by `F` on every row and the only money figure outside the Scale column that still is | `runInvestment`, `view.ts:605-607` |
 
 `r` is the client's mirror of the server's `entryRate` and is bit-identical to
 it: `Result.DivineChaosRate` is the newest hour's divine/chaos VWAP
-(`plays.go:776`) and every served play cleared in that hour
-(`plays.go:681-686`), so `chaosPerQuote(legs[0].quote, divineChaosRate)` is the
+(`result.DivineChaosRate = hourRate`, `plays.go:1026`) and every served play
+cleared in that hour (the newest-hour cut, `plays.go:1128-1133`), so `chaosPerQuote(legs[0].quote, divineChaosRate)` is the
 same float the server valued `Investment` at.
 
 Legs are read BY POSITION, never by `action` — leg 3 is a `sell` on the wire and
 a *convert* on screen. `u2` uses the sell form for that reason and states it.
+
+**On a window-priced row `u0` and `u1` can be built from a different hour than the
+`legs[i].tick` beside them, and the equations are unchanged.** Since POE-252 a leg
+whose scored hour traded under `Config.ThinHourVolume` units carries one of the
+extremes the market REALIZED over the trailing clock window, with the
+`priceItemQty`/`priceQuoteQty` pair the row that printed it posted it at — a whole
+posting from one row, never an average across the window's rows. `windowPriced`
+says so and `windowHours` is the span. Which hour `tick` reads then depends on
+which kind of window-priced leg it is:
+
+- **hour-live** (the hour traded, just too little to print two sides): `tick`,
+  `volume` and `stock` stay the SCORED hour's, deliberately — the step is what the
+  market can express NOW, and that is the half of the row the window does not
+  touch;
+- **window-rescued** (no row that hour, or one under `Config.MinVolumePerHour`):
+  there is no such hour, so `tick`, `volume` and `stock` all come from the newest
+  CONTRIBUTING window row — the same row family as the price, and no older than
+  it. The leg's item/quote ORIENTATION is not among them and never was: `orient`
+  reads `span[0].Row` for `ItemA`/`ItemB` alone, and those two are the same on
+  every row a market id carries, so any row of the span answers identically
+  (`direct.go:241-249`).
+
+`u0`, `u1` and `u2` are built from `legs[i].price` and `legs[i].tick` AS EMITTED,
+so E1–E8 close whichever hour each of those came from. There is no suspension to
+look for here, and a reader who goes looking should find the absence stated rather
+than have to prove it: the window moves the hour a price belongs to, and that is
+the whole of it.
+
+One identity a reader may reach for is not one, and never was:
+`legs[i].tick = 1 / max(priceItemQty, priceQuoteQty)` is **NOT a wire invariant on
+any leg**. `tickOf` (`pricing.go`) takes the COARSER of the source row's TWO
+quantity pairs — `max(1/max(lowestA, lowestB), 1/max(highestA, highestB))` — while
+the pair beside a price is the pair THAT price was posted at, so a buy leg whose
+market posted its high more coarsely than its low already disagreed with the
+identity before POE-252. The window widens the ways the two can differ; it did not
+open the gap. Nothing in §3 recomputes `tick` from the pair, which is why the gap
+costs the reader nothing.
 
 ---
 
@@ -165,6 +220,15 @@ E8  Scale column  =  ×F  →  +(play.expectedRoi · F)c,  "I_run c in"
     happens to equal F, which no rule arranges and nothing may rely on
 ```
 
+**`N` on a window-priced row is still one postable order, just not the scored
+hour's.** E1 counts `N = displayScale(play).units`, which reads the BUY leg's own
+`priceItemQty` (§2) and goes on reading exactly that after POE-252. On a
+window-priced buy leg that pair is the one the market posted the window's low at,
+taken whole off the single row that printed it, so the row still names a quantity
+somebody could place and §4.3's exactness claim survives — the posting is simply
+not the scored hour's. How stale it may be is `windowHours`, on the row, beside
+the mark.
+
 **E6 and E8 are two different questions, and on every row they have two
 different answers.** The Exp. ROI column and the Get slot's `keep ≈` line are
 what ONE POSTING is measured to pay; the Scale column is what the WHOLE RUN
@@ -183,8 +247,9 @@ cannot be subtracted from the buy total at all.
 **Why E7 derives the sell total backwards from `chainEnd` rather than forwards
 from `legs[1].price`.** Because `roiPct` is the WIRE'S ANSWER to what the round
 trip returns, and the client must not be able to disagree with it. `roiPct` is
-served (`plays.go:1056`, computed at `plays.go:1012` from the `plays.go:958-1006` undercut
-prices the legs carry), `R` is built from it, and `chainEnd` is built from `R`.
+served (`RoiPct: roiPct`, `plays.go:1360`), computed at
+`roiPctOf(c.mode, undercut)` (`plays.go:1316`) from the undercut prices
+`evaluate`'s leg loop builds (`plays.go:1248-1311`), `R` is built from it, and `chainEnd` is built from `R`.
 A forward derivation (`N · u1`) recomputes the served answer from the served
 inputs and then prints its own result beside it — so the moment the server's
 formula and the client's reading of the legs diverge for any reason (a leg
@@ -197,7 +262,7 @@ wire's `roiPct` rendered.
 
 Forward derivation is also the same number only in real arithmetic — `roiPct` is
 `u1/u0 − 1` for a direct play and `u1·u2/u0 − 1` for a 1-hop
-(`plays.go:1083-1092`), so `I·(1+roiPct) = N·u1·r` exactly on paper, while in
+(`roiPctOf`, `plays.go:1390-1399`), so `I·(1+roiPct) = N·u1·r` exactly on paper, while in
 float `200·19·1.01` and `19.19·200` differ in the last ulp. That is a real
 effect and it is why the CROSS-CHECKS in §7 carry a tolerance, but it is about
 one ulp and is invisible to the reader; it is a supporting detail, not the
@@ -217,7 +282,7 @@ says why in its hover.
 
 This is also why the convert step's divisor changes from the RAW price to `u2`.
 The old rationale (a `convertStep` comment this change deleted; the reasoning
-now sits at `view.ts:1622-1629`) — bare `price`, because the undercut is
+now sits in `convertStep`'s doc, `view.ts:1867-1874`) — bare `price`, because the undercut is
 already inside `expectedRoi` — was correct only while
 the convert line's numerator was Get. Under E3 the numerator is `chainEnd`,
 which is built from `R`, which is built from `roiPct`, which already contains
@@ -236,9 +301,10 @@ where it lives:
 
 - the **Scale column** (`CurrencyExchangePage.svelte`), which reads
   `worthwhileScale(play)` and is `F`-sized on every row (E8);
-- the **Run cost bounds** (`filters.ts:805-822`), which read `runInvestment(play)`
-  — `I_run`, the Scale column's own "N c in" figure — because a bankroll ceiling
-  is a run-sized question whatever the row prints (§6.1).
+- the **Run cost bounds** (`applyNumericFilters`, `filters.ts:842-859`), which
+  read `runInvestment(play)` — `I_run`, the Scale column's own "N c in" figure —
+  because a bankroll ceiling is a run-sized question whatever the row prints
+  (§6.1).
 
 That second seam is the one this document most needs stated out loud, because it
 is invisible in the code unless the bound names the run: `filters.ts` used to
@@ -249,7 +315,7 @@ reader which cell carries the figure it compares against.
 
 **The one exempt branch: an entry currency this response cannot value in chaos.**
 `chaosPerQuote` answers `null` when the entry quote is divine and the response's
-`divineChaosRate` is 0 (`view.ts:1037-1041`). There is then no `r`, so E1–E4 and
+`divineChaosRate` is 0 (`chaosPerQuote`, `view.ts:1266-1270`). There is then no `r`, so E1–E4 and
 E7 have no entry-currency rendering to be stated in and the row cannot carry a
 mechanical chain at all. That branch renders both ends in CHAOS from
 `moneyColumns` and prints the markets' own ratios on the steps. E5 survives
@@ -257,7 +323,8 @@ there and is the reason the branch is still a closed row: the ends are
 `I` and `I + X` in chaos, so Get is still Spend plus the Exp. ROI column. E2,
 E3, E4 and E7 are suspended, and the suspension is the branch's whole content.
 It is unreachable on a served body — no divine-quoted play is served in an hour
-that carried no divine/chaos trade (`plays.go:681-686`, `plays.go:776`) — and it
+that carried no divine/chaos trade (the newest-hour cut, `plays.go:1128-1133`;
+`result.DivineChaosRate = hourRate`, `plays.go:1026`) — and it
 is guarded anyway, because the alternative is a division by zero printed as an
 amount.
 
@@ -315,7 +382,7 @@ through two different formatters does not close for the reader.
    smaller-than-one-lot sentence when `N` is under a single lot. That is the same
    pair of facts the snap's two hovers carried (both deleted with the snap),
    moved off the line and onto the hover with the pair — where they now live, in
-   `marketPair` (`view.ts:1211-1252`).
+   `marketPair` (`view.ts:1440-1481`).
 
    The clauses say "the N this row counts" and never "the run". `N` is the BUY
    market's posting and this same hover words the SELL market beside it, whose
@@ -361,6 +428,26 @@ through two different formatters does not close for the reader.
    count-versus-lot half of the sentence is unchanged, because the ends beside it
    count `N` either way.
 
+**One wire field the row never renders, and one flag it does.** `legs[i].fair` —
+the leg's volume-weighted anchor — reaches no emitter here: nothing in `view.ts`
+or `ExchangeRoute.svelte` reads it, and no equation above is stated in it. It is
+recorded in this section all the same, because it is what the engine computes
+`suspect` against and `suspect` IS drawn on the row. On a window-priced leg `fair`
+is not the scored hour's VWAP: it becomes the POOLED volume-weighted price of the
+very rows that printed the window's extremes (`windowVwapOf`, read in `gatedLeg`),
+so the band judges a window spread against that window's own traded mass rather
+than against one hour's.
+
+The consequence is visible and is not a defect: **a window-priced row can also
+carry `suspect`, and does so more readily than an hour-priced one** — six hours of
+extremes bracket more than one hour's do, so the very width that made the window
+worth showing is what crosses the bands. The measured 17:00Z Apocalypse case pools to a fair near
+737 chaos with a window spread of 486/1148, so both the buy leg (under
+`fair·0.67`) and the sell leg (over `fair·1.5`) trip the bands. An hour-priced row
+printing that same spread against that same fair is flagged identically, which is
+the point — the two pricing paths read the same way, and a 2.4× spread genuinely
+is wide. Both marks order nothing (ADR-018) and hide nothing (ADR-017).
+
 ---
 
 ## 5. The one permitted deviation: the expectation
@@ -370,7 +457,8 @@ through two different formatters does not close for the reader.
 the reason this table exists (ADR-016).
 
 Measured across 960 top-20 play-hours that difference is negative and large: the
-best case overstates the measurement by four to eight times (`tooltips.ts:89`).
+best case overstates the measurement by four to eight times
+(`EXCHANGE_TOOLTIPS['Exp. ROI']`, `tooltips.ts:89`).
 Nothing in the arithmetic guarantees the SIGN, though, and no emitter, no
 formatter and no closure test may assume `chainEnd > get`. A row whose measured
 expectation beats its hour's best case is a legal row, and the matrix carries
@@ -409,7 +497,7 @@ the row, as the last step's total.
 closes the row the other way round — the route stays wholly mechanical, both
 ends and every step on the one best-case basis, and `keep ≈ X` moves off the
 Get slot onto the Exp. ROI cell's existing sub-line, which already renders `n=`
-and `low` (`CurrencyExchangePage.svelte:709-734`). It is a genuinely smaller
+and `low` (the Exp. ROI cell, `CurrencyExchangePage.svelte:784-809`). It is a genuinely smaller
 change: no red Get, no verb over a loss, no `positive` flip, no rendering change
 to the fallback rows at all.
 
@@ -424,7 +512,7 @@ measurement inverts which of the two the row asserts. The cost of the choice
 made is real and is paid here: the deviation of §5 exists at all, the fallback
 branch's Get can print below its Spend, and the shipped
 `keep ≈ 102c (≈ 0.51 div)` string — the one the width contract is sized around
-(`ExchangeRoute.svelte:245-252`) — has to stay on the row and be sized for.
+(`.slot-get`, `ExchangeRoute.svelte:258-267`) — has to stay on the row and be sized for.
 
 ---
 
@@ -484,8 +572,8 @@ the undercut from the leg (`price · (1 + tick)`) would avoid the rate but would
 re-derive a market number, which `filters.ts` does not do.
 
 **The exception's own exception:** the filter bar's **Run cost** bounds
-(`filters.ts:805-822`) DO read the run, because a bankroll ceiling is a run-sized
-quantity — the reader is asking what they can afford to have tied up, not what
+(`applyNumericFilters`, `filters.ts:842-859`) DO read the run, because a bankroll
+ceiling is a run-sized quantity — the reader is asking what they can afford to have tied up, not what
 one order costs. That bound reads `runInvestment(play)` — `I_run`, the exact
 figure the Scale column's "N c in" sub-line prints — and NOT
 `moneyColumns(play).investment`, which since the display-scale change is what the
@@ -505,7 +593,8 @@ which is why the seam is now pinned on a divine fixture as well as a chaos one.
 
 ### 6.2 ROI% (outside the SCALE rule and outside the BASIS rule)
 
-`play.roiPct` / `play.roiPctRaw`, rendered at `CurrencyExchangePage.svelte:736-750`.
+`play.roiPct` / `play.roiPctRaw`, rendered by the ROI% cell
+(`CurrencyExchangePage.svelte:811-825`).
 
 *Why exempt from SCALE:* it is a ratio. Whatever the row is sized at multiplies
 numerator and denominator by the same `N`, so the per-exchange percentage, the
@@ -521,11 +610,12 @@ cost, and on a coarse market it is the whole spread. A single-basis ROI% would
 delete the only reading that prices the undercut.
 
 Neither number is what the table is ranked by (that is `ExpectedRoi`), and NET
-is what the Gates row judges — both already stated at `tooltips.ts:86-87`.
+is what the Gates row judges — both already stated at
+`EXCHANGE_TOOLTIPS['ROI%']` (`tooltips.ts:86-87`).
 
 ### 6.3 Depth (outside SCALE and BASIS)
 
-`play.depth`, rendered at `CurrencyExchangePage.svelte:770-774`.
+`play.depth`, rendered by the Depth cell (`CurrencyExchangePage.svelte:845-849`).
 
 *Why exempt:* it is a MARKET reading, not a figure of the play — units per hour
 that changed hands on the play's thinnest leg. It is the whole book's volume and
@@ -535,7 +625,7 @@ the more the reader wants to trade.
 
 ### 6.4 `Scale.hours` (outside the BASIS rule)
 
-`worthwhileScale().hours = ceil(flips / depth)` (`view.ts:534`).
+`worthwhileScale().hours = ceil(flips / depth)` (`worthwhileScale`, `view.ts:581`).
 
 *Why exempt:* it is a TIME, and a time has no price basis. It inherits the run
 scale correctly (its numerator is `flips`) but its denominator is §6.3's
@@ -557,7 +647,7 @@ mirror the Go wire docs and say so in place.
 
 ### 6.5 A basis note that is not an exception
 
-`moneyColumns(play).roi = play.roi * units` (`view.ts:684-691`) has been read as
+`moneyColumns(play).roi = play.roi * units` (`view.ts:731-738`) has been read as
 mixing bases — while `units` could be a flip count, a fill-simulation-derived
 number multiplying a best-case per-exchange figure. It did not, and the reading
 is now moot besides: `units` is a market's posted pair on every row. **A count
@@ -568,6 +658,74 @@ which is the undercut round trip and nothing else. The ROI and Exp. ROI columns
 are on the SAME scale and on their own declared bases, which is exactly what §1
 asks for. `WorthwhileScale` carries no best-case total and should not: it exists
 to answer how far the MEASURED expectation has to be repeated.
+
+### 6.6 The window-priced row (inside SCALE, inside BASIS, outside the single-hour reading)
+
+`play.windowPriced` / `windowHours` / `windowVolume`, and the same three on each
+leg (`internal/exchange/plays.go`), rendered as a sub-line of the DEPTH cell,
+under the `low liquidity` sub-line and labelled with its span: `window 6h`. The
+two marks share that cell; there is no flags cell on this table (POE-252,
+2026-09-04).
+
+*What deviates:* the HOUR a leg's price came from, and nothing else on the row. An
+hour that traded under `Config.ThinHourVolume` (2) units cannot print a spread —
+one trade collapses the low and the high onto the same number, and the row then
+reads −0% however long two sides have stood in the game's book — so such a leg is
+priced from the extremes the market REALIZED over the last
+`Config.WindowPriceHours` (6) CLOCK hours, needing `Config.MinWindowVolume` (2)
+units summed across the rows that priced. Each extreme is one row's whole realized
+print with its own posted pair. **It is not a blend**: no average, no median and
+no clamp is taken over the window, because a blended price is a trade nobody could
+have made — the reason the single-hour doctrine exists at all (Mawr Blaidd/Chaos,
+POE-188).
+
+Since the same task the window also carries LIVENESS. A market that published no
+row in the scored hour, or one that traded under `Config.MinVolumePerHour`, is
+still enumerated and still served, priced window-only and marked (window-RESCUED).
+The measured pair published no row at all in nine of twenty-six clock hours, and
+ten of the SEVENTEEN shifts the acceptance test scores land on an hour the market
+either did not publish or published untraded — before this, every one of those
+ten served nothing. That is the flicker the task was filed on
+(`TestCorpus_apocalypseWindow_isServedInAllSeventeenShifts`,
+`internal/exchange/corpus_test.go:1300`).
+
+*Why it belongs here rather than in §5:* §5's deviation is a cross-hour
+STATISTIC that is never a price. This one IS a price — it just belongs to a
+different hour than the row was scored in. The doctrine it bends is the one
+ADR-016 wrote down and owns, and that ADR's 2026-09-04 amendment is where the
+decision and its bounds are recorded. This section states only what it means for
+THIS row.
+
+*What still holds:*
+
+- **SCALE.** `N` is still `displayScale(play).units`, still the buy market's own
+  posted pair, still one order (§3's note under E1). Every money figure on the row
+  still counts the same `N`.
+- **BASIS.** Every mechanical number is still priced at the UNDERCUT fill prices
+  built from the leg's emitted `price` and `tick`. Window pricing changes the
+  input, never the basis.
+- **CLOSURE.** E1–E8 hold unchanged and are asserted on such a row by the desktop
+  corpus incident block named in §7. A window price must close like any other.
+- **`tick`, `lastHour` and the chaos rate are the SCORED hour's** on every leg that
+  had a live hour of its own, so what the market can express now is read from now.
+  On a RESCUED leg they come from the newest contributing window row instead (§2),
+  which is also what keeps `depth` and `turnover` positive on such a row rather
+  than reporting no depth on exactly the rows this exists to surface. A `depth` of
+  0 would cost the Scale column its `hours` sub-line (§6.4 — the division has no
+  denominator), and a `turnover` of 0 would put the row under any armed
+  `minTurnover` gate.
+- **`hoursSeen` still counts hours the recipe was priced on its OWN prices.** A
+  rescued hour never counts, and it records no fill-simulation entry either, so
+  `expectedRoi` and `hoursSeen` on every pre-POE-252 row are untouched.
+- **It marks; it does not order and it does not hide.** `windowPriced` is in
+  neither comparator — not the server's ranking and not `sortPlays` (ADR-018) — and
+  no default gate in `filters.ts` reads it (ADR-017, ADR-015). Such a row's ROI and
+  Exp. ROI sit wherever their own numbers put them.
+
+*What the reader gives up:* freshness, bounded and disclosed. A spread that closed
+five hours ago can still be shown. `windowHours` is the span behind the price and
+`windowVolume` the mass its extremes were drawn from; both are on the row, which
+is the whole of how the reader knows.
 
 ---
 
@@ -626,7 +784,7 @@ Four assertion tiers, with the tolerance rule for each:
   compared with `toBe` on the whole string, with no tolerance. Covers:
   - the buy step's total against the Spend amount. The step line carries a unit
     and the end does not (`RouteEnd.amount` is bare, its unit word being a
-    separate span — `ExchangeRoute.svelte:163-166`), so the pin is two
+    separate span — the `end` snippet, `ExchangeRoute.svelte:177-180`), so the pin is two
     assertions and not one: the line ENDS WITH `for ≈ ${withOrbUnit(spend,
     entryUnitShort)}`, and the numeric head of that tail is character-identical
     to `route.spend.amount`. Either one alone can pass while the two numbers
@@ -694,7 +852,7 @@ Four assertion tiers, with the tolerance rule for each:
 
 **Fixture rule.** A closure fixture must be WIRE-CONSISTENT: `investment` =
 `u0 · r`, `roiPct` = the server's own formula over the legs' undercut prices
-(`plays.go:1083-1092`), and `roi` = `investment · roiPct`. A fixture that
+(`roiPctOf`, `plays.go:1390-1399`), and `roi` = `investment · roiPct`. A fixture that
 contradicts those identities can make a closure test pass or fail for a reason
 that has nothing to do with the code. Fixture INPUTS may be derived from the leg
 prices in the test file, with the hand-worked value in a comment; EXPECTED
@@ -726,11 +884,41 @@ back-solved `roiPct` above the fixture. An override that changed only the pair
 would pin a row no server could send, and would pin it at the very size the case
 is about.
 
+**The window fields (§6.6) are enforced on both tiers, and are named here so the
+enforcement is findable from this document rather than only from the code.**
+
+- **The wire type.** `windowPriced`, `windowHours` and `windowVolume` are declared
+  NON-OPTIONAL on `WireLeg` and `WirePlay` in
+  `desktop/src/lib/exchange/corpus.test.ts`, so a field disappearing from the
+  engine is a type error on the cross-layer tier rather than a silently absent
+  mark.
+- **The desktop incident block** `incident — Apocalypse card, thin newest hour
+  priced from the window (POE-252)` (`corpus.test.ts`) reads the market out of the
+  regenerated `recent.json` golden and asserts the mark, the six-hour span, the
+  rendered buy and sell prices against the window's own low and high, `suspect`
+  (§4's closing note, the accepted reading), and the full §3 equation battery — the
+  pin that a window price closes like any other row. The same file's visibility
+  predicate lists `windowPriced` among the flags no default gate may hide.
+- **The Go tier**, in `internal/exchange`:
+  `TestCorpus_apocalypseThinNewestHour_isPricedFromTheWindow` (the incident),
+  `TestCorpus_apocalypseThickNewestHour_isPricedFromTheHourAndUnmarked` and
+  `TestCorpus_thickMarkets_areNeverWindowPriced` (the POE-220 backtest: no
+  pre-existing key window-prices),
+  `TestCorpus_apocalypseWindow_isServedInAllSeventeenShifts` with
+  `TestCorpus_apocalypseWindowShifts_markTheThinHoursAndOnlyThose` (the no-flicker
+  acceptance, shift by shift),
+  `TestCorpus_deadWindow_isNotServedInEitherHorizon` (the window is not a
+  resurrection machine),
+  `TestCorpus_windowRescuedHours_recordNoSimulationEntry` and
+  `TestCorpus_livenessRelaxation_movesNoPreExistingValue` (the two counters that
+  keep `expectedRoi` and `hoursSeen` still), and
+  `TestBestPlays_windowPricedMark_doesNotOrderTheServedList` (ADR-018).
+
 ---
 
 ## 8. Out of scope for this document
 
 Gate semantics and levels; the server's pricing and simulation arithmetic; the
-Exp. ROI column's non-monotonicity in the served order (`view.ts:862-872`, a
-seam by choice); the Gold column; the gem-flip ROI domain, which shares the
-words and means percentage points (`tooltips.ts:50-53`).
+Exp. ROI column's non-monotonicity in the served order (`sortPlays`'s doc,
+`view.ts:1008-1016`, a seam by choice); the Gold column; the gem-flip ROI domain, which shares the
+words and means percentage points (`METRIC_TOOLTIPS`, `tooltips.ts:50-53`).
