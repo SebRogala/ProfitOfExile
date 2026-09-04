@@ -439,7 +439,7 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 						...incoming.layout,
 						rois: incoming.layout.rois ?? [],
 						// The diamond's own two POE-248 fields go through the
-						// same rule, one level deeper: `killGlyph` draws from
+						// same rule, one level deeper: `killGlyphs` draws from
 						// them, and a payload from before POE-248 has a diamond
 						// with no icon spots on it.
 						diamond:

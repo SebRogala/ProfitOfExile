@@ -332,9 +332,16 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   architect's name and one reason, placed level with the block the advisor chose
   and just outside the game's own side panel; and `temple.door` — the ROOM
   WIDGET, user-placed and persisted, the same isometric rectangle the side panel
-  draws, with the OPEN doors green, the advisor's door bigger and purple, and the
-  kill marked by a cyan glyph on the chosen architect's own icon spot inside the
-  room (POE-248).
+  draws, with every corridor the read settled in the game's own colours (green
+  open, red closed), the advisor's door bigger and purple, the door a SECOND
+  Stone of Passage would buy in the same purple at half opacity and a radius
+  between the two, and BOTH kills marked by a cyan glyph on their own architect
+  icon spots inside the room — the block the advisor did NOT choose at a quarter
+  opacity (POE-248).
+  **Faint is the alternative** is one rule across that widget: the conditional
+  door and the unchosen kill are both drawn and both dimmed, so everything at
+  full strength is a thing to do now. It is the read that check items below
+  test, not the opacity numbers.
   **What the temple overlay deliberately stopped showing in POE-244**, all of it
   still on the Temple page: the reader's status lines (`reading…`, `between
   rooms — layout only`), the top gamble and its risk %, the unread-plate badge,
@@ -347,9 +354,14 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   **Retired again in POE-248**, after the first live session: the callout's
   ARROW (owner: no arrows anywhere — placement points, and the room widget's
   glyph is what survives the panel closing), the room widget's two text lines
-  (`KILL <architect> → <room>` and `open <edge>`), and its red CLOSED and grey
-  UNSETTLED seals. A corridor the read could not settle is now drawn nowhere at
-  all, and `doorWarning()` is what says so in words.
+  (`KILL <architect> → <room>` and `open <edge>`), and its grey UNSETTLED seals.
+  A corridor the read could not settle is now drawn nowhere at all, and
+  `doorWarning()` is what says so in words.
+  The red CLOSED seals were retired with them and **came back the same day**,
+  after the owner checked the build in game: hiding them was the wrong half of
+  *"the seals add chaos"* — the grey was the chaos, and a room drawn with only
+  its open walls is not the room the player is standing in. `sealVisible()`
+  withholds one kind of corridor now, and one only.
   `temple.board` (the lattice redrawn over the game, POE-225) is RETIRED: the
   board is already on screen behind the window, and the copy cost space that has
   to be kept clear of the module's own OCR crops. Its persisted rectangle is left
@@ -1199,9 +1211,10 @@ touching the named path.
   that only appears after a drag is the user's placement and not a defect.
 - **The room widget survives the incursion, and the stand-down** (POE-244,
   POE-246's arming, rewritten in POE-248): with the panel open and a room read,
-  note the outline, the green open seals, the purple suggested seal and the cyan
-  kill glyph, then click *Enter Incursion*. All four must STAY for the whole
-  timed run — the layout panel and the game's own diamond are gone by then, and
+  note the outline, the green open and red closed seals, the purple suggested
+  seal (and the faint one beside it, when there is a second door), and both cyan
+  kill glyphs, then click *Enter Incursion*. Every one of them must STAY for the
+  whole timed run — the layout panel and the game's own diamond are gone by then, and
   this widget is the only surface left.
   **And they must still be there after `Temple: capture stood down` appears in
   `app.log`**, which is the POE-248 half. That line arrives roughly two minutes
@@ -1220,12 +1233,14 @@ touching the named path.
   POE-248): with the panel open, hold the widget beside the game's own diamond.
   The two must be the same shape at the same rotation — a RECTANGLE, wider along
   one isometric axis than the other, with its two long walls carrying two doors
-  each and its two short walls one each. Green where the game draws green;
-  nothing at all where the game draws red, which is intended (POE-248) and is the
-  fastest way to tell this build from the previous one. The advisor's door is the
-  bigger purple seal, and the cyan glyph sits on the same spot inside the room as
-  the chosen architect's icon does in the game's own diamond — top-right for an
-  upgrade, bottom-left for a change.
+  each and its two short walls one each. Green where the game draws green, RED
+  where the game draws red — the colours are the game's own semantics, and a
+  widget missing its closed seals is the first POE-248 build rather than this
+  one. The one corridor drawn nowhere is the kind nothing settled, which
+  `doorWarning()` says in words instead. The advisor's door is the bigger purple
+  seal, and the cyan glyph sits on the same spot inside the room as the chosen
+  architect's icon does in the game's own diamond — top-right for an upgrade,
+  bottom-left for a change.
   The Rust side pins the geometry against the committed crops through the
   shipped detector (`the_committed_crops_land_within_seven_px_of_the_room_wall`,
   worst measured case 6.40 px on a 200 px rect), so what this check adds is the
@@ -1250,9 +1265,47 @@ touching the named path.
   one): the positional rule and the one-sample upgrade/change reading disagree
   only there, so it is the board that settles which is right. If the mark lands
   on the block the advisor did NOT pick, the positional rule is wrong and
-  `killGlyph` should key on `kind` instead; record the board either way, because
+  `killGlyphs` should key on `kind` instead; record the board either way, because
   one sample is what the current mapping rests on
   (`markers::ARCHITECT_ICON_OFFSET`).
+- **A faint purple seal marks the second door** (POE-248): with one key set and
+  a kill ranked, the widget carries TWO purple seals — the bright big one is the
+  door to open now, the faint smaller one is what a SECOND Stone of Passage would
+  buy. Check it against the Temple page, which prints the same answer in words
+  under the top recommendation (`second stone: <edge>`): it must name the faint
+  seal's corridor and not one of the `open …` doors above it, and that corridor
+  must be one the game draws SHUT (opening an open door buys nothing).
+  **No faint seal at `keys = 2`**: set the keys control to 2 and the faint seal
+  must go, because with two stones in hand there is nothing conditional left —
+  the advisor's own answer IS the two-key one. Usually that means a second BRIGHT
+  seal appears; on a board where RU declines the second key it stays one bright
+  seal and the Temple page says so in the reasons (`RU: …`). Either way, no faint
+  one. Set it back to 1 and the faint seal returns.
+  No faint seal at all with ONE key is legal and not automatically a defect: the
+  room may have only one corridor worth a key, the pair may buy a merge the first
+  door already bought, every pair may be RV-excluded, or RU may have declined the
+  second key outright — the Temple page's reasons for the top recommendation are
+  where to look before filing it.
+- **The unchosen kill is drawn faint** (POE-248): with both architect blocks read,
+  the widget carries TWO cyan glyphs — the advisor's at full strength, the other
+  block's at about a quarter, at the opposite icon spot and with its OWN shape
+  (an up-arrow for an `upgrade`, two-way arrows for a `change`). The pair is what
+  orients: one mark alone says which half without saying what the halves are.
+  Two marks at the SAME strength is the regression — the widget then reads as two
+  instructions.
+  **Which is which is the OPACITY and the position, never the shape.** The panel
+  can print two blocks of the same kind — `panel.rs`'s own `CASE_1` fixture is two
+  `change` offers — and the widget then draws two identical two-way glyphs, one
+  bright and one faint. So read the strength, and cross-check the half against the
+  block the Temple page names.
+  That also bounds a pre-existing 50/50: on a TEXT-ONLY read (no OCR boxes, so
+  nothing orders the blocks) the half falls back to the offer's `kind`, and with
+  two blocks of the SAME kind that fallback cannot tell them apart — the pair is
+  drawn in an order the read did not establish. Record such a board rather than
+  filing it; the fix is a rect, not a rule.
+  And on a one-block read (`1 of 2 architects read` on the Temple page, POE-243)
+  there must be exactly ONE glyph: a second mark there would put a kill on screen
+  that was never on the panel.
 - **The change glyph reads as two-way, not a bar** (POE-248): on a `change`
   kill, the mark is two opposed arrows with daylight between their shafts —
   about 12 px at the shipped widget width. If it reads as one thick bar the

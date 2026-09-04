@@ -514,6 +514,32 @@ export function suggestedDoors(advice: AdviceView | null): EdgeId[] {
 	return topRecommendation(advice)?.doors ?? [];
 }
 
+/**
+ * The corridor a SECOND Stone of Passage would buy, or null (POE-248).
+ *
+ * Rust's answer, read and not derived: `AdviceView.secondaryDoor` is the partner
+ * of the door already recommended in the best two-key set that CONTAINS it, and
+ * the whole of the reasoning behind it — including every reason it is absent —
+ * lives in `advisor::conditional_second_door`. Deriving anything like it here
+ * would be a second ranking with no rollouts behind it.
+ *
+ * Null is sometimes an ANSWER and not a gap: the primary door's own singleton is
+ * in that ranking, so RU can win it, which is the chain saying do not spend a
+ * second key on this board. A surface must not fill the silence.
+ *
+ * Kept apart from [`suggestedDoors`] rather than appended to it, because the
+ * two are different instructions: that list is what to open with the key in
+ * hand, this is what to open with a key that has not dropped. The widget draws
+ * them at different sizes and opacities for exactly that reason.
+ *
+ * `?? null` because the field is optional on the wire — a payload from a build
+ * before POE-248 has none, and `undefined` reaching an SVG attribute inside an
+ * overlay window fails with no devtools to see it.
+ */
+export function secondDoor(advice: AdviceView | null): EdgeId | null {
+	return advice?.secondaryDoor ?? null;
+}
+
 // ------------------------------------------------------------- the panel --
 
 /**

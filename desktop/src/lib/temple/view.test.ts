@@ -30,6 +30,7 @@ import {
 	overlayShowsBoard,
 	overlayShowsDoors,
 	plateGlyph,
+	secondDoor,
 	suggestedDoors,
 	topGamble,
 	topRecommendation,
@@ -746,6 +747,38 @@ describe('suggestedDoors', () => {
 		// answer — the widget then prints no door line rather than a blank one.
 		expect(suggestedDoors(advice({ recommendations: [ranked({ doors: [] })] }))).toEqual([]);
 		expect(suggestedDoors(null)).toEqual([]);
+	});
+
+	it('leaves the conditional door out of what to open now', () => {
+		// The two answers must not merge: with one key in hand `suggestedDoors`
+		// is the whole instruction, and appending the door a SECOND stone would
+		// buy would tell the player to spend a key they do not have.
+		const both = advice({
+			recommendations: [ranked({ doors: ['B0-C1'] })],
+			secondaryDoor: 'B1-C1'
+		});
+		expect(suggestedDoors(both)).toEqual(['B0-C1']);
+		expect(secondDoor(both)).toBe('B1-C1');
+	});
+});
+
+describe('secondDoor', () => {
+	it('reads the corridor a second Stone of Passage would buy', () => {
+		expect(secondDoor(advice({ secondaryDoor: 'B1-C1' }))).toBe('B1-C1');
+	});
+
+	it('is null when Rust published no conditional answer', () => {
+		// Every reason lives on the Rust side — no second corridor, a two-key
+		// primary, an RV-only pair. All of them arrive here as one null, which
+		// the widget draws as no faint seal.
+		expect(secondDoor(advice({ secondaryDoor: null }))).toBeNull();
+		expect(secondDoor(null)).toBeNull();
+	});
+
+	it('is null for a payload from a build before the field existed', () => {
+		// The field is optional on the wire, and `undefined` reaching an SVG
+		// attribute inside an overlay window fails with no devtools to see it.
+		expect(secondDoor(advice())).toBeNull();
 	});
 });
 

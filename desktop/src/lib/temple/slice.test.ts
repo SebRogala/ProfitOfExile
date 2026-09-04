@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { isTempleStatus, templeSliceDefault, type TempleSlice } from './slice';
+import { secondDoor } from './view';
 
 /**
  * The wire contract between `src-tauri/src/temple/slice.rs` and this mirror.
@@ -23,7 +24,7 @@ const RUST_DEFAULT_JSON =
 
 /** Rust: the fully populated sample, `SAMPLE_SLICE_JSON` in `slice.rs`. */
 const RUST_SAMPLE_JSON =
-	'{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist\'s Den","displayName":"Torment Cells","builtTier":2,"rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}';
+	'{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist\'s Den","displayName":"Torment Cells","builtTier":2,"rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}';
 
 describe('templeSliceDefault', () => {
 	it('is exactly what Rust sends for a slice nothing has written yet', () => {
@@ -131,7 +132,7 @@ describe('the Rust sample decodes into this mirror', () => {
 			{ neighbour: 'C2', edge: 'C1-C2', pos: [1.0, -0.9] }
 		]);
 		// The two architect icon spots, mirrored through the centre and named
-		// for the half of the room each sits in — what `killGlyph` places the
+		// for the half of the room each sits in — what `killGlyphs` places the
 		// kill mark from.
 		expect(slice.layout?.diamond?.topIcon).toEqual([0.34, -0.3]);
 		expect(slice.layout?.diamond?.bottomIcon).toEqual([-0.34, 0.3]);
@@ -168,6 +169,15 @@ describe('the Rust sample decodes into this mirror', () => {
 		expect(slice.advice?.gambles[0].risk).toBe(0.31);
 		expect(slice.advice?.mapAction).toBe('leaveMap');
 		expect(slice.advice?.warnings).toHaveLength(2);
+	});
+
+	it('reads the conditional second door apart from the doors to open now', () => {
+		// Two different instructions on one wire (POE-248): `doors` is what the
+		// key in hand buys, `secondaryDoor` is what a stone that has not dropped
+		// would. A mirror that folded one into the other would have the widget
+		// telling a one-key player to open two doors.
+		expect(secondDoor(slice.advice ?? null)).toBe('C1-D2');
+		expect(slice.advice?.recommendations[0].doors).not.toContain('C1-D2');
 	});
 
 	it('reads the calibration under its snake_case keys', () => {

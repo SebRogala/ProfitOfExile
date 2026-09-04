@@ -14,13 +14,14 @@ import {
 	BANNER_TOP_CSS,
 	CALLOUT_GAP_CSS,
 	SEAL_RADIUS,
+	SEAL_RADIUS_SECONDARY,
 	SEAL_RADIUS_SUGGESTED,
 	bannerPlacement,
 	calloutPlacement,
 	captureToCss,
 	diamondGeometry,
 	doorDefaultPlacement,
-	killGlyph,
+	killGlyphs,
 	neverCoverRects,
 	roiRect,
 	sealVisible
@@ -396,7 +397,11 @@ describe('diamondGeometry', () => {
 			{ neighbour: 'C2', edge: 'C1-C2', pos: [2, 0] },
 			{ neighbour: 'B1', edge: 'B1-C1', pos: [0, -2] },
 			{ neighbour: 'C0', edge: 'C0-C1', pos: [-2, 0] },
-			{ neighbour: 'D2', edge: 'C1-D2', pos: [0, 2] }
+			{ neighbour: 'D2', edge: 'C1-D2', pos: [0, 2] },
+			// A second CLOSED corridor, so the advice can sit on one of them
+			// and leave the other plain — which is what makes "closed is drawn
+			// red at the plain radius" assertable at all.
+			{ neighbour: 'B0', edge: 'B0-C1', pos: [-1, -1] }
 		],
 		// Mirrored through the centre, as `markers::architect_icons` publishes
 		// them; round here for the same reason the corners are.
@@ -430,21 +435,45 @@ describe('diamondGeometry', () => {
 			['C1-C2', 'open'],
 			['B1-C1', 'closed'],
 			['C0-C1', 'unresolved'],
-			['C1-D2', 'open']
+			['C1-D2', 'open'],
+			['B0-C1', 'closed']
 		]);
 	});
 
-	it('draws the advisor\'s door larger than the rest', () => {
-		const seals = diamondGeometry(diamond, board, ['B1-C1']).seals;
-		expect(seals.map((seal) => [seal.edge, seal.suggested])).toEqual([
-			['C1-C2', false],
-			['B1-C1', true],
-			['C0-C1', false],
-			['C1-D2', false]
+	it('sizes the three kinds of seal in the order a glance reads them', () => {
+		// Advice at two strengths and a corridor with none: the door to open
+		// NOW is the biggest, the one a SECOND stone would buy sits between, and
+		// a corridor the advisor said nothing about is the smallest. The order
+		// is the claim — a reader who cannot see the colours still gets the
+		// ranking from the sizes.
+		const seals = diamondGeometry(diamond, board, ['B1-C1'], 'B0-C1').seals;
+		expect(seals.map((seal) => [seal.edge, seal.kind])).toEqual([
+			['C1-C2', 'plain'],
+			['B1-C1', 'suggested'],
+			['C0-C1', 'plain'],
+			['C1-D2', 'plain'],
+			['B0-C1', 'secondary']
 		]);
 		expect(seals[1].radius).toBe(SEAL_RADIUS_SUGGESTED);
+		expect(seals[4].radius).toBe(SEAL_RADIUS_SECONDARY);
 		expect(seals[0].radius).toBe(SEAL_RADIUS);
-		expect(SEAL_RADIUS_SUGGESTED).toBeGreaterThan(SEAL_RADIUS);
+		expect(SEAL_RADIUS_SUGGESTED).toBeGreaterThan(SEAL_RADIUS_SECONDARY);
+		expect(SEAL_RADIUS_SECONDARY).toBeGreaterThan(SEAL_RADIUS);
+	});
+
+	it('gives a corridor that is both the primary and the conditional door the primary size', () => {
+		// Rust never publishes this — `conditional_second_door` returns the
+		// OTHER member of the pair — so it is a guard rather than a case: the
+		// door to open now must not be drawn as the one to wait for.
+		const seals = diamondGeometry(diamond, board, ['B1-C1'], 'B1-C1').seals;
+		expect(seals[1].kind).toBe('suggested');
+		expect(seals[1].radius).toBe(SEAL_RADIUS_SUGGESTED);
+	});
+
+	it('leaves every seal plain when the advisor named no door', () => {
+		expect(
+			diamondGeometry(diamond, board, [], null).seals.every((seal) => seal.kind === 'plain')
+		).toBe(true);
 	});
 
 	it('places each seal at the position Rust published, with nothing recomputed', () => {
@@ -455,7 +484,8 @@ describe('diamondGeometry', () => {
 			[2, 0],
 			[0, -2],
 			[-2, 0],
-			[0, 2]
+			[0, 2],
+			[-1, -1]
 		]);
 	});
 
@@ -472,36 +502,48 @@ describe('diamondGeometry', () => {
 	});
 
 	describe('sealVisible', () => {
-		/** The four seals of the fixture above, already classified. */
-		const seals = () => diamondGeometry(diamond, board, ['B1-C1']).seals;
+		/** The five seals of the fixture above, already classified. */
+		const seals = (secondary: string | null = null) =>
+			diamondGeometry(diamond, board, ['B1-C1'], secondary).seals;
 
-		it('draws the open doors and the advisor\'s, and nothing else', () => {
-			// POE-248's subtraction, as the list of what survives: the two open
-			// corridors in the game's own green, plus B1-C1 — which is CLOSED
-			// and drawn anyway, because it is the door being recommended.
-			expect(seals().filter(sealVisible).map((seal) => seal.edge)).toEqual([
-				'C1-C2',
-				'B1-C1',
-				'C1-D2'
+		it('draws every corridor the read settled, in the game\'s own two colours', () => {
+			// The POE-248 correction, as the list of what survives: both open
+			// corridors, both closed ones — the game draws a wall red and the
+			// widget replaces the game's diamond during the incursion — and
+			// nothing for the one the read could not settle.
+			expect(seals().filter(sealVisible).map((seal) => [seal.edge, seal.state])).toEqual([
+				['C1-C2', 'open'],
+				['B1-C1', 'closed'],
+				['C1-D2', 'open'],
+				['B0-C1', 'closed']
 			]);
 		});
 
-		it('draws neither a closed corridor nor one nothing settled', () => {
-			// The two the owner called chaos. `C0-C1` is the interesting half:
-			// "we could not read it" is still real, and it is now said by
-			// `doorWarning` in words rather than by a grey dot nobody can act
-			// on.
+		it('draws nothing for a corridor nothing settled', () => {
+			// The one the owner did call chaos, and the only one still hidden:
+			// "we could not read it" is real, and it is said by `doorWarning` in
+			// words rather than by a dot nobody can act on.
 			const hidden = seals()
 				.filter((seal) => !sealVisible(seal))
 				.map((seal) => [seal.edge, seal.state]);
 			expect(hidden).toEqual([['C0-C1', 'unresolved']]);
 		});
+
+		it('draws the advisor\'s answer even on a corridor nothing settled', () => {
+			// The advisor reads an unsettled corridor as closed and can name it.
+			// Withholding the answer there would leave the widget silent about
+			// the one thing it exists to say — `doorWarning` is already up
+			// saying the shape may be wrong.
+			const conditional = seals('C0-C1').find((seal) => seal.edge === 'C0-C1');
+			expect(conditional).toMatchObject({ state: 'unresolved', kind: 'secondary' });
+			expect(sealVisible(conditional!)).toBe(true);
+		});
 	});
 
-	describe('killGlyph', () => {
+	describe('killGlyphs', () => {
 		/** Two blocks with rects, the CHANGE one printed first. */
-		const top = { kind: 'change', rect: [1200, 100, 300, 40] as CaptureRect };
-		const bottom = { kind: 'upgrade', rect: [1200, 200, 300, 40] as CaptureRect };
+		const top = { index: 0, kind: 'change', rect: [1200, 100, 300, 40] as CaptureRect };
+		const bottom = { index: 1, kind: 'upgrade', rect: [1200, 200, 300, 40] as CaptureRect };
 		const both = [top, bottom];
 
 		it('marks the half the chosen block was PRINTED in, not the half its kind implies', () => {
@@ -509,51 +551,87 @@ describe('diamondGeometry', () => {
 			// block is the top one, so its glyph goes in the top-right half —
 			// the opposite of what the one measured board's upgrade/change
 			// reading would have said.
-			expect(killGlyph(diamond, top, both)).toEqual({
+			expect(killGlyphs(diamond, top, both)[0]).toEqual({
 				position: { x: 1, y: -1 },
-				kind: 'change'
+				kind: 'change',
+				chosen: true
 			});
-			expect(killGlyph(diamond, bottom, both)).toEqual({
+			expect(killGlyphs(diamond, bottom, both)[0]).toEqual({
 				position: { x: -1, y: 1 },
-				kind: 'upgrade'
+				kind: 'upgrade',
+				chosen: true
 			});
+		});
+
+		it('draws the other block too, at the complementary spot with its own kind', () => {
+			// The pair is what orients: one mark says which half, two say what
+			// the halves ARE. The component draws this one faint — "faint is the
+			// alternative", the rule the conditional door seal shares.
+			expect(killGlyphs(diamond, top, both)).toEqual([
+				{ position: { x: 1, y: -1 }, kind: 'change', chosen: true },
+				{ position: { x: -1, y: 1 }, kind: 'upgrade', chosen: false }
+			]);
+			// And from the other side, so neither half is hard-coded: choosing
+			// the bottom block swaps both the spots and the kinds.
+			expect(killGlyphs(diamond, bottom, both)).toEqual([
+				{ position: { x: -1, y: 1 }, kind: 'upgrade', chosen: true },
+				{ position: { x: 1, y: -1 }, kind: 'change', chosen: false }
+			]);
+		});
+
+		it('draws no faint glyph when only one block was read', () => {
+			// POE-243's `forcedKill` shape. There is no second block to mark —
+			// inventing one would put a kill on the widget that was never on the
+			// panel — and the chosen one falls back to its kind for the half,
+			// because one rect orders nothing.
+			expect(killGlyphs(diamond, top, [top])).toEqual([
+				{ position: { x: -1, y: 1 }, kind: 'change', chosen: true }
+			]);
 		});
 
 		it('falls back to the kind when the read carried no boxes', () => {
 			// A text-only read: nothing orders the blocks, so the one-sample
-			// mapping is all there is — upgrade top-right, change bottom-left.
+			// mapping is all there is — upgrade top-right, change bottom-left —
+			// and the other block still takes the half the chosen one did not.
 			const textOnly = [
-				{ kind: 'upgrade', rect: null },
-				{ kind: 'change', rect: null }
+				{ index: 0, kind: 'upgrade', rect: null },
+				{ index: 1, kind: 'change', rect: null }
 			];
-			expect(killGlyph(diamond, textOnly[0], textOnly)?.position).toEqual({ x: 1, y: -1 });
-			expect(killGlyph(diamond, textOnly[1], textOnly)?.position).toEqual({ x: -1, y: 1 });
-		});
-
-		it('falls back to the kind when only one block was read', () => {
-			// POE-243's `forcedKill` shape. One rect orders nothing — the block
-			// that was read could be either of the two the panel drew — so the
-			// positional rule has to decline rather than guess.
-			expect(killGlyph(diamond, top, [top])?.position).toEqual({ x: -1, y: 1 });
+			expect(killGlyphs(diamond, textOnly[0], textOnly)).toEqual([
+				{ position: { x: 1, y: -1 }, kind: 'upgrade', chosen: true },
+				{ position: { x: -1, y: 1 }, kind: 'change', chosen: false }
+			]);
 		});
 
 		it('marks nothing when the ranking named no architect', () => {
 			// `kill either` — the advisor ranked the doors and left the kill
 			// free. A glyph on one of the two halves would claim a choice that
 			// was not made.
-			expect(killGlyph(diamond, null, both)).toBeNull();
+			expect(killGlyphs(diamond, null, both)).toEqual([]);
 		});
 
 		it('marks nothing for a kind it does not recognise', () => {
-			expect(killGlyph(diamond, { kind: 'sacrifice', rect: null }, both)).toBeNull();
+			expect(killGlyphs(diamond, { index: 0, kind: 'sacrifice', rect: null }, both)).toEqual(
+				[]
+			);
+		});
+
+		it('keeps the chosen mark when the OTHER block\'s kind is unrecognised', () => {
+			// The half that can still be trusted survives: the chosen block is
+			// what the player has to click, and a sibling the vocabulary does
+			// not know says nothing about it.
+			const odd = { index: 1, kind: 'sacrifice', rect: [1200, 200, 300, 40] as CaptureRect };
+			expect(killGlyphs(diamond, top, [top, odd])).toEqual([
+				{ position: { x: 1, y: -1 }, kind: 'change', chosen: true }
+			]);
 		});
 
 		it('marks nothing on a payload from before the spots were published', () => {
 			// A glyph placed at the origin would sit in the middle of the room
 			// and point at neither architect, which is worse than no glyph.
 			const older = { ...diamond, topIcon: null, bottomIcon: null };
-			expect(killGlyph(older, top, both)).toBeNull();
-			expect(killGlyph(older, bottom, both)).toBeNull();
+			expect(killGlyphs(older, top, both)).toEqual([]);
+			expect(killGlyphs(older, bottom, both)).toEqual([]);
 		});
 	});
 });

@@ -1627,6 +1627,7 @@ mod tests {
             advice: Some(crate::temple::slice::AdviceView {
                 recommendations: Vec::new(),
                 gambles: Vec::new(),
+                secondary_door: None,
                 map_action: "leaveMap".to_string(),
                 warnings: Vec::new(),
                 forced_kill: false,

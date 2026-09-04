@@ -29,6 +29,7 @@
 		modeLabel,
 		offerBuilds,
 		offerHeadline,
+		secondDoor,
 		topRecommendation,
 		unknownRoomsBadge
 	} from '$lib/temple/view';
@@ -49,6 +50,12 @@
 
 	/** The doors the top recommendation says to open — drawn on the board. */
 	const recommendedDoors = $derived(topRecommendation(advice)?.doors ?? []);
+	/** The corridor a SECOND Stone of Passage would buy, or null. Printed under
+	 *  the top recommendation only — it is one fact about the head of the list
+	 *  and not a ranked move — and deliberately NOT drawn on the board, which
+	 *  shows what to open with the key in hand. It is what the overlay's faint
+	 *  purple seal says, in words, on the surface that has room for them. */
+	const secondStone = $derived(secondDoor(advice));
 
 	const unknownBadge = $derived(unknownRoomsBadge(temple));
 	const markerNotice = $derived(markerFallbackNotice(layout));
@@ -294,6 +301,12 @@
 							     every rank, because the whole list is one architect's. -->
 							{#if forcedNote}<span class="forced">({forcedNote})</span>{/if}
 							<span class="move-doors">open {move.doorsLabel}</span>
+							<!-- Rust's conditional answer (POE-248): what a SECOND stone would
+							     buy, given this move. Never folded into `doorsLabel` — with one
+							     key in hand that would name a door the player cannot open. -->
+							{#if i === 0 && secondStone}
+								<span class="move-doors second">second stone: {secondStone}</span>
+							{/if}
 							<span class="meta">score {move.ev.toFixed(2)}</span>
 							<!-- The reasons ARE the audit trail: a bare score cannot be checked. -->
 							<ul class="reasons">
@@ -670,6 +683,13 @@
 	.move-doors {
 		font-size: 0.78rem;
 		color: var(--color-lab-text-secondary);
+	}
+
+	/* Dimmer than the doors above it, the page's own reading of the overlay's
+	   "faint is the alternative" rule: a conditional answer must not compete
+	   with the move being recommended. */
+	.move-doors.second {
+		color: var(--color-lab-text-muted);
 	}
 
 	.reasons {
