@@ -175,6 +175,79 @@ export interface LayoutView {
 	 *  lattice the board was actually read off; do not re-derive them from
 	 *  `scale` here, which would be a second answer to where a plate is. */
 	centres: PlateCentres;
+	/** Every rectangle this read took its INPUT from, in capture px (POE-244) —
+	 *  the never-cover set. 42 on a full board: the side panel, the panel's own
+	 *  diamond, the incursion-budget line, one per plate and one per corridor.
+	 *
+	 *  A surface drawing over the game must keep clear of all of them, because
+	 *  the module reads them again on the next tick: a panel drawn over one is
+	 *  OCR input the app wrote itself. `overlay-geometry.ts` is what applies
+	 *  that rule; nothing here re-derives a rect, and nothing should — five
+	 *  different Rust constants own these and a TypeScript copy of any of them
+	 *  would drift with nothing to fail.
+	 *
+	 *  OPTIONAL on the wire, and normalised to `[]` by `normaliseTemple`: a
+	 *  snapshot from a build before POE-244 carries neither field, and a
+	 *  consumer reading `undefined.length` inside an overlay window fails with
+	 *  no devtools to see it. Consumers may treat it as always present. */
+	rois?: RoiView[];
+	/** The current room's own isometric diamond, or null between rooms. Same
+	 *  wire-optionality rule as `rois`. */
+	diamond?: DiamondView | null;
+}
+
+/** One rectangle the read takes input from. */
+export interface RoiView {
+	/** `"panel"`, `"diamond"`, `"remaining"`, `"plate"` or `"corridor"`. The
+	 *  never-cover rule treats all five the same; the kind is for naming one. */
+	kind: string;
+	/** A slot key for `plate`, an edge id for `corridor`, null for the three
+	 *  panel regions. */
+	of: string | null;
+	rect: CaptureRect;
+}
+
+/**
+ * The room's isometric diamond, as the side panel draws it.
+ *
+ * A UNIT shape, not a screen rectangle — the panel's own diamond has its rect
+ * in `rois`. This is the geometry a widget needs to draw the SAME shape
+ * somewhere else at whatever size the user dragged it to, which is the whole
+ * point: during the incursion the panel and its diamond are gone, and the door
+ * the advisor named still has to be identifiable.
+ *
+ * Both fields are in one space — centre at the origin, `+y` down — so a
+ * consumer fits `corners` into its box and puts every seal through the same
+ * transform.
+ */
+export interface DiamondView {
+	/** The outline, four corners in ring order. */
+	corners: [
+		[number, number],
+		[number, number],
+		[number, number],
+		[number, number]
+	];
+	/** One seal per corridor the current room has. */
+	seals: SealView[];
+}
+
+/**
+ * One seal on the room's diamond.
+ *
+ * Deliberately carries no colour and no recommendation. Open/closed/uncertain
+ * is `edgeState(seal.edge, layout)` — the rule every temple surface already
+ * shares — and whether the advisor wants this door opened is membership of
+ * `recommendations[0].doors`. Repeating either here would be a second answer to
+ * a question the slice already answers.
+ */
+export interface SealView {
+	/** The slot this corridor leads to — `"C2"`. */
+	neighbour: SlotId;
+	/** The corridor itself — `"C1-C2"`, the key `doors` and `uncertain` use. */
+	edge: EdgeId;
+	/** `[x, y]` on the unit diamond, in `corners`' units. */
+	pos: [number, number];
 }
 
 /** One architect block, resolved. */

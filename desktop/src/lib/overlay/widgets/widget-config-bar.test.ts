@@ -33,14 +33,14 @@ describe('placing the widget-config bar', () => {
 	/**
 	 * The whole point of the change. A screen-centred bar would be at
 	 * x = 1920 / 2 - 160 = 800, which is where the shipped one was and is nowhere
-	 * near a widget the owner actually placed (`temple.board` is at x = 1425).
+	 * near a widget the owner actually placed (the one in this case is at x = 1400).
 	 */
 	it('centres the bar on the widgets rather than on the screen', () => {
 		expect(configBarAnchor([{ x: 1400, y: 400, w: 200, h: 200 }], HOST, BAR).x).toBe(1340);
 	});
 
-	/** The temple's advice widget ships at y = 40, so "no room above" is the
-	 *  ordinary case rather than an edge one. */
+	/** A widget near the top of the host — which is where a shipped default
+	 *  tends to be — so "no room above" is the ordinary case, not an edge one. */
 	it('drops the bar below the widgets when they sit too near the top', () => {
 		expect(configBarAnchor([{ x: 400, y: 40, w: 200, h: 200 }], HOST, BAR)).toEqual({
 			x: 340,
@@ -77,13 +77,12 @@ describe('placing the widget-config bar', () => {
 	});
 
 	/**
-	 * The shipped case: the temple declares exactly two widgets, and the cluster
-	 * has to be their UNION. `temple.board` ships at (40, 40) 200x200 and
-	 * `temple.advice` at (250, 40) 400x200, so the box is 40..650 x 40..240 — and
-	 * because both ship at y = 40 the default placement is BELOW the cluster.
-	 * A union that took the minimum of the two right edges instead of the maximum
-	 * would centre the bar on the board alone and push it off the left of the
-	 * host.
+	 * A module with more than one placeable widget: the cluster has to be their
+	 * UNION. Two boxes at (40, 40) 200x200 and (250, 40) 400x200 make
+	 * 40..650 x 40..240, and because both sit at y = 40 the bar goes BELOW the
+	 * cluster. A union that took the minimum of the two right edges instead of
+	 * the maximum would centre the bar on the first alone and push it off the
+	 * left of the host.
 	 */
 	it('spans both widgets when the module ships more than one', () => {
 		expect(

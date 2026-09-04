@@ -40,7 +40,8 @@ use serde::{Deserialize, Serialize};
 use super::advisor::{self, Advice, MapAction, Warning};
 use super::anchor::AnchorCalibration;
 use super::doors::Confidence;
-use super::lattice::{Edge, Slot};
+use super::lattice::{Edge, Lattice, Slot};
+use super::markers;
 use super::panel::{ArchitectOffer, PanelReading, RoomReading};
 use super::reader::TempleLayout;
 use super::rooms::{self, Match, OfferKind, RoomIdentity};
@@ -293,6 +294,82 @@ pub struct LayoutView {
     /// exactly 13 plates by construction — [`Lattice`] carries the same array —
     /// so a length is not something a consumer should have to check.
     pub centres: [[i32; 2]; 13],
+    /// Every rectangle on screen this read took its INPUT from, in capture px
+    /// (POE-244). The never-cover set: a surface drawing over the game must
+    /// keep clear of all of them, because the module reads them again on the
+    /// next tick and a panel drawn over one is OCR input the module wrote
+    /// itself.
+    ///
+    /// Published rather than re-derived by the consumer. There are five sources
+    /// — [`super::run::panel_rect`], [`super::run::diamond_rect`],
+    /// [`super::run::remaining_rect`], [`super::panel::name_strip`] /
+    /// [`super::panel::numeral_box`] and [`Lattice::edge_midpoint`] — and a
+    /// TypeScript copy of any of them would be a second answer to where the
+    /// module is looking, with nothing to fail when the two drifted.
+    /// [`super::run::read_rois`] is the one builder.
+    pub rois: Vec<RoiView>,
+    /// The current room's own diamond — the shape the side panel draws and the
+    /// seals on it, for a surface that has to draw it after the panel is gone
+    /// (POE-244). `None` when the read settled no current room, which is when
+    /// there is no room to draw.
+    pub diamond: Option<DiamondView>,
+}
+
+/// One rectangle the read takes input from, in CAPTURE px.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoiView {
+    /// `"panel"`, `"diamond"`, `"remaining"`, `"plate"` or `"corridor"` — what
+    /// the module reads there. Carried so a debug surface can name a rect; the
+    /// never-cover rule itself treats all five the same.
+    pub kind: String,
+    /// The board element the rect belongs to: a slot key for `plate`, an edge
+    /// id for `corridor`, `None` for the three panel regions, which belong to
+    /// the panel rather than to a plate.
+    pub of: Option<String>,
+    /// `[x, y, w, h]`, capture px — the same unit as [`LayoutView::origin`].
+    pub rect: [i32; 4],
+}
+
+/// The room's isometric diamond, as the side panel draws it.
+///
+/// A UNIT shape, not a screen rectangle: the panel's own diamond has its rect
+/// in [`LayoutView::rois`], and this is the geometry a widget needs to draw the
+/// SAME shape somewhere else, at whatever size the user has dragged it to. Both
+/// fields are in the units of [`super::markers::diamond_corners`] — centre at
+/// the origin, `+y` down — so a consumer scales the corners into its box and
+/// puts every seal through the same transform.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiamondView {
+    /// The outline, four corners in ring order.
+    pub corners: [[f64; 2]; 4],
+    /// One seal per corridor the current room has, in
+    /// [`super::lattice::neighbours`] order.
+    pub seals: Vec<SealView>,
+}
+
+/// One seal on the room's diamond.
+///
+/// What it is NOT carrying is deliberate. Open/closed/uncertain is
+/// [`LayoutView::doors`] / `uncertain` / `unresolved_incident` read through the
+/// consumer's own edge-state rule, which every temple surface already shares;
+/// and whether the advisor wants this door opened is membership of
+/// [`RankedView::doors`]. Repeating either here would be a second answer to a
+/// question the slice already answers, and the two could disagree.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SealView {
+    /// The slot this corridor leads to — `"C2"`.
+    pub neighbour: String,
+    /// The corridor itself — `"C1-C2"`, the key `doors` and `uncertain` use.
+    pub edge: String,
+    /// `[x, y]` on the seal RING — a unit vector, in
+    /// [`DiamondView::corners`]' units, which are ring radii. Every seal is at
+    /// radius 1 by construction; what differs between them is only the
+    /// direction, which is what the panel draws
+    /// ([`super::markers::SEAL_RING_FRACTION`] measures it).
+    pub pos: [f64; 2],
 }
 
 /// One architect block, resolved.
@@ -535,6 +612,38 @@ fn layout_view(read: &ReadResult<'_>) -> LayoutView {
         // republishes the lattice the board was read off rather than rebuilding
         // one that could round differently.
         centres: layout.slots.map(|(x, y)| [x, y]),
+        rois: super::run::read_rois(layout.origin, layout.scale),
+        diamond: layout.current.map(|current| diamond_view(layout, current)),
+    }
+}
+
+/// The current room's diamond, as [`super::markers`]' fitted projection puts
+/// it.
+///
+/// One seal per NEIGHBOUR the board gives the room — `lattice::neighbours`,
+/// which is the same source the marker reader counts its expected seals from
+/// (`run::read_markers` passes that degree in). Not one per OPEN corridor: a
+/// closed door is a red seal the player has to see, and a room whose seals were
+/// never settled still has walls in those directions.
+fn diamond_view(layout: &TempleLayout, current: Slot) -> DiamondView {
+    let lattice = Lattice::new(layout.origin, layout.scale);
+    DiamondView {
+        corners: markers::diamond_corners().map(|(x, y)| [x, y]),
+        seals: super::lattice::neighbours(current)
+            .into_iter()
+            .map(|to| {
+                // The unit direction IS the seal's place: the panel draws every
+                // seal at one radius from the centre (`SEAL_RING_FRACTION`), so
+                // the ring is the unit and `neighbour_direction` is already on
+                // it. Nothing to scale, and one home for the projection.
+                let (x, y) = markers::neighbour_direction(&lattice, current, to);
+                SealView {
+                    neighbour: to.as_str().to_string(),
+                    edge: Edge::new(current, to).to_string(),
+                    pos: [x, y],
+                }
+            })
+            .collect(),
     }
 }
 
@@ -2318,6 +2427,193 @@ mod tests {
         assert_eq!(published.profile, profile);
     }
 
+    // ------------------------------------ the never-cover set (POE-244) --
+
+    /// Every region the module reads reaches the slice, and each is the SAME
+    /// rectangle the reader will use on the next tick.
+    ///
+    /// The overlay's whole guarantee rests on this: a rect missing from the
+    /// list is a rect a callout may be placed over, and the failure is a read
+    /// that quietly degrades on a machine nobody is looking at. Asserted
+    /// against the owning functions rather than against numbers, because what
+    /// has to hold is that they are the same answer, not that they are any
+    /// particular value.
+    #[test]
+    fn every_read_region_reaches_the_slice_as_a_never_cover_rect() {
+        let layout = layout(Some(Slot::C1), &[], &[]);
+        let rooms = board_rooms(&[]);
+        let panel = panel("Chamber of Iron", Some(6), Vec::new());
+
+        let published = project(&read(&layout, &rooms, &panel, None, None), None)
+            .layout
+            .expect("a read publishes a layout");
+        let rois = published.rois;
+
+        let of_kind = |kind: &str| -> Vec<&RoiView> {
+            rois.iter().filter(|r| r.kind == kind).collect()
+        };
+        assert_eq!(
+            of_kind("panel").iter().map(|r| r.rect).collect::<Vec<_>>(),
+            vec![super::super::run::panel_rect(FIXTURE_ORIGIN, FIXTURE_SCALE)]
+        );
+        assert_eq!(
+            of_kind("diamond").iter().map(|r| r.rect).collect::<Vec<_>>(),
+            vec![super::super::run::diamond_rect(FIXTURE_ORIGIN, FIXTURE_SCALE)]
+        );
+        assert_eq!(
+            of_kind("remaining").iter().map(|r| r.rect).collect::<Vec<_>>(),
+            vec![super::super::run::remaining_rect(FIXTURE_ORIGIN, FIXTURE_SCALE)]
+        );
+        // One per plate and one per corridor, named by the board key a debug
+        // surface would print — 3 + 13 + 26.
+        assert_eq!(
+            of_kind("plate").iter().filter_map(|r| r.of.clone()).collect::<Vec<_>>(),
+            Slot::ALL.iter().map(|s| s.as_str().to_string()).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            of_kind("corridor").iter().filter_map(|r| r.of.clone()).collect::<Vec<_>>(),
+            crate::temple::lattice::edges().iter().map(|e| e.to_string()).collect::<Vec<_>>()
+        );
+        assert_eq!(rois.len(), 42);
+    }
+
+    /// A plate's one published rect covers BOTH boxes that plate is OCR'd from.
+    ///
+    /// The union is the deliberate simplification (`run::read_rois`), and this
+    /// is the property that makes it safe to publish one rect where the reader
+    /// crops two: nothing kept out of the union can be inside either crop.
+    #[test]
+    fn a_plate_roi_contains_both_of_the_boxes_that_plate_is_read_from() {
+        let lattice = Lattice::new(FIXTURE_ORIGIN, FIXTURE_SCALE);
+        let rois = super::super::run::read_rois(FIXTURE_ORIGIN, FIXTURE_SCALE);
+        let contains = |outer: [i32; 4], inner: [i32; 4]| {
+            outer[0] <= inner[0]
+                && outer[1] <= inner[1]
+                && outer[0] + outer[2] >= inner[0] + inner[2]
+                && outer[1] + outer[3] >= inner[1] + inner[3]
+        };
+
+        for slot in Slot::ALL {
+            let roi = rois
+                .iter()
+                .find(|r| r.kind == "plate" && r.of.as_deref() == Some(slot.as_str()))
+                .unwrap_or_else(|| panic!("no plate rect for {}", slot.as_str()));
+            for inner in [
+                crate::temple::panel::name_strip(&lattice, slot),
+                crate::temple::panel::numeral_box(&lattice, slot),
+            ] {
+                assert!(
+                    contains(roi.rect, inner),
+                    "{}: {:?} does not contain {inner:?}",
+                    slot.as_str(),
+                    roi.rect
+                );
+            }
+        }
+    }
+
+    /// A corridor's rect is the patch the beam sampler actually measures —
+    /// same centre, same half-width, same truncation. One pixel short on any
+    /// side is a pixel the overlay may cover and the sampler still reads.
+    #[test]
+    fn a_corridor_roi_is_the_patch_the_beam_sampler_measures() {
+        let lattice = Lattice::new(FIXTURE_ORIGIN, FIXTURE_SCALE);
+        let hw = (crate::temple::lattice::PATCH_HALF * FIXTURE_SCALE as f64) as i32;
+        let rois = super::super::run::read_rois(FIXTURE_ORIGIN, FIXTURE_SCALE);
+
+        for edge in crate::temple::lattice::edges() {
+            let roi = rois
+                .iter()
+                .find(|r| r.kind == "corridor" && r.of.as_deref() == Some(&edge.to_string()))
+                .unwrap_or_else(|| panic!("no corridor rect for {edge}"));
+            let (mx, my) = lattice.edge_midpoint(edge);
+            assert_eq!(roi.rect, [mx - hw, my - hw, 2 * hw, 2 * hw], "{edge}");
+        }
+    }
+
+    // --------------------------------------- the room's diamond (POE-244) --
+
+    /// One seal per corridor the room HAS, open or shut, and each one keyed by
+    /// both halves a consumer needs: the neighbour it leads to, and the edge id
+    /// `doors` / `uncertain` are spelled in.
+    #[test]
+    fn the_current_rooms_diamond_carries_one_seal_per_neighbour() {
+        // C1 is the only six-corridor shape on the board.
+        let layout = layout(Some(Slot::C1), &[(Slot::C1, Slot::C2)], &[]);
+        let rooms = board_rooms(&[]);
+        let panel = panel("Chamber of Iron", Some(6), Vec::new());
+
+        let diamond = project(&read(&layout, &rooms, &panel, None, None), None)
+            .layout
+            .and_then(|l| l.diamond)
+            .expect("a current room publishes a diamond");
+
+        assert_eq!(
+            diamond.seals.iter().map(|s| s.neighbour.clone()).collect::<Vec<_>>(),
+            crate::temple::lattice::neighbours(Slot::C1)
+                .iter()
+                .map(|s| s.as_str().to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            diamond.seals.iter().map(|s| s.edge.clone()).collect::<Vec<_>>(),
+            vec!["B0-C1", "B1-C1", "C0-C1", "C1-C2", "C1-D1", "C1-D2"]
+        );
+        // The outline is `markers::diamond_corners()` verbatim — the shape the
+        // seal positions are normalised onto, so a consumer scaling one and not
+        // the other draws seals off the walls.
+        assert_eq!(diamond.corners, markers::diamond_corners().map(|(x, y)| [x, y]));
+    }
+
+    /// Every published seal is on the seal RING, which is where the panel
+    /// draws them (`markers::SEAL_RING_FRACTION`, measured against the shipped
+    /// detector on all five committed crops).
+    ///
+    /// The version of this test POE-244 shipped first asserted the seals lay on
+    /// the published OUTLINE, which they never did on screen — it was the model
+    /// checked against its own algebra, and it passed while the model was 24 px
+    /// wrong about the panel. What survives is the claim a consumer can act on:
+    /// one radius for every corridor, so a widget scales the ring once and the
+    /// only thing that differs between seals is the direction.
+    #[test]
+    fn every_published_seal_sits_at_one_ring_radius() {
+        for current in Slot::ALL {
+            let layout = layout(Some(current), &[], &[]);
+            let rooms = board_rooms(&[]);
+            let panel = panel("Chamber of Iron", Some(6), Vec::new());
+            let diamond = project(&read(&layout, &rooms, &panel, None, None), None)
+                .layout
+                .and_then(|l| l.diamond)
+                .expect("a current room publishes a diamond");
+
+            assert!(!diamond.seals.is_empty(), "{} has no seals", current.as_str());
+            for seal in &diamond.seals {
+                let radius = seal.pos[0].hypot(seal.pos[1]);
+                assert!(
+                    (radius - 1.0).abs() < 1e-9,
+                    "{} -> {} is at radius {radius}",
+                    current.as_str(),
+                    seal.neighbour,
+                );
+            }
+        }
+    }
+
+    /// Between rooms there is no room to draw, so there is no diamond — the
+    /// same rule `advice` already follows. A widget that got an empty one would
+    /// draw a doorless box over the game.
+    #[test]
+    fn a_board_with_no_current_room_publishes_no_diamond() {
+        let layout = layout(None, &[], &[]);
+        let rooms = board_rooms(&[]);
+        let panel = panel("Chamber of Iron", Some(6), Vec::new());
+
+        let published = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        assert_eq!(published.status, TempleStatus::NoCurrentRoom);
+        assert_eq!(published.layout.and_then(|l| l.diamond), None);
+    }
+
     /// The whole default slice, as JSON, character for character.
     ///
     /// This string is COPIED into `desktop/src/lib/temple/slice.test.ts`, where
@@ -2387,6 +2683,30 @@ mod tests {
                     [900, 900],
                     [1110, 881],
                 ],
+                // TWO of the 42 a real read publishes, and one seal of C1's
+                // four. Like every other field of this sample these are
+                // hand-built: the pin is a check on the wire SHAPE, and
+                // `every_read_region_reaches_the_slice_as_a_never_cover_rect`
+                // and `the_current_rooms_diamond_carries_one_seal_per_neighbour`
+                // are what assert the projection's real content. A full board
+                // here would be a 4 kB literal nobody could read a rename out
+                // of.
+                rois: vec![
+                    RoiView { kind: "panel".to_string(), of: None, rect: [1100, 40, 500, 400] },
+                    RoiView {
+                        kind: "corridor".to_string(),
+                        of: Some("C1-C2".to_string()),
+                        rect: [991, 659, 27, 27],
+                    },
+                ],
+                diamond: Some(DiamondView {
+                    corners: [[1.457, 0.0], [0.0, 1.154], [-1.457, 0.0], [0.0, -1.154]],
+                    seals: vec![SealView {
+                        neighbour: "C2".to_string(),
+                        edge: "C1-C2".to_string(),
+                        pos: [0.746_63, -0.665_24],
+                    }],
+                }),
             }),
             panel: Some(PanelView {
                 room: Some("Locus of Corruption".to_string()),
@@ -2457,7 +2777,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]]},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.457,0.0],[0.0,1.154],[-1.457,0.0],[0.0,-1.154]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[0.74663,-0.66524]}]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///

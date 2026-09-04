@@ -21,7 +21,7 @@
  */
 import { TEMPLE_WINDOW_LABEL } from '../manager';
 import type { WidgetGeometry } from './widget-geometry';
-import { placeableWidgetsFor, type WidgetSpec } from './widget-registry';
+import { anchoredWidgetsFor, placeableWidgetsFor, type WidgetSpec } from './widget-registry';
 
 /**
  * Which per-device features are granted, as the page reads them.
@@ -44,6 +44,21 @@ export interface OverlayWindowRow {
 	label: string;
 }
 
+/** One widget row under a heading. */
+export interface OverlayWidgetRow {
+	spec: WidgetSpec;
+	/**
+	 * Whether the row has a PLACEMENT to show and configure.
+	 *
+	 * False for a game-anchored widget (POE-244): the module decides where it
+	 * goes on every read, so there is no stored rectangle to print and nothing
+	 * for the Configure button to arrange. The row still exists, because the
+	 * Show checkbox is the user's only way to turn one off and dropping the row
+	 * took that away — the widget became the one overlay surface with no switch.
+	 */
+	placeable: boolean;
+}
+
 /** One heading in Overlay Positions, with everything drawn under it. */
 export interface OverlayGroup {
 	/** Stable key for the `{#each}` — never shown. */
@@ -52,8 +67,10 @@ export interface OverlayGroup {
 	heading: string;
 	/** The per-window rows, each keeping its own Configure flow. */
 	windows: OverlayWindowRow[];
-	/** The widgets this group's module places inside its fullscreen window. */
-	widgets: WidgetSpec[];
+	/** The widgets this group's module draws inside its fullscreen window —
+	 *  the placeable ones first, then the anchored ones, each row saying which
+	 *  it is. */
+	widgets: OverlayWidgetRow[];
 	/**
 	 * The module the group's ONE "Configure widgets" button arranges, or `null`
 	 * when the group has no widgets.
@@ -128,13 +145,21 @@ const GROUPS: readonly GroupSpec[] = [
  */
 export function overlayGroups(grants: OverlayGroupGrants): OverlayGroup[] {
 	return GROUPS.filter((group) => group.grant === null || grants[group.grant]).map((group) => {
-		const widgets = group.module === null ? [] : placeableWidgetsFor(group.module);
+		const placeable = group.module === null ? [] : placeableWidgetsFor(group.module);
+		const anchored = group.module === null ? [] : anchoredWidgetsFor(group.module);
 		return {
 			id: group.id,
 			heading: group.heading,
 			windows: group.windows,
-			widgets,
-			configureModule: widgets.length > 0 ? group.module : null
+			widgets: [
+				...placeable.map((spec) => ({ spec, placeable: true })),
+				...anchored.map((spec) => ({ spec, placeable: false }))
+			],
+			// The button arranges PLACEABLE widgets, so an anchored row must not
+			// enable it: a config session over zero draggable frames hands the
+			// user an interactive monitor-sized rectangle with a Save/Cancel bar
+			// for nothing, which is the case this null already existed for.
+			configureModule: placeable.length > 0 ? group.module : null
 		};
 	});
 }

@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { canStartConfigure, overlayGroups, widgetGeometryText } from './overlay-groups';
-import { placeableWidgetsFor } from './widget-registry';
+import { anchoredWidgetsFor, placeableWidgetsFor } from './widget-registry';
 import { TEMPLE_WINDOW_LABEL } from '../manager';
 
 const ALL_GRANTS = { merc: true, temple: true };
@@ -59,9 +59,32 @@ describe('the Overlay Positions groups', () => {
 
 	it('takes the Temple rows from the widget registry rather than a second list', () => {
 		const temple = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Temple');
-		expect(temple?.widgets.map((widget) => widget.id)).toEqual(
-			placeableWidgetsFor(TEMPLE_WINDOW_LABEL).map((widget) => widget.id)
-		);
+		expect(temple?.widgets.map((row) => row.spec.id)).toEqual([
+			...placeableWidgetsFor(TEMPLE_WINDOW_LABEL).map((widget) => widget.id),
+			...anchoredWidgetsFor(TEMPLE_WINDOW_LABEL).map((widget) => widget.id)
+		]);
+	});
+
+	it('lists an anchored widget too, so it keeps a Show switch', () => {
+		// POE-244 review: the callout is placed by the module, so it has no
+		// stored rectangle — but dropping its row took away the only control the
+		// user has for that surface, and it became the one overlay thing with no
+		// way to switch it off. The row is here; the FLAG is what tells the page
+		// not to print a placement it does not have.
+		const temple = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Temple');
+		expect(temple?.widgets.map((row) => [row.spec.id, row.placeable])).toEqual([
+			['temple.door', true],
+			['temple.advice', false]
+		]);
+	});
+
+	it('offers Configure only while there is something draggable to arrange', () => {
+		// An anchored row must not enable the button on its own: a config session
+		// over zero frames is an interactive monitor-sized rectangle with a
+		// Save/Cancel bar for nothing.
+		const temple = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Temple');
+		expect(temple?.configureModule).toBe(TEMPLE_WINDOW_LABEL);
+		expect(temple?.widgets.filter((row) => row.placeable).length).toBeGreaterThan(0);
 	});
 
 	it('gives the Temple group no window row of its own', () => {

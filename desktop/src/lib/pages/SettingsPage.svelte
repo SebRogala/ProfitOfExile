@@ -1117,7 +1117,8 @@
 					</div>
 				{/each}
 
-				{#each group.widgets as widget (widget.id)}
+				{#each group.widgets as row (row.spec.id)}
+					{@const widget = row.spec}
 					<div class="setting-row">
 						<span class="setting-label">{widget.label}</span>
 						<span class="widget-show">
@@ -1128,7 +1129,16 @@
 								onchange={(next) => setWidgetVisible(widget, next)}
 							/>
 						</span>
-						<span class="setting-value mono">{widgetGeometryText(widgetGeometries[widget.id])}</span>
+						<!-- A game-anchored widget has no stored rectangle, so the
+						     geometry column would print "Not set" forever and the
+						     Configure button does not arrange it. The row is here
+						     for the Show checkbox alone, which is the user's only
+						     switch for that surface. -->
+						<span class="setting-value mono">
+							{row.placeable
+								? widgetGeometryText(widgetGeometries[widget.id])
+								: 'placed by the game'}
+						</span>
 					</div>
 				{/each}
 

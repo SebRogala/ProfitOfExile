@@ -2,7 +2,7 @@
 	/**
 	 * The fullscreen host every module's overlay window renders (POE-225).
 	 *
-	 * One window per module, the size of the primary monitor, click-through
+	 * One window per module, the size of the GAME monitor (POE-237), click-through
 	 * everywhere; inside it, one absolutely-positioned container per widget the
 	 * registry declares for that module. This component owns the placement, the
 	 * in-window config mode, the hot-rect declaration and the click routing —
@@ -43,7 +43,8 @@
 	import type { Snippet } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-	import { placeableWidgetsFor, type WidgetSpec } from './widget-registry';
+	import { anchoredWidgetsFor, placeableWidgetsFor, type WidgetSpec } from './widget-registry';
+	import type { OverlayDefaultGeometry } from '../overlay-defaults';
 	import {
 		EDGE_CURSORS,
 		dragged,
@@ -54,6 +55,7 @@
 		seedRect,
 		sizeToPersist,
 		widgetGeometry,
+		type HostFrame,
 		type HostSize,
 		type ResizeEdge,
 		type WidgetGeometry,
@@ -67,6 +69,8 @@
 	let {
 		module,
 		content,
+		anchored,
+		defaultsFor,
 		onAction
 	}: {
 		/** The module whose widgets this host draws — also the window label. */
@@ -86,6 +90,38 @@
 		 */
 		content: Snippet<[WidgetSpec, boolean]>;
 		/**
+		 * What each GAME-ANCHORED widget draws (POE-244), called once per
+		 * anchored entry the registry declares for this module.
+		 *
+		 * Rendered into a layer the size of the whole window, not into a placed
+		 * box, because the host cannot place one of these: where a callout goes
+		 * is a function of where the game drew the thing it points at, which only
+		 * the module knows. So the module positions its own content, and what the
+		 * host contributes is the frame it needs to do that — plus the same
+		 * window, the same `data-hot` claim, and the same exclusion from Settings
+		 * and from persistence that `anchored` already means.
+		 *
+		 * NOT rendered in config mode. There is nothing to arrange: an anchored
+		 * widget has no frame, no handles and no Save, and drawing it over the
+		 * dimmed host next to the red frames would say otherwise.
+		 */
+		anchored?: Snippet<[WidgetSpec, HostFrame]>;
+		/**
+		 * A better shipped placement for a widget the user has NOT configured,
+		 * or null to use the registry's.
+		 *
+		 * The registry ships fixed CSS numbers, which is the right answer for a
+		 * widget whose default has nothing to do with the game. The temple's door
+		 * diamond is the other case: its shipped position is "beside the game's
+		 * own diamond and clear of every OCR crop", and where that is depends on
+		 * a board this file knows nothing about. So the module may answer, and
+		 * the answer is used exactly where `spec.defaults` would have been — for
+		 * an unstored widget's position and for what config mode seeds one at.
+		 * A widget with a STORED placement is untouched by this: the user's
+		 * placement outranks any default, game-anchored or not.
+		 */
+		defaultsFor?: (spec: WidgetSpec, frame: HostFrame) => OverlayDefaultGeometry | null;
+		/**
 		 * A click the mouse hook forwarded, already resolved to the
 		 * `[data-action]` element under it. Only elements inside a declared
 		 * `[data-hot]` rect can ever produce one.
@@ -102,6 +138,7 @@
 	}
 
 	const specs = $derived(placeableWidgetsFor(module));
+	const anchoredSpecs = $derived(anchoredWidgetsFor(module));
 
 	/**
 	 * The window's scale factor, cached.
@@ -183,9 +220,110 @@
 		return () => window.removeEventListener('resize', measure);
 	});
 
+	/** What the host can tell a module about the window, for both module hooks. */
+	const frame = $derived<HostFrame>({ scaleFactor, host });
+
+	/**
+	 * The spec a placement is decided from — the registry's, with the module's
+	 * game-anchored default swapped in when it offered one.
+	 *
+	 * A copy rather than a mutation, and the id is untouched, so everything the
+	 * host keys on a spec (the persistence key, the `{#each}` key, the node map)
+	 * is the registry's own. The `defaults` field is the only thing that moves,
+	 * which keeps the answer inside `placementFor` and `seedRect` rather than
+	 * adding a fourth branch to either.
+	 */
+	function shipped(spec: WidgetSpec): WidgetSpec {
+		// READ ONLY. The remembering is `$effect`'s job below — writing here
+		// would be a state write inside `placed`'s derivation.
+		const override = defaultsFor?.(spec, frame) ?? lastDefaults[spec.id];
+		return override ? { ...spec, defaults: override } : spec;
+	}
+
+	/**
+	 * The last game-anchored default each widget was actually offered.
+	 *
+	 * Config mode is the reason (POE-241 + POE-244 review). A widget-config
+	 * session raises this window without starting the module's work, so there is
+	 * no board while the user is arranging — `defaultsFor` answers null, and
+	 * `seedRect` would open an unconfigured widget at the REGISTRY's number
+	 * while in play it sits beside the game's own diamond. Save then persists
+	 * the frame the user dragged from a position the widget has never been in.
+	 *
+	 * Remembering the last answer fixes the ordinary case: the user has been in
+	 * a temple this session, so the seed is where the widget has actually been.
+	 * When there has been NO board yet the registry number is still the seed,
+	 * and the bar says so rather than pretending — `seededFromRegistry` below.
+	 *
+	 * `$state`, and written by the effect under it rather than by `shipped`.
+	 * Both halves are needed: `seededFromRegistry` is a `$derived` that reads
+	 * this map, and a plain object would leave that derivation untracked — the
+	 * bar would keep its "shipped default" note for a whole config session after
+	 * the memory had filled. Writing it from `shipped` instead is what forces
+	 * the effect, because `shipped` runs inside `placed`'s derivation and Svelte
+	 * refuses a state write there.
+	 */
+	let lastDefaults = $state<Record<string, OverlayDefaultGeometry>>({});
+
+	/**
+	 * Remember whatever the module offered this frame.
+	 *
+	 * An effect and not a derivation: what is wanted is the LAST non-null
+	 * answer, which is history rather than a function of the current inputs —
+	 * the module stops answering the moment the board goes, and that is exactly
+	 * when the memory has to survive.
+	 *
+	 * It cannot loop: the effect reads `specs`, `defaultsFor` and `frame`, and
+	 * none of those is derived from `lastDefaults`. The write is skipped when
+	 * the answer is unchanged, so a module answering the same rectangle every
+	 * poll does not re-run the readers.
+	 */
+	$effect(() => {
+		if (!defaultsFor) return;
+		let next: Record<string, OverlayDefaultGeometry> | null = null;
+		for (const spec of specs) {
+			const offered = defaultsFor(spec, frame);
+			if (!offered) continue;
+			const held = lastDefaults[spec.id];
+			if (
+				held &&
+				held.x === offered.x &&
+				held.y === offered.y &&
+				held.w === offered.w &&
+				held.h === offered.h
+			) {
+				continue;
+			}
+			next ??= { ...lastDefaults };
+			next[spec.id] = offered;
+		}
+		if (next) lastDefaults = next;
+	});
+
+
 	// ---- config mode -------------------------------------------------------
 
 	let configMode = $state(false);
+
+	/**
+	 * Whether any widget in this session is being arranged from the SHIPPED
+	 * number rather than from a placement it has been drawn at.
+	 *
+	 * Only true for a widget with no stored row AND no remembered
+	 * game-anchored default, which is a first config session before the user
+	 * has opened a temple. Saying so in the bar is the honest half of the
+	 * fallback: the frame is a guess, and the guess moves the first time a
+	 * board is read.
+	 */
+	const seededFromRegistry = $derived(
+		configMode &&
+			specs.some(
+				(spec) => !stored[spec.id] && !lastDefaults[spec.id] && defaultsFor !== undefined
+			)
+	);
+
+
+
 	/** The live CSS rectangles while config mode is on, by widget id. */
 	let draft = $state<Record<string, WidgetRect>>({});
 	/** Which widgets the user actually RESIZED in this config session. Only
@@ -226,7 +364,7 @@
 			for (const spec of specs) {
 				const box = nodes[spec.id]?.getBoundingClientRect();
 				const measured = box ? { x: box.left, y: box.top, w: box.width, h: box.height } : null;
-				const seed = seedRect(spec, stored[spec.id], measured, scaleFactor, host);
+				const seed = seedRect(shipped(spec), stored[spec.id], measured, scaleFactor, host);
 				// `null` means the stored rectangle cannot be converted because the
 				// scale factor has not resolved. No draft entry, so no frame is drawn
 				// for that widget — and Save refuses at scale 0 anyway, so there is
@@ -528,7 +666,7 @@
 				// content measurement that changes under them.
 				const placement: WidgetPlacement | null = rect
 					? { x: rect.x, y: rect.y, width: rect.w, height: rect.h, maxWidth: null }
-					: placementFor(spec, stored[spec.id], scaleFactor, host);
+					: placementFor(shipped(spec), stored[spec.id], scaleFactor, host);
 				return { spec, placement };
 			})
 			.filter((entry) => entry.placement !== null) as {
@@ -622,6 +760,23 @@
 		</div>
 	{/each}
 
+	<!-- The game-anchored widgets (POE-244). One layer the size of the window
+	     per entry: the host has no placement to apply, so what it supplies is
+	     the space to place inside and the frame to place with. Never in config
+	     mode — there is nothing here to arrange. -->
+	{#if anchored && !configMode}
+		{#each anchoredSpecs as spec (spec.id)}
+			<!-- The Show checkbox applies here too (POE-244 review). An anchored
+			     widget has no persisted RECTANGLE, but `set_widget_geometry`
+			     still writes a row for it when the checkbox is cleared, and
+			     honouring only the placeable half made the callout the one
+			     overlay surface with no way to switch it off. -->
+			{#if stored[spec.id]?.visible !== false}
+				<div class="anchored-layer">{@render anchored(spec, frame)}</div>
+			{/if}
+		{/each}
+	{/if}
+
 	{#if configMode}
 		<!-- Placed against the WIDGETS, not against the monitor (POE-245): the
 		     host is a whole screen, and a bar pinned to its bottom edge is a
@@ -641,7 +796,14 @@
 				     has no devtools and no status line, and a Save that silently
 				     dropped a widget reads as one the user never moved. -->
 				<span class="config-hint" class:failed={saveError !== ''}>
-					{saveError === '' ? 'Drag a panel to move it · drag its edges to resize' : saveError}
+					{#if saveError !== ''}
+						{saveError}
+					{:else if seededFromRegistry}
+						Drag a panel to move it · drag its edges to resize — one of these is at its
+						shipped default and the game will place it once a board is read
+					{:else}
+						Drag a panel to move it · drag its edges to resize
+					{/if}
 				</span>
 			</div>
 			<button class="config-btn save" disabled={saving} onpointerup={saveConfig}>
@@ -653,7 +815,7 @@
 </div>
 
 <style>
-	/* The window is the whole primary monitor. Outside config mode nothing here
+	/* The window is the whole game monitor (POE-237). Outside config mode nothing here
 	   takes the mouse: OS-level click-through is `WS_EX_TRANSPARENT`, and this
 	   is the webview half of the same promise. The exception is `[data-hot]`
 	   below — those must be hit-testable so `elementFromPoint` can resolve a
@@ -697,6 +859,17 @@
 
 	.widget {
 		position: absolute;
+		pointer-events: none;
+	}
+
+	/* A game-anchored widget's canvas: the whole window, so the module can put
+	   its content at a coordinate it computed from the game's geometry, and an
+	   arrow can run from one of those coordinates to another. Click-through like
+	   everything else here; a `[data-hot]` element inside it is claimed by the
+	   host's own `useHotRects`, which queries the whole subtree. */
+	.anchored-layer {
+		position: absolute;
+		inset: 0;
 		pointer-events: none;
 	}
 

@@ -945,7 +945,12 @@ describe('temple slice', () => {
 					[690, 881],
 					[900, 900],
 					[1110, 881]
-				]
+				],
+				// POE-244's two fields. The store copies the slice through
+				// verbatim and reads neither, so the fixture carries the shape
+				// and not a board's worth of rectangles.
+				rois: [],
+				diamond: null
 			},
 			panel: {
 				room: 'Locus of Corruption',

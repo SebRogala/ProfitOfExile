@@ -425,7 +425,21 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 	const fresh = templeSliceDefault();
 	return {
 		status: incoming.status,
-		layout: incoming.layout ?? null,
+		// The nested layout is normalised too, and only for the two POE-244
+		// fields, because only those two are consumed as a GUARANTEE the way
+		// `unknownRooms.length` is: `neverCoverRects` iterates `rois` and
+		// `diamondGeometry` reads `corners`, and an older or truncated payload
+		// reaching either as `undefined` throws inside an overlay window with
+		// no devtools. An absent `rois` normalises to `[]`, which every caller
+		// already reads as "place nothing yet" (`overlay-geometry.ts`).
+		layout:
+			incoming.layout == null
+				? null
+				: {
+						...incoming.layout,
+						rois: incoming.layout.rois ?? [],
+						diamond: incoming.layout.diamond ?? null
+					},
 		panel: incoming.panel ?? null,
 		advice: incoming.advice ?? null,
 		mode: incoming.mode ?? null,

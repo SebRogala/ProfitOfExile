@@ -88,6 +88,32 @@ export function overlayShowsBoard(status: TempleStatus): boolean {
 	return OVERLAY_VISIBLE_STATUSES.includes(status);
 }
 
+/**
+ * The statuses the DOOR widget stays up for (POE-244).
+ *
+ * One more than the board's, and the extra one is the point. The door is opened
+ * INSIDE the room, during the timed incursion, and the layout panel is gone by
+ * then — so every surface keyed on the panel being readable disappears at
+ * exactly the moment the player has to act on it. `panel_not_visible` is the
+ * module armed and LOOKING with nothing on screen, which since POE-246 is what
+ * the whole incursion looks like: the arm survives on `PANEL_TAIL_MS` from the
+ * last sighting, and when it finally lapses the status becomes `waiting`, which
+ * is NOT in this list. That is what bounds how stale the room on the widget can
+ * be — a board from two minutes ago at the outside, not one from last map.
+ *
+ * `off`, `idle`, `unavailable` and `error` are excluded for the same reasons
+ * they are excluded from the board's list.
+ */
+export const DOOR_VISIBLE_STATUSES: readonly TempleStatus[] = [
+	...OVERLAY_VISIBLE_STATUSES,
+	'panel_not_visible'
+];
+
+/** Whether the door widget stays up for this status. */
+export function overlayShowsDoors(status: TempleStatus): boolean {
+	return DOOR_VISIBLE_STATUSES.includes(status);
+}
+
 // ---------------------------------------------------------- the geometry --
 
 /** Horizontal distance between two slots in the same row, reference px. */
@@ -392,6 +418,86 @@ export function leadReason(ranked: RankedView): string | null {
 	return ranked.reasons[0] ?? null;
 }
 
+/**
+ * The architect block the top recommendation is about, or null.
+ *
+ * `architectIndex` is a position in the panel's own `offers`, so the lookup can
+ * miss two ways that both mean "nothing to point at": the ranking named no
+ * architect (`kill either`), and it named one the panel view no longer carries.
+ * Both answer null rather than throwing an index at a surface.
+ */
+export function chosenOffer(slice: TempleSlice): OfferView | null {
+	const index = topRecommendation(slice.advice)?.architectIndex;
+	if (index === null || index === undefined) return null;
+	return slice.panel?.offers[index] ?? null;
+}
+
+/** What the kill callout says. Null when there is no ranked move to say it about. */
+export interface KillCallout {
+	/** `"KILL Quipolatl → Armoury"` — the architect to click and the room the
+	 *  kill actually BUILDS. The arrow half is dropped when the printed target
+	 *  did not resolve, and the whole title falls back to the advisor's own
+	 *  headline when the ranking named no architect — which is `"kill either"`,
+	 *  and is already the whole instruction. */
+	title: string;
+	/** The one reason the box has room for. */
+	reason: string | null;
+	/** `"only architect read"` when the kill was forced, else null. */
+	forced: string | null;
+	/** The block to point the arrow at, or null for a read that carried no
+	 *  boxes — which is not the same as no architect, and both draw the box
+	 *  without an arrow. */
+	target: OfferView | null;
+}
+
+/**
+ * `KILL <architect> → <room the kill builds>`.
+ *
+ * The architect leads because it is what is printed on screen beside the block
+ * the player has to click. The target follows because without it the overlay
+ * says WHICH block and never says what taking it does — the ranked action would
+ * be absent from every overlay surface, which is the thing the old advice
+ * widget's headline did carry.
+ *
+ * `displayName` and not `printedTarget`: POE-169's whole point is that the two
+ * differ, and Contested Development prints one line while building
+ * `currentTier + 1` of it. When nothing resolved there is no room to name and
+ * the title is the architect alone — `offerBuilds()` says so in full on the
+ * page, which has the space for it.
+ */
+function killTitle(target: OfferView): string {
+	const head = `KILL ${target.architectName}`;
+	return target.displayName === null ? head : `${head} → ${target.displayName}`;
+}
+
+/**
+ * The kill, as the pointer callout says it (POE-244).
+ *
+ * The owner's ask is that the overlay be seen rather than read: the name and
+ * the target lead, and the reason follows as the one line that justifies the
+ * choice. Everything else the old advice widget printed — the gamble, the
+ * unread-plate badge, the advisor's warning list — stays on the Temple page,
+ * which is the surface for reading. The one honesty line that did NOT move is
+ * `doorWarning()`; see its note.
+ */
+export function killCallout(slice: TempleSlice): KillCallout | null {
+	const move = topRecommendation(slice.advice);
+	if (move === null) return null;
+	const target = chosenOffer(slice);
+	return {
+		title: target === null ? move.headline : killTitle(target),
+		reason: leadReason(move),
+		forced: forcedKillNote(slice.advice),
+		target
+	};
+}
+
+/** The corridors the top recommendation wants opened. Empty is a real answer —
+ *  R3 can recommend a kill with no door. */
+export function suggestedDoors(advice: AdviceView | null): EdgeId[] {
+	return topRecommendation(advice)?.doors ?? [];
+}
+
 // ------------------------------------------------------------- the panel --
 
 /**
@@ -447,6 +553,35 @@ export function unknownRoomsBadge(slice: TempleSlice): string | null {
 export function markerFallbackNotice(layout: LayoutView | null): string | null {
 	if (!layout?.markerError) return null;
 	return `Door markers unread — corridors fall back to the beam read (${layout.markerError}).`;
+}
+
+/**
+ * The one line the door widget has room for when the read is not trustworthy,
+ * or null when it is (POE-244).
+ *
+ * The overlay's advice panel used to print four honesty surfaces under the
+ * recommendation — a low-confidence read, the marker fallback, the unread
+ * plates and the advisor's warnings — and POE-244 replaced that panel with a
+ * pointer. Three of those four move to the Temple page, which is the surface
+ * for reading; this one does not, because it is the only one that says **do not
+ * act on what this widget is showing you**, and the widget it is about is the
+ * one still on screen inside the room.
+ *
+ * A PRECEDENCE, not a list: there is one line. Low confidence outranks the
+ * marker fallback because it is the stronger statement — `Confidence::Low`
+ * means the beam read itself is a best effort over a panel it could not
+ * separate, and the marker fallback is the narrower "the seals were unread, so
+ * these came from the beam". Both are also visible on the diamond as grey
+ * seals; the words are what say the grey is not just this one corridor.
+ *
+ * Short on purpose. The page keeps `markerFallbackNotice`, which carries the
+ * reader's own reason and does not have to fit under a 190 px widget.
+ */
+export function doorWarning(layout: LayoutView | null): string | null {
+	if (layout === null) return null;
+	if (layout.confidence === 'low') return 'low-confidence read — do not act on these doors';
+	if (layout.markerError !== null) return 'seals unread — doors are a beam-read fallback';
+	return null;
 }
 
 /** `"chase"` / `"scarab"` as a label. Null mode means no advice was produced. */
