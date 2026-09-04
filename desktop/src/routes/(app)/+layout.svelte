@@ -22,8 +22,13 @@
 		TEMPLE_WINDOW_LABEL
 	} from '$lib/overlay/manager';
 	import { clickthroughReport } from '$lib/overlay/clickthrough-report';
-	import { moduleOverlayDriver } from '$lib/overlay/module-lifecycle';
-	import { chooseMonitor, type GameMonitorInfo } from '$lib/overlay/monitor-choice';
+	import { moduleOverlayDriver, moduleOverlayWanted } from '$lib/overlay/module-lifecycle';
+	import {
+		builtOnStaleMonitor,
+		chooseMonitor,
+		gameMonitorAfterBuild,
+		type GameMonitorInfo
+	} from '$lib/overlay/monitor-choice';
 	import {
 		widgetConfigEnd,
 		widgetConfigLive,
@@ -545,6 +550,45 @@
 	 */
 	let templeMonitorAt: { x: number; y: number } | null = null;
 
+	/**
+	 * A `game-monitor-changed` that arrived while a create was IN FLIGHT
+	 * (POE-245).
+	 *
+	 * The notice handler cannot act on one of those — there is no settled window
+	 * to rebuild — and it used to drop it. That was the whole bug:
+	 * `remember_game_monitor` emits only when the answer CHANGES, so the dropped
+	 * notice is the only one there will ever be and the overlay stays on the
+	 * display the game left until the module is toggled.
+	 *
+	 * So it is RECORDED here instead, and `reconcileTempleMonitor` consumes it
+	 * once the driver has settled the create. Cleared at the start of every
+	 * build, so one build's reconcile only ever sees notices from its own
+	 * lifetime.
+	 *
+	 * A plain `let` for the same reason the two above are: nothing renders from
+	 * it, and a rune would re-enter the lifecycle effect.
+	 */
+	let pendingGameMonitor: GameMonitorInfo | null = null;
+
+	/**
+	 * Whether anything currently wants the temple overlay window — the module
+	 * flag, or a live widget-config session, both under the feature grant.
+	 *
+	 * THREE readers since POE-245 (`module-lifecycle.ts`'s `moduleOverlayWanted`
+	 * is the rule): the desired-state effect below, and the two places that
+	 * rebuild the window onto another display. A rebuild is an unconditional
+	 * `setDesired(false)` then `setDesired(true)`, so without this a module the
+	 * user switched off while the window was being built would come straight
+	 * back — the correction winning over the toggle.
+	 */
+	function templeOverlayWanted(): boolean {
+		return moduleOverlayWanted(
+			ssot.modules[TEMPLE_MODULE_ID],
+			widgetConfigLive(widgetConfigSessions, TEMPLE_WINDOW_LABEL),
+			templeGranted
+		);
+	}
+
 	/** The create/destroy ordering, and the bounded retry — see
 	 *  `$lib/overlay/module-lifecycle`. The driver owns the mutable state; this
 	 *  file owns the Tauri work it orders. */
@@ -633,8 +677,16 @@
 		// overlay is left on the wrong screen for the rest of the session. With
 		// `0` the notice falls through to the corner comparison, which rebuilds
 		// (corners differ) or just learns the id (the window is already there).
+		// A LOCAL as well as the module variable (POE-245). The re-check at the
+		// end of this build must compare against the display this build actually
+		// went on, and the module variable is written by the notice handler in
+		// between — reading it back there is how the first version of this fix
+		// defeated itself.
+		const builtAt = { x: monitor.position.x, y: monitor.position.y };
 		templeMonitorId = onGameMonitor ? game.id : 0;
-		templeMonitorAt = { x: monitor.position.x, y: monitor.position.y };
+		templeMonitorAt = builtAt;
+		// This build's window for recording notices starts here.
+		pendingGameMonitor = null;
 		// Constructor dimensions are LOGICAL; a monitor reports PHYSICAL.
 		const sf = monitor.scaleFactor > 0 ? monitor.scaleFactor : 1;
 		const win = new WebviewWindow(TEMPLE_WINDOW_LABEL, {
@@ -723,6 +775,22 @@
 						logTemple(`initial focus check failed, window left visible: ${e}`);
 					}
 				}
+				// The monitor question, asked a SECOND time (POE-245) — but AFTER
+				// the driver has settled this create, which is what the timeout
+				// buys. The first ask was before the constructor; everything
+				// since — the ~1 s `set_overlay_clickthrough` spends waiting for
+				// the WebView2 HWND most of all — is time in which the player can
+				// alt-tab into a game on another display, and the notice Rust
+				// sends for that is one the handler below can only record.
+				//
+				// A macrotask and not a microtask: `finish(true)` resolves this
+				// creation, and the driver's settle (`moduleOverlaySettle`, then
+				// `pump`) runs in the microtasks that follow it. The rebuild the
+				// reconcile may ask for is `setDesired(false)/setDesired(true)`,
+				// which the driver ignores while `pending` is still `'create'` —
+				// so it has to run after the settle, not merely after this
+				// handler.
+				setTimeout(() => void reconcileTempleMonitor(builtAt, !!game && !onGameMonitor), 0);
 				finish(true);
 			}).catch(e => {
 				logTemple(`could not listen for tauri://created: ${e}`);
@@ -737,6 +805,105 @@
 				finish(false);
 			});
 		});
+	}
+
+	/**
+	 * Is the window on the display the game is on? Asked once, after a build has
+	 * settled (POE-245).
+	 *
+	 * The gap this closes: `createTempleOverlay` reads `get_game_monitor` before
+	 * the constructor, and the answer can move while the window is still being
+	 * built. Rust DOES send a `game-monitor-changed` for that, but the handler
+	 * below cannot act on a notice that arrives before the driver has settled —
+	 * there is no window to rebuild yet — and `remember_game_monitor` emits only
+	 * on a CHANGE, so that notice is the only one there will ever be. Dropping it
+	 * stranded the overlay on the display the game had left until the module was
+	 * toggled, which is the workaround the owner found.
+	 *
+	 * `builtAt` is the corner this build actually went on, passed in as a LOCAL.
+	 * Reading `templeMonitorAt` here instead is what defeated the first version
+	 * of this fix: the notice handler writes that variable, and it had already
+	 * run by the time this ran.
+	 *
+	 * A stale answer asks the DRIVER for its own off/on — the same rebuild the
+	 * notice handler performs, so this is one monitor-follow mechanism rather
+	 * than two, and the create budget is untouched. Reporting the build as
+	 * FAILED instead would spend that budget three times over and leave the
+	 * module with no overlay at all, which is worse than one on the wrong screen.
+	 *
+	 * It does NOT honour the `widgetConfigLive` deferral the notice handler
+	 * applies, and that is deliberate: the deferral works there because "the next
+	 * notice still rebuilds", and here there is no next notice — deferring would
+	 * strand the correction for the session. What the deferral protects is a user
+	 * mid-drag, and this runs before a session's `set_overlay_config_mode` has
+	 * been sent, so there is nothing to drag yet. A session opening across the
+	 * rebuild waits on `waitForWidgetConfigWindow`, whose `WIDGET_WINDOW_WAIT_MS`
+	 * budget covers a destroy and a create, and then arranges widgets on the
+	 * right display.
+	 */
+	async function reconcileTempleMonitor(
+		builtAt: { x: number; y: number },
+		couldNotReachTheGame: boolean,
+		retry = false
+	): Promise<void> {
+		// The create may have been undone between the schedule and now — a
+		// module-off, or a settle that recorded a failure. Nothing to reconcile,
+		// and the next build asks all of this again.
+		//
+		// It would ALSO read this way if the driver ever grew a macrotask hop
+		// between the create promise resolving and `moduleOverlaySettle`, which
+		// is what the `setTimeout(…, 0)` above is timed against. One more turn of
+		// the event loop covers that without changing today's behaviour, and the
+		// record is untouched on this path so the retry still finds it. Bounded
+		// to a single retry on purpose: a window that is genuinely gone never
+		// comes back, and an unbounded version would re-arm a timer for the life
+		// of the process.
+		if (!templeOverlay.built()) {
+			if (!retry) {
+				setTimeout(() => void reconcileTempleMonitor(builtAt, couldNotReachTheGame, true), 0);
+			}
+			return;
+		}
+		const recorded = pendingGameMonitor;
+		pendingGameMonitor = null;
+		const queried = await invoke<GameMonitorInfo | null>('get_game_monitor').catch(
+			(e: any) => {
+				// The recorded notice is what covers this: without it a failed
+				// lookup reads as "nothing to correct".
+				logTemple(`could not re-check the game monitor after the build: ${e}`);
+				return null;
+			}
+		);
+		const now = gameMonitorAfterBuild(recorded, queried);
+		if (!builtOnStaleMonitor(builtAt, now, couldNotReachTheGame)) {
+			// Re-arm both guards against the display the window is actually on.
+			// The notice handler zeroes the id while a create is in flight, so
+			// without this an id we already know would read as unknown and the
+			// next notice would rebuild a window that is already correct.
+			templeMonitorAt = builtAt;
+			if (now && now.x === builtAt.x && now.y === builtAt.y) templeMonitorId = now.id;
+			return;
+		}
+		if (!templeOverlayWanted()) {
+			// The module was switched off (or the grant withdrawn) while this
+			// window was being built. The desired-state effect has already asked
+			// for the teardown; rebuilding here would put the window back up
+			// against the user's own toggle.
+			logTemple(
+				'built on a display the game has since left, but nothing wants the window any more — leaving it to the module flag'
+			);
+			return;
+		}
+		logTemple(
+			`built on a display the game has since left — rebuilding on the one at ${now?.x},${now?.y}`
+		);
+		// Cleared rather than pointed at the new display: the rebuild's own
+		// create records where it lands, and a guard armed against a window that
+		// does not exist yet would make the next notice return early.
+		templeMonitorId = 0;
+		templeMonitorAt = null;
+		templeOverlay.setDesired(false);
+		templeOverlay.setDesired(true);
 	}
 
 	/** Tear the window down. Returns whether the label is gone afterwards. */
@@ -788,10 +955,24 @@
 		.listen<GameMonitorInfo>('game-monitor-changed', (event) => {
 			if (event.payload.id === templeMonitorId) return;
 			if (!templeOverlay.built()) {
-				// Nothing to rebuild — but the NEXT build must not be compared
-				// against a display the window was never on.
+				// No settled window, so there is nothing to rebuild HERE — but
+				// `built()` is also false while a create is IN FLIGHT, and this
+				// notice is the only one Rust will send (`remember_game_monitor`
+				// emits on a CHANGE, and the change is now recorded). Dropping it
+				// is what stranded the overlay on the display the game had left
+				// until the module was toggled (POE-245).
+				//
+				// So it is RECORDED and `reconcileTempleMonitor` consumes it once
+				// the driver has settled the create. A record left over from a
+				// build that never completed costs nothing: every build clears it
+				// on the way in.
+				pendingGameMonitor = event.payload;
+				// The id, but NOT the corner. The id guard must not believe a
+				// display the window was never on; the corner is rewritten by
+				// every build before the window is constructed, so it can only be
+				// read here after a build that wrote it — and the reconcile needs
+				// it left alone to re-arm.
 				templeMonitorId = 0;
-				templeMonitorAt = null;
 				return;
 			}
 			if (
@@ -819,6 +1000,16 @@
 				// asks `get_game_monitor` afresh.
 				logTemple(
 					`the game moved to monitor ${event.payload.id} while widgets are being arranged — deferring the rebuild until the config session ends`
+				);
+				return;
+			}
+			if (!templeOverlayWanted()) {
+				// Same guard as `reconcileTempleMonitor` (POE-245): a notice can
+				// land in the gap between the user switching the module off and
+				// the driver finishing the teardown, and the unconditional
+				// off/on below would put the window straight back up.
+				logTemple(
+					`the game moved to monitor ${event.payload.id}, but nothing wants the window any more — leaving it to the module flag`
 				);
 				return;
 			}
@@ -857,7 +1048,10 @@
 		// This takes the WINDOW down, not the module — the Rust temple module
 		// keeps running on its own flag, because the gate is hiding and not
 		// securing.
-		templeOverlay.setDesired((configuring || enabled === true) && templeGranted);
+		// The same rule the two rebuild sites ask, so the three cannot drift.
+		// `enabled` and `configuring` are read above as well, which is what keeps
+		// this effect subscribed to them.
+		templeOverlay.setDesired(templeOverlayWanted());
 	});
 
 	// --- Widget config mode (POE-226) ---

@@ -72,6 +72,36 @@ export function moduleOverlayRetryDelayMs(attempt: number): number {
 	return 500 * 2 ** Math.max(0, attempt - 1);
 }
 
+/**
+ * What the caller hands [`ModuleOverlayDriver.setDesired`]: whether ANYTHING
+ * currently wants this module's overlay window.
+ *
+ * Two terms ORed under one gate (POE-241, POE-203). The module flag is the
+ * ordinary owner; a live widget-config session is the second, which is how
+ * Configure raises a window for a module whose flag is off without starting any
+ * module work. The FEATURE GRANT is ANDed over BOTH, never over the flag alone:
+ * a device that loses the grant must have the window taken down whether the
+ * flag or a session is holding it up.
+ *
+ * `enabled` is `undefined` until the first SSOT poll answers, and that is NOT
+ * enabled — the caller's own bail-out decides what to do about not-yet-known,
+ * and this must not report a window as wanted on a value nobody has reported.
+ *
+ * Pure and out here because it has THREE call sites since POE-245: the layout's
+ * desired-state effect, and the two places that rebuild a window onto another
+ * display. Both rebuilds are an unconditional `setDesired(false)` then
+ * `setDesired(true)`, so a module switched off while the window was being built
+ * would be resurrected against the user's own toggle unless they ask this
+ * first — and one expression of the rule is what stops the three drifting.
+ */
+export function moduleOverlayWanted(
+	enabled: boolean | undefined,
+	configuring: boolean,
+	granted: boolean
+): boolean {
+	return (configuring || enabled === true) && granted;
+}
+
 /** The state before the first poll: nothing wanted, nothing built. */
 export function moduleOverlayInit(): ModuleOverlayLifecycle {
 	return { desired: undefined, actual: false, pending: 'none', attempts: 0, gaveUp: false };
@@ -305,6 +335,16 @@ export function moduleOverlayDriver(
 								)
 							)
 						: await effects.destroy();
+				// CONSUMER DEPENDENCY (POE-245): every hop from the create
+				// promise resolving to this line is a microtask, and
+				// `(app)/+layout.svelte`'s `reconcileTempleMonitor` is scheduled
+				// with `setTimeout(…, 0)` precisely so it lands AFTER it — the
+				// rebuild it may ask for is `setDesired(false)/setDesired(true)`,
+				// which this file ignores while `pending` is still `'create'`.
+				// Putting a macrotask (a timer, a `requestAnimationFrame`, an
+				// event round-trip) between the `await` above and this settle
+				// would silently break that correction. The reconcile carries one
+				// re-schedule as its own belt, but the guarantee lives here.
 				state = moduleOverlaySettle(state, ok);
 				if (action === 'create' && !ok) {
 					scheduleRetry();

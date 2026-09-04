@@ -61,6 +61,7 @@
 		type WidgetRect
 	} from './widget-geometry';
 	import { configExitDecision, type ConfigExitOutcome } from './widget-config-exit';
+	import { configBarAnchor } from './widget-config-bar';
 	import { useHotRects } from './use-hot-rects';
 
 	let {
@@ -536,6 +537,50 @@
 		}[]
 	);
 
+	// ---- the config bar ----------------------------------------------------
+
+	/**
+	 * The bar's own box, in CSS px — BORDER-box, which is the unit the anchor
+	 * clamps in: the bar carries a 1 px border, and `clientWidth` would report
+	 * two pixels short of what has to fit inside the host.
+	 *
+	 * Zero until the first measurement lands. Seeding an estimate instead was
+	 * worse in both directions — an estimate that is wrong by a hundred pixels
+	 * places the bar and then visibly jumps it — so the bar is drawn
+	 * `visibility: hidden` for the one frame that costs (see `barReady`). Hidden
+	 * and not `display: none`, because a bar that is not laid out cannot be
+	 * measured and the frame would never end.
+	 */
+	let barWidth = $state(0);
+	let barHeight = $state(0);
+
+	/** Whether the bar has measured itself. False for exactly one frame. */
+	const barReady = $derived(barWidth > 0 && barHeight > 0);
+
+	/**
+	 * The rectangles the bar is placed against: the widgets being arranged, in
+	 * the CSS pixels they are drawn at.
+	 *
+	 * Read off `placed` rather than off `draft` so a widget the draft carries but
+	 * the host is NOT drawing — one whose stored rectangle could not be converted
+	 * — is not part of the cluster the bar hides from.
+	 */
+	const configRects = $derived(
+		configMode
+			? placed.map((entry) => ({
+					x: entry.placement.x,
+					y: entry.placement.y,
+					w: entry.placement.width ?? 0,
+					h: entry.placement.height ?? 0
+				}))
+			: []
+	);
+
+	/** Where the bar goes — see `widget-config-bar.ts`. */
+	const barAt = $derived(
+		configBarAnchor(configRects, host, { width: barWidth, height: barHeight })
+	);
+
 	function boxStyle(placement: WidgetPlacement, cursor: string): string {
 		const size = [
 			placement.width === null ? '' : `width:${placement.width}px;`,
@@ -578,13 +623,27 @@
 	{/each}
 
 	{#if configMode}
-		<div class="config-bar">
-			<!-- The bar is the ONLY report a failed save gets: an overlay window has
-			     no devtools and no status line, and a Save that silently dropped a
-			     widget reads as one the user never moved. -->
-			<span class="config-hint" class:failed={saveError !== ''}>
-				{saveError === '' ? 'Drag to move, edges to resize' : saveError}
-			</span>
+		<!-- Placed against the WIDGETS, not against the monitor (POE-245): the
+		     host is a whole screen, and a bar pinned to its bottom edge is a
+		     thousand pixels from the thing it acts on. `widget-config-bar.ts`
+		     owns the arithmetic; the size is measured back out of the DOM
+		     because the copy in it is variable-length — a failed save names
+		     itself here. -->
+		<div
+			class="config-bar"
+			style="left:{barAt.x}px;top:{barAt.y}px;{barReady ? '' : 'visibility:hidden;'}"
+			bind:offsetWidth={barWidth}
+			bind:offsetHeight={barHeight}
+		>
+			<div class="config-copy">
+				<span class="config-title">Arrange widgets</span>
+				<!-- The bar is the ONLY report a failed save gets: an overlay window
+				     has no devtools and no status line, and a Save that silently
+				     dropped a widget reads as one the user never moved. -->
+				<span class="config-hint" class:failed={saveError !== ''}>
+					{saveError === '' ? 'Drag a panel to move it · drag its edges to resize' : saveError}
+				</span>
+			</div>
 			<button class="config-btn save" disabled={saving} onpointerup={saveConfig}>
 				{saving ? 'Saving…' : 'Save'}
 			</button>
@@ -623,8 +682,17 @@
 		box-sizing: border-box;
 	}
 
+	/* Config mode takes the whole window, which is what `set_overlay_config_mode`
+	   already did on the Rust side — the webview receives those clicks natively
+	   and the mouse hook skips this window entirely. The TINT is the affordance
+	   (POE-245): the previous session was announced only by a 3 px frame around
+	   each widget and an 11 px strip at the bottom of the monitor, so a user who
+	   pressed Configure and looked at the game could not tell whether anything
+	   had happened. Dimming the whole screen is unmistakable, and it exists only
+	   while config mode is on, so nothing the player sees while playing changes. */
 	.widget-host.config {
 		pointer-events: auto;
+		background: rgb(6 8 12 / 32%);
 	}
 
 	.widget {
@@ -660,8 +728,8 @@
 		position: absolute;
 		top: -3px;
 		left: -3px;
-		padding: 1px 5px;
-		font-size: 10px;
+		padding: 2px 7px;
+		font-size: 12px;
 		font-weight: 700;
 		color: var(--color-lab-bg);
 		background: var(--color-lab-red);
@@ -669,23 +737,43 @@
 		white-space: nowrap;
 	}
 
+	/* `left`/`top` come from `configBarAnchor` in the markup — the bar follows the
+	   widgets, so there is no `transform` to unwind and the helper's numbers are
+	   the whole answer. `max-width` is what keeps a long save error from growing
+	   the bar past the monitor; the copy column wraps inside it. */
 	.config-bar {
 		position: absolute;
-		bottom: 24px;
-		left: 50%;
-		transform: translateX(-50%);
 		display: flex;
-		gap: 8px;
+		gap: 12px;
 		align-items: center;
-		padding: 6px 10px;
-		background: rgb(15 17 23 / 92%);
-		border: 1px solid var(--color-lab-border);
-		border-radius: 6px;
+		max-width: calc(100vw - 32px);
+		padding: 10px 14px;
+		background: rgb(15 17 23 / 96%);
+		border: 1px solid var(--color-lab-red);
+		border-radius: 8px;
+		box-shadow: 0 6px 24px rgb(0 0 0 / 55%);
 		pointer-events: auto;
 	}
 
+	.config-copy {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+
+	.config-title {
+		font-size: 15px;
+		font-weight: 700;
+		color: var(--color-lab-red);
+		white-space: nowrap;
+	}
+
+	/* 14 px, not the 11 px this shipped at: the bar is read at arm's length over
+	   a game, and the hint is also where a refused save names itself. */
 	.config-hint {
-		font-size: 11px;
+		max-width: 46ch;
+		font-size: 14px;
 		color: var(--color-lab-text-secondary);
 	}
 
@@ -694,13 +782,17 @@
 		color: var(--color-lab-red);
 	}
 
+	/* 32 px tall and 14 px of type. The pointer is mid-drag when the user reaches
+	   for these, so they have to be a target rather than a strip. */
 	.config-btn {
-		padding: 3px 12px;
-		font-size: 12px;
+		min-height: 32px;
+		padding: 6px 18px;
+		font-size: 14px;
+		font-weight: 600;
 		color: var(--color-lab-text);
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
-		border-radius: 3px;
+		border-radius: 4px;
 		cursor: pointer;
 	}
 

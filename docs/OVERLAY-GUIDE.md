@@ -290,6 +290,34 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   display untouched, so the next notice still rebuilds; and when the session was
   the only thing holding the window up, its end tears the window down and the
   next build asks `get_game_monitor` afresh.
+  **The question is asked a SECOND time, once the build has settled** (POE-245,
+  `reconcileTempleMonitor` over `monitor-choice.ts`'s `gameMonitorAfterBuild`
+  and `builtOnStaleMonitor`). The first ask happens before the constructor and
+  the answer can move while the window is still being built —
+  `set_overlay_clickthrough` alone spends ~1 s waiting for the WebView2 HWND.
+  Rust does emit a `game-monitor-changed` for that move, but the notice handler
+  cannot act on one that arrives before the driver has settled the create
+  (`built()` is false, there is no window to rebuild), and
+  `remember_game_monitor` emits only on a CHANGE — so that notice is the only
+  one there will ever be. It is therefore RECORDED rather than dropped, and the
+  reconcile consumes it. Three details are load-bearing. The corner it compares
+  against is a LOCAL captured where the build assigns it, not the module
+  variable, because the notice handler writes that variable in between — reading
+  it back is how the first version of this fix defeated itself. The reconcile
+  runs on a `setTimeout(…, 0)` and not a microtask, because the rebuild it may
+  ask for is the driver's own `setDesired(false)`/`setDesired(true)`, which is
+  ignored while `pending` is still `'create'`. And a stale answer is NOT
+  reported as a failed creation: the window is built and usable, and three stale
+  answers would exhaust the create budget and leave the module with no overlay
+  at all. On the non-stale path the reconcile re-arms both guards, so the
+  "already the right canvas" comparison stays live. An unknown game monitor is
+  never stale — that is the pre-POE-237 primary fallback — and neither is a
+  build that KNEW where the game was and could not go there, which is POE-237's
+  own soft failure and would rebuild onto the primary every time. The reconcile
+  does NOT honour the config-session deferral: the deferral works for a notice
+  because the next notice still rebuilds, and here there is no next notice.
+  Nothing is being dragged that early, and a session opening across the rebuild
+  waits it out inside `WIDGET_WINDOW_WAIT_MS`.
 - The widgets are declared in
   `desktop/src/lib/overlay/widgets/widget-registry.ts`, keyed
   `"<module>.<widget>"`, with shipped defaults in CSS pixels; their placements
@@ -353,6 +381,23 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   written before the field existed, and every row Settings' Show checkbox
   writes from a window that does not know the overlay's size — and is never
   rebased, so those behave exactly as they always did.
+
+- **The config bar is placed against the WIDGETS, not against the window**
+  (POE-245). The host is a whole monitor, so the bar's shipped position — 24 px
+  above the bottom edge, centred on the screen — put the only controls that
+  window has a thousand pixels from the widgets they act on, at 11 px of type;
+  the owner's report was that it could not be found at all. `configBarAnchor()`
+  (`overlay/widgets/widget-config-bar.ts`) anchors it to the bounding box of the
+  widgets being arranged: above the cluster by preference, because the pointer
+  is inside a widget for the length of a drag and a bar below it sits under the
+  hand; below when there is no room above; the top of the host when neither
+  fits. Everything is clamped into the host, so no answer can put Save off the
+  edge of the monitor. Config mode also DIMS the whole host, which is the
+  affordance a 3 px frame per widget was not: the previous session announced
+  itself only by those frames and that strip, so pressing Configure and looking
+  at the game told the user nothing. The bar's size is measured out of the DOM
+  rather than assumed, because a refused save names itself in it and that copy
+  is variable-length.
 
 ### Config-mode ordering contract
 
@@ -802,6 +847,29 @@ touching the named path.
   waiting for a line that is never coming. A tail with **no** `You have entered`
   line in it (a quiet log, or one truncated between area changes) seeds
   `Disarmed` by design — Re-arm is the recovery, not a bug to report.
+- **The config bar is findable at 1080p and 1440p** (POE-245): press Configure
+  in Settings → Overlay Positions → Temple. The whole monitor must dim, and the
+  bar must appear next to the widgets with 14 px copy and buttons at least 32 px
+  tall. The anchor is the BOUNDING BOX of every widget being arranged, not one
+  of them: both temple widgets ship at y = 40, so on shipped defaults the bar
+  sits BELOW the pair and centred on the pair, not on the screen. To flip it,
+  drag both widgets down past about a quarter of the screen height and press
+  Configure again — the bar must now sit ABOVE them. Then drag one to the
+  bottom-right corner and re-enter: the bar must stay fully on screen, Save
+  included.
+- **A monitor change that arrives mid-build** (POE-245): with the temple module
+  already on in settings, start the app with PoE running on a non-primary
+  display but NOT in the foreground, then alt-tab into the game within a couple
+  of seconds. The overlay must end up on the game's display. `app.log` carries
+  `game is on monitor N at x,y` and then
+  `built on a display the game has since left — rebuilding on the one at x,y`;
+  it must NOT carry `creation attempt N failed` or
+  `giving up until the module is toggled` alongside it, because the correction
+  is the driver's own off/on and does not spend the create budget. Before
+  POE-245 the notice was discarded — the window was still being built, so
+  `built()` was false — and `remember_game_monitor` emits only on a CHANGE, so
+  no second notice ever came and the widgets stayed on the primary for the rest
+  of the session.
 
   **The open questions this item exists to answer.** Three reads, in this order:
 
