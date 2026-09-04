@@ -825,17 +825,22 @@ touching the named path.
   one succeeds. All three lines are on the same cadence — the first, then every
   tenth of a run — so a rate of roughly one line per minute in the chronic case
   is the design, not a lost log.
-- **The temple captures only when Alva says so** (POE-242, item 12 of the
-  POE-223 smoke list): with the temple module on and the game focused, stand in
-  a map with no incursion running. The Temple page's status must read **on,
-  waiting for Alva** and `app.log` must carry ONE `Temple: capture stood down`
-  line — one, not one a second. **TWO lines right after a module off→on toggle
-  are expected**, not a defect: the disarmed half of `gate_announcement` is
-  re-asserted whenever a foreign status write has moved the status off
-  `Waiting`, and the POE-171 finding-15 race is exactly that — a retiring loop's
-  `Stopping → Idle` publish landing after the new loop's `Waiting`. The second
-  line is the correction. What the check is actually looking for is a line per
-  SECOND, which means the gate is not latching at all. Then start an incursion:
+- **The temple captures only when something says so** (POE-242 + POE-246, item
+  12 of the POE-223 smoke list): with the temple module on and the game focused,
+  stand in a map with no incursion running and no layout panel open. The Temple
+  page's status must read **on, waiting for Alva**, and `app.log` must carry
+  `Temple: capture armed by the start-up probe` followed a tick or two later by
+  ONE `Temple: capture stood down` line — one, not one a second. The probe line
+  is POE-246 and is expected: a starting loop runs exactly one detect tick before
+  it may believe an empty screen, because the module can be switched on with the
+  panel already open and no Client.txt event is coming for that. A SECOND `stood
+  down` line is no longer expected either. Since POE-246 the log line is keyed on
+  the arm SOURCE while the publish is keyed on armed-ness, so the
+  `gate_announcement` re-assertion that corrects the POE-171 finding-15 race — a
+  retiring loop's `Stopping → Idle` publish landing after the new loop's
+  `Waiting` — fixes the status without repeating the line. What the check is
+  actually looking for is a line per SECOND, which means the gate is not latching
+  at all. Then start an incursion:
   the log gets
   `Temple: capture armed by Alva` (exactly one line — the capture loop owns the
   arm/disarm line, the Client.txt trigger writes state and says nothing), the
@@ -847,6 +852,49 @@ touching the named path.
   waiting for a line that is never coming. A tail with **no** `You have entered`
   line in it (a quiet log, or one truncated between area changes) seeds
   `Disarmed` by design — Re-arm is the recovery, not a bug to report.
+- **The panel on screen is what keeps the capture armed** (POE-246): three
+  reads, all with the temple module on and the game focused.
+
+  **What this item is and is not.** POE-246 is RETENTION plus one start-up look:
+  it keeps a gate that is already open from closing under a panel the loop can
+  still see, and it gives a starting loop one tick to notice a panel that is
+  already there. It does NOT acquire a panel from a stood-down state — opening
+  the layout panel with the loop already stood down and Alva silent (the hideout
+  read, item 3 of the POE-242 list) still needs **Re-arm**, exactly as it did
+  after POE-242. An area change out of the temple ends the panel's claim
+  immediately, so walking out does not carry two minutes of capture into the next
+  zone.
+
+  1. **The panel outlives Client.txt.** Right after Alva speaks — with
+     `Temple: capture armed by Alva` in the log, so the loop is known to be armed
+     — open the layout panel and leave it open for more than two minutes. The
+     advice must stay on screen for as long as the panel is, whatever Client.txt
+     said and however long ago. `app.log` may pick up
+     `Temple: capture armed by the panel on screen` as the Alva tail expires
+     under the open panel — that line IS the fix reporting itself. Measured
+     before it, on the laptop 2026-09-03: `layout panel found` 14:36:14 →
+     `capture stood down — waiting for Alva` 14:37:00 with the panel still open,
+     and the overlay hid with the status.
+  2. **A module toggled on over an open panel reads it.** With the panel open and
+     Alva silent, switch the temple module off and on. The board must appear
+     without pressing Re-arm, and it must appear on the PROBE tick — about a
+     second on a screen something has already measured, up to one sweep (~5 s) on
+     one nothing has. If it has not appeared by then it will not appear at all
+     until Alva speaks or Re-arm is pressed, because the probe is one look and a
+     loop that has spent it stands down. Before POE-246 this logged `capture loop
+     started` and `capture stood down` in the same second (17:28:31, same laptop)
+     and the owner saw the overlay "blink and disappear".
+  3. **A closed panel still stands the loop down.** Close the panel and stay in
+     the map with Alva quiet. `Temple: capture stood down` must arrive about two
+     minutes later (`temple::trigger::PANEL_TAIL_MS`) — and it must ARRIVE,
+     because POE-242's whole point is that a closed panel does not keep the loop
+     capturing. A stand-down that never comes means something on an empty screen
+     is clearing `anchor::NCC_FLOOR` every tick, which is worth a
+     `temple_debug_capture` dump rather than a tuning change here. Leaving the
+     zone is the fast path to the same place: walk out of the temple (or take a
+     portal) and the `You have entered` line must stand the loop down on the next
+     iteration, NOT two minutes later — the sighting is a claim about a screen
+     the player has left.
 - **The config bar is findable at 1080p and 1440p** (POE-245): press Configure
   in Settings → Overlay Positions → Temple. The whole monitor must dim, and the
   bar must appear next to the widgets with 14 px copy and buttons at least 32 px

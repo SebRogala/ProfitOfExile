@@ -17,13 +17,22 @@
 //! Linux container compiling the code it is meant to protect. This follows
 //! `mercenary::run`, which does the same.
 //!
-//! # Before any of it: the arm gate (POE-242)
+//! # Before any of it: the arm gate (POE-242, POE-246)
 //!
 //! The four gates below are all *inside* a tick. Ahead of them sits the one
 //! that decides whether a tick runs at all: the loop captures only while
-//! Client.txt has put an incursion in scope ([`super::trigger`]). Until then it
-//! publishes [`TempleStatus::Waiting`] once and naps — no capture, no
-//! correlation, nothing. The module being ON is not the trigger; Alva is.
+//! something has put an incursion in scope ([`super::trigger::arm_source`]).
+//! Until then it publishes [`TempleStatus::Waiting`] once and naps — no
+//! capture, no correlation, nothing. The module being ON is not the trigger.
+//!
+//! Three things open it, and only the first is Client.txt's: an Alva line or
+//! the temple area, the layout panel this loop can still SEE
+//! ([`LoopState::panel_seen_ms`], POE-246), and the one probe tick a starting
+//! loop runs before it may believe an empty screen
+//! ([`LoopState::probe_pending`]). The panel input is what makes stand-down mean
+//! "nothing has been on screen for [`super::trigger::PANEL_TAIL_MS`]" instead of
+//! "Client.txt has been quiet for that long" — measured 2026-09-03, the latter
+//! took the overlay off a panel the player was still reading.
 //!
 //! [`loop_step`] is that gate plus the focus check and the cadence check, as
 //! one pure function, so the property that matters ("a disarmed loop never
@@ -71,6 +80,9 @@
 //!   scale drifted would get retired instead of re-anchored; or
 //! - the user pressed re-arm ([`slice::ReadGate::rearm_pending`]), which the
 //!   promoting tick then spends ([`slice::ReadGate::note_rearm`]); or
+//! - this is the start-up probe tick (POE-246), whose cheap half has no
+//!   remembered plate to re-match and so cannot see a panel that is on screen;
+//!   or
 //! - [`FULL_READ_EVERY_N_MISSES`] cheap ticks in a row have said nothing —
 //!   the backstop for a UI-scale change, which is the one way a panel can be on
 //!   screen and invisible to the cheap tick.
@@ -247,6 +259,25 @@ pub struct LoopState {
     /// Cheap detect ticks since the last full read — see
     /// [`FULL_READ_EVERY_N_MISSES`].
     pub cheap_misses: u32,
+    /// When a tick last SAW the layout panel ([`now_ms`]), `None` until one has
+    /// (POE-246).
+    ///
+    /// The arm gate's third clock — [`trigger::arm_source`] keeps the loop armed
+    /// for [`trigger::PANEL_TAIL_MS`] past this, so the loop stands down for the
+    /// panel being ABSENT rather than for Client.txt having gone quiet. Written
+    /// by [`Self::on_detect`] on a sighting and by nothing else.
+    ///
+    /// **Retirement does not clear it**, deliberately: retiring is two missed
+    /// ticks (~2 s), and the tail is the window a player has to close a panel and
+    /// reopen it. Clearing it here would stand the loop down two seconds after
+    /// every panel close, which is the tail not existing.
+    pub panel_seen_ms: Option<u64>,
+    /// Whether the one detect a starting loop runs before it may stand down has
+    /// been spent (POE-246 — see `trigger`'s start-up probe note).
+    ///
+    /// Spelled as SPENT rather than pending so `Default` still derives to the
+    /// right answer: a loop that has run no tick owes one.
+    pub probe_spent: bool,
 }
 
 /// What one pixel tick did to the panel state.
@@ -277,8 +308,20 @@ impl LoopState {
     }
 
     /// Fold one anchor result into the state.
-    pub fn on_detect(&mut self, found: bool) -> DetectOutcome {
-        if found {
+    ///
+    /// `seen_at` is the moment the panel was seen ([`now_ms`]), and `None` is a
+    /// tick that found nothing. A timestamp rather than a `bool` because of what
+    /// it feeds: [`trigger::arm_source`]'s panel clock is what now decides when
+    /// the loop may stand down, and a shape where a miss carries no stamp is one
+    /// where a miss cannot extend the arm by accident (POE-246).
+    ///
+    /// Every tick calls this exactly once — through [`miss`] or through the
+    /// anchored path — which is what makes it the place the start-up probe is
+    /// spent, whatever the tick found.
+    pub fn on_detect(&mut self, seen_at: Option<u64>) -> DetectOutcome {
+        self.probe_spent = true;
+        if let Some(at) = seen_at {
+            self.panel_seen_ms = Some(at);
             self.misses = 0;
             if self.live {
                 DetectOutcome::Held
@@ -325,6 +368,12 @@ impl LoopState {
             self.cheap_misses += 1;
             false
         }
+    }
+
+    /// Whether the loop still owes itself the one detect it runs before it may
+    /// stand down (POE-246). [`trigger::arm_source`]'s third input.
+    pub fn probe_pending(&self) -> bool {
+        !self.probe_spent
     }
 
     /// Record how long one detect tick took. `true` the one time the backoff
@@ -432,8 +481,10 @@ pub struct SweepKey {
 /// it at one per [`FULL_READ_EVERY_N_MISSES`] ticks — 30 s at
 /// [`DETECT_INTERVAL`], 90 s once [`DETECT_INTERVAL_SLOW`] has fired — and only
 /// while the loop is ARMED, which POE-242 bounds to Alva's window rather than
-/// to the session. A player who never opens the layout panel during an
-/// incursion pays it at most twice.
+/// to the session (and POE-246 extends by [`super::trigger::PANEL_TAIL_MS`] past
+/// the last panel SIGHTING, which no screen without a panel on it ever gets). A
+/// player who never opens the layout panel during an incursion pays it at most
+/// twice.
 ///
 /// # Why `temple_rearm` is not an input
 ///
@@ -525,6 +576,54 @@ impl SweepGate {
         self.countdown = FULL_READ_EVERY_N_MISSES.saturating_sub(1);
         true
     }
+
+    /// Hand back a head start the START-UP PROBE spent on an empty screen
+    /// (POE-246).
+    ///
+    /// An uncalibrated screen is owed its first sweep NOW, and the probe tick is
+    /// usually the wrong tick to spend it on: it runs before anything has armed
+    /// the loop, so it lands on a closed panel, finds nothing correctly, and — if
+    /// it kept the budget — would leave the first ARMED tick with the panel
+    /// actually open waiting a whole [`FULL_READ_EVERY_N_MISSES`] cadence for the
+    /// answer. The probe still SWEEPS, because a module switched on over an open
+    /// panel is exactly what it exists to catch; it just does not pay for the
+    /// tick that finds nothing.
+    ///
+    /// # Only a tick the PROBE armed
+    ///
+    /// `source` is the gate's answer for this iteration
+    /// ([`trigger::arm_source`]), and only
+    /// [`trigger::ArmSource::StartupProbe`] refunds. An app started INSIDE a
+    /// temple is the case that needs the distinction: Client.txt arms it, its
+    /// first tick is an ordinary armed tick, and the loop keeps ticking after it
+    /// — refunding there buys a second 5.3 s sweep on the very next tick. That
+    /// source is also proof the tick is the loop's first, because
+    /// `arm_source` reaches the probe branch only while the probe is unspent, so
+    /// no second "is this the first tick?" argument is needed.
+    ///
+    /// The conditions are arguments rather than an `if` at the call site,
+    /// following [`LoopState::note_tick_duration`]: the rule belongs in the
+    /// tested surface. A sweep that ANCHORED spends the budget like any other —
+    /// it bought the answer the budget is for.
+    ///
+    /// The key guard is defensive and unreachable on the present call path
+    /// ([`Self::allow`] set this very key a few lines earlier, on this capture).
+    /// It stays because it is the method's one invariant — a countdown is given
+    /// back to the screen that spent it — and the call site cannot state it.
+    pub fn refund_probe(
+        &mut self,
+        key: SweepKey,
+        source: Option<trigger::ArmSource>,
+        anchored: bool,
+    ) {
+        if !matches!(source, Some(trigger::ArmSource::StartupProbe))
+            || anchored
+            || self.key != Some(key)
+        {
+            return;
+        }
+        self.countdown = 0;
+    }
 }
 
 /// Whether this tick's cheap result leaves anything for a cold-start sweep to
@@ -562,15 +661,42 @@ pub fn sweep_could_help(cheap: &anchor::CheapDetect) -> bool {
 /// in rather than short-circuiting around this function: a sweep that anchored
 /// is a detection by any reading, and routing it through here is what keeps
 /// [`LoopState::cheap_misses`] and the re-arm bump with one owner apiece.
+///
+/// `first_tick` is the sixth (POE-246): a loop's FIRST tick promotes whatever
+/// the cheap tick said, whoever opened the gate for it. It has to, and the
+/// reason is [`anchor::detect_cheap`]'s input rather than its floor — a fresh
+/// session holds no [`CheapHint`], because that hint carries an ORIGIN and only a
+/// previous read produces one, so the cheap tick on a starting loop is the
+/// nominating pass and nothing else. That is the pass POE-234 measured at 0.66
+/// against a 0.70 floor on a 1080p laptop with the panel open. Promoting reaches
+/// the read's own hinted chain instead, which is the remembered scale searched
+/// over the whole capture — [`anchor::anchor_for_loop`]'s note prices its two
+/// non-sweep steps at two correlations, so a first tick that finds nothing costs
+/// about what the cheap tick it followed cost.
+///
+/// # What it does to the sweep budget
+///
+/// Nothing here, and one thing next door. This promotion adds no sweep TRIGGER:
+/// the promoted read is handed [`SweepGate`]'s single per-tick answer like every
+/// other promotion, so an uncalibrated screen sweeps on the cadence it already
+/// had and a calibrated one pays the hint and the table.
+///
+/// What POE-246 did change is that the tick EXISTS. The start-up probe opens the
+/// gate for one iteration that a disarmed loop would not have run at all, so
+/// [`SweepGate::allow`] is asked on it — and on an uncalibrated screen that is
+/// the head-start sweep. [`SweepGate::refund_probe`] is the other half: it gives
+/// that head start back when the probe's sweep found nothing, so the first
+/// ARMED tick over an open panel still gets it.
 pub fn wants_full_read(
     state: &mut LoopState,
     gate: &mut slice::ReadGate,
     cheap: &anchor::CheapDetect,
     swept: bool,
+    first_tick: bool,
     rearm: u64,
 ) -> bool {
     let rearmed = gate.rearm_pending(rearm);
-    let read = state.note_cheap_detect(cheap.worth_reading() || swept, rearmed);
+    let read = state.note_cheap_detect(cheap.worth_reading() || swept || first_tick, rearmed);
     if read && rearmed {
         gate.note_rearm(rearm);
     }
@@ -678,28 +804,47 @@ pub fn gate_announcement(
     (next_status(status, TickOutcome::Disarmed).status != status).then_some(outcome)
 }
 
-/// The app-log line for a gate that just changed — one per transition, beside
-/// the publish [`gate_announcement`] asked for.
+/// The app-log line for a gate whose SOURCE has moved — one line per distinct
+/// source, `None` while it has not moved.
 ///
 /// **The capture loop is the one owner of the arm/disarm app-log line.**
 /// `trigger::on_client_line` writes the arm STATE and says nothing: it fires on
 /// every Client.txt transition whether or not the module is running, so letting
 /// it log too put two lines in `app.log` for one event whenever the module was
 /// on. This one is the fact a smoke run is checking — the capture loop saying it
-/// has started (or stopped) looking — and it covers the arm that expires on
-/// [`super::trigger::ALVA_TAIL_MS`] with no log line behind it at all, which the
-/// trigger could not have reported.
-fn gate_line(armed: bool, reason: Option<trigger::ArmReason>) -> String {
-    match (armed, reason) {
-        (true, Some(reason)) => format!(
-            "Temple: capture armed by {} — looking for the layout panel",
-            reason.label()
-        ),
-        (true, None) => "Temple: capture armed — looking for the layout panel".to_string(),
-        (false, _) => {
-            "Temple: capture stood down — waiting for Alva (Re-arm forces a read)".to_string()
-        }
+/// has started (or stopped) looking — and it covers the two transitions no
+/// Client.txt line announces at all: an [`super::trigger::ALVA_TAIL_MS`] arm
+/// expiring, and (POE-246) the layout panel going off screen.
+///
+/// # Why the source and not the publish
+///
+/// Keyed on [`trigger::ArmSource`] rather than on the publish
+/// [`gate_announcement`] asks for, which POE-246 changed for two reasons. A gate
+/// that stays open while the REASON changes hands says so — Alva's tail expiring
+/// under a panel that is still on screen is the loop's whole new behaviour, and
+/// it is invisible in an armed-ness bit. And the re-assertion that corrects a
+/// foreign status write (POE-171 finding 15) stops putting a second `stood down`
+/// line in `app.log` for one stand-down: the publish is the correction, the line
+/// never was.
+///
+/// `said` starts `None`, which is the same claim this line's `None` arm makes —
+/// a loop that has said nothing has not started looking — so the first source it
+/// does find is always announced.
+fn gate_line(
+    said: &mut Option<trigger::ArmSource>,
+    source: Option<trigger::ArmSource>,
+) -> Option<String> {
+    if *said == source {
+        return None;
     }
+    *said = source;
+    Some(match source {
+        Some(source) => format!(
+            "Temple: capture armed by {} — looking for the layout panel",
+            source.label()
+        ),
+        None => "Temple: capture stood down — waiting for Alva (Re-arm forces a read)".to_string(),
+    })
 }
 
 // --------------------------------------------------- the status machine --
@@ -1706,6 +1851,11 @@ struct Session {
     /// read alongside it, so an announcement another thread wrote over comes
     /// back.
     gate_said: Option<bool>,
+    /// The arm SOURCE the loop last put in `app.log`, `None` for "stood down"
+    /// and for a loop that has not looked yet — one claim, not two. The publish
+    /// above is keyed on armed-ness and this on the source, because the two
+    /// answer different questions; [`gate_line`] owns the rule.
+    source_said: Option<trigger::ArmSource>,
     /// The slice-derived hint the loop last ANNOUNCED, so the line saying it is
     /// running on another module's measurement is one line per value rather
     /// than one per second. See [`hint_line`], which owns the rule.
@@ -1763,6 +1913,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         cheap_hint: None,
         sweeps: SweepGate::default(),
         gate_said: None,
+        source_said: None,
         hint_said: None,
         k_said: None,
         rois_said: None,
@@ -1779,17 +1930,24 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
 
         // No capture while alt-tabbed: the layout panel is not on screen, and a
         // full-screen anchor match every second would be pure heat. The arm
-        // gate (POE-242) is asked only behind it, for two reasons: the loop
-        // publishes nothing at all while the game is not in front (see
+        // gate (POE-242, POE-246) is asked only behind it, for two reasons: the
+        // loop publishes nothing at all while the game is not in front (see
         // `TempleStatus::Idle`), and an unfocused iteration does the same thing
-        // either way.
+        // either way. The panel clock is unaffected by the wait — it is a
+        // deadline, not a countdown, so an alt-tab that outlasts it stands the
+        // loop down on the tick focus comes back.
         let focused = game_focused(&app);
-        let arm = if focused {
-            trigger::arm_state(&app)
+        let source = if focused {
+            trigger::arm_source(
+                trigger::arm_state(&app),
+                session.state.panel_seen_ms,
+                session.state.probe_pending(),
+                now_ms(),
+            )
         } else {
-            trigger::TempleArm::Disarmed
+            None
         };
-        let armed = arm.is_armed(now_ms());
+        let armed = source.is_some();
         if focused {
             // Decided UNDER the slice lock, against the status the slice
             // actually holds, so a foreign write (POE-171 finding 15) is
@@ -1804,8 +1962,12 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
                 }
             });
             if announced.is_some() {
-                crate::app_log(&app, gate_line(armed, arm.reason()));
                 session.gate_said = Some(armed);
+            }
+            // Separately from the publish: the source can change hands while the
+            // gate stays open, and that transition is the one a smoke run reads.
+            if let Some(line) = gate_line(&mut session.source_said, source) {
+                crate::app_log(&app, line);
             }
         }
 
@@ -1819,7 +1981,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         match step {
             LoopStep::Detect => {
                 let started = Instant::now();
-                let promoted = tick(&app, &mut session, &cancel);
+                let promoted = tick(&app, &mut session, &cancel, source);
                 last_detect = Instant::now();
                 if session.state.note_tick_duration(started.elapsed(), promoted) {
                     crate::app_log(
@@ -1895,11 +2057,19 @@ fn fail(app: &AppHandle, session: &mut Session, msg: String) {
 ///
 /// Returns whether this tick paid for the full read — the caller times only the
 /// ticks that did not, per [`SLOW_TICK`].
-fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) -> bool {
+fn tick(
+    app: &AppHandle,
+    session: &mut Session,
+    cancel: &watch::Receiver<bool>,
+    source: Option<trigger::ArmSource>,
+) -> bool {
     let grab = match crate::capture::capture_screen(app) {
         Ok(grab) => grab,
         Err(e) => {
             fail(app, session, format!("Temple: screen capture failed — {e}"));
+            // Through `miss`, which spends the start-up probe like any other
+            // tick (POE-246): a machine whose capture never succeeds must not
+            // hold the gate open for the session.
             miss(app, session, true);
             return false;
         }
@@ -1975,21 +2145,26 @@ fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) 
     // goes with it and a screen that has just LOST its scale restarts the
     // countdown — with one store instead of two behind it.
     let calibrated = hint.is_some();
-    let may_sweep = sweep_could_help(&cheap)
-        && session.sweeps.allow(
-            SweepKey {
-                monitor_id,
-                width: capture.0,
-                height: capture.1,
-            },
-            calibrated,
-        );
+    let screen = SweepKey {
+        monitor_id,
+        width: capture.0,
+        height: capture.1,
+    };
+    // Read BEFORE `on_detect` spends it, later in this tick: this is the loop's
+    // FIRST tick, which has no remembered plate for the cheap half to re-match
+    // whoever opened the gate for it (POE-246).
+    let first_tick = session.state.probe_pending();
+    let may_sweep = sweep_could_help(&cheap) && session.sweeps.allow(screen, calibrated);
 
     let mut sweep_ran = false;
     let mut swept = None;
     if !cheap.worth_reading() && may_sweep {
         sweep_ran = true;
         swept = cold_sweep(app, &img, hint.as_ref(), cancel);
+        // A sweep the START-UP PROBE armed is the one that lands on a closed
+        // panel by design — see `SweepGate::refund_probe`, which owns every
+        // condition, the arm source included.
+        session.sweeps.refund_probe(screen, source, swept.is_some());
     }
 
     if !wants_full_read(
@@ -1997,6 +2172,7 @@ fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) 
         &mut session.gate,
         &cheap,
         swept.is_some(),
+        first_tick,
         rearm,
     ) {
         miss(app, session, false);
@@ -2055,7 +2231,10 @@ fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) 
         },
     };
 
-    if session.state.on_detect(true) == DetectOutcome::Found {
+    // The sighting the arm gate's panel clock is measured from (POE-246): stamped
+    // on every anchored tick, so the tail restarts while the panel is on screen
+    // and only starts running once it is not.
+    if session.state.on_detect(Some(now_ms())) == DetectOutcome::Found {
         crate::app_log(
             app,
             format!(
@@ -2168,7 +2347,9 @@ fn cold_sweep(
 /// same publish, because clearing the message while leaving `error` standing
 /// leaves the page red with nothing under it.
 fn miss(app: &AppHandle, session: &mut Session, errored: bool) {
-    let retired = session.state.on_detect(false) == DetectOutcome::Retired;
+    // `None`: a tick that found nothing leaves `panel_seen_ms` where it was, so
+    // a miss can never extend the arm (POE-246).
+    let retired = session.state.on_detect(None) == DetectOutcome::Retired;
     if retired {
         // The panel left the screen: the next one is a new decision even if it
         // looks identical. This is what makes "close, kill, reopen" re-read.
@@ -2501,15 +2682,25 @@ mod tests {
         );
     }
 
+    // --------------------------------------------- the panel state machine --
+
+    /// A moment for the sighting stamps, in the shape [`now_ms`] returns
+    /// (2025-09-02 08:00 UTC). Nothing reads its value — the assertions are all
+    /// on differences from it.
+    const SEEN: u64 = 1_756_800_000_000;
+
     /// A panel is not retired on its first miss — the anchor loses a fading
     /// panel for a frame. Fails if `RETIRE_AFTER` is applied off by one.
+    ///
+    /// Ported to `Option<u64>` with POE-246: a miss is a tick with no sighting
+    /// to stamp, which is the same input this always meant.
     #[test]
     fn a_live_panel_survives_one_missed_anchor() {
         let mut state = LoopState { live: true, ..LoopState::default() };
 
-        assert_eq!(state.on_detect(false), DetectOutcome::Missed);
+        assert_eq!(state.on_detect(None), DetectOutcome::Missed);
         assert!(state.live, "one miss does not retire a panel");
-        assert_eq!(state.on_detect(false), DetectOutcome::Retired);
+        assert_eq!(state.on_detect(None), DetectOutcome::Retired);
         assert!(!state.live);
     }
 
@@ -2520,9 +2711,9 @@ mod tests {
     fn an_anchor_between_misses_resets_the_retirement_count() {
         let mut state = LoopState { live: true, ..LoopState::default() };
 
-        state.on_detect(false);
-        assert_eq!(state.on_detect(true), DetectOutcome::Held);
-        assert_eq!(state.on_detect(false), DetectOutcome::Missed, "the count restarted");
+        state.on_detect(None);
+        assert_eq!(state.on_detect(Some(SEEN)), DetectOutcome::Held);
+        assert_eq!(state.on_detect(None), DetectOutcome::Missed, "the count restarted");
         assert!(state.live);
     }
 
@@ -2531,8 +2722,116 @@ mod tests {
     fn the_first_anchor_reports_found_and_later_ones_do_not() {
         let mut state = LoopState::default();
 
-        assert_eq!(state.on_detect(true), DetectOutcome::Found);
-        assert_eq!(state.on_detect(true), DetectOutcome::Held);
+        assert_eq!(state.on_detect(Some(SEEN)), DetectOutcome::Found);
+        assert_eq!(state.on_detect(Some(SEEN + 1_000)), DetectOutcome::Held);
+    }
+
+    /// The write POE-246's whole stand-down rule rests on: every anchored tick
+    /// re-stamps the sighting, so the tail is measured from the LAST one.
+    ///
+    /// Fails if the stamp is written once (on `Found` only) — the loop would
+    /// then stand down [`trigger::PANEL_TAIL_MS`] after a panel OPENED rather
+    /// than after it closed, which is the 14:37:00 bug with a longer fuse.
+    #[test]
+    fn every_anchored_tick_re_stamps_the_sighting() {
+        let mut state = LoopState::default();
+
+        state.on_detect(Some(SEEN));
+        state.on_detect(Some(SEEN + 30_000));
+
+        assert_eq!(state.panel_seen_ms, Some(SEEN + 30_000));
+    }
+
+    /// And a miss never does. Fails if `on_detect` stamps unconditionally: a
+    /// loop looking at an empty screen would then hold its own gate open
+    /// forever, which is the free-running capture POE-242 removed.
+    #[test]
+    fn a_tick_that_found_nothing_leaves_the_last_sighting_where_it_was() {
+        let mut state = LoopState { live: true, ..LoopState::default() };
+        state.on_detect(Some(SEEN));
+
+        state.on_detect(None);
+
+        assert_eq!(state.panel_seen_ms, Some(SEEN));
+    }
+
+    /// Retiring a panel is not the same event as losing sight of it: the tail
+    /// keeps running from the last sighting for the seconds a player needs to
+    /// close a panel and reopen it. Fails if retirement clears the stamp — the
+    /// loop would stand down two ticks after every close.
+    #[test]
+    fn retiring_a_panel_does_not_clear_the_sighting_the_tail_is_measured_from() {
+        let mut state = LoopState::default();
+        state.on_detect(Some(SEEN));
+
+        state.on_detect(None);
+        assert_eq!(state.on_detect(None), DetectOutcome::Retired);
+
+        assert_eq!(state.panel_seen_ms, Some(SEEN));
+    }
+
+    /// The start-up probe is a debt one tick settles, whatever that tick found —
+    /// a clean miss and a FAILED screen grab alike, because [`miss`] folds both
+    /// through this call with no sighting to stamp.
+    ///
+    /// Fails if the probe is spent only on a sighting, or only on a tick that
+    /// ran clean: either way a machine whose capture keeps failing holds the
+    /// gate open for the rest of the session, which is the free-running capture
+    /// POE-242 removed with an error message on top of it.
+    #[test]
+    fn the_first_tick_spends_the_start_up_probe_even_when_it_could_not_look() {
+        let mut state = LoopState::default();
+        assert!(state.probe_pending(), "a loop that has not looked owes one look");
+
+        state.on_detect(None);
+
+        assert!(!state.probe_pending());
+    }
+
+    /// The 17:28:31 case end to end, over the two pure pieces the loop composes:
+    /// a module switched on with the panel already open and Alva silent gets its
+    /// probe tick, the tick anchors, and the panel itself holds the gate open
+    /// from there.
+    ///
+    /// Fails if the probe does not reach the gate, or if the sighting it takes
+    /// does not — either way the loop stands down in the second it started and
+    /// the advice blinks and disappears.
+    #[test]
+    fn a_probe_tick_that_anchors_hands_the_gate_over_to_the_panel() {
+        let mut state = LoopState::default();
+        let arm = trigger::ArmState::default();
+        assert_eq!(
+            trigger::arm_source(arm, state.panel_seen_ms, state.probe_pending(), SEEN),
+            Some(trigger::ArmSource::StartupProbe),
+            "the probe tick is allowed to run",
+        );
+
+        state.on_detect(Some(SEEN));
+
+        assert_eq!(
+            trigger::arm_source(arm, state.panel_seen_ms, state.probe_pending(), SEEN + 1_000),
+            Some(trigger::ArmSource::PanelOnScreen),
+        );
+    }
+
+    /// The other half: a probe that finds nothing stands the loop down on the
+    /// next iteration, which is POE-242's behaviour for a screen with no panel
+    /// on it. Fails if the probe survives its own tick.
+    #[test]
+    fn a_probe_tick_that_finds_nothing_stands_the_loop_down() {
+        let mut state = LoopState::default();
+
+        state.on_detect(None);
+
+        assert_eq!(
+            trigger::arm_source(
+                trigger::ArmState::default(),
+                state.panel_seen_ms,
+                state.probe_pending(),
+                SEEN,
+            ),
+            None,
+        );
     }
 
     /// The backoff is sticky and announces itself exactly once. Fails if
@@ -2710,6 +3009,60 @@ mod tests {
         );
     }
 
+    /// The probe's sweep is free when it finds nothing: the tick that has
+    /// something to find still gets the uncalibrated screen's head start.
+    ///
+    /// Fails if the refund is dropped — the first ARMED tick over an open panel
+    /// then waits a whole cadence for the sweep that would have read it, on the
+    /// strength of a sweep spent seconds earlier on a closed one.
+    #[test]
+    fn a_probe_sweep_that_found_nothing_gives_the_head_start_back() {
+        let mut gate = SweepGate::default();
+        let laptop = screen(7, 1920, 1080);
+        assert!(gate.allow(laptop, false), "precondition: the probe tick sweeps");
+
+        gate.refund_probe(laptop, Some(trigger::ArmSource::StartupProbe), false);
+
+        assert!(gate.allow(laptop, false), "the next tick still sweeps at once");
+    }
+
+    /// A probe sweep that ANCHORED pays like any other: it bought the answer the
+    /// budget exists for. Fails if the refund ignores the outcome, which would
+    /// let a screen whose panel is being read sweep again on the next
+    /// non-verified tick.
+    #[test]
+    fn a_probe_sweep_that_anchored_spends_the_budget_like_any_other() {
+        let mut gate = SweepGate::default();
+        let laptop = screen(7, 1920, 1080);
+        assert!(gate.allow(laptop, false), "precondition: the probe tick sweeps");
+
+        gate.refund_probe(laptop, Some(trigger::ArmSource::StartupProbe), true);
+
+        assert!(!gate.allow(laptop, false), "the cadence is running");
+    }
+
+    /// A first tick CLIENT.TXT armed pays like any other, and the app started
+    /// inside a temple is that case: the loop keeps ticking after it, so a refund
+    /// there buys a second 5.3 s sweep on the very next tick.
+    ///
+    /// Fails if the refund reads "this is the first tick" instead of "the probe
+    /// is what opened the gate" — the two are the same tick only when nothing
+    /// else armed the loop.
+    #[test]
+    fn a_first_sweep_under_a_live_client_txt_arm_is_not_given_back() {
+        let mut gate = SweepGate::default();
+        let laptop = screen(7, 1920, 1080);
+        assert!(gate.allow(laptop, false), "precondition: this tick sweeps");
+
+        gate.refund_probe(
+            laptop,
+            Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaLine)),
+            false,
+        );
+
+        assert!(!gate.allow(laptop, false), "the cadence is running");
+    }
+
     /// A different capture size is a different screen and sweeps immediately —
     /// the scale is a property of the render resolution, so nothing measured at
     /// 1920x1080 says anything about 2560x1440, and the countdown the old size
@@ -2780,19 +3133,19 @@ mod tests {
         let mut gate = slice::ReadGate::default();
 
         assert!(
-            !wants_full_read(&mut state, &mut gate, &saw_nothing(), false, 0),
-            "precondition: a quiet screen is a cheap tick",
+            !wants_full_read(&mut state, &mut gate, &saw_nothing(), false, false, 0),
+            "precondition: a quiet screen is a cheap tick — the loop has been\n             running, so its start-up probe is long spent (POE-246)",
         );
 
         assert!(
-            wants_full_read(&mut state, &mut gate, &saw_nothing(), false, 1),
+            wants_full_read(&mut state, &mut gate, &saw_nothing(), false, false, 1),
             "the bump buys a read",
         );
         assert!(
-            !wants_full_read(&mut state, &mut gate, &saw_nothing(), false, 1),
+            !wants_full_read(&mut state, &mut gate, &saw_nothing(), false, false, 1),
             "and exactly one — the tick after it is cheap again",
         );
-        assert!(!wants_full_read(&mut state, &mut gate, &saw_nothing(), false, 1));
+        assert!(!wants_full_read(&mut state, &mut gate, &saw_nothing(), false, false, 1));
     }
 
     /// …and the read it forced actually happens. Fails if spending the bump
@@ -2807,7 +3160,7 @@ mod tests {
         gate.record(board, panel);
         assert!(!gate.layout_wants_read(board, 0), "precondition: already read");
 
-        assert!(wants_full_read(&mut state, &mut gate, &saw_something(), false, 1));
+        assert!(wants_full_read(&mut state, &mut gate, &saw_something(), false, false, 1));
 
         assert!(
             gate.layout_wants_read(board, 1),
@@ -2835,8 +3188,26 @@ mod tests {
             &mut gate,
             &saw_nothing(),
             true,
+            false,
             0
         ));
+    }
+
+    /// The probe tick promotes whatever the cheap tick said, and that is what
+    /// makes a module toggled on over an open panel read it.
+    ///
+    /// The cheap half cannot answer on a starting loop: `detect_cheap`'s hint
+    /// carries an origin only a previous read produces, so tick one is the
+    /// nominating pass — measured at 0.66 against a 0.70 floor on the 1080p
+    /// laptop this was reported from, with the panel open. Fails if the probe is
+    /// dropped from the promotion, which leaves the probe looking through the
+    /// one pass that cannot see the panel it exists to find.
+    #[test]
+    fn the_start_up_probe_tick_pays_for_the_read_a_cheap_tick_would_have_skipped() {
+        let mut state = LoopState::default();
+        let mut gate = slice::ReadGate::default();
+
+        assert!(wants_full_read(&mut state, &mut gate, &saw_nothing(), false, true, 0));
     }
 
     /// A panel already on screen is read whatever the cheap tick says. It is
@@ -2855,7 +3226,7 @@ mod tests {
         };
         let mut gate = slice::ReadGate::default();
 
-        assert!(wants_full_read(&mut state, &mut gate, &saw_nothing(), false, 0));
+        assert!(wants_full_read(&mut state, &mut gate, &saw_nothing(), false, false, 0));
     }
 
     /// A cheap tick that saw something buys the full read. Fails if the
@@ -3183,14 +3554,47 @@ mod tests {
     /// item is measuring.
     #[test]
     fn the_gate_line_says_which_way_the_gate_moved() {
+        let mut said = None;
+
         assert_eq!(
-            gate_line(true, Some(trigger::ArmReason::AlvaLine)),
-            "Temple: capture armed by Alva — looking for the layout panel",
+            gate_line(&mut said, Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaLine))),
+            Some("Temple: capture armed by Alva — looking for the layout panel".to_string()),
         );
         assert_eq!(
-            gate_line(false, None),
-            "Temple: capture stood down — waiting for Alva (Re-arm forces a read)",
+            gate_line(&mut said, None),
+            Some("Temple: capture stood down — waiting for Alva (Re-arm forces a read)".to_string()),
         );
+    }
+
+    /// POE-246's own line: the gate stays open while the reason changes hands,
+    /// and the log says which one is holding it. Fails if the source vocabulary
+    /// stops at `ArmReason` — a smoke run then cannot tell a loop kept alive by
+    /// the panel on screen from one Client.txt is still arming.
+    #[test]
+    fn the_gate_line_names_the_panel_that_is_holding_the_gate_open() {
+        let mut said = Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaLine));
+
+        assert_eq!(
+            gate_line(&mut said, Some(trigger::ArmSource::PanelOnScreen)),
+            Some(
+                "Temple: capture armed by the panel on screen — looking for the layout panel"
+                    .to_string()
+            ),
+        );
+    }
+
+    /// One line per source, not one per iteration. Fails if the rule is dropped:
+    /// the loop reaches this once a second for as long as it is armed, and an
+    /// unconditional line would evict every other diagnostic from the 50-entry
+    /// buffer within a minute.
+    #[test]
+    fn the_gate_line_is_said_once_per_source() {
+        let mut said = None;
+        let source = Some(trigger::ArmSource::PanelOnScreen);
+
+        assert!(gate_line(&mut said, source).is_some());
+
+        assert_eq!(gate_line(&mut said, source), None, "and not again");
     }
 
     /// The status the arm gate publishes, and the one the plan names: "on,
