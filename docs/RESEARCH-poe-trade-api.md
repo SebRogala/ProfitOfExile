@@ -62,7 +62,7 @@ Response:
 |--------|-------|
 | Max IDs returned from search | **10,000** |
 | Max IDs per fetch request | **10** |
-| Max query complexity | **35 units** (anonymous; "Query is too complex" above it — the error text says logging in raises it, unmeasured) |
+| Max query complexity | **35 units** (anonymous; "Query is too complex" above it — the error text says logging in raises it; observed 2026-08-26 to be at least 116 — saved searches with 2, 3 and 4 `mercenary` groups of 4 filters each all loaded in a logged-in browser) |
 | Complexity cost per group | `and`: 1 per filter, no fixed cost · `count`: 3 + 2·f · `mercenary`: 21 + 2·f (so two `mercenary` groups never fit) · `not`: 1 per filter (assumed). Measured 2026-08-26 with 50 spaced probes on Allflame — e.g. 35 `and` filters pass; count6 alone = 15 ok, 4×count3 = 36 fails, and5 + 5×count2 = 40 fails; merc7 = 35 ok, merc8 fails, merc3 + and8 = 35 ok, + and9 fails. |
 | `total` field | True match count (can exceed 10k) |
 | `inexact` field | `true` when total is approximate |

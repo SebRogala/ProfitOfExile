@@ -5,10 +5,12 @@ This is the documentation entry point. Documents are classified so historical pl
 ## Start here
 
 - [Project README](../README.md) — product overview, stack, and development commands.
+- [Development setup](DEV-SETUP.md) — current fresh-machine procedure: WSL prerequisites and the shared infra stack, the legacy `profitofexile.localhost` host naming, the Windows toolchain, `desktop/` sync, and running the desktop app under `npx tauri dev`.
 - [Product vision](product-vision.md) — historical strategy-simulation domain and future scope; not current architecture.
 - [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — current workflows plus clearly labeled reliability targets for collection, native trade, contributions, optional server trading, pairing, and Mercure.
 - [Overlay Guide](OVERLAY-GUIDE.md) — maintained Windows/Tauri overlay mechanics and regression guards.
 - [Temple Lifecycle](TEMPLE-LIFECYCLE.md) — normative order of arming, detection, OCR and overlay show/hide for the temple module (POE-249, implemented 2026-09-04); every rule tagged shipped with the commit that shipped it.
+- [Game facts](GAME-FACTS.md) — current, dated reference of Path of Exile facts the code treats as invariants: one golden door per lab run, temple rooms log nothing, Divine Font wordings and parser anchors, Dedication rules, exchange sidebar categories, trade complexity; unvalidated claims kept in their own section.
 - [Collector Endpoint Guide](COLLECTOR-ENDPOINTS.md) — current cross-layer recipe for adding a market-data source.
 - [Gem and Item Icons](GEM-ICONS.md) — current procedure for adding or changing an icon, and why seeding precedes deploy.
 - [Deployment](DEPLOY.md) — how main reaches production, why the deploy is path-filtered, and what a green pipeline does not tell you, desktop release channels (stable / beta by device role), the public-repo rules for beta testers, and the one-off POE-215 merc registration-reset runbook.
@@ -64,7 +66,9 @@ ADRs record decisions at a point in time. If implementation later supersedes a d
 - [Collector Endpoint Guide](COLLECTOR-ENDPOINTS.md) — current endpoint extension procedure, verified against the fragments implementation.
 - [Gem and Item Icons](GEM-ICONS.md) — current icon map, cache-seeding order, and the puller/repopulate steps.
 - [Deployment](DEPLOY.md) — current deploy workflow, filter derivation, manual-dispatch cases, and the accepted verification gap.
+- [Development setup](DEV-SETUP.md) — current WSL + Windows dev-machine procedure and the daily edit/sync/run loop.
 - [Analysis Cache Guide](ANALYSIS-CACHE.md) — current `lab.Cache` topology, tick chain, tenancy and concurrency contract, cold start, and the sparkline series cache.
+- [Game facts](GAME-FACTS.md) — current game-side invariants with dates and sources, separate from codebase facts.
 - [Currency Exchange row invariant](CURRENCY-EXCHANGE-ROW-INVARIANT.md) — current normative spec for the exchange row: the invariant equations, the rendering rules, the re-affirmed exemptions, and the closure-test enforcement tiers.
 - [Historical overlay debugging notes](history/overlay-debugging-notes.md) — preserved runtime discoveries and obsolete implementation generations; not a current recipe.
 - [AI-Native Case Study](AI-NATIVE-CASE-STUDY.md) — public project/portfolio narrative, not an implementation contract.
