@@ -46,6 +46,8 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-016: Expected ROI is a cross-hour simulation; displayed prices stay single-hour](adr/016-expected-roi-is-a-cross-hour-simulation-displayed-prices-stay-single-hour.md)
 - [ADR-017: No default engine floor may hide a live market](adr/017-no-default-engine-floor-may-hide-a-live-market.md)
 - [ADR-018: Flags mark; they never order](adr/018-flags-mark-they-never-order.md)
+- [ADR-019: Nothing a module draws may cover what that module reads](adr/019-nothing-a-module-draws-may-cover-what-that-module-reads.md)
+- [ADR-020: One shared screen scale; a module corroborates or withholds](adr/020-one-shared-screen-scale-a-module-corroborates-or-withholds.md)
 
 Superseded:
 

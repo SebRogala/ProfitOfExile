@@ -1359,6 +1359,54 @@ mod tests {
         assert_eq!(parsed.screen_scale, None);
     }
 
+    /// A settings.json written BEFORE POE-234 WI-2 carries `temple_calibration`,
+    /// the temple's own private screen scale, which that work item deleted in
+    /// favour of the one shared `screen_scale`.
+    ///
+    /// It must LOAD, and the rest of the file must survive it. Serde ignores an
+    /// unknown key only because nothing here asks for `deny_unknown_fields`, and
+    /// adding that attribute would turn every affected user's next launch into a
+    /// reset of every unrelated preference in the file.
+    #[test]
+    fn a_settings_file_with_the_retired_temple_calibration_still_loads() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"server_url":"https://kept.example","temple_keys":2,
+                "temple_calibration":{"screen_w":2560,"screen_h":1440,"scale":1.13}}"#,
+        )
+        .expect("a pre-POE-234 file must still parse");
+
+        assert_eq!(
+            (parsed.server_url.as_str(), parsed.temple_keys),
+            ("https://kept.example", 2),
+            "the rest of the file survives the retired key",
+        );
+    }
+
+    /// …and the key is GONE from the next save rather than carried through.
+    ///
+    /// The opposite of the rule `widgets` follows for a retired widget id, and
+    /// the contrast is the point: a dead placement is the user's own arrangement
+    /// and is worth keeping, while a dead calibration is a second answer to a
+    /// question this app now has one answer to (ADR-020), and leaving it in the
+    /// file is how a downgrade quietly re-arms it.
+    #[test]
+    fn the_retired_temple_calibration_is_not_written_back_on_the_next_save() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"server_url":"https://kept.example",
+                "temple_calibration":{"screen_w":2560,"screen_h":1440,"scale":1.13}}"#,
+        )
+        .expect("a pre-POE-234 file must still parse");
+
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&parsed).expect("settings must serialize"))
+                .expect("its own output must parse");
+
+        assert!(
+            json.get("temple_calibration").is_none(),
+            "the retired key must not be written back, got {json}",
+        );
+    }
+
     /// A settings.json written before POE-214 carries no `screen_scale`. It
     /// must load with the field absent, not fail the whole file (which would
     /// reset every unrelated preference in it). The attribute that holds here

@@ -388,10 +388,10 @@ fn debug_capture_blocking(
     // alongside, because a wrong ROI is exactly the kind of thing this command
     // is run to find.
     let started = std::time::Instant::now();
-    let regions = [
-        ("panel", super::run::panel_rect(layout.origin, layout.scale)),
-        ("remaining", super::run::remaining_rect(layout.origin, layout.scale)),
-    ];
+    // The loop's own list, not a second copy of it (`run::text_regions`): a
+    // third text region must not be able to reach the dump without reaching the
+    // read and the outside-the-capture check with it.
+    let regions = super::run::text_regions(&layout);
     report.panel_rect = Some(regions[0].1);
     report.remaining_rect = Some(regions[1].1);
     let mut lines: Vec<crate::mercenary::geometry::OcrLineBox> = Vec::new();

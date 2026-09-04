@@ -449,6 +449,7 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 		unknownRooms: incoming.unknownRooms ?? [],
 		lastReadAt: incoming.lastReadAt ?? null,
 		calibration: incoming.calibration ?? null,
+		readNotice: incoming.readNotice ?? null,
 		lastError: incoming.lastError ?? null
 	};
 }

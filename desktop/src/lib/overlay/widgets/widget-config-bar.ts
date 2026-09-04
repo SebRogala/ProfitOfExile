@@ -84,19 +84,25 @@ function boundingBox(rects: readonly WidgetRect[]): WidgetRect | null {
  * 1. **Above the cluster**, horizontally centred on it — the default, and where
  *    the bar is out from under the hand that is dragging.
  * 2. **Below the cluster**, when there is not a bar's height plus a gap above
- *    it. A widget placed near the top of the screen is ordinary (the temple's
- *    advice widget ships at y = 40), so this is not an edge case.
+ *    it. A widget placed near the top of the screen is ordinary — a user drags
+ *    one there whenever the game's own chrome leaves the top free — so this is
+ *    not an edge case. It is not, however, where anything SHIPS any more: since
+ *    POE-244 the temple declares one placeable widget, `temple.door` at y = 300,
+ *    and branch 1 is what shipped defaults take.
  * 3. **The top of the host**, when the cluster leaves room on neither side. The
  *    bar then overlaps a widget, which is survivable — it is drawn after the
  *    widgets and so sits over them — while being off screen is not.
  *
  * With NO widgets to anchor against, the bar goes to the top of the host,
- * centred. That is not the Show checkbox — `seedRect` ignores `visible` and
- * `enterConfig` seeds every spec the registry declares, so a hidden widget
- * still gets a frame to place. It is an UNRESOLVED SCALE FACTOR: `seedRect`
+ * centred. That is not the Show checkbox — `seedRect` ignores `visible`, so a
+ * hidden widget still gets a frame to place. Nor is it the ANCHORED widgets:
+ * `enterConfig` seeds `placeableWidgetsFor(module)`, and an anchored widget
+ * (`temple.advice`) is neither persisted nor arranged, so it is absent by
+ * design rather than missing. It is an UNRESOLVED SCALE FACTOR: `seedRect`
  * returns `null` for a widget that has a stored placement it cannot convert,
- * and with every widget stored that is an empty draft. There is then nothing on
- * screen but the bar, which is exactly when being findable matters most.
+ * and with every placeable widget stored that is an empty draft. There is then
+ * nothing on screen but the bar, which is exactly when being findable matters
+ * most.
  *
  * An UNMEASURED host (either extent zero) gets the gap as both coordinates.
  * `WidgetHost` measures itself in an on-mount effect, so no frame this function

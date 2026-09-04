@@ -65,10 +65,16 @@ export function captureToCss(rect: CaptureRect, scaleFactor: number): WidgetRect
  * Every rectangle the module reads, in CSS px — the set nothing may cover.
  *
  * Empty for a layout that is absent or a scale factor that has not resolved,
- * and the callers treat an empty set as "do not place anything yet" rather than
- * as "everywhere is free". That distinction is the whole guard: an empty
- * obstacle list makes every position legal, which is exactly the wrong answer
- * when the reason it is empty is that the conversion failed.
+ * and an empty set means "do not place anything yet" rather than "everywhere is
+ * free". That distinction is the whole guard: an empty obstacle list makes
+ * every position legal, which is exactly the wrong answer when the reason it is
+ * empty is that the conversion failed.
+ *
+ * All three placers state that themselves — [`calloutPlacement`],
+ * [`bannerPlacement`] and [`doorDefaultPlacement`] — and the door's caller
+ * repeats it. Leaving it to the callers was not enough: the banner's wanted
+ * position is a function of the host alone, so it had no anchor to be null and
+ * drew top-centre over the panel crop.
  */
 export function neverCoverRects(
 	layout: LayoutView | null,
@@ -121,6 +127,14 @@ export interface BoxSize {
  * `null` also when the avoidance finds no free position. The box is then not
  * drawn: the board is on screen either way, and a callout that costs the module
  * its read is the worse trade.
+ *
+ * …and `null` for an EMPTY never-cover set, stated here rather than left to
+ * fall out of a null anchor. An empty set means the layout is absent or the
+ * scale factor has not resolved, which is "place nothing yet" and never "the
+ * screen is free" — and today both of those also null the anchor, so the guard
+ * is currently redundant. That redundancy is the point: the anchor going
+ * non-null on an unresolved conversion is one refactor away, and a rule that
+ * only holds by coincidence is a rule nothing enforces.
  */
 export function calloutPlacement(input: {
 	/** The chosen block's rect in CSS px, or null. */
@@ -135,6 +149,7 @@ export function calloutPlacement(input: {
 }): WidgetRect | null {
 	const { target, panel, box, obstacles, host } = input;
 	if (box.w <= 0 || box.h <= 0) return null;
+	if (obstacles.length === 0) return null;
 	const anchor = target ?? panel;
 	if (anchor === null) return null;
 	const wanted: WidgetRect = {
@@ -230,6 +245,15 @@ export function calloutArrow(box: WidgetRect, target: WidgetRect): CalloutArrow 
  * then falls back to the registry's shipped CSS default. That fallback is a
  * fixed number that cannot know where this screen's panel is, which is exactly
  * why it is the fallback and not the rule.
+ *
+ * Null too for an EMPTY never-cover set — the same rule as its two siblings,
+ * stated here as well as at the caller (`doorDefaults` in the temple overlay
+ * route). Two statements of one rule is the intended shape: the caller's is
+ * what keeps `WidgetHost` from being offered a default at all, and this one is
+ * what makes the rule a property of the FUNCTION, so a second caller cannot
+ * arrive without it. The registry fallback the caller then uses is NOT a
+ * violation — see ADR-019: it is a shipped rectangle the user can see and move,
+ * not a placement this module derived from the game.
  */
 export function doorDefaultPlacement(input: {
 	/** The panel's OCR crop in CSS px, or null. */
@@ -242,6 +266,7 @@ export function doorDefaultPlacement(input: {
 }): WidgetRect | null {
 	const { panel, diamond, box, obstacles, host } = input;
 	if (box.w <= 0 || box.h <= 0) return null;
+	if (obstacles.length === 0) return null;
 	if (panel === null) return null;
 	const wanted: WidgetRect = {
 		// The diamond's own column when it was published, the panel's left edge
@@ -267,6 +292,16 @@ export function doorDefaultPlacement(input: {
  * repository actually has a frame of.
  *
  * Null when the banner has not measured itself yet, or when nothing is free.
+ *
+ * Null too for an EMPTY never-cover set, and that one is the whole reason this
+ * function exists rather than a `style="left:50%"`. The banner is the only
+ * surface here that wants a position the HOST can supply on its own, so it is
+ * the only one an empty obstacle list places instead of withholding: with no
+ * layout, or with the scale factor unresolved, `avoidRects` found the wanted
+ * rect clear because nothing was passed to it, and the banner drew top-centre
+ * — straight over where the panel crop is about to be. The door default
+ * (`doorDefaults` in the temple overlay route) refuses on the same input; so
+ * does [`calloutPlacement`]. Empty means place nothing yet.
  */
 export function bannerPlacement(input: {
 	box: BoxSize;
@@ -275,6 +310,7 @@ export function bannerPlacement(input: {
 }): WidgetRect | null {
 	const { box, obstacles, host } = input;
 	if (box.w <= 0 || box.h <= 0) return null;
+	if (obstacles.length === 0) return null;
 	return avoidRects(
 		{ x: host.width / 2 - box.w / 2, y: BANNER_TOP_CSS, w: box.w, h: box.h },
 		obstacles,

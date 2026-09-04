@@ -174,6 +174,12 @@
 		{#if temple.lastError}
 			<p class="error">Last error: {temple.lastError}</p>
 		{/if}
+		{#if temple.readNotice}
+			<!-- A WARNING and not an error: the read completed and the board on
+			     screen is real, it was just short a text region. Same tone as the
+			     marker notice below, which is the same class of fact. -->
+			<p class="warn">{temple.readNotice}</p>
+		{/if}
 		{#if unknownBadge}
 			<p class="warn">{unknownBadge} — the advisor treats an unread plate as junk, not as empty.</p>
 		{/if}

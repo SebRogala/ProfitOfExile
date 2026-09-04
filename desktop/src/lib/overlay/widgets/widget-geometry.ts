@@ -547,6 +547,14 @@ export function placementFor(
 	// catches whatever is still outside — an unknown stored host, an aspect
 	// change, a widget wider than the new screen — and it can only pin to an
 	// edge, which is a placement the user did not make.
+	//
+	// RULED OUT, POE-245 (2026-09-03): "widgets invisible after the game moved
+	// to another monitor" was NOT this path. The placements had been saved on
+	// the game monitor, so rebase and clamp were both the identity; the two real
+	// causes were the module's stand-down (fixed in POE-246) and a
+	// game-monitor-changed notice dropped mid-build (fixed in the route). Read a
+	// future "the widget is in the wrong place after a monitor change" against
+	// those two before suspecting the arithmetic here.
 	const based = rebase(geometry, hostInPhysicalPx(host, scaleFactor), scaleFactor);
 	const rect = cssRect(based, scaleFactor);
 	if (!rect) return null;

@@ -1961,6 +1961,12 @@ struct Session {
     /// a function of `(origin, scale)` alone, so one line per distinct value
     /// says everything a repeat would.
     rois_said: Option<String>,
+    /// The outside-set [`clipped_roi_announcement`] last announced, `None`
+    /// before the loop has looked. Its own memory rather than a message in
+    /// [`ErrorLog`] — see that function for why a rect-keyed, session-capped
+    /// seam is the wrong shape for a condition a mouse drag re-states every
+    /// tick.
+    clipped_said: Option<Vec<&'static str>>,
     /// Whether the shared slice has held a scale for this screen at any point in
     /// this session. [`cheap_hint_for`]'s second input, and it is what separates
     /// a slice that was EMPTIED — Recalibrate — from one that was never filled.
@@ -2007,6 +2013,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         hint_said: None,
         k_said: None,
         rois_said: None,
+        clipped_said: None,
         slice_answered: false,
     };
     // Backdated so the first iteration ticks immediately rather than after a
@@ -2477,6 +2484,26 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) {
     publish(app, |slice| apply_status(slice, outcome));
 }
 
+/// The text crops this module OCRs, named, in the order they are read.
+///
+/// **The one list.** [`panel_text`] reads it, [`clipped_text_rois`] checks it,
+/// and `commands::temple_debug_capture` dumps it — three callers that must not
+/// disagree about what "the text regions" are. Before this they each spelled
+/// the pair out, so a third region added to one of them would have been read
+/// without ever being checked for falling off the capture, or checked without
+/// being dumped. A `[_; 2]` rather than a `Vec` so the arity is in the type: a
+/// third region is a deliberate edit here and every caller recompiles.
+///
+/// The names are what the log line and the Temple page print, so they are
+/// `&'static str` and are the KEY the once-per-value memory in
+/// [`clipped_roi_announcement`] compares on.
+pub fn text_regions(layout: &TempleLayout) -> [(&'static str, [i32; 4]); 2] {
+    [
+        ("panel", panel_rect(layout.origin, layout.scale)),
+        ("remaining", remaining_rect(layout.origin, layout.scale)),
+    ]
+}
+
 /// The panel's text: two bounded crops, as lines carrying their boxes in
 /// CAPTURE px.
 ///
@@ -2494,12 +2521,8 @@ fn panel_text(
     img: &DynamicImage,
     layout: &TempleLayout,
 ) -> Option<Vec<crate::mercenary::geometry::OcrLineBox>> {
-    let regions = [
-        panel_rect(layout.origin, layout.scale),
-        remaining_rect(layout.origin, layout.scale),
-    ];
     let mut lines = Vec::new();
-    for rect in regions {
+    for (_, rect) in text_regions(layout) {
         let Some((crop, origin)) = crop_clipped(img, rect) else {
             continue;
         };
@@ -2544,6 +2567,88 @@ fn rois_line(said: &mut Option<String>, origin: (i32, i32), scale: f32) -> Optio
     }
     *said = Some(line.clone());
     Some(line)
+}
+
+/// The named text ROIs that fall ENTIRELY outside the capture, in region order.
+///
+/// POE-230 keyed these rects on the layout anchor, which is what stopped them
+/// cutting the panel in half. It left one silence behind: [`crop_clipped`]
+/// answers `None` for a rect with no pixels in the frame and [`panel_text`]
+/// `continue`s, so a panel crop that has walked off the capture reads as a
+/// panel with nothing printed on it. The board still publishes, the advisor
+/// still ranks, and the only symptom is an offer list that is quietly empty.
+///
+/// A rect that is merely CLIPPED is not reported: the crop is smaller and the
+/// read is still a read, which is the case the clipping exists for. What is
+/// reported is the empty intersection.
+fn clipped_text_rois(
+    regions: &[(&'static str, [i32; 4])],
+    width: u32,
+    height: u32,
+) -> Vec<(&'static str, [i32; 4])> {
+    // The same arithmetic `crop_clipped` refuses on. Restated rather than
+    // called: this asks "was anything there at all?", and the answer must not
+    // change under a `crop_clipped` that grows a margin or a minimum size.
+    let outside = |[x, y, w, h]: [i32; 4]| {
+        x.max(0) >= (x + w).min(width as i32) || y.max(0) >= (y + h).min(height as i32)
+    };
+    regions.iter().copied().filter(|(_, rect)| outside(*rect)).collect()
+}
+
+/// What the user is told about one region that fell outside.
+///
+/// One sentence, used verbatim in `app.log` AND on the Temple page
+/// ([`slice::TempleSlice::read_notice`]), so a screenshot and a pasted log say
+/// the same thing. The wording names the one cause that produces this on a
+/// working install: the capture is the whole monitor
+/// (`capture::capture_screen`), so a read region outside it means the game is
+/// not filling the monitor the module is grabbing.
+fn clipped_roi_line(name: &str, rect: [i32; 4]) -> String {
+    format!("Temple: {name} ROI {rect:?} is outside the capture — windowed client?")
+}
+
+/// The clipped-ROI lines to put in `app.log` this tick, or `None` when this
+/// state has already been announced.
+///
+/// **Keyed on the region NAMES that are outside — not on their rects, and not
+/// on the message.** A windowed client being DRAGGED moves both rects every
+/// tick while the fact they report ("the panel crop is off the capture") does
+/// not change, so a rect-keyed memory would say it at 1 Hz for the length of the
+/// drag. The names are also the whole of what a reader needs repeated; the rects
+/// are in the line, and the geometry itself is already reported by
+/// [`rois_line`].
+///
+/// This is why the notice does NOT go through [`ErrorLog`], which is otherwise
+/// the loop's say-once seam: that keys on the message, the message carries the
+/// rect, and its [`MAX_DISTINCT_ERRORS`] slots are a SESSION-wide budget — a few
+/// seconds of dragging would spend all of them and take every later temple error
+/// down with them. A once-per-value memory of its own costs one `Session` field
+/// and cannot exhaust anything.
+///
+/// A region that comes BACK inside and then leaves again IS announced again:
+/// the second failure is news, and this must not degrade into say-it-once-ever.
+/// (Whether the empty state is stored or the memory is cleared for it is not
+/// observable — both leave the next non-empty set as news — so nothing depends
+/// on which.)
+///
+/// Pure over plain data with the memory passed in, the shape [`rois_line`] and
+/// [`hint_line`] use.
+fn clipped_roi_announcement(
+    said: &mut Option<Vec<&'static str>>,
+    outside: &[(&'static str, [i32; 4])],
+) -> Option<Vec<String>> {
+    let names: Vec<&'static str> = outside.iter().map(|(name, _)| *name).collect();
+    if said.as_deref() == Some(names.as_slice()) {
+        return None;
+    }
+    *said = Some(names);
+    if outside.is_empty() {
+        // The state changed back to "everything is in frame". Worth remembering,
+        // not worth a line — nothing is wrong, and a log that narrates recovery
+        // is a log that evicts the failure it recovered from.
+        return None;
+    }
+    Some(outside.iter().map(|(name, rect)| clipped_roi_line(name, *rect)).collect())
 }
 
 /// The expensive half: 13 plates, the side panel, the diamond, the advisor.
@@ -2623,6 +2728,26 @@ fn full_read(
     if let Some(line) = rois_line(&mut session.rois_said, layout.origin, layout.scale) {
         crate::app_log(app, line);
     }
+    // …and the honesty half of the same measurement. `panel_text` steps over a
+    // crop with no pixels in the frame, which is the right thing to do with the
+    // budget line and the wrong thing to do SILENTLY: an empty panel crop
+    // produces an empty offer list that reads exactly like a panel with no
+    // architects on it. The LOG is said once per outside-set (see
+    // `clipped_roi_announcement`); the SLICE carries the notice on every read it
+    // is true of, because the page shows a state and not a history.
+    let clipped = clipped_text_rois(&text_regions(&layout), img.width(), img.height());
+    if let Some(lines) = clipped_roi_announcement(&mut session.clipped_said, &clipped) {
+        for line in lines {
+            crate::app_log(app, line);
+        }
+    }
+    let read_notice = (!clipped.is_empty()).then(|| {
+        clipped
+            .iter()
+            .map(|(name, rect)| clipped_roi_line(name, *rect))
+            .collect::<Vec<_>>()
+            .join("; ")
+    });
 
     let panel = match already_read {
         Some(panel) => panel,
@@ -2677,6 +2802,7 @@ fn full_read(
             panel: &panel,
             settled: settled.as_ref(),
             marker_error,
+            read_notice,
             advice: advice.as_ref(),
             // The settings THIS tick started with. A setter that lands
             // mid-read echoes its new value onto the slice and then loses it
@@ -4677,6 +4803,122 @@ mod tests {
         assert!(
             rois_line(&mut said, LIVE_CAPTURE_ORIGIN, 1.13).is_some(),
             "a re-anchor at another scale moves every rect and must be reported",
+        );
+    }
+
+    /// A text ROI with no pixels in the frame is REPORTED, not stepped over in
+    /// silence.
+    ///
+    /// The silence POE-230 left behind: `crop_clipped` answers `None` for an
+    /// empty intersection, `panel_text` `continue`s, and the read publishes a
+    /// board whose offer list is empty for a reason nothing states. The rect is
+    /// the live capture's own panel crop (`[1131, 4, 544, 454]`) moved out to the
+    /// frame's right edge: its first column is x = 1920 on a 1920-wide capture,
+    /// so the intersection is empty by one pixel and nothing is read at all.
+    #[test]
+    fn a_text_roi_entirely_outside_the_capture_is_named_with_its_rect() {
+        let outside = clipped_text_rois(&[("panel", [1920, 4, 544, 454])], 1920, 1080);
+
+        assert_eq!(outside, vec![("panel", [1920, 4, 544, 454])]);
+        assert_eq!(
+            clipped_roi_line(outside[0].0, outside[0].1),
+            "Temple: panel ROI [1920, 4, 544, 454] is outside the capture — windowed client?",
+        );
+    }
+
+    /// A rect that is merely CLIPPED reads, so it says nothing.
+    ///
+    /// The boundary, and the reason this is not "does the rect fit": clipping is
+    /// what `crop_clipped` is FOR, and a line on every read whose panel touches
+    /// the frame edge would be the buffer-eviction problem `rois_line`'s
+    /// once-per-value rule exists to avoid. One column of pixels inside the
+    /// frame is a read.
+    #[test]
+    fn a_text_roi_clipped_at_the_edge_is_still_a_read_and_says_nothing() {
+        let regions = [
+            // Its last column is x = 1919: inside.
+            ("panel", [1919, 4, 544, 454]),
+            // Hanging off the LEFT and the TOP, one row and one column in.
+            ("remaining", [-299, -45, 300, 46]),
+        ];
+
+        assert!(clipped_text_rois(&regions, 1920, 1080).is_empty());
+    }
+
+    /// Both regions outside means both are named — the loop is over the
+    /// regions, not a first-hit answer.
+    ///
+    /// Fails if the check short-circuits on the panel: the budget line is the
+    /// one whose loss POE-230 called "a warning, not the board", and a report
+    /// that only ever names the panel would leave that loss exactly as silent
+    /// as it was before.
+    #[test]
+    fn every_outside_region_is_named_rather_than_the_first() {
+        let regions = [("panel", [4000, 4, 544, 454]), ("remaining", [810, 2000, 300, 46])];
+
+        let outside = clipped_text_rois(&regions, 1920, 1080);
+
+        assert_eq!(
+            outside.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            vec!["panel", "remaining"],
+        );
+    }
+
+    /// The notice is announced once per OUTSIDE-SET, and a rect that moves while
+    /// staying outside is not a new announcement.
+    ///
+    /// The case this is keyed for: a windowed client being DRAGGED. The panel
+    /// rect is a function of `(origin, scale)`, which moves with the window, so
+    /// every tick of the drag produces a different message about the same fact.
+    /// Keying on the message — which is what `ErrorLog` does — would say it at
+    /// 1 Hz for the length of the drag AND spend the session-wide
+    /// `MAX_DISTINCT_ERRORS` budget doing it, so every later temple error would
+    /// be dropped from the log by a mouse gesture.
+    ///
+    /// Fails if the memory keys on the rect or on the line.
+    #[test]
+    fn the_clipped_notice_is_said_once_while_the_same_regions_stay_outside() {
+        let mut said = None;
+
+        let first = clipped_roi_announcement(&mut said, &[("panel", [1920, 4, 544, 454])])
+            .expect("the first clipped read says so");
+        assert_eq!(first.len(), 1);
+        assert!(first[0].contains("[1920, 4, 544, 454]"), "{first:?}");
+
+        assert_eq!(
+            clipped_roi_announcement(&mut said, &[("panel", [1975, 60, 544, 454])]),
+            None,
+            "the same region, still outside, at a rect the drag moved — not news",
+        );
+    }
+
+    /// A SECOND region going outside is news, and so is the same region going
+    /// outside again after coming back.
+    ///
+    /// The other half of the memory: it must not degrade into "say it once
+    /// ever", which is the shape a `said.is_some()` guard would give it. Coming
+    /// back in frame is not itself announced — nothing is wrong, and a log that
+    /// narrates recovery evicts the failure it recovered from — but it does not
+    /// suppress the next report either.
+    #[test]
+    fn the_clipped_notice_returns_when_the_set_changes_or_the_fault_comes_back() {
+        let mut said = None;
+        let panel = ("panel", [1920, 4, 544, 454]);
+        let remaining = ("remaining", [810, 2000, 300, 46]);
+
+        assert!(clipped_roi_announcement(&mut said, &[panel]).is_some());
+        let both = clipped_roi_announcement(&mut said, &[panel, remaining])
+            .expect("a second region outside is a different fact");
+        assert_eq!(both.len(), 2, "{both:?}");
+
+        assert_eq!(
+            clipped_roi_announcement(&mut said, &[]),
+            None,
+            "coming back in frame is remembered, not narrated",
+        );
+        assert!(
+            clipped_roi_announcement(&mut said, &[panel]).is_some(),
+            "the fault returning is news again, not suppressed by the first report",
         );
     }
 

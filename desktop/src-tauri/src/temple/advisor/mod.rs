@@ -2054,6 +2054,55 @@ mod tests {
         );
     }
 
+    // The same acceptance board at the numbers the APP runs.
+    //
+    // The test above is asserted at this suite's `N`/`SEED` (400 and 7), which
+    // are not what a player's read uses: `slice::advise_read` passes
+    // `slice::ROLLOUTS` (2000) and `slice::SEED` (0x_7065_0171). The rollout is
+    // a sampler, so an ordering that holds at one (n, seed) is not an ordering
+    // that holds at another — and POE-243's acceptance criterion is about what
+    // the OVERLAY says, which only these two numbers decide.
+    //
+    // Imported rather than retyped: a test carrying its own copy of 2000 would
+    // keep passing after production moved off it, which is the whole failure
+    // this test exists to close.
+    //
+    // NOT ignored, measured rather than assumed: 2000 rollouts over this one
+    // board is 0.02 s in the release container (2026-09-04), so the five-fold
+    // rollout count buys nothing worth a lane exclusion. `N = 400` stays what
+    // the OTHER hundred-odd assertions in this module run at — the suite cost
+    // is the whole suite, not one case.
+    #[test]
+    fn the_pc_board_kills_the_change_architect_at_the_production_rollouts() {
+        use crate::temple::slice::{ROLLOUTS as PROD_ROLLOUTS, SEED as PROD_SEED};
+
+        let case = cases::case_7_armourers_workshop();
+
+        let advice = advise(
+            &case.state,
+            &case.offers,
+            case.keys,
+            &rush(),
+            &TempleConfig::default(),
+            PROD_ROLLOUTS,
+            PROD_SEED,
+        );
+
+        let top = advice.recommendations.first().expect("the board ranks");
+        let architect = top
+            .option
+            .architect
+            .as_ref()
+            .unwrap_or_else(|| panic!("{}: the top move must carry a kill", case.name));
+        assert_eq!(
+            (architect.offer_index, architect.kind, architect.display_name),
+            (1, Change, "Sanctum of Unity"),
+            "{}: the verdict at N={PROD_ROLLOUTS} seed={PROD_SEED:#x} — the numbers a read \
+             actually uses — must be the one the suite pins at N=400 seed=7",
+            case.name,
+        );
+    }
+
     // An illegible footer must not read as an optimistic forecast.
     #[test]
     fn an_illegible_incursion_count_is_reported_rather_than_assumed() {
