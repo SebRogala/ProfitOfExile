@@ -108,52 +108,52 @@ func candidateKeys(candidates []candidate) []string {
 func cardInChaos(action string) candidateLeg {
 	return candidateLeg{
 		action: action, item: cardID, quote: chaosID,
-		obs: obs{
+		obs: hourChannels(obs{
 			low:  pricePoint{price: 10, itemQty: 1, quoteQty: 10},
 			high: pricePoint{price: 12, itemQty: 1, quoteQty: 12},
 			vwap: 5000.0 / 300.0, vwapOK: true,
 			tick:        1.0 / 10.0,
 			quoteVolume: 5000, volume: 300, stock: executedStock(action, 40, 900),
-		},
+		}),
 	}
 }
 
 func cardInDivine(action string) candidateLeg {
 	return candidateLeg{
 		action: action, item: cardID, quote: divineID,
-		obs: obs{
+		obs: hourChannels(obs{
 			low:  pricePoint{price: 1.0 / 20.0, itemQty: 20, quoteQty: 1},
 			high: pricePoint{price: 1.0 / 16.0, itemQty: 16, quoteQty: 1},
 			vwap: 80.0 / 250.0, vwapOK: true,
 			tick:        1.0 / 16.0,
 			quoteVolume: 80, volume: 250, stock: executedStock(action, 35, 70),
-		},
+		}),
 	}
 }
 
 func divineInChaos(action string) candidateLeg {
 	return candidateLeg{
 		action: action, item: divineID, quote: chaosID,
-		obs: obs{
+		obs: hourChannels(obs{
 			low:  pricePoint{price: 196, itemQty: 1, quoteQty: 196},
 			high: pricePoint{price: 201, itemQty: 1, quoteQty: 201},
 			vwap: 13001051.0 / 65361.0, vwapOK: true,
 			tick:        1.0 / 196.0,
 			quoteVolume: 13001051, volume: 65361, stock: executedStock(action, 8878, 4564191),
-		},
+		}),
 	}
 }
 
 func chaosInDivine(action string) candidateLeg {
 	return candidateLeg{
 		action: action, item: chaosID, quote: divineID,
-		obs: obs{
+		obs: hourChannels(obs{
 			low:  pricePoint{price: 1.0 / 201.0, itemQty: 201, quoteQty: 1},
 			high: pricePoint{price: 1.0 / 196.0, itemQty: 196, quoteQty: 1},
 			vwap: 65361.0 / 13001051.0, vwapOK: true,
 			tick:        1.0 / 196.0,
 			quoteVolume: 65361, volume: 13001051, stock: executedStock(action, 4564191, 8878),
-		},
+		}),
 	}
 }
 
@@ -168,7 +168,7 @@ func executedStock(action string, itemSide, quoteSide int64) int64 {
 }
 
 func TestCrossQuoteCandidates_cardBoughtInChaos_observesTheThreeMarketsItWalks(t *testing.T) {
-	got := crossQuoteCandidates(triangle(), DefaultConfig())
+	got := crossQuoteCandidates(triangle(), windowView{}, DefaultConfig())
 
 	c := candidateByKey(t, got, oneHopKey(cardID, chaosID, divineID))
 	// Each leg carries the hour as ITS market saw it: the chaos market's tenths,
@@ -189,7 +189,7 @@ func TestCrossQuoteCandidates_cardBoughtInChaos_observesTheThreeMarketsItWalks(t
 }
 
 func TestCrossQuoteCandidates_cardBoughtInChaos_edgeIsTheProductOfThreeHourlyExtremes(t *testing.T) {
-	got := crossQuoteCandidates(triangle(), DefaultConfig())
+	got := crossQuoteCandidates(triangle(), windowView{}, DefaultConfig())
 
 	c := candidateByKey(t, got, oneHopKey(cardID, chaosID, divineID))
 	// Ten chaos buys a card, the card sells for a sixteenth of a divine, and
@@ -198,7 +198,7 @@ func TestCrossQuoteCandidates_cardBoughtInChaos_edgeIsTheProductOfThreeHourlyExt
 }
 
 func TestCrossQuoteCandidates_cardBoughtInDivine_observesTheThreeMarketsItWalks(t *testing.T) {
-	got := crossQuoteCandidates(triangle(), DefaultConfig())
+	got := crossQuoteCandidates(triangle(), windowView{}, DefaultConfig())
 
 	c := candidateByKey(t, got, oneHopKey(cardID, divineID, chaosID))
 	// The mirror walks the same three markets the other way round, so the
@@ -215,14 +215,14 @@ func TestCrossQuoteCandidates_cardBoughtInDivine_observesTheThreeMarketsItWalks(
 }
 
 func TestCrossQuoteCandidates_cardBoughtInDivine_edgeIsTheProductOfThreeHourlyExtremes(t *testing.T) {
-	got := crossQuoteCandidates(triangle(), DefaultConfig())
+	got := crossQuoteCandidates(triangle(), windowView{}, DefaultConfig())
 
 	c := candidateByKey(t, got, oneHopKey(cardID, divineID, chaosID))
 	wantClose(t, "edge", c.edge, 12.0*(1.0/196.0)/(1.0/20.0)-1)
 }
 
 func TestCrossQuoteCandidates_triangle_tradesOnlyTheItemThatIsNotAQuoteCurrency(t *testing.T) {
-	got := crossQuoteCandidates(triangle(), DefaultConfig())
+	got := crossQuoteCandidates(triangle(), windowView{}, DefaultConfig())
 
 	// The three markets close a loop that could be walked from any of its three
 	// corners, but a cross-quote play is one ITEM against two CURRENCIES: only
@@ -281,7 +281,7 @@ func TestCrossQuoteCandidates_loopThatIsNotOneItemAgainstTwoCurrencies_producesN
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := crossQuoteCandidates(tt.rows, tt.cfg); len(got) != 0 {
+			if got := crossQuoteCandidates(tt.rows, windowView{}, tt.cfg); len(got) != 0 {
 				t.Errorf("got %v, want no routes", candidateKeys(got))
 			}
 		})
@@ -294,7 +294,7 @@ func TestCrossQuoteCandidates_quotePriorityNamingTheCard_makesDivineTheTradedIte
 	// card and chaos are the currencies.
 	cfg := withField(func(c *Config) { c.QuotePriority = []string{ChaosID, cardID} })
 
-	got := crossQuoteCandidates(triangle(), cfg)
+	got := crossQuoteCandidates(triangle(), windowView{}, cfg)
 
 	want := []string{
 		oneHopKey(divineID, chaosID, cardID),
@@ -330,7 +330,7 @@ func TestCrossQuoteCandidates_hourWithoutTheClosingMarket_producesNoRoute(t *tes
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := crossQuoteCandidates(tt.rows, DefaultConfig()); len(got) != 0 {
+			if got := crossQuoteCandidates(tt.rows, windowView{}, DefaultConfig()); len(got) != 0 {
 				t.Errorf("got %v, want no routes", candidateKeys(got))
 			}
 		})
@@ -350,7 +350,7 @@ func TestCrossQuoteCandidates_untradedLegOnOneMarket_dropsOnlyTheRoutesThatTrade
 		scarabChaosSpec().row(), scarabDivineSpec().row(),
 	}
 
-	got := crossQuoteCandidates(rows, DefaultConfig())
+	got := crossQuoteCandidates(rows, windowView{}, DefaultConfig())
 
 	want := []string{
 		oneHopKey(scarabID, divineID, chaosID),
@@ -383,7 +383,7 @@ func TestCrossQuoteCandidates_unusableClosingMarket_dropsEveryRouteThroughIt(t *
 			closing := chaosDivineSpec()
 			tt.breakSpec(&closing)
 
-			got := crossQuoteCandidates([]Row{cardChaosSpec().row(), cardDivineSpec().row(), closing.row()}, DefaultConfig())
+			got := crossQuoteCandidates([]Row{cardChaosSpec().row(), cardDivineSpec().row(), closing.row()}, windowView{}, DefaultConfig())
 			if len(got) != 0 {
 				t.Errorf("got %v, want no routes", candidateKeys(got))
 			}
@@ -400,7 +400,7 @@ func TestCrossQuoteCandidates_closingMarketWithNoStockOfTheCurrencyBeingSold_dro
 	closing := chaosDivineSpec()
 	closing.highestStock[0] = 0
 
-	got := crossQuoteCandidates([]Row{cardChaosSpec().row(), cardDivineSpec().row(), closing.row()}, DefaultConfig())
+	got := crossQuoteCandidates([]Row{cardChaosSpec().row(), cardDivineSpec().row(), closing.row()}, windowView{}, DefaultConfig())
 
 	want := []string{oneHopKey(cardID, divineID, chaosID)}
 	if !reflect.DeepEqual(candidateKeys(got), want) {
@@ -415,7 +415,7 @@ func TestCrossQuoteCandidates_closingMarketWithNoStockOfTheCurrencyBeingBought_d
 	closing := chaosDivineSpec()
 	closing.highestStock[1] = 0
 
-	got := crossQuoteCandidates([]Row{cardChaosSpec().row(), cardDivineSpec().row(), closing.row()}, DefaultConfig())
+	got := crossQuoteCandidates([]Row{cardChaosSpec().row(), cardDivineSpec().row(), closing.row()}, windowView{}, DefaultConfig())
 
 	want := []string{oneHopKey(cardID, chaosID, divineID)}
 	if !reflect.DeepEqual(candidateKeys(got), want) {
@@ -436,7 +436,7 @@ func TestCrossQuoteCandidates_sellLegIntoAMarketWithNoAsksStanding_isGatedAndMar
 	oneSided := cardChaosSpec()
 	oneSided.highestStock[1] = 0
 
-	got := crossQuoteCandidates([]Row{oneSided.row(), cardDivineSpec().row(), chaosDivineSpec().row()}, DefaultConfig())
+	got := crossQuoteCandidates([]Row{oneSided.row(), cardDivineSpec().row(), chaosDivineSpec().row()}, windowView{}, DefaultConfig())
 
 	c := candidateByKey(t, got, oneHopKey(cardID, divineID, chaosID))
 	sell := c.legs[1]
@@ -459,7 +459,7 @@ func TestCrossQuoteCandidates_buyLegOnTheSameOneSidedMarket_isStillDropped(t *te
 	oneSided := cardChaosSpec()
 	oneSided.highestStock[1] = 0
 
-	got := crossQuoteCandidates([]Row{oneSided.row(), cardDivineSpec().row(), chaosDivineSpec().row()}, DefaultConfig())
+	got := crossQuoteCandidates([]Row{oneSided.row(), cardDivineSpec().row(), chaosDivineSpec().row()}, windowView{}, DefaultConfig())
 
 	if key := oneHopKey(cardID, chaosID, divineID); indexOf(candidateKeys(got), key) >= 0 {
 		t.Errorf("keys = %v, want no route buying the card off an empty ask side", candidateKeys(got))
@@ -474,7 +474,7 @@ func TestCrossQuoteCandidates_secondRowForTheSamePair_isIgnored(t *testing.T) {
 	second.lowestRatio = [2]int64{1000, 1}
 	second.highestRatio = [2]int64{2000, 1}
 
-	got := crossQuoteCandidates(append(triangle(), second.row()), DefaultConfig())
+	got := crossQuoteCandidates(append(triangle(), second.row()), windowView{}, DefaultConfig())
 
 	c := candidateByKey(t, got, oneHopKey(cardID, chaosID, divineID))
 	if c.legs[2].obs.high.price != 201 {
@@ -496,14 +496,14 @@ func TestCrossQuoteCandidates_rowThatNamesNoRealPair_isNotACounterparty(t *testi
 		{name: "ItemB is empty", itemA: cardID, itemB: ""},
 	}
 
-	want := crossQuoteCandidates(triangle(), DefaultConfig())
+	want := crossQuoteCandidates(triangle(), windowView{}, DefaultConfig())
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			spec := chaosDivineSpec()
 			spec.itemA = tt.itemA
 			spec.itemB = tt.itemB
 
-			got := crossQuoteCandidates(append(triangle(), spec.row()), DefaultConfig())
+			got := crossQuoteCandidates(append(triangle(), spec.row()), windowView{}, DefaultConfig())
 			if !reflect.DeepEqual(got, want) {
 				t.Errorf("keys = %v, want the untouched triangle's %v", candidateKeys(got), candidateKeys(want))
 			}
@@ -515,7 +515,7 @@ func TestCrossQuoteCandidates_shuffledRows_produceTheIdenticalOutput(t *testing.
 	// Rows arrive from the database in market-id order, but the unit indexes
 	// them through maps, so nothing about the output may depend on the order
 	// they came in.
-	want := crossQuoteCandidates(triangle(), DefaultConfig())
+	want := crossQuoteCandidates(triangle(), windowView{}, DefaultConfig())
 	if len(want) != 2 {
 		t.Fatalf("got %d routes from the reference order, want 2", len(want))
 	}
@@ -525,7 +525,7 @@ func TestCrossQuoteCandidates_shuffledRows_produceTheIdenticalOutput(t *testing.
 		base := triangle()
 		shuffled := []Row{base[order[0]], base[order[1]], base[order[2]]}
 
-		got := crossQuoteCandidates(shuffled, DefaultConfig())
+		got := crossQuoteCandidates(shuffled, windowView{}, DefaultConfig())
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("order %v produced %v, want %v", order, candidateKeys(got), candidateKeys(want))
 		}

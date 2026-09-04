@@ -2542,9 +2542,16 @@ func TestDefaultConfig_isTheDocumentedTuning(t *testing.T) {
 	// parameters ExpectedRoi was calibrated at (POE-193), they take no
 	// environment override, and moving one invalidates the measurement rather
 	// than adjusting a preference.
+	//
+	// The three window knobs — 2 / 6 / 2 — are pinned the same way and for a
+	// related reason: they decide what a served PRICE is, so they take no
+	// environment override either (POE-252).
 	want := Config{
 		WindowHours:       6,
 		MinVolumePerHour:  1,
+		ThinHourVolume:    2,
+		WindowPriceHours:  6,
+		MinWindowVolume:   2,
 		MinEdge:           0.001,
 		MinTurnoverChaos:  0,
 		MaxTick:           1,
@@ -2570,9 +2577,39 @@ func TestDefaultConfig_isTheDocumentedTuning(t *testing.T) {
 	}
 }
 
-func TestConfigWithDefaults_zeroValue_fillsEveryFieldFromDefaultConfig(t *testing.T) {
-	if got, want := (Config{}).withDefaults(), DefaultConfig(); !reflect.DeepEqual(got, want) {
+func TestConfigWithDefaults_zeroValue_fillsEveryOtherFieldFromDefaultConfig(t *testing.T) {
+	// ThinHourVolume is the one field a zero value does NOT restore, because on
+	// that knob an explicit 0 is a CHOICE — nothing is ever thin, so the window
+	// price path never fires. Every other field of the zero value reads as unset.
+	want := withField(func(c *Config) { c.ThinHourVolume = 0 })
+
+	if got := (Config{}).withDefaults(); !reflect.DeepEqual(got, want) {
 		t.Errorf("Config{}.withDefaults() = %+v, want %+v", got, want)
+	}
+}
+
+func TestConfigWithDefaults_explicitZeroThinHourVolume_disarmsTheWindowPathRatherThanRestoringTheDefault(t *testing.T) {
+	// The asymmetry MinEdge already has, mirrored: a level whose OFF value is 0
+	// cannot use the <= 0 idiom, or "off" would be silently rewritten as "on at
+	// the default". It is what
+	// TestBestPlays_windowPricingDisarmed_leavesEverySimulationFieldBitIdentical
+	// turns the path off with, and a <= 0 branch here would make that guard
+	// compare two identical runs and prove nothing.
+	cfg := Config{ThinHourVolume: 0}.withDefaults()
+
+	if cfg.ThinHourVolume != 0 {
+		t.Errorf("ThinHourVolume = %v, want the explicit 0 kept", cfg.ThinHourVolume)
+	}
+}
+
+func TestConfigWithDefaults_negativeThinHourVolume_readsAsUnset(t *testing.T) {
+	// A negative units-traded level means nothing, so it is the value that reads
+	// as unset on this knob — the mirror of MinEdge, where the negative is the
+	// choice and the 0 is unset.
+	cfg := Config{ThinHourVolume: -1}.withDefaults()
+
+	if cfg.ThinHourVolume != DefaultConfig().ThinHourVolume {
+		t.Errorf("ThinHourVolume = %v, want the default %v", cfg.ThinHourVolume, DefaultConfig().ThinHourVolume)
 	}
 }
 
@@ -2674,10 +2711,31 @@ func TestConfigWithDefaults_fillsTheUnsetFieldsIndependently(t *testing.T) {
 			cfg:  Config{MinEdge: -0.5},
 			want: withField(func(c *Config) { c.MinEdge = -0.5 }),
 		},
+		{
+			name: "only ThinHourVolume set",
+			cfg:  Config{ThinHourVolume: 5},
+			want: withField(func(c *Config) { c.ThinHourVolume = 5 }),
+		},
+		{
+			name: "only WindowPriceHours set",
+			cfg:  Config{WindowPriceHours: 12},
+			want: withField(func(c *Config) { c.WindowPriceHours = 12 }),
+		},
+		{
+			name: "only MinWindowVolume set",
+			cfg:  Config{MinWindowVolume: 8},
+			want: withField(func(c *Config) { c.MinWindowVolume = 8 }),
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Every case leaves ThinHourVolume unset, and on that knob unset is
+			// spelled with a negative (the two tests above pin why), so the
+			// table says so once here rather than in twenty rows.
+			if tt.cfg.ThinHourVolume == 0 {
+				tt.cfg.ThinHourVolume = -1
+			}
 			if got := tt.cfg.withDefaults(); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("withDefaults() = %+v, want %+v", got, tt.want)
 			}
@@ -2697,6 +2755,9 @@ func TestConfigWithDefaults_nonPositiveCount_fallsBackToTheDefault(t *testing.T)
 	cfg := Config{
 		WindowHours:       -1,
 		MinVolumePerHour:  -1,
+		ThinHourVolume:    -1,
+		WindowPriceHours:  -1,
+		MinWindowVolume:   -1,
 		MinTurnoverChaos:  -1,
 		MaxTick:           -1,
 		MinEdgeTickRatio:  -1,
@@ -2776,7 +2837,8 @@ func TestResult_marshalsWithTheFieldNamesTheHandlerPublishes(t *testing.T) {
 	wantKeys(t, "result", data, "league", "horizon", "from", "to", "hours", "divineChaosRate", "plays")
 	wantKeys(t, "play", mustMarshal(t, envelope.Plays[0]),
 		"key", "mode", "legs", "roiPct", "edge", "roiPctRaw", "roi", "investment",
-		"turnover", "tick", "depth", "suspect", "lowLiquidity", "hoursSeen", "expectedRoi",
+		"turnover", "tick", "depth", "suspect", "lowLiquidity", "windowPriced",
+		"windowHours", "windowVolume", "hoursSeen", "expectedRoi",
 		"expectedRoiPct", "simEntries", "lowCoverage", "lastHour")
 
 	var legs []map[string]json.RawMessage
@@ -2785,7 +2847,8 @@ func TestResult_marshalsWithTheFieldNamesTheHandlerPublishes(t *testing.T) {
 	}
 	wantKeys(t, "leg", mustMarshal(t, legs[0]),
 		"action", "item", "quote", "price", "priceItemQty", "priceQuoteQty",
-		"fair", "fairOk", "tick", "volume", "stock", "depletedSide", "suspect")
+		"fair", "fairOk", "tick", "volume", "stock", "depletedSide", "suspect",
+		"windowPriced", "windowHours", "windowVolume")
 
 	if got := string(envelope.Plays[0]["mode"]); got != `"direct"` {
 		t.Errorf("mode = %s, want %q", got, "direct")
@@ -2826,4 +2889,270 @@ func mustMarshal(t *testing.T, object map[string]json.RawMessage) []byte {
 		t.Fatalf("marshal: %v", err)
 	}
 	return data
+}
+
+// viewAt is the trailing-window index one scored hour looks back over, built the
+// way BestPlays builds it: the span's rows indexed by market, newest hour first.
+func viewAt(hour time.Time, rows []StoredRow) windowView {
+	return windowView{hour: hour, byMarket: windowHistoryOf(rows)}
+}
+
+// spreadHour is one hour of a chaos-quoted market as the in-game book stood on
+// 2026-09-04: a thousand cards changed hands between 486 chaos at the cheapest
+// and 1148 at the dearest, 750,000 chaos in all, so the hour's own fair is 750.
+func spreadHour(item string) rowSpec {
+	return pairedHour(chaosID, item, [2]int64{486, 1}, [2]int64{1148, 1}, [2]int64{750000, 1000})
+}
+
+// singlePrintHour is one hour whose trades all printed at ONE price — the shape
+// the thin hour has and the shape POE-252 is about: low == high, so the hour
+// alone shows no spread however many units it moved.
+func singlePrintHour(item string, price, units int64) rowSpec {
+	return pairedHour(chaosID, item, [2]int64{price, 1}, [2]int64{price, 1}, [2]int64{price * units, units})
+}
+
+// apocalypseWindowFeed renders `hours` hours of one chaos-quoted market shaped
+// like the 2026-09-04 measurement POE-252 was filed on: every hour printed the
+// spread the book stood at all day (spreadHour), except the hours named in
+// thinBacks, which traded thinUnits cards at a single 552 print — the owner's
+// own purchase being that hour's only trade.
+func apocalypseWindowFeed(item string, hours int, thinUnits int64, thinBacks ...int) []StoredRow {
+	rows := make([]StoredRow, 0, hours)
+	for back := 0; back < hours; back++ {
+		spec := spreadHour(item)
+		for _, thin := range thinBacks {
+			if back == thin {
+				spec = singlePrintHour(item, 552, thinUnits)
+			}
+		}
+		rows = append(rows, storedBack(back, spec))
+	}
+	return rows
+}
+
+func TestBestPlays_thinNewestHourOverASpreadBearingWindow_servesTheWindowPricedRow(t *testing.T) {
+	// THE INCIDENT (2026-09-04, prod). One card traded in the newest hour, at
+	// 552, and it was the owner's own purchase; the served flip read 552/552 for
+	// -0% while the game's book had stood near 550/1150 all day. The six-hour
+	// window prices the same row off what the market actually printed.
+	rows := apocalypseWindowFeed(cardID, 8, 1, 0, 3)
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	play := playByKey(t, got, directKey(chaosID, cardID))
+	if !play.WindowPriced {
+		t.Fatalf("WindowPriced = false on a newest hour that traded one card, want true")
+	}
+	if play.WindowHours != 6 {
+		t.Errorf("WindowHours = %d, want 6 — the closed clock span, every hour of which priced", play.WindowHours)
+	}
+	// Backs 0 and 3 traded one card each, backs 1, 2, 4 and 5 a thousand.
+	if play.WindowVolume != 4002 {
+		t.Errorf("WindowVolume = %v, want 4002 cards over the span", play.WindowVolume)
+	}
+	// The window's realized extremes, each carrying the pair its own hour posted
+	// it as — not the scored hour's 552.
+	buy, sell := play.Legs[0], play.Legs[1]
+	if buy.Price != 486 || buy.PriceItemQty != 1 || buy.PriceQuoteQty != 486 {
+		t.Errorf("buy leg = %v (%d/%d), want 486 chaos for 1 card", buy.Price, buy.PriceQuoteQty, buy.PriceItemQty)
+	}
+	if sell.Price != 1148 || sell.PriceItemQty != 1 || sell.PriceQuoteQty != 1148 {
+		t.Errorf("sell leg = %v (%d/%d), want 1148 chaos for 1 card", sell.Price, sell.PriceQuoteQty, sell.PriceItemQty)
+	}
+	if !buy.WindowPriced || buy.WindowHours != 6 {
+		t.Errorf("buy leg mark = %v/%d, want the window and its six-hour span on the leg too", buy.WindowPriced, buy.WindowHours)
+	}
+	// tick and LastHour stay the SCORED hour's (C5): the window says where the
+	// prices came from, not what the market is doing now.
+	tick := 1.0 / 552.0
+	if play.Tick != tick {
+		t.Errorf("Tick = %v, want the scored hour's %v", play.Tick, tick)
+	}
+	if !play.LastHour.Equal(feedHour) {
+		t.Errorf("LastHour = %v, want the scored hour %v", play.LastHour, feedHour)
+	}
+	wantClose(t, "RoiPct", play.RoiPct, undercutRoi(486, tick, [2]float64{1148, tick}))
+	if play.RoiPct <= 0 {
+		t.Errorf("RoiPct = %v, want a positive round trip — the spread the book stood at", play.RoiPct)
+	}
+	if play.LowLiquidity {
+		t.Errorf("LowLiquidity = true, want false: the window round trip clears MinEdge")
+	}
+}
+
+func TestBestPlays_windowPricingDisarmed_leavesEverySimulationFieldBitIdentical(t *testing.T) {
+	// ADR-016's calibration lock (C3). The fill simulation reads the HOUR
+	// channels and never the window ones, so arming the window path may move
+	// what a row is PRICED at and must not move ExpectedRoi, ExpectedRoiPct,
+	// SimEntries or LowCoverage by a single bit. Compared with == rather than
+	// within a tolerance: the claim is that the simulation never saw a window
+	// price at all, and any drift falsifies it.
+	//
+	// The feed is thin in the newest hour AND five hours behind it, so a
+	// window-priced hour is both an entry hour and a fill hour for the entries
+	// before it — the three sim channels a leak could travel through.
+	rows := apocalypseWindowFeed(cardID, 8, 1, 0, 3)
+	// A triangle rides along so that ALL FIVE of the simulation's reads are
+	// covered rather than the direct flip's three: the fifth is the conversion
+	// leg's volume-weighted price (recordSim's c.legs[2]), and here the
+	// divine/chaos market it converts on is itself thin in two hours — one divine
+	// against 300 chaos — so the conversion leg window-prices there and a leak on
+	// that read moves the triangle's expectation. The newest of the two is what
+	// makes the mark visible on the served row; back 2 is the one the simulation
+	// enters in.
+	chaosLeg, divineLeg, anchor := liquidTriangle()
+	for back := 0; back < 8; back++ {
+		hourAnchor := anchor
+		if back == 0 || back == 2 {
+			hourAnchor.volume = [2]int64{300, 1}
+		}
+		rows = append(rows, storedBack(back, chaosLeg), storedBack(back, divineLeg), storedBack(back, hourAnchor))
+	}
+	// A second card market pins the sixth read, sellVwapOK: recordSim must file
+	// the sell leg's HOUR anchor and never its window one. Its newest hour traded
+	// one card and NO chaos came back for it, so that hour has no volume-weighted
+	// price of its own while the window behind it — five spread hours of 750,000
+	// chaos — has a perfectly good one. Arming the window therefore gives the leg
+	// a Fair its own hour lacks, and simulateEntry consults exactly that reading
+	// when an entry goes unsold: the entry posted in the hour before the newest
+	// has no later hour to sell into, so it fire-sales against the newest hour's
+	// anchor or is skipped for want of one. Reading the window's anchor there
+	// would resurrect a skipped entry and move the mean.
+	//
+	// The reverse arrangement — a window with no anchor over an hour that has one
+	// — cannot be built: gatedLeg only reaches the window path on a row that
+	// already priced and traded, so the scored hour is always one of its own
+	// window's contributors and its quote volume is always in the pooled sum.
+	const noAnchorCardID = "Metadata/Items/DivinationCards/DivinationCardNoAnchor"
+	noAnchor := apocalypseWindowFeed(noAnchorCardID, 8, 1)
+	noAnchor[0] = storedBack(0, pairedHour(chaosID, noAnchorCardID, [2]int64{552, 1}, [2]int64{552, 1}, [2]int64{0, 1}))
+	rows = append(rows, noAnchor...)
+	key := directKey(chaosID, cardID)
+
+	disarmed := DefaultConfig()
+	disarmed.ThinHourVolume = 0
+
+	armedResult := BestPlays("Allflame", rows, DefaultConfig())
+	disarmedResult := BestPlays("Allflame", rows, disarmed)
+
+	// The two runs must genuinely differ in what they PRICED, or the equalities
+	// below would hold for the wrong reason.
+	armedPlay, disarmedPlay := playByKey(t, armedResult, key), playByKey(t, disarmedResult, key)
+	if !armedPlay.WindowPriced || disarmedPlay.WindowPriced {
+		t.Fatalf("WindowPriced armed/disarmed = %v/%v, want true/false", armedPlay.WindowPriced, disarmedPlay.WindowPriced)
+	}
+	if armedPlay.RoiPct == disarmedPlay.RoiPct {
+		t.Fatalf("both runs returned RoiPct %v; the disarmed run was not disarmed", armedPlay.RoiPct)
+	}
+	if armedPlay.SimEntries == 0 {
+		t.Fatalf("SimEntries = 0, so the equality below would compare two empty simulations")
+	}
+	// The triangle's conversion leg must actually have window-priced, or the
+	// fifth read is not under test — and its route must have simulated something,
+	// or recordSim's legs[2] read was never reached on a live entry.
+	hop := playByKey(t, armedResult, oneHopKey(scarabID, chaosID, divineID))
+	if !hop.WindowPriced {
+		t.Fatalf("the one-hop route came back unmarked; its conversion leg never read a window")
+	}
+	if hop.SimEntries == 0 {
+		t.Fatalf("the one-hop route's SimEntries = 0, so the conversion leg's equality below is vacuous")
+	}
+	// The no-anchor market must have gained a Fair from its window that its own
+	// hour does not have, or sim.go's sellVwapOK read is not under test.
+	armedNoAnchor := playByKey(t, armedResult, directKey(chaosID, noAnchorCardID))
+	disarmedNoAnchor := playByKey(t, disarmedResult, directKey(chaosID, noAnchorCardID))
+	if !armedNoAnchor.Legs[1].FairOK || disarmedNoAnchor.Legs[1].FairOK {
+		t.Fatalf("no-anchor sell-leg FairOK armed/disarmed = %v/%v, want true/false: the window anchor the simulation must not read", armedNoAnchor.Legs[1].FairOK, disarmedNoAnchor.Legs[1].FairOK)
+	}
+
+	// The SET is compared and not the order: arming the window path may legitimately
+	// move a row in the ranking, because a window-priced row's own Suspect reading
+	// is taken against the window's fair (C4) and Suspect is a sort key. What may
+	// not move is the four simulation fields below.
+	armedKeys, disarmedKeys := playKeys(armedResult.Plays), playKeys(disarmedResult.Plays)
+	sort.Strings(armedKeys)
+	sort.Strings(disarmedKeys)
+	if !reflect.DeepEqual(armedKeys, disarmedKeys) {
+		t.Fatalf("served keys = %v, want the disarmed run's %v", armedKeys, disarmedKeys)
+	}
+	for _, k := range armedKeys {
+		a, d := playByKey(t, armedResult, k), playByKey(t, disarmedResult, k)
+		if a.ExpectedRoi != d.ExpectedRoi {
+			t.Errorf("%s ExpectedRoi = %v, want the disarmed run's %v", k, a.ExpectedRoi, d.ExpectedRoi)
+		}
+		if a.ExpectedRoiPct != d.ExpectedRoiPct {
+			t.Errorf("%s ExpectedRoiPct = %v, want the disarmed run's %v", k, a.ExpectedRoiPct, d.ExpectedRoiPct)
+		}
+		if a.SimEntries != d.SimEntries {
+			t.Errorf("%s SimEntries = %d, want the disarmed run's %d", k, a.SimEntries, d.SimEntries)
+		}
+		if a.LowCoverage != d.LowCoverage {
+			t.Errorf("%s LowCoverage = %v, want the disarmed run's %v", k, a.LowCoverage, d.LowCoverage)
+		}
+	}
+}
+
+func TestBestPlays_windowPricedMark_doesNotOrderTheServedList(t *testing.T) {
+	// ADR-018: a flag marks, it never orders. These four markets are identical in
+	// every field the ranking comparator reads — Suspect, LowCoverage,
+	// ExpectedRoi, Turnover and Mode — and differ only in whether their newest
+	// hour was thin enough to price from the window, so the served order is the
+	// key order and nothing else. A comparator clause on the mark would group A
+	// with D and break this.
+	//
+	// The five hours behind the newest carry stock on NEITHER side, so no older
+	// hour produces a gated candidate and every market's simulation is empty.
+	// They still price the window, which reads traded volume and never stock.
+	const (
+		markA = "Metadata/Items/Currency/CurrencyWindowMarkA"
+		markB = "Metadata/Items/Currency/CurrencyWindowMarkB"
+		markC = "Metadata/Items/Currency/CurrencyWindowMarkC"
+		markD = "Metadata/Items/Currency/CurrencyWindowMarkD"
+	)
+	units := map[string]int64{markA: 1, markB: 2, markC: 2, markD: 1}
+
+	var rows []StoredRow
+	for _, item := range []string{markA, markB, markC, markD} {
+		for back := 0; back < 6; back++ {
+			// Same 240 chaos of turnover in the newest hour whichever way it is
+			// priced, so the comparator's Turnover clause cannot separate them.
+			spec := pairedHour(chaosID, item, [2]int64{100, 1}, [2]int64{130, 1}, [2]int64{240, units[item]})
+			if back > 0 {
+				spec = pairedHour(chaosID, item, [2]int64{100, 1}, [2]int64{130, 1}, [2]int64{12000, 100})
+				spec.lowestStock = [2]int64{0, 0}
+				spec.highestStock = [2]int64{0, 0}
+			}
+			rows = append(rows, storedBack(back, spec))
+		}
+	}
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	for _, item := range []string{markA, markD} {
+		if play := playByKey(t, got, directKey(chaosID, item)); !play.WindowPriced {
+			t.Fatalf("%s WindowPriced = false, want the window path to have fired", item)
+		}
+	}
+	for _, item := range []string{markB, markC} {
+		if play := playByKey(t, got, directKey(chaosID, item)); play.WindowPriced {
+			t.Fatalf("%s WindowPriced = true, want its own hour's prices", item)
+		}
+	}
+
+	keys := playKeys(got.Plays)
+	want := []string{
+		directKey(chaosID, markA),
+		directKey(chaosID, markB),
+		directKey(chaosID, markC),
+		directKey(chaosID, markD),
+	}
+	var served []string
+	for _, key := range keys {
+		if indexOf(want, key) >= 0 {
+			served = append(served, key)
+		}
+	}
+	if !reflect.DeepEqual(served, want) {
+		t.Errorf("served order = %v, want key order %v — the mark does not order (ADR-018)", served, want)
+	}
 }
