@@ -443,12 +443,12 @@ describe('the header line', () => {
 });
 
 describe('the one guides line', () => {
-	// The smoke complaint: the strip spent two lines saying "Guide A SKIP" and
-	// "Guide B SKIP". Which guide said no is not a decision the player makes
+	// The smoke complaint: the strip spent one SKIP line per guide, two of them
+	// at the time. Which guide said no is not a decision the player makes
 	// differently — the page keeps the per-guide breakdown.
 	it('says SKIP once however many guides decided against it', () => {
 		const line = guidesLine(
-			verdict([source('guide-a', 'Guide A', 'skip'), source('guide-b', 'Guide B', 'skip')]),
+			verdict([source('guide-a', 'ckaiba', 'skip'), source('guide-b', 'Nerotox', 'skip')]),
 			capture([])
 		);
 		expect(line).toEqual({ text: SKIP_LINE, tone: 'fail' });
@@ -459,15 +459,15 @@ describe('the one guides line', () => {
 	it('names only the guides that said WORTH', () => {
 		const line = guidesLine(
 			verdict([
-				source('guide-a', 'Guide A', 'skip'),
-				source('guide-b', 'Guide B', 'worth', ['kinetist-mid'], [
+				source('guide-a', 'ckaiba', 'skip'),
+				source('guide-b', 'Nerotox', 'worth', ['kinetist-mid'], [
 					ruleset('kinetist-mv', 'Kinetist', 'minimum viable'),
 					ruleset('kinetist-mid', 'Kinetist', 'mid')
 				])
 			]),
 			capture([])
 		);
-		expect(line).toEqual({ text: 'WORTH · Guide B (Kinetist mid)', tone: 'pass' });
+		expect(line).toEqual({ text: 'WORTH · Nerotox (Kinetist mid)', tone: 'pass' });
 	});
 
 	// A ladder can seat two rungs at one tier, and the strip is the line the
@@ -475,26 +475,26 @@ describe('the one guides line', () => {
 	it('names a rung sharing its tier by the wording that tells the two apart', () => {
 		const line = guidesLine(
 			verdict([
-				source('guide-b', 'Guide B', 'worth', ['fb-end-return'], [
+				source('guide-b', 'Nerotox', 'worth', ['fb-end-return'], [
 					ruleset('fb-end-return', 'Frost Blades', 'end', 'endgame (return)')
 				])
 			]),
 			capture([])
 		);
-		expect(line?.text).toBe('WORTH · Guide B (Frost Blades endgame (return))');
+		expect(line?.text).toBe('WORTH · Nerotox (Frost Blades endgame (return))');
 	});
 
 	it('names every guide that said WORTH when more than one did', () => {
 		const line = guidesLine(
 			verdict([
-				source('guide-a', 'Guide A', 'worth', ['manyshot'], [ruleset('manyshot', 'Manyshot', null)]),
-				source('guide-b', 'Guide B', 'worth', ['kinetist-mid'], [
+				source('guide-a', 'ckaiba', 'worth', ['manyshot'], [ruleset('manyshot', 'Manyshot', null)]),
+				source('guide-b', 'Nerotox', 'worth', ['kinetist-mid'], [
 					ruleset('kinetist-mid', 'Kinetist', 'mid')
 				])
 			]),
 			capture([])
 		);
-		expect(line?.text).toBe('WORTH · Guide A (Manyshot), Guide B (Kinetist mid)');
+		expect(line?.text).toBe('WORTH · ckaiba (Manyshot), Nerotox (Kinetist mid)');
 	});
 
 	// Three guides now, and the strip is still ONE line: the two saying no cost
@@ -504,8 +504,8 @@ describe('the one guides line', () => {
 	it('names the one guide that said WORTH when the other two skipped', () => {
 		const line = guidesLine(
 			verdict([
-				source('guide-a', 'Guide A', 'skip'),
-				source('guide-b', 'Guide B', 'skip'),
+				source('guide-a', 'ckaiba', 'skip'),
+				source('guide-b', 'Nerotox', 'skip'),
 				source('guide-c', 'CaptainLance', 'worth', ['guide-c-kinetist'], [
 					ruleset('guide-c-kinetist', 'Kinetist', null)
 				])
@@ -523,7 +523,7 @@ describe('the one guides line', () => {
 	it('names both guides when the one search they share is what said WORTH', () => {
 		const line = guidesLine(
 			verdict([
-				source('guide-b', 'Guide B', 'worth', ['guide-b-kinetist-mv'], [
+				source('guide-b', 'Nerotox', 'worth', ['guide-b-kinetist-mv'], [
 					ruleset('guide-b-kinetist-mv', 'Kinetist', 'mv')
 				]),
 				source('guide-d', 'XTheFarmerX', 'worth', ['guide-d-kinetist-20d'], [
@@ -532,7 +532,7 @@ describe('the one guides line', () => {
 			]),
 			capture([])
 		);
-		expect(line?.text).toBe('WORTH · Guide B (Kinetist mv), XTheFarmerX (Kinetist 20D)');
+		expect(line?.text).toBe('WORTH · Nerotox (Kinetist mv), XTheFarmerX (Kinetist 20D)');
 	});
 
 	// A WORTH outranks a SKIP beside it: one guide paying for this mercenary is
@@ -541,8 +541,8 @@ describe('the one guides line', () => {
 	it('reports a WORTH even when another guide said SKIP', () => {
 		const line = guidesLine(
 			verdict([
-				source('guide-a', 'Guide A', 'skip'),
-				source('guide-b', 'Guide B', 'worth', ['manyshot'], [ruleset('manyshot', 'Manyshot', null)])
+				source('guide-a', 'ckaiba', 'skip'),
+				source('guide-b', 'Nerotox', 'worth', ['manyshot'], [ruleset('manyshot', 'Manyshot', null)])
 			]),
 			capture([])
 		);
@@ -553,7 +553,7 @@ describe('the one guides line', () => {
 	// this answer, which is not true of a SKIP.
 	it('says unknown with the unread count when no guide could decide', () => {
 		const line = guidesLine(
-			verdict([source('guide-a', 'Guide A', 'unknown'), source('guide-b', 'Guide B', 'unknown')]),
+			verdict([source('guide-a', 'ckaiba', 'unknown'), source('guide-b', 'Nerotox', 'unknown')]),
 			capture([row(0, ['unknown', 'ambiguous'])])
 		);
 		expect(line).toEqual({ text: 'unknown — 2 icons unread', tone: 'unknown' });
@@ -561,7 +561,7 @@ describe('the one guides line', () => {
 
 	it('counts one unread icon in the singular', () => {
 		const line = guidesLine(
-			verdict([source('guide-a', 'Guide A', 'unknown')]),
+			verdict([source('guide-a', 'ckaiba', 'unknown')]),
 			capture([row(0, ['unknown', 'matched'])])
 		);
 		expect(line?.text).toBe('unknown — 1 icon unread');
@@ -571,7 +571,7 @@ describe('the one guides line', () => {
 	// icon — so the line must not offer a hover that would settle nothing.
 	it('leaves the count off an unknown with every icon read', () => {
 		const line = guidesLine(
-			verdict([source('guide-a', 'Guide A', 'unknown')]),
+			verdict([source('guide-a', 'ckaiba', 'unknown')]),
 			capture([row(0, ['matched'])])
 		);
 		expect(line?.text).toBe(UNKNOWN_LINE);
@@ -581,7 +581,7 @@ describe('the one guides line', () => {
 	// either way, so the shorter wording hides nothing.
 	it('reads a mixed SKIP and unknown as a SKIP', () => {
 		const line = guidesLine(
-			verdict([source('guide-a', 'Guide A', 'skip'), source('guide-b', 'Guide B', 'unknown')]),
+			verdict([source('guide-a', 'ckaiba', 'skip'), source('guide-b', 'Nerotox', 'unknown')]),
 			capture([row(0, ['unknown'])])
 		);
 		expect(line?.text).toBe(SKIP_LINE);
@@ -591,7 +591,7 @@ describe('the one guides line', () => {
 	// so a switched-off guide takes no part in the line.
 	it('ignores a guide the user switched off', () => {
 		const line = guidesLine(
-			verdict([source('guide-a', 'Guide A', 'off'), source('guide-b', 'Guide B', 'skip')]),
+			verdict([source('guide-a', 'ckaiba', 'off'), source('guide-b', 'Nerotox', 'skip')]),
 			capture([])
 		);
 		expect(line?.text).toBe(SKIP_LINE);
@@ -600,7 +600,7 @@ describe('the one guides line', () => {
 	// Drawing SKIP here would put a verdict on screen that no guide gave.
 	it('says so when every guide is switched off rather than drawing a SKIP', () => {
 		const line = guidesLine(
-			verdict([source('guide-a', 'Guide A', 'off'), source('guide-b', 'Guide B', 'off')]),
+			verdict([source('guide-a', 'ckaiba', 'off'), source('guide-b', 'Nerotox', 'off')]),
 			capture([])
 		);
 		expect(line).toEqual({ text: NO_GUIDES_NOTE, tone: 'muted' });

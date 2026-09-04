@@ -389,8 +389,8 @@ export const UNKNOWN_LINE = 'unknown';
 /**
  * ONE line for every enabled guide, not one line per guide (2026-08-25 smoke).
  *
- * The strip used to print `Guide A SKIP` and `Guide B SKIP` on two lines, which
- * is two lines of the player's screen spent saying "no" twice. The player's
+ * The strip used to print one `<guide> SKIP` line per guide, which was two
+ * lines of the player's screen spent saying "no" twice. The player's
  * question is not "what did each guide think" — that is the page, which keeps
  * its full per-guide view — it is "do I pay for this one".
  *
