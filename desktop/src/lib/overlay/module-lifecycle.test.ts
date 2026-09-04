@@ -11,6 +11,7 @@ import {
 	moduleOverlayNextAction,
 	moduleOverlayRetryDelayMs,
 	moduleOverlaySettle,
+	moduleOverlayWanted,
 	type ModuleOverlayLifecycle
 } from './module-lifecycle';
 
@@ -507,5 +508,34 @@ describe('driving one module-coupled overlay', () => {
 		// a future edit breaks first.
 		expect(calls).toEqual(['create']);
 		expect(driver.built()).toBe(false);
+	});
+});
+
+describe('moduleOverlayWanted', () => {
+	it('wants the window for an enabled, granted module', () => {
+		expect(moduleOverlayWanted(true, false, true)).toBe(true);
+	});
+
+	/** Not-yet-polled is not enabled. The caller's own bail-out decides what to
+	 *  do about not-yet-known; reporting it as wanted here would build a window
+	 *  on a value nobody has reported. */
+	it('does not want the window before the first poll has answered', () => {
+		expect(moduleOverlayWanted(undefined, false, true)).toBe(false);
+	});
+
+	/** POE-241: recording a config session is what raises a window for a module
+	 *  whose flag is off, without starting any module work. */
+	it('wants the window for a live config session with the flag off', () => {
+		expect(moduleOverlayWanted(false, true, true)).toBe(true);
+	});
+
+	/** POE-203: the grant is ANDed over BOTH terms. A session must not be a way
+	 *  round a device that lost the feature. */
+	it('refuses a live config session on a device without the grant', () => {
+		expect(moduleOverlayWanted(false, true, false)).toBe(false);
+	});
+
+	it('refuses an enabled module on a device without the grant', () => {
+		expect(moduleOverlayWanted(true, false, false)).toBe(false);
 	});
 });
