@@ -286,7 +286,11 @@ from a trailing clock window, marked with the span it read.**
   only half answered. `directCandidates` walks the scored hour's live rows first,
   exactly as before, then that hour's rescued present rows, then the remaining
   market ids the window index carries, in sorted order; the order is what keeps a
-  live row winning its key and keeps the output deterministic.
+  live row winning its key and keeps the output deterministic. This reach is
+  DIRECT plays only: a one-hop triangle is still enumerated from the scored
+  hour's rows and needs all three markets present there (`crossquote.go` states
+  the asymmetry); a present triangle leg that traded nothing can be rescued,
+  an absent one cannot.
 - **The stock DEMAND is unchanged** — ADR-017's second amendment stands, and the
   side a leg executes against must still be non-empty. What changes on a rescued
   hour is the stock READING: it comes from the newest CONTRIBUTING window row, so
