@@ -430,7 +430,31 @@ pub struct AppState {
     /// re-read of a board it would otherwise skip as unchanged. An atomic, not
     /// a Mutex: it is read on every tick and never read together with the
     /// settings.
+    ///
+    /// **INVARIANT, stated at both fields:** this counter FORCES a read with
+    /// nothing sighted; `temple_epoch` only INVALIDATES one already read. An
+    /// Alva line must never bump this one — that would promote an anchor
+    /// attempt on an empty screen for every voice line, which is the
+    /// free-running capture POE-242 removed.
     pub temple_rearm: AtomicU64,
+    /// Bumped by `temple::trigger::on_client_line` on every CYCLE BOUNDARY
+    /// (`trigger::ends_epoch`: a start line, any other Alva line, a zone change
+    /// out of the temple) — POE-249.
+    ///
+    /// The board's identity: within one epoch no incursion has happened, so the
+    /// sheet cannot have changed, and a sheet re-opened in the same epoch shows
+    /// what was already read rather than being read again. The capture loop
+    /// keys its board on it and INVALIDATES that board when it moves.
+    ///
+    /// **INVARIANT, stated at both fields:** `temple_rearm` FORCES a read with
+    /// nothing sighted; this one only invalidates. It must never be read as a
+    /// reason to look at the screen — Alva speaks several times per incursion,
+    /// and each of those lines would otherwise buy an anchor attempt over
+    /// whatever the player happens to be doing.
+    ///
+    /// An atomic for the same reason as its sibling: read once per tick, never
+    /// read together with anything else.
+    pub temple_epoch: AtomicU64,
     /// Bumped by `ssot::geometry_recalibrate` — the Settings **Recalibrate**
     /// button (POE-227). The merc detect loop compares it against the value its
     /// session last saw and, when it moved, throws away the frame registration
@@ -3870,6 +3894,7 @@ pub fn run() {
         temple_settings: Mutex::new(temple::slice::TempleSettings::shipped()),
         temple_arm: Mutex::new(temple::trigger::ArmState::default()),
         temple_rearm: AtomicU64::new(0),
+        temple_epoch: AtomicU64::new(0),
         merc_refit: AtomicU64::new(0),
         screen: Mutex::new(None),
         game_monitor: Mutex::new(None),

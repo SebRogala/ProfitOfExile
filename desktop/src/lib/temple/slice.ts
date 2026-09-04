@@ -418,6 +418,21 @@ export interface TempleProfile {
 /** The `temple` SSOT slice. Rust-owned; read-only in the webview. */
 export interface TempleSlice {
 	status: TempleStatus;
+	/**
+	 * Whether Alva has started an incursion the module has not yet found the
+	 * temple sheet for (POE-249).
+	 *
+	 * The only new lifecycle state, and a flag rather than a status because the
+	 * lifecycle in `docs/TEMPLE-LIFECYCLE.md` is spelled by three fields
+	 * together: `waiting` is this flag, `reading`/`read` are `status`, and
+	 * `playing` is an advice that stands while the sheet is shut. Rust sets it
+	 * on one of the three measured START phrases and clears it on any other
+	 * Alva line, a zone change, a completed read, a sighting, a stand-down and
+	 * the module being switched off.
+	 *
+	 * The notice's own gate is `overlayShowsWaiting`, not this field alone.
+	 */
+	waitingForPanel: boolean;
 	layout: LayoutView | null;
 	panel: PanelView | null;
 	/** Null whenever there is no decision to make — no board, or no current
@@ -464,6 +479,7 @@ export interface TempleSlice {
 export function templeSliceDefault(): TempleSlice {
 	return {
 		status: 'idle',
+		waitingForPanel: false,
 		layout: null,
 		panel: null,
 		advice: null,

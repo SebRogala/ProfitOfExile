@@ -526,6 +526,34 @@ pub struct AdviceView {
 #[serde(rename_all = "camelCase")]
 pub struct TempleSlice {
     pub status: TempleStatus,
+    /// Whether Alva has started an incursion the module has not yet found the
+    /// temple sheet for (POE-249).
+    ///
+    /// The ONE new lifecycle state, and a flag rather than a status because the
+    /// lifecycle in `docs/TEMPLE-LIFECYCLE.md` is not a second state machine —
+    /// its five states are already spelled by the three fields together:
+    ///
+    /// | cycle state | this flag | [`Self::status`] | [`Self::advice`] |
+    /// |---|---|---|---|
+    /// | `idle` | false | anything | `None` |
+    /// | `waiting` | **true** | not a board status, or a board that predates the new start line | — |
+    /// | `reading` / `read` | false, or **true** while the board still predates the start line | `Reading` / `Read` | — |
+    /// | `playing` | false | `PanelNotVisible` or stood down | `Some` |
+    ///
+    /// Set by [`start_cycle`] on one of the three measured START phrases and
+    /// cleared by [`end_cycle`] on any other Alva line or a zone change
+    /// (`super::trigger`), by [`project`] when a read completes, by
+    /// `super::run::apply_status` when the loop anchors or stops looking, and
+    /// by [`force_off`]. The overlay's own gate is
+    /// `view.ts::overlayShowsWaiting`, which also refuses to draw the notice
+    /// over a board — a START heard with the sheet already open must not blink
+    /// it.
+    ///
+    /// `serde(default)` so a payload from a build before POE-249 decodes as
+    /// "not waiting" rather than failing the whole slice; the webview mirror
+    /// defaults it the same way (`normaliseTemple`).
+    #[serde(default)]
+    pub waiting_for_panel: bool,
     pub layout: Option<LayoutView>,
     pub panel: Option<PanelView>,
     /// `None` whenever there is no decision to make — no board, or no current
@@ -918,6 +946,9 @@ pub fn project(read: &ReadResult<'_>, calibration: Option<AnchorCalibration>) ->
         } else {
             TempleStatus::Read
         },
+        // A completed read is the proof the sheet was found: the wait is over
+        // whether or not anything else noticed it end.
+        waiting_for_panel: false,
         layout: Some(layout_view(read)),
         panel: Some(panel_view(read)),
         advice: read.advice.map(advice_view),
@@ -997,6 +1028,37 @@ pub fn clear_advice(slice: &mut TempleSlice) {
     slice.mode = None;
 }
 
+/// Alva opened a portal: the module is now waiting for the temple sheet
+/// (POE-249).
+///
+/// The one writer that sets [`TempleSlice::waiting_for_panel`], called from
+/// `super::trigger::on_client_line` on one of the three measured START phrases.
+/// It touches nothing else — the board a previous incursion left behind is
+/// still what the Temple page has to draw, and the advice has its own end
+/// (`super::trigger::advice_end`).
+///
+/// A module that cannot look does not wait: an [`TempleStatus::Unavailable`]
+/// slice is left alone, because a START line reaching the watcher after
+/// `super::run::unavailable` parked the loop would otherwise raise a notice no
+/// tick can ever answer — that publish is the loop's last.
+pub fn start_cycle(slice: &mut TempleSlice) {
+    if slice.status == TempleStatus::Unavailable {
+        return;
+    }
+    slice.waiting_for_panel = true;
+}
+
+/// The cycle is over: take the waiting notice down.
+///
+/// The one writer that clears the flag, so every exit says it the same way —
+/// the sheet was found (`super::run::apply_status` on an anchored tick,
+/// [`project`] on a completed read), the loop stopped looking (a stand-down or
+/// a shutdown), Alva spoke again, or the zone changed. Idempotent, and the
+/// caller compares before it calls when it wants a log line.
+pub fn end_cycle(slice: &mut TempleSlice) {
+    slice.waiting_for_panel = false;
+}
+
 /// Force a disabled module's slice to [`TempleStatus::Off`] and drop what it
 /// was advising.
 ///
@@ -1021,6 +1083,9 @@ pub fn clear_advice(slice: &mut TempleSlice) {
 /// page reads the slice, never `ssot.modules`).
 pub fn force_off(slice: &mut TempleSlice) {
     slice.status = TempleStatus::Off;
+    // A notice that says the module is looking for the sheet, over a module
+    // that is switched off, is the same lie the advice would be.
+    end_cycle(slice);
     slice.advice = None;
     slice.mode = None;
     slice.read_notice = None;
@@ -2556,6 +2621,85 @@ mod tests {
         assert_eq!(s.profile, profile);
     }
 
+    // -------------------------------------------------------- the cycle --
+
+    /// Alva opened a portal: the module is waiting for the temple sheet.
+    /// Fails if the writer is inverted or does nothing — the notice would never
+    /// appear, and the whole of POE-249's row 1 with it.
+    #[test]
+    fn starting_a_cycle_puts_the_module_in_the_waiting_state() {
+        let mut s = TempleSlice::default();
+
+        start_cycle(&mut s);
+
+        assert!(s.waiting_for_panel);
+    }
+
+    /// A host with no capture or no OCR never gets a tick, so a START line
+    /// there would raise a notice nothing could take down until Alva spoke
+    /// again. The watcher keeps delivering lines after `super::run::unavailable`
+    /// has parked the loop, and that park was the loop's last publish, so the
+    /// refusal has to live here. Fails if the guard is dropped from
+    /// [`start_cycle`].
+    #[test]
+    fn an_unavailable_module_does_not_start_waiting_for_a_panel() {
+        let mut s = TempleSlice {
+            status: TempleStatus::Unavailable,
+            ..TempleSlice::default()
+        };
+
+        start_cycle(&mut s);
+
+        assert!(!s.waiting_for_panel);
+    }
+
+    /// …and the cycle's end takes it down again. Fails if the two writers do
+    /// the same thing, which would leave the notice up for the rest of the
+    /// session after the first start line.
+    #[test]
+    fn ending_a_cycle_takes_the_waiting_state_off() {
+        let mut s = TempleSlice { waiting_for_panel: true, ..TempleSlice::default() };
+
+        end_cycle(&mut s);
+
+        assert!(!s.waiting_for_panel);
+    }
+
+    /// A completed read is the proof the sheet was found, so the wait is over
+    /// whatever else noticed it end.
+    ///
+    /// This is the belt to `run::apply_status`'s braces (a sighting clears it
+    /// one step earlier, at `TickOutcome::Anchored`): `project` replaces the
+    /// whole slice, so a field it did not set would be the derive default here
+    /// anyway — what the test pins is that the default it lands on is the right
+    /// one. Fails if the projection ever carries a live wait onto a board.
+    #[test]
+    fn a_completed_read_ends_the_wait_for_the_panel() {
+        let layout = layout(Some(Slot::E1), &[], &[]);
+        let rooms = board_rooms(&[(Slot::E1, "Chamber of Iron")]);
+        let panel = panel("Chamber of Iron", Some(6), Vec::new());
+
+        let s = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        assert!(!s.waiting_for_panel);
+    }
+
+    /// A switched-off module is not waiting for anything. Fails if `force_off`
+    /// leaves the flag standing: the notice would float over the game with the
+    /// module off, which is the same lie the advice drop exists to stop.
+    #[test]
+    fn forcing_a_disabled_slice_off_ends_the_wait_too() {
+        let mut s = TempleSlice {
+            status: TempleStatus::Idle,
+            waiting_for_panel: true,
+            ..TempleSlice::default()
+        };
+
+        force_off(&mut s);
+
+        assert!(!s.waiting_for_panel);
+    }
+
     /// A read that lost a text region says so on the SLICE, as a notice and not
     /// as an error.
     ///
@@ -2888,7 +3032,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"status":"idle","layout":null,"panel":null,"advice":null,"mode":null,"keys":0,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
+            r#"{"status":"idle","waitingForPanel":false,"layout":null,"panel":null,"advice":null,"mode":null,"keys":0,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
         );
     }
 
@@ -2904,6 +3048,10 @@ mod tests {
     fn a_populated_slice_json_is_pinned_for_the_typescript_mirror() {
         let s = TempleSlice {
             status: TempleStatus::Read,
+            // `true` on purpose, like every other non-default value here: the
+            // pin is a check on the wire SHAPE, and a `false` would pin only
+            // the field's presence while the mirror's boolean has two branches.
+            waiting_for_panel: true,
             layout: Some(LayoutView {
                 slots: vec![SlotView {
                     slot: "A0".to_string(),
@@ -3056,7 +3204,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///

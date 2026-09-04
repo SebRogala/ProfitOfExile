@@ -930,6 +930,7 @@ mod tests {
             temple_settings: Mutex::new(crate::temple::slice::TempleSettings::shipped()),
             temple_arm: Mutex::new(crate::temple::trigger::ArmState::default()),
             temple_rearm: AtomicU64::new(0),
+            temple_epoch: AtomicU64::new(0),
             merc_refit: AtomicU64::new(0),
             screen: Mutex::new(None),
             widgets: Mutex::new(std::collections::BTreeMap::new()),

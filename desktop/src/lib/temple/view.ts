@@ -89,6 +89,25 @@ export function overlayShowsBoard(status: TempleStatus): boolean {
 }
 
 /**
+ * Whether the "waiting for the temple panel" notice belongs on screen
+ * (POE-249).
+ *
+ * Rust owns the first half: `waitingForPanel` goes up on one of Alva's three
+ * measured START phrases and comes down on any other Alva line, a zone change,
+ * a completed read, a sighting, a stand-down and the module being switched off.
+ *
+ * The second clause is this side's own, and it is not redundant. Alva's start
+ * line fires when the PORTAL OPENS, and the module may already have the sheet
+ * on screen and read when it lands — the flag and a board are not mutually
+ * exclusive states. Without the clause the notice would blink over a board the
+ * player is reading, which is the same failure shape POE-246 fixed one layer
+ * down.
+ */
+export function overlayShowsWaiting(slice: TempleSlice): boolean {
+	return slice.waitingForPanel && !overlayShowsBoard(slice.status);
+}
+
+/**
  * Whether the DOOR widget has something to draw (POE-244, rewritten in
  * POE-248).
  *

@@ -1065,6 +1065,19 @@ describe('temple slice', () => {
 			expect(mod.ssot.temple.unknownRooms).toEqual([]);
 		});
 
+		it('defaults a missing waitingForPanel to false, never undefined', () => {
+			// A build from before POE-249 sends no flag at all, and the notice's
+			// gate is `slice.waitingForPanel && !overlayShowsBoard(...)`. An
+			// `undefined` there is falsy by accident rather than by contract, and
+			// it makes the declared boolean a lie for anything that later reads it
+			// as one.
+			mod.applySnapshot({
+				league,
+				temple: { status: 'idle', keys: 1 } as unknown as TempleSlice,
+			});
+			expect(mod.ssot.temple.waitingForPanel).toBe(false);
+		});
+
 		it('keeps the payload\'s own value for a field it does carry', () => {
 			// The filling above must not reach a field that IS present, or a
 			// board would be blanked by the very code meant to type it honestly.
