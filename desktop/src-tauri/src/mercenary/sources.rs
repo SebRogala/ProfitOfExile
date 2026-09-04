@@ -27,7 +27,7 @@ use crate::AppState;
 /// this side exists to VALIDATE, so an id that only one of the two knows is a
 /// setting that can be stored and never applied. `merc-sources.test.ts` parses
 /// this literal and fails if the two lists stop matching.
-pub const SOURCE_IDS: &[&str] = &["guide-a", "guide-b", "guide-c", "guide-d", "guide-f"];
+pub const SOURCE_IDS: &[&str] = &["guide-a", "guide-b", "guide-c", "guide-d", "guide-e", "guide-f"];
 
 /// The `ui_prefs` key the off-list lived under before this module (ADR-013).
 ///

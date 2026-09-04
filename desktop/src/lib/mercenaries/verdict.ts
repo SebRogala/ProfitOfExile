@@ -535,6 +535,20 @@ function passReasons(ruleset: MercRuleset, groups: MercGroupResult[], capture: M
 }
 
 /**
+ * Is this group's ROW ANCHOR proven present in the capture? True for a group
+ * that has no anchor at all — only a `mercenary` group carries one.
+ *
+ * An unread anchor does not count as proven. That is deliberately not the
+ * verdict rule ("unknown, never absent"): a verdict judges the mercenary, while
+ * this decides what to put in a comp link, and a link built around a skill
+ * nobody could read is a search that may answer nothing.
+ */
+function anchorProven(group: MercGroupResult): boolean {
+	const anchor = group.positions.find((position) => isRowAnchor(group.type, position.entryId));
+	return anchor === undefined || anchor.presence === 'present';
+}
+
+/**
  * The toggles the derived search should carry for THIS mercenary: every bonus
  * it fired switched on, every buyer-contextual entry it has switched on and
  * every one it lacks switched off.
@@ -545,6 +559,21 @@ function flipsFor(groups: MercGroupResult[]): QueryFlips {
 	const enableGroups = new Set<string>();
 	for (const group of groups) {
 		if (group.type === 'not') continue;
+		// A parked `mercenary` group never runs the row pass — `evaluateGroup`
+		// answers a parked group over the WHOLE capture — so a support sitting on
+		// any other row reads as a fired bonus here. Reviving on that switches the
+		// group back on with its anchor skill live, and the derived search then
+		// demands a skill this mercenary has not got: zero listings, every time.
+		// Measured 2026-09-04 on a Frost Blades Combatant carrying Greater
+		// Elemental Damage with Attacks, which revived guide-e-combatant's parked
+		// `wild-strike` group. So such a group is left exactly as the guide wrote
+		// it — no entry flips, no revival.
+		//
+		// The trade-off: "somewhere in the capture" is all this asks. A bonus that
+		// fired on a DIFFERENT row from the anchor still revives the group, and
+		// that search can still come back empty. Answering that needs the row pass
+		// a parked group never runs; the anchor check is what fits in the flip pass.
+		if (!group.applied && !anchorProven(group)) continue;
 		const fired = group.positions.filter((position) => position.outcome === 'bonus-fired');
 		// A bonus the guide parked by switching its whole group off is invisible
 		// to the trade site until the group comes back on — so switch the group on
@@ -578,9 +607,9 @@ function evaluateRuleset(
 	// A fail outranks an unknown: a mercenary carrying a forbidden stat is out
 	// whatever else could not be read. A ruleset with NOTHING applied — every
 	// group parked or contextual — has asked the mercenary for nothing, so it is
-	// unknown rather than a pass nobody earned. None of the thirty-two rulesets
+	// unknown rather than a pass nobody earned. None of the thirty-eight rulesets
 	// (twenty-eight transcribe a saved search — from twenty-seven fixture files,
-	// two rungs sharing one — and four are authored) is in that state; a future
+	// two rungs sharing one — and ten are authored) is in that state; a future
 	// one could be.
 	const outcome: RulesetOutcome =
 		applied.length === 0

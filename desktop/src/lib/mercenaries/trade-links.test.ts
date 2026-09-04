@@ -33,6 +33,12 @@ import guideCKinetist from './__fixtures__/guide-c-kinetist.json';
 import guideCManyshot from './__fixtures__/guide-c-manyshot.json';
 import guideCBladeAmbusher from './__fixtures__/guide-c-blade-ambusher.json';
 import guideCCombatant from './__fixtures__/guide-c-combatant.json';
+import guideESniper from './__fixtures__/guide-e-sniper.json';
+import guideEKinetist from './__fixtures__/guide-e-kinetist.json';
+import guideECombatant from './__fixtures__/guide-e-combatant.json';
+import guideEManyshot from './__fixtures__/guide-e-manyshot.json';
+import guideECruelMistress from './__fixtures__/guide-e-cruel-mistress.json';
+import guideEStormhand from './__fixtures__/guide-e-stormhand.json';
 import n8r8JqonVIV from './__fixtures__/8r8JqonVIV.json';
 import veYJp9gZhE from './__fixtures__/veYJp9gZhE.json';
 import PPGnKVv7UL from './__fixtures__/PPGnKVv7UL.json';
@@ -67,6 +73,12 @@ const FIXTURES: Record<string, { id: string; query: unknown }> = {
 	'guide-c-manyshot': guideCManyshot,
 	'guide-c-blade-ambusher': guideCBladeAmbusher,
 	'guide-c-combatant': guideCCombatant,
+	'guide-e-sniper': guideESniper,
+	'guide-e-kinetist': guideEKinetist,
+	'guide-e-combatant': guideECombatant,
+	'guide-e-manyshot': guideEManyshot,
+	'guide-e-cruel-mistress': guideECruelMistress,
+	'guide-e-stormhand': guideEStormhand,
 	'8r8JqonVIV': n8r8JqonVIV,
 	veYJp9gZhE,
 	PPGnKVv7UL,
@@ -131,23 +143,29 @@ describe('savedSearchUrl', () => {
 });
 
 /**
- * The other half of that sweep: guide-c's rulesets are transcribed from PROSE,
- * so there is no saved search to link and nothing may render an "open saved
- * search" for them. The DERIVED link is unaffected — `rulesetQuery` builds from
- * the data model and never needs a hash — which is the whole reason the two
- * addressing schemes live in different fields instead of one being a hash
- * nobody can fetch.
+ * The other half of that sweep: guide-c's and guide-e's rulesets are transcribed
+ * from PROSE, so there is no saved search to link and nothing may render an
+ * "open saved search" for them. The DERIVED link is unaffected — `rulesetQuery`
+ * builds from the data model and never needs a hash — which is the whole reason
+ * the two addressing schemes live in different fields instead of one being a
+ * hash nobody can fetch.
  */
 describe('rulesets transcribed from prose', () => {
 	const AUTHORED = allRulesets().filter((ruleset) => ruleset.authored !== undefined);
 	const SAVED = allRulesets().filter((ruleset) => ruleset.savedSearch !== undefined);
 
-	it('names the four authored rulesets, and only those', () => {
+	it('names the ten authored rulesets, and only those', () => {
 		expect(AUTHORED.map((r) => r.id)).toEqual([
 			'guide-c-kinetist',
 			'guide-c-manyshot',
 			'guide-c-blade-ambusher',
-			'guide-c-combatant'
+			'guide-c-combatant',
+			'guide-e-sniper',
+			'guide-e-kinetist',
+			'guide-e-combatant',
+			'guide-e-manyshot',
+			'guide-e-cruel-mistress',
+			'guide-e-stormhand'
 		]);
 	});
 
@@ -169,7 +187,7 @@ describe('rulesets transcribed from prose', () => {
 });
 
 describe('source guide links', () => {
-	// The first three identified 2026-08-26, guide D 2026-08-28, guide F
+	// The first three identified 2026-08-26, guide D 2026-08-28, guides E and F
 	// 2026-09-04. Guide A's, guide B's and guide D's saved-search hashes are
 	// exactly the trade links on that page / in those video descriptions; guide
 	// B's URL is the CHANNEL, because its ladders come from different videos of
@@ -177,15 +195,22 @@ describe('source guide links', () => {
 	// while guide D's is a single VIDEO because both of its rungs came out of
 	// that one. Guide C's page publishes no links at all — the URL is where the
 	// PROSE is, so a reader can re-check the transcription against the sentences
-	// it came from. Guide F's page carries all six of its links but answers 403
-	// to this repo, so its URL is the only re-check a reader has and a stale one
-	// would leave six searches unattributable.
+	// it came from. Guide E's is the same idea one step further out: the note is
+	// an IMAGE embedded in cell E14 of Sheet1 of that spreadsheet, so the URL is
+	// where the picture is and the only re-check anyone has. Guide F's page
+	// carries all six of its links but answers 403 to this repo, so its URL is
+	// the only re-check a reader has and a stale one would leave six searches
+	// unattributable.
 	it('points each source at the page its rules were taken from', () => {
 		expect(MERC_SOURCES.map((s) => [s.id, s.guideUrl])).toEqual([
 			['guide-a', 'https://wealthyexile.com/strategies/7062/alchgo_astrolabe__merc_boss_rushing'],
 			['guide-b', 'https://www.youtube.com/channel/UCqIRIXItoDOlET2oeFn6WKA'],
 			['guide-c', 'https://mobalytics.gg/poe/builds/captainlance9-luminary-merc-bot'],
 			['guide-d', 'https://www.youtube.com/watch?v=LXoJCRmUaJI'],
+			[
+				'guide-e',
+				'https://docs.google.com/spreadsheets/d/1EW1JIew9A08RDmZbtWOcLzo3WEokexMdOlldXwRF34Q/htmlview'
+			],
 			[
 				'guide-f',
 				'https://mobalytics.gg/poe/builds/mercenary-support-luminary-path-of-evening'
@@ -222,12 +247,13 @@ describe('per-ruleset guide URLs', () => {
 		]);
 	});
 
-	// Guide A's, guide C's, guide D's and guide F's rulesets each come off ONE
-	// page or video, so they inherit the source URL rather than repeating it per
-	// ruleset. Guide F is six searches on one page, which is the most this can
-	// carry and still be true.
+	// Guide A's, guide C's, guide D's, guide E's and guide F's rulesets each come
+	// off ONE page, video or image, so they inherit the source URL rather than
+	// repeating it per ruleset. Guide E is six archetypes in one screenshot and
+	// guide F six searches on one page — the most this can carry and still be
+	// true.
 	it('leaves a one-page source’s rulesets without a URL of their own', () => {
-		const onePage = ['guide-a', 'guide-c', 'guide-d', 'guide-f'].flatMap(
+		const onePage = ['guide-a', 'guide-c', 'guide-d', 'guide-e', 'guide-f'].flatMap(
 			(id) => (MERC_SOURCES.find((s) => s.id === id) as MercSource).rulesets
 		);
 		expect(onePage.map((r) => `${r.id} ${r.guideUrl ?? 'inherits the source URL'}`)).toEqual([
@@ -240,6 +266,12 @@ describe('per-ruleset guide URLs', () => {
 			'guide-c-combatant inherits the source URL',
 			'guide-d-kinetist-budget inherits the source URL',
 			'guide-d-kinetist-20d inherits the source URL',
+			'guide-e-sniper inherits the source URL',
+			'guide-e-kinetist inherits the source URL',
+			'guide-e-combatant inherits the source URL',
+			'guide-e-manyshot inherits the source URL',
+			'guide-e-cruel-mistress inherits the source URL',
+			'guide-e-stormhand inherits the source URL',
 			'guide-f-manyshot-cheap inherits the source URL',
 			'guide-f-manyshot-expensive inherits the source URL',
 			'guide-f-combatant-cheap inherits the source URL',
@@ -298,9 +330,10 @@ describe('rulesetQuery', () => {
 	for (const ruleset of allRulesets()) {
 		// For the twenty-eight saved searches the oracle is GGG's own JSON: the builder
 		// walks the typed data model, and what comes out has to be the response
-		// returned for that hash. For guide-c's four the fixture is this builder's
-		// own output — a weaker check, and the only one available, since there is
-		// no saved search to disagree with (see `__fixtures__/README.md`).
+		// returned for that hash. For guide-c's four and guide-e's six the fixture
+		// is this builder's own output — a weaker check, and the only one
+		// available, since there is no saved search to disagree with (see
+		// `__fixtures__/README.md`).
 		it(`rebuilds ${oracleFixture(ruleset)} from the ${ruleset.id} data model`, () => {
 			expect(withoutExplicitFalses(rulesetQuery(ruleset))).toEqual(
 				withoutExplicitFalses(FIXTURES[oracleFixture(ruleset)].query)
