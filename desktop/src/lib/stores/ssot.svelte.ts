@@ -425,6 +425,9 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 	const fresh = templeSliceDefault();
 	return {
 		status: incoming.status,
+		// A build before POE-249 sends no flag at all, and `undefined` here
+		// would read as "not waiting" by accident rather than by contract.
+		waitingForPanel: incoming.waitingForPanel ?? false,
 		// The nested layout is normalised too, and only for the two POE-244
 		// fields, because only those two are consumed as a GUARANTEE the way
 		// `unknownRooms.length` is: `neverCoverRects` iterates `rois` and

@@ -882,12 +882,30 @@ pub enum TickOutcome {
     Stopping,
 }
 
-/// The status one loop event leaves behind, and whether it ends the last error.
+/// The status one loop event leaves behind, and what else it ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StatusUpdate {
     pub status: TempleStatus,
     /// `true` when the event means the last error is over.
     pub clear_error: bool,
+    /// `true` when the event means the module is no longer waiting for the
+    /// temple sheet ([`slice::TempleSlice::waiting_for_panel`], POE-249).
+    ///
+    /// Two different reasons, both ending in the same write. A sighting
+    /// ([`TickOutcome::Anchored`]) is the wait being ANSWERED — the sheet is on
+    /// screen and the read that follows publishes the board. A stand-down or a
+    /// shutdown ([`TickOutcome::Disarmed`], [`TickOutcome::Stopping`]) is the
+    /// loop no longer looking at all, and a notice that says "waiting for the
+    /// temple panel" over a loop that is not looking for one is a lie on
+    /// screen.
+    ///
+    /// The three that leave it alone are the ones where the wait is still the
+    /// truth: [`TickOutcome::NoPanel`] is a tick that looked and saw nothing,
+    /// [`TickOutcome::Failed`] is a tick that could not look this once, and
+    /// [`TickOutcome::Armed`] is the gate opening — which is what a START line
+    /// buys, and clearing there would take the notice down in the same second
+    /// it went up.
+    pub clear_waiting: bool,
 }
 
 /// The module's status machine.
@@ -908,11 +926,19 @@ pub struct StatusUpdate {
 /// no later event makes it available again — including the shutdown publish,
 /// which is why that path comes through here too rather than repeating the
 /// check.
+///
+/// The early return carries `clear_waiting: false` for the same reason it
+/// carries `clear_error: false`: an unavailable slice is not moved by a tick
+/// result at all. The wait such a slice may still be carrying is not left
+/// standing, though — [`unavailable`] ends the cycle itself, in the same
+/// publish that writes the status, because that publish is the last one its
+/// thread makes.
 pub fn next_status(prev: TempleStatus, outcome: TickOutcome) -> StatusUpdate {
     if prev == TempleStatus::Unavailable {
         return StatusUpdate {
             status: TempleStatus::Unavailable,
             clear_error: false,
+            clear_waiting: false,
         };
     }
     let (status, clear_error) = match outcome {
@@ -933,6 +959,10 @@ pub fn next_status(prev: TempleStatus, outcome: TickOutcome) -> StatusUpdate {
     StatusUpdate {
         status,
         clear_error,
+        clear_waiting: matches!(
+            outcome,
+            TickOutcome::Anchored | TickOutcome::Disarmed | TickOutcome::Stopping
+        ),
     }
 }
 
@@ -943,6 +973,9 @@ pub fn apply_status(slice: &mut TempleSlice, outcome: TickOutcome) {
     slice.status = update.status;
     if update.clear_error {
         slice.last_error = None;
+    }
+    if update.clear_waiting {
+        slice::end_cycle(slice);
     }
 }
 
@@ -2129,6 +2162,12 @@ fn unavailable(app: &AppHandle, cancel: &watch::Receiver<bool>, reason: String) 
     publish(app, |slice| {
         slice.status = TempleStatus::Unavailable;
         slice.last_error = Some(reason.clone());
+        // This is the LAST publish this thread makes, so a wait a START line
+        // put up stands forever unless it comes down here. On a host with no
+        // capture the notice would otherwise sit under the unavailable message
+        // for the rest of the session, claiming the module is looking for a
+        // panel it cannot see.
+        slice::end_cycle(slice);
     });
     while nap(cancel, UNFOCUSED_NAP) {}
     crate::app_log(app, "Module temple: stopped".to_string());
@@ -3934,6 +3973,55 @@ mod tests {
         assert_eq!(slice.status, TempleStatus::Idle);
         assert!(slice.advice.is_some(), "arming must not blank the standing board");
         assert_eq!(slice.mode.as_deref(), Some("chase"));
+    }
+
+    /// The three loop events that end the wait for the temple sheet (POE-249).
+    ///
+    /// Two different reasons, one write. `Anchored` is the wait ANSWERED — the
+    /// sheet is on screen — and `Disarmed`/`Stopping` are the loop no longer
+    /// looking, over which a notice saying "waiting for the temple panel" is a
+    /// lie. Fails if the clear is keyed on the resulting STATUS rather than on
+    /// the outcome: `Disarmed` and `Stopping` land on two different statuses
+    /// and `Anchored` on a third.
+    #[test]
+    fn the_outcomes_that_end_the_wait_for_the_panel_clear_it() {
+        for outcome in [
+            TickOutcome::Anchored,
+            TickOutcome::Disarmed,
+            TickOutcome::Stopping,
+        ] {
+            let mut slice = TempleSlice {
+                waiting_for_panel: true,
+                ..TempleSlice::default()
+            };
+
+            apply_status(&mut slice, outcome);
+
+            assert!(!slice.waiting_for_panel, "{outcome:?}");
+        }
+    }
+
+    /// And the three that leave it standing, because the wait is still the
+    /// truth: a tick that looked and saw nothing, a tick that could not look
+    /// this once, and the gate OPENING — which is what Alva's start line buys,
+    /// so clearing there would take the notice down in the same second it went
+    /// up.
+    #[test]
+    fn the_outcomes_that_are_still_a_wait_leave_it_standing() {
+        for outcome in [
+            TickOutcome::NoPanel,
+            TickOutcome::Failed,
+            TickOutcome::Armed,
+        ] {
+            let mut slice = TempleSlice {
+                waiting_for_panel: true,
+                ..TempleSlice::default()
+            };
+
+            apply_status(&mut slice, outcome);
+
+            assert!(slice.waiting_for_panel, "{outcome:?}");
+        }
     }
 
     /// Arming returns the module to `Idle` BEFORE the first read, so a board

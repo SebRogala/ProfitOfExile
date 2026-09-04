@@ -12,33 +12,49 @@
 //! tested here on Linux; the `AppHandle` wrappers at the bottom only lock and
 //! log.
 //!
-//! # Trigger — the lines this reads (MEASURED)
+//! # Trigger — the lines this reads (MEASURED, 684 of them)
 //!
-//! Read off Sebastian's PC Client.txt on 2026-09-02, over the **3 incursions**
-//! that file still held (2026-07 and 2026-08). Three samples is a small sample:
-//! the table is provenance for the design, not the matcher.
+//! Mined off Sebastian's PC Client.txt on 2026-09-04, covering 2026-01-29 →
+//! 2026-09-04: **684 Alva lines across 144 map instances**. The laptop's whole
+//! history (9 lines) agrees on every line it holds. `docs/TEMPLE-LIFECYCLE.md`
+//! is the normative write-up; this is the table [`classify`] is built from.
 //!
-//! | moment | line |
-//! |---|---|
-//! | incursion start | `Alva, Master Explorer: It's time!` (×1), `… : Time to go.` (×2) |
-//! | incursion end | `Alva, Master Explorer: Good job.` (×1), `… : Good job, exile.` (×2) |
-//! | temple banter | `… : No wonder it's lost…`, `… : At last... Atzoatl.` |
+//! | line | PC count | role |
+//! |---|---|---|
+//! | `Time to go.` | 122 | start |
+//! | `Let's go.` | 118 | start |
+//! | `It's time!` | 101 | start |
+//! | `Good job.` | 168 | end |
+//! | `Good job, exile.` | 174 | end |
+//! | `Just in time.` | 1 | end (no incursion followed it) |
+//! | `No wonder it's lost…`, `At last... Atzoatl.` | — | temple banter; an end by the same rule |
 //! | temple entry | `Generating level N area "Incursion_Temple8"`, then `: You have entered The Temple of Atzoatl.` |
 //!
-//! # Why a speaker match and not the phrases
+//! # Why the phrases, and why only for the START
 //!
-//! Six phrases out of three incursions is not the vocabulary — it is what three
-//! incursions happened to say. A phrase list would silently miss every variant
-//! nobody has heard yet, and a missed start line costs the whole capture. So
-//! the match is SPEAKER-shaped, the same shape `mercenary::trigger` uses:
-//! any line whose speaker is exactly [`ALVA_SPEAKER`] arms.
+//! The three start lines are used about equally, so a phrase gate needs all
+//! three — any one alone misses two thirds of incursions. What 684 lines buy is
+//! the START half of the rule: a CYCLE (the waiting notice, the board epoch)
+//! begins only on one of the three phrases above. **End lines can arrive after
+//! a zone change** — 3 of 342 in the mining, the player having left the map
+//! mid-incursion with `Good job` firing seconds after re-entering — and a cycle
+//! started by one of those would put a waiting notice on screen for an
+//! incursion that is already over.
 //!
-//! That is deliberately wider than "the incursion is starting", and the END
-//! lines are the case it widens onto: after an incursion closes the player is
-//! still map-side and may open the layout panel to read what the kill changed.
-//! Arming on `Good job.` is therefore WANTED, not the free-running bug coming
-//! back — the window it buys is bounded by [`ALVA_TAIL_MS`], and the first
-//! `You have entered` line after it disarms whatever the tail had left.
+//! ANY Alva line still ARMS, and ANY Alva line ENDS a cycle. The asymmetry is
+//! deliberate: an unheard start variant costs a Re-arm (one incursion in 342
+//! carried no start line at all, so that fallback is load-bearing anyway),
+//! while an unheard END variant would leave the notice standing — a claim on
+//! screen that is false. Arming is also wider than "the incursion is starting"
+//! on purpose: after an incursion closes the player is still map-side and may
+//! open the layout panel to read what the kill changed, so arming on
+//! `Good job.` is WANTED, not the free-running bug coming back — the window it
+//! buys is bounded by [`ALVA_TAIL_MS`], and the first `You have entered` line
+//! after it disarms whatever the tail had left.
+//!
+//! `Time to go, exile.` does not exist in either log — the `, exile` variant is
+//! on the END line — which is why the start table is matched EXACTLY rather
+//! than by prefix.
 //!
 //! It is an ENGLISH match: a client running in another language writes Alva's
 //! name and title in that language and no voice line on that machine will ever
@@ -120,16 +136,19 @@
 //! is what keeps Alva's own temple banter (`At last... Atzoatl.`, spoken
 //! seconds after the area line) from replacing the deadline-free temple arm
 //! with a two-minute one, which would blind the module part-way through a
-//! temple that took longer than that to run.
+//! temple that took longer than that to run. It has exactly one exception, and
+//! [`apply_line`] rather than [`TempleArm::arm`] is where it lives: an END line
+//! over an [`ArmReason::AlvaStart`] arm.
 //!
-//! # The premise this rests on, and the smoke item that tests it
+//! # The scope this draws, and the override outside it
 //!
-//! UNVERIFIED: that the layout panel is only ever opened with an Alva line or
-//! the temple area in scope. Alva stands in the hideout and her panel may open
-//! there with no voice line at all. Manual Re-arm is the fallback if so, and
-//! smoke item 12 is the measurement: *open the layout panel from Alva in the
-//! hideout — does the module read, or does it need Re-arm?* Its answer decides
-//! whether a hideout arm is needed.
+//! SETTLED by owner order, 2026-09-04 (`docs/TEMPLE-LIFECYCLE.md`,
+//! "Consequences that follow from the order"): a sheet opened from the hideout
+//! with Alva silent is NOT in scope. The module follows incursions, and a panel
+//! nobody was sent to by a voice line or by a zone is not one — so the absence
+//! of an arm there is the design and not a gap in it. **Re-arm** is the manual
+//! override, unchanged since POE-242, and it is the same fallback that covers a
+//! start variant nobody has heard.
 //!
 //! ## What the log settles, and what it cannot (2026-09-02)
 //!
@@ -238,8 +257,15 @@ pub const PANEL_TAIL_MS: u64 = ALVA_TAIL_MS;
 /// loop asks [`TempleArm::is_armed`], never the reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArmReason {
-    /// A `Alva, Master Explorer:` voice line, map-side.
+    /// A `Alva, Master Explorer:` voice line that is not one of the three
+    /// measured START phrases, map-side. Bounded by [`ALVA_TAIL_MS`].
     AlvaLine,
+    /// One of the three measured START phrases ([`classify`]). Armed with NO
+    /// deadline: the start line fires when the portal OPENS, and nothing in the
+    /// game times an open portal out — the mining holds one gap of 22 minutes
+    /// between a start and its end, the player being away from the PC. What
+    /// ends this arm is an end line or an area change, never a clock.
+    AlvaStart,
     /// The player is inside The Temple of Atzoatl.
     TempleArea,
     /// The user pressed Re-arm.
@@ -251,6 +277,7 @@ impl ArmReason {
     pub fn label(self) -> &'static str {
         match self {
             ArmReason::AlvaLine => "Alva",
+            ArmReason::AlvaStart => "Alva's start line",
             ArmReason::TempleArea => "the temple",
             ArmReason::Manual => "Re-arm",
         }
@@ -325,8 +352,13 @@ pub enum Transition {
     /// A resting (or expired) gate is now armed — the one case worth a log
     /// line.
     Armed(ArmReason),
-    /// A live arm was pushed out, or was already reaching further than this
-    /// line would have bought. Silent: Alva speaks several times per incursion.
+    /// A live arm was pushed out, was already reaching further than this line
+    /// would have bought, or — the two cases that are not about horizons — was
+    /// pulled IN to [`ALVA_TAIL_MS`] by an end line over a live
+    /// [`ArmReason::AlvaStart`] arm, or had its reason replaced in place by the
+    /// temple area line (both in [`apply_line`]). What the spelling means is
+    /// "the gate was already open", not "it now reaches further". Silent: Alva
+    /// speaks several times per incursion.
     Extended(ArmReason),
     /// An area change ended the arm.
     Disarmed,
@@ -371,6 +403,23 @@ impl TempleArm {
     ///
     /// An EXPIRED arm is not a live one: it is replaced, and reported as a
     /// fresh arm, because that is what the log reader sees.
+    ///
+    /// # The one permitted shortening, and why it is not here
+    ///
+    /// An [`ArmReason::AlvaStart`] arm carries no deadline and an END line
+    /// replaces it with an [`ALVA_TAIL_MS`] one — the only place in this module
+    /// where a live arm gets a nearer horizon. It is written out longhand in
+    /// [`apply_line`] rather than folded in here because its licence is not a
+    /// rule about horizons at all: the GAME said the incursion ended, which is
+    /// the one thing that outranks "the user asked for more looking". Every
+    /// other caller — Alva's temple banter over a [`ArmReason::TempleArea`]
+    /// arm, Re-arm pressed inside a temple — still gets the plain rule above.
+    ///
+    /// That the banter case reads on a `TempleArea` arm at all is what the
+    /// temple area line's own branch in [`apply_line`] buys: it does not bid
+    /// through this method, it ASSIGNS the reason. A bid would buy nothing over
+    /// a live deadline-free `AlvaStart` arm — `outlives(None, None)` holds — and
+    /// the banter would arrive to find a START arm and shorten it.
     fn arm(&mut self, reason: ArmReason, until_ms: Option<u64>, now_ms: u64) -> Transition {
         let live = self.is_armed(now_ms);
         if live {
@@ -492,11 +541,52 @@ pub fn arm_source(
     probe_pending.then_some(ArmSource::StartupProbe)
 }
 
-/// One Client.txt line, folded into the arm state.
+/// The three phrases Alva speaks when a portal OPENS, exactly as Client.txt
+/// writes them (module doc: 122 / 118 / 101 of 684 mined lines).
 ///
-/// Runs on EVERY line the watcher reads, so the order is the cost order: the
-/// area parse is one `str::find`, and the timestamp is parsed only for a line
-/// that is already known to be Alva's.
+/// Matched whole and trimmed rather than by prefix, because `Time to go,
+/// exile.` — which is NOT in either log, while `Good job, exile.` is — would
+/// pass a prefix test and start a cycle on an end line.
+const START_PHRASES: [&str; 3] = ["Time to go.", "Let's go.", "It's time!"];
+
+/// What one Client.txt line IS, as far as this module is concerned.
+///
+/// The single vocabulary [`classify`] answers in, and the reason there is one
+/// classifier rather than a predicate per consumer: the arm, the cycle flag,
+/// the board epoch and the advice clear all key on the same four facts, and a
+/// fifth kind added to one of four private tests would have been skipped in
+/// production and passed every test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineEvent {
+    /// `: You have entered The Temple of Atzoatl.` — the temple's own area
+    /// line, which arms and ends nothing.
+    EnteredTemple,
+    /// `: You have entered <anything else>`.
+    LeftArea,
+    /// An [`ALVA_SPEAKER`] line whose message is one of [`START_PHRASES`].
+    AlvaStart,
+    /// Any other [`ALVA_SPEAKER`] line — the two `Good job` variants, the
+    /// one-off `Just in time.`, and the temple banter.
+    AlvaEnd,
+}
+
+/// Whether this event ends a cycle: the notice comes down and the board the
+/// loop has read is no longer about the incursion in front of the player.
+///
+/// A START ends one as well as beginning one — starts and ends pair 341 : 342
+/// in the mining, so a second start with no end between them is theoretical,
+/// but if it happens the board from the previous incursion must not survive
+/// into the next. The temple's OWN area line ends nothing: the player walking
+/// into the temple is inside the cycle the start line opened.
+pub fn ends_epoch(event: LineEvent) -> bool {
+    matches!(
+        event,
+        LineEvent::LeftArea | LineEvent::AlvaStart | LineEvent::AlvaEnd
+    )
+}
+
+/// The KIND of a line, before any clock is consulted — [`classify`]'s first two
+/// questions and the whole of [`may_end_advice`].
 ///
 /// The area branch comes first and returns: an area line carries no speaker
 /// (`: You have entered …`), so the two cannot both match, and reading the area
@@ -508,35 +598,138 @@ pub fn arm_source(
 /// the sentence reads as an area change here. The cost is bounded (a wrong arm
 /// captures a screen with no panel on it; a wrong disarm is undone by the next
 /// real area line, or by Re-arm).
-pub fn apply_line(state: &mut ArmState, line: &str, now_ms: u64) -> Transition {
+fn line_kind(line: &str) -> Option<LineKind> {
     if let Some(area) = lab_navigation::parse_entered_area(line) {
-        return if area == TEMPLE_AREA {
-            state.arm.arm(ArmReason::TempleArea, None, now_ms)
-        } else {
+        return Some(LineKind::Area {
+            temple: area == TEMPLE_AREA,
+        });
+    }
+    (speaker_of(line) == Some(ALVA_SPEAKER)).then_some(LineKind::Alva)
+}
+
+/// [`line_kind`]'s answer: the two shapes of line this module reads at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineKind {
+    Area { temple: bool },
+    Alva,
+}
+
+/// The words after `"<speaker>: "`, trimmed. `None` for a line with no tag and
+/// no separator — the shape [`speaker_of`] already refused.
+fn message_of(line: &str) -> Option<&str> {
+    let message = line.get(line.find("] ")? + 2..)?;
+    Some(message.split_once(": ")?.1.trim())
+}
+
+/// What one Client.txt line says about the temple. `None` for a line that says
+/// nothing.
+///
+/// **The one owner of every per-line decision in this module.** [`apply_line`],
+/// [`advice_end`] and [`on_client_line`]'s cycle flag and epoch bump all read
+/// this answer, so "which lines matter" is one question with one place to be
+/// answered.
+///
+/// Runs on EVERY line the watcher reads, so the order is the cost order: the
+/// area parse is one `str::find`, and the timestamp is parsed only for a line
+/// that is already known to be Alva's.
+///
+/// The staleness gate applies to the two Alva kinds and to neither area kind.
+/// A voice line is evidence about the screen at the moment it was SPOKEN, and
+/// one older than [`LINE_STALE_MS`] on arrival reached us through a log the
+/// watcher was not tailing (a path change, a restart) — it is evidence about a
+/// screen that is minutes gone. An AREA is a state rather than a burst, so its
+/// age is irrelevant.
+pub fn classify(line: &str, now_ms: u64) -> Option<LineEvent> {
+    match line_kind(line)? {
+        LineKind::Area { temple: true } => Some(LineEvent::EnteredTemple),
+        LineKind::Area { temple: false } => Some(LineEvent::LeftArea),
+        LineKind::Alva => {
+            // Read off the RAW stamp, not off `arm_at`'s answer: `arm_at`
+            // clamps a stamp further than `MAX_BACKDATE_MS` back to `now`, so
+            // asking it would launder every stale line into a fresh one.
+            let stamp = line_timestamp_ms(line);
+            if stamp.is_some_and(|ms| now_ms.saturating_sub(ms) >= LINE_STALE_MS) {
+                return None;
+            }
+            Some(match message_of(line) {
+                Some(message) if START_PHRASES.contains(&message) => LineEvent::AlvaStart,
+                _ => LineEvent::AlvaEnd,
+            })
+        }
+    }
+}
+
+/// One Client.txt line, folded into the arm state.
+///
+/// [`classify`] answers what the line IS and this decides what that does to the
+/// gate. An [`LineEvent::AlvaEnd`] tail is measured from the LINE's own stamp
+/// rather than from `now_ms` — the watcher's hop is up to its 5 s
+/// `recv_timeout` fallback, and the tail would otherwise outlive the design by
+/// exactly that.
+///
+/// # The END line over a START arm
+///
+/// A START arm has no deadline (see [`ArmReason::AlvaStart`]), so something has
+/// to end it, and the END line is the game itself saying the incursion is over.
+/// It is the ONE case where a live arm is given a nearer horizon
+/// ([`TempleArm::arm`]) — and the horizon it is given is the ordinary
+/// [`ALVA_TAIL_MS`] one, because the player who walks out of the incursion may
+/// still open the layout panel to see what the kill changed.
+///
+/// A [`ArmReason::TempleArea`] or [`ArmReason::Manual`] arm is NOT shortened by
+/// an end line, and the case that needs that is Alva's own temple banter
+/// (`At last... Atzoatl.`): it is an [`LineEvent::AlvaEnd`] by this
+/// classification, and shortening the deadline-free area arm with it would
+/// blind the module part-way through a temple run.
+pub fn apply_line(state: &mut ArmState, line: &str, now_ms: u64) -> Transition {
+    match classify(line, now_ms) {
+        None => Transition::Ignored,
+        Some(LineEvent::EnteredTemple) => {
+            // A FACT, not a bid: the player IS in the temple, so the reason is
+            // assigned rather than offered to [`TempleArm::arm`]'s
+            // no-shortening rule. Bidding would leave a live
+            // [`ArmReason::AlvaStart`] arm's reason in place (both horizons are
+            // `None`, so the bid buys nothing), and Alva's temple banter
+            // seconds later — an [`LineEvent::AlvaEnd`] — would then find a
+            // START arm and shorten it to the tail, going blind part-way
+            // through the run.
+            let live = state.arm.is_armed(now_ms);
+            state.arm = TempleArm::Armed {
+                until_ms: None,
+                reason: ArmReason::TempleArea,
+            };
+            if live {
+                Transition::Extended(ArmReason::TempleArea)
+            } else {
+                Transition::Armed(ArmReason::TempleArea)
+            }
+        }
+        Some(LineEvent::LeftArea) => {
             // Before the disarm, and unconditionally: this stamp is about the
             // SCREEN (see [`ArmState`]) and the gate may already be closed.
             state.left_area_ms = Some(now_ms);
             state.arm.disarm()
-        };
+        }
+        Some(LineEvent::AlvaStart) => state.arm.arm(ArmReason::AlvaStart, None, now_ms),
+        Some(LineEvent::AlvaEnd) => {
+            let until = arm_at(now_ms, line_timestamp_ms(line)).saturating_add(ALVA_TAIL_MS);
+            let starting = matches!(
+                state.arm,
+                TempleArm::Armed {
+                    reason: ArmReason::AlvaStart,
+                    ..
+                }
+            ) && state.arm.is_armed(now_ms);
+            if starting {
+                state.arm = TempleArm::Armed {
+                    until_ms: Some(until),
+                    reason: ArmReason::AlvaLine,
+                };
+                return Transition::Extended(ArmReason::AlvaLine);
+            }
+            state.arm.arm(ArmReason::AlvaLine, Some(until), now_ms)
+        }
     }
-    if speaker_of(line) != Some(ALVA_SPEAKER) {
-        return Transition::Ignored;
-    }
-    let stamp = line_timestamp_ms(line);
-    // Read off the RAW stamp, not off `arm_at`'s answer: `arm_at` clamps a
-    // stamp further than `MAX_BACKDATE_MS` back to `now`, so asking it would
-    // launder every stale line into a fresh one. A line this old reached us
-    // through a log the watcher was not tailing (a path change, a restart) —
-    // it is evidence about a screen that is minutes gone.
-    if stamp.is_some_and(|ms| now_ms.saturating_sub(ms) >= LINE_STALE_MS) {
-        return Transition::Ignored;
-    }
-    let at = arm_at(now_ms, stamp);
-    state.arm.arm(
-        ArmReason::AlvaLine,
-        Some(at.saturating_add(ALVA_TAIL_MS)),
-        now_ms,
-    )
 }
 
 /// Why the advice the module is showing has stopped describing the board in
@@ -569,22 +762,21 @@ impl AdviceEnd {
     }
 }
 
-/// Whether a line is of a KIND that could end the advice: an area change, or a
+/// Whether a line is of a KIND this module reads at all: an area change, or a
 /// voice line from [`ALVA_SPEAKER`].
 ///
-/// The cheap half of [`advice_end`], split out so [`on_client_line`] can skip
-/// the slice lock on the ordinary line. That is not a micro-optimisation: this
-/// module's glue runs on EVERY Client.txt line the watcher reads, and
+/// The clock-free half of [`classify`] — the same [`line_kind`] call, so there
+/// is ONE answer to which lines matter and a fifth kind added to the classifier
+/// cannot be skipped here.
+///
+/// It exists as its own function because [`on_client_line`] wants that answer
+/// BEFORE it does anything else, and that is not a micro-optimisation: the glue
+/// runs on EVERY Client.txt line the watcher reads, and
 /// [`super::run::publish`] clones the whole [`super::slice::TempleSlice`] —
 /// thirteen plates, forty-two rects and a board — to decide whether the
-/// snapshot changed. Two string searches decide that it did not.
-///
-/// [`advice_end`] calls it too, so there is ONE answer to which lines matter. A
-/// third kind added there without adding it here would be skipped in
-/// production and pass every test, which is exactly the drift a duplicated
-/// guard at the call site would have invited.
+/// snapshot changed. Two string searches decide that it need not.
 pub fn may_end_advice(line: &str) -> bool {
-    lab_navigation::parse_entered_area(line).is_some() || speaker_of(line) == Some(ALVA_SPEAKER)
+    line_kind(line).is_some()
 }
 
 /// Whether one Client.txt line ends the advice a read at `last_read_ms`
@@ -615,24 +807,23 @@ pub fn may_end_advice(line: &str) -> bool {
 /// next read; the cost of the other is the widget blinking out at the moment
 /// it appears.
 ///
-/// Staleness is [`apply_line`]'s gate, for [`apply_line`]'s reason: a line that
-/// reached us through a log the watcher was not tailing is evidence about a
-/// screen that is minutes gone, and [`arm_at`] would launder its stamp into
-/// `now`.
+/// Staleness and the kind test are [`classify`]'s, which is what this reads: a
+/// line that reached us through a log the watcher was not tailing is evidence
+/// about a screen that is minutes gone, and [`arm_at`] would launder its stamp
+/// into `now`.
+///
+/// Both Alva kinds end the advice. A START is the next incursion beginning and
+/// an END is this one finishing, and the board behind the advice belongs to the
+/// previous one either way.
 pub fn advice_end(line: &str, last_read_ms: Option<u64>, now_ms: u64) -> Option<AdviceEnd> {
     let last_read = last_read_ms?;
-    if !may_end_advice(line) {
-        return None;
+    match classify(line, now_ms)? {
+        LineEvent::EnteredTemple => None,
+        LineEvent::LeftArea => Some(AdviceEnd::LeftArea),
+        LineEvent::AlvaStart | LineEvent::AlvaEnd => {
+            (arm_at(now_ms, line_timestamp_ms(line)) > last_read).then_some(AdviceEnd::NewIncursion)
+        }
     }
-    if let Some(area) = lab_navigation::parse_entered_area(line) {
-        return (area != TEMPLE_AREA).then_some(AdviceEnd::LeftArea);
-    }
-    // Alva's, by [`may_end_advice`] — the only other kind it admits.
-    let stamp = line_timestamp_ms(line);
-    if stamp.is_some_and(|ms| now_ms.saturating_sub(ms) >= LINE_STALE_MS) {
-        return None;
-    }
-    (arm_at(now_ms, stamp) > last_read).then_some(AdviceEnd::NewIncursion)
 }
 
 /// The arm state an app that started mid-session should begin in.
@@ -699,41 +890,103 @@ pub fn arm_state(app: &AppHandle) -> ArmState {
 /// Wired as a third call in the app's ONE Client.txt consumer (`lib.rs`) — the
 /// trigger must not add a second tailer.
 ///
-/// **Writes state and logs nothing.** The arm/disarm app-log line has one
-/// owner, and it is the capture loop's `run::gate_line`, for three reasons:
-/// this function runs whether or not the temple module is on (logging here
-/// would narrate a module the user has switched off); when the module IS on,
-/// both would fire within a second and put two lines in `app.log` for one
-/// event; and the loop covers the transition this function cannot see at all —
-/// an [`ALVA_TAIL_MS`] arm expiring, which no Client.txt line announces.
+/// **It never logs the ARM.** That app-log line has one owner, and it is the
+/// capture loop's `run::gate_line`, for three reasons: this function runs
+/// whether or not the temple module is on (logging here would narrate a module
+/// the user has switched off); when the module IS on, both would fire within a
+/// second and put two lines in `app.log` for one event; and the loop covers the
+/// transition this function cannot see at all — an [`ALVA_TAIL_MS`] arm
+/// expiring, which no Client.txt line announces.
+///
+/// What it DOES log is the two facts the loop cannot see: the cycle beginning
+/// and ending (POE-249), and the advice being cleared (POE-248). Both are
+/// statements about the incursion rather than about whether anything is
+/// looking, and both are logged only when the slice actually moved.
 pub fn on_client_line(app: &AppHandle, line: &str) {
-    let now = super::run::now_ms();
-    {
-        let state = app.state::<AppState>();
-        let mut arm = state.temple_arm.lock().unwrap_or_else(|e| e.into_inner());
-        apply_line(&mut arm, line, now);
-    }
-    // POE-248: the same line may also end the advice, and that is a separate
-    // question with a separate owner — see [`advice_end`].
-    //
-    // The kind test comes FIRST and outside the lock: `publish` clones the
-    // whole slice to decide whether to emit, and this runs on every line.
+    // The kind test comes FIRST, before the clock and before either lock: this
+    // runs on every Client.txt line the watcher reads, and a line that is
+    // neither an area change nor Alva's cannot move anything below (it is the
+    // `None` [`classify`] would answer, so [`apply_line`] would be a no-op).
     if !may_end_advice(line) {
         return;
     }
-    // Decided INSIDE the publish so the read stamp it is compared against is
-    // the one being overwritten, and so a clear that changes nothing emits
-    // nothing.
+    let now = super::run::now_ms();
+    let event = classify(line, now);
+    {
+        let state = app.state::<AppState>();
+        let mut arm = state.temple_arm.lock().unwrap_or_else(|e| e.into_inner());
+        // Classified a second time inside, which is two string searches on the
+        // handful of lines a map produces: one entry point for the arm beats a
+        // second one that only the glue could reach.
+        apply_line(&mut arm, line, now);
+    }
+    // A stale Alva line is the remaining `None`: it says nothing about the
+    // screen now, so it moves neither the cycle nor the epoch nor the advice.
+    let Some(event) = event else {
+        return;
+    };
+    if ends_epoch(event) {
+        // INVALIDATE, never force. See `AppState::temple_epoch`.
+        app.state::<AppState>()
+            .temple_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    // ONE publish for both writes: `publish` clones the slice to decide whether
+    // to emit, and two closures would clone it twice and emit twice for one
+    // line. The advice clear is decided INSIDE it so the read stamp it is
+    // compared against is the one being overwritten.
+    let waiting = match event {
+        LineEvent::AlvaStart => Some(true),
+        LineEvent::AlvaEnd | LineEvent::LeftArea => Some(false),
+        // The temple's own area line is inside the cycle, not a boundary of it.
+        LineEvent::EnteredTemple => None,
+    };
+    let mut moved = None;
     let mut ended = None;
     super::run::publish(app, |slice| {
-        if slice.advice.is_none() {
-            return;
+        if let Some(waiting) = waiting {
+            if slice.waiting_for_panel != waiting {
+                // Read back rather than trusting the INTENT: `start_cycle`
+                // refuses an `Unavailable` slice, and a log line for a wait
+                // that was never raised is the same lie on the page one surface
+                // over.
+                let before = slice.waiting_for_panel;
+                if waiting {
+                    super::slice::start_cycle(slice);
+                } else {
+                    super::slice::end_cycle(slice);
+                }
+                moved = (slice.waiting_for_panel != before).then_some(slice.waiting_for_panel);
+            }
         }
-        if let Some(end) = advice_end(line, slice.last_read_at, now) {
-            ended = Some(end);
-            super::slice::clear_advice(slice);
+        // Its own guard, and only this one: the flag above has to be written on
+        // a START, which is exactly the state that arrives with no advice.
+        if slice.advice.is_some() {
+            if let Some(end) = advice_end(line, slice.last_read_at, now) {
+                ended = Some(end);
+                super::slice::clear_advice(slice);
+            }
         }
     });
+    if let Some(waiting) = moved {
+        // The ARM is not logged here — `super::run::gate_line` owns that line.
+        // This one is about the cycle, which the loop cannot see.
+        crate::app_log(
+            app,
+            if waiting {
+                format!(
+                    "Temple: waiting for the temple panel ({})",
+                    ArmReason::AlvaStart.label()
+                )
+            } else {
+                let reason = match event {
+                    LineEvent::LeftArea => AdviceEnd::LeftArea,
+                    _ => AdviceEnd::NewIncursion,
+                };
+                format!("Temple: cycle ended — {}", reason.label())
+            },
+        );
+    }
     if let Some(end) = ended {
         crate::app_log(
             app,
@@ -799,9 +1052,16 @@ mod tests {
         )
     }
 
-    /// One of the two measured incursion-start lines.
-    fn alva_line(at_ms: u64) -> String {
+    /// The most-used measured START phrase — 122 of the 684 mined lines.
+    fn alva_start(at_ms: u64) -> String {
         stamped(at_ms, "Alva, Master Explorer: Time to go.")
+    }
+
+    /// A measured END line: what Alva says when the incursion closes, and the
+    /// generic "Alva spoke" fixture for everything the phrase table does not
+    /// admit as a start.
+    fn alva_end(at_ms: u64) -> String {
+        stamped(at_ms, "Alva, Master Explorer: Good job.")
     }
 
     /// The area line for a map — anything that is not the temple.
@@ -814,6 +1074,121 @@ mod tests {
         stamped(at_ms, ": You have entered The Temple of Atzoatl.")
     }
 
+    // -------------------------------------------------------- the classifier --
+
+    /// All three START phrases, because the mining splits 122 / 118 / 101
+    /// between them: a table missing one misses a third of incursions, and it
+    /// misses them SILENTLY — nothing on screen says the notice did not appear.
+    #[test]
+    fn every_measured_start_phrase_starts_a_cycle() {
+        for phrase in ["Time to go.", "Let's go.", "It's time!"] {
+            let line = stamped(NOW, &format!("Alva, Master Explorer: {phrase}"));
+
+            assert_eq!(classify(&line, NOW), Some(LineEvent::AlvaStart), "{phrase}");
+        }
+    }
+
+    /// Everything else Alva says ends one: both `Good job` variants, the
+    /// one-off `Just in time.` (mined once, with no incursion after it) and the
+    /// temple banter.
+    ///
+    /// Fails if the fallback arm of the phrase match is `None` or a start — an
+    /// end variant nobody has heard would then leave the waiting notice
+    /// standing over a finished incursion, which is the asymmetry the
+    /// START-only rule exists to buy.
+    #[test]
+    fn every_other_alva_line_ends_one() {
+        for phrase in [
+            "Good job.",
+            "Good job, exile.",
+            "Just in time.",
+            "No wonder it's lost…",
+            "At last... Atzoatl.",
+        ] {
+            let line = stamped(NOW, &format!("Alva, Master Explorer: {phrase}"));
+
+            assert_eq!(classify(&line, NOW), Some(LineEvent::AlvaEnd), "{phrase}");
+        }
+    }
+
+    /// `Time to go, exile.` is in NEITHER log — the `, exile` variant is on the
+    /// end line — so a prefix match on `Time to go.` would open a cycle on a
+    /// line the game does not speak. Fails the moment the table is matched by
+    /// prefix instead of whole.
+    #[test]
+    fn the_exile_variant_of_a_start_phrase_is_not_a_start() {
+        let line = stamped(NOW, "Alva, Master Explorer: Time to go, exile.");
+
+        assert_eq!(classify(&line, NOW), Some(LineEvent::AlvaEnd));
+    }
+
+    /// Another NPC saying one of the phrases is not Alva. Fails if the phrase
+    /// table is searched before (or instead of) the speaker.
+    #[test]
+    fn another_speaker_saying_a_start_phrase_is_not_classified() {
+        let line = stamped(NOW, "Einhar, Beastmaster: Time to go.");
+
+        assert_eq!(classify(&line, NOW), None);
+    }
+
+    /// The temple's own area line is an ENTRY and not a departure — it is
+    /// inside the cycle the start line opened, and reading it as a departure
+    /// would end the cycle at the moment the player walks in.
+    #[test]
+    fn the_temples_own_area_line_is_an_entry() {
+        assert_eq!(classify(&temple_line(NOW), NOW), Some(LineEvent::EnteredTemple));
+    }
+
+    /// Every other area is the player leaving.
+    #[test]
+    fn any_other_area_line_is_a_departure() {
+        assert_eq!(classify(&map_line(NOW), NOW), Some(LineEvent::LeftArea));
+    }
+
+    /// A start phrase that reached us through a log the watcher was not tailing
+    /// is evidence about a screen that is minutes gone. Fails if the staleness
+    /// gate is applied after the phrase match, or only to end lines — a restart
+    /// over an old log would then open a cycle and put the notice up.
+    #[test]
+    fn a_stale_start_phrase_is_not_classified_at_all() {
+        let spoken = NOW - LINE_STALE_MS;
+
+        assert_eq!(classify(&alva_start(spoken), NOW), None, "the gate is inclusive");
+        // A whole second inside, not a millisecond: Client.txt writes seconds,
+        // so a finer step would format to the same stamp and pin nothing.
+        assert_eq!(
+            classify(&alva_start(spoken + 1_000), NOW),
+            Some(LineEvent::AlvaStart),
+            "one second inside it",
+        );
+    }
+
+    /// An unstamped line is not a stale one. Fails if the missing stamp is read
+    /// as "infinitely old" — every line of a log written without timestamps
+    /// would be dropped, and the module would never arm on that machine.
+    #[test]
+    fn an_alva_line_with_no_timestamp_is_classified() {
+        let line = "[INFO Client 12345] Alva, Master Explorer: Let's go.";
+
+        assert_eq!(classify(line, NOW), Some(LineEvent::AlvaStart));
+    }
+
+    /// Which events are cycle boundaries: the epoch the capture loop keys its
+    /// board on moves on all three, and NOT on the temple's own area line —
+    /// bumping there would invalidate the board the player is walking in to
+    /// read.
+    #[test]
+    fn the_cycle_boundaries_are_the_three_that_are_not_the_temple_door() {
+        for (event, boundary) in [
+            (LineEvent::LeftArea, true),
+            (LineEvent::AlvaStart, true),
+            (LineEvent::AlvaEnd, true),
+            (LineEvent::EnteredTemple, false),
+        ] {
+            assert_eq!(ends_epoch(event), boundary, "{event:?}");
+        }
+    }
+
     // ------------------------------------------------------- voice lines --
 
     /// The trigger's whole reason for existing: until Alva speaks, the loop
@@ -822,7 +1197,7 @@ mod tests {
     fn an_alva_voice_line_arms_the_loop() {
         let mut state = ArmState::default();
 
-        let transition = apply_line(&mut state, &alva_line(NOW), NOW);
+        let transition = apply_line(&mut state, &alva_end(NOW), NOW);
 
         assert_eq!(transition, Transition::Armed(ArmReason::AlvaLine));
         assert!(state.arm.is_armed(NOW));
@@ -853,9 +1228,9 @@ mod tests {
     fn a_second_alva_line_pushes_the_arm_out() {
         let mut state = ArmState::default();
         let later = NOW + 30_000;
-        apply_line(&mut state, &alva_line(NOW), NOW);
+        apply_line(&mut state, &alva_end(NOW), NOW);
 
-        let transition = apply_line(&mut state, &alva_line(later), later);
+        let transition = apply_line(&mut state, &alva_end(later), later);
 
         assert_eq!(transition, Transition::Extended(ArmReason::AlvaLine));
         assert_eq!(
@@ -873,14 +1248,15 @@ mod tests {
     #[test]
     fn the_alva_tail_expires_when_no_area_change_arrives() {
         let mut state = ArmState::default();
-        apply_line(&mut state, &alva_line(NOW), NOW);
+        apply_line(&mut state, &alva_end(NOW), NOW);
 
         assert!(state.arm.is_armed(NOW + ALVA_TAIL_MS - 1), "one ms inside the tail");
         assert!(!state.arm.is_armed(NOW + ALVA_TAIL_MS), "the tail is exclusive");
     }
 
-    /// A line the watcher only reached a minute late — a path change, a restart
-    /// over an old log — says nothing about the screen now.
+    /// A START line the watcher only reached a minute late — a path change, a
+    /// restart over an old log — says nothing about the screen now, so it arms
+    /// nothing and (through `on_client_line`) opens no cycle.
     ///
     /// Fails if staleness is read off `arm_at`'s answer instead of the raw
     /// stamp: `arm_at` clamps a stamp further back than `MAX_BACKDATE_MS` to
@@ -892,7 +1268,7 @@ mod tests {
         let mut state = ArmState::default();
         let spoken = NOW - 60_000;
 
-        let transition = apply_line(&mut state, &alva_line(spoken), NOW);
+        let transition = apply_line(&mut state, &alva_start(spoken), NOW);
 
         assert_eq!(transition, Transition::Ignored);
         assert_eq!(state.arm, TempleArm::Disarmed);
@@ -910,13 +1286,95 @@ mod tests {
         let mut state = ArmState::default();
         let spoken = NOW - (LINE_STALE_MS - 1_000);
 
-        apply_line(&mut state, &alva_line(spoken), NOW);
+        apply_line(&mut state, &alva_end(spoken), NOW);
 
         assert_eq!(
             state.arm,
             TempleArm::Armed {
                 until_ms: Some(spoken + ALVA_TAIL_MS),
                 reason: ArmReason::AlvaLine,
+            },
+        );
+    }
+
+    /// A START line arms with NO deadline, unlike every other voice line.
+    ///
+    /// The start fires when the PORTAL OPENS and nothing in the game times an
+    /// open portal out — the mining holds one 22-minute gap between a start and
+    /// its end, the player being away from the PC. Fails if the start is armed
+    /// with [`ALVA_TAIL_MS`] like the rest: the module would go blind two
+    /// minutes into a wait the game itself does not bound.
+    #[test]
+    fn a_start_phrase_arms_the_loop_with_no_deadline() {
+        let mut state = ArmState::default();
+
+        let transition = apply_line(&mut state, &alva_start(NOW), NOW);
+
+        assert_eq!(transition, Transition::Armed(ArmReason::AlvaStart));
+        assert_eq!(
+            state.arm,
+            TempleArm::Armed {
+                until_ms: None,
+                reason: ArmReason::AlvaStart,
+            },
+        );
+        assert!(state.arm.is_armed(NOW + 3_600_000), "an hour later, still armed");
+    }
+
+    /// The one permitted shortening: the game says the incursion ended, so the
+    /// deadline-free start arm becomes an ordinary [`ALVA_TAIL_MS`] one,
+    /// measured from the END line's own stamp.
+    ///
+    /// Fails if the end line is dropped over a live arm (the start arm would
+    /// last until the next zone change, capturing across the rest of the map)
+    /// or if the tail is measured from `now` rather than from the line.
+    #[test]
+    fn an_end_line_shortens_a_start_arm_to_the_tail_from_its_own_stamp() {
+        let mut state = ArmState::default();
+        apply_line(&mut state, &alva_start(NOW), NOW);
+        let ended = NOW + 34_000;
+
+        let transition = apply_line(&mut state, &alva_end(ended), ended);
+
+        assert_eq!(transition, Transition::Extended(ArmReason::AlvaLine));
+        assert!(
+            state.arm.is_armed(ended + ALVA_TAIL_MS - 1),
+            "one ms inside the tail the end line bought",
+        );
+        assert!(
+            !state.arm.is_armed(ended + ALVA_TAIL_MS),
+            "and the start arm's own horizon is gone",
+        );
+    }
+
+    /// The shortening is keyed on the REASON, and this is the case that proves
+    /// it: a `Manual` arm reaching past the tail keeps its own horizon.
+    ///
+    /// The arm is hand-built because today's constants cannot produce one —
+    /// [`MANUAL_ARM_GRACE_MS`] is 60 s against [`ALVA_TAIL_MS`]'s 120 s, so a
+    /// live Re-arm never outlives an end line's tail. What the test pins is the
+    /// rule rather than the arithmetic: split those constants (their own docs
+    /// invite it) and the case becomes reachable. Fails if the shortening drops
+    /// its `AlvaStart` condition and takes any live arm with a further horizon.
+    #[test]
+    fn an_end_line_does_not_shorten_a_manual_arm_reaching_further() {
+        let far = NOW + 10 * ALVA_TAIL_MS;
+        let mut state = ArmState {
+            arm: TempleArm::Armed {
+                until_ms: Some(far),
+                reason: ArmReason::Manual,
+            },
+            left_area_ms: None,
+        };
+
+        let transition = apply_line(&mut state, &alva_end(NOW), NOW);
+
+        assert_eq!(transition, Transition::Extended(ArmReason::Manual));
+        assert_eq!(
+            state.arm,
+            TempleArm::Armed {
+                until_ms: Some(far),
+                reason: ArmReason::Manual,
             },
         );
     }
@@ -962,7 +1420,7 @@ mod tests {
     #[test]
     fn an_area_change_disarms_a_voice_line_arm() {
         let mut state = ArmState::default();
-        apply_line(&mut state, &alva_line(NOW), NOW);
+        apply_line(&mut state, &alva_end(NOW), NOW);
 
         let transition = apply_line(&mut state, &map_line(NOW + 5_000), NOW + 5_000);
 
@@ -970,19 +1428,52 @@ mod tests {
         assert!(!state.arm.is_armed(NOW + 5_000));
     }
 
-    /// Alva's temple banter (`At last... Atzoatl.`) lands seconds after the
-    /// area line. Fails if arming is "latest wins": the deadline-free temple
-    /// arm would become a two-minute one and the module would go blind in every
-    /// temple that took longer than that to run.
+    /// The START arm carries no deadline, so the zone change is one of only two
+    /// things that can end it — and the one that fires when the player
+    /// abandons the incursion instead of finishing it.
+    ///
+    /// Fails if the [`LineEvent::LeftArea`] branch spares an
+    /// [`ArmReason::AlvaStart`] arm the way [`apply_line`]'s end-line branch
+    /// singles that reason out: a start heard before a portal the player never
+    /// took would then keep the loop capturing for the rest of the session.
+    #[test]
+    fn an_area_change_disarms_a_start_arm() {
+        let mut state = ArmState::default();
+        apply_line(&mut state, &alva_start(NOW), NOW);
+
+        let transition = apply_line(&mut state, &map_line(NOW + 5_000), NOW + 5_000);
+
+        assert_eq!(transition, Transition::Disarmed);
+        assert!(!state.arm.is_armed(NOW + 5_000));
+    }
+
+    /// The measured sequence, in the order the game writes it: the START line
+    /// opens the portal, the area line follows when the player steps through,
+    /// and Alva's temple banter (`At last... Atzoatl.`) lands seconds later.
+    ///
+    /// **The START comes first because that is the only arrangement that can
+    /// see the bug.** Enter the temple from a resting gate and the arm is
+    /// `TempleArea` whatever the entry branch does; enter it with a live
+    /// deadline-free `AlvaStart` arm and a BID buys nothing (`outlives(None,
+    /// None)` holds), so the reason stays `AlvaStart` and the banter — an
+    /// [`LineEvent::AlvaEnd`] by the phrase table — hits the START-arm
+    /// shortening and trades the deadline-free arm for a two-minute one.
+    ///
+    /// Fails if the temple entry bids through [`TempleArm::arm`] rather than
+    /// assigning, if arming is "latest wins", or if the end line's shortening
+    /// is applied to any live arm rather than only to an
+    /// [`ArmReason::AlvaStart`] one: the module would go blind in every temple
+    /// that took longer than the tail to run.
     #[test]
     fn an_alva_line_inside_the_temple_does_not_shorten_the_area_arm() {
         let mut state = ArmState::default();
-        apply_line(&mut state, &temple_line(NOW), NOW);
+        apply_line(&mut state, &alva_start(NOW), NOW);
+        apply_line(&mut state, &temple_line(NOW + 1_000), NOW + 1_000);
 
         let transition = apply_line(
             &mut state,
-            &stamped(NOW + 4_000, "Alva, Master Explorer: At last... Atzoatl."),
-            NOW + 4_000,
+            &stamped(NOW + 5_000, "Alva, Master Explorer: At last... Atzoatl."),
+            NOW + 5_000,
         );
 
         assert_eq!(transition, Transition::Extended(ArmReason::TempleArea));
@@ -992,6 +1483,10 @@ mod tests {
                 until_ms: None,
                 reason: ArmReason::TempleArea,
             },
+        );
+        assert!(
+            state.arm.is_armed(NOW + 3_600_000),
+            "an hour into the run, still armed",
         );
     }
 
@@ -1033,7 +1528,7 @@ mod tests {
     #[test]
     fn a_panel_seen_a_moment_ago_keeps_the_loop_armed_past_the_voice_line_tail() {
         let mut state = ArmState::default();
-        apply_line(&mut state, &alva_line(NOW), NOW);
+        apply_line(&mut state, &alva_end(NOW), NOW);
         let expired = NOW + ALVA_TAIL_MS + 1;
         assert!(!state.arm.is_armed(expired), "the voice line has nothing left");
 
@@ -1070,7 +1565,7 @@ mod tests {
     #[test]
     fn a_panel_gone_longer_than_its_tail_stands_the_loop_down() {
         let mut state = ArmState::default();
-        apply_line(&mut state, &alva_line(NOW), NOW);
+        apply_line(&mut state, &alva_end(NOW), NOW);
         let seen = NOW + 1_000;
 
         assert_eq!(
@@ -1087,7 +1582,7 @@ mod tests {
     #[test]
     fn a_live_client_txt_arm_is_the_source_the_log_names() {
         let mut state = ArmState::default();
-        apply_line(&mut state, &alva_line(NOW), NOW);
+        apply_line(&mut state, &alva_end(NOW), NOW);
 
         assert_eq!(
             arm_source(state, Some(NOW), false, NOW + 1_000),
@@ -1244,7 +1739,7 @@ mod tests {
     fn an_alva_line_in_the_replay_does_not_arm() {
         let tail = format!(
             "{}\n{}\n",
-            alva_line(NOW - 5_000),
+            alva_start(NOW - 5_000),
             stamped(NOW - 1_000, "Alva, Master Explorer: Good job, exile."),
         );
 
@@ -1281,7 +1776,7 @@ mod tests {
     #[test]
     fn an_alva_line_after_the_read_ends_the_advice() {
         assert_eq!(
-            advice_end(&alva_line(NOW), READ, NOW),
+            advice_end(&alva_start(NOW), READ, NOW),
             Some(AdviceEnd::NewIncursion),
         );
     }
@@ -1296,7 +1791,7 @@ mod tests {
         let spoke = NOW - 40_000;
         let read = Some(NOW - 30_000);
 
-        assert_eq!(advice_end(&alva_line(spoke), read, NOW), None);
+        assert_eq!(advice_end(&alva_start(spoke), read, NOW), None);
     }
 
     /// A line stamped in the same SECOND as the read reads as older than it.
@@ -1307,7 +1802,7 @@ mod tests {
     fn a_line_stamped_in_the_read_s_own_second_keeps_the_advice() {
         let second = NOW - 5_000;
 
-        assert_eq!(advice_end(&alva_line(second), Some(second + 400), NOW), None);
+        assert_eq!(advice_end(&alva_start(second), Some(second + 400), NOW), None);
     }
 
     /// Nothing has been read, so there is nothing to end — and the app log must
@@ -1316,7 +1811,7 @@ mod tests {
     #[test]
     fn a_board_that_was_never_read_has_no_advice_to_end() {
         assert_eq!(advice_end(&map_line(NOW), None, NOW), None);
-        assert_eq!(advice_end(&alva_line(NOW), None, NOW), None);
+        assert_eq!(advice_end(&alva_start(NOW), None, NOW), None);
     }
 
     /// A line old enough to be about a screen that is minutes gone reaches us
@@ -1328,7 +1823,7 @@ mod tests {
     fn a_stale_alva_line_does_not_end_the_advice() {
         let ancient = NOW - LINE_STALE_MS - 1_000;
 
-        assert_eq!(advice_end(&alva_line(ancient), READ, NOW), None);
+        assert_eq!(advice_end(&alva_start(ancient), READ, NOW), None);
     }
 
     /// Ordinary chatter is not an end. Fails if the speaker match is widened.
@@ -1352,16 +1847,18 @@ mod tests {
     fn the_fast_path_admits_both_kinds_of_line_that_can_end_the_advice() {
         assert!(may_end_advice(&map_line(NOW)), "an area change");
         assert!(may_end_advice(&temple_line(NOW)), "the temple's own area line");
-        assert!(may_end_advice(&alva_line(NOW)), "an Alva voice line");
+        assert!(may_end_advice(&alva_start(NOW)), "an Alva voice line");
         // A line it admits is not automatically an end — that is `advice_end`'s
         // half, and the temple line is the case that separates them.
         assert_eq!(advice_end(&temple_line(NOW), READ, NOW), None);
     }
 
     /// The two functions are asked about every line and must not have been
-    /// collapsed into one: `Good job.` ARMS the capture (the player may open
-    /// the panel to see what the kill changed) and ENDS the advice of the
-    /// incursion that produced it. A single verdict cannot say both.
+    /// collapsed into one: `Good job, exile.` is an [`LineEvent::AlvaEnd`] — it
+    /// starts no cycle, it ARMS the capture for [`ALVA_TAIL_MS`] (the player
+    /// may open the panel to see what the kill changed) and it ENDS the advice
+    /// of the incursion that produced it. A single verdict cannot say all
+    /// three.
     #[test]
     fn the_end_line_still_arms_the_capture() {
         let mut state = ArmState::default();
