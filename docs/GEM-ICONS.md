@@ -3,9 +3,16 @@
 Status: current guide.
 
 The server serves artwork at `/api/gem-icon/{name}` from `internal/gemicon`. Each
-name is resolved against `internal/gemicon/gem-icon-urls.json`, which is compiled
-into the binary (`//go:embed`). A name absent from that map returns `404` and the
-UI renders its `?` fallback.
+name is resolved against the category maps in `internal/gemicon/urls/` —
+`gems.json` and `items.json` today — which are compiled into the binary
+(`//go:embed urls/*.json`) and merged into one flat lookup at construction. A
+name absent from that merged map returns `404` and the UI renders its `?`
+fallback.
+
+The split is source-side only, and the loader discovers the files rather than
+naming them: a new category (POE-135) is one new `*.json` there and no Go
+change. A key present in two of them fails construction naming the key and both
+files rather than letting one file's URL silently win the other's name.
 
 The architectural constraints — why production cannot fetch icons itself, and why
 the cache is seeded before the map deploys — are recorded in
@@ -21,9 +28,13 @@ Both sets share **one** cache root — `ICON_CACHE_DIR`, default
 sub-directory per set**:
 
 ```
-<ICON_CACHE_DIR>/gems               internal/gemicon/gem-icon-urls.json
+<ICON_CACHE_DIR>/gems               internal/gemicon/urls/*.json
 <ICON_CACHE_DIR>/currency-exchange  internal/exchange/itemdata/icon-urls.json
 ```
+
+One cache sub-directory per icon **set**, not per source file: every category
+map under `internal/gemicon/urls/` feeds the one `/api/gem-icon/{name}` route
+and therefore the one `gems/` directory.
 
 The sub-directories are load-bearing, not tidiness. Both sets run through the
 same cache-filename scheme and their key spaces are generated independently, so
@@ -52,12 +63,18 @@ name, cannot fetch it, and returns `502`.
 
    Inventory icons are `78 x 78` PNGs. Anything else means you followed a redirect to the wrong file — a page redirect can silently resolve to a *different item's* artwork.
 
-2. **Add the entry** to `internal/gemicon/gem-icon-urls.json`, keeping the file sorted by key.
+2. **Add the entry** to the category file it belongs in, keeping that file
+   sorted by key. `internal/gemicon/urls/gems.json` for a skill gem;
+   `internal/gemicon/urls/items.json` for anything that is not one — the two
+   lab offerings live there because `MarketOverview.svelte` routes offering
+   names through the gem endpoint. A category that does not exist yet is a new
+   `*.json` file in the same directory and needs no code change; the same key
+   must not appear in two of them, or construction fails.
 
-3. **Pull the new file(s).** The puller writes using the server's exact cache-filename scheme and skips files already present, so it is safe to re-run:
+3. **Pull the new file(s).** The puller writes using the server's exact cache-filename scheme and skips files already present, so it is safe to re-run. Hand it the whole directory — it merges the category files the way the server does:
 
    ```
-   python3 scripts/download-gem-icons.py internal/gemicon/gem-icon-urls.json icons-cache/gems
+   python3 scripts/download-gem-icons.py internal/gemicon/urls icons-cache/gems
    ```
 
    To pull only new entries, hand it a JSON file containing just those keys.
@@ -312,8 +329,9 @@ happens:
   two; the four Allflame skills missing at launch all resolved within days.
 - **A name the map was never meant to cover.** `MarketOverview.svelte` routes lab
   offering names through the gem endpoint, so `Gift to the Goddess` and
-  `Dedication to the Goddess` need entries here despite not being gems. That
-  `<img>` has no `?` fallback and renders broken instead.
+  `Dedication to the Goddess` need entries here despite not being gems — which
+  is what `urls/items.json` is for. That `<img>` has no `?` fallback and
+  renders broken instead.
 - **A name the surface should never have asked for.** The map is not the place to
   fix this one — the name source is. See below.
 

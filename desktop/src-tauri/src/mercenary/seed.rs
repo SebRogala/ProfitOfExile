@@ -82,8 +82,8 @@ pub struct SeedEntry {
     /// The merc support FAMILY — `vocab::MercStat::family`, the same string
     /// the template store keys on.
     pub family: String,
-    /// The player gem whose inventory art seeds it — a key of
-    /// `internal/gemicon/gem-icon-urls.json`, and the path segment
+    /// The player gem whose inventory art seeds it — a key of one of the
+    /// category maps under `internal/gemicon/urls/`, and the path segment
     /// `/api/gem-icon/{gem}` takes.
     pub gem: String,
     /// The family's LOWEST vocabulary tier, written by the generator.
@@ -1309,11 +1309,15 @@ mod tests {
     /// The corpus of live crops POE-207 measured the descriptor on.
     const CROP_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/merc-icon-crops");
 
-    /// The server's embedded name → URL map, read from the repo rather than
-    /// mirrored: a `gem` this file does not carry 404s at runtime, and a copy
+    /// The server's embedded name → URL maps, read from the repo rather than
+    /// mirrored: a `gem` these files do not carry 404s at runtime, and a copy
     /// here would only tell us that the copy agreed with itself.
-    const GEM_ICON_URLS: &str =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../internal/gemicon/gem-icon-urls.json");
+    ///
+    /// A DIRECTORY of category files since POE-135, and `gem_icon_keys` unions
+    /// all of them for the same reason the server merges them: the contract is
+    /// what `/api/gem-icon/{name}` answers for, which is the merged map and not
+    /// any one category.
+    const GEM_ICON_URLS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../internal/gemicon/urls");
 
     /// Rewrites `seed-map.json` instead of checking it.
     const UPDATE_ENV: &str = "MERC_SEED_MAP_UPDATE";
@@ -1348,7 +1352,7 @@ mod tests {
     /// it (POE-211).
     ///
     /// `Area of Effect` is the fold of `Increased Area of Effect`, and the
-    /// player gem kept the old spelling: `gem-icon-urls.json` carries
+    /// player gem kept the old spelling: `internal/gemicon/urls/` carries
     /// `Increased Area of Effect Support` and neither `Area of Effect Support`
     /// nor `Area of Effect Damage Support`. An override rather than a third
     /// name rule because it is a STATEMENT about one gem, not a pattern —
@@ -1375,14 +1379,31 @@ mod tests {
         lowest.into_iter().collect()
     }
 
-    /// The names `/api/gem-icon/{name}` will serve art for.
+    /// The names `/api/gem-icon/{name}` will serve art for: the UNION of every
+    /// category map in [`GEM_ICON_URLS`], which is what the server's loader
+    /// merges and therefore what the route answers for.
     fn gem_icon_keys() -> std::collections::BTreeSet<String> {
-        let raw = std::fs::read_to_string(GEM_ICON_URLS)
-            .expect("internal/gemicon/gem-icon-urls.json is in this repo");
-        serde_json::from_str::<std::collections::BTreeMap<String, String>>(&raw)
-            .expect("the gem icon map parses")
-            .into_keys()
-            .collect()
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(GEM_ICON_URLS)
+            .expect("internal/gemicon/urls is in this repo")
+            .map(|entry| entry.expect("read internal/gemicon/urls").path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .collect();
+        files.sort();
+        assert!(!files.is_empty(), "internal/gemicon/urls carries no *.json category map");
+
+        let mut keys = std::collections::BTreeSet::new();
+        for path in files {
+            let raw = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+            let part = serde_json::from_str::<std::collections::BTreeMap<String, String>>(&raw)
+                .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+            for key in part.into_keys() {
+                if !keys.insert(key.clone()) {
+                    panic!("duplicate icon key {key:?} across category maps");
+                }
+            }
+        }
+        keys
     }
 
     /// The explicit overrides, then the two naming rules, in order (POE-208
@@ -1762,7 +1783,7 @@ mod tests {
             "Support), then rule 1 '<family> Support' (46 hits), then rule 2 '<family> Damage Support'",
             "(4: Added Chaos/Cold/Fire/Lightning). family = merc display text minus '(Tier N)' minus a",
             "leading Lesser/Greater/Gilded, then the family alias table (vocab.rs). gem is a key of",
-            "internal/gemicon/gem-icon-urls.json.",
+            "one of the category maps under internal/gemicon/urls/.",
             "tier: the family's LOWEST vocabulary tier — one seed per family, under one key.",
             "verified: 'corpus' = every clean corpus crop of this family resolves to it through the real",
             "matcher (the acceptance test re-checks every ENABLED row that claims it, and re-derives the",
@@ -1950,7 +1971,7 @@ mod tests {
     /// No shipped family satisfies both today, so the key set here is
     /// hand-made — the same device `MercVocab::from_stats` exists for. Order it
     /// the other way and `Area of Effect` would silently take whatever gem a
-    /// future `gem-icon-urls.json` happened to name `Area of Effect Support`,
+    /// future category map happened to name `Area of Effect Support`,
     /// which is the guess the override was written to replace.
     #[test]
     fn an_override_beats_the_name_rules() {

@@ -19,6 +19,10 @@ Amended 2026-09-01 (POE-221) — the two cache directories became sub-directorie
 of one volume. Layout only; every decision below stands. See the second
 amendment at the end.
 
+Amended 2026-09-04 (POE-135) — the gem set's source map became a directory of
+category files merged at construction. Layout only; every decision below
+stands. See the third amendment at the end.
+
 ## Context
 
 The server serves gem and item artwork at `/api/gem-icon/{name}` from
@@ -30,8 +34,9 @@ Two facts constrain the design, and neither is visible from the code:
 - **poewiki 403s datacenter IPs.** The production VPS cannot fetch icons at
   runtime at all. Verified again 2026-07-26: the same URL that a developer
   machine downloads without incident is refused from the server.
-- **The map is compiled into the binary** (`//go:embed gem-icon-urls.json`,
-  `internal/gemicon/gemicon.go:41`). The handler looks a name up in that embedded
+- **The map is compiled into the binary** (`//go:embed urls/*.json` in
+  `internal/gemicon/gemicon.go`; one file per category since the 2026-09-04
+  amendment, merged at construction). The handler looks a name up in that embedded
   map and returns 404 before it ever touches disk, so dropping a file into the
   cache volume does nothing for a name the binary does not already know.
 
@@ -180,7 +185,7 @@ longer two independently configured volumes. There is a single root —
 production — and `internal/server` derives one sub-directory per set beneath it:
 
 ```
-<ICON_CACHE_DIR>/gems               internal/gemicon/gem-icon-urls.json
+<ICON_CACHE_DIR>/gems               internal/gemicon/urls/*.json
 <ICON_CACHE_DIR>/currency-exchange  internal/exchange/itemdata/icon-urls.json
 ```
 
@@ -223,3 +228,52 @@ then deploy, then drop the old volume. Seeding before the deploy is the same
 Decision 2 ordering as any icon addition, for the same reason.
 [GEM-ICONS.md → The one-time migration to a single volume](../GEM-ICONS.md#the-one-time-migration-to-a-single-volume-poe-221)
 carries the commands.
+
+## Amended 2026-09-04 (POE-135)
+
+Status of this section: current behaviour.
+
+**The gem set's source map is a directory of category files.**
+`internal/gemicon/gem-icon-urls.json` is replaced by
+`internal/gemicon/urls/gems.json` (763 skill gems) and
+`internal/gemicon/urls/items.json` (the two lab offerings, which are items the
+gem endpoint has to answer for because `MarketOverview.svelte` routes offering
+names through it). `//go:embed urls/*.json` embeds the directory and `New`
+merges every file it finds into the same single flat `map[string]string` the
+handler has always looked names up in. The merged content is byte-for-byte what
+the single file held: 765 entries, same keys, same URLs.
+
+**Layout only; every decision above stands.** The map is still compiled into the
+binary, so Decision 1 (production never fetches) and Decision 2 (seed before
+deploy) are untouched, adding an icon is still a code change requiring a deploy,
+and Decision 3 is still accepted and still unimplemented. The runtime lookup is
+unchanged — one flat map, no categories — so nothing about 404s, 502s, caching
+headers or the cache-filename scheme moves. There is still no runtime filesystem
+read on the production path.
+
+**Discovery rather than a named list, and a loud duplicate.** The loader globs
+`urls/*.json` instead of naming the categories, so a future set — currency,
+Alva/temple — is one new file and no Go change. A key present in two files is a
+construction error naming the key and both files. That failure is the reason the
+split is safe: the flat runtime map cannot represent two sources for one name,
+so without the check one category's artwork would silently be served under the
+other's, which is the same class of collision the POE-177 amendment's
+separate-cache-directories rule exists to prevent one layer down. A duplicate
+key WITHIN one file is a different, unguarded hazard: every loader that reads it
+(encoding/json, json.load, serde's BTreeMap) still resolves it last-writer-wins
+with no error, so that case is guarded only by the sorted-one-key-per-line file
+convention, not by code.
+
+**What else moved with it.** `docker-compose.yml` bind-mounts the `urls`
+directory (not one file) into the `desktop` container, and the merc seed-art
+contract test (`desktop/src-tauri/src/mercenary/seed.rs`) unions the keys of
+every `*.json` in it — the contract is what `/api/gem-icon/{name}` answers for,
+which is the merged map. `scripts/download-gem-icons.py` accepts a directory and
+merges it with the same duplicate-key failure.
+
+**Not done here, deliberately.** POE-135 also proposed renaming the package
+`gemicon` → `icons` and the route `/api/gem-icon/{name}` → `/api/icon/{name}`.
+Both are left for the owner: the installed desktop builds call the current
+route, so a rename without an alias breaks them on the next server deploy, and
+the package's own doc comment records a later (POE-177) decision to keep its
+name for its origin.

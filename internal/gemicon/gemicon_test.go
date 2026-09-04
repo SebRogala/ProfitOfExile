@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -240,18 +241,207 @@ func TestHandler_UpstreamFailureIsNotCachedSoRetrySucceeds(t *testing.T) {
 	}
 }
 
-func TestNew_ParsesEmbeddedURLMapAndCreatesCacheDir(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "nested", "icons")
-	c, err := New(dir)
+// urlFile is a category map as it appears on disk, for the fstest fixtures
+// below. The loader only ever unmarshals the bytes, so the value shape is what
+// matters, not the key names.
+func urlFile(entries string) *fstest.MapFile {
+	return &fstest.MapFile{Data: []byte(entries)}
+}
+
+// The point of discovering the files instead of naming them: a category the
+// loader has never heard of — "alva" here — is picked up with no code change,
+// and every file's entries reach the merged map.
+func TestLoadURLMap_discoversEveryJSONFileInTheDirectory(t *testing.T) {
+	fsys := fstest.MapFS{
+		"urls/gems.json":  urlFile(`{"Absolution": "https://example.invalid/abs.png"}`),
+		"urls/items.json": urlFile(`{"Gift to the Goddess": "https://example.invalid/gift.png"}`),
+		"urls/alva.json":  urlFile(`{"Chamber of Sins": "https://example.invalid/sins.png"}`),
+	}
+
+	urls, err := loadURLMap(fsys, "urls")
+	if err != nil {
+		t.Fatalf("loadURLMap() error = %v, want nil", err)
+	}
+
+	want := map[string]string{
+		"Absolution":          "https://example.invalid/abs.png",
+		"Gift to the Goddess": "https://example.invalid/gift.png",
+		"Chamber of Sins":     "https://example.invalid/sins.png",
+	}
+	if len(urls) != len(want) {
+		t.Fatalf("merged map holds %d entries, want %d — a category file was not read", len(urls), len(want))
+	}
+	for key, wantURL := range want {
+		if got := urls[key]; got != wantURL {
+			t.Errorf("merged map[%q] = %q, want %q", key, got, wantURL)
+		}
+	}
+}
+
+// A silent last-writer-wins merge is the one real hazard of a flat runtime map:
+// the loser's name would serve the winner's artwork with nothing to show for
+// it. Both file names and the key are in the message because that is what makes
+// the failure actionable — which of the two files to edit is the whole question.
+func TestLoadURLMap_duplicateKeyAcrossFiles_failsNamingBothFilesAndTheKey(t *testing.T) {
+	fsys := fstest.MapFS{
+		"urls/a.json": urlFile(`{"Shared Name": "https://example.invalid/first.png"}`),
+		"urls/b.json": urlFile(`{"Shared Name": "https://example.invalid/second.png"}`),
+	}
+
+	urls, err := loadURLMap(fsys, "urls")
+
+	if err == nil {
+		t.Fatalf("loadURLMap() error = nil, want a duplicate-key rejection (map = %v)", urls)
+	}
+	if urls != nil {
+		t.Errorf("loadURLMap returned a map alongside the error: %v", urls)
+	}
+	for _, want := range []string{"Shared Name", "urls/a.json", "urls/b.json"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+}
+
+func TestLoadURLMap_malformedFile_failsNamingTheFile(t *testing.T) {
+	fsys := fstest.MapFS{
+		"urls/gems.json":   urlFile(`{"Absolution": "https://example.invalid/abs.png"}`),
+		"urls/broken.json": urlFile(`{"Absolution": `),
+	}
+
+	urls, err := loadURLMap(fsys, "urls")
+
+	if err == nil {
+		t.Fatalf("loadURLMap() error = nil, want a parse rejection (map = %v)", urls)
+	}
+	if urls != nil {
+		t.Errorf("loadURLMap returned a map alongside the error: %v", urls)
+	}
+	if !strings.Contains(err.Error(), "urls/broken.json") {
+		t.Errorf("error %q does not name the file that failed to parse", err)
+	}
+}
+
+// Boundary: a directory with no category map in it. The Cache this would build
+// answers 404 for every name, so it is a broken build and has to fail at
+// construction rather than at the first render.
+func TestLoadURLMap_noJSONFilesMatched_fails(t *testing.T) {
+	fsys := fstest.MapFS{"urls/README.md": urlFile("not a map")}
+
+	urls, err := loadURLMap(fsys, "urls")
+
+	if err == nil {
+		t.Fatalf("loadURLMap() error = nil, want a rejection (map = %v)", urls)
+	}
+	if urls != nil {
+		t.Errorf("loadURLMap returned a map alongside the error: %v", urls)
+	}
+	if !strings.Contains(err.Error(), "no url map files matched") {
+		t.Errorf("error %q does not report the no-files-matched cause", err)
+	}
+}
+
+// Boundary: every matched file parses but none of them carries an entry — e.g.
+// a category file was created and left `{}`. This is distinct from no files
+// matching at all: the glob succeeded, so the failure has to name the emptier
+// cause or it reads as the wrong boundary.
+func TestLoadURLMap_matchedFilesHoldNoEntries_fails(t *testing.T) {
+	fsys := fstest.MapFS{"urls/empty.json": urlFile(`{}`)}
+
+	urls, err := loadURLMap(fsys, "urls")
+
+	if err == nil {
+		t.Fatalf("loadURLMap() error = nil, want a rejection (map = %v)", urls)
+	}
+	if urls != nil {
+		t.Errorf("loadURLMap returned a map alongside the error: %v", urls)
+	}
+	if !strings.Contains(err.Error(), "hold no entries") {
+		t.Errorf("error %q does not report the zero-entries cause", err)
+	}
+}
+
+// The glob is *.json, not *: a note or a scratch file sitting beside the
+// category maps must not be handed to the JSON parser.
+func TestLoadURLMap_ignoresNonJSONFiles(t *testing.T) {
+	fsys := fstest.MapFS{
+		"urls/gems.json": urlFile(`{"Absolution": "https://example.invalid/abs.png"}`),
+		"urls/README.md": urlFile("Category files live here; one per category."),
+	}
+
+	urls, err := loadURLMap(fsys, "urls")
+	if err != nil {
+		t.Fatalf("loadURLMap() error = %v, want nil — a non-JSON neighbour was read", err)
+	}
+	if len(urls) != 1 {
+		t.Errorf("merged map holds %d entries, want 1", len(urls))
+	}
+}
+
+// The embedded categories, end to end: every entry of every file reaches the
+// map New builds, which is the property the split had to preserve.
+func TestNew_embeddedMap_holdsEveryCategorysEntries(t *testing.T) {
+	c, err := New(t.TempDir())
 	if err != nil {
 		t.Fatalf("New() error = %v, want nil", err)
 	}
-	if got := c.urls["Absolution"]; got == "" {
-		t.Error("embedded map missing a URL for a known gem \"Absolution\"")
+
+	// The merged size the single pre-split file held. A category file dropped
+	// from the embed, or read and discarded, lands here.
+	if got, want := len(c.urls), 765; got != want {
+		t.Errorf("embedded map holds %d entries, want %d", got, want)
 	}
+	if got := c.urls["Absolution"]; got == "" {
+		t.Error("embedded map missing a URL for a known gem \"Absolution\" (gems.json)")
+	}
+	if got := c.urls["Gift to the Goddess"]; got == "" {
+		t.Error("embedded map missing a URL for a known offering \"Gift to the Goddess\" (items.json)")
+	}
+}
+
+func TestNew_createsTheCacheDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "nested", "icons")
+
+	if _, err := New(dir); err != nil {
+		t.Fatalf("New() error = %v, want nil", err)
+	}
+
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		t.Errorf("New() must create the cache dir; stat err = %v", err)
 	}
+}
+
+// The two lab offerings are items the GEM endpoint has to answer for, because
+// MarketOverview routes offering names through it. Which file they live in is
+// the categorisation this split exists for, and nothing about the merged map
+// would reveal it moving back.
+func TestEmbeddedCategories_theLabOfferingsAreInItemsAndNotInGems(t *testing.T) {
+	offerings := []string{"Gift to the Goddess", "Dedication to the Goddess"}
+
+	items := readEmbeddedCategory(t, "urls/items.json")
+	gems := readEmbeddedCategory(t, "urls/gems.json")
+
+	for _, name := range offerings {
+		if _, ok := items[name]; !ok {
+			t.Errorf("urls/items.json is missing %q", name)
+		}
+		if _, ok := gems[name]; ok {
+			t.Errorf("urls/gems.json carries %q, which is an item, not a gem", name)
+		}
+	}
+}
+
+func readEmbeddedCategory(t *testing.T, path string) map[string]string {
+	t.Helper()
+	raw, err := urlFiles.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read embedded %s: %v", path, err)
+	}
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("parse embedded %s: %v", path, err)
+	}
+	return m
 }
 
 // The point of the ETag memo is that a conditional request costs no server work.

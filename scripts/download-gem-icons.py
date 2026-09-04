@@ -8,25 +8,31 @@ This pulls every icon in the given map and writes it using the SAME filename
 scheme as the server's cache (safeFileName: runs of [^A-Za-z0-9] -> "_",
 trimmed, + ".png"), so OUT_DIR drops straight into the server's cache as hits.
 
+MAP_JSON may be a single flat name -> URL file OR a DIRECTORY of category files
+(POE-135): a directory is merged from its `*.json` in sorted order, exactly as
+the server's loader merges the embedded ones, and a key present in two of them
+aborts naming both files. Merging last-writer-wins instead would silently pull
+one category's artwork for the other's name.
+
 The server keeps ONE cache root (ICON_CACHE_DIR, /data/icons-cache in
 production) with ONE SUB-DIRECTORY PER ICON SET, because every set shares this
 filename scheme and a flat directory would let two keys reduce to the same file.
 So point OUT_DIR at the sub-directory for the map you are pulling, never at the
 root:
 
-    icons-cache/gems               internal/gemicon/gem-icon-urls.json
+    icons-cache/gems               internal/gemicon/urls  (a directory)
     icons-cache/currency-exchange  internal/exchange/itemdata/icon-urls.json
 
 Usage:
-    python3 scripts/download-gem-icons.py [MAP_JSON] [OUT_DIR]
+    python3 scripts/download-gem-icons.py [MAP_JSON_OR_DIR] [OUT_DIR]
 
 Then ship OUT_DIR into the matching sub-directory of the prod icon-cache volume
 (see docs/GEM-ICONS.md) and the server serves every icon from disk with no
 upstream fetch.
 """
-import json, os, re, sys, time, urllib.request
+import glob, json, os, re, sys, time, urllib.request
 
-MAP = sys.argv[1] if len(sys.argv) > 1 else "internal/gemicon/gem-icon-urls.json"
+MAP = sys.argv[1] if len(sys.argv) > 1 else "internal/gemicon/urls"
 OUT = sys.argv[2] if len(sys.argv) > 2 else "icons-cache/gems"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -37,10 +43,35 @@ def safe_name(name: str) -> str:
     return _unsafe.sub("_", name).strip("_")
 
 
+def load_map(path: str) -> dict:
+    """Read one flat map file, or merge every *.json in a directory.
+
+    Mirrors internal/gemicon's loader: sorted file order, and a duplicate key
+    across two files is fatal and names both files, never a silent winner.
+    """
+    if not os.path.isdir(path):
+        with open(path) as f:
+            return json.load(f)
+    files = sorted(glob.glob(os.path.join(path, "*.json")))
+    if not files:
+        raise SystemExit(f"no *.json in {path}")
+    merged, source = {}, {}
+    for file in files:
+        with open(file) as f:
+            part = json.load(f)
+        for name in sorted(part):
+            if name in merged:
+                raise SystemExit(
+                    f"duplicate icon key {name!r} in {source[name]} and {file}"
+                )
+            merged[name] = part[name]
+            source[name] = file
+    return merged
+
+
 def main() -> int:
     os.makedirs(OUT, exist_ok=True)
-    with open(MAP) as f:
-        m = json.load(f)
+    m = load_map(MAP)
     total, ok, skip, fail = len(m), 0, 0, []
     for i, (name, url) in enumerate(sorted(m.items()), 1):
         fn = os.path.join(OUT, safe_name(name) + ".png")

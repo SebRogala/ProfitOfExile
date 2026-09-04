@@ -34,12 +34,12 @@ const DefaultIconCacheDir = "./data/icons-cache"
 // The icon cache root holds one sub-directory per icon set, and the split is
 // load-bearing rather than tidiness. Every set runs on the same internal/gemicon
 // cache, which reduces a key to a filename with one shared scheme
-// (gemicon.safeFileName), and the key spaces are generated independently — a gem
-// display name from gem-icon-urls.json, a Currency Exchange metadata id from the
-// exchange asset — so neither generator can see a collision with the other's
-// keys. One flat directory would therefore let two keys that reduce to the same
-// filename serve each other's artwork. A new icon set gets a new sub-directory
-// here; nothing is ever cached in the root itself.
+// (gemicon.safeFileName), and the key spaces are generated independently — a
+// gem display name from internal/gemicon/urls/, a Currency Exchange metadata id
+// from the exchange asset — so neither generator can see a collision with the
+// other's keys. One flat directory would therefore let two keys that reduce to
+// the same filename serve each other's artwork. A new icon set gets a new
+// sub-directory here; nothing is ever cached in the root itself.
 //
 // These names are also the on-disk layout an operator seeds by hand (POE-221),
 // so changing one is a production migration, not a rename.
