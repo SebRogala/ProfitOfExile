@@ -21,11 +21,31 @@ package exchange
 // carried none that hour. Both are liveness only: lowest/highest stock are the
 // hour's min and max of total book size and say nothing about the extreme
 // (corr <= 0.13 against the edge), so nothing scores on either.
+//
+// TWO READINGS OF THE SPREAD live here since POE-252, and which one a consumer
+// takes is the whole of ADR-016's calibration lock. low/high/vwap are what the
+// leg is PRICED and JUDGED at, and on a thin hour they are the trailing
+// window's (windowPriceIn) rather than this hour's. hourLow/hourHigh/hourVwap/
+// hourVwapOK are ALWAYS this row's own priceIn and vwapIn result, whatever the
+// leg was priced at, and they are what the fill simulation reads — every one of
+// them, and nothing else (recordSim). windowPriced says which reading the first
+// three carry, with windowHours and windowVolume as the span behind it.
+//
+// tick, quoteVolume, volume and stock are this hour's whatever the leg was
+// priced at: they say what the market is doing NOW, which is the half of the
+// row the window deliberately does not touch (Play.WindowPriced, C5).
 type obs struct {
 	low          pricePoint
 	high         pricePoint
 	vwap         float64
 	vwapOK       bool
+	hourLow      pricePoint
+	hourHigh     pricePoint
+	hourVwap     float64
+	hourVwapOK   bool
+	windowPriced bool
+	windowHours  int
+	windowVolume float64
 	tick         float64
 	quoteVolume  float64
 	volume       float64
@@ -84,16 +104,16 @@ type candidate struct {
 // is the other leg's executing side, and both had to be non-empty to get here.
 // Everything else the two legs observe is identical: one hour of one market, and
 // only the end of the spread they execute on differs, which is read from action.
-func directCandidates(rows []Row, cfg Config) []candidate {
+func directCandidates(rows []Row, view windowView, cfg Config) []candidate {
 	candidates := make([]candidate, 0, len(rows))
 	for _, r := range rows {
 		item, quote := orient(r, cfg.QuotePriority)
 
-		buy, ok := gatedLeg("buy", item, quote, r, cfg)
+		buy, ok := gatedLeg("buy", item, quote, r, view, cfg)
 		if !ok {
 			continue
 		}
-		sell, ok := gatedLeg("sell", item, quote, r, cfg)
+		sell, ok := gatedLeg("sell", item, quote, r, view, cfg)
 		if !ok {
 			continue
 		}
@@ -140,7 +160,14 @@ func directCandidates(rows []Row, cfg Config) []candidate {
 // A direct flip keeps the both-sides demand all the same, because its two legs
 // are gated separately on the one row and between them ask for both — see
 // directCandidates.
-func gatedLeg(action, item, quote string, r Row, cfg Config) (candidateLeg, bool) {
+//
+// Since POE-252 it also decides WHICH HOURS the leg is priced from. The gates
+// above are unchanged and still read the scored row alone; what the window adds
+// is a second reading of the spread for an hour too thin to print one, taken
+// from the market's own rows inside the view. A leg the gates drop is dropped
+// whatever the window holds — a window cannot resurrect an hour, only price one
+// that is already alive.
+func gatedLeg(action, item, quote string, r Row, view windowView, cfg Config) (candidateLeg, bool) {
 	low, high, ok := priceIn(r, item, quote)
 	if !ok {
 		return candidateLeg{}, false
@@ -165,20 +192,49 @@ func gatedLeg(action, item, quote string, r Row, cfg Config) (candidateLeg, bool
 	// item — with no anchor, nothing can be called suspect either.
 	vwap, vwapOK := vwapIn(r, item, quote)
 
+	o := obs{
+		low:          low,
+		high:         high,
+		vwap:         vwap,
+		vwapOK:       vwapOK,
+		hourLow:      low,
+		hourHigh:     high,
+		hourVwap:     vwap,
+		hourVwapOK:   vwapOK,
+		tick:         tickOf(r),
+		quoteVolume:  float64(quoteVolumeOf(r, quote)),
+		volume:       float64(volume),
+		stock:        executes,
+		depletedSide: opposite <= 0,
+	}
+
+	// THE WINDOW PATH (POE-252). An hour that traded under Config.ThinHourVolume
+	// units cannot print a spread: one trade collapses the low and the high onto
+	// the same number, and the leg then reads -0% however long the two sides have
+	// stood in the game's book. Such a leg is priced from the trailing window
+	// instead — the extremes the market REALIZED over the last
+	// Config.WindowPriceHours clock hours — and is marked with the span it read.
+	//
+	// Only the priced-and-judged channels move. The hour channels above are left
+	// exactly as this row read them, because the fill simulation is calibrated on
+	// single-hour prices and must not see a window one (ADR-016, C3).
+	if float64(volume) < cfg.ThinHourVolume {
+		windowRows := view.rowsFor(r.MarketID)
+		if windowLow, windowHigh, contributors, windowVolume, priced := windowPriceIn(windowRows, view.hour, item, quote, cfg); priced {
+			o.low, o.high = windowLow, windowHigh
+			// The anchor moves with the extremes, and it is pooled over the very
+			// rows that printed them: a window spread judged against one hour's
+			// mass would compare two different windows, and Leg.Fair is what the
+			// suspect bands read.
+			o.vwap, o.vwapOK = windowVwapOf(contributors, item, quote)
+			o.windowPriced, o.windowHours, o.windowVolume = true, len(contributors), windowVolume
+		}
+	}
+
 	return candidateLeg{
 		action: action,
 		item:   item,
 		quote:  quote,
-		obs: obs{
-			low:          low,
-			high:         high,
-			vwap:         vwap,
-			vwapOK:       vwapOK,
-			tick:         tickOf(r),
-			quoteVolume:  float64(quoteVolumeOf(r, quote)),
-			volume:       float64(volume),
-			stock:        executes,
-			depletedSide: opposite <= 0,
-		},
+		obs:    o,
 	}, true
 }

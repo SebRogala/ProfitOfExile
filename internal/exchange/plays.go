@@ -133,6 +133,32 @@ type Leg struct {
 	// than a price. The play is still served — the reader judges it — but it
 	// ranks after every clean one.
 	Suspect bool `json:"suspect"`
+	// WindowPriced says this leg's Price is not the scored hour's: the hour
+	// traded under Config.ThinHourVolume units and printed no spread of its own,
+	// so Price is one of the extremes the market REALIZED over the trailing
+	// clock window (windowPriceIn) and the pair beside it is the one that hour
+	// posted. It is a MARK and never an order (ADR-018) and never a hide
+	// (ADR-017).
+	//
+	// What does NOT move with it: Tick, Volume and Stock stay the scored hour's,
+	// so on such a leg Tick is no longer 1/max(PriceItemQty, PriceQuoteQty) —
+	// the price and the step come from different hours on purpose, because the
+	// step is what the market can express NOW.
+	//
+	// What does move with it: Fair, which becomes the window's POOLED
+	// volume-weighted price so the suspect bands compare like with like. A
+	// window-priced leg is therefore often ALSO Suspect, for the ordinary
+	// reason — a spread that stood at 486/1148 genuinely is 2.4x wide against
+	// its own fair — and that is the band working rather than a false positive.
+	WindowPriced bool `json:"windowPriced"`
+	// WindowHours is how many hours of the clock window priced this leg: the
+	// span behind the price, and how the reader judges how stale it may be. It
+	// is 0 when the leg was priced from its own hour.
+	WindowHours int `json:"windowHours"`
+	// WindowVolume is the units of Item those hours traded between them — the
+	// mass the window's extremes were drawn from, against
+	// Config.MinWindowVolume. It is 0 when the leg was priced from its own hour.
+	WindowVolume float64 `json:"windowVolume"`
 }
 
 // Play is one ranked opportunity: ONE hour's PRICES, plus two cross-hour
@@ -244,6 +270,33 @@ type Play struct {
 	// lacks, so a recipe whose quiet hour is an exception keeps its place and a
 	// recipe that never had a spread sinks on its own.
 	LowLiquidity bool `json:"lowLiquidity"`
+	// WindowPriced says ANY leg was priced from its market's trailing window
+	// rather than from the scored hour, because that hour traded under
+	// Config.ThinHourVolume units and one trade collapses a low and a high onto
+	// the same number. The measured case is 2026-09-04: the Apocalypse card's
+	// newest hour traded ONE card, at 552, and it was the owner's own purchase,
+	// so the row served 552/552 for -0% while the game's book had stood near
+	// 550/1150 all day and the six-hour window had realized 486/1148.
+	//
+	// It is a MARK. It is in neither comparator — not this file's ranking sort
+	// and not the desktop's (ADR-018) — and no default gate reads it (ADR-017),
+	// so such a row's RoiPct and ExpectedRoi order at face value. The staleness
+	// it discloses is real and bounded: the prices are realized trades from
+	// inside the last Config.WindowPriceHours clock hours, and WindowHours says
+	// how many of those hours priced.
+	//
+	// LastHour, Tick and the result's DivineChaosRate stay the SCORED hour's,
+	// and so does ExpectedRoi — the fill simulation reads the legs' hour
+	// channels only, which is what keeps ADR-016's calibration intact.
+	WindowPriced bool `json:"windowPriced"`
+	// WindowHours is the widest window-priced leg's contributing-hour count, 0
+	// when the play is not window-priced. It is the span the reader judges the
+	// price's age by.
+	WindowHours int `json:"windowHours"`
+	// WindowVolume is that same leg's summed item-side volume over the window,
+	// 0 when the play is not window-priced: the mass the extremes were drawn
+	// from, in the same units as Depth.
+	WindowVolume float64 `json:"windowVolume"`
 	// HoursSeen counts the window hours in which the recipe produced a servable
 	// play on THAT hour's own prices: every leg traded and carried stock on the
 	// side it executes against, the
@@ -355,6 +408,39 @@ type Config struct {
 	// opt into the tighter reading; gatedLeg's demand for stock on the side each
 	// leg EXECUTES AGAINST stands whatever this is set to.
 	MinVolumePerHour float64
+	// ThinHourVolume is the units-traded level under which an hour is too thin
+	// to have printed a spread of its own, and the leg is priced from the
+	// trailing window instead (windowPriceIn). It reads the same number
+	// MinVolumePerHour does — units of the leg's ITEM traded in the hour — so
+	// the two knobs are in one currency, and the feed publishes no count of
+	// distinct trades to read instead.
+	//
+	// It must be set ABOVE MinVolumePerHour to do anything: an hour thin enough
+	// to fall under both was already dropped by gatedLeg's liveness gate, so at
+	// ThinHourVolume <= MinVolumePerHour the window path is inert. The
+	// comparison is deliberately not written as a max() of the two — they answer
+	// different questions, and coupling them would hide the misconfiguration
+	// instead of leaving it inspectable.
+	//
+	// withDefaults clamps this one on a NEGATIVE only, not on <= 0 like the
+	// counts around it: an explicit 0 means "nothing is ever thin" and disarms
+	// the window path entirely, which is how the calibration guard proves the
+	// fill simulation never sees a window price.
+	ThinHourVolume float64
+	// WindowPriceHours is how many CLOCK hours the trailing window spans, the
+	// scored hour included, so 6 means [h-5h, h]. It bounds how old a served
+	// price can be: the mark and Play.WindowHours disclose the age, and this
+	// caps it.
+	WindowPriceHours int
+	// MinWindowVolume is the item-side volume a window must have traded, summed
+	// over the hours that priced it, before it may price a leg. Two units over
+	// six hours is the floor a single trade cannot clear on its own.
+	//
+	// These three take no environment override, following the same shape
+	// ADR-016's calibration-locked sim knobs do (see DefaultConfig): they are
+	// Config fields with defaults, and moving one is a deliberate redeploy
+	// rather than a per-deployment preference.
+	MinWindowVolume float64
 	// MinEdge is the RoiPct at which an hour stops counting as an exploitable
 	// spread, 0.001 meaning +0.1%, judged on the UNDERCUT return.
 	//
@@ -551,10 +637,19 @@ type Config struct {
 // owner outcomes (POE-193), so changing one invalidates the measurement rather
 // than adjusting a preference — which is why, unlike every knob above, they take
 // no environment override and moving them is a deliberate redeploy.
+//
+// The three window knobs (ThinHourVolume 2, WindowPriceHours 6,
+// MinWindowVolume 2) take no environment override either, for a related reason:
+// they decide what a served PRICE is, so a per-deployment value would mean two
+// installations disagreeing about what the market printed. They are the levels
+// POE-252 was specified at, to be tuned on the corpus and shipped.
 func DefaultConfig() Config {
 	return Config{
 		WindowHours:      6,
 		MinVolumePerHour: 1,
+		ThinHourVolume:   2,
+		WindowPriceHours: 6,
+		MinWindowVolume:  2,
 		MinEdge:          0.001,
 		MinTurnoverChaos: 0,
 		MaxTick:          1,
@@ -580,10 +675,15 @@ func DefaultConfig() Config {
 // A non-positive count, floor or cap (WindowHours, MinVolumePerHour,
 // MinTurnoverChaos, MaxTick, MinEdgeTickRatio, MinROIChaos, SuspectLowBand,
 // SuspectHighBand, MinHoursSeen, SimWindowHours, SimLookaheadHours,
-// MinSimEntries, MaxPlays) reads as unset, because none of them has a meaningful
+// MinSimEntries, MaxPlays, WindowPriceHours, MinWindowVolume) reads as unset,
+// because none of them has a meaningful
 // negative value. MinEdge is different: only an exact 0 reads
 // as unset, so a caller can push the flag level below zero and stop flagging the
-// small gains it would otherwise mark. HideSuspect is a bool and has no unset
+// small gains it would otherwise mark. ThinHourVolume is different the same way
+// and for the mirror reason: only a NEGATIVE reads as unset, so an explicit 0
+// disarms the window path — nothing is ever thin — which is the reading the
+// calibration guard needs and which a <= 0 branch would silently overwrite with
+// the default. HideSuspect is a bool and has no unset
 // state: false is a choice, and it is also the default.
 //
 // Three of those branches no longer restore anything, and that is the point.
@@ -612,6 +712,15 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MinVolumePerHour <= 0 {
 		c.MinVolumePerHour = d.MinVolumePerHour
+	}
+	if c.ThinHourVolume < 0 {
+		c.ThinHourVolume = d.ThinHourVolume
+	}
+	if c.WindowPriceHours <= 0 {
+		c.WindowPriceHours = d.WindowPriceHours
+	}
+	if c.MinWindowVolume <= 0 {
+		c.MinWindowVolume = d.MinWindowVolume
 	}
 	if c.MinEdge == 0 {
 		c.MinEdge = d.MinEdge
@@ -787,6 +896,19 @@ func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 	result.From = hourAt[stamps[rankHours-1]]
 	result.To = hourAt[stamps[0]].Add(time.Hour)
 
+	// The trailing-window price path reads the SAME rows this loop is about to
+	// walk, indexed by market: no second query and no second scan of the
+	// hypertable (ADR-016's last consequence, and the reason repository.go is
+	// untouched by POE-252). Only the hour a view names changes as the loop moves
+	// back through the span.
+	spanRows := make([]StoredRow, 0, len(rows))
+	for _, stamp := range span {
+		for _, r := range byHour[stamp] {
+			spanRows = append(spanRows, StoredRow{Hour: hourAt[stamp], Row: r})
+		}
+	}
+	history := windowHistoryOf(spanRows)
+
 	anyRate := false
 	merged := make(map[string]*aggregate)
 	series := make(map[string]*simSeries)
@@ -805,8 +927,9 @@ func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 			result.DivineChaosRate = hourRate
 		}
 
-		candidates := directCandidates(hourRows, cfg)
-		candidates = append(candidates, crossQuoteCandidates(hourRows, cfg)...)
+		view := windowView{hour: hour, byMarket: history}
+		candidates := directCandidates(hourRows, view, cfg)
+		candidates = append(candidates, crossQuoteCandidates(hourRows, view, cfg)...)
 
 		seen := make(map[string]bool, len(candidates))
 		for _, c := range candidates {
@@ -983,6 +1106,7 @@ func evaluate(c candidate, hour time.Time, hourRate float64, hourRateOK bool, cf
 	undercut := make([]float64, len(c.legs))
 	depth, turnover, tick, entryRate := 0.0, 0.0, 0.0, 0.0
 	suspect := false
+	windowPriced, windowHours, windowVolume := false, 0, 0.0
 
 	for i, recipe := range c.legs {
 		o := recipe.obs
@@ -1016,9 +1140,22 @@ func evaluate(c candidate, hour time.Time, hourRate float64, hourRateOK bool, cf
 			Stock:         o.stock,
 			DepletedSide:  o.depletedSide,
 			Suspect:       legSuspect,
+			WindowPriced:  o.windowPriced,
+			WindowHours:   o.windowHours,
+			WindowVolume:  o.windowVolume,
 		}
 		raw[i], undercut[i] = point.price, filled
 		suspect = suspect || legSuspect
+		// The play's span is its WIDEST window-priced leg's, with the volume
+		// that same leg read: two legs of a triangle can look back over
+		// different numbers of hours, and the reader judging the row's age needs
+		// the oldest of them rather than an average of two spans.
+		if o.windowPriced {
+			windowPriced = true
+			if o.windowHours > windowHours {
+				windowHours, windowVolume = o.windowHours, o.windowVolume
+			}
+		}
 
 		rate := chaosPerUnit(recipe.quote, hourRate)
 		if rate <= 0 {
@@ -1093,6 +1230,9 @@ func evaluate(c candidate, hour time.Time, hourRate float64, hourRateOK bool, cf
 		Depth:        depth,
 		Suspect:      suspect,
 		LowLiquidity: lowLiquidity,
+		WindowPriced: windowPriced,
+		WindowHours:  windowHours,
+		WindowVolume: windowVolume,
 		LastHour:     hour,
 	}, true
 }

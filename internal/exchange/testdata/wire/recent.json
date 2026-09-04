@@ -23,7 +23,10 @@
           "volume": 1000,
           "stock": 500,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -38,7 +41,10 @@
           "volume": 1000,
           "stock": 5000,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": 0.19760239760239773,
@@ -51,6 +57,9 @@
       "depth": 1000,
       "suspect": false,
       "lowLiquidity": false,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 6,
       "expectedRoi": 195.5531521739132,
       "expectedRoiPct": 0.19535779437953374,
@@ -75,7 +84,10 @@
           "volume": 2,
           "stock": 6,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -90,7 +102,10 @@
           "volume": 2,
           "stock": 600,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": -0.008928571428571397,
@@ -103,6 +118,9 @@
       "depth": 2,
       "suspect": false,
       "lowLiquidity": true,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 5,
       "expectedRoi": 73.62272727272726,
       "expectedRoiPct": 0.729308578179246,
@@ -127,7 +145,10 @@
           "volume": 1000,
           "stock": 600,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -142,7 +163,10 @@
           "volume": 1000,
           "stock": 15000,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": 0.07434301521438469,
@@ -155,6 +179,9 @@
       "depth": 1000,
       "suspect": false,
       "lowLiquidity": false,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 6,
       "expectedRoi": 38.84784779269354,
       "expectedRoiPct": 0.37269150003161355,
@@ -179,7 +206,10 @@
           "volume": 1000,
           "stock": 500,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -194,7 +224,10 @@
           "volume": 1000,
           "stock": 5000,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": 0.27425742574257406,
@@ -207,6 +240,9 @@
       "depth": 1000,
       "suspect": false,
       "lowLiquidity": false,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 6,
       "expectedRoi": 27.380826086956503,
       "expectedRoiPct": 0.2710972879896683,
@@ -231,7 +267,10 @@
           "volume": 1000,
           "stock": 600,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -246,7 +285,10 @@
           "volume": 1000,
           "stock": 400,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": 0.20710059171597628,
@@ -259,6 +301,9 @@
       "depth": 1000,
       "suspect": false,
       "lowLiquidity": false,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 6,
       "expectedRoi": 22.170434782608687,
       "expectedRoiPct": 0.20497813223565725,
@@ -283,7 +328,10 @@
           "volume": 1000,
           "stock": 600,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -298,7 +346,10 @@
           "volume": 1000,
           "stock": 1121,
           "depletedSide": true,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -313,7 +364,10 @@
           "volume": 4000000,
           "stock": 5000,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": 0.18395432692307678,
@@ -326,6 +380,9 @@
       "depth": 1000,
       "suspect": false,
       "lowLiquidity": false,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 6,
       "expectedRoi": 20.220826086956503,
       "expectedRoiPct": 0.1869529039104706,
@@ -350,7 +407,10 @@
           "volume": 20000,
           "stock": 500,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -365,7 +425,10 @@
           "volume": 8000,
           "stock": 400,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -380,7 +443,10 @@
           "volume": 20000,
           "stock": 100000,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": 0.6281818181818186,
@@ -393,6 +459,9 @@
       "depth": 8000,
       "suspect": false,
       "lowLiquidity": false,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 6,
       "expectedRoi": 6.913043478260871,
       "expectedRoiPct": 0.6284584980237158,
@@ -417,7 +486,10 @@
           "volume": 8000,
           "stock": 300,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -432,7 +504,10 @@
           "volume": 8000,
           "stock": 400,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": 0.6363636363636362,
@@ -445,6 +520,9 @@
       "depth": 8000,
       "suspect": false,
       "lowLiquidity": false,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 6,
       "expectedRoi": 6.913043478260869,
       "expectedRoiPct": 0.6284584980237156,
@@ -469,7 +547,10 @@
           "volume": 4000000,
           "stock": 100000,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -484,7 +565,10 @@
           "volume": 4000000,
           "stock": 5000,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": -0.00995024875621886,
@@ -497,6 +581,9 @@
       "depth": 4000000,
       "suspect": false,
       "lowLiquidity": true,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 6,
       "expectedRoi": -0.009891304347826037,
       "expectedRoiPct": -0.00984209387843387,
@@ -521,7 +608,10 @@
           "volume": 20000,
           "stock": 500,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -536,7 +626,10 @@
           "volume": 20000,
           "stock": 5000,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": -0.018181818181818077,
@@ -549,6 +642,9 @@
       "depth": 20000,
       "suspect": false,
       "lowLiquidity": true,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 6,
       "expectedRoi": -0.21739130434782505,
       "expectedRoiPct": -0.01976284584980227,
@@ -573,7 +669,10 @@
           "volume": 8000,
           "stock": 300,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -588,7 +687,10 @@
           "volume": 20000,
           "stock": 5000,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -603,7 +705,10 @@
           "volume": 4000000,
           "stock": 5000,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": -0.02309090909090905,
@@ -616,6 +721,9 @@
       "depth": 8000,
       "suspect": false,
       "lowLiquidity": true,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 6,
       "expectedRoi": -0.21739130434782625,
       "expectedRoiPct": -0.01976284584980238,
@@ -640,7 +748,10 @@
           "volume": 10,
           "stock": 8,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -655,7 +766,10 @@
           "volume": 10,
           "stock": 1700,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": -0.011695906432748537,
@@ -668,6 +782,9 @@
       "depth": 10,
       "suspect": false,
       "lowLiquidity": true,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 6,
       "expectedRoi": -1.0313043478260884,
       "expectedRoiPct": -0.009946605644546158,
@@ -692,7 +809,10 @@
           "volume": 1000,
           "stock": 500,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -707,7 +827,10 @@
           "volume": 1000,
           "stock": 5000,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": 0.2870646766169156,
@@ -720,6 +843,9 @@
       "depth": 1000,
       "suspect": false,
       "lowLiquidity": false,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 5,
       "expectedRoi": 53.866875000000036,
       "expectedRoiPct": 0.2679944029850748,
@@ -744,7 +870,10 @@
           "volume": 1000,
           "stock": 600,
           "depletedSide": false,
-          "suspect": true
+          "suspect": true,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -759,7 +888,10 @@
           "volume": 1000,
           "stock": 15000,
           "depletedSide": false,
-          "suspect": false
+          "suspect": false,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": 3.06041986687148,
@@ -772,6 +904,9 @@
       "depth": 1000,
       "suspect": true,
       "lowLiquidity": false,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 6,
       "expectedRoi": 17.655212716222568,
       "expectedRoiPct": 0.07325814405071608,
@@ -796,7 +931,10 @@
           "volume": 500,
           "stock": 4000,
           "depletedSide": false,
-          "suspect": true
+          "suspect": true,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         },
         {
           "action": "sell",
@@ -811,7 +949,10 @@
           "volume": 500,
           "stock": 600,
           "depletedSide": false,
-          "suspect": true
+          "suspect": true,
+          "windowPriced": false,
+          "windowHours": 0,
+          "windowVolume": 0
         }
       ],
       "roiPct": -1,
@@ -824,6 +965,9 @@
       "depth": 500,
       "suspect": true,
       "lowLiquidity": true,
+      "windowPriced": false,
+      "windowHours": 0,
+      "windowVolume": 0,
       "hoursSeen": 6,
       "expectedRoi": -0.05240372670807454,
       "expectedRoiPct": -0.9170652173913044,

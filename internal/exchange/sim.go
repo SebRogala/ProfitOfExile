@@ -38,6 +38,18 @@ import (
 // nothing here re-derives a price: entryLow/sellHigh/sellVwap and the ticks are
 // the obs values gatedLeg already read through priceIn, vwapIn and tickOf.
 //
+// Every price here is ONE HOUR's, and since POE-252 that has to be said rather
+// than assumed. A thin hour is PRICED from a trailing window (windowPriceIn),
+// and obs carries both readings; this file takes the hour channels —
+// obs.hourLow, obs.hourHigh, obs.hourVwap, obs.hourVwapOK — and never the
+// window ones. The reason is ADR-016's calibration lock: ExpectedRoi's
+// parameters were validated against five real owner outcomes on single-hour
+// entry and fill prices, so feeding it an extreme realized in some other hour
+// would invalidate the measurement rather than improve it. A leak shows up as a
+// moved ExpectedRoi with the window path armed and disarmed, which
+// TestBestPlays_windowPricingDisarmed_leavesEverySimulationFieldBitIdentical
+// pins to the bit.
+//
 // convVwap is 1 with convVwapOK true on a direct flip, because a same-market
 // round trip converts its proceeds through the identity. That keeps one
 // arithmetic path for both shapes instead of a branch per entry.
@@ -113,18 +125,18 @@ func recordSim(series map[string]*simSeries, c candidate, hour time.Time, hourRa
 	entry, sell := c.legs[0].obs, c.legs[1].obs
 	o := simObs{
 		hour:       hour,
-		entryLow:   entry.low.price,
+		entryLow:   entry.hourLow.price,
 		entryTick:  entry.tick,
-		sellHigh:   sell.high.price,
+		sellHigh:   sell.hourHigh.price,
 		sellTick:   sell.tick,
-		sellVwap:   sell.vwap,
-		sellVwapOK: sell.vwapOK,
+		sellVwap:   sell.hourVwap,
+		sellVwapOK: sell.hourVwapOK,
 		convVwap:   1,
 		convVwapOK: true,
 		entryRate:  chaosPerUnit(c.legs[0].quote, hourRate),
 	}
 	if c.mode == ModeOneHop {
-		o.convVwap, o.convVwapOK = c.legs[2].obs.vwap, c.legs[2].obs.vwapOK
+		o.convVwap, o.convVwapOK = c.legs[2].obs.hourVwap, c.legs[2].obs.hourVwapOK
 	}
 	o.valuable = o.entryRate > 0 && o.entryLow > 0
 

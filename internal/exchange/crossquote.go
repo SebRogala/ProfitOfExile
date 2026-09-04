@@ -30,10 +30,16 @@ import "sort"
 // Each leg is gated on its own market's depth (gatedLeg) and every price must
 // come back ok, so one thin or unpriced side drops the whole route.
 //
+// Each leg also carries its OWN market's trailing window: gatedLeg reads the
+// view under the row's market id, so a thin leg of a triangle prices from the
+// window of the market it trades on and its two siblings are unaffected. The
+// route is still enumerated from ONE hour's rows — all three markets must have
+// traded in the scored hour for the triangle to exist at all.
+//
 // Output order does not depend on the order of rows: markets are indexed by
 // unordered pair, and both the items and their currency sides are sorted before
 // they are walked.
-func crossQuoteCandidates(rows []Row, cfg Config) []candidate {
+func crossQuoteCandidates(rows []Row, view windowView, cfg Config) []candidate {
 	byPair := make(map[string]Row, len(rows))
 	counterparties := make(map[string]map[string]bool)
 
@@ -66,10 +72,10 @@ func crossQuoteCandidates(rows []Row, cfg Config) []candidate {
 				rowXA := byPair[pairKey(x, a)]
 				rowXB := byPair[pairKey(x, b)]
 
-				if c, ok := oneHopCandidate(x, a, b, rowXA, rowXB, rowAB, cfg); ok {
+				if c, ok := oneHopCandidate(x, a, b, rowXA, rowXB, rowAB, view, cfg); ok {
 					candidates = append(candidates, c)
 				}
-				if c, ok := oneHopCandidate(x, b, a, rowXB, rowXA, rowAB, cfg); ok {
+				if c, ok := oneHopCandidate(x, b, a, rowXB, rowXA, rowAB, view, cfg); ok {
 					candidates = append(candidates, c)
 				}
 			}
@@ -86,16 +92,16 @@ func crossQuoteCandidates(rows []Row, cfg Config) []candidate {
 // It returns ok == false when any of the three prices is unavailable or any leg
 // fails its depth gate. The mirror route is the same call with a and b (and the
 // two X rows) swapped.
-func oneHopCandidate(x, a, b string, rowXA, rowXB, rowAB Row, cfg Config) (candidate, bool) {
-	buyX, ok := gatedLeg("buy", x, a, rowXA, cfg)
+func oneHopCandidate(x, a, b string, rowXA, rowXB, rowAB Row, view windowView, cfg Config) (candidate, bool) {
+	buyX, ok := gatedLeg("buy", x, a, rowXA, view, cfg)
 	if !ok {
 		return candidate{}, false
 	}
-	sellX, ok := gatedLeg("sell", x, b, rowXB, cfg)
+	sellX, ok := gatedLeg("sell", x, b, rowXB, view, cfg)
 	if !ok {
 		return candidate{}, false
 	}
-	sellB, ok := gatedLeg("sell", b, a, rowAB, cfg)
+	sellB, ok := gatedLeg("sell", b, a, rowAB, view, cfg)
 	if !ok {
 		return candidate{}, false
 	}

@@ -1,6 +1,10 @@
 package exchange
 
-import "math"
+import (
+	"math"
+	"sort"
+	"time"
+)
 
 // DivineID and ChaosID are the feed ids of the two currencies every liquid
 // market is quoted against, and the default Config.QuotePriority in that order.
@@ -94,6 +98,193 @@ func priceIn(r Row, item, quote string) (low, high pricePoint, ok bool) {
 		return pricePoint{}, pricePoint{}, false
 	}
 	return low, high, true
+}
+
+// windowView is what ONE scored hour may look back over: every market's rows
+// from the span BestPlays already holds, indexed by market id with each market's
+// rows ordered newest hour first, plus the hour doing the looking.
+//
+// It adds NO query. byMarket is built once per BestPlays call out of the same
+// grouped rows the per-hour loop walks, so the engine still reads the hypertable
+// exactly once per recompute (ADR-016's last consequence); only hour changes as
+// the loop moves back through the span.
+//
+// The zero value is a view with no history at all, under which windowPriceIn
+// never returns ok and every leg prices from its own hour. That is what the
+// per-hour unit tests pass, and it is why a caller that has no span in hand
+// cannot accidentally serve a window price.
+type windowView struct {
+	hour     time.Time
+	byMarket map[string][]StoredRow
+}
+
+// rowsFor returns one market's span rows, newest hour first, or nil when the
+// span carries none.
+func (v windowView) rowsFor(marketID string) []StoredRow {
+	return v.byMarket[marketID]
+}
+
+// windowHistoryOf indexes stored rows by market id, newest hour first.
+//
+// The sort is done here rather than trusted from the caller, so a window's
+// answer cannot depend on the order storage happened to return rows in — the
+// same property TestCorpus_shuffledFeedOrder_producesTheSameWireBytes holds the
+// whole engine to.
+func windowHistoryOf(rows []StoredRow) map[string][]StoredRow {
+	history := make(map[string][]StoredRow)
+	for _, stored := range rows {
+		history[stored.MarketID] = append(history[stored.MarketID], stored)
+	}
+	for _, market := range history {
+		sort.SliceStable(market, func(i, j int) bool { return market[i].Hour.After(market[j].Hour) })
+	}
+	return history
+}
+
+// windowContributors returns the rows of one market that may price a trailing
+// window ending at hour: the rows inside the CLOSED clock span
+// [hour - (Config.WindowPriceHours-1)h, hour] that traded at least
+// Config.MinVolumePerHour units of item and that priceIn can price.
+//
+// Three filters, each answering a different way a window could lie.
+//
+// The span is counted in CLOCK hours rather than in traded ones, so the oldest
+// print a window can serve is WindowPriceHours-1 hours old whatever the market's
+// gaps look like: a pair that traded six times in thirty hours is not priced off
+// a thirty-hour-old print.
+//
+// The volume floor is what keeps a stale ratio out of the extremes. The feed
+// republishes an hour nobody traded in with the market's LAST ratios rather than
+// with nulls (Row carries plain int64 quantities and no nullable price), so
+// letting an untraded row in would serve a price the window never printed. It is
+// the same floor gatedLeg reads on the scored hour, so both readings of "this
+// hour traded" are one number.
+//
+// A row priceIn refuses contributes neither an extreme nor its volume: the
+// window's summed volume is what the extremes were drawn from, not what the
+// market did.
+//
+// One row per market-hour is what the feed publishes; a duplicated hour
+// contributes once, and the winner is the first row of that hour that CLEARS
+// THE FILTERS ABOVE rather than simply the first one seen — the check compares
+// against the last row ADMITTED, so a duplicate whose first copy was dropped for
+// trading nothing or for not pricing lets the next copy be considered. That is
+// the rule crossQuoteCandidates already applies to a duplicated pair.
+//
+// The span is what caps the slice, not the market's history: at most one row per
+// clock hour survives, so a six-hour window read out of a day of rows allocates
+// six.
+func windowContributors(rows []StoredRow, hour time.Time, item, quote string, cfg Config) []StoredRow {
+	oldest := hour.Add(-time.Duration(cfg.WindowPriceHours-1) * time.Hour)
+	capacity := len(rows)
+	if cfg.WindowPriceHours >= 0 && cfg.WindowPriceHours < capacity {
+		capacity = cfg.WindowPriceHours
+	}
+	contributors := make([]StoredRow, 0, capacity)
+	for _, stored := range rows {
+		at := stored.Hour.UTC()
+		if at.After(hour) || at.Before(oldest) {
+			continue
+		}
+		if len(contributors) > 0 && contributors[len(contributors)-1].Hour.UTC().Equal(at) {
+			continue
+		}
+		if float64(volumeOf(stored.Row, item)) < cfg.MinVolumePerHour {
+			continue
+		}
+		if _, _, ok := priceIn(stored.Row, item, quote); !ok {
+			continue
+		}
+		contributors = append(contributors, stored)
+	}
+	return contributors
+}
+
+// windowPriceIn returns the cheapest and the dearest price of one item in quote
+// units REALIZED anywhere in the trailing window ending at hour, the rows that
+// contributed one, and the item-side volume those rows traded between them.
+//
+// The contributing ROWS come back rather than a count of them because the leg
+// needs both readings of one window — the extremes and the pooled anchor those
+// extremes are judged against (windowVwapOf) — and selecting the window twice
+// would be two answers to "which rows priced this hour". The count the wire
+// carries is len(contributors).
+//
+// It is the answer to a thin hour, and it is a min/max over per-ROW priceIn
+// results rather than a second reading of the stored columns: orientation stays
+// in priceIn, which already swaps which stored pair is the low and which the
+// high when the direction is reversed, so the reverse direction of a window is
+// the reciprocal interval with the pairs transposed and nothing here knows that.
+//
+// The two points it returns are WHOLE pricePoints lifted out of the rows that
+// printed them — never a price synthesized across hours. The integer pair is
+// what a reader types into the game and what
+// docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md sizes the whole row from, so a price
+// without its own posting pair would break the row's arithmetic as well as its
+// meaning.
+//
+// The two prices are realized extremes of DIFFERENT hours, which is one step
+// further from a book than priceIn's own caveat: nobody was necessarily offering
+// both at once, and here they were not even offered in the same hour. That is
+// the trade-off the mark and its span disclose (Play.WindowPriced), and the
+// clock span is what bounds it.
+//
+// ok is false on exactly two refusals: no row contributed, or the contributing
+// rows traded less than Config.MinWindowVolume between them. priceIn's third
+// refusal — a result that is not a usable interval — cannot fire here, because
+// every contributor already cleared priceIn: the min of positive lows is
+// positive, and the max of the highs is at or above it since each row's own high
+// is at or above its own low.
+func windowPriceIn(rows []StoredRow, hour time.Time, item, quote string, cfg Config) (low, high pricePoint, contributors []StoredRow, volume float64, ok bool) {
+	contributors = windowContributors(rows, hour, item, quote, cfg)
+	if len(contributors) == 0 {
+		return pricePoint{}, pricePoint{}, nil, 0, false
+	}
+
+	for i, stored := range contributors {
+		rowLow, rowHigh, priced := priceIn(stored.Row, item, quote)
+		if !priced {
+			continue
+		}
+		if i == 0 || rowLow.price < low.price {
+			low = rowLow
+		}
+		if i == 0 || rowHigh.price > high.price {
+			high = rowHigh
+		}
+		volume += float64(volumeOf(stored.Row, item))
+	}
+
+	if volume < cfg.MinWindowVolume {
+		return pricePoint{}, pricePoint{}, nil, 0, false
+	}
+	return low, high, contributors, volume, true
+}
+
+// windowVwapOf returns the POOLED volume-weighted price of one item in quote
+// units over the rows a window contributed — the quote units they traded over
+// the item units they traded — or ok == false when either sum is not positive.
+//
+// It takes windowPriceIn's contributors rather than the span and the hour, so
+// the window is selected once per leg: it is vwapIn's statement read over the
+// SAME rows the extremes were drawn from, and re-deriving that set here would
+// let the anchor and the extremes disagree about which hours priced.
+//
+// Pooled rather than an average of the hours' own volume-weighted prices,
+// because a one-card hour would otherwise outvote a thousand-card one. That is
+// what makes it the anchor a window-priced leg is JUDGED against (Leg.Fair, and
+// the suspect bands that compare to it); anchoring a window's extremes to a
+// single hour's mass would compare two different windows.
+func windowVwapOf(contributors []StoredRow, item, quote string) (float64, bool) {
+	itemVolume, quoteVolume := int64(0), int64(0)
+	for _, stored := range contributors {
+		itemVolume += volumeOf(stored.Row, item)
+		quoteVolume += quoteVolumeOf(stored.Row, quote)
+	}
+	if itemVolume <= 0 || quoteVolume <= 0 {
+		return 0, false
+	}
+	return float64(quoteVolume) / float64(itemVolume), true
 }
 
 // pointOf divides one quantity pair into its price and keeps both together.
