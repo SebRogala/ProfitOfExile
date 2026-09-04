@@ -246,6 +246,7 @@ func (r *Runner) RunOnce(ctx context.Context) (processed int, err error) {
 			"rows", inserted,
 			"skipped", stats.Skipped,
 			"invalid", stats.Invalid,
+			"non_reduced", stats.NonReduced,
 			"otherLeagueRows", otherLeagueRows,
 		)
 

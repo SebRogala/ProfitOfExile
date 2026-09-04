@@ -225,8 +225,9 @@ func TestPriceIn_everyPricedFixtureRow_recordedPairsAreReduced(t *testing.T) {
 	// price step only on a reduced pair). This test pins the RECORDED fixture
 	// hour only: it proves the pairs the direction tests read are reduced, and
 	// it cannot observe live feed drift — a frozen file never changes. The live
-	// guard, if one is wanted, is a gcd check in the ingest path (tracked
-	// follow-up), not this test.
+	// guard now exists and is not this test: isReduced, called on both pairs of
+	// every kept row in Normalize, counting Stats.NonReduced and warning
+	// (POE-197).
 	//
 	// Measured beyond the fixture on 2026-08-22: 0 of 91,520 stored priced
 	// market-hours carried a common factor on either ratio pair.
@@ -252,6 +253,9 @@ func TestPriceIn_everyPricedFixtureRow_recordedPairsAreReduced(t *testing.T) {
 
 // gcd is the test's own reducer, deliberately not a production helper: the
 // engine does not reduce pairs, and a shared helper would read as if it did.
+// It stays independent of isReduced (normalize.go) on purpose — a fixture test
+// that guards the ingest check must not be written in terms of the code it
+// guards.
 func gcd(a, b int64) int64 {
 	for b != 0 {
 		a, b = b, a%b
