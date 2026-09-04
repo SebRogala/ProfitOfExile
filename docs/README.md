@@ -49,6 +49,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-018: Flags mark; they never order](adr/018-flags-mark-they-never-order.md)
 - [ADR-019: Nothing a module draws may cover what that module reads](adr/019-nothing-a-module-draws-may-cover-what-that-module-reads.md)
 - [ADR-020: One shared screen scale; a module corroborates or withholds](adr/020-one-shared-screen-scale-a-module-corroborates-or-withholds.md)
+- [ADR-021: A module draws one window on the game's monitor, and widgets inside it](adr/021-a-module-draws-one-window-on-the-game-monitor-and-widgets-inside-it.md) — Proposed
 
 Superseded:
 
