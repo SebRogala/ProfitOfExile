@@ -335,23 +335,49 @@ fn reading_order<L: TextLine>(lines: &[L]) -> Vec<usize> {
 /// How far below a block's last line a wrapped continuation may start, as a
 /// multiple of THAT line's own glyph height, measured top to top.
 ///
-/// **This number is the bound; the measurement is the band under it.** The
-/// laptop panel capture reviewed for POE-243 puts a wrap at 1.03 to 1.15 of the
-/// preceding line's height — glyph boxes, so the ratio moves with which letters
-/// the line happens to carry — and 1.5 is the round number above that band.
-/// What it has to stay under is the gap to the *next* block, which the game
-/// draws on the other side of the diamond and a full offer lower.
+/// **MEASURED on real Windows.Media.Ocr boxes** — the laptop debug dump
+/// `1788516327712`, which is the first read of this rule through the actual
+/// engine rather than through a hand-written fixture:
 ///
-/// Only that one capture is behind the band, so treat it as a floor rather than
-/// as a population. A dump's `ocr-lines.json` (POE-243) carries every line's
-/// box, which is what to re-measure against before moving this.
+/// | step | drop | prev h | ratio |
+/// |---|---|---|---|
+/// | `HAYOXI, ARCHITECT OF` → `DESTRUCTION` | 14 | 10 | 1.40 |
+/// | `DESTRUCTION` → `(KILL TO UPGRADE TO OMNITECT` | 14 | 9 | **1.56** |
+/// | `(KILL TO UPGRADE TO OMNITECT` → `REACTOR PLANT)` | 14 | 11 | 1.27 |
+/// | `XOPEC, ARCHITECT OF POWER` → `(KILL TO CHANGE TO EXPLOSIVES` | 14 | 10 | 1.40 |
+/// | `(KILL TO CHANGE TO EXPLOSIVES` → `ROOM)` | 14 | 11 | 1.27 |
+///
+/// The pitch is a constant 14 px; the heights are not, because Windows OCR
+/// reports **cap height** — the box covers the glyphs, so a line with no
+/// descender is 9 px where its neighbour is 11. Dividing a fixed pitch by a
+/// varying height is what puts the worst case at 1.56.
+///
+/// **The earlier 1.5 was wrong, and this is how it failed.** That figure came
+/// from a 1.03–1.15 band read off the hand-built fixtures in this file, whose
+/// boxes were full line boxes — not OCR output, and so not the quantity this
+/// ratio is over. On the real capture 1.5 gated the 1.56 step out: the clause
+/// was skipped as foreign, `HAYOXI, ARCHITECT OF DESTRUCTION` never got a kill
+/// clause, and the offer was DROPPED. Xopec survived only because its two
+/// steps happen to be 1.40 and 1.27. That is one architect missing from the
+/// panel, which is the failure POE-243 exists to remove.
+///
+/// **2.5 is the bound over that measurement, and the margins run both ways:**
+/// 1.6× the worst wrap (1.56) above, and 0.59× the nearest foreign line below —
+/// the `ENTER INCURSION` button sits 47 px under an 11 px line, a ratio of
+/// **4.27**, and the next architect block is 132 px down at **12.0**. Nothing
+/// measured lands between 1.56 and 4.27.
+///
+/// The panel TITLE sits 35 px above the first architect line, which against its
+/// own 19 px box is 1.84 — inside the gate. It can never attach anyway: it is
+/// the topmost line, so [`reading_order`] walks it before any block is open.
+/// The ordering is what makes that safe, not this number.
 ///
 /// It multiplies the PREVIOUS line's height and not the taller of the two,
-/// deliberately: the temple screen prints tall furniture — the `Enter
-/// Incursion` button is nearly twice a text line — and letting the candidate's
-/// own height widen the gate is exactly backwards. How far a wrap sits below
-/// the line it wraps is a fact about the line it wraps.
-const CONTINUATION_PITCH: f32 = 1.5;
+/// deliberately: the temple screen prints tall furniture — the `ENTER
+/// INCURSION` button's box is 12 px against a text line's 9 — and letting the
+/// candidate's own height widen the gate is exactly backwards. How far a wrap
+/// sits below the line it wraps is a fact about the line it wraps.
+const CONTINUATION_PITCH: f32 = 2.5;
 
 /// Whether `next` is the wrapped continuation of a block whose last line is
 /// `prev`: the same column, directly below.
@@ -425,23 +451,27 @@ fn kill_clause(words: &[Word<'_>]) -> Option<(usize, OfferKind)> {
 /// A "block" that reaches a fourth line has not been read as an offer — it is
 /// an `Architect`-scoring line that never closed.
 ///
-/// # The four-line fixture is synthetic, and what it costs
+/// # A FOUR-line offer is real, and this bound does not reject it
 ///
-/// `laptop_panel_with_map_fragment` in the tests builds a FOUR-line Hayoxi
-/// block: the architect's name wrapped (`Hayoxi, Architect of` /
-/// `Destruction`) **and** the clause wrapped (`(Kill to upgrade to Omnitect` /
-/// `Reactor Plant)`). No capture shows both wraps at once — each half is
-/// measured, the combination is a worst case constructed to put the map-info
-/// fragment inside an offer with room on either side of it.
+/// The six captures behind the paragraph above were transcribed by hand. The
+/// laptop debug dump `1788516327712` — the first read through the real OCR
+/// engine — prints an offer over four: `HAYOXI, ARCHITECT OF` /
+/// `DESTRUCTION` / `(KILL TO UPGRADE TO OMNITECT` / `REACTOR PLANT)`, the name
+/// wrapped **and** the clause wrapped. So the one-to-three claim is a fact
+/// about those six transcripts and not about the game.
 ///
-/// It costs nothing there because [`Block::is_offer_text`] takes the PARSE as
-/// its strong evidence and only falls back to `closed && attached <=
-/// MAX_BLOCK_LINES` when there is none. So a genuine four-line offer is still
-/// recognised as block text — unless its room name ALSO failed the vocabulary,
-/// which is the one state this bound would reject. That state is doubly
-/// unmeasured, and the trade is the deliberate one: the bound exists to stop a
-/// mis-scored line latching onto a bracket several lines away and swallowing
-/// the panel title, which is a live failure with a live incident behind it.
+/// It costs nothing, because [`Block::is_offer_text`] takes the PARSE as its
+/// strong evidence and only falls back to `closed && attached <=
+/// MAX_BLOCK_LINES` when there is none — and that four-line block parses. The
+/// bound rejects a real offer in exactly one state: four or more lines AND a
+/// room name that failed the vocabulary, so there is no parse to carry it. The
+/// trade is deliberate. What the bound is for is stopping a mis-scored line
+/// latching onto a bracket several lines away and swallowing the panel title,
+/// which is a live failure with a live incident behind it
+/// ([`ARCHITECT_KEYWORD`]).
+///
+/// Raise it if a dump ever shows that combination; do not raise it on the
+/// strength of the four-line block alone, which is already handled.
 const MAX_BLOCK_LINES: usize = 3;
 
 /// One run of OCR lines that opened on an `Architect` word.
@@ -1270,6 +1300,32 @@ mod tests {
         ]
     }
 
+    /// The laptop side panel exactly as Windows.Media.Ocr boxed it — debug dump
+    /// `1788516327712`, `ocr-lines.json`, capture px, engine order, from the
+    /// panel region at origin (1131, 5).
+    ///
+    /// The only fixture in this file that is OCR OUTPUT rather than a
+    /// transcript with plausible boxes, which is what makes it the one that
+    /// pins [`CONTINUATION_PITCH`]: its heights are CAP HEIGHTS (9–11 px under
+    /// a constant 14 px pitch), and every hand-written fixture here uses full
+    /// line boxes instead.
+    fn laptop_panel_as_ocr_boxed_it() -> Vec<OcrLineBox> {
+        [
+            ([1288, 80, 254, 19], "LIGHTNING WORKSHOP"),
+            ([1505, 115, 113, 10], "HAYOXI, ARCHITECT OF"),
+            ([1526, 129, 70, 9], "DESTRUCTION"),
+            ([1479, 143, 163, 11], "(KILL TO UPGRADE TO OMNITECT"),
+            ([1520, 157, 83, 11], "REACTOR PLANT)"),
+            ([1194, 289, 146, 10], "XOPEC, ARCHITECT OF POWER"),
+            ([1188, 303, 160, 11], "(KILL TO CHANGE TO EXPLOSIVES"),
+            ([1251, 317, 34, 11], "ROOM)"),
+            ([1342, 364, 146, 12], "ENTER INCURSION"),
+        ]
+        .into_iter()
+        .map(|([x, y, w, h], text)| OcrLineBox { text: text.to_string(), x, y, w, h })
+        .collect()
+    }
+
     /// The same six lines with their boxes thrown away — what the parsers saw
     /// before POE-243, and what a transcript-only caller still sees.
     fn texts(lines: &[OcrLineBox]) -> Vec<String> {
@@ -1660,12 +1716,15 @@ mod tests {
         );
     }
 
-    // The temple screen prints furniture much taller than a text line — the
-    // `Enter Incursion` button is nearly twice one — and a tall candidate must
-    // not widen the gap it is allowed to sit at. 43 px below a 20 px architect
-    // line is 2.15 of that line's height: over the 30 px `CONTINUATION_PITCH`
-    // allows, and under the 52.5 px it would allow if the BUTTON's own 35 px
-    // set the pitch.
+    // A RULE test, not a board: the two heights are the laptop capture's (a
+    // text line boxes at 9 px of cap height, the `Enter Incursion` button at
+    // 12), and the gap is set where the two candidate rules disagree. On the
+    // capture itself the button is 47 px below Xopec's last line and in a
+    // different column, so it is refused twice over and settles nothing.
+    //
+    // 28 px under a 9 px line is 3.11 of that line's height — over the 22.5 px
+    // `CONTINUATION_PITCH` allows, and under the 30 px it would allow if the
+    // BUTTON's own 12 px set the pitch.
     //
     // Fails if `continues` takes the taller of the two heights: the button's
     // text is then appended to an open block, where it can be read as the
@@ -1673,8 +1732,8 @@ mod tests {
     #[test]
     fn a_tall_line_below_an_open_block_does_not_widen_the_gap_it_may_sit_at() {
         let lines = vec![
-            boxed("Xopec, Architect of Power", 1480, 310),
-            OcrLineBox { h: 35, ..boxed("Enter Incursion", 1480, 353) },
+            OcrLineBox { h: 9, ..boxed("Xopec, Architect of Power", 1200, 336) },
+            OcrLineBox { h: 12, ..boxed("Enter Incursion", 1300, 364) },
         ];
 
         assert_eq!(
@@ -1682,6 +1741,55 @@ mod tests {
             vec!["Xopec, Architect of Power".to_string()],
             "the button is screen furniture, not this offer's second line",
         );
+    }
+
+    // The Windows smoke of this batch, as a test. The panel had BOTH blocks
+    // inside the crop and the dump reported `panel — 1 architect block(s)`:
+    // `DESTRUCTION`'s box is 9 px of cap height under a 14 px pitch, so the
+    // clause below it sat at 1.56 of that height, `CONTINUATION_PITCH` was
+    // 1.5, the clause was skipped as foreign, and Hayoxi's offer never parsed.
+    //
+    // This is the fixture that pins the constant, because it is the only one
+    // here whose boxes came out of the OCR engine. Fails at 1.5 — which is the
+    // whole point — and fails again if the gate is ever measured against
+    // anything but the previous line's own height.
+    #[test]
+    fn the_laptop_panel_as_windows_ocr_boxed_it_parses_both_offers() {
+        let lines = laptop_panel_as_ocr_boxed_it();
+
+        let got = parse_architects(&lines);
+
+        assert_eq!(got.len(), 2, "the panel prints two, and both are here: {got:?}");
+        assert_eq!(got[0].architect_name, "HAYOXI");
+        assert_eq!(got[0].kind, OfferKind::Upgrade);
+        assert_eq!(
+            got[0].printed_target, "OMNITECT REACTOR PLANT",
+            "the clause under the 9 px line is Hayoxi's, not foreign text",
+        );
+        assert_eq!(got[1].architect_name, "XOPEC");
+        assert_eq!(got[1].kind, OfferKind::Change);
+        assert_eq!(got[1].printed_target, "EXPLOSIVES ROOM");
+    }
+
+    // The same read's rects and title, which is what a surface points at.
+    // Hayoxi's block spans four lines — the name wrapped AND the clause
+    // wrapped — so its union is the widest right edge (1642, the clause line)
+    // against the leftmost x (1479, the same line), from the first line's top
+    // to the last line's bottom.
+    //
+    // Fails if the union takes any single line, and fails if the `ENTER
+    // INCURSION` button is ever swept into Xopec's block: the rect would then
+    // run to 376 instead of 328.
+    #[test]
+    fn the_laptop_panel_publishes_a_rect_per_block_and_the_titles_own_box() {
+        let lines = laptop_panel_as_ocr_boxed_it();
+
+        let got = read_panel(&lines);
+
+        assert_eq!(got.identity_name(), Some("Lightning Workshop"));
+        assert_eq!(got.room_rect, Some([1288, 80, 254, 19]));
+        assert_eq!(got.architects[0].rect, Some([1479, 115, 163, 53]));
+        assert_eq!(got.architects[1].rect, Some([1188, 289, 160, 39]));
     }
 
     // ------------------------------------------------------ block rects --
