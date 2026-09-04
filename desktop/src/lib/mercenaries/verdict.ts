@@ -10,8 +10,8 @@
  *
  * Two rules shape everything below.
  *
- * **Sources are evaluated independently.** Guide A and guide B disagree — guide
- * A denies Barrage, guide B's cheapest rung accepts it — and that is not a
+ * **Sources are evaluated independently.** guide-a and guide-b disagree —
+ * guide-a denies Barrage, guide-b's cheapest rung accepts it — and that is not a
  * conflict to resolve: a mercenary failing one guide's gate can still be the
  * other's sale (POE-165, Sebastian's ruling). Rules are never merged across
  * sources.

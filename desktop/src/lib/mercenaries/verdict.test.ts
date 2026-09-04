@@ -938,6 +938,33 @@ describe('the row anchor of a `mercenary` group', () => {
 	});
 
 	/**
+	 * The unread edge of the same rule. `anchorProven` asks the capture to PROVE
+	 * the anchor present, which is deliberately not the verdict's "unknown, never
+	 * absent": an unreadable skill row leaves every skill unknown, and a comp link
+	 * built around a skill nobody could read is a search that may answer nothing.
+	 * Relaxing the check to "not absent" revives this group on the bonuses alone.
+	 */
+	it('leaves a parked group parked when its anchor skill was never read', () => {
+		const capture = captureOf([
+			// Greater Elemental Damage with Attacks and Greater Hypothermia are both
+			// bonuses of the wild-strike half, so they are what would revive it — and
+			// the row carrying them is the one the reader could not name.
+			row(0, unreadSkill(), supportsOf([CHAIN, GREATER_EDWA, GREATER_HYPOTHERMIA])),
+			row(1, skillRead(HERALD_OF_ICE)),
+			row(2, skillRead(INSPIRING_CRY)),
+			row(3, skillRead(STATIC_STRIKE))
+		]);
+		const verdict = verdictOf(capture);
+		// Unread, not absent — otherwise this is the test above under a new name.
+		expect(
+			positionOf(verdict, 'guide-e', 'guide-e-combatant', 'wild-strike', WILD_STRIKE).presence
+		).toBe('unknown');
+		expect(
+			derivedGroup(rulesetOf(verdict, 'guide-e', 'guide-e-combatant').derivedUrl, 2).disabled
+		).toBe(true);
+	});
+
+	/**
 	 * Every capture this file builds, swept across every source. The invariant is
 	 * general — no derived link may carry a group asking for more filters than it
 	 * leaves switched on — so the sweep is over everything rather than the two
