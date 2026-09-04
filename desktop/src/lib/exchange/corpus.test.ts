@@ -17,7 +17,7 @@
  * closure and filter derivations over those exact bytes. A Go-side change to what
  * is served now breaks a DESKTOP test named after the incident it re-opened.
  *
- * WHAT THE FIXTURES CARRY (fifteen served plays, both horizons):
+ * WHAT THE FIXTURES CARRY (sixteen served plays, both horizons):
  *
  * - the Apocalypse card's spreadless newest hour (2026-08-22, ADR-017's first
  *   amendment) — a best-case LOSS with a positive measured expectation;
@@ -25,6 +25,9 @@
  *   amendment) — served as a 1-hop whose SELL leg carries `depletedSide`;
  * - the 2026-08-23 screenshot's spreadless-170 print — a measured loser;
  * - Mawr Blaidd's junk low in the newest hour (POE-188) — served `suspect`;
+ * - the Apocalypse card's thin newest hour (POE-252, 2026-09-04) — one card
+ *   traded, so the legs are priced from the six-hour window and the row carries
+ *   `windowPriced` with its span;
  * - the Divine Vessel's 100% tick (POE-184) — a −100% round trip with no run;
  * - a recipe too young to have an expectation (`lowCoverage`);
  * - and the clean direct / divine-quoted / 1-hop shapes they are ranked against.
@@ -279,6 +282,7 @@ const FIXTURES: { horizon: string; response: CurrencyExchangeResponse }[] = [
 const CHAOS = CHAOS_ID;
 const DIVINE = DIVINE_ID;
 const APOCALYPSE_KEY = `direct:${CHAOS}|Metadata/Items/DivinationCards/DivinationCardApocalypse`;
+const APOCALYPSE_WINDOW_KEY = `direct:${CHAOS}|Metadata/Items/DivinationCards/DivinationCardApocalypseWindow`;
 const TATTOO_SELL_KEY = `1-hop:Metadata/Items/Tattoos/JourneyTattoo|${DIVINE}|${CHAOS}`;
 const TATTOO_TWIN_KEY = `direct:${CHAOS}|Metadata/Items/Tattoos/JourneyTattooTwoSided`;
 const TATTOO_DIVINE_DIRECT_KEY = `direct:${DIVINE}|Metadata/Items/Tattoos/JourneyTattoo`;
@@ -299,7 +303,7 @@ const DIVINE_ANCHOR_KEY = `direct:${CHAOS}|${DIVINE}`;
  *
  * The names are what the visibility test asserts on, so a default that starts
  * hiding a row fails with a sentence naming the market and its date rather than
- * with a diff of `Metadata/Items/...` paths. The eleven names the Go corpus
+ * with a diff of `Metadata/Items/...` paths. The twelve names the Go corpus
  * already uses are copied verbatim from
  * `TestCorpus_everyIncidentMarket_isServedInBothHorizons`; the four the Go list
  * does not name are described by the spec that produces them.
@@ -318,6 +322,8 @@ const INCIDENT_NAMES: Record<string, string> = {
 	[SCARAB_HOP_DIVINE_KEY]: 'the scarab triangle entered in divine, a two-tick loser',
 	[SPREADLESS_KEY]: 'the 2026-08-23 screenshot\'s spreadless 170 print',
 	[YOUNG_KEY]: 'a recipe too young to have an expectation',
+	[APOCALYPSE_WINDOW_KEY]:
+		'Apocalypse card, thin newest hour priced from the window (POE-252, 2026-09-04)',
 	[MAWR_JUNK_KEY]: 'Mawr Blaidd, junk low IN the newest hour (POE-188)',
 	[VESSEL_KEY]: 'Divine Vessel, a 100% tick (POE-184)'
 };
@@ -355,6 +361,10 @@ const POSTINGS: Record<string, { units: number; basis: 'posting' | 'single' }> =
 	[SCARAB_HOP_DIVINE_KEY]: { units: 20, basis: 'posting' },
 	[SPREADLESS_KEY]: { units: 1, basis: 'posting' },
 	[YOUNG_KEY]: { units: 1, basis: 'posting' },
+	// The window-priced row's buy leg carries the pair the hour its LOW came from
+	// posted — 486 chaos for 1 card — so the count is that leg's `priceItemQty`,
+	// read off the regenerated golden exactly as every entry above is.
+	[APOCALYPSE_WINDOW_KEY]: { units: 1, basis: 'posting' },
 	[MAWR_JUNK_KEY]: { units: 1, basis: 'posting' },
 	[VESSEL_KEY]: { units: 35, basis: 'posting' }
 };
@@ -513,7 +523,7 @@ describe('the engine fixtures', () => {
 		});
 	}
 
-	it('serves the same fifteen recipes in both horizons, in the same order', () => {
+	it('serves the same sixteen recipes in both horizons, in the same order', () => {
 		// The horizons differ in window length and therefore in `hoursSeen`, and in
 		// nothing else the desktop reads. That is a fact about the corpus feed rather
 		// than a rule — but a horizon that started dropping a market, or reordering
@@ -597,7 +607,7 @@ for (const { horizon, response } of FIXTURES) {
 				// E5, the equation that survives every branch of the row including the
 				// exempt one, and the one the D5 regression broke: a `getChaos` built
 				// from `roi` instead of `expectedRoi` fails here on every corpus row
-				// whose two ROI figures differ, which is all fifteen.
+				// whose two ROI figures differ, which is all sixteen.
 				const ledger = runLedger(play(), rate);
 
 				expect(ledger?.getChaos).toBe(ledger!.investmentChaos + ledger!.expectedRoiChaos);
@@ -982,13 +992,19 @@ describe('incident — Mawr Blaidd, junk low IN the newest hour (POE-188)', () =
 	const SORTS: ExchangeSort[] = ['expected', 'roi', 'fastest'];
 
 	/**
-	 * The clean market on either side of the flagged row, per sort.
+	 * The market on either side of the flagged row, per sort.
 	 *
 	 * Pinned as neighbours rather than as an index, so a failure names the two
 	 * markets the row should have been between. The flag used to send it behind
-	 * all fourteen other rows in all three orders; what puts it where it is now is
-	 * one number each time, and the three places differ because the three columns
-	 * do.
+	 * all other rows in all three orders; what puts it where it is now is one
+	 * number each time, and the three places differ because the three columns do.
+	 *
+	 * The claim rides on the `above` half in every case: it is a CLEAN row, so a
+	 * comparator that grew a `suspect` branch back could not leave this row
+	 * directly under it. Under the `fastest` sort the `below` half is the other
+	 * flagged row (POE-252's window-priced card), because that market absorbs in
+	 * two hours and nothing else in the corpus reads between one and unmeasurable
+	 * — which is a fact about the two markets' depth, not about either flag.
 	 */
 	const NEIGHBOURS: Record<ExchangeSort, { above: string; below: string }> = {
 		// ROI column +192.8c: under the clean flip's +197.8c, over the divine-quoted
@@ -999,9 +1015,9 @@ describe('incident — Mawr Blaidd, junk low IN the newest hour (POE-188)', () =
 		// reason the table offers two columns to order by.
 		expected: { above: TATTOO_TWIN_KEY, below: SCARAB_HOP_KEY },
 		// One hour to absorb, which nine clean rows tie with; the stable sort keeps
-		// the served order inside that tie and puts this row last of it, still ahead
-		// of every row whose wait cannot be read at all.
-		fastest: { above: YOUNG_KEY, below: DIVINE_ANCHOR_KEY }
+		// the served order inside that tie and puts this row last of it — directly
+		// above the two-hour window-priced card, per the `below` note above.
+		fastest: { above: YOUNG_KEY, below: APOCALYPSE_WINDOW_KEY }
 	};
 
 	for (const { horizon, response } of FIXTURES) {
@@ -1113,7 +1129,7 @@ describe('fresh-install visibility (ADR-017)', () => {
 	// the message.
 
 	/**
-	 * The eleven markets a fresh install shows, in served order.
+	 * The twelve markets a fresh install shows, in served order.
 	 *
 	 * The four that do NOT appear are each below one of the two sanctioned floors,
 	 * and the test below proves that by disarming exactly those two rather than by
@@ -1130,6 +1146,7 @@ describe('fresh-install visibility (ADR-017)', () => {
 		'the scarab against chaos, a two-tick loser',
 		'the 2026-08-23 screenshot\'s spreadless 170 print',
 		'a recipe too young to have an expectation',
+		'Apocalypse card, thin newest hour priced from the window (POE-252, 2026-09-04)',
 		'Mawr Blaidd, junk low IN the newest hour (POE-188)'
 	];
 

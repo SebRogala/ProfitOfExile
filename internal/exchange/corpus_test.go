@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -68,6 +69,16 @@ const (
 	// youngID appears in the newest few hours only, so the twelve-entry coverage
 	// guard has something to flag.
 	youngID = "Metadata/Items/Currency/CurrencyYoungRecipe"
+	// apocalypseWindowID is the SAME card as apocalypseID, measured a fortnight
+	// later (POE-252, prod read 2026-09-04): seventeen published hours in which
+	// the newest traded one card and printed no spread at all. It is a separate
+	// market id rather than an edit to apocalypseSpec, because the 2026-08-22
+	// incident that spec records has its own assertions and must keep passing
+	// untouched.
+	apocalypseWindowID = "Metadata/Items/DivinationCards/DivinationCardApocalypseWindow"
+	// deadWindowID is the control the window path is measured against: a market
+	// whose whole clock window is silent, which must stay OUT of the served set.
+	deadWindowID = "Metadata/Items/Currency/CurrencyDeadWindow"
 )
 
 // corpusNewest is the corpus feed's newest hour: 07:00 UTC on 2026-08-23, the
@@ -117,6 +128,10 @@ func corpusRows() []StoredRow {
 			cleanFlipSpec(),
 			corpusScarabChaosSpec(),
 			corpusScarabDivineSpec(),
+			deadWindowSpec(back),
+		}
+		if spec, published := apocalypseWindowSpec(back); published {
+			specs = append(specs, spec)
 		}
 		if back < youngRecipeHours {
 			specs = append(specs, youngRecipeSpec())
@@ -126,6 +141,27 @@ func corpusRows() []StoredRow {
 		}
 	}
 	return rows
+}
+
+// corpusRowsShifted is the same corpus with the newest `by` hours removed and
+// the remainder moved forward, so the hour the fixtures call `back == by` is now
+// the newest one BestPlays scores.
+//
+// It is how a per-hour claim is asserted against the ONE table rather than
+// against a second fixture per hour: nothing about any row changes, only which
+// of them the engine is standing in. corpusRowsShifted(0) is corpusRows().
+func corpusRowsShifted(by int) []StoredRow {
+	newest := corpusHour(by)
+	forward := time.Duration(by) * time.Hour
+	rows := corpusRows()
+	shifted := make([]StoredRow, 0, len(rows))
+	for _, stored := range rows {
+		if stored.Hour.After(newest) {
+			continue
+		}
+		shifted = append(shifted, StoredRow{Hour: stored.Hour.Add(forward), Row: stored.Row})
+	}
+	return shifted
 }
 
 // apocalypseSpec is the MinEdge incident (ADR-017, first amendment, 2026-08-22).
@@ -314,6 +350,120 @@ func youngRecipeSpec() rowSpec {
 	return liquidChaosMarket(youngID, 200, 260)
 }
 
+// apocalypseWindowMeasurement is the 2026-09-04 prod read of Chaos <-> Apocalypse, the
+// measurement POE-252 was specified from, indexed by how many CLOCK hours back
+// from the newest corpus hour each row sits.
+//
+// The table is the task's own, mapped by subtracting each measured hour from
+// 2026-09-04 17:00Z: 17:00 is back 0, 16:00 is back 1, and 09-03 16:00 is back
+// 25. Seventeen hours published a row and nine did not, which is 26 —
+// corpusHours exactly, so the measurement fills the corpus with no invented
+// hour. The nine ABSENT backs (6, 13, 14, 16, 18, 19, 21, 23, 24) are the zero
+// value of this array and render NO ROW AT ALL, because an hour the feed never
+// published is not the same shape as an hour that published a zero.
+//
+// Back 9 is the one row that is present with nothing traded. The feed
+// republishes such an hour with the market's LAST ratios rather than with nulls
+// — Row carries plain int64 quantities and no nullable price — so it renders
+// back 10's 1196:1 with volume {0, 0}. A zero pair would set PriceValid false
+// and change what the row tests; what this row tests is that a stale ratio
+// nobody traded at cannot reach a window's extremes.
+//
+// WHAT THE OWNER SAW at back 0: one card changed hands at 552, and it was his
+// own purchase, so the served row read 552/552 for -0% while the game's book
+// had stood near 550/1150 all day and the six hours behind it had realized
+// 486/1148.
+var apocalypseWindowMeasurement = [corpusHours]struct {
+	present          bool
+	cards, low, high int64
+}{
+	0:  {present: true, cards: 1, low: 552, high: 552},
+	1:  {present: true, cards: 2, low: 511, high: 1148},
+	2:  {present: true, cards: 3, low: 500, high: 1148},
+	3:  {present: true, cards: 1, low: 500, high: 500},
+	4:  {present: true, cards: 3, low: 487, high: 1140},
+	5:  {present: true, cards: 1, low: 486, high: 486},
+	7:  {present: true, cards: 3, low: 487, high: 1196},
+	8:  {present: true, cards: 1, low: 1000, high: 1000},
+	9:  {present: true, cards: 0, low: 1196, high: 1196},
+	10: {present: true, cards: 2, low: 1196, high: 1196},
+	11: {present: true, cards: 8, low: 485, high: 1196},
+	12: {present: true, cards: 2, low: 485, high: 486},
+	15: {present: true, cards: 5, low: 486, high: 1200},
+	17: {present: true, cards: 31, low: 485, high: 1100},
+	20: {present: true, cards: 4, low: 748, high: 899},
+	22: {present: true, cards: 12, low: 471, high: 899},
+	25: {present: true, cards: 6, low: 502, high: 940},
+}
+
+// apocalypseWindowSpec renders one hour of the measured card market, and reports
+// whether the feed published that hour at all.
+//
+// THE CHAOS SIDE is derived and not measured, by one rule stated here so every
+// number below is reproducible: VolumeA = round(cards * (low+high)/2). The hour's
+// volume-weighted price is then the arithmetic centre of its own extremes, which
+// is where a real hour's mass sits between two prints, and it makes the POOLED
+// window VWAP at back 0 come out at 8110 chaos over 11 cards = 737.27 — the
+// anchor the suspect bands judge that hour's 486/1148 against, and the reason
+// TestCorpus_apocalypseThinNewestHour_isPricedFromTheWindow expects a FLAGGED
+// row rather than a clean one.
+//
+// Stock is liquid on both sides in every published row, traded or not: this
+// fixture is about what the hours PRICED, and a book that emptied would be a
+// different incident (ADR-017's second amendment, journeyTattooChaosSpec).
+func apocalypseWindowSpec(back int) (rowSpec, bool) {
+	if back < 0 || back >= len(apocalypseWindowMeasurement) {
+		return rowSpec{}, false
+	}
+	hour := apocalypseWindowMeasurement[back]
+	if !hour.present {
+		return rowSpec{}, false
+	}
+	chaos := int64(math.Round(float64(hour.cards) * float64(hour.low+hour.high) / 2))
+	return rowSpec{
+		itemA:        chaosID,
+		itemB:        apocalypseWindowID,
+		volume:       [2]int64{chaos, hour.cards},
+		lowestStock:  [2]int64{2000, 200},
+		highestStock: [2]int64{5000, 500},
+		lowestRatio:  [2]int64{hour.low, 1},
+		highestRatio: [2]int64{hour.high, 1},
+	}, true
+}
+
+// deadWindowSilentHours is how many of the newest hours the dead-window control
+// publishes without a trade. The whole clock window a leg could look back over
+// is silent, which is why six is the number: it leaves the control standing
+// after WI-3 relaxes liveness, because a window with no realized print anywhere
+// inside it has nothing for a relaxed gate to price from either. Under WI-2 the
+// market is held out by the MinVolumePerHour liveness gate alone.
+//
+// It is read from the config rather than written as 6 so that raising
+// WindowPriceHours cannot silently leave a traded hour inside the window and
+// un-control the fixture.
+var deadWindowSilentHours = DefaultConfig().WindowPriceHours
+
+// deadWindowSpec is the control that says the window path is not a resurrection
+// machine: a market that traded normally until six hours ago and has published
+// nothing but its last ratios since.
+//
+// Its newest six hours carry volume {0, 0} with the 400/900 pair intact, which
+// is exactly the shape the feed publishes for an untraded hour. Nothing inside
+// the clock window traded, so windowPriceIn has no contributor to draw an
+// extreme from and the market must be ABSENT from the served set — a window may
+// price an hour that is alive, never revive one that is not.
+//
+// It is deliberately NOT named in INCIDENT_NAMES on the desktop tier: that map's
+// size is compared against the served count, so a market asserted absent cannot
+// have an entry there.
+func deadWindowSpec(back int) rowSpec {
+	spec := liquidChaosMarket(deadWindowID, 400, 900)
+	if back < deadWindowSilentHours {
+		spec.volume = [2]int64{0, 0}
+	}
+	return spec
+}
+
 // corpusScarabChaosSpec and corpusScarabDivineSpec are the package's standing one-hop
 // fixture, reused so the corpus carries a clean triangle beside the incidents
 // without a second description of what a liquid triangle looks like.
@@ -346,7 +496,14 @@ func corpusConfig(t *testing.T, horizon Horizon) Config {
 // corpusResult ranks the whole corpus for one horizon.
 func corpusResult(t *testing.T, horizon Horizon) Result {
 	t.Helper()
-	result := BestPlays(corpusLeague, corpusRows(), corpusConfig(t, horizon))
+	return corpusResultShifted(t, horizon, 0)
+}
+
+// corpusResultShifted ranks the corpus as it stood `by` hours ago — the same
+// feed with its newest `by` hours not yet published.
+func corpusResultShifted(t *testing.T, horizon Horizon, by int) Result {
+	t.Helper()
+	result := BestPlays(corpusLeague, corpusRowsShifted(by), corpusConfig(t, horizon))
 	result.Horizon = string(horizon)
 	return result
 }
@@ -377,6 +534,10 @@ var (
 	vesselKey       = directKey(chaosID, vesselID)
 	cleanFlipKey    = directKey(chaosID, cleanFlipID)
 	youngKey        = directKey(chaosID, youngID)
+
+	apocalypseWindowKey = directKey(chaosID, apocalypseWindowID)
+	deadWindowKey       = directKey(chaosID, deadWindowID)
+
 	scarabHopKey    = oneHopKey(scarabID, chaosID, divineID)
 	scarabDivineKey = directKey(divineID, scarabID)
 )
@@ -402,6 +563,7 @@ func TestCorpus_everyIncidentMarket_isServedInBothHorizons(t *testing.T) {
 		{incident: "a divine-quoted flip", key: scarabDivineKey},
 		{incident: "a one-hop triangle", key: scarabHopKey},
 		{incident: "a recipe too young to have an expectation", key: youngKey},
+		{incident: "Apocalypse card, thin newest hour priced from the window (POE-252, 2026-09-04)", key: apocalypseWindowKey},
 	}
 
 	for _, horizon := range []Horizon{HorizonRecent, HorizonDay} {
@@ -749,6 +911,286 @@ func TestCorpus_youngRecipe_isServedWithItsExpectationMarkedLowCoverage(t *testi
 	keys := playKeys(got.Plays)
 	if indexOf(keys, youngKey) < indexOf(keys, spreadlessKey) {
 		t.Errorf("the unmeasured play ranks above the measured loss %s (order %v)", spreadlessKey, keys)
+	}
+}
+
+func TestCorpus_apocalypseThinNewestHour_isPricedFromTheWindow(t *testing.T) {
+	// THE INCIDENT (2026-09-04, POE-252). The card's 17:00Z hour traded ONE card,
+	// at 552, and that trade was the owner's own purchase. One trade collapses the
+	// low and the high onto the same number, so the served row read 552/552 for
+	// -0% while the game's book had stood near 550/1150 all day.
+	//
+	// The six clock hours behind it had REALIZED 486 (12:00Z) and 1148 (16:00Z),
+	// and that is the spread the row must serve, marked with the span it came
+	// from. The window is the closed clock span [12:00, 17:00]: its lows are
+	// {552, 511, 500, 500, 487, 486} and its highs {552, 1148, 1148, 500, 1140,
+	// 486}. The task's acceptance says "low ~ 487-511"; the table's own arithmetic
+	// says 486, which is what the "~" covers (plan C7), so the bound is asserted
+	// as a range and the computed number as a literal inside it.
+	for _, horizon := range []Horizon{HorizonRecent, HorizonDay} {
+		t.Run(string(horizon), func(t *testing.T) {
+			play := playByKey(t, corpusResult(t, horizon), apocalypseWindowKey)
+
+			if !play.WindowPriced {
+				t.Fatalf("WindowPriced = false at a one-card hour, want true — the row is back to serving %v/%v", play.Legs[0].Price, play.Legs[1].Price)
+			}
+			if play.WindowHours != 6 {
+				t.Errorf("WindowHours = %d, want 6 — all six hours of [12:00, 17:00] priced", play.WindowHours)
+			}
+			if play.WindowVolume != 11 {
+				t.Errorf("WindowVolume = %v, want the 11 cards those six hours traded between them", play.WindowVolume)
+			}
+
+			buy, sell := play.Legs[0], play.Legs[1]
+			if buy.Price < 485 || buy.Price > 511 {
+				t.Errorf("buy leg Price = %v, want the window's low inside the acceptance band [485, 511]", buy.Price)
+			}
+			if buy.Price != 486 {
+				t.Errorf("buy leg Price = %v, want the 486 the 12:00Z hour realized", buy.Price)
+			}
+			if sell.Price != 1148 {
+				t.Errorf("sell leg Price = %v, want the 1148 the 16:00Z hour realized", sell.Price)
+			}
+			// The whole posting travels with the price, never a synthesized number:
+			// the pair is what a reader types into the game and what
+			// docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md sizes the row from.
+			if buy.PriceQuoteQty != 486 || buy.PriceItemQty != 1 {
+				t.Errorf("buy leg pair = %d:%d, want the 486:1 the 12:00Z hour posted", buy.PriceQuoteQty, buy.PriceItemQty)
+			}
+			if sell.PriceQuoteQty != 1148 || sell.PriceItemQty != 1 {
+				t.Errorf("sell leg pair = %d:%d, want the 1148:1 the 16:00Z hour posted", sell.PriceQuoteQty, sell.PriceItemQty)
+			}
+
+			// C5: the price is the window's, the STEP is the scored hour's. On this
+			// row tick is 1/552 and not 1/486, so tick == 1/max(pair) deliberately
+			// no longer rechecks — the price and the step come from different hours
+			// because the step is what the market can express NOW.
+			tick := 1.0 / 552.0
+			if play.Tick != tick {
+				t.Errorf("Tick = %v, want the scored hour's %v — tick is what the market is doing now", play.Tick, tick)
+			}
+			if !play.LastHour.Equal(corpusNewest) {
+				t.Errorf("LastHour = %v, want the scored hour %v", play.LastHour, corpusNewest)
+			}
+
+			wantClose(t, "RoiPct", play.RoiPct, undercutRoi(486, tick, [2]float64{1148, tick}))
+			if play.RoiPct <= 0 {
+				t.Errorf("RoiPct = %v, want the positive return the window's spread pays", play.RoiPct)
+			}
+			if play.LowLiquidity {
+				t.Errorf("LowLiquidity = true at a return of %v, want false — the window found the spread the hour could not print", play.RoiPct)
+			}
+
+			// ACCEPTED, not a defect (plan C4). The pooled window VWAP is 8110 chaos
+			// over 11 cards = 737.27, so 486 sits under 737.27*0.67 = 493.9 and 1148
+			// over 737.27*1.5 = 1105.9: both bands are crossed and both legs are
+			// flagged. An hour-priced row showing the same 486/1148 against the same
+			// fair would be flagged identically — a 2.4x spread genuinely IS wide —
+			// and ADR-018 keeps the flagged row readable and orderable at face value.
+			if !play.Suspect {
+				t.Errorf("Suspect = false against a pooled window fair of %v, want true — a 2.4x spread is wide however it was priced", buy.Fair)
+			}
+			if !buy.Suspect || !sell.Suspect {
+				t.Errorf("leg Suspect = %v / %v, want both true — each extreme is outside its own band of the window's fair", buy.Suspect, sell.Suspect)
+			}
+		})
+	}
+}
+
+func TestCorpus_apocalypseThickNewestHour_isPricedFromTheHourAndUnmarked(t *testing.T) {
+	// The same market one hour earlier, and the boundary the whole feature turns
+	// on. 16:00Z traded TWO cards, at 511 and 1148, which is ThinHourVolume
+	// exactly — thin means UNDER the level — so the hour printed a spread of its
+	// own and the window is never consulted. The task's acceptance says this hour
+	// is served hour-priced and unmarked, and it is the arm that says the window
+	// path did not simply take over pricing.
+	play := playByKey(t, corpusResultShifted(t, HorizonRecent, 1), apocalypseWindowKey)
+
+	if play.WindowPriced {
+		t.Fatalf("WindowPriced = true at a two-card hour, want false — %d hours of window reached a row that printed its own spread", play.WindowHours)
+	}
+	if play.WindowHours != 0 || play.WindowVolume != 0 {
+		t.Errorf("WindowHours/WindowVolume = %d/%v on an hour-priced row, want 0/0", play.WindowHours, play.WindowVolume)
+	}
+	if play.Legs[0].Price != 511 || play.Legs[1].Price != 1148 {
+		t.Errorf("legs priced %v / %v, want the 16:00Z hour's own 511 / 1148", play.Legs[0].Price, play.Legs[1].Price)
+	}
+	tick := 1.0 / 511.0
+	wantClose(t, "RoiPct", play.RoiPct, undercutRoi(511, tick, [2]float64{1148, tick}))
+	if play.RoiPct <= 0 {
+		t.Errorf("RoiPct = %v, want the positive return the hour's own spread pays", play.RoiPct)
+	}
+}
+
+func TestCorpus_apocalypseSinglePrintThickHour_servesTheResidualLoss(t *testing.T) {
+	// The residual ThinHourVolume = 2 deliberately does NOT catch, pinned rather
+	// than left latent. 07:00Z traded two cards at ONE 1196:1 print: two units is
+	// thick by the level, so the hour is priced from itself, both extremes are the
+	// same number, and the round trip pays two ticks against no spread.
+	//
+	// Raising the level to 3 would catch this hour and would also break the
+	// acceptance, which fixes 16:00Z's two-card hour as thick and unmarked
+	// (TestCorpus_apocalypseThickNewestHour_isPricedFromTheHourAndUnmarked). The
+	// two facts are the same knob read from both sides, which is why this test
+	// exists next to that one.
+	play := playByKey(t, corpusResultShifted(t, HorizonRecent, 10), apocalypseWindowKey)
+
+	if play.WindowPriced {
+		t.Errorf("WindowPriced = true, want false — two units is thick at ThinHourVolume %v", DefaultConfig().ThinHourVolume)
+	}
+	if play.Legs[0].Price != 1196 || play.Legs[1].Price != 1196 {
+		t.Errorf("legs priced %v / %v, want the single 1196 print both extremes carry", play.Legs[0].Price, play.Legs[1].Price)
+	}
+	tick := 1.0 / 1196.0
+	wantClose(t, "RoiPct", play.RoiPct, undercutRoi(1196, tick, [2]float64{1196, tick}))
+	if play.RoiPct >= 0 {
+		t.Errorf("RoiPct = %v, want the loss two ticks against a closed spread produce", play.RoiPct)
+	}
+}
+
+func TestCorpus_deadWindow_isNotServedInEitherHorizon(t *testing.T) {
+	// The control that says a window PRICES a live hour and never revives a dead
+	// one. This market traded normally until six hours ago and has published
+	// nothing but its last 400/900 ratios since, so its whole clock window is
+	// silent and there is no realized print anywhere inside it to serve.
+	//
+	// It is the guard on the liveness gate, and it is what would fail if that gate
+	// were simply removed: the row still PRICES — the stale ratios are intact and
+	// both sides carry stock — so a leg dropped only for its zero volume would
+	// come straight back at 400/900 and be served as current. WI-3 relaxes exactly
+	// that gate and re-asserts this market's absence afterwards.
+	for _, horizon := range []Horizon{HorizonRecent, HorizonDay} {
+		t.Run(string(horizon), func(t *testing.T) {
+			served := playKeys(corpusResult(t, horizon).Plays)
+			if indexOf(served, deadWindowKey) >= 0 {
+				t.Errorf("%s was served; nothing in its %d-hour window traded (got %v)", deadWindowKey, deadWindowSilentHours, served)
+			}
+		})
+	}
+}
+
+func TestCorpus_deadWindow_isServedOnceItsWindowTradesAgain(t *testing.T) {
+	// The positive arm of the control above, and what pins that control to THIS
+	// fixture: shifted back to the newest hour the dead-window market still traded,
+	// the same rows are served, priced from that hour's own 400/900.
+	//
+	// Without it the absence assertion passes just as well when the fixture is gone
+	// from the corpus entirely, so a market deleted by accident would read as the
+	// liveness gate working.
+	for _, horizon := range []Horizon{HorizonRecent, HorizonDay} {
+		t.Run(string(horizon), func(t *testing.T) {
+			play := playByKey(t, corpusResultShifted(t, horizon, deadWindowSilentHours), deadWindowKey)
+
+			if play.Legs[0].Price != 400 || play.Legs[1].Price != 900 {
+				t.Errorf("legs priced %v / %v, want the hour's own 400 / 900", play.Legs[0].Price, play.Legs[1].Price)
+			}
+			if play.WindowPriced {
+				t.Errorf("WindowPriced = true over %d hours, want the live hour's own price", play.WindowHours)
+			}
+		})
+	}
+}
+
+func TestCorpus_thickMarkets_areNeverWindowPriced(t *testing.T) {
+	// THE POE-220 BACKTEST, as a standing assertion rather than a one-off diff:
+	// no thick pair's row changes price because the window path exists.
+	//
+	// It holds by CONSTRUCTION at the shipped level. Every pre-POE-252 corpus
+	// market traded at least two units of its item in every hour — liquidChaosMarket
+	// puts 1000 on the item side, and the four hand-built newest-hour overrides
+	// carry 2 (Apocalypse), 10 (spreadless 170), 500 (Divine Vessel) and
+	// 8000/20000 (the triangle legs). The hand-built quiet hours (Apocalypse three
+	// hours back, volume {0, 0}) are not the exception they look like: an hour that
+	// traded nothing is dropped by MinVolumePerHour before the window path is
+	// reached, so the only hour a window can price is one that traded exactly one
+	// unit, and no pre-POE-252 market has one. At ThinHourVolume 2 none of them is
+	// ever thin, so none of them can take a window price. The committed wire fixtures
+	// carry the same claim byte for byte; this states it in one sentence a reader
+	// can check without a diff.
+	for _, horizon := range []Horizon{HorizonRecent, HorizonDay} {
+		t.Run(string(horizon), func(t *testing.T) {
+			marked := 0
+			for _, play := range corpusResult(t, horizon).Plays {
+				if play.Key == apocalypseWindowKey {
+					marked++
+					continue
+				}
+				if play.WindowPriced {
+					t.Errorf("%s is window-priced over %d hours, want its own hour's price", play.Key, play.WindowHours)
+				}
+				for i, leg := range play.Legs {
+					if leg.WindowPriced {
+						t.Errorf("%s leg %d (%s) is window-priced, want its own hour's price", play.Key, i, leg.Action)
+					}
+				}
+			}
+			// Without this the loop would also pass with the window path deleted,
+			// and would then be asserting nothing at all.
+			if marked != 1 {
+				t.Errorf("%d window-priced plays in the corpus, want exactly the Apocalypse-window market", marked)
+			}
+		})
+	}
+}
+
+func TestCorpus_apocalypseWindowShifts_markTheThinHoursAndOnlyThose(t *testing.T) {
+	// The measured feed read hour by hour, for every hour that PUBLISHED a traded
+	// row. Each shift ranks the corpus as if that hour were the newest, so the
+	// same seventeen-hour table answers seventeen different questions about which
+	// reading a row takes.
+	//
+	// The rule is one line and the table is what proves it is applied per hour and
+	// not once: an hour that traded under two cards is priced from the window it
+	// looks back over, and every other hour is priced from itself. WindowHours is
+	// the number of hours in the closed clock span [back, back+5] that published a
+	// TRADED row — the gaps at backs 6, 13, 14, 16, 18, 19, 21, 23, 24 and the
+	// untraded row at back 9 contribute nothing, which is why the three thin hours
+	// behind back 0 look back over fewer than six.
+	//
+	// The ten hours NOT listed here are the ones with no traded row of their own.
+	// Whether the pair is served in those hours at all is WI-3's question — the
+	// no-flicker acceptance — and nothing about them is asserted in this WI.
+	shifts := []struct {
+		back         int
+		cards        int64
+		windowPriced bool
+		windowHours  int
+	}{
+		{back: 0, cards: 1, windowPriced: true, windowHours: 6},
+		{back: 1, cards: 2},
+		{back: 2, cards: 3},
+		{back: 3, cards: 1, windowPriced: true, windowHours: 5},
+		{back: 4, cards: 3},
+		{back: 5, cards: 1, windowPriced: true, windowHours: 4},
+		{back: 7, cards: 3},
+		{back: 8, cards: 1, windowPriced: true, windowHours: 4},
+		{back: 10, cards: 2},
+		{back: 11, cards: 8},
+		{back: 12, cards: 2},
+		{back: 15, cards: 5},
+		{back: 17, cards: 31},
+		{back: 20, cards: 4},
+		{back: 22, cards: 12},
+		{back: 25, cards: 6},
+	}
+
+	for _, tt := range shifts {
+		t.Run(fmt.Sprintf("back%d", tt.back), func(t *testing.T) {
+			// The table is the fixture's own, so a fixture edit cannot silently
+			// leave this list describing hours that no longer exist.
+			if hour := apocalypseWindowMeasurement[tt.back]; !hour.present || hour.cards != tt.cards {
+				t.Fatalf("back %d is %+v in the feed, want a published row of %d cards", tt.back, hour, tt.cards)
+			}
+
+			play := playByKey(t, corpusResultShifted(t, HorizonRecent, tt.back), apocalypseWindowKey)
+
+			if play.WindowPriced != tt.windowPriced {
+				t.Errorf("WindowPriced = %v over %d cards, want %v", play.WindowPriced, tt.cards, tt.windowPriced)
+			}
+			if play.WindowHours != tt.windowHours {
+				t.Errorf("WindowHours = %d, want %d", play.WindowHours, tt.windowHours)
+			}
+		})
 	}
 }
 
