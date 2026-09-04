@@ -413,15 +413,18 @@ pub struct AppState {
     /// per read and writes the calibration back, and the `temple_set_*`
     /// commands are what the user edits while that loop is running.
     pub temple_settings: Mutex<temple::slice::TempleSettings>,
-    /// Whether Client.txt has put an incursion in scope (POE-242) — the single
-    /// owner of "may the temple loop capture right now". Written by the log
-    /// watcher on every line and by `temple_rearm`; read once per loop
-    /// iteration. Acquired alone, like every other module-owned Mutex.
+    /// Whether Client.txt has put an incursion in scope (POE-242) — with, since
+    /// POE-246, the stamp of the last area change that took the player away from
+    /// the temple, so the capture loop's own panel clock cannot outlive the
+    /// screen it measured. The single owner of "may the temple loop capture
+    /// right now". Written by the log watcher on every line and by
+    /// `temple_rearm`; read once per loop iteration. Acquired alone, like every
+    /// other module-owned Mutex.
     ///
     /// Kept current even while the temple module is OFF: it is a fact about the
     /// game, and a player who switches the module on inside a temple must get a
     /// read without pressing anything.
-    pub temple_arm: Mutex<temple::trigger::TempleArm>,
+    pub temple_arm: Mutex<temple::trigger::ArmState>,
     /// Bumped by `temple_rearm` (and by every settings command that invalidates
     /// the current advice). The loop's read gate watches it to force one full
     /// re-read of a board it would otherwise skip as unchanged. An atomic, not
@@ -3865,7 +3868,7 @@ pub fn run() {
         merc_template_generation: AtomicU64::new(0),
         temple: Mutex::new(temple::slice::TempleSlice::default()),
         temple_settings: Mutex::new(temple::slice::TempleSettings::shipped()),
-        temple_arm: Mutex::new(temple::trigger::TempleArm::default()),
+        temple_arm: Mutex::new(temple::trigger::ArmState::default()),
         temple_rearm: AtomicU64::new(0),
         merc_refit: AtomicU64::new(0),
         screen: Mutex::new(None),

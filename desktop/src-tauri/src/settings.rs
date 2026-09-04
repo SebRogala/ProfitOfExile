@@ -919,7 +919,7 @@ mod tests {
             merc_template_generation: AtomicU64::new(0),
             temple: Mutex::new(crate::temple::slice::TempleSlice::default()),
             temple_settings: Mutex::new(crate::temple::slice::TempleSettings::shipped()),
-            temple_arm: Mutex::new(crate::temple::trigger::TempleArm::default()),
+            temple_arm: Mutex::new(crate::temple::trigger::ArmState::default()),
             temple_rearm: AtomicU64::new(0),
             merc_refit: AtomicU64::new(0),
             screen: Mutex::new(None),
