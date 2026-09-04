@@ -86,9 +86,20 @@ function boundingBox(rects: readonly WidgetRect[]): WidgetRect | null {
  * 2. **Below the cluster**, when there is not a bar's height plus a gap above
  *    it. A widget placed near the top of the screen is ordinary — a user drags
  *    one there whenever the game's own chrome leaves the top free — so this is
- *    not an edge case. It is not, however, where anything SHIPS any more: since
- *    POE-244 the temple declares one placeable widget, `temple.door` at y = 300,
- *    and branch 1 is what shipped defaults take.
+ *    not an edge case. It is also, since POE-249, **where the shipped defaults
+ *    land**: the temple declares two placeable widgets, `temple.door` at
+ *    y = 300 and `temple.waiting` at y = 16, so the cluster's top edge is 16 px
+ *    from the top of the monitor and no bar fits above it. (Between POE-244 and
+ *    POE-249 the door was the only placeable widget and branch 1 was what
+ *    shipped defaults took.) The union of that pair spans x 40…1090, so the bar
+ *    is centred on a span the widgets themselves do not occupy — it lands
+ *    BETWEEN them rather than beside either one, which is arithmetically right
+ *    and is a LOOK nobody has judged over the game yet: `docs/OVERLAY-GUIDE.md`
+ *    carries it as an owner-judgement smoke item, and a bad verdict there
+ *    changes the shipped defaults rather than this function.
+ *    `widget-config-bar.test.ts` pins the answer against the registry rather
+ *    than against these numbers, so a widget added near the top edge moves the
+ *    assertion rather than silently invalidating this paragraph.
  * 3. **The top of the host**, when the cluster leaves room on neither side. The
  *    bar then overlaps a widget, which is survivable — it is drawn after the
  *    widgets and so sits over them — while being off screen is not.

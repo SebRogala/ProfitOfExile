@@ -14,6 +14,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { CONFIG_BAR_GAP, configBarAnchor } from './widget-config-bar';
+import { placeableWidgetsFor } from './widget-registry';
+import { TEMPLE_WINDOW_LABEL } from '../manager';
 
 const HOST = { width: 1920, height: 1080 };
 
@@ -103,11 +105,11 @@ describe('placing the widget-config bar', () => {
 	});
 
 	/**
-	 * The vertical half of the same union, which the shipped defaults cannot
-	 * check: both temple widgets ship at y = 40 with the same height, so their
-	 * bottoms coincide. Resize one in config mode and they do not — and a union
-	 * that took the minimum of the two bottoms would place the bar across the
-	 * taller widget instead of below the pair.
+	 * The vertical half of the same union, on numbers chosen for it rather than
+	 * on the shipped ones: what decides the branch at the shipped defaults is
+	 * the cluster's TOP (see the last case in this file), so the bottom rule
+	 * needs a case of its own. A union that took the minimum of the two bottoms
+	 * would place the bar across the taller widget instead of below the pair.
 	 */
 	it('clears the lower widget when the two have different bottoms', () => {
 		expect(
@@ -149,6 +151,52 @@ describe('placing the widget-config bar', () => {
 	 */
 	it('goes to the top centre of the host when there are no widgets to anchor to', () => {
 		expect(configBarAnchor([], HOST, BAR)).toEqual({ x: 800, y: CONFIG_BAR_GAP });
+	});
+
+	/**
+	 * What the SHIPPED defaults actually get, which no other case here checks:
+	 * every rectangle above is hand-built, so the registry could ship a widget
+	 * the bar lands on top of and nothing would say so.
+	 *
+	 * The two placeable temple widgets ship at `temple.door` (40, 300) 190x215
+	 * and `temple.waiting` (830, 16) 260x40, so the cluster is
+	 * 40..1090 x 16..515. There is no room for a bar above y = 16, so the answer
+	 * is branch 2 — BELOW the cluster — at y = 16 + 499 + 16 = 531, centred on
+	 * the union at 40 + 525 - 160 = 405.
+	 *
+	 * Pinned as the ANSWER rather than as the branch: a widget added anywhere
+	 * near the top or the bottom of the screen changes it, and the point is that
+	 * the change is visible here rather than as a Save button under the user's
+	 * hand.
+	 */
+	it('drops below the cluster the shipped temple defaults make', () => {
+		const shipped = placeableWidgetsFor(TEMPLE_WINDOW_LABEL).map((widget) => ({
+			x: widget.defaults.x,
+			y: widget.defaults.y,
+			w: widget.defaults.w,
+			h: widget.defaults.h
+		}));
+		expect(configBarAnchor(shipped, HOST, BAR)).toEqual({ x: 405, y: 531 });
+	});
+
+	/**
+	 * WHICH widget decides that, since the answer above is a property of the
+	 * pair and not of either one. `temple.waiting` ships 16 px from the top of
+	 * the monitor (POE-249) — a bar plus a gap does not fit above it — and the
+	 * door alone would still take branch 1, at 300 - 16 - 56.
+	 */
+	it('takes the space above again once the top widget is out of the cluster', () => {
+		const door = placeableWidgetsFor(TEMPLE_WINDOW_LABEL).find(
+			(widget) => widget.id === 'temple.door'
+		);
+		expect(door).toBeDefined();
+		expect(
+			configBarAnchor(
+				[{ x: door!.defaults.x, y: door!.defaults.y, w: door!.defaults.w, h: door!.defaults.h }],
+				HOST,
+				BAR
+			).y
+		).toBe(228);
 	});
 
 	/** Totality, not a frame anyone has seen: the host measures itself in an

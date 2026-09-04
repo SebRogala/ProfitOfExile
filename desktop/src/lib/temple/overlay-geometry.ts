@@ -1,6 +1,6 @@
 /**
- * Where the temple's two overlay surfaces go, and what shape the room widget
- * draws (POE-244, POE-248).
+ * Where the temple's overlay surfaces go, and what shape the room widget draws
+ * (POE-244, POE-248, POE-249).
  *
  * The sibling of `view.ts`: that file words the advice, this one places it. Both
  * exist because a `.svelte` file has no unit-test harness in this app and an
@@ -36,7 +36,9 @@ import { edgeState, type EdgeState } from './view';
 /** Gap between a placed box and the thing it is placed against, CSS px. */
 export const CALLOUT_GAP_CSS = 16;
 
-/** How far below the top of the host the leave-the-map banner wants to sit. */
+/** How far below the top of the host a top-centred surface wants to sit — the
+ *  leave-the-map banner, and since POE-249 the waiting notice's shipped
+ *  default. The name is the banner's because it was the first. */
 export const BANNER_TOP_CSS = 16;
 
 /**
@@ -58,11 +60,13 @@ export function captureToCss(rect: CaptureRect, scaleFactor: number): WidgetRect
  * every position legal, which is exactly the wrong answer when the reason it is
  * empty is that the conversion failed.
  *
- * All three placers state that themselves — [`calloutPlacement`],
- * [`bannerPlacement`] and [`doorDefaultPlacement`] — and the door's caller
- * repeats it. Leaving it to the callers was not enough: the banner's wanted
- * position is a function of the host alone, so it had no anchor to be null and
- * drew top-centre over the panel crop.
+ * Every placer states that itself — [`calloutPlacement`], [`bannerPlacement`],
+ * [`doorDefaultPlacement`] and [`waitingDefaultPlacement`] — and the two
+ * default-offering callers repeat it. Leaving it to the callers was not enough:
+ * the banner's wanted position is a function of the host alone, so it had no
+ * anchor to be null and drew top-centre over the panel crop. The waiting
+ * notice's default wants that same position, which is why it states the rule
+ * too.
  */
 export function neverCoverRects(
 	layout: LayoutView | null,
@@ -218,17 +222,73 @@ export function doorDefaultPlacement(input: {
  * Null when the banner has not measured itself yet, or when nothing is free.
  *
  * Null too for an EMPTY never-cover set, and that one is the whole reason this
- * function exists rather than a `style="left:50%"`. The banner is the only
- * surface here that wants a position the HOST can supply on its own, so it is
- * the only one an empty obstacle list places instead of withholding: with no
+ * function exists rather than a `style="left:50%"`. The banner WAS THE FIRST
+ * surface here that wants a position the HOST can supply on its own — since
+ * POE-249 [`waitingDefaultPlacement`] wants the same one — and a surface like
+ * that is what an empty obstacle list PLACES instead of withholding: with no
  * layout, or with the scale factor unresolved, `avoidRects` found the wanted
  * rect clear because nothing was passed to it, and the banner drew top-centre
- * — straight over where the panel crop is about to be. The door default
- * (`doorDefaults` in the temple overlay route) refuses on the same input; so
- * does [`calloutPlacement`]. Empty means place nothing yet.
+ * — straight over where the panel crop is about to be. That is the violation
+ * ADR-019 was written from, and it is why the rule is stated at each placer
+ * rather than left to an anchor: [`calloutPlacement`] and
+ * [`doorDefaultPlacement`] refuse on the same input, and so do the route's two
+ * default-offering callers (`doorDefaults`, `waitingDefaults`). Empty means
+ * place nothing yet.
  */
 export function bannerPlacement(input: {
 	box: BoxSize;
+	obstacles: readonly WidgetRect[];
+	host: HostSize;
+}): WidgetRect | null {
+	const { box, obstacles, host } = input;
+	if (box.w <= 0 || box.h <= 0) return null;
+	if (obstacles.length === 0) return null;
+	return avoidRects(
+		{ x: host.width / 2 - box.w / 2, y: BANNER_TOP_CSS, w: box.w, h: box.h },
+		obstacles,
+		host
+	);
+}
+
+/**
+ * Where the "waiting for the temple panel" notice SHIPS (POE-249).
+ *
+ * This is a shipped DEFAULT and not a placement. `temple.waiting` is a
+ * PLACEABLE widget: the route offers this answer through `defaultsFor`, the
+ * host uses it exactly where `spec.defaults` would have been, and a user who
+ * has dragged the notice anywhere at all never reaches this function again —
+ * `placementFor` consults a default only when there is no stored row. The
+ * registry's fixed rectangle is what applies when this answers null, which is
+ * the ADR-019 carve-out for a user-owned rectangle: a fixed number visible the
+ * moment it draws and movable in one drag, not a placer's silent output.
+ *
+ * Wanted position: the top centre of the host, the same place the leave-the-map
+ * banner wants, because the notice is about the CYCLE rather than about any
+ * rectangle the game drew — there is nothing on screen for it to be beside, and
+ * the sheet it is waiting for is not up yet. Screen-centre, which is what the
+ * owner asked for, is where the plates are (`temple.waiting`'s registry
+ * comment has the measured numbers), so the eye-level answer would be a box on
+ * the module's own OCR crops.
+ *
+ * Null on an unmeasured box and null on an EMPTY never-cover set — the same
+ * rule its three siblings state, and stated here for the same reason: an empty
+ * set is a layout that is absent or a scale factor that has not resolved, which
+ * is "place nothing yet" and never "the screen is free". This is the placer
+ * that rule bit first: the wanted position is a function of the HOST alone, so
+ * an empty obstacle list would come back from `avoidRects` clear (see
+ * [`bannerPlacement`], the violation ADR-019 was written from).
+ *
+ * The arithmetic is identical to [`bannerPlacement`]'s today and is
+ * deliberately not shared with it. They answer different questions — where one
+ * anchored line goes on every frame, versus where an unconfigured widget ships
+ * — and either one can move without the other: the banner following the panel
+ * downward would not move the notice, and the notice moving to the corner would
+ * not move the banner. A helper over both would invent that coupling.
+ */
+export function waitingDefaultPlacement(input: {
+	/** The registry's shipped box for the widget, CSS px. */
+	box: BoxSize;
+	/** The never-cover set, CSS px. */
 	obstacles: readonly WidgetRect[];
 	host: HostSize;
 }): WidgetRect | null {
