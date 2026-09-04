@@ -322,8 +322,10 @@ func directFlip(r legRow, item, quote string, view windowView, cfg Config) (cand
 // as old as the price it accompanies and no older. Tick, traded volume and quote
 // volume come from that same row: one row family, one hour, one story, which is
 // also what keeps Play.Depth and Play.Turnover positive on a rescued row rather
-// than blanking the reader's Scale column on exactly the rows this exists to
-// serve.
+// than reporting a market with no depth on exactly the rows this exists to
+// serve. Reading the scored row instead would cost the reader the WAIT — the
+// desktop's Scale column divides its run by Depth and prints a dash for the
+// hours when it cannot — and would put a 0 in front of any armed turnover gate.
 //
 // A window with no realized print inside it rescues nothing. That is the whole
 // of the guard: a market may be priced from a window that is alive, never
