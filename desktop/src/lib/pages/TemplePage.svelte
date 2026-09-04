@@ -63,6 +63,14 @@
 	/** The last rejection from any settings command, shown next to the controls. */
 	let settingsError = $state<string | null>(null);
 	let debugBusy = $state(false);
+	/**
+	 * Optional path of a saved capture (a dump's `screen.png`) to read INSTEAD
+	 * of the screen. The Rust command has always accepted one; the page did
+	 * not expose it. It exists so a board that is long gone can still be run
+	 * through the whole read path on a real Windows OCR engine — the
+	 * 2026-09-03 laptop dump is the regression board for POE-230/234/243.
+	 */
+	let debugImagePath = $state('');
 	let debugReport = $state<string | null>(null);
 	let debugFailed = $state(false);
 
@@ -75,7 +83,8 @@
 		debugBusy = true;
 		debugReport = null;
 		debugFailed = false;
-		const { report, error } = await templeDebugCapture();
+		const path = debugImagePath.trim();
+		const { report, error } = await templeDebugCapture(path === '' ? null : path);
 		debugFailed = error !== null;
 		debugReport = error ?? JSON.stringify(report, null, 2);
 		debugBusy = false;
@@ -162,12 +171,19 @@
 			>
 				Re-read
 			</Button>
+			<input
+				type="text"
+				bind:value={debugImagePath}
+				placeholder="saved screen.png (optional)"
+				class="debug-path"
+				title="Leave empty to capture the screen. Paste the full path of a dump's screen.png to run that capture through the read path instead."
+			/>
 			<Button
 				onclick={runDebugCapture}
 				disabled={debugBusy}
-				title="Capture the screen now and write a debug dump (screenshot, diamond crop, OCR regions, report.json)."
+				title="Capture the screen now (or read the saved capture named on the left) and write a debug dump (screenshot, diamond crop, OCR regions, ocr-lines.json, report.json)."
 			>
-				{debugBusy ? 'Capturing…' : 'Debug capture'}
+				{debugBusy ? 'Capturing…' : debugImagePath.trim() === '' ? 'Debug capture' : 'Debug read file'}
 			</Button>
 		</div>
 
@@ -423,6 +439,16 @@
 </div>
 
 <style>
+	.debug-path {
+		min-width: 220px;
+		padding: 4px 8px;
+		font-size: 0.8rem;
+		color: var(--color-lab-text);
+		background: var(--color-lab-surface);
+		border: 1px solid var(--color-lab-border);
+		border-radius: 3px;
+	}
+
 	.temple-page {
 		max-width: 1400px;
 		margin: 0 auto;
