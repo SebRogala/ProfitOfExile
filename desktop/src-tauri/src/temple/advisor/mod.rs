@@ -208,6 +208,15 @@ pub struct Advice {
     pub recommendations: Vec<Ranked>,
     /// The RV-excluded options, best first.
     pub gambles: Vec<Gamble>,
+    /// The corridor a SECOND Stone of Passage would buy, given the top
+    /// recommendation — see [`conditional_second_door`], which owns both the
+    /// meaning and every reason this is `None`.
+    ///
+    /// Beside the top recommendation and not inside [`Ranked`] on purpose: it
+    /// is not a ranked move of its own, it is one fact about the move at the
+    /// head of the list, and every option below the head would need a
+    /// conditional ranking of its own to carry the field honestly.
+    pub secondary_door: Option<Edge>,
     /// R5's verdict for the top recommendation.
     pub map_action: MapAction,
     /// What was unreadable or unspendable.
@@ -244,6 +253,7 @@ pub fn advise(
             mode,
             recommendations: Vec::new(),
             gambles: Vec::new(),
+            secondary_door: None,
             map_action: MapAction::Continue,
             warnings,
         };
@@ -296,11 +306,119 @@ pub fn advise(
     // inside one component, so any choice's sets answer it.
     let connectable = rules::rv_connectable(board, position, &door_sets_per_choice[0]);
 
-    let base = Sim::from_board(board, &valuation);
+    let (mut safe, mut risky) = score_options(
+        board,
+        position,
+        &choices,
+        &door_sets_per_choice,
+        keys,
+        profile,
+        &valuation,
+        config,
+        rollouts,
+        seed,
+        connectable,
+    );
+
+    // RV never leaves the player with nothing to do. Unreachable since
+    // `rv_connectable` gated the split — RV only speaks when some door set
+    // satisfies it, and that set is Allowed for every architect, so `safe`
+    // always holds something. Kept as the prototype's own guard
+    // (`rv_filter`'s `kept or opts`) against the two predicates ever drifting
+    // apart: an empty recommendation list is the one failure the overlay
+    // cannot render.
+    if safe.is_empty() {
+        safe = std::mem::take(&mut risky);
+    }
+
+    let recommendations = rank(safe);
+    let mut gambles: Vec<Gamble> = risky
+        .into_iter()
+        .map(|scored| Gamble {
+            option: scored.option,
+            ev: scored.estimate.mean,
+            risk: scored.estimate.risk,
+            reasons: scored.reasons,
+        })
+        .collect();
+    gambles.sort_by(|a, b| b.ev.total_cmp(&a.ev));
+
+    let map_action = map_action(board, recommendations.first(), mode, config, &valuation);
+    // One extra ranking per read, over the door just recommended and the pairs
+    // that contain it — nothing else is priced. On case 8 that is TWO options
+    // (the singleton and the board's one legal pair), measured at 3-7 ms
+    // against 13-22 ms for the whole read at the production rollouts
+    // (`the_conditional_ranking_cost_on_case_eight`, `#[ignore]`d).
+    let secondary_door = recommendations
+        .first()
+        .and_then(|primary| {
+            conditional_second_door(
+                board,
+                position,
+                primary,
+                keys,
+                profile,
+                &valuation,
+                config,
+                rollouts,
+                seed,
+                connectable,
+            )
+            .door
+        });
+
+    Advice {
+        mode,
+        recommendations,
+        gambles,
+        secondary_door,
+        map_action,
+        warnings,
+    }
+}
+
+struct Scored {
+    option: Decision,
+    estimate: Estimate,
+    door: DoorKey,
+    architect_key: ArchKey,
+    reasons: Vec<Reason>,
+}
+
+/// Price every (kill, door set) pair, split by RV's verdict.
+///
+/// Pulled out of [`advise`] so the CONDITIONAL ranking
+/// ([`conditional_second_door`]) prices its options through exactly the same
+/// chain — `evaluate_rules`, `rv_verdict`, the common-random-number rollout —
+/// rather than through a second copy of it. A fork here would be two answers to
+/// "what is this door worth", and the faint seal the overlay draws would drift
+/// away from the bright one beside it with nothing to fail.
+///
+/// The RV fallback (*"an empty recommendation list is the one failure the
+/// overlay cannot render"*) is deliberately NOT here: it belongs to the caller
+/// that has to publish something whatever happens. The conditional caller has
+/// the opposite duty — with nothing on the safe side it publishes nothing, so
+/// the widget never marks an RV-excluded corridor as the door a second stone
+/// buys.
+#[allow(clippy::too_many_arguments)]
+fn score_options(
+    board: &BoardState,
+    position: Slot,
+    choices: &[Option<ArchitectChoice>],
+    door_sets_per_choice: &[Vec<BTreeSet<Edge>>],
+    keys: u8,
+    profile: &StrategyProfile,
+    valuation: &Valuation,
+    config: &TempleConfig,
+    rollouts: u32,
+    seed: u64,
+    connectable: bool,
+) -> (Vec<Scored>, Vec<Scored>) {
+    let base = Sim::from_board(board, valuation);
     let mut safe: Vec<Scored> = Vec::new();
     let mut risky: Vec<Scored> = Vec::new();
 
-    for (architect, door_sets) in choices.iter().zip(&door_sets_per_choice) {
+    for (architect, door_sets) in choices.iter().zip(door_sets_per_choice) {
         for doors in door_sets {
             let verdict = rules::evaluate_rules(
                 board,
@@ -309,24 +427,24 @@ pub fn advise(
                 doors,
                 keys,
                 profile,
-                &valuation,
+                valuation,
             );
             let rv = rules::rv_verdict(
                 board,
                 position,
                 architect.as_ref().map(|a| &a.line),
                 doors,
-                &valuation,
+                valuation,
                 connectable,
             );
-            let opening = opening_for(position, architect.as_ref(), doors, &valuation);
+            let opening = opening_for(position, architect.as_ref(), doors, valuation);
             // Common random numbers: every option is priced from the same seed.
             let mut rng = Rng::seeded(seed);
             let estimate = rollout::evaluate(
                 &base,
                 &opening,
                 profile,
-                &valuation,
+                valuation,
                 config,
                 rollouts,
                 &mut rng,
@@ -360,47 +478,145 @@ pub fn advise(
             }
         }
     }
+    (safe, risky)
+}
 
-    // RV never leaves the player with nothing to do. Unreachable since
-    // `rv_connectable` gated the split — RV only speaks when some door set
-    // satisfies it, and that set is Allowed for every architect, so `safe`
-    // always holds something. Kept as the prototype's own guard
-    // (`rv_filter`'s `kept or opts`) against the two predicates ever drifting
-    // apart: an empty recommendation list is the one failure the overlay
-    // cannot render.
-    if safe.is_empty() {
-        safe = std::mem::take(&mut risky);
-    }
+/// What one conditional ranking answered, and what it cost.
+///
+/// The count is here because the cost claim in [`conditional_second_door`]'s
+/// header is about the SIZE of the extra pass, and a wall-clock number cannot
+/// hold anyone to it — the pass widening to every architect or every pair is a
+/// change in how many options get priced, which is machine-independent and
+/// assertable. `the_conditional_ranking_cost_on_case_eight` is what asserts it.
+struct Conditional {
+    /// The corridor a second stone would buy, or `None` — see
+    /// [`conditional_second_door`] for every reason there is no answer.
+    door: Option<Edge>,
+    /// How many (kill, door set) options the pass priced.
+    ///
+    /// Read only by `the_conditional_ranking_cost_on_case_eight`, and that is
+    /// the point: the alternative is a test that re-derives the enumeration it
+    /// is checking, which asserts nothing. Comes off with its first production
+    /// caller — a log line, most likely.
+    #[allow(dead_code)]
+    priced: usize,
+}
 
-    let recommendations = rank(safe);
-    let mut gambles: Vec<Gamble> = risky
-        .into_iter()
-        .map(|scored| Gamble {
-            option: scored.option,
-            ev: scored.estimate.mean,
-            risk: scored.estimate.risk,
-            reasons: scored.reasons,
-        })
-        .collect();
-    gambles.sort_by(|a, b| b.ev.total_cmp(&a.ev));
-
-    let map_action = map_action(board, recommendations.first(), mode, config, &valuation);
-
-    Advice {
-        mode,
-        recommendations,
-        gambles,
-        map_action,
-        warnings,
+impl Conditional {
+    /// The question did not arise: nothing priced, nothing to say.
+    fn unasked() -> Self {
+        Conditional { door: None, priced: 0 }
     }
 }
 
-struct Scored {
-    option: Decision,
-    estimate: Estimate,
-    door: DoorKey,
-    architect_key: ArchKey,
-    reasons: Vec<Reason>,
+/// The corridor a SECOND Stone of Passage would buy, given the primary answer
+/// (POE-248).
+///
+/// The overlay draws it as a faint purple seal beside the bright one, so the
+/// player who finds a second stone mid-incursion already knows where it goes
+/// and the `temple_keys` setting does not have to be configured ahead of time.
+///
+/// # It is CONDITIONAL, and that is the whole definition
+///
+/// Not "the 2-key answer": that is a different move, and showing its two doors
+/// would contradict the one door the widget is telling the player to open right
+/// now. This re-ranks, at TWO keys, the primary door's own singleton against
+/// every legal pair that contains it, and answers with the partner of the
+/// winner — *given* the move being recommended, what does the second key add.
+///
+/// **The singleton is in the ranking on purpose, and it is the whole of the
+/// "spend nothing more" answer.** [`DoorKey`] puts `ru_ok` above `opens`, so a
+/// pair every RU vetoes loses to the un-vetoed one-door set even with two keys
+/// in hand — which is the advisor saying *do not spend the second key on this
+/// board*. Ranking only the pairs would have taken that answer away and
+/// published the partner of the best RU-vetoed pair, i.e. exactly the corridor
+/// the chain had just declined. When the singleton wins there is no partner and
+/// the answer is `None`, which falls out of the same expression rather than
+/// needing a branch.
+///
+/// The primary's own architect is the only one enumerated. The widget draws ONE
+/// kill glyph, and a second door that only pays off under the other kill would
+/// be a door the player cannot act on as drawn. It also keeps the enumeration
+/// honest: [`rules::door_sets`] is architect-dependent (a kill can make this
+/// room a degree-priced upgrade room), so the sets asked about here are the
+/// sets the recommended kill actually creates.
+///
+/// `connectable` is the caller's, computed over the ONE-key sets, and reusing
+/// it here is sound rather than convenient: every candidate corridor is
+/// incident on the room the player is standing in, so a pair reaches the
+/// Entrance component exactly when one of its two doors does — the predicate
+/// cannot answer differently for a set built out of corridors it already saw.
+///
+/// # When it answers `None`
+///
+/// - `keys != 1`. At two the player HAS both stones and the advisor's own
+///   answer is already the two-key one — including RU's answer that the second
+///   is better not spent, which comes back as a ONE-door recommendation and is
+///   not a primary waiting for a partner. At zero there is no first stone for a
+///   second to follow, and the primary opens nothing anyway;
+/// - the primary opens no door — there is nothing for a second key to be second
+///   to;
+/// - the primary's singleton wins the conditional ranking (above);
+/// - every option is an RV gamble. The faint seal is advice, and RV's
+///   exclusions are exactly the moves that must not be given one.
+#[allow(clippy::too_many_arguments)]
+fn conditional_second_door(
+    board: &BoardState,
+    position: Slot,
+    primary: &Ranked,
+    keys: u8,
+    profile: &StrategyProfile,
+    valuation: &Valuation,
+    config: &TempleConfig,
+    rollouts: u32,
+    seed: u64,
+    connectable: bool,
+) -> Conditional {
+    if keys != 1 {
+        return Conditional::unasked();
+    }
+    let mut doors = primary.option.doors.iter();
+    let Some(&first) = doors.next() else {
+        return Conditional::unasked();
+    };
+    // Unreachable under the gate above — one key enumerates no two-door set —
+    // and stated here so the ONE-door precondition is a property of this
+    // function rather than something inferred from a caller's argument.
+    if doors.next().is_some() {
+        return Conditional::unasked();
+    }
+
+    let choices = [primary.option.architect.clone()];
+    // Every set containing the primary door: its own singleton, which
+    // `door_sets` enumerates at two keys as it does at one, and every pair the
+    // redundancy filter left standing.
+    let sets: Vec<BTreeSet<Edge>> = rules::door_sets(board, position, 2, choices[0].as_ref())
+        .into_iter()
+        .filter(|set| set.contains(&first))
+        .collect();
+
+    let (safe, risky) = score_options(
+        board,
+        position,
+        &choices,
+        std::slice::from_ref(&sets),
+        2,
+        profile,
+        valuation,
+        config,
+        rollouts,
+        seed,
+        connectable,
+    );
+    let priced = safe.len() + risky.len();
+    let Some(best) = rank(safe).into_iter().next() else {
+        return Conditional { door: None, priced };
+    };
+    Conditional {
+        // `None` when the winner IS the singleton: there is no second door.
+        door: best.option.doors.into_iter().find(|edge| *edge != first),
+        priced,
+    }
 }
 
 /// Rank the kill by EV, the door set by the rule chain.
@@ -948,6 +1164,363 @@ mod tests {
             case.name,
             case.decision,
         );
+    }
+
+    /// Case 8's CONDITIONAL door, at the numbers a read actually uses.
+    ///
+    /// **Not a walked decision.** Sebastian played the primary (B0-C1); nobody
+    /// has played a second stone on this board. This pins what the chain
+    /// PRODUCES so a change to it is visible, and the owner has not confirmed
+    /// the answer.
+    ///
+    /// Why it comes out B1-C1, and it is the enumeration rather than the
+    /// ranking that decides: with A0-B0 already open, B0 and B1 are the only
+    /// two corridors out of C1 that change reachability at all — C1-C0, C1-D1
+    /// and C1-D2 all lead back into C1's own ten-slot component, which
+    /// [`rules::door_sets`] excludes as strictly equal to opening nothing. So
+    /// {B0-C1, B1-C1} is the ONLY legal two-key set containing the primary —
+    /// asserted below, because the claim is what makes the rest of this
+    /// docstring true — and the conditional ranking has one pair to weigh
+    /// against the primary's own singleton. The second stone buys the Vault
+    /// (B1, Wealth of the Vaal), the other Apex-adjacent slot, which is one of
+    /// the corridors the owner named as plausible.
+    #[test]
+    fn case_eight_lightning_workshop_names_the_conditional_second_door() {
+        use crate::temple::slice::{ROLLOUTS as PROD_ROLLOUTS, SEED as PROD_SEED};
+
+        let case = cases::case_8_lightning_workshop();
+        let advice = advise(
+            &case.state,
+            &case.offers,
+            case.keys,
+            &rush(),
+            &TempleConfig::default(),
+            PROD_ROLLOUTS,
+            PROD_SEED,
+        );
+
+        assert_eq!(
+            top_doors(&advice, C1),
+            vec![B0],
+            "{}: the primary is still Sebastian's move — {}",
+            case.name,
+            case.decision
+        );
+        assert_eq!(
+            conditional_pairs(&case.state, C1, &advice.recommendations[0]),
+            vec![BTreeSet::from([Edge::new(B0, C1), Edge::new(B1, C1)])],
+            "{}: the primary door is in exactly one legal pair — C0/D1/D2 lead \
+             back into C1's own component and buy nothing",
+            case.name
+        );
+        assert_eq!(
+            advice.secondary_door,
+            Some(Edge::new(B1, C1)),
+            "{}: a second stone buys the other Apex-adjacent slot",
+            case.name
+        );
+    }
+
+    /// The conditional answer is the PARTNER of the primary in a legal two-key
+    /// set, not a door ranked on its own.
+    ///
+    /// The property, rather than the value case 8 happens to produce: whatever
+    /// comes back, `{primary, secondary}` must be a set [`rules::door_sets`]
+    /// would enumerate for the recommended architect at two keys. That is what
+    /// makes the faint seal readable as *"and this one too"* — a door ranked
+    /// independently could be one the pair filter excludes as buying a merge
+    /// the primary already bought.
+    #[test]
+    fn the_conditional_door_completes_a_legal_two_key_set_with_the_primary() {
+        let case = cases::case_8_lightning_workshop();
+        let advice = advise_case(&case);
+        let primary = &advice.recommendations[0];
+        let first = *primary
+            .option
+            .doors
+            .iter()
+            .next()
+            .expect("the top recommendation opens one door");
+        let second = advice
+            .secondary_door
+            .expect("case 8 has a second corridor worth a key");
+
+        assert_ne!(second, first, "the second door is a DIFFERENT corridor");
+        assert!(
+            conditional_pairs(&case.state, C1, primary)
+                .contains(&BTreeSet::from([first, second])),
+            "{:?} is not a legal two-key set for the recommended kill",
+            [first.to_string(), second.to_string()]
+        );
+    }
+
+    /// One corridor worth a key means no second door to be conditional about.
+    ///
+    /// Every corridor out of C1 is open but one, so the closed one is the only
+    /// candidate and the conditional ranking has nothing but the primary's own
+    /// singleton in it. The widget draws the bright seal and no faint one.
+    #[test]
+    fn there_is_no_conditional_door_when_the_room_has_one_corridor_to_buy() {
+        use crate::temple::lattice::neighbours;
+
+        let mut open: Vec<(Slot, Slot)> = neighbours(C1).into_iter().map(|n| (C1, n)).collect();
+        let stranded = open.pop().expect("C1 has corridors").1;
+        // Junk at tier 1 everywhere, so no room is the degree-priced upgrade
+        // room whose corridors survive the same-component exclusion.
+        let rooms: Vec<(Slot, &str, u8)> = std::iter::once(C1)
+            .chain(neighbours(C1))
+            .map(|slot| (slot, JUNK, 1))
+            .collect();
+        let state = board(&rooms, &open, C1, 5);
+
+        let advice = advise(
+            &state,
+            &junk_offers(),
+            1,
+            &rush(),
+            &TempleConfig::default(),
+            N,
+            SEED,
+        );
+
+        assert_eq!(
+            top_doors(&advice, C1),
+            vec![stranded],
+            "the one corridor that changes reachability is the primary"
+        );
+        assert!(
+            conditional_pairs(&state, C1, &advice.recommendations[0]).is_empty(),
+            "precondition: no pair to weigh against the singleton"
+        );
+        assert_eq!(
+            advice.secondary_door, None,
+            "there is no second corridor, so nothing a second stone could buy"
+        );
+    }
+
+    /// A board where the chain's answer is *do not spend a second key*, and the
+    /// conditional pass must say so by saying nothing.
+    ///
+    /// Every neighbour of D1 but the Entrance is a saturated tier-1 upgrade
+    /// room, so opening any of those corridors dilutes a certainty into a
+    /// lottery and RU vetoes it. D1-E1 is the one RU-safe corridor.
+    ///
+    /// [`DoorKey`] puts `ru_ok` above `opens`, so the un-vetoed SINGLETON
+    /// outranks every vetoed pair — with one key in hand and with two. That is
+    /// the shape a conditional pass ranking only PAIRS gets wrong: it would
+    /// re-rank exactly the vetoed pairs, find a winner among them because they
+    /// are all that is left, and publish the partner of a set the chain had
+    /// already declined. Both tests below measured that answer (`C0-D1`) before
+    /// the singleton joined the ranking.
+    fn ru_saturated_board() -> BoardState {
+        board(
+            &[
+                (C0, "upgrade", 1),
+                (C1, "upgrade", 1),
+                (D0, "upgrade", 1),
+                (D2, "upgrade", 1),
+                (E0, "upgrade", 1),
+                (C2, JUNK, 1),
+                (D3, JUNK, 1),
+                (D1, JUNK, 1),
+            ],
+            &[(C0, C1), (D0, E0), (D2, D3)],
+            D1,
+            6,
+        )
+    }
+
+    #[test]
+    fn the_conditional_answer_is_none_when_the_primary_singleton_outranks_every_pair() {
+        let state = ru_saturated_board();
+        let advice = advise(
+            &state,
+            &junk_offers(),
+            1,
+            &rush(),
+            &TempleConfig::default(),
+            N,
+            SEED,
+        );
+
+        assert_eq!(
+            top_doors(&advice, D1),
+            vec![E1],
+            "precondition: the one RU-safe corridor is the primary"
+        );
+        assert!(
+            !conditional_pairs(&state, D1, &advice.recommendations[0]).is_empty(),
+            "precondition: there ARE pairs — the answer must come from the ranking, \
+             not from an empty enumeration"
+        );
+        assert_eq!(
+            advice.secondary_door, None,
+            "RU says do not spend the second key, and the pass must not publish the \
+             partner of a pair it vetoed"
+        );
+    }
+
+    #[test]
+    fn two_keys_publish_no_conditional_door_because_the_player_holds_both_stones() {
+        // The same board at the setting the conditional answer exists to spare
+        // the player. The advisor's own recommendation here opens ONE door —
+        // RU declining the second key is a two-key answer — so a gate keyed on
+        // "the primary already opens two" would let this through and publish a
+        // partner from a vetoed pair.
+        let state = ru_saturated_board();
+        let advice = advise(
+            &state,
+            &junk_offers(),
+            2,
+            &rush(),
+            &TempleConfig::default(),
+            N,
+            SEED,
+        );
+
+        assert_eq!(
+            advice.recommendations[0].option.doors.len(),
+            1,
+            "precondition: the two-KEY answer is a one-DOOR set, which is RU declining \
+             to spend the second"
+        );
+        assert_eq!(advice.secondary_door, None);
+
+        // And the plain shape of the same gate: two keys, two doors, nothing
+        // conditional left to say.
+        let case = cases::case_8_lightning_workshop();
+        let advice = advise(
+            &case.state,
+            &case.offers,
+            2,
+            &rush(),
+            &TempleConfig::default(),
+            N,
+            SEED,
+        );
+        assert_eq!(advice.recommendations[0].option.doors.len(), 2);
+        assert_eq!(advice.secondary_door, None);
+    }
+
+    /// Every legal two-key PAIR containing the primary's door, for the kill the
+    /// primary carries — the enumeration the conditional pass ranks, minus the
+    /// primary's own singleton.
+    fn conditional_pairs(
+        board: &BoardState,
+        position: Slot,
+        primary: &Ranked,
+    ) -> Vec<BTreeSet<Edge>> {
+        let Some(&first) = primary.option.doors.iter().next() else {
+            return Vec::new();
+        };
+        rules::door_sets(board, position, 2, primary.option.architect.as_ref())
+            .into_iter()
+            .filter(|set| set.len() == 2 && set.contains(&first))
+            .collect()
+    }
+
+    /// What the conditional ranking costs, measured rather than assumed.
+    ///
+    /// `#[ignore]` for the reason [`crate::temple::anchor`]'s exhaustive sweep
+    /// is: a wall-clock number is a MEASUREMENT of the machine that took it.
+    /// Run it with `cargo test --release the_conditional_ranking_cost --
+    /// --ignored --nocapture`.
+    ///
+    /// Measured 2026-09-04, release, in the repo's docker image on WSL2, over
+    /// four runs: **13-22 ms** for the whole `advise` on case 8 at the
+    /// production rollouts, of which **3-7 ms** is the conditional pass. The
+    /// spread is the box, not the code — which is exactly why the assertion
+    /// below is not a time.
+    ///
+    /// Those figures are case 8's TWO-option pass: the primary's own singleton
+    /// plus the board's single legal pair. A six-corridor room with nothing
+    /// already open enumerates about five pairs, so budget roughly three times
+    /// that; it is still a fraction of the read, and it happens once per read.
+    ///
+    /// The ASSERTION is the machine-independent half, and it is a COUNT rather
+    /// than a time: the pass prices the primary's singleton and every legal
+    /// pair containing the primary door, for the primary's architect, and
+    /// nothing else. A ratio could not catch the pass widening — 14.6 % against
+    /// a 50 % bound leaves room to triple — while the count fails the moment
+    /// the enumeration takes in a second architect or a pair the primary is not
+    /// in.
+    #[test]
+    #[ignore]
+    fn the_conditional_ranking_cost_on_case_eight() {
+        use crate::temple::slice::{ROLLOUTS as PROD_ROLLOUTS, SEED as PROD_SEED};
+        use std::time::Instant;
+
+        let case = cases::case_8_lightning_workshop();
+        let profile = rush();
+        let config = TempleConfig::default();
+        let valuation = rollout::Valuation::for_profile(&profile);
+        let advise_once = || {
+            advise(
+                &case.state,
+                &case.offers,
+                case.keys,
+                &profile,
+                &config,
+                PROD_ROLLOUTS,
+                PROD_SEED,
+            )
+        };
+        for _ in 0..2 {
+            let _ = advise_once();
+        }
+
+        let mut whole = Vec::new();
+        let mut conditional = Vec::new();
+        let mut priced = Vec::new();
+        for _ in 0..5 {
+            let started = Instant::now();
+            let advice = advise_once();
+            whole.push(started.elapsed().as_secs_f64() * 1000.0);
+
+            let primary = &advice.recommendations[0];
+            let connectable = rules::rv_connectable(
+                &case.state,
+                C1,
+                &rules::door_sets(&case.state, C1, case.keys, primary.option.architect.as_ref()),
+            );
+            let started = Instant::now();
+            let out = conditional_second_door(
+                &case.state,
+                C1,
+                primary,
+                case.keys,
+                &profile,
+                &valuation,
+                &config,
+                PROD_ROLLOUTS,
+                PROD_SEED,
+                connectable,
+            );
+            conditional.push(started.elapsed().as_secs_f64() * 1000.0);
+            assert_eq!(out.door, Some(Edge::new(B1, C1)), "the pass under measurement did its job");
+            priced.push((out.priced, conditional_pairs(&case.state, C1, primary).len()));
+        }
+
+        let median = |mut v: Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v[v.len() / 2]
+        };
+        let (whole, cond) = (median(whole), median(conditional));
+        // Printed and not asserted: see the header. The COUNT below is the
+        // claim a machine cannot argue with.
+        println!(
+            "case 8 at N={PROD_ROLLOUTS}: whole advise {whole:.2} ms, conditional pass {cond:.2} ms \
+             over {} options",
+            priced[0].0
+        );
+        for (options, pairs) in priced {
+            assert_eq!(
+                options,
+                pairs + 1,
+                "the pass prices the primary's own singleton and every pair containing it, \
+                 for ONE architect, and nothing else"
+            );
+        }
     }
 
     // ============================================ RV constrains the passage

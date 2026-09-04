@@ -253,7 +253,7 @@ export interface DiamondView {
 	 *
 	 *  Named for the HALF and not for a kind of kill: which architect's icon
 	 *  the game draws where is what the measurement does NOT settle, so
-	 *  `killGlyph` keys on the chosen block's own OCR rect.
+	 *  `killGlyphs` keys the kill marks on the blocks' own OCR rects.
 	 *
 	 *  OPTIONAL on the wire and normalised to `null` by `normaliseTemple`, the
 	 *  same rule `rois` and `diamond` follow: a snapshot from a build before
@@ -347,6 +347,24 @@ export interface AdviceView {
 	recommendations: RankedView[];
 	/** The RV-excluded options, best first, each with its measured risk. */
 	gambles: RankedView[];
+	/** The corridor a SECOND Stone of Passage would buy, given the top
+	 *  recommendation — `"B1-C1"`, or null (POE-248).
+	 *
+	 *  The CONDITIONAL answer, not the two-key one: Rust ranks only the two-key
+	 *  sets that contain the door already recommended and publishes the other
+	 *  member of the best (`advisor::conditional_second_door`, which owns every
+	 *  reason it is null). The overlay draws it as a faint purple seal beside
+	 *  the bright suggested one, so a player who finds a second stone
+	 *  mid-incursion acts without having configured `keys` first.
+	 *
+	 *  NOT a member of `recommendations[0].doors`, and a surface must not merge
+	 *  it into them: those are the doors to open NOW, and with one key in hand
+	 *  the second is a door the player cannot buy.
+	 *
+	 *  OPTIONAL on the wire, the same rule `rois` follows: a payload from a
+	 *  build before POE-248 carries no field at all. `secondDoor()` in `view.ts`
+	 *  is the reader, and it coerces `undefined` to null. */
+	secondaryDoor?: string | null;
 	/** `"continue"` or `"leaveMap"` — R5's verdict for the top recommendation.
 	 *  Note the camelCase: `MapAction` is projected through a hand-written
 	 *  `match`, not through `rename_all`, so this one string is NOT snake_case

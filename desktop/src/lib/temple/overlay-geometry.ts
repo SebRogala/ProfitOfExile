@@ -259,6 +259,26 @@ export function bannerPlacement(input: {
 export const SEAL_RADIUS = 0.2;
 /** The advisor's door, drawn to be found rather than read. */
 export const SEAL_RADIUS_SUGGESTED = 0.34;
+/**
+ * The door a SECOND Stone of Passage would buy — between the two, on purpose.
+ *
+ * Size is half of what says which seal is which: the conditional door is more
+ * than a wall (a plain seal) and less than the instruction (the suggestion),
+ * and at a glance the ORDER of the three radii is what reads. Colour carries
+ * the other half — see the component's `.seal.secondary`, which is the same
+ * purple at half opacity, the shared *"faint = the alternative"* rule the
+ * non-chosen kill glyph also follows.
+ */
+export const SEAL_RADIUS_SECONDARY = 0.27;
+
+/**
+ * What a seal is, for the widget's three sizes and three fills.
+ *
+ * `plain` is a corridor with no advice on it — drawn in its own state's colour
+ * (green open, red closed) at [`SEAL_RADIUS`]. `suggested` is the door to open
+ * now; `secondary` is the one a second stone would buy.
+ */
+export type SealKind = 'plain' | 'secondary' | 'suggested';
 
 /** One seal, placed and classified for drawing. */
 export interface PlacedSeal {
@@ -271,9 +291,19 @@ export interface PlacedSeal {
 	 *  use (`view.ts`), never a second reading of `doors`. Which of the three
 	 *  actually get DRAWN is [`sealVisible`]. */
 	state: EdgeState;
-	/** Whether the top recommendation says to open this one. */
-	suggested: boolean;
+	/** Whether the advisor has anything to say about this corridor, and what.
+	 *  One field rather than two booleans: the three are mutually exclusive and
+	 *  a seal that was both would have two radii. */
+	kind: SealKind;
 }
+
+/** The radius each kind is drawn at. Total over [`SealKind`], so a kind added
+ *  without a size fails `npm run check` rather than drawing at `undefined`. */
+const SEAL_RADII: Record<SealKind, number> = {
+	plain: SEAL_RADIUS,
+	secondary: SEAL_RADIUS_SECONDARY,
+	suggested: SEAL_RADIUS_SUGGESTED
+};
 
 /** The diamond as an SVG can draw it. */
 export interface DiamondGeometry {
@@ -313,7 +343,8 @@ export interface DiamondGeometry {
 export function diamondGeometry(
 	diamond: DiamondView,
 	layout: LayoutView | null,
-	suggested: readonly EdgeId[]
+	suggested: readonly EdgeId[],
+	secondary: EdgeId | null = null
 ): DiamondGeometry {
 	const xs = diamond.corners.map(([x]) => x);
 	const ys = diamond.corners.map(([, y]) => y);
@@ -326,15 +357,22 @@ export function diamondGeometry(
 		aspectRatio: width / height,
 		outline: diamond.corners.map(([x, y]) => `${x},${y}`).join(' '),
 		seals: diamond.seals.map((seal) => {
-			const isSuggested = suggested.includes(seal.edge);
+			// `suggested` wins a corridor that is somehow in both: it is the
+			// door to open NOW, and drawing it as the conditional one would
+			// tell the player to wait for a stone they do not need.
+			const kind: SealKind = suggested.includes(seal.edge)
+				? 'suggested'
+				: seal.edge === secondary
+					? 'secondary'
+					: 'plain';
 			return {
 				edge: seal.edge,
 				neighbour: seal.neighbour,
 				x: seal.pos[0],
 				y: seal.pos[1],
-				radius: isSuggested ? SEAL_RADIUS_SUGGESTED : SEAL_RADIUS,
+				radius: SEAL_RADII[kind],
 				state: edgeState(seal.edge, layout),
-				suggested: isSuggested
+				kind
 			};
 		}),
 		viewBox: `${minX} ${minY} ${width} ${height}`
@@ -344,24 +382,33 @@ export function diamondGeometry(
 /**
  * Whether a seal is drawn at all (POE-248).
  *
- * The owner's rule, and it is subtractive: the room widget shows the outline,
- * the OPEN doors in the game's own green, and the advisor's door bigger and
- * purple. A closed corridor and one the read could not settle are both DRAWN
- * NOWHERE — *"the closed/uncertain seals add chaos"* — which leaves the widget
- * saying only the two things a player acts on: where the walls are, and which
- * hole in them to buy.
+ * One corridor is hidden and one only: the one the read could not SETTLE.
+ * Everything else is drawn in the game's own semantics — green where the game
+ * draws a passage, red where it draws a wall — because the widget replaces the
+ * panel's diamond during the incursion and a room with half its walls missing
+ * is not the room the player is standing in.
  *
- * Not "hide everything but the suggestion": open is the game's own semantics
- * and the thing the suggestion is read against, so it stays.
+ * # The correction this encodes
+ *
+ * The first cut of POE-248 hid the closed seals too (*"the closed/uncertain
+ * seals add chaos"*). The owner checked it in game and reversed that half the
+ * same day: what was chaotic was the GREY — a dot for a corridor nobody can act
+ * on, on a board where the red ones are half of what tells you where you are.
+ * So closed is back, in the game's red and at [`SEAL_RADIUS`], and unsettled
+ * stays away with `doorWarning()` saying so in words instead.
+ *
+ * Advice always draws, whatever the state: a suggestion or a conditional door
+ * on a corridor nothing settled is still the advisor's answer for it, and
+ * hiding it would leave the widget silent about the only thing it is for.
  */
 export function sealVisible(seal: PlacedSeal): boolean {
-	return seal.suggested || seal.state === 'open';
+	return seal.kind !== 'plain' || seal.state !== 'unresolved';
 }
 
 /** Which of the two architect blocks a kill is. The wire strings, exactly. */
 export type ArchitectKind = 'upgrade' | 'change';
 
-/** The kill, as a mark inside the room. */
+/** One kill mark inside the room. */
 export interface KillGlyph {
 	/** The icon spot, in `DiamondView.corners`' units — the same space the
 	 *  outline and the seals are in, so one transform places all three. */
@@ -369,23 +416,41 @@ export interface KillGlyph {
 	/** Which glyph to draw: an up-arrow for an upgrade, a two-way arrow for a
 	 *  change. The component owns the paths; this owns which one. */
 	kind: ArchitectKind;
+	/** Whether this is the block the advisor CHOSE. The other one is drawn
+	 *  faint — see [`killGlyphs`]. */
+	chosen: boolean;
 }
 
 /** The half of an offer that placing its glyph needs. */
 interface GlyphOffer {
+	/** Position in the panel, as `PanelView.offers` publishes it. The identity
+	 *  the "other" block is found by — see [`killGlyphs`]. */
+	index: number;
 	kind: string;
 	rect: CaptureRect | null;
 }
 
 /**
- * Where to mark the kill on the room widget, or null when there is nothing to
- * mark (POE-248).
+ * Where to mark the two kills on the room widget (POE-248).
  *
  * The kill used to be a LINE of text under the diamond — `KILL <architect> →
  * <room>`. Owner, after the first live session: a mark, not a sentence. The
  * game's own panel prints one architect icon in each half of the room diamond,
  * so marking the right half says which block to click, and the glyph's SHAPE
  * says which kind of kill it is — both at a glance, with nothing to read.
+ *
+ * # Both blocks, and why the second one is faint
+ *
+ * Owner again, after the in-game check: the widget draws the OTHER architect
+ * too, at its own spot with its own kind, at a quarter opacity the component
+ * owns. Two marks orient the player — one mark alone says which half without
+ * saying what the halves are — and the faintness is what keeps it from reading
+ * as a second instruction. It is the same visual rule the conditional door seal
+ * follows (`SEAL_RADIUS_SECONDARY`, half-opacity purple): **faint is the
+ * alternative**, across every mark on this widget.
+ *
+ * The chosen glyph comes first in the returned array, so a caller that draws
+ * only `[0]` still draws the right one.
  *
  * # Which half, and why it is the RECT that decides
  *
@@ -402,26 +467,64 @@ interface GlyphOffer {
  * is a fact about THIS panel rather than an assumption carried from another.
  * Two rects are needed for it to mean anything — one block read alone could be
  * either — and `kind` is the fallback below that, which is what a text-only
- * read (no boxes at all) gets.
+ * read (no boxes at all) gets. The other block takes the spot the chosen one
+ * did not, whichever way that was decided.
  *
- * Null when the ranking named no architect, when the offer's `kind` is not one
+ * # What returns nothing
+ *
+ * EMPTY when the ranking named no architect, when the offer's `kind` is not one
  * of the two wire strings, or when the payload predates POE-248 and has no
  * spots — a glyph drawn at the origin would sit in the middle of the room and
  * claim a block nobody chose.
+ *
+ * ONE entry — the chosen block alone, no faint mark — when the read carried no
+ * second block to draw. That is POE-243's `forcedKill` shape: the panel prints
+ * two and the OCR got one, and inventing a mark for the block nobody read would
+ * put a kill on screen that was never on the panel. Also one entry when the
+ * second block's `kind` is not a wire string, for the same reason the chosen
+ * one's must be.
  */
-export function killGlyph(
+export function killGlyphs(
 	diamond: DiamondView,
 	offer: GlyphOffer | null,
 	offers: readonly GlyphOffer[] = []
-): KillGlyph | null {
-	if (offer === null) return null;
-	if (offer.kind !== 'upgrade' && offer.kind !== 'change') return null;
-	const kind: ArchitectKind = offer.kind;
+): KillGlyph[] {
+	if (offer === null) return [];
+	const kind = architectKind(offer);
+	if (kind === null) return [];
 	// The rect when the read can order the blocks, the kind when it cannot.
 	const top = topBlock(offer, offers) ?? kind === 'upgrade';
+	const chosen = spotGlyph(diamond, top, kind, true);
+	if (chosen === null) return [];
+
+	// The other block, by its panel position: the chosen one's `index` is the
+	// identity `chosenOffer()` looked it up by. Exactly one sibling, or none —
+	// a list that somehow holds two others cannot say which is THE other, and a
+	// mark on the wrong half is worse than no mark.
+	const others = offers.filter((other) => other.index !== offer.index);
+	if (others.length !== 1) return [chosen];
+	const otherKind = architectKind(others[0]);
+	if (otherKind === null) return [chosen];
+	const other = spotGlyph(diamond, !top, otherKind, false);
+	return other === null ? [chosen] : [chosen, other];
+}
+
+/** The offer's kind as one of the two wire strings, or null. */
+function architectKind(offer: GlyphOffer): ArchitectKind | null {
+	return offer.kind === 'upgrade' || offer.kind === 'change' ? offer.kind : null;
+}
+
+/** One glyph on one of the diamond's two published spots, or null when the
+ *  payload predates them. */
+function spotGlyph(
+	diamond: DiamondView,
+	top: boolean,
+	kind: ArchitectKind,
+	chosen: boolean
+): KillGlyph | null {
 	const spot = top ? diamond.topIcon : diamond.bottomIcon;
 	if (spot === null || spot === undefined) return null;
-	return { position: { x: spot[0], y: spot[1] }, kind };
+	return { position: { x: spot[0], y: spot[1] }, kind, chosen };
 }
 
 /**

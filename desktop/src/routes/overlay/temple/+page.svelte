@@ -94,6 +94,7 @@
 		leaveMapBanner,
 		overlayShowsBoard,
 		overlayShowsDoors,
+		secondDoor,
 		suggestedDoors
 	} from '$lib/temple/view';
 	import { ssot } from '$lib/stores/ssot.svelte';
@@ -113,6 +114,10 @@
 	const chosen = $derived(chosenOffer(temple));
 	const offers = $derived(temple.panel?.offers ?? []);
 	const suggested = $derived(suggestedDoors(temple.advice));
+	/** The conditional door — what a SECOND Stone of Passage would buy. Rust's
+	 *  answer, drawn faint and kept apart from `suggested`: that list is what to
+	 *  open with the key in hand. */
+	const secondary = $derived(secondDoor(temple.advice));
 	const leaveBanner = $derived(leaveMapBanner(temple.advice));
 
 	/** The banner's measured box, CSS px. Zero until the first frame — the same
@@ -213,6 +218,7 @@
 				diamond={temple.layout.diamond}
 				layout={temple.layout}
 				{suggested}
+				{secondary}
 				room={temple.panel?.room ?? null}
 				offer={chosen}
 				{offers}

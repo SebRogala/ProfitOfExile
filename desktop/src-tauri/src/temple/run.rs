@@ -3855,6 +3855,7 @@ mod tests {
             advice: Some(slice::AdviceView {
                 recommendations: Vec::new(),
                 gambles: Vec::new(),
+                secondary_door: None,
                 map_action: "continue".to_string(),
                 warnings: Vec::new(),
                 forced_kill: false,
@@ -3886,6 +3887,7 @@ mod tests {
             advice: Some(slice::AdviceView {
                 recommendations: Vec::new(),
                 gambles: Vec::new(),
+                secondary_door: None,
                 map_action: "continue".to_string(),
                 warnings: Vec::new(),
                 forced_kill: false,
@@ -3918,6 +3920,7 @@ mod tests {
             advice: Some(slice::AdviceView {
                 recommendations: Vec::new(),
                 gambles: Vec::new(),
+                secondary_door: None,
                 map_action: "continue".to_string(),
                 warnings: Vec::new(),
                 forced_kill: false,

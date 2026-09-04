@@ -16,24 +16,34 @@
 	 *
 	 * # What it draws, and what it deliberately does not
 	 *
-	 * Owner, after the first live session (2026-09-04): the widget was too
-	 * busy. So it is subtractive now.
-	 *
 	 * - the OUTLINE, always;
-	 * - the OPEN doors, green, the way the game colours them;
+	 * - every corridor the read SETTLED, in the game's own colours: green for a
+	 *   passage, red for a wall;
 	 * - the advisor's door, purple and bigger;
-	 * - the KILL, as a cyan glyph on the chosen block's own icon spot inside
-	 *   the room — an up-arrow for an `upgrade`, a two-way arrow for a
-	 *   `change`. Which HALF is keyed on the block's OCR rect, not on its kind;
-	 *   see `killGlyph`.
+	 * - the door a SECOND Stone of Passage would buy, in the same purple at half
+	 *   opacity and a radius between the two;
+	 * - BOTH kills, as cyan glyphs on the two architect icon spots inside the
+	 *   room — an up-arrow for an `upgrade`, a two-way arrow for a `change` —
+	 *   with the block the advisor did NOT choose at a quarter opacity. Which
+	 *   HALF each sits in is keyed on the blocks' OCR rects, not on their kinds;
+	 *   see `killGlyphs`.
 	 *
-	 * Gone with POE-248: the red closed seals and the grey unsettled ones
-	 * (*"they add chaos"*), the `KILL <architect> → <room>` line and the `open
-	 * <edge>` line. The kill is a MARK now, not a sentence: the game's own panel
-	 * puts one architect icon in each half of the room diamond, so marking the
-	 * right half says which block to click and the glyph's shape says which kind
-	 * of kill it is, without anything to read. The callout still spells it out
-	 * in words while the panel is up.
+	 * **Faint is the alternative.** One rule, two marks: the conditional door
+	 * and the kill nobody chose are both drawn, both dimmed, and neither is an
+	 * instruction. Everything at full strength is a thing to do now.
+	 *
+	 * Gone with POE-248: the grey seals for a corridor the read could not settle
+	 * (`doorWarning` says that in words instead), the `KILL <architect> → <room>`
+	 * line and the `open <edge>` line. The kill is a MARK now, not a sentence:
+	 * the game's own panel puts one architect icon in each half of the room
+	 * diamond, so marking the right half says which block to click and the
+	 * glyph's shape says which kind of kill it is, without anything to read. The
+	 * callout still spells it out in words while the panel is up.
+	 *
+	 * The RED seals came back the same day they went (owner, in game): hiding
+	 * the closed corridors was the wrong half of *"the seals add chaos"* — the
+	 * grey was the chaos, and a room drawn with only its open walls is not the
+	 * room the player is standing in.
 	 *
 	 * The one line that stayed is `warning` — see its prop.
 	 *
@@ -48,7 +58,12 @@
 	 * second copy of it here would be a second answer that a re-fit leaves
 	 * behind.
 	 */
-	import { diamondGeometry, killGlyph, sealVisible, type ArchitectKind } from './overlay-geometry';
+	import {
+		diamondGeometry,
+		killGlyphs,
+		sealVisible,
+		type ArchitectKind
+	} from './overlay-geometry';
 	import { EDGE_STATE_LABEL } from './view';
 	import type { DiamondView, EdgeId, LayoutView, OfferView } from './slice';
 
@@ -56,6 +71,7 @@
 		diamond,
 		layout,
 		suggested,
+		secondary,
 		room,
 		offer,
 		offers,
@@ -68,6 +84,10 @@
 		layout: LayoutView | null;
 		/** The corridors the top recommendation wants opened. */
 		suggested: readonly EdgeId[];
+		/** The corridor a SECOND Stone of Passage would buy, or null —
+		 *  `secondDoor()` over the advice. Rust's conditional answer, drawn
+		 *  faint; never merged into `suggested`, which is what to open NOW. */
+		secondary: EdgeId | null;
 		/** The room's name, or null when neither source named it. */
 		room: string | null;
 		/** The architect block the advisor chose, or null when the ranking named
@@ -84,9 +104,9 @@
 		warning: string | null;
 	} = $props();
 
-	const geometry = $derived(diamondGeometry(diamond, layout, suggested));
+	const geometry = $derived(diamondGeometry(diamond, layout, suggested, secondary));
 	const drawn = $derived(geometry.seals.filter(sealVisible));
-	const glyph = $derived(killGlyph(diamond, offer, offers));
+	const glyphs = $derived(killGlyphs(diamond, offer, offers));
 
 	/**
 	 * The two kill marks, in the room's own units, centred on the origin.
@@ -136,8 +156,7 @@
 		/>
 		{#each drawn as seal (seal.edge)}
 			<circle
-				class="seal {seal.state}"
-				class:suggested={seal.suggested}
+				class="seal {seal.state} {seal.kind}"
 				cx={seal.x}
 				cy={seal.y}
 				r={seal.radius}
@@ -146,22 +165,28 @@
 				<title>{seal.edge} — {EDGE_STATE_LABEL[seal.state]}</title>
 			</circle>
 		{/each}
-		{#if glyph}
+		{#each glyphs as mark, i (i)}
 			<!-- Drawn twice: a dark stroke underneath so the cyan reads over the
 			     game's own gold and dark-red panel art, then the glyph itself.
 			     Both are non-scaling, so the widget can be dragged to any size
-			     and the mark keeps the weight it was designed at. -->
-			<g transform="translate({glyph.position.x} {glyph.position.y})">
-				<path
-					class="kill-shadow"
-					d={GLYPH[glyph.kind]}
-					vector-effect="non-scaling-stroke"
-				/>
-				<path class="kill" d={GLYPH[glyph.kind]} vector-effect="non-scaling-stroke">
-					<title>kill the {glyph.kind} architect</title>
+			     and the mark keeps the weight it was designed at. The whole
+			     group fades for the block nobody chose, so the halo fades with
+			     it and the faint mark keeps its own separation from the art. -->
+			<g
+				class="glyph"
+				class:faint={!mark.chosen}
+				transform="translate({mark.position.x} {mark.position.y})"
+			>
+				<path class="kill-shadow" d={GLYPH[mark.kind]} vector-effect="non-scaling-stroke" />
+				<path class="kill" d={GLYPH[mark.kind]} vector-effect="non-scaling-stroke">
+					<title
+						>{mark.chosen
+							? `kill the ${mark.kind} architect`
+							: `the ${mark.kind} block, not chosen`}</title
+					>
 				</path>
 			</g>
-		{/if}
+		{/each}
 	</svg>
 	{#if warning}
 		<!-- Never dropped to make the widget smaller: it is the one line that
@@ -217,11 +242,29 @@
 		stroke-width: 1;
 	}
 
-	/* The game's own colour for an open door, and the only seal colour left:
-	   `sealVisible` draws nothing at all for a closed or unsettled corridor
-	   (POE-248), so there is no red and no grey to tell this apart from. */
+	/* The game's own two colours, and they are the whole point of drawing the
+	   closed ones: the widget replaces the panel's diamond during the incursion,
+	   and a room with only its open walls marked is not this room. `sealVisible`
+	   withholds one corridor and one only — the kind the read could not settle,
+	   which `doorWarning` says in words. */
 	.seal.open {
 		fill: var(--color-lab-green);
+	}
+
+	.seal.closed {
+		fill: var(--color-lab-red);
+	}
+
+	/* The door a SECOND stone would buy. The same purple as the suggestion, at
+	   half strength and (in the geometry) between the two radii — faint is the
+	   alternative, the same rule `.glyph.faint` follows. After the state rules
+	   above on purpose: both are one class deep, so source order is what makes
+	   the advice win over the corridor's own colour. */
+	.seal.secondary {
+		fill: var(--color-lab-purple);
+		fill-opacity: 50%;
+		stroke: var(--color-lab-text);
+		stroke-opacity: 50%;
 	}
 
 	/* The advisor's door. Bigger is `SEAL_RADIUS_SUGGESTED` in the geometry —
@@ -241,6 +284,14 @@
 		stroke-width: 3;
 		stroke-linecap: round;
 		stroke-linejoin: round;
+	}
+
+	/* The block the advisor did NOT choose. 0.25 and not 0.1: over the dark room
+	   fill a tenth is not there at all, and the mark exists to be seen as the
+	   other option rather than guessed at. Same size and same cyan — only the
+	   strength says which is which, which is the rule the secondary seal shares. */
+	.glyph.faint {
+		opacity: 0.25;
 	}
 
 	.kill-shadow {
