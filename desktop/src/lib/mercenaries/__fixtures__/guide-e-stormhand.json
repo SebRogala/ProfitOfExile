@@ -1,0 +1,1 @@
+{"id":"guide-e-stormhand","query":{"stats":[{"type":"mercenary","filters":[{"id":"mercenary.skill_59005"},{"id":"mercenary.support_14317","disabled":true},{"id":"mercenary.support_31052","disabled":true},{"id":"mercenary.support_31571","disabled":true}]},{"type":"mercenary","filters":[{"id":"mercenary.skill_30663"}]}],"status":{"option":"securable"}}}

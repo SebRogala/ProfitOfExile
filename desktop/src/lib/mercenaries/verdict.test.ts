@@ -37,7 +37,18 @@ const SPECTRAL_HELIX_OF_TRARTHUS = 'mercenary.skill_28988';
 const SPECTRAL_HELIX = 'mercenary.skill_37916';
 const GREATER_KINETIC_BLAST = 'mercenary.skill_44258';
 const BARRAGE = 'mercenary.skill_1356';
+// The seven skills only guide-e's three new archetypes ask for.
+const TORNADO_SHOT = 'mercenary.skill_8030';
+const SHRAPNEL_BALLISTA = 'mercenary.skill_61903';
+const RAIN_OF_ARROWS = 'mercenary.skill_40759';
+const SOULREND_OF_REAPING = 'mercenary.skill_10742';
+const SUMMON_SEEKING_VOID = 'mercenary.skill_54144';
+const ARC = 'mercenary.skill_59005';
+const BALL_LIGHTNING_OF_STATIC = 'mercenary.skill_30663';
+/** In the Stormhand pool, and not the skill the note's second row asks for. */
+const SPARK = 'mercenary.skill_5893';
 const HASTE = 'mercenary.skill_52155';
+const ENVY = 'mercenary.skill_17515';
 const HATRED = 'mercenary.skill_24482';
 const HERALD_OF_ICE = 'mercenary.skill_32807';
 const GRACE = 'mercenary.skill_2792';
@@ -56,6 +67,10 @@ const GREATER_FASTER_ATTACKS = 'mercenary.support_50485';
 const FASTER_ATTACKS = 'mercenary.support_987';
 const HYPOTHERMIA = 'mercenary.support_38571';
 const CRITICAL_DAMAGE = 'mercenary.support_32189';
+const GILDED_SECONDARY_SHOTS = 'mercenary.support_18499';
+const GILDED_CHAIN_DISTANCE = 'mercenary.support_31571';
+/** On sushi's Sniper denial list — "no brutality". */
+const BRUTALITY = 'mercenary.support_64271';
 const MULTIPLE_TRAPS = 'mercenary.support_2555';
 const GREATER_SLOWER_PROJECTILES = 'mercenary.support_44952';
 const GILDED_EXTRA_TARGETS = ['mercenary.support_58471', 'mercenary.support_37259'];
@@ -192,6 +207,31 @@ function unsatisfiableGroups(rulesetId: string, url: string | null): string[] {
 		}))
 		.filter((group) => group.min > group.enabled)
 		.map((group) => `${rulesetId}: ${group.type} asks ${group.min} of ${group.enabled} enabled`);
+}
+
+/**
+ * The enabled groups of a derived query that ask for a SKILL this capture never
+ * showed. The derived link comps the mercenary it was built FROM, so a group
+ * demanding a skill that mercenary has not got answers with nothing — a dead
+ * comp whose arithmetic is nevertheless fine, which is why `unsatisfiableGroups`
+ * cannot see it.
+ *
+ * Only the surplus counts: a group whose `min` sits below its enabled-filter
+ * count can afford to miss that many. `not` groups are skipped — they ask for
+ * absence, so a skill the capture lacks is what they WANT.
+ */
+function absentSkillDemands(what: string, url: string | null, capture: MercCapture): string[] {
+	const present = new Set(capture.rows.flatMap((row) => row.skill.ids));
+	return derivedQueryOf(url)
+		.stats.filter((group) => group.disabled !== true && group.type !== 'not')
+		.flatMap((group) => {
+			const enabled = group.filters.filter((filter) => filter.disabled !== true);
+			const slack = enabled.length - (group.value?.min ?? enabled.length);
+			const missing = enabled
+				.map((filter) => filter.id)
+				.filter((id) => id.startsWith('mercenary.skill_') && !present.has(id));
+			return missing.length > slack ? [`${what}: ${group.type} demands ${missing.join(', ')}`] : [];
+		});
 }
 
 /** Every passing ruleset of one source, in declaration order. */
@@ -341,6 +381,66 @@ function bladeAmbusherCapture(skill: string = SPECTRAL_HELIX_OF_TRARTHUS): MercC
 
 function twoLadderCapture(): MercCapture {
 	return captureOf([...kinetistCapture().rows, row(2, skillRead(VAAL_ICE_SHOT))]);
+}
+
+/**
+ * A Sniper as sushi's note describes one: Tornado Shot carrying the two links he
+ * names, a ballista for his "totem" line and Haste for his aura line.
+ *
+ * Guide-e is the only source with a Sniper ruleset at all, so nothing else here
+ * can reach one — the same reason `bladeAmbusherCapture` exists for guide-c.
+ * `denied` is the whole variable: the note's one denial list is a support list,
+ * and a Sniper carrying a Brutality link is what it exists to reject.
+ */
+function sniperCapture(denied: string[] = []): MercCapture {
+	return captureOf([
+		row(0, skillRead(TORNADO_SHOT), supportsOf([GMP, GILDED_SECONDARY_SHOTS, ...denied])),
+		row(1, skillRead(SHRAPNEL_BALLISTA)),
+		row(2, skillRead(HASTE))
+	]);
+}
+
+/**
+ * The other Sniper the note accepts: Rain of Arrows of Saturation INSTEAD of
+ * Tornado Shot, with the same totem and aura rows.
+ *
+ * "rain of arrows works too" is a RULE — `core` is a `count` of one over the two
+ * skills — so this mercenary answers the note on its own merits, and the links
+ * the author hangs on "TS" are asked of it nowhere.
+ */
+function rainOfArrowsSniperCapture(): MercCapture {
+	return captureOf([
+		row(0, skillRead(RAIN_OF_ARROWS)),
+		row(1, skillRead(SHRAPNEL_BALLISTA)),
+		row(2, skillRead(HASTE))
+	]);
+}
+
+/**
+ * A Cruel Mistress as the note describes one: Soulrend of Reaping with Return
+ * and GMP, one of the two second skills the note accepts, and the Envy aura.
+ */
+function cruelMistressCapture(): MercCapture {
+	return captureOf([
+		row(0, skillRead(SOULREND_OF_REAPING), supportsOf([RETURN, GMP])),
+		row(1, skillRead(SUMMON_SEEKING_VOID)),
+		row(2, skillRead(ENVY))
+	]);
+}
+
+/**
+ * A Stormhand as the note describes one: Arc carrying two of the three chain
+ * links, and Ball Lightning of Static on its own row.
+ *
+ * `secondSkill` is the variable — the note asks for both skills ("arc and ball
+ * lightning of static"), so a Stormhand carrying something else in that slot has
+ * to fail rather than pass on the Arc row alone.
+ */
+function stormhandCapture(secondSkill: string = BALL_LIGHTNING_OF_STATIC): MercCapture {
+	return captureOf([
+		row(0, skillRead(ARC), supportsOf([CHAIN, GILDED_CHAIN_DISTANCE])),
+		row(1, skillRead(secondSkill))
+	]);
 }
 
 describe('row scoping of `mercenary` groups', () => {
@@ -539,10 +639,16 @@ describe('sources are evaluated independently', () => {
 			// Multiple Projectiles this mercenary has not got, and a source is
 			// worth as soon as one of its rungs passes.
 			['guide-d', 'worth'],
+			// Guide E is the fifth opinion on this archetype and the strictest: its
+			// note asks for BOTH Kinetic Blast secondaries ("greater KBoC & KBoC"),
+			// and this mercenary has only one of them. Its "barrage is not a brick"
+			// line is an `authorNote`, which rides a PASS — so it is not why this
+			// skips, and it is not relayed here.
+			['guide-e', 'skip'],
 			// Guide F wants the same Kinetic Blast links AND Greater Kinetic Blast,
 			// Haste and Inspiring Cry as live gates in one `and` group. This
 			// mercenary's second skill is Barrage, so all three are missing and
-			// both its rungs fail — a fifth opinion that turns on the buffs
+			// both its rungs fail — a sixth opinion that turns on the buffs
 			// rather than on the links.
 			['guide-f', 'skip']
 		]);
@@ -802,6 +908,36 @@ describe('the row anchor of a `mercenary` group', () => {
 	});
 
 	/**
+	 * The other half of the row-anchor rule. A PARKED `mercenary` group never runs
+	 * the row pass — `evaluateGroup` answers it over the whole capture — so a
+	 * support sitting on some other row reads as a fired bonus and revives it with
+	 * the anchor skill live. Guide-e's Combatant has both halves of its
+	 * "frost blades/wild strike" OR parked, so a Frost Blades Combatant carrying
+	 * Greater Elemental Damage with Attacks revived the WILD STRIKE half and
+	 * shipped a comp link demanding a skill this mercenary does not have.
+	 */
+	it('leaves a parked group parked when the capture lacks its anchor skill', () => {
+		const combatant = rulesetOf(verdictOf(frostBladesCapture()), 'guide-e', 'guide-e-combatant');
+		expect(combatant.outcome).toBe('pass');
+		expect(derivedGroup(combatant.derivedUrl, 2).disabled).toBe(true);
+	});
+
+	// The other side of the same rule, so the fix cannot be "never revive a
+	// `mercenary` group": the Frost Blades half of that same OR has its anchor on
+	// the row the bonus fired from, and it still comes back on carrying it.
+	it('revives a parked group whose anchor skill the capture has', () => {
+		const combatant = rulesetOf(verdictOf(frostBladesCapture()), 'guide-e', 'guide-e-combatant');
+		const frostBlades = derivedGroup(combatant.derivedUrl, 1);
+		expect(frostBlades.disabled).toBeUndefined();
+		expect(frostBlades.filters.filter((filter) => filter.disabled !== true)).toEqual([
+			{ id: FROST_BLADES },
+			{ id: CHAIN },
+			{ id: GREATER_EDWA },
+			{ id: GREATER_HYPOTHERMIA }
+		]);
+	});
+
+	/**
 	 * Every capture this file builds, swept across every source. The invariant is
 	 * general — no derived link may carry a group asking for more filters than it
 	 * leaves switched on — so the sweep is over everything rather than the two
@@ -831,32 +967,44 @@ describe('the row anchor of a `mercenary` group', () => {
 		['wild strike', wildStrikeCapture()],
 		['wild strike tier-2 speed', wildStrikeTierTwoSpeedCapture()],
 		['two ladders', twoLadderCapture()],
-		// The only archetype no guide-b ladder and no guide-a ruleset covers, so
-		// without it the sweep would never reach guide-c's Blade Ambusher at all.
-		['blade ambusher', bladeAmbusherCapture()]
+		// The archetype only guide-c covers, so without it the sweep would never
+		// reach its Blade Ambusher ruleset at all.
+		['blade ambusher', bladeAmbusherCapture()],
+		// The three archetypes only guide-e covers, for the same reason: no other
+		// capture here carries Tornado Shot, Soulrend of Reaping or Arc, so without
+		// these three the verdict path for Sniper, Cruel Mistress and Stormhand
+		// would never run.
+		['sniper', sniperCapture()],
+		// The Sniper the note's OR accepts without the skill its links hang on —
+		// the shape the anchor rule above exists for, seen from the passing side.
+		['rain of arrows sniper', rainOfArrowsSniperCapture()],
+		['cruel mistress', cruelMistressCapture()],
+		['stormhand', stormhandCapture()]
 	];
 
-	function sweep(): { visited: string[]; offenders: string[] } {
+	function sweep(): { visited: string[]; offenders: string[]; demands: string[] } {
 		const visited: string[] = [];
 		const offenders: string[] = [];
+		const demands: string[] = [];
 		for (const [what, capture] of SWEPT_CAPTURES) {
 			const verdict = verdictOf(capture);
 			for (const sourceId of SOURCE_IDS) {
 				for (const result of passingOf(verdict, sourceId)) {
 					visited.push(result.id);
 					offenders.push(...unsatisfiableGroups(`${what} / ${result.id}`, result.derivedUrl));
+					demands.push(...absentSkillDemands(`${what} / ${result.id}`, result.derivedUrl, capture));
 				}
 			}
 		}
-		return { visited, offenders };
+		return { visited, offenders, demands };
 	}
 
 	// A sweep that stopped passing anything would report no offenders and look
 	// green, so what it reached is asserted as well as what it found. Every
 	// guide-b ladder, both guide-d rungs, both guide-f Kineticist rungs, both
-	// untiered guide-a rulesets and all four guide-c rulesets that any of these
-	// captures can answer are in here.
-	it('sweeps a passing rung of every ladder, both guide-a archetypes and all four guide-c rulesets', () => {
+	// untiered guide-a rulesets and every guide-c and guide-e ruleset that any of
+	// these captures can answer are in here.
+	it('sweeps a passing rung of every ladder, both guide-a archetypes and every authored ruleset', () => {
 		expect([...new Set(sweep().visited)].sort()).toEqual([
 			'guide-a-combatant',
 			'guide-a-kinetist-v1',
@@ -883,6 +1031,12 @@ describe('the row anchor of a `mercenary` group', () => {
 			'guide-c-manyshot',
 			'guide-d-kinetist-20d',
 			'guide-d-kinetist-budget',
+			'guide-e-combatant',
+			'guide-e-cruel-mistress',
+			'guide-e-kinetist',
+			'guide-e-manyshot',
+			'guide-e-sniper',
+			'guide-e-stormhand',
 			'guide-f-kinetist-cheap',
 			'guide-f-kinetist-expensive'
 		]);
@@ -890,6 +1044,14 @@ describe('the row anchor of a `mercenary` group', () => {
 
 	it('leaves no derived group asking for more filters than it has switched on', () => {
 		expect(sweep().offenders).toEqual([]);
+	});
+
+	// The other way a derived link dies, over the same sweep: a group demanding a
+	// SKILL the capture never showed. The arithmetic of such a group adds up, so
+	// the check above cannot see it — it took a parked `mercenary` group revived
+	// by a bonus from another row (guide-e's Combatant, 2026-09-04) to surface it.
+	it('leaves no derived group demanding a skill the capture never showed', () => {
+		expect(sweep().demands).toEqual([]);
 	});
 
 	// The clamp, at the one rung that needs it: `projectiles` is parked with a
@@ -940,6 +1102,118 @@ describe('the row anchor of a `mercenary` group', () => {
 				{ id: GREATER_FASTER_ATTACKS, disabled: true }
 			]
 		]);
+	});
+});
+
+describe('sushi’s three new archetypes', () => {
+	// Sniper, Cruel Mistress and Stormhand exist in no other source here, so
+	// these are the only captures that run the verdict engine over them at all.
+	// Each pass asserts the WHOLE reason list rather than the outcome alone: for
+	// an authored ruleset the bonuses and the author's line are the entire
+	// verdict — there is no floor and no tier behind them.
+
+	it('passes the Sniper note and names every link and skill it fired', () => {
+		const sniper = rulesetOf(verdictOf(sniperCapture()), 'guide-e', 'guide-e-sniper');
+		expect(sniper.outcome).toBe('pass');
+		expect(sniper.reasons).toEqual([
+			'Bonuses fired: Greater Multiple Projectiles (Tier 3), Gilded Secondary Shots (Tier 3), Shrapnel Ballista, Haste'
+		]);
+	});
+
+	it('fails the Sniper note on a Brutality link its deny list forbids', () => {
+		const sniper = rulesetOf(verdictOf(sniperCapture([BRUTALITY])), 'guide-e', 'guide-e-sniper');
+		expect(sniper.outcome).toBe('fail');
+		expect(sniper.reasons).toContain('Brutality (Tier 2) present — forbidden');
+	});
+
+	// "rain of arrows works too" is a rule the engine applies, not a line the page
+	// quotes: `core` asks for ONE of the two skills, so the Sniper the second line
+	// describes passes on its own merits and nothing about it rides `authorNote`.
+	it('passes a Sniper running the Rain of Arrows the note accepts instead', () => {
+		const sniper = rulesetOf(verdictOf(rainOfArrowsSniperCapture()), 'guide-e', 'guide-e-sniper');
+		expect(sniper.outcome).toBe('pass');
+		expect(sniper.reasons).toEqual(['Bonuses fired: Shrapnel Ballista, Haste']);
+	});
+
+	// The floor under that OR: one of the two skills is still required, so a
+	// Sniper carrying neither is not the mercenary this note describes.
+	it('fails a Sniper carrying neither of the two skills the note accepts', () => {
+		const capture = captureOf([row(0, skillRead(SHRAPNEL_BALLISTA)), row(1, skillRead(HASTE))]);
+		const sniper = rulesetOf(verdictOf(capture), 'guide-e', 'guide-e-sniper');
+		expect(sniper.outcome).toBe('fail');
+		expect(sniper.reasons).toEqual([
+			'Tornado Shot or Rain of Arrows: needs 1, has 0 — missing Tornado Shot, Rain of Arrows of Saturation'
+		]);
+	});
+
+	// The links the note hangs on "TS" are row-scoped to Tornado Shot and parked,
+	// so a Rain of Arrows Sniper is never asked for them — the comp link it gets
+	// is a search this mercenary itself answers.
+	it('leaves the Tornado Shot links out of a Rain of Arrows Sniper’s comp link', () => {
+		const sniper = rulesetOf(verdictOf(rainOfArrowsSniperCapture()), 'guide-e', 'guide-e-sniper');
+		expect(derivedGroup(sniper.derivedUrl, 1).disabled).toBe(true);
+	});
+
+	it('passes the Cruel Mistress note and names every link and skill it fired', () => {
+		const mistress = rulesetOf(
+			verdictOf(cruelMistressCapture()),
+			'guide-e',
+			'guide-e-cruel-mistress'
+		);
+		expect(mistress.outcome).toBe('pass');
+		expect(mistress.reasons).toEqual([
+			'Bonuses fired: Return (Tier 3), Greater Multiple Projectiles (Tier 3), Summon Seeking Void, Envy'
+		]);
+	});
+
+	it('passes the Stormhand note and names the chain links it fired', () => {
+		const stormhand = rulesetOf(verdictOf(stormhandCapture()), 'guide-e', 'guide-e-stormhand');
+		expect(stormhand.outcome).toBe('pass');
+		expect(stormhand.reasons).toEqual([
+			'Bonuses fired: Chain (Tier 2), Gilded Chain Distance (Tier 3)'
+		]);
+	});
+
+	// "arc and ball lightning of static" is an AND, so the second row is a gate
+	// rather than a bonus: an Arc mercenary carrying something else there fails,
+	// however good its chain links are.
+	it('fails the Stormhand note when the second row is not Ball Lightning of Static', () => {
+		const stormhand = rulesetOf(
+			verdictOf(stormhandCapture(SPARK)),
+			'guide-e',
+			'guide-e-stormhand'
+		);
+		expect(stormhand.outcome).toBe('fail');
+		expect(stormhand.reasons).toContain(
+			'Ball Lightning of Static on row 1: needs 1, has 0 — missing Ball Lightning of Static'
+		);
+	});
+});
+
+describe('sushi’s Combatant alternation', () => {
+	// "frost blades/wild strike + static strike together" is an OR on the first
+	// half. Only Static Strike is a live gate, and each alternative sits in a
+	// parked group of its own — so a mercenary answering EITHER passes, which is
+	// the ruling the two parked groups exist to express. Both witnesses are here
+	// because a model that required both skills would still pass one of them.
+	it('reads the Combatant alternation as an OR rather than as both skills', () => {
+		expect(
+			[frostBladesCapture(), wildStrikeCapture()].map(
+				(capture) => rulesetOf(verdictOf(capture), 'guide-e', 'guide-e-combatant').outcome
+			)
+		).toEqual(['pass', 'pass']);
+	});
+
+	// The deny list is what keeps that OR from degenerating into "has Static
+	// Strike": the fourth skill of the Combatant pool is the one the note rejects.
+	it('fails the Combatant note on the Spectral Helix its deny list forbids', () => {
+		const capture = captureOf([
+			row(0, skillRead(SPECTRAL_HELIX)),
+			row(1, skillRead(STATIC_STRIKE))
+		]);
+		const combatant = rulesetOf(verdictOf(capture), 'guide-e', 'guide-e-combatant');
+		expect(combatant.outcome).toBe('fail');
+		expect(combatant.reasons).toContain('Spectral Helix present — forbidden');
 	});
 });
 

@@ -9,8 +9,9 @@
  * — GGG never assigned it a hash. The saved link stays the primary one; the
  * derived link is what you open to comp a specific mercenary.
  *
- * A ruleset transcribed from PROSE has no saved search at all (guide-c), so it
- * gets the derived link and nothing else — see `MercAuthoredQuery`.
+ * A ruleset transcribed from PROSE has no saved search at all (guide-c and
+ * guide-e), so it gets the derived link and nothing else — see
+ * `MercAuthoredQuery`.
  *
  * Distinct from `lib/trade-utils.ts`, which builds gem searches.
  */
@@ -25,8 +26,9 @@ export interface MercSavedSearch {
 
 /**
  * A query this app WROTE, from a guide whose author published prose instead of
- * trade links — guide-c is the case: CaptainLance lists ideal skill and support
- * combinations and saves no searches.
+ * trade links. Two sources are that case: CaptainLance (guide-c) lists ideal
+ * skill and support combinations and saves no searches, and sushi (guide-e)
+ * publishes per-archetype notes — as a screenshot — and no searches either.
  *
  * It names a committed fixture file rather than a GGG hash, and that difference
  * is not cosmetic. A saved search is re-fetchable and is its own oracle; an

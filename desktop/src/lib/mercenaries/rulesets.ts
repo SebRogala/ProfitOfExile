@@ -1,29 +1,30 @@
 /**
  * Mercenary rulesets — the declarative data model behind the Mercenaries view page.
  *
- * FIVE sources, and they do not all come from the same kind of thing. Guide-a,
+ * SIX sources, and they do not all come from the same kind of thing. Guide-a,
  * guide-b, guide-d and guide-f are transcriptions of GGG trade SAVED SEARCHES:
  * the raw responses live in `__fixtures__/<hash>.json` (see that README for
  * provenance and re-fetch commands) and `rulesets.test.ts` asserts this file
  * against them, so the fixtures — not this file — are the ground truth.
- * Guide-c is a transcription of PROSE: CaptainLance's "Ideal Merc Options"
- * names skills and support links in sentences and publishes no trade link at
- * all, so those four rulesets carry an `authored` fixture instead of a
- * `savedSearch` and their fixture is OUR OWN output, not GGG's. It is
- * committed and asserted like the others because it still catches a
- * typed-model edit nobody meant to make, but it cannot catch a MISREADING of
- * the guide — only a human re-reading the page can, and the prose is quoted in
- * the group comments below so that re-read is possible without leaving the
- * file.
+ * Guide-c and guide-e are transcriptions of PROSE: CaptainLance's "Ideal Merc
+ * Options" names skills and support links in sentences, sushi's archetype notes
+ * name them in shorthand, and neither publishes a trade link at all — so those
+ * ten rulesets carry an `authored` fixture instead of a `savedSearch` and their
+ * fixture is OUR OWN output, not GGG's. It is committed and asserted like the
+ * others because it still catches a typed-model edit nobody meant to make, but
+ * it cannot catch a MISREADING of the guide — only a human re-reading the source
+ * can, and the prose is quoted in the group comments below so that re-read is
+ * possible without leaving the file.
  *
  * The two kinds also point in opposite directions. Guide-a's rulesets are
  * seller-side (its author states price floors), guide-b's, guide-d's and
  * guide-f's are buyers' tier ladders — guide-f's read off the absence of a
  * price floor on any of its six rungs, since its prose is unreadable — and
- * guide-c is a buyer's IDEAL:
+ * guide-c and guide-e are buyers' IDEALS:
  * CaptainLance is telling a Luminary merc-bot player what links to look for,
- * with no prices and no floors. So a guide-c pass says "this mercenary is what
- * the build wants", never "this is what it is worth".
+ * with no prices and no floors, and sushi is doing the same across six
+ * archetypes. So a guide-c or guide-e pass says "this mercenary is what the
+ * build wants", never "this is what it is worth".
  *
  * Entry `name` values are copied verbatim from `__fixtures__/mercenary-stats.json`
  * (GGG's Mercenary stat vocabulary), `(Tier N)` suffix included. They are display
@@ -68,9 +69,10 @@
  * prose does not mention (Frigid Forkshot and Barrage denied, aura toggles), and the
  * search wins because it is what the author actually comps against.
  *
- * Guide-c has no such audit to do: there is no saved search to disagree with the
- * prose, so the prose IS the transcription and every guide-c group carries the
- * sentence it came from.
+ * Guide-c and guide-e have no such audit to do: there is no saved search to
+ * disagree with the prose, so the prose IS the transcription and every group of
+ * theirs carries the sentence — or, for guide-e, the shorthand line — it came
+ * from.
  *
  * Guide-d is XTheFarmerX's budget life-stacking Kinetic Blast build, published
  * as ONE video ("5 DIVINE BUDGET LIFE STACKING KB MERC BUILD | Trade Links -
@@ -86,6 +88,18 @@
  * fixture file. That is provenance rather than duplication — two guides
  * endorsing one search is a fact about the market, and a mercenary passing it
  * reads WORTH from both of them.
+ *
+ * Guide-e is sushi's archetype notes, the other authored source and the widest
+ * one: six archetypes, three of which — Sniper, Cruel Mistress and Stormhand —
+ * no other source here covers. It is also the only source whose text never
+ * reached this repo as text: it is a screenshot embedded in a Google Sheet cell,
+ * so the quoted lines in its group comments are a reading of a PICTURE and the
+ * jargon in them ("TS", "wed", "gilded +2 proj") had to be resolved against
+ * GGG's vocabulary and poewiki's class pools before anything could be typed.
+ * Exactly two of its rulesets carry an `authorNote`: the Combatant's, holding
+ * its two support RANKINGS and the shouted "NO PIERCE" (the denial itself is a
+ * live `not` group — what the note keeps is the shout), and the Kineticist's,
+ * holding its one remark about a skill no group asks for.
  *
  * Guide-f is the "Path of Evening" mercenary-support build page: ONE page, six
  * saved searches, three archetypes with a cheap and an expensive rung each, so
@@ -107,10 +121,25 @@
 
 import type { MercAuthoredQuery, MercSavedSearch } from './trade-links';
 
-export const SOURCE_IDS = ['guide-a', 'guide-b', 'guide-c', 'guide-d', 'guide-f'] as const;
+export const SOURCE_IDS = [
+	'guide-a',
+	'guide-b',
+	'guide-c',
+	'guide-d',
+	'guide-e',
+	'guide-f'
+] as const;
 export type MercSourceId = (typeof SOURCE_IDS)[number];
 
-export const ARCHETYPES = ['manyshot', 'kinetist', 'combatant', 'blade-ambusher'] as const;
+export const ARCHETYPES = [
+	'manyshot',
+	'kinetist',
+	'combatant',
+	'blade-ambusher',
+	'sniper',
+	'cruel-mistress',
+	'stormhand'
+] as const;
 export type MercArchetype = (typeof ARCHETYPES)[number];
 
 /**
@@ -3317,6 +3346,733 @@ const GUIDE_D_KINETIST_20D: MercRuleset = {
 };
 
 /**
+ * sushi's buyer-side archetype notes (TwitchTVSpicysushi#7614), league Allflame
+ * 3.29 — the second source here that publishes no trade link, and the only one
+ * whose prose reached this repo as an IMAGE.
+ *
+ * It lives in cell E14 of Sheet1 of a public Google Sheet as an embedded
+ * screenshot, captured 2026-08-31. The PNG is NOT committed — the owner keeps it
+ * with POE-228 — and the verbatim transcription is in that ticket's description;
+ * the video it was screenshotted from is unknown. So the transcription below is
+ * a reading of a picture of text, and every group carries the line it came from
+ * verbatim — the author's spelling and commas included — because that quote is
+ * the only thing a re-checker can hold the picture against.
+ *
+ * Modelled the guide-c way (the CaptainLance ruling above), because it is the
+ * same KIND of source: a buyer naming skills and the links he wants on them,
+ * with no prices, no floors and no ranking of mercenaries. So the SKILL is the
+ * only live filter of its `mercenary` group, every support the note names is a
+ * switched-off bonus at every tier its family has, and each "no ..." line is a
+ * live `not` group. A skill the note merely WANTS — an aura, the Sniper's totem,
+ * the Cruel Mistress's second skill — rides a live `and` group with every entry
+ * parked, the shape guide-a uses for its aura lists; a skill it accepts INSTEAD
+ * of another — the Sniper's "rain of arrows works too" — rides a live `count`
+ * group of `min: 1` with both skills live, the shape guide-b uses for "Greater
+ * Kinetic Blast or Barrage".
+ *
+ * Two things this source has that guide-c does not. It RANKS supports
+ * ("chain > wed > hypo > faster/gmp", twice, on the Combatant) and it SHOUTS one
+ * of its denials ("NO PIERCE"). Neither is expressible as a switch — a ranking
+ * is not a threshold, and the shout is not a filter although the denial under it
+ * IS one, a live `not` group like every other "no ..." line — so both go into
+ * the Combatant's `authorNote` verbatim, while every ranked support is ALSO
+ * listed as an ordinary bonus. The model says "wanted"; the note says "in this
+ * order". The Kineticist's `authorNote` carries the source's one remark about a
+ * skill it never asks for ("barrage is not a brick"). Those two notes are the
+ * whole of what rides prose here, pinned in `rulesets.test.ts`'s "author notes".
+ *
+ * Three archetypes arrive with it — Sniper, Cruel Mistress and Stormhand — and
+ * no other source here covers any of them.
+ *
+ * The jargon is the author's own shorthand ("TS", "wed", "gilded +2 proj",
+ * "fr totems"). Every resolution and its evidence is tabulated in
+ * `__fixtures__/README.md` under "Authored queries (guide-e)"; the group
+ * comments below name the resolution beside the quote it came from.
+ */
+const SUSHI_SHEET =
+	'https://docs.google.com/spreadsheets/d/1EW1JIew9A08RDmZbtWOcLzo3WEokexMdOlldXwRF34Q/htmlview';
+
+const GUIDE_E_SNIPER: MercRuleset = {
+	id: 'guide-e-sniper',
+	label: 'Sniper',
+	archetype: 'sniper',
+	authored: { file: 'guide-e-sniper' },
+	status: 'securable',
+	groups: [
+		{
+			// "TS with GMP and gilded +2 proj" and "rain of arrows works too" — ONE
+			// rule, because the second line names an alternative skill ROW rather
+			// than a link on the first. "TS" is Tornado Shot; Rain of Arrows of
+			// Saturation is the sole mercenary form of the skill the second line
+			// names.
+			//
+			// So the two skills share one `count` group asking for ONE of them — the
+			// shape guide-b's Kinetist MV rung uses for "Greater Kinetic Blast or
+			// Barrage". A Sniper running either passes, a Sniper running neither
+			// fails here, and neither skill is demanded of the other's mercenary.
+			// The alternative is a RULE, not a remark, so nothing about it rides
+			// `authorNote`.
+			id: 'core',
+			label: 'Tornado Shot or Rain of Arrows',
+			type: 'count',
+			enabledInSearch: true,
+			min: 1,
+			entries: [
+				{ id: 'mercenary.skill_8030', name: 'Tornado Shot', enabledInSearch: true },
+				{
+					id: 'mercenary.skill_40759',
+					name: 'Rain of Arrows of Saturation',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			// The links half of "TS with GMP and gilded +2 proj" — the author hangs
+			// them on TS, so they are row-scoped to Tornado Shot and asked of nothing
+			// else. "gilded +2 proj" is Gilded Secondary Shots (Tier 3), the one
+			// gilded support whose vocabulary text names the thing the note names
+			// ("Supported Tornado Shot fires +2 additional secondary Projectiles").
+			// "GMP" is the Multiple Projectiles family, which has a Tier 1 and a
+			// Tier 3 and no Tier 2.
+			//
+			// Parked, the guide-c way: the note WANTS these links, it does not gate
+			// on them. Parked also keeps the group off a Rain of Arrows Sniper's comp
+			// link — `verdict.ts::flipsFor` revives a parked `mercenary` group only
+			// when the capture proves its anchor skill, so a mercenary without
+			// Tornado Shot is never asked for Tornado Shot's links.
+			id: 'tornado-links',
+			label: 'Tornado Shot + wanted links',
+			type: 'mercenary',
+			enabledInSearch: false,
+			entries: [
+				{ id: 'mercenary.skill_8030', name: 'Tornado Shot', enabledInSearch: true },
+				{
+					id: 'mercenary.support_12054',
+					name: 'Multiple Projectiles (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_18499',
+					name: 'Gilded Secondary Shots (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			// "no brutality no arrow nova" — the whole Brutality family, and Arrow
+			// Nova, which the vocabulary carries at Tier 3 only.
+			id: 'deny-supports',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{
+					id: 'mercenary.support_55807',
+					name: 'Lesser Brutality (Tier 1)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_64271', name: 'Brutality (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_59345',
+					name: 'Greater Brutality (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_58429', name: 'Arrow Nova (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			// "totem" — read as a SKILL, not as a totem support: the two ballistas
+			// are the only totem skills in the Sniper pool and the note names no
+			// link for them. Either one answers it, so both are parked bonuses of
+			// ONE `and` group rather than two live requirements.
+			id: 'totems',
+			label: 'Ballista totem',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_61903', name: 'Shrapnel Ballista', enabledInSearch: false },
+				{
+					id: 'mercenary.skill_44144',
+					name: 'Siege Ballista of Trarthus',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			// "haste aura" — Haste is a skill; the mercenary vocabulary has no aura
+			// concept of its own.
+			id: 'auras',
+			label: 'Auras',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_52155', name: 'Haste', enabledInSearch: false }]
+		}
+	]
+};
+
+const GUIDE_E_KINETIST: MercRuleset = {
+	id: 'guide-e-kinetist',
+	// The note spells the class "kineticist". The app's archetype key is
+	// `kinetist`, the spelling guide-b and guide-c use, and the label follows the
+	// app so both readings of the class sit in one column on the page.
+	label: 'Kinetist',
+	archetype: 'kinetist',
+	authored: { file: 'guide-e-kinetist' },
+	// "barrage is not a brick" — a remark about a skill the note asks for
+	// nowhere. It is not a filter, so it stays prose.
+	authorNote: 'barrage is not a brick',
+	status: 'securable',
+	groups: [
+		{
+			// "greater KBoC & KBoC" and "return with chain/fork wed,gmp,crit dmg,".
+			// Greater Kinetic Blast and Kinetic Blast of Clustering are two DISTINCT
+			// skills of the Kineticist pool and the "&" asks for both, so each gets
+			// its own `mercenary` group.
+			//
+			// The link line names no row. Rather than pick one, both groups carry
+			// the same list as bonuses: nothing gates on the choice, and neither row
+			// is denied a link the note might have meant for it.
+			id: 'core',
+			label: 'Greater Kinetic Blast + wanted links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_44258', name: 'Greater Kinetic Blast', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: false },
+				{ id: 'mercenary.support_14317', name: 'Lesser Chain (Tier 1)', enabledInSearch: false },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_31571',
+					name: 'Gilded Chain Distance (Tier 3)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_32052', name: 'Greater Fork (Tier 3)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_12054',
+					name: 'Multiple Projectiles (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_30688',
+					name: 'Lesser Critical Damage (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_32189',
+					name: 'Critical Damage (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_55659',
+					name: 'Greater Critical Damage (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			// The other half of "greater KBoC & KBoC", carrying the same
+			// "return with chain/fork wed,gmp,crit dmg," list for the reason above.
+			id: 'secondary',
+			label: 'Kinetic Blast of Clustering + wanted links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: false },
+				{ id: 'mercenary.support_14317', name: 'Lesser Chain (Tier 1)', enabledInSearch: false },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_31571',
+					name: 'Gilded Chain Distance (Tier 3)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_32052', name: 'Greater Fork (Tier 3)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_12054',
+					name: 'Multiple Projectiles (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_30688',
+					name: 'Lesser Critical Damage (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_32189',
+					name: 'Critical Damage (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_55659',
+					name: 'Greater Critical Damage (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			// "no kinetic bolt or kinetic rain". Kinetic Rain of Impact is the sole
+			// mercenary form of the second one; guide-c denies Kinetic Bolt too, for
+			// its own stated reason.
+			id: 'deny',
+			label: 'Denied skills',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_12583', name: 'Kinetic Bolt', enabledInSearch: true },
+				{ id: 'mercenary.skill_32089', name: 'Kinetic Rain of Impact', enabledInSearch: true }
+			]
+		},
+		{
+			// "haste"
+			id: 'auras',
+			label: 'Auras',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_52155', name: 'Haste', enabledInSearch: false }]
+		}
+	]
+};
+
+const GUIDE_E_COMBATANT: MercRuleset = {
+	id: 'guide-e-combatant',
+	label: 'Combatant',
+	archetype: 'combatant',
+	authored: { file: 'guide-e-combatant' },
+	// Two support rankings and a shouted denial, verbatim. A ranking is not a
+	// threshold, so none of it is a switch — every support it names is an
+	// ordinary bonus in the groups below, and the ORDER lives only here.
+	authorNote:
+		'frost blades: chain > wed > hypo > faster/gmp; wild strike: return > wed > hypo > faster; NO PIERCE',
+	status: 'securable',
+	groups: [
+		{
+			// "frost blades/wild strike + static strike together".
+			// The slash is an OR and "+ ... together" is the constant, so Static
+			// Strike is the one skill this note requires of every Combatant. Making
+			// Frost Blades and Wild Strike live as well would ask for three of the
+			// four skills a Combatant rolls TWO of — a ruleset no mercenary could
+			// ever answer — so they are parked groups below, and the deny list does
+			// the rest: with Spectral Helix forbidden, a Combatant carrying Static
+			// Strike has Frost Blades or Wild Strike as its other skill.
+			// The note names no link for this row.
+			id: 'core',
+			label: 'Static Strike',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true }]
+		},
+		{
+			// "frost blades: chain > wed > hypo > faster/gmp" — the first of the two
+			// alternatives, parked for the reason in `core`. "faster" is the Faster
+			// Attacks family: Frost Blades is a melee attack, and Faster Projectiles
+			// is the other family the word could name.
+			id: 'frost-blades',
+			label: 'Frost Blades + ranked links',
+			type: 'mercenary',
+			enabledInSearch: false,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_14317', name: 'Lesser Chain (Tier 1)', enabledInSearch: false },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_31571',
+					name: 'Gilded Chain Distance (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_26146',
+					name: 'Lesser Hypothermia (Tier 1)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_52447',
+					name: 'Lesser Faster Attacks (Tier 1)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_50485',
+					name: 'Greater Faster Attacks (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_12054',
+					name: 'Multiple Projectiles (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			// "wild strike: return > wed > hypo > faster" — the other alternative.
+			// Its ranking drops GMP and leads with Return; both differences are the
+			// author's, and neither is a switch.
+			id: 'wild-strike',
+			label: 'Wild Strike + ranked links',
+			type: 'mercenary',
+			enabledInSearch: false,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_26146',
+					name: 'Lesser Hypothermia (Tier 1)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_52447',
+					name: 'Lesser Faster Attacks (Tier 1)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_50485',
+					name: 'Greater Faster Attacks (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			// "no spectral helix/elemental hit".
+			// Plain Spectral Helix, NOT the Trarthus transfigure guide-c's Blade
+			// Ambusher is built around — different ids, different class. And
+			// Elemental Hit of Ice is the only Elemental Hit in the mercenary
+			// vocabulary, which poewiki puts in the Mysterious Diver pool rather
+			// than the Combatant one; the note says it anyway, so it is transcribed
+			// anyway. A denial that can never fire costs nothing, and dropping it
+			// would be this app overruling the source it is quoting.
+			id: 'deny',
+			label: 'Denied skills',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_37916', name: 'Spectral Helix', enabledInSearch: true },
+				{ id: 'mercenary.skill_8708', name: 'Elemental Hit of Ice', enabledInSearch: true }
+			]
+		},
+		{
+			// "NO PIERCE" — the author's capitals, and the only line he shouts.
+			// Four ids: the family's three tiers plus the gilded Tier 3.
+			id: 'deny-supports',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.support_6040', name: 'Lesser Pierce (Tier 1)', enabledInSearch: true },
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true },
+				{ id: 'mercenary.support_27970', name: 'Greater Pierce (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_10482', name: 'Gilded Pierce (Tier 3)', enabledInSearch: true }
+			]
+		}
+	]
+};
+
+const GUIDE_E_MANYSHOT: MercRuleset = {
+	id: 'guide-e-manyshot',
+	label: 'Manyshot',
+	archetype: 'manyshot',
+	authored: { file: 'guide-e-manyshot' },
+	status: 'securable',
+	groups: [
+		{
+			// "ice shot with return on both" and "gmp, wed, hypo, crit".
+			// "on both" is the author's own scoping and it attaches to RETURN alone
+			// — Ice Shot and Vaal Ice Shot are the two rows a Manyshot has for it —
+			// so Return is a bonus here and in `secondary`, while the next line's
+			// links stay on this row rather than being credited to both.
+			// "crit" is unqualified, so both crit families are listed.
+			id: 'core',
+			label: 'Ice Shot + wanted links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_12054',
+					name: 'Multiple Projectiles (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_26146',
+					name: 'Lesser Hypothermia (Tier 1)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_30688',
+					name: 'Lesser Critical Damage (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_32189',
+					name: 'Critical Damage (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_55659',
+					name: 'Greater Critical Damage (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_23209',
+					name: 'Lesser Critical Chance (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_61471',
+					name: 'Critical Chance (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_62220',
+					name: 'Greater Critical Chance (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			// The other half of "return on both": Vaal Ice Shot is the Manyshot's
+			// second Ice Shot row, and Return is the only link the note puts on it.
+			id: 'secondary',
+			label: 'Vaal Ice Shot + Return',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: false }
+			]
+		},
+		{
+			// "no icicle rain" — guide-c denies the same skill, for its own reason.
+			id: 'deny',
+			label: 'Denied skills',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_24409', name: 'Icicle Rain', enabledInSearch: true }]
+		}
+	]
+};
+
+const GUIDE_E_CRUEL_MISTRESS: MercRuleset = {
+	id: 'guide-e-cruel-mistress',
+	// The note spells her "Cruel Mistriss"; the class is Cruel Mistress.
+	label: 'Cruel Mistress',
+	archetype: 'cruel-mistress',
+	authored: { file: 'guide-e-cruel-mistress' },
+	status: 'securable',
+	groups: [
+		{
+			// "soulrend of reaping w/ return + gmp"
+			id: 'core',
+			label: 'Soulrend of Reaping + wanted links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_10742', name: 'Soulrend of Reaping', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_12054',
+					name: 'Multiple Projectiles (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			// "summon void or fr totems" — an OR, so the two are parked bonuses of
+			// one `and` group: either fires on its own and neither gates.
+			// "summon void" is Summon Seeking Void, not Void Sphere — that one is
+			// her class primary and every Cruel Mistress has it, so asking for it
+			// would say nothing about the mercenary.
+			id: 'secondary',
+			label: 'Second skill — either',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_54144', name: 'Summon Seeking Void', enabledInSearch: false },
+				{ id: 'mercenary.skill_29071', name: 'Forbidden Rite Totem', enabledInSearch: false }
+			]
+		},
+		{
+			// "envy aura"
+			id: 'auras',
+			label: 'Auras',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_17515', name: 'Envy', enabledInSearch: false }]
+		}
+	]
+};
+
+const GUIDE_E_STORMHAND: MercRuleset = {
+	id: 'guide-e-stormhand',
+	label: 'Stormhand',
+	archetype: 'stormhand',
+	authored: { file: 'guide-e-stormhand' },
+	status: 'securable',
+	groups: [
+		{
+			// "arc and ball lightning of static" and "chain + gilded chain on arc".
+			// Both links sit on the ARC row, the author says so, and the family is
+			// exactly three ids: there is no Greater Chain, and the Tier 3 is
+			// Gilded Chain Distance, whose vocabulary text is Arc-specific
+			// ("Supported Arc has +10% more damage per remaining Chain").
+			id: 'core',
+			label: 'Arc + chain links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_59005', name: 'Arc', enabledInSearch: true },
+				{ id: 'mercenary.support_14317', name: 'Lesser Chain (Tier 1)', enabledInSearch: false },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_31571',
+					name: 'Gilded Chain Distance (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			// "arc and ball lightning of static" — "and", so both skills are wanted,
+			// and the Stormhand pool rolls two of seven, so one mercenary can carry
+			// both. The note names no link for this row.
+			id: 'secondary',
+			label: 'Ball Lightning of Static',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_30663', name: 'Ball Lightning of Static', enabledInSearch: true }
+			]
+		}
+	]
+};
+
+/**
  * The "Path of Evening" mercenary-support build page. Six saved searches on ONE
  * page, so no ruleset here carries a `guideUrl` of its own.
  *
@@ -4175,6 +4931,23 @@ export const MERC_SOURCES: MercSource[] = [
 		// own — unlike guide-b, whose ladders come off different videos.
 		guideUrl: XTHEFARMERX_KB_VIDEO,
 		rulesets: [GUIDE_D_KINETIST_BUDGET, GUIDE_D_KINETIST_20D]
+	},
+	{
+		id: 'guide-e',
+		label: 'sushi',
+		description: "sushi's buyer-side archetype notes for Allflame 3.29 — no prices, no floors",
+		// ONE image, six archetypes — so no ruleset here carries a `guideUrl` of
+		// its own, the guide-c shape. The URL is the SHEET the image is embedded
+		// in (Sheet1, cell E14), not a page of prose: there is no text to fetch.
+		guideUrl: SUSHI_SHEET,
+		rulesets: [
+			GUIDE_E_SNIPER,
+			GUIDE_E_KINETIST,
+			GUIDE_E_COMBATANT,
+			GUIDE_E_MANYSHOT,
+			GUIDE_E_CRUEL_MISTRESS,
+			GUIDE_E_STORMHAND
+		]
 	},
 	{
 		id: 'guide-f',

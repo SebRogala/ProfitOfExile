@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+	ARCHETYPES,
 	MERC_SOURCES,
 	SOURCE_IDS,
 	TIERS,
@@ -39,6 +40,12 @@ import guideCKinetist from './__fixtures__/guide-c-kinetist.json';
 import guideCManyshot from './__fixtures__/guide-c-manyshot.json';
 import guideCBladeAmbusher from './__fixtures__/guide-c-blade-ambusher.json';
 import guideCCombatant from './__fixtures__/guide-c-combatant.json';
+import guideESniper from './__fixtures__/guide-e-sniper.json';
+import guideEKinetist from './__fixtures__/guide-e-kinetist.json';
+import guideECombatant from './__fixtures__/guide-e-combatant.json';
+import guideEManyshot from './__fixtures__/guide-e-manyshot.json';
+import guideECruelMistress from './__fixtures__/guide-e-cruel-mistress.json';
+import guideEStormhand from './__fixtures__/guide-e-stormhand.json';
 import n8r8JqonVIV from './__fixtures__/8r8JqonVIV.json';
 import veYJp9gZhE from './__fixtures__/veYJp9gZhE.json';
 import PPGnKVv7UL from './__fixtures__/PPGnKVv7UL.json';
@@ -52,11 +59,12 @@ import mercenaryStats from './__fixtures__/mercenary-stats.json';
  * type from each import (unions of "has `disabled`" and "doesn't"), so each one is
  * widened through `unknown` into this single shape — the room-presets.ts idiom.
  *
- * The four `guide-c-*.json` files are not GGG's — they are this app's own
- * transcription of CaptainLance's prose, written in the same body shape so they
- * go through the same reader. What that buys is a typed-model edit failing
- * against a committed artifact instead of against nothing; what it cannot buy is
- * a check on whether the prose was read correctly. See `__fixtures__/README.md`.
+ * The four `guide-c-*.json` and six `guide-e-*.json` files are not GGG's — they
+ * are this app's own transcription of CaptainLance's prose and of sushi's
+ * archetype notes, written in the same body shape so they go through the same
+ * reader. What that buys is a typed-model edit failing against a committed
+ * artifact instead of against nothing; what it cannot buy is a check on whether
+ * the source was read correctly. See `__fixtures__/README.md`.
  */
 interface RawFilter {
 	id: string;
@@ -110,6 +118,12 @@ const FIXTURES: Record<string, RawSavedSearch> = {
 	'guide-c-manyshot': guideCManyshot as unknown as RawSavedSearch,
 	'guide-c-blade-ambusher': guideCBladeAmbusher as unknown as RawSavedSearch,
 	'guide-c-combatant': guideCCombatant as unknown as RawSavedSearch,
+	'guide-e-sniper': guideESniper as unknown as RawSavedSearch,
+	'guide-e-kinetist': guideEKinetist as unknown as RawSavedSearch,
+	'guide-e-combatant': guideECombatant as unknown as RawSavedSearch,
+	'guide-e-manyshot': guideEManyshot as unknown as RawSavedSearch,
+	'guide-e-cruel-mistress': guideECruelMistress as unknown as RawSavedSearch,
+	'guide-e-stormhand': guideEStormhand as unknown as RawSavedSearch,
 	'8r8JqonVIV': n8r8JqonVIV as unknown as RawSavedSearch,
 	veYJp9gZhE: veYJp9gZhE as unknown as RawSavedSearch,
 	PPGnKVv7UL: PPGnKVv7UL as unknown as RawSavedSearch,
@@ -505,6 +519,237 @@ describe('guide-c rulesets', () => {
 	});
 });
 
+describe('guide-e rulesets', () => {
+	const GUIDE_E = MERC_SOURCES.find((s) => s.id === 'guide-e') as MercSource;
+
+	/**
+	 * `<groupId> <type> enabled=<bool>` per ruleset — the shape each note block
+	 * was transcribed under.
+	 *
+	 * The `enabled` flag is in here rather than left implicit because on this
+	 * source it carries a RULING, twice. Sniper's `tornado-links` is parked
+	 * because the links the note hangs on "TS" are wanted rather than required,
+	 * and parking them is what keeps a Rain of Arrows Sniper from being asked for
+	 * Tornado Shot's links; Combatant's `frost-blades` and `wild-strike` are
+	 * parked because "frost blades/wild strike + static strike together" is an OR,
+	 * and making all three live would ask for three of the four skills a Combatant
+	 * rolls two of — a ruleset no mercenary could answer. Flipping any of those
+	 * three to live fails here.
+	 *
+	 * The Sniper's `core` TYPE carries a third ruling: `count` rather than
+	 * `mercenary`, because "rain of arrows works too" is an OR over two skill
+	 * rows. A `mercenary` group would scope the pair to one row and demand both.
+	 */
+	const GUIDE_E_GROUPS: Record<string, string[]> = {
+		'guide-e-sniper': [
+			'core count enabled=true',
+			'tornado-links mercenary enabled=false',
+			'deny-supports not enabled=true',
+			'totems and enabled=true',
+			'auras and enabled=true'
+		],
+		'guide-e-kinetist': [
+			'core mercenary enabled=true',
+			'secondary mercenary enabled=true',
+			'deny not enabled=true',
+			'auras and enabled=true'
+		],
+		'guide-e-combatant': [
+			'core mercenary enabled=true',
+			'frost-blades mercenary enabled=false',
+			'wild-strike mercenary enabled=false',
+			'deny not enabled=true',
+			'deny-supports not enabled=true'
+		],
+		'guide-e-manyshot': [
+			'core mercenary enabled=true',
+			'secondary mercenary enabled=true',
+			'deny not enabled=true'
+		],
+		'guide-e-cruel-mistress': [
+			'core mercenary enabled=true',
+			'secondary and enabled=true',
+			'auras and enabled=true'
+		],
+		'guide-e-stormhand': ['core mercenary enabled=true', 'secondary mercenary enabled=true']
+	};
+
+	it('gives each ruleset the groups its note block is transcribed under', () => {
+		expect(
+			Object.fromEntries(
+				GUIDE_E.rulesets.map((r) => [
+					r.id,
+					r.groups.map((g) => `${g.id} ${g.type} enabled=${g.enabledInSearch}`)
+				])
+			)
+		).toEqual(GUIDE_E_GROUPS);
+	});
+
+	// Which note block landed under which archetype key — including the two the
+	// author spells differently ("kineticist", "Cruel Mistriss"). The label is the
+	// app's word so guide-e's Kinetist sits in the same column as guide-b's.
+	it('files each note block under the archetype key its class name resolves to', () => {
+		expect(GUIDE_E.rulesets.map((r) => `${r.id} ${r.archetype} "${r.label}"`)).toEqual([
+			'guide-e-sniper sniper "Sniper"',
+			'guide-e-kinetist kinetist "Kinetist"',
+			'guide-e-combatant combatant "Combatant"',
+			'guide-e-manyshot manyshot "Manyshot"',
+			'guide-e-cruel-mistress cruel-mistress "Cruel Mistress"',
+			'guide-e-stormhand stormhand "Stormhand"'
+		]);
+	});
+
+	/**
+	 * The guide-c modelling ruling, applied here and stated as data: in every
+	 * guide-e `mercenary` group the SKILL is the one live filter and every support
+	 * the note lists is switched off. That is what makes a guide-e pass mean "has
+	 * the skill row, carries no denied stat" and every listed link a bonus.
+	 *
+	 * Pinned here rather than left to the fixture-fidelity sweep, because that
+	 * sweep compares this module against a file this module generated — both sides
+	 * move together when a switch flips, so it cannot see this rule break.
+	 *
+	 * The Sniper's `core` is not in this list and cannot be: it is the one `count`
+	 * group here, two live SKILLS asking for either, which is the OR the note's
+	 * "rain of arrows works too" states. The rule below is about row-scoped groups.
+	 */
+	it('leaves the skill as the only live filter of every mercenary group', () => {
+		const live = GUIDE_E.rulesets.flatMap((ruleset) =>
+			ruleset.groups
+				.filter((group) => group.type === 'mercenary')
+				.map(
+					(group) =>
+						`${ruleset.id}/${group.id}: ${group.entries
+							.filter((entry) => entry.enabledInSearch)
+							.map((entry) => entry.name)
+							.join(', ')}`
+				)
+		);
+		expect(live).toEqual([
+			'guide-e-sniper/tornado-links: Tornado Shot',
+			'guide-e-kinetist/core: Greater Kinetic Blast',
+			'guide-e-kinetist/secondary: Kinetic Blast of Clustering',
+			'guide-e-combatant/core: Static Strike',
+			'guide-e-combatant/frost-blades: Frost Blades',
+			'guide-e-combatant/wild-strike: Wild Strike',
+			'guide-e-manyshot/core: Ice Shot',
+			'guide-e-manyshot/secondary: Vaal Ice Shot',
+			'guide-e-cruel-mistress/core: Soulrend of Reaping',
+			'guide-e-stormhand/core: Arc',
+			'guide-e-stormhand/secondary: Ball Lightning of Static'
+		]);
+	});
+
+	/**
+	 * The note names no LINK COUNT anywhere — it lists supports, it never says
+	 * "two of these" — so no `mercenary` group here carries a `min`. That is the
+	 * rule with teeth: a `min` over parked filters is the one thing that hands out
+	 * a dead comp link (`trade-links.ts`'s clamp), and every parked filter on this
+	 * source lives in a `mercenary` group.
+	 *
+	 * The Sniper's `core` is the one exception, and it is a `min` the note DOES
+	 * state: "rain of arrows works too" is an OR over two skills, which is `min: 1`
+	 * of two live entries — the same shape guide-b's Kinetist MV rung uses for
+	 * "Greater Kinetic Blast or Barrage". Pinned by value, because dropping the
+	 * `min` would silently turn that OR into "either, or none".
+	 */
+	it('gives no mercenary group a minimum', () => {
+		const withMin = GUIDE_E.rulesets.flatMap((ruleset) =>
+			ruleset.groups
+				.filter((group) => group.type === 'mercenary' && group.min !== undefined)
+				.map((group) => `${ruleset.id}/${group.id}`)
+		);
+		expect(withMin).toEqual([]);
+	});
+
+	it('asks the Sniper for one of the two skills the note accepts', () => {
+		const core = GUIDE_E.rulesets
+			.find((ruleset) => ruleset.id === 'guide-e-sniper')
+			?.groups.find((group) => group.id === 'core');
+		expect([core?.type, core?.min, core?.entries.map((entry) => entry.name)]).toEqual([
+			'count',
+			1,
+			['Tornado Shot', 'Rain of Arrows of Saturation']
+		]);
+	});
+
+	// The note sets no item-level floor — it never mentions item level at all — so
+	// neither does the transcription.
+	it('sets no item-level floor on any ruleset', () => {
+		expect(GUIDE_E.rulesets.map((r) => `${r.id} ilvl=${r.ilvlMin ?? 'none'}`)).toEqual([
+			'guide-e-sniper ilvl=none',
+			'guide-e-kinetist ilvl=none',
+			'guide-e-combatant ilvl=none',
+			'guide-e-manyshot ilvl=none',
+			'guide-e-cruel-mistress ilvl=none',
+			'guide-e-stormhand ilvl=none'
+		]);
+	});
+
+	/**
+	 * The shorthand resolutions, pinned by the NAME each chosen id carries in
+	 * GGG's vocabulary. The `stat vocabulary` sweep above ties id to name, so
+	 * asserting the name here asserts the ID CHOSEN was the intended one — and a
+	 * wrong id fails by printing what it actually resolved to, or `<not declared>`
+	 * when the entry moved group.
+	 *
+	 * These are the readings that could have gone another way; everywhere else the
+	 * note names its skill outright. Why each:
+	 *
+	 * - "gilded +2 proj" → Gilded Secondary Shots, the one gilded support whose
+	 *   vocabulary text names Tornado Shot's secondary projectiles. Ruled out:
+	 *   Gilded Volleys (Bladefall's), Gilded Scattershot (+4 random projectiles),
+	 *   Gilded Archers (a minion support).
+	 * - "totem" → the two BALLISTA skills of the Sniper pool, not Multiple Totems
+	 *   or Gilded Totemic Onslaught: those are supports, and the note names no
+	 *   skill for them to support.
+	 * - "rain of arrows" and "kinetic rain" → the transfigured forms, which are
+	 *   the only forms of either skill in the mercenary vocabulary.
+	 * - "elemental hit" → Elemental Hit of Ice, the only Elemental Hit there is,
+	 *   although poewiki files it under Mysterious Diver rather than Combatant.
+	 *   Transcribed as written; the group comment records the mismatch.
+	 * - "summon void" → Summon Seeking Void, NOT Void Sphere: that one is the
+	 *   Cruel Mistress's class primary, so every one of them has it.
+	 * - "fr totems" → Forbidden Rite Totem.
+	 * - "gilded chain on arc" → Gilded Chain Distance, the Chain family's Tier 3
+	 *   and the one whose text is Arc-specific.
+	 */
+	it('resolves the note’s shorthand to the GGG names it was read as', () => {
+		const named = (rulesetId: string, groupId: string, entryId: string): string =>
+			`${rulesetId}/${groupId}/${entryId} = ${
+				entryOf(rulesetById(rulesetId), groupId, entryId)?.name ?? '<not declared>'
+			}`;
+		expect([
+			named('guide-e-sniper', 'tornado-links', 'mercenary.support_18499'),
+			named('guide-e-sniper', 'totems', 'mercenary.skill_61903'),
+			named('guide-e-sniper', 'totems', 'mercenary.skill_44144'),
+			named('guide-e-sniper', 'core', 'mercenary.skill_40759'),
+			named('guide-e-kinetist', 'deny', 'mercenary.skill_32089'),
+			named('guide-e-combatant', 'deny', 'mercenary.skill_8708'),
+			named('guide-e-cruel-mistress', 'secondary', 'mercenary.skill_54144'),
+			named('guide-e-cruel-mistress', 'secondary', 'mercenary.skill_29071'),
+			named('guide-e-stormhand', 'core', 'mercenary.support_31571')
+		]).toEqual([
+			'guide-e-sniper/tornado-links/mercenary.support_18499 = Gilded Secondary Shots (Tier 3)',
+			'guide-e-sniper/totems/mercenary.skill_61903 = Shrapnel Ballista',
+			'guide-e-sniper/totems/mercenary.skill_44144 = Siege Ballista of Trarthus',
+			'guide-e-sniper/core/mercenary.skill_40759 = Rain of Arrows of Saturation',
+			'guide-e-kinetist/deny/mercenary.skill_32089 = Kinetic Rain of Impact',
+			'guide-e-combatant/deny/mercenary.skill_8708 = Elemental Hit of Ice',
+			'guide-e-cruel-mistress/secondary/mercenary.skill_54144 = Summon Seeking Void',
+			'guide-e-cruel-mistress/secondary/mercenary.skill_29071 = Forbidden Rite Totem',
+			'guide-e-stormhand/core/mercenary.support_31571 = Gilded Chain Distance (Tier 3)'
+		]);
+	});
+
+	// Untiered like guide-c and for the same reason: the note ranks SUPPORTS, not
+	// mercenaries, so there is no cheap-to-expensive ladder to draw. The rankings
+	// it does publish ride `authorNote`, pinned under "author notes" below.
+	it('declares no tier ladder', () => {
+		expect(ladders(GUIDE_E)).toEqual([]);
+	});
+});
+
 describe('the oracle a ruleset is checked against', () => {
 	/**
 	 * `savedSearch` and `authored` are the two kinds of ground truth, and the type
@@ -512,7 +757,7 @@ describe('the oracle a ruleset is checked against', () => {
 	 * from being handed a guide-c ruleset and building a trade link to a hash GGG
 	 * never issued — so which rulesets are on which side is pinned, not implied.
 	 */
-	it('gives the four saved-search guides a hash and guide-c a fixture file', () => {
+	it('gives the four saved-search guides a hash and guide-c and guide-e a fixture file', () => {
 		const byKind = allRulesets().map(
 			(r) => `${r.id} ${r.savedSearch ? `saved=${r.savedSearch.hash}` : `authored=${r.authored?.file}`}`
 		);
@@ -520,7 +765,13 @@ describe('the oracle a ruleset is checked against', () => {
 			'guide-c-kinetist authored=guide-c-kinetist',
 			'guide-c-manyshot authored=guide-c-manyshot',
 			'guide-c-blade-ambusher authored=guide-c-blade-ambusher',
-			'guide-c-combatant authored=guide-c-combatant'
+			'guide-c-combatant authored=guide-c-combatant',
+			'guide-e-sniper authored=guide-e-sniper',
+			'guide-e-kinetist authored=guide-e-kinetist',
+			'guide-e-combatant authored=guide-e-combatant',
+			'guide-e-manyshot authored=guide-e-manyshot',
+			'guide-e-cruel-mistress authored=guide-e-cruel-mistress',
+			'guide-e-stormhand authored=guide-e-stormhand'
 		]);
 		expect(byKind.filter((row) => row.includes('saved=')).length).toBe(28);
 	});
@@ -1263,9 +1514,17 @@ describe('ladder keys', () => {
 });
 
 describe('author notes', () => {
-	// Verbatim from the two video descriptions and CaptainLance's four role lines
-	// — the app never paraphrases them. Guide-c's are the whole verdict a passing
-	// ruleset has to offer: there is no floor and no tier behind them.
+	// Verbatim from the two video descriptions, CaptainLance's four role lines and
+	// the two sushi lines that are not switches — the app never paraphrases them.
+	// For guide-c and guide-e they are the whole verdict a passing ruleset has to
+	// offer: there is no floor and no tier behind them.
+	//
+	// Guide-e's two are the reason this list matters more than it used to. One
+	// holds support RANKINGS ("chain > wed > hypo > faster/gmp") and the shouted
+	// "NO PIERCE" whose denial is a live `not` group; the other is a remark about
+	// a skill no group asks for ("barrage is not a brick"). The transcription
+	// tests cannot see any of it, because none of it is a switch. This is the only
+	// place that content is pinned at all.
 	it('carries each note exactly as its author wrote it', () => {
 		expect(
 			allRulesets()
@@ -1283,6 +1542,11 @@ describe('author notes', () => {
 			[
 				'guide-c-combatant',
 				'Good All rounder / Starter Merc (better clear option as armour stack setup late game)'
+			],
+			['guide-e-kinetist', 'barrage is not a brick'],
+			[
+				'guide-e-combatant',
+				'frost blades: chain > wed > hypo > faster/gmp; wild strike: return > wed > hypo > faster; NO PIERCE'
 			]
 		]);
 	});
@@ -1298,6 +1562,18 @@ describe('source registry', () => {
 		expect([...new Set(ids)]).toEqual(ids);
 	});
 
+	// `ARCHETYPES` is a hand-written list that `MercArchetype` is derived from, so
+	// a ruleset naming an archetype the list forgot does not compile. The other
+	// direction is silent: nothing at runtime reads `ARCHETYPES` — it exists to
+	// derive the type — so a member no ruleset declares (a leftover from a removed
+	// source, or one added ahead of the rulesets meant to use it) is dead
+	// vocabulary that no compile and no other test would ever flag. This is the
+	// only thing that notices.
+	it('leaves no archetype in the list that no ruleset declares', () => {
+		const declared = new Set(allRulesets().map((r) => r.archetype));
+		expect(ARCHETYPES.filter((archetype) => !declared.has(archetype))).toEqual([]);
+	});
+
 	// The line under each source's name on the page. It has to say WHOSE rules
 	// these are and which side of the trade they are written from, because the
 	// sources disagree on purpose and a reader comparing their headlines cannot
@@ -1308,6 +1584,7 @@ describe('source registry', () => {
 			"Nerotox: Nerotox's tiered saved searches — three videos, four ladders",
 			"CaptainLance: CaptainLance's buyer-side ideal links for a Luminary merc bot — no prices, no floors",
 			"XTheFarmerX: XTheFarmerX's budget life-stacking KB merc — two saved searches, the upper one Nerotox's own link",
+			"sushi: sushi's buyer-side archetype notes for Allflame 3.29 — no prices, no floors",
 			"Path of Evening: Path of Evening's buyer-side saved searches — three archetypes, a cheap and an expensive rung each"
 		]);
 	});
