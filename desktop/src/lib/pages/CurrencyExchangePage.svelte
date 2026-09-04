@@ -697,6 +697,20 @@
 						{@const progress = hoursProgress(play.hoursSeen, hoursWindow)}
 						{@const scale = worthwhileScale(play)}
 						{@const money = moneyColumns(play)}
+						<!-- The Depth cell can carry BOTH thin-hour marks at once, and in
+						     dense there is one `title` between them, so the copy is joined
+						     here rather than picked. The window mark's label is its SPAN,
+						     which is the whole reading — how many hours of the window
+						     printed a price — so a row that says it is window-priced
+						     without sending one falls back to naming the mark instead of
+						     printing "window 0h", which would claim a measured nought. -->
+						{@const depthMarks = [
+							play.lowLiquidity ? EXCHANGE_TOOLTIPS['Low liquidity'] : '',
+							play.windowPriced ? EXCHANGE_TOOLTIPS['Window priced'] : ''
+						].filter((copy) => copy !== '')}
+						{@const windowLabel = play.windowHours
+							? `window ${play.windowHours}h`
+							: 'window priced'}
 						<!-- The thin-hour reading is the play's, not one step's — the ROUND
 						     TRIP returned no spread worth taking in the newest hour — but a
 						     row-wide ring turned solid red below some rank, where nearly
@@ -830,13 +844,27 @@
 							     this cell's title. -->
 							<td
 								class="num"
-								title={dense && play.lowLiquidity ? EXCHANGE_TOOLTIPS['Low liquidity'] : null}
+								title={dense && depthMarks.length > 0 ? depthMarks.join('\n\n') : null}
 							>
 								<span class="mono value">{formatVolume(play.depth)}/h</span>
 								{#if play.lowLiquidity && !dense}
 									<div class="sub">
 										<Tooltip text={EXCHANGE_TOOLTIPS['Low liquidity']}>
 											<span class="low-liq">low liquidity</span>
+										</Tooltip>
+									</div>
+								{/if}
+								<!-- Under the thin-hour label and in the same cell, because the
+								     two are one reading of the same quiet hour told twice: that
+								     hour printed no spread worth taking, and these prices are
+								     therefore not that hour's. They co-occur only sometimes —
+								     a window-priced row usually clears the server's floor on
+								     the window's own spread and comes back with no low-liquidity
+								     flag at all — so neither replaces the other. -->
+								{#if play.windowPriced && !dense}
+									<div class="sub">
+										<Tooltip text={EXCHANGE_TOOLTIPS['Window priced']}>
+											<span class="window-priced">{windowLabel}</span>
 										</Tooltip>
 									</div>
 								{/if}
@@ -908,9 +936,10 @@
 		     changes both) plus two to four words, with the explanation on hover
 		     from `EXCHANGE_TOOLTIPS` — the same source the column headers read, so
 		     the legend cannot contradict a column about its own mark.
-		     Both densities: the strip shrinks a step in dense but keeps every
-		     entry, because dense is where the marks carry MORE of the meaning —
-		     every sub-line that would have spelled it out is gone. -->
+		     Both densities: the strip shrinks a step in dense and keeps every entry
+		     whose mark is still on screen there, because dense is where the marks
+		     carry MORE of the meaning — every sub-line that would have spelled it
+		     out is gone. -->
 		<div class="legend" class:dense>
 			<span class="legend-label">Marks</span>
 
@@ -939,6 +968,21 @@
 			<Tooltip text={EXCHANGE_TOOLTIPS['Low liquidity']}>
 				<span class="key"><span class="sw sw-low-liq"></span>low liquidity</span>
 			</Tooltip>
+
+			<!-- Not a tile mark, unlike the three above it: this one is a WORD under
+			     the Depth figure, reading "window 6h", and the swatch is here to give
+			     its colour a name in the same strip the reader already scans. Cyan
+			     because the other four hues on this table are spoken for — gold is a
+			     doubtful extreme, purple a one-sided book, red a spreadless hour and
+			     the dashed grey an unused step — and a fifth mark sharing one of them
+			     would read as that mark. -->
+			<!-- Comfortable only: in dense the word is dropped for the row `title`, so
+			     a swatch here would advertise a colour the dense reader cannot find. -->
+			{#if !dense}
+				<Tooltip text={EXCHANGE_TOOLTIPS['Window priced']}>
+					<span class="key"><span class="sw sw-window"></span>window priced</span>
+				</Tooltip>
+			{/if}
 
 			<!-- Only while the column is on screen: with every play the filters left direct,
 			     the convert slot is gone and a legend entry for its dashed tile would
@@ -1418,6 +1462,15 @@
 		opacity: 0.8;
 	}
 
+	/* The span behind the price, under the depth figure and under the thin-hour
+	   label when the row carries both. Muted at the same strength as `.low-liq`
+	   above it for the same reason — the sub-lines name the marks, the numbers on
+	   the row are what the reader is here for. */
+	.window-priced {
+		color: var(--color-lab-cyan);
+		opacity: 0.8;
+	}
+
 	.pill {
 		display: inline-block;
 		font-size: 0.6rem;
@@ -1511,6 +1564,12 @@
 	   both live on a step tile rather than one being a row outline. */
 	.sw-low-liq {
 		border-color: var(--color-lab-red);
+	}
+
+	/* The Depth cell's word-mark, not a tile: these prices came from the trailing
+	   window rather than from the hour beside them. */
+	.sw-window {
+		border-color: var(--color-lab-cyan);
 	}
 
 	.sw-empty {

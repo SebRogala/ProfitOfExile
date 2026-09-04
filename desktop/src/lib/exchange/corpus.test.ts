@@ -119,6 +119,9 @@ interface WireLeg {
 	stock: number;
 	depletedSide: boolean;
 	suspect: boolean;
+	windowPriced: boolean;
+	windowHours: number;
+	windowVolume: number;
 }
 
 /** The engine's `exchange.Play`. */
@@ -136,6 +139,9 @@ interface WirePlay {
 	depth: number;
 	suspect: boolean;
 	lowLiquidity: boolean;
+	windowPriced: boolean;
+	windowHours: number;
+	windowVolume: number;
 	hoursSeen: number;
 	expectedRoi: number;
 	expectedRoiPct: number;
@@ -940,6 +946,141 @@ describe('incident — Apocalypse card, spreadless newest hour (2026-08-22)', ()
 	});
 });
 
+describe('incident — Apocalypse card, thin newest hour priced from the window (POE-252)', () => {
+	// THE INCIDENT (2026-09-04, ADR-016's second exception). The same card, two
+	// weeks on. Its newest hour traded ONE card, at 552, and that trade was the
+	// reader's own purchase — so the hour's low and its high were the same number,
+	// the round trip paid two ticks against no spread, and the row read −0%. The
+	// game's own book had stood near 550/1150 the whole day, and the six-hour
+	// window behind that hour had realized 486 and 1148.
+	//
+	// The engine now prices such a leg from the window and MARKS the row with the
+	// span it drew from. What the desktop owes that is three things, and they are
+	// the three this block pins: the marked figures arrive intact, the row closes
+	// its equations like any other, and the mark decides nothing — no gate reads
+	// it (the fresh-install suite below) and no sort does (the last case here).
+	const play = () => playByKey(RECENT, APOCALYPSE_WINDOW_KEY);
+	const rate = RECENT.divineChaosRate;
+
+	it('prices both steps from the window’s realized extremes, not from the scored hour', () => {
+		// The two numbers the incident is about. 486 is the window's low, printed at
+		// the 12:00 hour, and 1148 its high — while the scored hour printed 552 on
+		// both sides. A leg that fell back to the hour would read 552/552 here, and
+		// that is the served row the owner photographed.
+		const p = play();
+
+		expect(p.windowPriced).toBe(true);
+		expect(p.windowHours).toBe(6);
+		expect(p.legs[0].action).toBe('buy');
+		expect(p.legs[0].price).toBe(486);
+		expect(p.legs[1].action).toBe('sell');
+		expect(p.legs[1].price).toBe(1148);
+	});
+
+	it('keeps the price step on the scored hour, so it no longer rebuilds from the pair', () => {
+		// C5, and the reason `$lib/api`'s leg block says the identity
+		// `tick === 1 / max(priceItemQty, priceQuoteQty)` is not a wire invariant.
+		// The pair beside the buy price is the 12:00 hour's 486:1, while the step is
+		// the scored hour's own — 1/552, because that is the resolution the market
+		// can express NOW. A client re-deriving the step from the pair would undercut
+		// this row at the wrong distance in both directions.
+		const buy = play().legs[0];
+
+		expect(buy.priceItemQty).toBe(1);
+		expect(buy.priceQuoteQty).toBe(486);
+		expect(buy.tick).toBe(1 / 552);
+		expect(buy.tick).not.toBe(1 / Math.max(buy.priceItemQty, buy.priceQuoteQty));
+	});
+
+	it('carries the suspect mark as well, because a 2.4× window genuinely is wide', () => {
+		// C4, and ACCEPTED rather than tolerated. The window's pooled VWAP is
+		// 8110/11 ≈ 737, so 486 is under `fair × 0.67` and 1148 over `fair × 1.5`:
+		// both bands are crossed and both legs come back flagged. An hour-priced row
+		// showing the same spread against the same fair would be flagged identically,
+		// which is the property that makes the two pricing paths read the same way.
+		const p = play();
+
+		expect(p.suspect).toBe(true);
+		expect(p.legs.every((leg) => leg.suspect)).toBe(true);
+		expect(p.legs[0].fair).toBeGreaterThan(730);
+		expect(p.legs[0].fair).toBeLessThan(745);
+	});
+
+	it('closes on Get = Spend + Exp. ROI like any other row', () => {
+		// E3 and E5 on a row whose prices came from four different hours between
+		// them. The generic closure battery above already applies §3's whole set to
+		// this row — it is driven by the fixture's own plays — and this is the pin
+		// that says the window path did not need an exemption from it: a price is a
+		// price whichever hour realized it.
+		const ledger = runLedger(play(), rate)!;
+
+		expect(ledger.chainEndChaos).toBe(ledger.investmentChaos + ledger.roiChaos);
+		expect(ledger.getChaos).toBe(ledger.investmentChaos + ledger.expectedRoiChaos);
+	});
+
+	it('fills the Scale column, because the row’s depth came with its prices', () => {
+		// WI-3 step 8 as a DESKTOP consequence. `worthwhileScale` answers `hours:
+		// null` on a row with no readable depth, and the Scale column then prints a
+		// dash on exactly the rows POE-252 exists to surface. The served row here is
+		// HOUR-LIVE — its own hour traded the one card — so its depth is that hour's.
+		// The window-RESCUED case, where depth has to come from the newest
+		// contributing window row instead, is pinned Go-side
+		// (`internal/exchange/direct_test.go` and `plays_test.go`): the newest-hour
+		// served set this fixture is cannot contain one, because shift 0 is hour-live
+		// by construction.
+		const p = play();
+		const scale = worthwhileScale(p);
+
+		expect(p.depth).toBeGreaterThan(0);
+		expect(scale).not.toBeNull();
+		expect(scale!.flips).toBeGreaterThan(0);
+		expect(scale!.hours).not.toBeNull();
+	});
+
+	for (const { horizon, response } of FIXTURES) {
+		it(`survives a fresh-install filter pass in the ${horizon} horizon`, () => {
+			// ADR-017 on the newest mark: a row is marked, never removed. The suite at
+			// the end of this file makes the same claim over the whole served set; this
+			// one names the market, so a gate armed against `windowPriced` fails here
+			// with the incident in the message.
+			expect(names(freshInstallPass(response))).toContain(INCIDENT_NAMES[APOCALYPSE_WINDOW_KEY]);
+		});
+	}
+
+	/**
+	 * Every member of `ExchangeSort`, exhaustively.
+	 *
+	 * Keyed by the union so the TYPE CHECKER supplies the list: a fourth sort
+	 * added to `view.ts` fails to compile here until it is named, which a
+	 * hand-written array of three would not do.
+	 */
+	const EVERY_SORT: Record<ExchangeSort, true> = { expected: true, roi: true, fastest: true };
+
+	for (const sort of Object.keys(EVERY_SORT) as ExchangeSort[]) {
+		it(`leaves two otherwise identical rows in their input order under the ${sort} sort`, () => {
+			// ADR-018 and C8: the mark is in NEITHER comparator. The pair is cloned
+			// from one served play and differs in this one field, so "identical" is
+			// structural — every key `sortPlays` reads (`expectedRoi`, `roiPct`,
+			// `investment`, `depth`, `legs`) is the same object graph, and a
+			// comparator that grew a `windowPriced` branch would have to reorder them
+			// to act on it. Order is asserted by KEY rather than by index so a failure
+			// says which row moved.
+			const source = play();
+			const marked = { ...source, key: 'marked', windowPriced: true };
+			const unmarked = { ...source, key: 'unmarked', windowPriced: false };
+
+			expect(sortPlays([marked, unmarked], sort).map((p) => p.key)).toEqual([
+				'marked',
+				'unmarked'
+			]);
+			expect(sortPlays([unmarked, marked], sort).map((p) => p.key)).toEqual([
+				'unmarked',
+				'marked'
+			]);
+		});
+	}
+});
+
 describe('incident — the 2026-08-23 screenshot’s spreadless 170 print', () => {
 	// The market whose newest hour printed low == high == 170, served flagged rather
 	// than dropped since the MinEdge demotion. It is the measured LOSER of the pair:
@@ -1206,18 +1347,28 @@ describe('fresh-install visibility (ADR-017)', () => {
 
 	it('keeps every measured loser and every flagged row on screen', () => {
 		// The half of the rule that is easiest to break by accident: `lowLiquidity`,
-		// `lowCoverage`, `suspect` and a negative `expectedRoi` are MARKS — never
-		// sort keys since POE-220, and never reasons to hide. All four shapes are in the fixture, and each
-		// row carrying one must reach a fresh install unless a sanctioned floor
-		// removed it for its PRICE — which is a different reason and the only other
-		// one allowed.
+		// `lowCoverage`, `suspect`, `windowPriced` and a negative `expectedRoi` are
+		// MARKS — never sort keys since POE-220, and never reasons to hide. All five
+		// shapes are in the fixture, and each row carrying one must reach a fresh
+		// install unless a sanctioned floor removed it for its PRICE — which is a
+		// different reason and the only other one allowed.
 		const shown = new Set(freshInstallPass(RECENT).map((p) => p.key));
 		const flagged = RECENT.plays.filter(
-			(p) => p.suspect || p.lowCoverage || p.lowLiquidity === true || p.expectedRoi < 0
+			(p) =>
+				p.suspect ||
+				p.lowCoverage ||
+				p.lowLiquidity === true ||
+				p.windowPriced === true ||
+				p.expectedRoi < 0
 		);
 		const owed = flagged.filter((p) => !belowASanctionedFloor(p));
 
 		expect(flagged.length).toBeGreaterThan(3);
+		// The newest of the five shapes, asserted rather than assumed: a fixture that
+		// stopped carrying a window-priced row would still satisfy the count above off
+		// the other four, and this rule would go untested for the mark it was extended
+		// to cover (POE-252).
+		expect(RECENT.plays.some((p) => p.windowPriced === true)).toBe(true);
 		expect(owed.length).toBeGreaterThan(0);
 		expect(names(owed.filter((p) => !shown.has(p.key)))).toEqual([]);
 	});
