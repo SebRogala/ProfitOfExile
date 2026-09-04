@@ -2,7 +2,7 @@
 
 Status: CURRENT. Normative for the desktop Currency Exchange table.
 
-Last verified: 2026-09-05 against `poe-252@725dbe3` — `desktop/src/lib/exchange/view.ts`,
+Last verified: 2026-09-05 against `main@8219496` — `desktop/src/lib/exchange/view.ts`,
 `filters.ts`, `desktop/src/lib/pages/CurrencyExchangePage.svelte`,
 `desktop/src/lib/components/ExchangeRoute.svelte`, `desktop/src/lib/tooltips.ts`,
 `internal/exchange/plays.go`, `internal/exchange/direct.go`. EVERY `file:line`
