@@ -120,8 +120,33 @@ type windowView struct {
 
 // rowsFor returns one market's span rows, newest hour first, or nil when the
 // span carries none.
+//
+// The empty id is never a market: crossQuoteCandidates reaches here with a zero
+// Row when a triangle's third market did not trade in the scored hour, and an
+// index that happened to hold a row under "" would hand that route somebody
+// else's history.
 func (v windowView) rowsFor(marketID string) []StoredRow {
+	if marketID == "" {
+		return nil
+	}
 	return v.byMarket[marketID]
+}
+
+// markets returns every market id the span carries, ascending.
+//
+// It is what directCandidates enumerates since POE-252's liveness change: a
+// market with no row in the scored hour is still a market the reader can act on
+// when the window behind it priced, so the hour's own rows are no longer the
+// whole list of candidates. Sorted because that list must not depend on the
+// order storage returned rows in — the property
+// TestCorpus_shuffledFeedOrder_producesTheSameWireBytes holds the engine to.
+//
+// It is derived from byMarket on every call rather than stored beside it, so a
+// view built by hand in a test cannot carry a market list that disagrees with
+// its own index. The zero view has no markets, which is why the per-hour unit
+// tests see the pre-POE-252 enumeration.
+func (v windowView) markets() []string {
+	return sortedIDs(v.byMarket)
 }
 
 // windowHistoryOf indexes stored rows by market id, newest hour first.

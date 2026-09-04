@@ -1296,3 +1296,215 @@ func firstDifference(want, got []byte) string {
 	}
 	return "no line differs (trailing bytes only)"
 }
+
+func TestCorpus_apocalypseWindow_isServedInAllSeventeenShifts(t *testing.T) {
+	// THE ACCEPTANCE, hour by hour: the pair is served in every hour that had a
+	// trade in its window, and not only in the hours the feed published a trade
+	// of its own. Ten of the seventeen shifts below score an hour the market
+	// either did not publish at all or published with nothing traded, and before
+	// POE-252's liveness change every one of them served nothing — the row
+	// vanished from the reader's list while the game's book had not moved.
+	//
+	// THE THREE ASSERTED COLUMNS are the whole of the mechanism:
+	//
+	//   - windowPriced says which reading the prices are. An hour that traded two
+	//     cards or more printed its own spread and is priced from itself.
+	//   - windowHours counts the hours inside the closed clock span [back, back+5]
+	//     that published a TRADED row. The gaps at backs 6, 13, 14, 16, 18, 19,
+	//     21, 23, 24 and the untraded row at back 9 contribute nothing.
+	//   - hoursSeen counts the backs inside the RANKING window — six hours on this
+	//     horizon, so the same [back, back+5] span — that were HOUR-LIVE, meaning
+	//     the market published a traded row of its own that hour. A window-rescued
+	//     hour never counts, including the scored hour itself: on shift 6 the
+	//     column reads 4 (backs 7, 8, 10, 11) rather than 5, and that is what
+	//     proves the rescue did not leak into the counter every pre-POE-252 value
+	//     depends on.
+	//
+	// The two spans coincide at DefaultConfig, which is why hoursSeen equals
+	// windowHours on every window-priced row here. They are asserted separately
+	// all the same: they are different questions and a configuration where
+	// WindowPriceHours exceeds WindowHours separates them.
+	//
+	// NOTHING IS ASSERTED ABOUT THE SIGN of RoiPct across shifts, deliberately.
+	// Shift 10 scores two cards printed at one 1196 ratio, which is thick by the
+	// level and serves the residual loss two ticks against a closed spread make
+	// (TestCorpus_apocalypseSinglePrintThickHour_servesTheResidualLoss); a
+	// sign-continuity clause would be false there.
+	shifts := []struct {
+		back                   int
+		windowPriced           bool
+		windowHours, hoursSeen int
+	}{
+		{back: 0, windowPriced: true, windowHours: 6, hoursSeen: 6},
+		{back: 1, hoursSeen: 5},
+		{back: 2, hoursSeen: 5},
+		{back: 3, windowPriced: true, windowHours: 5, hoursSeen: 5},
+		{back: 4, hoursSeen: 4},
+		{back: 5, windowPriced: true, windowHours: 4, hoursSeen: 4},
+		{back: 6, windowPriced: true, windowHours: 4, hoursSeen: 4},
+		{back: 7, hoursSeen: 5},
+		{back: 8, windowPriced: true, windowHours: 4, hoursSeen: 4},
+		{back: 9, windowPriced: true, windowHours: 3, hoursSeen: 3},
+		{back: 10, hoursSeen: 4},
+		{back: 11, hoursSeen: 3},
+		{back: 12, hoursSeen: 3},
+		{back: 13, windowPriced: true, windowHours: 2, hoursSeen: 2},
+		{back: 14, windowPriced: true, windowHours: 2, hoursSeen: 2},
+		{back: 15, hoursSeen: 3},
+		{back: 16, windowPriced: true, windowHours: 2, hoursSeen: 2},
+	}
+
+	for _, tt := range shifts {
+		t.Run(fmt.Sprintf("back%d", tt.back), func(t *testing.T) {
+			play := playByKey(t, corpusResultShifted(t, HorizonRecent, tt.back), apocalypseWindowKey)
+
+			if play.WindowPriced != tt.windowPriced {
+				t.Errorf("WindowPriced = %v, want %v", play.WindowPriced, tt.windowPriced)
+			}
+			if play.WindowHours != tt.windowHours {
+				t.Errorf("WindowHours = %d, want %d", play.WindowHours, tt.windowHours)
+			}
+			if play.HoursSeen != tt.hoursSeen {
+				t.Errorf("HoursSeen = %d, want %d — only the hours that priced on their OWN row count", play.HoursSeen, tt.hoursSeen)
+			}
+		})
+	}
+}
+
+func TestCorpus_windowRescuedHours_recordNoSimulationEntry(t *testing.T) {
+	// The C3 calibration lock, read on the market the liveness change exists for.
+	// A window-RESCUED hour has no prices of its own, so it is not an entry and
+	// not a fill: BestPlays skips recordSim for it rather than filing a zero,
+	// which would enter the mean.
+	//
+	// DERIVATION of the fourteen. The sim window is the newest 24 backs. The
+	// fixture's HOUR-LIVE backs inside it — a published row with at least one
+	// card traded — are 0, 1, 2, 3, 4, 5, 7, 8, 10, 11, 12, 15, 17, 20 and 22:
+	// fifteen observation hours, because back 9's zero-volume row and the nine
+	// absent backs contribute none. An entry needs a later observation within
+	// SimLookaheadHours clock hours, and every one of the fifteen has one except
+	// back 0, which is the newest hour and has no later hour at all. Fourteen.
+	//
+	// If the implementation yields a different count the derivation above is the
+	// thing to check first: the rescued hours are exactly the ten this count
+	// leaves out, and a leak shows up here as a number between 15 and 24.
+	cfg := DefaultConfig()
+	play := playByKey(t, corpusResult(t, HorizonRecent), apocalypseWindowKey)
+
+	if play.SimEntries != 14 {
+		t.Errorf("SimEntries = %d, want 14 — one per hour-live back but the newest", play.SimEntries)
+	}
+	if play.LowCoverage {
+		t.Errorf("LowCoverage = true on %d entries against a guard of %d, want false", play.SimEntries, cfg.MinSimEntries)
+	}
+}
+
+func TestCorpus_livenessRelaxation_movesNoPreExistingValue(t *testing.T) {
+	// THE GOVERNING RULE of POE-252's liveness change, as literals rather than as
+	// a loop: the relaxation reaches every market in the feed, and no value any
+	// pre-existing market already served may move because of it.
+	//
+	// These two keys are the ones a reader needs named. apocalypseSpec's back-3
+	// hour is the concrete case — volume {0, 0} over live ratios, so the
+	// relaxation rescues it: left unguarded it would reach recordSim and
+	// aggregate.add and take HoursSeen from 5 to 6, SimEntries from 22 to 23 and
+	// ExpectedRoi off the literal below. The young recipe trades in the newest
+	// five hours only, which makes it the corpus's most sensitive coverage row.
+	//
+	// The ALL-KEYS claim is not carried here. It is carried by the committed wire
+	// fixtures, which TestCorpus_wireGolden compares byte for byte — a loop over
+	// every key would restate that comparison in a weaker form.
+	//
+	// Compared with == and not wantClose: the claim is that the simulation never
+	// saw a rescued hour at all, and any drift falsifies it.
+	recent := corpusResult(t, HorizonRecent)
+	day := corpusResult(t, HorizonDay)
+
+	apocalypse := playByKey(t, recent, apocalypseKey)
+	if apocalypse.HoursSeen != 5 {
+		t.Errorf("apocalypse HoursSeen (recent) = %d, want 5 — the untraded hour is rescued, never counted", apocalypse.HoursSeen)
+	}
+	if seen := playByKey(t, day, apocalypseKey).HoursSeen; seen != 23 {
+		t.Errorf("apocalypse HoursSeen (day) = %d, want 23", seen)
+	}
+	if apocalypse.SimEntries != 22 {
+		t.Errorf("apocalypse SimEntries = %d, want 22 — a rescued hour files no entry", apocalypse.SimEntries)
+	}
+	if apocalypse.ExpectedRoi != 73.62272727272726 {
+		t.Errorf("apocalypse ExpectedRoi = %v, want the pinned 73.62272727272726", apocalypse.ExpectedRoi)
+	}
+
+	young := playByKey(t, recent, youngKey)
+	if young.HoursSeen != 5 {
+		t.Errorf("young HoursSeen = %d, want 5", young.HoursSeen)
+	}
+	if young.SimEntries != 4 {
+		t.Errorf("young SimEntries = %d, want 4", young.SimEntries)
+	}
+}
+
+func TestCorpus_deadWindow_staysUnservedUntilOneTradedHourReEntersItsWindow(t *testing.T) {
+	// The boundary the relaxation stops at, read from both sides of it.
+	//
+	// The dead-window market publishes a row in every hour — last ratios intact,
+	// both sides stocked, nothing traded — so the enumeration reaches it and the
+	// liveness gate no longer drops it on the zero alone. What drops it is that
+	// its window holds no realized print: at the newest hour the clock span is its
+	// six silent hours and there is nothing to price from, so it stays absent.
+	// One hour earlier the span reaches the last hour it traded in, and the same
+	// silent row is carried at that hour's 400/900 and marked.
+	//
+	// Together the two rows say the window PRICES an hour that is alive and never
+	// revives one that is not, which is the guard that separates POE-252 from
+	// "serve everything".
+	silent := corpusResult(t, HorizonRecent)
+	if served := playKeys(silent.Plays); indexOf(served, deadWindowKey) >= 0 {
+		t.Errorf("%s was served; nothing in its %d-hour window traded (got %v)", deadWindowKey, deadWindowSilentHours, served)
+	}
+
+	carried := playByKey(t, corpusResultShifted(t, HorizonRecent, 1), deadWindowKey)
+	if !carried.WindowPriced {
+		t.Fatalf("WindowPriced = false one hour later, want the window that reaches the last traded hour")
+	}
+	if carried.WindowHours != 1 {
+		t.Errorf("WindowHours = %d, want the single traded hour at the far end of the span", carried.WindowHours)
+	}
+	if carried.Legs[0].Price != 400 || carried.Legs[1].Price != 900 {
+		t.Errorf("legs priced %v / %v, want that hour's realized 400 / 900", carried.Legs[0].Price, carried.Legs[1].Price)
+	}
+	// One counted hour: the last hour the market traded is the oldest back of the
+	// ranking window as well as of the price window, and it is hour-live. The
+	// five rescued hours in front of it add nothing to the counter.
+	if carried.HoursSeen != 1 {
+		t.Errorf("HoursSeen = %d, want the single hour-live back at the far end of the window", carried.HoursSeen)
+	}
+}
+
+func TestCorpus_marketRescuedPastTheRankingWindow_isStillServed(t *testing.T) {
+	// The MinHoursSeen exemption, in the only configuration where it fires.
+	//
+	// At DefaultConfig it is inert: WindowPriceHours and the recent horizon's
+	// WindowHours are both six and both count hours by the same MinVolumePerHour
+	// predicate, so every hour that contributed to a served row's window is itself
+	// a counted hour and hoursCleared is never 0 on a served row. A test written
+	// against the shipped config would therefore pass with the exemption deleted
+	// and prove nothing.
+	//
+	// This is the misconfiguration that separates them: a ranking window of ONE
+	// hour over a price window of six. Shift 6 scores 11:00Z, an hour the card
+	// published no row for, so the ranking window holds nothing but a rescued hour
+	// and hoursCleared is 0 while the price window reaches four live backs behind
+	// it. Removing the `&& !a.newest.WindowPriced` clause makes this play vanish.
+	cfg := corpusConfig(t, HorizonRecent)
+	cfg.WindowHours = 1
+
+	got := BestPlays(corpusLeague, corpusRowsShifted(6), cfg)
+
+	play := playByKey(t, got, apocalypseWindowKey)
+	if play.HoursSeen != 0 {
+		t.Errorf("HoursSeen = %d, want 0 — the one-hour ranking window holds only the rescued hour", play.HoursSeen)
+	}
+	if !play.WindowPriced {
+		t.Errorf("WindowPriced = false, want the mark that earns the row its exemption")
+	}
+}

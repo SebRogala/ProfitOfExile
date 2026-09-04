@@ -532,30 +532,82 @@ func TestBestPlays_playSeenInThreeHours_reportsTheNewestHourAsLastHour(t *testin
 	}
 }
 
-func TestBestPlays_recipeThatTradedNothingInTheNewestHour_isNotServed(t *testing.T) {
-	// Persistence is not a licence to serve a stale price. The card cleared in
-	// the two older hours — enough for MinHoursSeen — and then nothing changed
-	// hands in the last snapshot, so that hour has no price to read at all and
-	// the recipe is dropped rather than served at an hour-old one. The hell
-	// market clears in all three and proves the window itself is alive.
-	//
-	// UNPRICEABLE is the whole of what this drop covers since MinEdge became a
-	// flag (2026-08-22). An hour that priced the market and merely showed no
-	// spread worth taking is served flagged instead — see
-	// TestBestPlays_recipeWhoseNewestHourLostItsSpread_isStillServedFlagged,
-	// which is this test's fixture with the last hour's trade put back.
+// silentNewestHourFeed is a card market that traded a thousand units in each of
+// the two hours behind the newest one and NOTHING in the newest, beside a hell
+// market that traded in all three. It is the shape POE-252's liveness change
+// turns on, and it is read twice below: once armed and once disarmed.
+func silentNewestHourFeed() []StoredRow {
 	closed := liquidChaosMarket(cardID, 100, 120)
 	closed.volume = [2]int64{0, 0}
 
-	rows := append(
+	return append(
 		storedAt(feedHour, closed.row(), liquidChaosMarket(hellID, 100, 120).row()),
 		append(
 			storedAt(feedHour.Add(-time.Hour), liquidChaosMarket(cardID, 100, 120).row(), liquidChaosMarket(hellID, 100, 120).row()),
 			storedAt(feedHour.Add(-2*time.Hour), liquidChaosMarket(cardID, 100, 120).row(), liquidChaosMarket(hellID, 100, 120).row())...,
 		)...,
 	)
+}
 
-	got := BestPlays("Allflame", rows, DefaultConfig())
+func TestBestPlays_recipeThatTradedNothingInTheNewestHour_isServedFromItsWindow(t *testing.T) {
+	// THE ACCEPTANCE POE-252 WAS FILED ON: a pair the reader can act on is served
+	// in every hour that had a trade in its window, not only in the hours the
+	// feed happened to publish a trade of its own.
+	//
+	// Until POE-252 this fixture served the hell market alone: the card's newest
+	// hour had no price of its own, so its leg failed the liveness gate and the
+	// newest-hour rule then deleted the whole recipe — the pair vanished from the
+	// list for an hour in which the game's book had not moved at all. It is now
+	// carried by the two hours behind it, priced at what THEY realized and marked
+	// with the span, so what the reader is shown is how old the print is rather
+	// than nothing.
+	//
+	// What the newest-hour rule still defends is intact and is asserted here as
+	// the counts: the rescued hour is not one the recipe cleared on its own
+	// prices, so HoursSeen stays at the two hours that did.
+	got := BestPlays("Allflame", silentNewestHourFeed(), DefaultConfig())
+
+	play := playByKey(t, got, directKey(chaosID, cardID))
+	if !play.WindowPriced {
+		t.Fatalf("WindowPriced = false on an hour the market published no trade in, want the window that carried it")
+	}
+	if play.WindowHours != 2 {
+		t.Errorf("WindowHours = %d, want the two hours behind the silent one", play.WindowHours)
+	}
+	if play.Legs[0].Price != 100 || play.Legs[1].Price != 120 {
+		t.Errorf("legs priced %v / %v, want the window's realized 100 / 120", play.Legs[0].Price, play.Legs[1].Price)
+	}
+	if play.HoursSeen != 2 {
+		t.Errorf("HoursSeen = %d, want 2 — a rescued hour did not clear on its own prices and never counts", play.HoursSeen)
+	}
+	// Depth and turnover come from the newest contributing window row rather
+	// than from the silent hour, or the served row would carry a zero depth and
+	// blank the reader's scale column on exactly the rows this exists to serve.
+	if play.Depth != 1000 {
+		t.Errorf("Depth = %v, want the 1000 units the newest contributing hour traded", play.Depth)
+	}
+	if play.Turnover <= 0 {
+		t.Errorf("Turnover = %v, want the chaos that same row turned over", play.Turnover)
+	}
+	if !play.LastHour.Equal(feedHour) {
+		t.Errorf("LastHour = %v, want the hour the recipe was SCORED at, %v", play.LastHour, feedHour)
+	}
+}
+
+func TestBestPlays_recipeThatTradedNothingInTheNewestHour_isDroppedWithTheWindowPathDisarmed(t *testing.T) {
+	// The same feed with ThinHourVolume at 0, which is the one field that turns
+	// POE-252 off: nothing is thin, so nothing is window-priced and nothing is
+	// rescued, and the pre-POE-252 answer comes back — persistence is not a
+	// licence to serve a stale price, and a recipe whose newest hour has no price
+	// at all is dropped rather than served at an hour-old one.
+	//
+	// It is the arm that says the relaxation is a configuration and not a rewrite
+	// of the newest-hour rule, and it is what a reader disarming the feature in
+	// production would get.
+	cfg := DefaultConfig()
+	cfg.ThinHourVolume = 0
+
+	got := BestPlays("Allflame", silentNewestHourFeed(), cfg)
 
 	if want := []string{directKey(chaosID, hellID)}; !reflect.DeepEqual(playKeys(got.Plays), want) {
 		t.Errorf("keys = %v, want %v — the card last traded an hour ago", playKeys(got.Plays), want)
@@ -3069,6 +3121,14 @@ func TestBestPlays_windowPricingDisarmed_leavesEverySimulationFieldBitIdentical(
 	// move a row in the ranking, because a window-priced row's own Suspect reading
 	// is taken against the window's fair (C4) and Suspect is a sort key. What may
 	// not move is the four simulation fields below.
+	//
+	// The two SETS are equal only because no market in this fixture is RESCUED:
+	// every one of them traded at least Config.MinVolumePerHour units in every
+	// hour, so the window reprices rows here and revives none. A rescued market
+	// is served armed and absent disarmed BY DESIGN (windowRescued), so adding
+	// one to this feed would break this equality without touching the four
+	// equalities that are the test's claim — extend the fixture with that in
+	// mind rather than by relaxing the assertion.
 	armedKeys, disarmedKeys := playKeys(armedResult.Plays), playKeys(disarmedResult.Plays)
 	sort.Strings(armedKeys)
 	sort.Strings(disarmedKeys)
@@ -3089,6 +3149,48 @@ func TestBestPlays_windowPricingDisarmed_leavesEverySimulationFieldBitIdentical(
 		if a.LowCoverage != d.LowCoverage {
 			t.Errorf("%s LowCoverage = %v, want the disarmed run's %v", k, a.LowCoverage, d.LowCoverage)
 		}
+	}
+}
+
+func TestBestPlays_oneHopHourRescuedOnItsConversionLeg_recordsNoSimulationEntryForIt(t *testing.T) {
+	// A RESCUED hour has no reading of its own, so it is not an entry: recordSim
+	// reads the hour channels, and on such an hour those belong to a different
+	// hour's row (ADR-016, C3). The rescue is on the route's CONVERSION leg —
+	// legs[2], the one only a triangle has — because that is the leg a
+	// per-leg reading of the guard would miss.
+	//
+	// That the route IS still built in that hour rather than dropped is
+	// TestCrossQuoteCandidates_untradedClosingMarket_isCarriedByItsOwnWindow;
+	// what is measured here is that being built bought it no entry.
+	chaosLeg, divineLeg, anchor := liquidTriangle()
+	untraded := anchor
+	untraded.volume = [2]int64{0, 0}
+	// Four hours, and the rescue goes in the hour ONE back: the newest hour can
+	// never be an entry (it has no later hour to fill in) and the oldest must
+	// stay live so the counts below differ by the rescued hour alone.
+	feed := func(untradedBack int) []StoredRow {
+		rows := make([]StoredRow, 0, 12)
+		for back := 0; back < 4; back++ {
+			hourAnchor := anchor
+			if back == untradedBack {
+				hourAnchor = untraded
+			}
+			rows = append(rows, storedBack(back, chaosLeg), storedBack(back, divineLeg), storedBack(back, hourAnchor))
+		}
+		return rows
+	}
+
+	rescued := BestPlays("Allflame", feed(1), DefaultConfig())
+	live := BestPlays("Allflame", feed(-1), DefaultConfig())
+
+	key := oneHopKey(scarabID, chaosID, divineID)
+	livePlay, rescuedPlay := playByKey(t, live, key), playByKey(t, rescued, key)
+	// Backs 3, 2 and 1 are entries when every hour is live; the newest is not.
+	if livePlay.SimEntries != 3 {
+		t.Fatalf("live SimEntries = %d, want 3 — the three hours that had a later hour to fill in", livePlay.SimEntries)
+	}
+	if rescuedPlay.SimEntries != 2 {
+		t.Errorf("rescued SimEntries = %d, want 2: the hour whose conversion market traded nothing has no reading to enter on", rescuedPlay.SimEntries)
 	}
 }
 

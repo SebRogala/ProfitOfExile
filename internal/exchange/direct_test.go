@@ -397,3 +397,235 @@ func TestDirectCandidates_thinHourVolumeAtTheLivenessFloor_neverWindowPrices(t *
 		t.Errorf("windowPriced = true at ThinHourVolume == MinVolumePerHour (%v), want an inert window path", cfg.ThinHourVolume)
 	}
 }
+
+// windowOnlyRows renders `hours` hours of one chaos-quoted market that printed
+// the 2026-09-04 book's spread (spreadHour) in the hours named by `backs`, and
+// published NO ROW AT ALL in every other hour of the span.
+//
+// It is the shape POE-252's liveness change is about: a market the feed simply
+// did not carry this hour, whose window behind it is full of realized prints.
+func windowOnlyRows(item string, backs ...int) []StoredRow {
+	rows := make([]StoredRow, 0, len(backs))
+	for _, back := range backs {
+		rows = append(rows, storedBack(back, spreadHour(item)))
+	}
+	return rows
+}
+
+func TestDirectCandidates_publishedButUntradedScoredHour_isCarriedByItsWindow(t *testing.T) {
+	// The scored hour published a row and nobody traded in it, which is what the
+	// feed sends for a quiet hour: the last ratios intact, both volumes zero.
+	// Before POE-252 the leg was dropped for that zero and the newest-hour rule
+	// deleted the recipe; now the five hours behind it carry the hour's liveness
+	// and print its price.
+	untraded := spreadHour(cardID)
+	untraded.volume = [2]int64{0, 0}
+	rows := append([]StoredRow{storedBack(0, untraded)}, windowOnlyRows(cardID, 1, 2, 3, 4, 5)...)
+
+	got := directCandidates([]Row{rows[0].Row}, viewAt(feedHour, rows), DefaultConfig())
+
+	if len(got) != 1 {
+		t.Fatalf("got %d candidates, want the flip the window carries", len(got))
+	}
+	o := got[0].legs[0].obs
+	if !o.rescued {
+		t.Errorf("rescued = false on an hour that traded nothing, want the window to have carried it")
+	}
+	if !o.windowPriced || o.windowHours != 5 {
+		t.Errorf("window marks = %v/%d, want true/5 — the untraded scored hour contributes no print of its own", o.windowPriced, o.windowHours)
+	}
+	if o.low.price != 486 || o.high.price != 1148 {
+		t.Errorf("priced interval = %v/%v, want the window's realized 486/1148", o.low.price, o.high.price)
+	}
+	// Depth, turnover and the book reading all come from the newest contributing
+	// window row rather than from the silent hour: one row family, one hour, one
+	// story, and a served row whose depth is zero blanks the reader's scale.
+	if o.volume != 1000 || o.quoteVolume != 750000 {
+		t.Errorf("volume/quoteVolume = %v/%v, want the newest contributing hour's 1000/750000", o.volume, o.quoteVolume)
+	}
+	if o.stock != 6 {
+		t.Errorf("stock = %d, want the newest contributing hour's item-side book", o.stock)
+	}
+}
+
+func TestDirectCandidates_rescuedHourWhoseNewestContributingRowHasNoExecutingStock_producesNoCandidate(t *testing.T) {
+	// The stock DEMAND is unchanged by the liveness relaxation — ADR-017's second
+	// amendment stands and the side the leg executes against must be non-empty.
+	// What moved is only which row that demand is read on: the newest CONTRIBUTING
+	// window row, so the book reading is as old as the price beside it and no
+	// older.
+	//
+	// Only that one row is emptied here; the four hours behind it keep their
+	// stock, so an implementation reading the demand off any other contributor —
+	// or off the oldest — would serve this market and fail.
+	untraded := spreadHour(cardID)
+	untraded.volume = [2]int64{0, 0}
+	newestContributor := spreadHour(cardID)
+	newestContributor.highestStock = [2]int64{600, 0}
+	rows := append(
+		[]StoredRow{storedBack(0, untraded), storedBack(1, newestContributor)},
+		windowOnlyRows(cardID, 2, 3, 4, 5)...,
+	)
+
+	got := directCandidates([]Row{rows[0].Row}, viewAt(feedHour, rows), DefaultConfig())
+
+	if len(got) != 0 {
+		t.Errorf("got %d candidates against an empty ask side, want none — the buy has nothing to take", len(got))
+	}
+}
+
+func TestDirectCandidates_marketWithNoRowInTheScoredHour_isEnumeratedFromTheWindow(t *testing.T) {
+	// The acceptance line POE-252 was filed on — "served in every hour that has
+	// at least one trade in the window" — reaches hours the feed published no row
+	// for at all, which is nine of the twenty-six measured hours. The market is
+	// enumerated out of the span index rather than out of the scored hour's rows,
+	// and everything it reads comes from the newest row inside its window.
+	//
+	// The newest contributing hour is given quantities of its own so the
+	// assertions below discriminate: an implementation reading depth off the
+	// oldest contributor, or off a zero Row, returns different numbers.
+	newest := pairedHour(chaosID, cardID, [2]int64{500, 1}, [2]int64{1148, 1}, [2]int64{7000, 10})
+	newest.highestStock = [2]int64{4321, 77}
+	rows := append([]StoredRow{storedBack(1, newest)}, windowOnlyRows(cardID, 2, 3, 4, 5)...)
+
+	got := directCandidates(nil, viewAt(feedHour, rows), DefaultConfig())
+
+	if len(got) != 1 {
+		t.Fatalf("got %d candidates for a market with no row this hour, want the one its window carries", len(got))
+	}
+	if want := directKey(chaosID, cardID); got[0].key != want {
+		t.Errorf("key = %q, want %q — the id comes from the span index, not from an absent row", got[0].key, want)
+	}
+	o := got[0].legs[0].obs
+	if !o.rescued || !o.windowPriced {
+		t.Errorf("rescued/windowPriced = %v/%v, want both true on a market with no row of its own", o.rescued, o.windowPriced)
+	}
+	if o.volume != 10 || o.quoteVolume != 7000 || o.stock != 77 {
+		t.Errorf("volume/quoteVolume/stock = %v/%v/%d, want the newest contributing row's 10/7000/77", o.volume, o.quoteVolume, o.stock)
+	}
+	if o.tick != 1.0/500.0 {
+		t.Errorf("tick = %v, want the newest contributing row's %v", o.tick, 1.0/500.0)
+	}
+	if o.low.price != 486 || o.high.price != 1148 {
+		t.Errorf("priced interval = %v/%v, want the window's realized 486/1148", o.low.price, o.high.price)
+	}
+}
+
+func TestDirectCandidates_marketWithNoPricedRowAnywhereInTheWindow_producesNoCandidate(t *testing.T) {
+	// The guard that says the window path is not a resurrection machine. This
+	// market traded normally seven hours ago and has published nothing since, so
+	// there is no realized print anywhere inside the clock span to serve — and an
+	// enumeration that walked the span index without asking the window for a
+	// price would bring it straight back at a seven-hour-old ratio.
+	rows := windowOnlyRows(cardID, 6, 7)
+
+	got := directCandidates(nil, viewAt(feedHour, rows), DefaultConfig())
+
+	if len(got) != 0 {
+		t.Errorf("got %d candidates from a silent window, want none whatever the market did seven hours ago", len(got))
+	}
+}
+
+func TestDirectCandidates_divineQuotedMarketWithNoRowInTheScoredHour_keepsItsOrientation(t *testing.T) {
+	// Which side of a market is the ITEM is decided by orient off a row, and on a
+	// window-only market there is no scored row to decide it from. Falling back to
+	// a zero Row would leave both sides empty, orient would answer with the zero
+	// ids, and the leg would price the pair the wrong way round while still
+	// returning a plausible-looking number — which is why this is pinned rather
+	// than inspected.
+	//
+	// The scarab is quoted in divine here: one divine buys between 10 and 20
+	// scarabs, so a scarab is worth 0.05 to 0.1 divine.
+	_, divineLeg, _ := liquidTriangle()
+	rows := []StoredRow{storedBack(1, divineLeg), storedBack(2, divineLeg)}
+
+	got := directCandidates(nil, viewAt(feedHour, rows), DefaultConfig())
+
+	if len(got) != 1 {
+		t.Fatalf("got %d candidates, want the divine-quoted flip its window carries", len(got))
+	}
+	leg := got[0].legs[0]
+	if leg.item != scarabID || leg.quote != divineID {
+		t.Errorf("leg trades %q in %q, want the scarab quoted in divine", leg.item, leg.quote)
+	}
+	if leg.obs.low.price != 1.0/20.0 || leg.obs.high.price != 1.0/10.0 {
+		t.Errorf("priced interval = %v/%v, want 0.05/0.1 divine per scarab", leg.obs.low.price, leg.obs.high.price)
+	}
+}
+
+func TestDirectCandidates_twoWindowOnlyMarketsInOneHour_keepTheirOwnKeys(t *testing.T) {
+	// The candidate key is built from the market id the span index is being
+	// walked under, never from the scored row. Read off a zero Row both keys
+	// collapse to the bare prefix "direct:", and BestPlays' per-hour seen map
+	// then treats the two markets as one recipe and drops the second without an
+	// error of any kind — a silent data loss, which is why the two keys are
+	// asserted rather than a count of two.
+	const secondCardID = "Metadata/Items/DivinationCards/DivinationCardSecondWindowOnly"
+	rows := append(windowOnlyRows(cardID, 1, 2), windowOnlyRows(secondCardID, 1, 2)...)
+
+	got := directCandidates(nil, viewAt(feedHour, rows), DefaultConfig())
+
+	// Ascending id order, which is what makes the enumeration independent of the
+	// order storage returned rows in.
+	want := []string{directKey(chaosID, secondCardID), directKey(chaosID, cardID)}
+	if keys := candidateKeys(got); !reflect.DeepEqual(keys, want) {
+		t.Errorf("keys = %v, want %v", keys, want)
+	}
+}
+
+func TestDirectCandidates_windowPathDisarmed_enumeratesNoMarketWithoutAScoredRow(t *testing.T) {
+	// ThinHourVolume: 0 is the one field that turns POE-252 off, and it must turn
+	// off the ENUMERATION as well as the pricing: nothing is thin, so nothing is
+	// window-priced and nothing is rescued. A reader can prove the whole feature
+	// inert from one number, which is what the C3 calibration guard leans on.
+	cfg := DefaultConfig()
+	cfg.ThinHourVolume = 0
+	rows := windowOnlyRows(cardID, 1, 2, 3, 4, 5)
+
+	got := directCandidates(nil, viewAt(feedHour, rows), cfg)
+
+	if len(got) != 0 {
+		t.Errorf("got %d candidates with the window path disarmed, want none", len(got))
+	}
+}
+
+func TestDirectCandidates_twoRowsForOneScoredMarketHour_letTheTradedCopyWinTheKey(t *testing.T) {
+	// One hour holds one row per market — the repository's
+	// PRIMARY KEY (league, time, market_id) forbids a second — but BestPlays is
+	// total over whatever rows it is handed, and pricing.go and crossquote.go
+	// both defend a duplicated hour explicitly, so this one does too.
+	//
+	// BestPlays keeps the FIRST candidate under a key. A copy that traded nothing
+	// is RESCUED by the window its live twin contributes to, so walking the hour
+	// in ONE pass emits the rescued copy first and serves a window-priced row
+	// where an hour-live one existed. The two sub-passes make the traded copy win
+	// the key exactly as it did before POE-252.
+	untraded := spreadHour(cardID)
+	untraded.volume = [2]int64{0, 0}
+	// The traded copy prints an interval of its own, distinct from the 486/1148
+	// the rest of the window realized, so every assertion below names which copy
+	// answered rather than reading a number both could have produced.
+	traded := pairedHour(chaosID, cardID, [2]int64{500, 1}, [2]int64{900, 1}, [2]int64{4500, 9})
+	rows := append(
+		[]StoredRow{storedBack(0, untraded), storedBack(0, traded)},
+		windowOnlyRows(cardID, 1, 2, 3)...,
+	)
+
+	got := directCandidates([]Row{rows[0].Row, rows[1].Row}, viewAt(feedHour, rows), DefaultConfig())
+
+	// Both copies still produce a candidate; which one comes FIRST is the whole
+	// question, because that is the one the per-hour seen map keeps.
+	if len(got) != 2 {
+		t.Fatalf("got %d candidates from two copies of one market-hour, want 2", len(got))
+	}
+	o := got[0].legs[0].obs
+	if o.rescued || o.windowPriced {
+		t.Errorf("winning candidate rescued/windowPriced = %v/%v, want false/false — the traded copy priced its own hour", o.rescued, o.windowPriced)
+	}
+	if o.low.price != 500 || o.high.price != 900 {
+		t.Errorf("winning interval = %v/%v, want the traded copy's own 500/900", o.low.price, o.high.price)
+	}
+	if o.volume != 9 {
+		t.Errorf("winning volume = %v, want the traded copy's 9 cards", o.volume)
+	}
+}
