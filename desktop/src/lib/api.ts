@@ -299,18 +299,21 @@ export type CurrencyExchangeHorizon = 'recent' | 'day';
 
 /**
  * One swap inside a play, as ONE feed hour observed it — the hour the play's
- * `lastHour` names, and no other. `item`/`quote` are the raw Currency Exchange
- * ids and `itemName`/`quoteName` their display names — real item names
- * (POE-177), with the humanized id as the fallback for an id the server's asset
- * does not know. `price` is quote per item.
+ * `lastHour` names on a leg priced in its own scored hour, and one of the hours
+ * inside the trailing clock window on a `windowPriced` one (below). Either way
+ * each PRICE is one hour's realized print and never a blend. `item`/`quote` are
+ * the raw Currency Exchange ids and `itemName`/`quoteName` their display names
+ * — real item names (POE-177), with the humanized id as the fallback for an id
+ * the server's asset does not know. `price` is quote per item.
  *
  * `price` is that hour's realized extreme on the leg's side (cheapest for a buy,
  * dearest for a sell) and it is RAW: the undercut a real order has to pay lives
  * in the play's `roiPct`/`roi`, never in this number. `fair` is the same hour's
  * volume-weighted price, where the traded mass actually cleared, and is the
- * anchor `price` should be read against; `fairOk` is false when the hour's quote
- * side reported no volume, and `fair` is then 0 — a missing reading rather than
- * a free item. `suspect` is that comparison already made: an extreme too far
+ * anchor `price` should be read against; `fairOk` is false when the quote side
+ * reported no volume — the scored hour's, or on a `windowPriced` leg (below) the
+ * WINDOW's POOLED quote volume, whichever `fair` itself came from — and `fair`
+ * is then 0, a missing reading rather than a free item. `suspect` is that comparison already made: an extreme too far
  * from `fair` to be repeatable (a buy under `fair × 0.67`, a sell over
  * `fair × 1.5`), and it stays false when there is no `fair` to judge against.
  * `tick` is the hour's price resolution on this market as a fraction of the
@@ -318,6 +321,23 @@ export type CurrencyExchangeHorizon = 'recent' | 'day';
  * separates a real spread from one integer step (POE-184) — and what lets a
  * client rebuild the undercut price: `price × (1 + tick)` to buy,
  * `price × (1 − tick)` to sell.
+ *
+ * Both of those readings move on a `windowPriced` leg, and they move
+ * DIFFERENTLY. `fair` becomes the window's POOLED volume-weighted price instead
+ * of the scored hour's, so `suspect` still compares the extreme against the mass
+ * that traded beside it — like with like, which is why such a leg is often
+ * suspect for the ordinary reason. `tick` does not follow it: on a leg whose
+ * scored hour was live the step stays THAT hour's, because the step is what the
+ * market can express now even where the price is older; only on a RESCUED leg —
+ * no row in the scored hour at all, or one under the server's per-hour volume
+ * floor — does it come from the newest window row that contributed, as old as
+ * the price beside it and no older.
+ *
+ * So `tick === 1 / Math.max(priceItemQty, priceQuoteQty)` is NOT a wire
+ * invariant, on this leg or any other: the server reads the step from the
+ * COARSER of its source row's two pairs, and on a window-priced leg the pair
+ * beside the price can come from a different hour than the step. Rebuild the
+ * undercut price FROM `tick`; never re-derive `tick` from the pair.
  *
  * `depletedSide` is a reading of the OPPOSITE side of this leg's book: true when
  * nothing stood there in the hour — no asks facing a sell, no bids facing a buy
@@ -383,6 +403,12 @@ export interface CurrencyExchangeLeg {
 	suspect: boolean;
 	/** Optional: absent on a server older than the field, and absent means false. */
 	depletedSide?: boolean;
+	/** Optional: absent on a server older than the field, and absent means false. */
+	windowPriced?: boolean;
+	/** Optional: absent on a server older than the field, and 0 when not window-priced. */
+	windowHours?: number;
+	/** Optional: absent on a server older than the field, and 0 when not window-priced. */
+	windowVolume?: number;
 	itemName: string;
 	itemIcon: string | null;
 	itemCategory: string;
@@ -438,9 +464,10 @@ export interface CurrencyExchangeLeg {
  * judges it — and the wire ranks it after every clean one, an ordering the
  * desktop table drops (see above). `hoursSeen` counts the window
  * hours in which the recipe cleared every gate on that hour's own prices, and
- * `lastHour` is the hour every price above was read from: always the window's
- * newest, because a recipe that did not clear in the last snapshot is not
- * served at all.
+ * `lastHour` is the hour the recipe was SCORED at, and the hour every price
+ * above was read from unless the row is `windowPriced` (below). It is always the
+ * window's newest, because a recipe that did not clear in the last snapshot is
+ * not served at all.
  *
  * `lowLiquidity` is the play-level thin-hour flag, and it is about `lastHour`
  * alone: that hour printed no spread worth taking, the round trip at its
@@ -459,6 +486,37 @@ export interface CurrencyExchangeLeg {
  *
  * OPTIONAL on the wire — a server older than the field omits it, and an absent
  * field means false, so no client may distinguish "not sent" from "clean".
+ *
+ * `windowPriced` is the other thin-hour mark, and it says something the flag
+ * above cannot: the leg prices on this row are NOT `lastHour`'s. That hour
+ * traded so little that one trade collapsed its low and its high onto the same
+ * number, so the server priced the legs from the extremes the market actually
+ * REALIZED over the trailing clock window instead, and `windowHours` says how
+ * many hours of that window printed while `windowVolume` says how many units
+ * they traded between them. The measured case is 2026-09-04: the Apocalypse
+ * card's newest hour traded one card at 552 — the reader's own purchase — and
+ * the row read −0%, while the six-hour window had realized 486/1148 and the
+ * game's book stood near 550/1150 all day.
+ *
+ * The staleness is real, bounded and DISCLOSED: a price here can be hours old,
+ * and `windowHours` beside the mark is how the reader judges how old. What does
+ * NOT move with it is `lastHour` and the response's `divineChaosRate`, still the
+ * scored hour's, and `expectedRoi`, whose simulation reads the legs' own-hour
+ * prices and never the window's. `tick` is off that list because it has no one
+ * answer: it is the scored hour's on every leg that HAD a row there, and the
+ * newest contributing window row's on a RESCUED leg — the leg block above says
+ * which and why. Such a row also commonly carries `suspect`, for the ordinary
+ * reason and not as a second symptom: a window that stood at 486/1148 is 2.4×
+ * wide against its own fair, which is what the band is for.
+ *
+ * Like `lowLiquidity` it is a MARK. It is in neither comparator — not the
+ * wire's ranking and not `sortPlays` (ADR-018) — and no default gate reads it
+ * (ADR-017), so such a row's `roiPct` and `expectedRoi` order at face value.
+ *
+ * OPTIONAL on the wire, the same three ways: a server older than the fields
+ * omits them, an absent `windowPriced` means false, and an absent
+ * `windowHours`/`windowVolume` means 0 — which is also what a served
+ * hour-priced row carries.
  *
  * `simEntries` is how many entry hours the two expectations are averaged over
  * and `lowCoverage` says that count fell under the server's guard — "we could
@@ -491,6 +549,12 @@ export interface CurrencyExchangePlay {
 	suspect: boolean;
 	/** Optional: absent on a server older than the field, and absent means false. */
 	lowLiquidity?: boolean;
+	/** Optional: absent on a server older than the field, and absent means false. */
+	windowPriced?: boolean;
+	/** Optional: absent on a server older than the field, and 0 when not window-priced. */
+	windowHours?: number;
+	/** Optional: absent on a server older than the field, and 0 when not window-priced. */
+	windowVolume?: number;
 	hoursSeen: number;
 	lastHour: string;
 }
