@@ -471,9 +471,9 @@ impl TempleArm {
 /// was measured on. `: You have entered <a map>` is positive evidence that
 /// whatever panel the loop last anchored went with the zone, so a sighting older
 /// than the change says nothing about the screen in front of the player now.
-/// Without it, walking out of a temple carried up to [`PANEL_TAIL_MS`] of 1 Hz
-/// capture into the next zone, under a log line claiming the panel was on
-/// screen.
+/// Without it, walking out of a temple carried up to [`PANEL_TAIL_MS`] of
+/// capture at `super::run`'s `DETECT_INTERVAL` (~1.5 Hz, 650 ms) into the next
+/// zone, under a log line claiming the panel was on screen.
 ///
 /// Stamped on EVERY non-temple area line rather than only on the ones that move
 /// the gate: the case that needs it is a loop the PANEL is keeping armed, whose
@@ -1594,8 +1594,9 @@ mod tests {
     /// the panel the loop last anchored went with the zone.
     ///
     /// Fails if the panel branch reads the sighting alone — the loop then
-    /// carries up to `PANEL_TAIL_MS` of 1 Hz capture into the next zone, under a
-    /// log line saying the panel is on screen.
+    /// carries up to `PANEL_TAIL_MS` of capture at `super::run`'s
+    /// `DETECT_INTERVAL` (~1.5 Hz, 650 ms) into the next zone, under a log line
+    /// saying the panel is on screen.
     #[test]
     fn an_area_change_ends_the_panel_arm_as_well_as_the_voice_line_one() {
         let mut state = ArmState::default();
