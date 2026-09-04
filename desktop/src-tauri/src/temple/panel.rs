@@ -164,9 +164,10 @@ pub struct ArchitectOffer {
     /// Nothing in the advisor reads it: it exists so a surface can point at the
     /// block the advice is about without guessing where the panel drew it.
     ///
-    /// Deliberately OUTSIDE [`super::slice::panel_signature`]: a box that
-    /// wobbles by a pixel between two reads of the same panel is not a changed
-    /// panel, and hashing it would re-read the board for a rounding difference.
+    /// It travels with the offer it belongs to and is never merged separately:
+    /// [`super::slice::merge_reads`] takes a whole block or none of it, because a
+    /// rect from one read under an identity from another points a surface at a
+    /// line it is not describing.
     pub rect: Option<[i32; 4]>,
 }
 
@@ -2110,6 +2111,28 @@ mod tests {
         for header in ["Temple of Atzoatl"].iter().chain(HEADER_SLIPS.iter()) {
             let mut lines = vec![*header];
             lines.extend(CASE_1);
+            assert_eq!(
+                read_panel(&lines).identity_name(),
+                Some("Tombs"),
+                "{header:?} was read as the title"
+            );
+        }
+    }
+
+    // …and the placement that actually loads `title_match`: BETWEEN the title
+    // and the architect block. `read_panel` walks UP from the block, so a stray
+    // line above the title is never reached once the real one matches — only a
+    // line the walk hits FIRST can take the title.
+    //
+    // Fails on the mutation that replaces `title_match(line.text())` with a bare
+    // `rooms::match_room_name(line.text())`: every header here is a confident
+    // fuzzy `Apex of Atzoatl` (0.89-0.92), so the panel would report the Apex
+    // for a board the player is standing in the Tombs of.
+    #[test]
+    fn a_header_between_the_title_and_the_block_never_becomes_the_panel_title() {
+        for header in ["Temple of Atzoatl"].iter().chain(HEADER_SLIPS.iter()) {
+            let mut lines = vec![CASE_1[0], *header];
+            lines.extend(&CASE_1[1..]);
             assert_eq!(
                 read_panel(&lines).identity_name(),
                 Some("Tombs"),

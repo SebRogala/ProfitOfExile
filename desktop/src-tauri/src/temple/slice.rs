@@ -42,7 +42,7 @@ use super::anchor::AnchorCalibration;
 use super::doors::Confidence;
 use super::lattice::{Edge, Lattice, Slot};
 use super::markers;
-use super::panel::{ArchitectOffer, PanelReading, RoomReading};
+use super::panel::{ARCHITECTS_PER_PANEL, ArchitectOffer, PanelReading, RoomReading};
 use super::reader::TempleLayout;
 use super::rooms::{self, Match, OfferKind, RoomIdentity};
 use super::strategy::{Mode, StrategyProfile, TempleConfig, Tier};
@@ -975,9 +975,10 @@ pub const ROLLOUTS: u32 = 2000;
 /// The advisor's RNG seed.
 ///
 /// **Fixed on purpose.** The same board must produce the same advice every
-/// time it is read, or a re-read triggered by an unrelated pixel change would
-/// reshuffle two options separated by less than the sampling noise, and the
-/// overlay would flicker between them while the player is deciding.
+/// time it is read, or one of POE-249's retries — up to `super::run::RETRIES`
+/// re-reads of the board on screen — would reshuffle two options separated by
+/// less than the sampling noise, and the overlay would flicker between them
+/// while the player is deciding.
 pub const SEED: u64 = 0x_7065_0171;
 
 /// Rank one read, or refuse to.
@@ -1092,26 +1093,41 @@ pub fn force_off(slice: &mut TempleSlice) {
     slice.last_error = None;
 }
 
-// ------------------------------------------------------ change detection --
+// ----------------------------------------------- one board, read and kept --
 
-/// The cheap per-tick fingerprint of a board: everything
-/// [`super::reader::read_layout`] produces WITHOUT OCR.
+/// The two text regions `super::run::text_regions` crops, by name.
 ///
-/// Pixels only, so computing it costs one anchor match and one beam-sampling
-/// pass — no per-plate crops, no OCR engine. It moves when the player moves
-/// (`current`), when a corridor opens (`doors`), and when the panel itself
-/// moves or rescales (`origin`, `scale`).
+/// Declared here rather than spelled out at each use because [`unclean`] is the
+/// second consumer: it is handed the names `super::run::clipped_text_rois`
+/// reported as OUTSIDE the capture, and has to know which read failures each of
+/// them explains. Two string literals in two files is a drift the compiler
+/// cannot see — a renamed region would silently stop exempting anything.
+pub const PANEL_REGION: &str = "panel";
+/// The budget line's region — see [`PANEL_REGION`].
+pub const REMAINING_REGION: &str = "remaining";
+
+/// The board's SEMANTIC fingerprint: what the sheet says, with no reference to
+/// where on screen it says it.
 ///
-/// What it deliberately does NOT see is the plate TEXT: a kill that upgrades
-/// the room the player is standing in changes a name and a numeral and nothing
-/// else. [`panel_signature`] is the second gate that catches those, and
-/// [`ReadGate::on_panel_lost`] is the third — closing the panel always re-arms.
+/// Three fields, all of them things only an incursion or a walk can change: the
+/// room the player is standing in (`current`), the corridors the beam read open
+/// (`doors`), and the ones it could not decide (`uncertain`). Cheap — it is
+/// everything [`super::reader::read_layout`] produces WITHOUT OCR, so computing
+/// it costs one anchor match and one beam-sampling pass and no OCR engine.
+///
+/// # Exactly what it does NOT cover, and why
+///
+/// `origin` and `scale` used to be hashed in here. They are not, because a hash
+/// is the wrong shape for them: two frames of a sheet nobody touched can differ
+/// by a pixel of anchor jitter, and a hash says only "different", which would
+/// have made every such frame a new board. Those two moved into
+/// [`BoardFrame`], which compares them with a TOLERANCE. This half stays exact,
+/// because it is the half where a one-step difference is a real difference — a
+/// corridor is open or it is not.
+///
+/// [`BoardFrame`] is the whole answer; this is its exact third.
 pub fn layout_signature(layout: &TempleLayout) -> u64 {
     let mut hasher = DefaultHasher::new();
-    layout.origin.hash(&mut hasher);
-    // `scale` is an f32 and has no `Hash`; the bit pattern is the right key
-    // here anyway — two scales that differ at all are two different reads.
-    layout.scale.to_bits().hash(&mut hasher);
     layout.current.map(|s| s.index()).hash(&mut hasher);
     for edge in &layout.doors {
         edge.to_string().hash(&mut hasher);
@@ -1122,72 +1138,362 @@ pub fn layout_signature(layout: &TempleLayout) -> u64 {
     hasher.finish()
 }
 
-/// The fingerprint of the side panel's TEXT — the two bounded OCR crops
-/// [`super::run::panel_text`] takes, no per-plate crops.
+/// "Is this the same board as that one?", answered from pixels alone.
 ///
-/// Hashes what [`panel::read_panel`] PARSED, not the lines it parsed from. The
-/// distinction is the whole value of this gate: the crops still catch stray
-/// text — a tooltip, a floating combat number, a chat line drawn over the
-/// panel's corner — and a raw-line hash moves for every one of them, which
-/// buys a full 26-crop re-read every [`super::run::PANEL_RECHECK_INTERVAL`]
-/// for the whole time the noise is on screen. The parsed fields move only when
-/// the board did.
+/// # Why it is not one hash (POE-249)
 ///
-/// The rule for what belongs here is **exactly the panel fields
-/// [`panel_view`] publishes** — title identity, each offer's architect, kind
-/// and printed target, and the budget. A published field left out of the hash
-/// is a change the gate can never see, so the slice would keep showing the
-/// pre-kill panel until something else re-armed the read.
+/// It was, and that had a defect nothing had measured: a hash answers only
+/// "identical", and the anchor origin of a sheet nobody has touched is not
+/// guaranteed identical across two frames — the plate is found by correlation
+/// over a frame the game is still redrawing. A hash over `origin` therefore made
+/// every jittered frame a NEW board, which for a clean board is one wasted
+/// 28-call read per reopen and for an UNCLEAN one is worse: a new board restores
+/// the retry budget, so a per-frame jitter would have re-read at the full
+/// cadence for as long as the sheet was open.
 ///
-/// **One carve-out, and it is deliberate: the rects** (`room_rect`,
-/// `ArchitectOffer::rect`, POE-243). They are published and they are NOT
-/// hashed. A glyph bounding box moves by a pixel between two reads of a panel
-/// that has not changed — anti-aliasing on a frame the game redrew, a
-/// sub-pixel anchor difference — and hashing it would spend a 27-OCR-call full
-/// read on that. What the rects describe is where text was drawn, which is a
-/// property of the same panel this hash is asking about; when the panel really
-/// changes, one of the fields above moves with it and the rects come along on
-/// the re-read.
-pub fn panel_signature(panel: &PanelReading) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    // The identity, not the OCR text: `panel_view` publishes the identity, so
-    // two spellings of the same room are one published value and re-reading
-    // because OCR wobbled a glyph is churn. An unread title hashes as `None`,
-    // so "unread → read" still re-arms.
-    panel.room.identity().map(|id| id.display_name()).hash(&mut hasher);
-    for offer in &panel.architects {
-        offer.architect_name.trim().hash(&mut hasher);
-        // `OfferKind` is not `Hash`; the discriminant is what matters.
-        matches!(offer.kind, OfferKind::Upgrade).hash(&mut hasher);
-        // The printed name, not the resolved one: `OfferView` publishes it
-        // verbatim because it is what the player reads off the panel, and two
-        // targets that both fail to resolve are still two different offers.
-        offer.printed_target.trim().hash(&mut hasher);
-    }
-    panel.incursions_remaining.hash(&mut hasher);
-    hasher.finish()
+/// So the comparison is split by what each field means:
+///
+/// - `semantic` ([`layout_signature`]) is EXACT. A corridor is open or closed;
+///   the player is in one room or another. There is no "nearly".
+/// - `origin` and `scale_milli` are compared with a BAND — see
+///   [`Self::matches`]. Inside it the sheet has not moved, it has been re-found;
+///   outside it the window was dragged or the UI scale changed, and every ROI
+///   the read places from those numbers is somewhere else.
+///
+/// `scale` is carried as thousandths rather than as the `f32` so this type is
+/// `Eq` and `Copy` and `super::run::LoopState` keeps its derives; the band is
+/// two orders of magnitude wider than the rounding, so nothing is lost to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoardFrame {
+    /// The anchor origin this read was taken at, capture px.
+    pub origin: (i32, i32),
+    /// The anchor scale, in thousandths — `round(scale * 1000)`.
+    pub scale_milli: u32,
+    /// [`layout_signature`] of the same layout.
+    pub semantic: u64,
 }
 
-/// "Read once per panel open, not per frame."
+/// How far the anchor origin may move before the sheet counts as MOVED, px.
 ///
-/// Three ways a re-read is armed, in the order the loop reaches them:
+/// # What two covers, in the terms this codebase actually quantifies
 ///
-/// 1. the layout fingerprint moved — the player moved, a door opened, the
-///    panel moved;
-/// 2. the panel's text moved — a kill changed a plate without changing a
-///    corridor;
-/// 3. the panel was lost and found again, or the user pressed re-arm.
+/// Not still-frame jitter — **nothing has measured the correlation peak's
+/// per-frame stability on a still screen**, and that sentence is the honest
+/// state of it. What IS quantified is the ROUTE the origin was found by, and the
+/// two routes disagree by a known amount:
 ///
-/// A pure state machine over `u64`s so all three are testable without a
-/// screen. It holds no `Instant`: the loop owns the cadence, this owns only
-/// the question "is what I am looking at the thing I already read?".
+/// - The fast path, `super::anchor::detect_cheap`'s recheck, is a
+///   full-resolution correlation over a fixed window at a fixed scale. Given the
+///   same pixels it returns the same peak, so two frames of a still sheet that
+///   both take this route differ by nothing. Two covers it exactly.
+/// - The sweep path budgets more. `super::anchor`'s `SWEEP_FINE_RADIUS` is
+///   `FINE_RADIUS + 4`, the four being the position error a coarse scale step
+///   buys, and the measurement beside it is that the nominee at scale 1.00 sits
+///   **2 px** from the true top-left. So two covers the measured case and half
+///   the budgeted one.
+///
+/// A tick that flips route — recheck fails for one frame, the fallback chain
+/// answers, then recheck resumes — can therefore land outside the band on a
+/// board nothing touched. That case is not free and is not silent: it costs one
+/// read, with the RETRY budget carried rather than restored
+/// (`super::run::LoopState::note_read`), and it is bounded by
+/// [`super::run::GEOMETRY_READS_CAP`]. It never produces a wrong board.
+///
+/// What the band stops is the unbounded version of the same thing: at zero
+/// tolerance every re-found origin is a new board with a fresh retry budget, so
+/// an anchor that would not sit still paid 28 OCR calls every 650 ms.
+pub const FRAME_ORIGIN_TOLERANCE: i32 = 2;
+
+/// How far the anchor scale may move before the sheet counts as RESCALED, as a
+/// fraction denominator: 100 is one per cent.
+///
+/// One per cent is `super::anchor::SCALE_STEP` at scale 1.0 — the resolution the
+/// anchor search itself works at — so a difference under it is not a scale the
+/// search could have distinguished, and a difference over it is a step the
+/// search took deliberately.
+pub const FRAME_SCALE_TOLERANCE_DENOM: u64 = 100;
+
+impl BoardFrame {
+    /// The frame one resolved layout was read at.
+    pub fn of(layout: &TempleLayout) -> Self {
+        Self {
+            origin: layout.origin,
+            // Saturating, per Rust's float-to-int `as`: a scale is a small
+            // positive number here and a NaN or a negative would land on 0,
+            // which compares as a frame nothing matches rather than as a wrap.
+            scale_milli: (layout.scale * 1000.0).round() as u32,
+            semantic: layout_signature(layout),
+        }
+    }
+
+    /// Whether these two frames describe the same board CONTENT — the exact
+    /// third alone, with where it was drawn ignored.
+    ///
+    /// Named because two callers need this question rather than the whole one:
+    /// [`Self::matches`] asks it first, and `super::run::LoopState::note_read`
+    /// asks it ALONE, to tell a board that changed from a board that only moved.
+    pub fn same_content(&self, other: &Self) -> bool {
+        self.semantic == other.semantic
+    }
+
+    /// Whether these two frames are the same board in the same place.
+    ///
+    /// The exact third and the two banded thirds, all of which must hold.
+    ///
+    /// **Symmetric**, and that is load-bearing rather than incidental: the two
+    /// call orders are opposite — `super::run`'s gate asks `recorded.matches(&
+    /// fresh)` and [`merge_reads`] asks `fresh.matches(&kept)` — so an
+    /// asymmetric predicate would let the gate admit a retry the merge then
+    /// discarded. Both bands are symmetric by construction: `abs_diff` is, and
+    /// the scale band is taken against the LARGER of the two rather than against
+    /// `self`. The property is argued from that `max`, not tested — at the
+    /// scales the anchor produces (about 850-1200 thousandths) the two
+    /// directions cannot be made to disagree by any input a test could write.
+    pub fn matches(&self, other: &Self) -> bool {
+        if !self.same_content(other) {
+            return false;
+        }
+        let moved = self.origin.0.abs_diff(other.origin.0) > FRAME_ORIGIN_TOLERANCE as u32
+            || self.origin.1.abs_diff(other.origin.1) > FRAME_ORIGIN_TOLERANCE as u32;
+        if moved {
+            return false;
+        }
+        // Multiplied out rather than divided. At the scales the anchor produces
+        // the two forms agree — a divide truncates 990/100 to 9 against a band
+        // of 9.9, which no test here can tell apart — so this is the form that
+        // stays right if a much smaller `scale_milli` ever reaches it, not a
+        // form any test pins.
+        let drift = u64::from(self.scale_milli.abs_diff(other.scale_milli));
+        let larger = u64::from(self.scale_milli.max(other.scale_milli));
+        drift * FRAME_SCALE_TOLERANCE_DENOM <= larger
+    }
+}
+
+/// One completed read of one board, kept so a retry can fill in what it missed.
+///
+/// The five things a read produces that a LATER read of the same board could
+/// improve on — everything [`ReadResult`] is built from except the settings
+/// echo and the timestamps, which belong to the tick rather than to the board.
+/// Owned rather than borrowed because it outlives the tick that read it: it
+/// lives on `super::run::Session`, which is the loop's own state, and the
+/// projection is rebuilt from it on every retry.
+///
+/// It is deliberately NOT on `super::run::LoopState`, which derives `Eq` and is
+/// the loop's cheap bookkeeping. `super::run::BoardRead` is the bookkeeping half
+/// — a key, a status, a retry budget — and this is the payload.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeptRead {
+    pub layout: TempleLayout,
+    pub rooms: Vec<RoomReading>,
+    pub panel: PanelReading,
+    /// The door set the diamond settled, or `None` on the marker fallback.
+    pub settled: Option<BTreeSet<Edge>>,
+    /// Why the diamond read failed, when it did.
+    pub marker_error: Option<String>,
+}
+
+/// Fold a retry into the read it is retrying, region by region.
+///
+/// POE-249 row 2: a read whose regions did not all come out clean is re-taken
+/// at most [`super::run::RETRIES`] more times, and each re-take is a WHOLE read
+/// — the anchor moved by a pixel, the crops are new, and OCR is not
+/// deterministic across two frames of a game that is still drawing. So a retry
+/// can be WORSE than the read it followed, region by region, and merging is
+/// what stops the second attempt at a board undoing the first one's answers.
+///
+/// The rule is the same everywhere: a region the fresh read RESOLVED wins,
+/// because it is the newer look at the same panel; a region it did not resolve
+/// falls back to the kept read's answer. Nothing is invented and nothing that
+/// was known is ever replaced by an unknown.
+///
+/// # The precondition, and why the layout is the thing it tests
+///
+/// [`BoardFrame::of(&fresh.layout).matches(&BoardFrame::of(&kept.layout))`](BoardFrame::matches),
+/// or the fresh read is returned ALONE and the kept one is dropped. The frame
+/// covers the room the player is standing in, both corridor sets, the anchor
+/// origin and the scale, which is exactly the set that makes two reads
+/// comparable: the settled door markers are indexed off `current`, and the plate
+/// crops are placed from `origin`/`scale`. A merge across a moved board would
+/// file the old room's corridors under the new room's name.
+///
+/// **The same predicate the read gate uses** (`super::run::LoopState::same_board`),
+/// and deliberately the same one: a retry the gate let through as "the same
+/// board" that this then refused to merge would spend a retry and throw away
+/// what it bought. The two used to be different tests for the same question.
+///
+/// Which makes the guard below REDUNDANT BY DESIGN on the production path:
+/// `super::run::kept_for` applies the same predicate to the same two frames
+/// before it hands anything here, so nothing this loop calls can reach the
+/// `return fresh` arm. It stays because this is a pure function that a caller
+/// may hand any two reads — its own precondition is not something to inherit
+/// from one caller's discipline — and because the redundancy is the point: a
+/// future loosening of "same board" is then visibly a TWO-place edit, and a
+/// one-place loosening fails this file's tests rather than shipping.
+///
+/// So the tolerance is here too. Inside [`FRAME_ORIGIN_TOLERANCE`] px and
+/// [`FRAME_SCALE_TOLERANCE_DENOM`]'s one per cent, a re-anchored sheet is the
+/// same board and the retry merges into what the first read got; beyond it, the
+/// window was dragged or the UI was rescaled and the fresh read stands alone,
+/// which it must, because the merged read takes the FRESH layout and every ROI
+/// the slice publishes is placed from it.
+///
+/// # The one region that is taken wholesale
+///
+/// The architect blocks, when the two reads printed different NUMBERS of them.
+/// The panel always draws two ([`super::panel::ARCHITECTS_PER_PANEL`], measured
+/// on every reference board), so a read that found one found half a panel —
+/// and a per-index merge over lists of different lengths would pair block 0 of
+/// a one-block read against block 0 of a two-block read, which are not
+/// necessarily the same offer (POE-243 sorts them by where they were drawn).
+/// The longer read is the one that saw the whole panel, so it is taken whole,
+/// rects included.
+pub fn merge_reads(kept: &KeptRead, fresh: KeptRead) -> KeptRead {
+    if !BoardFrame::of(&fresh.layout).matches(&BoardFrame::of(&kept.layout)) {
+        return fresh;
+    }
+    let KeptRead {
+        layout,
+        rooms: fresh_rooms,
+        panel: fresh_panel,
+        settled: fresh_settled,
+        marker_error: fresh_marker_error,
+    } = fresh;
+    let PanelReading {
+        room,
+        room_rect,
+        architects,
+        incursions_remaining,
+    } = fresh_panel;
+
+    // Per SLOT rather than per position: `read_board` returns one reading per
+    // plate, and matching on the slot is what keeps a short or reordered
+    // vector from filing one plate's identity under another's.
+    let rooms = fresh_rooms
+        .into_iter()
+        .map(|reading| {
+            if reading.identity.is_known() {
+                return reading;
+            }
+            match kept.rooms.iter().find(|k| k.slot == reading.slot) {
+                Some(known) if known.identity.is_known() => known.clone(),
+                _ => reading,
+            }
+        })
+        .collect();
+
+    // The title and its box move together: the rect is where THAT reading found
+    // the name, so a fresh rect under a kept identity would point the overlay at
+    // a line it is not describing (POE-243).
+    let (room, room_rect) = if room.identity().is_some() {
+        (room, room_rect)
+    } else {
+        (kept.panel.room, kept.panel.room_rect)
+    };
+
+    let architects = if architects.len() == kept.panel.architects.len() {
+        architects
+            .into_iter()
+            .zip(kept.panel.architects.iter())
+            .map(|(fresh_offer, kept_offer)| {
+                if fresh_offer.target.identity().is_some() {
+                    fresh_offer
+                } else {
+                    kept_offer.clone()
+                }
+            })
+            .collect()
+    } else if architects.len() > kept.panel.architects.len() {
+        architects
+    } else {
+        kept.panel.architects.clone()
+    };
+
+    // A fresh marker error is the whole diamond failing, not one seal: the read
+    // has no door set at all, so the kept one's set AND the reason it might
+    // itself carry are what the projection still has to work from.
+    let (settled, marker_error) = if fresh_marker_error.is_none() {
+        (fresh_settled, None)
+    } else {
+        (kept.settled.clone(), kept.marker_error.clone())
+    };
+
+    KeptRead {
+        // The FRESH anchor, always: every ROI the slice publishes is placed
+        // from it, and the retry is the capture the player is looking at.
+        layout,
+        rooms,
+        panel: PanelReading {
+            room,
+            room_rect,
+            architects,
+            incursions_remaining: incursions_remaining.or(kept.panel.incursions_remaining),
+        },
+        settled,
+        marker_error,
+    }
+}
+
+/// Whether this read is worth spending a retry on — POE-249 row 2's four
+/// causes, minus the ones a clipped crop explains.
+///
+/// `clipped` is the region names `super::run::clipped_text_rois` reported as
+/// falling entirely OUTSIDE the capture this read was taken from. A region that
+/// is not on screen cannot read better next time, so the failures it explains
+/// are not counted: with [`REMAINING_REGION`] outside, the budget is missing
+/// because the crop was empty, and with [`PANEL_REGION`] outside, so are the
+/// architect blocks. Without this a windowed client whose panel crop has walked
+/// off the monitor would pay three full reads per board forever and publish the
+/// same empty panel every time.
+///
+/// The plates and the door diamond have no such exemption: they are placed off
+/// the anchor inside the board itself, so a plate that did not read is a plate
+/// OCR could not name, which is exactly what a retry is for.
+pub fn unclean(read: &KeptRead, clipped: &[&'static str]) -> bool {
+    if read.rooms.iter().any(|reading| !reading.identity.is_known()) {
+        return true;
+    }
+    if read.marker_error.is_some() {
+        return true;
+    }
+    if !clipped.contains(&REMAINING_REGION) && read.panel.incursions_remaining.is_none() {
+        return true;
+    }
+    if !clipped.contains(&PANEL_REGION) {
+        if read.panel.architects.len() < ARCHITECTS_PER_PANEL {
+            return true;
+        }
+        if read
+            .panel
+            .architects
+            .iter()
+            .any(|offer| offer.target.identity().is_none())
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// The user's Re-arm button, as a counter the loop spends once.
+///
+/// It was `ReadGate`, and carried the whole "is what I am looking at the thing I
+/// already read?" question: two fingerprints, a panel-lost reset, and this. All
+/// of that moved to the board key in POE-249 — `super::run::LoopState::board`,
+/// keyed on `(temple_epoch, temple_rearm)` — and what is left is the one input
+/// that is not derived from the screen at all.
+///
+/// The rearm counter is HALF that key, so a bump invalidates the board on its
+/// own. This exists for the other half of the button's contract: a re-arm
+/// pressed while nothing is anchored must still force an anchor ATTEMPT, and
+/// nothing on an empty screen produces a key to compare. See
+/// `super::run::wants_full_read`, which peeks here and spends the bump on the
+/// tick it promoted for.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub struct ReadGate {
-    read: Option<(u64, u64)>,
+pub struct RearmGate {
     rearm_seen: u64,
 }
 
-impl ReadGate {
+impl RearmGate {
     /// Whether the user's re-arm counter has moved since the last read, WITHOUT
     /// spending the bump.
     ///
@@ -1202,101 +1508,98 @@ impl ReadGate {
 
     /// Spend a re-arm bump.
     ///
-    /// Drops the recorded read as well as recording the counter, because a
-    /// bump means "read this board again even though it looks identical" —
-    /// recording the counter alone would let the read it forced match its own
-    /// fingerprint and skip.
-    ///
-    /// **The detect tick must call this on the tick it promoted for a bump.**
-    /// [`Self::layout_wants_read`] is reached only after a read that SUCCEEDED,
-    /// so a re-arm pressed while no panel is on screen would otherwise stay
-    /// pending forever and pin the loop into the full read on every tick — the
-    /// exact cost [`super::run`]'s detect tick exists to remove, re-entered
-    /// through the settings commands, which re-arm on every change.
+    /// **The detect tick must call this on the tick it promoted for a bump**, or
+    /// a re-arm pressed while no panel is on screen stays pending forever and
+    /// pins the loop into an anchor attempt on every tick — the exact cost the
+    /// detect tick exists to remove, re-entered through the settings commands,
+    /// which re-arm on every change.
     pub fn note_rearm(&mut self, rearm: u64) {
         self.rearm_seen = rearm;
-        self.read = None;
     }
+}
 
-    /// Whether the layout fingerprint alone already justifies a full read.
-    ///
-    /// `rearm` is the user's re-arm counter; a bump forces one read and is then
-    /// spent, so holding the button down does not pin the loop into re-reading
-    /// forever. A bump the detect tick already spent is no longer pending here,
-    /// which is why this and that tick share one writer.
-    pub fn layout_wants_read(&mut self, layout: u64, rearm: u64) -> bool {
-        if self.rearm_pending(rearm) {
-            self.note_rearm(rearm);
-            return true;
-        }
-        !matches!(self.read, Some((seen, _)) if seen == layout)
+// ------------------------------------------------- fixtures, shared -------
+//
+// At module level and `pub(crate)` rather than inside this file's `mod tests`,
+// because `super::run`'s tests build boards too: `run::kept_for` decides what
+// happens to a whole [`KeptRead`], and a second constructor over there would be
+// a second answer to "what does a read look like?" for the two files that have
+// to agree about it. This file's own helpers build on these.
+
+/// The origin and scale [`fixture_layout`] builds its board at — a plausible
+/// anchored Entrance on a 1374-wide capture. Named so a test can rebuild the
+/// same lattice without copying two numbers out of the helper.
+#[cfg(test)]
+pub(crate) const FIXTURE_ORIGIN: (i32, i32) = (673, 494);
+/// See [`FIXTURE_ORIGIN`].
+#[cfg(test)]
+pub(crate) const FIXTURE_SCALE: f32 = 0.99;
+
+#[cfg(test)]
+pub(crate) fn fixture_calibration() -> AnchorCalibration {
+    AnchorCalibration {
+        screen_w: 1374,
+        screen_h: 773,
+        scale: 0.99,
     }
+}
 
-    /// Whether the panel's text has moved since the last completed read.
-    ///
-    /// Only consulted when [`Self::layout_wants_read`] said no — it costs the
-    /// two bounded OCR crops [`super::run::panel_text`] takes, which the cheap
-    /// tick exists to avoid.
-    pub fn panel_wants_read(&self, panel: u64) -> bool {
-        !matches!(self.read, Some((_, seen)) if seen == panel)
+/// A layout with the given current room and door sets, anchored at
+/// [`FIXTURE_ORIGIN`]; every other field is a plausible constant, because
+/// nothing reading this cares about them.
+#[cfg(test)]
+pub(crate) fn fixture_layout(
+    current: Option<Slot>,
+    doors: &[(Slot, Slot)],
+    uncertain: &[(Slot, Slot)],
+) -> TempleLayout {
+    // `slots` is the lattice the anchor fixes — `reader::read_layout_at`
+    // fills it from exactly this expression. A filler `[(0, 0); 13]` was
+    // harmless while nothing read the field; it is not now that the
+    // projection publishes the centres (POE-227).
+    let lattice = Lattice::new(FIXTURE_ORIGIN, FIXTURE_SCALE);
+    TempleLayout {
+        origin: lattice.origin,
+        scale: lattice.scale,
+        ncc: 0.94,
+        confidence: Confidence::High,
+        current,
+        doors: doors.iter().map(|(a, b)| Edge::new(*a, *b)).collect(),
+        uncertain: uncertain.iter().map(|(a, b)| Edge::new(*a, *b)).collect(),
+        slots: lattice.centres,
+        thresholds: super::doors::Thresholds { horizontal: 0.20, diagonal: 0.20 },
+        calibration: fixture_calibration(),
     }
+}
 
-    /// Remember what a completed read saw.
-    pub fn record(&mut self, layout: u64, panel: u64) {
-        self.read = Some((layout, panel));
-    }
-
-    /// The panel left the screen. The next one that appears is a new decision
-    /// even if it looks identical — this is what makes "close the panel, kill
-    /// the architect, reopen" re-read rather than show the pre-kill board.
-    pub fn on_panel_lost(&mut self) {
-        self.read = None;
+/// One [`KeptRead`] over `layout`: no plate named, no title, no offer, no
+/// diamond. The payload a test can watch a merge or a DROP move around without
+/// any of it standing in for the decision being tested.
+#[cfg(test)]
+pub(crate) fn fixture_read(layout: TempleLayout) -> KeptRead {
+    KeptRead {
+        layout,
+        rooms: Vec::new(),
+        panel: PanelReading {
+            room: Match::Unknown,
+            room_rect: None,
+            architects: Vec::new(),
+            incursions_remaining: None,
+        },
+        settled: None,
+        marker_error: None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The shared fixtures above, under the short names this file's 40-odd call
+    // sites already read at.
+    use super::fixture_layout as layout;
     use crate::temple::advisor::rules::ArchitectChoice;
-    use crate::temple::doors::Thresholds;
     use crate::temple::lattice::{Lattice, Slot};
     use crate::temple::rooms::{match_room_name, resolve_name};
-
-    fn calibration() -> AnchorCalibration {
-        AnchorCalibration {
-            screen_w: 1374,
-            screen_h: 773,
-            scale: 0.99,
-        }
-    }
-
-    /// The origin and scale [`layout`] builds its board at — a plausible
-    /// anchored Entrance on a 1374-wide capture. Named so a test can rebuild
-    /// the same lattice without copying two numbers out of the helper.
-    const FIXTURE_ORIGIN: (i32, i32) = (673, 494);
-    const FIXTURE_SCALE: f32 = 0.99;
-
-    /// A layout with the given current room and door set; every other field is
-    /// a plausible constant, because nothing below reads them.
-    fn layout(current: Option<Slot>, doors: &[(Slot, Slot)], uncertain: &[(Slot, Slot)]) -> TempleLayout {
-        // `slots` is the lattice the anchor fixes — `reader::read_layout_at`
-        // fills it from exactly this expression. A filler `[(0, 0); 13]` was
-        // harmless while nothing read the field; it is not now that the
-        // projection publishes the centres (POE-227).
-        let lattice = Lattice::new(FIXTURE_ORIGIN, FIXTURE_SCALE);
-        TempleLayout {
-            origin: lattice.origin,
-            scale: lattice.scale,
-            ncc: 0.94,
-            confidence: Confidence::High,
-            current,
-            doors: doors.iter().map(|(a, b)| Edge::new(*a, *b)).collect(),
-            uncertain: uncertain.iter().map(|(a, b)| Edge::new(*a, *b)).collect(),
-            slots: lattice.centres,
-            thresholds: Thresholds { horizontal: 0.20, diagonal: 0.20 },
-            calibration: calibration(),
-        }
-    }
 
     /// 13 plates: `named` maps a slot to the room name printed on it,
     /// everything else reads Unknown.
@@ -2348,215 +2651,470 @@ mod tests {
         );
     }
 
-    // -------------------------------------------------- change detection --
+    // ------------------------------------- the merge precondition (layout) --
 
-    /// The gate's whole purpose: an unchanged board does not buy a second
-    /// read. Fails if `layout_wants_read` ignores the recorded fingerprint.
+    /// The semantic fingerprint ignores the two fields that move between two
+    /// captures of a board nobody touched: `ncc` is a correlation score against
+    /// a frame the game redraws, and `confidence` is derived from it.
+    ///
+    /// This is what makes both consumers usable at all. [`merge_reads`]'s
+    /// precondition has to say YES on the ordinary retry, or a second look at an
+    /// unclean board would drop the first one's answers instead of filling its
+    /// gaps; and `super::run::LoopState::same_board` has to say YES on the
+    /// ordinary reopen, or every reopen would pay 28 OCR calls.
+    ///
+    /// Fails if it folds in either field — the mutation is one line,
+    /// `layout.ncc.to_bits().hash(&mut hasher)`.
     #[test]
-    fn an_unchanged_layout_does_not_re_read() {
+    fn a_rescored_read_of_an_unmoved_board_hashes_the_same() {
         let before = layout(Some(Slot::B0), &[(Slot::B0, Slot::C1)], &[]);
-        let again = layout(Some(Slot::B0), &[(Slot::B0, Slot::C1)], &[]);
-        let mut gate = ReadGate::default();
+        let mut rescored = layout(Some(Slot::B0), &[(Slot::B0, Slot::C1)], &[]);
+        rescored.ncc = 0.87;
+        rescored.confidence = Confidence::Low;
 
-        assert!(gate.layout_wants_read(layout_signature(&before), 0), "the first sight is always a read");
-        gate.record(layout_signature(&before), 7);
-
-        assert!(
-            !gate.layout_wants_read(layout_signature(&again), 0),
-            "the same board must not be re-read",
-        );
+        assert_eq!(layout_signature(&before), layout_signature(&rescored));
     }
 
-    /// A door that opened moves the fingerprint. Fails if `layout_signature`
+    /// A door that opened moves the fingerprint, so a retry taken after it
+    /// cannot be merged into the read before it. Fails if `layout_signature`
     /// skips `doors`.
     #[test]
-    fn an_opened_corridor_re_arms_the_read() {
+    fn an_opened_corridor_moves_the_layout_signature() {
         let before = layout(Some(Slot::B0), &[], &[]);
         let after = layout(Some(Slot::B0), &[(Slot::B0, Slot::C1)], &[]);
-        let mut gate = ReadGate::default();
-        gate.record(layout_signature(&before), 7);
 
-        assert!(gate.layout_wants_read(layout_signature(&after), 0));
+        assert_ne!(layout_signature(&before), layout_signature(&after));
     }
 
-    /// Moving to another room moves the fingerprint. Fails if
+    /// Moving to another room moves it too — and this is the one the settled
+    /// door markers depend on, because they are indexed off `current`. Fails if
     /// `layout_signature` skips `current`.
     #[test]
-    fn a_new_current_room_re_arms_the_read() {
+    fn a_new_current_room_moves_the_layout_signature() {
         let before = layout(Some(Slot::B0), &[], &[]);
         let after = layout(Some(Slot::C1), &[], &[]);
-        let mut gate = ReadGate::default();
-        gate.record(layout_signature(&before), 7);
 
-        assert!(gate.layout_wants_read(layout_signature(&after), 0));
+        assert_ne!(layout_signature(&before), layout_signature(&after));
     }
 
-    /// The second gate: the plates changed but no corridor did — a kill that
-    /// upgraded the room the player is standing in. Fails if `panel_signature`
-    /// ignores the panel's contents, or if `panel_wants_read` compares against
-    /// the layout half of the pair.
-    #[test]
-    fn a_changed_panel_re_arms_a_read_the_layout_alone_would_skip() {
-        let board = layout(Some(Slot::B0), &[], &[]);
-        let mut gate = ReadGate::default();
-        let before = panel_signature(&panel("Corruption Chamber", Some(6), Vec::new()));
-        gate.record(layout_signature(&board), before);
+    // ------------------------------------------------ merging a retry read --
 
-        assert!(
-            !gate.layout_wants_read(layout_signature(&board), 0),
-            "precondition: the pixels did not move",
-        );
-        assert!(
-            gate.panel_wants_read(panel_signature(&panel(
-                "Catalyst of Corruption",
-                Some(5),
-                Vec::new(),
-            ))),
-            "a changed panel must re-arm",
-        );
-        assert!(
-            !gate.panel_wants_read(before),
-            "an unchanged panel must not",
-        );
+    /// A read of the fixture board: `named` plates, `title`/`remaining`/`offers`
+    /// on the panel, a settled door set and no marker error.
+    fn kept_read(
+        named: &[(Slot, &str)],
+        title: &str,
+        remaining: Option<u8>,
+        offers: Vec<ArchitectOffer>,
+    ) -> KeptRead {
+        KeptRead {
+            rooms: board_rooms(named),
+            panel: panel(title, remaining, offers),
+            settled: Some(BTreeSet::from([Edge::new(Slot::B0, Slot::C1)])),
+            ..fixture_read(layout(Some(Slot::B0), &[(Slot::B0, Slot::C1)], &[]))
+        }
     }
 
-    /// The point of hashing the PARSED panel: text the crop caught but the
-    /// panel did not print — screen furniture, a tooltip, a chat line — leaves
-    /// the fingerprint alone, so it cannot buy a 26-crop re-read every four
-    /// seconds for as long as it is on screen.
-    ///
-    /// The stray line is a MIS-READ of the window header, `tample of atzoatl`,
-    /// which `panel.rs` measures at 0.9190 against `Apex of Atzoatl` — a
-    /// confident, wrong room name. Two guards keep it out of the parse
-    /// (`is_screen_furniture`, and `title_match`'s exact-only rule for the two
-    /// fixed slots), and `panel.rs` documents the second as the backstop for
-    /// the first: gut BOTH and the stray line becomes the title, which moves
-    /// the fingerprint and re-arms the read on nothing. Verified as the
-    /// mutation — either guard alone still holds this line, which is what
-    /// "backstop" means.
+    /// Every plate named, both offers resolved, a budget and a settled diamond —
+    /// the read [`unclean`] must call clean.
+    fn clean_read() -> KeptRead {
+        kept_read(
+            &Slot::ALL.map(|slot| (slot, "Chasm")),
+            "Chasm",
+            Some(6),
+            vec![
+                offer("Guatelitzi", "Corruption Chamber", OfferKind::Change),
+                offer("Ticaba", "Storage Room", OfferKind::Upgrade),
+            ],
+        )
+    }
+
+    /// A plate the retry could not name keeps the identity the first read got.
+    /// Fails if the merge takes the fresh plates wholesale — the board would
+    /// lose a room the player had already been shown.
     #[test]
-    fn text_the_panel_did_not_print_does_not_move_the_panel_fingerprint() {
-        let printed = [
-            "Tombs".to_string(),
-            "Ticaba, Architect of the Arena".to_string(),
-            "(Kill to change to Storage Room)".to_string(),
-            "9 Incursions Remaining".to_string(),
-        ];
-        // Between the title and the architect block, which is exactly where
-        // `read_panel`'s positional rule looks first — anywhere else and the
-        // real title would win for a reason that has nothing to do with the
-        // guards this pins.
-        let with_stray = [
-            printed[0].clone(),
-            "Tample of Atzoatl".to_string(),
-            printed[1].clone(),
-            printed[2].clone(),
-            printed[3].clone(),
-        ];
+    fn a_known_plate_is_not_replaced_by_an_unknown_retry() {
+        let kept = kept_read(&[(Slot::B0, "Chasm")], "Chasm", Some(6), Vec::new());
+        let fresh = kept_read(&[], "Chasm", Some(6), Vec::new());
+
+        let merged = merge_reads(&kept, fresh);
 
         assert_eq!(
-            panel_signature(&crate::temple::panel::read_panel(&printed)),
-            panel_signature(&crate::temple::panel::read_panel(&with_stray)),
-            "text the panel did not print must not re-arm the read",
+            merged.rooms[Slot::B0.index()].identity.identity().map(|id| id.display_name()),
+            Some("Chasm"),
         );
     }
 
-    /// The other half of the same rule: a field the panel DOES publish moves
-    /// the fingerprint. Fails if `panel_signature` drops the offers, which
-    /// would leave the slice showing the pre-kill architect block until
-    /// something else re-armed.
+    /// …and the other direction: a plate the first read missed is filled in by
+    /// the retry, which is the whole reason the retry runs. Fails if the merge
+    /// prefers the kept plate unconditionally.
     #[test]
-    fn a_changed_architect_offer_moves_the_panel_fingerprint() {
-        let before = panel(
-            "Chasm",
-            Some(6),
-            vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
-        );
-        let after = panel(
-            "Chasm",
-            Some(6),
-            vec![offer("Guatelitzi", "Storage Room", OfferKind::Change)],
-        );
+    fn an_unknown_plate_is_filled_in_by_a_retry_that_read_it() {
+        let kept = kept_read(&[], "Chasm", Some(6), Vec::new());
+        let fresh = kept_read(&[(Slot::B0, "Chasm")], "Chasm", Some(6), Vec::new());
 
-        assert_ne!(panel_signature(&before), panel_signature(&after));
+        let merged = merge_reads(&kept, fresh);
+
+        assert_eq!(
+            merged.rooms[Slot::B0.index()].identity.identity().map(|id| id.display_name()),
+            Some("Chasm"),
+        );
     }
 
-    /// The room the panel is titled after re-arms the read. This is the case
-    /// the pixel gate cannot see at all: a kill that upgrades the room the
-    /// player is standing in changes a name and a numeral and no corridor.
+    /// An offer the retry could not resolve keeps the resolved one at the same
+    /// index — and the RECT comes with it, because a box from one read under an
+    /// identity from another points the overlay at a line it is not describing.
     ///
-    /// Fails if `panel_signature` drops the title, which would leave the slice
-    /// showing the pre-kill room until the player moved.
+    /// Fails if the merge takes the fresh block whatever it resolved to.
     #[test]
-    fn a_changed_room_title_moves_the_panel_fingerprint() {
-        let before = panel("Catalyst of Corruption", Some(6), Vec::new());
-        let after = panel("Locus of Corruption", Some(6), Vec::new());
+    fn a_resolved_offer_is_not_replaced_by_an_unresolved_one_at_the_same_index() {
+        let mut resolved = offer("Guatelitzi", "Corruption Chamber", OfferKind::Change);
+        resolved.rect = Some([10, 20, 30, 40]);
+        let mut unread = offer("Guatelitzi", "qqqq zzzz", OfferKind::Change);
+        unread.rect = Some([99, 99, 9, 9]);
+        let kept = kept_read(&[], "Chasm", Some(6), vec![resolved, offer("Ticaba", "Storage Room", OfferKind::Upgrade)]);
+        let fresh = kept_read(&[], "Chasm", Some(6), vec![unread, offer("Ticaba", "Storage Room", OfferKind::Upgrade)]);
 
-        assert_ne!(panel_signature(&before), panel_signature(&after));
-    }
+        let merged = merge_reads(&kept, fresh);
 
-    /// A budget that ticked down re-arms even when nothing else moved. Fails
-    /// if `panel_signature` drops `incursions_remaining`, which the advisor
-    /// scores every rollout against.
-    #[test]
-    fn a_spent_incursion_moves_the_panel_fingerprint() {
-        let before = panel("Chasm", Some(6), Vec::new());
-        let after = panel("Chasm", Some(5), Vec::new());
-
-        assert_ne!(panel_signature(&before), panel_signature(&after));
-    }
-
-    /// Closing and reopening the panel re-arms even on an identical board.
-    /// Fails if `on_panel_lost` does not clear the recorded read.
-    #[test]
-    fn losing_the_panel_re_arms_the_next_identical_board() {
-        let board = layout(Some(Slot::B0), &[], &[]);
-        let mut gate = ReadGate::default();
-        gate.record(layout_signature(&board), 7);
-        assert!(!gate.layout_wants_read(layout_signature(&board), 0), "precondition");
-
-        gate.on_panel_lost();
-
-        assert!(gate.layout_wants_read(layout_signature(&board), 0));
-    }
-
-    /// The explicit re-arm forces exactly ONE read, not a permanent one.
-    /// Fails if the counter is never recorded (re-reads forever) or recorded
-    /// without forcing the read (the button does nothing).
-    #[test]
-    fn an_explicit_rearm_forces_one_read_and_then_stops() {
-        let board = layout(Some(Slot::B0), &[], &[]);
-        let mut gate = ReadGate::default();
-        gate.record(layout_signature(&board), 7);
-
-        assert!(gate.layout_wants_read(layout_signature(&board), 1), "the bump forces a read");
-        gate.record(layout_signature(&board), 7);
-        assert!(
-            !gate.layout_wants_read(layout_signature(&board), 1),
-            "the same counter value must not force a second read",
+        assert_eq!(merged.panel.architects[0].printed_target, "Corruption Chamber");
+        assert_eq!(
+            merged.panel.architects[0].rect,
+            Some([10, 20, 30, 40]),
+            "the rect travels with the block it belongs to",
         );
+    }
+
+    /// The panel always prints two blocks, so a retry that found one found half
+    /// a panel — the merge keeps the two-block read whole rather than pairing
+    /// block 0 of one against block 0 of the other.
+    ///
+    /// Fails if the unequal-length case falls through to the per-index merge:
+    /// POE-243 sorts blocks by where they were drawn, so a one-block read's
+    /// block 0 is not necessarily the same offer.
+    #[test]
+    fn a_one_offer_retry_does_not_shorten_a_two_offer_read() {
+        let kept = kept_read(
+            &[],
+            "Chasm",
+            Some(6),
+            vec![
+                offer("Guatelitzi", "Corruption Chamber", OfferKind::Change),
+                offer("Ticaba", "Storage Room", OfferKind::Upgrade),
+            ],
+        );
+        let fresh = kept_read(&[], "Chasm", Some(6), vec![offer("Ticaba", "Storage Room", OfferKind::Upgrade)]);
+
+        let merged = merge_reads(&kept, fresh);
+
+        assert_eq!(merged.panel.architects.len(), 2);
+        assert_eq!(merged.panel.architects[0].architect_name, "Guatelitzi");
+    }
+
+    /// And the same rule the other way up: a retry that finally read BOTH blocks
+    /// replaces a one-block read wholesale. Fails if the merge keeps the longer
+    /// of the two by accident of ordering rather than by length.
+    #[test]
+    fn a_two_offer_retry_replaces_a_one_offer_read_wholesale() {
+        let kept = kept_read(&[], "Chasm", Some(6), vec![offer("Ticaba", "Storage Room", OfferKind::Upgrade)]);
+        let fresh = kept_read(
+            &[],
+            "Chasm",
+            Some(6),
+            vec![
+                offer("Guatelitzi", "Corruption Chamber", OfferKind::Change),
+                offer("Ticaba", "Storage Room", OfferKind::Upgrade),
+            ],
+        );
+
+        let merged = merge_reads(&kept, fresh);
+
+        assert_eq!(merged.panel.architects.len(), 2);
+        assert_eq!(merged.panel.architects[0].architect_name, "Guatelitzi");
+    }
+
+    /// The budget is a single number the footer either printed or did not, so
+    /// whichever read got it wins — in both directions. Fails if the merge
+    /// takes the fresh value unconditionally (a retry that lost the footer would
+    /// blank a budget the advisor scores every rollout against) or the kept one
+    /// unconditionally (the first read's `None` would never be filled).
+    #[test]
+    fn a_budget_that_either_read_got_survives_the_merge() {
+        let with_budget = kept_read(&[], "Chasm", Some(6), Vec::new());
+        let without = kept_read(&[], "Chasm", None, Vec::new());
+
+        assert_eq!(
+            merge_reads(&with_budget, without.clone()).panel.incursions_remaining,
+            Some(6),
+            "a retry that lost the footer keeps the budget",
+        );
+        assert_eq!(
+            merge_reads(&without, with_budget).panel.incursions_remaining,
+            Some(6),
+            "and a retry that found it fills one in",
+        );
+    }
+
+    /// The title follows the same rule as the plates: a retry that could not
+    /// read it keeps the name the first read got, and the title's own rect goes
+    /// with it. Fails if `room`/`room_rect` are taken from different reads.
+    #[test]
+    fn an_unread_title_keeps_the_name_and_the_rect_of_the_read_that_got_it() {
+        let mut kept = kept_read(&[], "Chasm", Some(6), Vec::new());
+        kept.panel.room_rect = Some([1, 2, 3, 4]);
+        let mut fresh = kept_read(&[], "qqqq zzzz", Some(6), Vec::new());
+        fresh.panel.room_rect = Some([50, 60, 70, 80]);
+
+        let merged = merge_reads(&kept, fresh);
+
+        assert_eq!(merged.panel.room.identity().map(|id| id.display_name()), Some("Chasm"));
+        assert_eq!(merged.panel.room_rect, Some([1, 2, 3, 4]));
+    }
+
+    /// A diamond the retry read replaces the one before it — a newer look at the
+    /// same corridors is the better answer. Fails if the kept door set is
+    /// preferred.
+    #[test]
+    fn a_retry_that_read_the_diamond_replaces_the_settled_doors() {
+        let mut kept = kept_read(&[], "Chasm", Some(6), Vec::new());
+        kept.settled = Some(BTreeSet::from([Edge::new(Slot::B0, Slot::C0)]));
+        let mut fresh = kept_read(&[], "Chasm", Some(6), Vec::new());
+        fresh.settled = Some(BTreeSet::from([Edge::new(Slot::B0, Slot::C1)]));
+
+        let merged = merge_reads(&kept, fresh);
+
+        assert_eq!(merged.settled, Some(BTreeSet::from([Edge::new(Slot::B0, Slot::C1)])));
+        assert_eq!(merged.marker_error, None);
+    }
+
+    /// A retry whose diamond FAILED keeps the door set the first read settled,
+    /// and the reason that read carried — a marker error is the whole diamond
+    /// failing, not one seal, so there is nothing partial to take from it.
+    ///
+    /// Fails if the fresh `settled`/`marker_error` are taken unconditionally:
+    /// the room widget would lose its corridors on a retry the read was supposed
+    /// to improve.
+    #[test]
+    fn a_failed_retry_diamond_keeps_the_doors_the_first_read_settled() {
+        let kept = kept_read(&[], "Chasm", Some(6), Vec::new());
+        let mut fresh = kept_read(&[], "Chasm", Some(6), Vec::new());
+        fresh.settled = None;
+        fresh.marker_error = Some("read 3 door markers for a 4-neighbour room".to_string());
+
+        let merged = merge_reads(&kept, fresh);
+
+        assert_eq!(merged.settled, Some(BTreeSet::from([Edge::new(Slot::B0, Slot::C1)])));
+        assert_eq!(merged.marker_error, None, "the kept read had no error to carry");
+    }
+
+    /// BOTH diamonds failed, so the merged read has no door set — and the kept
+    /// read's REASON is what it carries out, because that is the only
+    /// explanation either read produced.
+    ///
+    /// The `marker_error` is not decoration: `unclean` reads it, so a merged
+    /// read with no doors and no error is a board the retry budget stops
+    /// improving with nothing on the page saying why. Fails on the mutation
+    /// `(kept.settled.clone(), None)` — the fallback arm dropping the kept
+    /// reason while keeping the kept (absent) doors.
+    #[test]
+    fn two_failed_diamonds_carry_the_kept_reads_reason_out() {
+        // Otherwise CLEAN on both sides, so the `unclean` assertion below can
+        // only be answered by the marker error the merge carried out.
+        let mut kept = clean_read();
+        kept.settled = None;
+        kept.marker_error = Some("the diamond rect fell outside the capture".to_string());
+        let mut fresh = clean_read();
+        fresh.settled = None;
+        fresh.marker_error = Some("read 3 door markers for a 4-neighbour room".to_string());
+
+        let merged = merge_reads(&kept, fresh);
+
+        assert_eq!(merged.settled, None);
+        assert_eq!(
+            merged.marker_error.as_deref(),
+            Some("the diamond rect fell outside the capture"),
+        );
+        assert!(unclean(&merged, &[]), "a board with no doors and no reason is not clean");
+    }
+
+    /// The precondition. A board whose frame moved is a DIFFERENT board — the
+    /// player walked through a door — so the fresh read stands alone and the
+    /// kept one is dropped.
+    ///
+    /// Fails if the merge runs anyway: the old room's settled corridors would be
+    /// published under the new room's name, and a plate the player has already
+    /// left would fill in one they are looking at.
+    #[test]
+    fn a_read_of_a_moved_board_is_returned_unmerged() {
+        let mut kept = kept_read(&[(Slot::B0, "Chasm")], "Chasm", Some(6), Vec::new());
+        kept.layout = layout(Some(Slot::B0), &[], &[]);
+        let mut fresh = kept_read(&[], "qqqq zzzz", None, Vec::new());
+        fresh.layout = layout(Some(Slot::C1), &[], &[]);
+
+        let merged = merge_reads(&kept, fresh.clone());
+
+        assert_eq!(merged, fresh, "nothing of the old board may reach the new one");
+    }
+
+    /// The band, on the merge side. An anchor origin that landed one px away is
+    /// the same sheet re-found, so the retry FOLDS into what the first read got
+    /// rather than replacing it.
+    ///
+    /// This is the half that makes the tolerance worth having: at bit-exact
+    /// origins a jittered retry threw away the plate the first read had already
+    /// named, on a board the player was looking at. Fails if `merge_reads` stops
+    /// using `BoardFrame::matches` — a bare `==` on the frames, or the old
+    /// `layout_signature` comparison with origin folded back into it.
+    #[test]
+    fn a_one_pixel_wobble_still_merges_into_the_kept_read() {
+        let kept = kept_read(&[(Slot::B0, "Chasm")], "Chasm", Some(6), Vec::new());
+        let mut fresh = kept_read(&[], "Chasm", Some(6), Vec::new());
+        fresh.layout.origin = (kept.layout.origin.0 + 1, kept.layout.origin.1);
+
+        let merged = merge_reads(&kept, fresh);
+
+        assert_eq!(
+            merged.rooms[Slot::B0.index()].identity.identity().map(|id| id.display_name()),
+            Some("Chasm"),
+        );
+    }
+
+    /// …and past the band it does not. The window was dragged, every ROI is
+    /// somewhere else, and the fresh read is the only one that describes the
+    /// frame the player is looking at.
+    ///
+    /// Fails if the tolerance is widened past `FRAME_ORIGIN_TOLERANCE`, or
+    /// dropped entirely: a plate read at the old coordinates would be published
+    /// as a plate at the new ones.
+    #[test]
+    fn a_move_past_the_tolerance_returns_the_fresh_read_unmerged() {
+        let kept = kept_read(&[(Slot::B0, "Chasm")], "Chasm", Some(6), Vec::new());
+        let mut fresh = kept_read(&[], "Chasm", Some(6), Vec::new());
+        fresh.layout.origin = (
+            kept.layout.origin.0 + FRAME_ORIGIN_TOLERANCE + 1,
+            kept.layout.origin.1,
+        );
+
+        let merged = merge_reads(&kept, fresh.clone());
+
+        assert_eq!(merged, fresh, "nothing of the old frame may reach the new one");
+    }
+
+    // ---------------------------------------- what is worth a retry at all --
+
+    /// The clean case: every plate named, both offers resolved, a budget and a
+    /// diamond. Fails if any cause is evaluated inverted — the loop would then
+    /// spend its whole retry budget on every board.
+    #[test]
+    fn a_read_with_nothing_missing_is_clean() {
+        assert!(!unclean(&clean_read(), &[]));
+    }
+
+    /// An unread plate is worth a retry: the crop is inside the board, so a
+    /// redraw can fix it. Fails if the plates are left out of the check.
+    #[test]
+    fn an_unread_plate_is_worth_a_retry() {
+        let mut read = clean_read();
+        read.rooms[Slot::C1.index()].identity = Match::Unknown;
+
+        assert!(unclean(&read, &[]));
+    }
+
+    /// A panel that printed only one architect block is a partial read of a
+    /// panel that always prints two. Fails if the arity is left out.
+    #[test]
+    fn a_panel_with_one_architect_block_is_worth_a_retry() {
+        let mut read = clean_read();
+        read.panel.architects.truncate(1);
+
+        assert!(unclean(&read, &[]));
+    }
+
+    /// Both blocks read, but one names a room the vocabulary does not have —
+    /// the offer is printed and unusable. Fails if the check counts blocks
+    /// without looking at what they resolved to.
+    #[test]
+    fn an_offer_that_did_not_resolve_is_worth_a_retry() {
+        let mut read = clean_read();
+        read.panel.architects[1] = offer("Ticaba", "qqqq zzzz", OfferKind::Upgrade);
+
+        assert!(unclean(&read, &[]));
+    }
+
+    /// A diamond that failed to read is worth a retry — the seals are drawn
+    /// inside the board and a selection frame moves. Fails if `marker_error` is
+    /// left out.
+    #[test]
+    fn a_failed_diamond_read_is_worth_a_retry() {
+        let mut read = clean_read();
+        read.marker_error = Some("read 3 door markers for a 4-neighbour room".to_string());
+
+        assert!(unclean(&read, &[]));
+    }
+
+    /// An unread budget is worth a retry, because the advisor scores every
+    /// rollout against it. Fails if `incursions_remaining` is left out.
+    #[test]
+    fn an_unread_budget_is_worth_a_retry() {
+        let mut read = clean_read();
+        read.panel.incursions_remaining = None;
+
+        assert!(unclean(&read, &[]));
+    }
+
+    /// …unless the budget's own crop fell off the capture, which is a windowed
+    /// client and not something a retry can fix. Fails if the exemption is
+    /// missing: such a machine would pay three full reads for every board it
+    /// ever sees and publish the same empty footer each time.
+    #[test]
+    fn a_budget_whose_crop_is_off_the_capture_is_not_worth_a_retry() {
+        let mut read = clean_read();
+        read.panel.incursions_remaining = None;
+
+        assert!(!unclean(&read, &[REMAINING_REGION]));
+    }
+
+    /// The exemption is per REGION, not a blanket amnesty: the budget's crop
+    /// being off the capture says nothing about the plates, which are read from
+    /// the board itself.
+    ///
+    /// Fails if a clipped region short-circuits the whole check.
+    #[test]
+    fn a_clipped_budget_does_not_excuse_an_unread_plate() {
+        let mut read = clean_read();
+        read.rooms[Slot::C1.index()].identity = Match::Unknown;
+
+        assert!(unclean(&read, &[REMAINING_REGION]));
+    }
+
+    /// The panel crop being off the capture explains BOTH offer causes at once —
+    /// no blocks were read because there was nothing to read them from. Fails if
+    /// the exemption covers only one of the two.
+    #[test]
+    fn offers_missing_because_the_panel_crop_is_off_the_capture_are_not_worth_a_retry() {
+        let mut read = clean_read();
+        read.panel.architects = Vec::new();
+
+        assert!(!unclean(&read, &[PANEL_REGION]));
     }
 
     /// `rearm_pending` is a pure peek: it reports the bump and spends nothing.
-    /// [`ReadGate::note_rearm`] is the single place the bump is spent (the
-    /// promoting detect tick calls it; so does `layout_wants_read`).
+    /// [`RearmGate::note_rearm`] is the single place the bump is spent, on the
+    /// tick that promoted for it.
     ///
-    /// Fails if `rearm_pending` consumes the bump itself — the tick that
-    /// peeked would then be the only one to ever see it, and a read that
-    /// spends it through `note_rearm` would no longer drop the recorded board.
+    /// Fails if `rearm_pending` consumes the bump itself — the tick that peeked
+    /// would then be the only one to ever see it, and the anchor attempt the
+    /// button exists to force would never happen.
     #[test]
     fn rearm_pending_peeks_and_note_rearm_is_what_spends_the_bump() {
-        let board = layout(Some(Slot::B0), &[], &[]);
-        let mut gate = ReadGate::default();
-        gate.record(layout_signature(&board), 7);
+        let mut gate = RearmGate::default();
         assert!(!gate.rearm_pending(0), "nothing pressed yet");
 
         assert!(gate.rearm_pending(1), "the bump is visible");
         assert!(gate.rearm_pending(1), "and peeking does not spend it");
-        assert!(
-            gate.layout_wants_read(layout_signature(&board), 1),
-            "the read still sees the bump it was promoted for",
-        );
+
+        gate.note_rearm(1);
+
         assert!(!gate.rearm_pending(1), "which is what spends it");
     }
 

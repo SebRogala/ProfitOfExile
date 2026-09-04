@@ -169,7 +169,7 @@ pub fn temple_rearm(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Bump the counter `slice::ReadGate` watches.
+/// Bump the counter `slice::RearmGate` watches.
 ///
 /// An atomic rather than a field of `temple_settings`: it is read on every tick
 /// and never read together with the settings, and a counter that shared their
@@ -525,7 +525,8 @@ pub struct DumpLine {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DumpRegion {
-    /// `"panel"` or `"remaining"`.
+    /// [`super::slice::PANEL_REGION`] or [`super::slice::REMAINING_REGION`] —
+    /// `super::run::text_regions` is what fills it.
     pub region: String,
     /// The ROI this region was cropped at, capture px.
     pub rect: [i32; 4],
@@ -720,7 +721,7 @@ mod tests {
     fn the_ocr_line_dump_round_trips_through_its_camel_case_keys() {
         let dump = OcrLinesDump {
             regions: vec![DumpRegion {
-                region: "panel".to_string(),
+                region: super::slice::PANEL_REGION.to_string(),
                 rect: [1288, 92, 400, 300],
                 origin: [1288, 92],
                 lines_in_engine_order: vec![DumpLine {

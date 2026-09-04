@@ -318,9 +318,10 @@ pub fn anchor(img: &DynamicImage) -> Result<Anchor, ReadError> {
 ///
 /// **The capture loop never calls this.** Its step 3 is [`full_sweep`], which
 /// measured 28.4 s in the Linux container and 347.8 s on the laptop that
-/// reported POE-234 — a price a 1 Hz loop may not pay on a screen with nothing
-/// on it. `super::run` calls [`anchor_for_loop`], which is this chain with that
-/// step replaced by [`Scene::pyramid_sweep`]. What still reaches here is
+/// reported POE-234 — a price a loop ticking every `super::run::DETECT_INTERVAL`
+/// (650 ms, ~1.5 Hz) may not pay on a screen with nothing on it. `super::run`
+/// calls [`anchor_for_loop`], which is this chain with that step replaced by
+/// [`Scene::pyramid_sweep`]. What still reaches here is
 /// `super::commands::temple_debug_capture`, where the user pressed a button and
 /// is waiting, and `super::reader::read_layout`, which the tests and the
 /// fixtures go through.
