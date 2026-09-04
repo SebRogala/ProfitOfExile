@@ -43,8 +43,9 @@ Consequences that follow from the order, not from extra rules:
   read (the loop is armed), silently.
 - A death is a zone change (row 4). A sheet opened from the hideout with Alva silent is not in
   scope — **Re-arm** is the manual override (`temple_rearm`, 60 s), unchanged since POE-242.
-- The keys setting (`temple_keys`) is orthogonal; POE-248 item 9 (the faint second-stone door)
-  is what makes it unnecessary.
+- The keys setting (`temple_keys`) is GONE (POE-253): stones drop from the kill INSIDE the
+  incursion, after the sheet has been read, so the count was a prediction nobody could fill
+  in. POE-248 item 9 (the faint second-stone door) is the second stone's answer.
 
 Four residuals the rules above produce, all ACCEPTED with their answer named (POE-249, owner
 decisions 1, 3 and 4 of the plan review):

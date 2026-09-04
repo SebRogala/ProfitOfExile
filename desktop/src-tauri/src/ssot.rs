@@ -1523,7 +1523,7 @@ mod tests {
     }
 
     /// The echo survives the module being switched off, for the reason the
-    /// temple's `keys`/`config` echo does: it is what the USER set, and the
+    /// temple's `config`/`profile` echo does: it is what the USER set, and the
     /// page renders its guide toggles from it while the module is off
     /// (ADR-014 — the page reads the slice, never `ssot.modules`).
     #[test]
@@ -1588,7 +1588,6 @@ mod tests {
             [("temple".to_string(), true)].into_iter().collect();
         let slice = crate::temple::slice::TempleSlice {
             status: crate::temple::slice::TempleStatus::Read,
-            keys: 2,
             unknown_rooms: vec!["A0".to_string()],
             mode: Some("chase".to_string()),
             ..Default::default()
@@ -1610,7 +1609,6 @@ mod tests {
         );
 
         assert_eq!(out.temple.status, crate::temple::slice::TempleStatus::Read);
-        assert_eq!(out.temple.keys, 2);
         assert_eq!(out.temple.unknown_rooms, vec!["A0".to_string()]);
         assert_eq!(out.temple.mode, Some("chase".to_string()));
     }

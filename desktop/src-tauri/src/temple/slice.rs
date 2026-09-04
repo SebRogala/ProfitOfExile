@@ -85,8 +85,15 @@ impl Default for TempleProfileSettings {
     }
 }
 
-/// Largest number of opening stones one incursion can drop.
-pub const MAX_KEYS: u8 = 2;
+/// The opening stones the player has in hand when the sheet is read: one.
+///
+/// The advisor keeps its `keys` parameter, and since POE-253 this constant is
+/// its only production value. There is no setting behind it: stones drop from
+/// the kill INSIDE the incursion, after the sheet has been read, so a count
+/// asked for up front is a prediction the player cannot make. A second stone
+/// in hand is `advisor::conditional_second_door`'s answer — the faint
+/// second door it draws is what that case looks like on screen.
+pub const KEYS_IN_HAND: u8 = 1;
 
 impl TempleProfileSettings {
     /// The Rush with these four fields applied.
@@ -125,12 +132,12 @@ impl TempleProfileSettings {
     }
 }
 
-/// Everything the temple module persists — the user's profile tuning, the two
-/// config flags and the key count.
+/// Everything the temple module persists — the user's profile tuning and the
+/// two config flags.
 ///
-/// One `AppState` Mutex holds this whole struct while `settings.json` keeps
-/// three separate fields, so a hand-edited file stays readable and one bad
-/// field defaults on its own (`#[serde(default)]` per field on `Settings`).
+/// One `AppState` Mutex holds this whole struct while `settings.json` keeps two
+/// separate fields, so a hand-edited file stays readable and one bad field
+/// defaults on its own (`#[serde(default)]` per field on `Settings`).
 ///
 /// **No calibration field.** It held one until POE-234 WI-2 — the remembered
 /// anchor scale, keyed on the capture size — and that was the app's SECOND
@@ -146,37 +153,6 @@ impl TempleProfileSettings {
 pub struct TempleSettings {
     pub profile: TempleProfileSettings,
     pub config: TempleConfig,
-    /// Opening stones this incursion dropped. The panel does not print it, so
-    /// the user sets it; 1 is the common case.
-    pub keys: u8,
-}
-
-/// The common case: one opening stone dropped. `u8::default()` is 0, which is
-/// a legal but uncommon board, so this is the number every default path uses.
-pub fn default_keys() -> u8 {
-    1
-}
-
-impl TempleSettings {
-    /// The shipped defaults. `Default::default()` gives `keys: 0`, which is a
-    /// legal but uncommon board — go through here, never through the derive.
-    pub fn shipped() -> TempleSettings {
-        TempleSettings {
-            profile: TempleProfileSettings::default(),
-            config: TempleConfig::default(),
-            keys: default_keys(),
-        }
-    }
-}
-
-/// Reject a key count the game cannot produce.
-pub fn validate_keys(keys: u8) -> Result<(), String> {
-    if keys > MAX_KEYS {
-        return Err(format!(
-            "an incursion drops at most {MAX_KEYS} opening stones, got {keys}"
-        ));
-    }
-    Ok(())
 }
 
 // ------------------------------------------------------------- wire types --
@@ -501,8 +477,8 @@ pub struct AdviceView {
     /// ranking, RU can win it, which is the chain saying *do not spend a second
     /// key on this board*. This is the wire form. The overlay draws it as a faint purple
     /// seal beside the bright suggested one, which is what lets a player who
-    /// finds a second stone mid-incursion act without having configured the
-    /// keys setting first.
+    /// finds a second stone mid-incursion act on it — and, since POE-253, is
+    /// the WHOLE answer to a second stone: there is no count to configure.
     ///
     /// NOT a member of `recommendations[0].doors`: those are the doors to open
     /// NOW, and merging the conditional one into them would tell a one-key
@@ -582,14 +558,12 @@ pub struct TempleSlice {
     /// Chase or Scarab, from the profile's own selector. `None` with no
     /// advice.
     pub mode: Option<String>,
-    /// The user's key count, echoed so the overlay does not need a second
-    /// command to render its own control.
-    pub keys: u8,
-    /// The two config flags in force, echoed for the same reason as [`Self::keys`]
-    /// — the page renders the controls it owns from ONE source, and there is no
-    /// getter command to ask a second time. Settings, not a reading: unlike
-    /// [`Self::advice`] it survives [`force_off`], because a switched-off module's
-    /// settings are still the settings the next read will use.
+    /// The two config flags in force, echoed so the overlay does not need a
+    /// second command to render its own controls — the page renders the
+    /// controls it owns from ONE source, and there is no getter command to ask
+    /// a second time. Settings, not a reading: unlike [`Self::advice`] it
+    /// survives [`force_off`], because a switched-off module's settings are
+    /// still the settings the next read will use.
     pub config: TempleConfig,
     /// The four tunable profile fields in force. Same ownership and same
     /// survival rule as [`Self::config`].
@@ -639,7 +613,6 @@ pub struct ReadResult<'a> {
     /// which is what CLEARS the field on the slice.
     pub read_notice: Option<String>,
     pub advice: Option<&'a Advice>,
-    pub keys: u8,
     /// The config flags this read was ranked under — echoed onto the slice, not
     /// used by the projection. Carried here rather than read from state because
     /// `project` is pure and the whole slice is written in one replace: a field
@@ -980,7 +953,6 @@ pub fn project(read: &ReadResult<'_>, calibration: Option<AnchorCalibration>) ->
         panel: Some(panel_view(read)),
         advice: read.advice.map(advice_view),
         mode: read.advice.map(|a| mode_label(a.mode)),
-        keys: read.keys,
         config: read.config.clone(),
         profile: read.profile.clone(),
         unknown_rooms: unknown_rooms(read.rooms),
@@ -1026,7 +998,7 @@ pub fn advise_read(
     Some(advisor::advise(
         &board,
         &panel.architects,
-        settings.keys,
+        KEYS_IN_HAND,
         &settings.profile.to_profile(),
         &settings.config,
         ROLLOUTS,
@@ -1105,7 +1077,7 @@ pub fn end_cycle(slice: &mut TempleSlice) {
 /// [`TempleSlice::read_notice`] goes with them on the same argument — it is a
 /// warning about an attempt nobody is making any more.
 ///
-/// What does NOT go is the settings echo (`keys`, `config`, `profile`). Those
+/// What does NOT go is the settings echo (`config`, `profile`). Those
 /// are not something the module read — they are what the user set, and the page
 /// renders its own controls from them while the module is off (ADR-014: the
 /// page reads the slice, never `ssot.modules`).
@@ -1677,7 +1649,6 @@ mod tests {
             marker_error: None,
             read_notice: None,
             advice,
-            keys: 1,
             config: TempleConfig::default(),
             profile: TempleProfileSettings::default(),
             read_at: 1_700_000_000_000,
@@ -1827,7 +1798,7 @@ mod tests {
         let rooms = board_rooms(&[]);
         let panel = panel("Tombs", Some(6), Vec::new());
 
-        assert!(advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).is_none());
+        assert!(advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).is_none());
     }
 
     /// Unknown plates do not stop the advisor: with a current room it still
@@ -1842,7 +1813,7 @@ mod tests {
             Some(6),
             vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
         );
-        let settings = TempleSettings::shipped();
+        let settings = TempleSettings::default();
 
         let advice = advise_read(&layout, &rooms, &panel, None, &settings)
             .expect("a board with a current room ranks");
@@ -1876,7 +1847,7 @@ mod tests {
             vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
         );
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
 
         let view = advice_view(&advice);
 
@@ -1904,7 +1875,7 @@ mod tests {
         let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
         let panel = panel("Chasm", None, Vec::new());
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
 
         assert!(
             advice.warnings.contains(&Warning::NoBudget),
@@ -1990,7 +1961,7 @@ mod tests {
             ],
         );
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
         let door = advice
             .secondary_door
             .expect("precondition: an all-closed room has a second corridor to buy")
@@ -2022,7 +1993,7 @@ mod tests {
             vec![offer("Quipolatl", "Armoury", OfferKind::Upgrade)],
         );
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
         assert!(
             advice.warnings.contains(&Warning::PartialArchitects { read: 1, expected: 2 }),
             "precondition: one block of two warns, got {:?}",
@@ -2057,7 +2028,7 @@ mod tests {
             vec![offer("Nobody", "Definitely Not A Room", OfferKind::Change)],
         );
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
         assert!(
             advice
                 .recommendations
@@ -2097,7 +2068,7 @@ mod tests {
             ],
         );
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
 
         assert!(!advice_view(&advice).forced_kill);
     }
@@ -2111,7 +2082,7 @@ mod tests {
         let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
         let panel = panel("Chasm", Some(6), Vec::new());
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
 
         let view = advice_view(&advice);
 
@@ -2334,7 +2305,7 @@ mod tests {
         );
         assert_eq!(published.built_tier, Some(3));
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped())
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default())
             .expect("a board with a current room ranks");
         let choice = ranked_choice(&advice, 0).expect("the change offer is ranked");
         assert_eq!(choice.built_tier, Tier::T3);
@@ -2366,7 +2337,7 @@ mod tests {
         assert_eq!(published.display_name, None);
         assert_eq!(published.built_tier, None);
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped())
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default())
             .expect("a board with a current room still ranks its doors");
         assert!(
             advice.warnings.contains(&Warning::UnknownCurrentTier),
@@ -2408,7 +2379,7 @@ mod tests {
         assert_eq!(published.display_name.as_deref(), Some("Atlas of Worlds"));
         assert_eq!(published.built_tier, Some(3));
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped())
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default())
             .expect("ranks");
         assert!(
             !advice.warnings.contains(&Warning::UnknownCurrentTier),
@@ -2451,7 +2422,7 @@ mod tests {
         assert_eq!(published.display_name.as_deref(), Some("Atlas of Worlds"));
         assert_eq!(published.built_tier, Some(3));
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped())
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default())
             .expect("ranks");
         assert!(
             !advice.warnings.contains(&Warning::UnknownCurrentTier),
@@ -2551,7 +2522,7 @@ mod tests {
     fn a_current_room_the_two_sources_disagree_about_reaches_the_page_as_a_warning() {
         let (layout, rooms, panel) = disagreeing_board();
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped())
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default())
             .expect("ranks");
 
         assert!(
@@ -2620,7 +2591,7 @@ mod tests {
             ],
         );
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped())
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default())
             .expect("ranks");
 
         assert_eq!(
@@ -2652,7 +2623,7 @@ mod tests {
             ],
         );
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped())
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default())
             .expect("ranks");
 
         let top = advice
@@ -3260,7 +3231,7 @@ mod tests {
     }
 
     /// The settings echo survives the module being switched off. Fails if
-    /// `force_off` blanks it: the page renders the keys/flags/profile controls
+    /// `force_off` blanks it: the page renders the flags/profile controls
     /// from the slice alone, so a wipe here would show every control at its
     /// derive default while `settings.json` says otherwise, with the module off
     /// and no loop left to correct it.
@@ -3270,7 +3241,6 @@ mod tests {
         let config = TempleConfig { artefacts_of_the_vaal: false, scarab_of_timelines: true };
         let mut s = TempleSlice {
             status: TempleStatus::Read,
-            keys: 2,
             config: config.clone(),
             profile: profile.clone(),
             ..TempleSlice::default()
@@ -3278,7 +3248,6 @@ mod tests {
 
         force_off(&mut s);
 
-        assert_eq!(s.keys, 2);
         assert_eq!(s.config, config);
         assert_eq!(s.profile, profile);
     }
@@ -3424,7 +3393,6 @@ mod tests {
         let config = TempleConfig { artefacts_of_the_vaal: false, scarab_of_timelines: true };
         let profile = TempleProfileSettings { path_cost: 3.5, ..Default::default() };
         let result = ReadResult {
-            keys: 2,
             config: config.clone(),
             profile: profile.clone(),
             ..read(&layout, &rooms, &panel, None, None)
@@ -3432,7 +3400,6 @@ mod tests {
 
         let published = project(&result, None);
 
-        assert_eq!(published.keys, 2);
         assert_eq!(published.config, config);
         assert_eq!(published.profile, profile);
     }
@@ -3694,7 +3661,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"status":"idle","waitingForPanel":false,"layout":null,"panel":null,"advice":null,"mode":null,"keys":0,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
+            r#"{"status":"idle","waitingForPanel":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
         );
     }
 
@@ -3851,7 +3818,6 @@ mod tests {
                 forced_kill: true,
             }),
             mode: Some("chase".to_string()),
-            keys: 2,
             config: TempleConfig { artefacts_of_the_vaal: false, scarab_of_timelines: true },
             profile: TempleProfileSettings {
                 apex_score: 3.5,
@@ -3874,7 +3840,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///
@@ -3901,16 +3867,6 @@ mod tests {
     }
 
     // ------------------------------------------------------- validation --
-
-    /// Keys are 0, 1 or 2 — the game drops no more. Fails if the bound is
-    /// exclusive or absent.
-    #[test]
-    fn key_counts_above_two_are_rejected() {
-        assert!(validate_keys(0).is_ok(), "zero keys is a legal board");
-        assert!(validate_keys(2).is_ok(), "two keys is the maximum");
-        let err = validate_keys(3).expect_err("three keys is not a board the game produces");
-        assert!(err.contains('3'), "the message names the rejected value, got {err:?}");
-    }
 
     /// Both profile weights are magnitudes. Fails if `validate` accepts a sign
     /// error or a NaN into the float ordering.
@@ -3973,7 +3929,6 @@ mod tests {
                 artefacts_of_the_vaal: false,
                 scarab_of_timelines: true,
             },
-            keys: 2,
         };
 
         let json = serde_json::to_string(&settings).expect("settings serialise");
@@ -4024,7 +3979,7 @@ mod tests {
 
     /// A settings file written by an older build — every temple key missing —
     /// loads as the Rush rather than as zeros. Fails if a `#[serde(default)]`
-    /// is dropped or if `Default` is used where `shipped()` is meant.
+    /// is dropped from the profile.
     #[test]
     fn missing_profile_keys_default_to_the_rush() {
         let parsed: TempleProfileSettings =
@@ -4035,18 +3990,6 @@ mod tests {
         assert_eq!(parsed.path_cost, rush.path_cost);
         assert_eq!(parsed.reroll_until_favourable, rush.reroll_until_favourable);
         assert_eq!(parsed.r4_keep_upgrade_targets, rush.r4_keep_upgrade_targets);
-    }
-
-    /// Fresh install defaults: one key, not zero. Fails if a caller reaches
-    /// for `TempleSettings::default()` where `shipped()` is meant.
-    #[test]
-    fn the_shipped_default_is_one_key() {
-        assert_eq!(TempleSettings::shipped().keys, 1);
-        assert_eq!(
-            TempleSettings::shipped().config,
-            TempleConfig::default(),
-            "Artefacts of the Vaal on, scarab off",
-        );
     }
 
     /// `identities` is indexed by slot, not by position, so a short or

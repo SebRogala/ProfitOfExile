@@ -51,34 +51,6 @@ pub const DEBUG_DIR: &str = "temple-debug";
 
 // ------------------------------------------------------------- the setters --
 
-/// Set how many opening stones this incursion dropped.
-///
-/// The panel does not print the count, so it is the one board fact the user
-/// supplies. 0 is legal (every passage from the room is already open) and 2 is
-/// the maximum — see [`slice::validate_keys`].
-#[tauri::command]
-pub fn temple_set_keys(keys: u8, app: AppHandle) -> Result<(), String> {
-    if let Err(e) = slice::validate_keys(keys) {
-        crate::app_log(&app, format!("Temple: key count rejected — {e}"));
-        return Err(e);
-    }
-    {
-        let state = app.state::<AppState>();
-        state
-            .temple_settings
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .keys = keys;
-    }
-    crate::persist_settings(&app);
-    // The slice echoes the key count so the overlay renders its own control
-    // from one source; without this write the control would not move until the
-    // next full read.
-    super::run::publish(&app, |s| s.keys = keys);
-    rearm(&app);
-    Ok(())
-}
-
 /// Set the two config flags — the Atlas passive and the scarab.
 ///
 /// Both change the *rules*, not the reading: `artefacts_of_the_vaal` changes
@@ -96,10 +68,10 @@ pub fn temple_set_config(config: TempleConfig, app: AppHandle) -> Result<(), Str
             .config = config.clone();
     }
     crate::persist_settings(&app);
-    // Echoed onto the slice for the same reason as the key count: the page and
-    // the overlay render these controls from the slice, so without this write
-    // the switch the user just flipped would not move until the next full read
-    // — and with the module off, never.
+    // Echoed onto the slice: the page and the overlay render these controls
+    // from the slice, so without this write the switch the user just flipped
+    // would not move until the next full read — and with the module off,
+    // never.
     super::run::publish(&app, |s| s.config = config.clone());
     crate::app_log(
         &app,
