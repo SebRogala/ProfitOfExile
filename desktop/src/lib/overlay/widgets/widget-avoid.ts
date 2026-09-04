@@ -9,12 +9,15 @@
  * absolute rather than a preference, and this file is the arithmetic that
  * enforces it.
  *
- * It governs BOXES. The temple's callout also draws an arrow, and a thin line
- * crossing a crop is not what breaks an OCR read — a filled shape sitting on
- * the glyphs is. That exception is bounded where it is taken
- * (`temple/overlay-geometry.ts`'s `ARROW_STANDOFF_CSS`, which stops the line
- * and its head short of the block), not here: nothing that goes through this
- * file is allowed to overlap anything.
+ * It governs BOXES a PLACER derives from the game, and since POE-248 that is
+ * everything the temple's own placers produce. There was one exception — the
+ * callout's arrow, on the argument that a thin line crossing a crop is not what
+ * breaks an OCR read while a filled shape sitting on the glyphs is — and it
+ * went with the arrow (ADR-019's amendment). A rectangle the USER placed never
+ * came through here and still does not: `placementFor` honours a stored
+ * placement without consulting an obstacle set, because refusing to draw a
+ * widget where its owner put it would be the app overruling a decision it
+ * asked for.
  *
  * Pure, and in its own module rather than inside `widget-geometry.ts`, because
  * that file is about the placement a USER makes and this one is about a

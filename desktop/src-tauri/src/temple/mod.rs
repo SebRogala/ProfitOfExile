@@ -25,6 +25,10 @@
 //! - [`advisor`] (POE-170) — the board graph, the Monte-Carlo rollout and the
 //!   rule layer that ranks `(architect kill, door set)` and decides whether to
 //!   leave the map. Consumes every module above it and is pure.
+//!
+//! The lifecycle these modules implement — what arms the loop, when a full read
+//! runs, when each overlay shows — is normative in `docs/TEMPLE-LIFECYCLE.md`.
+//!
 //! Later changes that moved where things live (2026-09-03/04):
 //! - POE-234: the anchor's cold start is `anchor::Scene::pyramid_sweep` behind
 //!   `anchor_for_loop` (hint → `MEASURED_SCALES` → pyramid); the temple reads and

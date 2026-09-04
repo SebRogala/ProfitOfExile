@@ -311,7 +311,62 @@ pub fn case_7_armourers_workshop() -> Case {
     }
 }
 
-/// The six WALKED boards, in order.
+// --- Case 8 — 2026-09-03, 3 left, in Lightning Workshop (C1) --------------
+// POE-248. One key, and only two corridors worth enumerating: C1-B0 and
+// C1-B1 — every other closed door from C1 leads back into its own component.
+// Both far ends are B slots, so the advisor scored them equal on R1-apex and
+// fell through to R2, which prefers the smaller merge and therefore took
+// B1 (a lone singleton) over B0 (a two-slot component with the Apex in it,
+// because A0-B0 is already open). Sebastian says B0: connecting to a slot that
+// is ALREADY connected to the Apex *reaches* the Apex, and that outranks a slot
+// which is merely Apex-adjacent.
+pub fn case_8_lightning_workshop() -> Case {
+    Case {
+        name: "8 LightningWorkshop",
+        state: board(
+            &[
+                (B0, "house_of_the_others", 3),
+                (B1, "wealth_of_the_vaal", 1),
+                // Chasm — a tier-0 filler, no line at all.
+                (C0, "", 0),
+                // The room he is standing in.
+                (C1, "conduit_of_lightning", 1),
+                (C2, "upgrade", 2),
+                (D0, "hall_of_champions", 3),
+                (D1, "apex_of_ascension", 1),
+                (D2, "storm_of_corruption", 1),
+                (D3, "gem", 2),
+                (E0, "court_of_sealed_death", 3),
+                (E2, "hybridisation_chamber", 3),
+            ],
+            &[
+                (A0, B0),
+                (C0, D0),
+                (C0, D1),
+                (C1, C2),
+                (C2, D2),
+                (C2, D3),
+                (D0, E0),
+                (D1, D2),
+                (D1, E0),
+                (D1, E1),
+                (D2, D3),
+                (D3, E2),
+            ],
+            C1,
+            3,
+        ),
+        offers: vec![
+            offer("Hayoxi", Upgrade, "Omnitect Reactor Plant"),
+            offer("Xopec", Change, "Explosives Room"),
+        ],
+        keys: 1,
+        decision: "open B0-C1 (A0-B0 is already open, so B0 reaches the Apex; \
+                   B1 is only Apex-adjacent)",
+    }
+}
+
+/// The seven WALKED boards, in order.
 ///
 /// [`case_7_armourers_workshop`] is deliberately not among them: it records
 /// what the app got wrong rather than what Sebastian decided, and the suites
@@ -324,6 +379,7 @@ pub fn retrospective() -> Vec<Case> {
         case_4_chasm_merge(),
         case_5_poison_garden(),
         case_6_cloister(),
+        case_8_lightning_workshop(),
     ]
 }
 

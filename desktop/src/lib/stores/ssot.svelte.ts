@@ -438,7 +438,18 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 				: {
 						...incoming.layout,
 						rois: incoming.layout.rois ?? [],
-						diamond: incoming.layout.diamond ?? null
+						// The diamond's own two POE-248 fields go through the
+						// same rule, one level deeper: `killGlyph` draws from
+						// them, and a payload from before POE-248 has a diamond
+						// with no icon spots on it.
+						diamond:
+							incoming.layout.diamond == null
+								? null
+								: {
+										...incoming.layout.diamond,
+										topIcon: incoming.layout.diamond.topIcon ?? null,
+										bottomIcon: incoming.layout.diamond.bottomIcon ?? null
+									}
 					},
 		panel: incoming.panel ?? null,
 		advice: incoming.advice ?? null,

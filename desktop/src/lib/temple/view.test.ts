@@ -34,7 +34,6 @@ import {
 	topGamble,
 	topRecommendation,
 	unknownRoomsBadge,
-	DOOR_VISIBLE_STATUSES,
 	chosenOffer,
 	doorWarning,
 	killCallout
@@ -91,6 +90,28 @@ function layout(over: Partial<LayoutView> = {}): LayoutView {
 		rois: [],
 		diamond: null,
 		...over
+	};
+}
+
+/**
+ * The room's shape, as Rust publishes it.
+ *
+ * Nothing in `view.ts` reads a coordinate off it — `overlay-geometry.ts` does —
+ * so the numbers are a placeholder and only its PRESENCE is asserted: it is
+ * what `overlayShowsDoors` tests for, because a move with no room to draw it on
+ * has nothing to show.
+ */
+function diamond() {
+	return {
+		corners: [
+			[1, 0],
+			[0, 1],
+			[-1, 0],
+			[0, -1]
+		] as [[number, number], [number, number], [number, number], [number, number]],
+		seals: [],
+		topIcon: [0.34, -0.3] as [number, number],
+		bottomIcon: [-0.34, 0.3] as [number, number]
 	};
 }
 
@@ -298,10 +319,15 @@ describe('edgeState', () => {
 		expect(edgeState('C1-C2', layout({ doors: ['C1-C2'] }))).toBe('open');
 	});
 
-	it('calls a door the selection frame covers uncertain, not open', () => {
-		// Both sets carry it: reported open, but not settled. Drawn dashed.
+	it('keeps a settled door open even though the beam flagged it uncertain', () => {
+		// POE-248's live bug, as a fixture: this is the shape a SUCCESSFUL read
+		// publishes. `doors.rs` puts every corridor incident to the current room
+		// in `uncertain` before any judgement — the selection frame covers their
+		// midpoints — and the diamond read then settles them into `doors`. The
+		// old rule tested `uncertain` and drew C1-C2 grey where the game's own
+		// seal was green.
 		expect(edgeState('C1-C2', layout({ doors: ['C1-C2'], uncertain: ['C1-C2'] }))).toBe(
-			'uncertain'
+			'open'
 		);
 	});
 
@@ -313,7 +339,7 @@ describe('edgeState', () => {
 		expect(edgeState('B0-C1', l)).toBe('unresolved');
 	});
 
-	it('marks unresolved ahead of uncertain even when the edge is also in doors', () => {
+	it('marks unresolved ahead of open even when the edge is also in doors', () => {
 		// Today's fallback publishes `doors = doors − uncertain`, so this exact
 		// payload does not occur — which is the point. The precedence is the
 		// honesty guard, and a rule only checked on inputs that cannot
@@ -334,11 +360,11 @@ describe('edgeState', () => {
 		expect(edgeState('C1-C2', null)).toBe('closed');
 	});
 
-	it('words all four states', () => {
-		for (const state of ['open', 'uncertain', 'unresolved', 'closed'] as const) {
+	it('words all three states', () => {
+		for (const state of ['open', 'unresolved', 'closed'] as const) {
 			expect(EDGE_STATE_LABEL[state], state).toBeTruthy();
 		}
-		expect(new Set(Object.values(EDGE_STATE_LABEL)).size).toBe(4);
+		expect(new Set(Object.values(EDGE_STATE_LABEL)).size).toBe(3);
 	});
 });
 
@@ -533,35 +559,43 @@ describe('badges', () => {
 
 
 describe('overlayShowsDoors', () => {
-	it('keeps the door widget up through the incursion, when the panel is gone', () => {
-		// The whole point of the second list. The door is opened INSIDE the
-		// room, and by then the layout panel is off screen — `panel_not_visible`
-		// is what the module reports for the length of that, and the board
-		// widget's own list stops exactly there.
-		expect(overlayShowsDoors('panel_not_visible')).toBe(true);
-		expect(overlayShowsBoard('panel_not_visible')).toBe(false);
+	/** A slice mid-incursion: a room read, a move ranked. */
+	function showing(over: Partial<ReturnType<typeof templeSliceDefault>> = {}) {
+		return {
+			...templeSliceDefault(),
+			status: 'panel_not_visible' as const,
+			layout: layout({ current: 'C1', diamond: diamond() }),
+			advice: advice({ recommendations: [ranked()] }),
+			...over
+		};
+	}
+
+	it('shows the widget while there is a move and a room to draw it on', () => {
+		expect(overlayShowsDoors(showing())).toBe(true);
 	});
 
-	it('shows the doors for everything the board shows them for', () => {
-		for (const status of OVERLAY_VISIBLE_STATUSES) {
-			expect(overlayShowsDoors(status), status).toBe(true);
+	it('survives every status the loop can publish while the advice stands', () => {
+		// POE-248's rule, and the regression it closes: the gate is no longer a
+		// status list. `waiting` is the capture having stood down, which is
+		// exactly what the tail of an incursion looks like — the owner watched
+		// the widget vanish there while he was still in the room.
+		for (const status of ALL_STATUSES) {
+			expect(overlayShowsDoors(showing({ status })), status).toBe(true);
 		}
 	});
 
-	it('stands down once the module stops looking', () => {
-		// `waiting` is the arm having lapsed (POE-246's PANEL_TAIL_MS), which is
-		// what bounds how stale the room on the widget can be: a board from two
-		// minutes ago at the outside, never one from the last map.
-		expect(overlayShowsDoors('waiting')).toBe(false);
-		for (const status of ['off', 'idle', 'unavailable', 'error'] as const) {
-			expect(overlayShowsDoors(status), status).toBe(false);
-		}
-		expect(DOOR_VISIBLE_STATUSES).toEqual([
-			'reading',
-			'read',
-			'no_current_room',
-			'panel_not_visible'
-		]);
+	it('hides the widget once the advice is cleared', () => {
+		// The only thing that takes it down. Rust clears the advice on a zone
+		// change, on the next Alva line after the read, and when the module is
+		// switched off (`trigger::advice_end`, `slice::force_off`).
+		expect(overlayShowsDoors(showing({ advice: null }))).toBe(false);
+	});
+
+	it('hides the widget when the read settled no room to draw', () => {
+		// Between rooms: the layout is published without a diamond, and there is
+		// no shape to hang a door on.
+		expect(overlayShowsDoors(showing({ layout: layout({ diamond: null }) }))).toBe(false);
+		expect(overlayShowsDoors(showing({ layout: null }))).toBe(false);
 	});
 });
 
@@ -761,7 +795,7 @@ describe('the door widget through a whole incursion', () => {
 	const inRoom = () => ({
 		...templeSliceDefault(),
 		status: 'panel_not_visible' as const,
-		layout: layout({ current: 'C1', doors: ['C1-C2'] }),
+		layout: layout({ current: 'C1', doors: ['C1-C2'], diamond: diamond() }),
 		advice: advice({ recommendations: [ranked({ doors: ['C1-C2'] })] }),
 		panel: {
 			room: 'Chamber of Iron',
@@ -772,7 +806,7 @@ describe('the door widget through a whole incursion', () => {
 	});
 
 	it('still shows the widget once the panel has closed behind the player', () => {
-		expect(overlayShowsDoors(inRoom().status)).toBe(true);
+		expect(overlayShowsDoors(inRoom())).toBe(true);
 	});
 
 	it('still names the kill, which is the only place it is named by then', () => {

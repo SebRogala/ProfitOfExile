@@ -681,7 +681,7 @@ mod tests {
         ranked.reasons.iter().any(want)
     }
 
-    // =================================================== the six walked boards
+    // ================================================= the seven walked boards
 
     // R1 (Chamber of Iron is the only neighbour above Tombs) AND R2 (it merges
     // two singletons rather than attaching one room to the 10-cluster). Both
@@ -812,7 +812,7 @@ mod tests {
         assert_eq!(top_doors(&advice, B0), vec![A0], "{}", case.decision);
         assert!(has_reason(&advice.recommendations[0], |r| matches!(
             r,
-            Reason::R1Apex
+            Reason::R1Apex { .. }
         )));
     }
 
@@ -885,6 +885,68 @@ mod tests {
                 && has_reason(top, |r| matches!(r, Reason::R1Gradient { row: 2 })),
             "the pick must be explained by R1 and R2: {:?}",
             top.reasons
+        );
+    }
+
+    // POE-248. One key in Lightning Workshop (C1), and the only two corridors
+    // that change a component both land on a B slot. Under a single
+    // Apex/Apex-adjacent flag they tied, and R2 decided: it prefers the smaller
+    // merge, so it took the lone singleton B1 (the Vault) over B0, which
+    // already shares a two-slot component with the Apex because A0-B0 is open.
+    // Sebastian's rule is that B0 REACHES the Apex, which outranks adjacency.
+    #[test]
+    fn case_eight_lightning_workshop_opens_the_corridor_that_already_reaches_the_apex() {
+        let case = cases::case_8_lightning_workshop();
+        let advice = advise_case(&case);
+        assert_eq!(
+            top_doors(&advice, C1),
+            vec![B0],
+            "{}: Sebastian's move was {}",
+            case.name,
+            case.decision
+        );
+        let top = &advice.recommendations[0];
+        assert!(
+            has_reason(top, |r| matches!(
+                r,
+                Reason::R1Apex { reaches_apex: true }
+            )),
+            "{}: and the overlay must print the reaching level, not adjacency: {:?}",
+            case.name,
+            top.reasons
+        );
+    }
+
+    // The same board at the numbers the APP runs, for the reason the PC board's
+    // pair below carries: `slice::advise_read` passes `slice::ROLLOUTS` and
+    // `slice::SEED`, not this suite's `N`/`SEED`, and the rollout breaks the
+    // chain's own ties — so an ordering that holds at one (n, seed) is not one
+    // that holds at another. Imported rather than retyped, so a test carrying
+    // its own copy of the numbers cannot outlive production's.
+    #[test]
+    fn case_eight_lightning_workshop_reaches_the_apex_at_the_production_rollouts() {
+        use crate::temple::slice::{ROLLOUTS as PROD_ROLLOUTS, SEED as PROD_SEED};
+
+        let case = cases::case_8_lightning_workshop();
+
+        let advice = advise(
+            &case.state,
+            &case.offers,
+            case.keys,
+            &rush(),
+            &TempleConfig::default(),
+            PROD_ROLLOUTS,
+            PROD_SEED,
+        );
+
+        assert_eq!(
+            top_doors(&advice, C1),
+            vec![B0],
+            "{}: the verdict at N={PROD_ROLLOUTS} seed={PROD_SEED:#x} — the numbers a read \
+             actually uses — must be the one the suite pins at N=400 seed=7; Sebastian's move \
+             was {}",
+            case.name,
+            case.decision,
         );
     }
 
@@ -1059,7 +1121,7 @@ mod tests {
         );
         let top = &advice.recommendations[0];
         assert!(
-            has_reason(top, |r| matches!(r, Reason::R1Apex)),
+            has_reason(top, |r| matches!(r, Reason::R1Apex { .. })),
             "the pick must name the rule that produced it: {:?}",
             top.reasons
         );
@@ -2168,7 +2230,7 @@ mod tests {
     // that was false. So pin the whole set each board produces.
     #[test]
     fn each_walked_board_is_explained_by_exactly_the_rules_that_decided_it() {
-        let expected: [&[&str]; 6] = [
+        let expected: [&[&str]; 7] = [
             // 1 Tombs — a free kill, and a door decided by the scarcity chain.
             // `Ru` is on the corridor into E2's Sanctum, not on the pick.
             &["Rd", "R2", "R1Gradient", "Rs", "Ru"],
@@ -2196,10 +2258,17 @@ mod tests {
             // prices none of them, so its side still reads NoUsableDoor. The
             // rollout separates the kills by 3+ points. `ZeroKey` here would
             // be a lie: a key did drop.
+            //
+            // `R1Apex` was in this list until POE-248 and its absence is the
+            // FIX, not a re-recording: the corridor that scored it is C0-B0,
+            // and on this board B0 is already inside C0's own component (via
+            // B0-C1 and C0-C1) while that component holds no Apex. So the door
+            // buys neither the Apex nor a new way toward it, and `apex_reach`
+            // is silent — see its note. The recorded decision is untouched: the
+            // top pick still opens nothing, for RU's reason.
             &[
                 "ExpectedValue",
                 "NoUsableDoor",
-                "R1Apex",
                 "R1Gradient",
                 "R2",
                 "R4",
@@ -2210,6 +2279,15 @@ mod tests {
             ],
             // 6 Cloister — the blind board, decided by R1 and R2 alone.
             &["Rd", "R2", "R1Gradient", "Rs"],
+            // 8 Lightning Workshop — R1-apex fires on both corridors (reaching
+            // on B0, adjacent on B1) and the rest of the door chain ranks them.
+            // On the kill: RC, because C2's Sanctum is adjacent and connected
+            // and can supply the tier; R4, because the `upgrade` maxes C1 out
+            // of the drop pool. R4's carve-out does NOT veto that — C2 already
+            // holds three open corridors against two picks, so C1 is not a live
+            // target it could lose. No `ExpectedValue`: neither kill is vetoed
+            // and the rollout cannot separate them, so the band covers both.
+            &["R1Apex", "Rd", "R2", "R1Gradient", "Rs", "Rc", "R4"],
         ];
 
         for (case, want) in cases::retrospective().into_iter().zip(expected) {

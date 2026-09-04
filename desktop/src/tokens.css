@@ -34,6 +34,11 @@
 	--color-lab-red: #ef4444;
 	--color-lab-yellow: #eab308;
 	--color-lab-blue: #3b82f6;
+	/* The temple overlay's kill mark (POE-248). A sixth hue was added rather
+	   than reused because the other five are already spoken for over the game:
+	   red is a closed seal, green an open one, purple the advisor's door, yellow
+	   "not settled" and blue the app's own links. */
+	--color-lab-cyan: #22d3ee;
 	--color-lab-purple: #a855f7;
 	--color-lab-green-muted: #6b9e7a;
 }

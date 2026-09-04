@@ -1,31 +1,33 @@
 <script lang="ts">
 	/**
-	 * The kill, as a box with an arrow into the architect block it is about
-	 * (POE-244).
+	 * The kill, as a box beside the architect block it is about (POE-244,
+	 * POE-248).
 	 *
 	 * The owner's ask, verbatim: *"it needs to be pointing to the thing, so I
 	 * don't have to read, but see where to go"*. What this replaces is a panel
 	 * of prose beside a redrawn copy of a board that is already on screen — the
 	 * player had to read it, find the matching block in the game's own side
-	 * panel, and only then click. So the box is short and the ARROW carries the
-	 * instruction.
+	 * panel, and only then click.
 	 *
-	 * # Two rules it must not break
+	 * # There is no arrow (POE-248)
+	 *
+	 * POE-244 drew a line with a head into the chosen block. Owner, 2026-09-04:
+	 * no arrows anywhere. What points is the PLACEMENT — the box sits level with
+	 * the block, immediately outside the panel it belongs to — and, once the
+	 * panel closes, the cyan kill glyph on the room widget, which marks the same
+	 * architect's own icon spot inside the room. An arrow could only ever point
+	 * at something that is on screen, and the moment the player has to act is
+	 * the moment it is not.
+	 *
+	 * # The rule it must not break
 	 *
 	 * **It covers no read region.** Every OCR crop and sampled patch reaches the
 	 * slice as `layout.rois`, and `calloutPlacement` refuses any position that
 	 * overlaps one — including the position it wanted. When nothing is free the
 	 * box is NOT drawn: the game's own panel is on screen either way, and a
-	 * callout that corrupts the module's next read is the worse trade.
-	 *
-	 * **The arrow may cross what the box may not, and it stops SHORT of the
-	 * block.** A 3 px line crossing a crop is not what breaks an OCR read; a
-	 * filled panel sitting on the text is — and so is the arrowHEAD, which is a
-	 * solid triangle. So the line is thin, the head is small and in USER units
-	 * (see the marker), and `calloutArrow` ends the line `ARROW_STANDOFF_CSS`
-	 * before the block's edge so the point lands beside the text rather than on
-	 * it. That asymmetry between a thin line and a filled shape is the whole
-	 * reason the arrow exists rather than the box being placed on the block.
+	 * callout that corrupts the module's next read is the worse trade. With the
+	 * arrow gone, that is the only geometry rule left here — nothing this
+	 * component draws crosses a rect any more.
 	 *
 	 * # The measure-then-place frame
 	 *
@@ -36,7 +38,7 @@
 	 * never end. Same trick, and the same reason, as the config bar's in
 	 * `WidgetHost.svelte`.
 	 */
-	import { calloutArrow, calloutPlacement } from './overlay-geometry';
+	import { calloutPlacement } from './overlay-geometry';
 	import type { KillCallout } from './view';
 	import type { HostSize, WidgetRect } from '$lib/overlay/widgets/widget-geometry';
 
@@ -51,8 +53,8 @@
 		/** What the box says. */
 		callout: KillCallout;
 		/** The chosen block's rect in CSS px, or null for a read that carried no
-		 *  boxes — the box then shows with no arrow, because there is nothing on
-		 *  screen it could honestly point at. */
+		 *  boxes — the box is then placed against the panel crop instead, which
+		 *  is the honest answer when there is no block to be level with. */
 		target: WidgetRect | null;
 		/** The side panel's OCR crop in CSS px — the fallback anchor. */
 		panel: WidgetRect | null;
@@ -75,44 +77,7 @@
 			host
 		})
 	);
-	const arrow = $derived(placement && target ? calloutArrow(placement, target) : null);
 </script>
-
-<!-- The arrow first, so the box is drawn over its own end rather than under it.
-     The SVG is the whole window: both ends are window coordinates, and a line
-     between two boxes cannot live inside either. -->
-{#if arrow}
-	<svg class="arrow-layer" aria-hidden="true">
-		<defs>
-			<!-- `markerUnits="userSpaceOnUse"` is load-bearing: the default is
-			     `strokeWidth`, which multiplies every number below by the line's
-			     3 px stroke and turned an 8 px head into a 24 px triangle
-			     sitting on the block's first glyphs. With `refX` at 7.5 of an
-			     8-wide marker the tip reaches half a pixel past the line's end,
-			     and `calloutArrow` already stops that end `ARROW_STANDOFF_CSS`
-			     short of the block — so the point lands about 9 px clear of the
-			     text it is aiming at. -->
-			<marker
-				id="temple-kill-arrowhead"
-				markerUnits="userSpaceOnUse"
-				markerWidth="8"
-				markerHeight="8"
-				refX="7.5"
-				refY="4"
-				orient="auto"
-			>
-				<path d="M0,0 L8,4 L0,8 z" fill="var(--color-lab-purple)" />
-			</marker>
-		</defs>
-		<line
-			x1={arrow.x1}
-			y1={arrow.y1}
-			x2={arrow.x2}
-			y2={arrow.y2}
-			marker-end="url(#temple-kill-arrowhead)"
-		/>
-	</svg>
-{/if}
 
 <div
 	class="callout"
@@ -131,22 +96,6 @@
 </div>
 
 <style>
-	.arrow-layer {
-		position: absolute;
-		inset: 0;
-		width: 100%;
-		height: 100%;
-		pointer-events: none;
-		overflow: visible;
-	}
-
-	/* Wide enough to be followed at a glance over a lit game scene, and the same
-	   purple the kill is printed in — the line and the words are one statement. */
-	.arrow-layer line {
-		stroke: var(--color-lab-purple);
-		stroke-width: 3;
-	}
-
 	.callout {
 		position: absolute;
 		padding: 6px 10px;

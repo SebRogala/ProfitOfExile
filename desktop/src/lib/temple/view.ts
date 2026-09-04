@@ -89,29 +89,30 @@ export function overlayShowsBoard(status: TempleStatus): boolean {
 }
 
 /**
- * The statuses the DOOR widget stays up for (POE-244).
+ * Whether the DOOR widget has something to draw (POE-244, rewritten in
+ * POE-248).
  *
- * One more than the board's, and the extra one is the point. The door is opened
- * INSIDE the room, during the timed incursion, and the layout panel is gone by
- * then — so every surface keyed on the panel being readable disappears at
- * exactly the moment the player has to act on it. `panel_not_visible` is the
- * module armed and LOOKING with nothing on screen, which since POE-246 is what
- * the whole incursion looks like: the arm survives on `PANEL_TAIL_MS` from the
- * last sighting, and when it finally lapses the status becomes `waiting`, which
- * is NOT in this list. That is what bounds how stale the room on the widget can
- * be — a board from two minutes ago at the outside, not one from last map.
+ * **Not a status rule.** It was one — `OVERLAY_VISIBLE_STATUSES` plus
+ * `panel_not_visible` — and the first live session showed what that costs:
+ * `12:32:10 capture armed by the panel on screen` … `12:39:05 capture stood
+ * down`, and the diamond went off screen with the status while the player was
+ * still standing in the room it described. Owner: the kill callout lives with
+ * the PANEL and the room widget lives with the INCURSION.
  *
- * `off`, `idle`, `unavailable` and `error` are excluded for the same reasons
- * they are excluded from the board's list.
+ * A status is a statement about whether anything is LOOKING at the screen, and
+ * that is the wrong question here: the layout panel is shut for the whole
+ * incursion, which is exactly when this widget is the only surface left. So the
+ * gate is the ADVICE itself, which the module clears when the incursion
+ * genuinely ends — a zone change, the next Alva voice line after the read, a
+ * read that replaces it, or the module being switched off
+ * (`temple::trigger::advice_end`, `slice::clear_advice`, `slice::force_off`).
+ *
+ * The diamond is tested with it because there is nothing to draw a door on
+ * without one, and a read between rooms (`no_current_room`) publishes advice-
+ * less layout in the other direction.
  */
-export const DOOR_VISIBLE_STATUSES: readonly TempleStatus[] = [
-	...OVERLAY_VISIBLE_STATUSES,
-	'panel_not_visible'
-];
-
-/** Whether the door widget stays up for this status. */
-export function overlayShowsDoors(status: TempleStatus): boolean {
-	return DOOR_VISIBLE_STATUSES.includes(status);
+export function overlayShowsDoors(slice: TempleSlice): boolean {
+	return slice.advice !== null && (slice.layout?.diamond ?? null) !== null;
 }
 
 // ---------------------------------------------------------- the geometry --
@@ -296,27 +297,43 @@ export function latticeViewBox(margin = 12): ViewBox {
  * How one corridor is drawn.
  *
  * - `open` — a settled door. Solid.
- * - `uncertain` — reported open, but the current room's selection frame covers
- *   it, so the reader could not settle it. Dashed.
  * - `unresolved` — incident to the current room and settled by NOTHING, which
  *   only happens on the diamond-read fallback. Marked, because "we could not
  *   see it" must not render the same as "it is shut".
  * - `closed` — everything else.
  */
-export type EdgeState = 'open' | 'uncertain' | 'unresolved' | 'closed';
+export type EdgeState = 'open' | 'unresolved' | 'closed';
 
 /**
- * Which of the four states a corridor is in, for one published layout.
+ * Which of the three states a corridor is in, for one published layout.
  *
- * `unresolved` wins outright: it is the honesty guard, and its set is a subset
- * of `uncertain`, so testing it second would never fire.
+ * `unresolved` wins outright: it is the honesty guard, and every corridor in it
+ * is one `doors` has no verdict on anyway.
+ *
+ * # The fourth state, and why it is gone (POE-248)
+ *
+ * There used to be an `uncertain` between the two: `doors.includes(id) &&
+ * uncertain.includes(id)`. That read `layout.uncertain` as a VERDICT, and it is
+ * not one — `doors.rs` puts EVERY corridor incident to the current room in it
+ * before any open/closed judgement, because the gold selection frame covers
+ * them and the beam sampler cannot settle them. It is the beam's self-doubt,
+ * published on every read.
+ *
+ * On the settled path the door MARKERS answer those corridors — that is what
+ * the diamond read is for — and `layout.doors` is the settled set. So an edge
+ * the seals read GREEN was still in `uncertain`, and the old branch coloured it
+ * grey: owner, 2026-09-04, on a read whose log shows 6/6 markers and no error,
+ * *"the widget drew C1-C2 grey where the game's seal was green"*. On the
+ * fallback path `doors` is `doors − uncertain`, so the branch could not fire at
+ * all. It was reachable only when it was wrong.
+ *
+ * `LayoutView.uncertain` stays on the wire as what it is — a diagnostic about
+ * the read — and no surface may read it as a door state again.
  */
 export function edgeState(id: EdgeId, layout: LayoutView | null): EdgeState {
 	if (layout === null) return 'closed';
 	if (layout.unresolvedIncident.includes(id)) return 'unresolved';
-	const open = layout.doors.includes(id);
-	if (open && layout.uncertain.includes(id)) return 'uncertain';
-	return open ? 'open' : 'closed';
+	return layout.doors.includes(id) ? 'open' : 'closed';
 }
 
 /**
@@ -343,7 +360,6 @@ export function plateGlyph(read: SlotView | undefined): string {
 /** Wording for one corridor's state, for a `title`. */
 export const EDGE_STATE_LABEL: Record<EdgeState, string> = {
 	open: 'open corridor',
-	uncertain: 'reported open, hidden behind the selection frame',
 	unresolved: 'could not be read — the diamond read failed',
 	closed: 'closed'
 };

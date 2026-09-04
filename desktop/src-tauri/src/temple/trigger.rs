@@ -539,6 +539,102 @@ pub fn apply_line(state: &mut ArmState, line: &str, now_ms: u64) -> Transition {
     )
 }
 
+/// Why the advice the module is showing has stopped describing the board in
+/// front of the player (POE-248).
+///
+/// The room widget lives with the INCURSION, not with the capture: the layout
+/// panel closes the moment the player walks into the room, and POE-244's
+/// stand-down clear took the door diamond off screen at exactly the moment it
+/// was the only surface left. So the loop standing down no longer ends the
+/// advice — these two lines do, and both are facts about the GAME rather than
+/// about whether anything is looking at it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdviceEnd {
+    /// `: You have entered <not the temple>` — the board the advice describes
+    /// is not on this screen and cannot be got back to.
+    LeftArea,
+    /// An [`ALVA_SPEAKER`] line stamped after the read. One incursion ended or
+    /// another began; either way the panel behind the advice is a panel from
+    /// the previous one.
+    NewIncursion,
+}
+
+impl AdviceEnd {
+    /// The words the app log uses for this end.
+    pub fn label(self) -> &'static str {
+        match self {
+            AdviceEnd::LeftArea => "the zone changed",
+            AdviceEnd::NewIncursion => "Alva spoke again",
+        }
+    }
+}
+
+/// Whether a line is of a KIND that could end the advice: an area change, or a
+/// voice line from [`ALVA_SPEAKER`].
+///
+/// The cheap half of [`advice_end`], split out so [`on_client_line`] can skip
+/// the slice lock on the ordinary line. That is not a micro-optimisation: this
+/// module's glue runs on EVERY Client.txt line the watcher reads, and
+/// [`super::run::publish`] clones the whole [`super::slice::TempleSlice`] —
+/// thirteen plates, forty-two rects and a board — to decide whether the
+/// snapshot changed. Two string searches decide that it did not.
+///
+/// [`advice_end`] calls it too, so there is ONE answer to which lines matter. A
+/// third kind added there without adding it here would be skipped in
+/// production and pass every test, which is exactly the drift a duplicated
+/// guard at the call site would have invited.
+pub fn may_end_advice(line: &str) -> bool {
+    lab_navigation::parse_entered_area(line).is_some() || speaker_of(line) == Some(ALVA_SPEAKER)
+}
+
+/// Whether one Client.txt line ends the advice a read at `last_read_ms`
+/// produced.
+///
+/// The sibling of [`apply_line`] and deliberately a SECOND function rather than
+/// a second return value: the arm is about whether to look at the screen and
+/// this is about whether what was last seen still holds, and the two answers
+/// diverge on every line that matters. `: You have entered <a map>` disarms AND
+/// ends the advice; `Alva, Master Explorer: Good job.` ARMS (the player may
+/// open the panel to see what the kill changed) and ends the advice of the
+/// incursion that just finished; the temple's own area line arms and ends
+/// nothing.
+///
+/// `None` for a board that was never read (`last_read_ms` is `None`) — there is
+/// nothing to end, and answering otherwise would put a log line on every zone
+/// change of a session that never opened a panel.
+///
+/// # Why the Alva line is compared to the READ and not just accepted
+///
+/// The line that ARMS the capture is an Alva line, and it is spoken seconds
+/// before the read it buys. Ending the advice on any Alva line at all would
+/// therefore clear the board the same voice line was the reason for reading.
+/// So the comparison is against the read's own stamp, and the tie is broken
+/// TOWARD keeping the advice: Client.txt writes whole seconds, so a line
+/// spoken in the same second as the read reads as older than it and is ignored.
+/// The cost of that direction is one stale board until the next line or the
+/// next read; the cost of the other is the widget blinking out at the moment
+/// it appears.
+///
+/// Staleness is [`apply_line`]'s gate, for [`apply_line`]'s reason: a line that
+/// reached us through a log the watcher was not tailing is evidence about a
+/// screen that is minutes gone, and [`arm_at`] would launder its stamp into
+/// `now`.
+pub fn advice_end(line: &str, last_read_ms: Option<u64>, now_ms: u64) -> Option<AdviceEnd> {
+    let last_read = last_read_ms?;
+    if !may_end_advice(line) {
+        return None;
+    }
+    if let Some(area) = lab_navigation::parse_entered_area(line) {
+        return (area != TEMPLE_AREA).then_some(AdviceEnd::LeftArea);
+    }
+    // Alva's, by [`may_end_advice`] — the only other kind it admits.
+    let stamp = line_timestamp_ms(line);
+    if stamp.is_some_and(|ms| now_ms.saturating_sub(ms) >= LINE_STALE_MS) {
+        return None;
+    }
+    (arm_at(now_ms, stamp) > last_read).then_some(AdviceEnd::NewIncursion)
+}
+
 /// The arm state an app that started mid-session should begin in.
 ///
 /// `lab_navigation::replay_recent_log` hands its events to the lab overlays and
@@ -612,9 +708,38 @@ pub fn arm_state(app: &AppHandle) -> ArmState {
 /// an [`ALVA_TAIL_MS`] arm expiring, which no Client.txt line announces.
 pub fn on_client_line(app: &AppHandle, line: &str) {
     let now = super::run::now_ms();
-    let state = app.state::<AppState>();
-    let mut arm = state.temple_arm.lock().unwrap_or_else(|e| e.into_inner());
-    apply_line(&mut arm, line, now);
+    {
+        let state = app.state::<AppState>();
+        let mut arm = state.temple_arm.lock().unwrap_or_else(|e| e.into_inner());
+        apply_line(&mut arm, line, now);
+    }
+    // POE-248: the same line may also end the advice, and that is a separate
+    // question with a separate owner — see [`advice_end`].
+    //
+    // The kind test comes FIRST and outside the lock: `publish` clones the
+    // whole slice to decide whether to emit, and this runs on every line.
+    if !may_end_advice(line) {
+        return;
+    }
+    // Decided INSIDE the publish so the read stamp it is compared against is
+    // the one being overwritten, and so a clear that changes nothing emits
+    // nothing.
+    let mut ended = None;
+    super::run::publish(app, |slice| {
+        if slice.advice.is_none() {
+            return;
+        }
+        if let Some(end) = advice_end(line, slice.last_read_at, now) {
+            ended = Some(end);
+            super::slice::clear_advice(slice);
+        }
+    });
+    if let Some(end) = ended {
+        crate::app_log(
+            app,
+            format!("Temple: advice cleared — {} (the room widget is down)", end.label()),
+        );
+    }
 }
 
 /// Re-arm, from the button.
@@ -1124,5 +1249,128 @@ mod tests {
         );
 
         assert_eq!(catch_up_state(&tail), TempleArm::Disarmed);
+    }
+
+    // ----------------------------------------------- what ends the advice --
+
+    /// A read at `NOW - 30 s`, which is what every case below is measured
+    /// against: the board was read half a minute ago and the player is acting
+    /// on it.
+    const READ: Option<u64> = Some(NOW - 30_000);
+
+    /// The zone change, which is the unambiguous end: the board the advice
+    /// describes is not on this screen and cannot be walked back to.
+    #[test]
+    fn leaving_the_zone_ends_the_advice() {
+        assert_eq!(
+            advice_end(&map_line(NOW), READ, NOW),
+            Some(AdviceEnd::LeftArea),
+        );
+    }
+
+    /// Entering the TEMPLE does not. It is the arm's own area line, and the
+    /// board that follows replaces the advice by being read.
+    #[test]
+    fn entering_the_temple_leaves_the_advice_alone() {
+        assert_eq!(advice_end(&temple_line(NOW), READ, NOW), None);
+    }
+
+    /// The next voice line after the read — `Good job.` at the end of the
+    /// incursion, or `Time to go.` at the start of the next one. Either way the
+    /// panel behind the advice belonged to the previous one.
+    #[test]
+    fn an_alva_line_after_the_read_ends_the_advice() {
+        assert_eq!(
+            advice_end(&alva_line(NOW), READ, NOW),
+            Some(AdviceEnd::NewIncursion),
+        );
+    }
+
+    /// The regression this comparison exists for: the line that ARMS the
+    /// capture is an Alva line, spoken seconds BEFORE the read it buys. Ending
+    /// the advice on any Alva line at all would clear the board the same voice
+    /// line was the reason for reading — the widget would blink out the moment
+    /// it appeared, which is the shape of the bug POE-246 fixed one layer down.
+    #[test]
+    fn the_alva_line_that_armed_the_read_does_not_end_it() {
+        let spoke = NOW - 40_000;
+        let read = Some(NOW - 30_000);
+
+        assert_eq!(advice_end(&alva_line(spoke), read, NOW), None);
+    }
+
+    /// A line stamped in the same SECOND as the read reads as older than it.
+    /// Client.txt has one-second resolution and the tie is broken toward
+    /// keeping the advice: one stale board costs a glance, a widget that
+    /// vanishes costs the incursion.
+    #[test]
+    fn a_line_stamped_in_the_read_s_own_second_keeps_the_advice() {
+        let second = NOW - 5_000;
+
+        assert_eq!(advice_end(&alva_line(second), Some(second + 400), NOW), None);
+    }
+
+    /// Nothing has been read, so there is nothing to end — and the app log must
+    /// not narrate a clear on every zone change of a session that never opened
+    /// a panel.
+    #[test]
+    fn a_board_that_was_never_read_has_no_advice_to_end() {
+        assert_eq!(advice_end(&map_line(NOW), None, NOW), None);
+        assert_eq!(advice_end(&alva_line(NOW), None, NOW), None);
+    }
+
+    /// A line old enough to be about a screen that is minutes gone reaches us
+    /// only through a log the watcher was not tailing. `apply_line` refuses to
+    /// arm on one; this refuses to clear on one, and for the same reason —
+    /// `arm_at` would otherwise launder its stamp into `now` and every restart
+    /// would blank the board.
+    #[test]
+    fn a_stale_alva_line_does_not_end_the_advice() {
+        let ancient = NOW - LINE_STALE_MS - 1_000;
+
+        assert_eq!(advice_end(&alva_line(ancient), READ, NOW), None);
+    }
+
+    /// Ordinary chatter is not an end. Fails if the speaker match is widened.
+    #[test]
+    fn a_line_that_is_neither_an_area_nor_alva_ends_nothing() {
+        let line = stamped(NOW, "Einhar, Beastmaster: What a beast!");
+
+        assert_eq!(advice_end(&line, READ, NOW), None);
+        assert!(
+            !may_end_advice(&line),
+            "the fast path must skip the slice lock for a line like this",
+        );
+    }
+
+    /// The fast path admits exactly the two kinds `advice_end` can answer on.
+    ///
+    /// `on_client_line` returns before touching the slice when this is false,
+    /// so a line it rejects can never be cleared on however the rest of the
+    /// function is written — the two must not drift.
+    #[test]
+    fn the_fast_path_admits_both_kinds_of_line_that_can_end_the_advice() {
+        assert!(may_end_advice(&map_line(NOW)), "an area change");
+        assert!(may_end_advice(&temple_line(NOW)), "the temple's own area line");
+        assert!(may_end_advice(&alva_line(NOW)), "an Alva voice line");
+        // A line it admits is not automatically an end — that is `advice_end`'s
+        // half, and the temple line is the case that separates them.
+        assert_eq!(advice_end(&temple_line(NOW), READ, NOW), None);
+    }
+
+    /// The two functions are asked about every line and must not have been
+    /// collapsed into one: `Good job.` ARMS the capture (the player may open
+    /// the panel to see what the kill changed) and ENDS the advice of the
+    /// incursion that produced it. A single verdict cannot say both.
+    #[test]
+    fn the_end_line_still_arms_the_capture() {
+        let mut state = ArmState::default();
+        let line = stamped(NOW, "Alva, Master Explorer: Good job, exile.");
+
+        let transition = apply_line(&mut state, &line, NOW);
+
+        assert_eq!(transition, Transition::Armed(ArmReason::AlvaLine));
+        assert!(state.arm.is_armed(NOW));
+        assert_eq!(advice_end(&line, READ, NOW), Some(AdviceEnd::NewIncursion));
     }
 }

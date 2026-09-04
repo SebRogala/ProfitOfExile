@@ -257,8 +257,17 @@ pub struct LayoutView {
     /// Corridors to act on — the settled set when the diamond read succeeded,
     /// `doors − uncertain` when it did not.
     pub doors: Vec<String>,
-    /// Corridors the current room's selection frame covers, exactly as the
-    /// reader reported them.
+    /// Every corridor incident to the current room, exactly as the reader
+    /// reported it — a DIAGNOSTIC about the read, never a door state (POE-248).
+    ///
+    /// [`super::doors::read_doors`] puts all of them here unconditionally,
+    /// before any open/closed judgement, because the gold selection frame
+    /// covers their midpoints. What settles them is the diamond read, and its
+    /// answer is already in [`Self::doors`] — so an edge the seals read GREEN
+    /// is in BOTH lists, and the webview's `edgeState` used to colour it as
+    /// unsettled on the strength of this one. It no longer reads it; nothing
+    /// should. The honest "nothing settled this" signal is
+    /// [`Self::unresolved_incident`].
     pub uncertain: Vec<String>,
     /// Corridors incident to the current room that NOTHING settled — populated
     /// only on the diamond-read fallback. Surfaced, never guessed.
@@ -347,6 +356,22 @@ pub struct DiamondView {
     /// One seal per corridor the current room has, in
     /// [`super::lattice::neighbours`] order.
     pub seals: Vec<SealView>,
+    /// The architect icon spot in the room's TOP-RIGHT half, in
+    /// [`Self::corners`]' units (POE-248) — the one the panel's first (topmost)
+    /// architect block belongs to.
+    ///
+    /// Carried rather than derived by the widget for the reason every other
+    /// number here is: it is a MEASUREMENT of the panel
+    /// ([`super::markers::ARCHITECT_ICON_OFFSET`]), and a TypeScript copy of it
+    /// would be a second answer that a re-measure leaves behind.
+    ///
+    /// Named for the HALF and not for a kind of kill: which architect's icon
+    /// the game draws where is the one thing the measurement does not settle,
+    /// and the webview keys the glyph on the chosen block's own OCR rect.
+    pub top_icon: [f64; 2],
+    /// The spot in the room's BOTTOM-LEFT half — the mirror of
+    /// [`Self::top_icon`] through the room's centre, and the second block's.
+    pub bottom_icon: [f64; 2],
 }
 
 /// One seal on the room's diamond.
@@ -364,11 +389,15 @@ pub struct SealView {
     pub neighbour: String,
     /// The corridor itself — `"C1-C2"`, the key `doors` and `uncertain` use.
     pub edge: String,
-    /// `[x, y]` on the seal RING — a unit vector, in
-    /// [`DiamondView::corners`]' units, which are ring radii. Every seal is at
-    /// radius 1 by construction; what differs between them is only the
-    /// direction, which is what the panel draws
-    /// ([`super::markers::SEAL_RING_FRACTION`] measures it).
+    /// `[x, y]` ON THE ROOM'S WALL, in [`DiamondView::corners`]' units
+    /// (POE-248).
+    ///
+    /// Not a unit vector and not a ring: the room is a rectangle, a door is a
+    /// hole in one of its four walls, and this is where the corridor's own
+    /// direction leaves the outline
+    /// ([`super::markers::seal_position`]). The two same-row corridors land at
+    /// exactly 1.0 — the midpoint of a short wall — and the four diagonals at
+    /// 0.938 and 1.034, two to each long wall.
     pub pos: [f64; 2],
 }
 
@@ -646,16 +675,17 @@ fn layout_view(read: &ReadResult<'_>) -> LayoutView {
 /// never settled still has walls in those directions.
 fn diamond_view(layout: &TempleLayout, current: Slot) -> DiamondView {
     let lattice = Lattice::new(layout.origin, layout.scale);
+    let (top, bottom) = markers::architect_icons();
     DiamondView {
         corners: markers::diamond_corners().map(|(x, y)| [x, y]),
         seals: super::lattice::neighbours(current)
             .into_iter()
             .map(|to| {
-                // The unit direction IS the seal's place: the panel draws every
-                // seal at one radius from the centre (`SEAL_RING_FRACTION`), so
-                // the ring is the unit and `neighbour_direction` is already on
-                // it. Nothing to scale, and one home for the projection.
-                let (x, y) = markers::neighbour_direction(&lattice, current, to);
+                // The wall IS the seal's place: the room is a rectangle and a
+                // door is a hole in one of its sides, so this is the corridor's
+                // direction intersected with the outline (`markers`, POE-248).
+                // Nothing to scale here, and one home for the projection.
+                let (x, y) = markers::seal_position(&lattice, current, to);
                 SealView {
                     neighbour: to.as_str().to_string(),
                     edge: Edge::new(current, to).to_string(),
@@ -663,6 +693,8 @@ fn diamond_view(layout: &TempleLayout, current: Slot) -> DiamondView {
                 }
             })
             .collect(),
+        top_icon: [top.0, top.1],
+        bottom_icon: [bottom.0, bottom.1],
     }
 }
 
@@ -918,6 +950,28 @@ pub fn advise_read(
         ROLLOUTS,
         SEED,
     ))
+}
+
+/// Drop the move the module is recommending, keeping the board it was read
+/// from (POE-248).
+///
+/// The room widget lives with the INCURSION and the kill callout with the
+/// PANEL, and this is the incursion's end. Its callers are
+/// [`super::trigger::advice_end`]'s two Client.txt lines — the player left the
+/// zone, or Alva spoke again after the read — and NOT the capture standing
+/// down, which POE-244 used and POE-248 removed: `TempleStatus::PanelNotVisible`
+/// is what the whole incursion looks like from the loop's side, and the door
+/// diamond is the only surface on screen through it.
+///
+/// The LAYOUT stays. The Temple page keeps drawing the last board it was given
+/// under a badge that says when it was read, which is the same thing it does
+/// while the module is looking for the next one; what goes is the ranked move,
+/// because a move is a thing the player can still act on and the board is only
+/// a record. `mode` goes with it — it is read off the advice and would be a
+/// label with nothing under it.
+pub fn clear_advice(slice: &mut TempleSlice) {
+    slice.advice = None;
+    slice.mode = None;
 }
 
 /// Force a disabled module's slice to [`TempleStatus::Off`] and drop what it
@@ -2118,6 +2172,18 @@ mod tests {
             view.unresolved_incident.is_empty(),
             "a settled read leaves nothing unresolved",
         );
+        // The shape POE-248's overlay bug turned on, pinned here so a consumer
+        // reading it as a verdict has something to fail against: on the settled
+        // path a corridor the SEALS read open is in BOTH lists. `uncertain` is
+        // the beam's self-doubt about a corridor the frame covered, and the
+        // diamond read is precisely what answers it — see the field's note.
+        assert!(
+            view.uncertain.contains(&"B0-C1".to_string())
+                && view.doors.contains(&"B0-C1".to_string()),
+            "`uncertain` is a diagnostic and overlaps `doors`: {:?} / {:?}",
+            view.uncertain,
+            view.doors,
+        );
     }
 
     /// The fallback: with no settled set the door list is `doors − uncertain`
@@ -2640,18 +2706,22 @@ mod tests {
         assert_eq!(diamond.corners, markers::diamond_corners().map(|(x, y)| [x, y]));
     }
 
-    /// Every published seal is on the seal RING, which is where the panel
-    /// draws them (`markers::SEAL_RING_FRACTION`, measured against the shipped
-    /// detector on all five committed crops).
+    /// Every published seal is ON the outline the same payload carries
+    /// (POE-248), which is where the panel draws them.
     ///
-    /// The version of this test POE-244 shipped first asserted the seals lay on
-    /// the published OUTLINE, which they never did on screen — it was the model
-    /// checked against its own algebra, and it passed while the model was 24 px
-    /// wrong about the panel. What survives is the claim a consumer can act on:
-    /// one radius for every corridor, so a widget scales the ring once and the
-    /// only thing that differs between seals is the direction.
+    /// The version POE-244 shipped asserted the seals lay on the published
+    /// OUTLINE and was right to; what was wrong was the outline — a rhombus
+    /// fitted to the seals, with the seals themselves then put on a constant
+    /// ring INSIDE it. POE-248 measured the gold border instead and the two
+    /// claims became one again: the room is a rectangle, and a door is a hole
+    /// in a wall. This is the consumer-visible half of that — a widget scales
+    /// the corners into its box and every seal is on the polygon it drew.
+    ///
+    /// The test is a point-in-polygon check on the PUBLISHED corners rather
+    /// than a call back into `markers`: a projection that changed both sides at
+    /// once would still have to keep them agreeing.
     #[test]
-    fn every_published_seal_sits_at_one_ring_radius() {
+    fn every_published_seal_sits_on_the_published_outline() {
         for current in Slot::ALL {
             let layout = layout(Some(current), &[], &[]);
             let rooms = board_rooms(&[]);
@@ -2663,15 +2733,64 @@ mod tests {
 
             assert!(!diamond.seals.is_empty(), "{} has no seals", current.as_str());
             for seal in &diamond.seals {
-                let radius = seal.pos[0].hypot(seal.pos[1]);
+                // Distance to the nearest of the four edges, as a fraction of
+                // the shape: zero means the point is on the boundary.
+                let worst = (0..4)
+                    .map(|i| {
+                        let [ax, ay] = diamond.corners[i];
+                        let [bx, by] = diamond.corners[(i + 1) % 4];
+                        let (ex, ey) = (bx - ax, by - ay);
+                        let (px, py) = (seal.pos[0] - ax, seal.pos[1] - ay);
+                        // |cross| / |edge| — the perpendicular distance to the
+                        // line the edge lies on.
+                        (ex * py - ey * px).abs() / ex.hypot(ey)
+                    })
+                    .fold(f64::INFINITY, f64::min);
                 assert!(
-                    (radius - 1.0).abs() < 1e-9,
-                    "{} -> {} is at radius {radius}",
+                    worst < 1e-9,
+                    "{} -> {} is {worst} off every wall of the outline",
                     current.as_str(),
                     seal.neighbour,
                 );
             }
         }
+    }
+
+    /// The two architect icon spots reach the wire, mirrored and inside the
+    /// room (POE-248).
+    ///
+    /// The kill glyph the overlay draws is placed from these two fields alone,
+    /// so a payload that dropped them (or published the same point twice) would
+    /// put the glyph on the wrong architect's half with nothing to fail.
+    #[test]
+    fn a_published_diamond_carries_both_architect_icon_spots() {
+        let layout = layout(Some(Slot::C1), &[], &[]);
+        let rooms = board_rooms(&[]);
+        let panel = panel("Chamber of Iron", Some(6), Vec::new());
+
+        let diamond = project(&read(&layout, &rooms, &panel, None, None), None)
+            .layout
+            .and_then(|l| l.diamond)
+            .expect("a current room publishes a diamond");
+
+        let (top, bottom) = (diamond.top_icon, diamond.bottom_icon);
+        assert_eq!(
+            [top[0] + bottom[0], top[1] + bottom[1]],
+            [0.0, 0.0],
+            "the two spots must be reflections through the room's centre",
+        );
+        // `+AXIS_X` is right and up on screen, so the field named for the
+        // top-right half must actually be in it.
+        assert!(
+            top[0] > 0.0 && top[1] < 0.0,
+            "the top spot belongs in the top-right half: {top:?}",
+        );
+        let half_long = diamond.corners[0][0].hypot(diamond.corners[0][1]);
+        let reach = top[0].hypot(top[1]) / half_long;
+        assert!(
+            (0.2..0.45).contains(&reach),
+            "the icon sits well inside the room; it is at {reach} of the way to a corner",
+        );
     }
 
     /// Between rooms there is no room to draw, so there is no diamond — the
@@ -2774,13 +2893,23 @@ mod tests {
                         rect: [991, 659, 27, 27],
                     },
                 ],
+                // Round, obviously synthetic numbers — NOT the fitted shape.
+                // The rectangle's real corners are irrational in every
+                // coordinate, and a sample carrying them would read as the
+                // measurement while being a second copy of it;
+                // `the_current_rooms_diamond_carries_one_seal_per_neighbour`
+                // asserts the projection itself. What is pinned here is that
+                // four corners, a seal and BOTH icon spots reach the wire under
+                // these names.
                 diamond: Some(DiamondView {
-                    corners: [[1.457, 0.0], [0.0, 1.154], [-1.457, 0.0], [0.0, -1.154]],
+                    corners: [[1.4, -0.1], [-0.1, 1.2], [-1.4, 0.1], [0.1, -1.2]],
                     seals: vec![SealView {
                         neighbour: "C2".to_string(),
                         edge: "C1-C2".to_string(),
-                        pos: [0.746_63, -0.665_24],
+                        pos: [1.0, -0.9],
                     }],
+                    top_icon: [0.34, -0.3],
+                    bottom_icon: [-0.34, 0.3],
                 }),
             }),
             panel: Some(PanelView {
@@ -2856,7 +2985,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.457,0.0],[0.0,1.154],[-1.457,0.0],[0.0,-1.154]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[0.74663,-0.66524]}]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///

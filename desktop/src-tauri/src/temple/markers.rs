@@ -189,79 +189,197 @@ pub fn neighbour_direction(lattice: &Lattice, from: Slot, to: Slot) -> (f64, f64
     (x / norm, y / norm)
 }
 
-/// The seal ring's radius, as a fraction of the diamond rect's **shorter side**.
+/// Half-length of the room's LONG wall, as a fraction of the diamond rect's
+/// **shorter side**.
 ///
-/// The seals are drawn at one distance from the diamond's centre, not at a
-/// distance that depends on which wall they are on. MEASURED through the
-/// shipped detector on all five committed crops — 21 seals, 5 slot shapes,
-/// 2 crop sizes:
+/// The room is a **rectangle** in isometric view, not a rhombus — owner,
+/// 2026-09-04: *"the game's room is a RECTANGLE ... two long sides that each
+/// carry two doors and two short sides with one each, which is what makes the
+/// doors and the architect icons easy to place"*. Its walls run along the two
+/// projection axes: the long pair along [`AXIS_X`], the short pair along
+/// [`AXIS_Y`], so two lengths describe the whole shape.
 ///
-/// | crop | short side | detected radii | ratio |
-/// |---|---|---|---|
-/// | `diamond-ref-d3-1374.png` | 200 | 72.1 – 79.1 | 1.10 |
-/// | `diamond-ref-b0-1358.png` | 200 | 67.7 – 81.3 | 1.20 |
-/// | `diamond-ref-b1-1352.png` | 200 | 71.2 – 82.5 | 1.16 |
-/// | `diamond-ref-d1-1376.png` | 200 | 67.7 – 82.5 | 1.22 |
-/// | `diamond-live-b0-1539.png` | 220 | 75.3 – 92.9 | 1.23 |
+/// **MEASURED on the gold outline itself**, not on the seals. The border is
+/// masked by colour, the interior architect frames and the surrounding UI text
+/// are dropped, and the four wall lines are fitted at their known directions;
+/// the numbers are the rail MIDLINE. Six crops, two capture scales:
 ///
-/// Swept 0.360 … 0.400 in 0.002 steps against the POSITIONAL residual
-/// `|predicted − detected|`. **0.382 is the min-max optimum: rms 5.44 px, max
-/// 8.94 px** (0.380 is the rms optimum at 5.43/9.38, and the max is what the
-/// acceptance test spends, so the min-max point is the one taken).
-/// `the_committed_crops_land_within_ten_px_of_the_seal_ring` is that test.
+/// | crop | short side | long side `a` | short side `b` | `a/b` |
+/// |---|---|---|---|---|
+/// | `temple-debug/1788517353584/diamond.png` (200x200, C1 — the laptop board POE-248 was reported on) | 200 | 152.0 | 132.5 | 1.1473 |
+/// | `diamond-ref-d3-1374.png` | 200 | 152.5 | 133.1 | 1.1460 |
+/// | `diamond-ref-b0-1358.png` | 200 | 152.6 | 133.4 | 1.1444 |
+/// | `diamond-ref-b1-1352.png` | 200 | 152.5 | 132.7 | 1.1494 |
+/// | `diamond-ref-d1-1376.png` | 200 | 152.6 | 133.0 | 1.1475 |
+/// | `diamond-live-b0-1539.png` | 220 | 169.6 | 148.0 | 1.1457 |
 ///
-/// # What this replaced, and why the first model was wrong
+/// The five scale-1.0 crops agree to **0.6 px on `a` and 0.9 px on `b`**, cut
+/// from five different screenshots over a month apart. The sixth is the 1539 px
+/// capture: `169.6 / 152.5 = 1.112`, which is the 1.111 its own panel border
+/// implies rather than the 1.13 it is recorded at — the same anchor error
+/// [`super::run::PANEL_BOX_REF`] documents, not a disagreement about the shape.
+/// Halved and divided by the 200 px short side, the mean of the five is the
+/// constant below.
 ///
-/// POE-244 first placed a seal on the parallelogram spanned by [`AXIS_X`] and
-/// [`AXIS_Y`], which puts a same-row corridor at HALF the radius of a diagonal
-/// one — a 2.24 : 1 spread. The panel does not draw them that way: the six
-/// radii on `diamond-ref-d1-1376.png` run 67.7 … 82.5 px, a spread of **1.22**.
-/// Fitted end to end that model is rms 22.2 px, max 44.5 px — four times worse
-/// than one constant. The mistake was reading [`AXIS_X`] / [`AXIS_Y`] as a
-/// description of the SHAPE when they are a fit of DIRECTIONS only, which is
-/// all [`neighbour_direction`] ever claimed and all the door reader ever used.
+/// The fit solves for the CENTRE as well as the two lengths, so the framing of
+/// the crop must not matter — and measurably does not.
 ///
-/// Only the test reaches this: nothing that SHIPS converts a seal to screen
-/// pixels, because the widget draws the diamond in its own unit space where the
-/// ring is 1 by construction. It is here because it is the measurement
-/// [`DIAMOND_HALF_W`] and [`neighbour_direction`]'s unit length are both
-/// expressed against — a number the code needs to be checkable against the
-/// panel, per this module's per-item allow convention.
-#[allow(dead_code)]
-pub const SEAL_RING_FRACTION: f64 = 0.382;
+/// The laptop row is the case that shows it, and its provenance is worth
+/// stating exactly because two dump ids name it. `temple-debug/1788438639673`
+/// is the 2026-09-03 capture itself, committed as
+/// `tests/fixtures/temple/screen-live-1920x1080.png` (`anchor`'s
+/// `MEASURED_SCALES` row is keyed on it).
+/// `temple-debug/1788517353584` is the 2026-09-04 dump the REPLAY of that same
+/// `screen.png` wrote — Debug read file, the smoke item in
+/// `docs/OVERLAY-GUIDE.md` — so the two hold the same pixels and its
+/// `diamond.png` is that capture's diamond ROI. Cropped straight out of the
+/// committed fixture instead, one pixel apart in each axis, the same fit gives
+/// `a = 152.1`, `b = 132.4`: 0.1 px on each side, with the centre moving by
+/// exactly the crop's own offset.
+///
+/// # What this replaced
+///
+/// POE-244 fitted a RHOMBUS (`|x|/A + |y|/B = 1`) to the 21 detected seals and
+/// placed the seals themselves on a constant-radius ring, because a rhombus
+/// cannot hold two doors on one wall. Both are gone. The rectangle is measured
+/// from the outline and the seals then fall on its walls: against the same
+/// shipped detector the ring is rms 5.54 px / max 9.89 px over the five
+/// committed crops, and the rectangle is **rms 3.21 px / max 6.40 px** — with
+/// no parameter fitted to a seal at all. Fitting `a` and `b` to the seals
+/// instead moves them by 1 % (`a/b` 1.150 against the outline's 1.147) and buys
+/// max 5.94 px; the outline is kept, because a shape measured from the shape is
+/// the one a re-cut crop can falsify.
+pub const ROOM_LONG_FRACTION: f64 = 0.3811;
 
-/// Half-width of the room's outline, in units of the seal ring's radius.
+/// Half-length of the room's SHORT wall, same units — see
+/// [`ROOM_LONG_FRACTION`] for the measurement.
+pub const ROOM_SHORT_FRACTION: f64 = 0.3324;
+
+/// The room's short wall in units of its long one — the whole aspect, and the
+/// only part of the two measurements the DRAWING unit space needs.
 ///
-/// The rhombus `|x| / A + |y| / B = 1` least-squares-fitted to the same 21
-/// detected seals gives `a = 0.5565` and `b = 0.4407` of the shorter side —
-/// `1.457` and `1.154` ring radii, an aspect of **1.263**, which is the
-/// isometric squash the game draws the room at.
+/// Derived rather than typed, so the aspect cannot drift from the two lengths
+/// it is the ratio of.
+pub const ROOM_ASPECT: f64 = ROOM_SHORT_FRACTION / ROOM_LONG_FRACTION;
+
+/// Half the room's long wall, in the unit space [`diamond_corners`] draws in.
 ///
-/// The seals are NOT on this outline by construction, and saying so is the
-/// point: a ring fits the measurements better than the rhombus does
-/// (rms 5.44 / max 8.94 against rms 5.56 / max 11.41), so the ring is what
-/// places them and this is what draws the walls. At the six angles a corridor
-/// can actually take, the outline's own radius is 1.125, 0.959 and 0.918 ring
-/// radii — **averaging 1.000** — so the seals sit on the walls to the eye
-/// while each one stays where the panel really puts it.
-pub const DIAMOND_HALF_W: f64 = 1.457;
-/// Half-height of the room's outline — see [`DIAMOND_HALF_W`].
-pub const DIAMOND_HALF_H: f64 = 1.154;
+/// **The unit IS this length**: one is the half-long-wall, which makes a
+/// same-row corridor's seal — the midpoint of a short wall — sit at exactly
+/// 1.0, and every other seal a ratio the shape decides.
+pub const ROOM_HALF_LONG: f64 = 1.0;
+/// Half the room's short wall, same unit space.
+pub const ROOM_HALF_SHORT: f64 = ROOM_ASPECT;
+
+/// How far along the room's long axis the panel draws an architect's icon, in
+/// half-long-walls.
+///
+/// **MEASURED** as the centre of the ornate frame each icon sits in, on the
+/// three crops where the frame is detected whole (the laptop C1 diamond — see
+/// [`ROOM_LONG_FRACTION`] for which dump that is — plus `diamond-ref-b1-1352`
+/// and `diamond-live-b0-1539`, and the icon art itself on two of them): the
+/// frames land at `+0.438 … +0.460` and
+/// `-0.440 … -0.454` of the half-long-wall along [`AXIS_X`], and at
+/// `-0.05 … +0.05` across it. So the two icons sit ON the long axis, mirrored,
+/// and one number places both.
+///
+/// # Which spot belongs to which architect block
+///
+/// What the pixels settle is that there are TWO spots, mirrored through the
+/// room's centre. `+AXIS_X` is right and UP on screen, so one lands in the
+/// room's top-right half and the other in its bottom-left, and
+/// [`architect_icons`] returns them in that order.
+///
+/// What they do NOT settle is which architect's icon goes where. The panel
+/// prints its two blocks top to bottom (`super::panel::reading_order` sorts on
+/// the box top), and the assumption POE-248 ships is the positional one — the
+/// TOP block's icon in the top-right half, the BOTTOM block's in the
+/// bottom-left. The webview keys the kill glyph on the chosen block's own OCR
+/// rect (`overlay-geometry.ts`'s `killGlyph`) and falls back to the offer's
+/// `kind` only when a read carried no boxes to order the blocks by.
+///
+/// **One sample.** The board this was measured on (2026-09-04) had the
+/// `upgrade` block on top, so it cannot separate "top block" from "upgrade
+/// block" on its own; the owner read it as upgrade/change. The falsifier is a
+/// panel with the CHANGE block printed first — on that board the positional
+/// rule and the kind rule disagree, and the smoke item in `OVERLAY-GUIDE.md`
+/// is what looks.
+pub const ARCHITECT_ICON_OFFSET: f64 = 0.45;
+
+/// A vector scaled to unit length.
+fn unit((x, y): (f64, f64)) -> (f64, f64) {
+    let n = x.hypot(y);
+    (x / n, y / n)
+}
+
+/// The room's two wall directions, `(long, short)`, as unit vectors.
+///
+/// [`AXIS_X`] is already unit length to 7e-5 and [`AXIS_Y`] is 1.88 times it;
+/// both are normalised here anyway, so the shape stays a function of the fitted
+/// DIRECTIONS alone and cannot inherit the projection's stretch.
+fn wall_axes() -> ((f64, f64), (f64, f64)) {
+    (unit(AXIS_X), unit(AXIS_Y))
+}
+
+/// `v` in the room's own wall basis: the `(long, short)` pair with
+/// `v = long * ux + short * uy`.
+///
+/// The two axes are 83.2° apart, not 90°, so this is a change of basis and not
+/// a pair of dot products — using dot products here would put every diagonal
+/// seal a few per cent off the wall it belongs to.
+fn wall_coords((vx, vy): (f64, f64)) -> (f64, f64) {
+    let ((ux, uy), (vx2, vy2)) = wall_axes();
+    let det = ux * vy2 - uy * vx2;
+    ((vx * vy2 - vy * vx2) / det, (ux * vy - uy * vx) / det)
+}
 
 /// The room's isometric outline, as four corners in ring order, `+y` down and
-/// the centre at the origin, in units of the seal ring's radius.
+/// the centre at the origin, in units of [`ROOM_HALF_LONG`].
 ///
 /// Ring order is by screen angle — right, bottom, left, top — so a consumer can
-/// draw it as a polygon without sorting. A seal goes at
-/// [`neighbour_direction`], which is a unit vector, so it lands on the ring of
-/// radius 1 inside this shape; see [`DIAMOND_HALF_W`] for how the two relate.
+/// draw it as a polygon without sorting. The corners are the four sums
+/// `±ROOM_HALF_LONG * ux ± ROOM_HALF_SHORT * uy`, which is why the shape is
+/// slightly ROTATED: neither diagonal is axis-aligned, and the panel's is not
+/// either.
 pub fn diamond_corners() -> [(f64, f64); 4] {
+    let ((lx, ly), (sx, sy)) = wall_axes();
+    let (l, s) = (ROOM_HALF_LONG, ROOM_HALF_SHORT);
     [
-        (DIAMOND_HALF_W, 0.0),
-        (0.0, DIAMOND_HALF_H),
-        (-DIAMOND_HALF_W, 0.0),
-        (0.0, -DIAMOND_HALF_H),
+        (l * lx + s * sx, l * ly + s * sy),
+        (-l * lx + s * sx, -l * ly + s * sy),
+        (-l * lx - s * sx, -l * ly - s * sy),
+        (l * lx - s * sx, l * ly - s * sy),
     ]
+}
+
+/// Where `to`'s seal sits on `from`'s room, in [`diamond_corners`]' units.
+///
+/// **On the wall, not on a ring.** A door is a hole in a wall, so the seal is
+/// where the corridor's own direction leaves the rectangle: the ray from the
+/// centre along [`neighbour_direction`], intersected with the outline. The two
+/// same-row corridors land on the midpoint of a short wall — at exactly
+/// [`ROOM_HALF_LONG`] — and the four diagonals land on the long walls, two per
+/// wall, at 0.938 and 1.034 of it. That 2-2-1-1 distribution is the shape's
+/// whole point (see [`ROOM_LONG_FRACTION`]); a rhombus can only ever put one
+/// door on a side.
+pub fn seal_position(lattice: &Lattice, from: Slot, to: Slot) -> (f64, f64) {
+    let (dx, dy) = neighbour_direction(lattice, from, to);
+    let (long, short) = wall_coords((dx, dy));
+    let r = 1.0 / ((long / ROOM_HALF_LONG).abs()).max((short / ROOM_HALF_SHORT).abs());
+    (dx * r, dy * r)
+}
+
+/// The two architect icon spots inside the room, in [`diamond_corners`]' units
+/// and in the order the panel prints the blocks it draws them for: the
+/// TOP-RIGHT half first, the BOTTOM-LEFT half second.
+///
+/// Named for the halves and not for the two kinds of kill on purpose — see
+/// [`ARCHITECT_ICON_OFFSET`], which is what the measurement does and does not
+/// settle.
+pub fn architect_icons() -> ((f64, f64), (f64, f64)) {
+    let ((lx, ly), _) = wall_axes();
+    let d = ARCHITECT_ICON_OFFSET * ROOM_HALF_LONG;
+    ((d * lx, d * ly), (-d * lx, -d * ly))
 }
 
 /// Row of a slot as an index, `A` = 0 … `E` = 4.
@@ -1022,21 +1140,24 @@ mod tests {
     }
 
     /// The seal model against the SHIPPED DETECTOR on every committed crop
-    /// (POE-244).
+    /// (POE-244, re-fitted to the ROOM RECTANGLE in POE-248).
     ///
     /// The test the first version of this geometry did not have and needed: the
     /// one it shipped with asserted the model against its own algebra, which a
     /// model that is wrong about the panel passes perfectly. This one predicts
-    /// `centre + SEAL_RING_FRACTION × short_side × neighbour_direction` and
-    /// compares it to where `read_door_markers` actually found the ink — 21
-    /// seals, 5 slot shapes, 2 crop sizes, both scale families.
+    /// `centre + ROOM_LONG_FRACTION × short_side × seal_position` — the ray
+    /// through the wall, not a constant ring — and compares it to where
+    /// `read_door_markers` actually found the ink: 21 seals, 5 slot shapes,
+    /// 2 crop sizes, both scale families.
     ///
-    /// 10 px on a 200 px rect is 5 % of the shape, which is inside a seal's own
-    /// 11–25 px diameter: a prediction this close is one the eye reads as being
-    /// on the same wall. Measured worst case is 8.94 px, so the bound has about
-    /// a pixel of headroom and a re-fit that loses more than that fails here.
+    /// The bound came DOWN with the shape. On the same detections the retired
+    /// ring model is rms 5.5 px / max 9.9 px and the rectangle is rms 3.2 px /
+    /// max 6.4 px, with nothing fitted to a seal: `a` and `b` are measured off
+    /// the gold outline ([`ROOM_LONG_FRACTION`]). 7 px on a 200 px rect is 3.5 %
+    /// of the shape and well inside a seal's own 11-25 px diameter, so a re-fit
+    /// that loses more than half a pixel of the headroom fails here.
     #[test]
-    fn the_committed_crops_land_within_ten_px_of_the_seal_ring() {
+    fn the_committed_crops_land_within_seven_px_of_the_room_wall() {
         let mut worst = (0.0_f64, "");
         for f in ALL {
             let read = read(f);
@@ -1044,14 +1165,14 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{} ({}): {e}", f.file, f.case));
             let img = load(f);
             let short = img.width().min(img.height()) as f64;
-            let radius = SEAL_RING_FRACTION * short;
+            let half_long = ROOM_LONG_FRACTION * short;
             for (slot, marker) in assigned {
-                let (ux, uy) = neighbour_direction(&lattice(), f.current, slot);
-                let px = read.centre.0 as f64 + ux * radius;
-                let py = read.centre.1 as f64 + uy * radius;
+                let (ux, uy) = seal_position(&lattice(), f.current, slot);
+                let px = read.centre.0 as f64 + ux * half_long;
+                let py = read.centre.1 as f64 + uy * half_long;
                 let err = (px - marker.position.0 as f64).hypot(py - marker.position.1 as f64);
                 assert!(
-                    err < 10.0,
+                    err < 7.0,
                     "{}: {} -> {} predicted ({px:.1}, {py:.1}), detected {:?}, off by {err:.2} px",
                     f.file,
                     f.current.as_str(),
@@ -1074,22 +1195,181 @@ mod tests {
         );
     }
 
-    /// A seal is on the ring, which is the whole placement rule now that the
-    /// outline no longer defines it.
+    /// The rectangle beats the ring it replaced, on the same detections.
+    ///
+    /// The claim [`ROOM_LONG_FRACTION`]'s note makes, asserted rather than
+    /// written down: a shape measured from the gold OUTLINE places the seals
+    /// better than the constant radius that was fitted TO the seals. It is what
+    /// stops a future "simplify this back to one radius" from looking free.
+    ///
+    /// The retired constant (0.382 of the shorter side) is a literal here
+    /// because it is no longer anywhere else — reviving it as a `const` would
+    /// give the module two answers to where a seal goes.
     #[test]
-    fn every_modelled_seal_sits_at_one_ring_radius() {
+    fn the_room_rectangle_places_seals_closer_than_the_ring_it_replaced() {
+        const RETIRED_SEAL_RING_FRACTION: f64 = 0.382;
+        let (mut ring_worst, mut rect_worst) = (0.0_f64, 0.0_f64);
+        let (mut ring_sq, mut rect_sq, mut n) = (0.0_f64, 0.0_f64, 0usize);
+        for f in ALL {
+            let read = read(f);
+            let assigned = assign_markers(&lattice(), f.current, &read)
+                .unwrap_or_else(|e| panic!("{} ({}): {e}", f.file, f.case));
+            let img = load(f);
+            let short = img.width().min(img.height()) as f64;
+            for (slot, marker) in assigned {
+                let (mx, my) = (marker.position.0 as f64, marker.position.1 as f64);
+                let (cx, cy) = (read.centre.0 as f64, read.centre.1 as f64);
+                let (rx, ry) = neighbour_direction(&lattice(), f.current, slot);
+                let ring = (cx + rx * RETIRED_SEAL_RING_FRACTION * short - mx)
+                    .hypot(cy + ry * RETIRED_SEAL_RING_FRACTION * short - my);
+                let (wx, wy) = seal_position(&lattice(), f.current, slot);
+                let rect = (cx + wx * ROOM_LONG_FRACTION * short - mx)
+                    .hypot(cy + wy * ROOM_LONG_FRACTION * short - my);
+                ring_worst = ring_worst.max(ring);
+                rect_worst = rect_worst.max(rect);
+                ring_sq += ring * ring;
+                rect_sq += rect * rect;
+                n += 1;
+            }
+        }
+        let (ring_rms, rect_rms) = (
+            (ring_sq / n as f64).sqrt(),
+            (rect_sq / n as f64).sqrt(),
+        );
+        assert!(
+            rect_rms < ring_rms && rect_worst < ring_worst,
+            "the rectangle must beat the ring on both statistics: \
+             ring rms {ring_rms:.2} max {ring_worst:.2}, \
+             rect rms {rect_rms:.2} max {rect_worst:.2} over {n} seals",
+        );
+    }
+
+    /// Every seal is ON a wall, which is the whole placement rule now that the
+    /// ring is gone.
+    ///
+    /// "On the boundary" is `max(|long| / half_long, |short| / half_short) == 1`
+    /// in the room's own wall basis — the same expression [`seal_position`]
+    /// inverts, so this fails if the inversion is wrong in either direction
+    /// (a seal short of the wall, or one outside it).
+    #[test]
+    fn every_modelled_seal_sits_on_a_room_wall() {
         let lattice = lattice();
         for slot in Slot::ALL {
             for to in lattice::neighbours(slot) {
-                let (x, y) = neighbour_direction(&lattice, slot, to);
+                let (long, short) = wall_coords(seal_position(&lattice, slot, to));
+                let on_wall = (long / ROOM_HALF_LONG)
+                    .abs()
+                    .max((short / ROOM_HALF_SHORT).abs());
                 assert!(
-                    (x.hypot(y) - 1.0).abs() < 1e-12,
-                    "{} -> {} is at radius {}",
+                    (on_wall - 1.0).abs() < 1e-9,
+                    "{} -> {} sits at {on_wall} of the wall",
                     slot.as_str(),
                     to.as_str(),
-                    x.hypot(y)
                 );
             }
+        }
+    }
+
+    /// The 2-2-1-1 door distribution — the reason the room is a rectangle at
+    /// all (owner, 2026-09-04).
+    ///
+    /// A six-neighbour room puts TWO seals on each long wall and ONE on each
+    /// short wall. A rhombus cannot: every one of its four sides would take one
+    /// and a half. Fails if [`ROOM_ASPECT`] is edited far enough for a diagonal
+    /// corridor to slide onto a short wall.
+    #[test]
+    fn a_six_door_room_puts_two_seals_on_each_long_wall_and_one_on_each_short() {
+        let lattice = lattice();
+        // C1 has all six corridors — the shape every other slot is a subset of.
+        let mut long_walls = 0usize;
+        let mut short_walls = std::collections::BTreeMap::<i64, usize>::new();
+        let mut long_by_side = std::collections::BTreeMap::<i64, usize>::new();
+        for to in lattice::neighbours(Slot::C1) {
+            let (long, short) = wall_coords(seal_position(&lattice, Slot::C1, to));
+            if (short / ROOM_HALF_SHORT).abs() > (long / ROOM_HALF_LONG).abs() {
+                long_walls += 1;
+                *long_by_side.entry(short.signum() as i64).or_default() += 1;
+            } else {
+                *short_walls.entry(long.signum() as i64).or_default() += 1;
+            }
+        }
+        assert_eq!(long_walls, 4, "four diagonal corridors leave by a long wall");
+        assert_eq!(
+            long_by_side.values().copied().collect::<Vec<_>>(),
+            vec![2, 2],
+            "two doors per long wall, one wall each side",
+        );
+        assert_eq!(
+            short_walls.values().copied().collect::<Vec<_>>(),
+            vec![1, 1],
+            "one door per short wall — the two same-row corridors",
+        );
+    }
+
+    /// The shape is a RECTANGLE, and the two measurements say so.
+    ///
+    /// Not a tautology over [`ROOM_ASPECT`]'s definition: it asserts the
+    /// geometric consequences a consumer relies on — opposite walls equal and
+    /// parallel, adjacent walls unequal, and the long/short ratio the outline
+    /// was measured at. A rhombus (the retired shape) has four equal sides and
+    /// fails the third.
+    #[test]
+    fn the_outline_is_a_rectangle_with_the_measured_aspect() {
+        let c = diamond_corners();
+        let side = |i: usize| {
+            let (ax, ay) = c[i];
+            let (bx, by) = c[(i + 1) % 4];
+            (bx - ax).hypot(by - ay)
+        };
+        for (i, j) in [(0usize, 2usize), (1, 3)] {
+            assert!(
+                (side(i) - side(j)).abs() < 1e-9,
+                "opposite walls differ: {} vs {}",
+                side(i),
+                side(j),
+            );
+        }
+        // Corner 0 is the right corner and corner 1 the bottom, and the step
+        // between them is `-2 * ROOM_HALF_LONG * ux` — so side 0 IS a long wall
+        // and side 1 a short one.
+        let (long, short) = (side(0), side(1));
+        assert!(
+            (long / short - 1.0 / ROOM_ASPECT).abs() < 1e-9,
+            "long/short is {}, the measured outline says {}",
+            long / short,
+            1.0 / ROOM_ASPECT,
+        );
+        assert!(
+            (1.140..1.155).contains(&(long / short)),
+            "the outline was measured at 1.147 on six crops, this is {}",
+            long / short,
+        );
+    }
+
+    /// The two architect icons are mirrored on the long axis and well inside
+    /// the room — the spot POE-248's kill glyph is drawn at.
+    #[test]
+    fn the_architect_icons_are_mirrored_on_the_long_axis_inside_the_room() {
+        let (top, bottom) = architect_icons();
+        assert!(
+            (top.0 + bottom.0).abs() < 1e-12 && (top.1 + bottom.1).abs() < 1e-12,
+            "the two icons must be reflections through the room's centre: {top:?} / {bottom:?}",
+        );
+        // `+AXIS_X` is right and UP on screen, so the FIRST spot is the one in
+        // the room's top-right half — which is the order this function promises.
+        assert!(
+            top.0 > 0.0 && top.1 < 0.0,
+            "the first spot belongs in the top-right half: {top:?}",
+        );
+        for (name, (x, y)) in [("top-right", top), ("bottom-left", bottom)] {
+            let (long, short) = wall_coords((x, y));
+            let out = (long / ROOM_HALF_LONG)
+                .abs()
+                .max((short / ROOM_HALF_SHORT).abs());
+            assert!(
+                (0.4..0.5).contains(&out),
+                "the {name} icon sits at {out} of the way to the wall; measured 0.45",
+            );
         }
     }
 

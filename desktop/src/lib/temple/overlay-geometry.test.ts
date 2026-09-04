@@ -11,22 +11,22 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-	ARROW_STANDOFF_CSS,
 	BANNER_TOP_CSS,
 	CALLOUT_GAP_CSS,
 	SEAL_RADIUS,
 	SEAL_RADIUS_SUGGESTED,
 	bannerPlacement,
-	calloutArrow,
 	calloutPlacement,
 	captureToCss,
 	diamondGeometry,
 	doorDefaultPlacement,
+	killGlyph,
 	neverCoverRects,
-	roiRect
+	roiRect,
+	sealVisible
 } from './overlay-geometry';
 import { rectIsClear } from '$lib/overlay/widgets/widget-avoid';
-import type { DiamondView, LayoutView, RoiView } from './slice';
+import type { CaptureRect, DiamondView, LayoutView, RoiView } from './slice';
 
 const HOST = { width: 1920, height: 1080 };
 
@@ -235,55 +235,6 @@ describe('calloutPlacement', () => {
 	});
 });
 
-describe('calloutArrow', () => {
-	it('runs from the box side facing the block to the middle of the block side facing back', () => {
-		// Box at 420..480 × 210..230, centre (450, 220). The block's four edge
-		// midpoints are N (550,200), E (600,220), S (550,240), W (500,220); the
-		// nearest to the box centre is W at 50 px. The box end then follows it:
-		// of the box's own midpoints, E (480,220) is nearest to (500,220). The
-		// line then STOPS 10 px short of that, at x = 490.
-		expect(calloutArrow({ x: 420, y: 210, w: 60, h: 20 }, BLOCK)).toEqual({
-			x1: 480,
-			y1: 220,
-			x2: 490,
-			y2: 220
-		});
-	});
-
-	it('points down when the box is above the block', () => {
-		// Box centred at (550, 100), directly above the block: the block's
-		// nearest midpoint is N (550, 200), the box leaves from its own S edge
-		// (550, 120), and the standoff pulls the end back to y = 190.
-		expect(calloutArrow({ x: 520, y: 80, w: 60, h: 40 }, BLOCK)).toEqual({
-			x1: 550,
-			y1: 120,
-			x2: 550,
-			y2: 190
-		});
-	});
-
-	it('stops the line short of the block, so the head does not land on the text', () => {
-		// The reason the standoff exists: the arrowHEAD is a filled triangle
-		// drawn AT the line's end, and a line that reached the block's edge put
-		// that triangle on the first glyphs of the OCR crop the module reads.
-		// Asserted as the distance rather than as a coordinate, so the claim is
-		// the same one whatever direction the arrow runs.
-		const arrow = calloutArrow({ x: 420, y: 210, w: 60, h: 20 }, BLOCK);
-		const gap = Math.hypot(500 - arrow.x2, 220 - arrow.y2);
-		expect(gap).toBeCloseTo(ARROW_STANDOFF_CSS, 6);
-		expect(ARROW_STANDOFF_CSS).toBeGreaterThanOrEqual(8);
-	});
-
-	it('leaves a line with nowhere to go alone rather than reversing it', () => {
-		// A box whose chosen edge midpoint is inside the standoff of the target
-		// midpoint. Pulling back further than the line is long would flip its
-		// direction and point the head away from the block.
-		const touching = calloutArrow({ x: 494, y: 215, w: 6, h: 10 }, BLOCK);
-		expect(touching.x2).toBe(500);
-		expect(touching.y2).toBe(220);
-	});
-});
-
 describe('bannerPlacement', () => {
 	it('centres the banner at the top of the host when that is clear', () => {
 		// A published set that is nowhere near the top centre — the plate crop
@@ -446,13 +397,20 @@ describe('diamondGeometry', () => {
 			{ neighbour: 'B1', edge: 'B1-C1', pos: [0, -2] },
 			{ neighbour: 'C0', edge: 'C0-C1', pos: [-2, 0] },
 			{ neighbour: 'D2', edge: 'C1-D2', pos: [0, 2] }
-		]
+		],
+		// Mirrored through the centre, as `markers::architect_icons` publishes
+		// them; round here for the same reason the corners are.
+		topIcon: [1, -1],
+		bottomIcon: [-1, 1]
 	};
 	const board = {
 		...layout([]),
-		// One corridor of each of the four states `edgeState` can report.
+		// One corridor of each of the three states `edgeState` can report, in
+		// the shape a real read publishes: `uncertain` carries every corridor
+		// incident to the current room, and the settled `doors` is the verdict
+		// over them (POE-248).
 		doors: ['C1-C2', 'C1-D2'],
-		uncertain: ['C1-D2'],
+		uncertain: ['C1-C2', 'B1-C1', 'C1-D2'],
 		unresolvedIncident: ['C0-C1']
 	};
 
@@ -460,19 +418,19 @@ describe('diamondGeometry', () => {
 		expect(diamondGeometry(diamond, board, []).outline).toBe('2,0 0,2 -2,0 0,-2');
 	});
 
-	it('colours each seal by the same edge state the board and the page use', () => {
-		// Four answers, not two. "Reported open but hidden behind the selection
-		// frame" and "settled by nothing" must both stay distinguishable from
-		// the red the game uses for a door it HAS settled shut — that is
-		// POE-171's honesty guard, carried onto a widget that outlives the
-		// panel it was read from.
+	it('classifies each seal by the same edge state the board and the page use', () => {
+		// Three answers, not two: "settled by nothing" must stay distinguishable
+		// from a door the read HAS settled shut — POE-171's honesty guard,
+		// carried onto a widget that outlives the panel it was read from. And
+		// the two corridors the beam flagged uncertain but the seals settled are
+		// open, which is the POE-248 fix seen from the geometry's side.
 		expect(
 			diamondGeometry(diamond, board, []).seals.map((seal) => [seal.edge, seal.state])
 		).toEqual([
 			['C1-C2', 'open'],
 			['B1-C1', 'closed'],
 			['C0-C1', 'unresolved'],
-			['C1-D2', 'uncertain']
+			['C1-D2', 'open']
 		]);
 	});
 
@@ -511,5 +469,91 @@ describe('diamondGeometry', () => {
 		expect(minY).toBeLessThanOrEqual(-2 - SEAL_RADIUS_SUGGESTED);
 		expect(minX + width).toBeGreaterThanOrEqual(2 + SEAL_RADIUS_SUGGESTED);
 		expect(minY + height).toBeGreaterThanOrEqual(2 + SEAL_RADIUS_SUGGESTED);
+	});
+
+	describe('sealVisible', () => {
+		/** The four seals of the fixture above, already classified. */
+		const seals = () => diamondGeometry(diamond, board, ['B1-C1']).seals;
+
+		it('draws the open doors and the advisor\'s, and nothing else', () => {
+			// POE-248's subtraction, as the list of what survives: the two open
+			// corridors in the game's own green, plus B1-C1 — which is CLOSED
+			// and drawn anyway, because it is the door being recommended.
+			expect(seals().filter(sealVisible).map((seal) => seal.edge)).toEqual([
+				'C1-C2',
+				'B1-C1',
+				'C1-D2'
+			]);
+		});
+
+		it('draws neither a closed corridor nor one nothing settled', () => {
+			// The two the owner called chaos. `C0-C1` is the interesting half:
+			// "we could not read it" is still real, and it is now said by
+			// `doorWarning` in words rather than by a grey dot nobody can act
+			// on.
+			const hidden = seals()
+				.filter((seal) => !sealVisible(seal))
+				.map((seal) => [seal.edge, seal.state]);
+			expect(hidden).toEqual([['C0-C1', 'unresolved']]);
+		});
+	});
+
+	describe('killGlyph', () => {
+		/** Two blocks with rects, the CHANGE one printed first. */
+		const top = { kind: 'change', rect: [1200, 100, 300, 40] as CaptureRect };
+		const bottom = { kind: 'upgrade', rect: [1200, 200, 300, 40] as CaptureRect };
+		const both = [top, bottom];
+
+		it('marks the half the chosen block was PRINTED in, not the half its kind implies', () => {
+			// The whole point of keying on the rect: on this panel the `change`
+			// block is the top one, so its glyph goes in the top-right half —
+			// the opposite of what the one measured board's upgrade/change
+			// reading would have said.
+			expect(killGlyph(diamond, top, both)).toEqual({
+				position: { x: 1, y: -1 },
+				kind: 'change'
+			});
+			expect(killGlyph(diamond, bottom, both)).toEqual({
+				position: { x: -1, y: 1 },
+				kind: 'upgrade'
+			});
+		});
+
+		it('falls back to the kind when the read carried no boxes', () => {
+			// A text-only read: nothing orders the blocks, so the one-sample
+			// mapping is all there is — upgrade top-right, change bottom-left.
+			const textOnly = [
+				{ kind: 'upgrade', rect: null },
+				{ kind: 'change', rect: null }
+			];
+			expect(killGlyph(diamond, textOnly[0], textOnly)?.position).toEqual({ x: 1, y: -1 });
+			expect(killGlyph(diamond, textOnly[1], textOnly)?.position).toEqual({ x: -1, y: 1 });
+		});
+
+		it('falls back to the kind when only one block was read', () => {
+			// POE-243's `forcedKill` shape. One rect orders nothing — the block
+			// that was read could be either of the two the panel drew — so the
+			// positional rule has to decline rather than guess.
+			expect(killGlyph(diamond, top, [top])?.position).toEqual({ x: -1, y: 1 });
+		});
+
+		it('marks nothing when the ranking named no architect', () => {
+			// `kill either` — the advisor ranked the doors and left the kill
+			// free. A glyph on one of the two halves would claim a choice that
+			// was not made.
+			expect(killGlyph(diamond, null, both)).toBeNull();
+		});
+
+		it('marks nothing for a kind it does not recognise', () => {
+			expect(killGlyph(diamond, { kind: 'sacrifice', rect: null }, both)).toBeNull();
+		});
+
+		it('marks nothing on a payload from before the spots were published', () => {
+			// A glyph placed at the origin would sit in the middle of the room
+			// and point at neither architect, which is worse than no glyph.
+			const older = { ...diamond, topIcon: null, bottomIcon: null };
+			expect(killGlyph(older, top, both)).toBeNull();
+			expect(killGlyph(older, bottom, both)).toBeNull();
+		});
 	});
 });

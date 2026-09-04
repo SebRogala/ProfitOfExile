@@ -28,8 +28,8 @@
 //!
 //! # The chain
 //!
-//! `RV > RU > R1-apex > RD > R2 > R1-gradient > RS`, and generic
-//! cluster-merging ranked below R2 while no cluster holds value.
+//! `RV > RU > R1-apex-reaches > R1-apex-adjacent > RD > R2 > R1-gradient > RS`,
+//! and generic cluster-merging ranked below R2 while no cluster holds value.
 //!
 //! That order is not a description of [`DoorKey`] — it IS [`DoorKey`], read off
 //! its field order by the derived lexicographic `Ord`. Reordering the fields
@@ -54,6 +54,16 @@
 //!   badly: [`DoorScore::r2`] sums the sizes of the components each door joins
 //!   and prefers the smaller total, so "attach a singleton" (5+1) outranks
 //!   "merge two fives" (5+5) without a second mechanism.
+//! - **R1-apex is two levels, not one.** Measured on the Lightning Workshop
+//!   board (2026-09-03, [`super::cases::case_8_lightning_workshop`]): standing
+//!   in C1 with one key, both candidate corridors land on a B slot, so a single
+//!   Apex/Apex-adjacent flag scored them equal and the next key down decided.
+//!   That handed the board to B1 — R2 prefers the smaller merge and B1 is a
+//!   lone singleton, while B0 already sits in a two-slot component with the
+//!   Apex because A0-B0 is open. Sebastian's call is that connecting to a slot
+//!   ALREADY wired to the Apex *reaches* the Apex and must outrank a slot that
+//!   is merely Apex-adjacent, so the flag is split into
+//!   [`DoorKey::r1_apex_reaches`] ranked above [`DoorKey::r1_apex_adjacent`].
 //!
 //! Hub degree is **not** a rule (re-checked 2026-08-18: board 1 was decided by
 //! the row gradient, and the hub reading of it was commentary).
@@ -149,7 +159,11 @@ pub enum Reason {
     RvMerge { rooms: usize },
     /// R1-apex — a door whose far end is the Apex, or one of the only two
     /// slots that can ever open an Apex corridor.
-    R1Apex,
+    ///
+    /// `reaches_apex` is the level the option achieved: `true` when the far end
+    /// is the Apex itself or a B slot already wired to it, `false` when the far
+    /// end is Apex-adjacent but no A0 corridor is open there yet.
+    R1Apex { reaches_apex: bool },
     /// R2 — merges the smallest components available.
     R2 { joined: usize },
     /// R1 gradient — connects toward the top of the board.
@@ -212,7 +226,10 @@ impl Reason {
             Reason::RvMerge { rooms } => format!(
                 "RV: connects {rooms} target-line room(s) to the Entrance"
             ),
-            Reason::R1Apex => "R1: reaches the Apex or an Apex-adjacent slot — \
+            Reason::R1Apex { reaches_apex: true } => {
+                "R1: reaches the Apex — the far slot is already connected to it".to_string()
+            }
+            Reason::R1Apex { reaches_apex: false } => "R1: reaches an Apex-adjacent slot — \
                  only B0/B1 can ever open the Apex"
                 .to_string(),
             Reason::R2 { joined } => format!("R2: merges the smallest clusters ({joined} rooms)"),
@@ -347,14 +364,70 @@ fn degree_priced(line: Option<&Line>, tier: Tier) -> bool {
     line == Some(&Line::Upgrade) && matches!(tier.get(), 1 | 2)
 }
 
-/// R1-apex's predicate.
+/// R1-apex's two levels, ordered worst to best.
 ///
-/// The Apex itself, or one of the only two slots that can ever open an Apex
-/// corridor. Reaching B0 or B1 buys the *opportunity* to open the Apex, which
-/// is the scarcity R1-apex is about — the Apex is never a drop room, so 2 of 12
-/// slots are the whole supply.
-fn reaches_apex(far: Slot) -> bool {
-    far == Slot::APEX || far == Slot::B0 || far == Slot::B1
+/// The Apex is never a drop room, so 2 of 12 slots are the whole supply of
+/// corridors that can ever open it — that scarcity is what R1-apex is about.
+/// But the two B slots are not worth the same: one whose component already
+/// holds the Apex hands you the Apex the moment the corridor opens, while one
+/// with no open A0 corridor yet buys only the *opportunity* to open it later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApexReach {
+    /// The corridor buys neither the Apex nor a new way toward it.
+    None,
+    /// It newly joins B0 or B1 — one of the two slots that can ever open an
+    /// Apex corridor — to the room you are standing in.
+    Adjacent,
+    /// It newly joins your component to one that already holds the Apex.
+    Reaches,
+}
+
+/// R1-apex's predicate: what this corridor BUYS, not what its far end is.
+///
+/// `open` is the board **before** this option's doors are applied, and both
+/// ends are read against it: the level is the difference the door makes, so a
+/// corridor that lands on an Apex slot you can already walk to scores nothing.
+///
+/// # Why the position is read too
+///
+/// Measuring the far end alone was POE-248's first cut and it is wrong wherever
+/// a corridor is enumerated *inside* its own component — which [`door_sets`]
+/// does on purpose, because every corridor out of a tier-1/2 upgrade room
+/// raises a degree RU prices. Take A0-B0, B0-C0 and C0-C1 open with C1 a
+/// Sanctum of Unity II: from C1 the closed C1-B0 corridor is a **no-op**, B0
+/// already being in C1's own component, and yet its far end sits in a component
+/// holding the Apex. Scored on the far end it read `Reaches` and outranked
+/// C1-B1, which actually merges a new component. Before the split the two tied
+/// and R2 picked B1; the split has to keep picking B1, and it does because
+/// nothing is bought where nothing changes.
+///
+/// The same rule bounds the lower level: `Adjacent` is *new* adjacency, so a B
+/// slot already inside your component buys none.
+///
+/// # And why the SUPPLY set still gates both levels
+///
+/// Only the Apex and the two slots that can ever open a corridor to it count,
+/// exactly as before. Dropping that gate — scoring any far end whose component
+/// happens to hold the Apex — is a different rule, and walked board 1
+/// ([`super::cases::case_1_tombs`]) is the measurement that rejects it: from
+/// Tombs (D3) the D2 corridor lands in a ten-slot component that does hold the
+/// Apex, and Sebastian played the C2 singleton instead. R1-apex is about the
+/// SCARCITY of the two corridors that can ever open the Apex, not about
+/// connectivity to it, which is what RV and R2 are for.
+fn apex_reach(far: Slot, position: Slot, open: &[SlotMask; 13]) -> ApexReach {
+    if far != Slot::APEX && far != Slot::B0 && far != Slot::B1 {
+        return ApexReach::None;
+    }
+    let mine = component(open, position);
+    if !mask_holds(mine, Slot::APEX.index())
+        && mask_holds(component(open, far), Slot::APEX.index())
+    {
+        return ApexReach::Reaches;
+    }
+    if far != Slot::APEX && !mask_holds(mine, far.index()) {
+        return ApexReach::Adjacent;
+    }
+    ApexReach::None
 }
 
 fn far_end(edge: Edge, from: Slot) -> Slot {
@@ -517,13 +590,32 @@ pub struct DoorKey {
     /// RU: 1 unless the option dilutes a saturated upgrade room. A veto over
     /// everything below it, but not over RV.
     pub ru_ok: u8,
-    /// R1-apex: how many Apex or Apex-adjacent corridors the set opens.
+    /// R1-apex, upper level: how many doors of the set newly join the room you
+    /// are standing in to a component that already holds the Apex.
+    ///
+    /// A DIFFERENCE, not a property of the far end: a corridor onto an Apex
+    /// slot you can already walk to buys nothing and scores nothing. See
+    /// [`apex_reach`].
     ///
     /// It sits **above** RD's count because the redundancy filter can drop the
     /// pair that would have spent both keys: a two-set of junk corridors must
     /// not outrank the one-set that banks the scarcest connectivity on the
     /// board.
-    pub r1_apex: u8,
+    pub r1_apex_reaches: u8,
+    /// R1-apex, lower level: how many doors newly join an Apex-adjacent slot
+    /// (B0/B1) to your component, on a board where the Apex is not walkable
+    /// yet. Same difference rule as [`Self::r1_apex_reaches`].
+    ///
+    /// Split off [`Self::r1_apex_reaches`] rather than counted with it because
+    /// the two are not worth the same, measured on the Lightning Workshop board
+    /// (2026-09-03, [`super::cases::case_8_lightning_workshop`]): A0-B0 was
+    /// open, so from C1 the B0 corridor *reached* the Apex while the B1
+    /// corridor was adjacent to it only. Counted as one flag they tied, and the
+    /// keys below decided — R2 prefers the smaller merge, so it took the lone
+    /// singleton B1 over B0's two-slot component with the Apex in it, which
+    /// Sebastian rejects. Field order is the chain, so reaching must come
+    /// first.
+    pub r1_apex_adjacent: u8,
     /// RD: how many corridors the set opens.
     ///
     /// A **count**, not a flag: keys are use-it-or-lose-it, so with two of them
@@ -588,7 +680,8 @@ pub fn evaluate_rules(
     let open = board.adjacency();
 
     // -- the door half ----------------------------------------------------
-    let mut r1_apex = 0u8;
+    let mut r1_apex_reaches = 0u8;
+    let mut r1_apex_adjacent = 0u8;
     let mut r2_total = 0i32;
     let mut best_row = u8::MAX;
     let mut scarcest = usize::MAX;
@@ -596,8 +689,14 @@ pub fn evaluate_rules(
     for edge in doors {
         let (a, b) = edge.ends();
         let far = far_end(*edge, position);
-        if reaches_apex(far) {
-            r1_apex += 1;
+        // `open`, never `trial`: R1-apex asks what the board looked like BEFORE
+        // this option's own doors, at both ends — see [`apex_reach`], which
+        // reads the position as well as the far slot so a corridor inside its
+        // own component scores nothing.
+        match apex_reach(far, position, &open) {
+            ApexReach::Reaches => r1_apex_reaches += 1,
+            ApexReach::Adjacent => r1_apex_adjacent += 1,
+            ApexReach::None => {}
         }
         r2_total += component(&trial, a).count_ones() as i32;
         r2_total += component(&trial, b).count_ones() as i32;
@@ -616,8 +715,13 @@ pub fn evaluate_rules(
             rooms: connects_value as usize,
         });
     }
-    if r1_apex > 0 {
-        reasons.push(Reason::R1Apex);
+    // One R1-apex reason per option, reporting the best level the set reached —
+    // a two-door set that reaches the Apex on one corridor and is merely
+    // adjacent on the other has still reached it.
+    if r1_apex_reaches > 0 || r1_apex_adjacent > 0 {
+        reasons.push(Reason::R1Apex {
+            reaches_apex: r1_apex_reaches > 0,
+        });
     }
     if !doors.is_empty() {
         reasons.push(Reason::Rd);
@@ -645,7 +749,8 @@ pub fn evaluate_rules(
         door: DoorKey {
             connects_value,
             ru_ok: u8::from(ru.is_none()),
-            r1_apex,
+            r1_apex_reaches,
+            r1_apex_adjacent,
             opens: doors.len() as u8,
             r2: -r2_total,
             r1_gradient: if doors.is_empty() {
@@ -1251,7 +1356,8 @@ mod tests {
         let base = DoorKey {
             connects_value: 0,
             ru_ok: 1,
-            r1_apex: 0,
+            r1_apex_reaches: 0,
+            r1_apex_adjacent: 0,
             opens: 1,
             r2: -4,
             r1_gradient: -2,
@@ -1260,7 +1366,8 @@ mod tests {
         let rv = DoorKey {
             connects_value: 1,
             ru_ok: 0,
-            r1_apex: 0,
+            r1_apex_reaches: 0,
+            r1_apex_adjacent: 0,
             opens: 0,
             r2: -99,
             r1_gradient: -9,
@@ -1269,7 +1376,7 @@ mod tests {
         assert!(rv > base, "RV outranks every scarcity rule, RU included");
         let diluting = DoorKey {
             ru_ok: 0,
-            r1_apex: 9,
+            r1_apex_reaches: 9,
             ..base
         };
         assert!(base > diluting, "RU vetoes an Apex door that dilutes a shrine");
@@ -1279,11 +1386,160 @@ mod tests {
         assert!(both_keys > base, "keys are use-it-or-lose-it");
         // The redundancy filter can drop the pair that would have spent both
         // keys, so the two-key set on offer is sometimes two junk corridors.
-        let apex_one_key = DoorKey { r1_apex: 1, ..base };
+        let apex_one_key = DoorKey { r1_apex_adjacent: 1, ..base };
         assert!(
             apex_one_key > both_keys,
             "one key on the Apex corridor beats two keys on corridors that are \
              not scarce"
+        );
+        // POE-248: the two levels are two fields, reaching first, so the chain
+        // never has to fall through to R2 to separate them.
+        let reaches = DoorKey { r1_apex_reaches: 1, ..base };
+        assert!(
+            reaches > apex_one_key,
+            "a corridor onto the Apex's own component outranks one that is only \
+             Apex-adjacent"
+        );
+    }
+
+    // POE-248's bug, at the key. A0-B0 is open, so from C1 the B0 corridor
+    // lands on a slot already wired to the Apex while the B1 corridor lands on
+    // a lone singleton. R2 prefers B1 — it merges 1 + 1 against B0's 1 + 2 — so
+    // this only holds because reaching ranks ABOVE the merge size.
+    #[test]
+    fn a_corridor_into_the_apexs_own_component_outranks_a_merely_apex_adjacent_one() {
+        let state = board(&[], &[(A0, B0), (C1, C2), (C2, D2), (D2, E1)]);
+        let reaching = verdict(&state, C1, None, &[(C1, B0)]);
+        let adjacent = verdict(&state, C1, None, &[(C1, B1)]);
+        let levels = |key: &DoorKey| (key.r1_apex_reaches, key.r1_apex_adjacent);
+        assert_eq!(
+            levels(&reaching.door),
+            (1, 0),
+            "B0 is wired to the Apex: {:?}",
+            reaching.door
+        );
+        assert_eq!(
+            levels(&adjacent.door),
+            (0, 1),
+            "B1 is Apex-adjacent only: {:?}",
+            adjacent.door
+        );
+        assert!(
+            adjacent.door.r2 > reaching.door.r2,
+            "precondition: R2 prefers the singleton B1, so it cannot be what \
+             decides this — {:?} against {:?}",
+            adjacent.door,
+            reaching.door
+        );
+        assert!(
+            reaching.door > adjacent.door,
+            "B0 reaches the Apex and must outrank B1: {:?} against {:?}",
+            reaching.door,
+            adjacent.door
+        );
+        let apex_reason = |v: &RuleVerdict| {
+            v.reasons
+                .iter()
+                .find_map(|r| match r {
+                    Reason::R1Apex { reaches_apex } => Some(*reaches_apex),
+                    _ => None,
+                })
+                .expect("both corridors touch an Apex slot, so R1-apex speaks")
+        };
+        assert!(
+            apex_reason(&reaching),
+            "and the overlay must say the far slot is already connected: {:?}",
+            reaching.reasons
+        );
+        assert!(
+            !apex_reason(&adjacent),
+            "while B1's reason stays the adjacency one: {:?}",
+            adjacent.reasons
+        );
+    }
+
+    // The lower level still fires: an Apex-adjacent slot with no A0 corridor
+    // open is scarcer than any slot that can never open one.
+    #[test]
+    fn an_apex_adjacent_corridor_outranks_one_that_touches_neither_the_apex_nor_its_slots() {
+        let state = board(&[], &[(C1, C2), (C2, D2), (D2, E1)]);
+        let adjacent = verdict(&state, C1, None, &[(C1, B1)]);
+        let neither = verdict(&state, C1, None, &[(C1, C0)]);
+        assert_eq!(
+            adjacent.door.r1_apex_adjacent, 1,
+            "B1 can still open an Apex corridor: {:?}",
+            adjacent.door
+        );
+        assert_eq!(
+            neither.door.r1_apex_adjacent, 0,
+            "C0 never can: {:?}",
+            neither.door
+        );
+        assert_eq!(
+            adjacent.door.r2, neither.door.r2,
+            "precondition: both attach one singleton, so R2 cannot decide this"
+        );
+        assert!(
+            adjacent.door > neither.door,
+            "the Apex-adjacent corridor is the scarcer one, and R1-apex says so \
+             before the row gradient is ever read: {:?} against {:?}",
+            adjacent.door,
+            neither.door
+        );
+    }
+
+    // The regression the far-end-only version of `apex_reach` shipped with, and
+    // the reason the predicate reads the POSITION too.
+    //
+    // `door_sets` deliberately keeps a corridor whose far end is already in your
+    // own component when the position is a tier-1/2 upgrade room, because every
+    // corridor out of one raises a degree RU prices. So on this board — A0-B0,
+    // B0-C0 and C0-C1 open, C1 a Sanctum of Unity II — C1-B0 is enumerated and
+    // is a NO-OP: B0 is already reachable. Scored on its far end alone it read
+    // `Reaches` and beat C1-B1, which merges a genuinely new component.
+    #[test]
+    fn a_corridor_inside_its_own_component_buys_no_apex_and_ranks_below_one_that_does() {
+        let state = board(&[(C1, "upgrade", 2)], &[(A0, B0), (B0, C0), (C0, C1)]);
+        // Precondition: the no-op corridor is on offer at all. Without the
+        // upgrade room under the player `door_sets` would filter it out and the
+        // bug would be unreachable from here.
+        let offered = door_sets(&state, C1, 1, None);
+        assert!(
+            offered.iter().any(|set| set.contains(&Edge::new(C1, B0))),
+            "the same-component corridor must still be enumerated: {offered:?}"
+        );
+
+        let no_op = verdict(&state, C1, None, &[(C1, B0)]);
+        let merge = verdict(&state, C1, None, &[(C1, B1)]);
+
+        let levels = |key: &DoorKey| (key.r1_apex_reaches, key.r1_apex_adjacent);
+        assert_eq!(
+            levels(&no_op.door),
+            (0, 0),
+            "B0 is already in C1's component, so this door buys nothing: {:?}",
+            no_op.door
+        );
+        assert_eq!(
+            levels(&merge.door),
+            (0, 1),
+            "B1 is a new Apex-adjacent slot, and the Apex itself is already \
+             walkable from C1, so this is adjacency and not reach: {:?}",
+            merge.door
+        );
+        assert!(
+            merge.door > no_op.door,
+            "the door that changes the board must outrank the one that does \
+             not: {:?} against {:?}",
+            merge.door,
+            no_op.door
+        );
+        assert!(
+            no_op
+                .reasons
+                .iter()
+                .all(|r| !matches!(r, Reason::R1Apex { .. })),
+            "and R1-apex must not claim credit for a no-op: {:?}",
+            no_op.reasons
         );
     }
 
