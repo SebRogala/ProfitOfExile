@@ -40,6 +40,17 @@
 //!   the title carry screen rects; `Warning::PartialArchitects`.
 //! - POE-246: [`trigger`]'s clock measures absence (panel tail, start-up probe).
 //! - POE-244: [`markers`] publishes the seal ring / rhombus the overlay draws — ADR-019.
+//! - POE-249: [`trigger::classify`] is the ONE owner of what a Client.txt line
+//!   means ([`trigger::LineEvent`], [`trigger::ends_epoch`], the three measured
+//!   START phrases, [`trigger::ArmReason::AlvaStart`] armed with no deadline);
+//!   the loop reads a board ONCE per identity — [`run::LoopState::gate`] →
+//!   [`run::GateAnswer`] over the epoch, the re-arm counter and
+//!   [`slice::BoardFrame`], with [`run::RETRIES`] merged re-reads
+//!   ([`slice::KeptRead`], [`slice::merge_reads`], [`slice::unclean`], and
+//!   `run::kept_for`) and [`run::GEOMETRY_READS_CAP`] bounding a flapping
+//!   anchor. `slice::panel_signature` and the periodic panel re-OCR are gone;
+//!   [`slice::layout_signature`] survives as the semantic half of the identity
+//!   and `ReadGate` is now [`slice::RearmGate`], the re-arm counter alone.
 //!
 //! - [`trigger`] (POE-242) — what puts an incursion in scope, and so whether
 //!   [`run`]'s loop may capture at all: a pure state machine over the Client.txt

@@ -328,9 +328,17 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   its id and origin) — so a user-placed widget and a game-anchored one need no
   conversion between them beyond the window's own scale factor.
 - **The shipped widget list.** Three, all the temple's:
-  `temple.advice` — the KILL CALLOUT (POE-244), `anchored`, a box carrying the
-  architect's name and one reason, placed level with the block the advisor chose
-  and just outside the game's own side panel; `temple.door` — the ROOM
+  `temple.offers` — the OFFER BOXES (POE-249), `anchored`, one box per architect
+  block on the side panel in the panel's OWN order (box `i` mirrors `offers[i]`,
+  so "upper = the upgrade" is the common case and not a rule), stacked in the
+  SCREEN's left margin and each level with the block it mirrors. A box carries
+  the architect and the kind, the room that kill BUILDS and its tier, Vertolka's
+  grade for the line it builds into, and the advisor's first reason for THAT
+  block. The advisor's pick wears a 2 px cyan frame — the same cyan as the room
+  widget's kill glyph — and that frame IS the pointer; the other box is faint.
+  They live with the SHEET and go when it closes. They REPLACE `temple.advice`,
+  POE-244's single kill callout, which named one block and left the block the
+  player was choosing against off the overlay entirely; `temple.door` — the ROOM
   WIDGET, user-placed and persisted, the same isometric rectangle the side panel
   draws, with every corridor the read settled in the game's own colours (green
   open, red closed), the advisor's door bigger and purple, the door a SECOND
@@ -344,12 +352,10 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   (830, 16) 260×40 on a 1920-wide host, which is measured clear of the panel's
   OCR crop rather than eye-level. It is the only surface that exists before
   anything has been read, and it is gone the moment there is a board.
-  (NOT SHIPPED, tracked in POE-249: the kill callout is due to be replaced by
-  per-offer boxes drawn on the architect blocks themselves. Until that lands
-  this list is what the registry declares.)
-  **Faint is the alternative** is one rule across that widget: the conditional
-  door and the unchosen kill are both drawn and both dimmed, so everything at
-  full strength is a thing to do now. It is the read that check items below
+  **Faint is the alternative** is one rule across the temple's widgets: the
+  conditional door, the unchosen kill and the offer box the advisor did not pick
+  are all drawn and all dimmed, so everything at full strength is a thing to do
+  now. It is the read that check items below
   test, not the opacity numbers.
   **What the temple overlay deliberately stopped showing in POE-244**, all of it
   still on the Temple page: the reader's status lines (`reading…`, `between
@@ -376,20 +382,23 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   to be kept clear of the module's own OCR crops. Its persisted rectangle is left
   INERT rather than removed — Rust does not validate widget ids against the
   frontend registry (`set_widget_geometry` says why) and the host looks
-  placements up by spec, so a row nothing declares is never read. **The same is
-  true of `temple.advice`'s stored RECTANGLE**, which every machine that arranged
-  the widgets before POE-244 also has: the widget still exists but is now
-  anchored, so its `x`/`y`/`width`/`height` are never consulted again. Its
-  `visible` flag is NOT inert — the Show checkbox still writes it and the host
-  still honours it, which is the one thing a stored row for an anchored widget is
-  still for.
+  placements up by spec, so a row nothing declares is never read. **Since
+  POE-249 the same is true of `temple.advice`'s WHOLE stored row** — the
+  rectangle every machine that arranged the widgets before POE-244 has, and the
+  `visible` flag too, which under POE-244 was the one part of that row still
+  live. The offer boxes took a NEW id rather than inheriting `temple.advice`'s
+  (different surface, different label), so nothing declares that row any more
+  and nothing reads any of it. The consequence to know: a machine that had
+  switched the CALLOUT off sees the offer boxes ON, because the Show checkbox
+  now writes `temple.offers`'s own row — which is the honest answer for a
+  surface that did not exist when that switch was flipped.
 - **Two kinds of widget, and the host draws them differently.** A PLACEABLE
   widget gets a positioned box from `placementFor`, a Settings row, a persisted
   rectangle and a config-mode frame. An `anchored` one gets none of those: the
   host renders it through a second `anchored` snippet into a layer the size of
   the whole window, and the MODULE positions its own content inside that. The
-  host cannot place one — where a callout goes is a function of where the game
-  drew the thing it points at — so what it contributes is the window, the frame
+  host cannot place one — where an offer box goes is a function of where the
+  game drew the block it mirrors — so what it contributes is the window, the frame
   (`HostFrame`: the scale factor and the host box, both already resolved here, so
   the module does not ask the window a second time), the same `data-hot` claim,
   and the exclusion from Settings' POSITION column and from placement
@@ -405,7 +414,10 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   right for a widget whose default has nothing to do with the game; the temple's
   door diamond is the other case — it ships "beside the game's own diamond, below
   the panel, and clear of every read region", which depends on a board the host
-  knows nothing about. The hook answers with a replacement `defaults` and is used
+  knows nothing about. Since POE-249 the temple's hook is a DISPATCHER
+  (`widgetDefaults` over `doorDefaults` and `waitingDefaults`), because the
+  waiting notice wants its own game-aware default too. The hook answers with a
+  replacement `defaults` and is used
   exactly where `spec.defaults` would have been, for an unstored widget's position
   and for what config mode seeds one at. A STORED placement outranks it: the user's
   placement is never overridden by a default, game-anchored or not. The
@@ -444,15 +456,18 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   five constants would drift with nothing to fail — and `neverCoverRects` returns
   an EMPTY list both when there is no layout and when the scale factor has not
   resolved, which the callers must read as "place nothing yet" and never as "the
-  screen is free". **All three placers state that themselves rather than
-  inheriting it**: `calloutPlacement`, `bannerPlacement` and
-  `doorDefaultPlacement` each return null on an empty set, and `doorDefaults` in
-  the route repeats it so no default is offered to the host at all. The banner is
+  screen is free". **All four placers state that themselves rather than
+  inheriting it**: `offerStackPlacement`, `bannerPlacement`,
+  `doorDefaultPlacement` and `waitingDefaultPlacement` each return null on an
+  empty set (for the offer boxes that is null per BOX), and `doorDefaults` and
+  `waitingDefaults` in the route repeat it so no default is offered to the host
+  at all. The banner is
   why the rule is stated per placer instead of once at the caller — its wanted
   position (top centre) is a function of the HOST alone, so an empty obstacle list
   did not withhold it, it PLACED it, straight over the panel crop the next tick
-  reads. A `null` anchor covering the same case in the callout was a coincidence,
-  not the rule. What the rule does NOT bind is a rectangle the USER owns — a
+  reads. A `null` anchor covering the same case in the retired callout was a
+  coincidence, not the rule — and the waiting notice, which wants the same top
+  centre for the same host-only reason, states it explicitly. What the rule does NOT bind is a rectangle the USER owns — a
   stored placement, or the registry default `placementFor` falls back to. Those
   are visible, attributable and one drag from fixed; see ADR-019's carve-out.
 - `WidgetHost.svelte` owns placement, hot rects and click routing. Any element a
@@ -810,9 +825,10 @@ touching the named path.
   (`overlayShowsDoors` plus a published diamond). Outside a temple the window is
   up and the widget renders nothing, so there is no rect to click and the check
   proves nothing. Since POE-244 the probe is on the DOOR widget and not the
-  advice one: the callout is anchored, so it is not placed by the user and is
-  not drawn in config mode, and the probe belongs on a surface that behaves like
-  every other widget. That moved its precondition too — the door widget needs a
+  panel-side one: that surface — the kill callout then, the offer boxes since
+  POE-249 — is anchored, so it is not placed by the user and is not drawn in
+  config mode, and the probe belongs on a surface that behaves like every other
+  widget. That moved its precondition too — the door widget needs a
   published `layout.diamond`, which means a read that settled a CURRENT ROOM, so
   **run this standing IN a room**. A board read between rooms
   (`no_current_room`) draws no diamond and therefore no probe.
@@ -1120,17 +1136,19 @@ touching the named path.
      `temple anchor not corroborated by the capture: unit ratio k=… — the
      measurement was withheld` line before assuming the publish is broken.
 - **A one-of-two architect read says so, and the two-block read is right**
-  (POE-243): open the layout panel on a board with two architects. The kill
-  callout's title must NOT carry `(only architect read)`, and on the PC's
+  (POE-243): open the layout panel on a board with two architects. No offer
+  box's headline may carry `(only architect read)`, and on the PC's
   Armourer's Workshop board (2026-09-03, Quipolatl `upgrade → Armoury` against
   Atmohua `change → Shrine of Empowerment`, standing in a tier-1 room) the advice
   must be the **change → Sanctum of Unity** — that board is pinned as advisor case
   7 at both the suite's constants and the app's own, and `upgrade → Armoury` on
   screen means the PANEL lost Atmohua's block, not that the ranking is wrong. Then
   force a one-of-two read (cover the lower block, or catch a panel the OCR half
-  reads): the callout and the Temple page must both mark the headline
+  reads): the PICK's box and the Temple page must both mark the headline
   `(only architect read)` rather than showing a forced kill with the confidence of
-  a chosen one. Finally press **Debug capture** on a board whose `change` offer
+  a chosen one. The note rides on the pick alone — a box the advisor did not
+  choose must not carry it, because the note is a statement about the CHOSEN
+  block. Finally press **Debug capture** on a board whose `change` offer
   WRAPS onto a second line and open `ocr-lines.json`: the block must appear in
   `blocks` with its rect and its whole wrapped target, and the engine-order lines
   above it must show which line the grouping attached. A block that stops at the
@@ -1204,30 +1222,115 @@ touching the named path.
      the panel is only ever opened with an Alva line or the temple area in scope
      is UNVERIFIED (see `temple/trigger.rs`).
 
-- **The kill callout sits level with the right block, on both machines**
-  (POE-244, arrow removed in POE-248): open a temple layout panel with two
-  architect blocks. A box must appear beside the panel reading
-  `KILL <architect>` with one reason under it, VERTICALLY CENTRED on the block
-  whose name it carries — not on the other one, and not between them. There is
-  no arrow any more; the placement is the whole pointer. Check on BOTH machines
-  (1920×1080 laptop and the desktop): the block rect is the union of that
-  block's OCR line boxes in capture px, and the only step to CSS is the window's
-  own scale factor, so a display at anything but 100 % is where a missing or
-  doubled conversion shows. Then close one block's read (a one-of-two read,
-  which the panel produces on its own often enough — or force it by covering the
-  lower block): the box must carry `(only architect read)` inside the title
-  line. A read with no block rect at all puts the box at the panel crop's top
-  instead, which is correct and not a bug — there is no block to be level with.
-- **Nothing is drawn over what the module reads** (POE-244) — the check the
+- **The offer boxes mirror the panel's blocks, from the screen's left margin**
+  (POE-249, replacing POE-244's kill-callout item): open a temple layout panel
+  with two architect blocks. TWO boxes must appear in the SCREEN's left margin —
+  at one x for the column, no further right than `boardLeft − 16 − the widest
+  box`, which is 280 on a 1920×1080 frame at the full 260 px and further right
+  when the text wraps short; about 900 px from the blocks they mirror — box
+  `i` level with block `i` in the panel's own order, each carrying the
+  architect and kind, what that kill BUILDS with its tier, Vertolka's grade for
+  the line, and one reason. The distance is the design and not a defect: the
+  owner asked for the left margin, and the CYAN FRAME on the advisor's pick is
+  the whole pointer — there is no arrow and no line. The other box must be
+  faint. Check on BOTH machines (1920×1080 laptop and the desktop): a block rect
+  is the union of that block's OCR line boxes in capture px and the only step to
+  CSS is the window's own scale factor, so a display at anything but 100 % is
+  where a missing or doubled conversion shows. Three variants to force:
+  a read with no block rect at all puts the first box at the panel crop's top,
+  which is correct; a one-of-two read (cover the lower block) must put
+  `(only architect read)` on the PICK's headline and nowhere else; and a
+  `kill either` board — the advisor names no architect — must give BOTH boxes
+  the same lead reason (the door instruction) and NEITHER a cyan frame. A box
+  that cannot be placed clear of a read region is not drawn at all while the
+  other still is (ADR-019); two boxes at the same strength is the regression,
+  because the overlay then reads as two instructions.
+  **Owner judgement, not arithmetic**: whether a cyan frame 900 px from the
+  block it points at actually reads as the pointer at a glance, over the game.
+  If it does not, the fix is a product decision about where the column sits, not
+  a change to `offerStackPlacement`.
+- **The waiting notice, from Alva's start line to the sheet** (POE-249): with the
+  temple module on and the game focused, click Alva and open the incursion
+  portal WITHOUT opening the layout sheet. `app.log` must carry
+  `Temple: capture armed by Alva's start line — looking for the layout panel`
+  and `Temple: waiting for the temple panel (Alva's start line)`, and the notice
+  must be on screen at the TOP CENTRE (or wherever it was dragged). Then open
+  the sheet: the notice must go the moment the panel is sighted, on the same
+  tick the board appears. The inverse is the half that is easy to get wrong —
+  hear a start line with the sheet ALREADY open (open it, then take the next
+  incursion) and the notice must NOT blink over the board for a tick;
+  `overlayShowsWaiting`'s second clause is what stops it, and a blink means the
+  route is reading `waitingForPanel` alone.
+- **Any other Alva line ends the cycle** (POE-249): with the notice up, let Alva
+  say anything else — `Good job.` at the end of the run is the ordinary case.
+  `app.log` must carry `Temple: cycle ended — Alva spoke again` (or
+  `— the zone changed` when a portal or a death got there first) and the notice
+  must go down. The room widget goes down on the same line only if it is stamped
+  AFTER the read (`Temple: advice cleared — Alva spoke again (the room widget is
+  down)`): the line that ARMED a read is spoken seconds before it, and
+  `trigger::advice_end` refuses to clear on that one, which is deliberate and
+  not a missed clear.
+- **A sheet reopened inside one incursion is not re-read** (POE-249): with a
+  board on screen, close the layout sheet and open it again without leaving the
+  room. `app.log` must say `Temple: layout panel back — same board, no read` and
+  must NOT say `Temple: layout panel found …` — the two branches are exclusive,
+  and the reopen taking the second one means the board identity did not match.
+  The corroborating half is the Temple page's `last read <time>`, which must NOT
+  advance. Do NOT use the `Temple: rois …` line for this: it prints once per
+  DISTINCT value, so a re-read at the same origin and scale prints nothing
+  either way. A static reopen that keeps taking the `found` branch has two
+  causes, in this order: the board read UNCLEAN and still owes a retry
+  (`slice::unclean`, `RETRIES`) — check the unreadable-region item below first —
+  or the anchor is landing more than 2 px from where it did
+  (`slice::FRAME_ORIGIN_TOLERANCE`), which
+  `Temple: anchor origin keeps moving on a board already read N times …` turning
+  up alongside it confirms. The second is POE-247 territory, and worth a
+  `temple_debug_capture` dump rather than a tolerance change here.
+- **The sheet-bound overlays go within one tick** (POE-249): with a board on
+  screen, close the layout sheet and time it. The offer boxes and the
+  leave-the-map banner must be gone within one cheap tick — 650 ms, or 3 s on a
+  machine the backoff has fired on — and `Temple: layout panel gone` must be in
+  the log on that SAME tick; the ROOM WIDGET must STAY. The hide never depended
+  on `RETIRE_AFTER`: `miss` published `panel_not_visible` on the first clean miss
+  at 2 as well. What 1 buys is the log line, `LoopState::live` and the arm gate
+  agreeing with the screen, so a `layout panel gone` that lands a tick late is
+  `RETIRE_AFTER` back at 2. A room widget that goes with the boxes is the POE-248
+  regression and is checked in its own item below.
+- **An unreadable region costs at most two more reads** (POE-249): open the
+  sheet with a plate covered — parking the cursor over one so the game's own
+  tooltip is on it as the sheet opens is the reliable way. The Temple page's
+  `last read <time>` may advance at most THREE times in total (the read plus
+  `RETRIES` = 2) and must then stop while the sheet stays open, with the
+  unreadable region's last clean value kept rather than replaced
+  (`slice::merge_reads`). A `last read` that keeps advancing every tick means the
+  budget is not being spent or the board identity is changing under it. A region
+  the app reports as CLIPPED (the windowed-client case in the POE-230 item
+  above) is exempt and buys no retries at all — it cannot improve.
+- **`anchor origin keeps moving` must not appear at all** (POE-249): in a normal
+  session, on either machine, `app.log` must not carry
+  `Temple: anchor origin keeps moving on a board already read N times …`. It is
+  the `GEOMETRY_READS_CAP` bound reporting that it is holding the cost of an
+  anchor that will not settle, so seeing it in ordinary play means the anchor
+  route is flapping — record the board and the log rather than raising the cap.
+- **Nothing is drawn over what the module reads** (POE-244, widened in POE-249)
+  — the check the
   static gates cannot reach, because the failure is the app reading its own
-  overlay back as game pixels. With the callout and the door diamond both on
+  overlay back as game pixels. With the offer boxes and the door diamond both on
   screen over a live panel, press **Debug capture** in the Temple page and open
   the dump: the capture is a real screen grab, so the overlay is IN it. Then
   compare `report.json` against a dump taken with the temple module's overlay
   toggled off on the same board — the room title, both architect blocks, the
   incursion count, `current`, `doors` and `unknownRooms` must be identical. Any
-  difference is a surface sitting on a crop, and the first suspects are the
-  callout's box and a room widget the user has dragged onto a plate.
+  difference is a surface sitting on a crop, and the first suspects are an offer
+  box and a room widget the user has dragged onto a plate. The WAITING NOTICE is
+  not on this list and cannot be got onto it by hand: `overlayShowsWaiting` and
+  the boxes' `overlayShowsBoard` are exact complements, so the notice is off the
+  screen for every frame a board is up, and a reopen answers `Reshown`, which
+  clears the wait. Its one real hazard — the notice inside the frame the FIRST
+  read of a cycle grabs, in the window before the `Anchored` publish — is
+  unreachable from this procedure, and what holds it is
+  `waitingDefaultPlacement`'s `avoidRects` plus the measured 41 px of clearance
+  to the panel crop, not this check.
   `avoidRects` cannot protect the second one —
   once the user places the widget it goes where they put it — so a difference
   that only appears after a drag is the user's placement and not a defect.
@@ -1340,13 +1443,16 @@ touching the named path.
   a centred banner reaches x 1200 and the panel's crop starts at 1131, so it will
   have moved up or left. Verify with the Debug-capture diff below rather than by
   eye: the panel's title and both architect blocks must still read.
-- **The Show checkbox reaches the callout** (POE-244): Settings → Overlay
-  Positions → Temple lists BOTH widgets. The kill callout's row shows
-  `placed by the game` where the door diamond shows a rectangle, and clearing its
-  Show toggle must take the callout off the screen while leaving the room widget
-  up. A row that is missing, or a toggle that does nothing, is
+- **The Show checkbox reaches the anchored widget** (POE-244, retargeted in
+  POE-249): Settings → Overlay Positions → Temple lists all THREE widgets. The
+  offer boxes' row (`temple.offers`) shows `placed by the game` where the door
+  diamond and the waiting notice show rectangles, and clearing its Show toggle
+  must take BOTH boxes off the screen while leaving the room widget and the
+  notice up. A row that is missing, or a toggle that does nothing, is
   the regression: an anchored widget with no switch is the only overlay surface
-  the user cannot turn off.
+  the user cannot turn off. A machine that had switched POE-244's CALLOUT off
+  sees the boxes ON — that stored row is inert now, `visible` included — and
+  that is the intended answer, not a lost setting.
 - **Config mode seeds the door widget where it actually sits** (POE-244): open a
   temple and let the widget be placed beside the game's diamond, then leave the
   temple and press Configure in Settings. The red frame must appear where the
