@@ -20,8 +20,9 @@
 	 * - every corridor the read SETTLED, in the game's own colours: green for a
 	 *   passage, red for a wall;
 	 * - the advisor's door, purple and bigger;
-	 * - the door a SECOND Stone of Passage would buy, in the same purple at half
-	 *   opacity and a radius between the two;
+	 * - the door a SECOND Stone of Passage would buy — or, when the move opens
+	 *   nothing, the convenience door that shortens the walk — in the same
+	 *   purple at half opacity and a radius between the two;
 	 * - BOTH kills, as cyan glyphs on the two architect icon spots inside the
 	 *   room — an up-arrow for an `upgrade`, a two-way arrow for a `change` —
 	 *   with the block the advisor did NOT choose at a quarter opacity. Which
@@ -84,9 +85,10 @@
 		layout: LayoutView | null;
 		/** The corridors the top recommendation wants opened. */
 		suggested: readonly EdgeId[];
-		/** The corridor a SECOND Stone of Passage would buy, or null —
-		 *  `secondDoor()` over the advice. Rust's conditional answer, drawn
-		 *  faint; never merged into `suggested`, which is what to open NOW. */
+		/** The corridor drawn FAINT, or null — `faintDoor()` over the advice:
+		 *  the door a SECOND Stone of Passage would buy, or the convenience door
+		 *  when the move opens nothing. Rust's answer either way; never merged
+		 *  into `suggested`, which is what to open NOW. */
 		secondary: EdgeId | null;
 		/** The room's name, or null when neither source named it. */
 		room: string | null;
@@ -255,8 +257,9 @@
 		fill: var(--color-lab-red);
 	}
 
-	/* The door a SECOND stone would buy. The same purple as the suggestion, at
-	   half strength and (in the geometry) between the two radii — faint is the
+	/* The door a SECOND stone would buy, or the convenience door when the move
+	   opens nothing. The same purple as the suggestion, at half strength and
+	   (in the geometry) between the two radii — faint is the
 	   alternative, the same rule `.glyph.faint` follows. After the state rules
 	   above on purpose: both are one class deep, so source order is what makes
 	   the advice win over the corridor's own colour. */

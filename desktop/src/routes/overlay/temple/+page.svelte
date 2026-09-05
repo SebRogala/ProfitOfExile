@@ -115,12 +115,12 @@
 	import {
 		chosenOffer,
 		doorWarning,
+		faintDoor,
 		leaveMapBanner,
 		offerBoxes,
 		overlayShowsBoard,
 		overlayShowsDoors,
 		overlayShowsWaiting,
-		secondDoor,
 		suggestedDoors
 	} from '$lib/temple/view';
 	import { ssot } from '$lib/stores/ssot.svelte';
@@ -151,10 +151,11 @@
 	const chosen = $derived(chosenOffer(temple));
 	const offers = $derived(temple.panel?.offers ?? []);
 	const suggested = $derived(suggestedDoors(temple.advice));
-	/** The conditional door — what a SECOND Stone of Passage would buy. Rust's
-	 *  answer, drawn faint and kept apart from `suggested`: that list is what to
-	 *  open with the key in hand. */
-	const secondary = $derived(secondDoor(temple.advice));
+	/** The faint door — what a SECOND Stone of Passage would buy, or, when the
+	 *  move opens nothing, the convenience door that shortens the walk. Rust's
+	 *  answer either way, and never merged into `suggested`: that list is what
+	 *  the MOVE opens. `faintDoor()` says why one seal carries both. */
+	const secondary = $derived(faintDoor(temple.advice));
 	const leaveBanner = $derived(leaveMapBanner(temple.advice));
 
 	/** The banner's measured box, CSS px. Zero until the first frame — the same

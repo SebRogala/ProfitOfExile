@@ -31,6 +31,9 @@ import {
 	overlayShowsDoors,
 	overlayShowsWaiting,
 	plateGlyph,
+	convenienceDoor,
+	convenienceNote,
+	faintDoor,
 	secondDoor,
 	suggestedDoors,
 	topGamble,
@@ -931,6 +934,51 @@ describe('secondDoor', () => {
 		// The field is optional on the wire, and `undefined` reaching an SVG
 		// attribute inside an overlay window fails with no devtools to see it.
 		expect(secondDoor(advice())).toBeNull();
+	});
+});
+
+describe('convenienceDoor', () => {
+	const convenience = {
+		door: 'B0-C1',
+		reason: 'convenience door B0-C1: shortens the Entrance → Apex walk, 5 → 4 hops'
+	};
+
+	it('reads the door to spend the key on when the move opens nothing', () => {
+		expect(convenienceDoor(advice({ convenience }))).toBe('B0-C1');
+		expect(convenienceNote(advice({ convenience }))).toBe(convenience.reason);
+	});
+
+	it('is null when Rust published none, and for a payload before the field existed', () => {
+		// Every reason lives on the Rust side — a merge corridor, RU's veto, no
+		// key, a move that already opens a door. All arrive here as one null.
+		expect(convenienceDoor(advice({ convenience: null }))).toBeNull();
+		expect(convenienceNote(advice({ convenience: null }))).toBeNull();
+		expect(convenienceDoor(advice())).toBeNull();
+		expect(convenienceDoor(null)).toBeNull();
+	});
+
+	it('stays out of the doors to open now', () => {
+		// The move opens nothing, and the faint seal must not be promoted into
+		// the bright one: `suggestedDoors` is the MOVE.
+		const both = advice({ recommendations: [ranked({ doors: [] })], convenience });
+		expect(suggestedDoors(both)).toEqual([]);
+		expect(convenienceDoor(both)).toBe('B0-C1');
+	});
+});
+
+describe('faintDoor', () => {
+	it('is the second stone\'s door when there is one', () => {
+		expect(faintDoor(advice({ secondaryDoor: 'B1-C1' }))).toBe('B1-C1');
+	});
+
+	it('is the convenience door when the move opens nothing', () => {
+		const convenience = { door: 'B0-C1', reason: 'convenience door B0-C1: …' };
+		expect(faintDoor(advice({ convenience }))).toBe('B0-C1');
+	});
+
+	it('is null with neither', () => {
+		expect(faintDoor(advice())).toBeNull();
+		expect(faintDoor(null)).toBeNull();
 	});
 });
 

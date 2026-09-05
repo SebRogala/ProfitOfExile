@@ -58,6 +58,7 @@ mod fixtures;
 // `#![allow(dead_code)]` this module shipped with is gone. The handful of items
 // still reached only by tests — in `state`, `rollout` and `fixtures` — carry
 // their own attribute instead.
+pub mod convenience;
 pub mod rollout;
 pub mod rules;
 pub mod state;
@@ -217,6 +218,17 @@ pub struct Advice {
     /// head of the list, and every option below the head would need a
     /// conditional ranking of its own to carry the field honestly.
     pub secondary_door: Option<Edge>,
+    /// The door to open with the key when the top recommendation opens
+    /// NOTHING — see [`convenience::convenience_door`], which owns the ranking
+    /// (the walk it shortens) and every reason this is `None`.
+    ///
+    /// Beside the top recommendation for the same reason
+    /// [`Self::secondary_door`] is: one fact about the move at the head of the
+    /// list, not a move of its own. The two are exclusive by construction —
+    /// the second stone's door needs a primary door to be second to, this one
+    /// needs there to be none — so the widget's one faint seal is never asked
+    /// to show both.
+    pub convenience_door: Option<convenience::ConvenienceDoor>,
     /// R5's verdict for the top recommendation.
     pub map_action: MapAction,
     /// What was unreadable or unspendable.
@@ -254,6 +266,7 @@ pub fn advise(
             recommendations: Vec::new(),
             gambles: Vec::new(),
             secondary_door: None,
+            convenience_door: None,
             map_action: MapAction::Continue,
             warnings,
         };
@@ -367,11 +380,27 @@ pub fn advise(
             .door
         });
 
+    // Only when the move opens nothing, and only with a key to spend: the
+    // faint seal is what to do with a key the move has no use for, and with a
+    // door already recommended that seal is the second stone's.
+    let convenience_door = recommendations
+        .first()
+        .filter(|primary| keys > 0 && primary.option.doors.is_empty())
+        .and_then(|primary| {
+            convenience::convenience_door(
+                board,
+                position,
+                primary.option.architect.as_ref(),
+                &valuation,
+            )
+        });
+
     Advice {
         mode,
         recommendations,
         gambles,
         secondary_door,
+        convenience_door,
         map_action,
         warnings,
     }
@@ -2782,6 +2811,78 @@ mod tests {
             keys: 1,
             usable: 0
         }));
+    }
+
+    // ================================================= the convenience door
+
+    // The same board — every closed corridor out of C1 leads back into its own
+    // cluster, so the ranking opens nothing — is exactly where the faint seal
+    // has to say something (owner, 2026-09-05). No Apex is reachable and no
+    // wanted room is built, so it is the loop fallback: B0 and B1 are both
+    // three hops from C1 and the smaller edge wins the tie.
+    #[test]
+    fn a_move_that_opens_nothing_still_carries_a_convenience_door() {
+        let state = board(
+            &[],
+            &[(C1, D1), (C1, D2), (C0, D1), (B0, C0), (B1, C2), (C2, D2)],
+            C1,
+            5,
+        );
+        let advice = advise(
+            &state,
+            &junk_offers(),
+            1,
+            &rush(),
+            &TempleConfig::default(),
+            N,
+            SEED,
+        );
+
+        assert!(advice.recommendations[0].option.doors.is_empty());
+        assert!(has_reason(&advice.recommendations[0], |r| matches!(
+            r,
+            Reason::NoUsableDoor
+        )));
+        let door = advice.convenience_door.expect("a key and four in-cluster corridors");
+        assert_eq!(door.door, Edge::new(B0, C1));
+        assert_eq!(door.why, convenience::Why::Loop { far: B0, hops: 3 });
+        assert_eq!(
+            advice.secondary_door, None,
+            "with no primary door there is nothing for a second stone to be second to"
+        );
+    }
+
+    // With a door recommended the faint seal is the second stone's, and the
+    // convenience door stays out of the way — case 8 opens B0-C1.
+    #[test]
+    fn a_move_that_opens_a_door_carries_no_convenience_door() {
+        let advice = advise_case(&cases::case_8_lightning_workshop());
+
+        assert!(!advice.recommendations[0].option.doors.is_empty());
+        assert_eq!(advice.convenience_door, None);
+    }
+
+    // No key, no door to spend it on: the convenience door is about the key
+    // the move has no use for, and with none dropped there is no key.
+    #[test]
+    fn a_zero_key_incursion_carries_no_convenience_door() {
+        let state = board(
+            &[],
+            &[(C1, D1), (C1, D2), (C0, D1), (B0, C0), (B1, C2), (C2, D2)],
+            C1,
+            5,
+        );
+        let advice = advise(
+            &state,
+            &junk_offers(),
+            0,
+            &rush(),
+            &TempleConfig::default(),
+            N,
+            SEED,
+        );
+
+        assert_eq!(advice.convenience_door, None);
     }
 
     /// A [`Reason`]'s variant name, for asserting *which* rules spoke.

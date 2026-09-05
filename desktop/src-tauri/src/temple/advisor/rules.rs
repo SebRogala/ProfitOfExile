@@ -430,7 +430,7 @@ fn apex_reach(far: Slot, position: Slot, open: &[SlotMask; 13]) -> ApexReach {
     ApexReach::None
 }
 
-fn far_end(edge: Edge, from: Slot) -> Slot {
+pub(super) fn far_end(edge: Edge, from: Slot) -> Slot {
     let (a, b) = edge.ends();
     if a == from {
         b
@@ -835,7 +835,7 @@ fn empty_set_reason(
 
 /// The board after this option is played, used by the rules that need to see
 /// the room the kill *creates* rather than the one it replaces (RU on Case 5).
-fn applied(
+pub(super) fn applied(
     board: &BoardState,
     position: Slot,
     architect: Option<&ArchitectChoice>,
@@ -862,7 +862,11 @@ fn applied(
 /// turns a certainty into a lottery. Case 5 is the whole rule: Poison Garden
 /// changes to Sanctum of Unity II with exactly two connected neighbours, so
 /// **do not open a third door**.
-fn ru_violation(before: &BoardState, after: &BoardState, doors: &BTreeSet<Edge>) -> Option<Reason> {
+pub(super) fn ru_violation(
+    before: &BoardState,
+    after: &BoardState,
+    doors: &BTreeSet<Edge>,
+) -> Option<Reason> {
     if doors.is_empty() {
         return None;
     }

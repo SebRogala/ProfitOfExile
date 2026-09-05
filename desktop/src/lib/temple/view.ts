@@ -649,6 +649,45 @@ export function secondDoor(advice: AdviceView | null): EdgeId | null {
 	return advice?.secondaryDoor ?? null;
 }
 
+/**
+ * The convenience door, or null: the corridor to open with the key when the
+ * top recommendation opens NOTHING (owner, 2026-09-05).
+ *
+ * Rust's answer, read and not derived, the same discipline `secondDoor` keeps:
+ * `advisor::convenience` ranks the walk — Entrance → Apex, Entrance → the
+ * wanted rooms, the wanted rooms → Apex, then the longest open loop — and owns
+ * every reason it is null, RU's veto included. A surface that derived one here
+ * would be a second ranking with no board model behind it.
+ *
+ * Never merged into `suggestedDoors`: that list is the MOVE, and this is what
+ * to do with a key the move has no use for.
+ */
+export function convenienceDoor(advice: AdviceView | null): EdgeId | null {
+	return advice?.convenience?.door ?? null;
+}
+
+/** The convenience door's one line — the door and the walk it shortens — or
+ *  null. What the page prints under the top recommendation, the way it prints
+ *  the second stone's door. */
+export function convenienceNote(advice: AdviceView | null): string | null {
+	return advice?.convenience?.reason ?? null;
+}
+
+/**
+ * The corridor the room widget draws FAINT: the second stone's door, or the
+ * convenience door when the move opens nothing.
+ *
+ * One seal for two answers, because they are the same kind of statement — not
+ * the move, but what to do with a key the move has no use for — and because
+ * Rust makes them exclusive by construction: the second stone's door needs a
+ * primary door to be second to, the convenience door needs there to be none.
+ * The `??` is therefore never a priority between two present answers; it is
+ * only which field carried the one there is.
+ */
+export function faintDoor(advice: AdviceView | null): EdgeId | null {
+	return secondDoor(advice) ?? convenienceDoor(advice);
+}
+
 // ------------------------------------------------------------- the panel --
 
 /**
