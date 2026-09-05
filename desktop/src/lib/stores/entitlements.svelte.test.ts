@@ -214,6 +214,78 @@ describe('loadEntitlements', () => {
 		expect(mod.entitlements).toEqual({ role: 'editor', channel: 'beta', features: ['merc'] });
 	});
 
+	it('withdraws a landed grant on resetEntitlements', async () => {
+		// The one path that revokes without a server saying so: a server switch.
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		mocks.fetchDeviceMe.mockResolvedValue(betaGrant);
+		const mod = await import('./entitlements.svelte');
+		await mod.loadEntitlements();
+
+		mod.resetEntitlements();
+
+		expect(mod.entitlements).toEqual({ role: '', channel: 'stable', features: [] });
+	});
+
+	it('starts a chain on refreshEntitlements when none is running', async () => {
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		mocks.fetchDeviceMe.mockResolvedValue(betaGrant);
+		const mod = await import('./entitlements.svelte');
+
+		await mod.refreshEntitlements();
+
+		expect(mod.entitlements.channel).toBe('beta');
+	});
+
+	it('ends a sleeping backoff early on refreshEntitlements', async () => {
+		// The chain is a rung into the schedule against a server that was down;
+		// a server switch cannot wait the rest of that rung out.
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		mocks.fetchDeviceMe
+			.mockRejectedValueOnce(new Error('local server down'))
+			.mockResolvedValueOnce(betaGrant);
+		const mod = await import('./entitlements.svelte');
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mocks.fetchDeviceMe).toHaveBeenCalledTimes(1);
+
+		void mod.refreshEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(mocks.fetchDeviceMe).toHaveBeenCalledTimes(2);
+		expect(mod.entitlements.channel).toBe('beta');
+	});
+
+	it('drops an answer that was in flight when the refresh was asked for, and asks again', async () => {
+		// The request left for the previous server; its grant must not land
+		// after the switch and pass for the new server's.
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		let answerFirst!: (body: unknown) => void;
+		mocks.fetchDeviceMe
+			.mockImplementationOnce(() => new Promise((resolve) => { answerFirst = resolve; }))
+			.mockResolvedValueOnce({ role: 'user', channel: 'stable', features: [] });
+		const mod = await import('./entitlements.svelte');
+		void mod.loadEntitlements();
+		await vi.advanceTimersByTimeAsync(0);
+
+		const refreshed = mod.refreshEntitlements();
+		answerFirst(betaGrant);
+		await refreshed;
+
+		expect(mocks.fetchDeviceMe).toHaveBeenCalledTimes(2);
+		expect(mod.entitlements).toEqual({ role: 'user', channel: 'stable', features: [] });
+	});
+
+	it('returns the running chain from refreshEntitlements rather than a second one', async () => {
+		vi.useRealTimers();
+		mocks.deviceStatus.status = { device_id: 'device-1' };
+		mocks.fetchDeviceMe.mockResolvedValue(betaGrant);
+		const mod = await import('./entitlements.svelte');
+
+		const first = mod.loadEntitlements();
+		expect(mod.refreshEntitlements()).toBe(first);
+		await first;
+	});
+
 	it('shares one chain between concurrent callers', async () => {
 		// The 30-minute refresh can fire while a startup load is still running;
 		// a second chain would double the request rate on every tick.

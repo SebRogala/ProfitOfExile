@@ -11,7 +11,7 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { loadEntitlements } from '$lib/stores/entitlements.svelte';
+import { loadEntitlements, refreshEntitlements, resetEntitlements } from '$lib/stores/entitlements.svelte';
 import { checkForUpdate } from '$lib/updater/check';
 
 /** Shape of the Rust AppStatus struct emitted via "status-changed" events. */
@@ -40,6 +40,10 @@ export interface AppStatus {
 	auto_trade_enabled: boolean;
 	/** Hardware device fingerprint — hex SHA-256 (64 chars) for hardware, UUID for fallback. */
 	device_id: string;
+	/** True when this build hashed the id with the fixed dev salt rather than
+	 *  the CI secret: it is then a DIFFERENT device on the server than a release
+	 *  build on the same PC (docs/DEV-SETUP.md, "Build-time variables"). */
+	device_id_dev_salt: boolean;
 	/** Rounds accumulated in the pending font session — 0 when nothing is captured.
 	 *  The session is stamped with the selected market at send time, so a non-zero
 	 *  count is what makes a discardable pending run visible. */
@@ -74,6 +78,7 @@ export async function initStatusStore(): Promise<() => void> {
 	// Subscribe to backend events first (so we don't miss any)
 	const unlistenStatus = await listen<AppStatus>('status-changed', (event) => {
 		store.status = event.payload;
+		noteServerUrl(event.payload?.server_url);
 	});
 
 	const unlistenLogs = await listen('logs-changed', (event) => {
@@ -83,6 +88,7 @@ export async function initStatusStore(): Promise<() => void> {
 	// Then do initial load as fallback
 	try {
 		store.status = await invoke<AppStatus>('get_status');
+		noteServerUrl(store.status?.server_url);
 	} catch (e) {
 		console.warn('[store] initial get_status failed:', e);
 	}
@@ -106,6 +112,28 @@ export async function initStatusStore(): Promise<() => void> {
 		unlistenLogs();
 		clearInterval(updateInterval);
 	};
+}
+
+/**
+ * The `server_url` the last status carried, or null before the first one.
+ *
+ * A CHANGE means the grant on screen — hidden modules, update channel — came
+ * from a server the app is no longer talking to: the local server and
+ * production hold different roles for the same device. So a change withdraws
+ * the grant and asks the new server at once, instead of drawing the previous
+ * server's modules until the 30-minute tick or a restart. The first status is
+ * not a change (startup asks on its own), and a status that repeats the url
+ * is ignored, because `status-changed` fires on every state mutation.
+ */
+let knownServerUrl: string | null = null;
+
+function noteServerUrl(url: string | undefined): void {
+	if (url === undefined) return;
+	if (knownServerUrl !== null && url !== knownServerUrl) {
+		resetEntitlements();
+		void refreshEntitlements();
+	}
+	knownServerUrl = url;
 }
 
 /**

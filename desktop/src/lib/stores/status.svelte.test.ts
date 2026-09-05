@@ -11,14 +11,27 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
 	loadEntitlements: vi.fn(),
-	checkForUpdate: vi.fn()
+	refreshEntitlements: vi.fn(),
+	resetEntitlements: vi.fn(),
+	checkForUpdate: vi.fn(),
+	/** The `status-changed` / `logs-changed` handlers the store registered. */
+	handlers: {} as Record<string, (event: { payload: unknown }) => void>
 }));
 
 // The store reaches Rust through `invoke`/`listen` only; the real core and
 // event modules cannot load outside a webview. Same shape as ssot.svelte.test.ts.
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => null) }));
-vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => vi.fn()) }));
-vi.mock('$lib/stores/entitlements.svelte', () => ({ loadEntitlements: mocks.loadEntitlements }));
+vi.mock('@tauri-apps/api/event', () => ({
+	listen: vi.fn(async (name: string, handler: (event: { payload: unknown }) => void) => {
+		mocks.handlers[name] = handler;
+		return vi.fn();
+	})
+}));
+vi.mock('$lib/stores/entitlements.svelte', () => ({
+	loadEntitlements: mocks.loadEntitlements,
+	refreshEntitlements: mocks.refreshEntitlements,
+	resetEntitlements: mocks.resetEntitlements
+}));
 vi.mock('$lib/updater/check', () => ({ checkForUpdate: mocks.checkForUpdate }));
 
 /** The bound `status.svelte.ts` gives entitlements before it checks anyway. */
@@ -37,6 +50,10 @@ beforeEach(() => {
 	vi.resetModules();
 	vi.useFakeTimers();
 	mocks.loadEntitlements.mockReset();
+	mocks.refreshEntitlements.mockReset();
+	mocks.refreshEntitlements.mockResolvedValue(undefined);
+	mocks.resetEntitlements.mockReset();
+	mocks.handlers = {};
 	mocks.checkForUpdate.mockReset();
 	mocks.checkForUpdate.mockResolvedValue(null);
 	warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -139,5 +156,71 @@ describe('initStatusStore', () => {
 		await vi.advanceTimersByTimeAsync(0);
 
 		expect(store.updateVersion).toBe('1.3.0-beta.1');
+	});
+});
+
+/**
+ * What a `server_url` change does to the grant on screen.
+ *
+ * The local server and production hold different roles for the same device,
+ * so the modules drawn for one must not survive a switch to the other, and the
+ * new server must be asked now rather than on the 30-minute tick.
+ */
+describe('a server_url change', () => {
+	/** A status carrying just what the switch reads. */
+	function status(serverUrl: string) {
+		return { payload: { server_url: serverUrl } };
+	}
+
+	it('withdraws the grant and asks the new server at once', async () => {
+		mocks.loadEntitlements.mockResolvedValue(undefined);
+		const { initStatusStore } = await import('./status.svelte');
+		await initStatusStore();
+		mocks.handlers['status-changed'](status('https://prod.example'));
+
+		mocks.handlers['status-changed'](status('https://profitofexile.localhost'));
+
+		expect(mocks.resetEntitlements).toHaveBeenCalledTimes(1);
+		expect(mocks.refreshEntitlements).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not read the first status as a switch', async () => {
+		// Startup asks on its own; a reset here would race the startup load.
+		mocks.loadEntitlements.mockResolvedValue(undefined);
+		const { initStatusStore } = await import('./status.svelte');
+		await initStatusStore();
+
+		mocks.handlers['status-changed'](status('https://prod.example'));
+
+		expect(mocks.resetEntitlements).not.toHaveBeenCalled();
+		expect(mocks.refreshEntitlements).not.toHaveBeenCalled();
+	});
+
+	it('ignores a status that repeats the url', async () => {
+		// `status-changed` fires on every state mutation, not only this one.
+		mocks.loadEntitlements.mockResolvedValue(undefined);
+		const { initStatusStore } = await import('./status.svelte');
+		await initStatusStore();
+		mocks.handlers['status-changed'](status('https://prod.example'));
+
+		mocks.handlers['status-changed'](status('https://prod.example'));
+		mocks.handlers['status-changed'](status('https://prod.example'));
+
+		expect(mocks.resetEntitlements).not.toHaveBeenCalled();
+	});
+
+	it('resets before it refreshes', async () => {
+		// The other order would let the new answer land and then be wiped.
+		const order: string[] = [];
+		mocks.resetEntitlements.mockImplementation(() => order.push('reset'));
+		mocks.refreshEntitlements.mockImplementation(async () => { order.push('refresh'); });
+		mocks.loadEntitlements.mockResolvedValue(undefined);
+		const { initStatusStore } = await import('./status.svelte');
+		await initStatusStore();
+		mocks.handlers['status-changed'](status('https://prod.example'));
+
+		mocks.handlers['status-changed'](status('https://profitofexile.localhost'));
+
+		expect(order).toEqual(['reset', 'refresh']);
 	});
 });

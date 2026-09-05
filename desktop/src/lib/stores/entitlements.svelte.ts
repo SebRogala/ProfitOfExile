@@ -29,11 +29,19 @@
  * entitlement they do not have is not an error, and the one person who does
  * have it will notice the module missing.
  *
+ * **A grant is one server's answer.** The local server and production hold
+ * different roles for the same device, so a `server_url` change withdraws the
+ * grant (`resetEntitlements()`) and asks the new server at once
+ * (`refreshEntitlements()`) — the status store does both. The refresh is also
+ * what the identify dialog calls on open, so a promote the tester was just
+ * told about shows up when they look, not on the next 30-minute tick.
+ *
  * Usage:
  *   import { entitlements, hasFeature, MERC_FEATURE } from '$lib/stores/entitlements.svelte';
  *   // Read: entitlements.channel / entitlements.features / entitlements.role
  *   // Read: hasFeature(MERC_FEATURE)
  *   // Call loadEntitlements() from initStatusStore() — at startup and on its tick.
+ *   // Call refreshEntitlements() to ask NOW; resetEntitlements() + refresh on a server switch.
  */
 
 /** The two update channels the server can put a device on. */
@@ -113,8 +121,24 @@ export function retryDelayMs(attempt: number): number {
 	return RETRY_DELAYS_MS[i];
 }
 
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Ends the backoff sleep in progress early — set while a chain sleeps, null
+ * otherwise. `refreshEntitlements()` calls it so a chain minutes into the
+ * five-minute cap asks again now.
+ */
+let wake: (() => void) | null = null;
+
+/** Sleep `ms`, or less when `wake` is called. */
+function backoff(ms: number): Promise<void> {
+	return new Promise((resolve) => {
+		const timer = setTimeout(done, ms);
+		function done() {
+			clearTimeout(timer);
+			wake = null;
+			resolve();
+		}
+		wake = done;
+	});
 }
 
 /**
@@ -131,34 +155,40 @@ async function currentDeviceId(): Promise<string> {
 }
 
 /**
- * One attempt. `true` when a device-identified answer was written through.
+ * One attempt. The device-identified answer, or null when there is none yet.
+ *
+ * Returned rather than written: the chain decides whether an answer still
+ * stands (see `runLoad` — one that arrives after a refresh was asked for may
+ * be the previous server's).
  *
  * `$lib/api` is imported DYNAMICALLY for the same reason as the status store:
  * it reads `store.status`, which imports this module.
  */
-async function attemptLoad(): Promise<boolean> {
+async function attemptLoad(): Promise<Entitlements | null> {
 	try {
 		const deviceId = await currentDeviceId();
 		if (!deviceId) {
 			// Not an error and not an answer: the server would reply 200 for an
 			// anonymous device and that reply would read as "entitled to nothing".
 			console.warn('[entitlements] no device id yet — not asking /api/device/me, will retry');
-			return false;
+			return null;
 		}
 		const { fetchDeviceMe } = await import('$lib/api');
-		const answered = normalizeEntitlements(await fetchDeviceMe());
-		entitlements.role = answered.role;
-		entitlements.channel = answered.channel;
-		entitlements.features = answered.features;
-		return true;
+		return normalizeEntitlements(await fetchDeviceMe());
 	} catch (e) {
 		// Not user-facing: the device keeps the stable/no-features default.
 		console.warn(
 			'[entitlements] /api/device/me failed — staying on stable with no hidden features, will retry:',
 			e
 		);
-		return false;
+		return null;
 	}
+}
+
+function write(answered: Entitlements): void {
+	entitlements.role = answered.role;
+	entitlements.channel = answered.channel;
+	entitlements.features = answered.features;
 }
 
 /** The load chain in flight, so two callers cannot start two of them. */
@@ -184,8 +214,65 @@ export function loadEntitlements(): Promise<void> {
 	return loading;
 }
 
+/**
+ * Raised by `refreshEntitlements()` while a chain is running: the answer the
+ * chain is waiting on may be for a server the app has since left, so it is
+ * dropped and the chain asks once more. Cleared at the top of every attempt.
+ */
+let askAgain = false;
+
+/**
+ * Ask NOW rather than on the chain's schedule.
+ *
+ * `loadEntitlements()` joins a chain that is already running, and a running
+ * chain may be minutes into a backoff against a server that was down — or
+ * mid-request against a server the app just switched away from. Two callers
+ * cannot wait that out: the status store on a `server_url` change, where the
+ * grant on screen belongs to the previous server, and the identify dialog,
+ * where the tester is looking for the promote they were just told about. This
+ * ends a sleeping backoff at once, makes a chain that is mid-request drop that
+ * answer and ask again, and with no chain running simply starts one. The
+ * returned promise is the chain's, and unbounded like it.
+ */
+export function refreshEntitlements(): Promise<void> {
+	if (loading) {
+		askAgain = true;
+		wake?.();
+		return loading;
+	}
+	return loadEntitlements();
+}
+
+/**
+ * Back to "entitled to nothing" — for a server switch.
+ *
+ * A grant is one server's answer about this device; the local server and
+ * production hold different roles for the same fingerprint, so carrying a
+ * grant across a `server_url` change would draw modules the new server never
+ * granted. The switch resets first and refreshes second. The store's own
+ * failure path never resets (a refresh that cannot reach the server keeps the
+ * landed grant), so this is the one place a grant is withdrawn without a
+ * server saying so.
+ */
+export function resetEntitlements(): void {
+	write(defaultEntitlements());
+}
+
 async function runLoad(): Promise<void> {
-	for (let attempt = 0; !(await attemptLoad()); attempt++) {
-		await sleep(retryDelayMs(attempt));
+	let attempt = 0;
+	for (;;) {
+		askAgain = false;
+		const answered = await attemptLoad();
+		if (answered && !askAgain) {
+			write(answered);
+			return;
+		}
+		if (answered) {
+			// A refresh was asked for while that request was in flight, so the
+			// answer may be the previous server's: drop it and ask again at once.
+			attempt = 0;
+			continue;
+		}
+		await backoff(retryDelayMs(attempt++));
 	}
 }

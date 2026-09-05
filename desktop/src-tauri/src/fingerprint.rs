@@ -21,6 +21,15 @@ const APP_SECRET: &str = match option_env!("APP_FINGERPRINT_SECRET") {
     None => "poe-dev-fingerprint-salt",
 };
 
+/// Whether this build hashes with the fixed dev salt rather than a CI-injected
+/// secret. The salt is one of the hash inputs, so a dev-salt build is a
+/// DIFFERENT device on every server than a release build on the same hardware:
+/// it starts there as a plain `user` with no hidden modules until that id is
+/// identified and promoted on its own (docs/DEV-SETUP.md, "Build-time
+/// variables"). Surfaced through `AppStatus` so the identify dialog can say so
+/// next to the id it shows, and logged at startup beside the id.
+pub const USES_DEV_SALT: bool = option_env!("APP_FINGERPRINT_SECRET").is_none();
+
 /// Compute the device fingerprint. Returns a hex-encoded SHA-256 hash.
 ///
 /// On non-Windows platforms (or when all hardware queries fail), returns a

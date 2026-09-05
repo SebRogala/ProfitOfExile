@@ -209,6 +209,9 @@ pub struct AppStatus {
     pub trade_auto_refresh_secs: u32,
     pub auto_trade_enabled: bool,
     pub device_id: String,
+    /// `fingerprint::USES_DEV_SALT` — true means `device_id` is not the id a
+    /// release build has on this PC. The identify dialog says so next to it.
+    pub device_id_dev_salt: bool,
     /// Sealed rounds accumulated in the current font session. Drives the
     /// discard affordance: zero means there is nothing to throw away.
     pub font_session_rounds: usize,
@@ -534,6 +537,7 @@ fn build_status(state: &AppState) -> AppStatus {
         trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
         auto_trade_enabled: *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()),
         device_id: state.device_id.clone(),
+        device_id_dev_salt: fingerprint::USES_DEV_SALT,
         font_session_rounds: state.font_session.lock().unwrap_or_else(|e| e.into_inner()).rounds.len(),
         ocr_language_warning: ocr_warning_field(),
     }
@@ -3812,8 +3816,9 @@ pub fn run() {
     log::info!("Pair code: {}", pair_code);
 
     let device_id = fingerprint::compute_device_id();
-    log::info!("Device ID: {}... ({})", &device_id[..device_id.len().min(8)],
-        if device_id.len() == 64 { "hardware" } else { "volatile" });
+    log::info!("Device ID: {}... ({}, {} salt)", &device_id[..device_id.len().min(8)],
+        if device_id.len() == 64 { "hardware" } else { "volatile" },
+        if fingerprint::USES_DEV_SALT { "dev" } else { "release" });
 
     // Build server HTTP client with default device headers.
     let version = env!("CARGO_PKG_VERSION");
