@@ -5,7 +5,7 @@ This is the documentation entry point. Documents are classified so historical pl
 ## Start here
 
 - [Project README](../README.md) — product overview, stack, and development commands.
-- [Development setup](DEV-SETUP.md) — current fresh-machine procedure: WSL prerequisites and the shared infra stack, the legacy `profitofexile.localhost` host naming, the Windows toolchain, `desktop/` sync, and running the desktop app under `npx tauri dev`.
+- [Development setup](DEV-SETUP.md) — current fresh-machine procedure: WSL prerequisites and the shared infra stack, the legacy `profitofexile.localhost` host naming, the Windows toolchain, `desktop/` sync, the three build-time variables a dev build needs to behave like a release, and running the desktop app under `npx tauri dev`.
 - [Product vision](product-vision.md) — historical strategy-simulation domain and future scope; not current architecture.
 - [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — current workflows plus clearly labeled reliability targets for collection, native trade, contributions, optional server trading, pairing, and Mercure.
 - [Overlay Guide](OVERLAY-GUIDE.md) — maintained Windows/Tauri overlay mechanics and regression guards.

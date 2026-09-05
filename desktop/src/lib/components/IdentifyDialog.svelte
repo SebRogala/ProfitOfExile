@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { store } from '$lib/stores/status.svelte';
+	import { refreshEntitlements } from '$lib/stores/entitlements.svelte';
 	import { getVersion } from '@tauri-apps/api/app';
 
 	let { open = $bindable(false) } = $props();
@@ -51,6 +52,10 @@
 				.then(v => { appVersion = v; })
 				.catch(() => {});
 			loadRegistration();
+			// The tester opens this after being told about a promote. The store's
+			// next scheduled ask may be half an hour out, and the role this dialog
+			// reads for its own row does not reach the store — so ask it to refresh.
+			void refreshEntitlements();
 		}
 	});
 
@@ -138,6 +143,12 @@
 					<span class="label">Device</span>
 					<code class="device-code">{shortId || '...'}</code>
 				</div>
+				{#if store.status?.device_id_dev_salt}
+					<!-- A build without APP_FINGERPRINT_SECRET hashes with the dev salt, so
+					     this id is a different device on the server than the release build
+					     on the same PC — the one thing a hash alone can never tell you. -->
+					<span class="hint">Dev-salt build: this is not the id a release build has on this PC (docs/DEV-SETUP.md, "Build-time variables").</span>
+				{/if}
 
 				<div class="registration" class:registered={registration === 'registered'}>
 					{#if registration === 'checking'}

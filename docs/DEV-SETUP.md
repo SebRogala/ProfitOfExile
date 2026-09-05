@@ -165,14 +165,48 @@ starts Vite on port 1420 (`tauri.conf.json` `devUrl`), builds the Rust crate,
 and opens the app; Svelte changes hot-reload, Rust changes relink. The debug
 exe lands at `src-tauri\target\debug\ProfitOfExile.exe`.
 
-**Which server it talks to.** Unset, the build-time `POE_SERVER_URL` and
-`VITE_SERVER_URL` default to `https://profitofexile.localhost`
-(`settings.rs`, `api.ts`, `TopBar.svelte`). The Settings page persists a
-`server_url` override at runtime, which is the way to point a dev build at
-production without rebuilding. `APP_FINGERPRINT_SECRET` falls back to a fixed
-dev-only salt (`fingerprint.rs`), so device identity works locally without CI
-secrets; the server's `CORS_ORIGINS` default already allows
-`http://localhost:1420` and `tauri://localhost`.
+**Which server it talks to.** The Rust default for `server_url` is the
+build-time `POE_SERVER_URL` and the web side's is `VITE_SERVER_URL`
+(`settings.rs`, `api.ts`); unset, both are `https://profitofexile.localhost`.
+The Settings page persists a `server_url` override at runtime, and a dev build
+also has the DEBUG/PROD button in the top bar, which flips between the local
+server and the production target (`server-toggle.ts`). Two things about that
+override are easy to trip over:
+
+- **The settings file is shared.** A dev build and the installed release build
+  have the same Tauri identifier, so both read and write
+  `%AppData%\profitofexile\settings.json`. Flipping the dev build to DEBUG
+  points the installed app at the local server too, until either of them
+  writes the url back.
+- **A server switch resets entitlements.** The local server and production
+  hold different roles for the same device, so on a `server_url` change the
+  app withdraws the hidden-module grant and asks the new server at once
+  (`status.svelte.ts`): modules the new server never granted disappear, and
+  the ones it did appear as soon as it answers.
+
+The server's `CORS_ORIGINS` default already allows `http://localhost:1420`
+and `tauri://localhost`.
+
+### Build-time variables
+
+CI builds every release with three variables from repository secrets
+(`.github/workflows/desktop.yml`). A dev build compiled without them works,
+but differently, and on a fresh machine the differences look like bugs:
+
+| Variable | Set | Unset |
+|---|---|---|
+| `VITE_SERVER_URL` | the DEBUG/PROD button has a production target | once on DEBUG the button has nowhere to go back to: its tooltip says so and a click opens Settings, where a url can be typed. The url the app left is remembered (pref `devServerReturnUrl`), so after one flip from a url typed into Settings the button finds its way back on its own |
+| `POE_SERVER_URL` | the Rust default `server_url` is production | the default is the local server; moot once `settings.json` carries an override |
+| `APP_FINGERPRINT_SECRET` | the device id is the one the installed release build has on this PC | the id is hashed with a fixed dev salt (`fingerprint.rs`), so the dev build is a **different device** on every server: it starts as a plain `user` there and sees no hidden modules until that id is identified and promoted on its own ([DEPLOY.md](DEPLOY.md), "Who is on the beta channel"). The identify dialog (Ctrl+Shift+F11) says "dev-salt build" under the id in that case |
+
+Set them as Windows *user* environment variables (System Properties, or
+`[Environment]::SetEnvironmentVariable('NAME', 'value', 'User')` in
+PowerShell), then open a new terminal before `npx tauri dev`. The two urls
+are the production origin; the secret is the value the CI secret holds. Get
+it from the owner and keep it out of the repo and out of anything under
+`DESKTOP_WIN_DIR`. All three are read at compile time (`option_env!`,
+`import.meta.env`), so changing one means a rebuild, which cargo and Vite do
+on their own.
 
 **Driving it without the game.** A second debug instance with its own WebView2
 user-data folder and a remote-debugging port can be scripted from WSL through

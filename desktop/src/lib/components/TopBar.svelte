@@ -3,22 +3,40 @@
 
 	import { nav } from '$lib/stores/navigation.svelte';
 	import { store } from '$lib/stores/status.svelte';
+	import { persisted } from '$lib/prefs.svelte';
+	import { LOCAL_SERVER_URL, serverToggle } from '$lib/server-toggle';
 
 	let { status }: {
 		status: any;
 	} = $props();
 
-	const PROD_URL = import.meta.env.VITE_SERVER_URL || 'https://profitofexile.localhost';
-	const LOCAL_URL = 'https://profitofexile.localhost';
+	/**
+	 * The production target this build was given, or '' when it was built
+	 * without one (docs/DEV-SETUP.md, "Build-time variables"). NOT defaulted to
+	 * the local url: that default is what made the DEBUG/PROD button a one-way
+	 * door — see `server-toggle.ts`.
+	 */
+	const BUILT_PROD_URL: string = import.meta.env.VITE_SERVER_URL || '';
 
-	function isDebug(): boolean {
-		return (status?.server_url || PROD_URL) === LOCAL_URL;
-	}
+	/**
+	 * The url the app left when it last flipped to DEBUG — the way back for a
+	 * build with no production target. Persisted (ADR-013) so a restart on
+	 * DEBUG still has it. Only written by the dev-only button below.
+	 */
+	const returnUrl = persisted('devServerReturnUrl', '');
 
-	async function toggleDebug() {
+	const toggle = $derived(serverToggle(status?.server_url ?? '', BUILT_PROD_URL, returnUrl.value));
+
+	async function toggleServer() {
+		// Nowhere to go: the tooltip has said why; take the click to where a
+		// server url can be typed instead of eating it.
+		if (!toggle.target) {
+			nav.go('/settings');
+			return;
+		}
+		if (toggle.target === LOCAL_SERVER_URL && status?.server_url) returnUrl.value = status.server_url;
 		const { invoke } = await import('@tauri-apps/api/core');
-		const newUrl = isDebug() ? PROD_URL : LOCAL_URL;
-		await invoke('set_server_url', { url: newUrl });
+		await invoke('set_server_url', { url: toggle.target });
 	}
 
 	async function minimizeWindow() {
@@ -55,8 +73,8 @@
 		<span class="status-dot" class:connected={store.serverConnected} title={store.serverConnected ? `Server: Connected (${status?.server_url})` : 'Server: Disconnected'}></span>
 		<span class="status-dot scanning-dot" class:active={status?.state && status.state !== 'Idle'} title={`OCR Scanner: ${status?.state ?? 'Unknown'} ${status?.state === 'PickingGems' ? '— reading gem names' : status?.state === 'FontReady' ? '— font detected' : ''}`}></span>
 		{#if import.meta.env.DEV}
-			<button class="btn-debug" class:active={isDebug()} onclick={toggleDebug}>
-				{isDebug() ? 'DEBUG' : 'PROD'}
+			<button class="btn-debug" class:active={toggle.label === 'DEBUG'} class:no-target={!toggle.target} title={toggle.title} onclick={toggleServer}>
+				{toggle.label}
 			</button>
 		{/if}
 		{#if store.updateAvailable}
@@ -147,6 +165,11 @@
 
 	.btn-debug:hover {
 		border-color: var(--text-muted);
+	}
+
+	/* Nowhere to switch to: the tooltip says why and the click opens Settings. */
+	.btn-debug.no-target {
+		border-style: dashed;
 	}
 
 	.btn-debug.active {
