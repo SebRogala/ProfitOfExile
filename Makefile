@@ -129,13 +129,16 @@ ifndef DESKTOP_DEPLOY_DIR
 endif
 	cp desktop/src-tauri/target/release/profitofexile-desktop $(DESKTOP_DEPLOY_DIR)/
 
+# Cargo.lock IS synced: the Windows build must resolve the crates CI builds
+# from. Excluded, a fresh copy floats to newer Tauri crates than the pinned npm
+# packages and the Tauri CLI refuses the minor-version gap (2026-09-05).
 desktop-sync: ## One-time sync desktop/ to Windows (DESKTOP_WIN_DIR)
 ifndef DESKTOP_WIN_DIR
 	$(error Set DESKTOP_WIN_DIR in .env.local — e.g. /mnt/c/Users/you/Projects/poe-desktop)
 endif
 	rsync -av --delete \
 		--exclude node_modules --exclude .svelte-kit --exclude build \
-		--exclude target --exclude Cargo.lock \
+		--exclude target \
 		desktop/ $(DESKTOP_WIN_DIR)/
 
 desktop-watch: ## Watch + sync desktop/ to Windows on changes
@@ -148,6 +151,6 @@ endif
 			--exclude '(node_modules|\.svelte-kit|target|build)' 2>/dev/null; \
 		rsync -av --delete \
 			--exclude node_modules --exclude .svelte-kit --exclude build \
-			--exclude target --exclude Cargo.lock \
+			--exclude target \
 			desktop/ $(DESKTOP_WIN_DIR)/; \
 	done

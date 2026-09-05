@@ -1,6 +1,6 @@
 # Development setup: WSL + Windows
 
-Status: current, verified 2026-09-04 against the reference machine. Scope: a
+Status: current, verified 2026-09-05 against the reference machine. Scope: a
 fresh machine to a running server, web UI, and the desktop app in dev mode.
 
 ## Shape
@@ -135,11 +135,15 @@ make desktop-watch   # inotifywait loop: re-sync on every change (Ctrl+C to stop
 ```
 
 Both are `rsync --delete` excluding `node_modules`, `.svelte-kit`, `build`,
-`target`, and `Cargo.lock`, so:
+and `target`, so:
 
-- the Windows copy keeps its own `node_modules`, build output, and lockfile;
-  CI builds from the committed `Cargo.lock`, the Windows dev build resolves its
-  own;
+- the Windows copy keeps its own `node_modules` and build output, but builds
+  from the committed `Cargo.lock`, the same one CI builds from. The lockfile
+  was excluded until 2026-09-05; a fresh copy then resolved its own and
+  floated to newer Tauri crates than the npm packages `package-lock.json`
+  pins, which `tauri dev` refuses with "Found version mismatched Tauri
+  packages". That message means the Windows copy has a stale or self-resolved
+  lockfile: re-run `make desktop-sync`;
 - anything you put inside `DESKTOP_WIN_DIR` that is not in `desktop/` is
   deleted on the next sync. Keep private scripts and captures outside it.
 
