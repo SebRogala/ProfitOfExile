@@ -18,6 +18,7 @@
 	import {
 		TEMPLE_STATUS_LABEL,
 		TEMPLE_STATUS_TONE,
+		convenienceNote,
 		forcedKillNote,
 		formatRisk,
 		gambleLabel,
@@ -54,6 +55,12 @@
 	 *  shows what to open with the key in hand. It is what the overlay's faint
 	 *  purple seal says, in words, on the surface that has room for them. */
 	const secondStone = $derived(secondDoor(advice));
+	/** The convenience door in words, or null — the corridor to open with the
+	 *  key when the move opens nothing, and the walk it shortens. Printed under
+	 *  the top recommendation like the second stone's door, and for the same
+	 *  reason: it is one fact about the head of the list, and it is what the
+	 *  overlay's faint seal means when there is no primary door. */
+	const convenience = $derived(convenienceNote(advice));
 
 	const unknownBadge = $derived(unknownRoomsBadge(temple));
 	const markerNotice = $derived(markerFallbackNotice(layout));
@@ -297,6 +304,12 @@
 							     key in hand that would name a door the player cannot open. -->
 							{#if i === 0 && secondStone}
 								<span class="move-doors second">second stone: {secondStone}</span>
+							{/if}
+							<!-- The other thing the faint seal can mean: the move opens
+							     nothing, and this is the door to spend the key on anyway,
+							     for the walk. Rust's line names the door and the walk. -->
+							{#if i === 0 && convenience}
+								<span class="move-doors second">{convenience}</span>
 							{/if}
 							<span class="meta">score {move.ev.toFixed(2)}</span>
 							<!-- The reasons ARE the audit trail: a bare score cannot be checked. -->

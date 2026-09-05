@@ -350,6 +350,16 @@ export interface RankedView {
 	reasons: string[];
 }
 
+/** The convenience door and the walk it shortens, in words — see
+ *  `AdviceView.convenience`. */
+export interface ConvenienceView {
+	/** `"B0-C1"`. */
+	door: EdgeId;
+	/** Rust's one line, naming the door and the walk: `convenience door B0-C1:
+	 *  shortens the Entrance → Apex walk, 5 → 4 hops`. */
+	reason: string;
+}
+
 /** The decision, with everything needed to justify it. */
 export interface AdviceView {
 	/** Best first. */
@@ -374,6 +384,23 @@ export interface AdviceView {
 	 *  build before POE-248 carries no field at all. `secondDoor()` in `view.ts`
 	 *  is the reader, and it coerces `undefined` to null. */
 	secondaryDoor?: string | null;
+	/** The door to open with the key when the top recommendation opens
+	 *  NOTHING, and the walk it shortens in words (owner, 2026-09-05: *"if all
+	 *  rooms have the connections, app doesn't suggest to open the doors
+	 *  anymore at all"*).
+	 *
+	 *  Rust's `advisor::convenience` owns the ranking — Entrance → Apex,
+	 *  Entrance → the wanted rooms, the wanted rooms → Apex, then the longest
+	 *  open loop — and every reason it is null, RU's veto included. Exclusive
+	 *  with `secondaryDoor` by construction: that one needs a primary door to
+	 *  be second to, this one needs there to be none. The overlay draws it
+	 *  with the SAME faint seal (`faintDoor()` in `view.ts`), because it is
+	 *  the same kind of statement: not the move, but what to do with a key the
+	 *  move has no use for.
+	 *
+	 *  OPTIONAL on the wire for the same reason `secondaryDoor` is;
+	 *  `convenienceDoor()` / `convenienceNote()` coerce `undefined` to null. */
+	convenience?: ConvenienceView | null;
 	/** `"continue"` or `"leaveMap"` — R5's verdict for the top recommendation.
 	 *  Note the camelCase: `MapAction` is projected through a hand-written
 	 *  `match`, not through `rename_all`, so this one string is NOT snake_case

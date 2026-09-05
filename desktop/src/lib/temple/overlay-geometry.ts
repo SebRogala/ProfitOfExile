@@ -399,7 +399,8 @@ export const SEAL_RADIUS_SECONDARY = 0.27;
  *
  * `plain` is a corridor with no advice on it — drawn in its own state's colour
  * (green open, red closed) at [`SEAL_RADIUS`]. `suggested` is the door to open
- * now; `secondary` is the one a second stone would buy.
+ * now; `secondary` is the faint one — what a second stone would buy, or the
+ * convenience door when the move opens nothing (`faintDoor()` in `view.ts`).
  */
 export type SealKind = 'plain' | 'secondary' | 'suggested';
 

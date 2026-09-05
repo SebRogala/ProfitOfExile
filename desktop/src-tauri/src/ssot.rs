@@ -1626,6 +1626,7 @@ mod tests {
                 recommendations: Vec::new(),
                 gambles: Vec::new(),
                 secondary_door: None,
+                convenience: None,
                 map_action: "leaveMap".to_string(),
                 warnings: Vec::new(),
                 forced_kill: false,

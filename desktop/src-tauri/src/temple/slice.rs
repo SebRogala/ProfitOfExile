@@ -460,6 +460,17 @@ pub struct RankedView {
     pub reasons: Vec<String>,
 }
 
+/// The convenience door, on the wire: the corridor and the walk it shortens.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConvenienceView {
+    /// `"B0-C1"`.
+    pub door: String,
+    /// `advisor::convenience::ConvenienceDoor::describe` — names the door and
+    /// the walk, so the page prints it as one line.
+    pub reason: String,
+}
+
 /// The decision, with everything needed to justify it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -490,6 +501,20 @@ pub struct AdviceView {
     /// missing value to `null`, so the two ends agree about what silence means.
     #[serde(default)]
     pub secondary_door: Option<String>,
+    /// The door to open with the key when the top recommendation opens
+    /// NOTHING, and the walk it shortens in words (owner, 2026-09-05).
+    ///
+    /// `advisor::convenience` owns the ranking — Entrance → Apex, Entrance →
+    /// the wanted rooms, the wanted rooms → Apex, then the longest open loop —
+    /// and every reason it is absent, RU's veto included. Exclusive with
+    /// [`Self::secondary_door`] by construction: that one needs a primary door
+    /// to be second to, this one needs there to be none. The overlay draws it
+    /// with the SAME faint seal, because it is the same kind of statement —
+    /// not the move, but what to do with a key the move has no use for.
+    ///
+    /// `serde(default)` for the same reason `secondary_door` carries one.
+    #[serde(default)]
+    pub convenience: Option<ConvenienceView>,
     /// `"continue"` or `"leaveMap"`. R5's verdict for the top recommendation —
     /// as prominent as the kill when it says leave.
     pub map_action: String,
@@ -892,6 +917,10 @@ fn advice_view(advice: &Advice) -> AdviceView {
             })
             .collect(),
         secondary_door: advice.secondary_door.map(|edge| edge.to_string()),
+        convenience: advice.convenience_door.map(|door| ConvenienceView {
+            door: door.door.to_string(),
+            reason: door.describe(),
+        }),
         map_action: match advice.map_action {
             MapAction::Continue => "continue".to_string(),
             MapAction::LeaveMap => "leaveMap".to_string(),
@@ -1975,6 +2004,48 @@ mod tests {
             "the conditional door must not be one of the doors to open now: {:?}",
             view.recommendations[0].doors
         );
+    }
+
+    // The convenience door reaches the wire beside the top recommendation
+    // with its walk in words, and never as one of the doors to open now —
+    // a board where every corridor out of C1 leads back into its own cluster.
+    #[test]
+    fn the_convenience_door_is_projected_with_its_walk_in_words() {
+        let layout = layout(
+            Some(Slot::C1),
+            &[
+                (Slot::C1, Slot::D1),
+                (Slot::C1, Slot::D2),
+                (Slot::C0, Slot::D1),
+                (Slot::B0, Slot::C0),
+                (Slot::B1, Slot::C2),
+                (Slot::C2, Slot::D2),
+            ],
+            &[],
+        );
+        let rooms = board_rooms(&[(Slot::C1, "Chasm")]);
+        let panel = panel(
+            "Chasm",
+            Some(6),
+            vec![
+                offer("Ticaba", "Storage Room", OfferKind::Change),
+                offer("Juatalotli", "Sparring Room", OfferKind::Change),
+            ],
+        );
+        let advice =
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
+        let door = advice
+            .convenience_door
+            .expect("precondition: the move opens nothing and C1 has in-cluster corridors");
+
+        let view = advice_view(&advice);
+
+        let projected = view.convenience.expect("projected beside the top recommendation");
+        assert_eq!(projected.door, door.door.to_string());
+        assert_eq!(projected.reason, door.describe());
+        assert!(projected.reason.starts_with(&format!("convenience door {}", projected.door)));
+        assert!(view.recommendations[0].doors.is_empty());
+        assert_eq!(view.secondary_door, None);
     }
 
     /// A one-of-two read reaches the surfaces BOTH ways: as prose in
@@ -3204,6 +3275,7 @@ mod tests {
                 recommendations: Vec::new(),
                 gambles: Vec::new(),
                 secondary_door: None,
+                convenience: None,
                 map_action: "leaveMap".to_string(),
                 warnings: Vec::new(),
                 forced_kill: false,
@@ -3804,6 +3876,7 @@ mod tests {
                 // `case_eight_lightning_workshop_names_the_conditional_second_door`
                 // is where the pairing is asserted.
                 secondary_door: Some("C1-D2".to_string()),
+                convenience: None,
                 map_action: "leaveMap".to_string(),
                 // Two warnings, and the second is the one `forced_kill`
                 // mirrors. Hand-built, like every other field of this sample —
@@ -3840,7 +3913,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///
