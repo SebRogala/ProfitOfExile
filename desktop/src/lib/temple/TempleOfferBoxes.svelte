@@ -14,6 +14,14 @@
 	 * all — so the comparison happened in the game's own panel, in text, which
 	 * is the reading the overlay exists to spare.
 	 *
+	 * # The column is the panel's own diagonal
+	 *
+	 * Since 2026-09-06 each box also sits on its block's SIDE of the panel's
+	 * diamond: the game prints the first block top-right and the second
+	 * bottom-left, so the top box is `STACK_STAGGER_CSS` right of the column and
+	 * the lower one on it (owner's ask, redrawn on a screenshot). The side is
+	 * read off the block rect in `offerStackPlacement`, never off the index.
+	 *
 	 * # The frame is the pointer
 	 *
 	 * The pick carries a 2 px cyan frame — the same cyan as the kill glyph on

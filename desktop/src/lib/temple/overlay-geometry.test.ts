@@ -17,6 +17,7 @@ import {
 	SEAL_RADIUS_SECONDARY,
 	SEAL_RADIUS_SUGGESTED,
 	STACK_GAP_CSS,
+	STACK_STAGGER_CSS,
 	bannerPlacement,
 	captureToCss,
 	diamondGeometry,
@@ -190,10 +191,19 @@ describe('offerStackPlacement', () => {
 		return out;
 	}
 
-	/** Both architect blocks as the panel drew them, inside the panel's crop. */
+	/** Two architect blocks inside the panel's crop, both LEFT of its centre —
+	 *  a plain column, which is what the stacking and avoidance cases below
+	 *  are about. The game's own diagonal is `PANEL_BLOCKS`. */
 	const BLOCKS = [
 		{ x: 1140, y: 150, w: 280, h: 43 },
 		{ x: 1140, y: 260, w: 280, h: 43 }
+	];
+	/** Both blocks as the GAME draws them — the PC dump `1788567663863` at
+	 *  scale 1: the first block RIGHT of the panel's diamond, the second LEFT
+	 *  of it. */
+	const PANEL_BLOCKS = [
+		{ x: 1484, y: 114, w: 154, h: 54 },
+		{ x: 1188, y: 289, w: 160, h: 39 }
 	];
 	/** What one box measures once it has rendered its four lines. */
 	const BOX = { w: 260, h: 96 };
@@ -220,6 +230,60 @@ describe('offerStackPlacement', () => {
 		).toEqual([
 			{ x: 280, y: 150, ...BOX },
 			{ x: 280, y: 260, ...BOX }
+		]);
+	});
+
+	it("puts each box on its block's side of the diamond: the top one right of the column", () => {
+		// The owner's ask (2026-09-06): the top box redrawn 175 px to the right
+		// on a 1:1 crop of the 1920 screen, the lower one left where it was.
+		// The panel prints its first block top-RIGHT of the diamond and its
+		// second bottom-LEFT, so that is the panel's own diagonal. The column is
+		// still 280 (556 - 16 - 260): the top box sits STACK_STAGGER_CSS right
+		// of it, level with its block, and the lower box sits ON it, level with
+		// its own. The blocks' tops are 175 px apart, more than the 96 + 8 the
+		// stack needs, so neither is pushed.
+		expect(
+			offerStackPlacement({
+				blocks: PANEL_BLOCKS,
+				panel: COMMITTED_PANEL,
+				boxes: [BOX, BOX],
+				obstacles: committedRegions(),
+				host: HOST
+			})
+		).toEqual([
+			{ x: 280 + STACK_STAGGER_CSS, y: 114, ...BOX },
+			{ x: 280, y: 289, ...BOX }
+		]);
+	});
+
+	it('takes the column for a box whose side cannot be read', () => {
+		// The side is read off the block against the panel crop's centre, and
+		// nothing else: a box with no block rect, or a read with no panel crop,
+		// has no side and takes the column. Guessing "the first box goes right"
+		// would move a box for a reason nothing on screen states.
+		expect(
+			offerStackPlacement({
+				blocks: [null, PANEL_BLOCKS[1]],
+				panel: COMMITTED_PANEL,
+				boxes: [BOX, BOX],
+				obstacles: committedRegions(),
+				host: HOST
+			})
+		).toEqual([
+			{ x: 280, y: COMMITTED_PANEL.y, ...BOX },
+			{ x: 280, y: 289, ...BOX }
+		]);
+		expect(
+			offerStackPlacement({
+				blocks: PANEL_BLOCKS,
+				panel: null,
+				boxes: [BOX, BOX],
+				obstacles: committedRegions(),
+				host: HOST
+			})
+		).toEqual([
+			{ x: 280, y: 114, ...BOX },
+			{ x: 280, y: 289, ...BOX }
 		]);
 	});
 

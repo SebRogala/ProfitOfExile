@@ -331,7 +331,11 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   `temple.offers` — the OFFER BOXES (POE-249), `anchored`, one box per architect
   block on the side panel in the panel's OWN order (box `i` mirrors `offers[i]`,
   so "upper = the upgrade" is the common case and not a rule), stacked in the
-  SCREEN's left margin and each level with the block it mirrors. A box carries
+  SCREEN's left margin, each level with the block it mirrors and, since
+  2026-09-06, on its block's SIDE of the panel's diamond — the game prints the
+  first block top-right and the second bottom-left, so the top box sits
+  `STACK_STAGGER_CSS` (175 px, measured off the owner's redrawn screenshot)
+  right of the column and the lower one on it. A box carries
   the architect and the kind, the room that kill BUILDS and its tier, Vertolka's
   grade for the line it builds into, and the advisor's first reason for THAT
   block. The advisor's pick wears a 2 px cyan frame — the same cyan as the room
