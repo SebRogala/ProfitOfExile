@@ -41,6 +41,17 @@ export const CALLOUT_GAP_CSS = 16;
  *  one separates two boxes of one column, which have to read as a pair. */
 export const STACK_GAP_CSS = 8;
 
+/** How far right of the column a box sits when its block is on the RIGHT of
+ *  the side panel's diamond, CSS px (owner, 2026-09-06).
+ *
+ *  The game prints the panel's first block top-RIGHT of its diamond and the
+ *  second bottom-LEFT, so a plain column mirrors the panel's ORDER but not its
+ *  shape. The owner redrew the top box 175 px to the right on a 1:1 crop of
+ *  the 1920×1080 screen and left the lower box where it was — the diagonal the
+ *  panel itself draws — and 175 is that measurement. Less than a box is wide
+ *  (260), so the two still overlap in x and the stacking floor still applies. */
+export const STACK_STAGGER_CSS = 175;
+
 /** How far below the top of the host a top-centred surface wants to sit — the
  *  leave-the-map banner, and since POE-249 the waiting notice's shipped
  *  default. The name is the banner's because it was the first. */
@@ -149,6 +160,16 @@ export interface BoxSize {
  * bigger than the screen. That refusal is still the rule, and it is per BOX:
  * one that cannot be placed is dropped while the other is still drawn.
  *
+ * # The side rule
+ *
+ * Since 2026-09-06 the column is a DIAGONAL: a box whose block sits right of
+ * the panel crop's centre — the first block, as the game draws it — is placed
+ * [`STACK_STAGGER_CSS`] right of the column, and one whose block sits left of
+ * it takes the column. That is the panel's own shape, mirrored, the way the
+ * level-with-the-block rule below mirrors its order. The side is READ off the
+ * block rect against the panel crop, never assumed from the box's index: a
+ * read with no block rect, or no panel crop, has no side and takes the column.
+ *
  * # The stacking rule
  *
  * Box `i` wants to be level with block `i`, which is what makes the column
@@ -184,12 +205,13 @@ export function offerStackPlacement(input: {
 	const { blocks, panel, boxes, obstacles, host } = input;
 	if (obstacles.length === 0) return boxes.map(() => null);
 	const boardLeft = Math.min(...obstacles.map((rect) => rect.x));
-	// ONE x for the stack, off the WIDEST box: a column whose boxes started at
-	// different x would read as two unrelated surfaces. Clamped to 8 rather than
-	// allowed off screen — `avoidRects` would clamp it to 0 anyway, and a box
-	// flush against the screen edge reads as clipped.
+	// ONE column for the stack, off the WIDEST box, so the two boxes start from
+	// the same line and the side rule below is the only thing that moves one.
+	// Clamped to 8 rather than allowed off screen — `avoidRects` would clamp it
+	// to 0 anyway, and a box flush against the screen edge reads as clipped.
 	const widest = Math.max(0, ...boxes.map((box) => box.w));
-	const x = Math.max(8, boardLeft - CALLOUT_GAP_CSS - widest);
+	const column = Math.max(8, boardLeft - CALLOUT_GAP_CSS - widest);
+	const centre = panel === null ? null : panel.x + panel.w / 2;
 	const placed: (WidgetRect | null)[] = [];
 	// The last box that actually GOT a position — what the next one stacks
 	// under. A box that was not measured or could not be placed is not one, so
@@ -202,6 +224,10 @@ export function offerStackPlacement(input: {
 			continue;
 		}
 		const block = blocks[i] ?? null;
+		// The block's side of the diamond, read against the panel crop's own
+		// centre — see "The side rule" above. No block or no panel is no side.
+		const right = block !== null && centre !== null && block.x + block.w / 2 > centre;
+		const x = right ? column + STACK_STAGGER_CSS : column;
 		// Level with this box's own block. With no block rect the first box
 		// takes the panel crop's top — there is no block to be level with — and
 		// a later one takes the bottom of the box above it, which is the only
