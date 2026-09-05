@@ -151,6 +151,10 @@ pub struct ArchitectOffer {
     /// Text before the first comma: `Ticaba`, `Juatalotli`, `Xipocado`.
     pub architect_name: String,
     /// Resident (`change`) or non-resident (`upgrade`).
+    ///
+    /// Read from the kill clause's verb, or — when OCR dropped the verb —
+    /// decided from the panel title by [`decide_kind`]. See
+    /// [`PrintedOffer::verb`] for the measured drop.
     pub kind: OfferKind,
     /// The room name the panel printed, verbatim.
     pub printed_target: String,
@@ -169,6 +173,48 @@ pub struct ArchitectOffer {
     /// rect from one read under an identity from another points a surface at a
     /// line it is not describing.
     pub rect: Option<[i32; 4]>,
+}
+
+/// One architect block as the panel printed it: [`ArchitectOffer`] minus the
+/// kind, which is not always on the block.
+///
+/// The verb is the only word of the clause that names the kind, and it is a
+/// word the OCR engine can drop whole. [`read_panel`] turns this into an
+/// [`ArchitectOffer`] — with the verb when it was read, and by
+/// [`decide_kind`] when it was not — so nothing past the panel reader ever
+/// sees an offer whose kind is a question.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrintedOffer {
+    /// See [`ArchitectOffer::architect_name`].
+    pub architect_name: String,
+    /// The verb of `Kill to <verb> to`, when OCR read one.
+    ///
+    /// **MEASURED drop.** PC debug dump `1788567663863` (2026-09-05, Torture
+    /// Cages): the crop printed `(Kill to change to Shrine of` legibly and
+    /// Windows.Media.Ocr returned `(KILL TO TO SHRINE OF` — the verb gone
+    /// whole, both `to`s intact. A parser that needed the verb dropped
+    /// Tzamoto's offer, the overlay said `only architect read`, and the
+    /// advisor recommended the one kill it could see.
+    pub verb: Option<OfferKind>,
+    /// See [`ArchitectOffer::printed_target`].
+    pub printed_target: String,
+    /// See [`ArchitectOffer::target`].
+    pub target: Match,
+    /// See [`ArchitectOffer::rect`].
+    pub rect: Option<[i32; 4]>,
+}
+
+impl PrintedOffer {
+    /// The offer, once its kind is settled.
+    fn with_kind(self, kind: OfferKind) -> ArchitectOffer {
+        ArchitectOffer {
+            architect_name: self.architect_name,
+            kind,
+            printed_target: self.printed_target,
+            target: self.target,
+            rect: self.rect,
+        }
+    }
 }
 
 /// How many architect blocks the incursion side panel prints.
@@ -421,26 +467,48 @@ pub fn starts_architect(line: &str) -> bool {
     words(line).iter().any(|w| word_is_architect(&w.key))
 }
 
-/// Position of `kill to <verb> to` in `words`, with the verb it names.
+/// Where the kill clause sits in a block's words.
+struct KillClause {
+    /// Index of `kill`.
+    kill_at: usize,
+    /// The verb between the two `to`s, when it was read as one.
+    verb: Option<OfferKind>,
+    /// Index of the target's first word — the one after the trailing `to`.
+    /// At most `words.len()`, so it always slices.
+    target_at: usize,
+}
+
+/// The `kill to <verb> to` clause in `words`.
 ///
-/// The trailing `to` is what pins the room's first word; without it a title
-/// such as `Architect of the Hoard` could swallow the verb position.
-fn kill_clause(words: &[Word<'_>]) -> Option<(usize, OfferKind)> {
-    for i in 0..words.len().saturating_sub(3) {
+/// Both `to`s are required and the verb is not. The trailing `to` is what
+/// pins the room's first word; without it a title such as `Architect of the
+/// Hoard` could swallow the verb position. The verb is the clause's only
+/// dispensable word, and the one OCR has been seen to lose
+/// ([`PrintedOffer::verb`]): `kill to to <room>` is that measured shape, and
+/// `kill to <junk> to <room>` — a verb read as neither keyword — is the same
+/// clause with the slip landing inside the word instead of on it. Both come
+/// back with no verb, and the kind is settled from the panel instead
+/// ([`decide_kind`]).
+fn kill_clause(words: &[Word<'_>]) -> Option<KillClause> {
+    for i in 0..words.len().saturating_sub(2) {
         if !word_is(&words[i].key, "kill") || !word_is(&words[i + 1].key, "to") {
             continue;
         }
-        let kind = if word_is(&words[i + 2].key, "change") {
-            OfferKind::Change
-        } else if word_is(&words[i + 2].key, "upgrade") {
-            OfferKind::Upgrade
-        } else {
-            continue;
-        };
-        if !word_is(&words[i + 3].key, "to") {
+        // `kill to to <room>`: the verb was dropped whole.
+        if word_is(&words[i + 2].key, "to") {
+            return Some(KillClause { kill_at: i, verb: None, target_at: i + 3 });
+        }
+        if !matches!(words.get(i + 3), Some(w) if word_is(&w.key, "to")) {
             continue;
         }
-        return Some((i, kind));
+        let verb = if word_is(&words[i + 2].key, "change") {
+            Some(OfferKind::Change)
+        } else if word_is(&words[i + 2].key, "upgrade") {
+            Some(OfferKind::Upgrade)
+        } else {
+            None
+        };
+        return Some(KillClause { kill_at: i, verb, target_at: i + 4 });
     }
     None
 }
@@ -499,8 +567,9 @@ struct Block {
     /// The run's lines, joined back into one string.
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     text: String,
-    /// The offer, when the run is one.
-    offer: Option<ArchitectOffer>,
+    /// The offer, when the run is one — as printed, its kind still to be
+    /// settled by [`read_panel`].
+    offer: Option<PrintedOffer>,
 }
 
 impl Block {
@@ -651,18 +720,20 @@ pub fn group_architect_blocks<L: TextLine>(lines: &[L]) -> Vec<String> {
 
 /// Parse one whole architect block.
 ///
-/// Requires **both** halves — an `Architect` word and a `Kill to <verb> to`
+/// Requires **both** halves — an `Architect` word and a `Kill to … to`
 /// clause — so an ordinary line of the panel returns `None` instead of a
-/// half-filled offer.
-pub fn parse_architect_block(block: &str) -> Option<ArchitectOffer> {
+/// half-filled offer. The clause's verb is not required: see
+/// [`kill_clause`], and [`PrintedOffer::verb`] for what a block without one
+/// yields.
+pub fn parse_architect_block(block: &str) -> Option<PrintedOffer> {
     let words = words(block);
     let architect_at = words.iter().position(|w| word_is_architect(&w.key))?;
-    let (kill_at, kind) = kill_clause(&words)?;
-    if kill_at <= architect_at {
+    let clause = kill_clause(&words)?;
+    if clause.kill_at <= architect_at {
         return None;
     }
 
-    let printed_target = words[kill_at + 4..]
+    let printed_target = words[clause.target_at..]
         .iter()
         .map(|w| w.raw.trim_end_matches(')'))
         .filter(|raw| !raw.is_empty())
@@ -691,9 +762,9 @@ pub fn parse_architect_block(block: &str) -> Option<ArchitectOffer> {
         return None;
     }
 
-    Some(ArchitectOffer {
+    Some(PrintedOffer {
         architect_name: name,
-        kind,
+        verb: clause.verb,
         target: rooms::match_room_name(&printed_target),
         printed_target,
         // The block's own lines are what carry boxes, and this function is
@@ -702,13 +773,11 @@ pub fn parse_architect_block(block: &str) -> Option<ArchitectOffer> {
     })
 }
 
-/// Every architect offer the OCR lines contain.
+/// Every architect offer the OCR lines contain — [`read_panel`]'s
+/// architects, for a caller that wants nothing else of the panel.
 #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub fn parse_architects<L: TextLine>(lines: &[L]) -> Vec<ArchitectOffer> {
-    architect_blocks(lines)
-        .into_iter()
-        .filter_map(|block| block.offer)
-        .collect()
+    read_panel(lines).architects
 }
 
 // ------------------------------------------------- incursions remaining --
@@ -875,6 +944,13 @@ pub fn is_screen_furniture(line: &str) -> bool {
 /// Two things a plain vocabulary match would accept are refused here:
 /// [`SCREEN_FURNITURE`], and a *fuzzy* read of one of the two fixed-slot names
 /// — see [`title_match`].
+///
+/// # Which kind an offer is
+///
+/// The verb when the clause carried one; otherwise the title decides, which
+/// is why the kinds are settled HERE and not in [`parse_architect_block`]: a
+/// block on its own does not know what room it is printed under. See
+/// [`decide_kind`].
 pub fn read_panel<L: TextLine>(lines: &[L]) -> PanelReading {
     // Every index below is a position in READING order, which is also the
     // order the blocks' spans are recorded in — so `order[at]` is the one
@@ -909,12 +985,85 @@ pub fn read_panel<L: TextLine>(lines: &[L]) -> PanelReading {
         .or_else(|| (0..order.len()).find_map(title_at))
         .unwrap_or((Match::Unknown, None));
 
+    let printed: Vec<PrintedOffer> = blocks.into_iter().filter_map(|block| block.offer).collect();
+    let architects = settle_kinds(printed, room.identity());
+
     PanelReading {
         room,
         room_rect,
-        architects: blocks.into_iter().filter_map(|block| block.offer).collect(),
+        architects,
         incursions_remaining: parse_incursions_remaining(lines),
     }
+}
+
+/// Turn the printed offers into [`ArchitectOffer`]s, in the same order.
+///
+/// An offer whose verb was read keeps it. One whose verb was not is put to
+/// [`decide_kind`], and dropped when that has no answer — see there for why a
+/// drop beats a guess.
+fn settle_kinds(printed: Vec<PrintedOffer>, current: Option<RoomIdentity>) -> Vec<ArchitectOffer> {
+    let read: Vec<OfferKind> = printed.iter().filter_map(|offer| offer.verb).collect();
+    printed
+        .into_iter()
+        .filter_map(|offer| {
+            let kind = match offer.verb {
+                Some(verb) => verb,
+                None => decide_kind(offer.target, current, &read)?,
+            };
+            Some(offer.with_kind(kind))
+        })
+        .collect()
+}
+
+/// The kind of an offer whose verb OCR did not read, from what else the panel
+/// says.
+///
+/// # The rule
+///
+/// The two kinds differ in WHERE the target sits, not only in the verb
+/// ([`OfferKind`]): an `upgrade` is the current room's own line one tier up,
+/// and a `change` is the other architect's line. With the title read, the
+/// target alone names the kind — its line against the title's. A title with
+/// no line at all — a tier-0 filler, where neither architect is resident and
+/// both print `change` — makes every offer a `change`.
+///
+/// Holds on every panel this file transcribes: `Torture Cages` (dump
+/// `1788567663863`) offers `upgrade to Sadist's Den`, its own line, and
+/// `change to Shrine of Empowerment`, another; `Armourer's Workshop` offers
+/// `upgrade to Armoury` and `change to Shrine of Empowerment`; `Tombs` prints
+/// two `change`s. It is the same fact [`rooms::resolve_offer`] rests on, and
+/// it is recorded in `docs/GAME-FACTS.md`.
+///
+/// # Without a title
+///
+/// The panel prints at most one `upgrade` — only one architect is resident —
+/// so a read `upgrade` on the other block makes this one a `change`. A read
+/// `change` says nothing: a tier-0 room prints two of them.
+///
+/// # Why no answer is a drop and not a guess
+///
+/// A dropped offer leaves the panel one architect short, which
+/// [`super::slice::unclean`] treats as a region worth another read; a guessed
+/// kind is published as clean and never re-read. The advisor's RC and R4 rules
+/// turn on the kind, so the guess would become advice with a coin in it. The
+/// verb was lost by one engine pass, and the retries exist to read it again.
+fn decide_kind(
+    target: Match,
+    current: Option<RoomIdentity>,
+    read: &[OfferKind],
+) -> Option<OfferKind> {
+    let by_title = current.and_then(|current| match current.line() {
+        None => Some(OfferKind::Change),
+        Some(line) => {
+            let target_line = target.identity()?.line()?;
+            Some(if line == target_line {
+                OfferKind::Upgrade
+            } else {
+                OfferKind::Change
+            })
+        }
+    });
+    by_title.or_else(|| read.contains(&OfferKind::Upgrade).then_some(OfferKind::Change))
 }
 
 /// Match one line **as a panel title**, which is stricter than matching it as
@@ -1321,6 +1470,31 @@ mod tests {
             ([1188, 303, 160, 11], "(KILL TO CHANGE TO EXPLOSIVES"),
             ([1251, 317, 34, 11], "ROOM)"),
             ([1342, 364, 146, 12], "ENTER INCURSION"),
+        ]
+        .into_iter()
+        .map(|([x, y, w, h], text)| OcrLineBox { text: text.to_string(), x, y, w, h })
+        .collect()
+    }
+
+    /// The PC side panel exactly as Windows.Media.Ocr boxed it — debug dump
+    /// `1788567663863` (2026-09-05), `ocr-lines.json`, capture px, engine
+    /// order, panel region at origin (1131, 5). Torture Cages at C2.
+    ///
+    /// The second real-OCR fixture, kept for what the engine did to Tzamoto's
+    /// clause: the crop printed `(Kill to change to Shrine of` legibly and
+    /// the engine returned `(KILL TO TO SHRINE OF` — the verb dropped whole.
+    /// It also split `TORMENTS` in two, which nothing here cares about.
+    fn pc_panel_as_ocr_boxed_it() -> Vec<OcrLineBox> {
+        [
+            ([1327, 80, 173, 19], "TORTURE CAGES"),
+            ([1484, 114, 154, 12], "QUIPOLATL, ARCHITECT OF THE"),
+            ([1545, 129, 32, 9], "NEXUS"),
+            ([1485, 142, 151, 12], "(KILL TO UPGRADE TO SADIST'S"),
+            ([1549, 157, 24, 11], "DEN)"),
+            ([1205, 281, 126, 11], "TZAMOTO, ARCHITECT OF"),
+            ([1240, 296, 55, 9], "TOR MENTS"),
+            ([1189, 310, 157, 11], "(KILL TO TO SHRINE OF"),
+            ([1227, 324, 83, 11], "EMPOWERMENT)"),
         ]
         .into_iter()
         .map(|([x, y, w, h], text)| OcrLineBox { text: text.to_string(), x, y, w, h })
@@ -1791,6 +1965,113 @@ mod tests {
         assert_eq!(got.room_rect, Some([1288, 80, 254, 19]));
         assert_eq!(got.architects[0].rect, Some([1479, 115, 163, 53]));
         assert_eq!(got.architects[1].rect, Some([1188, 289, 160, 39]));
+    }
+
+    // ------------------------------------------------- the dropped verb --
+
+    // The PC panel as the engine boxed it: Tzamoto's clause came back
+    // `(KILL TO TO SHRINE OF` with no verb, and the panel still has two
+    // offers. The kind is the title's: Torture Cages is the Sadist's Den line
+    // and Shrine of Empowerment is not, so the kill is a `change` — which is
+    // what the crop printed.
+    //
+    // Fails if `kill_clause` requires the verb (one offer, the shipped bug),
+    // and fails if the kind is a default rather than the line comparison (an
+    // `upgrade` here resolves to the wrong room with the plate unread).
+    #[test]
+    fn the_pc_panel_whose_verb_the_engine_dropped_still_yields_both_offers() {
+        let lines = pc_panel_as_ocr_boxed_it();
+
+        let got = read_panel(&lines);
+
+        assert_eq!(got.identity_name(), Some("Torture Cages"));
+        assert_eq!(got.architects.len(), 2, "both offers: {:?}", got.architects);
+        assert_eq!(got.architects[0].architect_name, "QUIPOLATL");
+        assert_eq!(got.architects[0].kind, OfferKind::Upgrade);
+        assert_eq!(got.architects[0].printed_target, "SADIST'S DEN");
+        assert_eq!(got.architects[1].architect_name, "TZAMOTO");
+        assert_eq!(got.architects[1].kind, OfferKind::Change);
+        assert_eq!(got.architects[1].printed_target, "SHRINE OF EMPOWERMENT");
+        assert!(got.architects[1].target.is_known());
+        assert_eq!(got.architects[1].rect, Some([1189, 281, 157, 54]));
+    }
+
+    // The same drop on the OTHER block: a verb-less clause whose target is on
+    // the title's own line is the `upgrade`. Fails if the decision is a fixed
+    // default instead of the line comparison.
+    #[test]
+    fn a_verbless_clause_naming_the_titles_own_line_is_the_upgrade() {
+        let got = read_panel(&[
+            "Torture Cages",
+            "Quipolatl, Architect of the Nexus (Kill to to Sadist's Den)",
+        ]);
+
+        assert_eq!(got.identity_name(), Some("Torture Cages"));
+        assert_eq!(got.architects.len(), 1);
+        assert_eq!(got.architects[0].kind, OfferKind::Upgrade);
+        assert_eq!(got.architects[0].printed_target, "Sadist's Den");
+    }
+
+    // A verb read as neither keyword is the same clause with the slip inside
+    // the word: both `to`s still pin the target, and the title decides.
+    // `cl1nn` scores 0.62 against `change`, under KEYWORD.
+    #[test]
+    fn a_clause_whose_verb_read_as_junk_is_decided_like_a_dropped_one() {
+        let got = read_panel(&[
+            "Torture Cages",
+            "Tzamoto, Architect of Torments (Kill to cl1nn to Shrine of Empowerment)",
+        ]);
+
+        assert_eq!(got.architects.len(), 1);
+        assert_eq!(got.architects[0].kind, OfferKind::Change);
+        assert_eq!(got.architects[0].printed_target, "Shrine of Empowerment");
+    }
+
+    // Tier 0: a filler has no line, so neither architect is resident and both
+    // kills are `change`s — Case 1's Tombs with one verb lost.
+    #[test]
+    fn a_verbless_clause_under_a_filler_title_is_a_change() {
+        let got = read_panel(&[
+            "Tombs",
+            "Ticaba, Architect of the Arena (Kill to to Storage Room)",
+            "Juatalotli, Architect of the Hoard (Kill to change to Sparring Room)",
+        ]);
+
+        assert_eq!(got.identity_name(), Some("Tombs"));
+        assert_eq!(got.architects.len(), 2);
+        assert!(got.architects.iter().all(|o| o.kind == OfferKind::Change));
+    }
+
+    // No title, and the other block read `upgrade`: the panel prints one
+    // upgrade at most, so this one is the `change`.
+    #[test]
+    fn without_a_title_the_other_blocks_upgrade_makes_a_verbless_one_a_change() {
+        let got = read_panel(&[
+            "Quipolatl, Architect of the Nexus (Kill to upgrade to Sadist's Den)",
+            "Tzamoto, Architect of Torments (Kill to to Shrine of Empowerment)",
+        ]);
+
+        assert_eq!(got.identity_name(), None);
+        assert_eq!(got.architects.len(), 2);
+        assert_eq!(got.architects[1].architect_name, "Tzamoto");
+        assert_eq!(got.architects[1].kind, OfferKind::Change);
+    }
+
+    // No title and nothing to decide by — the other block is a `change`,
+    // which a tier-0 room pairs with a second `change` — so the offer is
+    // dropped, not guessed. Its lines are still block text: the target must
+    // not be read as the room the player is in. Fails if a default kind is
+    // ever filled in, and fails if a verb-less block stops hiding its lines.
+    #[test]
+    fn without_a_title_or_a_read_upgrade_a_verbless_offer_is_dropped_not_guessed() {
+        let got = read_panel(&[
+            "Ticaba, Architect of the Arena (Kill to to Storage Room)",
+            "Juatalotli, Architect of the Hoard (Kill to change to Sparring Room)",
+        ]);
+
+        assert_eq!(got.identity_name(), None, "`Storage Room` is block text, not the title");
+        assert_eq!(got.architects.len(), 1);
+        assert_eq!(got.architects[0].architect_name, "Juatalotli");
     }
 
     // ------------------------------------------------------ block rects --

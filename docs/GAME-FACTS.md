@@ -44,6 +44,17 @@ is not mistaken for a fact.
   opens it, and is "last known as of the last panel open". Live tracking is
   not a missing feature; it has no signal to build on
   ([TEMPLE-LIFECYCLE.md](TEMPLE-LIFECYCLE.md)).
+- **An architect offer's kind is where its target sits.** The side panel
+  prints two architects per room. `Kill to upgrade to <X>` names the current
+  room's own line one tier up; `Kill to change to <Y>` names the other
+  architect's line. A tier-0 filler has no resident architect, so both print
+  `change`, and no room prints two `upgrade`s. Seen on every transcribed
+  panel: Torture Cages 2026-09-05 (upgrade to Sadist's Den, change to Shrine
+  of Empowerment), Armourer's Workshop 2026-09-03 (upgrade to Armoury, change
+  to Shrine of Empowerment), Tombs 2026-08-02 (two changes). The panel parser
+  (`desktop/src-tauri/src/temple/panel.rs`, `decide_kind`) settles the kind
+  from the title by this rule when OCR loses the verb, which Windows OCR did
+  on a legible crop on 2026-09-05 (`(KILL TO TO SHRINE OF`).
 
 ## Divine Font
 
