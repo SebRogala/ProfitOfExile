@@ -23,6 +23,16 @@ reference machine runs Docker Desktop, engine 29.x; the infra README notes
 Traefik must be v3.6+ for that engine), `git`, `make`, `rsync`,
 `inotify-tools` (for `make desktop-watch`), and `mkcert` (infra certificates).
 
+Docker Desktop must have the distro ticked under Settings, Resources, WSL
+integration ("Enable integration with my default WSL distro" covers the
+default distro). A Docker Desktop upgrade can reset this. The symptom is
+`docker` in WSL answering "could not be found in this WSL 2 distro" while the
+engine runs fine on the Windows side; re-tick it and Apply & restart.
+The same upgrade can leave the auto-restarted `traefik` container with a dead
+Docker-socket mount (its log repeats "Cannot connect to the Docker daemon" and
+every `*.localhost` host answers 404); `docker compose up -d --force-recreate
+traefik` in `/var/www/infra` fixes it.
+
 1. **Shared infra first.** Clone the `infra` repository (private, ask the
    owner for access) to `/var/www/infra` and follow its README: `make certs` (mkcert bundle), then
    `make up`. Its init script creates the `profitofexile` database and role on
@@ -103,6 +113,11 @@ Two Windows-specific settings, both observed on the reference machine
 - **Smart App Control** blocks unsigned Rust build scripts. Add an exclusion
   for the project directory (or turn it off), or `cargo` fails on the first
   build-script crate.
+- **PowerShell execution policy.** A fresh machine's default (`Restricted`)
+  refuses `npm.ps1` and `npx.ps1`, so `npm ci` and `npx tauri dev` fail from
+  PowerShell with "running scripts is disabled on this system". Either
+  `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or run them from
+  `cmd`, where `npm.cmd`/`npx.cmd` are used instead.
 
 ## 3. Sync WSL to Windows
 
