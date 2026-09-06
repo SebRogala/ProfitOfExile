@@ -325,6 +325,43 @@ export interface OfferView {
 	 *  Optional on the wire: a snapshot from a build before POE-257 carries no
 	 *  field at all, so read it as `offer.value ?? null`. */
 	value?: RoomValueView | null;
+	/** The vial upgrade for the unique this kill's LINE drops, priced off the
+	 *  same read as `value` — base + vial → upgraded (POE-260).
+	 *
+	 *  Null far more often than not, and the box draws nothing for every one
+	 *  of the reasons: eighteen lines drop no unique, Locus of Corruption's
+	 *  Shadowstitch is nobody's recipe base, and a payload that has never
+	 *  reached the server carries no recipe table to look in.
+	 *
+	 *  On the OFFER rather than inside `RoomValueView`, because it is a fact
+	 *  about the LINE and not about a tier's sum — the same three prices would
+	 *  otherwise ride on all three rows of every `temple_value_table` line,
+	 *  where nothing reads them.
+	 *
+	 *  Optional on the wire and normalised to `null` by `normaliseTemple`. */
+	recipe?: RecipeView | null;
+}
+
+/** One line's vial upgrade: base unique + vial → upgraded unique (POE-260). */
+export interface RecipeView {
+	/** The unique this line's tier-3 chest drops. */
+	base: RecipeItemView;
+	/** The vial that transforms it. NOT necessarily the vial this line's own
+	 *  architect rolls for — on Locus of Corruption they are different items,
+	 *  which is why Rust keys the lookup on `base`. */
+	vial: RecipeItemView;
+	/** What the two become. */
+	upgraded: RecipeItemView;
+}
+
+/** One priced member of a `RecipeView`. */
+export interface RecipeItemView {
+	/** poe.ninja's own name — the price's join key, and what `/api/gem-icon/`
+	 *  is asked for. */
+	name: string;
+	/** Chaos, or null where this read priced nothing for it. Never `0` standing
+	 *  in for a missing price. */
+	chaos: number | null;
 }
 
 /** One room-tier's chaos value and the terms behind it. */

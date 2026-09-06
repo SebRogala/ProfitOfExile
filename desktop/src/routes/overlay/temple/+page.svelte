@@ -367,7 +367,7 @@
 				blocks={blockRects(frame.scaleFactor)}
 				panel={roiRect(temple.layout, 'panel', frame.scaleFactor)}
 				host={frame.host}
-				maxWidth={spec.defaults.w}
+				width={spec.defaults.w}
 			/>
 		{/if}
 	{/snippet}

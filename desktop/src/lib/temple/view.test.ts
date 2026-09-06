@@ -42,9 +42,12 @@ import {
 	chosenOffer,
 	doorWarning,
 	marketNote,
-	offerBoxes
+	offerBoxes,
+	offerBoxSignature,
+	offerChaos,
+	type OfferBox
 } from './view';
-import { templeSliceDefault, type AdviceView, type LayoutView, type MarketView, type OfferView, type RankedView, type SlotId, type SlotView, type TempleStatus } from './slice';
+import { templeSliceDefault, type AdviceView, type DriverView, type LayoutView, type MarketView, type OfferView, type RankedView, type RoomValueView, type SlotId, type SlotView, type TempleStatus } from './slice';
 
 /** A fixed clock, so every age below is the difference the test states. */
 const NOW = 1_788_665_199_649;
@@ -925,6 +928,715 @@ describe('offerBoxes', () => {
 		const boxes = offerBoxes(cold, NOW);
 
 		expect(boxes[0].market).toBe('prices unavailable — base values');
+	});
+});
+
+
+// ------------------------------------------- the value fixtures (POE-260) --
+
+/** A live read, twelve minutes old — the age the design's artboards print. */
+const LIVE_MARKET: MarketView = { asOf: NOW - 12 * MINUTE, stale: false, unavailable: false };
+
+/**
+ * One room-tier's value, as Rust publishes it.
+ *
+ * The defaults are a whole, market-priced tier-3 row with no terms; every test
+ * below states the terms it is about. Nothing here computes anything — the
+ * point of these tests is that `view.ts` computes nothing either.
+ */
+function value(over: Partial<RoomValueView> = {}): RoomValueView {
+	return {
+		total: 96,
+		priced: 'market',
+		guessed: false,
+		league: 'Allflame',
+		asOf: NOW - 12 * MINUTE,
+		scaledFromTier3: null,
+		drivers: [],
+		...over
+	};
+}
+
+/** One term of that sum. The named builders below are the real shapes: a term
+ *  with a count and a unit price, one with neither, and the two bonuses. */
+function term(over: Partial<DriverView> & { kind: string; name: string }): DriverView {
+	return {
+		count: null,
+		unitPrice: null,
+		chaos: null,
+		guessed: false,
+		lowConfidence: false,
+		windowPriced: false,
+		...over
+	};
+}
+
+/** Crucible of Flame's own line on the committed capture, at the numbers the
+ *  design's priced artboard prints. */
+const saleTerm = (over: Partial<DriverView> = {}) =>
+	term({ kind: 'sale', name: 'Crucible of Flame', unitPrice: 196, chaos: 186, ...over });
+const uniqueTerm = (over: Partial<DriverView> = {}) =>
+	term({
+		kind: 'unique_drop',
+		name: 'Story of the Vaal',
+		count: 0.25,
+		unitPrice: 68,
+		chaos: 17,
+		guessed: true,
+		...over
+	});
+const vialTerm = (over: Partial<DriverView> = {}) =>
+	term({
+		kind: 'vial_drop',
+		name: 'Vial of Fate',
+		count: 0.1,
+		unitPrice: 41,
+		chaos: 4.1,
+		guessed: true,
+		...over
+	});
+const modTerm = (over: Partial<DriverView> = {}) =>
+	term({
+		kind: 'mod_item',
+		name: 'temple gloves',
+		count: 2,
+		unitPrice: 30,
+		chaos: 60,
+		guessed: true,
+		...over
+	});
+const quantityTerm = (over: Partial<DriverView> = {}) =>
+	term({
+		kind: 'quantity_bonus',
+		name: 'increased Quantity of Items found in this Area',
+		count: 6,
+		unitPrice: 0.5,
+		chaos: 3,
+		...over
+	});
+const rarityTerm = (over: Partial<DriverView> = {}) =>
+	term({
+		kind: 'rarity_bonus',
+		name: 'increased Rarity of Items found in this Area',
+		count: 12,
+		unitPrice: 0.25,
+		chaos: 3,
+		...over
+	});
+/** The driver that makes a tier-1 row a fraction of its LINE (epic lock L2). */
+const fractionTerm = (over: Partial<DriverView> = {}) =>
+	term({
+		kind: 'tier_fraction',
+		name: 'Crucible of Flame',
+		count: 0.8,
+		unitPrice: 846,
+		chaos: 676.8,
+		...over
+	});
+
+describe('offerBoxes — what the number is made of (POE-260)', () => {
+	const panel = (offers: OfferView[]) => ({
+		room: 'Chamber of Iron',
+		roomRect: null,
+		offers,
+		incursionsRemaining: 6
+	});
+	const slice = (offers: OfferView[], market: MarketView = LIVE_MARKET) => ({
+		...templeSliceDefault(),
+		advice: advice(),
+		panel: panel(offers),
+		market
+	});
+	const only = (offer: OfferView, market?: MarketView) =>
+		offerBoxes(slice([offer], market), NOW)[0];
+
+	it('lists the sale first and then what the room drops, in the wire order', () => {
+		// `valuation.rs` pushes sale, unique, vial, mod, and the box draws that
+		// order: the sale is money the room pays out now and the drops are what
+		// falls out of it, which is the order a player reads them in. A box
+		// re-sorting them by price would put a 428 c vial above the 846 c sale.
+		const box = only(offer({ value: value({ drivers: [saleTerm(), uniqueTerm(), vialTerm()] }) }));
+
+		expect(box.drivers.map((driver) => [driver.kind, driver.name])).toEqual([
+			['sale', 'sale price above floor'],
+			['unique', 'Story of the Vaal'],
+			['vial', 'Vial of Fate']
+		]);
+	});
+
+	it('prints the ITEM price and its count on a drop row, not the term it contributed', () => {
+		// 0.25 x 68 c is 17 c, and 17 is not a number anybody can look up. The
+		// row shows what one Story of the Vaal goes for and how many a run is
+		// worth, which is the pair a player checks against poe.ninja. A row
+		// printing the contribution would read as a price nobody trades at.
+		const box = only(offer({ value: value({ drivers: [uniqueTerm()] }) }));
+
+		expect(box.drivers[0].price).toBe('68c');
+		expect(box.drivers[0].perRun).toBe('×0.25');
+		expect(box.drivers[0].iconName).toBe('Story of the Vaal');
+	});
+
+	it('prints the sale row as the delta above the floor, in the gain form', () => {
+		// The one row whose number IS its contribution: what the room pays above
+		// the floor. The `+` is the difference from a drop price, and the row
+		// carries no count because a sale is not a per-run expectation.
+		const box = only(
+			offer({ value: value({ drivers: [saleTerm({ chaos: 186, unitPrice: 196 })] }) })
+		);
+
+		expect(box.drivers[0].price).toBe('+186c');
+		expect(box.drivers[0].perRun).toBeNull();
+		expect(box.drivers[0].iconName).toBeNull();
+	});
+
+	it('drops a sale worth exactly zero rather than printing +0c on every box', () => {
+		// 84 of the capture's 86 room-tiers sit at the floor. A `+0c` row on
+		// nearly every box would push a row saying what the room DROPS into the
+		// fold, which is the row the player is reading for.
+		const box = only(
+			offer({ value: value({ drivers: [saleTerm({ chaos: 0 }), uniqueTerm()] }) })
+		);
+
+		expect(box.drivers.map((driver) => driver.kind)).toEqual(['unique']);
+	});
+
+	it('keeps an UNPRICED item on screen and says so, rather than inventing a number', () => {
+		// The acceptance criterion in one line: icon shown, `no price` in the
+		// price cell, never a fabricated 0. A production change that read a
+		// missing price as zero prints `0c` here and fails.
+		const box = only(
+			offer({ value: value({ priced: 'partial', drivers: [uniqueTerm(), vialTerm({ unitPrice: null, chaos: null })] }) })
+		);
+
+		expect(box.drivers[1].price).toBe('no price');
+		expect(box.drivers[1].priced).toBe(false);
+		expect(box.drivers[1].iconName).toBe('Vial of Fate');
+	});
+
+	it('says an em dash instead where there is no market to have an answer', () => {
+		// Two different absences, and the box has to tell them apart: `no price`
+		// means this item was looked up and came back empty while other terms
+		// priced, and `—` means the whole read is on the grade ladder. A player
+		// who cannot tell them apart cannot tell a dead feed from a dead item.
+		const box = only(
+			offer({ value: value({ priced: 'fallback', drivers: [uniqueTerm({ unitPrice: null, chaos: null })] }) })
+		);
+
+		expect(box.drivers[0].price).toBe('—');
+	});
+
+	it('counts the unpriced rows in the partial chip', () => {
+		const box = only(
+			offer({
+				value: value({
+					priced: 'partial',
+					drivers: [uniqueTerm({ unitPrice: null, chaos: null }), vialTerm({ unitPrice: null, chaos: null })]
+				})
+			})
+		);
+
+		expect(box.chip).toBe('floor · 2 unpriced');
+	});
+
+	it('carries no chip at all when every term priced', () => {
+		expect(only(offer({ value: value({ drivers: [uniqueTerm()] }) })).chip).toBeNull();
+	});
+
+	it('counts an unpriced term the FOLD hid, because the chip is about the number', () => {
+		// The chip says how complete the sum is, and the sum is every term —
+		// not the three the box has room to draw. A partial board whose only
+		// unpriced item happens to be the fourth would otherwise print a bare
+		// `floor`, which is the wording for a missing COUNT and says nothing
+		// about the price that is actually missing.
+		const box = only(
+			offer({
+				value: value({
+					priced: 'partial',
+					drivers: [
+						saleTerm({ chaos: 186 }),
+						uniqueTerm(),
+						vialTerm(),
+						modTerm({ unitPrice: null, chaos: null })
+					]
+				})
+			})
+		);
+
+		expect(box.drivers).toHaveLength(3);
+		expect(box.chip).toBe('floor · 1 unpriced');
+	});
+
+	it('words a state this file has not been taught as a partial sum in EVERY field', () => {
+		// `offerState` answers `partial` for a wire string it does not know,
+		// because it is the one state that claims nothing. That only holds if
+		// the rest of the wording follows its answer instead of re-reading the
+		// raw string: the chip's own branch used to, so an unknown state gave a
+		// box that called itself partial and then drew no `floor` chip at all.
+		const box = only(
+			offer({
+				value: value({
+					priced: 'a_state_a_later_rust_grew',
+					drivers: [uniqueTerm({ unitPrice: null, chaos: null })]
+				})
+			})
+		);
+
+		expect(box.state).toBe('partial');
+		expect(box.chip).toBe('floor · 1 unpriced');
+		expect(box.drivers[0].price).toBe('no price');
+	});
+
+	it('gives a temple-mod row no icon, because its name is a hint and not an item', () => {
+		// `drops.rs` prices the architect's signature rare off a prose hint
+		// (`temple gloves`), which is not a poe.ninja name — so
+		// `/api/gem-icon/temple%20gloves` is a request that cannot succeed. The
+		// row draws the unresolved glyph either way; naming the item there only
+		// buys a guaranteed 404 per row.
+		const box = only(offer({ value: value({ drivers: [modTerm()] }) }));
+
+		expect(box.drivers[0].kind).toBe('mod');
+		expect(box.drivers[0].name).toBe('temple gloves');
+		expect(box.drivers[0].iconName).toBeNull();
+	});
+
+	it('shows the LETTER and an F mark where the ladder priced the room', () => {
+		// Epic lock L4: no market, no chaos number. The grade is the answer and
+		// the box says so rather than printing a rung as if it were a price.
+		const box = only(
+			offer({
+				grade: 'A++',
+				value: value({ priced: 'fallback', total: 846, drivers: [uniqueTerm({ unitPrice: null, chaos: null })] })
+			})
+		);
+
+		expect(box.valueText).toBe('grade A++');
+		expect(box.value).toBeNull();
+		expect(box.marks).toEqual(['F']);
+	});
+
+	it('words an instrumental line as what it DOES, never as a missing price', () => {
+		// Temple Nexus and Shrine of Unmaking are priced at their letter because
+		// summing is the wrong question for them — no price is missing. Wording
+		// them like the ladder would tell a player the market is down when it is
+		// not, and the number is one the advisor ranked on.
+		const box = only(
+			offer({ grade: 'B+', value: value({ priced: 'instrumental', total: 105.75, drivers: [] }) })
+		);
+
+		expect(box.note).toBe('valued at its letter — its worth is what it does, not what it drops');
+		expect(box.valueText).toBe('106');
+		expect(box.marks).not.toContain('F');
+	});
+
+	it('names the player as the source of a number they typed', () => {
+		const box = only(
+			offer({ value: value({ priced: 'override', total: 500, drivers: [] }) })
+		);
+
+		expect(box.note).toBe('your own number for this room');
+	});
+
+	it('says outright when a line drops nothing at all', () => {
+		// An empty row list is a real answer — Chamber of Iron is worth its
+		// quantity bonus and nothing else — and silence there reads as a read
+		// that failed rather than as a room that drops nothing.
+		const box = only(offer({ value: value({ drivers: [quantityTerm()] }) }));
+
+		expect(box.drivers).toEqual([]);
+		expect(box.note).toBe('this line drops no unique and no vial');
+	});
+
+	it('sums the two area bonuses into one line and names both percentages', () => {
+		const box = only(
+			offer({ value: value({ drivers: [quantityTerm(), rarityTerm()] }) })
+		);
+
+		expect(box.bonus).toEqual({ label: '+6% quant · +12% rarity', amount: '+6c' });
+	});
+
+	it('withholds the bonus amount where nothing priced the rates', () => {
+		// The fallback path nulls every term's chaos. `+0c` there would claim
+		// the percentages are worth nothing rather than that nothing priced
+		// them.
+		const box = only(
+			offer({
+				value: value({
+					priced: 'fallback',
+					drivers: [quantityTerm({ chaos: null }), rarityTerm({ chaos: null })]
+				})
+			})
+		);
+
+		expect(box.bonus?.amount).toBeNull();
+		expect(box.bonus?.label).toBe('+6% quant · +12% rarity');
+	});
+
+	it('shows the headline number the advisor ranked on, never the sum of the rows', () => {
+		// POE-257 D6 and epic lock L2 together. This row is a tier-1 kill: its
+		// drivers are the TIER-3 room's terms, copied unscaled, and adding them
+		// up gives 68 + 41 = 109 against a total of 676.8. A box that summed its
+		// own rows would print one of the two numbers the design exists to keep
+		// apart.
+		const box = only(
+			offer({
+				builtTier: 1,
+				value: value({
+					total: 676.8,
+					scaledFromTier3: 846,
+					drivers: [uniqueTerm(), vialTerm(), fractionTerm()]
+				})
+			})
+		);
+
+		expect(box.value).toBe(676.8);
+		expect(box.valueText).toBe('677');
+	});
+
+	it('says on a scaled box that the rows under it are the tier-3 room\'s', () => {
+		// Without this line the box is a sum that does not sum, which is worse
+		// than no explanation: the rows are the LINE's terms and the number is a
+		// fraction of the line.
+		const box = only(
+			offer({
+				builtTier: 1,
+				value: value({ total: 676.8, scaledFromTier3: 846, drivers: [uniqueTerm(), fractionTerm()] })
+			})
+		);
+
+		expect(box.scaleNote).toBe('tier 1 = 80% of tier 3 · the rows below are tier 3\'s');
+	});
+
+	it('leaves the scale line off a row that was not scaled, whose rows DO add up', () => {
+		expect(only(offer({ value: value({ drivers: [uniqueTerm()] }) })).scaleNote).toBeNull();
+	});
+
+	it('draws three driver rows and folds the rest into one line', () => {
+		// The height is designed against the 316 px the panel's own diagonal
+		// admits, so a fourth row cannot grow the box — it folds, with the chaos
+		// it contributed named so the fold is not a silent omission.
+		const box = only(
+			offer({
+				value: value({
+					drivers: [saleTerm({ chaos: 186 }), uniqueTerm(), vialTerm(), modTerm()]
+				})
+			})
+		);
+
+		expect(box.drivers).toHaveLength(3);
+		expect(box.driverCount).toBe(4);
+		expect(box.fold).toBe('+1 more item · 60c');
+	});
+
+	it('withholds the folded chaos on a scaled row, where it would be tier 3\'s', () => {
+		// Same trap as the headline: summing copied tier-3 terms under a tier-1
+		// total would print a number from the wrong tier. The COUNT is still
+		// true at every tier, so it stays.
+		const box = only(
+			offer({
+				builtTier: 1,
+				value: value({
+					total: 676.8,
+					scaledFromTier3: 846,
+					drivers: [saleTerm({ chaos: 186 }), uniqueTerm(), vialTerm(), modTerm(), fractionTerm()]
+				})
+			})
+		);
+
+		expect(box.fold).toBe('+1 more item');
+	});
+
+	it('withholds the BONUS chaos on a scaled row, where it is tier 3\'s too', () => {
+		// The rule the fold states has to reach every amount on the box: the
+		// bonus driver carries the tier-3 room's rates against the tier-3
+		// room's value, so `+6c` under a tier-1 headline is a number from the
+		// wrong tier — printed two lines below a fold that has just refused to
+		// print one. The percentages are the room's at every tier and stay.
+		const box = only(
+			offer({
+				builtTier: 1,
+				value: value({
+					total: 676.8,
+					scaledFromTier3: 846,
+					drivers: [uniqueTerm(), quantityTerm(), rarityTerm(), fractionTerm()]
+				})
+			})
+		);
+
+		expect(box.bonus).toEqual({ label: '+6% quant · +12% rarity', amount: null });
+	});
+
+	it('still prints a row\'s UNIT price on a scaled box, the one amount scaling does not touch', () => {
+		// The carve-out, and the reason the rule is about DERIVED amounts. 68 c
+		// is what one Story of the Vaal goes for at every tier and is the
+		// number a player checks against poe.ninja; withholding it would leave
+		// the row with an icon and nothing to look up.
+		const box = only(
+			offer({
+				builtTier: 1,
+				value: value({
+					total: 676.8,
+					scaledFromTier3: 846,
+					drivers: [uniqueTerm(), fractionTerm()]
+				})
+			})
+		);
+
+		expect(box.drivers[0].price).toBe('68c');
+	});
+
+	it('shows the tier-3 sale PRICE on a scaled box, never the delta that is tier 3\'s', () => {
+		// The sale row is the one whose ordinary cell is itself a derived
+		// amount — what the room ADDED above the floor — so it is the one that
+		// leaks a tier-3 number past the rule the fold and the bonus already
+		// follow. The committed sample is the proof: a 12.5 delta on a row
+		// whose scaled total is 10, printing `+13c` under `10`, which reads as
+		// the box's own number and is larger than it. A scaled box shows the
+		// tier-3 room's PRICE instead, unsigned and named for its tier, which
+		// is the treatment every drop row on that box already gets. The
+		// unscaled delta is pinned above, in the gain-form case.
+		const box = only(
+			offer({
+				builtTier: 1,
+				value: value({
+					total: 676.8,
+					scaledFromTier3: 846,
+					drivers: [saleTerm(), uniqueTerm(), fractionTerm()]
+				})
+			})
+		);
+
+		expect(box.drivers[0].name).toBe('tier 3 sale price');
+		expect(box.drivers[0].price).toBe('196c');
+		// The compact strip reads the same number, because it reads the same
+		// field — a second rule there is a second place to leak from.
+		expect(box.stripPrices).toBe('196 · 68c');
+	});
+
+	it('folds nothing at three rows', () => {
+		const box = only(
+			offer({ value: value({ drivers: [saleTerm({ chaos: 186 }), uniqueTerm(), vialTerm()] }) })
+		);
+
+		expect(box.fold).toBeNull();
+	});
+
+	it('carries the vial upgrade with a price for each of its three members', () => {
+		const box = only(
+			offer({
+				value: value({ drivers: [uniqueTerm()] }),
+				recipe: {
+					base: { name: 'Story of the Vaal', chaos: 5 },
+					vial: { name: 'Vial of Fate', chaos: 1 },
+					upgraded: { name: 'Fate of the Vaal', chaos: 39.2 }
+				}
+			})
+		);
+
+		expect(box.recipe?.base).toEqual({
+			name: 'Story of the Vaal',
+			iconName: 'Story of the Vaal',
+			price: '5c'
+		});
+		expect(box.recipe?.upgraded.price).toBe('39c');
+	});
+
+	it('draws no recipe line for a line no vial upgrades', () => {
+		// Locus of Corruption: it drops Shadowstitch, which nothing transforms.
+		// An invented recipe there would name two items the room never drops.
+		expect(only(offer({ value: value({ drivers: [uniqueTerm()] }) })).recipe).toBeNull();
+	});
+
+	it('draws an em dash for a recipe member this read could not price', () => {
+		const box = only(
+			offer({
+				value: value({ drivers: [uniqueTerm()] }),
+				recipe: {
+					base: { name: 'Story of the Vaal', chaos: 5 },
+					vial: { name: 'Vial of Fate', chaos: null },
+					upgraded: { name: 'Fate of the Vaal', chaos: null }
+				}
+			})
+		);
+
+		expect(box.recipe?.vial.price).toBe('—');
+	});
+
+	it('marks the row that was priced from a window, and the one that is thin', () => {
+		// POE-252 and POE-131, on the row each is about. Both muted, because the
+		// price WAS measured — a yellow mark there would say nobody measured it,
+		// which is what `G` means and these do not.
+		const box = only(
+			offer({
+				value: value({
+					drivers: [uniqueTerm({ windowPriced: true, guessed: false }), vialTerm({ lowConfidence: true })]
+				})
+			})
+		);
+
+		expect(box.drivers[0].marks).toEqual(['W']);
+		expect(box.drivers[1].marks).toEqual(['L', 'G']);
+	});
+
+	it('rolls the guess up to the box only when there is no row to carry it', () => {
+		// With rows on screen the estimate is attributable — this count, that
+		// price — and a box-level mark saying the same thing again is noise. An
+		// instrumental line has no rows at all, so its `G` has nowhere else to
+		// go.
+		const withRows = only(offer({ value: value({ guessed: true, drivers: [uniqueTerm()] }) }));
+		const without = only(
+			offer({ value: value({ priced: 'instrumental', guessed: true, drivers: [] }) })
+		);
+
+		expect(withRows.marks).toEqual([]);
+		expect(without.marks).toEqual(['G']);
+	});
+
+	it('reports the market\'s own staleness, not the value\'s withheld age', () => {
+		// `RoomValueView.asOf` is null on a stale read by construction — a stale
+		// read priced nothing — so the field that withholds the age cannot be
+		// the one that reports it. Reading it there would leave a stale board
+		// looking fresh.
+		const stale = { asOf: NOW - 3 * 60 * MINUTE, stale: true, unavailable: true };
+
+		expect(only(offer({ value: value() }), stale).stale).toBe(true);
+		expect(only(offer({ value: value() })).stale).toBe(false);
+	});
+
+	it('draws no value row at all for an offer that resolved to no room', () => {
+		// Nothing to price, so nothing is priced. A zero or a dash here would be
+		// a claim about a room the app could not name.
+		const box = only(offer({ displayName: null, builtTier: null, grade: null, lineTop: null }));
+
+		expect(box.valueText).toBeNull();
+		expect(box.state).toBeNull();
+		expect(box.drivers).toEqual([]);
+	});
+
+	it('gives the compact strip its prices and one foot line', () => {
+		// The compact form drops the counts, the bonus, the recipe and the
+		// reason, and merges the rating and the age into one line. Only the
+		// PRICED rows reach the strip: a bare `no price` in a run of numerals
+		// reads as one of them.
+		const box = only(
+			offer({
+				value: value({
+					priced: 'partial',
+					drivers: [uniqueTerm(), vialTerm(), modTerm({ unitPrice: null, chaos: null })]
+				})
+			})
+		);
+
+		expect(box.stripPrices).toBe('68 · 41c');
+		expect(box.foot).toBe('Vertolka C · T3 Sadist\'s Den · prices 12 min old');
+	});
+
+	it('leaves the strip empty where nothing priced', () => {
+		const box = only(
+			offer({ value: value({ priced: 'fallback', drivers: [uniqueTerm({ unitPrice: null, chaos: null })] }) })
+		);
+
+		expect(box.stripPrices).toBeNull();
+	});
+});
+
+describe('offerChaos', () => {
+	it('rounds to whole chaos once the number is big enough to read', () => {
+		expect(offerChaos(676.8)).toBe('677');
+		expect(offerChaos(96)).toBe('96');
+	});
+
+	it('keeps one decimal between 1 and 10, where rounding would lose a fifth of it', () => {
+		expect(offerChaos(5)).toBe('5');
+		expect(offerChaos(5.44)).toBe('5.4');
+	});
+
+	it('never rounds a small real value down to a bare zero', () => {
+		// 0.4 c is worth something and `0` says it is worth nothing, which is
+		// the one claim this file may not make by accident.
+		expect(offerChaos(0.4)).toBe('0.40');
+	});
+});
+
+describe('offerBoxSignature', () => {
+	const box = (over: Partial<OfferBox>): OfferBox => ({
+		...offerBoxes(
+			{
+				...templeSliceDefault(),
+				advice: advice(),
+				panel: {
+					room: null,
+					roomRect: null,
+					offers: [offer({ value: value({ drivers: [uniqueTerm()] }) })],
+					incursionsRemaining: 6
+				},
+				market: LIVE_MARKET
+			},
+			NOW
+		)[0],
+		...over
+	});
+
+	it('does not change when only the rendered TEXT changes', () => {
+		// The POE-258 regression this replaces: the market-age line was in the
+		// measurement signature, so `prices 12 min old` becoming `prices 13 min
+		// old` re-measured the pair and hid it for a frame, once a minute, for
+		// as long as a board was up. The box is fixed-width now, so nothing a
+		// string says can move it — and this is the assertion that keeps a
+		// future field from being added back in.
+		const first = box({ market: 'prices 12 min old', reason: 'R1: connects toward the top' });
+		const second = box({ market: 'prices 13 min old', reason: 'R4: below the risk threshold' });
+
+		expect(offerBoxSignature(second, false)).toBe(offerBoxSignature(first, false));
+	});
+
+	it('does not read the stale FLAG, whose drawing costs no height', () => {
+		// All the flag itself draws is a dotted underline and a yellow age
+		// line, neither of which is a row. What a real stale board changes is
+		// `state` — Rust prices nothing off a stale snapshot, so the box comes
+		// back on the cold ladder with no rows — and `state` is in the
+		// signature, so that transition re-measures on the field that names the
+		// form rather than on a second spelling of it. Hence a box differing in
+		// the flag ALONE, which is what this asserts.
+		expect(offerBoxSignature(box({ stale: true }), false)).toBe(
+			offerBoxSignature(box({ stale: false }), false)
+		);
+	});
+
+	it('changes when the value state does, which is what a stale board changes', () => {
+		// The other half, and the one that makes the flag's absence safe: a
+		// board going stale takes every box from `market` to `fallback`, and
+		// the fallback form has no driver rows and no bonus line. A signature
+		// blind to that would leave the pair measured for a box that is no
+		// longer on screen.
+		expect(offerBoxSignature(box({ state: 'fallback' }), false)).not.toBe(
+			offerBoxSignature(box({ state: 'market' }), false)
+		);
+	});
+
+	it('changes when a driver row appears', () => {
+		const one = box({});
+		const two = box({ drivers: [...one.drivers, one.drivers[0]] });
+
+		expect(offerBoxSignature(two, false)).not.toBe(offerBoxSignature(one, false));
+	});
+
+	it('changes when the form does', () => {
+		expect(offerBoxSignature(box({}), true)).not.toBe(offerBoxSignature(box({}), false));
+	});
+
+	it('changes when a row appears that was not there', () => {
+		// Every optional row is in the signature because every one of them is
+		// height. The recipe is the tallest of them at 39 px.
+		const without = box({ recipe: null });
+		const withOne = box({
+			recipe: {
+				base: { name: 'Story of the Vaal', iconName: 'Story of the Vaal', price: '5c' },
+				vial: { name: 'Vial of Fate', iconName: 'Vial of Fate', price: '1c' },
+				upgraded: { name: 'Fate of the Vaal', iconName: 'Fate of the Vaal', price: '39c' }
+			}
+		});
+
+		expect(offerBoxSignature(withOne, false)).not.toBe(offerBoxSignature(without, false));
 	});
 });
 
