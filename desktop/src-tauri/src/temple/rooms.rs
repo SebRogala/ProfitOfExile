@@ -77,6 +77,52 @@ impl Grade {
             Grade::APlusPlus => "A++",
         }
     }
+
+    /// What this grade stands in for, in chaos, when **nothing about the room
+    /// is priced** — POE-257's fallback and epic lock L1's only use of the
+    /// letter in arithmetic.
+    ///
+    /// **PROVISIONAL, calibrated 2026-09-06.** The ladder is geometric and it
+    /// is anchored on the one thing the market states outright: on that day's
+    /// Allflame capture (`assets/temple-market-allflame-2026-09-06.json`) the
+    /// two rooms above the 10 c floor were Locus of Corruption at 856 c (A++)
+    /// and Doryani's Institute at 400 c (A+). The rungs 800 and 400 keep those
+    /// two in the feed's order at roughly the feed's ratio, and the rest of the
+    /// ladder halves down from there. Nothing else about it is measured: no
+    /// feed prices a C+ room above the floor, so those rungs are a ranking, not
+    /// a valuation.
+    ///
+    /// Read ONLY where nothing is priced. A room with a live sale, a priced
+    /// drop or a priced bonus is worth what was summed and never touches this
+    /// — otherwise a third-party letter would silently outrank the feed.
+    /// POE-259's Custom preset overrides it per room, which is the intended
+    /// escape when a player disagrees with a rung.
+    ///
+    /// **These ten rungs are absolute chaos amounts fixed on one day, which is
+    /// exactly the shape `AGENTS.md` warns about**: an absolute price cutoff
+    /// stops meaning what it meant as the league ages and the currency moves.
+    /// 800 c was two thirds of Locus on 2026-09-06; it will be a different
+    /// fraction of it next month, and the ladder will quietly re-rank the
+    /// unpriced rooms against the priced ones without anyone editing it. The
+    /// proposed replacement, for POE-257 WI-2 or the owner to decide: express
+    /// each rung as a FRACTION of the live read's top tier-3 sale delta, so
+    /// the ladder rescales with the feed, and keep these absolute numbers only
+    /// for a cold read that has no top delta to take a fraction of.
+    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
+    pub fn fallback_chaos(self) -> f64 {
+        match self {
+            Grade::D => 2.0,
+            Grade::CMinus => 5.0,
+            Grade::C => 10.0,
+            Grade::CPlus => 20.0,
+            Grade::BMinus => 30.0,
+            Grade::B => 50.0,
+            Grade::BPlus => 100.0,
+            Grade::A => 200.0,
+            Grade::APlus => 400.0,
+            Grade::APlusPlus => 800.0,
+        }
+    }
 }
 
 // ------------------------------------------------------------------- lines --
@@ -929,6 +975,39 @@ mod tests {
         assert_eq!(line_by_key("corruption").grade().as_str(), "A++");
         assert_eq!(line_by_key("gem").grade(), Grade::APlus);
         assert_eq!(line_by_key("explosive").grade(), Grade::D);
+    }
+
+    #[test]
+    fn the_fallback_ladder_rises_with_the_grade() {
+        // The ladder stands in for a market that said nothing, so the one
+        // thing it can honestly claim is the sheet's own ordering. A rung out
+        // of place would rank a worse room above a better one on a cold read,
+        // and nothing else in the valuation would notice.
+        let worst_first = [
+            Grade::D,
+            Grade::CMinus,
+            Grade::C,
+            Grade::CPlus,
+            Grade::BMinus,
+            Grade::B,
+            Grade::BPlus,
+            Grade::A,
+            Grade::APlus,
+            Grade::APlusPlus,
+        ];
+
+        for pair in worst_first.windows(2) {
+            let (worse, better) = (pair[0], pair[1]);
+            assert!(better > worse, "the arrangement is worst-first");
+            assert!(
+                better.fallback_chaos() > worse.fallback_chaos(),
+                "{} stands in for {} c, which does not beat {}'s {} c",
+                better.as_str(),
+                better.fallback_chaos(),
+                worse.as_str(),
+                worse.fallback_chaos()
+            );
+        }
     }
 
     // ------------------------------------------------- bridge to POE-167 --
