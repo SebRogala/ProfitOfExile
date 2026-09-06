@@ -235,6 +235,15 @@ const CLASS_PRIMARIES: &[(&str, [&str; 2])] = &[
     ("Stormhand", ["mercenary.skill_41484", "mercenary.skill_33661"]),
 ];
 
+/// How many of a linked row's support cells the link lets a listing lack.
+///
+/// One, on rows with two or more cells; a one-cell row keeps its one link,
+/// because a group of "this skill or nothing" asks for nothing the `and`
+/// group did not. Measured on the 2026-09-06 Bloodletter capture: `min` at
+/// 1 + cells found 0 listings, 1 + cells − 1 on every row found several. A
+/// comp is "mercenaries like this one", and a listing one link short is one.
+const LINK_TOLERANCE: usize = 1;
+
 /// The ids the link treats as fixed for this capture: the primaries of every
 /// class the capture is recognised as (see [`CLASS_PRIMARIES`]). Empty when no
 /// class is recognised, and then the link asks for every skill.
@@ -267,10 +276,13 @@ fn fixed_skill_ids(capture: &MercCapture, rows: &[RowPlan]) -> Vec<String> {
 ///   (the icon read could not narrow it) — a linked row's alternatives ride in
 ///   its `mercenary` group instead;
 /// - one `mercenary` group per row with at least one support cell: the skill's
-///   ids, then every cell's ids, `min` = 1 + the number of cells. Under the
-///   measured union semantics a row can match at most one id per family, so
-///   that `min` reads "this skill, with every one of these links, at any tier
-///   the floor admits" — Path of Evening's shape exactly (`8r8JqonVIV`).
+///   ids, then every cell's ids, `min` = 1 + the number of cells, LESS ONE on a
+///   row with two or more cells ([`LINK_TOLERANCE`]). Under the measured union
+///   semantics a row can match at most one id per family, so that `min` reads
+///   "this skill, with all but one of these links, at any tier the floor
+///   admits" — Path of Evening's shape (`8r8JqonVIV`) with the slack the
+///   2026-09-06 Bloodletter capture showed the market needs: every link on
+///   every row found nothing, one link short per row found listings.
 ///
 /// A fixed skill stays as a `mercenary` anchor when its row has links: what the
 /// row carries still prices it, only the bare skill does not. When leaving the
@@ -303,7 +315,9 @@ fn link_stats(rows: &[RowPlan], fixed: &[String]) -> Vec<Value> {
                     filters.push(id.clone());
                 }
             }
-            let min = (1 + row.supports.len()).min(filters.len());
+            let cells = row.supports.len();
+            let slack = if cells >= 2 { LINK_TOLERANCE } else { 0 };
+            let min = (1 + cells - slack).min(filters.len());
             mercs.push(json!({
                 "type": "mercenary",
                 "value": {"min": min},
@@ -2424,7 +2438,8 @@ mod tests {
     }
 
     /// The guides' shape: the skills in one leading `and` group, and each
-    /// linked row as a `mercenary` group asking for the skill plus every cell.
+    /// linked row as a `mercenary` group asking for the skill plus its cells,
+    /// one short on a row that has two or more ([`LINK_TOLERANCE`]).
     #[test]
     fn the_link_groups_each_linked_row_and_asks_for_the_skill_with_every_link() {
         let capture = capture(vec![
@@ -2444,8 +2459,8 @@ mod tests {
         assert_eq!(link_and_ids(&query), strs(&["skill_a", "skill_b"]));
         assert_eq!(
             merc_groups(&query),
-            vec![(3, strs(&["skill_a", "sup_a", "sup_b1", "sup_b2"]))],
-            "a two-cell row asks for the skill and both cells, the unnarrowed cell as its set",
+            vec![(2, strs(&["skill_a", "sup_a", "sup_b1", "sup_b2"]))],
+            "a two-cell row asks for the skill and one of its two cells, the unnarrowed cell as its set",
         );
         assert_eq!(query.link["status"]["option"], "securable");
         assert_eq!(
@@ -2456,6 +2471,22 @@ mod tests {
 
     /// The tier floor reaches the link: a confirmed tier-3 cell under a floor
     /// of 1 asks for the family at every grade, and `min` still counts cells.
+    /// A five-cell row asks for the skill and four of the five; the slack is
+    /// one cell, not a fraction.
+    #[test]
+    fn a_wide_row_asks_for_all_but_one_of_its_links() {
+        let cells = (0..5)
+            .map(|i| support(&[&format!("sup_{i}")], None, None, ReadState::Matched))
+            .collect();
+        let query = build_capture_query(&capture(vec![row(0, "skill_a", cells)]), &no_vocab(), 3)
+            .expect("builds");
+
+        let mercs = merc_groups(&query);
+        assert_eq!(mercs.len(), 1);
+        assert_eq!(mercs[0].0, 5, "1 + 5 cells − 1: {mercs:?}");
+        assert_eq!(mercs[0].1.len(), 6);
+    }
+
     #[test]
     fn the_link_loosens_a_linked_row_to_the_tier_floor() {
         let capture = capture(vec![row(
