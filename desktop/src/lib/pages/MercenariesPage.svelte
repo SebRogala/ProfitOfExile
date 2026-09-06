@@ -352,6 +352,23 @@
 	}
 </script>
 
+<!-- ONE link, rendered twice (Last capture, Trade). The URL is Rust's
+     `trade.url` on the SSOT slice and nothing here derives or reshapes it; the
+     snippet is what keeps the two cards showing one button, one wording and one
+     target when the query behind it changes. -->
+{#snippet tradeSiteLink()}
+	{#if trade.url}
+		<a
+			class="trade-button"
+			href={trade.url}
+			target="_blank"
+			title="Open this mercenary's search on the trade site — under your own login, so it can ask the grouped question the app cannot."
+		>
+			open on trade site ↗
+		</a>
+	{/if}
+{/snippet}
+
 <div class="merc-page">
 	<div class="page-head">
 		<h1>Mercenaries</h1>
@@ -496,6 +513,9 @@
 	<section class="card capture-card">
 		<div class="card-head">
 			<h2 class="card-title">Last capture</h2>
+			<!-- The same link the Trade card carries, next to the capture it
+			     searches for: the capture is what the player reads first. -->
+			{@render tradeSiteLink()}
 			<!-- The capture glyphs are about CONFIDENCE, not about rules: without
 			     this line the ✕ reads as the rulesets' "denied". -->
 			<span class="legend read-legend">
@@ -649,10 +669,10 @@
 					{trade.searchesUsed}/{MERC_TRADE_MAX_SEARCHES} searches this capture
 				</span>
 			{/if}
-			<span class="spacer"></span>
-			{#if trade.url}
-				<a class="guide-link" href={trade.url} target="_blank">trade ↗</a>
-			{/if}
+			<!-- Beside the status, as a button: the far-right text link was the
+			     one thing on this card a player is meant to click and the one
+			     thing they missed (2026-09-06). -->
+			{@render tradeSiteLink()}
 		</div>
 
 		<!-- No capture, nothing to say. Safe as an `else` over the whole answer
@@ -1062,6 +1082,26 @@
 	.trade-card,
 	.settings-card {
 		margin-bottom: 1rem;
+	}
+
+	/* The same face as `Button.svelte`, on an anchor: a link that opens the
+	   trade site is a button to the player, and a `<button>` cannot carry an
+	   href. */
+	.trade-button {
+		border: 1px solid var(--color-lab-blue);
+		color: var(--color-lab-blue);
+		padding: 0.2rem 0.5rem;
+		border-radius: 4px;
+		font-size: 0.75rem;
+		text-decoration: none;
+		white-space: nowrap;
+		flex-shrink: 0;
+		align-self: center;
+	}
+
+	.trade-button:hover {
+		background: color-mix(in srgb, var(--color-lab-blue) 12%, transparent);
+		color: var(--color-lab-text);
 	}
 
 	.trade-headline {

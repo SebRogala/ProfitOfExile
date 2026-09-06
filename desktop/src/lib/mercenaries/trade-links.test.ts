@@ -451,7 +451,8 @@ describe('captured-mercenary query parity', () => {
 			['skill_a', 'sup_a', 'sup_b1', 'sup_b2'],
 			['skill_b', 'sup_greater_chain', 'sup_chain']
 		]);
-		// A row group asks for the skill plus every one of its cells.
-		expect(linked.stats.map((group) => group.value?.min)).toEqual([undefined, 3, 2]);
+		// A row group asks for the skill plus its cells, one short on a row with
+		// two or more (Rust's LINK_TOLERANCE); a one-cell row keeps its link.
+		expect(linked.stats.map((group) => group.value?.min)).toEqual([undefined, 2, 2]);
 	});
 });

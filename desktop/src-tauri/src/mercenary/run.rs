@@ -1588,19 +1588,39 @@ pub fn tooltip_lines(
         .collect()
 }
 
+/// A hover confirmation has to clear this Jaro-Winkler score, over and above
+/// the name matcher's own `Matched` gate.
+///
+/// The tooltip's BODY names other supports' families: "Supported Skills deal
+/// 15% more Melee Physical Damage" OCRs as a line reading "Physical Damage",
+/// which scores 0.92 against the family `Physical Damage Reduction` — exactly
+/// the matcher's `name_match` — and on 2026-09-06 that line, nearer the cursor
+/// than the title, confirmed a Melee Physical Damage cell as Physical Damage
+/// Reduction. A title reads its own name at 1.0 and a title with an OCR slip
+/// still reads above 0.97; a body fragment that happens to prefix a family
+/// name does not. A confirmation is the one read a hover cannot undo, so it
+/// asks for more than a detect does.
+const TITLE_MATCH: f32 = 0.97;
+
 /// Read a confirmation out of a hover tooltip (D5).
 ///
-/// The matching line NEAREST the cursor wins, not the first one read. The hover
-/// region is ~600×620 scaled px and deliberately overlaps the panel it was
-/// opened from, so it contains the skill-name column too — and the two
-/// vocabularies overlap (`Frenzy` is both a merc skill and a support family).
-/// Taking the first match would let a skill name three rows up confirm the cell
-/// under the cursor with the wrong identity, which is worse than not
-/// confirming: it is a confident wrong id in front of the verdict engine.
+/// The BEST-scoring line wins, and the one nearest the cursor among equals.
+/// Score first because the tooltip's own body is in the crop and names other
+/// families in passing (see [`TITLE_MATCH`]); the title names the support
+/// outright and outscores any fragment of the body. Distance second because
+/// the hover region is ~600×620 scaled px and deliberately overlaps the panel
+/// it was opened from, so it contains the skill-name column too — and the two
+/// vocabularies overlap (`Frenzy` is both a merc skill and a support family):
+/// a skill name three rows up would tie the title at 1.0, and the nearer line
+/// is the tooltip that is actually open. Either rule alone was measured
+/// wrong; first-match was the original bug, nearest-match the 2026-09-06 one.
 ///
 /// `cell_tier` is the badge tier, used only when the tooltip title carried no
 /// tier of its own. No tier at all → no confirmation: the family alone names up
-/// to three different links.
+/// to three different links. A `(family, tier)` the vocabulary has no entry
+/// for — Physical Damage Reduction exists only Gilded, at tier 3 — is no
+/// confirmation either: it names a support that does not exist, and the badge
+/// tier saying otherwise is the badge disagreeing with the title.
 pub fn confirm_from_tooltip(
     lines: &[TooltipLine],
     cell_tier: Option<u8>,
@@ -1610,13 +1630,17 @@ pub fn confirm_from_tooltip(
     let mut best: Option<(&TooltipLine, SupportTitleRead)> = None;
     for line in lines {
         let read = vocab.match_support_title(&line.text, thresholds);
-        if read.state != ReadState::Matched {
+        if read.state != ReadState::Matched || read.score < TITLE_MATCH {
             continue;
         }
-        if best
-            .as_ref()
-            .is_none_or(|(near, _)| line.distance_sq < near.distance_sq)
-        {
+        let better = match &best {
+            None => true,
+            Some((near, standing)) => {
+                read.score > standing.score
+                    || (read.score == standing.score && line.distance_sq < near.distance_sq)
+            }
+        };
+        if better {
             best = Some((line, read));
         }
     }
@@ -1632,6 +1656,9 @@ pub fn confirm_from_tooltip(
         let (ids, name, _, _) = classify_resolution(&matches);
         (ids, name)
     };
+    if ids.is_empty() {
+        return None;
+    }
     Some(ConfirmedCell {
         family,
         tier,
@@ -6528,6 +6555,51 @@ mod tests {
         assert_eq!(confirmed.family, "Frenzy");
         assert_eq!(confirmed.name.as_deref(), Some("Gilded Frenzy (Tier 3)"));
         assert_eq!(confirmed.ids.len(), 1);
+    }
+
+    /// The 2026-09-06 misread: the body line "Physical Damage" sits nearer the
+    /// cursor than the title and scores 0.92 against `Physical Damage
+    /// Reduction` — a `Matched` read by the detect's gate. The title outscores
+    /// it and wins whatever the distance says.
+    #[test]
+    fn the_title_outscores_a_body_fragment_that_is_nearer_the_cursor() {
+        let lines = vec![
+            tooltip("Melee Physical Damage", 40_000),
+            tooltip("Physical Damage", 100),
+        ];
+
+        let confirmed = confirm_from_tooltip(&lines, Some(2), &vocab(), &thresholds())
+            .expect("the title confirms");
+
+        assert_eq!(confirmed.family, "Melee Physical Damage");
+        assert_eq!(confirmed.tier, 2);
+    }
+
+    /// The same fragment alone — the title line lost to the OCR — confirms
+    /// nothing rather than the wrong family: 0.92 is a detect-grade match, not
+    /// a confirmation-grade one.
+    #[test]
+    fn a_body_fragment_alone_confirms_nothing() {
+        assert!(
+            confirm_from_tooltip(&[tooltip("Physical Damage", 100)], Some(2), &vocab(), &thresholds())
+                .is_none()
+        );
+    }
+
+    /// A family the vocabulary carries at ONE tier only, read under a badge of
+    /// another: the pair names no support, so it is no confirmation.
+    #[test]
+    fn a_family_and_badge_tier_the_vocabulary_lacks_confirm_nothing() {
+        assert!(
+            confirm_from_tooltip(
+                &[tooltip("Physical Damage Reduction", 0)],
+                Some(2),
+                &vocab(),
+                &thresholds()
+            )
+            .is_none(),
+            "Physical Damage Reduction exists only Gilded, at tier 3",
+        );
     }
 
     /// A title spelled as a bare family name carries no tier, so the badge's

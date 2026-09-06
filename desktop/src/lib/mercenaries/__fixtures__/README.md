@@ -284,9 +284,10 @@ back to the guides' shape; the posted body is unchanged and no longer pinned her
 - one `and` group of the skills — `skill_a`, `skill_b`, in row order (a recognised class's
   two fixed primaries would be left out; this capture has none);
 - one `mercenary` group per linked row: the skill, then every cell's ids, `value.min` =
-  1 + the number of cells — `skill_a`/`sup_a`/`sup_b1`/`sup_b2` at `min 3` (the unnarrowed
-  cell rides as its set) and `skill_b`/`sup_greater_chain`/`sup_chain` at `min 2` (the
-  loosened one).
+  1 + the number of cells, less one on a row with two or more cells (`LINK_TOLERANCE`,
+  2026-09-06) — `skill_a`/`sup_a`/`sup_b1`/`sup_b2` at `min 2` (skill plus one of its two
+  cells; the unnarrowed cell rides as its set) and `skill_b`/`sup_greater_chain`/`sup_chain`
+  at `min 2` (a one-cell row keeps its link; the loosened one).
 
 A `mercenary` group is row-scoped, so the link asks "this skill with these links on one
 row" — Path of Evening's shape (`8r8JqonVIV`). `mercenary/search.rs`'s head doc ("The
