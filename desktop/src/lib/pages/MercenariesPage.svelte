@@ -581,17 +581,26 @@
 			{/if}
 		</div>
 
-		<div class="headline-strip">
+		<!-- Each headline is also the switcher: clicking a source expands it below,
+		     the same pick the segmented buttons in the page head make. One shared
+		     `selectedSource` — two controls, one state, no drift. -->
+		<div class="headline-strip" role="group" title="Click a guide to show its rules and verdict below.">
 			{#each MERC_SOURCES as strip (strip.id)}
 				{@const headline = headlineOf(strip.id)}
-				<div class="headline" class:selected={strip.id === source.id}>
+				<button
+					type="button"
+					class="headline"
+					class:selected={strip.id === source.id}
+					aria-pressed={strip.id === source.id}
+					onclick={() => (selectedSource = strip.id)}
+				>
 					<span class="headline-source">{strip.label}</span>
 					{#if headline === null}
 						<span class="badge tone-muted" title="no capture yet">—</span>
 					{:else}
 						<span class="badge tone-{HEADLINE_TONE[headline]}">{HEADLINE_LABEL[headline]}</span>
 					{/if}
-				</div>
+				</button>
 			{/each}
 		</div>
 
@@ -612,7 +621,7 @@
 	<section class="card trade-card">
 		<div class="card-head">
 			<h2 class="card-title">Trade</h2>
-			<span class="badge tone-{tradeStatusTone(trade)}">{tradeStatusLabel(trade)}</span>
+			<span class="badge tone-{tradeStatusTone(trade)}">{tradeStatusLabel(trade, merc.status)}</span>
 			{#if trade.searchesUsed > 0}
 				<span
 					class="meta"
@@ -1314,13 +1323,22 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.4rem;
+		font: inherit;
 		font-size: 0.75rem;
+		color: inherit;
+		background: transparent;
 		border: 1px solid var(--color-lab-border);
 		border-radius: 6px;
 		padding: 3px 8px;
+		cursor: pointer;
 	}
 
-	.headline.selected {
+	.headline:hover {
+		border-color: var(--color-lab-text-muted);
+	}
+
+	.headline.selected,
+	.headline.selected:hover {
 		border-color: var(--color-lab-purple);
 	}
 

@@ -421,8 +421,9 @@ describe('derivedSearchUrl', () => {
 /**
  * The capture path's half of the cross-language parity check.
  *
- * The fixture is what Rust's `build_capture_query` produces for one fixed
- * capture (`__fixtures__/README.md` names it), and `search.rs`'s
+ * The fixture is the LINK query Rust's `build_capture_query` produces for one
+ * fixed capture (`__fixtures__/README.md` names it) — the grouped one the
+ * `trade ↗` URL carries, not the flat body the app posts — and `search.rs`'s
  * `the_link_carries_the_shared_fixture_query_under_a_bare_query_envelope`
  * asserts the Rust link against the same file. Both sides read one artifact, so
  * a query shape that changes on one side without the other fails here rather
@@ -441,15 +442,16 @@ describe('captured-mercenary query parity', () => {
 		expect(JSON.parse(new URL(url).searchParams.get('q') ?? '')).toEqual({ query: captureQuery });
 	});
 
-	it('keeps the and group and both count groups in link order', () => {
+	it('keeps the and group and both row groups in link order', () => {
 		const url = derivedSearchUrl('Allflame', query);
 		const linked = JSON.parse(new URL(url).searchParams.get('q') ?? '').query as TradeQuery;
-		expect(linked.stats.map((group) => group.type)).toEqual(['and', 'count', 'count']);
+		expect(linked.stats.map((group) => group.type)).toEqual(['and', 'mercenary', 'mercenary']);
 		expect(linked.stats.map((group) => group.filters.map((f) => f.id))).toEqual([
-			['skill_a', 'sup_a', 'skill_b'],
-			['sup_b1', 'sup_b2'],
-			['sup_greater_chain', 'sup_chain']
+			['skill_a', 'skill_b'],
+			['skill_a', 'sup_a', 'sup_b1', 'sup_b2'],
+			['skill_b', 'sup_greater_chain', 'sup_chain']
 		]);
-		expect(linked.stats.map((group) => group.value?.min)).toEqual([undefined, 1, 1]);
+		// A row group asks for the skill plus every one of its cells.
+		expect(linked.stats.map((group) => group.value?.min)).toEqual([undefined, 3, 2]);
 	});
 });

@@ -15,9 +15,6 @@
           "id": "skill_a"
         },
         {
-          "id": "sup_a"
-        },
-        {
           "id": "skill_b"
         }
       ],
@@ -26,19 +23,28 @@
     {
       "filters": [
         {
+          "id": "skill_a"
+        },
+        {
+          "id": "sup_a"
+        },
+        {
           "id": "sup_b1"
         },
         {
           "id": "sup_b2"
         }
       ],
-      "type": "count",
+      "type": "mercenary",
       "value": {
-        "min": 1
+        "min": 3
       }
     },
     {
       "filters": [
+        {
+          "id": "skill_b"
+        },
         {
           "id": "sup_greater_chain"
         },
@@ -46,9 +52,9 @@
           "id": "sup_chain"
         }
       ],
-      "type": "count",
+      "type": "mercenary",
       "value": {
-        "min": 1
+        "min": 2
       }
     }
   ],

@@ -258,9 +258,11 @@ six cases here.
 
 ## Captured-mercenary query parity
 
-`capture-query.expected.json` is not a GGG response — it is the `query` object Rust's
-`mercenary/search.rs::build_capture_query` produces for one fixed capture, committed so
-both languages assert against one artifact instead of two literals that can drift apart.
+`capture-query.expected.json` is not a GGG response — it is the LINK query Rust's
+`mercenary/search.rs::build_capture_query` produces for one fixed capture
+(`CaptureQuery::link`, the `q` of the `trade ↗` URL — not the body the app posts),
+committed so both languages assert against one artifact instead of two literals that can
+drift apart.
 
 **The capture it was built from** (`search.rs`'s `parity_capture()` test fixture, with
 that module's `chain_vocab()` and a tier floor of **2**):
@@ -273,17 +275,23 @@ that module's `chain_vocab()` and a tier floor of **2**):
 The floor of 2 is what adds `sup_chain` to row 1's cell: loosening adds the family's ids
 at every tier from the floor up to, but not including, the tier read.
 
-**The shape the rows lower to** (amended 2026-08-26; the file previously carried one
-`mercenary` group per row, which GGG answers with 400 "Query is too complex" — a query
-may hold ONE `mercenary` group, and a captured panel is four or five rows):
+**The shape the link takes** (amended 2026-09-06; from 2026-08-26 to then the file carried
+the flat body the app posts anonymously — one `and` group of every single-id cell plus one
+`count min 1` group per multi-id cell — because that is all GGG's anonymous budget of 35
+admits. The link opens under the user's own login, where the budget is larger, so it went
+back to the guides' shape; the posted body is unchanged and no longer pinned here):
 
-- one `and` group with every cell that names exactly one support — `skill_a`, `sup_a`,
-  `skill_b`, in read order, rows folded together;
-- one `count` group of `value.min = 1` per cell that names several — `sup_b1`/`sup_b2`
-  (the unnarrowed read) and `sup_greater_chain`/`sup_chain` (the loosened one).
+- one `and` group of the skills — `skill_a`, `skill_b`, in row order (a recognised class's
+  two fixed primaries would be left out; this capture has none);
+- one `mercenary` group per linked row: the skill, then every cell's ids, `value.min` =
+  1 + the number of cells — `skill_a`/`sup_a`/`sup_b1`/`sup_b2` at `min 3` (the unnarrowed
+  cell rides as its set) and `skill_b`/`sup_greater_chain`/`sup_chain` at `min 2` (the
+  loosened one).
 
-Nothing in the query says which row a support sat on. That is deliberate and costs a
-known false-positive class; `mercenary/search.rs`'s head doc carries the probe numbers.
+A `mercenary` group is row-scoped, so the link asks "this skill with these links on one
+row" — Path of Evening's shape (`8r8JqonVIV`). `mercenary/search.rs`'s head doc ("The
+browser link asks a different question") carries the probe numbers and the 2026-09-05
+verification.
 
 Who reads it:
 
@@ -299,7 +307,7 @@ than hand-editing the file:
 ```rust
 // a throwaway #[test] in mercenary/search.rs
 let q = build_capture_query(&parity_capture(), &chain_vocab(), 2).unwrap();
-println!("{}", serde_json::to_string_pretty(q.body.get("query").unwrap()).unwrap());
+println!("{}", serde_json::to_string_pretty(&q.link).unwrap());
 ```
 
 ## Stat vocabulary

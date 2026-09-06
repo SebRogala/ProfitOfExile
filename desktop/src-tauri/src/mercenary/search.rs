@@ -80,6 +80,37 @@
 //! the same three ids with `min 3` = 0, so a row never holds two tiers of one
 //! family.
 //!
+//! # The browser link asks a different question
+//!
+//! Everything above is about the body the app POSTS, and the app posts
+//! anonymously. The `trade ↗` link is opened by the user's browser under the
+//! user's own login, and GGG's error says what that changes: "Query is too
+//! complex. Please reduce the amount of filters used. Logging in will increase
+//! this limit." — verified 2026-09-05 by posting the Path of Evening cheap
+//! Manyshot search (`8r8JqonVIV`) anonymously, a search that runs logged in
+//! and that costs 96 under the table above. Every guide's saved search is in
+//! that position (29–127), and the guides' shape is the one that finds
+//! listings: a mercenary is priced by which skill carries which links, and
+//! only a `mercenary` group can say that.
+//!
+//! So the link does not carry [`CaptureQuery::body`]. It carries
+//! [`CaptureQuery::link`], built by [`link_stats`] from the rows BEFORE the
+//! budget walk, the way the guides build theirs:
+//!
+//! - one `and` group of the rolled skills — the class's two fixed primaries
+//!   ([`CLASS_PRIMARIES`]) are left out, since every listing of the class has
+//!   them and asking adds nothing;
+//! - one `mercenary` group per row that has links: the skill, every support
+//!   cell's ids loosened to the tier floor, `min` = 1 + the number of cells —
+//!   "this skill, with every one of these links, at any admitted tier",
+//!   row-scoped.
+//!
+//! The flat body stays what the app posts, because the app has no login. The
+//! logged-in budget is measured only as "at least 116" (`docs/GAME-FACTS.md`),
+//! so a five-row panel at a low floor may still be refused in the browser —
+//! that is the experiment this shape is (2026-09-06), and why the flat body was
+//! not replaced outright.
+//!
 //! # What is deliberately absent from the query
 //!
 //! `status.option = "securable"`, `sort.price = "asc"` and
@@ -162,6 +193,138 @@ pub struct CaptureQuery {
     /// the listings answer a looser question than the panel, so their "no
     /// listings" is not the same signal as a complete query's.
     pub cells_dropped: bool,
+    /// The `query` object the BROWSER link carries — a different question from
+    /// [`Self::body`], asked the way the guides ask it: one `and` group of the
+    /// rolled skills and one row-scoped `mercenary` group per linked row. It
+    /// never goes through the anonymous budget (head doc, "The browser link"),
+    /// so it is built from the rows before any degradation and never hashed.
+    pub link: Value,
+}
+
+/// The two skills every mercenary of a class carries, by the class name GGG
+/// prints in the recruit window's header.
+///
+/// A fixed skill says nothing about the mercenary — every listing of the class
+/// has it — so the link leaves it out of the `and` group. Each row is a
+/// `docs/GAME-FACTS.md` entry ("Mercenary class primaries", wiki-sourced
+/// 2026-09-06); the ids are pinned against the compiled vocabulary by
+/// `class_primaries_name_the_skills_the_vocabulary_knows`.
+///
+/// The class is inferred rather than trusted: the header's class read is
+/// best-effort and often `None`, so a class also counts as recognised when
+/// BOTH of its primaries are among the capture's skill reads. A mercenary
+/// carrying one primary and a class read that says otherwise is left alone.
+const CLASS_PRIMARIES: &[(&str, [&str; 2])] = &[
+    // Ice Shot, Vaal Grace
+    ("Manyshot", ["mercenary.skill_11495", "mercenary.skill_58425"]),
+    // Elemental Weakness, Flame Wall
+    ("Kinetist", ["mercenary.skill_5689", "mercenary.skill_57450"]),
+    // Inspiring Cry, Herald of Ice
+    ("Combatant", ["mercenary.skill_65473", "mercenary.skill_32807"]),
+    // Blade Trap, Trarthan Agility
+    ("Blade Ambusher", ["mercenary.skill_11054", "mercenary.skill_38072"]),
+    // Ensnaring Arrow, Poacher's Mark
+    ("Sniper", ["mercenary.skill_12667", "mercenary.skill_27805"]),
+    // Despair, Void Sphere
+    ("Cruel Mistress", ["mercenary.skill_56742", "mercenary.skill_52783"]),
+    // Conductivity, Sigil of Power
+    ("Stormhand", ["mercenary.skill_41484", "mercenary.skill_33661"]),
+];
+
+/// The ids the link treats as fixed for this capture: the primaries of every
+/// class the capture is recognised as (see [`CLASS_PRIMARIES`]). Empty when no
+/// class is recognised, and then the link asks for every skill.
+fn fixed_skill_ids(capture: &MercCapture, rows: &[RowPlan]) -> Vec<String> {
+    let carried = |id: &str| rows.iter().any(|row| row.skill_ids.iter().any(|s| s == id));
+    let class_read = capture
+        .header
+        .class
+        .as_deref()
+        .map(|c| c.trim().to_lowercase());
+    CLASS_PRIMARIES
+        .iter()
+        .filter(|(class, primaries)| {
+            class_read.as_deref() == Some(&class.to_lowercase())
+                || primaries.iter().all(|id| carried(id))
+        })
+        .flat_map(|(_, primaries)| primaries.iter().map(|id| id.to_string()))
+        .collect()
+}
+
+/// The link's stat groups — the guides' shape, applied to the rows as read.
+///
+/// - one `and` group of every single-id skill that is not fixed, in row order;
+/// - one `count min 1` group per unlinked row whose skill read is still a set
+///   (the icon read could not narrow it) — a linked row's alternatives ride in
+///   its `mercenary` group instead;
+/// - one `mercenary` group per row with at least one support cell: the skill's
+///   ids, then every cell's ids, `min` = 1 + the number of cells. Under the
+///   measured union semantics a row can match at most one id per family, so
+///   that `min` reads "this skill, with every one of these links, at any tier
+///   the floor admits" — Path of Evening's shape exactly (`8r8JqonVIV`).
+///
+/// A fixed skill stays as a `mercenary` anchor when its row has links: what the
+/// row carries still prices it, only the bare skill does not. When leaving the
+/// fixed skills out would leave NOTHING to ask for — a mercenary of two bare
+/// primaries — they are kept, because a filter-free search is the whole league.
+fn link_stats(rows: &[RowPlan], fixed: &[String]) -> Vec<Value> {
+    let build = |fixed: &[String]| -> Vec<Value> {
+        let is_fixed = |id: &str| fixed.iter().any(|f| f == id);
+        let mut and: Vec<String> = Vec::new();
+        let mut counts: Vec<Vec<String>> = Vec::new();
+        let mut mercs: Vec<Value> = Vec::new();
+
+        for row in rows {
+            let skill_fixed = row.skill_ids.iter().any(|id| is_fixed(id));
+            match row.skill_ids.as_slice() {
+                [id] if !skill_fixed && !and.iter().any(|seen| seen == id) => {
+                    and.push(id.clone());
+                }
+                ids if ids.len() > 1 && !skill_fixed && row.supports.is_empty() => {
+                    counts.push(ids.to_vec());
+                }
+                _ => {}
+            }
+            if row.supports.is_empty() {
+                continue;
+            }
+            let mut filters: Vec<String> = Vec::new();
+            for id in row.skill_ids.iter().chain(row.supports.iter().flatten()) {
+                if !filters.iter().any(|seen| seen == id) {
+                    filters.push(id.clone());
+                }
+            }
+            let min = (1 + row.supports.len()).min(filters.len());
+            mercs.push(json!({
+                "type": "mercenary",
+                "value": {"min": min},
+                "filters": filters.iter().map(|id| json!({"id": id})).collect::<Vec<_>>(),
+            }));
+        }
+
+        let mut stats: Vec<Value> = Vec::new();
+        if !and.is_empty() {
+            stats.push(json!({
+                "type": "and",
+                "filters": and.iter().map(|id| json!({"id": id})).collect::<Vec<_>>(),
+            }));
+        }
+        for ids in &counts {
+            stats.push(json!({
+                "type": "count",
+                "value": {"min": 1},
+                "filters": ids.iter().map(|id| json!({"id": id})).collect::<Vec<_>>(),
+            }));
+        }
+        stats.extend(mercs);
+        stats
+    };
+
+    let stats = build(fixed);
+    if stats.is_empty() && !fixed.is_empty() {
+        return build(&[]);
+    }
+    stats
 }
 
 /// One row's contribution to the query: the skill's ids, and one id set per
@@ -291,6 +454,21 @@ pub fn build_capture_query(
         return None;
     }
 
+    // The browser link is built from the rows AS PLANNED, before the budget
+    // walk below touches them: it runs under the user's own login, where the
+    // anonymous budget does not apply (head doc, "The browser link").
+    let link = json!({
+        "stats": link_stats(&rows, &fixed_skill_ids(capture, &rows)),
+        "status": {"option": "securable"},
+        "filters": {
+            "trade_filters": {
+                "filters": {
+                    "sale_type": {"option": "priced"},
+                },
+            },
+        },
+    });
+
     let mut loosening_dropped = false;
     let mut cells_dropped = false;
     let mut plan = lower(&rows);
@@ -387,16 +565,21 @@ pub fn build_capture_query(
         complexity: complexity(&plan),
         loosening_dropped,
         cells_dropped,
+        link,
     })
 }
 
 /// The trade-site URL for a query the app assembled itself.
 ///
+/// Carries [`CaptureQuery::link`], NOT the body the app posts: the link opens
+/// in the user's browser under their own login, where GGG's complexity budget
+/// is the larger logged-in one, so it can ask the grouped question the
+/// anonymous body cannot (head doc, "The browser link").
+///
 /// Same envelope as `derivedSearchUrl` in
-/// `desktop/src/lib/mercenaries/trade-links.ts:147-151`: the `q` parameter
-/// carries a `{"query": ...}` object holding the request body's `query` — and
-/// no `sort`, which the TS side omits too because the trade site owns the sort
-/// control.
+/// `desktop/src/lib/mercenaries/trade-links.ts`: the `q` parameter carries a
+/// `{"query": ...}` object — and no `sort`, which the TS side omits too because
+/// the trade site owns the sort control.
 ///
 /// Parity with the TS link is structural, not byte-for-byte: `serde_json`
 /// renders object keys sorted while the TS object literal keeps insertion
@@ -406,8 +589,7 @@ pub fn build_capture_query(
 /// `league` must be resolved before this is called; there is no sensible
 /// fallback and a wrong league silently comps against another economy.
 pub fn capture_url(league: &str, query: &CaptureQuery) -> String {
-    let inner = query.body.get("query").cloned().unwrap_or(Value::Null);
-    let envelope = json!({"query": inner});
+    let envelope = json!({"query": query.link});
     let encoded = serde_json::to_string(&envelope).unwrap_or_default();
     format!(
         "https://www.pathofexile.com/trade/search/{}?q={}",
@@ -2150,10 +2332,11 @@ mod tests {
 
     /// Cross-language parity, pinned by a SHARED fixture rather than by two
     /// literals that can drift apart:
-    /// `lib/mercenaries/__fixtures__/capture-query.expected.json` is the query
-    /// object [`parity_capture`] builds, and `trade-links.test.ts` sends that
-    /// same file through `derivedSearchUrl` and asserts the same round trip. A
-    /// change to either side's envelope now fails on its own side.
+    /// `lib/mercenaries/__fixtures__/capture-query.expected.json` is the LINK
+    /// query [`parity_capture`] builds — the grouped one, not the posted body —
+    /// and `trade-links.test.ts` sends that same file through
+    /// `derivedSearchUrl` and asserts the same round trip. A change to either
+    /// side's envelope now fails on its own side.
     ///
     /// The `q` parameter carries `{"query": ...}` and NO `sort`, because the
     /// trade site owns the sort control — the strict comparison below is what
@@ -2196,6 +2379,251 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // The browser link
+    // -----------------------------------------------------------------------
+
+    fn strs(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    /// The link's stat groups, in order.
+    fn link_groups(query: &CaptureQuery) -> Vec<Value> {
+        query.link["stats"]
+            .as_array()
+            .expect("the link carries a stats array")
+            .clone()
+    }
+
+    /// The ids of the link's one `and` group — empty when it has none.
+    fn link_and_ids(query: &CaptureQuery) -> Vec<String> {
+        let groups = link_groups(query);
+        let ands: Vec<&Value> = groups.iter().filter(|g| g["type"] == "and").collect();
+        assert!(ands.len() <= 1, "at most one `and` group in the link: {groups:?}");
+        ands.first().map(|g| group_ids(g)).unwrap_or_default()
+    }
+
+    /// `(min, ids)` of every `mercenary` group in the link, in order.
+    fn merc_groups(query: &CaptureQuery) -> Vec<(u64, Vec<String>)> {
+        link_groups(query)
+            .iter()
+            .filter(|g| g["type"] == "mercenary")
+            .map(|g| {
+                let min = g["value"]["min"].as_u64().expect("a mercenary group carries a min");
+                (min, group_ids(g))
+            })
+            .collect()
+    }
+
+    /// The guides' shape: the skills in one leading `and` group, and each
+    /// linked row as a `mercenary` group asking for the skill plus every cell.
+    #[test]
+    fn the_link_groups_each_linked_row_and_asks_for_the_skill_with_every_link() {
+        let capture = capture(vec![
+            row(
+                0,
+                "skill_a",
+                vec![
+                    support(&["sup_a"], None, None, ReadState::Matched),
+                    support(&["sup_b1", "sup_b2"], None, None, ReadState::Matched),
+                ],
+            ),
+            row(1, "skill_b", vec![]),
+        ]);
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("builds");
+
+        assert_eq!(link_groups(&query)[0]["type"], "and", "the `and` group leads");
+        assert_eq!(link_and_ids(&query), strs(&["skill_a", "skill_b"]));
+        assert_eq!(
+            merc_groups(&query),
+            vec![(3, strs(&["skill_a", "sup_a", "sup_b1", "sup_b2"]))],
+            "a two-cell row asks for the skill and both cells, the unnarrowed cell as its set",
+        );
+        assert_eq!(query.link["status"]["option"], "securable");
+        assert_eq!(
+            query.link["filters"]["trade_filters"]["filters"]["sale_type"]["option"],
+            "priced"
+        );
+    }
+
+    /// The tier floor reaches the link: a confirmed tier-3 cell under a floor
+    /// of 1 asks for the family at every grade, and `min` still counts cells.
+    #[test]
+    fn the_link_loosens_a_linked_row_to_the_tier_floor() {
+        let capture = capture(vec![row(
+            0,
+            "skill_a",
+            vec![support(
+                &["sup_greater_chain"],
+                Some("Chain"),
+                Some(3),
+                ReadState::Confirmed,
+            )],
+        )]);
+        let query = build_capture_query(&capture, &chain_vocab(), 1).expect("builds");
+
+        assert_eq!(
+            merc_groups(&query),
+            vec![(
+                2,
+                strs(&["skill_a", "sup_greater_chain", "sup_lesser_chain", "sup_chain"])
+            )],
+        );
+    }
+
+    /// Both primaries of a class on the panel recognise the class without a
+    /// header read; its primaries leave the `and` group, and a primary that
+    /// carries links still anchors its row.
+    #[test]
+    fn a_recognised_class_s_primaries_leave_the_and_group_but_still_anchor_their_links() {
+        let capture = capture(vec![
+            row(0, "mercenary.skill_56742", vec![]),
+            row(
+                1,
+                "mercenary.skill_52783",
+                vec![support(&["sup_a"], None, None, ReadState::Matched)],
+            ),
+            row(2, "skill_soulrend", vec![]),
+        ]);
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("builds");
+
+        assert_eq!(link_and_ids(&query), strs(&["skill_soulrend"]));
+        assert_eq!(
+            merc_groups(&query),
+            vec![(2, strs(&["mercenary.skill_52783", "sup_a"]))]
+        );
+    }
+
+    #[test]
+    fn one_primary_alone_is_not_a_class_and_stays_in_the_and_group() {
+        let capture = capture(vec![
+            row(0, "mercenary.skill_56742", vec![]),
+            row(1, "skill_x", vec![]),
+        ]);
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("builds");
+
+        assert_eq!(
+            link_and_ids(&query),
+            strs(&["mercenary.skill_56742", "skill_x"])
+        );
+    }
+
+    #[test]
+    fn a_class_read_in_the_header_recognises_the_class_from_one_primary() {
+        let mut capture = capture(vec![
+            row(0, "mercenary.skill_56742", vec![]),
+            row(1, "skill_x", vec![]),
+        ]);
+        capture.header.class = Some(" cruel mistress ".to_string());
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("builds");
+
+        assert_eq!(link_and_ids(&query), strs(&["skill_x"]));
+    }
+
+    /// Two bare primaries and nothing else: leaving them out would ask GGG for
+    /// every mercenary in the league, so they stay.
+    #[test]
+    fn a_capture_of_bare_primaries_alone_keeps_them_rather_than_asking_for_nothing() {
+        let capture = capture(vec![
+            row(0, "mercenary.skill_56742", vec![]),
+            row(1, "mercenary.skill_52783", vec![]),
+        ]);
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("builds");
+
+        assert_eq!(
+            link_and_ids(&query),
+            strs(&["mercenary.skill_56742", "mercenary.skill_52783"])
+        );
+    }
+
+    #[test]
+    fn an_unnarrowed_skill_on_an_unlinked_row_is_a_count_group_in_the_link() {
+        let mut unnarrowed = row(0, "skill_a", vec![]);
+        unnarrowed.skill.ids = strs(&["skill_a", "skill_a2"]);
+        let query =
+            build_capture_query(&capture(vec![unnarrowed]), &no_vocab(), 3).expect("builds");
+
+        let groups = link_groups(&query);
+        assert_eq!(groups.len(), 1, "{groups:?}");
+        assert_eq!(groups[0]["type"], "count");
+        assert_eq!(groups[0]["value"]["min"], 1);
+        assert_eq!(group_ids(&groups[0]), strs(&["skill_a", "skill_a2"]));
+    }
+
+    /// The link is built from the rows as planned: a panel the anonymous
+    /// budget cannot hold at floor 1 loses its loosening in the BODY and keeps
+    /// it in the link.
+    #[test]
+    fn the_link_keeps_what_the_budget_walk_drops_from_the_body() {
+        // Five DIFFERENT families, one confirmed tier-3 cell each: at floor 1
+        // the body needs five distinct `count` groups of three ids (9 apiece)
+        // on top of five skills — 50 against a budget of 35. One family five
+        // times over would fold into a single group and fit.
+        let vocab = MercVocab::from_stats(
+            (0..5)
+                .flat_map(|f| (1..=3).map(move |t| stat(&format!("sup_f{f}_t{t}"), &format!("F{f}"), t)))
+                .collect(),
+        );
+        let rows = (0..5)
+            .map(|i| {
+                row(
+                    i as u8,
+                    &format!("skill_{i}"),
+                    vec![support(
+                        &[&format!("sup_f{i}_t3")],
+                        Some(&format!("F{i}")),
+                        Some(3),
+                        ReadState::Confirmed,
+                    )],
+                )
+            })
+            .collect();
+        let query = build_capture_query(&capture(rows), &vocab, 1).expect("builds");
+
+        assert!(query.loosening_dropped, "five loosened cells cost more than the budget");
+        assert!(
+            and_ids(&query).contains(&"sup_f0_t3".to_string()),
+            "the body fell back to the exact read",
+        );
+        let mercs = merc_groups(&query);
+        assert_eq!(mercs.len(), 5);
+        assert_eq!(
+            mercs[0],
+            (2, strs(&["skill_0", "sup_f0_t3", "sup_f0_t1", "sup_f0_t2"])),
+            "the link row still admits the weaker grades",
+        );
+    }
+
+    /// Every id in [`CLASS_PRIMARIES`] is a skill the compiled vocabulary
+    /// knows by the name the table claims — the table is transcribed, and this
+    /// is what catches a transcription that drifts from GGG's stats.
+    #[test]
+    fn class_primaries_name_the_skills_the_vocabulary_knows() {
+        let vocab = MercVocab::load().expect("the compiled vocabulary loads");
+        let expected: [(&str, [&str; 2]); 7] = [
+            ("Manyshot", ["Ice Shot", "Vaal Grace"]),
+            ("Kinetist", ["Elemental Weakness", "Flame Wall"]),
+            ("Combatant", ["Inspiring Cry", "Herald of Ice"]),
+            ("Blade Ambusher", ["Blade Trap", "Trarthan Agility"]),
+            ("Sniper", ["Ensnaring Arrow", "Poacher's Mark"]),
+            ("Cruel Mistress", ["Despair", "Void Sphere"]),
+            ("Stormhand", ["Conductivity", "Sigil of Power"]),
+        ];
+        assert_eq!(CLASS_PRIMARIES.len(), expected.len());
+        for ((class, ids), (want_class, names)) in CLASS_PRIMARIES.iter().zip(expected.iter()) {
+            assert_eq!(class, want_class);
+            for (id, name) in ids.iter().zip(names.iter()) {
+                let stat = vocab
+                    .stats()
+                    .iter()
+                    .find(|stat| stat.id == *id)
+                    .unwrap_or_else(|| panic!("{class}: {id} is not in the vocabulary"));
+                assert_eq!(stat.name, *name, "{class}: {id}");
+                assert_eq!(stat.role, MercRole::Skill, "{class}: {id} is not a skill");
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // The trigger policy
     // -----------------------------------------------------------------------
 
@@ -2206,6 +2634,7 @@ mod tests {
             complexity: 1,
             loosening_dropped: false,
             cells_dropped: false,
+            link: json!({"stats": [tag]}),
         }
     }
 
