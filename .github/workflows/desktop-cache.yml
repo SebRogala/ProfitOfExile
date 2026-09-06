@@ -27,7 +27,14 @@ on:
   push:
     branches: [main]
     paths:
-      - 'desktop/**'
+      # Only the files the two cache keys hash. rust-cache keys on
+      # Cargo.toml/Cargo.lock (plus rustc version and env), setup-node on
+      # package-lock.json; a push that changes neither restores the existing
+      # key and saves nothing, so triggering on `desktop/**` spent a Windows
+      # runner per source change for no cache change.
+      - 'desktop/src-tauri/Cargo.toml'
+      - 'desktop/src-tauri/Cargo.lock'
+      - 'desktop/package-lock.json'
       - '.github/workflows/desktop-cache.yml'
 
 concurrency:
