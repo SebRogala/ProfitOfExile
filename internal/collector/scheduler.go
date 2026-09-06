@@ -24,10 +24,22 @@ const mercureTopicPrefix = "poe/collector/"
 
 // mercureTopicSuffix maps endpoint names to source-agnostic topic suffixes.
 // Falls back to the raw endpoint name if not present in the map.
-var mercureTopicSuffix = map[string]string{
-	EndpointNinjaGems:      "gems",
-	EndpointNinjaCurrency:  "currency",
-	EndpointNinjaFragments: "fragments",
+var mercureTopicSuffix = buildTopicSuffixes()
+
+// buildTopicSuffixes assembles the endpoint-to-topic map. The three original
+// endpoints are listed here; the seven poe.ninja item-overview categories carry
+// their own suffix on ItemEndpoints ("items/<kebab-category>") so a category,
+// its endpoint name and its topic cannot drift apart.
+func buildTopicSuffixes() map[string]string {
+	suffixes := map[string]string{
+		EndpointNinjaGems:      "gems",
+		EndpointNinjaCurrency:  "currency",
+		EndpointNinjaFragments: "fragments",
+	}
+	for _, item := range ItemEndpoints {
+		suffixes[item.Endpoint] = item.TopicSuffix
+	}
+	return suffixes
 }
 
 // Scheduler orchestrates price data collection with independent goroutines per

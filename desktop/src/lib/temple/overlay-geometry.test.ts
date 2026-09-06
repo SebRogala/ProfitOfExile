@@ -13,6 +13,10 @@ import { describe, expect, it } from 'vitest';
 import {
 	BANNER_TOP_CSS,
 	CALLOUT_GAP_CSS,
+	DIAGONAL_BUDGET_CSS,
+	FULL_BOX_MAX_CSS,
+	FULL_PAIR_CSS,
+	MAX_FOLDABLE_DRIVERS,
 	SEAL_RADIUS,
 	SEAL_RADIUS_SECONDARY,
 	SEAL_RADIUS_SUGGESTED,
@@ -25,6 +29,7 @@ import {
 	killGlyphs,
 	neverCoverRects,
 	offerStackPlacement,
+	offersCompact,
 	roiRect,
 	sealVisible,
 	waitingDefaultPlacement
@@ -35,6 +40,11 @@ import type { WidgetRect } from '$lib/overlay/widgets/widget-geometry';
 import { widgetsFor } from '$lib/overlay/widgets/widget-registry';
 import { TEMPLE_WINDOW_LABEL } from '$lib/overlay/manager';
 import type { CaptureRect, DiamondView, LayoutView, RoiView } from './slice';
+// The room widget's own source. Vite's `?raw`, the mechanism
+// `overlay-defaults.test.ts` documents: one claim below is about a CSS
+// declaration whose effect only a browser can show, and this app has no DOM
+// harness for a `.svelte` file.
+import doorSource from './TempleDoorDiamond.svelte?raw';
 
 const HOST = { width: 1920, height: 1080 };
 
@@ -205,7 +215,18 @@ describe('offerStackPlacement', () => {
 		{ x: 1484, y: 114, w: 154, h: 54 },
 		{ x: 1188, y: 289, w: 160, h: 39 }
 	];
-	/** What one box measures once it has rendered its four lines. */
+	/**
+	 * An ARBITRARY box, and not a measurement of the shipped one.
+	 *
+	 * `offerStackPlacement` takes whatever size it is handed, so these cases
+	 * pick a rectangle whose arithmetic a reader can check by hand — the column
+	 * lands at `556 - 16 - 260 = 280` and the stack step is `96 + 8`. The width
+	 * is NOT irrelevant (it is what puts the column at 280), it is simply not
+	 * the shipped number: the v3 box is 300 wide and is `V3_BOX` below, which
+	 * the POE-260 cases use. It once said "its five lines", which stopped being
+	 * a shape any box has when POE-260 gave the full form the row table
+	 * `FULL_BOX_ROWS` restates.
+	 */
 	const BOX = { w: 260, h: 96 };
 
 	it('stacks both boxes in the left margin, each level with its own block', () => {
@@ -498,6 +519,176 @@ describe('offerStackPlacement', () => {
 		).toEqual([{ x: 8, y: 150, ...BOX }, null]);
 	});
 
+	/**
+	 * The v3 pair on the frame the design was sized against (POE-260).
+	 *
+	 * The first block at y 133 is the design's stated assumption — architect
+	 * block rects are OCR-derived and pinned by no fixture — and it is MORE
+	 * CONSERVATIVE than the dump's y 114 (`PANEL_BLOCKS` above, the real
+	 * measurement): a lower block is less room down to plate C0, so a diagonal
+	 * that clears at 133 clears at 114 too. 316 is exactly `449 - 133`, plate
+	 * C0's crop being what ends the staggered strip. The blocks are on the two
+	 * sides the game draws them: the first right of the panel crop's centre
+	 * (1403), the second left of it.
+	 */
+	const V3_BLOCKS = [
+		{ x: 1484, y: 133, w: 154, h: 54 },
+		{ x: 1188, y: 289, w: 160, h: 39 }
+	];
+	/** One v3 box at the DIAGONAL's budget: the registry's width, and the
+	 *  height the staggered strip has room for. Not `FULL_BOX_MAX_CSS`, which
+	 *  is the tallest a box can BE — a box that tall gives up the diagonal
+	 *  instead, which is the case the second test below is about. */
+	const V3_BOX = { w: 300, h: DIAGONAL_BUDGET_CSS };
+
+	it('seats a full-height v3 box on the diagonal, clear of all 42 read regions', () => {
+		// The height budget, checked against the real rects rather than against
+		// the design's arithmetic. Column = 556 - 16 - 300 = 240, staggered =
+		// 240 + 175 = 415, so the box occupies x 415..715 and y 133..449 —
+		// flush under plate C0's crop and inside none of them. A box that grew
+		// a row past 316 is what this catches.
+		const obstacles = committedRegions();
+
+		const placed = offerStackPlacement({
+			blocks: V3_BLOCKS,
+			panel: COMMITTED_PANEL,
+			boxes: [V3_BOX, V3_BOX],
+			obstacles,
+			host: HOST
+		}) as WidgetRect[];
+
+		expect(placed[0]).toEqual({ x: 415, y: 133, ...V3_BOX });
+		expect(rectIsClear(placed[0], obstacles)).toBe(true);
+		expect(rectIsClear(placed[1], [...obstacles, placed[0]])).toBe(true);
+	});
+
+	it('gives up the DIAGONAL rather than the content when the block sits lower', () => {
+		// The design's stated trade (§1): a first block below y 133 pushes the
+		// staggered box past plate C0, and `avoidRects` slides it back toward
+		// the column at the same y. The box is still drawn and still 316 px —
+		// no line of the explanation is lost — which is why clearing the plate
+		// is NOT a collapse trigger.
+		const obstacles = committedRegions();
+		const lower = [{ ...V3_BLOCKS[0], y: 200 }, V3_BLOCKS[1]];
+
+		const placed = offerStackPlacement({
+			blocks: lower,
+			panel: COMMITTED_PANEL,
+			boxes: [V3_BOX, V3_BOX],
+			obstacles,
+			host: HOST
+		}) as WidgetRect[];
+
+		expect(placed[0].h).toBe(DIAGONAL_BUDGET_CSS);
+		expect(placed[0].x).toBeLessThan(415);
+		expect(rectIsClear(placed[0], obstacles)).toBe(true);
+	});
+
+	/**
+	 * `TempleOfferBoxes.svelte`'s full form, row by row, in CSS px — each entry
+	 * is that rule's own `height`/`line-height` plus its stated `margin-top`,
+	 * for the WORST shape the wording can build: a `market` or `partial` box on
+	 * the pick (2 px frame) that is also a scaled row (`scale`) on a four-term
+	 * room (`fold`).
+	 *
+	 * What it guards is `FULL_BOX_MAX_CSS` against this table. It cannot see a
+	 * row ADDED to the component — nothing here reads the stylesheet — so a new
+	 * row has to land in both places or the budget is quietly short.
+	 */
+	const FULL_BOX_ROWS = {
+		border: 2 * 2,
+		padding: 2 * 8,
+		headline: 20,
+		builds: 17,
+		value: 8 + 28,
+		scale: 6 + 15,
+		drivers: 8 + 3 * 26 + 2 * 6,
+		fold: 6 + 15,
+		bonus: 6 + 15,
+		recipe: 8 + 13 + 2 + 24,
+		rating: 8 + 14,
+		reason: 2 + 14,
+		age: 6 + 13
+	};
+	const WORST_FULL_BOX = Object.values(FULL_BOX_ROWS).reduce((sum, row) => sum + row, 0);
+
+	it('budgets the pair against the tallest box the wording can build, not the design\'s typical one', () => {
+		// 358, not the 316 of the design's priced artboard: that artboard has
+		// neither the scale note a tier-1 kill adds nor the fold a fourth term
+		// adds, and both are ordinary boards. A constant sized on the typical
+		// box is a pair that fits on paper and clamps on screen.
+		expect(WORST_FULL_BOX).toBe(358);
+		expect(FULL_BOX_MAX_CSS).toBe(WORST_FULL_BOX);
+		expect(FULL_BOX_MAX_CSS).toBeGreaterThan(DIAGONAL_BUDGET_CSS);
+	});
+
+	it('seats two worst-case boxes without clamping at exactly the clearance the compact rule allows', () => {
+		// The two constants meeting. `offersCompact` lets the pair render full
+		// down to `FULL_PAIR_CSS` of host below the first block, so at exactly
+		// that clearance two of the TALLEST boxes must still stack: the first
+		// level with its block, the second `STACK_GAP_CSS` under it, and the
+		// second's bottom edge flush with the host.
+		//
+		// Under-budget `FULL_PAIR_CSS` and this is what happens instead: the
+		// lower box's wanted y runs past the host, `avoidRects` clamps it up
+		// onto the box above, and it is then displaced across the screen or
+		// dropped — the box the player was comparing against, gone, on a board
+		// the collapse rule said was fine.
+		const obstacles = committedRegions();
+		const top = HOST.height - FULL_PAIR_CSS;
+		// Both blocks LEFT of the panel crop's centre, so both boxes take the
+		// plain column (x 240) — the strip that is clear for the host's whole
+		// height. The diagonal has its own case above.
+		const blocks = [
+			{ x: 1140, y: top, w: 280, h: 43 },
+			{ x: 1140, y: top + 60, w: 280, h: 43 }
+		];
+		const box = { w: 300, h: WORST_FULL_BOX };
+
+		expect(
+			offersCompact({ driverCounts: [3, 3], blocks, panel: COMMITTED_PANEL, host: HOST })
+		).toBe(false);
+		expect(
+			offerStackPlacement({ blocks, panel: COMMITTED_PANEL, boxes: [box, box], obstacles, host: HOST })
+		).toEqual([
+			{ x: 240, y: top, ...box },
+			{ x: 240, y: top + WORST_FULL_BOX + STACK_GAP_CSS, ...box }
+		]);
+	});
+
+	it('draws BOTH compact boxes on a host too short for the full pair', () => {
+		// The design's own promise: the box is never dropped, it collapses.
+		// The compact form is 136 px, so the pair needs 280 of the 300 this
+		// host leaves under the block — and both must come back placed. A
+		// collapse rule that fired but a form that did not shrink puts the
+		// lower box past the host's bottom edge, where the clamp walks it onto
+		// its neighbour and `avoidRects` answers null: one box on screen,
+		// which is the comparison gone.
+		const obstacles = committedRegions();
+		const shortHost = { width: 1920, height: 600 };
+		const blocks = [
+			{ x: 1140, y: 300, w: 280, h: 43 },
+			{ x: 1140, y: 340, w: 280, h: 43 }
+		];
+		const compactBox = { w: 300, h: 136 };
+
+		expect(
+			offersCompact({ driverCounts: [3, 3], blocks, panel: COMMITTED_PANEL, host: shortHost })
+		).toBe(true);
+		expect(
+			offerStackPlacement({
+				blocks,
+				panel: COMMITTED_PANEL,
+				boxes: [compactBox, compactBox],
+				obstacles,
+				host: shortHost
+			})
+		).toEqual([
+			{ x: 240, y: 300, ...compactBox },
+			{ x: 240, y: 300 + 136 + STACK_GAP_CSS, ...compactBox }
+		]);
+	});
+
 	it('places nothing at all with an empty never-cover set', () => {
 		// The rule this file's other three placers state, and the one this
 		// placer needs most: `boardLeft` is a minimum over that set, so an empty
@@ -513,6 +704,89 @@ describe('offerStackPlacement', () => {
 				host: HOST
 			})
 		).toEqual([null, null]);
+	});
+});
+
+describe('offersCompact', () => {
+	/** A first block where the game normally draws it — the design's y 133. */
+	const HIGH = [{ x: 1484, y: 133, w: 154, h: 54 }, { x: 1188, y: 289, w: 160, h: 39 }];
+	/** Three driver rows on each box: the full form's own cap. */
+	const THREE = [3, 3];
+
+	it('keeps the full form where the host has room for two of them', () => {
+		// 1080 - 133 is 947, and two full boxes plus the stack gap need 640.
+		expect(offersCompact({ driverCounts: THREE, blocks: HIGH, panel: COMMITTED_PANEL, host: HOST })).toBe(
+			false
+		);
+	});
+
+	it('collapses when what is left of the host under the first block cannot seat the pair', () => {
+		// The boundary itself: a first block at y 441 leaves exactly 639 px,
+		// one short of the pair. The rule is about what is BELOW the block,
+		// because the stack starts level with it and grows downward — a test on
+		// the host's height alone would pass on a screen with no room at all.
+		const low = [{ ...HIGH[0], y: HOST.height - FULL_PAIR_CSS + 1 }, HIGH[1]];
+
+		expect(offersCompact({ driverCounts: THREE, blocks: low, panel: COMMITTED_PANEL, host: HOST })).toBe(
+			true
+		);
+	});
+
+	it('keeps the full form at exactly the pair\'s own height', () => {
+		// One pixel the other side of the same boundary, so the comparison is
+		// pinned rather than the direction of it.
+		const exact = [{ ...HIGH[0], y: HOST.height - FULL_PAIR_CSS }, HIGH[1]];
+
+		expect(
+			offersCompact({ driverCounts: THREE, blocks: exact, panel: COMMITTED_PANEL, host: HOST })
+		).toBe(false);
+	});
+
+	it('collapses when one box has more drivers than a fold can honestly hide', () => {
+		// Design §7.1. Past `MAX_FOLDABLE_DRIVERS` the fold line would be hiding
+		// more items than the three rows above it show, and a box whose
+		// explanation is mostly "and some others" is not an explanation. It
+		// takes ONE box over the line: the pair collapses together, because two
+		// boxes in different forms read as two different kinds of answer.
+		expect(
+			offersCompact({
+				driverCounts: [MAX_FOLDABLE_DRIVERS + 1, 2],
+				blocks: HIGH,
+				panel: COMMITTED_PANEL,
+				host: HOST
+			})
+		).toBe(true);
+	});
+
+	it('folds rather than collapsing at the cap itself', () => {
+		expect(
+			offersCompact({
+				driverCounts: [MAX_FOLDABLE_DRIVERS, 2],
+				blocks: HIGH,
+				panel: COMMITTED_PANEL,
+				host: HOST
+			})
+		).toBe(false);
+	});
+
+	it('measures from the panel crop when the read carried no block rect', () => {
+		// The same fallback chain `offerStackPlacement` uses for the first box's
+		// top, and it has to be the same one: a rule measuring from a different
+		// origin than the stack starts at would collapse a pair that fits, or
+		// keep a pair that does not.
+		const shortHost = { width: 1920, height: COMMITTED_PANEL.y + FULL_PAIR_CSS - 1 };
+
+		expect(
+			offersCompact({ driverCounts: THREE, blocks: [null, null], panel: COMMITTED_PANEL, host: shortHost })
+		).toBe(true);
+	});
+
+	it('measures from the banner top when there is neither a block nor a panel', () => {
+		const shortHost = { width: 1920, height: BANNER_TOP_CSS + FULL_PAIR_CSS - 1 };
+
+		expect(
+			offersCompact({ driverCounts: THREE, blocks: [null, null], panel: null, host: shortHost })
+		).toBe(true);
 	});
 });
 
@@ -857,6 +1131,158 @@ describe('diamondGeometry', () => {
 		expect(minY).toBeLessThanOrEqual(-2 - SEAL_RADIUS_SUGGESTED);
 		expect(minX + width).toBeGreaterThanOrEqual(2 + SEAL_RADIUS_SUGGESTED);
 		expect(minY + height).toBeGreaterThanOrEqual(2 + SEAL_RADIUS_SUGGESTED);
+	});
+
+	describe('the exit label', () => {
+		/**
+		 * The longest of the 75 tier names in `src-tauri/src/temple/rooms.rs`'s
+		 * `LINES`, at 26 characters.
+		 *
+		 * Restated here rather than imported — the vocabulary is Rust's and
+		 * there is no TypeScript copy of it — and pinned on the Rust side by
+		 * `the_longest_room_name_reaches_the_wire_whole`, which fails if a
+		 * longer name is ever added. That is the seam: this file budgets the
+		 * footprint against the worst case, and the other end guarantees which
+		 * case that is.
+		 */
+		const LONGEST_ROOM = 'Breach Containment Chamber';
+
+		/**
+		 * The suggested seal's radius as a percentage of the fixture's box.
+		 *
+		 * The box spans -2.459..2.459 — the corners at ±2 grown by
+		 * `SEAL_RADIUS_SUGGESTED * 1.35` on each side — so it is 4.918 wide and
+		 * the biggest seal the widget draws is 0.34/4.918 of it, i.e. 6.91 %.
+		 * That is the clearance the text starts past the mark.
+		 */
+		const SEAL_PCT = (SEAL_RADIUS_SUGGESTED / 4.918) * 100;
+
+		it('pins the name beside the solid purple seal, running into the room', () => {
+			// C1-C2's seal is at x 2, i.e. 90.67 % across the box and level with
+			// the centre. The door is on the RIGHT half, so the text is pinned by
+			// its `right` edge and runs leftward — across the room, never out over
+			// the game — starting at the mark's inner rim rather than under it:
+			// 9.33 % in from that side for the seal's own point, plus one
+			// suggested radius.
+			const at = diamondGeometry(diamond, board, ['C1-C2'], null, {
+				door: 'C1-C2',
+				name: LONGEST_ROOM
+			}).exitLabel;
+			expect(at?.side).toBe('right');
+			expect(at?.inset).toBeCloseTo(9.33 + SEAL_PCT, 1);
+			expect(at?.top).toBeCloseTo(50, 1);
+			expect(at?.width).toBeCloseTo(90.67 - SEAL_PCT, 1);
+		});
+
+		it('runs the name the other way for a door on the left of the room', () => {
+			// The mirror of the case above: C0-C1's seal is at x -2, so the text
+			// is pinned by its `left` edge and runs rightward. Inward is the rule;
+			// which CSS side that is is a consequence of where the door is, and
+			// the clearance past the mark is the same one.
+			const at = diamondGeometry(diamond, board, ['C0-C1'], null, {
+				door: 'C0-C1',
+				name: LONGEST_ROOM
+			}).exitLabel;
+			expect(at?.side).toBe('left');
+			expect(at?.inset).toBeCloseTo(9.33 + SEAL_PCT, 1);
+			expect(at?.width).toBeCloseTo(90.67 - SEAL_PCT, 1);
+		});
+
+		it('starts the name clear of every mark, whichever wall the door is on', () => {
+			// The offset is a property of the placement, not of the two cases
+			// above: on EVERY seal the text begins one suggested radius past the
+			// seal's own point, which is the rim of the biggest circle the widget
+			// draws. Dropping it puts the first letters under the mark the label
+			// is about. Asserted against the seal's own published position, so a
+			// re-fit of `markers::seal_position` moves both sides together.
+			for (const seal of diamond.seals) {
+				const at = diamondGeometry(diamond, board, [seal.edge], null, {
+					door: seal.edge,
+					name: LONGEST_ROOM
+				}).exitLabel;
+				const centre = ((seal.pos[0] + 2.459) / 4.918) * 100;
+				const near = at!.side === 'right' ? 100 - centre : centre;
+				expect(at!.inset, seal.edge).toBeCloseTo(near + SEAL_PCT, 6);
+			}
+		});
+
+		it('keeps the name inside the shape whatever the room is called', () => {
+			// The footprint claim, and it is a property of the PLACEMENT rather
+			// than of any particular string: the label's span is exactly the box
+			// from the mark's inner rim to the far edge — the clearance is bought
+			// out of the label's own room, so the two still sum to the whole box
+			// — and a longer name therefore wraps instead of reaching past the
+			// widget. Checked on every seal the fixture has,
+			// with the longest name the vocabulary can produce — and against a
+			// one-character name, because a placement that measured the text
+			// would answer those two differently.
+			for (const seal of diamond.seals) {
+				const at = diamondGeometry(diamond, board, [seal.edge], null, {
+					door: seal.edge,
+					name: LONGEST_ROOM
+				}).exitLabel;
+				expect(at, seal.edge).not.toBeNull();
+				expect(at!.inset + at!.width, seal.edge).toBeCloseTo(100, 6);
+				expect(at!.inset, seal.edge).toBeGreaterThanOrEqual(0);
+				expect(at!.width, seal.edge).toBeGreaterThan(0);
+				expect(at!.top, seal.edge).toBeGreaterThanOrEqual(0);
+				expect(at!.top, seal.edge).toBeLessThanOrEqual(100);
+				expect(
+					diamondGeometry(diamond, board, [seal.edge], null, {
+						door: seal.edge,
+						name: 'X'
+					}).exitLabel,
+					seal.edge
+				).toEqual(at);
+			}
+		});
+
+		it('costs the widget no height, so its shipped rectangle is still the drawn box', () => {
+			// The reason this is asserted on the SOURCE: the label's height is
+			// only observable in a browser, and this app has no DOM harness for a
+			// `.svelte` file (the same bargain `FULL_BOX_MAX_CSS` and
+			// `overlay-defaults.test.ts` strike). What it protects is
+			// `doorDefaultPlacement`'s promise: that function clears the read
+			// regions for a 190x215 box — the registry's — and the test above,
+			// `never ships on top of a read region`, is the check. A label that
+			// joined the widget's column would add a line the placement never
+			// budgeted for, and the widget would grow into a crop the module
+			// reads back as game pixels (ADR-019).
+			const exit = doorSource.slice(doorSource.indexOf('\t.exit {'));
+			expect(exit).toContain('position: absolute;');
+		});
+
+		it('draws no name when Rust published none', () => {
+			// Null is the answer for a move that opens no door and for a plate
+			// that did not resolve — `slice.rs::recommended_exit` owns both — and
+			// nothing here fills it in from the seal's own neighbour.
+			expect(diamondGeometry(diamond, board, ['C1-C2'], null, null).exitLabel).toBeNull();
+			expect(diamondGeometry(diamond, board, ['C1-C2']).exitLabel).toBeNull();
+		});
+
+		it('never puts the name on the faint second-stone seal', () => {
+			// One label, and on the door to open NOW. The faint seal is what a
+			// key the move has no use for would buy; a name on it would read as
+			// the instruction.
+			expect(
+				diamondGeometry(diamond, board, ['C1-C2'], 'B0-C1', {
+					door: 'B0-C1',
+					name: LONGEST_ROOM
+				}).exitLabel
+			).toBeNull();
+		});
+
+		it('never puts the name on a corridor the advisor said nothing about', () => {
+			// The same rule from the other side: the label is matched to the
+			// seal the shape classified `suggested`, so a stale or mismatched
+			// door on the wire labels nothing rather than the nearest seal.
+			expect(
+				diamondGeometry(diamond, board, ['C1-C2'], null, {
+					door: 'C1-D2',
+					name: LONGEST_ROOM
+				}).exitLabel
+			).toBeNull();
+		});
 	});
 
 	describe('sealVisible', () => {

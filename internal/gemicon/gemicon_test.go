@@ -529,9 +529,12 @@ func TestNew_embeddedMap_holdsEveryCategorysEntries(t *testing.T) {
 		t.Fatalf("New() error = %v, want nil", err)
 	}
 
-	// The merged size the single pre-split file held. A category file dropped
-	// from the embed, or read and discarded, lands here.
-	if got, want := len(c.urls), 765; got != want {
+	// The merged size across every category file: 765 for the two the split
+	// started with (gems.json, items.json) plus temple.json's 32 (POE-255). A
+	// category file dropped from the embed, or read and discarded, lands here.
+	// The number is deliberately hard-coded rather than summed from the same
+	// embed the map is built from, which would move with the defect.
+	if got, want := len(c.urls), 797; got != want {
 		t.Errorf("embedded map holds %d entries, want %d", got, want)
 	}
 	if got := c.urls["Absolution"]; got == "" {
@@ -539,6 +542,9 @@ func TestNew_embeddedMap_holdsEveryCategorysEntries(t *testing.T) {
 	}
 	if got := c.urls["Gift to the Goddess"]; got == "" {
 		t.Error("embedded map missing a URL for a known offering \"Gift to the Goddess\" (items.json)")
+	}
+	if got := c.urls["Chronicle of Atzoatl"]; got == "" {
+		t.Error("embedded map missing a URL for the shared temple room artwork \"Chronicle of Atzoatl\" (temple.json)")
 	}
 }
 

@@ -3433,12 +3433,27 @@ fn full_read(
         Some(kept) => slice::merge_reads(&kept, fresh),
         None => fresh,
     };
+    // ONE valuation for this read, handed to the ranking AND to the offer
+    // boxes below (POE-257 D6). Two calls would let the number on screen come
+    // from a market read the recommendation never saw.
+    //
+    // The market arrives as STATE, never as a fetch: `crate::ssot` polls it
+    // every `ssot::TEMPLE_MARKET_POLL` and this reads what it stored, because
+    // `docs/TEMPLE-LIFECYCLE.md` forbids network work on this tick. Read here
+    // rather than passed in, so the read is as fresh as this tick and the
+    // staleness judgement is made against THIS clock (POE-258 D2) — before the
+    // first poll answers, and whenever the last read has aged out, it is
+    // `MarketInput::none()` in effect and every room falls back to its grade
+    // ladder value rather than to zero, which is epic lock L4.
+    let market = crate::ssot::temple_market_now(app);
+    let valuation = slice::value_read(settings, &market);
     let advice = slice::advise_read(
         &read.layout,
         &read.rooms,
         &read.panel,
         read.settled.as_ref(),
         settings,
+        &valuation,
     );
 
     let projected = slice::project(
@@ -3456,6 +3471,13 @@ fn full_read(
             // setters' own `rearm` forces the next read, which restores it.
             config: settings.config.clone(),
             profile: settings.profile.clone(),
+            preset: settings.preset,
+            custom: settings.custom.clone(),
+            valuation: &valuation,
+            // The SAME read the valuation above was computed from, so the
+            // price-age line and the numbers on the offer boxes can never be
+            // about different markets.
+            market: slice::market_view(&market),
             read_at: now_ms(),
         },
         // The calibration THIS capture measured, which is what the page's
@@ -5128,6 +5150,7 @@ mod tests {
                 gambles: Vec::new(),
                 secondary_door: None,
                 convenience: None,
+                recommended_exit: None,
                 map_action: "continue".to_string(),
                 warnings: Vec::new(),
                 forced_kill: false,
@@ -5161,6 +5184,7 @@ mod tests {
                 gambles: Vec::new(),
                 secondary_door: None,
                 convenience: None,
+                recommended_exit: None,
                 map_action: "continue".to_string(),
                 warnings: Vec::new(),
                 forced_kill: false,
@@ -5195,6 +5219,7 @@ mod tests {
                 gambles: Vec::new(),
                 secondary_door: None,
                 convenience: None,
+                recommended_exit: None,
                 map_action: "continue".to_string(),
                 warnings: Vec::new(),
                 forced_kill: false,

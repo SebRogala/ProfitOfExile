@@ -344,7 +344,7 @@ pub fn advise(
         safe = std::mem::take(&mut risky);
     }
 
-    let recommendations = rank(safe);
+    let recommendations = rank(safe, profile);
     let mut gambles: Vec<Gamble> = risky
         .into_iter()
         .map(|scored| Gamble {
@@ -640,7 +640,7 @@ fn conditional_second_door(
         connectable,
     );
     let priced = safe.len() + risky.len();
-    let Some(best) = rank(safe).into_iter().next() else {
+    let Some(best) = rank(safe, profile).into_iter().next() else {
         return Conditional { door: None, priced };
     };
     Conditional {
@@ -670,7 +670,7 @@ fn conditional_second_door(
 /// Workshop, open the Apex"* scores R1-apex, and letting the door axis lead
 /// would recommend Sebastian's own historical loss over upgrading the
 /// corruption line.
-fn rank(scored: Vec<Scored>) -> Vec<Ranked> {
+fn rank(scored: Vec<Scored>, profile: &StrategyProfile) -> Vec<Ranked> {
     if scored.is_empty() {
         return Vec::new();
     }
@@ -704,7 +704,7 @@ fn rank(scored: Vec<Scored>) -> Vec<Ranked> {
     });
     let leader = summaries[0].1;
     let vetoed_leader = summaries[0].2.vetoed();
-    let cutoff = leader.mean - rules::noise_margin(leader.stderr);
+    let cutoff = leader.mean - rules::noise_margin(profile, leader.stderr);
     let band = summaries
         .iter()
         .position(|(_, estimate, key)| key.vetoed() != vetoed_leader || estimate.mean < cutoff)
@@ -905,6 +905,68 @@ mod tests {
 
     fn rush() -> StrategyProfile {
         StrategyProfile::locus_doryani_rush()
+    }
+
+    /// The eight walked boards: the seven Sebastian decided, plus the one the
+    /// app got wrong, which is a real board and therefore a real regression
+    /// surface for the production profile.
+    fn all_walked_boards() -> Vec<cases::Case> {
+        let mut boards = cases::retrospective();
+        boards.push(cases::case_7_armourers_workshop());
+        boards
+    }
+
+    /// The profile the SHIPPED app ranks with (POE-257): the settings defaults
+    /// bridged over a cold valuation, which is what `run::full_read` builds
+    /// whenever POE-258's poll has no prices in hand. Every room is priced at
+    /// its cold grade rung, so the whole board carries a value where the fixture
+    /// priced four lines and left 21 at zero.
+    fn production_profile() -> StrategyProfile {
+        crate::temple::slice::TempleProfileSettings::default().to_profile(
+            &crate::temple::slice::value_read(
+                &crate::temple::slice::TempleSettings::default(),
+                &crate::temple::market::MarketInput::none(),
+            ),
+        )
+    }
+
+    /// The same bridge over the COMMITTED ALLFLAME CAPTURE — what the app ranks
+    /// with whenever POE-258's poll is holding prices.
+    ///
+    /// The difference from [`production_profile`] is not cosmetic: the cold
+    /// ladder tops out at 800 with every room on a ten-rung scale, while the
+    /// capture pays 846 for Locus and puts thirteen rooms under 10 c. A board
+    /// that decides the same way under both is a board the market cannot move.
+    fn live_production_profile() -> StrategyProfile {
+        crate::temple::slice::TempleProfileSettings::default().to_profile(
+            &crate::temple::slice::value_read(
+                &crate::temple::slice::TempleSettings::default(),
+                &crate::temple::market::allflame(),
+            ),
+        )
+    }
+
+    /// What one board's top recommendation kills, as
+    /// `(kind, line key, built tier)`, or `None` for a door-only pick.
+    fn top_kill_of(advice: &Advice) -> Option<(crate::temple::rooms::OfferKind, String, u8)> {
+        let architect = advice.recommendations[0].option.architect.as_ref()?;
+        Some((
+            architect.kind,
+            architect.line.key().to_string(),
+            architect.built_tier.get(),
+        ))
+    }
+
+    fn advise_case_with(case: &cases::Case, profile: &StrategyProfile) -> Advice {
+        advise(
+            &case.state,
+            &case.offers,
+            case.keys,
+            profile,
+            &TempleConfig::default(),
+            N,
+            SEED,
+        )
     }
 
     fn advise_case(case: &cases::Case) -> Advice {
@@ -2988,5 +3050,258 @@ mod tests {
                 case.name
             );
         }
+    }
+
+
+    // ============================ the production path over the walked boards
+
+    /// The door the app actually recommends on each walked board, pinned.
+    ///
+    /// The recorded decisions are mostly about the DOOR, and the door axis is
+    /// decided by the rule chain rather than by the rollout — R1, R2 and RS
+    /// read the graph, not the prices. So this is NOT written as "the same
+    /// door as the fixture": comparing two runs of the same rule chain cannot
+    /// fail, and no value-side change moves any of these (a `room_baseline`
+    /// left unscaled, a `room_baseline` x50 and a whole extra chaos hop of
+    /// `path_cost` were all tried and moved nothing). What can move them is a
+    /// change to the door chain itself, and what these literals are for is
+    /// stating that the profile the app SHIPS with still reproduces
+    /// Sebastian's recorded play — the fixture suites above only say the
+    /// fixture does. Verified against `best_row.min(far.row())` inverted to
+    /// `.max` in `rules::door_key`, which moves board 1 off Chamber of Iron.
+    #[test]
+    fn the_production_profile_opens_sebastians_recorded_door_on_every_walked_board() {
+        let production = production_profile();
+
+        let opened: Vec<(&str, Vec<Slot>)> = all_walked_boards()
+            .iter()
+            .map(|case| {
+                let advice = advise_case_with(case, &production);
+                (
+                    case.name,
+                    opened_toward(
+                        &advice.recommendations[0].option.doors,
+                        case.state.position.expect("every walked board has a position"),
+                    ),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            opened,
+            vec![
+                // "open D3-C2 (up, and merges two singletons)"
+                ("1 Tombs", vec![C2]),
+                // "connect DOWN (B1-C1 or B1-C2)"
+                ("2 CorruptionChamber", vec![C2]),
+                // "open B0-A0 (the Apex is finally free value)"
+                ("3 Chasm-late", vec![A0]),
+                // "open B1-C2 (the only door that changes anything)"
+                ("4 Chasm-merge", vec![C2]),
+                // "open NO door (RU)"
+                ("5 PoisonGarden", Vec::new()),
+                // "open D1-C1 (Cellar: one row up AND a singleton)"
+                ("6 Cloister-blind", vec![C1]),
+                // "open B0-C1 (B0 already reaches the Apex)"
+                ("8 LightningWorkshop", vec![B0]),
+                // Board 7 records a MISS on the kill; its door was never in
+                // dispute.
+                ("7 ArmourersWorkshop-PC", vec![B1]),
+            ],
+        );
+    }
+
+    /// The kill moves on exactly two of the eight walked boards, and both are
+    /// boards Sebastian recorded as *"kill either"*.
+    ///
+    /// | Board | Recorded decision | Fixture kill | Cold production kill | Reading |
+    /// |---|---|---|---|---|
+    /// | 1 Tombs | *kill either*; open D3-C2 | Storage Room | Sparring Room | Harmless. Both architects are worthless and Sebastian said so; the fixture priced both at zero and first-seen order decided, while the cold ladder separates two junk letters. The door — the whole of his decision — is unchanged. |
+    /// | 3 Chasm-late | *kill either*; open B0-A0 | Throne of Atziri | Conduit of Lightning | Harmless, same reason. |
+    ///
+    /// The six boards not listed produce an identical kill. **Board 7 is among
+    /// them, and was not** until the two instrumental lines were priced at
+    /// their grade rung: it is the app's recorded MISS, it reproduced that miss
+    /// under every priced profile while Temple Nexus scored zero, and it now
+    /// plays Sebastian's *change to Sanctum of Unity* on the cold read and on
+    /// the capture alike. Board 2 — *upgrade the corruption line*, the one
+    /// board the Locus/Doryani targets actually drive — is unmoved throughout.
+    ///
+    /// Fails if the bridge stops pricing the board (every row would read
+    /// "same"), and fails if a third board moves.
+    #[test]
+    fn the_production_profile_changes_the_kill_on_exactly_the_two_kill_either_boards() {
+        let production = production_profile();
+
+        let moved: Vec<(&str, Option<(OfferKind, String, u8)>, Option<(OfferKind, String, u8)>)> =
+            all_walked_boards()
+                .iter()
+                .filter_map(|case| {
+                    let fixture = top_kill_of(&advise_case(case));
+                    let shipped = top_kill_of(&advise_case_with(case, &production));
+                    (fixture != shipped).then(|| (case.name, fixture, shipped))
+                })
+                .collect();
+
+        assert_eq!(
+            moved,
+            vec![
+                (
+                    "1 Tombs",
+                    Some((Change, "museum_of_artefacts".to_string(), 1)),
+                    Some((Change, "hall_of_champions".to_string(), 1)),
+                ),
+                (
+                    "3 Chasm-late",
+                    Some((Change, "throne_of_atziri".to_string(), 1)),
+                    Some((Change, "conduit_of_lightning".to_string(), 1)),
+                ),
+            ],
+        );
+    }
+
+    /// Board 7 plays Sebastian's kill on BOTH production reads.
+    ///
+    /// The board the app got wrong, and the reason the two instrumental lines
+    /// are priced at their letter at all. He played *change to Sanctum of
+    /// Unity*; the overlay said *upgrade to Armoury*, and so did every
+    /// chaos-denominated profile while Temple Nexus was scored at zero — the
+    /// 6 c junk room beat the shrine that lifts a tier. Its own recorded
+    /// `decision` string is the assertion message, so a failure names his play
+    /// rather than a tuple.
+    ///
+    /// Fails if the bridge zeroes the instrumental lines again, on either read.
+    #[test]
+    fn the_production_profile_plays_sebastians_kill_on_board_seven_cold_and_live() {
+        let case = cases::case_7_armourers_workshop();
+        let sebastian = Some((Change, "upgrade".to_string(), 2));
+
+        for (label, profile) in [
+            ("cold", production_profile()),
+            ("live", live_production_profile()),
+        ] {
+            assert_eq!(
+                top_kill_of(&advise_case_with(&case, &profile)),
+                sebastian,
+                "{label}: {}",
+                case.decision,
+            );
+        }
+    }
+
+    /// Board 2 is the one whose recorded decision the Locus/Doryani targets
+    /// drive, and the production profile reaches it too.
+    ///
+    /// *"Upgrade the corruption line"* is the whole point of the strategy, and
+    /// it is the assertion that says re-denominating the board in chaos did not
+    /// cost the app the decision the epic exists for. Fails if the corruption
+    /// line stops outranking a junk `change` once every other line on the board
+    /// carries a value of its own.
+    #[test]
+    fn the_production_profile_still_upgrades_the_corruption_line_on_board_two() {
+        let case = cases::case_2_corruption_chamber();
+
+        let advice = advise_case_with(&case, &production_profile());
+
+        assert_eq!(
+            top_kill_of(&advice),
+            Some((Upgrade, "corruption".to_string(), 2)),
+            "recorded decision: {}",
+            case.decision,
+        );
+    }
+
+
+    /// The door on every walked board, at the capture's prices.
+    ///
+    /// The same literals as
+    /// `the_production_profile_opens_sebastians_recorded_door_on_every_walked_board`,
+    /// and that is the finding: a board whose value spread goes from 800/2 to
+    /// 846/2.1 opens the same corridor every time, because the door axis is the
+    /// rule chain's and the rule chain reads the graph. Verified against
+    /// `best_row.min(far.row())` inverted to `.max` in `rules::door_key`, which
+    /// moves board 1 off Chamber of Iron.
+    #[test]
+    fn the_live_priced_profile_opens_sebastians_recorded_door_on_every_walked_board() {
+        let live = live_production_profile();
+
+        let opened: Vec<(&str, Vec<Slot>)> = all_walked_boards()
+            .iter()
+            .map(|case| {
+                let advice = advise_case_with(case, &live);
+                (
+                    case.name,
+                    opened_toward(
+                        &advice.recommendations[0].option.doors,
+                        case.state.position.expect("every walked board has a position"),
+                    ),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            opened,
+            vec![
+                ("1 Tombs", vec![C2]),
+                ("2 CorruptionChamber", vec![C2]),
+                ("3 Chasm-late", vec![A0]),
+                ("4 Chasm-merge", vec![C2]),
+                ("5 PoisonGarden", Vec::new()),
+                ("6 Cloister-blind", vec![C1]),
+                ("8 LightningWorkshop", vec![B0]),
+                ("7 ArmourersWorkshop-PC", vec![B1]),
+            ],
+        );
+    }
+
+    /// The kill on every walked board, at the capture's prices.
+    ///
+    /// Two rows differ from the cold path and both are recorded rather than
+    /// argued:
+    ///
+    /// - **board 8** kills the `upgrade` block (Conduit of Lightning II)
+    ///   where the cold path kills the `change` (Explosives Room II). The
+    ///   recorded decision on that board is a DOOR — *"open B0-C1"* — and the
+    ///   door is unchanged, so this contradicts nothing Sebastian said. It is
+    ///   the capture separating two lines the cold ladder tied.
+    /// - **board 7** plays Sebastian's *change to Sanctum of Unity*, which it
+    ///   did NOT while the upgrade line scored zero. That version recommended
+    ///   *upgrade to Armoury* — Chamber of Iron, 6 c of quantity bonus — and
+    ///   the mechanism was `rank`'s stage 1: the `change` was the better
+    ///   option by EV (697.48 at its best door against 658.56) but both
+    ///   architects fell inside one band, because the noise margin on a chaos
+    ///   board is `3 x stderr` and the rollout's spread is set by whether
+    ///   Locus (846) gets reached at all, not by the 6 c the two candidate
+    ///   rooms were worth. Inside the band the `ArchKey` ordered, and the
+    ///   `upgrade` kill carries R4 — *maxes a junk room out of the drop pool*
+    ///   — which the `change` does not. Pricing Temple Nexus at its B+ rung
+    ///   (105.75) instead of at its own bonus separates the two architects
+    ///   past the band, and the EV decides Sebastian's way again.
+    ///
+    /// Fails on `tier_total` returning `0.0` — the bridge pricing nothing —
+    /// which is the mutation that says these literals are the valuation's
+    /// answer and not the rule chain's.
+    #[test]
+    fn the_live_priced_profile_kills_this_on_every_walked_board() {
+        let live = live_production_profile();
+
+        let killed: Vec<(&str, Option<(OfferKind, String, u8)>)> = all_walked_boards()
+            .iter()
+            .map(|case| (case.name, top_kill_of(&advise_case_with(case, &live))))
+            .collect();
+
+        assert_eq!(
+            killed,
+            vec![
+                ("1 Tombs", Some((Change, "hall_of_champions".to_string(), 1))),
+                ("2 CorruptionChamber", Some((Upgrade, "corruption".to_string(), 2))),
+                ("3 Chasm-late", Some((Change, "conduit_of_lightning".to_string(), 1))),
+                ("4 Chasm-merge", Some((Change, "hybridisation_chamber".to_string(), 1))),
+                ("5 PoisonGarden", Some((Change, "upgrade".to_string(), 2))),
+                ("6 Cloister-blind", Some((Change, "hall_of_champions".to_string(), 1))),
+                ("8 LightningWorkshop", Some((Upgrade, "conduit_of_lightning".to_string(), 2))),
+                ("7 ArmourersWorkshop-PC", Some((Change, "upgrade".to_string(), 2))),
+            ],
+        );
     }
 }

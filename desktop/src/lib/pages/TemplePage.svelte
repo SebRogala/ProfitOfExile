@@ -14,7 +14,9 @@
 	 * them and this file lays them out.
 	 */
 	import Button from '$lib/components/Button.svelte';
+	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
 	import TempleLattice from '$lib/temple/TempleLattice.svelte';
+	import TempleValueTable from '$lib/temple/TempleValueTable.svelte';
 	import {
 		TEMPLE_STATUS_LABEL,
 		TEMPLE_STATUS_TONE,
@@ -26,6 +28,7 @@
 		lastReadText,
 		leaveMapBanner,
 		markerFallbackNotice,
+		marketNote,
 		modeLabel,
 		offerBuilds,
 		offerHeadline,
@@ -33,13 +36,37 @@
 		topRecommendation,
 		unknownRoomsBadge
 	} from '$lib/temple/view';
-	import type { TempleConfig, TempleProfile } from '$lib/temple/slice';
+	import {
+		KNOBS,
+		PRESET_NOTE,
+		PRESET_OPTIONS,
+		VALUE_MARK_LEGEND,
+		copyValuesInto,
+		overrideCount,
+		parseKnob,
+		parsePreset,
+		valueRows,
+		valueTableKey,
+		withCell,
+		withoutOverrides,
+		type KnobSpec
+	} from '$lib/temple/values';
+	import type {
+		TempleConfig,
+		TempleCustom,
+		TemplePreset,
+		TempleProfile,
+		TempleValueRow
+	} from '$lib/temple/slice';
 	import {
 		rearmTemple,
 		setTempleConfig,
+		setTempleCustom,
+		setTemplePreset,
 		setTempleProfile,
 		ssot,
-		templeDebugCapture
+		templeDebugCapture,
+		templeValueTable
 	} from '$lib/stores/ssot.svelte';
 
 	const temple = $derived(ssot.temple);
@@ -61,6 +88,18 @@
 	 *  reason: it is one fact about the head of the list, and it is what the
 	 *  overlay's faint seal means when there is no primary door. */
 	const convenience = $derived(convenienceNote(advice));
+
+	/** What the prices behind every chaos value on this page are — one line,
+	 *  always present (POE-258). It is re-derived on every SSOT poll rather
+	 *  than composed in Rust, so the age it prints follows the clock instead of
+	 *  standing still between the market poller's five-minute ticks.
+	 *
+	 *  `pollMarket` and NOT `market`: this page's question is what the app is
+	 *  priced against right now — the value table below is served off the same
+	 *  latest poll (`temple_value_table` calls `ssot::temple_market_now`) — and
+	 *  not what some earlier board happened to be priced against. The offer
+	 *  boxes ask the other question and read `market`. */
+	const market = $derived(marketNote(temple.pollMarket));
 
 	const unknownBadge = $derived(unknownRoomsBadge(temple));
 	const markerNotice = $derived(markerFallbackNotice(layout));
@@ -128,6 +167,151 @@
 		const parsed = Number(raw);
 		return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 	}
+
+	// --- the preset and its table (POE-259) -----------------------------------
+
+	/** Long enough that tabbing across a row of cells is one write, short
+	 *  enough that a pause reads as done. `$lib/prefs.svelte.ts`'s number, for
+	 *  its reason: every write rewrites the whole settings file, and each one
+	 *  also re-arms the reader.
+	 *
+	 *  Same accepted trade-off as that file's: an edit made within the window
+	 *  of closing the app is lost. It degrades to the previous value and never
+	 *  corrupts the table — and unlike a pref, the cell is still on screen
+	 *  showing what was typed until the write lands. */
+	const CUSTOM_WRITE_DEBOUNCE_MS = 300;
+
+	/** The 25 x 3 table Rust priced for the preset in force. Fetched rather
+	 *  than published: it is 75 values nothing but this editor reads, and the
+	 *  SSOT snapshot goes out every three seconds. */
+	let valueTable = $state<TempleValueRow[]>([]);
+	/** What `valueTable` was fetched for — `valueTableKey`'s answer at the time,
+	 *  which is the whole of what the numbers depend on. */
+	let fetchedValueKey = $state<string | null>(null);
+	let valueTableError = $state<string | null>(null);
+
+	/**
+	 * Cell and rate edits that Rust has not accepted yet, or has refused.
+	 *
+	 * The controls read this in preference to the slice, so a burst of edits
+	 * inside one debounce window builds on each other rather than each
+	 * starting from the last echo. Cleared when a write is accepted — from
+	 * there the slice is the truth again — and KEPT when one is refused, so
+	 * the player can see and fix what they typed.
+	 */
+	let customDraft = $state<TempleCustom | null>(null);
+	let customTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Whether a `temple_set_custom` is out. Not `$state`: nothing renders it,
+	 *  it only orders the writes. */
+	let customInFlight = false;
+	/** What an ACCEPTED write still had to say. Rust's, not re-derived here. */
+	let customNotes = $state<string[]>([]);
+	/** Why each refused rate was refused, by field. */
+	let knobRefused = $state<Record<string, string>>({});
+
+	const customTable = $derived(customDraft ?? temple.custom);
+	/** The editor's rows. Under Default there is no override to report, so the
+	 *  cells are read-only text and the table is passed no Custom at all. */
+	const valueTableRows = $derived(
+		valueRows(valueTable, temple.preset === 'custom' ? customTable : null)
+	);
+	// Keyed on the POLL and not on the read: `temple_value_table` prices these
+	// rows off `ssot::temple_market_now`, so a key watching the read's frozen
+	// market would leave the table showing prices the command has stopped
+	// serving.
+	const wantValueKey = $derived(valueTableKey(temple.preset, temple.pollMarket, temple.custom));
+
+	// The slice is whole-replaced on every poll, so an effect that simply read
+	// `temple.preset` would re-fetch 75 values every three seconds. The key is
+	// what makes this fire on a CHANGE rather than on a poll.
+	$effect(() => {
+		const key = wantValueKey;
+		const preset = temple.preset;
+		if (key === fetchedValueKey) return;
+		fetchedValueKey = key;
+		void loadValueTable(preset, key);
+	});
+
+	async function loadValueTable(preset: TemplePreset, key: string): Promise<void> {
+		const { rows, error } = await templeValueTable(preset);
+		// A newer request was issued while this one was in flight; its answer
+		// is the one the page is waiting for.
+		if (key !== fetchedValueKey) return;
+		valueTable = rows;
+		valueTableError = error;
+	}
+
+	function pickPreset(raw: string): void {
+		const preset = parsePreset(raw);
+		if (preset === null || preset === temple.preset) return;
+		// The preset ONLY. Writing the Custom table here would delete the
+		// player's numbers the first time they looked at Default, which is the
+		// one thing the two-field split exists to prevent.
+		void apply(() => setTemplePreset(preset));
+	}
+
+	/** Queue a Custom write, coalescing a burst of edits into one command. */
+	function writeCustom(next: TempleCustom): void {
+		customDraft = next;
+		armCustomWrite();
+	}
+
+	function armCustomWrite(): void {
+		if (customTimer !== null) clearTimeout(customTimer);
+		customTimer = setTimeout(() => {
+			customTimer = null;
+			void flushCustom();
+		}, CUSTOM_WRITE_DEBOUNCE_MS);
+	}
+
+	async function flushCustom(): Promise<void> {
+		const sent = customDraft;
+		if (sent === null) return;
+		// One write at a time. The command takes the WHOLE table, so two in
+		// flight at once can be answered in either order and leave Rust — and
+		// `settings.json` — holding the older of the two. Re-arming rather
+		// than dropping is what keeps the newest draft: it is still in
+		// `customDraft`, and something has to carry it once this write is done.
+		if (customInFlight) {
+			armCustomWrite();
+			return;
+		}
+		customInFlight = true;
+		try {
+			const { error, notes } = await setTempleCustom(sent);
+			settingsError = error;
+			customNotes = notes;
+			if (error === null && customDraft === sent) customDraft = null;
+		} finally {
+			customInFlight = false;
+		}
+	}
+
+	/** One override cell. `null` puts that tier back on the formula. */
+	function editCell(key: string, tier: number, chaos: number | null): void {
+		writeCustom(withCell(customTable, key, tier, chaos));
+	}
+
+	function editKnob(spec: KnobSpec, raw: string): void {
+		const parsed = parseKnob(raw, spec);
+		if (parsed.kind === 'invalid') {
+			knobRefused = { ...knobRefused, [spec.field]: parsed.reason };
+			return;
+		}
+		const { [spec.field]: _cleared, ...rest } = knobRefused;
+		knobRefused = rest;
+		writeCustom({ ...customTable, [spec.field]: parsed.chaos });
+	}
+
+	/** D3's one explicit click — the ONLY way Default's numbers enter Custom. */
+	async function copyDefaultValues(): Promise<void> {
+		const { rows, error } = await templeValueTable('default');
+		if (error !== null) {
+			settingsError = error;
+			return;
+		}
+		writeCustom(copyValuesInto(customTable, rows));
+	}
 </script>
 
 <div class="temple-page">
@@ -169,6 +353,11 @@
 			{#if layout}
 				<span class="meta">panel NCC {layout.ncc.toFixed(3)} · {layout.confidence} confidence</span>
 			{/if}
+			<span
+				class="meta"
+				title="Where the chaos values on this page come from. Prices are polled from the server every five minutes; a missing or stale read leaves every room at the preset's base value."
+				>{market}</span
+			>
 			<span class="spacer"></span>
 			<Button
 				onclick={() => void apply(rearmTemple)}
@@ -360,6 +549,80 @@
 			<p class="error">{settingsError}</p>
 		{/if}
 
+		<!-- The room valuation first: it decides what every number on this page
+		     means, and the two weights below are stated relative to it. -->
+		<div class="setting">
+			<span class="setting-label">Room valuation</span>
+			<div class="preset-head">
+				<SegmentedButtons
+					value={temple.preset}
+					options={PRESET_OPTIONS}
+					onselect={pickPreset}
+					title="Which valuation the advisor ranks on. Switching never copies Default's numbers into Custom and never clears Custom."
+				/>
+				<span class="meta">{market}</span>
+			</div>
+			<p class="meta">{PRESET_NOTE[temple.preset]}</p>
+
+			{#if temple.preset === 'custom'}
+				<div class="knobs">
+					{#each KNOBS as knob (knob.field)}
+						<label class="number">
+							<span>{knob.label}</span>
+							<input
+								type="number"
+								min="0"
+								max={knob.max ?? undefined}
+								step={knob.step}
+								value={customTable[knob.field]}
+								aria-invalid={knobRefused[knob.field] !== undefined}
+								class:refused={knobRefused[knob.field] !== undefined}
+								onchange={(e) => editKnob(knob, e.currentTarget.value)}
+							/>
+							<span class="meta">{knob.hint}</span>
+							{#if knobRefused[knob.field]}
+								<span class="cell-error">{knobRefused[knob.field]}</span>
+							{/if}
+						</label>
+					{/each}
+				</div>
+
+				<div class="table-actions">
+					<Button
+						onclick={() => void copyDefaultValues()}
+						title="Write Default's current number into every cell. The one way Default's values enter Custom — switching preset never copies."
+					>
+						Copy Default into Custom
+					</Button>
+					<Button
+						variant="danger"
+						onclick={() => writeCustom(withoutOverrides(customTable))}
+						title="Drop every per-room number and put the whole board back on the formula. The rates are left alone."
+					>
+						Clear overrides
+					</Button>
+					<span class="meta">
+						{overrideCount(customTable)} room-tier{overrideCount(customTable) === 1 ? '' : 's'} priced
+						by hand
+					</span>
+				</div>
+
+				{#each customNotes as note (note)}
+					<p class="warn">{note}</p>
+				{/each}
+			{/if}
+
+			{#if valueTableError}
+				<p class="error">{valueTableError}</p>
+			{/if}
+			<TempleValueTable
+				rows={valueTableRows}
+				editable={temple.preset === 'custom'}
+				onedit={editCell}
+			/>
+			<p class="meta">{VALUE_MARK_LEGEND}</p>
+		</div>
+
 		<div class="setting">
 			<span class="setting-label">Map rules</span>
 			<label class="check">
@@ -386,6 +649,11 @@
 
 		<div class="setting">
 			<span class="setting-label">Strategy profile</span>
+			<p class="meta">
+				Both weights are RELATIVE, in units where the best tier-3 room on the board is worth 9 —
+				not chaos. The app rescales them to whatever that room is worth today, so the same number
+				keeps meaning the same thing when the market moves.
+			</p>
 			<label class="number">
 				<span>Apex score</span>
 				<input
@@ -398,7 +666,9 @@
 						if (v !== null) setProfileField('apexScore', v);
 					}}
 				/>
-				<span class="meta">What the Apex of Atzoatl is worth on its own.</span>
+				<span class="meta">
+					What the Apex of Atzoatl is worth on its own, with the top tier-3 room at 9.
+				</span>
 			</label>
 			<label class="number">
 				<span>Path cost</span>
@@ -413,7 +683,8 @@
 					}}
 				/>
 				<span class="meta">
-					Traversal weight per corridor from the Entrance. 0 for the Doryani rush.
+					Traversal weight per corridor from the Entrance, same units — top tier-3 room = 9. 0 for
+					the Doryani rush.
 				</span>
 			</label>
 			<label class="check">
@@ -725,5 +996,40 @@
 		border: 1px solid var(--color-lab-border);
 		border-radius: 3px;
 		padding: 2px 5px;
+	}
+
+	/* The preset picker and the market line it applies to, on one row. */
+	.preset-head {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.6rem;
+	}
+
+	/* The five rates, one per line so each keeps its unit hint beside it — the
+	   hints are the whole reason a player can set these at all. */
+	.knobs {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		width: 100%;
+	}
+
+	.table-actions {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+
+	/* A refused rate is marked by its border AND by the reason printed beside
+	   it — a colour alone is a mark somebody cannot see. */
+	.number input.refused {
+		border-color: var(--color-lab-red);
+	}
+
+	.cell-error {
+		font-size: 0.7rem;
+		color: var(--color-lab-red);
 	}
 </style>

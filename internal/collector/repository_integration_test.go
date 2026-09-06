@@ -39,7 +39,7 @@ func integrationPool(t *testing.T) *pgxpool.Pool {
 	t.Cleanup(func() { pool.Close() })
 
 	// TimescaleDB guard: verify required hypertables exist before running tests.
-	for _, table := range []string{"gem_snapshots", "currency_snapshots"} {
+	for _, table := range []string{"gem_snapshots", "currency_snapshots", "item_snapshots"} {
 		var exists bool
 		if err := pool.QueryRow(ctx,
 			"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)", table).
@@ -525,5 +525,251 @@ func TestLatestSnapshot_afterInserts(t *testing.T) {
 	}
 	if summary.LastCurrencyTime.Equal(snapTime) && summary.CurrencyCount != 1 {
 		t.Errorf("CurrencyCount = %d, want 1 (when our snapshot is latest)", summary.CurrencyCount)
+	}
+}
+
+// itemSnapshot builds an ItemSnapshot with every stored field populated so a
+// round-trip assertion can catch a crossed column.
+func itemSnapshot(category string, ninjaID int64, name string) ItemSnapshot {
+	return ItemSnapshot{
+		Category:        category,
+		NinjaID:         ninjaID,
+		DetailsID:       "details-" + name,
+		Name:            name,
+		Variant:         "Fire",
+		Links:           6,
+		Chaos:           844.6,
+		Divine:          2.5,
+		Exalted:         361.1,
+		Listings:        2553,
+		SampleCount:     399,
+		StackSize:       10,
+		Icon:            "https://web.poecdn.com/gen/image/" + name + ".png",
+		ItemClass:       5,
+		ItemType:        "Ring",
+		BaseType:        "Chronicle of Atzoatl",
+		LevelRequired:   49,
+		SparklineChange: 40.77,
+	}
+}
+
+// registerItemLeague inserts a second league so league scoping can be asserted
+// against a real neighbour rather than an absence. Registered before the row
+// cleanups it must outlive (t.Cleanup is LIFO).
+func registerItemLeague(t *testing.T, pool *pgxpool.Pool, id string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO leagues (id, display_name, collection_state) VALUES ($1, $1, 'collecting')`, id); err != nil {
+		t.Fatalf("register league %q: %v", id, err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM leagues WHERE id = $1`, id); err != nil {
+			t.Logf("cleanup warning: delete league %q: %v", id, err)
+		}
+	})
+}
+
+// cleanupItemSnapshots removes every item_snapshots row at the given time,
+// across leagues, so a failed assertion cannot leak rows into a later run.
+func cleanupItemSnapshots(t *testing.T, pool *pgxpool.Pool, times ...time.Time) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, tm := range times {
+			if _, err := pool.Exec(context.Background(),
+				"DELETE FROM item_snapshots WHERE time = $1", tm); err != nil {
+				t.Logf("cleanup warning: delete item_snapshots at %v: %v", tm, err)
+			}
+		}
+	})
+}
+
+func TestInsertItemSnapshots_roundTrip(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	snapTime := time.Now().UTC().Truncate(time.Microsecond)
+	cleanupItemSnapshots(t, pool, snapTime)
+
+	want := itemSnapshot("IncursionTemple", 108490, "Locus of Corruption (Tier 3)")
+
+	inserted, err := repo.InsertItemSnapshots(ctx, testScope, snapTime, []ItemSnapshot{want})
+	if err != nil {
+		t.Fatalf("InsertItemSnapshots: %v", err)
+	}
+	if inserted != 1 {
+		t.Fatalf("inserted = %d, want 1", inserted)
+	}
+
+	var got ItemSnapshot
+	err = pool.QueryRow(ctx,
+		`SELECT category, ninja_id, details_id, name, variant, links,
+		        chaos, divine, exalted, listings, sample_count, stack_size,
+		        icon, item_class, item_type, base_type, level_required, sparkline_change
+		 FROM item_snapshots WHERE league = $1 AND time = $2`, testScope.ID(), snapTime,
+	).Scan(&got.Category, &got.NinjaID, &got.DetailsID, &got.Name, &got.Variant, &got.Links,
+		&got.Chaos, &got.Divine, &got.Exalted, &got.Listings, &got.SampleCount, &got.StackSize,
+		&got.Icon, &got.ItemClass, &got.ItemType, &got.BaseType, &got.LevelRequired,
+		&got.SparklineChange)
+	if err != nil {
+		t.Fatalf("read back item snapshot: %v", err)
+	}
+
+	if got != want {
+		t.Errorf("stored row = %+v,\nwant %+v", got, want)
+	}
+}
+
+func TestInsertItemSnapshots_emptyCategoryIsRejected(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	snapTime := time.Now().UTC().Truncate(time.Microsecond)
+	cleanupItemSnapshots(t, pool, snapTime)
+
+	unstamped := itemSnapshot("", 108490, "Locus of Corruption (Tier 3)")
+	stamped := itemSnapshot("Vial", 42, "Sacrifice at Dusk")
+
+	inserted, err := repo.InsertItemSnapshots(ctx, testScope, snapTime, []ItemSnapshot{stamped, unstamped})
+	if err == nil {
+		t.Fatal("expected an error for a snapshot with no category, got nil")
+	}
+	if inserted != 0 {
+		t.Errorf("inserted = %d, want 0", inserted)
+	}
+
+	// The batch must not be half-applied: category is part of the primary key,
+	// so the whole write is refused before any row is queued.
+	var rows int
+	if err := pool.QueryRow(ctx,
+		"SELECT count(*) FROM item_snapshots WHERE time = $1", snapTime).Scan(&rows); err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	if rows != 0 {
+		t.Errorf("stored rows = %d, want 0", rows)
+	}
+}
+
+func TestInsertItemSnapshots_repeatedNinjaIDInOneTickStoresOnce(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	snapTime := time.Now().UTC().Truncate(time.Microsecond)
+	cleanupItemSnapshots(t, pool, snapTime)
+
+	first := itemSnapshot("UniqueAccessory", 7747, "Precursor's Emblem")
+	repeat := itemSnapshot("UniqueAccessory", 7747, "Precursor's Emblem")
+	repeat.Chaos = 1
+
+	inserted, err := repo.InsertItemSnapshots(ctx, testScope, snapTime, []ItemSnapshot{first, repeat})
+	if err != nil {
+		t.Fatalf("InsertItemSnapshots: %v", err)
+	}
+	if inserted != 1 {
+		t.Errorf("inserted = %d, want 1 (the repeat conflicts on the primary key)", inserted)
+	}
+
+	var chaos float64
+	if err := pool.QueryRow(ctx,
+		"SELECT chaos FROM item_snapshots WHERE league = $1 AND time = $2 AND ninja_id = 7747",
+		testScope.ID(), snapTime).Scan(&chaos); err != nil {
+		t.Fatalf("read back stored row: %v", err)
+	}
+	if chaos != first.Chaos {
+		t.Errorf("stored chaos = %v, want %v (the first row wins, the repeat is dropped)", chaos, first.Chaos)
+	}
+}
+
+func TestLastItemSnapshotTime_readsOneCategoryOnly(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	older := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Microsecond)
+	newer := time.Now().UTC().Add(-1 * time.Hour).Truncate(time.Microsecond)
+	cleanupItemSnapshots(t, pool, older, newer)
+
+	if _, err := repo.InsertItemSnapshots(ctx, testScope, older,
+		[]ItemSnapshot{itemSnapshot("IncursionTemple", 108490, "Locus of Corruption (Tier 3)")}); err != nil {
+		t.Fatalf("insert older IncursionTemple tick: %v", err)
+	}
+	if _, err := repo.InsertItemSnapshots(ctx, testScope, newer,
+		[]ItemSnapshot{itemSnapshot("Vial", 42, "Sacrifice at Dusk")}); err != nil {
+		t.Fatalf("insert newer Vial tick: %v", err)
+	}
+
+	// IncursionTemple must report its own older tick, not the table maximum —
+	// otherwise a category that just started collecting would be considered
+	// fresh because a sibling wrote a moment ago.
+	gotTemple, err := repo.LastItemSnapshotTime(ctx, testScope, "IncursionTemple")
+	if err != nil {
+		t.Fatalf("LastItemSnapshotTime IncursionTemple: %v", err)
+	}
+	if !gotTemple.Equal(older) {
+		t.Errorf("IncursionTemple last time = %v, want %v", gotTemple, older)
+	}
+
+	gotVial, err := repo.LastItemSnapshotTime(ctx, testScope, "Vial")
+	if err != nil {
+		t.Fatalf("LastItemSnapshotTime Vial: %v", err)
+	}
+	if !gotVial.Equal(newer) {
+		t.Errorf("Vial last time = %v, want %v", gotVial, newer)
+	}
+}
+
+func TestLastItemSnapshotTime_ignoresAnotherLeaguesRows(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	const otherLeagueID = "POE-254-Other-League"
+	registerItemLeague(t, pool, otherLeagueID)
+	otherScope := league.Historical(otherLeagueID)
+
+	snapTime := time.Now().UTC().Truncate(time.Microsecond)
+	cleanupItemSnapshots(t, pool, snapTime)
+
+	if _, err := repo.InsertItemSnapshots(ctx, otherScope, snapTime,
+		[]ItemSnapshot{itemSnapshot("Vial", 42, "Sacrifice at Dusk")}); err != nil {
+		t.Fatalf("insert into the other league: %v", err)
+	}
+
+	got, err := repo.LastItemSnapshotTime(ctx, testScope, "Vial")
+	if err != nil {
+		t.Fatalf("LastItemSnapshotTime: %v", err)
+	}
+	if !got.IsZero() {
+		t.Errorf("last time = %v, want the zero time — %s has no Vial rows, only %s does",
+			got, testScope.ID(), otherLeagueID)
+	}
+}
+
+func TestInsertItemSnapshots_writesUnderTheGivenLeague(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	const otherLeagueID = "POE-254-Write-League"
+	registerItemLeague(t, pool, otherLeagueID)
+	otherScope := league.Historical(otherLeagueID)
+
+	snapTime := time.Now().UTC().Truncate(time.Microsecond)
+	cleanupItemSnapshots(t, pool, snapTime)
+
+	if _, err := repo.InsertItemSnapshots(ctx, otherScope, snapTime,
+		[]ItemSnapshot{itemSnapshot("UniqueFlask", 900, "Rumi's Concoction")}); err != nil {
+		t.Fatalf("InsertItemSnapshots: %v", err)
+	}
+
+	var storedLeague string
+	if err := pool.QueryRow(ctx,
+		"SELECT league FROM item_snapshots WHERE time = $1 AND ninja_id = 900", snapTime).Scan(&storedLeague); err != nil {
+		t.Fatalf("read back stored league: %v", err)
+	}
+	if storedLeague != otherLeagueID {
+		t.Errorf("stored league = %q, want %q", storedLeague, otherLeagueID)
 	}
 }

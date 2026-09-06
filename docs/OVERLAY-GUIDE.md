@@ -1253,6 +1253,169 @@ touching the named path.
   block it points at actually reads as the pointer at a glance, over the game.
   If it does not, the fix is a product decision about where the column sits, not
   a change to `offerStackPlacement`.
+- **The offer box explains the number, in each of its five states** (POE-260):
+  the box now leads with what the room is WORTH in chaos and shows what makes
+  that number up, so what this item checks is that every state says something
+  true and none of them invents a number. One read per state; the state is
+  visible on the Temple page's value table (`values.ts`'s letter) if a box is
+  ambiguous.
+
+  1. **Priced.** Open a panel on a board with a chest-unique line — Crucible of
+     Flame, Toxic Grove, Sanctum of Immortality, Hybridisation Chamber, Conduit
+     of Lightning or Defense Research Lab. The box must show a chaos figure with
+     `per run` beside it, up to three ICON rows under it, each with the item's
+     own price and its per-run count (`×0.25` for the unique, `×2` for the
+     gloves, and a per-LINE vial count since POE-262, printed to two
+     significant digits — `×0.1` on Crucible, Conduit and Sanctum, `×0.06` on
+     Hybridisation Chamber, `×0.048` on Defense Research Lab, `×0.012` on
+     Toxic Grove), the
+     `+6% quant · +12% rarity` line, and — on those six lines, and NOT on Locus
+     of Corruption — an `UPGRADE RECIPE` row of three icons with prices. Icons
+     that render as a `?` mean the server's `/api/gem-icon/<name>` did not answer
+     for that poe.ninja name; check one by hand before assuming the row is wrong.
+     The row prices are the ITEM's, not the term's: `Story of the Vaal 68c
+     ×0.25` is right and `17c` is the bug.
+  2. **Partial.** A board where the feed carries no line for one of the items —
+     the vials are the usual case. The unpriced row must keep its icon and read
+     `no price`, never `0c` and never be missing, and the headline number must
+     carry a `floor · N unpriced` chip in place of `per run`.
+  3. **Fallback.** Force it by starting the app with no network (or point the
+     server URL at nothing) and opening a panel. Both boxes must show
+     `grade <letter>` with an `F` mark instead of a chaos figure, every row price
+     must be an em dash `—`, and the age line must read
+     `prices unavailable — base values`. A chaos number on a board with no market
+     is the failure this state exists to make impossible.
+
+     **Then the other half, which is the POE-258 correction**: with a PRICED
+     board still on screen, flip the DEBUG/PROD toggle. The Temple page's Reader
+     row must go to `prices unavailable — base values` within the click — that
+     row reads `pollMarket`, the latest poll — while the standing board's boxes
+     keep their chaos figures AND keep their own `prices N min old` line, because
+     those numbers really were priced against that read. A box that flips to
+     `prices unavailable` over chaos figures it is still showing, or a Reader row
+     that stays priced after the switch, means the two `MarketView` fields have
+     been crossed again. Re-read (or take the next incursion) and both must land
+     on base values together.
+  4. **Stale.** Hardest to force deliberately — leave the app running against a
+     server whose temple recompute has stopped for over two hours, or check it
+     opportunistically. What to expect is the FALLBACK box with one extra line,
+     not the priced box with a warning on it: ADR-022's rule 3 turns the whole
+     valuation on `MarketInput::prices_anything()`, a stale read is not live, so
+     every room comes back with the single cold-ladder driver. So the box must
+     read `grade <letter>` with an `F` mark and no chaos figure, carry NO driver
+     rows and no quant/rarity line, show an em dash for each recipe price — and
+     the age line, in yellow, must read `prices stale (<N> h) — base values`,
+     which is the one thing that tells this state from state 3. The dotted
+     yellow underline sits on whatever the value slot carries, which here is the
+     grade.
+
+     **The line goes stale on the CLOCK, not on a republish** (POE-258's M1
+     correction): `view.ts::marketStale` judges the read's own `asOf` against
+     the published `staleAfterMs`, so a board left on screen crosses two hours
+     by itself. Watch one over the line if you can: the age line must flip from
+     `prices 1 h old` to `prices stale (2 h)` with nothing having been
+     republished behind it, and the box's dotted yellow underline must appear on
+     the same tick. A line that stays `prices 2 h old` means the wording is back
+     on the wire's `stale` flag.
+
+     **And that clock-aged line carries NO `— base values` suffix**, which is
+     the one wording difference between this case and the paragraph above. The
+     suffix is a claim about the NUMBERS, not about the age: it says they came
+     off the cold grade ladder. A board the clock aged after the fact is still
+     showing real prices that have merely gone old, so `prices stale (2 h)` is
+     the whole truth about it and `— base values` would be false — the numbers
+     become base values at the NEXT read, which is the read that will actually
+     take the cold branch. So the two forms to tell apart on screen:
+     `grade <letter>` + `F` + `prices stale (N h) — base values` is the read that
+     was already too old when it was valued; chaos figures + driver rows +
+     `prices stale (N h)` is the read that has aged under the player. A suffix
+     over chaos figures, or a missing suffix over an `F` box, is the regression.
+
+     **The box gets SHORTER when the board goes stale** — about 197 px against
+     the priced form's 316 — because the cold ladder wiped its terms. That is
+     the expected form and not a regression; the regression is a chaos figure,
+     a driver row or a `per run` surviving into it, which would be the box
+     justifying its number with prices the ranking refused to use.
+
+     **316 and 358 are two different budgets and neither is wrong.** 316 is
+     `DIAGONAL_BUDGET_CSS` — what the panel's own diagonal has room for once the
+     column is staggered — and it happens to equal the design's typical priced
+     box, which is how the two got conflated. 358 is `FULL_BOX_MAX_CSS`, the
+     tallest a full box can actually be: the same box plus the scale note and
+     the fold, the two rows a tier-1 or tier-2 kill on a four-term room adds.
+     `offersCompact` budgets the PAIR against 358, never against 316.
+  5. **Compact.** Force it by making the room below the first architect block
+     too small for the pair — run the game WINDOWED at roughly 720 px tall, or
+     find a board whose first block sits low. BOTH boxes must collapse together
+     to the icons-and-prices strip with one foot line; one full box beside one
+     compact box is the regression, because the two then read as two different
+     kinds of answer.
+
+  **And the blink must be gone.** Watch either box for three unbroken minutes on
+  a live board. It must NOT flicker as the age line rolls from `prices 12 min
+  old` to `13 min old` — that was POE-258's accepted defect and POE-260's fixed
+  box width is what ends it. A flicker on the minute means something text-shaped
+  is back in `offerBoxSignature`.
+
+  **Owner judgement, not arithmetic**: whether the box is still readable at arm's
+  length over a game now that it carries icons and four more lines, and whether
+  the pick's cyan frame still wins the eye against them. If it does not, the fix
+  is a product decision about what the box drops, not a change to the geometry.
+- **The vials-per-run knob moves the Temple page's totals** (POE-262): on the
+  Temple page pick **Custom** and find Glittering Halls' row in the value table.
+  The table prints CELL TOTALS and no per-driver rows, so this is where the knob
+  is read as a number rather than as a line. Note the tier-3 cell at the
+  shipped `0.1`, set **Vials per run** to `0.2`, and the cell must DOUBLE its
+  vial half; set it to `0` and it must fall to `15.00`, the 60 % rarity bonus
+  alone and the one figure here that does not move with the market. On the
+  committed capture (Vial of Transcendence at 428 c) the three read `86.33`,
+  `158` — 157.67, and cells at 100 c and up print whole — and `15.00`; a live
+  vial price moves the first two and not the third. Factory's tier-3 cell must
+  not move at any of the three — it names no vial. `NaN` or a negative value must be refused in place with the
+  field marked, and the table must stay on screen. Then set it back to `0.1`.
+- **The same knob on the offer box, where the vial line itself is visible**
+  (POE-262): with the value above set, open a live board on a tier-3 Glittering
+  Halls offer. The `Vial of Transcendence` row's per-run cell reads `×0.17` at
+  `0.1` and `×0.33` at `0.2` — two significant digits, not the raw
+  `×0.16666666666666666` — and its chaos figure doubles with it while the
+  `+…% rarity` line below does not move. At `0` the row must still be LISTED,
+  reading no chaos, rather than vanishing: a missing row would say the room
+  rolls for no vial at all.
+- **The value table sorts, and a re-sort moves nothing else** (POE-263): on a
+  profile that has never set the sort (or after clearing the
+  `templeValueTableSort` pref), the Temple page's table must OPEN with Locus of
+  Corruption first and Doryani's Institute second — tier 3, biggest first, the
+  default sort. Click **Tier 3**: the order flips to cheapest first and the
+  header's arrow with it. Click **Room line**: A→Z, and the arrow moves to that
+  header — not the direction that was on Tier 3. Click **Grade**: A++ first, and
+  the check that matters is that `B-` sits between `C+` and `B`, NOT below `D` —
+  a grade off the ladder is what a typographic minus in `GRADES` looks like.
+  Reach all three headers by TAB alone and fire one with Enter; a screen reader
+  must announce the sorted column as ascending or descending. Then close the app,
+  reopen it, and the table must come back on the sort you left it on. **Nothing a
+  sort does may change a number**: note Locus's tier-3 cell before the first
+  click and check it is the same figure, with the same provenance letter, after
+  the third.
+- **Tiers 1-2 collapse, and a hand-priced hidden tier is still visible**
+  (POE-263): with the checkbox above the table clear, the table must be three
+  columns (Room line, Grade, Tier 3) and the BOX must be narrower than the card
+  rather than stretched across it. Tick **Tiers 1-2** and the two columns
+  appear; the pick must survive a restart like the sort. Then pick **Custom**,
+  type a number into a tier-1 cell, and collapse the tiers again: the row's
+  tier-3 cell must carry a small `•` after its provenance letter, and hovering
+  it must read `tier 1: <your number> c, tier 2: —`. A missing dot is the
+  regression this item exists for — a number the player typed that the app then
+  shows nowhere.
+- **An edit does not move the row out from under the cursor** (POE-263): under
+  **Custom** with the table sorted on Tier 3, click into a tier-3 cell in the
+  middle of the list, type a large number — 9999 — and press **Enter while
+  staying in the cell** (this fires `change` → `onedit` → the write echo arrives
+  with the new total). The row must stay where it is. Then **Tab out**: on the
+  next snapshot (≤ 3 s) the row must jump to the top. A row that climbs before
+  you leave the cell, or that never jumps once you have, means the held order is
+  being re-derived on the wrong signal. In the same pass, mistype a cell
+  (`abc`), leave it, and click a header: the red mark and its reason must still
+  be on THAT cell and no other.
 - **The waiting notice, from Alva's start line to the sheet** (POE-249): with the
   temple module on and the game focused, click Alva and open the incursion
   portal WITHOUT opening the layout sheet. `app.log` must carry
@@ -1415,6 +1578,27 @@ touching the named path.
   door already bought, every pair may be RV-excluded, or RU may have declined the
   second key outright — the Temple page's reasons for the top recommendation are
   where to look before filing it.
+- **The recommended exit carries the next room's name** (POE-261): with a kill
+  ranked and a door to open, the bright purple seal has the name of the room
+  behind it beside it, level with the mark and running INWARD across the shape —
+  and nothing else on the widget is labelled, the faint seal included. Check the
+  name against the Temple page's own plate for that corridor's far end: it must
+  be that plate's name at the tier the page shows, not the line's tier-3 room.
+  **An unread plate behind the door draws NO name** (`unknown rooms` on the
+  Temple page names the slot): a name there would be a guess, and the seal is
+  the instruction either way. And the label must not push the shape down or the
+  warning line off the box — it is pinned inside the shape's own box and costs
+  no height, so a widget that grew taller when the name appeared is the
+  regression (its shipped rectangle is what `doorDefaultPlacement` cleared the
+  read regions with).
+  **The wrapped name has to stay readable, and has to stay out of the way** —
+  the half only a build can answer. Force the worst case if the board offers it
+  (`Breach Containment Chamber` is the longest name in the vocabulary, and at
+  the shipped widget width it wraps to two lines): every word must read against
+  the room's own fill and the game behind it, and neither line may sit on top of
+  the purple seal it belongs to or on either cyan kill glyph. A name that
+  swallows its own mark has replaced the instruction with a caption, and the
+  answer is the widget's width or the text's halo, not dropping the label.
 - **The unchosen kill is drawn faint** (POE-248): with both architect blocks read,
   the widget carries TWO cyan glyphs — the advisor's at full strength, the other
   block's at about a quarter, at the opposite icon spot and with its OWN shape

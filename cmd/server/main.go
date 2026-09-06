@@ -28,6 +28,7 @@ import (
 	"profitofexile/internal/mercure"
 	"profitofexile/internal/server"
 	"profitofexile/internal/server/handlers"
+	"profitofexile/internal/temple"
 	"profitofexile/internal/trade"
 )
 
@@ -300,6 +301,14 @@ func main() {
 	exchangeRepo := exchange.NewRepository(pool)
 	exchangeCache := exchange.NewCache()
 
+	// Temple market: the read side of item_snapshots (POE-255). Its own
+	// repository, cache and recompute service for the same reason the exchange
+	// has its own (ADR-008) — separate tables, separate collector endpoints,
+	// separate Mercure topics — and its own cache type rather than a field on
+	// labCache because a different event fills it.
+	templeCache := temple.NewCache(scope)
+	templeService := temple.NewService(temple.NewRepository(pool), templeCache, scope, slog.Default())
+
 	// Ranking knobs are overridable per deploy. Unlike the TRADE_* fallbacks
 	// above, an unusable value here is logged loudly rather than swallowed: a
 	// typo in a threshold silently changes which plays users are shown, with no
@@ -517,6 +526,7 @@ func main() {
 		LayoutRepo:           layoutRepo,
 		LabCache:             labCache,
 		ExchangeCache:        exchangeCache,
+		TempleCache:          templeCache,
 		MercureSubscriberKey: os.Getenv("MERCURE_SUBSCRIBER_KEY"),
 		MercurePublicURL:     os.Getenv("MERCURE_PUBLIC_URL"),
 		TradeGate:            tradeGate,
@@ -633,6 +643,11 @@ func main() {
 	// waiting for the collector's next stored hour, which can be minutes away.
 	// Trigger logs its own failures and never blocks serving.
 	go exchangeService.Trigger(ctx)
+	// Same reason for the temple market: it is held in memory only, so a restart
+	// leaves it COLD until something recomputes it. Rebuild at boot rather than
+	// waiting for the next stored item tick, which is up to a poe.ninja cache
+	// cycle away. Trigger logs its own failures and never blocks serving.
+	go templeService.Trigger(ctx)
 	// Delayed recompute timer — fires 15min after the last ninja_gems event
 	// so that the v2 pipeline picks up trade data accumulated since the snapshot.
 	// Protected by a mutex since the timer callback and Mercure handler run on
@@ -662,6 +677,11 @@ func main() {
 			"poe/admin/recompute",      // operator-triggered full recompute
 			exchange.Topic,             // collector stored a currency-exchange hour
 		}
+		// The seven poe.ninja item-overview topics (POE-254), which the temple
+		// market is recomputed from. They come from internal/temple rather than
+		// being spelled out here so the subscription and the read side cannot
+		// name different topics.
+		topics = append(topics, temple.Topics()...)
 		mercureSubKey := os.Getenv("MERCURE_SUBSCRIBER_KEY")
 		// One-shot warning for misconfigured deploys where the collector is
 		// publishing trade-ticks but the server has trade disabled. Repeated
@@ -781,6 +801,17 @@ func main() {
 					}
 					slog.Info("fragment event: offering timing updated", "offerings", n)
 				}()
+			}
+
+			// One of the seven item feeds stored a snapshot. Recomputes coalesce
+			// (temple.Service.Trigger), so the seven events that land within
+			// seconds of each other cost two bounded queries rather than seven,
+			// and the served answer is the one computed after the last of them.
+			// Parent ctx like the branches above, so a recompute survives a
+			// subscriber reconnect mid-run.
+			if temple.IsFeedEndpoint(endpoint) {
+				go templeService.HandleEvent(ctx, []byte(ev.Data))
+				return
 			}
 
 			if endpoint == "ninja_gems" || endpoint == "ninja-gems" {

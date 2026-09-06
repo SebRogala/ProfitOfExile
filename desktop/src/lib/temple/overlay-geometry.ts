@@ -1,6 +1,6 @@
 /**
  * Where the temple's overlay surfaces go, and what shape the room widget draws
- * (POE-244, POE-248, POE-249).
+ * (POE-244, POE-248, POE-249, POE-261).
  *
  * The sibling of `view.ts`: that file words the advice, this one places it. Both
  * exist because a `.svelte` file has no unit-test harness in this app and an
@@ -30,7 +30,14 @@
  */
 import { avoidRects } from '$lib/overlay/widgets/widget-avoid';
 import type { HostSize, WidgetRect } from '$lib/overlay/widgets/widget-geometry';
-import type { CaptureRect, DiamondView, EdgeId, LayoutView, SlotId } from './slice';
+import type {
+	CaptureRect,
+	DiamondView,
+	EdgeId,
+	ExitLabelView,
+	LayoutView,
+	SlotId
+} from './slice';
 import { edgeState, type EdgeState } from './view';
 
 /** Gap between a placed box and the thing it is placed against, CSS px. */
@@ -250,6 +257,122 @@ export function offerStackPlacement(input: {
 }
 
 /**
+ * What the panel's own DIAGONAL has room for, CSS px (POE-260 design §1).
+ *
+ * MEASURED: on the committed 1920x1080 frame the staggered strip — the column
+ * plus [`STACK_STAGGER_CSS`] — is clear only down to y 449, where plate C0's
+ * crop begins, and the design sizes against a first architect block at y 133.
+ * 449 - 133 is the whole of it.
+ *
+ * This is an ASSUMPTION about the board and not a ceiling on the box: a box
+ * taller than this still draws every line it has, and `offerStackPlacement`
+ * gives up the diagonal for it (slides it back onto the column) rather than
+ * dropping content. So it is not what [`offersCompact`] budgets against —
+ * [`FULL_BOX_MAX_CSS`] is — and the two are kept apart because the design's
+ * priced form happens to be exactly 316 px, which is how they were conflated
+ * in the first place.
+ */
+export const DIAGONAL_BUDGET_CSS = 316;
+
+/**
+ * The tallest a FULL offer box can actually be, CSS px (POE-260).
+ *
+ * Summed from `TempleOfferBoxes.svelte`'s own fixed row heights — every row in
+ * the full form is a `height` or a `line-height` with a stated margin, which is
+ * what makes a box's geometry a function of its SHAPE — for the worst case the
+ * wording can produce: a `market` or `partial` box on the advisor's pick, so a
+ * 2 px frame, with the value row, a scale note, three driver rows, a fold line,
+ * a bonus line, a recipe, a rating, a reason and the age line.
+ *
+ *     border 2x2 4 + padding 2x8 16 + headline 20 + builds 17
+ *     + value (8 + 28) 36 + scale (6 + 15) 21 + drivers (8 + 3x26 + 2x6) 98
+ *     + fold (6 + 15) 21 + bonus (6 + 15) 21 + recipe (8 + 13, 2 + 24) 47
+ *     + rating (8 + 14) 22 + reason (2 + 14) 16 + age (6 + 13) 19 = 358
+ *
+ * The design's 316 is that same box WITHOUT the scale note and the fold, which
+ * are the two rows a tier-1 or tier-2 kill on a four-term room adds — a shape
+ * the wording produces on ordinary boards, so it is the one the pair has to be
+ * budgeted for. `note` is not in the sum and cannot be: `valuation.rs` gives an
+ * instrumental and an overridden room exactly ONE driver, of a kind that is not
+ * a row, so the line that says "valued at its letter" is only ever on a box
+ * with no rows, no fold and no bonus.
+ *
+ * Not measured from the DOM because this app has no DOM harness for a
+ * `.svelte` file; `overlay-geometry.test.ts` restates the row table beside the
+ * constant so a row added to the component without a number here fails.
+ */
+export const FULL_BOX_MAX_CSS = 358;
+
+/** What two FULL boxes and the gap between them need, CSS px — the clearance
+ *  [`offersCompact`] demands before it lets the pair render full. Off the
+ *  WORST case rather than the design's typical one, because the box that gets
+ *  clamped for want of it is the LOWER one, and a clamped box lands on the box
+ *  above it and is then moved or dropped entirely. */
+export const FULL_PAIR_CSS = FULL_BOX_MAX_CSS * 2 + STACK_GAP_CSS;
+
+/**
+ * More driver rows than folding one line can honestly hide (POE-260 design
+ * §7.1).
+ *
+ * At four rows the fold hides one and shows three, which is a summary; at six
+ * it hides three and shows three, which is not. The cap sits one row below that
+ * crossing, so five — hiding two under three — is the last shape that still
+ * reads as a summary.
+ *
+ * **Unreachable as the wording stands**, and kept anyway. `view.ts`'s
+ * `ROW_KINDS` has four entries — sale, unique drop, vial drop, mod item — and a
+ * room publishes at most one driver of each, so `driverCount` cannot exceed 4
+ * today and this trigger never fires. It fires the day a fifth `ROW_KIND` is
+ * added, which is the day the fold would start hiding as much as it shows; a
+ * collapse rule that only appeared then would be a rule written under the
+ * pressure of the feature that broke it.
+ */
+export const MAX_FOLDABLE_DRIVERS = 5;
+
+/**
+ * Whether the pair of offer boxes draws in its COMPACT form (POE-260).
+ *
+ * Both tests read inputs that exist BEFORE the boxes render. Neither may read a
+ * measured height: the component measures and then places, so a fit test on the
+ * measured height would change the height it was testing and oscillate for as
+ * long as the board is up.
+ *
+ * Two triggers, and they are different kinds of "does not fit":
+ *
+ * 1. **Too many drivers to fold.** More than [`MAX_FOLDABLE_DRIVERS`] rows on
+ *    ANY box and the pair goes compact — the fold line would be hiding more
+ *    than the rows it sits under show.
+ * 2. **Not enough screen under the first block.** The stack starts level with
+ *    block 0 (or, with no block rect, at the panel crop's top, or at
+ *    [`BANNER_TOP_CSS`]) and grows downward, so what is left of the host below
+ *    that point is the whole budget. Under [`FULL_PAIR_CSS`] the pair cannot
+ *    both be full.
+ *
+ * **Together, never one each.** Two boxes in different forms read as two
+ * different kinds of answer, and the whole point of the pair is that the player
+ * is comparing them.
+ *
+ * Explicitly NOT a trigger: whether the staggered box clears the first plate.
+ * `offerStackPlacement` already answers that by sliding the box back onto the
+ * column, and its answer keeps every line of content — the diagonal is what
+ * gives there, not the explanation.
+ */
+export function offersCompact(input: {
+	/** Every box's driver-row count, in box order (`OfferBox.driverCount`). */
+	driverCounts: readonly number[];
+	/** Each offer's block rect in CSS px, `blocks[i]` for box `i`. */
+	blocks: readonly (WidgetRect | null)[];
+	/** The side panel's OCR crop in CSS px. */
+	panel: WidgetRect | null;
+	host: HostSize;
+}): boolean {
+	const { driverCounts, blocks, panel, host } = input;
+	if (driverCounts.some((count) => count > MAX_FOLDABLE_DRIVERS)) return true;
+	const top = blocks[0]?.y ?? panel?.y ?? BANNER_TOP_CSS;
+	return host.height - top < FULL_PAIR_CSS;
+}
+
+/**
  * Where the door diamond sits until the user drags it.
  *
  * Below the panel's crop and lined up with the panel's own diamond, which is
@@ -455,6 +578,41 @@ const SEAL_RADII: Record<SealKind, number> = {
 	suggested: SEAL_RADIUS_SUGGESTED
 };
 
+/**
+ * Where the recommended exit's NAME is drawn, as percentages of the shape's own
+ * box (POE-261).
+ *
+ * Percentages and not pixels, and out of the widget's flow: the label is pinned
+ * inside the `<svg>`'s own box, so it moves with the seal when the widget is
+ * resized and it costs the widget NO height. That second half is what keeps
+ * ADR-019 answered without re-measuring anything — the room widget's shipped
+ * rectangle is what [`doorDefaultPlacement`] clears the read regions with, and
+ * a label that added a line under the shape would grow the drawn box past the
+ * rectangle that clearance was computed for.
+ *
+ * The text runs from the seal toward the room's INTERIOR, never outward: pinned
+ * to the far side of the box, so `inset` + `width` is exactly 100 and the
+ * label's span is the box from the mark's inner rim to that far edge. It
+ * therefore cannot leave the widget's footprint whatever the name is — which is
+ * the whole reason the placement is stated in these terms and not as a width in
+ * characters.
+ */
+export interface ExitLabelPlacement {
+	/** Which side of the box the label is pinned to — the CSS property the
+	 *  widget sets. Always the side OPPOSITE the seal. */
+	side: 'left' | 'right';
+	/** How far that pinned edge sits from its side of the box, as a percentage
+	 *  of the box's width. It clears the seal by one [`SEAL_RADIUS_SUGGESTED`],
+	 *  so the text starts at the mark's inner rim rather than under it. */
+	inset: number;
+	/** The seal's own height in the box, as a percentage. The label is centred
+	 *  on it, so the name sits level with the mark it belongs to. */
+	top: number;
+	/** How much of the box's width is left between the seal and the far edge —
+	 *  the label's `max-width`, as a percentage. */
+	width: number;
+}
+
 /** The diamond as an SVG can draw it. */
 export interface DiamondGeometry {
 	/** `"x,y x,y x,y x,y"` for a `<polygon points=…>`. */
@@ -471,6 +629,60 @@ export interface DiamondGeometry {
 	 *  stylesheet would be a second answer that silently letterboxes the shape
 	 *  the first time either moves. */
 	aspectRatio: number;
+	/** Where the recommended exit's name goes, or null when there is no name to
+	 *  draw — see [`ExitLabelPlacement`]. Null too when the named door is not a
+	 *  seal this shape drew SUGGESTED, which is what makes *"only the solid
+	 *  purple exit is labelled"* a property of the geometry rather than of the
+	 *  markup. */
+	exitLabel: ExitLabelPlacement | null;
+}
+
+/**
+ * The name's place on the shape, or null (POE-261).
+ *
+ * Two gates, and both are refusals rather than fallbacks:
+ *
+ * 1. **No name.** Rust published none — the move opens no door, or the plate
+ *    behind it did not resolve (`slice.rs::recommended_exit` owns every reason,
+ *    and `view.ts::recommendedExit` is the reader). Nothing here invents one.
+ * 2. **The named door is not the solid purple seal.** The label belongs to the
+ *    seal the ranking made `suggested`; a name landing on a plain corridor or
+ *    on the faint second-stone seal would be an instruction the advisor never
+ *    gave. Matching on the door rather than trusting the order is what makes
+ *    ONE label the shape's own guarantee.
+ */
+function exitLabelPlacement(
+	seals: readonly PlacedSeal[],
+	frame: { x: number; y: number; w: number; h: number },
+	exit: ExitLabelView | null
+): ExitLabelPlacement | null {
+	if (exit === null) return null;
+	const seal = seals.find((s) => s.edge === exit.door && s.kind === 'suggested');
+	if (seal === undefined) return null;
+	// The frame is the corners' bounding box grown by the SAME margin on all
+	// four sides, so its 50 % is the room's own centre and this comparison is
+	// "which half of the room is this door on".
+	const x = ((seal.x - frame.x) / frame.w) * 100;
+	const side = x > 50 ? 'right' : 'left';
+	// The text starts at the mark's INNER RIM, not at its centre: a label pinned
+	// to the seal's own point begins under the seal, and the biggest circle the
+	// widget draws is the one it would begin under. One suggested radius of
+	// clearance is the smallest offset that cannot do that, and it is taken from
+	// [`SEAL_RADIUS_SUGGESTED`] rather than written as a number so a resized seal
+	// moves the text with it.
+	//
+	// It buys the clearance out of the label's own room — `inset` gains it and
+	// `width` gives it up — so `inset` + `width` is still exactly 100 and the
+	// label still ends at the far edge. The footprint claim is unchanged; what
+	// changed is where the span STARTS.
+	const clear = (SEAL_RADIUS_SUGGESTED / frame.w) * 100;
+	const near = side === 'right' ? 100 - x : x;
+	return {
+		side,
+		inset: near + clear,
+		top: ((seal.y - frame.y) / frame.h) * 100,
+		width: 100 - near - clear
+	};
 }
 
 /**
@@ -494,7 +706,8 @@ export function diamondGeometry(
 	diamond: DiamondView,
 	layout: LayoutView | null,
 	suggested: readonly EdgeId[],
-	secondary: EdgeId | null = null
+	secondary: EdgeId | null = null,
+	exit: ExitLabelView | null = null
 ): DiamondGeometry {
 	const xs = diamond.corners.map(([x]) => x);
 	const ys = diamond.corners.map(([, y]) => y);
@@ -503,29 +716,31 @@ export function diamondGeometry(
 	const minY = Math.min(...ys) - margin;
 	const width = Math.max(...xs) + margin - minX;
 	const height = Math.max(...ys) + margin - minY;
+	const seals: PlacedSeal[] = diamond.seals.map((seal) => {
+		// `suggested` wins a corridor that is somehow in both: it is the door
+		// to open NOW, and drawing it as the conditional one would tell the
+		// player to wait for a stone they do not need.
+		const kind: SealKind = suggested.includes(seal.edge)
+			? 'suggested'
+			: seal.edge === secondary
+				? 'secondary'
+				: 'plain';
+		return {
+			edge: seal.edge,
+			neighbour: seal.neighbour,
+			x: seal.pos[0],
+			y: seal.pos[1],
+			radius: SEAL_RADII[kind],
+			state: edgeState(seal.edge, layout),
+			kind
+		};
+	});
 	return {
 		aspectRatio: width / height,
 		outline: diamond.corners.map(([x, y]) => `${x},${y}`).join(' '),
-		seals: diamond.seals.map((seal) => {
-			// `suggested` wins a corridor that is somehow in both: it is the
-			// door to open NOW, and drawing it as the conditional one would
-			// tell the player to wait for a stone they do not need.
-			const kind: SealKind = suggested.includes(seal.edge)
-				? 'suggested'
-				: seal.edge === secondary
-					? 'secondary'
-					: 'plain';
-			return {
-				edge: seal.edge,
-				neighbour: seal.neighbour,
-				x: seal.pos[0],
-				y: seal.pos[1],
-				radius: SEAL_RADII[kind],
-				state: edgeState(seal.edge, layout),
-				kind
-			};
-		}),
-		viewBox: `${minX} ${minY} ${width} ${height}`
+		seals,
+		viewBox: `${minX} ${minY} ${width} ${height}`,
+		exitLabel: exitLabelPlacement(seals, { x: minX, y: minY, w: width, h: height }, exit)
 	};
 }
 

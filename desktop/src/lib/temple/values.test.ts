@@ -1,0 +1,969 @@
+import { describe, it, expect } from 'vitest';
+import {
+	KNOBS,
+	PRESET_NOTE,
+	PRESET_OPTIONS,
+	TIERS,
+	VALUE_MARK_LEGEND,
+	copyValuesInto,
+	formatChaos,
+	formatCount,
+	markTitle,
+	overrideCount,
+	overrideOf,
+	parseCell,
+	parseKnob,
+	parsePreset,
+	valueMark,
+	valueRows,
+	valueTableKey,
+	withCell,
+	withoutOverrides,
+	DEFAULT_TIERS_MODE,
+	DEFAULT_VALUE_SORT,
+	gradeRank,
+	hiddenOverrideTitle,
+	nextValueSort,
+	orderRows,
+	parseTiersMode,
+	parseValueSort,
+	serializeValueSort,
+	sortValueRows,
+	type ValueMark,
+	type ValueRow
+} from './values';
+import type { MarketView, RoomValueView, TempleCustom, TempleValueRow } from './slice';
+
+/** A cell as Rust publishes one. Every field is overridable so a test states
+ *  only the one it is about. */
+function value(over: Partial<RoomValueView> = {}): RoomValueView {
+	return {
+		total: 846,
+		priced: 'market',
+		guessed: false,
+		league: 'Allflame',
+		asOf: 1_788_665_199_649,
+		scaledFromTier3: null,
+		drivers: [],
+		...over
+	};
+}
+
+/** One line's three tiers, tier 1 first, as `temple_value_table` returns them. */
+function row(key: string, name: string, tiers: Partial<RoomValueView>[]): TempleValueRow {
+	return {
+		key,
+		name,
+		grade: 'A++',
+		tiers: [value(tiers[0]), value(tiers[1]), value(tiers[2])]
+	};
+}
+
+/** A live, fully priced market read, as the slice publishes one. */
+function market(over: Partial<MarketView> = {}): MarketView {
+	return {
+		asOf: 1_788_665_199_649,
+		stale: false,
+		staleAfterMs: 2 * 60 * 60 * 1000,
+		unavailable: false,
+		...over
+	};
+}
+
+/** The shipped rates and no overrides — `TempleCustomSettings::default`. */
+function custom(over: Partial<TempleCustom> = {}): TempleCustom {
+	return {
+		tierFraction: 0.8,
+		cPerQuantity: 0.5,
+		cPerRarity: 0.25,
+		vialsPerRun: 0.1,
+		dropsWeight: 1,
+		comboPremium: 0,
+		rooms: {},
+		...over
+	};
+}
+
+describe('valueMark', () => {
+	it('marks a fully priced sum as measured', () => {
+		expect(valueMark(value({ priced: 'market', guessed: false }))).toBe('M');
+	});
+
+	it('marks a fully priced sum that rests on an estimate as guessed', () => {
+		// Same `priced`, opposite `guessed` — so the letter really is reading
+		// both fields and not just the first.
+		expect(valueMark(value({ priced: 'market', guessed: true }))).toBe('G');
+	});
+
+	it('marks an incomplete sum as partial even when nothing in it is guessed', () => {
+		// P outranks G by design: an undercount is a worse thing to know about
+		// a number than an estimate. Fails if the precedence is inverted.
+		expect(valueMark(value({ priced: 'partial', guessed: false }))).toBe('P');
+		expect(valueMark(value({ priced: 'partial', guessed: true }))).toBe('P');
+	});
+
+	it('marks a grade-ladder value as a fallback whichever way `guessed` reads', () => {
+		// A cold rung reads guessed:false and a live one true (ADR-022 §3). A
+		// cell that flipped F to G as the market came and went would be
+		// describing the market, not the number.
+		expect(valueMark(value({ priced: 'fallback', guessed: false }))).toBe('F');
+		expect(valueMark(value({ priced: 'fallback', guessed: true }))).toBe('F');
+	});
+
+	it('marks an instrumental line as instrumental, not as a fallback', () => {
+		// No price is MISSING for these two — summing is the wrong question —
+		// so collapsing them into F would tell the player to go looking for a
+		// price that was never owed.
+		expect(valueMark(value({ priced: 'instrumental', guessed: true }))).toBe('I');
+	});
+
+	it("marks the player's own number as theirs, above every other provenance", () => {
+		// An override replaces the formula outright, so nothing else about the
+		// cell is news. Fails if `priced` is read in the wrong order.
+		expect(valueMark(value({ priced: 'override', guessed: true }))).toBe('O');
+	});
+});
+
+describe('markTitle', () => {
+	it('states an estimate the letter could not carry', () => {
+		// P won the letter, so `guessed` would otherwise be lost entirely.
+		expect(markTitle(value({ priced: 'partial', guessed: true }))).toContain(
+			'rests on an estimate'
+		);
+	});
+
+	it('does not repeat the estimate when the letter already says it', () => {
+		// `G`'s own label already reads "rests on an estimate", so an
+		// unconditional second clause would print it twice in one title.
+		const title = markTitle(value({ priced: 'market', guessed: true }));
+
+		expect(title.split('rests on an estimate')).toHaveLength(2);
+	});
+
+	it('names the tier-3 total a scaled row came from', () => {
+		expect(markTitle(value({ total: 676.8, scaledFromTier3: 846 }))).toContain('846');
+	});
+
+	it('names the league the prices came from', () => {
+		expect(markTitle(value({ league: 'Mirage' }))).toContain('Mirage');
+	});
+
+	it('says nothing about a league on a cold read', () => {
+		// `league` is "" with nothing priced; "priced in " would be a claim
+		// about a market that was never read.
+		expect(markTitle(value({ league: '' }))).not.toContain('priced in');
+	});
+});
+
+describe('VALUE_MARK_LEGEND', () => {
+	it('spells out every letter the table can print', () => {
+		// The letters are the whole accessibility story — they are what a
+		// colour cannot carry — so a mark with no legend entry is a mark
+		// nobody can read. Fails if a `ValueMark` is added without one.
+		const marks: ValueMark[] = ['M', 'G', 'P', 'F', 'I', 'O'];
+		for (const mark of marks) expect(VALUE_MARK_LEGEND).toContain(`${mark} = `);
+	});
+});
+
+describe('valueRows', () => {
+	const rows = [
+		row('corruption', 'Locus of Corruption', [
+			{ total: 676.8, scaledFromTier3: 846 },
+			{ total: 676.8, scaledFromTier3: 846 },
+			{ total: 846 }
+		]),
+		row('gem', 'Doryani’s Institute', [
+			{ total: 312, scaledFromTier3: 390, priced: 'partial' },
+			{ total: 312, scaledFromTier3: 390, priced: 'partial' },
+			{ total: 390, priced: 'partial' }
+		])
+	];
+
+	it('derives one cell per tier for every line the table states', () => {
+		const derived = valueRows(rows, null);
+
+		expect(derived).toHaveLength(rows.length);
+		expect(derived.map((r) => r.cells.map((c) => c.tier))).toEqual([
+			[1, 2, 3],
+			[1, 2, 3]
+		]);
+	});
+
+	it('reads each cell off its own tier rather than off the row', () => {
+		// The three cells carry three different numbers, so a projection that
+		// indexed the wrong tier would show tier 1 at the tier-3 price.
+		expect(valueRows(rows, null)[0].cells.map((c) => c.total)).toEqual([676.8, 676.8, 846]);
+	});
+
+	it('carries the line name and grade through for the row heading', () => {
+		expect(valueRows(rows, null)[0]).toMatchObject({
+			key: 'corruption',
+			name: 'Locus of Corruption',
+			grade: 'A++'
+		});
+	});
+
+	it('marks each cell from its own provenance', () => {
+		const derived = valueRows(rows, null);
+
+		expect(derived[0].cells.map((c) => c.mark)).toEqual(['M', 'M', 'M']);
+		expect(derived[1].cells.map((c) => c.mark)).toEqual(['P', 'P', 'P']);
+	});
+
+	it('reports no override under Default, which states none', () => {
+		expect(valueRows(rows, null).flatMap((r) => r.cells.map((c) => c.override))).toEqual([
+			null,
+			null,
+			null,
+			null,
+			null,
+			null
+		]);
+	});
+
+	it("reports the Custom table's own number on the cell that states one", () => {
+		const table = custom({ rooms: { corruption: [null, null, 500] } });
+
+		const derived = valueRows(rows, table);
+
+		expect(derived[0].cells.map((c) => c.override)).toEqual([null, null, 500]);
+		expect(derived[1].cells.map((c) => c.override)).toEqual([null, null, null]);
+	});
+
+	it('shows the total the preset produced, not the override, as the value', () => {
+		// The two are the same number once Rust has been told, and different
+		// while an edit is in flight. The cell must show what is IN FORCE —
+		// a table that echoed the typed number would claim a write landed
+		// before it did.
+		const table = custom({ rooms: { corruption: [null, null, 12] } });
+
+		expect(valueRows(rows, table)[0].cells[2].total).toBe(846);
+	});
+});
+
+describe('overrideOf', () => {
+	it('answers null for a line the table does not name', () => {
+		expect(overrideOf(custom(), 'corruption', 3)).toBeNull();
+	});
+
+	it("answers the tier's own slot, tier 1 first", () => {
+		const table = custom({ rooms: { corruption: [7, null, 500] } });
+
+		expect(overrideOf(table, 'corruption', 1)).toBe(7);
+		expect(overrideOf(table, 'corruption', 2)).toBeNull();
+		expect(overrideOf(table, 'corruption', 3)).toBe(500);
+	});
+
+	it('answers 0 rather than null for a room priced at nothing', () => {
+		// "This room is worth nothing to me" is a position a rusher holds, and
+		// `?? null` on a stored 0 would silently put it back on the formula.
+		expect(overrideOf(custom({ rooms: { gem: [null, null, 0] } }), 'gem', 3)).toBe(0);
+	});
+});
+
+describe('parseCell', () => {
+	it('reads an empty box as "use the formula", not as zero', () => {
+		// `Number('')` is 0, which is exactly how the two would collapse.
+		expect(parseCell('')).toEqual({ kind: 'clear' });
+		expect(parseCell('   ')).toEqual({ kind: 'clear' });
+	});
+
+	it('reads a typed zero as the position it is', () => {
+		expect(parseCell('0')).toEqual({ kind: 'value', chaos: 0 });
+	});
+
+	it('reads a chaos amount', () => {
+		expect(parseCell('12.5')).toEqual({ kind: 'value', chaos: 12.5 });
+	});
+
+	it('refuses text rather than storing NaN', () => {
+		// One NaN in the table makes the whole ranking's float ordering
+		// arbitrary, and `settings.json` cannot even represent it.
+		expect(parseCell('quite a lot')).toEqual({ kind: 'invalid', reason: 'not a number' });
+	});
+
+	it('refuses a negative amount, which is not a chaos value', () => {
+		expect(parseCell('-5')).toEqual({ kind: 'invalid', reason: 'not a chaos amount' });
+	});
+
+	it('refuses an infinity', () => {
+		expect(parseCell('Infinity').kind).toBe('invalid');
+	});
+});
+
+describe('parseKnob', () => {
+	const dropsWeight = KNOBS.find((k) => k.field === 'dropsWeight')!;
+	const tierFraction = KNOBS.find((k) => k.field === 'tierFraction')!;
+
+	it('reads the rusher’s zero drops weight', () => {
+		expect(parseKnob('0', dropsWeight)).toEqual({ kind: 'value', chaos: 0 });
+	});
+
+	it('refuses an empty rate instead of clearing it', () => {
+		// A rate has no "use the formula" state — the formula IS the rate — so
+		// a blank box is a half-typed number and not an instruction.
+		expect(parseKnob('', dropsWeight).kind).toBe('invalid');
+	});
+
+	it('refuses a tier fraction above 1 rather than letting Rust clamp it', () => {
+		// `valuation::tier_fraction` caps at 1, so a stored 2.5 would show a
+		// number the app never applies.
+		expect(parseKnob('2.5', tierFraction)).toEqual({ kind: 'invalid', reason: 'at most 1' });
+	});
+
+	it('accepts the fraction’s own ceiling', () => {
+		expect(parseKnob('1', tierFraction)).toEqual({ kind: 'value', chaos: 1 });
+	});
+
+	it('does not cap a knob that has no ceiling', () => {
+		expect(parseKnob('2.5', dropsWeight)).toEqual({ kind: 'value', chaos: 2.5 });
+	});
+});
+
+describe('withCell', () => {
+	it('states a number for a line the table had never named', () => {
+		const next = withCell(custom(), 'corruption', 3, 500);
+
+		expect(next.rooms).toEqual({ corruption: [null, null, 500] });
+	});
+
+	it('leaves the other two tiers of the row alone', () => {
+		const table = custom({ rooms: { corruption: [7, null, 500] } });
+
+		expect(withCell(table, 'corruption', 2, 9).rooms.corruption).toEqual([7, 9, 500]);
+	});
+
+	it('leaves the rates alone', () => {
+		// The cell editor and the rate editor are separate controls; a cell
+		// write that reset the rusher's drops weight would undo his one
+		// setting behind his back.
+		const table = custom({ dropsWeight: 0 });
+
+		expect(withCell(table, 'gem', 3, 1).dropsWeight).toBe(0);
+	});
+
+	it('does not mutate the table it was given', () => {
+		// The caller's copy is the slice's own echo; mutating it would show a
+		// value the command has not accepted yet.
+		const table = custom({ rooms: { corruption: [null, null, 500] } });
+
+		withCell(table, 'corruption', 3, 1);
+
+		expect(table.rooms.corruption).toEqual([null, null, 500]);
+	});
+
+	it('drops the row entirely once its last tier is cleared', () => {
+		// Rust ignores an all-null row, so keeping it would write a line
+		// claiming an opinion the player has just withdrawn.
+		const table = custom({ rooms: { corruption: [null, null, 500] } });
+
+		expect(withCell(table, 'corruption', 3, null).rooms).toEqual({});
+	});
+
+	it('keeps the row when clearing one tier of several', () => {
+		const table = custom({ rooms: { corruption: [7, null, 500] } });
+
+		expect(withCell(table, 'corruption', 3, null).rooms).toEqual({ corruption: [7, null, null] });
+	});
+});
+
+describe('copyValuesInto', () => {
+	const rows = [
+		row('corruption', 'Locus of Corruption', [{ total: 676.8 }, { total: 676.8 }, { total: 846 }])
+	];
+
+	it('states every tier of every line the table valued', () => {
+		expect(copyValuesInto(custom(), rows).rooms).toEqual({ corruption: [676.8, 676.8, 846] });
+	});
+
+	it('leaves the rates alone', () => {
+		// The button copies VALUES. Resetting the drops weight with them would
+		// undo the one setting a rusher came for.
+		expect(copyValuesInto(custom({ dropsWeight: 0 }), rows).dropsWeight).toBe(0);
+	});
+
+	it('replaces whatever the table said before, rather than merging', () => {
+		const table = custom({ rooms: { gem: [null, null, 1] } });
+
+		expect(copyValuesInto(table, rows).rooms.gem).toBeUndefined();
+	});
+});
+
+describe('withoutOverrides', () => {
+	it('puts every room back on the formula', () => {
+		const table = custom({ rooms: { corruption: [null, null, 500] } });
+
+		expect(withoutOverrides(table).rooms).toEqual({});
+	});
+
+	it('leaves the rates alone', () => {
+		expect(withoutOverrides(custom({ dropsWeight: 0 })).dropsWeight).toBe(0);
+	});
+});
+
+describe('overrideCount', () => {
+	it('counts stated tiers, not rows', () => {
+		const table = custom({ rooms: { corruption: [7, null, 500], gem: [null, null, 0] } });
+
+		expect(overrideCount(table)).toBe(3);
+	});
+
+	it('counts a zero, which is a stated number', () => {
+		expect(overrideCount(custom({ rooms: { gem: [null, null, 0] } }))).toBe(1);
+	});
+
+	it('counts nothing on a table that states nothing', () => {
+		expect(overrideCount(custom())).toBe(0);
+	});
+});
+
+describe('formatChaos', () => {
+	it('keeps two decimals on a small value, where they are the difference', () => {
+		expect(formatChaos(6.0)).toBe('6.00');
+	});
+
+	it('rounds a three-figure value, where they are noise', () => {
+		expect(formatChaos(676.8)).toBe('677');
+	});
+
+	// POE-262: a room nothing priced is a fraction of the cheapest room
+	// something priced, so a low rung is a sub-chaos figure and two decimals
+	// would round it to 0.01 or to a flat 0.00. Fails if the sub-1 c band is
+	// dropped back to `toFixed(2)`.
+	it('keeps two significant digits under a chaos, where two decimals would round the rung away', () => {
+		expect(formatChaos(0.015)).toBe('0.015');
+	});
+
+	it('keeps a rung four decimals deep visible rather than printing it as zero', () => {
+		expect(formatChaos(0.0051)).toBe('0.0051');
+	});
+
+	// The boundary itself: 1 c is the first value the two-decimal band owns.
+	it('takes two decimals at one chaos', () => {
+		expect(formatChaos(1)).toBe('1.00');
+	});
+
+	// A stated zero is not a rounded-away rung, and reads as the zero it is.
+	it('prints a value stated at nothing as a plain zero', () => {
+		expect(formatChaos(0)).toBe('0.00');
+	});
+
+	// Two significant digits would print 0.999 as `1.0`, a third format in a
+	// column that has only ever had two. Fails if the two-decimal band starts
+	// at 1 rather than at 0.995.
+	it('keeps the two-decimal form for a value that rounds up to one chaos', () => {
+		expect(formatChaos(0.999)).toBe('1.00');
+	});
+
+	// Two significant digits go EXPONENTIAL below 1e-6, and a table cell
+	// reading `1.0e-7` is not a price. Fails if the literal band is dropped.
+	it('prints a rung too small to write as under a ten-thousandth, not in exponent form', () => {
+		expect(formatChaos(1e-7)).toBe('<0.0001');
+	});
+
+	// The boundary the literal band does NOT own: 0.0001 is still written out.
+	// Fails if the comparison becomes `<=`.
+	it('still writes out a ten-thousandth of a chaos', () => {
+		expect(formatChaos(0.0001)).toBe('0.00010');
+	});
+});
+
+describe('formatCount', () => {
+	// The architect's two gloves per run, the one whole count the shipped table
+	// states. Fails if the trim is dropped: `toPrecision(2)` renders it `2.0`,
+	// which reads as a price rather than as two items.
+	it('prints a whole count whole', () => {
+		expect(formatCount(2)).toBe('2');
+	});
+
+	// The counterpart: a fraction nobody would read as a whole number keeps
+	// both its digits.
+	it('keeps both digits of a quarter', () => {
+		expect(formatCount(0.25)).toBe('0.25');
+	});
+
+	// The anchor rate itself, and the one that shows the trim doing work:
+	// `toPrecision(2)` renders a tenth as `0.10`, a form no other count in the
+	// list takes. Fails if the trailing-zero trim is dropped.
+	it('trims the trailing zero off the anchor rate', () => {
+		expect(formatCount(0.1)).toBe('0.1');
+	});
+
+	// Glittering Halls' derived rate, 0.1 x 2815/1689. Fails if the count is
+	// interpolated raw — `0.16666666666666666` — and fails on `toFixed(2)`,
+	// which would print `0.17` here but `0.00` four rows down.
+	it('rounds a derived rate to two significant digits', () => {
+		expect(formatCount(0.1 * (2815 / 1689))).toBe('0.17');
+	});
+
+	// Hybridisation Chamber, 0.1 x 1005/1689: `0.060` before the trim.
+	it('trims a derived rate that lands on a trailing zero', () => {
+		expect(formatCount(0.1 * (1005 / 1689))).toBe('0.06');
+	});
+
+	// Defense Research Lab (0.1 x 804/1689) and Toxic Grove (0.1 x 201/1689):
+	// two and three decimals deep, and both still two significant digits.
+	// Fails on `toFixed(2)`, which prints them as `0.05` and `0.01`.
+	it('keeps two significant digits on the rates two and three decimals deep', () => {
+		expect(formatCount(0.1 * (804 / 1689))).toBe('0.048');
+		expect(formatCount(0.1 * (201 / 1689))).toBe('0.012');
+	});
+
+	// Locus of Corruption and Throne of Atziri, 0.1 x 20/1689 — the smallest
+	// rate in the table. Fails on `toFixed(2)`, which prints `0.00` and says
+	// the room rolls for no vial at all.
+	it('keeps the smallest rate in the table visible rather than printing it as zero', () => {
+		expect(formatCount(0.1 * (20 / 1689))).toBe('0.0012');
+	});
+
+	// A `vialsPerRun` of 0 leaves the row listed with the count it now has, so
+	// zero is a value this reaches. Fails if zero falls into the `<0.0001`
+	// band — the room would read as rolling for a vial the player just priced
+	// at nothing — and fails if the trim is dropped (`0.0`).
+	it('prints a count zeroed by the knob as a plain zero', () => {
+		expect(formatCount(0)).toBe('0');
+	});
+
+	// `toPrecision(2)` prints 19.6 as `20`, so a blanket trailing-zero strip
+	// would return `2` — an order of magnitude, silently. Reachable: the knob
+	// has no maximum, and at a `vialsPerRun` of 11.76 Glittering Halls' count
+	// is 19.6. Fails if the trim stops being confined to a fraction.
+	it('does not trim a zero out of a whole-number rounding', () => {
+		expect(formatCount(19.6)).toBe('20');
+	});
+
+	// `toPrecision(2)` goes exponential the moment two significant digits
+	// cannot hold the integer part. Fails if the round-whole band is dropped:
+	// `1.7e+2` in a `x` cell. The knob has no maximum, so this is reachable.
+	it('rounds a count too large for two significant digits rather than printing an exponent', () => {
+		expect(formatCount(166.66)).toBe('167');
+	});
+
+	// The other end of the same rule, and the same claim `formatChaos` makes:
+	// the room does roll for the item. Fails if the literal band is dropped.
+	it('prints a count too small to write as under a ten-thousandth', () => {
+		expect(formatCount(1.2e-7)).toBe('<0.0001');
+	});
+});
+
+describe('TIERS', () => {
+	it('is the three tiers a room line has, tier 1 first', () => {
+		expect(TIERS).toEqual([1, 2, 3]);
+	});
+});
+
+describe('parsePreset', () => {
+	it('narrows the two wire strings the picker can report', () => {
+		expect(parsePreset('default')).toBe('default');
+		expect(parsePreset('custom')).toBe('custom');
+	});
+
+	it('refuses anything else rather than handing Rust a third variant', () => {
+		// The dropped Basic preset is the concrete case: a stale option in the
+		// list would otherwise reach a Rust enum that has no branch for it.
+		expect(parsePreset('basic')).toBeNull();
+		expect(parsePreset('Custom')).toBeNull();
+	});
+});
+
+describe('valueTableKey', () => {
+	it('holds still across a poll that changed nothing', () => {
+		// The key's whole job. The slice is whole-replaced every three
+		// seconds, so a key that moved with the poll would re-fetch 75 values
+		// on a timer.
+		expect(valueTableKey('custom', market(), custom())).toBe(
+			valueTableKey('custom', market(), custom())
+		);
+	});
+
+	it('moves when a read that kept its timestamp stopped pricing anything', () => {
+		// The stale transition: `asOf` is published on a stale read as well as
+		// a live one, so nothing but `unavailable` says that every room just
+		// dropped onto the base ladder. Fails if the flag leaves the key —
+		// the board would re-value while the editor kept showing the market
+		// numbers and their letters.
+		const priced = valueTableKey('custom', market(), custom());
+		const onBaseValues = valueTableKey('custom', market({ unavailable: true }), custom());
+
+		expect(onBaseValues).not.toBe(priced);
+	});
+
+	it('moves when an already-unpriced read crosses two hours', () => {
+		// The one way `stale` rises without `unavailable` rising with it: a
+		// read the floor made unusable, ageing past the window afterwards.
+		const fresh = valueTableKey('custom', market({ unavailable: true }), custom());
+		const aged = valueTableKey('custom', market({ unavailable: true, stale: true }), custom());
+
+		expect(aged).not.toBe(fresh);
+	});
+
+	it('moves when the server observed new prices', () => {
+		const before = valueTableKey('custom', market(), custom());
+		const after = valueTableKey('custom', market({ asOf: 1_788_665_299_649 }), custom());
+
+		expect(after).not.toBe(before);
+	});
+
+	it('moves when the preset in force changes', () => {
+		expect(valueTableKey('custom', market(), custom())).not.toBe(
+			valueTableKey('default', market(), custom())
+		);
+	});
+
+	it('moves when the Custom table states a different number', () => {
+		// Under Default the table changes no value on screen, but the fetch is
+		// keyed on it either way: the alternative is a key that has to know
+		// which preset reads which field.
+		const before = valueTableKey('custom', market(), custom());
+		const after = valueTableKey(
+			'custom',
+			market(),
+			custom({ rooms: { corruption: [null, null, 1234] } })
+		);
+
+		expect(after).not.toBe(before);
+	});
+
+	it('moves when a rate changes, not only when a room does', () => {
+		// A rate re-prices every room the table does not name, which is most
+		// of the board. Fails if the key digests `rooms` alone.
+		const before = valueTableKey('custom', market(), custom());
+		const after = valueTableKey('custom', market(), custom({ dropsWeight: 0 }));
+
+		expect(after).not.toBe(before);
+	});
+});
+
+describe('PRESET_OPTIONS', () => {
+	it('offers the two presets and no third', () => {
+		expect(PRESET_OPTIONS.map((o) => o.value)).toEqual(['default', 'custom']);
+	});
+
+	it('gives each preset a line saying where its numbers come from', () => {
+		for (const option of PRESET_OPTIONS) expect(PRESET_NOTE[option.value].length).toBeGreaterThan(0);
+	});
+});
+
+describe('KNOBS', () => {
+	it('names all six rates the Custom preset carries', () => {
+		// One missing spec is one rate with no control, which is a setting the
+		// player can only reach by hand-editing settings.json. `vialsPerRun`
+		// arrived with POE-262 and sits beside the other two guessed rates.
+		expect(KNOBS.map((k) => k.field)).toEqual([
+			'tierFraction',
+			'cPerQuantity',
+			'cPerRarity',
+			'vialsPerRun',
+			'dropsWeight',
+			'comboPremium'
+		]);
+	});
+
+	it('gives every rate a unit hint, because none of them is self-evident', () => {
+		for (const knob of KNOBS) expect(knob.hint.length).toBeGreaterThan(0);
+	});
+});
+
+/** A `ValueRow` as the table holds one (POE-263). Tiers 1 and 2 sit at the
+ *  shipped 0.8 of tier 3, which is what the sort must ignore: only the tier-3
+ *  column is a sort key. */
+function vrow(
+	name: string,
+	grade: string,
+	tier3: number,
+	overrides: (number | null)[] = [null, null, null]
+): ValueRow {
+	return {
+		key: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+		name,
+		grade,
+		cells: TIERS.map((tier) => ({
+			tier,
+			total: tier === 3 ? tier3 : tier3 * 0.8,
+			mark: 'M' as ValueMark,
+			title: '',
+			override: overrides[tier - 1]
+		}))
+	};
+}
+
+describe('GRADES', () => {
+	it('carries every letter Rust prints, in the wire form it prints it', () => {
+		// `rooms::Grade::as_str` writes an ASCII hyphen. A typographic minus
+		// here would put every B- and C- room off the ladder at rank -1, below
+		// D, and the grade column would be quietly wrong for six of the 25
+		// lines rather than visibly broken.
+		for (const grade of ['D', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A', 'A+', 'A++']) {
+			expect(gradeRank(grade)).toBeGreaterThanOrEqual(0);
+		}
+	});
+
+	it('ranks a letter it does not know below every letter it does', () => {
+		expect(gradeRank('S')).toBeLessThan(gradeRank('D'));
+	});
+});
+
+describe('sortValueRows', () => {
+	it('puts the most valuable tier-3 room first in desc', () => {
+		const sorted = sortValueRows(
+			[vrow('Chamber of Iron', 'C', 1.86), vrow('Locus of Corruption', 'A++', 856)],
+			'tier3',
+			'desc'
+		);
+
+		expect(sorted.map((r) => r.name)).toEqual(['Locus of Corruption', 'Chamber of Iron']);
+	});
+
+	it('puts the cheapest tier-3 room first in asc', () => {
+		const sorted = sortValueRows(
+			[vrow('Locus of Corruption', 'A++', 856), vrow('Chamber of Iron', 'C', 1.86)],
+			'tier3',
+			'asc'
+		);
+
+		expect(sorted.map((r) => r.name)).toEqual(['Chamber of Iron', 'Locus of Corruption']);
+	});
+
+	it('reads the tier-3 cell and not a tier the fraction produced', () => {
+		// A comparator on `cells[0]` would order these two the same way, so the
+		// cheaper room carries a HAND-PRICED tier 1 that outvalues the other's
+		// tier 3. Only reading tier 3 keeps Locus on top.
+		const cheap = vrow('Sadist’s Den', 'C', 10);
+		cheap.cells[0].total = 5000;
+		const sorted = sortValueRows([cheap, vrow('Locus of Corruption', 'A++', 856)], 'tier3', 'desc');
+
+		expect(sorted.map((r) => r.name)).toEqual(['Locus of Corruption', 'Sadist’s Den']);
+	});
+
+	it('reads the room column A to Z in asc', () => {
+		const sorted = sortValueRows(
+			[vrow('Toxic Grove', 'C', 2.65), vrow('Apex of Ascension', 'B-', 0.07)],
+			'room',
+			'asc'
+		);
+
+		expect(sorted.map((r) => r.name)).toEqual(['Apex of Ascension', 'Toxic Grove']);
+	});
+
+	it('reads the room column Z to A in desc', () => {
+		const sorted = sortValueRows(
+			[vrow('Apex of Ascension', 'B-', 0.07), vrow('Toxic Grove', 'C', 2.65)],
+			'room',
+			'desc'
+		);
+
+		expect(sorted.map((r) => r.name)).toEqual(['Toxic Grove', 'Apex of Ascension']);
+	});
+
+	it('ranks grades on the ladder rather than on their letters in desc', () => {
+		// The letters do not collate: sorted as strings, descending, these four
+		// come out B-, B, A++, A+. The ladder is the whole reason `GRADES`
+		// exists.
+		const sorted = sortValueRows(
+			[
+				vrow('Bath', 'B', 1),
+				vrow('Apex', 'B-', 1),
+				vrow('Doryani', 'A+', 1),
+				vrow('Locus', 'A++', 1)
+			],
+			'grade',
+			'desc'
+		);
+
+		expect(sorted.map((r) => r.grade)).toEqual(['A++', 'A+', 'B', 'B-']);
+	});
+
+	it('ranks grades worst first in asc', () => {
+		const sorted = sortValueRows(
+			[vrow('Locus', 'A++', 1), vrow('Apex', 'B-', 1), vrow('Bath', 'B', 1)],
+			'grade',
+			'asc'
+		);
+
+		expect(sorted.map((r) => r.grade)).toEqual(['B-', 'B', 'A++']);
+	});
+
+	it('breaks a tie on the room name ascending, even under desc', () => {
+		// The tie-break is there to make the order the same on every re-sort,
+		// not to be part of what the header asked for. Flipping it with the
+		// direction would move two equal rows past each other for no stated
+		// reason.
+		const sorted = sortValueRows(
+			[vrow('Chamber', 'C', 100), vrow('Apex', 'C', 100), vrow('Bath', 'C', 100)],
+			'tier3',
+			'desc'
+		);
+
+		expect(sorted.map((r) => r.name)).toEqual(['Apex', 'Bath', 'Chamber']);
+	});
+
+	it('leaves the array it was handed in the order it arrived', () => {
+		// The caller holds the SSOT's own rows. Sorting in place would reorder
+		// the snapshot every other reader of it is looking at.
+		const rows = [vrow('Chamber of Iron', 'C', 1.86), vrow('Locus of Corruption', 'A++', 856)];
+
+		sortValueRows(rows, 'tier3', 'desc');
+
+		expect(rows.map((r) => r.name)).toEqual(['Chamber of Iron', 'Locus of Corruption']);
+	});
+});
+
+describe('DEFAULT_VALUE_SORT', () => {
+	it('opens the table on tier 3 with the board’s two priced rooms on top', () => {
+		// The committed capture's own numbers: Locus of Corruption quoted at
+		// 856 c and Doryani's Institute quoted at 400 c (tier-3 totals 846.51 /
+		// 390) are the only two rooms above the 10 c floor (ADR-022 §3), so an
+		// opening order that does not lead with them
+		// is one the player has to fix by hand every launch.
+		const sorted = sortValueRows(
+			[
+				vrow('Chamber of Iron', 'C', 1.86),
+				vrow('Doryani’s Institute', 'A+', 400),
+				vrow('Locus of Corruption', 'A++', 856)
+			],
+			DEFAULT_VALUE_SORT.key,
+			DEFAULT_VALUE_SORT.direction
+		);
+
+		expect(sorted.map((r) => r.name)).toEqual([
+			'Locus of Corruption',
+			'Doryani’s Institute',
+			'Chamber of Iron'
+		]);
+	});
+});
+
+describe('nextValueSort', () => {
+	it('flips the direction when the sorted column is clicked again', () => {
+		expect(nextValueSort({ key: 'tier3', direction: 'desc' }, 'tier3')).toEqual({
+			key: 'tier3',
+			direction: 'asc'
+		});
+	});
+
+	it('opens the room column ascending rather than inheriting the old direction', () => {
+		expect(nextValueSort({ key: 'tier3', direction: 'desc' }, 'room')).toEqual({
+			key: 'room',
+			direction: 'asc'
+		});
+	});
+
+	it('opens the grade column at the best grade', () => {
+		expect(nextValueSort({ key: 'room', direction: 'asc' }, 'grade')).toEqual({
+			key: 'grade',
+			direction: 'desc'
+		});
+	});
+
+	it('opens the tier-3 column at the most valuable room', () => {
+		expect(nextValueSort({ key: 'room', direction: 'asc' }, 'tier3')).toEqual({
+			key: 'tier3',
+			direction: 'desc'
+		});
+	});
+});
+
+describe('parseValueSort', () => {
+	it('writes and reads the exact wire form stored in settings.json', () => {
+		// The round-trip test below would still pass if serialize and parse
+		// agreed on a DIFFERENT separator — it only checks the two against each
+		// other. Pinning the literal is what catches a change to the wire form
+		// itself: swap the `:` for a `|` and a profile upgraded from a build
+		// that wrote `"tier3:desc"` reads a string neither parser recognises,
+		// so ADR-013 quietly resets everyone's sort on upgrade.
+		expect(serializeValueSort({ key: 'tier3', direction: 'desc' })).toBe('tier3:desc');
+		expect(parseValueSort('tier3:desc')).toEqual({ key: 'tier3', direction: 'desc' });
+	});
+
+	it('reads back every sort it writes', () => {
+		// The pair is what survives a restart (ADR-013). A serialize the parser
+		// does not accept is a table that silently reopens on the default.
+		for (const key of ['room', 'grade', 'tier3'] as const) {
+			for (const direction of ['asc', 'desc'] as const) {
+				const sort = { key, direction };
+				expect(parseValueSort(serializeValueSort(sort))).toEqual(sort);
+			}
+		}
+	});
+
+	it('falls back to the default on a column this build does not have', () => {
+		expect(parseValueSort('tier1:desc')).toEqual(DEFAULT_VALUE_SORT);
+	});
+
+	it('falls back to the default on a direction this build does not have', () => {
+		expect(parseValueSort('tier3:sideways')).toEqual(DEFAULT_VALUE_SORT);
+	});
+
+	it('falls back to the default on a value that is not a pair at all', () => {
+		expect(parseValueSort('')).toEqual(DEFAULT_VALUE_SORT);
+	});
+});
+
+describe('parseTiersMode', () => {
+	it('reads a stored “all” as both hidden tiers shown', () => {
+		expect(parseTiersMode('all')).toBe('all');
+	});
+
+	it('falls back to tier 3 alone on anything else', () => {
+		expect(parseTiersMode('tiers-1-2')).toBe(DEFAULT_TIERS_MODE);
+		expect(DEFAULT_TIERS_MODE).toBe('tier3');
+	});
+});
+
+describe('orderRows', () => {
+	it('holds the order while the row objects underneath are replaced', () => {
+		// The SSOT hands over a fresh array every three seconds. The order is
+		// the reader's; the numbers are the poll's.
+		const held = ['locus-of-corruption', 'chamber-of-iron'];
+		const fresh = [vrow('Chamber of Iron', 'C', 2.1), vrow('Locus of Corruption', 'A++', 900)];
+
+		expect(orderRows(fresh, held).map((r) => [r.name, r.cells[2].total])).toEqual([
+			['Locus of Corruption', 900],
+			['Chamber of Iron', 2.1]
+		]);
+	});
+
+	it('drops a key no row answers rather than leaving a hole', () => {
+		const rows = [vrow('Chamber of Iron', 'C', 1.86)];
+
+		expect(orderRows(rows, ['gone', 'chamber-of-iron']).map((r) => r.name)).toEqual([
+			'Chamber of Iron'
+		]);
+	});
+
+	it('keeps a row the held order does not name rather than losing it', () => {
+		const rows = [vrow('Chamber of Iron', 'C', 1.86), vrow('Toxic Grove', 'C', 2.65)];
+
+		expect(orderRows(rows, ['toxic-grove']).map((r) => r.name)).toEqual([
+			'Toxic Grove',
+			'Chamber of Iron'
+		]);
+	});
+});
+
+describe('hiddenOverrideTitle', () => {
+	it('lists both hidden tiers when one of them is priced by hand', () => {
+		// Collapsed, tiers 1 and 2 are off screen. A number the player typed
+		// that the table then shows nowhere is the one thing it must not do.
+		expect(hiddenOverrideTitle(vrow('Locus of Corruption', 'A++', 856, [500, null, null]))).toBe(
+			'tier 1: 500 c, tier 2: —'
+		);
+	});
+
+	it('says nothing when neither hidden tier is priced by hand', () => {
+		expect(hiddenOverrideTitle(vrow('Locus of Corruption', 'A++', 856))).toBeNull();
+	});
+
+	it('says nothing when only tier 3 is priced by hand, since tier 3 is on screen', () => {
+		expect(hiddenOverrideTitle(vrow('Locus of Corruption', 'A++', 856, [null, null, 900]))).toBeNull();
+	});
+
+	it('prints a hidden override the way the cell it stands for would', () => {
+		// `formatChaos` and not `toFixed(2)`: a sub-chaos override rendered as
+		// `0.00` reads as zero, which is what POE-262's significant-digit band
+		// exists to prevent.
+		expect(hiddenOverrideTitle(vrow('Sadist’s Den', 'C', 10, [null, 0.015, null]))).toBe(
+			'tier 1: —, tier 2: 0.015 c'
+		);
+	});
+});

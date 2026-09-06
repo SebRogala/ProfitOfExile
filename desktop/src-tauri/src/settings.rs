@@ -127,6 +127,30 @@ pub struct Settings {
     /// camelCase inside — see `temple_profile`.
     #[serde(default)]
     pub temple_config: crate::temple::strategy::TempleConfig,
+    /// Which room valuation is in force — `"default"` or `"custom"`
+    /// (POE-257). Absent means Default.
+    ///
+    /// Container-level `#[serde(default)]` covers the absent-field case;
+    /// `Salvaged` covers a present-but-wrong one, for the reason
+    /// `modules_or_default` exists — and remembers that it did, so
+    /// `apply_to_state` can say so out loud.
+    #[serde(default)]
+    pub temple_preset: Salvaged<crate::temple::preset::Preset>,
+    /// The Custom valuation's rates and per-room chaos overrides. camelCase
+    /// inside — see `temple_profile`.
+    ///
+    /// A SEPARATE field from `temple_preset` on purpose: the table has to
+    /// survive periods of not being the preset in force, or switching to
+    /// Default and back would hand the player an empty table. It is also the
+    /// one temple block whose bad entries do NOT reject the whole field —
+    /// see `apply_to_state`.
+    ///
+    /// Container-level `#[serde(default)]` covers the absent-field case;
+    /// `Salvaged` covers a present-but-wrong one, for the reason
+    /// `modules_or_default` exists — and remembers that it did, so
+    /// `apply_to_state` can say so out loud.
+    #[serde(default)]
+    pub temple_custom: Salvaged<crate::temple::preset::TempleCustomSettings>,
     /// The guides taking NO part in the merc verdict (POE-199).
     ///
     /// A TYPED field rather than a `ui_prefs` entry, and deliberately against
@@ -460,6 +484,88 @@ where
         .collect())
 }
 
+/// A settings block that may have been SALVAGED: the file held a value this
+/// build cannot read, so the default stands in and the fact is remembered.
+///
+/// # Why the salvage exists at all
+///
+/// `Settings` deserialises as a unit, so one wrong-typed entry inside a block
+/// — `"rooms": {"gem": "a lot"}` in a hand-edited file, a shape a later build
+/// writes — fails the WHOLE file, `load` falls back to `Settings::default()`,
+/// and every unrelated preference the user ever set (server URL, capture
+/// regions, overlay layout) is silently reset. `modules_or_default` was
+/// written for exactly that, and the two temple blocks are the other
+/// schema-shaped areas a hand edit can reach.
+///
+/// # Why it is a type and not a `log::warn!`
+///
+/// `log::` is unreachable in a shipped build — `load`'s own invalid-file arm
+/// says so and routes its message to `crate::app_log` instead. A salvage that
+/// only warned through `log::` would be invisible to the user whose table just
+/// disappeared. The flag rides on the value so `apply_to_state` can put a line
+/// in `rejected`, which is where every other refused setting is reported and
+/// what the app log prints. A thread-local or a global would have done the
+/// same job and coupled the deserialize to the apply by timing rather than by
+/// data.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Salvaged<T> {
+    value: T,
+    salvaged: bool,
+}
+
+impl<T> Salvaged<T> {
+    /// A value that came from somewhere other than the file — `from_state`,
+    /// `Settings::default` — and so was never at risk of being salvaged.
+    pub fn new(value: T) -> Salvaged<T> {
+        Salvaged {
+            value,
+            salvaged: false,
+        }
+    }
+
+    /// Whether the file's own value was refused and this default stood in.
+    pub fn was_salvaged(&self) -> bool {
+        self.salvaged
+    }
+}
+
+impl<T> std::ops::Deref for Salvaged<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.value
+    }
+}
+
+/// The wrapper is invisible on the wire: what is written back is the value.
+impl<T: Serialize> Serialize for Salvaged<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.value.serialize(serializer)
+    }
+}
+
+impl<'de, T: serde::de::DeserializeOwned + Default> Deserialize<'de> for Salvaged<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Settings are JSON only, so the value is always representable; taking
+        // it as a `Value` first is what makes the salvage possible at all — a
+        // failed typed deserialize has already consumed the deserializer.
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        match serde_json::from_value(raw) {
+            Ok(value) => Ok(Salvaged {
+                value,
+                salvaged: false,
+            }),
+            Err(e) => {
+                log::warn!("settings: a block did not parse ({e}) — using its defaults");
+                Ok(Salvaged {
+                    value: T::default(),
+                    salvaged: true,
+                })
+            }
+        }
+    }
+}
+
 fn default_lab_mode() -> String {
     "Normal".to_string()
 }
@@ -543,6 +649,8 @@ impl Default for Settings {
             modules: std::collections::HashMap::new(),
             temple_profile: Default::default(),
             temple_config: Default::default(),
+            temple_preset: Salvaged::new(Default::default()),
+            temple_custom: Salvaged::new(Default::default()),
             // `None`, not the empty list: never written is what the one-time
             // migration from the `mercSourcesOff` preference keys on.
             merc_sources_off: None,
@@ -720,6 +828,8 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         // hand-edited file readable and lets one bad field default on its own.
         temple_profile: temple.profile,
         temple_config: temple.config,
+        temple_preset: Salvaged::new(temple.preset),
+        temple_custom: Salvaged::new(temple.custom),
         // Written from the owner, so the first save after the migration turns
         // the `None` that keeps re-reading the old preference into a real
         // value — which is what ends the migration.
@@ -916,6 +1026,7 @@ mod tests {
             merc_template_generation: AtomicU64::new(0),
             temple: Mutex::new(crate::temple::slice::TempleSlice::default()),
             temple_settings: Mutex::new(crate::temple::slice::TempleSettings::default()),
+            temple_market: Mutex::new(crate::temple::market::MarketInput::none()),
             temple_arm: Mutex::new(crate::temple::trigger::ArmState::default()),
             temple_rearm: AtomicU64::new(0),
             temple_epoch: AtomicU64::new(0),
@@ -1011,6 +1122,19 @@ mod tests {
             config: crate::temple::strategy::TempleConfig {
                 artefacts_of_the_vaal: false,
                 scarab_of_timelines: true,
+            },
+            // POE-257: the preset and its table ride the same cycle. Custom
+            // with a real override, so a field dropped from `from_state` or
+            // `apply_to_state` fails here rather than resetting the player's
+            // table on the next launch.
+            preset: crate::temple::preset::Preset::Custom,
+            custom: crate::temple::preset::TempleCustomSettings {
+                drops_weight: 0.0,
+                rooms: std::collections::BTreeMap::from([(
+                    "gem".to_string(),
+                    vec![None, None, Some(250.0)],
+                )]),
+                ..Default::default()
             },
         };
         *state.temple_settings.lock().unwrap() = chosen.clone();
@@ -1421,6 +1545,440 @@ mod tests {
         assert!(
             json.get("temple_keys").is_none(),
             "the retired key must not be written back, got {json}",
+        );
+    }
+
+    /// The Custom table survives a switch to Default and back (POE-257 AC).
+    ///
+    /// The whole reason `temple_preset` and `temple_custom` are two fields:
+    /// the table has to outlive periods of not being in force, or a player who
+    /// looks at Default once loses the numbers they typed. This walks the real
+    /// cycle — state, save, load, state — with the preset flipped in between
+    /// and flipped back. Fails if either half is folded into an "active preset"
+    /// blob, or if `from_state` stops reading the table while Default is on.
+    #[test]
+    fn the_custom_table_survives_a_switch_to_default_and_back() {
+        let state = test_app_state();
+        let mine = crate::temple::preset::TempleCustomSettings {
+            drops_weight: 0.0,
+            c_per_quantity: 2.5,
+            rooms: std::collections::BTreeMap::from([(
+                "corruption".to_string(),
+                vec![None, None, Some(1234.0)],
+            )]),
+            ..Default::default()
+        };
+        *state.temple_settings.lock().unwrap() = crate::temple::slice::TempleSettings {
+            preset: crate::temple::preset::Preset::Custom,
+            custom: mine.clone(),
+            ..Default::default()
+        };
+
+        // Switch to Default, and round-trip through the file as a restart
+        // would.
+        state.temple_settings.lock().unwrap().preset = crate::temple::preset::Preset::Default;
+        let on_disk = from_state(&state);
+        let reloaded: Settings =
+            serde_json::from_str(&serde_json::to_string(&on_disk).expect("settings serialise"))
+                .expect("its own output parses");
+        let restarted = test_app_state();
+        let _ = apply_to_state(&reloaded, &restarted);
+
+        assert_eq!(
+            restarted.temple_settings.lock().unwrap().preset,
+            crate::temple::preset::Preset::Default,
+            "the switch itself persisted",
+        );
+        assert_eq!(
+            restarted.temple_settings.lock().unwrap().custom,
+            mine,
+            "and the table the player is not currently using survived it",
+        );
+
+        // Switch back: the same numbers are in force again, unedited.
+        restarted.temple_settings.lock().unwrap().preset =
+            crate::temple::preset::Preset::Custom;
+        let settings = restarted.temple_settings.lock().unwrap().clone();
+        assert_eq!(settings.custom, mine);
+        assert_eq!(
+            crate::temple::slice::value_read(
+                &settings,
+                &crate::temple::market::MarketInput::none(),
+            )
+            .get("corruption", crate::temple::strategy::Tier::T3)
+            .expect("the corruption line is valued")
+            .total,
+            1234.0,
+            "and switching back puts them back in force",
+        );
+    }
+
+    /// One malformed entry in a hand-edited Custom table costs its own room,
+    /// says so, and lets the other 24 load (POE-257 D4).
+    ///
+    /// The opposite of the rule beside it: `temple_profile` is rejected whole,
+    /// because a scorer on half a profile is worse than one on the default.
+    /// A table of 25 independent numbers is not that, and rejecting it whole
+    /// would throw away everything the player meant over one bad character.
+    /// Fails if `apply_to_state` reverts to the all-or-nothing rule, or if it
+    /// swallows the refusal instead of reporting it.
+    #[test]
+    fn one_malformed_custom_entry_is_refused_by_name_and_the_rest_of_the_table_loads() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"temple_preset":"custom",
+                "temple_custom":{"rooms":{"corruption":[null,null,-5],
+                                          "gem":[null,null,777]}}}"#,
+        )
+        .expect("a hand-edited file must still parse");
+
+        let state = test_app_state();
+        let rejected = apply_to_state(&parsed, &state);
+
+        assert_eq!(
+            rejected.len(),
+            1,
+            "one refusal, and nothing else rejected: {rejected:?}",
+        );
+        assert!(
+            rejected[0].contains("corruption") && rejected[0].contains("tier 3"),
+            "the refusal names the offending key and tier: {rejected:?}",
+        );
+        let settings = state.temple_settings.lock().unwrap().clone();
+        assert_eq!(
+            settings.preset,
+            crate::temple::preset::Preset::Custom,
+            "the preset loaded",
+        );
+        let valued = crate::temple::slice::value_read(
+            &settings,
+            &crate::temple::market::MarketInput::none(),
+        );
+        assert_eq!(
+            valued
+                .get("gem", crate::temple::strategy::Tier::T3)
+                .expect("valued")
+                .total,
+            777.0,
+            "the survivor is in force",
+        );
+        assert_ne!(
+            valued
+                .get("corruption", crate::temple::strategy::Tier::T3)
+                .expect("valued")
+                .total,
+            -5.0,
+            "and the refused room is back on the formula, not at its bad value",
+        );
+    }
+
+    /// The table the load STORES is the salvaged one, so one bad entry in a
+    /// hand-edited file does not write-lock the editor (POE-259).
+    ///
+    /// The echo the editor reads is this stored table, and the editor writes a
+    /// WHOLE table back. Store the file's own and the bad entry rides in the
+    /// echo, straight into `TempleCustomSettings::validate` — which is
+    /// `temple_set_custom`'s only gate — and every later edit is refused over
+    /// a room the player is not touching and cannot see. Fails if the raw
+    /// table is stored again: the unrelated edit below stops being accepted.
+    ///
+    /// The surviving entry is asserted alongside, because the cheap way to
+    /// pass the first half is to store nothing at all.
+    #[test]
+    fn a_bad_entry_is_dropped_from_the_stored_table_so_the_next_edit_is_still_accepted() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"temple_preset":"custom",
+                "temple_custom":{"rooms":{"corruption":[null,null,-5],
+                                          "gem":[null,null,777]}}}"#,
+        )
+        .expect("a hand-edited file must still parse");
+
+        let state = test_app_state();
+        let _ = apply_to_state(&parsed, &state);
+        let stored = state.temple_settings.lock().unwrap().custom.clone();
+
+        assert!(
+            !stored.rooms.contains_key("corruption"),
+            "the entry the load refused is not in the echo: {:?}",
+            stored.rooms,
+        );
+        assert_eq!(
+            stored.rooms.get("gem").map(Vec::as_slice),
+            Some([None, None, Some(777.0)].as_slice()),
+            "and the entry it accepted is, unchanged",
+        );
+
+        // What the editor does next: the echo it just read, with one unrelated
+        // cell changed, handed back whole.
+        let mut edited = stored.clone();
+        edited
+            .rooms
+            .insert("gem".to_string(), vec![Some(12.0), None, Some(777.0)]);
+
+        assert_eq!(
+            edited.validate(),
+            Ok(()),
+            "an edit to another room is not refused over the bad entry",
+        );
+    }
+
+    /// A rate this build cannot apply is reset to the shipped one, said out
+    /// loud, and does not write-lock the editor either (POE-259).
+    ///
+    /// The knob half of the same failure as the test above. A hand-edited
+    /// `"tierFraction": 2.5` is well-typed, so `Salvaged` never sees it and it
+    /// reaches the echo as a number — where it would be handed back to
+    /// `TempleCustomSettings::validate` on the player's next cell edit and
+    /// refuse a write about a room entirely. Both bad rates are stated, so the
+    /// load cannot pass by stopping at the first.
+    ///
+    /// Reset and not merely reported: `valuation::tier_fraction` would clamp
+    /// 2.5 to 1.0 and `valuation::rate` would floor -1 to 0, so leaving the
+    /// file's numbers in the echo shows the player two rates the app does not
+    /// apply.
+    #[test]
+    fn a_rate_this_build_cannot_apply_is_reset_to_the_shipped_one_and_named() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"temple_preset":"custom",
+                "temple_custom":{"tierFraction":2.5,"dropsWeight":-1}}"#,
+        )
+        .expect("a hand-edited file must still parse");
+
+        let state = test_app_state();
+        let rejected = apply_to_state(&parsed, &state);
+        let stored = state.temple_settings.lock().unwrap().custom.clone();
+
+        assert_eq!(stored.tier_fraction, 0.8, "the shipped fraction is in force");
+        assert_eq!(stored.drops_weight, 1.0, "and the shipped drops weight");
+        assert_eq!(rejected.len(), 2, "one line per reset rate: {rejected:?}");
+        assert!(
+            rejected
+                .iter()
+                .any(|line| line.contains("tier fraction")
+                    && line.contains("2.5")
+                    && line.contains("0.8")),
+            "the fraction's line names the knob, the file's number and the default: {rejected:?}",
+        );
+        assert!(
+            rejected
+                .iter()
+                .any(|line| line.contains("drops weight")
+                    && line.contains("-1")
+                    && line.contains("1")),
+            "and so does the drops weight's: {rejected:?}",
+        );
+
+        // What the editor does next: the echo it just read, with one unrelated
+        // cell changed, handed back whole.
+        let mut edited = stored.clone();
+        edited
+            .rooms
+            .insert("gem".to_string(), vec![None, None, Some(777.0)]);
+
+        assert_eq!(
+            edited.validate(),
+            Ok(()),
+            "an edit to a room is not refused over the rate that was reset",
+        );
+    }
+
+    /// A wrong-typed `temple_custom` costs the player their Custom table and
+    /// nothing else.
+    ///
+    /// `Settings` deserialises as a unit, so without the tolerant reader one
+    /// bad value inside this block aborts the WHOLE file and `load` falls back
+    /// to `Settings::default()` — silently resetting the server URL, the
+    /// capture regions, the overlay layout and every other preference. That is
+    /// the failure `modules_or_default` was written for, and this block is the
+    /// second schema-shaped area a hand edit can reach. Fails if
+    /// `deserialize_with` is dropped: the whole parse errors instead.
+    #[test]
+    fn a_wrong_typed_temple_custom_drops_only_that_block() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"server_url":"https://example.test",
+                "temple_preset":"custom",
+                "temple_custom":{"rooms":{"gem":"quite a lot"}}}"#,
+        )
+        .expect("the rest of the file must still parse");
+
+        assert_eq!(parsed.server_url, "https://example.test", "unrelated survives");
+        assert_eq!(
+            *parsed.temple_preset,
+            crate::temple::preset::Preset::Custom,
+            "so does the neighbouring temple field",
+        );
+        assert_eq!(
+            *parsed.temple_custom,
+            crate::temple::preset::TempleCustomSettings::default(),
+            "and only the malformed block is back on its defaults",
+        );
+        assert!(
+            parsed.temple_custom.was_salvaged(),
+            "and the file remembers that it was replaced, not merely absent",
+        );
+        assert!(!parsed.temple_preset.was_salvaged());
+    }
+
+    /// A settings file written before POE-262 loads with the shipped vial
+    /// rate, and says nothing about it.
+    ///
+    /// `vials_per_run` is the sixth knob and every file on every machine
+    /// predates it, so the missing-field case is the ONLY case that matters on
+    /// the first run after the update. `#[serde(default)]` on
+    /// `TempleCustomSettings` is what answers it, and the rest of the table has
+    /// to survive intact beside it — an absent field is not a malformed one, so
+    /// the block is not salvaged and nothing reaches `rejected`.
+    ///
+    /// Fails if the `default` attribute is ever dropped (the whole block would
+    /// be salvaged to defaults, taking the player's rooms and rates with it),
+    /// and fails if the missing field is reported as a refusal.
+    #[test]
+    fn a_settings_file_written_before_the_vial_knob_loads_with_the_shipped_rate() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"server_url":"https://example.test",
+                "temple_preset":"custom",
+                "temple_custom":{"tierFraction":0.5,"cPerQuantity":2.5,
+                                 "cPerRarity":1.5,"dropsWeight":0.0,
+                                 "comboPremium":40.0,
+                                 "rooms":{"gem":[null,null,50.0]}}}"#,
+        )
+        .expect("a file with no vialsPerRun still parses");
+
+        assert!(
+            !parsed.temple_custom.was_salvaged(),
+            "an absent field is not a malformed block",
+        );
+        assert_eq!(
+            parsed.temple_custom.vials_per_run,
+            crate::temple::valuation::Knobs::default().vials_per_run,
+            "the shipped 0.1 stands in",
+        );
+        // And the five knobs the file DID state are untouched by it.
+        assert_eq!(parsed.temple_custom.tier_fraction, 0.5);
+        assert_eq!(parsed.temple_custom.c_per_quantity, 2.5);
+        assert_eq!(parsed.temple_custom.c_per_rarity, 1.5);
+        assert_eq!(parsed.temple_custom.drops_weight, 0.0);
+        assert_eq!(parsed.temple_custom.combo_premium, 40.0);
+        assert_eq!(parsed.temple_custom.rooms.len(), 1, "and so are the rooms");
+
+        let state = test_app_state();
+        let rejected = apply_to_state(&parsed, &state);
+
+        assert_eq!(rejected, Vec::<String>::new(), "nothing to report");
+        assert_eq!(
+            state.temple_settings.lock().unwrap().custom.vials_per_run,
+            0.1,
+        );
+    }
+
+    /// A hand-edited negative vial rate is reset to the shipped one, by name.
+    ///
+    /// The write path refuses it (`TempleCustomSettings::validate`), so only a
+    /// hand edit can put it in the file — and there the loader's rule is
+    /// `salvage_knob`: reset to the shipped number and say which knob, what the
+    /// file said, and what is running instead. Fails if `vials_per_run` reaches
+    /// `validate`'s list but not `salvaged`'s, which is the shape a sixth knob
+    /// arrives in — the field would load as -0.1, `valuation::rate` would floor
+    /// it to 0, and every vial in the temple would silently be worth nothing.
+    #[test]
+    fn a_negative_vial_rate_in_a_file_is_reset_to_the_shipped_one_and_named() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"temple_preset":"custom",
+                "temple_custom":{"vialsPerRun":-0.1,"cPerRarity":0.75}}"#,
+        )
+        .expect("the block itself is well-formed; only the value is refused");
+        assert!(
+            !parsed.temple_custom.was_salvaged(),
+            "precondition: serde read the block, so this is a knob refusal",
+        );
+        assert_eq!(parsed.temple_custom.vials_per_run, -0.1, "as the file said");
+
+        let state = test_app_state();
+        let rejected = apply_to_state(&parsed, &state);
+
+        let custom = state.temple_settings.lock().unwrap().custom.clone();
+        assert_eq!(custom.vials_per_run, 0.1, "the shipped rate is what runs");
+        assert_eq!(custom.c_per_rarity, 0.75, "the neighbouring knob survives");
+        assert!(
+            rejected.iter().any(|line| line.contains("vials per run")),
+            "the reset is reported and names the knob, got {rejected:?}",
+        );
+    }
+
+    /// The salvage reaches the app log, because `log::` does not.
+    ///
+    /// `load`'s own invalid-file arm records the rule this follows: `log::` is
+    /// unreachable in a shipped build, so anything the user has to know about
+    /// their settings goes through `rejected` and out to `crate::app_log`. A
+    /// silently emptied Custom table is exactly that — the player opens the
+    /// preset and finds their numbers gone with nothing said.
+    ///
+    /// Fails if the push is dropped from `apply_to_state`: the block is still
+    /// salvaged and nothing says so.
+    #[test]
+    fn a_salvaged_temple_block_is_reported_in_the_app_log() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"temple_preset":"basic","temple_custom":{"rooms":{"gem":"quite a lot"}}}"#,
+        )
+        .expect("the rest of the file must still parse");
+
+        let rejected = apply_to_state(&parsed, &test_app_state());
+
+        assert_eq!(rejected.len(), 2, "one line per salvaged block: {rejected:?}");
+        assert!(
+            rejected
+                .iter()
+                .any(|line| line.contains("temple custom table was not a table")),
+            "the table's own line: {rejected:?}",
+        );
+        assert!(
+            rejected
+                .iter()
+                .any(|line| line.contains("temple preset was not a known preset")),
+            "and the preset's: {rejected:?}",
+        );
+    }
+
+    /// A `temple_preset` that is not one of the two known strings costs the
+    /// preset choice and nothing else. Same rule, same reason.
+    #[test]
+    fn an_unknown_temple_preset_drops_only_that_field() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"server_url":"https://example.test","temple_preset":"basic"}"#,
+        )
+        .expect("the rest of the file must still parse");
+
+        assert_eq!(parsed.server_url, "https://example.test");
+        assert_eq!(*parsed.temple_preset, crate::temple::preset::Preset::Default);
+        assert!(parsed.temple_preset.was_salvaged());
+    }
+
+    /// A refusal in a Custom table that is NOT the preset in force still
+    /// reaches the user, and says which table it is about.
+    ///
+    /// Suppressing it would hide a fault in a file the player is expected to
+    /// hand-edit: they would fix nothing, switch to Custom, and meet the same
+    /// broken entry with no history of it. The repo's rule is that a flag is
+    /// added, never that a finding is hidden. Fails if the prefix is dropped
+    /// (the line would read as a live refusal) and fails if the warning is
+    /// gated away entirely.
+    #[test]
+    fn a_refusal_in_a_table_that_is_not_in_force_says_so_rather_than_going_quiet() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"temple_preset":"default",
+                "temple_custom":{"rooms":{"corruption":[null,null,-5]}}}"#,
+        )
+        .expect("a hand-edited file must still parse");
+
+        let rejected = apply_to_state(&parsed, &test_app_state());
+
+        assert_eq!(rejected.len(), 1, "got {rejected:?}");
+        assert!(
+            rejected[0].starts_with("(Custom table, not in force)"),
+            "the line says which table it is about: {rejected:?}",
+        );
+        assert!(
+            rejected[0].contains("corruption") && rejected[0].contains("tier 3"),
+            "and still names the offending entry: {rejected:?}",
         );
     }
 
@@ -2522,6 +3080,50 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
     // profile from a file this build would reject falls back to the default
     // rather than poisoning every later ranking — and says so, through
     // `rejected`, because the file and the running value now disagree.
+    //
+    // The Custom TABLE is the one exception, and POE-257 is why: it is 25
+    // independent numbers, not one profile, so a single malformed entry costs
+    // its own room and the other 24 load. `TempleCustomSettings::overrides`
+    // owns that rule and names every entry it refused; the warnings join the
+    // same `rejected` list, so the disagreement between the file and the
+    // running value is reported either way.
+    //
+    // What is STORED is the salvaged table, not the file's own (POE-259). The
+    // echo the editor reads is this value, and the editor writes back a whole
+    // table — so a raw bad entry, or a rate this build cannot apply, would be
+    // handed straight to `TempleCustomSettings::validate`, which refuses the
+    // write over a value the player is not editing and cannot see. The rule
+    // for both halves is `TempleCustomSettings::salvaged`, which is also where
+    // the trade-off is written down: what it changed, having been reported
+    // here, does not survive the next save.
+    //
+    // The warnings are about a table that may not be the one in force, so each
+    // one says which it is rather than being suppressed. Suppressing them
+    // would hide a fault in a file the player is expected to hand-edit — they
+    // would fix nothing, switch to Custom, and meet the same broken entry with
+    // no history; and the repo's visibility rule is that a flag is added, never
+    // that a finding is hidden.
+    // A block the file could not state at all is reported before the finer
+    // refusals inside it: the user has lost a whole table, not one entry, and
+    // `log::` cannot tell them (see `Salvaged`).
+    if settings.temple_custom.was_salvaged() {
+        rejected.push(
+            "temple custom table was not a table; using defaults (the shipped rates, no overrides)"
+                .to_string(),
+        );
+    }
+    if settings.temple_preset.was_salvaged() {
+        rejected.push("temple preset was not a known preset; using Default".to_string());
+    }
+    let in_force = *settings.temple_preset == crate::temple::preset::Preset::Custom;
+    let (accepted_table, warnings) = settings.temple_custom.salvaged();
+    for warning in warnings {
+        rejected.push(if in_force {
+            warning
+        } else {
+            format!("(Custom table, not in force) {warning}")
+        });
+    }
     *state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()) =
         crate::temple::slice::TempleSettings {
             profile: match settings.temple_profile.validate() {
@@ -2534,6 +3136,8 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
                 }
             },
             config: settings.temple_config.clone(),
+            preset: *settings.temple_preset,
+            custom: accepted_table,
         };
 
     // The enabled-guide set (POE-199), with its one-time migration from the
