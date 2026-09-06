@@ -603,6 +603,11 @@ export interface TempleCustom {
 	/** Chaos per point of `increased Rarity of Items found in this Area`. Same
 	 *  standing as `cPerQuantity`. */
 	cPerRarity: number;
+	/** Expected vials per run at tier 3 on a line whose raw poedb vial chance
+	 *  is the anchor (Conduit, Crucible, Sanctum). Every other line scales off
+	 *  it by that stat — Glittering Halls ×1.67, Locus and Throne ×0.012.
+	 *  Vertolka's proposed 0.1; `0` removes every vial term. */
+	vialsPerRun: number;
 	/** A global multiplier on the whole drops term. A rusher who never opens a
 	 *  chest sets it to 0, which reduces the ranking to sale value alone. */
 	dropsWeight: number;
@@ -815,6 +820,7 @@ export function templeSliceDefault(): TempleSlice {
 			tierFraction: 0.8,
 			cPerQuantity: 0.5,
 			cPerRarity: 0.25,
+			vialsPerRun: 0.1,
 			dropsWeight: 1.0,
 			comboPremium: 0.0,
 			rooms: {}

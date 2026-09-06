@@ -25,12 +25,23 @@ Consequences bullet.
 **Amended 2026-09-06 (POE-262 WI-1):** §3's recorded owner fork is CLOSED, in
 Vertolka's favour. On a live read a room that summed nothing is anchored on the
 LOWEST tier-3 total among the rooms that summed something — 2.65 on the
-committed capture, where it used to be the top sale delta capped at the lowest
+committed capture when WI-1 landed, 1.857 after WI-2 moved the anchor room's
+own vial term — where it used to be the top sale delta capped at the lowest
 sale-priced room — so a letter can no longer outrank a measurement. That
 anchor is over the formula sums of the 23 non-instrumental lines with Custom
 overrides ignored. §4's two instrumental lines keep the old anchor-and-cap
 unchanged, on their own board-7 evidence. See the rewritten §3 and the new
 Alternatives entries.
+
+**Amended 2026-09-06 (POE-262 WI-2):** the vial rate is no longer a flat 0.1
+carried on six of the nine vial lines. It is DERIVED for all nine, at every
+tier, as `vials_per_run × vial_chance_raw / 1689` — poedb's own per-line ratio
+against the tier-3 integer the three standard vial rooms share — and
+`vials_per_run` is the sixth knob. §1's knob list, its "What is a guess, and
+whose" entry and its "deliberately absent" list are amended below. Glittering
+Halls, which named a vial but no unique and so carried no rate at all, goes
+from 15 c to 86.33 c on the committed capture and rises above Factory and
+Defense Research Lab, which is what Vertolka's 2026-09-06 review asked for.
 
 **Amended 2026-09-06 (POE-259):** the presets are reachable from the UI. The
 Temple page carries a Default / Custom picker and an editor over the 25 lines by
@@ -104,9 +115,35 @@ area bonus: what a tier-1 room is worth at BUILDING time is the line being
 present at all, because the 50 % double-tier node and the Timelines scarab act
 on the line, not on the tier.
 
-The five knobs are `valuation::Knobs`, and `preset.rs` re-exports rather than
-redefines them: `tier_fraction` 0.8, `c_per_quantity` 0.5, `c_per_rarity` 0.25,
-`drops_weight` 1.0, `combo_premium` 0.0.
+The **six** knobs are `valuation::Knobs`, and `preset.rs` re-exports rather
+than redefines them: `tier_fraction` 0.8, `c_per_quantity` 0.5, `c_per_rarity`
+0.25, `vials_per_run` 0.1 (**added 2026-09-06, POE-262 WI-2**), `drops_weight`
+1.0, `combo_premium` 0.0.
+
+**The vial rate is an anchor, not a per-line number** (POE-262 WI-2,
+2026-09-06). `drops::VIAL_RATE_ANCHOR_RAW` is 1689 — the tier-3 `chance to drop
+<tag> vial` integer poedb prints on Conduit of Lightning, Crucible of Flame and
+Sanctum of Immortality, three of the six lines Vertolka's *"price of vial
+divided by 10"* was stated for, and the value most of them share (the other
+three print 804, 1005 and 201). The convention this fixes is exactly **"raw
+1689 means `vials_per_run` per run"**; the SCALE of the integer is still
+unknown and this does not settle it. `TierDrops::vials_per_run(anchor)` derives
+every line and tier from it, so at the default anchor the nine vial lines read,
+at tier 3:
+
+| line | raw | vials/run |
+|---|---|---|
+| Glittering Halls | 2815 | 0.1667 |
+| Conduit / Crucible / Sanctum | 1689 | 0.1 |
+| Hybridisation Chamber | 1005 | 0.0595 |
+| Defense Research Lab | 804 | 0.0476 |
+| Toxic Grove | 201 | 0.0119 |
+| Locus of Corruption / Throne of Atziri | 20 | 0.00118 |
+
+Locus and Throne's 0.00118 is Vertolka's "small chance" as a number. Two things
+deliberately do NOT scale: `uniques_per_run` (his flat 0.25 — no page prints a
+per-tier chest-unique chance to scale it by) and `mod_item_chance_raw` (no
+anchor has been stated for it, so it stays raw and unmultiplied).
 
 **What is a guess, and whose.** Three sources, and they are not
 interchangeable.
@@ -118,8 +155,17 @@ interchangeable.
   unique divided by 4 + price of vial divided by 10"* — and the one manual price
   in the table, *"Crucible of Flames is giving on average 2 temple gloves per
   run and their base price is usually around 30c"* (poe.ninja publishes no line
-  for a mod-rolled rare). The counts and the glove price are `Basis::Guess` in
-  `drops.rs`; the two rates are `Knobs` defaults.
+  for a mod-rolled rare). The unique count and the glove price are
+  `Basis::Guess` in `drops.rs`; the c-per-percent rates and (since POE-262
+  WI-2) the vial rate are `Knobs` defaults.
+- **Vertolka's and poedb's TOGETHER**, which is the vial rate and nothing else
+  (POE-262 WI-2). Its anchor is his estimate and its per-line ratio is poedb's
+  measurement, so it is a `Basis::Guess` sourced to `VIAL_RATE_DERIVED`, which
+  names both parents rather than crediting either alone. Half a measurement is
+  not a measurement: every vial driver reads `guessed: true`, on all nine
+  lines. That is why `LineDrops::has_guess` is now true for the nine vial lines
+  rather than the six chest ones, and why Locus of Corruption — whose 846 c
+  sale the feed printed — no longer reports an unguessed total.
 - **poedb's**, measured and dated 2026-09-06: the quantity / rarity / pack-size
   percentages, and the raw chance integers. So a bonus term is half measured and
   half guessed — the *percentage* is poedb's number, the *rate* that turns it
@@ -139,10 +185,16 @@ rests on one of these estimates, and the live grade rung is one of them (§3).
 
 Three terms are deliberately absent from the sum rather than priced at zero:
 pack size (no rate exists, and there is no driver because a driver has to be
-listed against a rate), poedb's raw `vial_chance_raw` / `mod_item_chance_raw`
-integers (no printed scale — see [GAME-FACTS.md](../GAME-FACTS.md)), and any
+listed against a rate), poedb's raw `mod_item_chance_raw` integer (no printed
+scale and no stated anchor — see [GAME-FACTS.md](../GAME-FACTS.md)), and any
 term with no count or no price, which is still listed as a `Driver` with
 `chaos: None`.
+
+**Amended 2026-09-06 (POE-262 WI-2):** that list used to name `vial_chance_raw`
+beside `mod_item_chance_raw`. It no longer does. The integer is still never
+multiplied by a price, but it IS read — as the ratio that turns
+`Knobs::vials_per_run` into one line's expected count, which needs no scale
+because the anchor and the line are the same stat.
 
 ### 2. ONE read, shown and ranked
 
@@ -191,8 +243,11 @@ stale, a usable (non-zero, finite) floor, and at least one room or item quote.
   moves it, while the line's own formula sum always does. The two instrumental
   lines are out because their totals are letters rather than sums (§4). A++
   lands on L exactly and every lower grade on a fixed fraction of it. On the
-  committed capture L is Toxic Grove's 2.65, so B− reads 0.0994 and D reads
-  0.0066.
+  committed capture L is Toxic Grove's formula sum: 2.65 when WI-1 landed and
+  **1.857 since WI-2** (its vial went from a flat 0.1 × 9 c to 0.1 × 201/1689 ×
+  9 c), so B− reads 0.0696 and D 0.0046 where they read 0.0994 and 0.0066.
+  L moves with the drop table and the knobs by design — it is a property of the
+  read, not a constant.
 
   As accepted this bullet read `Grade::fallback_chaos_scaled(top_sale_delta)`
   capped at the lowest sale-priced room. That two-step survives for the §4
@@ -405,7 +460,7 @@ number it replaced there.
   price. Its reasoning survives for the §4 instrumental lines, which take that
   anchor and that cap unchanged.
 - **Clipping every rung at L** rather than scaling the ladder onto it. Every
-  grade above the clip collapses to L, so B− and C tie at 2.65 on the capture
+  grade above the clip collapses to L, so B− and C tie at L on the capture
   and the letters stop ordering the unpriced rooms — the half of Vertolka's
   rule the grades exist for.
 - **Anchoring the board's top FALLBACK letter on L.** A C room's value would
@@ -466,19 +521,24 @@ number it replaced there.
 - **A sixth scaled magnitude added without a row in `REFERENCE_TOP_ROOM_VALUE`'s
   table is a constant that will quietly stop meaning what it meant.** That table
   is the checklist.
-- **The Mirage vial-spike case is a drop-table question, not a formula one.** At
-  Vertolka's 0.1 vials per run an 808 c Vial of Summoning adds 74.8 c to Sanctum
-  of Immortality tier 3 (60.75 → 135.55 on the capture), which cannot rival
-  Doryani's 390. Reaching the epic's "a high-chance vial room rivals Doryani"
-  case needs about 0.41 vials per run, or a scale for the poedb chance integers
-  to derive one from. **Open owner item**, for Vertolka; the shipped test
-  asserts Sanctum crossing Crucible of Flame (67.35) instead.
+- **Amended 2026-09-06 (POE-262 WI-2): the Mirage vial-spike case is now a KNOB
+  value, not a missing scale.** At the default anchor an 808 c Vial of Summoning
+  adds 74.8 c to Sanctum of Immortality tier 3 (60.75 → 135.55 on the capture),
+  which still cannot rival Doryani's 390; reaching the epic's "a high-chance
+  vial room rivals Doryani" case needs about 0.41 vials per run on the anchor
+  lines. That is no longer blocked on deriving a scale for the poedb integers —
+  `vials_per_run = 0.41` reaches it, and Vertolka's own proposed 0.2 is halfway
+  there. What remains is his call on what the shipped Default should be: **open
+  owner item**, for Vertolka. The shipped test asserts Sanctum crossing Crucible
+  of Flame (67.35) instead. Glittering Halls, whose raw 2815 is 1.67× the
+  anchor, is the line that reaches highest for a given anchor.
 - **The grade ladder is provisional and dated.** It is calibrated on one day's
   capture, and it is the only place a third-party LETTER (Vertolka's grade)
   enters arithmetic — through a rung this project chose, not one he stated.
 - **On a live read the letters read as FRACTIONS OF A CHAOS, and that is the
-  point** (POE-262). Anchored on the cheapest summed room, a C rung is 0.0331 c
-  and a D rung 0.0066 c on the committed capture. A number that small is not the
+  point** (POE-262). Anchored on the cheapest summed room, a C rung is 0.0232 c
+  and a D rung 0.0046 c on the committed capture (0.0331 and 0.0066 before WI-2
+  moved the anchor room's own vial term). A number that small is not the
   claim that the room is nearly worthless in the game — it is the claim that
   nothing on this read priced it, which is what the `F` mark beside it says.
   `values.ts::formatChaos` keeps two significant digits under 1 c for the same
@@ -486,7 +546,12 @@ number it replaced there.
   saying zero. Two bands are carved out of that rule for the CELL rather than
   for the number — `[0.995, 1)` keeps the two-decimal form so 0.999 reads
   `1.00` rather than introducing a third format, and anything under 0.0001
-  prints the literal `<0.0001` rather than the exponential `1.0e-7`.
+  prints the literal `<0.0001` rather than the exponential `1.0e-7`. The
+  per-run COUNTS moved the same way and for the same reason: a derived rate is
+  `0.1 × 2815/1689`, so `values.ts::formatCount` prints two significant digits
+  with trailing zeros trimmed (`×0.17`, `×0.012`) where the raw float would
+  put seventeen digits in an overlay cell and `toFixed(2)` would print the
+  smallest rates as `×0.00`.
 - **`advisor::rollout`'s `lost_threshold` moves with the anchor** (POE-262).
   It is the minimum POSITIVE tier-3 value among the lines the mode rule names
   as TARGETS (the corruption and gem lines for the shipped profiles). Both are
@@ -501,6 +566,22 @@ number it replaced there.
 - **POE-260 must branch on `scaledFromTier3` before rendering `drivers`.** The
   copied tier-3 terms are unscaled by design; the `tier_fraction` driver is the
   headline.
+- **Amended 2026-09-06 (POE-262 WI-2): the `guessed` mark now says almost
+  nothing, and a materiality threshold is an open owner item.** Deriving the
+  vial rate gave every line poedb prints a vial chance on a guessed count, so
+  on the committed capture `RoomValue::guessed` is true for 24 of the 25 tier-3
+  rooms — `only_doryanis_institute_is_free_of_estimates` is the pin, and
+  Doryani's Institute is estimate-free only because it names no unique, no vial
+  and no bonus. Locus of Corruption is the case that shows the cost: it earns
+  its `G` on a vial term of 0.51 c inside a total of 846.51, a term three
+  orders of magnitude below the figure the mark sits beside. So the mark has
+  stopped separating soft numbers from firm ones; it now reports that SOME term
+  rests on somebody's estimate, which is nearly always. A threshold — mark only
+  when the guessed terms are a material share of the total — would restore the
+  separation, and picking the share is the owner's call: **open owner item**.
+  Not urgent, because of the bullet below: `guessed` is a flag under ADR-018,
+  so it orders nothing either way, and what a bad threshold costs is a legend
+  players learn to ignore rather than a mis-ranked board.
 - **Every provenance flag is a flag.** `guessed`, `lowConfidence` and
   `windowPriced` ride on the driver that carries them and never remove a room
   from the ranking or reorder one (ADR-017, ADR-018).

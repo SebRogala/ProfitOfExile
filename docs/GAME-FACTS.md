@@ -139,14 +139,29 @@ buff"). Both are recorded as absent rather than as a figure nobody wrote down.
   <tag> item % [33/66/100]`. The vial values run **7 to 2815** (Locus of
   Corruption and Throne of Atziri share 7 / 13 / 20 at the bottom, Glittering
   Halls has 929 / 1886 / 2815 at the top) and **nothing on the page states what unit they are in**. They are
-  carried verbatim as `u32` (`vial_chance_raw`, `mod_item_chance_raw`), are
-  never multiplied by a price, and are the measured SHAPE of the tier
-  progression only. Anyone who finds the scale should record it here first.
+  carried verbatim as `u32` (`vial_chance_raw`, `mod_item_chance_raw`) and are
+  never multiplied by a price. Anyone who finds the scale should record it here
+  first.
+
+  **The scale is still unknown; a CONVENTION was fixed on 2026-09-06 (POE-262)
+  for the vial stat only.** Vertolka's "0.1 vials per run" was stated for six
+  lines, three of which print **1689** at tier 3, so the app reads *raw 1689 =
+  the configured rate per run* and scales every other line and tier by its own
+  integer over 1689. At the shipped 0.1 that gives Glittering Halls 0.1667 per
+  run, Hybridisation Chamber 0.0595, Defense Research Lab 0.0476, Toxic Grove
+  0.0119, and Locus of Corruption and Throne of Atziri 0.00118 — which is his
+  "small chance" as a number. **This is a ratio, not a unit**: it says one
+  line's rate relative to another's, and it says nothing about what raw 1689
+  means in the game. `mod_item_chance_raw` has no such anchor (nobody has stated
+  a per-run rate for the architect's rare) and stays raw and unmultiplied.
 - **Uniques drop at tier 3 only.** Vertolka-stated 2026-09-06: "only tier 3
   rooms can drop unique, but T1 and T2 adding chance to drop vial and provide
   smaller quant/rarity bonuses". His two drop rates — 0.25 uniques per run and
   0.1 vials per run at tier 3 — are **guesses**, stated as "price of unique
-  divided by 4 + price of vial divided by 10".
+  divided by 4 + price of vial divided by 10". The unique rate is flat: no page
+  prints a per-tier chest-unique chance to scale it by. The vial rate is the
+  ANCHOR of the convention above and is a user setting; he proposed doubling it
+  to 0.2 on 2026-09-06.
 - **What a point of quantity or rarity is worth has never been measured.** The
   only figures anyone has proposed are Vertolka's, in the same 2026-09-06
   message: *"Maybe there we can setup something like 1% quant = 0,5c, 1% rarity

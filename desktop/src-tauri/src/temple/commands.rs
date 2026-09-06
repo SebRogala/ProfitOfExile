@@ -205,10 +205,11 @@ pub fn temple_set_custom(
         &app,
         format!(
             "Temple: custom — tier fraction {:.2}, {:.2} c per quantity %, {:.2} c per rarity %, \
-             drops weight {:.2}, combo premium {:.2}, {} room override{}",
+             {:.3} vials per run, drops weight {:.2}, combo premium {:.2}, {} room override{}",
             custom.tier_fraction,
             custom.c_per_quantity,
             custom.c_per_rarity,
+            custom.vials_per_run,
             custom.drops_weight,
             custom.combo_premium,
             custom.rooms.len(),

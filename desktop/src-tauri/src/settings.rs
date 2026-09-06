@@ -1818,6 +1818,92 @@ mod tests {
         assert!(!parsed.temple_preset.was_salvaged());
     }
 
+    /// A settings file written before POE-262 loads with the shipped vial
+    /// rate, and says nothing about it.
+    ///
+    /// `vials_per_run` is the sixth knob and every file on every machine
+    /// predates it, so the missing-field case is the ONLY case that matters on
+    /// the first run after the update. `#[serde(default)]` on
+    /// `TempleCustomSettings` is what answers it, and the rest of the table has
+    /// to survive intact beside it — an absent field is not a malformed one, so
+    /// the block is not salvaged and nothing reaches `rejected`.
+    ///
+    /// Fails if the `default` attribute is ever dropped (the whole block would
+    /// be salvaged to defaults, taking the player's rooms and rates with it),
+    /// and fails if the missing field is reported as a refusal.
+    #[test]
+    fn a_settings_file_written_before_the_vial_knob_loads_with_the_shipped_rate() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"server_url":"https://example.test",
+                "temple_preset":"custom",
+                "temple_custom":{"tierFraction":0.5,"cPerQuantity":2.5,
+                                 "cPerRarity":1.5,"dropsWeight":0.0,
+                                 "comboPremium":40.0,
+                                 "rooms":{"gem":[null,null,50.0]}}}"#,
+        )
+        .expect("a file with no vialsPerRun still parses");
+
+        assert!(
+            !parsed.temple_custom.was_salvaged(),
+            "an absent field is not a malformed block",
+        );
+        assert_eq!(
+            parsed.temple_custom.vials_per_run,
+            crate::temple::valuation::Knobs::default().vials_per_run,
+            "the shipped 0.1 stands in",
+        );
+        // And the five knobs the file DID state are untouched by it.
+        assert_eq!(parsed.temple_custom.tier_fraction, 0.5);
+        assert_eq!(parsed.temple_custom.c_per_quantity, 2.5);
+        assert_eq!(parsed.temple_custom.c_per_rarity, 1.5);
+        assert_eq!(parsed.temple_custom.drops_weight, 0.0);
+        assert_eq!(parsed.temple_custom.combo_premium, 40.0);
+        assert_eq!(parsed.temple_custom.rooms.len(), 1, "and so are the rooms");
+
+        let state = test_app_state();
+        let rejected = apply_to_state(&parsed, &state);
+
+        assert_eq!(rejected, Vec::<String>::new(), "nothing to report");
+        assert_eq!(
+            state.temple_settings.lock().unwrap().custom.vials_per_run,
+            0.1,
+        );
+    }
+
+    /// A hand-edited negative vial rate is reset to the shipped one, by name.
+    ///
+    /// The write path refuses it (`TempleCustomSettings::validate`), so only a
+    /// hand edit can put it in the file — and there the loader's rule is
+    /// `salvage_knob`: reset to the shipped number and say which knob, what the
+    /// file said, and what is running instead. Fails if `vials_per_run` reaches
+    /// `validate`'s list but not `salvaged`'s, which is the shape a sixth knob
+    /// arrives in — the field would load as -0.1, `valuation::rate` would floor
+    /// it to 0, and every vial in the temple would silently be worth nothing.
+    #[test]
+    fn a_negative_vial_rate_in_a_file_is_reset_to_the_shipped_one_and_named() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"temple_preset":"custom",
+                "temple_custom":{"vialsPerRun":-0.1,"cPerRarity":0.75}}"#,
+        )
+        .expect("the block itself is well-formed; only the value is refused");
+        assert!(
+            !parsed.temple_custom.was_salvaged(),
+            "precondition: serde read the block, so this is a knob refusal",
+        );
+        assert_eq!(parsed.temple_custom.vials_per_run, -0.1, "as the file said");
+
+        let state = test_app_state();
+        let rejected = apply_to_state(&parsed, &state);
+
+        let custom = state.temple_settings.lock().unwrap().custom.clone();
+        assert_eq!(custom.vials_per_run, 0.1, "the shipped rate is what runs");
+        assert_eq!(custom.c_per_rarity, 0.75, "the neighbouring knob survives");
+        assert!(
+            rejected.iter().any(|line| line.contains("vials per run")),
+            "the reset is reported and names the knob, got {rejected:?}",
+        );
+    }
+
     /// The salvage reaches the app log, because `log::` does not.
     ///
     /// `load`'s own invalid-file arm records the rule this follows: `log::` is

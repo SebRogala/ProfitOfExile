@@ -33,10 +33,19 @@
 //!   the one stated exception to the third bullet below: a term left out is
 //!   still listed, but a driver has to be listed against a rate, and pack size
 //!   has none.
-//! - **The raw poedb chance integers.**
-//!   [`vial_chance_raw`](super::drops::TierDrops::vial_chance_raw) and
-//!   [`mod_item_chance_raw`](super::drops::TierDrops::mod_item_chance_raw) run 7
-//!   to 2815 with no scale printed anywhere. They are never multiplied here.
+//! - **The raw poedb mod-item chance integer.**
+//!   [`mod_item_chance_raw`](super::drops::TierDrops::mod_item_chance_raw) is 33
+//!   / 66 / 100 with no scale printed anywhere, and nobody has stated a per-run
+//!   rate to anchor it on the way
+//!   [`VIAL_RATE_ANCHOR_RAW`](super::drops::VIAL_RATE_ANCHOR_RAW) anchors the
+//!   vial stat (POE-262). It is never multiplied here.
+//!
+//!   Its sibling
+//!   [`vial_chance_raw`](super::drops::TierDrops::vial_chance_raw) used to be on
+//!   this list and no longer is: it is still never multiplied by a price, but
+//!   it IS read — as the RATIO that turns [`Knobs::vials_per_run`] into one
+//!   line's expected count, which needs no scale because the anchor and the
+//!   line are the same stat.
 //! - **A term with no count or no price** contributes nothing and is still
 //!   listed as a [`Driver`] with `chaos: None`, so the explanation box shows
 //!   what was left out instead of quietly showing a smaller total.
@@ -180,6 +189,17 @@ pub struct Knobs {
     /// **Vertolka's proposed rate**, same message and same standing as
     /// [`Self::c_per_quantity`]: unmeasured, a guess he flagged as such.
     pub c_per_rarity: f64,
+    /// Expected vials per run at tier 3 on a line whose tier-3 raw chance IS
+    /// [`drops::VIAL_RATE_ANCHOR_RAW`](super::drops::VIAL_RATE_ANCHOR_RAW) —
+    /// Conduit of Lightning, Crucible of Flame, Sanctum of Immortality. Every
+    /// other line and tier scales off it by poedb's own ratio
+    /// ([`drops::TierDrops::vials_per_run`](super::drops::TierDrops::vials_per_run)):
+    /// Glittering Halls ×1.67, Locus and Throne ×0.012.
+    ///
+    /// **Vertolka's proposed rate**, 0.1 by default (*"price of vial divided by
+    /// 10"*, 2026-09-06 on POE-124) and a knob because he has since proposed
+    /// *"20 % value of vial instead of 10 %"*. `0` removes every vial term.
+    pub vials_per_run: f64,
     /// A global multiplier on the whole drops term. A rusher who never opens a
     /// chest sets it to `0.0`, which reduces the ranking to sale value alone.
     pub drops_weight: f64,
@@ -196,6 +216,7 @@ impl Default for Knobs {
             tier_fraction: 0.8,
             c_per_quantity: 0.5,
             c_per_rarity: 0.25,
+            vials_per_run: 0.1,
             drops_weight: 1.0,
             combo_premium: 0.0,
         }
@@ -986,7 +1007,7 @@ fn value_tier3(
             &mut drivers,
             DriverKind::VialDrop,
             vial,
-            tier.vials_per_run(),
+            tier.vials_per_run(rate(knobs.vials_per_run)),
             market.price(vial).map(UnitPrice::from_feed),
             weight,
         );
@@ -1235,6 +1256,22 @@ mod tests {
         (actual - expected).abs() < 1e-9
     }
 
+    /// The committed capture's fallback anchor L — `lowest_summed_room_total`,
+    /// which is Toxic Grove's tier-3 formula sum and the number every scaled
+    /// rung on this capture is a fraction of.
+    ///
+    /// Written as the arithmetic rather than as a literal, because it IS the
+    /// arithmetic: 0.25 x Apep's Slumber at 7 c, plus a vial rate of 0.1 x
+    /// 201/1689 (POE-262's derivation — Toxic Grove's tier-3 raw chance against
+    /// the anchor raw) x Vial of Awakening at 9 c. 1.75 + 0.10710... =
+    /// 1.85710... WI-1's L was 2.65, when the vial rate was a flat 0.1.
+    ///
+    /// The operand order is the formula's, so this is bit-identical to the
+    /// total the table computes — pinned by
+    /// `the_anchor_is_toxic_groves_formula_sum`, which is what lets the rung
+    /// assertions stay exact rather than approximate.
+    const ANCHOR: f64 = 0.25 * 7.0 + 0.1 * 201.0 / 1689.0 * 9.0;
+
     fn driver<'a>(value: &'a RoomValue, kind: DriverKind) -> &'a Driver {
         value
             .drivers
@@ -1320,27 +1357,64 @@ mod tests {
         assert_eq!(unique.name, "Shadowstitch");
         assert_eq!(unique.unit_price, None);
         assert_eq!(unique.chaos, None);
-        assert_eq!(value.drops, 0.0);
         assert_eq!(value.priced, Priced::Partial);
+        // The unpriced unique adds NOTHING, and since POE-262 that is visible
+        // as a subtraction rather than as a zero: Locus's drops are its vial
+        // term alone — 0.1 x 20/1689 x Vial of Sacrifice at 428 c — so a
+        // priceless term quietly contributing would show up here as a bigger
+        // number, not as an unchanged 0.
+        let vial_alone = 0.1 * 20.0 / 1689.0 * 428.0;
+        assert!(close(value.drops, vial_alone), "drops were {}", value.drops);
+        assert!(close(value.drops, 0.506_808_762_581), "{}", value.drops);
     }
 
+    /// Vertolka's "small chance" is a number now, on both lines that carry it.
+    ///
+    /// Locus of Corruption and Throne of Atziri print poedb's smallest vial
+    /// chance, 20 at tier 3 against the anchor's 1689, and before POE-262 they
+    /// carried no rate at all — the vial driver listed a price, a `None` count
+    /// and no chaos, and the two rooms' vials were worth zero. They now derive
+    /// 0.1 x 20/1689 = 0.001184 like every other vial line.
+    ///
+    /// Throne is the consequence worth stating: that term is its WHOLE value,
+    /// so it stops being a letter and becomes a priced room at 0.001184 x 1712
+    /// = 2.03 c — under the 10 c floor the feed prices rooms at, which is
+    /// exactly the standing "small chance" should have.
+    ///
+    /// Fails if either line goes back to a `None` count (both vials read no
+    /// chaos and Throne falls back to its letter), and fails if the derivation
+    /// stops scaling by the raw (both would read 0.1 and Throne 171 c, over
+    /// Factory).
     #[test]
-    fn a_term_with_a_price_but_no_stated_count_contributes_nothing() {
-        // Locus rolls for Vial of Sacrifice, priced at 428 c on the capture,
-        // and nobody has stated how often it drops.
-        let value = value_of(
-            &Valued::compute(&allflame(), &Knobs::default()),
-            "corruption",
-            3,
-        );
+    fn the_two_smallest_chance_lines_derive_a_rate_rather_than_carrying_none() {
+        let valued = Valued::compute(&allflame(), &Knobs::default());
+        // 0.1 x 20 / 1689: the smallest rate in the table.
+        let small = 0.1 * 20.0 / 1689.0;
+        assert!(close(small, 0.001_184_132_622_9), "{small}");
 
-        let vial = driver(&value, DriverKind::VialDrop);
+        let locus = value_of(&valued, "corruption", 3);
+        let vial = driver(&locus, DriverKind::VialDrop);
         assert_eq!(vial.name, "Vial of Sacrifice");
         assert_eq!(vial.unit_price, Some(428.0));
-        assert_eq!(vial.count, None);
-        assert_eq!(vial.chaos, None);
+        assert!(close(vial.count.expect("a derived count"), small));
+        assert!(close(vial.chaos.expect("a priced term"), small * 428.0));
+        assert!(vial.guessed, "the anchor it scales is Vertolka's");
         assert!(vial.low_confidence, "11 listings, POE-131 thin");
         assert!(vial.window_priced, "priced off the 24-hour window, POE-252");
+
+        let throne = value_of(&valued, "throne_of_atziri", 3);
+        let ghost = driver(&throne, DriverKind::VialDrop);
+        assert_eq!(ghost.name, "Vial of the Ghost");
+        assert_eq!(ghost.unit_price, Some(1712.0));
+        assert!(close(ghost.count.expect("a derived count"), small));
+        assert_eq!(
+            throne.priced,
+            Priced::Market,
+            "its vial was its only term, and the term now has a count",
+        );
+        assert!(close(throne.total, small * 1712.0), "{}", throne.total);
+        assert!(close(throne.total, 2.027_235_050_326), "{}", throne.total);
+        assert!(throne.total < 10.0, "under the floor the feed prices at");
     }
 
     #[test]
@@ -1353,8 +1427,12 @@ mod tests {
         );
 
         assert_eq!(value.sale, 846.0);
-        assert_eq!(value.total, 846.0);
         assert_eq!(driver(&value, DriverKind::Sale).unit_price, Some(856.0));
+        // The sale is not the whole total any more, and the difference is the
+        // point: POE-262 gave Locus a derived vial rate, so its 846 c sale
+        // carries 0.1 x 20/1689 x Vial of Sacrifice at 428 c on top.
+        assert!(close(value.total, 846.0 + 0.1 * 20.0 / 1689.0 * 428.0));
+        assert!(close(value.total, 846.506_808_762_581), "{}", value.total);
     }
 
     #[test]
@@ -1389,7 +1467,15 @@ mod tests {
         let fraction = driver(&t1, DriverKind::TierFraction);
         assert_eq!(fraction.name, "Locus of Corruption");
         assert_eq!(fraction.count, Some(0.8));
-        assert_eq!(fraction.unit_price, Some(846.0));
+        // Its tier-3 total: the 846 sale plus the derived vial term.
+        assert_eq!(
+            fraction.unit_price,
+            Some(value_of(&valued, "corruption", 3).total)
+        );
+        assert!(close(
+            fraction.unit_price.expect("a tier-3 total"),
+            846.506_808_762_581
+        ));
         assert!(
             t1.drivers.iter().any(|d| d.kind == DriverKind::UniqueDrop),
             "the tier-3 drivers are carried down, not recomputed"
@@ -1479,7 +1565,10 @@ mod tests {
         let valued = Valued::compute(&allflame(), &knobs);
 
         assert_eq!(value_of(&valued, "corruption", 1).total, 0.0);
-        assert_eq!(value_of(&valued, "corruption", 3).total, 846.0);
+        assert!(close(
+            value_of(&valued, "corruption", 3).total,
+            846.506_808_762_581
+        ));
     }
 
     #[test]
@@ -1528,13 +1617,19 @@ mod tests {
         );
 
         assert_eq!(value.priced, Priced::Fallback);
-        // The D rung on the LIVE ladder, which POE-262 re-anchored: the
-        // capture's cheapest SUMMED room is Toxic Grove at 2.65, so every rung
-        // is 2.65/800 of its cold value and D is 2 x 2.65/800 = 0.006625.
-        // 2.0 here would mean the ladder had stopped moving with the market;
-        // 2.115 would mean it was still anchored on the top sale delta.
-        assert_eq!(value.total, Grade::D.fallback_chaos_scaled(2.65));
-        assert!(close(value.total, 0.006_625), "total was {}", value.total);
+        // The D rung on the LIVE ladder, which POE-262 WI-1 re-anchored and
+        // WI-2 moved: the capture's cheapest SUMMED room is Toxic Grove at
+        // `ANCHOR` = 1.85710..., so every rung is ANCHOR/800 of its cold value
+        // and D is 2 x 1.85710.../800 = 0.0046428. 2.0 here would mean the
+        // ladder had stopped moving with the market; 2.115 would mean it was
+        // still anchored on the top sale delta; 0.006625 would mean Toxic
+        // Grove's vial had gone back to a flat 0.1 per run.
+        assert_eq!(value.total, Grade::D.fallback_chaos_scaled(ANCHOR));
+        assert!(
+            close(value.total, 0.004_642_761_989),
+            "total was {}",
+            value.total
+        );
         assert_eq!(value.sale, 0.0);
         assert_eq!(value.drops, 0.0);
         assert_eq!(value.bonus, 0.0);
@@ -1582,7 +1677,7 @@ mod tests {
         // at the floor, drops nothing, and its two percentages now price at 0,
         // so its C rung stands in. The terms stay listed — the percentages are
         // real — but one still carrying `Some(0)` would make the lines the box
-        // prints disagree with the 0.033125 c the advisor ranked on.
+        // prints disagree with the 0.0232138 c the advisor ranked on.
         let knobs = Knobs {
             c_per_quantity: 0.0,
             c_per_rarity: 0.0,
@@ -1595,10 +1690,14 @@ mod tests {
         // expression: an assertion written only in terms of
         // `fallback_chaos_scaled` moves with any change to that function and
         // could not fail. Zeroing the two rates does not move the anchor —
-        // Toxic Grove's 2.65 is a DROP, not a bonus — so C is
-        // 10 x 2.65/800 = 0.033125.
-        assert_eq!(value.total, Grade::C.fallback_chaos_scaled(2.65));
-        assert!(close(value.total, 0.033_125), "total was {}", value.total);
+        // Toxic Grove's 1.85710... is a DROP, not a bonus — so C is
+        // 10 x 1.85710.../800 = 0.0232138.
+        assert_eq!(value.total, Grade::C.fallback_chaos_scaled(ANCHOR));
+        assert!(
+            close(value.total, 0.023_213_809_947),
+            "total was {}",
+            value.total
+        );
         assert!(
             value
                 .drivers
@@ -1616,7 +1715,7 @@ mod tests {
             carried,
             vec![(
                 DriverKind::GradeFallback,
-                Some(Grade::C.fallback_chaos_scaled(2.65))
+                Some(Grade::C.fallback_chaos_scaled(ANCHOR))
             )],
         );
     }
@@ -1770,7 +1869,13 @@ mod tests {
         let sadists = value_of(&valued, "sadists_den", 3);
         let war = value_of(&valued, "hall_of_war", 3);
 
-        assert!(close(measured.total, 8.7), "was {}", measured.total);
+        // 8.7 at WI-1; POE-262 WI-2 took its vial from a flat 0.1 to
+        // 0.1 x 1005/1689, which is 0.0595 x Vial of Consequence at 2 c.
+        assert!(
+            close(measured.total, 8.619_005_328_597),
+            "{}",
+            measured.total
+        );
         assert_eq!(measured.priced, Priced::Partial, "it summed a real drop");
         assert_eq!(sadists.priced, Priced::Fallback, "C, and it sums nothing");
         assert_eq!(
@@ -1778,11 +1883,390 @@ mod tests {
             Priced::Fallback,
             "C, and pack size prices at nothing"
         );
-        // 10 x 2.65/800: the C rung on the cheapest SUMMED room.
-        assert!(close(sadists.total, 0.033_125), "was {}", sadists.total);
-        assert!(close(war.total, 0.033_125), "was {}", war.total);
+        // 10 x ANCHOR/800: the C rung on the cheapest SUMMED room.
+        assert!(close(sadists.total, 0.023_213_809_947), "{}", sadists.total);
+        assert!(close(war.total, 0.023_213_809_947), "{}", war.total);
         assert!(measured.total > sadists.total);
         assert!(measured.total > war.total);
+    }
+
+    /// Glittering Halls outranks the two rooms Vertolka said it should.
+    ///
+    /// His 2026-09-06 review, and the second half of POE-262: Glittering Halls
+    /// *"should be over 40"* — Vial of Transcendence at ~400 c and *"10 %"* —
+    /// and it belongs above Defense Research Lab and Factory. On the committed
+    /// capture it sat at 15 c, its 60 % rarity bonus alone, UNDER Factory's 36,
+    /// because the table gave a vial rate only to the six lines whose sheet row
+    /// names a unique and Glittering Halls names none.
+    ///
+    /// The derived rate ends it. Glittering Halls prints the temple's highest
+    /// vial chance (2815 at tier 3 against the anchor's 1689), so the anchor
+    /// rate of 0.1 becomes 0.1 x 2815/1689 = 0.1667 vials a run, and at the
+    /// capture's 428 c that is 71.33 c of vial on top of the 15 c bonus.
+    ///
+    /// Fails on the shipped-before state (15 c, under Factory), fails if the
+    /// ratio is inverted (0.06 x 428 = 25.65, still under Factory), and fails
+    /// if the rate stops being anchored per line (0.1 x 428 = 42.80 would clear
+    /// Factory but not by the amount his 2815 says).
+    #[test]
+    fn glittering_halls_outranks_factory_and_defense_research_lab() {
+        let valued = Valued::compute(&allflame(), &Knobs::default());
+
+        let halls = value_of(&valued, "glittering_halls", 3);
+        let factory = value_of(&valued, "factory", 3);
+        let lab = value_of(&valued, "defense_research_lab", 3);
+
+        // 0.1 x 2815/1689 = 0.16666..., which is 5/3 of the anchor rate
+        // because 1689 x 5 / 3 is exactly 2815.
+        let vial = driver(&halls, DriverKind::VialDrop);
+        assert_eq!(vial.name, "Vial of Transcendence");
+        assert_eq!(vial.unit_price, Some(428.0));
+        assert!(close(
+            vial.count.expect("a derived count"),
+            0.1 * 2815.0 / 1689.0
+        ));
+        assert!(close(
+            vial.count.expect("a derived count"),
+            0.166_666_666_667
+        ));
+        assert!(close(vial.chaos.expect("priced"), 71.333_333_333_333));
+        assert!(vial.guessed, "the anchor it scales is Vertolka's");
+
+        // 71.33 of vial + 60 % rarity at 0.25 c a point.
+        assert!(close(halls.total, 86.333_333_333_333), "{}", halls.total);
+        assert!(close(factory.total, 36.0), "{}", factory.total);
+        assert!(close(lab.total, 24.897_602_131_439), "{}", lab.total);
+        assert!(halls.total > factory.total, "over Factory");
+        assert!(halls.total > lab.total, "over Defense Research Lab");
+        assert!(halls.total > 40.0, "Vertolka: it should be over 40");
+    }
+
+    /// A zero anchor removes every vial term and touches nothing else.
+    ///
+    /// The knob's floor, and the setting a player who never picks up a vial
+    /// holds. It is `0` rather than "no vial rate": the count is still stated
+    /// (`Some(0.0)`), so the box keeps listing the vial the room rolls for and
+    /// says it is worth nothing, rather than dropping the line and looking as
+    /// though the room had no vial.
+    ///
+    /// Fails if `Knobs::vials_per_run` stops reaching the table (every count
+    /// would stay at its 0.1-anchored value), and fails if zeroing it also
+    /// zeroes the unique rate — Sanctum's 0.25 x 195 c must survive intact.
+    #[test]
+    fn a_zero_vial_rate_removes_every_vial_term_and_leaves_the_uniques() {
+        let knobs = Knobs {
+            vials_per_run: 0.0,
+            ..Knobs::default()
+        };
+        let valued = Valued::compute(&allflame(), &knobs);
+
+        let mut vials = 0;
+        for (key, tiers) in valued.lines() {
+            for value in tiers {
+                for driver in value.drivers.iter() {
+                    if driver.kind != DriverKind::VialDrop {
+                        continue;
+                    }
+                    vials += 1;
+                    assert_eq!(driver.count, Some(0.0), "{key}: the vial is listed");
+                    // `None` on a room that summed nothing at all, where the
+                    // rung is the whole accounting and every other term is
+                    // blanked with it (`value_tier3`'s fallback branch).
+                    let expected = match value.priced {
+                        Priced::Fallback => None,
+                        _ => Some(0.0),
+                    };
+                    assert_eq!(driver.chaos, expected, "{key}: worth nothing");
+                }
+            }
+        }
+        assert_eq!(vials, 27, "the nine vial lines, three tiers each");
+
+        // Sanctum of Immortality: 0.25 x Mask of the Spirit Drinker at 195 c,
+        // +6 % quantity and +12 % rarity, and its vial gone. 60.75 - 6.
+        let sanctum = value_of(&valued, "sanctum_of_immortality", 3);
+        let unique = driver(&sanctum, DriverKind::UniqueDrop);
+        assert_eq!(unique.count, Some(0.25), "the unique rate does not scale");
+        assert_eq!(unique.chaos, Some(48.75));
+        assert!(close(sanctum.total, 54.75), "{}", sanctum.total);
+
+        // Throne of Atziri is the room the setting costs everything: its vial
+        // was its ONLY term, so at a zero anchor it stops being a priced room
+        // and falls back to its letter. Stated rather than left implicit —
+        // this is what "0 removes every vial term" costs a player who sets it.
+        let throne = value_of(&valued, "throne_of_atziri", 3);
+        assert_eq!(throne.priced, Priced::Fallback, "nothing left to sum");
+        // C- on an anchor that is now Toxic Grove's unique term alone: the
+        // cheapest summed room lost its vial with everything else.
+        assert_eq!(
+            throne.total,
+            Grade::CMinus.fallback_chaos_scaled(ANCHOR_NO_VIALS)
+        );
+        assert!(close(throne.total, 0.010_937_5), "{}", throne.total);
+    }
+
+    /// The capture's anchor L with the vial rate at zero: Toxic Grove's unique
+    /// term alone, 0.25 x Apep's Slumber at 7 c. Still the lowest formula sum.
+    const ANCHOR_NO_VIALS: f64 = 0.25 * 7.0;
+
+    /// `push_drop` with a price and nobody's count lists the item and adds 0.
+    ///
+    /// The one arm of `push_drop`'s match the shipped table no longer reaches,
+    /// and the reason it is exercised directly rather than through
+    /// `value_tier3`: since POE-262 a count is `None` exactly where
+    /// `vial_chance_raw` is `None`, and a line with no vial chance names no
+    /// vial, so no row is pushed at all. The contract still holds and is still
+    /// the one a future priced-but-unrated drop would land on — a row that
+    /// shows the item and its price, contributing NOTHING.
+    ///
+    /// Fails if a missing count is read as one per run: the row would
+    /// contribute 428 c and `chaos` would stop being `None`, which is the
+    /// difference between "nobody has rated this" and "one drops every run".
+    #[test]
+    fn a_drop_priced_with_no_count_lists_the_item_and_contributes_nothing() {
+        let mut drivers = Vec::new();
+
+        let added = push_drop(
+            &mut drivers,
+            DriverKind::VialDrop,
+            "Vial of Transcendence",
+            None,
+            Some(UnitPrice {
+                chaos: 428.0,
+                guessed: false,
+                low_confidence: false,
+                window_priced: false,
+            }),
+            1.0,
+        );
+
+        assert_eq!(added, 0.0, "an unrated drop adds nothing to the total");
+        assert_eq!(drivers.len(), 1, "the row is still listed");
+        let driver = &drivers[0];
+        assert_eq!(driver.name, "Vial of Transcendence");
+        assert_eq!(driver.count, None, "nobody has stated a rate");
+        assert_eq!(driver.unit_price, Some(428.0), "the price is still shown");
+        assert_eq!(driver.chaos, None, "and no term was priced from it");
+    }
+
+    /// A malformed vial rate lands on the zero anchor, count included.
+    ///
+    /// `rate()`'s job on this knob, and the reason `value_tier3` wraps
+    /// `knobs.vials_per_run` in it rather than passing it straight to
+    /// `TierDrops::vials_per_run`. `temple_custom` is a hand-editable file, so
+    /// `NaN`, `-1` and `inf` reach `Knobs` whatever the editor refuses.
+    ///
+    /// The TOTAL is not what catches it. `push_drop` already floors the chaos
+    /// it computes (`rate(count.value())`), so an unwrapped knob still prices
+    /// every vial term at nothing and every total is unchanged — the damage
+    /// lands in the COUNT the box prints, `×NaN` or `×-1.7` beside a term
+    /// worth 0 c, a driver list disagreeing with its own headline. So the
+    /// counts are asserted, and the totals are asserted beside them to state
+    /// what the setting is worth: exactly a zero anchor, room for room.
+    ///
+    /// Fails if `rate(..)` is dropped from the call: the counts read
+    /// `Some(NaN)` and `Some(-1.666..)` where `Some(0.0)` is required.
+    #[test]
+    fn a_malformed_vial_rate_lands_on_the_zero_anchor() {
+        let zeroed = Valued::compute(
+            &allflame(),
+            &Knobs {
+                vials_per_run: 0.0,
+                ..Knobs::default()
+            },
+        );
+
+        for bad in [f64::NAN, -1.0, f64::INFINITY] {
+            let valued = Valued::compute(
+                &allflame(),
+                &Knobs {
+                    vials_per_run: bad,
+                    ..Knobs::default()
+                },
+            );
+
+            let mut vials = 0;
+            for (key, tiers) in valued.lines() {
+                for (index, value) in tiers.iter().enumerate() {
+                    let tier = Tier::new(index as u8 + 1).expect("1..=3");
+                    let baseline = zeroed.get(key, tier).expect("the same table");
+                    assert!(
+                        close(value.total, baseline.total),
+                        "{key} tier {}: {} at a rate of {bad}, {} at zero",
+                        index + 1,
+                        value.total,
+                        baseline.total,
+                    );
+                    for driver in value.drivers.iter() {
+                        if driver.kind != DriverKind::VialDrop {
+                            continue;
+                        }
+                        vials += 1;
+                        assert_eq!(
+                            driver.count,
+                            Some(0.0),
+                            "{key} tier {}: a rate of {bad} reached the count",
+                            index + 1,
+                        );
+                    }
+                }
+            }
+            assert_eq!(vials, 27, "the nine vial lines, three tiers each");
+        }
+    }
+
+    /// Vertolka's proposed doubling doubles the vial terms and nothing else.
+    ///
+    /// *"we can try to use 20 % value of vial instead of 10 %"* (2026-09-06),
+    /// which is what makes the anchor a knob rather than a constant. Every
+    /// derived count is linear in it by construction, so the property is over
+    /// the whole table rather than over one room: a line's vial term doubles,
+    /// its unique and bonus terms do not move, and a room with no vial does not
+    /// move at all.
+    ///
+    /// Fails if the anchor is applied to the unique rate too (Sanctum's unique
+    /// would double as well), and fails if any line's rate is hard-coded rather
+    /// than derived (its term would stay put while the others doubled).
+    ///
+    /// The rooms that summed nothing are excluded and NOT because they are
+    /// awkward: their totals are grade rungs scaled on
+    /// `lowest_summed_room_total`, which is Toxic Grove's sum — a sum with a
+    /// vial term in it — so a room nothing prices moves with the anchor by
+    /// design. `the_letters_and_the_anchor_move_together` is where that is
+    /// asserted rather than skipped.
+    #[test]
+    fn doubling_the_anchor_doubles_every_vial_term_and_only_those() {
+        let shipped = Valued::compute(&allflame(), &Knobs::default());
+        let doubled = Valued::compute(
+            &allflame(),
+            &Knobs {
+                vials_per_run: 0.2,
+                ..Knobs::default()
+            },
+        );
+
+        let mut moved = Vec::new();
+        for (key, tiers) in shipped.lines() {
+            if tiers[2].priced == Priced::Fallback {
+                continue;
+            }
+            let after = doubled.get(key, Tier::T3).expect("valued");
+            for (before, after) in tiers[2].drivers.iter().zip(after.drivers.iter()) {
+                assert_eq!(before.kind, after.kind, "{key}: the driver list moved");
+                match before.kind {
+                    DriverKind::VialDrop => {
+                        moved.push(key);
+                        assert!(
+                            close(
+                                after.count.expect("a count"),
+                                2.0 * before.count.expect("a count"),
+                            ),
+                            "{key}: the vial count did not double",
+                        );
+                        assert!(
+                            close(
+                                after.chaos.expect("priced"),
+                                2.0 * before.chaos.expect("priced"),
+                            ),
+                            "{key}: the vial term did not double",
+                        );
+                    }
+                    _ => assert_eq!(
+                        after.chaos, before.chaos,
+                        "{key}: a {:?} term moved with the vial anchor",
+                        before.kind,
+                    ),
+                }
+            }
+        }
+        assert_eq!(moved.len(), 9, "the nine vial lines, got {moved:?}");
+
+        // And a room with no vial at all is untouched, total included.
+        assert_eq!(
+            value_of(&doubled, "factory", 3).total,
+            value_of(&shipped, "factory", 3).total,
+        );
+    }
+
+    /// The letters move with the anchor rate, because the anchor L does.
+    ///
+    /// The consequence of WI-1 and WI-2 meeting: the fallback rung is a
+    /// fraction of the cheapest SUMMED room, the cheapest summed room is Toxic
+    /// Grove, and Toxic Grove's sum contains a vial term. So raising the vial
+    /// rate raises every unpriced room's value too — not by its own vial (it
+    /// has none priced) but through the room it is measured against.
+    ///
+    /// Stated here rather than buried because it is the surprising half: a
+    /// player who doubles the anchor sees eleven rooms they never think of as
+    /// vial rooms move as well. Fails if the rung stops reading the live
+    /// anchor, and fails if the anchor stops summing the vial term.
+    #[test]
+    fn the_letters_and_the_anchor_move_together() {
+        let doubled = Valued::compute(
+            &allflame(),
+            &Knobs {
+                vials_per_run: 0.2,
+                ..Knobs::default()
+            },
+        );
+
+        // Toxic Grove at the doubled anchor: 1.75 + 0.2 x 201/1689 x 9.
+        let l = 0.25 * 7.0 + 0.2 * 201.0 / 1689.0 * 9.0;
+        assert_eq!(value_of(&doubled, "toxic_grove", 3).total, l);
+        assert!(close(l, 1.964_209_591_474), "L was {l}");
+        assert!(l > ANCHOR, "the anchor rose with the rate");
+
+        // And the C rung rose with it, in the same ratio.
+        let sadists = value_of(&doubled, "sadists_den", 3);
+        assert_eq!(sadists.priced, Priced::Fallback, "precondition");
+        assert_eq!(sadists.total, Grade::C.fallback_chaos_scaled(l));
+        assert!(close(sadists.total, 0.024_552_619_893), "{}", sadists.total);
+    }
+
+    /// The capture's anchor L is Toxic Grove's formula sum, to the bit.
+    ///
+    /// `ANCHOR` is written as arithmetic so the rung assertions can state where
+    /// their numbers come from; this is what licenses those assertions to be
+    /// exact rather than approximate. It also pins WI-2's move: L was 2.65 when
+    /// Toxic Grove's vial was a flat 0.1 per run, and deriving the rate took it
+    /// to 1.857 — the whole board of scaled rungs moved by that ratio.
+    ///
+    /// Fails if any other line drops below Toxic Grove (the anchor would be
+    /// that line's sum instead) and fails if `ANCHOR` drifts from the formula.
+    #[test]
+    fn the_anchor_is_toxic_groves_formula_sum() {
+        let valued = Valued::compute(&allflame(), &Knobs::default());
+
+        let grove = value_of(&valued, "toxic_grove", 3);
+        assert_eq!(
+            grove.priced,
+            Priced::Partial,
+            "its unique is priced, at 7 c"
+        );
+        assert_eq!(grove.total, ANCHOR, "bit-identical, not merely close");
+        assert!(close(ANCHOR, 1.857_104_795_737), "ANCHOR is {ANCHOR}");
+        // 1.75 of unique + 0.107 of vial: the vial is 0.1 x 201/1689 x 9 c,
+        // where a flat 0.1 x 9 would have made it 0.9 and the total 2.65.
+        assert_eq!(driver(&grove, DriverKind::UniqueDrop).chaos, Some(1.75));
+        assert!(close(
+            driver(&grove, DriverKind::VialDrop).chaos.expect("priced"),
+            0.107_104_795_737,
+        ));
+
+        // And it really is the lowest formula sum on the board, which is the
+        // only reason it is the anchor.
+        let second = valued
+            .lines()
+            .filter(|(key, tiers)| {
+                *key != "toxic_grove" && matches!(tiers[2].priced, Priced::Market | Priced::Partial)
+            })
+            .map(|(_, tiers)| tiers[2].total)
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            close(second, 2.027_235_050_326),
+            "Throne of Atziri, {second}"
+        );
+        assert!(ANCHOR < second);
     }
 
     /// On a live read a letter never reaches a room that summed something.
@@ -1801,7 +2285,7 @@ mod tests {
     /// stand at 31.725 over Chamber of Iron's measured 6.
     ///
     /// Fails if the anchor widens back to the sale-priced set (Apex reads
-    /// 31.725 against a floor of 2.65) and fails if any rung stops being a
+    /// 31.725 against a floor of 1.857) and fails if any rung stops being a
     /// fraction of the anchor.
     #[test]
     fn no_letter_reaches_a_room_that_summed_something() {
@@ -1812,7 +2296,11 @@ mod tests {
             .filter(|(_, tiers)| matches!(tiers[2].priced, Priced::Market | Priced::Partial))
             .map(|(_, tiers)| tiers[2].total)
             .fold(f64::INFINITY, f64::min);
-        assert!(close(cheapest_summed, 2.65), "Toxic Grove, a partial sum");
+        assert!(close(cheapest_summed, ANCHOR), "Toxic Grove, a partial sum");
+        assert!(
+            close(cheapest_summed, 1.857_104_795_737),
+            "{cheapest_summed}"
+        );
 
         let mut fallbacks = 0;
         for (key, tiers) in valued.lines() {
@@ -1838,7 +2326,10 @@ mod tests {
                 );
             }
         }
-        assert_eq!(fallbacks, 11, "the capture's unpriced rooms");
+        // Ten, not WI-1's eleven: POE-262 WI-2 gave Throne of Atziri a
+        // derived vial rate, so the room the market prices a vial for stopped
+        // being one of the rooms nothing prices.
+        assert_eq!(fallbacks, 10, "the capture's unpriced rooms");
     }
 
     /// On the rusher's board the anchor collapses onto the two rooms the feed
@@ -1887,7 +2378,7 @@ mod tests {
     /// fraction of one anchor is what keeps both halves at once.
     ///
     /// Fails if the rungs are CLIPPED at the anchor rather than scaled onto it
-    /// — B- and C would tie at 2.65 on this capture — and fails if the ladder
+    /// — B- and C would tie at 1.857 on this capture — and fails if the ladder
     /// is flattened to a constant.
     #[test]
     fn the_letters_still_order_the_rooms_nothing_priced() {
@@ -1901,11 +2392,15 @@ mod tests {
         for value in [&apex, &sadists, &storm, &atlas] {
             assert_eq!(value.priced, Priced::Fallback, "precondition");
         }
-        // B- 30, C 10, C- 5, D 2, each x 2.65/800.
-        assert!(close(apex.total, 0.099_375), "B-, was {}", apex.total);
-        assert!(close(sadists.total, 0.033_125), "C, was {}", sadists.total);
-        assert!(close(storm.total, 0.016_562_5), "C-, was {}", storm.total);
-        assert!(close(atlas.total, 0.006_625), "D, was {}", atlas.total);
+        // B- 30, C 10, C- 5, D 2, each x ANCHOR/800.
+        assert!(close(apex.total, 0.069_641_429_840), "B-, {}", apex.total);
+        assert!(
+            close(sadists.total, 0.023_213_809_947),
+            "C, {}",
+            sadists.total
+        );
+        assert!(close(storm.total, 0.011_606_904_973), "C-, {}", storm.total);
+        assert!(close(atlas.total, 0.004_642_761_989), "D, {}", atlas.total);
         assert!(apex.total > sadists.total);
         assert!(sadists.total > storm.total);
         assert!(storm.total > atlas.total);
@@ -1920,6 +2415,9 @@ mod tests {
     /// it on because it IS the capture's anchor at 2.65, and the two override
     /// values bracket it from both sides — 0 below, 500 above.
     ///
+    /// POE-262 WI-2 moved the anchor from 2.65 to 1.857 by deriving its vial
+    /// rate; the property this pins is unchanged and its number is not.
+    ///
     /// Excluding an overridden line instead is the tempting reading, and it is
     /// the one this pins against: it would make one Custom edit move eleven
     /// other rooms (the anchor would jump to Chamber of Iron's 6.00 and every
@@ -1933,7 +2431,7 @@ mod tests {
         let market = allflame();
         let untouched = Valued::compute(&market, &Knobs::default());
         assert!(
-            close(value_of(&untouched, "toxic_grove", 3).total, 2.65),
+            close(value_of(&untouched, "toxic_grove", 3).total, ANCHOR),
             "precondition: Toxic Grove is the capture's anchor",
         );
 
@@ -1967,11 +2465,12 @@ mod tests {
     /// writing 0.5 c against the room that IS the anchor must not drag all
     /// eleven unpriced rooms down by a factor of five. Toxic Grove is the room
     /// because its stated 0.5 sits below its own formula sum of 2.65, so the
-    /// two answers are distinguishable on the row and on every rung.
+    /// two answers are distinguishable on the row and on every rung — its
+    /// formula sum is `ANCHOR`, 1.857.
     ///
     /// Fails if the set is ever fed the PUBLISHED totals — the row as the
     /// player sees it — rather than the formula value of each line: Sadist's
-    /// Den would read 10 x 0.5/800 = 0.00625 instead of 10 x 2.65/800.
+    /// Den would read 10 x 0.5/800 = 0.00625 instead of 10 x ANCHOR/800.
     #[test]
     fn a_stated_number_never_becomes_the_anchor() {
         let market = allflame();
@@ -1986,9 +2485,13 @@ mod tests {
         );
         let sadists = value_of(&valued, "sadists_den", 3);
         assert_eq!(sadists.priced, Priced::Fallback);
-        // 10 x 2.65/800, the formula sum of the overridden line — not 10 x
-        // 0.5/800, the number the player wrote over it.
-        assert!(close(sadists.total, 0.033_125), "C, was {}", sadists.total);
+        // 10 x ANCHOR/800, the formula sum of the overridden line — not
+        // 10 x 0.5/800, the number the player wrote over it.
+        assert!(
+            close(sadists.total, 0.023_213_809_947),
+            "C, {}",
+            sadists.total
+        );
     }
 
     /// The two instrumental lines keep ADR-022 §4's own ladder.
@@ -2096,14 +2599,14 @@ mod tests {
 
         let gem = value_of(&valued, "gem", 3);
         assert_eq!(gem.priced, Priced::Fallback, "its sale was its whole value");
-        // 400 x 2.65/800: the A+ rung on the unchanged anchor, not the 423 the
-        // capped ladder used to hand it.
+        // 400 x ANCHOR/800: the A+ rung on the unchanged anchor, not the 423
+        // the capped ladder used to hand it.
         assert!(
-            close(gem.total, Grade::APlus.fallback_chaos_scaled(2.65)),
+            close(gem.total, Grade::APlus.fallback_chaos_scaled(ANCHOR)),
             "was {}",
             gem.total,
         );
-        assert!(close(gem.total, 1.325), "was {}", gem.total);
+        assert!(close(gem.total, 0.928_552_397_869), "was {}", gem.total);
         for (key, tiers) in valued.lines() {
             if key == "gem" || tiers[2].priced != Priced::Fallback {
                 continue;
@@ -2418,9 +2921,16 @@ mod tests {
     }
 
     #[test]
-    fn only_the_two_rooms_the_feed_prices_outright_are_free_of_estimates() {
-        // Everything else rests on Vertolka's per-run counts, the two unmeasured
-        // bonus rates, or the grade ladder — and says so.
+    fn only_doryanis_institute_is_free_of_estimates() {
+        // Everything else rests on Vertolka's per-run counts, the two
+        // unmeasured bonus rates, or the grade ladder — and says so.
+        //
+        // ONE room, where WI-1 had two. Locus of Corruption left the list at
+        // POE-262 WI-2 and honestly: its 846 c sale is still the feed's, but
+        // its total is now that plus a vial term derived off Vertolka's
+        // anchor, so the number the board ranks it on is no longer measured
+        // end to end. Doryani's Institute names no unique, no vial and no
+        // bonus, so its sale really is its whole value.
         let valued = Valued::compute(&allflame(), &Knobs::default());
 
         let measured: Vec<&str> = valued
@@ -2429,7 +2939,11 @@ mod tests {
             .map(|(key, _)| key)
             .collect();
 
-        assert_eq!(measured, vec!["corruption", "gem"]);
+        assert_eq!(measured, vec!["gem"]);
+        assert!(
+            value_of(&valued, "corruption", 3).guessed,
+            "its derived vial term contributed chaos",
+        );
     }
 
     // ------------------------------------------------------- the recipe --

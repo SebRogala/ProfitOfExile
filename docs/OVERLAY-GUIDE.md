@@ -1264,7 +1264,11 @@ touching the named path.
      Flame, Toxic Grove, Sanctum of Immortality, Hybridisation Chamber, Conduit
      of Lightning or Defense Research Lab. The box must show a chaos figure with
      `per run` beside it, up to three ICON rows under it, each with the item's
-     own price and its per-run count (`×0.25`, `×0.1`, `×2`), the
+     own price and its per-run count (`×0.25` for the unique, `×2` for the
+     gloves, and a per-LINE vial count since POE-262, printed to two
+     significant digits — `×0.1` on Crucible, Conduit and Sanctum, `×0.06` on
+     Hybridisation Chamber, `×0.048` on Defense Research Lab, `×0.012` on
+     Toxic Grove), the
      `+6% quant · +12% rarity` line, and — on those six lines, and NOT on Locus
      of Corruption — an `UPGRADE RECIPE` row of three icons with prices. Icons
      that render as a `?` mean the server's `/api/gem-icon/<name>` did not answer
@@ -1357,6 +1361,26 @@ touching the named path.
   length over a game now that it carries icons and four more lines, and whether
   the pick's cyan frame still wins the eye against them. If it does not, the fix
   is a product decision about what the box drops, not a change to the geometry.
+- **The vials-per-run knob moves the Temple page's totals** (POE-262): on the
+  Temple page pick **Custom** and find Glittering Halls' row in the value table.
+  The table prints CELL TOTALS and no per-driver rows, so this is where the knob
+  is read as a number rather than as a line. Note the tier-3 cell at the
+  shipped `0.1`, set **Vials per run** to `0.2`, and the cell must DOUBLE its
+  vial half; set it to `0` and it must fall to `15.00`, the 60 % rarity bonus
+  alone and the one figure here that does not move with the market. On the
+  committed capture (Vial of Transcendence at 428 c) the three read `86.33`,
+  `158` — 157.67, and cells at 100 c and up print whole — and `15.00`; a live
+  vial price moves the first two and not the third. Factory's tier-3 cell must
+  not move at any of the three — it names no vial. `NaN` or a negative value must be refused in place with the
+  field marked, and the table must stay on screen. Then set it back to `0.1`.
+- **The same knob on the offer box, where the vial line itself is visible**
+  (POE-262): with the value above set, open a live board on a tier-3 Glittering
+  Halls offer. The `Vial of Transcendence` row's per-run cell reads `×0.17` at
+  `0.1` and `×0.33` at `0.2` — two significant digits, not the raw
+  `×0.16666666666666666` — and its chaos figure doubles with it while the
+  `+…% rarity` line below does not move. At `0` the row must still be LISTED,
+  reading no chaos, rather than vanishing: a missing row would say the room
+  rolls for no vial at all.
 - **The waiting notice, from Alva's start line to the sheet** (POE-249): with the
   temple module on and the game focused, click Alva and open the incursion
   portal WITHOUT opening the layout sheet. `app.log` must carry
