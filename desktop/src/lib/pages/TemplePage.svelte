@@ -92,8 +92,14 @@
 	/** What the prices behind every chaos value on this page are — one line,
 	 *  always present (POE-258). It is re-derived on every SSOT poll rather
 	 *  than composed in Rust, so the age it prints follows the clock instead of
-	 *  standing still between the market poller's five-minute ticks. */
-	const market = $derived(marketNote(temple.market));
+	 *  standing still between the market poller's five-minute ticks.
+	 *
+	 *  `pollMarket` and NOT `market`: this page's question is what the app is
+	 *  priced against right now — the value table below is served off the same
+	 *  latest poll (`temple_value_table` calls `ssot::temple_market_now`) — and
+	 *  not what some earlier board happened to be priced against. The offer
+	 *  boxes ask the other question and read `market`. */
+	const market = $derived(marketNote(temple.pollMarket));
 
 	const unknownBadge = $derived(unknownRoomsBadge(temple));
 	const markerNotice = $derived(markerFallbackNotice(layout));
@@ -209,7 +215,11 @@
 	const valueTableRows = $derived(
 		valueRows(valueTable, temple.preset === 'custom' ? customTable : null)
 	);
-	const wantValueKey = $derived(valueTableKey(temple.preset, temple.market, temple.custom));
+	// Keyed on the POLL and not on the read: `temple_value_table` prices these
+	// rows off `ssot::temple_market_now`, so a key watching the read's frozen
+	// market would leave the table showing prices the command has stopped
+	// serving.
+	const wantValueKey = $derived(valueTableKey(temple.preset, temple.pollMarket, temple.custom));
 
 	// The slice is whole-replaced on every poll, so an effect that simply read
 	// `temple.preset` would re-fetch 75 values every three seconds. The key is

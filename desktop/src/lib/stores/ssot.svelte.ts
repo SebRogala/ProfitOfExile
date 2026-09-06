@@ -44,6 +44,7 @@ import { mercenarySliceDefault, type MercenarySlice } from '$lib/mercenaries/cap
 import {
 	isTempleStatus,
 	templeSliceDefault,
+	type MarketView,
 	type TempleConfig,
 	type TempleCustom,
 	type TempleDebugReport,
@@ -411,6 +412,13 @@ function applyTemple(incoming: TempleSlice | undefined): void {
 	ssot.temple = normaliseTemple(incoming);
 }
 
+/** One market view from the payload, with the staleness line filled in from
+ *  `fallback` when the payload carries none. */
+function marketView(incoming: MarketView | undefined, fallback: MarketView): MarketView {
+	if (incoming == null) return fallback;
+	return { ...incoming, staleAfterMs: incoming.staleAfterMs ?? fallback.staleAfterMs };
+}
+
 /**
  * Take a payload field by field, so the rune matches its declared type.
  *
@@ -502,7 +510,20 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 		// `market.asOf` — `undefined.asOf` throws inside an overlay window with
 		// no devtools. The fresh default says "unavailable", which is exactly
 		// what such a build is.
-		market: incoming.market ?? fresh.market,
+		//
+		// Two fields and not one: `market` is the READ on screen (the offer
+		// boxes' line) and `pollMarket` is the latest poll (the page's reader
+		// row). A build from before the split sends only `market`, so
+		// `pollMarket` falls to the fresh default rather than borrowing it —
+		// "the app has not told us what the next read will use" is true of such
+		// a build, and base values is the fail-safe reading of it.
+		// `staleAfterMs` is normalised one level deeper, because it is consumed
+		// as a GUARANTEE the way `unknownRooms.length` is: `marketStale`
+		// compares an age against it, and `undefined` there makes every
+		// comparison false — a market that can never go stale, which is the one
+		// answer this field must not be able to give by accident.
+		market: marketView(incoming.market, fresh.market),
+		pollMarket: marketView(incoming.pollMarket, fresh.pollMarket),
 		unknownRooms: incoming.unknownRooms ?? [],
 		lastReadAt: incoming.lastReadAt ?? null,
 		calibration: incoming.calibration ?? null,

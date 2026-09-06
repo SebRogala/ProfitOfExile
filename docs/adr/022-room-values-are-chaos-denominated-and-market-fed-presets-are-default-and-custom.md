@@ -15,12 +15,21 @@ Accepted (POE-257, commits `cd5627c` (WI-1) + `f722d49` (WI-2), 2026-09-06),
 under epic POE-124. Supersedes nothing.
 
 Two things it decided were **not yet reachable by a user** when it was accepted.
-One of them has since landed: POE-258 wired the poll, so `run.rs` now prices a
+Both have since landed.
+
+**Amended 2026-09-06 (POE-258):** the market poll is wired, so `run.rs` prices a
 board against a real market read (`ssot::temple_market_now`) and takes the
 cold-ladder branch only when there is nothing to price with — see the amended
-Consequences bullet. The other stands: POE-257 shipped no preset setters, so the
-preset is reachable only by editing `settings.json` (POE-259 adds
-`temple_set_preset` / `temple_set_custom`).
+Consequences bullet.
+
+**Amended 2026-09-06 (POE-259):** the presets are reachable from the UI. The
+Temple page carries a Default / Custom picker and an editor over the 25 lines by
+3 tiers, served by three commands — `temple_set_preset` (the choice alone, so
+switching away and back never touches the table), `temple_set_custom` (validated
+by the same per-entry rules the loader salvages by) and `temple_value_table` (the
+75 rows on demand, keyed on preset, market age and the Custom table, so the 3 s
+SSOT snapshot carries no room values). Editing `settings.json` by hand is no
+longer the only way in.
 
 Related: [ADR-013](013-ui-picks-persist-in-a-schema-less-prefs-map.md) — the two
 new settings blocks are TYPED, against that ADR's default, because Rust reads
@@ -293,11 +302,11 @@ to their own variants and the other 21 to `Line::Other(key)`.
 
 `apex_score` and `path_cost` stay **RELATIVE settings**, stated in units where
 the **top tier-3 room is worth 9** (`strategy::REFERENCE_TOP_ROOM_VALUE`), and
-POE-259's controls must be labelled that way — a slider reading "2" beside a
-board of three-figure chaos numbers is a slider nobody can set. The bridge
-multiplies by `StrategyProfile::value_scale()` = top tier-3 value / 9. That
-multiplier is applied to exactly five magnitudes, and the table in
-`REFERENCE_TOP_ROOM_VALUE`'s doc is normative for the list: `apex_score`,
+any control over them must be labelled that way (POE-259's are) — a slider
+reading "2" beside a board of three-figure chaos numbers is a slider nobody can
+set. The bridge multiplies by `StrategyProfile::value_scale()` = top tier-3
+value / 9. That multiplier is applied to exactly five magnitudes, and the table
+in `REFERENCE_TOP_ROOM_VALUE`'s doc is normative for the list: `apex_score`,
 `apex_mixed_increment`, `room_baseline`, `path_cost`, and
 `advisor::rules::NOISE_FLOOR` (scaled in `rules::noise_margin`).
 `blast_discount` is not on it — it is a fraction of a score difference and is
@@ -381,7 +390,9 @@ number it replaced there.
 
 ## Consequences
 
-- **Production runs on live prices since POE-258.** `run.rs` reads the market
+- **Amended 2026-09-06 (POE-258): production runs on live prices.** As accepted,
+  this bullet read that `run.rs` always took the cold-ladder branch because
+  nothing filled the market. It does not any more: `run.rs` reads the market
   from `ssot::temple_market_now`, which `ssot::spawn_temple_market_poll` fills
   every five minutes and which judges staleness against the tick's own clock.
   The cold branch is still the whole fallback and is still what L4 asks for —
@@ -393,8 +404,13 @@ number it replaced there.
   the read ages into stale on its own. What changed is that the player is now told
   which of the two is on screen (`view.ts::marketNote`), because a rung and a
   price print the same kind of number.
-- **No preset is reachable from the UI.** POE-257 shipped no setters; the preset
-  and the Custom table are settings-file-only until POE-259.
+- **No preset was reachable from the UI.** POE-257 shipped no setters; the
+  preset and the Custom table were settings-file-only. **Amended 2026-09-06
+  (POE-259):** the Temple page's picker and value editor close this — see the
+  amended Status. The consequence that survives is the one that made it worth
+  writing down: what a player can reach, they can also get wrong, so
+  `temple_set_custom` validates per entry and per knob and returns advisory
+  lines (both target lines at zero) without refusing the write.
 - **`room_baseline` is 4.44 c on a cold read** — 0.05 × (800 / 9) — which is
   more than a D-grade tier-3 room is worth (2 c). On a board of nothing but
   junk, "open one more room" outweighs "the room you opened". That is an

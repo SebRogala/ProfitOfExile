@@ -433,10 +433,6 @@ func main() {
 	slog.Info("collector stopped")
 }
 
-// checkExpectedLeague enforces the optional EXPECTED_LEAGUE deploy assertion.
-// An empty expected value is a no-op (the assertion is opt-in). A non-empty
-// value must equal the resolved league exactly, otherwise it returns an error
-// the caller turns into a refusal to start.
 // itemInserter is the one repository call itemStoreFunc needs, taken as a
 // function value so the store behaviour can be exercised without a database.
 type itemInserter func(ctx context.Context, scope league.Scope, snapTime time.Time, snapshots []collector.ItemSnapshot) (int, error)
@@ -464,6 +460,10 @@ func itemStoreFunc(insert itemInserter, scope league.Scope, category string, log
 	}
 }
 
+// checkExpectedLeague enforces the optional EXPECTED_LEAGUE deploy assertion.
+// An empty expected value is a no-op (the assertion is opt-in). A non-empty
+// value must equal the resolved league exactly, otherwise it returns an error
+// the caller turns into a refusal to start.
 func checkExpectedLeague(expected, resolved string) error {
 	if expected == "" {
 		return nil

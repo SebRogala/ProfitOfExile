@@ -1223,7 +1223,10 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 			// null on a stale read by construction: the whole point of the flag
 			// is that there IS a read and it is too old, so the field that
 			// withholds its age cannot be the one that reports it (POE-258).
-			stale: slice.market.stale
+			// Through `marketStale` and not off the raw flag, so the mark and
+			// the line above it can never say different things about the same
+			// clock.
+			stale: marketStale(slice.market, now)
 		};
 	});
 }
@@ -1441,6 +1444,21 @@ function marketAge(asOf: number, now: number): string {
 }
 
 /**
+ * Whether a market view is too old to price with, AT THE CLOCK GIVEN.
+ *
+ * The wire's `stale` is Rust's answer at publish time, and a `MarketView` on a
+ * board does not get republished — `TempleSlice.market` belongs to the read that
+ * produced the board and stands still until the next one. So the flag is read
+ * only when there is no observation to measure; whenever `asOf` is set, the
+ * clock and the published `staleAfterMs` are the answer, which is what makes a
+ * board left on screen cross the two-hour line on its own.
+ */
+export function marketStale(market: MarketView, now: number = Date.now()): boolean {
+	if (market.asOf === null) return market.stale;
+	return now - market.asOf > market.staleAfterMs;
+}
+
+/**
  * What the page and the offer boxes say about the prices behind the board
  * (POE-258).
  *
@@ -1450,19 +1468,42 @@ function marketAge(asOf: number, now: number): string {
  * number, and only this line says which.
  *
  * - `prices 12 min old` — the board is priced.
- * - `prices stale (3 h) — base values` — there IS a read and it is too old to
- *   price with, so the age is stated: it is what tells a stalled feed from a
- *   server that was never reached.
+ * - `prices stale (3 h) — base values` — the read was already too old to price
+ *   with when it was VALUED, so the numbers beside this line came off the cold
+ *   grade ladder. The age is stated because it is what tells a stalled feed
+ *   from a server that was never reached.
+ * - `prices stale (3 h)`, no suffix — the read priced these numbers off a live
+ *   market and has since aged past the line with nothing re-read. See below.
  * - `prices unavailable — base values` — everything else: no poll has landed,
  *   the server's cache is cold, the payload priced another league, or the floor
  *   was unusable. The player's move is the same in all four, so they get one
  *   sentence rather than four.
  *
+ * **The line ages by itself.** Both the minutes and the STALE verdict come from
+ * `now`, not from the publish (`marketStale`), so a board sitting on screen
+ * rolls from `prices 12 min old` through `prices 59 min old` to
+ * `prices stale (2 h)` with nothing republished behind it.
+ *
+ * **And that is why the suffix is conditional.** `— base values` is a claim
+ * about the NUMBERS printed beside this line, not about the age: it says they
+ * came off the grade ladder. On a board the clock aged after the fact those
+ * numbers are real prices that have merely gone old, so the suffix would be
+ * false — the caution belongs on the age, and `base values` arrives at the next
+ * read, which is the one that will actually take the cold branch. Both
+ * conditions are tested rather than only `unavailable`: Rust makes a stale read
+ * unavailable by construction (`prices_anything` is `is_live() && …`), so the
+ * flag is redundant TODAY, and asserting it anyway is what keeps this wording
+ * honest if that entailment ever stops holding.
+ *
  * `now` is a parameter so the age is testable; callers pass nothing.
  */
 export function marketNote(market: MarketView, now: number = Date.now()): string {
 	if (market.asOf === null) return 'prices unavailable — base values';
-	if (market.stale) return `prices stale (${marketAge(market.asOf, now)}) — base values`;
+	if (marketStale(market, now)) {
+		const age = `prices stale (${marketAge(market.asOf, now)})`;
+		const pricedWhenValued = !market.unavailable && !market.stale;
+		return pricedWhenValued ? age : `${age} — base values`;
+	}
 	if (market.unavailable) return 'prices unavailable — base values';
 	return `prices ${marketAge(market.asOf, now)} old`;
 }

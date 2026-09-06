@@ -899,19 +899,21 @@ pub struct AdviceView {
     pub forced_kill: bool,
 }
 
-/// What the prices behind the board are worth saying, on the wire (POE-258).
+/// What the prices behind a board are worth saying, on the wire (POE-258).
 ///
-/// Three facts and no wording: `ssot::poll_temple_market` writes this from the
-/// [`MarketInput`] it stores, and `$lib/temple/view::marketNote` is the ONE
-/// place that turns it into the line the page and the offer boxes print. The
-/// age is left as a timestamp rather than composed here on purpose — a
-/// "12 min old" written at publish time would stand frozen until the next poll
-/// five minutes later, while the webview re-derives it from the clock on every
-/// render.
+/// Facts and no wording: `$lib/temple/view::marketNote` is the ONE place that
+/// turns this into the line the page and the offer boxes print. The age is left
+/// as a timestamp rather than composed here on purpose — a "12 min old" written
+/// at publish time would stand frozen until the next poll five minutes later,
+/// while the webview re-derives it from the clock on every render. That is also
+/// why [`Self::stale_after_ms`] is published: the age moves between publishes,
+/// so the LINE the age crosses has to travel with it or the webview could only
+/// re-derive half the sentence.
 ///
-/// It is a fact about the SERVER, not about a read, so it survives
-/// [`force_off`] the way [`TempleSlice::config`] does: a switched-off module
-/// still has prices, or still has none.
+/// The slice carries TWO of these and they answer different questions —
+/// [`TempleSlice::market`] is the read on screen, [`TempleSlice::poll`] is the
+/// latest poll. Both survive [`force_off`] the way [`TempleSlice::config`]
+/// does: a switched-off module still has prices, or still has none.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketView {
@@ -923,9 +925,27 @@ pub struct MarketView {
     /// because a stale read priced the room at nothing. Here the age IS the
     /// message — "prices stale (3 h)" cannot be said without it.
     pub as_of: Option<i64>,
-    /// Whether the read is older than [`market::STALE_AFTER_MS`](super::market::STALE_AFTER_MS),
-    /// judged against the clock at the moment it was published.
+    /// Whether the read is older than [`Self::stale_after_ms`], judged against
+    /// the clock at the moment it was published.
+    ///
+    /// Rust's answer AT THAT MOMENT and nothing more. The webview prefers its
+    /// own clock whenever [`Self::as_of`] is set — that is what makes a board
+    /// left on screen say `prices stale (3 h)` without a republish — and falls
+    /// back to this flag only for a payload that carries no observation to
+    /// measure.
     pub stale: bool,
+    /// How old an observation may be before it stops pricing —
+    /// [`market::STALE_AFTER_MS`](super::market::STALE_AFTER_MS), published so
+    /// the webview can re-judge [`Self::stale`] against its own clock rather
+    /// than hard-coding the two hours a second time.
+    ///
+    /// Defaulted to the constant itself rather than to serde's `0`, for a
+    /// payload from a build before the field: zero would read as "every
+    /// observation is instantly stale", which is a claim about the market that
+    /// an absent field is not making. The constant is the app's own answer and
+    /// the only one it has ever had.
+    #[serde(default = "default_stale_after_ms")]
+    pub stale_after_ms: i64,
     /// Whether the board is being valued on the preset's base values rather
     /// than on prices — [`MarketInput::prices_anything`] answering `false`.
     ///
@@ -933,7 +953,19 @@ pub struct MarketView {
     /// is cold, the payload priced another league, the read is stale, the floor
     /// is unusable), because the player's question is "is this number a price
     /// or a ladder rung?" and the answer is the same in all five.
+    ///
+    /// A fact about the NUMBERS this read produced, and never about their age —
+    /// which is what `view.ts::marketNote` gates its `— base values` suffix on.
+    /// A read that priced live and has since aged past [`Self::stale_after_ms`]
+    /// still carries `false` here, and its line says `prices stale (3 h)` with
+    /// no suffix: those figures are real prices gone old, and the cold branch is
+    /// taken by the NEXT read rather than retroactively by this one.
     pub unavailable: bool,
+}
+
+/// [`MarketView::stale_after_ms`]'s serde default — the constant, not zero.
+fn default_stale_after_ms() -> i64 {
+    super::market::STALE_AFTER_MS
 }
 
 impl Default for MarketView {
@@ -959,6 +991,7 @@ pub fn market_view(market: &MarketInput) -> MarketView {
     MarketView {
         as_of: market.as_of_ms(),
         stale: market.stale,
+        stale_after_ms: super::market::STALE_AFTER_MS,
         unavailable: !market.prices_anything(),
     }
 }
@@ -1032,23 +1065,44 @@ pub struct TempleSlice {
     /// would give the player back.
     #[serde(default)]
     pub custom: TempleCustomSettings,
-    /// The prices the board is valued against, or the absence of them
+    /// The prices THIS board was valued against, or the absence of them
     /// (POE-258).
     ///
-    /// Written by TWO paths, both from the same stored [`MarketInput`], because
-    /// it has to move without a read and survive one: `ssot::poll_temple_market`
-    /// publishes it on every poll — which is what makes a last-good read age
-    /// into "stale" on screen with nobody looking at a temple — and [`project`]
-    /// re-states it from [`ReadResult::market`], because a read replaces the
-    /// whole slice and a field the projection did not set would be blanked by
-    /// every board. The same rule [`Self::config`] follows, for the same
-    /// reason.
+    /// **Written by [`project`] alone**, from [`ReadResult::market`] — the
+    /// projection of the very [`MarketInput`] the read's own valuation used. No
+    /// poll may touch it, and that is the whole contract: a surface that shows
+    /// this board's numbers and this field's line can never be made to
+    /// disagree with itself by something that happened after the read. A
+    /// DEBUG/PROD switch used to blank it under a priced board, and a fresh
+    /// poll used to write "3 min old" over a board on the cold grade ladder.
+    ///
+    /// What the NEXT read will use is [`Self::poll`], which is the field a
+    /// per-poll surface reads.
     ///
     /// `serde(default)` so a payload from a build before POE-258 decodes as
     /// "no prices" rather than failing the whole slice — which is also the
     /// truthful reading of such a build.
     #[serde(default)]
     pub market: MarketView,
+    /// The prices the NEXT read will be valued against — the latest poll's
+    /// view of the stored [`MarketInput`] (POE-258, corrected here).
+    ///
+    /// **Written by `ssot::publish_market_view` alone**, on every poll and on
+    /// a server-URL change, which is what lets it move with nobody looking at a
+    /// temple. [`project`] seeds it from the read's own market for the one
+    /// reason [`Self::config`] is echoed: a read replaces the whole slice, and
+    /// a field the projection did not set would be blanked by every board. That
+    /// seed is not a second source — `run::full_read` builds the read's
+    /// [`MarketInput`] by calling `ssot::temple_market_now`, so at the instant
+    /// of a read the read's market IS the latest poll's.
+    ///
+    /// Named `pollMarket` on the wire rather than `poll`, because `poll` alone
+    /// names a mechanism and not a market.
+    ///
+    /// `serde(default)` for a payload from a build before the split, which then
+    /// reads as "no prices" — the same fail-safe [`Self::market`] takes.
+    #[serde(rename = "pollMarket", default)]
+    pub poll: MarketView,
     /// Slots whose plate did not resolve, by key. Surfaced, never hidden — the
     /// player can then see which rooms the advisor is treating as junk.
     pub unknown_rooms: Vec<String>,
@@ -1116,13 +1170,21 @@ pub struct ReadResult<'a> {
     /// recommendation did not use.
     pub valuation: &'a Valued,
     /// The market this read was valued against, as the slice states it
-    /// (POE-258). Carried here for the reason [`Self::config`] is: the
-    /// projection replaces the whole slice, and a field it did not set would
-    /// be blanked by every board until the next poll five minutes later.
+    /// (POE-258).
     ///
     /// The projection of the SAME [`MarketInput`] that produced
     /// [`Self::valuation`], so the "prices unavailable" line and the numbers on
-    /// the offer boxes can never be about different reads.
+    /// the offer boxes can never be about different reads. It becomes
+    /// [`TempleSlice::market`], which nothing else ever writes.
+    ///
+    /// It also SEEDS [`TempleSlice::poll`], for the reason [`Self::config`] is
+    /// carried here at all: the projection replaces the whole slice, and a
+    /// field it did not set would be blanked by every board until the next poll
+    /// five minutes later. Seeding it with this view is exact rather than
+    /// approximate — `run::full_read` takes the read's market from
+    /// `ssot::temple_market_now`, so the read's market and the poll's are the
+    /// same object at the moment of a read; they only diverge afterwards, which
+    /// is precisely what the two fields exist to record.
     pub market: MarketView,
     pub read_at: u64,
 }
@@ -1631,6 +1693,11 @@ pub fn project(read: &ReadResult<'_>, calibration: Option<AnchorCalibration>) ->
         preset: read.preset,
         custom: read.custom.clone(),
         market: read.market.clone(),
+        // The same view in both fields, and only here: at the moment of a read
+        // the read's market IS the latest poll's (`run::full_read` asks
+        // `ssot::temple_market_now` for it). Afterwards `market` stands still
+        // with the board it describes while the poll moves `poll` on its own.
+        poll: read.market.clone(),
         unknown_rooms: unknown_rooms(read.rooms),
         last_read_at: Some(read.read_at),
         calibration,
@@ -4427,6 +4494,20 @@ mod tests {
         assert!(!view.unavailable);
     }
 
+    /// The staleness LINE travels with the observation, so the webview can
+    /// re-judge the age against its own clock between publishes.
+    ///
+    /// Fails if `market_view` stops publishing the constant, or publishes a
+    /// second hand-written two hours instead of `market::STALE_AFTER_MS` — the
+    /// case that would let Rust and `view.ts` disagree about when a read dies.
+    #[test]
+    fn the_view_publishes_the_line_the_age_is_judged_against() {
+        let view = market_view(&crate::temple::market::allflame());
+
+        assert_eq!(view.stale_after_ms, crate::temple::market::STALE_AFTER_MS);
+        assert_eq!(view.stale_after_ms, 2 * 60 * 60 * 1000, "two hours, in ms");
+    }
+
     /// A stale read KEEPS its observation time on this view, unlike on
     /// `RoomValueView`.
     ///
@@ -4483,12 +4564,15 @@ mod tests {
         assert!(!fresh.market.stale, "no observation is not the same claim as an old one");
     }
 
-    /// A completed read republishes the market it was valued against.
+    /// A completed read republishes the market it was valued against, into
+    /// BOTH market fields.
     ///
     /// `project` writes the WHOLE slice, so without the echo every board would
-    /// blank the price line the poll had just published and leave it blank for
-    /// up to `ssot::TEMPLE_MARKET_POLL`. Fails if the field is dropped from
-    /// `project`.
+    /// blank the price line and leave it blank for up to
+    /// `ssot::TEMPLE_MARKET_POLL`. `poll` takes the same view because at the
+    /// moment of a read it IS the same view — `run::full_read` asks
+    /// `ssot::temple_market_now` for the market it prices with. Fails if either
+    /// field is dropped from `project`.
     #[test]
     fn a_read_republishes_the_market_it_was_valued_against() {
         let layout = layout(Some(Slot::E1), &[], &[]);
@@ -4504,6 +4588,7 @@ mod tests {
         let published = project(&result, None);
 
         assert_eq!(published.market, market);
+        assert_eq!(published.poll, market, "a read seeds the poll field too");
     }
 
     // ------------------------------------ the never-cover set (POE-244) --
@@ -4763,7 +4848,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"status":"idle","waitingForPanel":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":true},"preset":"default","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":1.0,"comboPremium":0.0,"rooms":{}},"market":{"asOf":null,"stale":false,"unavailable":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
+            r#"{"status":"idle","waitingForPanel":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":true},"preset":"default","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":1.0,"comboPremium":0.0,"rooms":{}},"market":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
         );
     }
 
@@ -5019,7 +5104,19 @@ mod tests {
             market: MarketView {
                 as_of: Some(1_788_665_199_649),
                 stale: true,
+                stale_after_ms: crate::temple::market::STALE_AFTER_MS,
                 unavailable: true,
+            },
+            // DELIBERATELY a different market from the read's: two hours later,
+            // live and priced. That is the state the split exists for — a board
+            // still on the cold ladder under a poll that has since answered —
+            // and pinning it here is what makes a mirror that reads `pollMarket`
+            // where it meant `market` fail in both suites.
+            poll: MarketView {
+                as_of: Some(1_788_672_399_649),
+                stale: false,
+                stale_after_ms: crate::temple::market::STALE_AFTER_MS,
+                unavailable: false,
             },
             unknown_rooms: vec!["D3".to_string()],
             last_read_at: Some(1_700_000_000_000),
@@ -5036,7 +5133,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]},"recipe":{"base":{"name":"Story of the Vaal","chaos":5.0},"vial":{"name":"Vial of Fate","chaos":1.0},"upgraded":{"name":"Fate of the Vaal","chaos":null}}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"unavailable":true},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]},"recipe":{"base":{"name":"Story of the Vaal","chaos":5.0},"vial":{"name":"Vial of Fate","chaos":1.0},"upgraded":{"name":"Fate of the Vaal","chaos":null}}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///
