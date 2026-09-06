@@ -147,12 +147,12 @@ impl Grade {
     /// - a room that **summed nothing** is anchored on
     ///   `valuation::lowest_summed_room_total` — the lowest tier-3 total among
     ///   the rooms that summed something, over the FORMULA sums of the 23
-    ///   non-instrumental lines with Custom overrides ignored, 2.65 on the
+    ///   non-instrumental lines with Custom overrides ignored, 1.857 on the
     ///   committed capture. Since A++ equals the anchor and every lower grade
     ///   is a fixed fraction of it, no letter can reach a room something
     ///   priced. That CLOSES the fork ADR-022 §3 recorded: Apex of Ascension
     ///   (B−, nothing summed) used to stand at 31.7 over Chamber of Iron's
-    ///   measured 6, and now reads 0.0994;
+    ///   measured 6, and now reads 0.0696;
     /// - the two `strategy::INSTRUMENTAL_LINES` are anchored on the read's
     ///   best tier-3 sale delta and then capped at the lowest sale-priced room
     ///   (846 and 390 on the capture, so Temple Nexus reads its B+ 105.75 and

@@ -293,9 +293,9 @@ halves in one multiplication, and it makes a room's rung a function of its own
 letter and L alone rather than of which OTHER rooms happened to fall back. L is
 over the formula sums of the 23 non-instrumental lines, **overrides ignored** —
 a player's stated number never enters the set and never moves it — so the anchor
-is a property of the READ, and one Custom edit cannot move the other eleven
-unpriced rooms. Apex now reads 0.0994 against Chamber of Iron's 6.00. The ladder is not inert for the
-eleven rooms nobody prices: it still ranks them against each other, which is
+is a property of the READ, and one Custom edit cannot move the other ten
+unpriced rooms. Apex now reads 0.0696 against Chamber of Iron's 6.00. The ladder is not inert for the
+ten rooms nobody prices: it still ranks them against each other, which is
 what a ranking of unpriced rooms can honestly be.
 
 The whole ladder is **PROVISIONAL, calibrated 2026-09-06** on that capture, and
@@ -531,7 +531,9 @@ number it replaced there.
   there. What remains is his call on what the shipped Default should be: **open
   owner item**, for Vertolka. The shipped test asserts Sanctum crossing Crucible
   of Flame (67.35) instead. Glittering Halls, whose raw 2815 is 1.67× the
-  anchor, is the line that reaches highest for a given anchor.
+  anchor, is the line that reaches highest for a given anchor. A second Default
+  is open beside it: Vertolka 2026-09-06 proposed 0.4 c per rarity % as a
+  possible Default; today it is a Custom edit; owner call open.
 - **The grade ladder is provisional and dated.** It is calibrated on one day's
   capture, and it is the only place a third-party LETTER (Vertolka's grade)
   enters arithmetic — through a rung this project chose, not one he stated.

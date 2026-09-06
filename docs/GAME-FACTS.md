@@ -169,6 +169,8 @@ buff"). Both are recorded as absent rather than as a figure nobody wrote down.
   the code prices area bonuses with. **Pack size has no proposed rate at all**
   and is deliberately not priced. All three are flagged wherever they reach a
   number ([ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md)).
+  Vertolka 2026-09-06 proposed 0.4 c per rarity % as a possible Default; today
+  it is a Custom edit; owner call open.
 
 ## Divine Font
 

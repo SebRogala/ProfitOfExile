@@ -433,8 +433,9 @@ impl TierDrops {
     /// four lines whose page prints it (33 / 66 / 100 across the tiers). It is
     /// the game's own handle on how often the architect's signature rare
     /// ([`TempleMod`]) actually drops, and the same caveat applies: **raw, the
-    /// page prints no scale, not an [`Estimate`]**, and it must not be
-    /// multiplied by a price until POE-257 settles the units.
+    /// page prints no scale, not an [`Estimate`]** — no anchor has been stated
+    /// for it (the vial stat got one in POE-262; this one has not), so it
+    /// stays raw and unmultiplied.
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn mod_item_chance_raw(self) -> Option<u32> {
         self.mod_item_chance_raw

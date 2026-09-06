@@ -810,9 +810,10 @@ describe('sortValueRows', () => {
 
 describe('DEFAULT_VALUE_SORT', () => {
 	it('opens the table on tier 3 with the board’s two priced rooms on top', () => {
-		// The committed capture's own numbers: Locus of Corruption at 856 c and
-		// Doryani's Institute at 400 c are the only two rooms above the 10 c
-		// floor (ADR-022 §3), so an opening order that does not lead with them
+		// The committed capture's own numbers: Locus of Corruption quoted at
+		// 856 c and Doryani's Institute quoted at 400 c (tier-3 totals 846.51 /
+		// 390) are the only two rooms above the 10 c floor (ADR-022 §3), so an
+		// opening order that does not lead with them
 		// is one the player has to fix by hand every launch.
 		const sorted = sortValueRows(
 			[
