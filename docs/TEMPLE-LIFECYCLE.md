@@ -3,7 +3,11 @@
 **Status:** normative design, owner-ordered 2026-09-04 (POE-249); **implemented 2026-09-04
 (POE-249): fa5bc61 (the trigger), 15eb3f8 (the loop), 8d287e5 (the waiting notice), ee1f2c7
 (the offer boxes)**. Every line is now tagged
-**shipped** with the commit that shipped it; nothing here is planned any more. Read this before
+**shipped** with the commit that shipped it; nothing here is planned any more. **Amended
+2026-09-06** (owner): the slow-machine backoff is retired, the loop probes at its one cadence
+straight from the arm, every read and every slow tick write a measured line, and the budget this
+whole document serves is stated where it belongs — "Cadences and budgets" and "Owner decisions".
+Read this before
 touching `desktop/src-tauri/src/temple/{trigger,run,slice}.rs` or the temple overlay widgets.
 Related: [Overlay Guide](OVERLAY-GUIDE.md) (windows, click-through, smoke items),
 [ADR-014](adr/014-desktop-features-are-modules-with-a-work-toggle-and-a-view-page.md)
@@ -138,21 +142,56 @@ Facts that shape the rules (PC mining):
 
 ## Cadences and budgets (measured numbers, where they exist)
 
+- **The budget (owner, 2026-09-06): the verdict is on screen about 1 s after the panel opens.**
+  Panel open → next cheap tick (0–650 ms) → one full read → publish → the overlay's next
+  snapshot. **Measured 2026-09-06 on the PC, same code, same evening, one A/B on the build
+  profile:** the release build read the sheet in **666 ms from grab to publish** (capture 35,
+  cheap detect 64, anchor 96, text OCR 165, plates 102, markers 6, advise 193) and the overlay
+  showed it **+43 ms** later; the DEBUG `tauri dev` build read the same sheet in **4247 ms**
+  (cheap detect 1042, anchor 1351, text OCR 1076, plates 496) with the overlay again at +44 ms —
+  the "5–6 s verdict" of that session, tick wait included, was the build profile and nothing
+  else. So the budget holds on release at the cadence (≤ 650 + 666 + 43 ms worst case) and can
+  not hold on a debug build. Nothing in the code asserts the budget — the two log lines below
+  MEASURE it per read, and that is how a regression is found: in `app.log`, not in a test.
 - Cheap presence tick: `DETECT_INTERVAL` **650 ms, shipped** (15eb3f8). Cost: one monitor grab
-  (225 ms on the laptop's debug build, `temple-debug/1788516327712`) plus one windowed
-  correlation. The slow-machine backoff is unchanged — `DETECT_INTERVAL_SLOW` 3 s, fired once for
-  the life of the thread by a cheap tick slower than `SLOW_TICK`, which is 1.5 s and is an
-  ABSOLUTE CEILING rather than the cadence: a machine between 650 ms and 1.5 s runs at its own
-  rate and is not backed off.
+  (225 ms on the laptop's debug build, `temple-debug/1788516327712`; **52 ms on the PC's release
+  build**, `temple-debug/1788567663863`) plus one windowed correlation. **There is no slow-machine
+  backoff since 2026-09-06** (owner decision below). The retired one — `DETECT_INTERVAL_SLOW`
+  3 s, sticky for the life of the thread after ONE cheap tick over 1.5 s — fired once on the PC
+  (`2026-09-06 21:57:12`, 1519 ms: a screen-capture stall as a fight started, right after the
+  sheet closed) and cost every later incursion of that session up to 3 s before the sheet was even
+  seen. The loop is self-pacing, and it sleeps the interval AFTER the tick rather than around
+  it — so a slow tick delays the next one by its whole duration and a machine that cannot hold
+  650 ms runs at tick + 650 ms per detect; what that spends is CPU while armed, which POE-242
+  bounds to Alva's window.
+- **Measured, every time** (`run.rs`, `TickStages` / `ReadStages`): every full read writes
+  `Temple: read timings — capture N ms, cheap detect N ms, anchor N ms, text ocr N ms, plates N
+  ms, markers N ms, advise N ms, publish N ms — N ms from grab to publish, read at <unix ms>;
+  clean | unclean, N retries left`, and the temple overlay writes `[temple-overlay] board read at
+  <unix ms> on screen +N ms (via nudge | poll | write)` against the same stamp
+  (`routes/overlay/temple/+page.svelte`, `ssot.svelte.ts::lastSsotDelivery`). The first is the
+  loop's half of the budget, the second the delivery's, and `via` answers whether the overlay is
+  living on the `ssot-changed` nudge or on the 3 s poll — the question `ssot.rs`'s "overlays must
+  still poll" note left open since 2026-07-24. **Answered 2026-09-06: `via nudge` on every read
+  measured (5 of 5, +13 to +44 ms), on the debug and the release build alike.** The poll stays
+  as the backstop it was meant to be; it is not what the overlay lives on. A cheap tick that
+  overruns the cadence writes
+  `Temple: slow detect tick — N ms (capture N ms, cheap detect N ms, anchor N ms); the cadence is
+  650 ms`, at most one line per 10 s (`SLOW_TICK`, `SLOW_TICK_LOG_EVERY`): the stage breakdown is
+  the point, because a stall in `capture` and a slow `cheap detect` are different problems with
+  the same total. None of these lines changes what the loop does.
 - The backstop `FULL_READ_EVERY_N_MISSES` is 30 cheap ticks, which is now **≈ 19.5 s** (it was
-  30 s at 1000 ms) and 90 s once the backoff has fired. Since POE-249's gate split it forces the
+  30 s at 1000 ms). Since POE-249's gate split it forces the
   ANCHOR RESOLVE and NOT the 28 OCR calls — a backstop tick that re-anchors a board already read
   re-shows it — so the name overstates what it buys.
 - That shortening raised the COLD SWEEP's duty cycle on an uncalibrated screen with no panel on
   it, from ~18 % to **~27 %** (5.3 s of pyramid sweep per 19.5 s). Accepted: it is bounded by the
   arm window, and the sweep is what gets a cold screen its first board.
 - Full read: anchor+doors 1.5 s, panel OCR 1.9 s, plate OCR 0.7 s on the laptop's DEBUG build
-  (same dump); release is faster.
+  (same dump); **on the PC's release build 75 / 85 / 56 ms** (`temple-debug/1788567663863`,
+  2026-09-05), so ~270 ms from grab to plates and the advisor adds 13–22 ms
+  (`advisor/mod.rs`, `the_conditional_ranking_cost_on_case_eight`). A DEBUG build is 10–20× that
+  on the same machine — when a session reads slow, check which build ran before anything else.
 - Cold start (no remembered scale): the pyramid sweep, 5.3 s in the release container (POE-234,
   29ac1b9), never the 348 s exhaustive sweep.
 - Tails: `ALVA_TAIL_MS` = `PANEL_TAIL_MS` = 120 s; `MANUAL_ARM_GRACE_MS` 60 s (`trigger.rs`).
@@ -186,13 +225,21 @@ Facts that shape the rules (PC mining):
 | ONE valuation per read, shown and ranked | `temple/slice.rs` (`value_read`, called once in `temple/run.rs::full_read`) handed to `advise_read` AND to `project` → `OfferView.value` |
 | smoke items per rule | `OVERLAY-GUIDE.md` "Windows smoke checks" |
 
-## Owner decisions this encodes (2026-09-04)
+## Owner decisions this encodes (2026-09-04, amended 2026-09-06)
 
 "Sheet presence should be every 1 s, as sometimes 4 s is the time the user already finished the
 temple — and if that presence test is cheap, I'd even go every 650 ms." "After the Alva voice
 line (doesn't matter which one) or zone change, we clear the overlays and hide them, as the user
 has finished the incursion or died." "When the user starts playing, the cheap sheet detect notices
 the sheet is gone; we hide the info overlay, and only the room overlay stays."
+
+2026-09-06, after a session whose verdicts took 4–6 s: "On Alva voiceline, it should start cheap
+OCRing to detect the panel, if it's detected, it should scan the layout and propose the verdict —
+it should all close in about 1 s from the moment I open the panel." "If the cheap probe is really
+cheap — we can just straight go to it, without the need to do the weird logic." "Let's add
+logging measurements, so we know what is really going on." Encoded as: no backoff, one cadence
+from the arm, and the three measured lines above. The 1 s is the owner's expectation of what is
+possible, not a number the code asserts — the lines are how it is checked.
 
 One deviation from those words, recorded rather than resolved silently: the notice ships at the
 TOP centre, not the screen centre, because a centred box covers plates C1/D1/D2 in the very

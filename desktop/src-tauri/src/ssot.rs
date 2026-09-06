@@ -7,6 +7,13 @@
 //! "Runtime-earned observations"). `emit_ssot` provides an optional eager
 //! `ssot-changed` nudge for the main window; overlays must still poll.
 //!
+//! Measured 2026-09-06 (`[temple-overlay] board read at … (via nudge)` in
+//! app.log, docs/TEMPLE-LIFECYCLE.md "Cadences and budgets"): the nudge DID
+//! reach the temple overlay window on every read, +13 to +44 ms after the
+//! publish, debug and release builds alike. The poll is the backstop the note
+//! above describes, not the path a read travels on. The stale-data observation
+//! behind that note was about JS-to-JS cross-window events, not Rust emits.
+//!
 //! Chunk 1 built the core types + the poll-target command. Chunk 3 adds the
 //! league resolution seam: a start-only fetch task (`spawn_league_fetch`), the
 //! `set_league` / `refresh_league` mutator commands, and the dual-write

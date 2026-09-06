@@ -1455,8 +1455,9 @@ touching the named path.
   `temple_debug_capture` dump rather than a tolerance change here.
 - **The sheet-bound overlays go within one tick** (POE-249): with a board on
   screen, close the layout sheet and time it. The offer boxes and the
-  leave-the-map banner must be gone within one cheap tick — 650 ms, or 3 s on a
-  machine the backoff has fired on — and `Temple: layout panel gone` must be in
+  leave-the-map banner must be gone within one cheap tick — 650 ms; there is no
+  backoff since 2026-09-06, a machine that cannot hold 650 ms simply runs at
+  tick + 650 ms per detect — and `Temple: layout panel gone` must be in
   the log on that SAME tick; the ROOM WIDGET must STAY. The hide never depended
   on `RETIRE_AFTER`: `miss` published `panel_not_visible` on the first clean miss
   at 2 as well. What 1 buys is the log line, `LoopState::live` and the arm gate

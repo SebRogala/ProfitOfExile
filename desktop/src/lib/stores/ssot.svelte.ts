@@ -561,13 +561,42 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 let unlistenSsot: UnlistenFn | null = null;
 
+/**
+ * What prompted a `get_ssot` fetch — the measurement the temple overlay logs
+ * against each read's `lastReadAt` (docs/TEMPLE-LIFECYCLE.md, "Cadences and
+ * budgets"). `nudge` is the `ssot-changed` listener, `poll` the
+ * `POLL_INTERVAL_MS` timer, `initial` the store's first fetch, `write` a setter
+ * re-fetching after its own command.
+ */
+export type SsotDelivery = 'initial' | 'poll' | 'nudge' | 'write';
+
+let lastDelivery: SsotDelivery = 'initial';
+
+/**
+ * Why the snapshot currently applied was fetched. Read it from a `$effect`
+ * that reacts to a slice change and it names the path that delivered that
+ * change — the one question the "overlays must poll" note in `ssot.rs` left
+ * open, answered per delivery in the log instead of assumed.
+ */
+export function lastSsotDelivery(): SsotDelivery {
+	return lastDelivery;
+}
+
 /** Fetch the snapshot via the poll-target command and apply it. */
-export async function fetchSsot(): Promise<void> {
+export async function fetchSsot(reason: SsotDelivery = 'write'): Promise<void> {
 	// Capture the write counter before awaiting: anything written after this
 	// point is newer than whatever the response carries.
 	const dispatchedAtSeq = writeSeq;
 	try {
-		applySnapshot(await invoke<SsotSnapshot>('get_ssot'), dispatchedAtSeq);
+		const snap = await invoke<SsotSnapshot>('get_ssot');
+		// Set right before the apply, so what a reader sees is the reason of the
+		// MOST RECENT apply before its `$effect` flushed. That is all this can
+		// promise: two fetches that settle in one microtask drain both apply
+		// before the effect runs once, and the earlier one is then labelled with
+		// the later one's reason. Accepted — the reason is a measurement in a log
+		// line, and nothing branches on it.
+		lastDelivery = reason;
+		applySnapshot(snap, dispatchedAtSeq);
 	} catch (e) {
 		console.warn('[ssot] get_ssot failed:', e);
 	}
@@ -899,13 +928,15 @@ export function startSsotStore(): () => void {
 	if (pollInterval !== null) return stopSsotStore;
 
 	// Immediate first fetch so the store leaves its null fail-closed state ASAP.
-	fetchSsot();
-	pollInterval = setInterval(fetchSsot, POLL_INTERVAL_MS);
+	fetchSsot('initial');
+	pollInterval = setInterval(() => fetchSsot('poll'), POLL_INTERVAL_MS);
 
 	// Optional eager nudge: on ssot-changed, re-fetch via get_ssot. The event
 	// payload is NOT trusted as truth — get_ssot is the source (WebView2 events
-	// can be stale). Overlays rely on the poll above regardless.
-	listen('ssot-changed', () => { fetchSsot(); })
+	// can be stale). Overlays rely on the poll above regardless. Which of the
+	// two delivered a given change is `lastSsotDelivery()`, logged per read by
+	// the temple overlay.
+	listen('ssot-changed', () => { fetchSsot('nudge'); })
 		.then((unlisten) => {
 			// If stop ran before the listener resolved, unlisten immediately.
 			if (pollInterval === null) { unlisten(); return; }
