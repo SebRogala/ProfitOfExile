@@ -248,6 +248,7 @@ pub fn build_capture(
             screen: frame.screen(),
             header: layout.header.clone(),
             rows,
+            partial: false,
         },
         cells: cells_debug,
         sigs,
@@ -1356,6 +1357,7 @@ mod tests {
                 .enumerate()
                 .map(|(i, name)| named_row(i as u8, name))
                 .collect(),
+            partial: false,
         }
     }
 
@@ -1522,6 +1524,7 @@ mod tests {
             screen: [2560, 1440],
             header,
             rows,
+            partial: false,
         }
     }
 

@@ -349,9 +349,26 @@ export const HEARD_PREFIX = 'heard ';
  */
 function countedLine(prefix: string, capture: MercCapture): string {
 	const rows = capture.rows.length;
+	const rowsPhrase = `${rows} ${rows === 1 ? 'row' : 'rows'}`;
+	// A first look has no cells to count: saying "all icons read" over it
+	// would be the exact claim `partial` exists to withhold.
+	if (capture.partial) return `${prefix} · ${rowsPhrase} · ${READING_ICONS_NOTE}`;
 	const unread = unreadPhrase(unreadIconCount(capture));
-	return `${prefix} · ${rows} ${rows === 1 ? 'row' : 'rows'} · ${unread ?? 'all icons read'}`;
+	return `${prefix} · ${rowsPhrase} · ${unread ?? 'all icons read'}`;
 }
+
+/**
+ * What the counted line and each row say while the icon pass has not run
+ * (`MercCapture.partial`): Rust publishes the rows on the first look at a
+ * window and the ~2 s read follows, so the strip shows the skills it has and
+ * says the rest is coming — the 2026-09-06 report was a strip that sat on
+ * "scanning" for the whole read and looked stuck.
+ */
+export const READING_ICONS_NOTE = 'reading the icons…';
+
+/** The verdict line while the icons are unread: a verdict on skills alone
+ *  would fail every guide that keys on links, so none is drawn yet. */
+export const VERDICT_PENDING_LINE = 'still reading — verdict follows';
 
 /**
  * The header line: who this is, as far as the reader got.
@@ -415,6 +432,7 @@ export function guidesLine(
 	verdict: MercVerdict | null,
 	capture: MercCapture | null
 ): OverlayGuidesLine | null {
+	if (capture?.partial) return { text: VERDICT_PENDING_LINE, tone: HEADLINE_TONE.unknown };
 	if (verdict === null || capture === null) return null;
 	const enabled = verdict.sources.filter((source) => source.headline !== 'off');
 	if (enabled.length === 0) return { text: NO_GUIDES_NOTE, tone: HEADLINE_TONE.off };
@@ -594,6 +612,8 @@ export function rowGlyphs(capture: MercCapture): OverlayRowGlyphs[] {
 		index: row.index,
 		skill: row.skill.name ?? 'skill not read',
 		glyphs: row.supports.map((cell) => glyphOf(cell.state)),
-		note: row.supports.length === 0 ? NO_CELLS_NOTE : null
+		// A first look has not read the cells yet; a full read that found
+		// none is a skill without supports. Same empty run, two facts.
+		note: capture.partial ? READING_ICONS_NOTE : row.supports.length === 0 ? NO_CELLS_NOTE : null
 	}));
 }

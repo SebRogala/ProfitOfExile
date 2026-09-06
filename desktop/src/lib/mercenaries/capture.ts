@@ -94,6 +94,14 @@ export interface MercCapture {
 	screen: [number, number];
 	header: MercHeader;
 	rows: MercRow[];
+	/**
+	 * The icon pass has not run on this frame: the rows carry their skill
+	 * names and no support cells, and the full read is on its way. Rust
+	 * publishes one such capture per window, on the first look, so the
+	 * surfaces can show the rows during the ~2 s read instead of "scanning".
+	 * Optional because older payloads lack it; absent means false.
+	 */
+	partial?: boolean;
 }
 
 /** Where the runtime geometry came from — the debug report names the same two. */

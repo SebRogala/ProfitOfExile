@@ -214,6 +214,10 @@ pub struct CaptureQuery {
 /// best-effort and often `None`, so a class also counts as recognised when
 /// BOTH of its primaries are among the capture's skill reads. A mercenary
 /// carrying one primary and a class read that says otherwise is left alone.
+///
+/// The header prints a rank word before the class — `Infamous Manyshot` in
+/// the 2026-09-06 app log — so a class read is matched on its LAST word(s),
+/// not on the whole line.
 const CLASS_PRIMARIES: &[(&str, [&str; 2])] = &[
     // Ice Shot, Vaal Grace
     ("Manyshot", ["mercenary.skill_11495", "mercenary.skill_58425"]),
@@ -241,12 +245,17 @@ fn fixed_skill_ids(capture: &MercCapture, rows: &[RowPlan]) -> Vec<String> {
         .class
         .as_deref()
         .map(|c| c.trim().to_lowercase());
+    // "manyshot" and "infamous manyshot" both name Manyshot; "notmanyshot"
+    // would not, hence the word boundary.
+    let class_named = |class: &str| {
+        let class = class.to_lowercase();
+        class_read
+            .as_deref()
+            .is_some_and(|read| read == class || read.ends_with(&format!(" {class}")))
+    };
     CLASS_PRIMARIES
         .iter()
-        .filter(|(class, primaries)| {
-            class_read.as_deref() == Some(&class.to_lowercase())
-                || primaries.iter().all(|id| carried(id))
-        })
+        .filter(|(class, primaries)| class_named(class) || primaries.iter().all(|id| carried(id)))
         .flat_map(|(_, primaries)| primaries.iter().map(|id| id.to_string()))
         .collect()
 }
@@ -2507,16 +2516,35 @@ mod tests {
         );
     }
 
+    /// The header prints a rank before the class (`Infamous Manyshot`, app log
+    /// 2026-09-06), so the class is matched on the line's tail, case-blind.
     #[test]
     fn a_class_read_in_the_header_recognises_the_class_from_one_primary() {
+        for read in [" cruel mistress ", "Infamous Cruel Mistress"] {
+            let mut capture = capture(vec![
+                row(0, "mercenary.skill_56742", vec![]),
+                row(1, "skill_x", vec![]),
+            ]);
+            capture.header.class = Some(read.to_string());
+            let query = build_capture_query(&capture, &no_vocab(), 3).expect("builds");
+
+            assert_eq!(link_and_ids(&query), strs(&["skill_x"]), "class read {read:?}");
+        }
+    }
+
+    #[test]
+    fn a_class_read_that_merely_ends_in_a_class_name_is_not_that_class() {
         let mut capture = capture(vec![
             row(0, "mercenary.skill_56742", vec![]),
             row(1, "skill_x", vec![]),
         ]);
-        capture.header.class = Some(" cruel mistress ".to_string());
+        capture.header.class = Some("Notcruel Mistress".to_string());
         let query = build_capture_query(&capture, &no_vocab(), 3).expect("builds");
 
-        assert_eq!(link_and_ids(&query), strs(&["skill_x"]));
+        assert_eq!(
+            link_and_ids(&query),
+            strs(&["mercenary.skill_56742", "skill_x"])
+        );
     }
 
     /// Two bare primaries and nothing else: leaving them out would ask GGG for

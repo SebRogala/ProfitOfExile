@@ -337,6 +337,14 @@ pub struct MercCapture {
     pub screen: [u32; 2],
     pub header: MercHeader,
     pub rows: Vec<MercRow>,
+    /// The icon pass has not run on this frame: the rows carry their skill
+    /// names and NO support cells, and the full read is coming. Published
+    /// once per window, on the first look, so the surfaces can show the rows
+    /// while the ~2 s read runs (2026-09-06: the strip sat on "scanning" for
+    /// the whole of it). A verdict on a partial capture is not a verdict, and
+    /// the surfaces say "still reading" instead of drawing one.
+    #[serde(default)]
+    pub partial: bool,
 }
 
 /// The `mercenary` SSOT slice. Rust-owned; the webview only reads it.
@@ -836,6 +844,7 @@ mod tests {
                         ],
                     }],
                 }],
+                partial: false,
             }),
             learned_families: vec!["Pierce--3".into()],
             pooled_families: vec!["Pierce--3".into()],

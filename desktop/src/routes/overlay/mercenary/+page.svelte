@@ -150,8 +150,12 @@
 	const showsVerdict = $derived(overlayShowsVerdict(merc));
 	const status = $derived(statusLine(merc));
 	const enabled = $derived(enabledSources(merc.sourcesOff));
+	// Not on a first look: the icons are unread, and `guidesLine` says the
+	// verdict is pending instead (`MercCapture.partial`).
 	const verdict = $derived(
-		capture === null ? null : evaluateCapture(capture, MERC_SOURCES, enabled, ssot.league)
+		capture === null || capture.partial
+			? null
+			: evaluateCapture(capture, MERC_SOURCES, enabled, ssot.league)
 	);
 	// ONE line for every enabled guide, not one per guide: the strip used to
 	// spend two lines saying SKIP twice (2026-08-25 smoke). The page keeps the

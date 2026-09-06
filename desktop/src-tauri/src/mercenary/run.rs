@@ -78,7 +78,7 @@ use super::seed;
 use super::sync;
 use super::trigger;
 use super::{
-    MercCapture, MercGeometry, MercHeader, MercStatus, MercSupportRead,
+    MercCapture, MercGeometry, MercHeader, MercRow, MercSkillRead, MercStatus, MercSupportRead,
     MercenarySlice, ReadState, ScaleSource,
 };
 
@@ -3244,7 +3244,9 @@ fn detect_tick(
     // the whole panel, the fit moves its edges by at most 12 px, and
     // `CROP_SIDE_PITCHES` already reaches ~175 px past them — re-deriving it
     // after the fit would cost a second OCR to answer the same question.
+    let stage = Instant::now();
     let refined = cellfit::refine(view, frame, layout, &session.geometry);
+    let fit_ms = stage.elapsed().as_millis();
     let mut layout = refined.layout;
     let adopted = match &refined.fit {
         Some(fit) => {
@@ -3382,12 +3384,33 @@ fn detect_tick(
     if *cancel.borrow() {
         return report(None);
     }
+    // FIRST LOOK at a window: the rows go out NOW, before the read below,
+    // which is the tick's expensive half (2.2 s on a six-row panel in the
+    // 2026-09-06 log) and which the strip used to sit through saying
+    // "scanning". Only when nothing is live: a re-read of a window already on
+    // the slice would blank its icons for the length of every tick. The
+    // header is pass 1's, unguarded — it is replaced by the folded one below
+    // on this same tick. See [`MercCapture::partial`].
+    if session.current.is_none() {
+        let look = first_look(&layout, screen, now_ms(), &session.geometry, &session.vocab);
+        publish(app, |slice| {
+            slice.status = MercStatus::Live;
+            slice.burst_speaker = None;
+            slice.capture = Some(look);
+            slice.last_error = None;
+        });
+    }
+    let stage = Instant::now();
     let texts = pass2_texts(view, frame, &layout, &session.geometry);
+    let pass2_ms = stage.elapsed().as_millis();
     // BEFORE the store is read (POE-208 L10). The seeds are rendered art, so
     // they are only valid at the window they were resampled for, and this frame
     // reports the window the panel is actually at. Costs nothing on every tick
     // but the first at a given window — see `seed::window_plan`.
+    let stage = Instant::now();
     seed::rederive_for_window(app, &session.geometry, layout.scale);
+    let seeds_ms = stage.elapsed().as_millis();
+    let stage = Instant::now();
     let mut result = {
         let state = app.state::<AppState>();
         let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
@@ -3402,6 +3425,23 @@ fn detect_tick(
             &store,
         )
     };
+    let icons_ms = stage.elapsed().as_millis();
+    // Where a slow tick went. The loop's own line says only that the tick was
+    // slow; this one says which stage to look at. Always in debug mode, and
+    // on every tick the backoff would call slow otherwise.
+    let total_ms = started.elapsed().as_millis();
+    if debug_mode(app) || total_ms >= SLOW_TICK.as_millis() {
+        let cells: usize = result.capture.rows.iter().map(|row| row.supports.len()).sum();
+        crate::app_log(
+            app,
+            format!(
+                "Merc: read stages — grab+ocr {took} ms, fit {fit_ms} ms, pass 2 {pass2_ms} ms, \
+                 seeds {seeds_ms} ms, icons {icons_ms} ms ({cells} cells, {} rows) — {total_ms} ms \
+                 on the {how} frame",
+                result.capture.rows.len()
+            ),
+        );
+    }
     // Before ANY use of this frame's header — the fold below, and the
     // completeness check that opens a trade session with it. The cursor was
     // read before the grab, so it says where it was WHILE the frame was taken;
@@ -3597,6 +3637,48 @@ fn detect_tick(
         slice.last_error = None;
     });
     report(Some(outcome))
+}
+
+/// The rows as pass 1 read them, before the icon pass — the capture the first
+/// look at a window publishes ([`MercCapture::partial`]).
+///
+/// Skill names from the pass-1 text (pass 2's re-OCR has not run), no support
+/// cells at all, and `partial: true` so the surfaces word it as a read in
+/// progress rather than a mercenary with no links.
+fn first_look(
+    layout: &geometry::MercLayout,
+    screen: [u32; 2],
+    captured_at_ms: u64,
+    g: &MercGeometry,
+    vocab: &MercVocab,
+) -> MercCapture {
+    let rows = layout
+        .rows
+        .iter()
+        .map(|row| {
+            let read = vocab.match_skill(&row.text, &g.thresholds);
+            MercRow {
+                index: row.index,
+                skill: MercSkillRead {
+                    raw: row.text.clone(),
+                    ids: read.ids,
+                    name: read.name,
+                    score: read.score,
+                    state: read.state,
+                },
+                supports: Vec::new(),
+            }
+        })
+        .collect();
+    MercCapture {
+        captured_at_ms,
+        live: true,
+        scale: layout.scale,
+        screen,
+        header: layout.header.clone(),
+        rows,
+        partial: true,
+    }
 }
 
 /// Whether a retired capture's confirmations may be re-applied to `next`.
@@ -4241,6 +4323,7 @@ mod tests {
             screen: [2560, 1440],
             header: Default::default(),
             rows,
+            partial: false,
         }
     }
 
