@@ -1381,6 +1381,41 @@ touching the named path.
   `+…% rarity` line below does not move. At `0` the row must still be LISTED,
   reading no chaos, rather than vanishing: a missing row would say the room
   rolls for no vial at all.
+- **The value table sorts, and a re-sort moves nothing else** (POE-263): on a
+  profile that has never set the sort (or after clearing the
+  `templeValueTableSort` pref), the Temple page's table must OPEN with Locus of
+  Corruption first and Doryani's Institute second — tier 3, biggest first, the
+  default sort. Click **Tier 3**: the order flips to cheapest first and the
+  header's arrow with it. Click **Room line**: A→Z, and the arrow moves to that
+  header — not the direction that was on Tier 3. Click **Grade**: A++ first, and
+  the check that matters is that `B-` sits between `C+` and `B`, NOT below `D` —
+  a grade off the ladder is what a typographic minus in `GRADES` looks like.
+  Reach all three headers by TAB alone and fire one with Enter; a screen reader
+  must announce the sorted column as ascending or descending. Then close the app,
+  reopen it, and the table must come back on the sort you left it on. **Nothing a
+  sort does may change a number**: note Locus's tier-3 cell before the first
+  click and check it is the same figure, with the same provenance letter, after
+  the third.
+- **Tiers 1-2 collapse, and a hand-priced hidden tier is still visible**
+  (POE-263): with the checkbox above the table clear, the table must be three
+  columns (Room line, Grade, Tier 3) and the BOX must be narrower than the card
+  rather than stretched across it. Tick **Tiers 1-2** and the two columns
+  appear; the pick must survive a restart like the sort. Then pick **Custom**,
+  type a number into a tier-1 cell, and collapse the tiers again: the row's
+  tier-3 cell must carry a small `•` after its provenance letter, and hovering
+  it must read `tier 1: <your number> c, tier 2: —`. A missing dot is the
+  regression this item exists for — a number the player typed that the app then
+  shows nowhere.
+- **An edit does not move the row out from under the cursor** (POE-263): under
+  **Custom** with the table sorted on Tier 3, click into a tier-3 cell in the
+  middle of the list, type a large number — 9999 — and press **Enter while
+  staying in the cell** (this fires `change` → `onedit` → the write echo arrives
+  with the new total). The row must stay where it is. Then **Tab out**: on the
+  next snapshot (≤ 3 s) the row must jump to the top. A row that climbs before
+  you leave the cell, or that never jumps once you have, means the held order is
+  being re-derived on the wrong signal. In the same pass, mistype a cell
+  (`abc`), leave it, and click a header: the red mark and its reason must still
+  be on THAT cell and no other.
 - **The waiting notice, from Alva's start line to the sheet** (POE-249): with the
   temple module on and the game focused, click Alva and open the incursion
   portal WITHOUT opening the layout sheet. `app.log` must carry

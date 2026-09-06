@@ -308,6 +308,190 @@ export function overrideOf(custom: TempleCustom, key: string, tier: number): num
 	return row[tier - 1] ?? null;
 }
 
+// --- sorting, and the columns the table shows ------------------------------
+
+/**
+ * The ten grades, WORST first — the wire strings, in `rooms::Grade`'s own
+ * order (`temple/rooms.rs`, whose derived `Ord` is worst-first too).
+ *
+ * One list and not a string comparison, because the letters do not collate:
+ * `"A++" < "A+"` is true of the characters and false of the grades, and `"B-"`
+ * sorts before `"B"` while the room graded `B-` is the worse of the two.
+ * The strings are the ASCII forms Rust prints (`"B-"`, `"C-"`), not the
+ * typographic minus — a grade that misses this list is one Rust never sent.
+ */
+export const GRADES = ['D', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A', 'A+', 'A++'] as const;
+
+/** Where a grade sits on the ladder, worst at 0. `-1` for a letter this build
+ *  does not know, which sorts it below `D` rather than throwing: an unknown
+ *  grade is a room the table still has to show. */
+export function gradeRank(grade: string): number {
+	return (GRADES as readonly string[]).indexOf(grade);
+}
+
+/** The three sortable columns. Tier 1 and 2 are not among them: they are
+ *  `tierFraction` of tier 3 (ADR-022 §1), so sorting on one of them is
+ *  sorting on tier 3 with extra steps — unless the player overrode it, and a
+ *  column that means two different things is not a sort key. */
+export type ValueSortKey = 'room' | 'grade' | 'tier3';
+
+/** Which way a column is read. */
+export type ValueSortDirection = 'asc' | 'desc';
+
+/** The whole sort: one column, one direction. */
+export interface ValueSort {
+	key: ValueSortKey;
+	direction: ValueSortDirection;
+}
+
+/** What the table opens on: the moving number, biggest first. Grade never
+ *  changes and the room name is a lookup order, so tier 3 is the only column
+ *  whose default order tells the player something they did not already know. */
+export const DEFAULT_VALUE_SORT: ValueSort = { key: 'tier3', direction: 'desc' };
+
+/** Which way a column reads when it is FIRST clicked: a name ascends (A→Z), a
+ *  grade and a value descend (best first). A column that opened at its least
+ *  interesting end would cost every player a second click. */
+const FIRST_DIRECTION: Record<ValueSortKey, ValueSortDirection> = {
+	room: 'asc',
+	grade: 'desc',
+	tier3: 'desc'
+};
+
+/**
+ * The sort a click on `key` produces.
+ *
+ * Clicking the column already sorted on FLIPS it; clicking another moves to
+ * that column at its own first direction rather than carrying the old one
+ * over — `desc` means "Z→A" on one column and "most valuable" on another, and
+ * inheriting it makes the first click on Room read backwards.
+ */
+export function nextValueSort(current: ValueSort, key: ValueSortKey): ValueSort {
+	if (current.key === key) {
+		return { key, direction: current.direction === 'asc' ? 'desc' : 'asc' };
+	}
+	return { key, direction: FIRST_DIRECTION[key] };
+}
+
+/** The sort as one persisted string (ADR-013 stores strings). */
+export function serializeValueSort(sort: ValueSort): string {
+	return `${sort.key}:${sort.direction}`;
+}
+
+/**
+ * A stored sort, or the default.
+ *
+ * Defensive on purpose: the value is a line in `settings.json` that a build
+ * before this one never wrote and a build after this one may stop writing, so
+ * anything that is not one of the six legal pairs falls back rather than
+ * putting the table in a state no header can undo.
+ */
+export function parseValueSort(raw: string): ValueSort {
+	const [key, direction] = raw.split(':');
+	if (key !== 'room' && key !== 'grade' && key !== 'tier3') return DEFAULT_VALUE_SORT;
+	if (direction !== 'asc' && direction !== 'desc') return DEFAULT_VALUE_SORT;
+	return { key, direction };
+}
+
+/** Which tier columns the table shows: all three, or tier 3 alone. */
+export type ValueTiersMode = 'all' | 'tier3';
+
+/** The table opens collapsed. Tiers 1 and 2 are a fixed fraction of tier 3, so
+ *  in the common case they carry no information the tier-3 column does not,
+ *  and the table is half the width without them. */
+export const DEFAULT_TIERS_MODE: ValueTiersMode = 'tier3';
+
+/** A stored tiers mode, or the default — same fallback rule as
+ *  [`parseValueSort`], for the same reason. */
+export function parseTiersMode(raw: string): ValueTiersMode {
+	return raw === 'all' ? 'all' : DEFAULT_TIERS_MODE;
+}
+
+/** A row's tier-3 total — what the `tier3` column orders on. */
+function tier3Total(row: ValueRow): number {
+	return row.cells[2].total;
+}
+
+/**
+ * The rows in one column's order. Pure: a NEW array, and no cell is touched.
+ *
+ * Sorting must never re-price anything (epic lock L4: the value shown is the
+ * value ranked), so this reorders and nothing else — every number in the
+ * result is the number Rust handed over.
+ *
+ * **The tie-break is always the room name ascending, even in `desc`.** It is
+ * there to make the order deterministic across a re-sort, not to be part of
+ * what the player asked for; flipping it with the direction would move two
+ * equal rows past each other for no reason the header states. `Array.sort` is
+ * stable in every engine this app runs on, but the input order is the SSOT's
+ * and not something a reader can see, so leaning on stability alone would
+ * leave ties ordered by an invisible rule.
+ */
+export function sortValueRows(
+	rows: ValueRow[],
+	key: ValueSortKey,
+	direction: ValueSortDirection
+): ValueRow[] {
+	const sign = direction === 'asc' ? 1 : -1;
+	return [...rows].sort((a, b) => {
+		let primary = 0;
+		if (key === 'room') primary = a.name.localeCompare(b.name);
+		else if (key === 'grade') primary = gradeRank(a.grade) - gradeRank(b.grade);
+		else primary = tier3Total(a) - tier3Total(b);
+		if (primary !== 0) return primary * sign;
+		return a.name.localeCompare(b.name);
+	});
+}
+
+/**
+ * `rows` in the order `keys` states, with anything `keys` does not name
+ * appended in the order it arrived.
+ *
+ * This is what holds a sorted table STILL while the player types in it. The
+ * SSOT snapshot whole-replaces the rows every three seconds and an edit
+ * changes a total, so a table that re-sorted on every arrival would slide the
+ * row out from under the cursor mid-edit. The component keeps the key order it
+ * last sorted and re-applies it here, so the CELLS stay current while the rows
+ * stay put.
+ *
+ * A key with no row is dropped and a row with no key is kept, so the result is
+ * always exactly `rows` — no row can go missing because an order went stale.
+ */
+export function orderRows(rows: ValueRow[], keys: string[]): ValueRow[] {
+	const byKey = new Map(rows.map((row) => [row.key, row]));
+	const ordered: ValueRow[] = [];
+	for (const key of keys) {
+		const row = byKey.get(key);
+		if (row === undefined) continue;
+		byKey.delete(key);
+		ordered.push(row);
+	}
+	return [...ordered, ...byKey.values()];
+}
+
+/**
+ * What the hidden tiers of a row say, or null if they say nothing (D5).
+ *
+ * With tiers 1 and 2 collapsed a stored override on either one is off screen,
+ * and a number the player typed that the app then shows nowhere is the one
+ * thing this table must never do. The tier-3 cell wears a mark and this is its
+ * `title`: every hidden tier listed, with an em dash for the one still on the
+ * formula.
+ *
+ * Null under Default and under an un-overridden Custom row alike — both have
+ * nothing stored, so there is nothing to disclose.
+ */
+export function hiddenOverrideTitle(row: ValueRow): string | null {
+	const hidden = row.cells.filter((cell) => cell.tier !== 3);
+	if (!hidden.some((cell) => cell.override !== null)) return null;
+	return hidden
+		.map(
+			(cell) =>
+				`tier ${cell.tier}: ${cell.override === null ? '—' : `${formatChaos(cell.override)} c`}`
+		)
+		.join(', ');
+}
+
 // --- editing ---------------------------------------------------------------
 
 /** What a player typed into one override cell. */
