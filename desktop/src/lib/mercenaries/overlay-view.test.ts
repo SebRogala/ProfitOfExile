@@ -3,6 +3,8 @@ import {
 	IDLE_LINE,
 	LINGER_MS,
 	NO_CELLS_NOTE,
+	READING_ICONS_NOTE,
+	VERDICT_PENDING_LINE,
 	NO_GUIDES_NOTE,
 	SCANNING_LINE,
 	SKIP_LINE,
@@ -25,6 +27,7 @@ import {
 	unreadNote
 } from './overlay-view';
 import { mercenarySliceDefault } from './capture';
+import { HEADLINE_TONE } from './capture-view';
 import type {
 	MercCapture,
 	MercRow,
@@ -791,5 +794,31 @@ describe('the on-screen gate on the glyph rows', () => {
 
 	it('draws nothing before anything is captured', () => {
 		expect(liveRowGlyphs(slice('live', null))).toEqual([]);
+	});
+});
+
+/**
+ * A first look (`MercCapture.partial`): Rust publishes the rows before the icon
+ * pass, so every line that counts or judges cells has to say the read is still
+ * running rather than describe an empty capture.
+ */
+describe('a first look at a window', () => {
+	const first = (): MercCapture => ({ ...capture([row(0, [])]), partial: true });
+
+	it('is counted as reading the icons, never as all icons read', () => {
+		expect(statusLine(slice('live', first()))).toBe(`reading · 1 row · ${READING_ICONS_NOTE}`);
+	});
+
+	it('marks each row as reading rather than as a skill without cells', () => {
+		const glyphs = rowGlyphs(first());
+		expect(glyphs[0].note).toBe(READING_ICONS_NOTE);
+		expect(glyphs[0].glyphs).toEqual([]);
+	});
+
+	it('says the verdict is pending, whatever a verdict on the skills alone would say', () => {
+		expect(guidesLine(null, first())).toEqual({
+			text: VERDICT_PENDING_LINE,
+			tone: HEADLINE_TONE.unknown
+		});
 	});
 });

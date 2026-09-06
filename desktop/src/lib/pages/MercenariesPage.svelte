@@ -116,9 +116,17 @@
 	/** The verdict is derived, never stored: it is a function of the capture, the
 	 *  rulesets, the source toggles and the active league, and any copy of it
 	 *  would be one poll away from lying. */
+	// Not on a first look (`MercCapture.partial`): the icons are unread, and a
+	// verdict on the skills alone would fail every guide that keys on links.
 	const verdict = $derived(
-		capture === null ? null : evaluateCapture(capture, MERC_SOURCES, enabled, ssot.league)
+		capture === null || capture.partial
+			? null
+			: evaluateCapture(capture, MERC_SOURCES, enabled, ssot.league)
 	);
+	/** The read is still running on this capture: the rows are pass 1's and the
+	 *  icons are on their way. False once the loop is not live any more, so a
+	 *  read the module stop interrupted does not claim to be running. */
+	const stillReading = $derived(capture?.partial === true && merc.status === 'live');
 	const sourceVerdict = $derived(verdict?.sources.find((s) => s.id === source.id) ?? null);
 	const results = $derived(sourceVerdict?.rulesets ?? []);
 	const positions = $derived(indexPositions(results));
@@ -508,6 +516,11 @@
 					{capture.scale.toFixed(2)} · screen {capture.screen[0]}×{capture.screen[1]}
 				</span>
 			{/if}
+			{#if stillReading}
+				<span class="badge tone-unknown">still reading the icons…</span>
+			{:else if capture?.partial}
+				<span class="badge tone-muted" title="the module stopped before the icon pass ran">icons not read</span>
+			{/if}
 		</div>
 
 		{#if merc.status === 'unavailable'}
@@ -548,7 +561,9 @@
 									     cell is taken out of the table layout and browsers wrap it in an
 									     anonymous cell, which is a layout surprise this row does not need. -->
 									<div class="supports">
-										{#if row.supports.length === 0}
+										{#if capture.partial}
+											<span class="meta">{stillReading ? 'reading…' : 'not read'}</span>
+										{:else if row.supports.length === 0}
 											<span class="meta">no support cells</span>
 										{:else}
 											{#each row.supports as support (support.slot)}
@@ -578,6 +593,10 @@
 			<h2 class="card-title">Verdict</h2>
 			{#if capture === null}
 				<span class="meta">nothing captured to judge yet</span>
+			{:else if stillReading}
+				<span class="meta">still reading the icons — the verdict follows</span>
+			{:else if capture.partial}
+				<span class="meta">icons not read — no verdict</span>
 			{/if}
 		</div>
 
@@ -596,7 +615,7 @@
 				>
 					<span class="headline-source">{strip.label}</span>
 					{#if headline === null}
-						<span class="badge tone-muted" title="no capture yet">—</span>
+						<span class="badge tone-muted" title={capture === null ? 'no capture yet' : 'still reading'}>—</span>
 					{:else}
 						<span class="badge tone-{HEADLINE_TONE[headline]}">{HEADLINE_LABEL[headline]}</span>
 					{/if}
