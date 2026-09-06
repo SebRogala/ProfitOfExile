@@ -1,0 +1,791 @@
+{
+ "source": "poewiki List of mercenary classes, joined to GGG /api/trade/data/stats by display text; researched 2026-09-06 (Codex), see docs/GAME-FACTS.md \"Mercenaries\"",
+ "prefixes": [
+  "Infamous"
+ ],
+ "classes": [
+  {
+   "class": "Earthshaker",
+   "primaries": [
+    "mercenary.skill_38311",
+    "mercenary.skill_2135"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_10712",
+    "mercenary.skill_53728",
+    "mercenary.skill_41346",
+    "mercenary.skill_17654",
+    "mercenary.skill_40527"
+   ],
+   "utility_pool": [
+    "mercenary.skill_52845",
+    "mercenary.skill_21036",
+    "mercenary.skill_31440",
+    "mercenary.skill_57171",
+    "mercenary.skill_14889"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Eruptor",
+   "primaries": [
+    "mercenary.skill_59259",
+    "mercenary.skill_2135",
+    "mercenary.skill_18149"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_53235",
+    "mercenary.skill_3093",
+    "mercenary.skill_6228",
+    "mercenary.skill_42361"
+   ],
+   "utility_pool": [
+    "mercenary.skill_21036",
+    "mercenary.skill_52845",
+    "mercenary.skill_33728",
+    "mercenary.skill_44334",
+    "mercenary.skill_47364"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Ripper",
+   "primaries": [
+    "mercenary.skill_52105",
+    "mercenary.skill_62530"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_8445",
+    "mercenary.skill_12723",
+    "mercenary.skill_7182",
+    "mercenary.skill_41915",
+    "mercenary.skill_19808"
+   ],
+   "utility_pool": [
+    "mercenary.skill_21036",
+    "mercenary.skill_52845",
+    "mercenary.skill_2135",
+    "mercenary.skill_40419"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Smoulderstrike",
+   "primaries": [
+    "mercenary.skill_32391",
+    "mercenary.skill_8295"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_42219",
+    "mercenary.skill_17147",
+    "mercenary.skill_899",
+    "mercenary.skill_19178"
+   ],
+   "utility_pool": [
+    "mercenary.skill_13235",
+    "mercenary.skill_2135",
+    "mercenary.skill_21036",
+    "mercenary.skill_50414",
+    "mercenary.skill_59259"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Striker",
+   "primaries": [
+    "mercenary.skill_4988",
+    "mercenary.skill_20973",
+    "mercenary.skill_17015"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_64565",
+    "mercenary.skill_22696",
+    "mercenary.skill_10235"
+   ],
+   "utility_pool": [
+    "mercenary.skill_52845",
+    "mercenary.skill_2135",
+    "mercenary.skill_21036",
+    "mercenary.skill_40419",
+    "mercenary.skill_38521",
+    "mercenary.skill_38104"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Flamequiver",
+   "primaries": [
+    "mercenary.skill_34665",
+    "mercenary.skill_24179"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_23512",
+    "mercenary.skill_59200",
+    "mercenary.skill_35610",
+    "mercenary.skill_36298",
+    "mercenary.skill_18004",
+    "mercenary.skill_21962"
+   ],
+   "utility_pool": [
+    "mercenary.skill_2792",
+    "mercenary.skill_10722",
+    "mercenary.skill_60723",
+    "mercenary.skill_39298"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Toxicologist",
+   "primaries": [
+    "mercenary.skill_10320",
+    "mercenary.skill_26913",
+    "mercenary.skill_18986"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_36274",
+    "mercenary.skill_38628",
+    "mercenary.skill_28502",
+    "mercenary.skill_58174"
+   ],
+   "utility_pool": [
+    "mercenary.skill_10722",
+    "mercenary.skill_1516",
+    "mercenary.skill_2792",
+    "mercenary.skill_60723",
+    "mercenary.skill_38072"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Sniper",
+   "primaries": [
+    "mercenary.skill_12667",
+    "mercenary.skill_27805"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_8546",
+    "mercenary.skill_40759",
+    "mercenary.skill_8030",
+    "mercenary.skill_61903",
+    "mercenary.skill_12260",
+    "mercenary.skill_44144",
+    "mercenary.skill_43202",
+    "mercenary.skill_30431"
+   ],
+   "utility_pool": [
+    "mercenary.skill_2792",
+    "mercenary.skill_10722",
+    "mercenary.skill_60723",
+    "mercenary.skill_58592",
+    "mercenary.skill_52155"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Thunderquiver",
+   "primaries": [
+    "mercenary.skill_41051",
+    "mercenary.skill_47406"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_27165",
+    "mercenary.skill_38993",
+    "mercenary.skill_22000",
+    "mercenary.skill_17216"
+   ],
+   "utility_pool": [
+    "mercenary.skill_38326",
+    "mercenary.skill_10722",
+    "mercenary.skill_38072",
+    "mercenary.skill_36279",
+    "mercenary.skill_60723"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Manyshot",
+   "primaries": [
+    "mercenary.skill_11495",
+    "mercenary.skill_58425"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_16381",
+    "mercenary.skill_18232",
+    "mercenary.skill_24409",
+    "mercenary.skill_65447"
+   ],
+   "utility_pool": [
+    "mercenary.skill_24482",
+    "mercenary.skill_10557",
+    "mercenary.skill_2792",
+    "mercenary.skill_60723",
+    "mercenary.skill_10722"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Withertouch",
+   "primaries": [
+    "mercenary.skill_63468",
+    "mercenary.skill_7383"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_11671",
+    "mercenary.skill_13441",
+    "mercenary.skill_8450",
+    "mercenary.skill_39669",
+    "mercenary.skill_50670"
+   ],
+   "utility_pool": [
+    "mercenary.skill_1516",
+    "mercenary.skill_28757",
+    "mercenary.skill_40470",
+    "mercenary.skill_56180",
+    "mercenary.skill_28785",
+    "mercenary.skill_10320",
+    "mercenary.skill_1911"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Reanimator",
+   "primaries": [
+    "mercenary.skill_52491",
+    "mercenary.skill_21523"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_57377",
+    "mercenary.skill_17409",
+    "mercenary.skill_61730",
+    "mercenary.skill_44467",
+    "mercenary.skill_19108"
+   ],
+   "utility_pool": [
+    "mercenary.skill_28757",
+    "mercenary.skill_40470",
+    "mercenary.skill_56180",
+    "mercenary.skill_26391",
+    "mercenary.skill_62758"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Cruel Mistress",
+   "primaries": [
+    "mercenary.skill_56742",
+    "mercenary.skill_52783"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_35371",
+    "mercenary.skill_52144",
+    "mercenary.skill_10742",
+    "mercenary.skill_29071",
+    "mercenary.skill_54144",
+    "mercenary.skill_51539"
+   ],
+   "utility_pool": [
+    "mercenary.skill_14498",
+    "mercenary.skill_28757",
+    "mercenary.skill_40470",
+    "mercenary.skill_56180",
+    "mercenary.skill_17515"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Stormhand",
+   "primaries": [
+    "mercenary.skill_41484",
+    "mercenary.skill_33661"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_5893",
+    "mercenary.skill_59005",
+    "mercenary.skill_30663",
+    "mercenary.skill_50290",
+    "mercenary.skill_3148",
+    "mercenary.skill_11879",
+    "mercenary.skill_7549"
+   ],
+   "utility_pool": [
+    "mercenary.skill_28757",
+    "mercenary.skill_40470",
+    "mercenary.skill_56180",
+    "mercenary.skill_38326",
+    "mercenary.skill_63233",
+    "mercenary.skill_16018"
+   ],
+   "unresolved": [
+    "Storm Call"
+   ]
+  },
+  {
+   "class": "Frosthand",
+   "primaries": [
+    "mercenary.skill_10557",
+    "mercenary.skill_6479"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_50009",
+    "mercenary.skill_57063",
+    "mercenary.skill_31928",
+    "mercenary.skill_33663",
+    "mercenary.skill_61497",
+    "mercenary.skill_61471",
+    "mercenary.skill_28637"
+   ],
+   "utility_pool": [
+    "mercenary.skill_28757",
+    "mercenary.skill_40470",
+    "mercenary.skill_56180",
+    "mercenary.skill_13693",
+    "mercenary.skill_21708"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Flamehand",
+   "primaries": [
+    "mercenary.skill_57450",
+    "mercenary.skill_40521"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_24099",
+    "mercenary.skill_6446",
+    "mercenary.skill_29426",
+    "mercenary.skill_324",
+    "mercenary.skill_37821",
+    "mercenary.skill_30130",
+    "mercenary.skill_8801"
+   ],
+   "utility_pool": [
+    "mercenary.skill_28757",
+    "mercenary.skill_40470",
+    "mercenary.skill_33728",
+    "mercenary.skill_13235",
+    "mercenary.skill_50414"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Cardinal",
+   "primaries": [
+    "mercenary.skill_28506",
+    "mercenary.skill_38655"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_7395",
+    "mercenary.skill_53518",
+    "mercenary.skill_3093"
+   ],
+   "utility_pool": [
+    "mercenary.skill_63233",
+    "mercenary.skill_56180",
+    "mercenary.skill_34212",
+    "mercenary.skill_38326"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Fallen Reverend",
+   "primaries": [
+    "mercenary.skill_15611",
+    "mercenary.skill_50349",
+    "mercenary.skill_21523"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_4383",
+    "mercenary.skill_61523",
+    "mercenary.skill_53527"
+   ],
+   "utility_pool": [
+    "mercenary.skill_38326",
+    "mercenary.skill_14498",
+    "mercenary.skill_37344",
+    "mercenary.skill_56180",
+    "mercenary.skill_40470"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Flaming Charlatan",
+   "primaries": [
+    "mercenary.skill_47949",
+    "mercenary.skill_17763"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_1577",
+    "mercenary.skill_4286",
+    "mercenary.skill_40723",
+    "mercenary.skill_47293"
+   ],
+   "utility_pool": [
+    "mercenary.skill_28757",
+    "mercenary.skill_56180",
+    "mercenary.skill_44334",
+    "mercenary.skill_13235"
+   ],
+   "unresolved": [
+    "Scorching Ray"
+   ]
+  },
+  {
+   "class": "Storming Zealot",
+   "primaries": [
+    "mercenary.skill_19034",
+    "mercenary.skill_14732"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_45226",
+    "mercenary.skill_23225",
+    "mercenary.skill_24685",
+    "mercenary.skill_6651"
+   ],
+   "utility_pool": [
+    "mercenary.skill_5673",
+    "mercenary.skill_38326",
+    "mercenary.skill_28757",
+    "mercenary.skill_56180"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Warpriest",
+   "primaries": [
+    "mercenary.skill_40812",
+    "mercenary.skill_55917"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_50866",
+    "mercenary.skill_43742",
+    "mercenary.skill_53518",
+    "mercenary.skill_47078",
+    "mercenary.skill_39732"
+   ],
+   "utility_pool": [
+    "mercenary.skill_63233",
+    "mercenary.skill_56180",
+    "mercenary.skill_3093",
+    "mercenary.skill_34212"
+   ],
+   "unresolved": [
+    "Summon Holy Relic"
+   ]
+  },
+  {
+   "class": "Winter Deacon",
+   "primaries": [
+    "mercenary.skill_57491",
+    "mercenary.skill_47031"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_11018",
+    "mercenary.skill_53217",
+    "mercenary.skill_14816",
+    "mercenary.skill_38103"
+   ],
+   "utility_pool": [
+    "mercenary.skill_24482",
+    "mercenary.skill_40470",
+    "mercenary.skill_10557",
+    "mercenary.skill_55367",
+    "mercenary.skill_13693"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Bastion",
+   "primaries": [
+    "mercenary.skill_21201",
+    "mercenary.skill_22850"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_41834",
+    "mercenary.skill_58855",
+    "mercenary.skill_52494"
+   ],
+   "utility_pool": [
+    "mercenary.skill_52845",
+    "mercenary.skill_60723",
+    "mercenary.skill_38311",
+    "mercenary.skill_17015",
+    "mercenary.skill_45615"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Swiftblade",
+   "primaries": [
+    "mercenary.skill_46739",
+    "mercenary.skill_39265",
+    "mercenary.skill_28026"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_61669",
+    "mercenary.skill_37132",
+    "mercenary.skill_7395"
+   ],
+   "utility_pool": [
+    "mercenary.skill_18793",
+    "mercenary.skill_2135",
+    "mercenary.skill_60723",
+    "mercenary.skill_59409",
+    "mercenary.skill_17105"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Bloodletter",
+   "primaries": [
+    "mercenary.skill_60880",
+    "mercenary.skill_26931",
+    "mercenary.skill_8136"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_12357",
+    "mercenary.skill_54006"
+   ],
+   "utility_pool": [
+    "mercenary.skill_2135",
+    "mercenary.skill_60723",
+    "mercenary.skill_52845",
+    "mercenary.skill_19268"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Shattersword",
+   "primaries": [
+    "mercenary.skill_46131",
+    "mercenary.skill_39265",
+    "mercenary.skill_28026"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_12729",
+    "mercenary.skill_28511",
+    "mercenary.skill_43812"
+   ],
+   "utility_pool": [
+    "mercenary.skill_60723",
+    "mercenary.skill_10823",
+    "mercenary.skill_2792",
+    "mercenary.skill_27763"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Combatant",
+   "primaries": [
+    "mercenary.skill_65473",
+    "mercenary.skill_32807"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_22105",
+    "mercenary.skill_40957",
+    "mercenary.skill_37916",
+    "mercenary.skill_24931"
+   ],
+   "utility_pool": [
+    "mercenary.skill_38326",
+    "mercenary.skill_60723",
+    "mercenary.skill_40470",
+    "mercenary.skill_13693"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Bladebitter",
+   "primaries": [
+    "mercenary.skill_22227",
+    "mercenary.skill_14992"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_59831",
+    "mercenary.skill_36446",
+    "mercenary.skill_16896",
+    "mercenary.skill_12262"
+   ],
+   "utility_pool": [
+    "mercenary.skill_10823",
+    "mercenary.skill_60723",
+    "mercenary.skill_1516",
+    "mercenary.skill_10320",
+    "mercenary.skill_2792"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Blade Ambusher",
+   "primaries": [
+    "mercenary.skill_11054",
+    "mercenary.skill_38072"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_62393",
+    "mercenary.skill_28988"
+   ],
+   "utility_pool": [
+    "mercenary.skill_64528",
+    "mercenary.skill_56180",
+    "mercenary.skill_2792",
+    "mercenary.skill_44296",
+    "mercenary.skill_13711"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Shock Ambusher",
+   "primaries": [
+    "mercenary.skill_41484",
+    "mercenary.skill_25149"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_17037",
+    "mercenary.skill_8075",
+    "mercenary.skill_37561",
+    "mercenary.skill_5247"
+   ],
+   "utility_pool": [
+    "mercenary.skill_56180",
+    "mercenary.skill_40470",
+    "mercenary.skill_64528",
+    "mercenary.skill_44296",
+    "mercenary.skill_14498"
+   ],
+   "unresolved": [
+    "Ball Lightning of Orbiting",
+    "Lightning Warp"
+   ]
+  },
+  {
+   "class": "Frost Ambusher",
+   "primaries": [
+    "mercenary.skill_57491",
+    "mercenary.skill_3493"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_62997",
+    "mercenary.skill_9321"
+   ],
+   "utility_pool": [
+    "mercenary.skill_44296",
+    "mercenary.skill_56180",
+    "mercenary.skill_40470",
+    "mercenary.skill_2792",
+    "mercenary.skill_55367",
+    "mercenary.skill_44455"
+   ],
+   "unresolved": [
+    "Creeping Frost"
+   ]
+  },
+  {
+   "class": "Bladecaster",
+   "primaries": [
+    "mercenary.skill_26057",
+    "mercenary.skill_22724"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_17198",
+    "mercenary.skill_37202",
+    "mercenary.skill_25718",
+    "mercenary.skill_50999",
+    "mercenary.skill_59477"
+   ],
+   "utility_pool": [
+    "mercenary.skill_60723",
+    "mercenary.skill_2792",
+    "mercenary.skill_56180",
+    "mercenary.skill_19417",
+    "mercenary.skill_57491"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Kineticist",
+   "primaries": [
+    "mercenary.skill_5689",
+    "mercenary.skill_57450"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_12583",
+    "mercenary.skill_26705",
+    "mercenary.skill_1356",
+    "mercenary.skill_44258",
+    "mercenary.skill_16356",
+    "mercenary.skill_32089"
+   ],
+   "utility_pool": [
+    "mercenary.skill_56180",
+    "mercenary.skill_40470",
+    "mercenary.skill_52155",
+    "mercenary.skill_65473"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Sanguimancer",
+   "primaries": [
+    "mercenary.skill_44422",
+    "mercenary.skill_2187",
+    "mercenary.skill_4927"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_40439",
+    "mercenary.skill_1185",
+    "mercenary.skill_14064",
+    "mercenary.skill_8958"
+   ],
+   "utility_pool": [
+    "mercenary.skill_56180",
+    "mercenary.skill_28757",
+    "mercenary.skill_18793",
+    "mercenary.skill_16018",
+    "mercenary.skill_14889"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Mysterious Diver",
+   "primaries": [
+    "mercenary.skill_8708",
+    "mercenary.skill_10557"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_22105",
+    "mercenary.skill_32807",
+    "mercenary.skill_40957"
+   ],
+   "utility_pool": [
+    "mercenary.skill_24482",
+    "mercenary.skill_13693",
+    "mercenary.skill_40470",
+    "mercenary.skill_60723"
+   ],
+   "unresolved": []
+  },
+  {
+   "class": "Warpriest of the Ruckus",
+   "primaries": [
+    "mercenary.skill_40812",
+    "mercenary.skill_55917"
+   ],
+   "secondary_pool": [
+    "mercenary.skill_50866",
+    "mercenary.skill_43742",
+    "mercenary.skill_53518",
+    "mercenary.skill_47078",
+    "mercenary.skill_39732"
+   ],
+   "utility_pool": [
+    "mercenary.skill_63233",
+    "mercenary.skill_56180",
+    "mercenary.skill_3093",
+    "mercenary.skill_34212"
+   ],
+   "unresolved": [
+    "Summon Holy Relic"
+   ]
+  }
+ ]
+}

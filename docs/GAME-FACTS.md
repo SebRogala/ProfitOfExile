@@ -174,20 +174,28 @@ shapes.
 
 ## Mercenaries
 
-- **Mercenary class primaries.** Every mercenary of a class carries the class's
-  two primary skills; the rest of its kit is rolled. Wiki-sourced, 2026-09-06
+- **Mercenary classes and their skill pools.** Thirty-five classes plus the
+  identical "Warpriest of the Ruckus". Every mercenary of a class carries the
+  class's fixed primary skills — two for most classes, THREE for some
+  (Bloodletter: Bloodthirst, Blood Mortar, Lacerate) — and rolls one or two
+  secondaries and one or two utilities from the class's two pools. The same
+  skill can be a primary in one class and a utility in another (Leap Slam).
+  Wiki-sourced 2026-09-06
   ([List of mercenary classes](https://www.poewiki.net/wiki/List_of_mercenary_classes),
-  "Always has these skills"): Manyshot — Ice Shot, Vaal Grace; Kinetist —
-  Elemental Weakness, Flame Wall; Combatant — Inspiring Cry, Herald of Ice;
-  Blade Ambusher — Blade Trap, Trarthan Agility; Sniper — Ensnaring Arrow,
-  Poacher's Mark; Cruel Mistress — Despair, Void Sphere; Stormhand —
-  Conductivity, Sigil of Power. The wiki table predates the Allflame return of
-  mercenaries and no capture has yet contradicted it; treat a capture carrying
-  a class read and only one of its primaries as the signal to re-check. The
-  mercenary module's trade link leaves a recognised class's primaries out of
-  its `and` group (`CLASS_PRIMARIES` in
-  `desktop/src-tauri/src/mercenary/search.rs`, ids pinned against the stat
-  vocabulary by test) because a filter every listing satisfies adds nothing.
+  "Always has these skills"), joined to GGG's stat vocabulary by display text,
+  and committed as `desktop/src-tauri/src/mercenary/class-pools.json`, every
+  id pinned against the vocabulary by test. The current class name is
+  `Kineticist`; the guides' `Kinetist` is the app's archetype key, not the
+  header's word. The recruit window prints one rank prefix before the class,
+  `Infamous` (better links and gear; no source says higher support tiers),
+  and no other; the 3.26 Renown ranks were player ranks, not mercenary ones.
+  Not in the table and unverified: the tier-roll odds per class or per rank.
+  The trade link leaves a recognised class's primaries out of its `and` group
+  because a filter every listing satisfies adds nothing, and its anchor-rows
+  shape leaves utility rows out because only support-mercenary buyers price
+  them (community consensus, same date: a mercenary is priced by a desired
+  combat skill and the links on that row; a rolled secondary is NOT
+  interchangeable — Vaal Ice Shot against Icicle Rain decides a Manyshot).
 
 ## Not validated
 

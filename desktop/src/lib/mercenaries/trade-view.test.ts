@@ -34,6 +34,7 @@ function state(overrides: Partial<MercTradeState> = {}): MercTradeState {
 		status: 'idle',
 		queryHash: null,
 		url: null,
+		urlAnchors: null,
 		result: null,
 		error: null,
 		searchesUsed: 0,
