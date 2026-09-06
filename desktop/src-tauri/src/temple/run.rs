@@ -201,30 +201,34 @@ const TICK: Duration = Duration::from_millis(100);
 /// screen. It is affordable at this rate because it is *only* the cheap half —
 /// since POE-249 an anchored tick no longer implies OCR (see [`LoopState::board`]).
 const DETECT_INTERVAL: Duration = Duration::from_millis(650);
-/// Pixel-tick cadence after the backoff has fired.
-const DETECT_INTERVAL_SLOW: Duration = Duration::from_millis(3000);
-/// A **cheap** detect tick slower than this backs the detect cadence off, once,
-/// for the life of the thread.
+/// A cheap detect tick slower than this is LOGGED — [`slow_tick_line`], at most
+/// one line per [`SLOW_TICK_LOG_EVERY`] — and nothing else.
 ///
-/// Cheap ticks only — a tick that promoted to the full read is excluded, and
-/// the [`FULL_READ_EVERY_N_MISSES`] backstop is the reason that matters: it
-/// deliberately costs seconds, and letting one of those trip a *sticky* backoff
-/// would slow the loop permanently on the strength of a cost the loop chose to
-/// pay.
+/// It is [`DETECT_INTERVAL`] on purpose: a tick that takes longer than the
+/// cadence is the loop running below its nominal rate, which is the one fact
+/// about a tick worth a line. It is a MEASUREMENT, never a switch.
 ///
-/// # 1.5 s is an ABSOLUTE ceiling, not the cadence
+/// # There is no slow-machine backoff (owner decision, 2026-09-06)
 ///
-/// It is more than twice [`DETECT_INTERVAL`], and that is deliberate rather than
-/// an oversight: a tick between 650 ms and 1.5 s does NOT back the loop off. The
-/// loop is self-pacing — each tick waits for the last one to finish and then
-/// sleeps the interval — so a machine in that band simply runs at its own rate,
-/// which is a slower sheet-hide and nothing worse. Backing off there would trade
-/// a cadence the machine can nearly hold for a 3 s one it does not need.
+/// Until 2026-09-06 a cheap tick over 1.5 s backed the cadence off to 3 s for
+/// the life of the thread. The one time it fired on the PC (app.log,
+/// `2026-09-06 21:57:12`, 1519 ms) it was a single screen-capture stall as a
+/// fight started, and it cost every later incursion of that session up to 3 s
+/// of detect latency — the sheet had to wait for a 3 s tick to be seen. The
+/// owner's rule replaces it: *"if the cheap probe is really cheap — we can just
+/// straight go to it"* (docs/TEMPLE-LIFECYCLE.md, "Owner decisions").
 ///
-/// What a tick over 1.5 s says is different in kind: this machine cannot sustain
-/// ANY sub-second cadence on a screen this size, so the 650 ms target is a fiction
-/// and [`DETECT_INTERVAL_SLOW`] is the honest one.
-const SLOW_TICK: Duration = Duration::from_millis(1500);
+/// Nothing is lost for correctness. The loop is self-pacing, and it sleeps the
+/// interval AFTER the tick rather than around it — `last_detect` is stamped when
+/// `tick` returns — so a slow tick already delays the next one by its whole
+/// duration, and a machine that cannot hold 650 ms runs at tick + 650 ms per
+/// detect. What that costs is CPU while ARMED, which POE-242 bounds to Alva's
+/// window.
+const SLOW_TICK: Duration = DETECT_INTERVAL;
+/// At most one slow-tick line per this much wall time. A machine that is slow
+/// on EVERY tick would otherwise write one line per tick into `app_log`'s
+/// 50-entry buffer; the file log is append-only either way.
+const SLOW_TICK_LOG_EVERY: Duration = Duration::from_secs(10);
 /// How long to idle between focus checks while the game is not focused.
 const UNFOCUSED_NAP: Duration = Duration::from_millis(1000);
 /// Distinct error messages logged before the loop stops repeating itself. The
@@ -277,9 +281,8 @@ const RETIRE_AFTER: u8 = 1;
 /// clears [`anchor::COARSE_CANDIDATE_FLOOR`]. The game's own UI-scale slider is
 /// the way that happens.
 ///
-/// 30 ticks is 19.5 s at [`DETECT_INTERVAL`] and 90 s once
-/// [`DETECT_INTERVAL_SLOW`] has fired. Long, deliberately: the case is rare and
-/// what the backstop forces is the ANCHOR RESOLVE — the ~80×-a-cheap-tick half
+/// 30 ticks is 19.5 s at [`DETECT_INTERVAL`]. Long, deliberately: the case is
+/// rare and what the backstop forces is the ANCHOR RESOLVE — the ~80×-a-cheap-tick half
 /// (see [`anchor::detect_cheap`]) — which is the price this constant is
 /// budgeting and the one that recovers the drifted scale.
 ///
@@ -319,13 +322,6 @@ pub struct LoopState {
     /// kept as the seam a `RETIRE_AFTER > 1` would need, so do not read the
     /// counter as a live threshold — the threshold is the constant.
     pub misses: u8,
-    /// The slow-tick backoff has fired.
-    ///
-    /// Sticky for the life of the thread: it means "this machine takes over
-    /// 1.5 s to run a cheap detect tick on a screen this size", which does not
-    /// become false again, and flapping between cadences would flap the log
-    /// line that announces it.
-    pub backed_off: bool,
     /// Cheap detect ticks since the last full read — see
     /// [`FULL_READ_EVERY_N_MISSES`].
     pub cheap_misses: u32,
@@ -548,19 +544,6 @@ pub enum DetectOutcome {
 }
 
 impl LoopState {
-    /// How long to wait before the next pixel tick.
-    ///
-    /// One cadence whether or not a panel is live: the tick costs the same
-    /// either way — it is the same `read_layout_for_loop` call — so there is
-    /// nothing for a second number to buy.
-    pub fn detect_interval(&self) -> Duration {
-        if self.backed_off {
-            DETECT_INTERVAL_SLOW
-        } else {
-            DETECT_INTERVAL
-        }
-    }
-
     /// Fold one anchor result into the state.
     ///
     /// `seen_at` is the moment the panel was seen ([`now_ms`]), and `None` is a
@@ -762,27 +745,122 @@ impl LoopState {
             geometry_reads,
         });
     }
+}
 
-    /// Record how long one detect tick took. `true` the one time the backoff
-    /// fires, so the caller logs it once.
-    ///
-    /// `promoted` ticks are ignored rather than filtered by the caller, so the
-    /// rule sits in the tested surface: a tick that paid for the full read is
-    /// not evidence about the cadence, and the periodic backstop deliberately
-    /// costs seconds — letting one of those trip a *sticky* backoff would slow
-    /// the loop for the rest of the session on the strength of a cost it chose
-    /// to pay. See [`SLOW_TICK`].
-    pub fn note_tick_duration(&mut self, took: Duration, promoted: bool) -> bool {
-        if promoted {
-            return false;
-        }
-        if took > SLOW_TICK && !self.backed_off {
-            self.backed_off = true;
-            true
-        } else {
-            false
+// ------------------------------------------------------ the measurements --
+
+/// What one detect tick spent, stage by stage, in wall time.
+///
+/// Written by [`tick`] as each stage finishes (write-through, so a tick that
+/// returns early still leaves the stages it ran) and read twice: by
+/// [`slow_tick_line`] for a cheap tick that overran the cadence, and by
+/// [`read_timings_line`] for the read line, which carries the OCR half as well.
+/// `Duration::ZERO` is a stage this tick did not run.
+///
+/// Every number here is a MEASUREMENT of the machine and the build that took it
+/// (the laptop's debug build grabbed the screen in 225 ms, the PC's release
+/// build in 52 ms — same code), which is why the lines print the numbers and
+/// assert no budget. The budget is the owner's — verdict on screen about 1 s
+/// after the panel opens (docs/TEMPLE-LIFECYCLE.md) — and these lines are how
+/// it is checked against a real session rather than assumed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TickStages {
+    /// `capture::capture_screen` — the monitor grab.
+    pub capture: Duration,
+    /// `anchor::detect_cheap` — the presence probe.
+    pub cheap: Duration,
+    /// Resolving the anchor into a `TempleLayout` (doors included), on the
+    /// ticks that did.
+    pub anchor: Duration,
+}
+
+/// What the full read spent after the anchor, stage by stage.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReadStages {
+    /// The panel and budget-line OCR (`panel_text`).
+    pub text_ocr: Duration,
+    /// The 26 plate OCR calls (`panel::read_board`).
+    pub plate_ocr: Duration,
+    /// The door markers (`read_markers`).
+    pub markers: Duration,
+    /// Valuation plus the advisor's ranking.
+    pub advise: Duration,
+    /// Projecting the slice and emitting it.
+    pub publish: Duration,
+}
+
+fn ms(d: Duration) -> u128 {
+    d.as_millis()
+}
+
+/// The line a cheap tick writes when it overran [`SLOW_TICK`], or `None`.
+///
+/// `said` is when this loop last wrote one; the line is rate-limited to one per
+/// [`SLOW_TICK_LOG_EVERY`] so a machine that is slow on every tick does not
+/// fill the log with the same fact. The stage breakdown is the point of the
+/// line: a stall in `capture` (the game saturating the GPU as a fight starts)
+/// and a slow `cheap detect` (a debug build, a huge screen) are different
+/// problems with the same total.
+///
+/// Cheap ticks only — a tick that resolved the anchor writes
+/// [`read_timings_line`] instead when it read, and its anchor cost is a price
+/// the loop chose to pay.
+pub fn slow_tick_line(
+    said: &mut Option<Instant>,
+    now: Instant,
+    took: Duration,
+    stages: &TickStages,
+) -> Option<String> {
+    if took <= SLOW_TICK {
+        return None;
+    }
+    if let Some(last) = *said {
+        if now.duration_since(last) < SLOW_TICK_LOG_EVERY {
+            return None;
         }
     }
+    *said = Some(now);
+    Some(format!(
+        "Temple: slow detect tick — {} ms (capture {} ms, cheap detect {} ms, anchor {} ms); the cadence is {} ms",
+        ms(took),
+        ms(stages.capture),
+        ms(stages.cheap),
+        ms(stages.anchor),
+        ms(DETECT_INTERVAL),
+    ))
+}
+
+/// The line every full read writes: each stage from the grab to the publish,
+/// the total, the read's own `last_read_at` stamp so the overlay's
+/// `[temple-overlay] board read at …` line can be matched to it, and whether
+/// the read was clean or is buying a retry.
+pub fn read_timings_line(
+    tick: &TickStages,
+    read: &ReadStages,
+    total: Duration,
+    read_at: u64,
+    unclean: bool,
+    retries_left: Option<u8>,
+) -> String {
+    let verdict = match (unclean, retries_left) {
+        (false, _) => "clean".to_string(),
+        (true, Some(n)) => format!("unclean, {n} retries left"),
+        (true, None) => "unclean".to_string(),
+    };
+    format!(
+        "Temple: read timings — capture {} ms, cheap detect {} ms, anchor {} ms, text ocr {} ms, plates {} ms, markers {} ms, advise {} ms, publish {} ms — {} ms from grab to publish, read at {}; {}",
+        ms(tick.capture),
+        ms(tick.cheap),
+        ms(tick.anchor),
+        ms(read.text_ocr),
+        ms(read.plate_ocr),
+        ms(read.markers),
+        ms(read.advise),
+        ms(read.publish),
+        ms(total),
+        read_at,
+        verdict,
+    )
 }
 
 // ------------------------------------------------------- the cold sweep --
@@ -828,7 +906,7 @@ pub struct SweepKey {
 /// [`FULL_READ_EVERY_N_MISSES`] — the same cadence, and for the same reason, as
 /// the periodic full read: it is the interval this loop already treats as "long
 /// enough that an expensive answer is worth re-asking". 30 ticks is 19.5 s at
-/// [`DETECT_INTERVAL`] and 90 s once [`DETECT_INTERVAL_SLOW`] has fired.
+/// [`DETECT_INTERVAL`].
 ///
 /// The countdown is in TICKS, so shortening [`DETECT_INTERVAL`] to 650 ms
 /// (POE-249) shortened this with it: 5.3 s of sweeping every 19.5 s rather than
@@ -873,7 +951,7 @@ pub struct SweepKey {
 ///
 /// One sweep is 5.3 s (Linux container, release, 1920x1080). The cadence caps
 /// it at one per [`FULL_READ_EVERY_N_MISSES`] ticks — 19.5 s at
-/// [`DETECT_INTERVAL`], 90 s once [`DETECT_INTERVAL_SLOW`] has fired — and only
+/// [`DETECT_INTERVAL`] — and only
 /// while the loop is ARMED, which POE-242 bounds to Alva's window rather than
 /// to the session (and POE-246 extends by [`super::trigger::PANEL_TAIL_MS`] past
 /// the last panel SIGHTING, which no screen without a panel on it ever gets). A
@@ -996,7 +1074,7 @@ impl SweepGate {
     /// no second "is this the first tick?" argument is needed.
     ///
     /// The conditions are arguments rather than an `if` at the call site,
-    /// following [`LoopState::note_tick_duration`]: the rule belongs in the
+    /// following [`slow_tick_line`]: the rule belongs in the
     /// tested surface. A sweep that ANCHORED spends the budget like any other —
     /// it bought the answer the budget is for.
     ///
@@ -2389,6 +2467,10 @@ impl ErrorLog {
 /// Everything the loop carries between ticks.
 struct Session {
     state: LoopState,
+    /// What the current tick has spent so far — see [`TickStages`].
+    tick_stages: TickStages,
+    /// When [`slow_tick_line`] last wrote, for its rate limit.
+    slow_tick_said: Option<Instant>,
     gate: slice::RearmGate,
     errors: ErrorLog,
     /// The last completed read of the board [`LoopState::board`] is keeping, so
@@ -2484,6 +2566,8 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
 
     let mut session = Session {
         state: LoopState::default(),
+        tick_stages: TickStages::default(),
+        slow_tick_said: None,
         gate: slice::RearmGate::default(),
         errors: ErrorLog::default(),
         kept: None,
@@ -2500,7 +2584,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
     };
     // Backdated so the first iteration ticks immediately rather than after a
     // full cadence of doing nothing.
-    let mut last_detect = Instant::now() - DETECT_INTERVAL_SLOW;
+    let mut last_detect = Instant::now() - DETECT_INTERVAL;
 
     loop {
         if *cancel.borrow() {
@@ -2553,7 +2637,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         let step = loop_step(
             focused,
             armed,
-            last_detect.elapsed() >= session.state.detect_interval(),
+            last_detect.elapsed() >= DETECT_INTERVAL,
         );
         // A `match` and not an `if`, so a fifth [`LoopStep`] cannot be added
         // without deciding here whether it captures.
@@ -2562,15 +2646,17 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
                 let started = Instant::now();
                 let promoted = tick(&app, &mut session, &cancel, source);
                 last_detect = Instant::now();
-                if session.state.note_tick_duration(started.elapsed(), promoted) {
-                    crate::app_log(
-                        &app,
-                        format!(
-                            "Temple: detect tick took {} ms — cadence backing off to {} s",
-                            started.elapsed().as_millis(),
-                            DETECT_INTERVAL_SLOW.as_secs()
-                        ),
-                    );
+                // Measured, never acted on — see `SLOW_TICK`. A promoted tick
+                // that read wrote its own `read_timings_line` inside `tick`.
+                if !promoted {
+                    if let Some(line) = slow_tick_line(
+                        &mut session.slow_tick_said,
+                        last_detect,
+                        started.elapsed(),
+                        &session.tick_stages,
+                    ) {
+                        crate::app_log(&app, line);
+                    }
                 }
             }
             // Nothing to do but wait: `step.nap()` below is the whole of it.
@@ -2642,20 +2728,29 @@ fn fail(app: &AppHandle, session: &mut Session, msg: String) {
 /// when that board has not been read yet (POE-249's two gates — see the module
 /// note and docs/TEMPLE-LIFECYCLE.md rows 2-3).
 ///
-/// Returns whether this tick paid to RESOLVE THE ANCHOR — the caller times only
-/// the ticks that did not, per [`SLOW_TICK`], because a promoted tick is not
-/// evidence about what the cheap half costs. A tick that resolved an anchor and
-/// then re-showed an already-read board is a promoted tick by that measure: it
-/// paid for [`reader::read_layout_for_loop`] either way.
+/// Returns whether this tick paid to RESOLVE THE ANCHOR — the caller writes
+/// [`slow_tick_line`] only for the ticks that did not, because a promoted tick
+/// is not evidence about what the cheap half costs, and a promoted tick that
+/// READ writes [`read_timings_line`] of its own. A tick that resolved an anchor
+/// and then re-showed an already-read board is a promoted tick by that measure:
+/// it paid for [`reader::read_layout_for_loop`] either way.
 fn tick(
     app: &AppHandle,
     session: &mut Session,
     cancel: &watch::Receiver<bool>,
     source: Option<trigger::ArmSource>,
 ) -> bool {
+    // The measurements start at the grab (`TickStages`); every stage below
+    // writes through to the session as it finishes.
+    let grabbed_at = Instant::now();
+    session.tick_stages = TickStages::default();
     let grab = match crate::capture::capture_screen(app) {
         Ok(grab) => grab,
         Err(e) => {
+            // The failing grab is what the tick SPENT, and a slow-tick line that
+            // attributes 0 ms to `capture` after a 650 ms stall points the reader
+            // at the wrong stage.
+            session.tick_stages.capture = grabbed_at.elapsed();
             fail(app, session, format!("Temple: screen capture failed — {e}"));
             // Through `miss`, which spends the start-up probe like any other
             // tick (POE-246): a machine whose capture never succeeds must not
@@ -2664,6 +2759,7 @@ fn tick(
             return false;
         }
     };
+    session.tick_stages.capture = grabbed_at.elapsed();
     let monitor_id = grab.monitor_id;
     let origin = grab.origin;
     let img = grab.image;
@@ -2711,7 +2807,9 @@ fn tick(
     // button is half the key, and a bump seen by one gate but not the other
     // would either force a read the gate then skipped or skip one it forced.
     let key = (temple_epoch(app), rearm);
+    let probing = Instant::now();
     let cheap = anchor::detect_cheap(&img, session.cheap_hint.as_ref());
+    session.tick_stages.cheap = probing.elapsed();
 
     // The cold start (POE-234). The cheap tick's nominating scale is a GUESS on
     // a capture size nobody has measured, and a guess that misses looks exactly
@@ -2772,10 +2870,9 @@ fn tick(
     ) {
         miss(app, session, false);
         // A sweep that found nothing still COST what a promoted tick costs, so
-        // it is reported as one: `LoopState::note_tick_duration` ignores
-        // promoted ticks, and letting seconds of deliberate work trip the
-        // sticky `SLOW_TICK` backoff would slow the loop for the rest of the
-        // session on the strength of a price it chose to pay once.
+        // it is reported as one: `slow_tick_line` is for the cheap ticks, and a
+        // sweep's seconds are a price the loop chose to pay, not a fact about
+        // the cadence.
         return sweep_ran;
     }
 
@@ -2784,6 +2881,7 @@ fn tick(
     // so the promoted read takes that anchor instead of finding the plate a
     // second time. A sweep that anchored is the same fact from the cold path.
     // Every other promotion has no anchor to hand over.
+    let anchoring = Instant::now();
     let layout = match (swept, cheap) {
         (Some(found), _) | (None, anchor::CheapDetect::Anchored(found)) => {
             reader::read_layout_at(&img, found)
@@ -2825,6 +2923,7 @@ fn tick(
             }
         },
     };
+    session.tick_stages.anchor = anchoring.elapsed();
 
     // The sighting the arm gate's panel clock is measured from (POE-246): stamped
     // on every anchored tick, so the tail restarts while the panel is on screen
@@ -2889,7 +2988,7 @@ fn tick(
     }
 
     let Some(status) = reshown else {
-        full_read(app, session, cancel, &img, layout, &settings, key, frame);
+        full_read(app, session, cancel, &img, layout, &settings, key, frame, grabbed_at);
         return true;
     };
 
@@ -3351,7 +3450,9 @@ fn full_read(
     settings: &TempleSettings,
     key: (u64, u64),
     frame: slice::BoardFrame,
+    since_grab: Instant,
 ) {
+    let mut stages = ReadStages::default();
     publish(app, |slice| apply_status(slice, TickOutcome::Anchored));
     // Before any crop, so a read that fails halfway still leaves the geometry it
     // was working from in the log.
@@ -3379,10 +3480,12 @@ fn full_read(
             .join("; ")
     });
 
+    let reading_text = Instant::now();
     let panel = match panel_text(app, session, img, &layout) {
         Some(lines) => panel::read_panel(&lines),
         None => return,
     };
+    stages.text_ocr = reading_text.elapsed();
 
     // 26 more OCR calls follow — two per plate. A stop that arrived during the
     // text OCR must not buy them: this is the loop's longest blocking stretch
@@ -3395,7 +3498,9 @@ fn full_read(
     }
     let lattice = Lattice::new(layout.origin, layout.scale);
     let stop = || *cancel.borrow();
+    let reading_plates = Instant::now();
     let rooms = panel::read_board(&SystemOcr, img, &lattice, &stop);
+    stages.plate_ocr = reading_plates.elapsed();
     if *cancel.borrow() {
         return;
     }
@@ -3415,10 +3520,12 @@ fn full_read(
         );
     }
 
+    let reading_markers = Instant::now();
     let (settled, marker_error) = match read_markers(img, &layout) {
         Ok(set) => (Some(set), None),
         Err(e) => (None, Some(e)),
     };
+    stages.markers = reading_markers.elapsed();
 
     // The merge (POE-249). `kept_for` owns the drop — see it for why a board
     // this loop has not read must not reach `slice::merge_reads` at all.
@@ -3445,6 +3552,7 @@ fn full_read(
     // first poll answers, and whenever the last read has aged out, it is
     // `MarketInput::none()` in effect and every room falls back to its grade
     // ladder value rather than to zero, which is epic lock L4.
+    let advising = Instant::now();
     let market = crate::ssot::temple_market_now(app);
     let valuation = slice::value_read(settings, &market);
     let advice = slice::advise_read(
@@ -3455,6 +3563,8 @@ fn full_read(
         settings,
         &valuation,
     );
+    stages.advise = advising.elapsed();
+    let read_at = now_ms();
 
     let projected = slice::project(
         &slice::ReadResult {
@@ -3478,7 +3588,7 @@ fn full_read(
             // price-age line and the numbers on the offer boxes can never be
             // about different markets.
             market: slice::market_view(&market),
-            read_at: now_ms(),
+            read_at,
         },
         // The calibration THIS capture measured, which is what the page's
         // "anchor calibration" row means: the scale the board in front of the
@@ -3495,11 +3605,28 @@ fn full_read(
     // off the capture, because a region that is not on screen cannot read better
     // on a retry and its failures must not spend one.
     let clipped_names: Vec<&'static str> = clipped.iter().map(|(name, _)| *name).collect();
-    session
-        .state
-        .note_read(key, &frame, projected.status, slice::unclean(&read, &clipped_names));
+    let unclean = slice::unclean(&read, &clipped_names);
+    session.state.note_read(key, &frame, projected.status, unclean);
     session.kept = Some(read);
+    let publishing = Instant::now();
     publish(app, |slice| *slice = projected);
+    stages.publish = publishing.elapsed();
+    // One line per read, always: reads are once per board plus at most
+    // `RETRIES`, and this line is how the owner's ~1 s panel-open → verdict
+    // budget is checked against a real session (docs/TEMPLE-LIFECYCLE.md,
+    // "Cadences and budgets"). The overlay writes the other half —
+    // `[temple-overlay] board read at <read_at> …` — against the same stamp.
+    crate::app_log(
+        app,
+        read_timings_line(
+            &session.tick_stages,
+            &stages,
+            since_grab.elapsed(),
+            read_at,
+            unclean,
+            session.state.board.as_ref().map(|board| board.retries_left),
+        ),
+    );
 }
 
 #[cfg(test)]
@@ -4368,41 +4495,53 @@ mod tests {
         );
     }
 
-    /// The backoff is sticky and announces itself exactly once. Fails if
-    /// `note_tick_duration` re-announces, or if it fires on a fast tick.
+    /// The slow-tick line is a measurement with a rate limit, not a switch:
+    /// nothing at or inside the cadence, one line per `SLOW_TICK_LOG_EVERY`
+    /// past it, and the stage breakdown on the line. Fails if a tick inside
+    /// the cadence is reported, if two slow ticks inside one window both
+    /// write, or if the line drops the stages that say WHERE the time went.
     #[test]
-    fn the_slow_tick_backoff_fires_once_and_stays() {
-        let mut state = LoopState::default();
+    fn a_slow_tick_is_logged_once_per_window_with_its_stages() {
+        let mut said = None;
+        let t0 = Instant::now();
+        let stages = TickStages {
+            capture: Duration::from_millis(1200),
+            cheap: Duration::from_millis(300),
+            anchor: Duration::ZERO,
+        };
 
-        assert!(!state.note_tick_duration(Duration::from_millis(200), false));
-        assert_eq!(state.detect_interval(), DETECT_INTERVAL);
+        assert_eq!(
+            slow_tick_line(&mut said, t0, SLOW_TICK, &stages),
+            None,
+            "a tick at the cadence is not slow",
+        );
 
-        assert!(state.note_tick_duration(SLOW_TICK + Duration::from_millis(1), false));
-        assert_eq!(state.detect_interval(), DETECT_INTERVAL_SLOW);
-        assert!(
-            !state.note_tick_duration(SLOW_TICK + Duration::from_millis(1), false),
-            "the backoff announces itself once",
+        let line = slow_tick_line(&mut said, t0, Duration::from_millis(1519), &stages)
+            .expect("a tick past the cadence writes");
+        assert!(line.contains("1519 ms"), "{line}");
+        assert!(line.contains("capture 1200 ms"), "{line}");
+        assert!(line.contains("cheap detect 300 ms"), "{line}");
+
+        assert_eq!(
+            slow_tick_line(
+                &mut said,
+                t0 + SLOW_TICK_LOG_EVERY / 2,
+                Duration::from_millis(1600),
+                &stages
+            ),
+            None,
+            "inside the window the fact is already on the log",
         );
         assert!(
-            !state.note_tick_duration(Duration::from_millis(10), false),
-            "and does not come back off",
+            slow_tick_line(
+                &mut said,
+                t0 + SLOW_TICK_LOG_EVERY,
+                Duration::from_millis(1600),
+                &stages
+            )
+            .is_some(),
+            "the window has passed",
         );
-    }
-
-    /// A tick that paid for the full read is not evidence about the cadence.
-    /// The periodic backstop costs seconds by design, so one of those must not
-    /// trip a backoff that is sticky for the life of the thread.
-    ///
-    /// Fails if the promoted tick is timed like a cheap one — every 30th tick
-    /// would then permanently slow a loop that is running perfectly well.
-    #[test]
-    fn a_slow_promoted_tick_does_not_back_the_cadence_off() {
-        let mut state = LoopState::default();
-
-        assert!(!state.note_tick_duration(SLOW_TICK * 3, true));
-
-        assert!(!state.backed_off);
-        assert_eq!(state.detect_interval(), DETECT_INTERVAL);
     }
 
     // ------------------------------------------------ the cheap detect gate --

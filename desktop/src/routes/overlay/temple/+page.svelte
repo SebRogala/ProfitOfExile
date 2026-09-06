@@ -124,9 +124,43 @@
 		recommendedExit,
 		suggestedDoors
 	} from '$lib/temple/view';
-	import { ssot } from '$lib/stores/ssot.svelte';
+	import { lastSsotDelivery, ssot } from '$lib/stores/ssot.svelte';
 
 	const temple = $derived(ssot.temple);
+
+	/**
+	 * Read → overlay latency, one log line per read (docs/TEMPLE-LIFECYCLE.md,
+	 * "Cadences and budgets"). `lastReadAt` is Rust's `now_ms()` at publish and
+	 * `Date.now()` is this window's clock when the rune changed — the same
+	 * machine, so the difference is the delivery, and `lastSsotDelivery()` says
+	 * which path carried it — the `ssot-changed` nudge, the 3 s poll, or a
+	 * setter's own re-fetch (`write`, e.g. after Re-arm). Rust's
+	 * `Temple: read timings — … read at <stamp>` line carries the same stamp,
+	 * so the two halves of "panel opened → verdict on screen" line up in one log.
+	 *
+	 * The guard keys on the DELIVERY, not on this effect's first run. The
+	 * store's `initial` fetch awaits IPC, so the effect's first flush lands
+	 * BEFORE it and sees nothing — and a window created after a board was
+	 * already read this app-run (the module toggled off and on, a monitor
+	 * change) would then log that minutes-old stamp as a delivery latency.
+	 * `initial` therefore only records what the rune already held, and every
+	 * delivery after it is a real one and is logged.
+	 */
+	let seenReadAt: number | null = null;
+	$effect(() => {
+		const at = temple.lastReadAt;
+		const via = lastSsotDelivery();
+		if (via === 'initial') {
+			seenReadAt = at;
+			return;
+		}
+		if (at === null || at === seenReadAt) return;
+		seenReadAt = at;
+		const shownAfter = Date.now() - at;
+		invoke('app_log_from_frontend', {
+			msg: `[temple-overlay] board read at ${at} on screen +${shownAfter} ms (via ${via})`
+		}).catch((e) => console.warn('[temple-overlay] app_log failed:', e));
+	});
 	/** The offer boxes' gate: there is a panel on screen. Whether there is
 	 *  anything to SAY about it is `offerBoxes`, which is empty without advice —
 	 *  so the leave-the-map banner inside this same snippet survives a read that
