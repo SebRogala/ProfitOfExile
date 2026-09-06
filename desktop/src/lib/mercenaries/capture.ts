@@ -172,6 +172,13 @@ export interface MercTradeState {
 	queryHash: string | null;
 	/** The trade-site link for that query, or null until the league resolves. */
 	url: string | null;
+	/**
+	 * The same search in the anchor-rows shape: only the linked combat rows,
+	 * utility and unlinked rows left out. Published beside `url` while that
+	 * shape is on trial (2026-09-06) so the page can offer both; `null`
+	 * whenever `url` is.
+	 */
+	urlAnchors: string | null;
 	result: MercTradeResult | null;
 	/** Why the last lookup failed. Set only alongside `status: 'error'`. */
 	error: string | null;
@@ -282,6 +289,7 @@ export function mercenarySliceDefault(): MercenarySlice {
 			status: 'off',
 			queryHash: null,
 			url: null,
+			urlAnchors: null,
 			result: null,
 			error: null,
 			searchesUsed: 0

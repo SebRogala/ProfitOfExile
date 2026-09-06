@@ -190,6 +190,10 @@ pub struct MercTradeState {
     /// The trade-site link for that query. `None` until the league resolves —
     /// a URL cannot name a search without one.
     pub url: Option<String>,
+    /// The same link in the anchor-rows shape (`search::LinkShape::Anchors`):
+    /// only the linked combat rows. Published beside [`Self::url`] while that
+    /// shape is on trial (2026-09-06), so the page can offer both.
+    pub url_anchors: Option<String>,
     pub result: Option<crate::trade::MercTradeResult>,
     /// Why the last lookup failed. Set only alongside
     /// [`MercTradeStatus::Error`].

@@ -593,6 +593,7 @@ describe('mercenary slice', () => {
 				status: 'idle',
 				queryHash: null,
 				url: null,
+				urlAnchors: null,
 				result: null,
 				error: null,
 				searchesUsed: 0,
@@ -667,6 +668,7 @@ describe('mercenary slice', () => {
 					status: 'idle',
 					queryHash: null,
 					url: null,
+					urlAnchors: null,
 					result: null,
 					error: null,
 					searchesUsed: 0,
@@ -757,6 +759,7 @@ describe('mercenary slice', () => {
 				status: 'done',
 				queryHash: 'a1b2c3',
 				url: 'https://www.pathofexile.com/trade/search/Mirage/abc',
+				urlAnchors: 'https://www.pathofexile.com/trade/search/Mirage/abc-anchors',
 				result: {
 					queryHash: 'a1b2c3',
 					league: 'Mirage',

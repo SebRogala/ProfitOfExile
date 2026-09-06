@@ -199,41 +199,81 @@ pub struct CaptureQuery {
     /// never goes through the anonymous budget (head doc, "The browser link"),
     /// so it is built from the rows before any degradation and never hashed.
     pub link: Value,
+    /// The anchor-rows shape of the same link ([`LinkShape::Anchors`]): only
+    /// the linked combat rows, utility and unlinked rows left out. Equal to
+    /// [`Self::link`] when nothing anchors.
+    pub link_anchors: Value,
 }
 
-/// The two skills every mercenary of a class carries, by the class name GGG
-/// prints in the recruit window's header.
+/// The mercenary classes, each with the skills it always carries and the two
+/// pools it rolls from — compiled in from `class-pools.json`, which joins the
+/// wiki's class table to GGG's stat vocabulary by display text (researched
+/// 2026-09-06; `docs/GAME-FACTS.md`, "Mercenaries"). Every id in it is a
+/// skill the compiled vocabulary knows, pinned by
+/// `class_pools_name_the_skills_the_vocabulary_knows`.
 ///
-/// A fixed skill says nothing about the mercenary — every listing of the class
-/// has it — so the link leaves it out of the `and` group. Each row is a
-/// `docs/GAME-FACTS.md` entry ("Mercenary class primaries", wiki-sourced
-/// 2026-09-06); the ids are pinned against the compiled vocabulary by
-/// `class_primaries_name_the_skills_the_vocabulary_knows`.
-///
-/// The class is inferred rather than trusted: the header's class read is
-/// best-effort and often `None`, so a class also counts as recognised when
-/// BOTH of its primaries are among the capture's skill reads. A mercenary
-/// carrying one primary and a class read that says otherwise is left alone.
-///
-/// The header prints a rank word before the class — `Infamous Manyshot` in
-/// the 2026-09-06 app log — so a class read is matched on its LAST word(s),
-/// not on the whole line.
-const CLASS_PRIMARIES: &[(&str, [&str; 2])] = &[
-    // Ice Shot, Vaal Grace
-    ("Manyshot", ["mercenary.skill_11495", "mercenary.skill_58425"]),
-    // Elemental Weakness, Flame Wall
-    ("Kinetist", ["mercenary.skill_5689", "mercenary.skill_57450"]),
-    // Inspiring Cry, Herald of Ice
-    ("Combatant", ["mercenary.skill_65473", "mercenary.skill_32807"]),
-    // Blade Trap, Trarthan Agility
-    ("Blade Ambusher", ["mercenary.skill_11054", "mercenary.skill_38072"]),
-    // Ensnaring Arrow, Poacher's Mark
-    ("Sniper", ["mercenary.skill_12667", "mercenary.skill_27805"]),
-    // Despair, Void Sphere
-    ("Cruel Mistress", ["mercenary.skill_56742", "mercenary.skill_52783"]),
-    // Conductivity, Sigil of Power
-    ("Stormhand", ["mercenary.skill_41484", "mercenary.skill_33661"]),
-];
+/// Why a table and not a rule: a class has two OR THREE fixed primaries
+/// (Bloodletter: Bloodthirst, Blood Mortar, Lacerate), rolls one or two
+/// secondaries and one or two utilities, and the same skill is a primary in
+/// one class and a utility in another (Leap Slam). Nothing about a row says
+/// which it is; the class does.
+const RAW_CLASS_POOLS: &str = include_str!("class-pools.json");
+
+/// One class's skills, by role — see [`RAW_CLASS_POOLS`].
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ClassPool {
+    pub class: String,
+    pub primaries: Vec<String>,
+    pub secondary_pool: Vec<String>,
+    pub utility_pool: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ClassPools {
+    /// The rank words the recruit window prints BEFORE the class
+    /// (`Infamous Manyshot`); stripped before the class name is matched.
+    prefixes: Vec<String>,
+    classes: Vec<ClassPool>,
+}
+
+fn class_pools() -> &'static ClassPools {
+    static POOLS: std::sync::OnceLock<ClassPools> = std::sync::OnceLock::new();
+    POOLS.get_or_init(|| {
+        serde_json::from_str(RAW_CLASS_POOLS).expect("class-pools.json is the compiled-in table")
+    })
+}
+
+/// What a captured row's skill is to the class the capture was recognised as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowRole {
+    /// Every mercenary of the class carries it; the bare skill says nothing.
+    Primary,
+    /// Rolled from the class's secondary pool — the combat skill buyers pick
+    /// a mercenary FOR (Vaal Ice Shot against Icicle Rain decides a
+    /// Manyshot's price), so it is never interchangeable.
+    Secondary,
+    /// Rolled from the utility pool: movement, auras, curses. Priced only by
+    /// support-mercenary buyers, and left out of the comp by default.
+    Utility,
+    /// In no pool of the recognised class, or no class recognised. Treated
+    /// as a combat skill: the honest default when the table cannot say.
+    Unknown,
+}
+
+impl ClassPool {
+    fn role_of(&self, skill_ids: &[String]) -> RowRole {
+        let carries = |pool: &[String]| skill_ids.iter().any(|id| pool.contains(id));
+        if carries(&self.primaries) {
+            RowRole::Primary
+        } else if carries(&self.secondary_pool) {
+            RowRole::Secondary
+        } else if carries(&self.utility_pool) {
+            RowRole::Utility
+        } else {
+            RowRole::Unknown
+        }
+    }
+}
 
 /// How many of a linked row's support cells the link lets a listing lack.
 ///
@@ -244,64 +284,106 @@ const CLASS_PRIMARIES: &[(&str, [&str; 2])] = &[
 /// comp is "mercenaries like this one", and a listing one link short is one.
 const LINK_TOLERANCE: usize = 1;
 
-/// The ids the link treats as fixed for this capture: the primaries of every
-/// class the capture is recognised as (see [`CLASS_PRIMARIES`]). Empty when no
-/// class is recognised, and then the link asks for every skill.
-fn fixed_skill_ids(capture: &MercCapture, rows: &[RowPlan]) -> Vec<String> {
+/// The class this capture is recognised as, if any.
+///
+/// Inferred rather than trusted: the header's class read is best-effort and
+/// often `None`, so a class also counts as recognised when EVERY one of its
+/// primaries is among the capture's skill reads. A header read is matched on
+/// its tail after the rank prefixes — `Infamous Manyshot` names Manyshot,
+/// `Notmanyshot` names nothing — and wins over the primaries when both apply.
+fn recognise_class(capture: &MercCapture, rows: &[RowPlan]) -> Option<&'static ClassPool> {
+    let pools = class_pools();
     let carried = |id: &str| rows.iter().any(|row| row.skill_ids.iter().any(|s| s == id));
-    let class_read = capture
-        .header
-        .class
-        .as_deref()
-        .map(|c| c.trim().to_lowercase());
-    // "manyshot" and "infamous manyshot" both name Manyshot; "notmanyshot"
-    // would not, hence the word boundary.
-    let class_named = |class: &str| {
-        let class = class.to_lowercase();
-        class_read
-            .as_deref()
-            .is_some_and(|read| read == class || read.ends_with(&format!(" {class}")))
-    };
-    CLASS_PRIMARIES
-        .iter()
-        .filter(|(class, primaries)| class_named(class) || primaries.iter().all(|id| carried(id)))
-        .flat_map(|(_, primaries)| primaries.iter().map(|id| id.to_string()))
-        .collect()
+    let class_read = capture.header.class.as_deref().map(|read| {
+        let mut read = read.trim().to_lowercase();
+        for prefix in &pools.prefixes {
+            let prefix = format!("{} ", prefix.to_lowercase());
+            if let Some(rest) = read.strip_prefix(&prefix) {
+                read = rest.trim().to_string();
+            }
+        }
+        read
+    });
+    let by_header = class_read.as_deref().and_then(|read| {
+        pools.classes.iter().find(|pool| {
+            let class = pool.class.to_lowercase();
+            read == class || read.ends_with(&format!(" {class}"))
+        })
+    });
+    by_header.or_else(|| {
+        pools
+            .classes
+            .iter()
+            .find(|pool| pool.primaries.iter().all(|id| carried(id)))
+    })
+}
+
+/// Which of the two link shapes [`link_stats`] builds. Both are published
+/// (`MercTradeState::url`, `MercTradeState::url_anchors`) while the anchor
+/// shape is on trial (2026-09-06): the page shows one button per shape, so a
+/// shape can be judged against the other on the same capture without a
+/// rebuild.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinkShape {
+    /// Every row: an `and` of the rolled skills (primaries left out), one
+    /// `mercenary` group per linked row.
+    EveryRow,
+    /// Only the anchors — linked rows whose skill is a combat skill (primary,
+    /// secondary or unknown; never utility): an `and` of the anchor skills,
+    /// one `mercenary` group per anchor. Unlinked rows and utility rows are
+    /// left out. Empty when nothing anchors, and then [`EveryRow`] stands in.
+    Anchors,
 }
 
 /// The link's stat groups — the guides' shape, applied to the rows as read.
 ///
-/// - one `and` group of every single-id skill that is not fixed, in row order;
+/// - one `and` group of the skills the shape asks for by name: every rolled
+///   single-id skill under [`LinkShape::EveryRow`] (a recognised class's
+///   primaries left out, since every listing of the class has them), the
+///   anchor skills under [`LinkShape::Anchors`];
 /// - one `count min 1` group per unlinked row whose skill read is still a set
-///   (the icon read could not narrow it) — a linked row's alternatives ride in
-///   its `mercenary` group instead;
-/// - one `mercenary` group per row with at least one support cell: the skill's
-///   ids, then every cell's ids, `min` = 1 + the number of cells, LESS ONE on a
-///   row with two or more cells ([`LINK_TOLERANCE`]). Under the measured union
-///   semantics a row can match at most one id per family, so that `min` reads
-///   "this skill, with all but one of these links, at any tier the floor
-///   admits" — Path of Evening's shape (`8r8JqonVIV`) with the slack the
-///   2026-09-06 Bloodletter capture showed the market needs: every link on
-///   every row found nothing, one link short per row found listings.
+///   (the icon read could not narrow it) — `EveryRow` only; a linked row's
+///   alternatives ride in its `mercenary` group instead;
+/// - one `mercenary` group per row the shape searches that has at least one
+///   support cell: the skill's ids, then every cell's ids, `min` = 1 + the
+///   number of cells, LESS ONE on a row with two or more cells
+///   ([`LINK_TOLERANCE`]). Under the measured union semantics a row can match
+///   at most one id per family, so that `min` reads "this skill, with all but
+///   one of these links, at any tier the floor admits" — Path of Evening's
+///   shape (`8r8JqonVIV`) with the slack the 2026-09-06 Bloodletter capture
+///   showed the market needs: every link on every row found nothing, one link
+///   short per row found listings.
 ///
-/// A fixed skill stays as a `mercenary` anchor when its row has links: what the
-/// row carries still prices it, only the bare skill does not. When leaving the
-/// fixed skills out would leave NOTHING to ask for — a mercenary of two bare
-/// primaries — they are kept, because a filter-free search is the whole league.
-fn link_stats(rows: &[RowPlan], fixed: &[String]) -> Vec<Value> {
-    let build = |fixed: &[String]| -> Vec<Value> {
-        let is_fixed = |id: &str| fixed.iter().any(|f| f == id);
+/// Under `EveryRow` a fixed skill stays as a `mercenary` anchor when its row
+/// has links: what the row carries still prices it, only the bare skill does
+/// not. When leaving the fixed skills out would leave NOTHING to ask for — a
+/// mercenary of two bare primaries — they are kept, because a filter-free
+/// search is the whole league.
+fn link_stats(rows: &[RowPlan], class: Option<&ClassPool>, shape: LinkShape) -> Vec<Value> {
+    let role = |row: &RowPlan| class.map_or(RowRole::Unknown, |c| c.role_of(&row.skill_ids));
+    // The rows this shape searches, and whether their bare skills are named.
+    let searched: Vec<&RowPlan> = match shape {
+        LinkShape::EveryRow => rows.iter().collect(),
+        LinkShape::Anchors => rows
+            .iter()
+            .filter(|row| !row.supports.is_empty() && role(row) != RowRole::Utility)
+            .collect(),
+    };
+    let build = |name_primaries: bool| -> Vec<Value> {
         let mut and: Vec<String> = Vec::new();
         let mut counts: Vec<Vec<String>> = Vec::new();
         let mut mercs: Vec<Value> = Vec::new();
 
-        for row in rows {
-            let skill_fixed = row.skill_ids.iter().any(|id| is_fixed(id));
+        for row in &searched {
+            let named = match shape {
+                LinkShape::EveryRow => name_primaries || role(row) != RowRole::Primary,
+                LinkShape::Anchors => true,
+            };
             match row.skill_ids.as_slice() {
-                [id] if !skill_fixed && !and.iter().any(|seen| seen == id) => {
+                [id] if named && !and.iter().any(|seen| seen == id) => {
                     and.push(id.clone());
                 }
-                ids if ids.len() > 1 && !skill_fixed && row.supports.is_empty() => {
+                ids if ids.len() > 1 && named && row.supports.is_empty() => {
                     counts.push(ids.to_vec());
                 }
                 _ => {}
@@ -343,11 +425,27 @@ fn link_stats(rows: &[RowPlan], fixed: &[String]) -> Vec<Value> {
         stats
     };
 
-    let stats = build(fixed);
-    if stats.is_empty() && !fixed.is_empty() {
-        return build(&[]);
+    let stats = build(false);
+    if stats.is_empty() && shape == LinkShape::EveryRow && class.is_some() {
+        return build(true);
     }
     stats
+}
+
+/// The link query for one shape: the stat groups under the same status and
+/// sale-type filter the posted body carries, and no ilvl floor (head doc).
+fn link_query(stats: Vec<Value>) -> Value {
+    json!({
+        "stats": stats,
+        "status": {"option": "securable"},
+        "filters": {
+            "trade_filters": {
+                "filters": {
+                    "sale_type": {"option": "priced"},
+                },
+            },
+        },
+    })
 }
 
 /// One row's contribution to the query: the skill's ids, and one id set per
@@ -480,17 +578,14 @@ pub fn build_capture_query(
     // The browser link is built from the rows AS PLANNED, before the budget
     // walk below touches them: it runs under the user's own login, where the
     // anonymous budget does not apply (head doc, "The browser link").
-    let link = json!({
-        "stats": link_stats(&rows, &fixed_skill_ids(capture, &rows)),
-        "status": {"option": "securable"},
-        "filters": {
-            "trade_filters": {
-                "filters": {
-                    "sale_type": {"option": "priced"},
-                },
-            },
-        },
-    });
+    let class = recognise_class(capture, &rows);
+    let link = link_query(link_stats(&rows, class, LinkShape::EveryRow));
+    let anchors = link_stats(&rows, class, LinkShape::Anchors);
+    let link_anchors = if anchors.is_empty() {
+        link.clone()
+    } else {
+        link_query(anchors)
+    };
 
     let mut loosening_dropped = false;
     let mut cells_dropped = false;
@@ -589,6 +684,7 @@ pub fn build_capture_query(
         loosening_dropped,
         cells_dropped,
         link,
+        link_anchors,
     })
 }
 
@@ -612,7 +708,16 @@ pub fn build_capture_query(
 /// `league` must be resolved before this is called; there is no sensible
 /// fallback and a wrong league silently comps against another economy.
 pub fn capture_url(league: &str, query: &CaptureQuery) -> String {
-    let envelope = json!({"query": query.link});
+    link_url(league, &query.link)
+}
+
+/// The same link for the anchor-rows shape ([`CaptureQuery::link_anchors`]).
+pub fn capture_url_anchors(league: &str, query: &CaptureQuery) -> String {
+    link_url(league, &query.link_anchors)
+}
+
+fn link_url(league: &str, link: &Value) -> String {
+    let envelope = json!({"query": link});
     let encoded = serde_json::to_string(&envelope).unwrap_or_default();
     format!(
         "https://www.pathofexile.com/trade/search/{}?q={}",
@@ -1134,6 +1239,10 @@ pub fn tick(
         (Some(query), Some(league)) => Some(capture_url(league, query)),
         _ => None,
     };
+    let link_anchors = |query: Option<&CaptureQuery>| match (query, &league) {
+        (Some(query), Some(league)) => Some(capture_url_anchors(league, query)),
+        _ => None,
+    };
 
     match action {
         // Nothing moved. The slice already says what this capture is worth.
@@ -1152,6 +1261,7 @@ pub fn tick(
                 if clear {
                     slice.trade.query_hash = None;
                     slice.trade.url = None;
+                    slice.trade.url_anchors = None;
                     slice.trade.result = None;
                 }
             });
@@ -1164,6 +1274,7 @@ pub fn tick(
                 slice.trade.status = MercTradeStatus::WaitingLeague;
                 slice.trade.query_hash = hash;
                 slice.trade.url = None;
+                slice.trade.url_anchors = None;
                 slice.trade.result = None;
                 slice.trade.error = None;
                 slice.trade.searches_used = used;
@@ -1172,10 +1283,12 @@ pub fn tick(
         TriggerAction::PublishCached => {
             let hash = query.map(|q| q.hash.clone());
             let url = link(query);
+            let url_anchors = link_anchors(query);
             publish(app, |slice| {
                 slice.trade.status = MercTradeStatus::Done;
                 slice.trade.query_hash = hash;
                 slice.trade.url = url;
+                slice.trade.url_anchors = url_anchors;
                 slice.trade.result = cached;
                 slice.trade.error = None;
                 slice.trade.searches_used = used;
@@ -1190,10 +1303,12 @@ pub fn tick(
             let Some(query) = query else { return };
             let hash = query.hash.clone();
             let url = link(Some(query));
+            let url_anchors = link_anchors(Some(query));
             publish(app, |slice| {
                 slice.trade.status = MercTradeStatus::Queued;
                 slice.trade.query_hash = Some(hash);
                 slice.trade.url = url;
+                slice.trade.url_anchors = url_anchors;
                 // The hash moved, so whatever was on the slice answered a
                 // different question. Keeping it would show one mercenary's
                 // prices under another's link.
@@ -1219,6 +1334,7 @@ pub fn tick(
                 slice.trade.status = MercTradeStatus::Idle;
                 slice.trade.query_hash = hash;
                 slice.trade.url = link(query);
+                slice.trade.url_anchors = link_anchors(query);
                 slice.trade.result = None;
                 slice.trade.error = None;
                 slice.trade.searches_used = used;
@@ -2652,34 +2768,156 @@ mod tests {
         );
     }
 
-    /// Every id in [`CLASS_PRIMARIES`] is a skill the compiled vocabulary
-    /// knows by the name the table claims — the table is transcribed, and this
-    /// is what catches a transcription that drifts from GGG's stats.
+    /// Every id in the class table is a skill the compiled vocabulary knows;
+    /// the table is transcribed, and this is what catches a transcription that
+    /// drifts from GGG's stats. The seven classes the guides cover keep the
+    /// primaries the guides' searches were read against.
     #[test]
-    fn class_primaries_name_the_skills_the_vocabulary_knows() {
+    fn class_pools_name_the_skills_the_vocabulary_knows() {
         let vocab = MercVocab::load().expect("the compiled vocabulary loads");
-        let expected: [(&str, [&str; 2]); 7] = [
-            ("Manyshot", ["Ice Shot", "Vaal Grace"]),
-            ("Kinetist", ["Elemental Weakness", "Flame Wall"]),
-            ("Combatant", ["Inspiring Cry", "Herald of Ice"]),
-            ("Blade Ambusher", ["Blade Trap", "Trarthan Agility"]),
-            ("Sniper", ["Ensnaring Arrow", "Poacher's Mark"]),
-            ("Cruel Mistress", ["Despair", "Void Sphere"]),
-            ("Stormhand", ["Conductivity", "Sigil of Power"]),
-        ];
-        assert_eq!(CLASS_PRIMARIES.len(), expected.len());
-        for ((class, ids), (want_class, names)) in CLASS_PRIMARIES.iter().zip(expected.iter()) {
-            assert_eq!(class, want_class);
-            for (id, name) in ids.iter().zip(names.iter()) {
+        let pools = class_pools();
+        assert_eq!(pools.prefixes, vec!["Infamous".to_string()]);
+        assert!(pools.classes.len() >= 35, "{} classes", pools.classes.len());
+        for pool in &pools.classes {
+            assert!(!pool.primaries.is_empty(), "{}: no primaries", pool.class);
+            for id in pool
+                .primaries
+                .iter()
+                .chain(&pool.secondary_pool)
+                .chain(&pool.utility_pool)
+            {
                 let stat = vocab
                     .stats()
                     .iter()
                     .find(|stat| stat.id == *id)
-                    .unwrap_or_else(|| panic!("{class}: {id} is not in the vocabulary"));
-                assert_eq!(stat.name, *name, "{class}: {id}");
-                assert_eq!(stat.role, MercRole::Skill, "{class}: {id} is not a skill");
+                    .unwrap_or_else(|| panic!("{}: {id} is not in the vocabulary", pool.class));
+                assert_eq!(stat.role, MercRole::Skill, "{}: {id} is not a skill", pool.class);
             }
         }
+        let primaries_of = |class: &str| -> Vec<String> {
+            let pool = pools
+                .classes
+                .iter()
+                .find(|pool| pool.class == class)
+                .unwrap_or_else(|| panic!("{class} is not in the table"));
+            pool.primaries
+                .iter()
+                .map(|id| vocab.stats().iter().find(|s| s.id == *id).unwrap().name.clone())
+                .collect()
+        };
+        assert_eq!(primaries_of("Manyshot"), strs(&["Ice Shot", "Vaal Grace"]));
+        assert_eq!(primaries_of("Kineticist"), strs(&["Elemental Weakness", "Flame Wall"]));
+        assert_eq!(primaries_of("Combatant"), strs(&["Inspiring Cry", "Herald of Ice"]));
+        assert_eq!(primaries_of("Cruel Mistress"), strs(&["Despair", "Void Sphere"]));
+        assert_eq!(
+            primaries_of("Bloodletter"),
+            strs(&["Bloodthirst", "Blood Mortar", "Lacerate"]),
+            "a class can carry three fixed skills",
+        );
+    }
+
+    /// The anchor-rows shape on the 2026-09-06 Bloodletter capture: the three
+    /// linked combat rows anchor, the bare primary and both utility rows —
+    /// Leap Slam with its two links included — are left out.
+    fn bloodletter() -> MercCapture {
+        let links = |n: usize| -> Vec<MercSupportRead> {
+            (0..n)
+                .map(|i| support(&[&format!("sup_{i}")], None, None, ReadState::Matched))
+                .collect()
+        };
+        capture(vec![
+            row(0, "mercenary.skill_60880", vec![]), // Bloodthirst, primary
+            row(1, "mercenary.skill_26931", links(3)), // Blood Mortar, primary
+            row(2, "mercenary.skill_8136", links(4)),  // Lacerate, primary
+            row(3, "mercenary.skill_12357", links(5)), // Bladestorm, secondary
+            row(4, "mercenary.skill_60723", vec![]),   // Dash, utility
+            row(5, "mercenary.skill_2135", links(2)),  // Leap Slam, utility
+        ])
+    }
+
+    fn anchor_groups(query: &CaptureQuery) -> Vec<Value> {
+        query.link_anchors["stats"]
+            .as_array()
+            .expect("the anchors link carries a stats array")
+            .clone()
+    }
+
+    #[test]
+    fn the_anchor_shape_searches_the_linked_combat_rows_and_nothing_else() {
+        let query = build_capture_query(&bloodletter(), &no_vocab(), 3).expect("builds");
+
+        let groups = anchor_groups(&query);
+        assert_eq!(groups[0]["type"], "and");
+        assert_eq!(
+            group_ids(&groups[0]),
+            strs(&["mercenary.skill_26931", "mercenary.skill_8136", "mercenary.skill_12357"]),
+            "the anchor skills, primaries included, and no utility",
+        );
+        let mercs: Vec<(u64, usize, String)> = groups[1..]
+            .iter()
+            .map(|g| {
+                assert_eq!(g["type"], "mercenary");
+                (g["value"]["min"].as_u64().unwrap(), group_ids(g).len(), group_ids(g)[0].clone())
+            })
+            .collect();
+        assert_eq!(
+            mercs,
+            vec![
+                (3, 4, "mercenary.skill_26931".to_string()),
+                (4, 5, "mercenary.skill_8136".to_string()),
+                (5, 6, "mercenary.skill_12357".to_string()),
+            ],
+            "skill plus all but one link per anchor; Leap Slam's two links are not searched",
+        );
+    }
+
+    /// The every-row shape on the same capture still names the rolled skills
+    /// and searches every linked row — with all three Bloodletter primaries
+    /// out of its `and` group now that the table knows them.
+    #[test]
+    fn the_every_row_shape_leaves_all_three_bloodletter_primaries_out_of_and() {
+        let query = build_capture_query(&bloodletter(), &no_vocab(), 3).expect("builds");
+
+        assert_eq!(
+            link_and_ids(&query),
+            strs(&["mercenary.skill_12357", "mercenary.skill_60723", "mercenary.skill_2135"])
+        );
+        assert_eq!(merc_groups(&query).len(), 4, "every linked row, Leap Slam included");
+    }
+
+    /// No class recognised: nothing is utility, so every linked row anchors.
+    #[test]
+    fn without_a_class_every_linked_row_anchors() {
+        let capture = capture(vec![
+            row(0, "skill_a", vec![support(&["sup_a"], None, None, ReadState::Matched)]),
+            row(1, "skill_b", vec![]),
+        ]);
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("builds");
+
+        let groups = anchor_groups(&query);
+        assert_eq!(group_ids(&groups[0]), strs(&["skill_a"]));
+        assert_eq!(groups.len(), 2);
+    }
+
+    /// Nothing linked, nothing to anchor: the anchors link is the every-row
+    /// link rather than a filter-free search.
+    #[test]
+    fn with_nothing_to_anchor_the_anchors_link_is_the_every_row_link() {
+        let capture = capture(vec![row(0, "skill_a", vec![]), row(1, "skill_b", vec![])]);
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("builds");
+
+        assert_eq!(query.link_anchors, query.link);
+    }
+
+    /// The header's rank prefix is stripped before the class is matched, and a
+    /// class read wins over the primaries rule.
+    #[test]
+    fn the_class_is_read_from_the_header_tail_after_the_rank_prefix() {
+        let mut capture = bloodletter();
+        capture.header.class = Some("Infamous Bloodletter".to_string());
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("builds");
+
+        assert_eq!(anchor_groups(&query).len(), 4);
     }
 
     // -----------------------------------------------------------------------
@@ -2694,6 +2932,7 @@ mod tests {
             loosening_dropped: false,
             cells_dropped: false,
             link: json!({"stats": [tag]}),
+            link_anchors: json!({"stats": [tag]}),
         }
     }
 

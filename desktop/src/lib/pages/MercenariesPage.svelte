@@ -94,6 +94,11 @@
 
 	const SOURCE_OPTIONS = MERC_SOURCES.map((s) => ({ value: s.id, label: s.label }));
 
+	/** A third party's warrant price check: paste the warrant, see what the
+	 *  mercenaries most like it are asking. Takes no parameters, so it is one
+	 *  constant rather than anything built from the capture. */
+	const WARRANT_PRICE_CHECK_URL = 'https://xddbsns.com/mercenary-price-check.html';
+
 	let selectedSource = $state<MercSourceId>(MERC_SOURCES[0].id);
 
 	const source = $derived(MERC_SOURCES.find((s) => s.id === selectedSource) ?? MERC_SOURCES[0]);
@@ -352,21 +357,44 @@
 	}
 </script>
 
-<!-- ONE link, rendered twice (Last capture, Trade). The URL is Rust's
-     `trade.url` on the SSOT slice and nothing here derives or reshapes it; the
-     snippet is what keeps the two cards showing one button, one wording and one
-     target when the query behind it changes. -->
-{#snippet tradeSiteLink()}
+<!-- ONE set of links, rendered twice (Last capture, Trade). The URLs are
+     Rust's `trade.url` and `trade.urlAnchors` on the SSOT slice and nothing here
+     derives or reshapes them; the snippet is what keeps the two cards showing
+     the same buttons, wording and targets when the queries behind them change.
+     Two shapes while the anchor-rows one is on trial (2026-09-06): "every row"
+     is the search as first shipped, "anchor rows" only the linked combat rows.
+     The price check is a third party's page that takes a PASTED warrant, so it
+     carries nothing of this capture — it is the natural next step once the
+     warrant is in hand. -->
+{#snippet tradeSiteLinks()}
 	{#if trade.url}
 		<a
 			class="trade-button"
 			href={trade.url}
 			target="_blank"
-			title="Open this mercenary's search on the trade site — under your own login, so it can ask the grouped question the app cannot."
+			title="Open this mercenary's search on the trade site — every row, under your own login, so it can ask the grouped question the app cannot."
 		>
-			open on trade site ↗
+			trade: every row ↗
 		</a>
 	{/if}
+	{#if trade.urlAnchors}
+		<a
+			class="trade-button"
+			href={trade.urlAnchors}
+			target="_blank"
+			title="The same search on the linked combat rows only — utility rows such as movement and auras, and rows without links, are left out."
+		>
+			trade: anchor rows ↗
+		</a>
+	{/if}
+	<a
+		class="trade-button price-check"
+		href={WARRANT_PRICE_CHECK_URL}
+		target="_blank"
+		title="Warrant Price Check (xddbsns.com): once you hold the warrant, copy it in game (Ctrl+C) and paste it there to see what the mercenaries most like it are asking."
+	>
+		warrant price check ↗
+	</a>
 {/snippet}
 
 <div class="merc-page">
@@ -515,7 +543,7 @@
 			<h2 class="card-title">Last capture</h2>
 			<!-- The same link the Trade card carries, next to the capture it
 			     searches for: the capture is what the player reads first. -->
-			{@render tradeSiteLink()}
+			{@render tradeSiteLinks()}
 			<!-- The capture glyphs are about CONFIDENCE, not about rules: without
 			     this line the ✕ reads as the rulesets' "denied". -->
 			<span class="legend read-legend">
@@ -672,7 +700,7 @@
 			<!-- Beside the status, as a button: the far-right text link was the
 			     one thing on this card a player is meant to click and the one
 			     thing they missed (2026-09-06). -->
-			{@render tradeSiteLink()}
+			{@render tradeSiteLinks()}
 		</div>
 
 		<!-- No capture, nothing to say. Safe as an `else` over the whole answer
@@ -1102,6 +1130,11 @@
 	.trade-button:hover {
 		background: color-mix(in srgb, var(--color-lab-blue) 12%, transparent);
 		color: var(--color-lab-text);
+	}
+
+	.trade-button.price-check {
+		border-color: var(--color-lab-border);
+		color: var(--color-lab-text-muted);
 	}
 
 	.trade-headline {
