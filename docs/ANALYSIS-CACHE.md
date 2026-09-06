@@ -140,6 +140,32 @@ before adding or reading a cache field; this document deliberately does not
 restate it, because two normative homes is how the rule drifted in the first
 place (POE-158).
 
+## Other caches on the same contract
+
+`lab.Cache` is not the only in-memory cache the server serves from, and the
+contracts above are written once for all of them. Two others follow them with
+their own type, because each is filled by a different event and a single type
+would tie three unrelated tick chains together:
+
+- **`exchange.Cache`** (`internal/exchange/service.go`) — the currency-exchange
+  ranking, refreshed by `exchange.Service` on a stored feed hour.
+- **`temple.Cache`** (`internal/temple/service.go`) — the aggregated temple
+  market (POE-255), refreshed by `temple.Service` on any of the seven
+  `poe/collector/items/*` ticks and once at boot from the warm-up goroutine.
+  `temple.Service.Trigger` coalesces the burst those seven produce into one
+  rerun. The handler has **no** database fallback and that is deliberate: this
+  package's read side of `item_snapshots` IS the recompute, so a request-path
+  query would repeat it rather than answer anything the cache could not. A COLD
+  read is served as `temple.EmptyMarket` — 200 with the static recipe table and
+  `asOf: null` — matching `MarketOverview`'s cold behaviour.
+
+Both report warmth explicitly (`Snapshot() (value, warm bool)`), store an empty
+answer rather than skipping it, and build their replacement value outside the
+lock. Tenancy is where they differ: `temple.Cache` asserts it the way `Cache.For`
+does, while `exchange.Cache` exposes only `Set` and `Snapshot` — it is keyed by
+horizon rather than by league, and the process-scoped `exchange.Service` is its
+only writer.
+
 ## The sparkline cache
 
 Files: `internal/lab/sparkline_cache.go` (merge and population),
