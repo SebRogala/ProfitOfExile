@@ -21,6 +21,7 @@ import (
 	"profitofexile/internal/mercure"
 	"profitofexile/internal/server/handlers"
 	devmw "profitofexile/internal/server/middleware"
+	"profitofexile/internal/temple"
 	"profitofexile/internal/trade"
 )
 
@@ -117,6 +118,11 @@ type RouterConfig struct {
 	// registered, which the desktop's pull already treats as "keep the local
 	// store" rather than as an error.
 	MercTemplateRepo *mercenary.Repository
+	// TempleCache holds the newest computed temple market, refreshed by
+	// temple.Service in cmd/server on each of the seven poe.ninja item ticks.
+	// May be nil — the handler then reads as COLD and answers 200 with the
+	// static recipe table and no observations, rather than failing.
+	TempleCache *temple.Cache
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -219,6 +225,13 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/analysis/history", handlers.SignalHistory(cfg.LabRepo, cfg.LabCache, cfg.League))
 
 		r.Get("/api/analysis/market-overview", handlers.MarketOverview(cfg.LabCache, cfg.Pool, cfg.League))
+		// Sibling of market-overview, not a section of it: one aggregated,
+		// league-keyed, cache-backed object per consumer, so the temple module's
+		// poll cannot be widened by a change made for the gem dashboard. It reads
+		// neither the lab repository nor the lab cache — its own cache is filled
+		// by the item ticks — and is registered here only to sit beside the
+		// endpoint it is modelled on.
+		r.Get("/api/analysis/temple-market", handlers.TempleMarket(cfg.TempleCache, cfg.League))
 
 		// V2 pre-computed analysis endpoints
 		r.Get("/api/analysis/market-context", handlers.MarketContextAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
