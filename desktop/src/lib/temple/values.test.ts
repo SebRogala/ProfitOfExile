@@ -19,7 +19,18 @@ import {
 	valueTableKey,
 	withCell,
 	withoutOverrides,
-	type ValueMark
+	DEFAULT_TIERS_MODE,
+	DEFAULT_VALUE_SORT,
+	gradeRank,
+	hiddenOverrideTitle,
+	nextValueSort,
+	orderRows,
+	parseTiersMode,
+	parseValueSort,
+	serializeValueSort,
+	sortValueRows,
+	type ValueMark,
+	type ValueRow
 } from './values';
 import type { MarketView, RoomValueView, TempleCustom, TempleValueRow } from './slice';
 
@@ -650,5 +661,308 @@ describe('KNOBS', () => {
 
 	it('gives every rate a unit hint, because none of them is self-evident', () => {
 		for (const knob of KNOBS) expect(knob.hint.length).toBeGreaterThan(0);
+	});
+});
+
+/** A `ValueRow` as the table holds one (POE-263). Tiers 1 and 2 sit at the
+ *  shipped 0.8 of tier 3, which is what the sort must ignore: only the tier-3
+ *  column is a sort key. */
+function vrow(
+	name: string,
+	grade: string,
+	tier3: number,
+	overrides: (number | null)[] = [null, null, null]
+): ValueRow {
+	return {
+		key: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+		name,
+		grade,
+		cells: TIERS.map((tier) => ({
+			tier,
+			total: tier === 3 ? tier3 : tier3 * 0.8,
+			mark: 'M' as ValueMark,
+			title: '',
+			override: overrides[tier - 1]
+		}))
+	};
+}
+
+describe('GRADES', () => {
+	it('carries every letter Rust prints, in the wire form it prints it', () => {
+		// `rooms::Grade::as_str` writes an ASCII hyphen. A typographic minus
+		// here would put every B- and C- room off the ladder at rank -1, below
+		// D, and the grade column would be quietly wrong for six of the 25
+		// lines rather than visibly broken.
+		for (const grade of ['D', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A', 'A+', 'A++']) {
+			expect(gradeRank(grade)).toBeGreaterThanOrEqual(0);
+		}
+	});
+
+	it('ranks a letter it does not know below every letter it does', () => {
+		expect(gradeRank('S')).toBeLessThan(gradeRank('D'));
+	});
+});
+
+describe('sortValueRows', () => {
+	it('puts the most valuable tier-3 room first in desc', () => {
+		const sorted = sortValueRows(
+			[vrow('Chamber of Iron', 'C', 1.86), vrow('Locus of Corruption', 'A++', 856)],
+			'tier3',
+			'desc'
+		);
+
+		expect(sorted.map((r) => r.name)).toEqual(['Locus of Corruption', 'Chamber of Iron']);
+	});
+
+	it('puts the cheapest tier-3 room first in asc', () => {
+		const sorted = sortValueRows(
+			[vrow('Locus of Corruption', 'A++', 856), vrow('Chamber of Iron', 'C', 1.86)],
+			'tier3',
+			'asc'
+		);
+
+		expect(sorted.map((r) => r.name)).toEqual(['Chamber of Iron', 'Locus of Corruption']);
+	});
+
+	it('reads the tier-3 cell and not a tier the fraction produced', () => {
+		// A comparator on `cells[0]` would order these two the same way, so the
+		// cheaper room carries a HAND-PRICED tier 1 that outvalues the other's
+		// tier 3. Only reading tier 3 keeps Locus on top.
+		const cheap = vrow('Sadist’s Den', 'C', 10);
+		cheap.cells[0].total = 5000;
+		const sorted = sortValueRows([cheap, vrow('Locus of Corruption', 'A++', 856)], 'tier3', 'desc');
+
+		expect(sorted.map((r) => r.name)).toEqual(['Locus of Corruption', 'Sadist’s Den']);
+	});
+
+	it('reads the room column A to Z in asc', () => {
+		const sorted = sortValueRows(
+			[vrow('Toxic Grove', 'C', 2.65), vrow('Apex of Ascension', 'B-', 0.07)],
+			'room',
+			'asc'
+		);
+
+		expect(sorted.map((r) => r.name)).toEqual(['Apex of Ascension', 'Toxic Grove']);
+	});
+
+	it('reads the room column Z to A in desc', () => {
+		const sorted = sortValueRows(
+			[vrow('Apex of Ascension', 'B-', 0.07), vrow('Toxic Grove', 'C', 2.65)],
+			'room',
+			'desc'
+		);
+
+		expect(sorted.map((r) => r.name)).toEqual(['Toxic Grove', 'Apex of Ascension']);
+	});
+
+	it('ranks grades on the ladder rather than on their letters in desc', () => {
+		// The letters do not collate: sorted as strings, descending, these four
+		// come out B-, B, A++, A+. The ladder is the whole reason `GRADES`
+		// exists.
+		const sorted = sortValueRows(
+			[
+				vrow('Bath', 'B', 1),
+				vrow('Apex', 'B-', 1),
+				vrow('Doryani', 'A+', 1),
+				vrow('Locus', 'A++', 1)
+			],
+			'grade',
+			'desc'
+		);
+
+		expect(sorted.map((r) => r.grade)).toEqual(['A++', 'A+', 'B', 'B-']);
+	});
+
+	it('ranks grades worst first in asc', () => {
+		const sorted = sortValueRows(
+			[vrow('Locus', 'A++', 1), vrow('Apex', 'B-', 1), vrow('Bath', 'B', 1)],
+			'grade',
+			'asc'
+		);
+
+		expect(sorted.map((r) => r.grade)).toEqual(['B-', 'B', 'A++']);
+	});
+
+	it('breaks a tie on the room name ascending, even under desc', () => {
+		// The tie-break is there to make the order the same on every re-sort,
+		// not to be part of what the header asked for. Flipping it with the
+		// direction would move two equal rows past each other for no stated
+		// reason.
+		const sorted = sortValueRows(
+			[vrow('Chamber', 'C', 100), vrow('Apex', 'C', 100), vrow('Bath', 'C', 100)],
+			'tier3',
+			'desc'
+		);
+
+		expect(sorted.map((r) => r.name)).toEqual(['Apex', 'Bath', 'Chamber']);
+	});
+
+	it('leaves the array it was handed in the order it arrived', () => {
+		// The caller holds the SSOT's own rows. Sorting in place would reorder
+		// the snapshot every other reader of it is looking at.
+		const rows = [vrow('Chamber of Iron', 'C', 1.86), vrow('Locus of Corruption', 'A++', 856)];
+
+		sortValueRows(rows, 'tier3', 'desc');
+
+		expect(rows.map((r) => r.name)).toEqual(['Chamber of Iron', 'Locus of Corruption']);
+	});
+});
+
+describe('DEFAULT_VALUE_SORT', () => {
+	it('opens the table on tier 3 with the board’s two priced rooms on top', () => {
+		// The committed capture's own numbers: Locus of Corruption at 856 c and
+		// Doryani's Institute at 400 c are the only two rooms above the 10 c
+		// floor (ADR-022 §3), so an opening order that does not lead with them
+		// is one the player has to fix by hand every launch.
+		const sorted = sortValueRows(
+			[
+				vrow('Chamber of Iron', 'C', 1.86),
+				vrow('Doryani’s Institute', 'A+', 400),
+				vrow('Locus of Corruption', 'A++', 856)
+			],
+			DEFAULT_VALUE_SORT.key,
+			DEFAULT_VALUE_SORT.direction
+		);
+
+		expect(sorted.map((r) => r.name)).toEqual([
+			'Locus of Corruption',
+			'Doryani’s Institute',
+			'Chamber of Iron'
+		]);
+	});
+});
+
+describe('nextValueSort', () => {
+	it('flips the direction when the sorted column is clicked again', () => {
+		expect(nextValueSort({ key: 'tier3', direction: 'desc' }, 'tier3')).toEqual({
+			key: 'tier3',
+			direction: 'asc'
+		});
+	});
+
+	it('opens the room column ascending rather than inheriting the old direction', () => {
+		expect(nextValueSort({ key: 'tier3', direction: 'desc' }, 'room')).toEqual({
+			key: 'room',
+			direction: 'asc'
+		});
+	});
+
+	it('opens the grade column at the best grade', () => {
+		expect(nextValueSort({ key: 'room', direction: 'asc' }, 'grade')).toEqual({
+			key: 'grade',
+			direction: 'desc'
+		});
+	});
+
+	it('opens the tier-3 column at the most valuable room', () => {
+		expect(nextValueSort({ key: 'room', direction: 'asc' }, 'tier3')).toEqual({
+			key: 'tier3',
+			direction: 'desc'
+		});
+	});
+});
+
+describe('parseValueSort', () => {
+	it('writes and reads the exact wire form stored in settings.json', () => {
+		// The round-trip test below would still pass if serialize and parse
+		// agreed on a DIFFERENT separator — it only checks the two against each
+		// other. Pinning the literal is what catches a change to the wire form
+		// itself: swap the `:` for a `|` and a profile upgraded from a build
+		// that wrote `"tier3:desc"` reads a string neither parser recognises,
+		// so ADR-013 quietly resets everyone's sort on upgrade.
+		expect(serializeValueSort({ key: 'tier3', direction: 'desc' })).toBe('tier3:desc');
+		expect(parseValueSort('tier3:desc')).toEqual({ key: 'tier3', direction: 'desc' });
+	});
+
+	it('reads back every sort it writes', () => {
+		// The pair is what survives a restart (ADR-013). A serialize the parser
+		// does not accept is a table that silently reopens on the default.
+		for (const key of ['room', 'grade', 'tier3'] as const) {
+			for (const direction of ['asc', 'desc'] as const) {
+				const sort = { key, direction };
+				expect(parseValueSort(serializeValueSort(sort))).toEqual(sort);
+			}
+		}
+	});
+
+	it('falls back to the default on a column this build does not have', () => {
+		expect(parseValueSort('tier1:desc')).toEqual(DEFAULT_VALUE_SORT);
+	});
+
+	it('falls back to the default on a direction this build does not have', () => {
+		expect(parseValueSort('tier3:sideways')).toEqual(DEFAULT_VALUE_SORT);
+	});
+
+	it('falls back to the default on a value that is not a pair at all', () => {
+		expect(parseValueSort('')).toEqual(DEFAULT_VALUE_SORT);
+	});
+});
+
+describe('parseTiersMode', () => {
+	it('reads a stored “all” as both hidden tiers shown', () => {
+		expect(parseTiersMode('all')).toBe('all');
+	});
+
+	it('falls back to tier 3 alone on anything else', () => {
+		expect(parseTiersMode('tiers-1-2')).toBe(DEFAULT_TIERS_MODE);
+		expect(DEFAULT_TIERS_MODE).toBe('tier3');
+	});
+});
+
+describe('orderRows', () => {
+	it('holds the order while the row objects underneath are replaced', () => {
+		// The SSOT hands over a fresh array every three seconds. The order is
+		// the reader's; the numbers are the poll's.
+		const held = ['locus-of-corruption', 'chamber-of-iron'];
+		const fresh = [vrow('Chamber of Iron', 'C', 2.1), vrow('Locus of Corruption', 'A++', 900)];
+
+		expect(orderRows(fresh, held).map((r) => [r.name, r.cells[2].total])).toEqual([
+			['Locus of Corruption', 900],
+			['Chamber of Iron', 2.1]
+		]);
+	});
+
+	it('drops a key no row answers rather than leaving a hole', () => {
+		const rows = [vrow('Chamber of Iron', 'C', 1.86)];
+
+		expect(orderRows(rows, ['gone', 'chamber-of-iron']).map((r) => r.name)).toEqual([
+			'Chamber of Iron'
+		]);
+	});
+
+	it('keeps a row the held order does not name rather than losing it', () => {
+		const rows = [vrow('Chamber of Iron', 'C', 1.86), vrow('Toxic Grove', 'C', 2.65)];
+
+		expect(orderRows(rows, ['toxic-grove']).map((r) => r.name)).toEqual([
+			'Toxic Grove',
+			'Chamber of Iron'
+		]);
+	});
+});
+
+describe('hiddenOverrideTitle', () => {
+	it('lists both hidden tiers when one of them is priced by hand', () => {
+		// Collapsed, tiers 1 and 2 are off screen. A number the player typed
+		// that the table then shows nowhere is the one thing it must not do.
+		expect(hiddenOverrideTitle(vrow('Locus of Corruption', 'A++', 856, [500, null, null]))).toBe(
+			'tier 1: 500 c, tier 2: —'
+		);
+	});
+
+	it('says nothing when neither hidden tier is priced by hand', () => {
+		expect(hiddenOverrideTitle(vrow('Locus of Corruption', 'A++', 856))).toBeNull();
+	});
+
+	it('says nothing when only tier 3 is priced by hand, since tier 3 is on screen', () => {
+		expect(hiddenOverrideTitle(vrow('Locus of Corruption', 'A++', 856, [null, null, 900]))).toBeNull();
+	});
+
+	it('prints a hidden override the way the cell it stands for would', () => {
+		// `formatChaos` and not `toFixed(2)`: a sub-chaos override rendered as
+		// `0.00` reads as zero, which is what POE-262's significant-digit band
+		// exists to prevent.
+		expect(hiddenOverrideTitle(vrow('Sadist’s Den', 'C', 10, [null, 0.015, null]))).toBe(
+			'tier 1: —, tier 2: 0.015 c'
+		);
 	});
 });
