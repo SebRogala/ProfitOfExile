@@ -146,10 +146,14 @@ pub struct Knobs {
     /// zero (see [`tier_fraction`]).
     pub tier_fraction: f64,
     /// Chaos per point of `increased Quantity of Items found in this Area`.
-    /// **A guess** — Vertolka stated no rate, and nobody has measured one.
+    /// **Vertolka's proposed rate** (1 % quantity = 0.5 c, 1 % rarity = 0.25 c,
+    /// 2026-09-06 message on POE-124: *"Maybe there we can setup something like
+    /// 1% quant = 0,5c, 1% rarity = 0,25c"*), unmeasured — a guess he flagged
+    /// as such.
     pub c_per_quantity: f64,
     /// Chaos per point of `increased Rarity of Items found in this Area`.
-    /// **A guess**, same standing as [`Self::c_per_quantity`].
+    /// **Vertolka's proposed rate**, same message and same standing as
+    /// [`Self::c_per_quantity`]: unmeasured, a guess he flagged as such.
     pub c_per_rarity: f64,
     /// A global multiplier on the whole drops term. A rusher who never opens a
     /// chest sets it to `0.0`, which reduces the ranking to sale value alone.
@@ -602,10 +606,16 @@ fn rung(grade: Grade, live: bool, ladder_top: Option<f64>, cap: Option<f64>) -> 
 ///
 /// Temple Nexus is B+ and Shrine of Unmaking is D, and those two rungs are
 /// what the lines are worth — 100 and 2 cold, 105.75 and 2.115 on the
-/// committed capture. NOT what they drop: both rooms carry a small quantity
-/// bonus, and summing it would price the shrine that lifts a 846 c line at
-/// 6 c, below a junk C-grade room. What they are actually worth is the tiers
-/// they lift and the rooms they clear, and that reaches the score through
+/// committed capture. NOT what they drop. Temple Nexus is the room the claim
+/// turns on: it carries a 6 c area bonus (6 % quantity, 12 % rarity at tier
+/// 3), and summing that would price the room that lifts an 846 c line at 6 c,
+/// below a junk C-grade room. Shrine of Unmaking drops NOTHING — the
+/// explosive line is `None` at every tier of `drops.rs` — so summing gives it
+/// zero and the ordinary fallback would hand it the same D rung; what this
+/// path changes for the shrine is [`Priced::Instrumental`] rather than
+/// [`Priced::Fallback`], which is the honest label for a room whose price is
+/// not missing. What both lines are actually worth is the tiers they lift and
+/// the rooms they clear, and that reaches the score through
 /// `advisor::rollout`, which this does not touch.
 ///
 /// The double-pay this deliberately accepts: the rollout ALREADY credits both
