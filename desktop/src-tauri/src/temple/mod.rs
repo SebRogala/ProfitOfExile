@@ -96,6 +96,7 @@ pub mod advisor;
 pub mod anchor;
 pub mod commands;
 pub mod doors;
+pub mod drops;
 pub mod lattice;
 pub mod markers;
 pub mod panel;
