@@ -21,6 +21,8 @@ type SnapshotStore interface {
 	InsertGemSnapshots(ctx context.Context, scope league.Scope, snapTime time.Time, snapshots []GemSnapshot) (int, error)
 	InsertCurrencySnapshots(ctx context.Context, scope league.Scope, snapTime time.Time, snapshots []CurrencySnapshot) (int, error)
 	InsertFragmentSnapshots(ctx context.Context, scope league.Scope, snapTime time.Time, snapshots []FragmentSnapshot) (int, error)
+	LastItemSnapshotTime(ctx context.Context, scope league.Scope, category string) (time.Time, error)
+	InsertItemSnapshots(ctx context.Context, scope league.Scope, snapTime time.Time, snapshots []ItemSnapshot) (int, error)
 	LatestSnapshot(ctx context.Context, scope league.Scope) (*SnapshotSummary, error)
 }
 
@@ -83,6 +85,94 @@ func (r *Repository) LastFragmentSnapshotTime(ctx context.Context, scope league.
 		return time.Time{}, nil
 	}
 	return *t, nil
+}
+
+// LastItemSnapshotTime returns the most recent snapshot timestamp for one
+// poe.ninja item category. Returns the zero time if that category has no
+// snapshots. Each category keeps its own cadence, so the staleness read is
+// per-category rather than per-table: a category that started collecting later
+// (or 404'd for a while) must not be held back by a sibling's fresher rows.
+func (r *Repository) LastItemSnapshotTime(ctx context.Context, scope league.Scope, category string) (time.Time, error) {
+	if err := scope.Validate(); err != nil {
+		return time.Time{}, fmt.Errorf("repo: last item snapshot time: %w", err)
+	}
+	if category == "" {
+		return time.Time{}, fmt.Errorf("repo: last item snapshot time: empty category")
+	}
+	var t *time.Time
+	err := r.pool.QueryRow(ctx,
+		"SELECT MAX(time) FROM item_snapshots WHERE league = $1 AND category = $2",
+		scope.ID(), category,
+	).Scan(&t)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("repo: last item snapshot time %s: %w", category, err)
+	}
+	if t == nil {
+		return time.Time{}, nil
+	}
+	return *t, nil
+}
+
+// InsertItemSnapshots batch-inserts item snapshots using a pipelined batch
+// within a single transaction. All rows share the provided timestamp for
+// snapshot coherence. Returns the number of rows actually inserted (excludes
+// conflicts).
+//
+// Each row carries its own Category — the conversion stamps it from the
+// category the line was fetched under. An empty Category is rejected rather
+// than written, because category is part of the primary key and an unstamped
+// row would land under a category that identifies nothing.
+func (r *Repository) InsertItemSnapshots(ctx context.Context, scope league.Scope, snapTime time.Time, snapshots []ItemSnapshot) (int, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, fmt.Errorf("repo: insert item snapshots: %w", err)
+	}
+	if len(snapshots) == 0 {
+		return 0, nil
+	}
+	for i, s := range snapshots {
+		if s.Category == "" {
+			return 0, fmt.Errorf("repo: insert item snapshots: snapshot %d (ninja id %d) has an empty category", i, s.NinjaID)
+		}
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("repo: insert item snapshots: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	const query = `INSERT INTO item_snapshots (league, time, category, ninja_id, details_id, name, variant, links,
+	                                           chaos, divine, exalted, listings, sample_count, stack_size,
+	                                           icon, item_class, item_type, base_type, level_required, sparkline_change)
+	               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+	               ON CONFLICT DO NOTHING`
+
+	batch := &pgx.Batch{}
+	for _, s := range snapshots {
+		batch.Queue(query, scope.ID(), snapTime, s.Category, s.NinjaID, s.DetailsID, s.Name, s.Variant, s.Links,
+			s.Chaos, s.Divine, s.Exalted, s.Listings, s.SampleCount, s.StackSize,
+			s.Icon, s.ItemClass, s.ItemType, s.BaseType, s.LevelRequired, s.SparklineChange)
+	}
+
+	results := tx.SendBatch(ctx, batch)
+	inserted := 0
+	for i := range snapshots {
+		tag, err := results.Exec()
+		if err != nil {
+			results.Close()
+			return 0, fmt.Errorf("repo: insert item snapshot %s/%d: %w", snapshots[i].Category, snapshots[i].NinjaID, err)
+		}
+		inserted += int(tag.RowsAffected())
+	}
+	if err := results.Close(); err != nil {
+		return 0, fmt.Errorf("repo: insert item snapshots: close batch: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("repo: insert item snapshots: commit: %w", err)
+	}
+
+	return inserted, nil
 }
 
 // InsertFragmentSnapshots batch-inserts fragment snapshots using a pipelined batch

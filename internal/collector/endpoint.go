@@ -16,16 +16,59 @@ const (
 	EndpointNinjaGems      = "ninja-gems"
 	EndpointNinjaCurrency  = "ninja-currency"
 	EndpointNinjaFragments = "ninja-fragments"
+
+	EndpointNinjaIncursionTemple = "ninja-incursion-temple"
+	EndpointNinjaVial            = "ninja-vial"
+	EndpointNinjaUniqueArmour    = "ninja-unique-armour"
+	EndpointNinjaUniqueAccessory = "ninja-unique-accessory"
+	EndpointNinjaUniqueWeapon    = "ninja-unique-weapon"
+	EndpointNinjaUniqueJewel     = "ninja-unique-jewel"
+	EndpointNinjaUniqueFlask     = "ninja-unique-flask"
 )
 
+// ItemEndpoint binds one poe.ninja item-overview category to its canonical
+// endpoint name and Mercure topic suffix.
+//
+// Category is poe.ninja's own `type` query value, stored verbatim in
+// item_snapshots.category — the collector does not translate it into a taxonomy
+// of its own.
+type ItemEndpoint struct {
+	// Category is poe.ninja's type name, e.g. "IncursionTemple".
+	Category string
+
+	// Endpoint is the canonical endpoint name used for logging, the scheduler's
+	// endpoint list and the Mercure payload's "endpoint" field.
+	Endpoint string
+
+	// TopicSuffix is appended to mercureTopicPrefix to form the endpoint's
+	// Mercure topic.
+	TopicSuffix string
+}
+
+// ItemEndpoints is the set of poe.ninja item-overview categories the collector
+// polls. Each gets its own EndpointConfig — its own conditional-GET/ETag state,
+// its own staleness read and its own Mercure topic — so one category returning
+// 404 for a league leaves the other six collecting (POE-254).
+var ItemEndpoints = []ItemEndpoint{
+	{Category: "IncursionTemple", Endpoint: EndpointNinjaIncursionTemple, TopicSuffix: "items/incursion-temple"},
+	{Category: "Vial", Endpoint: EndpointNinjaVial, TopicSuffix: "items/vial"},
+	{Category: "UniqueArmour", Endpoint: EndpointNinjaUniqueArmour, TopicSuffix: "items/unique-armour"},
+	{Category: "UniqueAccessory", Endpoint: EndpointNinjaUniqueAccessory, TopicSuffix: "items/unique-accessory"},
+	{Category: "UniqueWeapon", Endpoint: EndpointNinjaUniqueWeapon, TopicSuffix: "items/unique-weapon"},
+	{Category: "UniqueJewel", Endpoint: EndpointNinjaUniqueJewel, TopicSuffix: "items/unique-jewel"},
+	{Category: "UniqueFlask", Endpoint: EndpointNinjaUniqueFlask, TopicSuffix: "items/unique-flask"},
+}
+
 // FetchResult holds the outcome of a single endpoint fetch as a tagged union.
-// Exactly one of four states is valid: NotModified=true (no data), or exactly
-// one of GemData, CurrencyData, or FragmentData populated. Validate() enforces
-// mutual exclusivity at runtime and is called at every construction site.
+// Exactly one of five states is valid: NotModified=true (no data), or exactly
+// one of GemData, CurrencyData, FragmentData, or ItemData populated. Validate()
+// enforces mutual exclusivity at runtime and is called at every construction
+// site.
 type FetchResult struct {
 	GemData      []GemSnapshot
 	CurrencyData []CurrencySnapshot
 	FragmentData []FragmentSnapshot
+	ItemData     []ItemSnapshot
 	ETag         string
 	Age          int  // seconds since origin server generated the response
 	AgePresent   bool // true when the Age header was present (distinguishes header-absent from genuine Age=0)
@@ -35,9 +78,6 @@ type FetchResult struct {
 // Validate checks FetchResult invariants: a NotModified result must have no
 // data, and at most one data slice may be populated.
 func (r *FetchResult) Validate() error {
-	if r.NotModified && (len(r.GemData) > 0 || len(r.CurrencyData) > 0 || len(r.FragmentData) > 0) {
-		return fmt.Errorf("FetchResult: NotModified=true but data slices are populated")
-	}
 	populated := 0
 	if len(r.GemData) > 0 {
 		populated++
@@ -47,6 +87,12 @@ func (r *FetchResult) Validate() error {
 	}
 	if len(r.FragmentData) > 0 {
 		populated++
+	}
+	if len(r.ItemData) > 0 {
+		populated++
+	}
+	if r.NotModified && populated > 0 {
+		return fmt.Errorf("FetchResult: NotModified=true but data slices are populated")
 	}
 	if populated > 1 {
 		return fmt.Errorf("FetchResult: multiple data slices are populated")
@@ -62,7 +108,8 @@ type FetchFunc func(ctx context.Context, league string, etag string) (*FetchResu
 
 // StoreFunc persists snapshot data from a FetchResult. It receives the full
 // result and the snapshot timestamp; the closure reads the appropriate typed
-// field (GemData or CurrencyData). Returns the number of rows inserted.
+// field (GemData, CurrencyData, FragmentData or ItemData). Returns the number
+// of rows inserted.
 type StoreFunc func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error)
 
 // StalenessFunc returns the time of the last stored snapshot for an endpoint.

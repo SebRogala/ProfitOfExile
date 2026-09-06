@@ -1,9 +1,11 @@
 package collector
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -1994,5 +1996,174 @@ func TestLogCapture_withAttrsPrependsAttrsIntoStoredRecords(t *testing.T) {
 	}
 	if got := endpoint.String(); got != "x" {
 		t.Errorf("endpoint = %q, want %q", got, "x")
+	}
+}
+
+func TestMercureTopicSuffix_itemCategoriesPublishUnderItems(t *testing.T) {
+	want := map[string]string{
+		EndpointNinjaGems:            "gems",
+		EndpointNinjaCurrency:        "currency",
+		EndpointNinjaFragments:       "fragments",
+		EndpointNinjaIncursionTemple: "items/incursion-temple",
+		EndpointNinjaVial:            "items/vial",
+		EndpointNinjaUniqueArmour:    "items/unique-armour",
+		EndpointNinjaUniqueAccessory: "items/unique-accessory",
+		EndpointNinjaUniqueWeapon:    "items/unique-weapon",
+		EndpointNinjaUniqueJewel:     "items/unique-jewel",
+		EndpointNinjaUniqueFlask:     "items/unique-flask",
+	}
+
+	for endpoint, wantSuffix := range want {
+		got, ok := mercureTopicSuffix[endpoint]
+		if !ok {
+			t.Errorf("endpoint %q has no topic suffix, so it would publish under its raw endpoint name", endpoint)
+			continue
+		}
+		if got != wantSuffix {
+			t.Errorf("endpoint %q suffix = %q, want %q", endpoint, got, wantSuffix)
+		}
+	}
+	if len(mercureTopicSuffix) != len(want) {
+		t.Errorf("topic suffix map has %d entries, want %d", len(mercureTopicSuffix), len(want))
+	}
+}
+
+func TestMercureTopicSuffix_noTwoEndpointsShareATopic(t *testing.T) {
+	// Two endpoints on one topic would make a subscriber unable to tell which
+	// category refreshed — the seven item entries are copy-paste neighbours, so
+	// this is the mistake the table invites.
+	seen := make(map[string]string, len(mercureTopicSuffix))
+	for endpoint, suffix := range mercureTopicSuffix {
+		if other, ok := seen[suffix]; ok {
+			t.Errorf("endpoints %q and %q both publish on suffix %q", other, endpoint, suffix)
+		}
+		seen[suffix] = endpoint
+	}
+}
+
+func TestItemEndpoints_coverTheSevenPolledCategories(t *testing.T) {
+	want := []string{
+		"IncursionTemple", "Vial",
+		"UniqueArmour", "UniqueAccessory", "UniqueWeapon", "UniqueJewel", "UniqueFlask",
+	}
+
+	got := make([]string, 0, len(ItemEndpoints))
+	for _, item := range ItemEndpoints {
+		got = append(got, item.Category)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("polled categories = %v, want %v", got, want)
+	}
+}
+
+// failingFetchEndpoint builds an endpoint whose fetch always fails the way a
+// poe.ninja 404 for an unserved category does.
+func failingFetchEndpoint(name string, storeCalls *int32) EndpointConfig {
+	return EndpointConfig{
+		Name:             name,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: time.Hour,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			return nil, fmt.Errorf("ninja: fetch items Vial: http get https://poe.ninja/x: status 404: not found")
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			atomic.AddInt32(storeCalls, 1)
+			return 0, nil
+		},
+	}
+}
+
+func TestScheduler_fetchFailureSkipsTheStoreForThatEndpoint(t *testing.T) {
+	var storeCalls int32
+	ep := failingFetchEndpoint(EndpointNinjaVial, &storeCalls)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Allflame"), "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+
+	if calls := atomic.LoadInt32(&storeCalls); calls != 0 {
+		t.Errorf("StoreFunc called %d times after a failed fetch, want 0", calls)
+	}
+}
+
+func TestScheduler_fetchFailureIsLoggedWithTheEndpointName(t *testing.T) {
+	var storeCalls int32
+	ep := failingFetchEndpoint(EndpointNinjaVial, &storeCalls)
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Allflame"), "", "", logger)
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+
+	logged := logBuf.String()
+	if !strings.Contains(logged, "fetch failed") {
+		t.Errorf("log = %q, want it to report a failed fetch", logged)
+	}
+	if !strings.Contains(logged, EndpointNinjaVial) {
+		t.Errorf("log = %q, want it to name endpoint %q — otherwise an operator cannot tell which category 404'd", logged, EndpointNinjaVial)
+	}
+}
+
+func TestScheduler_oneCategoryFailingLeavesTheOthersStoring(t *testing.T) {
+	var failingStoreCalls int32
+	failing := failingFetchEndpoint(EndpointNinjaVial, &failingStoreCalls)
+
+	var healthyRows int32
+	healthy := EndpointConfig{
+		Name:             EndpointNinjaIncursionTemple,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: time.Hour,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			return &FetchResult{ItemData: []ItemSnapshot{
+				{Category: "IncursionTemple", NinjaID: 108490, Name: "Locus of Corruption (Tier 3)", Chaos: 844.6},
+			}}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			atomic.AddInt32(&healthyRows, int32(len(result.ItemData)))
+			return len(result.ItemData), nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{failing, healthy}, nil, league.Historical("Allflame"), "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+
+	if rows := atomic.LoadInt32(&healthyRows); rows < 1 {
+		t.Errorf("healthy endpoint stored %d rows, want at least 1 — a sibling's 404 must not stop it", rows)
+	}
+	if calls := atomic.LoadInt32(&failingStoreCalls); calls != 0 {
+		t.Errorf("failing endpoint's StoreFunc called %d times, want 0", calls)
 	}
 }
