@@ -740,3 +740,298 @@ func TestFetchCurrencyEndpoint_304NotModified(t *testing.T) {
 		t.Errorf("Age = %d, want 600", result.Age)
 	}
 }
+
+// itemOverviewBody is a poe.ninja item/overview response written as raw JSON
+// rather than encoded from ninjaItemLine, so the nulls the live endpoint sends
+// for variant, links and divineValue are decoded as nulls instead of arriving
+// as Go zero values the test itself chose. Both lines are trimmed copies of the
+// 2026-09-06 payload for league Allflame.
+//
+// The IncursionTemple line carries no itemType, levelRequired or stackSize
+// because that category sends none of them; the UniqueAccessory line carries
+// itemType and levelRequired but no stackSize, because a ring does not stack.
+// flavourText is present on both categories upstream and is kept here so the
+// deliberate decision not to store it stays under test: adding a FlavourText
+// field to ItemSnapshot would break the mapping assertion below.
+const itemOverviewBody = `{"lines":[
+	{"id":108490,"name":"Locus of Corruption (Tier 3)","detailsId":"locus-of-corruption-tier-3-temple",
+	 "variant":null,"links":null,"chaosValue":844.6,"divineValue":2.0,"exaltedValue":361.1,
+	 "listingCount":2553,"count":399,
+	 "icon":"https://web.poecdn.com/gen/image/TempleMap.png","itemClass":5,"baseType":"Chronicle of Atzoatl",
+	 "sparkLine":{"totalChange":40.77,"data":[0,17.93,88.3]}},
+	{"id":7747,"name":"Precursor's Emblem","detailsId":"precursors-emblem-sapphire-ring",
+	 "variant":"Fire","links":6,"chaosValue":424.3,"divineValue":null,"exaltedValue":180.6,
+	 "listingCount":2570,"count":91,
+	 "icon":"https://web.poecdn.com/gen/image/SapphireRing.png","itemClass":10,"itemType":"Ring",
+	 "baseType":"Sapphire Ring","levelRequired":49,
+	 "flavourText":"History teaches humility.",
+	 "sparkLine":{"totalChange":-3.5}}
+]}`
+
+// itemServer serves body for every request and records the last request URL.
+func itemServer(t *testing.T, body string) (*httptest.Server, *string) {
+	t.Helper()
+	var lastURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lastURL = r.URL.String()
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Errorf("write test response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server, &lastURL
+}
+
+func TestFetchItemEndpoint_mapsEveryStoredField(t *testing.T) {
+	server, _ := itemServer(t, itemOverviewBody)
+
+	f := testNinjaFetcher(t, server)
+	result, err := f.ItemEndpointFetcher("UniqueAccessory")(context.Background(), "Allflame", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.ItemData) != 2 {
+		t.Fatalf("got %d items, want 2", len(result.ItemData))
+	}
+
+	// The second line carries every field populated, so it pins the whole
+	// payload-to-row mapping: crossing any two of them changes this row.
+	got := result.ItemData[1]
+	want := ItemSnapshot{
+		Category:        "UniqueAccessory",
+		NinjaID:         7747,
+		DetailsID:       "precursors-emblem-sapphire-ring",
+		Name:            "Precursor's Emblem",
+		Variant:         "Fire",
+		Links:           6,
+		Chaos:           424.3,
+		Divine:          0,
+		Exalted:         180.6,
+		Listings:        2570,
+		SampleCount:     91,
+		StackSize:       0,
+		Icon:            "https://web.poecdn.com/gen/image/SapphireRing.png",
+		ItemClass:       10,
+		ItemType:        "Ring",
+		BaseType:        "Sapphire Ring",
+		LevelRequired:   49,
+		SparklineChange: -3.5,
+	}
+	if got != want {
+		t.Errorf("snapshot = %+v,\nwant %+v", got, want)
+	}
+}
+
+func TestFetchItemEndpoint_absentVariantAndLinksStoreEmptyAndZero(t *testing.T) {
+	server, _ := itemServer(t, itemOverviewBody)
+
+	f := testNinjaFetcher(t, server)
+	result, err := f.ItemEndpointFetcher("IncursionTemple")(context.Background(), "Allflame", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.ItemData) != 2 {
+		t.Fatalf("got %d items, want 2", len(result.ItemData))
+	}
+
+	// The first line sends variant and links as JSON null — the shape every
+	// IncursionTemple, Vial and UniqueFlask line has. They must land as the
+	// empty string and zero, not as a substituted placeholder.
+	got := result.ItemData[0]
+	if got.Variant != "" {
+		t.Errorf("Variant = %q, want \"\" for a line with a null variant", got.Variant)
+	}
+	if got.Links != 0 {
+		t.Errorf("Links = %d, want 0 for a line with null links", got.Links)
+	}
+	// The same line's non-null neighbours must be unaffected.
+	if got.Divine != 2.0 {
+		t.Errorf("Divine = %v, want 2.0", got.Divine)
+	}
+	if got.Name != "Locus of Corruption (Tier 3)" {
+		t.Errorf("Name = %q, want %q", got.Name, "Locus of Corruption (Tier 3)")
+	}
+}
+
+func TestFetchItemEndpoint_categoryWithoutOptionalScalarsStoresZeroValues(t *testing.T) {
+	server, _ := itemServer(t, itemOverviewBody)
+
+	f := testNinjaFetcher(t, server)
+	result, err := f.ItemEndpointFetcher("IncursionTemple")(context.Background(), "Allflame", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.ItemData) != 2 {
+		t.Fatalf("got %d items, want 2", len(result.ItemData))
+	}
+
+	// IncursionTemple sends none of itemType, levelRequired or stackSize. They
+	// must land as zero values rather than borrowing a neighbouring field —
+	// mapping ItemType from baseType, say, would put "Chronicle of Atzoatl" here.
+	got := result.ItemData[0]
+	if got.ItemType != "" {
+		t.Errorf("ItemType = %q, want \"\" for a category that sends no itemType", got.ItemType)
+	}
+	if got.LevelRequired != 0 {
+		t.Errorf("LevelRequired = %d, want 0 for a category that sends no levelRequired", got.LevelRequired)
+	}
+	if got.StackSize != 0 {
+		t.Errorf("StackSize = %d, want 0 for a category whose items do not stack", got.StackSize)
+	}
+	// exaltedValue, unlike the three above, is sent by every category and must
+	// carry through on the same line.
+	if got.Exalted != 361.1 {
+		t.Errorf("Exalted = %v, want 361.1", got.Exalted)
+	}
+}
+
+func TestFetchItemEndpoint_mapsVialStackSize(t *testing.T) {
+	// Vial is the only category whose lines carry stackSize (9/9 on the
+	// 2026-09-06 payload), so it is the only place the column can be pinned.
+	const body = `{"lines":[
+		{"id":39826,"name":"Vial of the Ghost","detailsId":"vial-of-the-ghost","stackSize":10,
+		 "chaosValue":1697,"divineValue":4.0,"exaltedValue":722.2,"listingCount":7,"count":3,
+		 "itemClass":5,"icon":"https://web.poecdn.com/gen/image/VialSoulCatcher.png",
+		 "sparkLine":{"totalChange":0,"data":[]}}
+	]}`
+	server, _ := itemServer(t, body)
+
+	f := testNinjaFetcher(t, server)
+	result, err := f.ItemEndpointFetcher("Vial")(context.Background(), "Allflame", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.ItemData) != 1 {
+		t.Fatalf("got %d items, want 1", len(result.ItemData))
+	}
+	if got := result.ItemData[0].StackSize; got != 10 {
+		t.Errorf("StackSize = %d, want 10", got)
+	}
+}
+
+func TestFetchItemEndpoint_stampsFetchedCategoryOnEveryRow(t *testing.T) {
+	server, _ := itemServer(t, itemOverviewBody)
+
+	f := testNinjaFetcher(t, server)
+	result, err := f.ItemEndpointFetcher("UniqueJewel")(context.Background(), "Allflame", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.ItemData) != 2 {
+		t.Fatalf("got %d items, want 2", len(result.ItemData))
+	}
+	for i, s := range result.ItemData {
+		if s.Category != "UniqueJewel" {
+			t.Errorf("item %d Category = %q, want %q", i, s.Category, "UniqueJewel")
+		}
+	}
+}
+
+func TestFetchItemEndpoint_dropsLineWithoutAnID(t *testing.T) {
+	// An id-less line cannot be keyed: ninja_id is part of the primary key, and
+	// a batch of them would collapse under ON CONFLICT DO NOTHING.
+	const body = `{"lines":[
+		{"id":0,"name":"Unidentifiable","detailsId":"","chaosValue":5,"listingCount":3},
+		{"id":42,"name":"Sacrifice at Dusk","detailsId":"sacrifice-at-dusk","chaosValue":7,"listingCount":9}
+	]}`
+	server, _ := itemServer(t, body)
+
+	f := testNinjaFetcher(t, server)
+	result, err := f.ItemEndpointFetcher("Vial")(context.Background(), "Allflame", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.ItemData) != 1 {
+		t.Fatalf("got %d items, want 1 (the id-less line must be dropped)", len(result.ItemData))
+	}
+	if result.ItemData[0].NinjaID != 42 {
+		t.Errorf("NinjaID = %d, want 42 (the identified line must survive)", result.ItemData[0].NinjaID)
+	}
+}
+
+func TestFetchItemEndpoint_requestsTheGivenCategoryAndLeague(t *testing.T) {
+	server, lastURL := itemServer(t, itemOverviewBody)
+
+	f := testNinjaFetcher(t, server)
+	if _, err := f.ItemEndpointFetcher("IncursionTemple")(context.Background(), "Hardcore Allflame", ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(*lastURL, "type=IncursionTemple") {
+		t.Errorf("request URL = %q, want it to carry type=IncursionTemple", *lastURL)
+	}
+	if !strings.Contains(*lastURL, "league=Hardcore+Allflame") {
+		t.Errorf("request URL = %q, want it to carry the escaped league", *lastURL)
+	}
+	if !strings.Contains(*lastURL, "/economy/stash/current/item/overview") {
+		t.Errorf("request URL = %q, want the item/overview path", *lastURL)
+	}
+}
+
+func TestFetchItemEndpoint_notFoundReturnsErrorNamingTheStatus(t *testing.T) {
+	// poe.ninja answers 404 for a category it does not serve in a league. The
+	// error must name the status so the scheduler's "fetch failed" log tells an
+	// operator which categories this league has.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	f := testNinjaFetcher(t, server)
+	result, err := f.ItemEndpointFetcher("Vial")(context.Background(), "Allflame", "")
+	if err == nil {
+		t.Fatal("expected error for 404 response, got nil")
+	}
+	if result != nil {
+		t.Errorf("result = %+v, want nil on a 404", result)
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("error = %q, want it to mention status 404", err.Error())
+	}
+	if !strings.Contains(err.Error(), "Vial") {
+		t.Errorf("error = %q, want it to name the category", err.Error())
+	}
+}
+
+func TestFetchItemEndpoint_malformedJSON(t *testing.T) {
+	server, _ := itemServer(t, "{{bad")
+
+	f := testNinjaFetcher(t, server)
+	_, err := f.ItemEndpointFetcher("UniqueWeapon")(context.Background(), "Allflame", "")
+	if err == nil {
+		t.Fatal("expected error for malformed JSON, got nil")
+	}
+	if !strings.Contains(err.Error(), "decode") {
+		t.Errorf("error = %q, want it to mention decode", err.Error())
+	}
+}
+
+func TestFetchItemEndpoint_304NotModifiedCarriesNoData(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") != `"temple-etag"` {
+			t.Errorf("If-None-Match = %q, want %q", r.Header.Get("If-None-Match"), `"temple-etag"`)
+		}
+		w.Header().Set("ETag", `"temple-etag"`)
+		w.Header().Set("Age", "120")
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	defer server.Close()
+
+	f := testNinjaFetcher(t, server)
+	result, err := f.ItemEndpointFetcher("IncursionTemple")(context.Background(), "Allflame", `"temple-etag"`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.NotModified {
+		t.Error("NotModified = false, want true on a 304")
+	}
+	if len(result.ItemData) != 0 {
+		t.Errorf("ItemData length = %d, want 0 on a 304", len(result.ItemData))
+	}
+	if result.Age != 120 {
+		t.Errorf("Age = %d, want 120", result.Age)
+	}
+	if result.ETag != `"temple-etag"` {
+		t.Errorf("ETag = %q, want %q", result.ETag, `"temple-etag"`)
+	}
+}

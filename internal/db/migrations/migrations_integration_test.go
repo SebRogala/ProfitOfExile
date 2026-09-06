@@ -229,6 +229,7 @@ func TestScopedRelationsHaveLeagueIdentityAndPrimaryKeys(t *testing.T) {
 		"gem_features":             {"league", "time", "name", "variant"},
 		"gem_signals":              {"league", "time", "name", "variant"},
 		"gem_snapshots":            {"league", "time", "name", "variant", "is_corrupted"},
+		"item_snapshots":           {"league", "time", "category", "ninja_id"},
 		"market_context":           {"league", "time"},
 		"quality_results":          {"league", "time", "name", "level"},
 		"trade_lookups":            {"league", "time", "gem", "variant"},
@@ -489,13 +490,14 @@ var scopedRelations = []string{
 
 // leagueRegistryRelations is every relation whose league column is a foreign key
 // into the leagues registry: the legacy set plus the two currency-exchange tables
-// added by POE-173 and double_corrupt_snapshots added by POE-125.
-// currency_exchange_cursor is a plain table and the other two are younger than
-// the backfill, so none of the three can join scopedRelations — the FK is the
+// added by POE-173, double_corrupt_snapshots added by POE-125 and item_snapshots
+// added by POE-254.
+// currency_exchange_cursor is a plain table and the other three are younger than
+// the backfill, so none of the four can join scopedRelations — the FK is the
 // one contract all of them share.
 var leagueRegistryRelations = append(append([]string{},
 	scopedRelations...), "currency_exchange_markets", "currency_exchange_cursor",
-	"double_corrupt_snapshots")
+	"double_corrupt_snapshots", "item_snapshots")
 
 var retainedRelations = []string{
 	"currency_snapshots", "dedication_snapshots", "font_snapshots", "fragment_snapshots",

@@ -18,6 +18,10 @@ through `internal/exchange`'s scope-taking repository.
 fifteen), created with `league TEXT NOT NULL REFERENCES leagues(id)` and read
 and written only through `internal/lab`'s scope-taking repository.
 
+**Amended 2026-09-06 (POE-254):** `item_snapshots` joins the set (now sixteen),
+created with `league TEXT NOT NULL REFERENCES leagues(id)` and read and written
+only through `internal/collector`'s scope-taking repository.
+
 ## Context
 
 POE-119 adds a league column to its twelve historical data tables and introduces
