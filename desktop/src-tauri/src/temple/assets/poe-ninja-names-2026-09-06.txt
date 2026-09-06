@@ -1,0 +1,36 @@
+# poe.ninja item names as published on 2026-09-06 (league Allflame).
+# Endpoint: https://poe.ninja/poe1/api/economy/stash/current/item/overview?league=Allflame&type=<TYPE>
+# Field taken: lines[].name, verbatim (apostrophes included).
+#
+# This file is the JOIN KEY fixture for temple/drops.rs. POE-255/257 price the
+# table by matching these strings against the collector's item_snapshots rows,
+# so a typo in drops.rs is a silent price miss - the test in drops.rs pins every
+# name in the table against this list.
+#
+# VIALS: the complete type=Vial list, 9 lines, unfiltered.
+# UNIQUES: only the names temple/drops.rs uses, selected by exact match against
+#   the five unique overviews fetched the same day (UniqueArmour 977, UniqueAccessory 366, UniqueWeapon 643, UniqueJewel 166, UniqueFlask 39 lines; 1366 distinct names).
+#   A name drops.rs uses that poe.ninja did NOT publish is listed under ABSENT.
+
+[vial]
+Vial of the Ghost
+Vial of Transcendence
+Vial of Sacrifice
+Vial of Summoning
+Vial of the Ritual
+Vial of Awakening
+Vial of Consequence
+Vial of Dominance
+Vial of Fate
+
+[unique]
+Dance of the Offered
+Story of the Vaal
+Architect's Hand
+Coward's Chains
+Mask of the Spirit Drinker
+Apep's Slumber
+
+[absent]
+# Present in the game and on poedb, but not published by poe.ninja on 2026-09-06:
+Shadowstitch
