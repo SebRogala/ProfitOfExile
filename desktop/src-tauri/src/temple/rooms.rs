@@ -193,7 +193,6 @@ impl RoomLine {
     /// POE-167's key, so [`RoomLine::mechanical_line`] round-trips through
     /// [`Line::named`]; for the other 21 it is a snake_case slug of the tier-3
     /// name, which is the name the strategy layer talks about.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn key(self) -> &'static str {
         self.key
     }
