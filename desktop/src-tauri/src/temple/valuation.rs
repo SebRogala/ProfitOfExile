@@ -41,21 +41,59 @@
 //!   listed as a [`Driver`] with `chaos: None`, so the explanation box shows
 //!   what was left out instead of quietly showing a smaller total.
 //!
-//! # Fallback is never zero
+//! # Fallback is never zero, and a cold read is not a half-priced one
 //!
 //! Epic lock L4: a missing or stale market falls back to the preset's base
-//! value. The ladder stands in only where **nothing at all was summed** — no
-//! sale, no priced drop, and no bonus. A bonus is a summed term like any
-//! other: its percentage is poedb's measured number and the rate that prices
-//! it is a knob the player sets, so a room whose only priced term is its
-//! quantity bonus is worth that bonus and not its letter. Letting the letter
-//! win there would put a third-party grade above the feed, which is the one
-//! thing [`Grade::fallback_chaos`](super::rooms::Grade::fallback_chaos) says it
-//! must never do — visibly so under a rusher's `drops_weight = 0`, where an A+
-//! rung would otherwise outrank Doryani's Institute's real 390 c. Where the
-//! ladder does stand in, [`RoomValue::priced`] says [`Priced::Fallback`] and
-//! the rung is the only driver left carrying chaos. A room's total is never
+//! value. There are two shapes of that, and which one applies turns on
+//! [`MarketInput::is_live`] alone.
+//!
+//! **A read that is not live** — [`MarketInput::none`] before the first poll
+//! answers, or a stale payload — prices EVERY room at
+//! [`Grade::fallback_chaos`](super::rooms::Grade::fallback_chaos), the cold
+//! ladder, and nothing else. Those ten rungs ARE the preset's base-value table
+//! that L4 names. Mixing them with the terms that survive a cold market — a
+//! poedb quantity bonus, `drops.rs`'s manually priced temple-mod item — is
+//! what this module used to do, and it produced a board where Sanctum of
+//! Immortality (grade A) sat at 6 c UNDER Sadist's Den (grade C) at 10 c. Half
+//! a formula and half a ladder is not a ranking in either unit. A Custom
+//! override still wins over the rung: the player stating a number outright is
+//! not a missing price.
+//!
+//! **A live read** sums the formula. The ladder stands in only for a room
+//! where **nothing at all was summed** — no sale, no priced drop, no bonus —
+//! and there it is
+//! [`fallback_chaos_scaled`](super::rooms::Grade::fallback_chaos_scaled)
+//! anchored on the read's best tier-3 sale delta, then CAPPED at the lowest
+//! tier-3 total among the rooms whose sale is above the floor. On the
+//! committed capture that cap is `min(846, 390) = 390`, which is what pulls an
+//! A+ rung of 423 back under the 390 the feed actually prints. With no
+//! above-floor room there is nothing to cap against and the scaled rung
+//! stands.
+//!
+//! What the cap does NOT do — the owner's open fork, recorded rather than
+//! closed: a letter can still outrank a room whose own MEASURED value is
+//! small. Apex of Ascension is B−, sums nothing and stands in at 31.7 c, while
+//! Chamber of Iron summed a real 6 c quantity bonus and stays at 6 c. The
+//! alternative rule is to cap at the lowest MEASURED total rather than the
+//! lowest sale-priced one, which on this capture would pull every letter under
+//! 6 c and make the ladder inert for the ~15 rooms nobody prices at all.
+//! Neither is measured; the shipped choice keeps the ladder useful.
+//!
+//! Where the ladder stands in, [`RoomValue::priced`] says [`Priced::Fallback`]
+//! and the rung is the only driver carrying chaos. A room's total is never
 //! `NaN` and never negative.
+//!
+//! # Two lines are priced at their letter even when the market is live
+//!
+//! [`INSTRUMENTAL_LINES`] — the upgrade line and the explosives line — take
+//! the same rung by a different route, and say so with
+//! [`Priced::Instrumental`] rather than [`Priced::Fallback`]: no price is
+//! missing, summing is simply the wrong question for them. Their worth is the
+//! tiers they lift and the rooms they clear, which the advisor's rollout
+//! models; their own drops are a 6 c quantity bonus, which would price the
+//! shrine that lifts a 846 c line below a junk C-grade room. See
+//! [`instrumental`] for the board-7 evidence and the double-pay trade-off. A
+//! Custom override replaces the rung like any other room's value.
 //!
 //! # The Mirage vial spike is a drop-table question, not a formula one
 //!
@@ -69,19 +107,26 @@
 //! # What is a guess, and what is measured
 //!
 //! [`RoomValue::guessed`] is true when any driver that actually contributed
-//! chaos rests on somebody's estimate. Three knobs are estimates by
-//! construction — [`Knobs::c_per_quantity`], [`Knobs::c_per_rarity`] and the
-//! grade ladder — so a room whose value comes from a quantity bonus or from the
-//! ladder is flagged even though the underlying percentage is poedb's measured
-//! number. That is the honest reading: the *percentage* is measured, the *rate*
-//! that turns it into chaos is not.
+//! chaos rests on somebody's estimate. Two knobs are estimates by construction
+//! — [`Knobs::c_per_quantity`] and [`Knobs::c_per_rarity`] — so a room whose
+//! value comes from a quantity bonus is flagged even though the underlying
+//! percentage is poedb's measured number. That is the honest reading: the
+//! *percentage* is measured, the *rate* that turns it into chaos is not.
+//!
+//! The grade ladder is flagged on ONE of its two paths, and the asymmetry is
+//! deliberate. The LIVE rung is an inference about this market — the cold
+//! number re-anchored on today's top delta and then capped — so it reads
+//! `guessed: true`. The COLD rung is not an inference about anything: it is
+//! the preset's stated base value for that room, the same standing as a Custom
+//! override, which also reads `guessed: false`. [`Priced::Fallback`] is what
+//! tells the player no price was involved either way.
 
 use std::collections::BTreeMap;
 
 use super::drops::Estimate;
 use super::market::{ItemQuote, MarketInput};
-use super::rooms::{RoomLine, LINES};
-use super::strategy::Tier;
+use super::rooms::{Grade, RoomLine, LINES};
+use super::strategy::{Tier, INSTRUMENTAL_LINES};
 
 // ---------------------------------------------------------------- the knobs --
 
@@ -92,7 +137,6 @@ use super::strategy::Tier;
 /// is "one base strategy, per-user configurables" (`temple/mod.rs`). POE-259
 /// persists them per preset; nothing here reads or writes settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub struct Knobs {
     /// What a tier-1 or tier-2 room is worth as a fraction of its line's tier-3
     /// total. Epic lock L2's 80 %: line presence is what the double-tier node
@@ -173,7 +217,6 @@ fn tier_fraction(value: f64) -> f64 {
 
 /// Which term of the formula a [`Driver`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub enum DriverKind {
     /// The room-tier's own feed price above the floor.
     Sale,
@@ -192,6 +235,45 @@ pub enum DriverKind {
     TierFraction,
     /// Nothing was priced, so the letter grade's ladder value stood in.
     GradeFallback,
+    /// One of the two [`INSTRUMENTAL_LINES`], priced at its letter rather than
+    /// at what it drops.
+    ///
+    /// The upgrade line's worth is the TIERS IT LIFTS and the explosives
+    /// line's is the ROOMS IT CLEARS, and both of those reach the score
+    /// through the rollout (`advisor::rollout::UPGRADE_TARGETS` and
+    /// `CHARGES`), not through a price. What the room itself drops — Temple
+    /// Nexus's 6 c quantity bonus — is not what a player is buying when they
+    /// take it, and summing it would put the shrine below a junk C-grade room.
+    /// The letter is the honest stand-in: Vertolka graded the line for what it
+    /// does, not for what falls out of it.
+    Instrumental,
+    /// The player's own number for this room-tier, from the Custom preset's
+    /// table (POE-257 D4). It REPLACES the formula rather than adding to it,
+    /// which is why it is the only driver such a room carries.
+    CustomOverride,
+}
+
+impl DriverKind {
+    /// The wire form — `snake_case` variants, the convention
+    /// `desktop/src/lib/README.md` records for this app's enums.
+    ///
+    /// Hand-written rather than derived because [`DriverKind`] is a reasoning
+    /// type the projection reads, exactly like
+    /// [`Grade::as_str`](super::rooms::Grade::as_str).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DriverKind::Sale => "sale",
+            DriverKind::UniqueDrop => "unique_drop",
+            DriverKind::VialDrop => "vial_drop",
+            DriverKind::ModItem => "mod_item",
+            DriverKind::QuantityBonus => "quantity_bonus",
+            DriverKind::RarityBonus => "rarity_bonus",
+            DriverKind::TierFraction => "tier_fraction",
+            DriverKind::GradeFallback => "grade_fallback",
+            DriverKind::Instrumental => "instrumental",
+            DriverKind::CustomOverride => "custom_override",
+        }
+    }
 }
 
 /// One line of the explanation box: a term of the sum, and everything the
@@ -202,7 +284,6 @@ pub enum DriverKind {
 /// because a term silently dropped from a total is indistinguishable from a
 /// term worth zero.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub struct Driver {
     /// Which term of the formula this is.
     pub kind: DriverKind,
@@ -236,7 +317,6 @@ pub struct Driver {
 /// stated is as absent from the total as a term the feed cannot price, and the
 /// player is owed the same warning either way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub enum Priced {
     /// Every term this room names turned into chaos.
     Market,
@@ -244,11 +324,31 @@ pub enum Priced {
     Partial,
     /// Nothing did. The total is the grade ladder's value (epic lock L4).
     Fallback,
+    /// Nothing was summed because summing was the wrong question: this is one
+    /// of the two [`INSTRUMENTAL_LINES`], priced at its letter. Distinct from
+    /// [`Self::Fallback`] because no price is MISSING — see
+    /// [`DriverKind::Instrumental`].
+    Instrumental,
+    /// Nothing was summed at all: the player stated this room-tier's value
+    /// outright in the Custom table, and their number replaced the formula.
+    Override,
+}
+
+impl Priced {
+    /// The wire form — `snake_case`, like [`DriverKind::as_str`].
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Priced::Market => "market",
+            Priced::Partial => "partial",
+            Priced::Fallback => "fallback",
+            Priced::Instrumental => "instrumental",
+            Priced::Override => "override",
+        }
+    }
 }
 
 /// What one room-tier is worth, and what that number is made of.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub struct RoomValue {
     /// The feed price above the room-line floor. Zero on
     /// [`Priced::Fallback`].
@@ -277,28 +377,87 @@ pub struct RoomValue {
 /// the overlay shows from it, so the number the player sees is the number the
 /// recommendation used.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub struct Valued {
     lines: BTreeMap<&'static str, [RoomValue; 3]>,
+    knobs: Knobs,
+    league: String,
+    as_of_ms: Option<i64>,
+    top_sale_delta: Option<f64>,
 }
+
+/// One line's three per-tier overrides, tier 1 first. `None` means "use the
+/// formula"; `Some` is the player's own chaos number for that room-tier.
+pub type RoomOverrides = BTreeMap<String, [Option<f64>; 3]>;
 
 impl Valued {
     /// Value every one of the 25 lines at all three tiers.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn compute(market: &MarketInput, knobs: &Knobs) -> Valued {
+        Valued::compute_with(market, knobs, &RoomOverrides::new())
+    }
+
+    /// [`Self::compute`] with the Custom preset's per-room overrides applied
+    /// (POE-257 D4).
+    ///
+    /// An override REPLACES the formula for exactly the room-tier it names: a
+    /// tier-3 override also moves that line's tier-1 and tier-2 rows, because
+    /// those are [`Knobs::tier_fraction`] of whatever tier 3 is worth (epic
+    /// lock L2), while a tier-1 override moves nothing but itself.
+    pub fn compute_with(market: &MarketInput, knobs: &Knobs, overrides: &RoomOverrides) -> Valued {
+        // Both computed once for the whole table and BEFORE any room is
+        // valued: the anchor the grade ladder is rescaled on and the cap every
+        // rescaled rung is held under are properties of the READ, not of a
+        // room, so a per-room re-derivation would be 25 answers to one
+        // question.
+        let top_sale_delta = top_tier3_sale_delta(market);
+        let cap = fallback_cap(market, knobs);
+        // The one branch the whole fallback rule turns on (epic lock L4). A
+        // read that prices nothing — cold before the first poll, or stale —
+        // still has terms that would survive it: a poedb quantity bonus and
+        // `drops.rs`'s manually priced temple-mod item owe the feed nothing.
+        // Summing those and letting the ladder stand in for the rest ranks half
+        // the board in one unit and half in another, which is how a grade-A
+        // room ended up under a grade-C one at 6 c against 10 c.
+        let live = market.prices_anything();
+
         let mut lines = BTreeMap::new();
         for line in LINES.iter() {
-            let t3 = value_tier3(line, market, knobs);
-            let t1 = scale_from_tier3(line, &t3, knobs);
-            let t2 = scale_from_tier3(line, &t3, knobs);
+            let row = overrides.get(line.key());
+            let at = |tier: usize| row.and_then(|values| values[tier]);
+
+            let t3 = match at(2) {
+                Some(chaos) => overridden(line, Tier::T3, chaos),
+                None if INSTRUMENTAL_LINES.contains(&line.mechanical_line()) => {
+                    instrumental(line, live, top_sale_delta, cap)
+                }
+                None if !live => cold_fallback(line),
+                None => value_tier3(line, market, knobs, top_sale_delta, cap),
+            };
+            let scaled = |tier: usize| match at(tier) {
+                Some(chaos) => overridden(line, tier_of(tier), chaos),
+                None => scale_from_tier3(line, &t3, knobs),
+            };
+            let t1 = scaled(0);
+            let t2 = scaled(1);
             lines.insert(line.key(), [t1, t2, t3]);
         }
-        Valued { lines }
+
+        Valued {
+            lines,
+            knobs: *knobs,
+            league: market.league.clone(),
+            // WITHHELD on a stale read, which is not the same claim
+            // `MarketInput::as_of_ms` makes. That one answers "when did the
+            // server last observe anything"; this one is the age of the prices
+            // BEHIND these numbers, and a stale read contributed none of them
+            // — every room on it fell back to the grade ladder. Publishing its
+            // timestamp would date a valuation to a market it did not use.
+            as_of_ms: market.is_live().then(|| market.as_of_ms()).flatten(),
+            top_sale_delta,
+        }
     }
 
     /// One room-tier's value. `None` for an unknown key and for
     /// [`Tier::T0`] — tier 0 is filler and belongs to no line.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn get(&self, key: &str, tier: Tier) -> Option<&RoomValue> {
         let tiers = self.lines.get(key)?;
         match tier.get() {
@@ -308,15 +467,257 @@ impl Valued {
     }
 
     /// Every line's three tiers, tier 1 first, in key order.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn lines(&self) -> impl Iterator<Item = (&'static str, &[RoomValue; 3])> + '_ {
         self.lines.iter().map(|(key, tiers)| (*key, tiers))
+    }
+
+    /// The rates this table was computed with.
+    ///
+    /// Carried rather than re-fetched because the table IS the market read and
+    /// these knobs together: the profile bridge reads
+    /// [`Knobs::combo_premium`] off it (POE-257 D5), and the explanation box
+    /// needs the two bonus rates to say which of its lines are a guess.
+    pub fn knobs(&self) -> &Knobs {
+        &self.knobs
+    }
+
+    /// The league the market read priced against, empty on a cold read.
+    /// Published beside every value (POE-260): a price is league-local, so a
+    /// number shown without one is a number nobody can check.
+    pub fn league(&self) -> &str {
+        &self.league
+    }
+
+    /// When the market read behind this table was last observed, in epoch ms.
+    /// `None` on a cold read — and on a stale one, which
+    /// [`MarketInput::as_of_ms`] still answers but which this table was built
+    /// from as if it carried nothing.
+    pub fn as_of_ms(&self) -> Option<i64> {
+        self.as_of_ms
+    }
+
+    /// The best tier-3 sale delta this table's grade ladder was anchored on,
+    /// or `None` on a cold or stale read (where the ladder is the absolute
+    /// one). Published so the audit trail can say which ladder ran.
+    pub fn top_sale_delta(&self) -> Option<f64> {
+        self.top_sale_delta
+    }
+}
+
+/// A tier index `0..=2` as a [`Tier`]. Private, and total by construction —
+/// the only caller iterates the three slots of a `[_; 3]`.
+fn tier_of(index: usize) -> Tier {
+    Tier::new(index as u8 + 1).expect("a [_; 3] index is 0..=2")
+}
+
+/// The best tier-3 sale delta this read carries, or `None`.
+///
+/// `None` says "do not re-anchor the grade ladder", and one expression answers
+/// it for every unusable market: a cold read carries no rooms, a live read
+/// where everything sits at the floor carries no positive delta, and a STALE
+/// read answers zero to every accessor by construction
+/// ([`MarketInput`]'s module header: staleness is enforced in one place, and a
+/// second check here would be a second answer to it).
+fn top_tier3_sale_delta(market: &MarketInput) -> Option<f64> {
+    if !market.prices_anything() {
+        return None;
+    }
+    let top = LINES
+        .iter()
+        .filter_map(|line| line.name(Tier::T3))
+        .map(|room| market.sale_delta(room, Tier::T3))
+        .fold(0.0, f64::max);
+    (top > 0.0).then_some(top)
+}
+
+/// The ceiling every rescaled grade rung is held under, or `None` for a read
+/// with nothing to hold it under.
+///
+/// The lowest tier-3 total among the rooms whose sale is ABOVE the floor — 390
+/// on the committed capture, where the two such rooms are Locus of Corruption
+/// (846) and Doryani's Institute (390). Without it a scaled A+ rung is 423 and
+/// outranks the 390 the feed actually printed, which is the letter beating the
+/// market that epic lock L1 forbids.
+///
+/// Sale-priced rooms rather than merely valued ones, and that is the recorded
+/// fork — see the module header. `None` where there is no such room (any read
+/// [`MarketInput::prices_anything`] calls cold — no poll yet, stale, no usable
+/// floor — or a board entirely at the floor), and there the scaled rung stands
+/// uncapped, because there is no printed price for it to be beating.
+///
+/// An above-floor room always sums its own sale, so valuing one here can never
+/// re-enter the fallback branch this result feeds — the recursion the missing
+/// arguments would otherwise imply cannot happen.
+fn fallback_cap(market: &MarketInput, knobs: &Knobs) -> Option<f64> {
+    if !market.prices_anything() {
+        return None;
+    }
+    LINES
+        .iter()
+        .filter(|line| {
+            let Some(room) = line.name(Tier::T3) else {
+                return false;
+            };
+            market
+                .room(room, Tier::T3)
+                .is_some_and(|quote| quote.above_floor)
+                && market.sale_delta(room, Tier::T3) > 0.0
+        })
+        .map(|line| value_tier3(line, market, knobs, None, None).total)
+        .fold(None, |lowest: Option<f64>, total| {
+            Some(lowest.map_or(total, |low| low.min(total)))
+        })
+}
+
+/// One room-tier on a read that priced nothing: its cold grade rung, alone.
+///
+/// Epic lock L4's "base value" — the ten rungs of
+/// [`Grade::fallback_chaos`](super::rooms::Grade::fallback_chaos) are the
+/// preset's stated table for a board with no market, and the whole board is
+/// read off it so that every room is ranked in the same unit. No other driver
+/// is listed: nothing was tried, because there was nothing to try it against.
+/// `guessed` is false for the same reason a Custom override's is — this is a
+/// stated number, not an inference about a market.
+/// One grade's rung on whichever ladder this read is entitled to.
+///
+/// The cold rung on a read that prices nothing, and on a live read the rung
+/// re-anchored on today's top delta and then held under the cheapest
+/// sale-priced room — the same two-step every fallback room takes, in one
+/// place so the ladder cannot mean two things on one board.
+fn rung(grade: Grade, live: bool, ladder_top: Option<f64>, cap: Option<f64>) -> f64 {
+    if !live {
+        return grade.fallback_chaos();
+    }
+    let rung = match ladder_top {
+        Some(top) => grade.fallback_chaos_scaled(top),
+        None => grade.fallback_chaos(),
+    };
+    match cap {
+        Some(cap) => rung.min(cap),
+        None => rung,
+    }
+}
+
+/// One of the two [`INSTRUMENTAL_LINES`], priced at its letter.
+///
+/// Temple Nexus is B+ and Shrine of Unmaking is D, and those two rungs are
+/// what the lines are worth — 100 and 2 cold, 105.75 and 2.115 on the
+/// committed capture. NOT what they drop: both rooms carry a small quantity
+/// bonus, and summing it would price the shrine that lifts a 846 c line at
+/// 6 c, below a junk C-grade room. What they are actually worth is the tiers
+/// they lift and the rooms they clear, and that reaches the score through
+/// `advisor::rollout`, which this does not touch.
+///
+/// The double-pay this deliberately accepts: the rollout ALREADY credits both
+/// effects, so the rung is paid on top of them. The evidence that the
+/// mechanical credit alone is too little is retrospective board 7, where the
+/// app recommended *upgrade to Armoury* over Sebastian's *change to Sanctum of
+/// Unity* — a 6 c junk room beating the shrine — under every priced profile
+/// until the rung was added
+/// (`advisor::tests::the_live_priced_profile_kills_this_on_every_walked_board`).
+/// A Custom override replaces the rung like any other room's value, and it
+/// reaches the ranking as well as the box.
+fn instrumental(
+    line: &RoomLine,
+    live: bool,
+    ladder_top: Option<f64>,
+    cap: Option<f64>,
+) -> RoomValue {
+    let grade = line.grade();
+    let chaos = rung(grade, live, ladder_top, cap);
+    RoomValue {
+        sale: 0.0,
+        drops: 0.0,
+        bonus: 0.0,
+        total: chaos,
+        drivers: vec![Driver {
+            kind: DriverKind::Instrumental,
+            // The letter, exactly as `GradeFallback` names it: the rung IS the
+            // grade, and the box's own wording for what that means belongs to
+            // the surface (POE-260), not to a data field.
+            name: grade.as_str().to_string(),
+            count: None,
+            unit_price: None,
+            chaos: Some(chaos),
+            // The same rule as the ladder: a live rung is an inference about
+            // this market, a cold one is the preset's stated base value.
+            guessed: live,
+            low_confidence: false,
+            window_priced: false,
+        }],
+        guessed: live,
+        priced: Priced::Instrumental,
+    }
+}
+
+fn cold_fallback(line: &RoomLine) -> RoomValue {
+    let grade = line.grade();
+    let chaos = grade.fallback_chaos();
+    RoomValue {
+        sale: 0.0,
+        drops: 0.0,
+        bonus: 0.0,
+        total: chaos,
+        drivers: vec![Driver {
+            kind: DriverKind::GradeFallback,
+            name: grade.as_str().to_string(),
+            count: None,
+            unit_price: None,
+            chaos: Some(chaos),
+            guessed: false,
+            low_confidence: false,
+            window_priced: false,
+        }],
+        guessed: false,
+        priced: Priced::Fallback,
+    }
+}
+
+/// One room-tier priced by the player rather than by the formula.
+///
+/// The single [`DriverKind::CustomOverride`] driver IS the whole accounting:
+/// the drivers a consumer prints must sum to the total it ranks on, and a
+/// stated number has no terms behind it to show.
+fn overridden(line: &RoomLine, tier: Tier, chaos: f64) -> RoomValue {
+    let total = rate(chaos);
+    RoomValue {
+        sale: 0.0,
+        drops: 0.0,
+        bonus: 0.0,
+        total,
+        drivers: vec![Driver {
+            kind: DriverKind::CustomOverride,
+            name: line
+                .name(tier)
+                .expect("an override names a tier-1..3 room")
+                .to_string(),
+            count: None,
+            unit_price: None,
+            chaos: Some(total),
+            guessed: false,
+            low_confidence: false,
+            window_priced: false,
+        }],
+        guessed: false,
+        priced: Priced::Override,
     }
 }
 
 // -------------------------------------------------------------- the formula --
 
-fn value_tier3(line: &RoomLine, market: &MarketInput, knobs: &Knobs) -> RoomValue {
+/// One room-tier on a LIVE read.
+///
+/// `ladder_top` anchors the grade ladder and `cap` holds it down; both are
+/// properties of the whole read and both are `None` where the read carries
+/// nothing to derive them from. A read that is not live never reaches here —
+/// [`cold_fallback`] answers for it.
+fn value_tier3(
+    line: &RoomLine,
+    market: &MarketInput,
+    knobs: &Knobs,
+    ladder_top: Option<f64>,
+    cap: Option<f64>,
+) -> RoomValue {
     let room = line
         .name(Tier::T3)
         .expect("every line has a tier-3 room name");
@@ -412,7 +813,10 @@ fn value_tier3(line: &RoomLine, market: &MarketInput, knobs: &Knobs) -> RoomValu
     let summed = sale + drops + bonus;
     if summed <= 0.0 {
         let grade = line.grade();
-        let ladder = grade.fallback_chaos();
+        // `value_tier3` only runs on a live read, so `rung` takes the anchored
+        // and capped branch — the same one `instrumental` takes, which is why
+        // they share it.
+        let ladder = rung(grade, true, ladder_top, cap);
         // The rung is the whole total, so it must be the whole accounting: a
         // term still carrying `Some(0.0)` would make the drivers the box
         // prints disagree with the number the advisor ranked on. Counts and
@@ -768,6 +1172,47 @@ mod tests {
         );
     }
 
+    /// The carried-down drivers are the TIER-3 row's, unscaled.
+    ///
+    /// This is the contract POE-260 has to render against, and it is
+    /// counter-intuitive on purpose: a tier-1 row's `tier_fraction` driver
+    /// carries the WHOLE total, and every other driver on it carries the
+    /// tier-3 number it was copied from. Scaling the clones would look tidier
+    /// and would be wrong twice over — the copies would then sum to the total
+    /// alongside the fraction driver that already is it, and the box would
+    /// print a Locus tier-1 room as 676.80 + 676.80.
+    ///
+    /// Fails the moment `scale_from_tier3` multiplies the copies.
+    #[test]
+    fn a_lower_tiers_carried_drivers_keep_the_tier_three_numbers() {
+        let valued = Valued::compute(&allflame(), &Knobs::default());
+        let t3 = value_of(&valued, "corruption", 3);
+        let t1 = value_of(&valued, "corruption", 1);
+
+        let carried: Vec<&Driver> = t1
+            .drivers
+            .iter()
+            .filter(|d| d.kind != DriverKind::TierFraction)
+            .collect();
+        assert_eq!(
+            carried.len(),
+            t3.drivers.len(),
+            "every tier-3 driver is carried down, and nothing else is",
+        );
+        for (copy, original) in carried.iter().zip(t3.drivers.iter()) {
+            assert_eq!(copy.kind, original.kind);
+            assert_eq!(copy.chaos, original.chaos, "{:?} was rescaled", copy.kind);
+            assert_eq!(copy.unit_price, original.unit_price);
+            assert_eq!(copy.count, original.count);
+        }
+        // And the one driver that IS the answer.
+        assert_eq!(
+            driver(&t1, DriverKind::TierFraction).chaos,
+            Some(t1.total),
+            "the fraction driver holds the total, so the clones must not",
+        );
+    }
+
     #[test]
     fn a_tier_fraction_above_one_cannot_make_a_lower_tier_beat_its_own_tier_three() {
         let knobs = Knobs {
@@ -859,7 +1304,12 @@ mod tests {
         );
 
         assert_eq!(value.priced, Priced::Fallback);
-        assert_eq!(value.total, 2.0);
+        // The D rung on the LIVE ladder: the capture's best tier-3 sale delta
+        // is Locus at 846, so every rung is 846/800 of its cold value
+        // (`Grade::fallback_chaos_scaled`). 2.0 here would mean the ladder had
+        // stopped moving with the feed.
+        assert_eq!(value.total, Grade::D.fallback_chaos_scaled(846.0));
+        assert!(close(value.total, 2.115), "total was {}", value.total);
         assert_eq!(value.sale, 0.0);
         assert_eq!(value.drops, 0.0);
         assert_eq!(value.bonus, 0.0);
@@ -881,7 +1331,12 @@ mod tests {
 
         assert!(close(value.total, 36.0), "total was {}", value.total);
         assert!(close(value.bonus, 36.0), "66 x 0.5 + 12 x 0.25");
-        assert_ne!(value.total, Grade::B.fallback_chaos(), "not the B rung");
+        assert_ne!(
+            value.total,
+            Grade::B.fallback_chaos_scaled(846.0),
+            "not the B rung — and the LIVE B rung, which is the one this read \
+             would have fallen back to",
+        );
         assert!(
             !value
                 .drivers
@@ -902,7 +1357,7 @@ mod tests {
         // at the floor, drops nothing, and its two percentages now price at 0,
         // so its C rung stands in. The terms stay listed — the percentages are
         // real — but one still carrying `Some(0)` would make the lines the box
-        // prints disagree with the 10 c the advisor ranked on.
+        // prints disagree with the 10.575 c the advisor ranked on.
         let knobs = Knobs {
             c_per_quantity: 0.0,
             c_per_rarity: 0.0,
@@ -911,7 +1366,12 @@ mod tests {
         let value = value_of(&Valued::compute(&allflame(), &knobs), "chamber_of_iron", 3);
 
         assert_eq!(value.priced, Priced::Fallback);
-        assert_eq!(value.total, 10.0);
+        // The C rung on the LIVE ladder, stated as a number as well as as an
+        // expression: an assertion written only in terms of
+        // `fallback_chaos_scaled` moves with any change to that function and
+        // could not fail.
+        assert_eq!(value.total, Grade::C.fallback_chaos_scaled(846.0));
+        assert!(close(value.total, 10.575), "total was {}", value.total);
         assert!(
             value
                 .drivers
@@ -925,70 +1385,349 @@ mod tests {
             .filter(|d| d.chaos.is_some())
             .map(|d| (d.kind, d.chaos))
             .collect();
-        assert_eq!(carried, vec![(DriverKind::GradeFallback, Some(10.0))]);
-    }
-
-    #[test]
-    fn with_no_market_a_feed_priced_room_falls_back_to_its_grade() {
-        let valued = Valued::compute(&MarketInput::none(), &Knobs::default());
-
-        assert_eq!(value_of(&valued, "corruption", 3).total, 800.0, "A++");
-        assert_eq!(value_of(&valued, "gem", 3).total, 400.0, "A+");
-        assert_eq!(value_of(&valued, "museum_of_artefacts", 3).total, 2.0, "D");
-
-        let still_priced: Vec<&str> = valued
-            .lines()
-            .filter(|(_, tiers)| tiers.iter().any(|v| v.priced != Priced::Fallback))
-            .map(|(key, _)| key)
-            .collect();
         assert_eq!(
-            still_priced,
-            vec![
-                "chamber_of_iron",
-                "conduit_of_lightning",
-                "crucible_of_flame",
-                "defense_research_lab",
-                "factory",
-                "glittering_halls",
-                "hall_of_champions",
-                "hybridisation_chamber",
-                "sanctum_of_immortality",
-                "upgrade",
-            ],
-            "exactly the lines whose value never came from the feed: poedb's              area bonuses, and Crucible's manually priced temple-mod item"
+            carried,
+            vec![(
+                DriverKind::GradeFallback,
+                Some(Grade::C.fallback_chaos_scaled(846.0))
+            )],
         );
     }
 
+    /// A read that prices nothing prices the WHOLE board off the cold ladder.
+    ///
+    /// Epic lock L4's "base value" is those ten rungs, and it is all of them:
+    /// the terms that survive a cold market — poedb's area bonuses, Crucible of
+    /// Flame's manually priced temple-mod item — are deliberately NOT summed
+    /// alongside a letter. Mixing them is what this module used to do, and it
+    /// put Sanctum of Immortality (grade A, 6 c of quantity bonus) under
+    /// Sadist's Den (grade C, 10 c of letter). Half a formula and half a ladder
+    /// is not a ranking in either unit.
+    ///
+    /// Fails the moment the bonus term is summed on a cold read again: Sanctum
+    /// reads 6 instead of 200, and Crucible reads 66 instead of 400.
     #[test]
-    fn a_manually_priced_term_survives_a_cold_market() {
-        // Crucible of Flame's temple-mod item is the one drop in the table
-        // priced from drops.rs's own base price rather than from poe.ninja,
-        // which prices no mod-rolled rare. Two gloves a run at 30 c stand
-        // whether or not the feed has spoken.
+    fn a_read_that_prices_nothing_reads_the_whole_board_off_the_cold_ladder() {
+        let valued = Valued::compute(&MarketInput::none(), &Knobs::default());
+
+        assert_eq!(valued.lines().count(), 25);
+        for (key, tiers) in valued.lines() {
+            let line = LINES
+                .iter()
+                .find(|line| line.key() == key)
+                .expect("every valued key is a room line");
+            assert_eq!(
+                tiers[2].total,
+                line.grade().fallback_chaos(),
+                "{key} is graded {}",
+                line.grade().as_str(),
+            );
+            // The two instrumental lines reach the SAME rung by a different
+            // route and say so: they are not priced at their letter because
+            // nothing was priced, but because their worth is the tiers they
+            // lift and the rooms they clear.
+            let instrumental = INSTRUMENTAL_LINES.contains(&line.mechanical_line());
+            assert_eq!(
+                tiers[2].priced,
+                if instrumental {
+                    Priced::Instrumental
+                } else {
+                    Priced::Fallback
+                },
+                "{key}",
+            );
+            assert!(
+                !tiers[2].guessed,
+                "{key}: a stated base value is not an inference about a market",
+            );
+            assert_eq!(
+                tiers[2].drivers.len(),
+                1,
+                "{key}: nothing was tried, so only the rung is listed",
+            );
+            assert_eq!(
+                tiers[2].drivers[0].kind,
+                if instrumental {
+                    DriverKind::Instrumental
+                } else {
+                    DriverKind::GradeFallback
+                },
+                "{key}",
+            );
+        }
+
+        // The order the ladder is FOR, spelled out on the rooms the epic
+        // argues about.
+        assert_eq!(value_of(&valued, "corruption", 3).total, 800.0, "Locus A++");
+        assert_eq!(value_of(&valued, "gem", 3).total, 400.0, "Doryani A+");
+        assert_eq!(
+            value_of(&valued, "crucible_of_flame", 3).total,
+            400.0,
+            "Crucible A+, and NOT the 66 its mod item plus bonus would sum to",
+        );
+        assert_eq!(
+            value_of(&valued, "sanctum_of_immortality", 3).total,
+            200.0,
+            "Sanctum A, and NOT the 6 its quantity bonus would sum to",
+        );
+        assert_eq!(value_of(&valued, "sadists_den", 3).total, 10.0, "C");
+        assert_eq!(
+            value_of(&valued, "upgrade", 3).total,
+            100.0,
+            "Temple Nexus B+, priced at its letter and NOT at its 6 c bonus",
+        );
+        assert!(
+            value_of(&valued, "sanctum_of_immortality", 3).total
+                > value_of(&valued, "sadists_den", 3).total,
+            "the inversion the rule exists to end",
+        );
+    }
+
+    /// A manually priced drop is not a market, and does not stand in for one.
+    ///
+    /// Crucible of Flame's temple-mod item is the one drop in the table priced
+    /// from `drops.rs`'s own base price rather than from poe.ninja, which
+    /// prices no mod-rolled rare. Two gloves a run at 30 c is a real number and
+    /// the box still shows it once a read arrives — but on a COLD read it is
+    /// the only number on the board, and 66 c of it would rank Crucible below
+    /// eleven rooms whose letters say it outranks them. Fails if the cold path
+    /// starts summing terms again.
+    #[test]
+    fn a_manually_priced_term_does_not_stand_in_for_a_cold_market() {
         let value = value_of(
             &Valued::compute(&MarketInput::none(), &Knobs::default()),
             "crucible_of_flame",
             3,
         );
 
-        assert_eq!(value.priced, Priced::Partial);
-        assert_eq!(driver(&value, DriverKind::ModItem).chaos, Some(60.0));
-        assert!(close(value.total, 66.0), "60 drops + 6 bonus, no sale");
+        assert_eq!(value.priced, Priced::Fallback);
+        assert_eq!(value.total, 400.0, "the A+ rung, not the 66 it can sum");
+        assert!(
+            !value.drivers.iter().any(|d| d.kind == DriverKind::ModItem),
+            "and nothing was tried, so nothing is listed: {:?}",
+            value.drivers,
+        );
+        // The same term, on a live read, still contributes — this is about the
+        // cold path only.
+        assert_eq!(
+            driver(
+                &value_of(
+                    &Valued::compute(&allflame(), &Knobs::default()),
+                    "crucible_of_flame",
+                    3
+                ),
+                DriverKind::ModItem
+            )
+            .chaos,
+            Some(60.0),
+        );
     }
 
+    /// On a live read a letter never exceeds the CHEAPEST sale-priced room.
+    ///
+    /// This is the property `Grade::fallback_chaos_scaled` cannot impose on its
+    /// own, and the reason `fallback_cap` exists. Anchored on the capture's 846
+    /// the A+ rung scales to 423, which is still above the 390 the feed prints
+    /// for Doryani's Institute — a third-party letter beating the market, which
+    /// epic lock L1 forbids.
+    ///
+    /// Crucible of Flame is the A+ line that can be pushed onto the fallback
+    /// path without touching the market: it sits at the floor, so zeroing the
+    /// drops weight and both bonus rates leaves it with nothing summed. Fails
+    /// if the cap is dropped — the room reads 423 and outranks Doryani.
     #[test]
-    fn a_stale_market_falls_back_even_though_it_carries_prices() {
+    fn the_live_ladder_never_prices_a_letter_above_the_cheapest_sale_priced_room() {
+        let knobs = Knobs {
+            drops_weight: 0.0,
+            c_per_quantity: 0.0,
+            c_per_rarity: 0.0,
+            ..Knobs::default()
+        };
+        let valued = Valued::compute(&allflame(), &knobs);
+
+        let crucible = value_of(&valued, "crucible_of_flame", 3);
+        assert_eq!(crucible.priced, Priced::Fallback, "precondition");
+        assert!(
+            Grade::APlus.fallback_chaos_scaled(846.0) > 390.0,
+            "precondition: the uncapped rung really would beat the feed",
+        );
+        assert_eq!(crucible.total, 390.0, "held at Doryani's printed 390");
+
+        // And the rule is the table's, not one room's.
+        for (key, tiers) in valued.lines() {
+            // Both rung-priced kinds: a room that summed nothing, and the two
+            // instrumental lines, which take the same ladder by a different
+            // route and are capped by the same rule.
+            if matches!(tiers[2].priced, Priced::Fallback | Priced::Instrumental) {
+                assert!(
+                    tiers[2].total <= 390.0,
+                    "{key} stands in at {} above the cheapest sale-priced room",
+                    tiers[2].total,
+                );
+            }
+        }
+    }
+
+    /// A letter can still outrank a room whose own MEASURED value is small,
+    /// and that is the shipped choice rather than an oversight.
+    ///
+    /// The cap is the lowest SALE-PRICED room, not the lowest valued one. Apex
+    /// of Ascension is B-, sums nothing and stands in at 31.7; Chamber of Iron
+    /// summed a real 6 c quantity bonus and stays at 6. The guess outranks the
+    /// measurement. Capping at the lowest MEASURED total instead would pull
+    /// every letter under 6 c on this capture and make the ladder inert for the
+    /// fifteen rooms nobody prices at all — an owner's fork, recorded here and
+    /// in `Grade::fallback_chaos_scaled`, not closed.
+    ///
+    /// Fails if someone tightens the cap to the lowest measured room without
+    /// taking that fork: Apex would drop to 6.
+    #[test]
+    fn the_cap_is_the_cheapest_sale_priced_room_and_not_the_cheapest_valued_one() {
+        let valued = Valued::compute(&allflame(), &Knobs::default());
+
+        let apex = value_of(&valued, "apex_of_ascension", 3);
+        let iron = value_of(&valued, "chamber_of_iron", 3);
+
+        assert_eq!(apex.priced, Priced::Fallback);
+        assert!(close(apex.total, 31.725), "B- scaled, was {}", apex.total);
+        assert_eq!(iron.priced, Priced::Market, "it summed a real bonus");
+        assert_eq!(iron.total, 6.0);
+        assert!(apex.total > iron.total, "the recorded residual");
+    }
+
+    /// With one of the two above-floor rooms pushed to the floor, the cap
+    /// becomes the one that is left.
+    ///
+    /// The rule is "the lowest sale-priced room", not "390". Take Doryani's
+    /// Institute down to the floor and Locus of Corruption is the only room the
+    /// feed still pays a premium for, so the cap is 846 — and the gem line,
+    /// which now sums nothing, stands in at its full scaled A+ rung of 423
+    /// rather than being held at 390.
+    ///
+    /// That 423 is the ACCEPTED RESIDUAL, documented as such: it is above every
+    /// measured room on the board except Locus, so a line whose feed price
+    /// collapsed is ranked by its letter well above rooms whose prices did not.
+    /// It is below the only printed premium left, which is the whole of what
+    /// the cap promises. Fails if the cap is hard-coded to the capture's 390.
+    #[test]
+    fn a_room_falling_to_the_floor_raises_the_cap_to_the_room_still_above_it() {
+        let mut market = allflame();
+        let quote = market
+            .rooms
+            .get_mut(&("Doryani's Institute".to_string(), 3))
+            .expect("the capture prices Doryani's Institute at tier 3");
+        quote.above_floor = false;
+        quote.sale_delta = 0.0;
+
+        let valued = Valued::compute(&market, &Knobs::default());
+
+        let gem = value_of(&valued, "gem", 3);
+        assert_eq!(gem.priced, Priced::Fallback, "its sale was its whole value");
+        assert!(
+            close(gem.total, Grade::APlus.fallback_chaos_scaled(846.0)),
+            "the uncapped A+ rung, was {}",
+            gem.total,
+        );
+        assert!(close(gem.total, 423.0), "was {}", gem.total);
+        assert!(
+            gem.total < value_of(&valued, "corruption", 3).total,
+            "and still under the one room the feed pays a premium for",
+        );
+    }
+
+    /// A read with a broken floor is a cold read, on the WHOLE board.
+    ///
+    /// The floor is the median of all 86 room-tier lines, so zero is not a
+    /// market anybody can trade into — it is an empty or broken feed. The
+    /// dangerous shape is not the floor being ignored outright but the board
+    /// being ranked in two units at once: with the floor guarded only inside
+    /// the ladder anchor and the cap, a payload like this would still SUM its
+    /// own `saleDelta`s while every unpriced room took the cold, UNCAPPED rung
+    /// — Temple Nexus standing at 100 over rooms the feed prices at 3.
+    ///
+    /// Fails if the floor term is dropped from `MarketInput::prices_anything`:
+    /// Locus reads its wire delta instead of its 800 rung, and Temple Nexus
+    /// stops being capped.
+    #[test]
+    fn a_read_with_no_usable_floor_reads_the_same_cold_ladder_as_no_market() {
+        for floor in [0.0, -1.0, f64::NAN] {
+            let mut market = allflame();
+            market.floor = floor;
+            assert!(market.is_live(), "precondition: nothing else is wrong");
+            assert!(!market.rooms.is_empty(), "precondition: it carries rooms");
+
+            let broken = Valued::compute(&market, &Knobs::default());
+            let cold = Valued::compute(&MarketInput::none(), &Knobs::default());
+
+            for (key, tiers) in broken.lines() {
+                let same = cold.get(key, Tier::T3).expect("valued");
+                assert_eq!(tiers[2].total, same.total, "floor {floor}: {key}");
+                assert_eq!(tiers[2].priced, same.priced, "floor {floor}: {key}");
+            }
+            assert_eq!(broken.top_sale_delta(), None, "floor {floor}: no anchor");
+        }
+    }
+
+    /// A stale read is a cold read: the same whole-board cold ladder, not the
+    /// stale prices and not the scaled rungs.
+    ///
+    /// Epic lock L4 names stale and missing in one breath, and every accessor
+    /// on `MarketInput` already answers as absent while `stale` is set. Fails
+    /// if a stale read reaches the live path — Locus would read its stale 846,
+    /// or the rungs would be re-anchored on it.
+    #[test]
+    fn a_stale_market_reads_the_same_cold_ladder_as_no_market_at_all() {
         let mut market = allflame();
         market.stale = true;
 
-        let value = value_of(
-            &Valued::compute(&market, &Knobs::default()),
-            "corruption",
-            3,
+        let stale = Valued::compute(&market, &Knobs::default());
+        let cold = Valued::compute(&MarketInput::none(), &Knobs::default());
+
+        assert_eq!(value_of(&stale, "corruption", 3).total, 800.0, "A++");
+        for (key, tiers) in stale.lines() {
+            let same = cold.get(key, Tier::T3).expect("valued");
+            assert_eq!(tiers[2].total, same.total, "{key}");
+            assert_eq!(tiers[2].priced, same.priced, "{key}");
+        }
+    }
+
+    #[test]
+    fn a_stale_read_publishes_no_price_age_and_no_ladder_anchor() {
+        // A stale read contributed no price to any total — every room on it
+        // fell back to the grade ladder. Publishing its `asOf` anyway would
+        // date the valuation to a market it did not use, and the overlay's
+        // "priced N minutes ago" line would be about numbers that came from a
+        // letter grade.
+        let mut market = allflame();
+        market.stale = true;
+        assert_eq!(
+            market.as_of_ms(),
+            Some(1_788_665_199_649),
+            "precondition: the read itself still knows when it was taken",
         );
 
-        assert_eq!(value.priced, Priced::Fallback);
-        assert_eq!(value.total, 800.0, "the A++ rung, not the stale 846");
+        let valued = Valued::compute(&market, &Knobs::default());
+
+        assert_eq!(valued.as_of_ms(), None);
+        assert_eq!(valued.top_sale_delta(), None, "and nothing to anchor on");
+        assert_eq!(valued.league(), "Allflame", "the league is still a fact");
+    }
+
+    #[test]
+    fn a_live_read_publishes_its_age_and_the_delta_the_ladder_was_anchored_on() {
+        let valued = Valued::compute(&allflame(), &Knobs::default());
+
+        assert_eq!(valued.as_of_ms(), Some(1_788_665_199_649));
+        assert_eq!(valued.top_sale_delta(), Some(846.0), "Locus of Corruption");
+    }
+
+    #[test]
+    fn a_cold_read_has_no_anchor_and_no_age() {
+        let valued = Valued::compute(&MarketInput::none(), &Knobs::default());
+
+        assert_eq!(valued.as_of_ms(), None);
+        assert_eq!(valued.top_sale_delta(), None);
+        assert_eq!(valued.league(), "");
     }
 
     #[test]

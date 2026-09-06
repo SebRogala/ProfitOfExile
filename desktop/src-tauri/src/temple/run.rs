@@ -3433,12 +3433,23 @@ fn full_read(
         Some(kept) => slice::merge_reads(&kept, fresh),
         None => fresh,
     };
+    // ONE valuation for this read, handed to the ranking AND to the offer
+    // boxes below (POE-257 D6). Two calls would let the number on screen come
+    // from a market read the recommendation never saw.
+    //
+    // `MarketInput::none()` until POE-258 lands the poll: with no market every
+    // room falls back to its grade ladder value rather than to zero, which is
+    // epic lock L4 and is what makes this a working ranking rather than a
+    // placeholder. The tick must not fetch it — `docs/TEMPLE-LIFECYCLE.md`
+    // forbids HTTP here — so it arrives from the poller as state.
+    let valuation = slice::value_read(settings, &crate::temple::market::MarketInput::none());
     let advice = slice::advise_read(
         &read.layout,
         &read.rooms,
         &read.panel,
         read.settled.as_ref(),
         settings,
+        &valuation,
     );
 
     let projected = slice::project(
@@ -3456,6 +3467,9 @@ fn full_read(
             // setters' own `rearm` forces the next read, which restores it.
             config: settings.config.clone(),
             profile: settings.profile.clone(),
+            preset: settings.preset,
+            custom: settings.custom.clone(),
+            valuation: &valuation,
             read_at: now_ms(),
         },
         // The calibration THIS capture measured, which is what the page's

@@ -103,12 +103,10 @@ impl Grade {
     /// stops meaning what it meant as the league ages and the currency moves.
     /// 800 c was two thirds of Locus on 2026-09-06; it will be a different
     /// fraction of it next month, and the ladder will quietly re-rank the
-    /// unpriced rooms against the priced ones without anyone editing it. The
-    /// proposed replacement, for POE-257 WI-2 or the owner to decide: express
-    /// each rung as a FRACTION of the live read's top tier-3 sale delta, so
-    /// the ladder rescales with the feed, and keep these absolute numbers only
-    /// for a cold read that has no top delta to take a fraction of.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
+    /// unpriced rooms against the priced ones without anyone editing it.
+    /// [`Self::fallback_chaos_scaled`] is the answer, and it is what a live
+    /// read uses; these ten numbers are the COLD ladder, kept for the read
+    /// that has no top delta to take a fraction of.
     pub fn fallback_chaos(self) -> f64 {
         match self {
             Grade::D => 2.0,
@@ -122,6 +120,58 @@ impl Grade {
             Grade::APlus => 400.0,
             Grade::APlusPlus => 800.0,
         }
+    }
+
+    /// [`Self::fallback_chaos`] re-anchored on what the feed is paying TODAY.
+    ///
+    /// `top_sale_delta` is the best tier-3 sale delta in the live market read.
+    /// Every rung is multiplied by `top_sale_delta / 800`, so A++ equals that
+    /// delta and the ratios between the ten rungs are the ones
+    /// [`Self::fallback_chaos`] fixes — the ladder moves with the feed instead
+    /// of standing still while the currency does.
+    ///
+    /// **Why this exists rather than the ten absolute numbers alone.** The
+    /// absolute rungs reproduce an inversion the epic's L1 lock forbids: at
+    /// `Grade::APlus` = 400 an A+ line that summed NOTHING outranks Doryani's
+    /// Institute, whose 390 the feed actually printed. That is a third-party
+    /// letter beating the market, and it is structural — not a property of the
+    /// 2026-09-06 capture, where it happens not to fire because both A+ lines
+    /// price something.
+    ///
+    /// # What the rescale does and does not guarantee
+    ///
+    /// Rescaling alone does NOT keep a letter under the feed, and this doc
+    /// used to claim it did. A++ equals the top sale delta by construction, so
+    /// on the committed capture A+ scales to 423 — still above the 390 the
+    /// feed pays for Doryani's Institute. The guarantee is imposed one layer
+    /// up, by [`crate::temple::valuation::Valued`], which CAPS every fallback
+    /// room at the lowest tier-3 total among the rooms whose sale is above the
+    /// floor. What holds, exactly:
+    ///
+    /// - on a live read a letter never exceeds the LOWEST sale-priced room
+    ///   (390 on the capture, so the 423 above becomes 390);
+    /// - a letter CAN still outrank a room whose own measured value is small.
+    ///   Apex of Ascension is B− and summed nothing, so it stands in at 31.7;
+    ///   Chamber of Iron summed a real 6 c quantity bonus and stays at 6. The
+    ///   letter wins, and it is a guess beating a measurement.
+    ///
+    /// That second bullet is the **owner's open fork**, recorded rather than
+    /// closed: the alternative rule is to cap at the lowest MEASURED room
+    /// rather than the lowest SALE-PRICED one, which would pull every letter
+    /// under 6 c on this capture and make the ladder almost inert. Neither
+    /// choice is measured; the shipped one keeps the ladder useful for the ~15
+    /// rooms nobody prices at all.
+    ///
+    /// A non-finite or non-positive `top_sale_delta` is not a read to anchor
+    /// on, and falls back to [`Self::fallback_chaos`] — that is the cold-read
+    /// path, and the caller ([`crate::temple::valuation::Valued`]) also
+    /// withholds a stale read's delta so a stale market cannot re-anchor the
+    /// ladder either.
+    pub fn fallback_chaos_scaled(self, top_sale_delta: f64) -> f64 {
+        if !top_sale_delta.is_finite() || top_sale_delta <= 0.0 {
+            return self.fallback_chaos();
+        }
+        self.fallback_chaos() * (top_sale_delta / Grade::APlusPlus.fallback_chaos())
     }
 }
 
@@ -1006,6 +1056,59 @@ mod tests {
                 better.fallback_chaos(),
                 worse.as_str(),
                 worse.fallback_chaos()
+            );
+        }
+    }
+
+    /// The top rung IS the read's best sale delta, and 800 is the one delta
+    /// that leaves the ladder where it stands.
+    ///
+    /// The boundary matters because the two ladders have to be the same object
+    /// seen from two sides: a scaled ladder that did not reduce to the cold
+    /// one at its own anchor would silently re-rank every unpriced room the
+    /// first time a market read arrived.
+    #[test]
+    fn the_scaled_ladder_is_the_cold_ladder_at_its_own_anchor() {
+        let top = Grade::APlusPlus.fallback_chaos();
+
+        assert_eq!(Grade::APlusPlus.fallback_chaos_scaled(top), top);
+        assert_eq!(Grade::D.fallback_chaos_scaled(top), Grade::D.fallback_chaos());
+        assert_eq!(Grade::A.fallback_chaos_scaled(top), Grade::A.fallback_chaos());
+    }
+
+    /// Every rung is the same share of the anchor that it is of 800.
+    ///
+    /// This is the arithmetic and nothing more. The claim this test used to
+    /// make — "a letter stays below the feed" — is FALSE of the rescale on its
+    /// own: anchored on the capture's 846, A+ scales to 423, which is above
+    /// the 390 the feed pays for Doryani's Institute. The property that does
+    /// hold is imposed by the cap in `valuation::Valued`, and it is tested
+    /// through the real chain there
+    /// (`the_live_ladder_never_prices_a_letter_above_the_cheapest_sale_priced_room`).
+    #[test]
+    fn every_scaled_rung_is_its_cold_share_of_the_anchor() {
+        let anchor = 390.0;
+        let share = anchor / Grade::APlusPlus.fallback_chaos();
+
+        assert_eq!(Grade::APlus.fallback_chaos_scaled(anchor), 400.0 * share);
+        assert_eq!(Grade::C.fallback_chaos_scaled(anchor), 10.0 * share);
+        assert_eq!(
+            Grade::APlusPlus.fallback_chaos_scaled(anchor),
+            anchor,
+            "the top rung IS the anchor",
+        );
+    }
+
+    /// A read with no top delta is not a read to anchor on, and falls back to
+    /// the cold rungs rather than to zero — which would price every unpriced
+    /// room in the game at nothing the moment a market went quiet.
+    #[test]
+    fn a_read_with_no_top_delta_leaves_the_cold_ladder_standing() {
+        for top in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                Grade::A.fallback_chaos_scaled(top),
+                Grade::A.fallback_chaos(),
+                "top delta {top} is not an anchor",
             );
         }
     }

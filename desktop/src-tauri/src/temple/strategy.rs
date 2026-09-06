@@ -120,6 +120,40 @@ impl Line {
     }
 }
 
+/// The two lines whose worth is what they DO, not what they drop (POE-257).
+///
+/// The upgrade line moves tiers and the explosives line moves reachability,
+/// and both effects reach the score through the rollout —
+/// `rollout::UPGRADE_TARGETS` and `rollout::CHARGES`, untouched. What the
+/// rooms themselves drop is a small quantity bonus: Temple Nexus is worth 6 c
+/// of it on the 2026-09-06 capture, which is what a junk C-grade room is
+/// worth, and which is not what a player is buying when they take the shrine
+/// that lifts a 846 c line by a tier.
+///
+/// So `valuation::instrumental` prices these two at their GRADE RUNG instead —
+/// Temple Nexus B+ (100 cold, 105.75 on the capture), Shrine of Unmaking D
+/// (2, 2.115) — and the bridge copies that into
+/// [`StrategyProfile::room_values`] like any other line.
+///
+/// # The double payment, and why it is the accepted trade
+///
+/// The rollout already credits both effects, so the rung is paid on top of
+/// them. The evidence that the mechanical credit alone is too little is
+/// retrospective board 7: while these lines scored zero, the app recommended
+/// *upgrade to Armoury* (Chamber of Iron, 6 c) over Sebastian's *change to
+/// Sanctum of Unity*, on the cold board and on the capture alike — his own
+/// recorded miss, reproduced. The two architects fell inside one noise band
+/// 39 c wide and R4 broke the tie the wrong way; the rung separates them past
+/// the band. The cost is visible and is not hidden: Temple Nexus is now the
+/// THIRD most valuable tier-3 room on the capture, above two rooms the feed
+/// actually prices. The better model — valuing a `change` onto one of these
+/// lines by its own downstream effect — needs the board's upgrade-reachable
+/// set at scoring time, which `room_values` has no shape for.
+///
+/// Beside [`Line`] rather than beside either caller, because the valuation and
+/// the tests both ask the question.
+pub const INSTRUMENTAL_LINES: [Line; 2] = [Line::Upgrade, Line::Explosive];
+
 // Serialised as its bare key rather than as a Rust enum: `room_values` is a map
 // KEYED by `Line`, and serde_json rejects a non-string map key — the derived
 // representation of `Other(String)` is an object, so a derive here would make
@@ -315,7 +349,73 @@ pub struct StrategyProfile {
     pub r4_keep_upgrade_targets: bool,
 }
 
+/// The top tier-3 room value the abstract constants around
+/// [`StrategyProfile`] are stated against.
+///
+/// [`StrategyProfile::locus_doryani_rush`] prices its best room-tier — Locus of
+/// Corruption III — at 9 on Sebastian's 1–10 outcome ranking, and every other
+/// magnitude in the engine was chosen next to that 9. POE-257 re-denominates
+/// `room_values` in CHAOS, where the same room is worth 846, so each of them
+/// has to move with it or become dust. [`StrategyProfile::value_scale`] is the
+/// multiplier, and these are ALL FIVE magnitudes it is applied to — a sixth
+/// added to the engine without a row here is a constant that will quietly stop
+/// meaning what it meant:
+///
+/// | Constant | Stated value | Where it is scaled |
+/// |---|---|---|
+/// | [`StrategyProfile::apex_score`] | 2.0 (a settings field) | `slice::TempleProfileSettings::to_profile` |
+/// | [`StrategyProfile::apex_mixed_increment`] | 0.5 | `slice::TempleProfileSettings::to_profile` |
+/// | [`StrategyProfile::room_baseline`] | 0.05 | `slice::TempleProfileSettings::to_profile` |
+/// | [`StrategyProfile::path_cost`] | 0.0 for the Rush (a settings field) | `slice::TempleProfileSettings::to_profile` |
+/// | [`rules::NOISE_FLOOR`](super::advisor::rules::NOISE_FLOOR) | 0.05 | `rules::noise_margin` |
+///
+/// [`StrategyProfile::blast_discount`] is deliberately NOT on the list: it is a fraction
+/// of a score difference, so it is already scale-free. Neither is
+/// `rollout::Valuation::lost_threshold`, which is DERIVED from `room_values`
+/// and therefore moves with them by construction.
+///
+/// # What the rescale preserves, and what it does not
+///
+/// Every ratio to the TOP room survives exactly — that is the definition of
+/// the multiplier. Ratios to the BOTTOM of the board do not, and
+/// [`StrategyProfile::room_baseline`] is where that shows: 0.05 of a 9-point ranking is
+/// 4.44 c beside a cold ladder whose top rung is 800, which is more than a
+/// D-grade tier-3 room is worth (2 c). So on a board of nothing but junk, "open
+/// one more room" outweighs "the room you opened". That is an accepted side
+/// effect of stating the constant as a fraction of the top rather than of the
+/// floor; the owner may lower `room_baseline` if the RD term starts deciding
+/// junk boards, and no code change is needed to do it.
+pub const REFERENCE_TOP_ROOM_VALUE: f64 = 9.0;
+
 impl StrategyProfile {
+    /// How many of THIS profile's value units one unit of the reference 1–10
+    /// ranking is worth (POE-257 D5).
+    ///
+    /// `1.0` for [`Self::locus_doryani_rush`] by construction, so every
+    /// constant expressed as a multiple of it is bit-identical to the number
+    /// it replaced on the profile the pinned suites rank with. For a
+    /// chaos-denominated profile it is `top tier-3 value / 9`, which is what
+    /// turns "0.05 of a 10-point scale" into "the same fraction of what this
+    /// player's best room is actually worth".
+    ///
+    /// A profile whose rooms are all worth nothing — a Custom table zeroed
+    /// outright — has no scale to take, and answers `1.0` rather than `0`:
+    /// zeroing the noise floor would make the priority chain decide every
+    /// board on sampling noise, which is a much larger change than the player
+    /// asked for.
+    pub fn value_scale(&self) -> f64 {
+        let top = self
+            .room_values
+            .values()
+            .map(|values| values[2])
+            .fold(0.0, f64::max);
+        if top.is_finite() && top > 0.0 {
+            top / REFERENCE_TOP_ROOM_VALUE
+        } else {
+            1.0
+        }
+    }
+
     /// Sebastian's Locus / Doryani Rush.
     ///
     /// The numbers are his measured outcome ranking (1–10): Locus of Corruption

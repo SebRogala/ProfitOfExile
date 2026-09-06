@@ -31,7 +31,7 @@
 //!   [`LayoutView::unresolved_incident`] instead of being silently included or
 //!   silently dropped. See [`super::run::diamond_rect`].
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -42,10 +42,13 @@ use super::anchor::AnchorCalibration;
 use super::doors::Confidence;
 use super::lattice::{Edge, Lattice, Slot};
 use super::markers;
+use super::market::MarketInput;
 use super::panel::{ARCHITECTS_PER_PANEL, ArchitectOffer, PanelReading, RoomReading};
+use super::preset::{self, Preset, TempleCustomSettings};
 use super::reader::TempleLayout;
 use super::rooms::{self, Match, OfferKind, RoomIdentity};
-use super::strategy::{Mode, StrategyProfile, TempleConfig, Tier};
+use super::strategy::{Combination, Line, Mode, StrategyProfile, TempleConfig, Tier};
+use super::valuation::{Driver, DriverKind, RoomValue, Valued};
 
 // ---------------------------------------------------------------- settings --
 
@@ -59,9 +62,21 @@ use super::strategy::{Mode, StrategyProfile, TempleConfig, Tier};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TempleProfileSettings {
-    /// What the Apex is worth on its own.
+    /// What the Apex is worth on its own, **in units where the top tier-3 room
+    /// is worth 9** ([`REFERENCE_TOP_ROOM_VALUE`](super::strategy::REFERENCE_TOP_ROOM_VALUE)).
+    ///
+    /// Relative, not chaos, and deliberately so: 2.0 means "the Apex is worth
+    /// a bit under a quarter of the best room on the board", which is a
+    /// judgement that survives the currency moving and a league ending. The
+    /// bridge multiplies it by
+    /// [`StrategyProfile::value_scale`](super::strategy::StrategyProfile::value_scale)
+    /// so the same 2.0 is 188 c beside a top room worth 846. POE-259's control
+    /// must label it in these units — a slider that reads "2" next to a board
+    /// of three-figure chaos numbers is a slider nobody can set.
     pub apex_score: f64,
-    /// Run-time traversal weight per BFS hop from the Entrance. 0 for the Rush.
+    /// Run-time traversal weight per BFS hop from the Entrance, in the SAME
+    /// relative units as [`Self::apex_score`]: 9 is the top tier-3 room. 0 for
+    /// the Rush (rush in, grab the room, leave).
     pub path_cost: f64,
     /// Prefer `change` over `upgrade` while no favourable line exists.
     pub reroll_until_favourable: bool,
@@ -96,14 +111,129 @@ impl Default for TempleProfileSettings {
 pub const KEYS_IN_HAND: u8 = 1;
 
 impl TempleProfileSettings {
-    /// The Rush with these four fields applied.
-    pub fn to_profile(&self) -> StrategyProfile {
+    /// The Rush's structure, priced in chaos from `valuation` (POE-257 D5).
+    ///
+    /// Three things happen here, and the third is the one that is easy to
+    /// miss.
+    ///
+    /// 1. **`room_values` becomes the whole board.** All 25 lines at all three
+    ///    tiers, in chaos, keyed through
+    ///    [`RoomLine::mechanical_line`](super::rooms::RoomLine::mechanical_line)
+    ///    so the four mechanical keys resolve to their own variants and the
+    ///    other 21 to `Line::Other(key)`. No exceptions, including the two
+    ///    [`INSTRUMENTAL_LINES`](super::strategy::INSTRUMENTAL_LINES): the
+    ///    valuation prices those at their grade rung
+    ///    (`valuation::instrumental` — Temple Nexus 100 cold, 105.75 on the
+    ///    capture) and the bridge copies that like any other line, so the
+    ///    number the box shows is the number the ranking used for every one of
+    ///    the 25.
+    /// 2. **The combination is gone by default.** The orchestrator settled
+    ///    that Locus + Doryani is worth the sum of the two above-floor deltas
+    ///    and no more, and the per-room sum already IS that sum. A
+    ///    [`Combination`] REPLACES the sum rather than adding to it, so
+    ///    emitting one worth exactly the sum would be a no-op on a two-room
+    ///    board and a silent deletion of every other line's value on a real
+    ///    one. Only a non-zero [`Knobs::combo_premium`](super::preset::Knobs::combo_premium)
+    ///    brings it back — and it carries that same replacement rule with it,
+    ///    which is the price of stating a premium at all.
+    /// 3. **Every absolute magnitude is rescaled.** `apex_score`,
+    ///    `apex_mixed_increment`, `room_baseline` and `path_cost` were all
+    ///    chosen against a top room worth 9 (see
+    ///    [`REFERENCE_TOP_ROOM_VALUE`](super::strategy::REFERENCE_TOP_ROOM_VALUE));
+    ///    left alone next to a top room worth 846 they would be dust, and RD
+    ///    would stop being able to say "open something beats opening nothing".
+    ///    `blast_discount` is a fraction of a score difference and is left
+    ///    exactly as it is, and so is `mode_rule`, which names lines rather
+    ///    than pricing them.
+    ///
+    /// # The two instrumental lines are paid twice, on purpose
+    ///
+    /// `rollout::UPGRADE_TARGETS` and `CHARGES` already credit what the
+    /// upgrade and explosives lines DO — the tiers they lift, the rooms they
+    /// clear — and this bridge now also copies their grade rung into
+    /// `room_values`. That is a double payment, and it is the accepted trade,
+    /// with retrospective board 7 as the evidence: while those two lines
+    /// scored zero, the app recommended *upgrade to Armoury* (Chamber of Iron,
+    /// 6 c of quantity bonus) over Sebastian's *change to Sanctum of Unity*,
+    /// on the cold board and on the capture alike. The mechanical credit alone
+    /// did not survive a noise band 39 c wide. The alternative — valuing a
+    /// `change` onto an instrumental line by its own downstream effect — needs
+    /// the board's upgrade-reachable set at scoring time, which `room_values`
+    /// has no shape for; it is the better model and a larger change.
+    ///
+    /// What the rung is NOT is the room's own drops: `valuation::instrumental`
+    /// deliberately refuses to sum Temple Nexus's 6 c quantity bonus, which is
+    /// the number that produced the board-7 miss in the first place.
+    ///
+    /// # `mode_rule` is not a valuation and does not become one
+    ///
+    /// It stays [`ModeRule::LinesConnected`](super::strategy::ModeRule)
+    /// `[Corruption, Gem]` whatever the player prices those two lines at. The
+    /// rule decides when the build flips from chasing to scarab-farming, and
+    /// RV — the hard constraint that refuses to bank an unreachable target —
+    /// reads the same two lines. A Custom table that prices both of them at
+    /// zero therefore does NOT stop the advisor protecting them; it only stops
+    /// them scoring. That is a real gap between what the table says and what
+    /// the advisor does, so
+    /// [`TempleCustomSettings::overrides`](super::preset::TempleCustomSettings::overrides)
+    /// warns about exactly that pair rather than letting the player discover
+    /// it on a board.
+    ///
+    /// [`StrategyProfile::locus_doryani_rush`] is untouched and stays the
+    /// fixture the pinned 10/9/7/2 suites rank with.
+    pub fn to_profile(&self, valuation: &Valued) -> StrategyProfile {
+        let rush = StrategyProfile::locus_doryani_rush();
+
+        let mut room_values = BTreeMap::new();
+        for line in rooms::LINES.iter() {
+            room_values.insert(
+                line.mechanical_line(),
+                [
+                    tier_total(valuation, line.key(), Tier::T1),
+                    tier_total(valuation, line.key(), Tier::T2),
+                    tier_total(valuation, line.key(), Tier::T3),
+                ],
+            );
+        }
+
+        // Only a POSITIVE premium builds a combination. Zero is the default
+        // and means "the pair is the sum of its two deltas", which the
+        // per-room sum already says. Negative is refused rather than honoured:
+        // a `Combination` REPLACES the sum, so a premium of -500 would make
+        // reaching Locus AND Doryani score less than reaching Locus alone —
+        // an inversion no player is asking for, reachable only from a
+        // hand-edited file, and not a thing the UI can express. Non-finite is
+        // refused for the reason every float in the ranking is checked: one
+        // `NaN` makes the whole ordering arbitrary.
+        let premium = valuation.knobs().combo_premium;
+        let combinations = if premium.is_finite() && premium > 0.0 {
+            vec![Combination {
+                requires: vec![(Line::Corruption, Tier::T3), (Line::Gem, Tier::T3)],
+                score: tier_total(valuation, "corruption", Tier::T3)
+                    + tier_total(valuation, "gem", Tier::T3)
+                    + premium,
+            }]
+        } else {
+            Vec::new()
+        };
+
+        // Built first so the scale is read off the values that will actually
+        // be ranked, rather than from a second copy of the same maximum.
+        let scaled = StrategyProfile {
+            room_values,
+            combinations,
+            ..rush.clone()
+        };
+        let scale = scaled.value_scale();
+
         StrategyProfile {
-            apex_score: self.apex_score,
-            path_cost: self.path_cost,
+            apex_score: self.apex_score * scale,
+            apex_mixed_increment: rush.apex_mixed_increment * scale,
+            room_baseline: rush.room_baseline * scale,
+            path_cost: self.path_cost * scale,
             reroll_until_favourable: self.reroll_until_favourable,
             r4_keep_upgrade_targets: self.r4_keep_upgrade_targets,
-            ..StrategyProfile::locus_doryani_rush()
+            ..scaled
         }
     }
 
@@ -118,18 +248,30 @@ impl TempleProfileSettings {
     pub fn validate(&self) -> Result<(), String> {
         if !self.apex_score.is_finite() || self.apex_score < 0.0 {
             return Err(format!(
-                "apex_score must be a finite number ≥ 0, got {}",
+                "apex_score must be a finite number ≥ 0 in units where the top \
+                 tier-3 room is worth 9, got {}",
                 self.apex_score
             ));
         }
         if !self.path_cost.is_finite() || self.path_cost < 0.0 {
             return Err(format!(
-                "path_cost must be a finite number ≥ 0, got {}",
+                "path_cost must be a finite number ≥ 0 in units where the top \
+                 tier-3 room is worth 9, got {}",
                 self.path_cost
             ));
         }
         Ok(())
     }
+}
+
+/// One room-tier's chaos total, or `0.0`.
+///
+/// The zero is not a default standing in for a missing number: [`Valued`]
+/// tables every one of the 25 keys at all three tiers by construction, so a
+/// miss here would be a key that is not a room line — a line the board can
+/// never hold, and therefore worth nothing on it.
+fn tier_total(valuation: &Valued, key: &str, tier: Tier) -> f64 {
+    valuation.get(key, tier).map_or(0.0, |value| value.total)
 }
 
 /// Everything the temple module persists — the user's profile tuning and the
@@ -153,6 +295,13 @@ impl TempleProfileSettings {
 pub struct TempleSettings {
     pub profile: TempleProfileSettings,
     pub config: TempleConfig,
+    /// Which valuation is in force (POE-257 D4).
+    pub preset: Preset,
+    /// The Custom preset's rates and per-room overrides — kept whether or not
+    /// Custom is the preset in force, which is the whole reason it is a field
+    /// of its own: switching away and back has to return the player's numbers
+    /// unchanged.
+    pub custom: TempleCustomSettings,
 }
 
 // ------------------------------------------------------------- wire types --
@@ -422,6 +571,94 @@ pub struct OfferView {
     /// for a monitor-sized overlay: the same unit as `LayoutView::origin` and
     /// `centres`, and no conversion for a surface drawing over the game.
     pub rect: Option<[i32; 4]>,
+    /// What this kill's room is worth, in chaos, **from the same table the
+    /// ranking used** (POE-257 D6). `None` when the printed target did not
+    /// resolve — the same silence as [`display_name`](Self::display_name).
+    ///
+    /// "The same table" is exact and has no exceptions left: the two
+    /// [`INSTRUMENTAL_LINES`](super::strategy::INSTRUMENTAL_LINES) used to be
+    /// worth what this field said while scoring zero in `room_values`, and
+    /// since the board-7 fix they are priced at their grade rung and copied
+    /// into `room_values` like every other line.
+    ///
+    /// `serde(default)` so a payload from a build before POE-257 decodes as
+    /// "no value" rather than failing the whole slice.
+    #[serde(default)]
+    pub value: Option<RoomValueView>,
+}
+
+/// One room-tier's chaos value and the terms behind it, on the wire.
+///
+/// The audit trail is the point, exactly as it is for `RankedView::reasons`: a
+/// number the player cannot take apart is a number they cannot disagree with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomValueView {
+    /// Chaos. The number the advisor ranked this room on — every line,
+    /// including the two
+    /// [`INSTRUMENTAL_LINES`](super::strategy::INSTRUMENTAL_LINES), which are
+    /// priced at their grade rung and copied into `room_values` like any
+    /// other. There is no line whose shown value differs from its ranked one.
+    pub total: f64,
+    /// `"market"`, `"partial"`, `"fallback"` or `"override"` — how complete
+    /// the sum behind [`Self::total`] is
+    /// ([`Priced`](super::valuation::Priced)).
+    pub priced: String,
+    /// Whether any term that actually contributed chaos rests on somebody's
+    /// estimate — a guessed drop count, one of the two unmeasured bonus rates,
+    /// or the grade ladder.
+    pub guessed: bool,
+    /// The league the prices came from, `""` on a cold read. A price is
+    /// league-local, so a value shown without one cannot be checked.
+    pub league: String,
+    /// When the market behind this value was last observed, unix ms. `null` on
+    /// a cold read AND on a stale one — a stale read prices nothing, so it has
+    /// no age to show.
+    pub as_of: Option<i64>,
+    /// The tier-3 total this row was scaled from, when it is a tier-1 or
+    /// tier-2 row; `null` when this IS the tier-3 row.
+    ///
+    /// **A consumer must branch on this before touching
+    /// [`Self::drivers`].** On a tier-3 row the drivers sum to
+    /// [`Self::total`]. On a tier-1 or tier-2 row they are the TIER-3 row's
+    /// terms, copied unscaled, plus one `tier_fraction` driver whose `chaos`
+    /// is the whole total (epic lock L2: a lower tier is worth a fraction of
+    /// the LINE, not its own separate drops). Summing that list would print a
+    /// Locus tier-1 room as 846 + 676.80.
+    pub scaled_from_tier3: Option<f64>,
+    /// Every term of the sum, including the ones that contributed nothing —
+    /// a term silently dropped from a total is indistinguishable from a term
+    /// worth zero.
+    pub drivers: Vec<DriverView>,
+}
+
+/// One term of a [`RoomValueView`]'s sum.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriverView {
+    /// `"sale"`, `"unique_drop"`, `"vial_drop"`, `"mod_item"`,
+    /// `"quantity_bonus"`, `"rarity_bonus"`, `"tier_fraction"`,
+    /// `"grade_fallback"` or `"custom_override"`
+    /// ([`DriverKind`](super::valuation::DriverKind)). `snake_case`, this
+    /// app's convention for enum variants on the wire.
+    pub kind: String,
+    /// What is being priced, as its source spells it — the poe.ninja room or
+    /// item name, the game's own bonus wording, or the grade letter.
+    pub name: String,
+    /// Expected count per run, the bonus percentage, or the tier fraction.
+    /// `null` where the term has no count, or where nobody has stated one.
+    pub count: Option<f64>,
+    /// Chaos per unit of [`Self::count`]. `null` where nothing priced it.
+    pub unit_price: Option<f64>,
+    /// What this term added. `null` when it added nothing because a count or a
+    /// price was missing — which is why it is listed at all.
+    pub chaos: Option<f64>,
+    /// Whether this term rests on an estimate rather than on measured data.
+    pub guessed: bool,
+    /// POE-131's thin-market flag on the price behind this term.
+    pub low_confidence: bool,
+    /// POE-252: that price is a trailing-window median, not the newest print.
+    pub window_priced: bool,
 }
 
 /// The side panel, as text gave it.
@@ -593,6 +830,21 @@ pub struct TempleSlice {
     /// The four tunable profile fields in force. Same ownership and same
     /// survival rule as [`Self::config`].
     pub profile: TempleProfileSettings,
+    /// Which valuation preset is in force — `"default"` or `"custom"`
+    /// (POE-257). Same ownership and survival rule as [`Self::config`].
+    ///
+    /// `serde(default)` so a payload from a build before POE-257 decodes as
+    /// the Default preset rather than failing the whole slice. Typed rather
+    /// than a flat string, like [`Self::status`] and unlike [`Self::mode`]:
+    /// [`Preset`] is a closed two-value settings vocabulary with a `snake_case`
+    /// wire form, not a projection of a reasoning type.
+    #[serde(default)]
+    pub preset: Preset,
+    /// The Custom preset's rates and per-room overrides, echoed whether or not
+    /// Custom is in force: the page has to be able to show what switching
+    /// would give the player back.
+    #[serde(default)]
+    pub custom: TempleCustomSettings,
     /// Slots whose plate did not resolve, by key. Surfaced, never hidden — the
     /// player can then see which rooms the advisor is treating as junk.
     pub unknown_rooms: Vec<String>,
@@ -645,6 +897,20 @@ pub struct ReadResult<'a> {
     pub config: TempleConfig,
     /// The profile this read was ranked under. Same reason as [`Self::config`].
     pub profile: TempleProfileSettings,
+    /// The preset this read was ranked under. Same reason as [`Self::config`].
+    pub preset: Preset,
+    /// The Custom table this read was ranked under. Same reason as
+    /// [`Self::config`] — echoed onto the slice so the page renders its
+    /// controls from ONE source.
+    pub custom: TempleCustomSettings,
+    /// The room values this read was ranked on — the SAME object
+    /// [`advise_read`] was given (POE-257 D6).
+    ///
+    /// A borrow and not a value so the "one table per read" rule is visible at
+    /// the call site: `run` builds one [`Valued`] with [`value_read`] and
+    /// hands it to both, and the offer boxes cannot be showing a number the
+    /// recommendation did not use.
+    pub valuation: &'a Valued,
     pub read_at: u64,
 }
 
@@ -836,7 +1102,50 @@ fn current_tier(read: &ReadResult<'_>) -> Option<Tier> {
         .map(|id| id.tier())
 }
 
-fn offer_view(index: usize, offer: &ArchitectOffer, current_tier: Option<Tier>) -> OfferView {
+/// One driver on the wire.
+fn driver_view(driver: &Driver) -> DriverView {
+    DriverView {
+        kind: driver.kind.as_str().to_string(),
+        name: driver.name.clone(),
+        count: driver.count,
+        unit_price: driver.unit_price,
+        chaos: driver.chaos,
+        guessed: driver.guessed,
+        low_confidence: driver.low_confidence,
+        window_priced: driver.window_priced,
+    }
+}
+
+/// One room-tier's value on the wire.
+///
+/// [`RoomValueView::scaled_from_tier3`] is read off the `tier_fraction` driver
+/// rather than off the tier, and that is the exact test: `scale_from_tier3` is
+/// the only thing that ever produces one, so the driver is present precisely
+/// when this row's other drivers are a tier-3 row's copied terms. An
+/// overridden tier-1 row has no such driver — the player stated its number
+/// outright — and it reads `null`, which is true of it.
+fn room_value_view(value: &RoomValue, valuation: &Valued) -> RoomValueView {
+    RoomValueView {
+        total: value.total,
+        priced: value.priced.as_str().to_string(),
+        guessed: value.guessed,
+        league: valuation.league().to_string(),
+        as_of: valuation.as_of_ms(),
+        scaled_from_tier3: value
+            .drivers
+            .iter()
+            .find(|d| d.kind == DriverKind::TierFraction)
+            .and_then(|d| d.unit_price),
+        drivers: value.drivers.iter().map(driver_view).collect(),
+    }
+}
+
+fn offer_view(
+    index: usize,
+    offer: &ArchitectOffer,
+    current_tier: Option<Tier>,
+    valuation: &Valued,
+) -> OfferView {
     let resolved = match rooms::resolve_offer_for(&offer.printed_target, offer.kind, current_tier) {
         rooms::OfferResolution::Built(resolved) => Some(resolved),
         // Both failures publish the printed target with no resolved room: the
@@ -865,6 +1174,15 @@ fn offer_view(index: usize, offer: &ArchitectOffer, current_tier: Option<Tier>) 
         // re-deriving a rect from anything else here would be a second answer
         // to where the panel drew the block.
         rect: offer.rect,
+        // Off the LINE and the BUILT tier, from the one table this read was
+        // ranked on. Not the tier-3 room's value and not the printed target's:
+        // what the player is being offered is `built_tier` of `line`, and that
+        // is the row the advisor scored.
+        value: resolved.as_ref().and_then(|r| {
+            valuation
+                .get(r.line.key(), r.built_tier)
+                .map(|value| room_value_view(value, valuation))
+        }),
     }
 }
 
@@ -882,7 +1200,7 @@ fn panel_view(read: &ReadResult<'_>) -> PanelView {
             .architects
             .iter()
             .enumerate()
-            .map(|(index, offer)| offer_view(index, offer, tier))
+            .map(|(index, offer)| offer_view(index, offer, tier, read.valuation))
             .collect(),
         incursions_remaining: read.panel.incursions_remaining,
     }
@@ -984,6 +1302,8 @@ pub fn project(read: &ReadResult<'_>, calibration: Option<AnchorCalibration>) ->
         mode: read.advice.map(|a| mode_label(a.mode)),
         config: read.config.clone(),
         profile: read.profile.clone(),
+        preset: read.preset,
+        custom: read.custom.clone(),
         unknown_rooms: unknown_rooms(read.rooms),
         last_read_at: Some(read.read_at),
         calibration,
@@ -1021,6 +1341,7 @@ pub fn advise_read(
     panel: &PanelReading,
     settled: Option<&BTreeSet<Edge>>,
     settings: &TempleSettings,
+    valuation: &Valued,
 ) -> Option<Advice> {
     layout.current?;
     let board = advisor::state::BoardState::from_reading(layout, &identities(rooms), panel, settled);
@@ -1028,11 +1349,25 @@ pub fn advise_read(
         &board,
         &panel.architects,
         KEYS_IN_HAND,
-        &settings.profile.to_profile(),
+        &settings.profile.to_profile(valuation),
         &settings.config,
         ROLLOUTS,
         SEED,
     ))
+}
+
+/// The 25 x 3 table one read ranks on and shows from (POE-257 D6).
+///
+/// **Call this ONCE per read** and hand the same object to [`advise_read`] and
+/// to [`ReadResult::valuation`]. That is the whole of "shown = ranked": two
+/// calls a tick apart would price the offer boxes off a market read the
+/// recommendation never saw, and the player would be told a number that did
+/// not produce the advice.
+///
+/// It does no HTTP and takes no clock — `market` arrives from POE-258's poll,
+/// because `docs/TEMPLE-LIFECYCLE.md` forbids network work on the 650 ms tick.
+pub fn value_read(settings: &TempleSettings, market: &MarketInput) -> Valued {
+    preset::value_table(settings.preset, &settings.custom, market)
 }
 
 /// Drop the move the module is recommending, keeping the board it was read
@@ -1628,6 +1963,7 @@ mod tests {
     use crate::temple::advisor::rules::ArchitectChoice;
     use crate::temple::lattice::{Lattice, Slot};
     use crate::temple::rooms::{match_room_name, resolve_name};
+    use crate::temple::strategy::{ModeRule, REFERENCE_TOP_ROOM_VALUE};
 
     /// 13 plates: `named` maps a slot to the room name printed on it,
     /// everything else reads Unknown.
@@ -1663,12 +1999,57 @@ mod tests {
         }
     }
 
+    /// The valuation a projection test ranks and shows from.
+    ///
+    /// Cold (`MarketInput::none`), which is what the loop has until POE-258's
+    /// poll answers: every room falls back to its grade ladder value, so the
+    /// table is complete and the ranking is real without a market fixture in
+    /// every arrange step. A test that needs prices builds its own.
+    fn valued() -> Valued {
+        value_read(&TempleSettings::default(), &MarketInput::none())
+    }
+
+    /// A valuation whose top tier-3 room is worth exactly
+    /// [`REFERENCE_TOP_ROOM_VALUE`] — the scale the profile's abstract weights
+    /// are stated against, so `to_profile` rescales by exactly 1.
+    ///
+    /// Built by overriding all 25 lines rather than by hoping a market read
+    /// lands on 9: the point is a scale of one, and a fixture that drifted off
+    /// it would turn every assertion below into arithmetic.
+    fn reference_scale_valuation() -> Valued {
+        let rooms = rooms::LINES
+            .iter()
+            .map(|line| {
+                let top = if line.key() == "corruption" {
+                    REFERENCE_TOP_ROOM_VALUE
+                } else {
+                    0.0
+                };
+                (line.key().to_string(), vec![Some(0.0), Some(0.0), Some(top)])
+            })
+            .collect();
+        value_read(
+            &TempleSettings {
+                preset: Preset::Custom,
+                custom: TempleCustomSettings { rooms, ..Default::default() },
+                ..Default::default()
+            },
+            &MarketInput::none(),
+        )
+    }
+
+    /// Float equality that survives the arithmetic behind a chaos total.
+    fn close(actual: f64, expected: f64) -> bool {
+        (actual - expected).abs() < 1e-9
+    }
+
     fn read<'a>(
         layout: &'a TempleLayout,
         rooms: &'a [RoomReading],
         panel: &'a PanelReading,
         settled: Option<&'a BTreeSet<Edge>>,
         advice: Option<&'a Advice>,
+        valuation: &'a Valued,
     ) -> ReadResult<'a> {
         ReadResult {
             layout,
@@ -1680,6 +2061,9 @@ mod tests {
             advice,
             config: TempleConfig::default(),
             profile: TempleProfileSettings::default(),
+            preset: Preset::default(),
+            custom: TempleCustomSettings::default(),
+            valuation,
             read_at: 1_700_000_000_000,
         }
     }
@@ -1695,7 +2079,7 @@ mod tests {
         let layout = layout(Some(Slot::D3), &[], &[]);
         let rooms = board_rooms(&[(Slot::D3, "Tombs"), (Slot::C1, "Locus of Corruption")]);
         let panel = panel("Tombs", Some(6), Vec::new());
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         let view = slice.layout.expect("a read publishes its layout");
         let d3 = view
@@ -1730,7 +2114,7 @@ mod tests {
         let rooms = board_rooms(&[]);
         let panel = panel("Tombs", Some(6), Vec::new());
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         let view = slice.layout.expect("a read publishes its layout");
         let lattice = Lattice::new(FIXTURE_ORIGIN, FIXTURE_SCALE);
@@ -1757,7 +2141,7 @@ mod tests {
         let rooms = board_rooms(&[]);
         let panel = panel("Tombs", Some(6), Vec::new());
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         let view = slice.layout.expect("a read publishes its layout");
         assert_eq!(view.origin, [FIXTURE_ORIGIN.0, FIXTURE_ORIGIN.1]);
@@ -1777,7 +2161,7 @@ mod tests {
         let rooms = board_rooms(&[(Slot::D3, "Tombs")]);
         let panel = panel("Tombs", Some(6), Vec::new());
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         assert_eq!(
             slice.unknown_rooms.len(),
@@ -1809,7 +2193,7 @@ mod tests {
         let rooms = board_rooms(&[(Slot::C1, "Locus of Corruption")]);
         let panel = panel("Tombs", Some(6), Vec::new());
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         assert_eq!(slice.status, TempleStatus::NoCurrentRoom);
         assert!(slice.advice.is_none(), "no position, no ranking");
@@ -1827,7 +2211,7 @@ mod tests {
         let rooms = board_rooms(&[]);
         let panel = panel("Tombs", Some(6), Vec::new());
 
-        assert!(advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).is_none());
+        assert!(advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued()).is_none());
     }
 
     /// Unknown plates do not stop the advisor: with a current room it still
@@ -1844,10 +2228,11 @@ mod tests {
         );
         let settings = TempleSettings::default();
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &settings)
+        let valued = valued();
+        let advice = advise_read(&layout, &rooms, &panel, None, &settings, &valued)
             .expect("a board with a current room ranks");
         let slice = project(
-            &read(&layout, &rooms, &panel, None, Some(&advice)),
+            &read(&layout, &rooms, &panel, None, Some(&advice), &valued),
             None,
         );
 
@@ -1876,7 +2261,7 @@ mod tests {
             vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
         );
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued()).expect("ranks");
 
         let view = advice_view(&advice);
 
@@ -1904,7 +2289,7 @@ mod tests {
         let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
         let panel = panel("Chasm", None, Vec::new());
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued()).expect("ranks");
 
         assert!(
             advice.warnings.contains(&Warning::NoBudget),
@@ -1937,7 +2322,7 @@ mod tests {
         panel.room_rect = Some([1300, 100, 152, 20]);
         panel.architects[0].rect = Some([1300, 140, 280, 43]);
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         let view = slice.panel.expect("a read publishes its panel");
         assert_eq!(view.room_rect, Some([1300, 100, 152, 20]));
@@ -1960,7 +2345,7 @@ mod tests {
             vec![offer("Quipolatl", "Armoury", OfferKind::Upgrade)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         let view = slice.panel.expect("a read publishes its panel");
         assert_eq!(view.room_rect, None);
@@ -1990,7 +2375,7 @@ mod tests {
             ],
         );
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued()).expect("ranks");
         let door = advice
             .secondary_door
             .expect("precondition: an all-closed room has a second corridor to buy")
@@ -2033,7 +2418,7 @@ mod tests {
             ],
         );
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued()).expect("ranks");
         let door = advice
             .convenience_door
             .expect("precondition: the move opens nothing and C1 has in-cluster corridors");
@@ -2064,7 +2449,7 @@ mod tests {
             vec![offer("Quipolatl", "Armoury", OfferKind::Upgrade)],
         );
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued()).expect("ranks");
         assert!(
             advice.warnings.contains(&Warning::PartialArchitects { read: 1, expected: 2 }),
             "precondition: one block of two warns, got {:?}",
@@ -2099,7 +2484,7 @@ mod tests {
             vec![offer("Nobody", "Definitely Not A Room", OfferKind::Change)],
         );
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued()).expect("ranks");
         assert!(
             advice
                 .recommendations
@@ -2139,7 +2524,7 @@ mod tests {
             ],
         );
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued()).expect("ranks");
 
         assert!(!advice_view(&advice).forced_kill);
     }
@@ -2153,7 +2538,7 @@ mod tests {
         let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
         let panel = panel("Chasm", Some(6), Vec::new());
         let advice =
-            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default()).expect("ranks");
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued()).expect("ranks");
 
         let view = advice_view(&advice);
 
@@ -2180,7 +2565,7 @@ mod tests {
             vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         let view = slice.panel.expect("a read publishes its panel");
         let first = view.offers.first().expect("one architect block");
@@ -2207,7 +2592,7 @@ mod tests {
             vec![offer("Guatelitzi", "Qwertz Chamber", OfferKind::Upgrade)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         let first = slice
             .panel
@@ -2244,7 +2629,7 @@ mod tests {
             vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         let first = slice.panel.expect("panel").offers.into_iter().next().expect("one block");
         assert_eq!(first.grade.as_deref(), Some("A++"));
@@ -2270,7 +2655,7 @@ mod tests {
             vec![offer("Guatelitzi", "Qwertz Chamber", OfferKind::Upgrade)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         let first = slice.panel.expect("panel").offers.into_iter().next().expect("one block");
         assert_eq!(first.grade, None);
@@ -2292,7 +2677,7 @@ mod tests {
             vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         let first = slice.panel.expect("panel").offers.into_iter().next().expect("one block");
         assert_eq!(first.display_name.as_deref(), Some("Catalyst of Corruption"));
@@ -2361,7 +2746,7 @@ mod tests {
             vec![offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
         let published = slice
             .panel
             .expect("panel")
@@ -2376,7 +2761,7 @@ mod tests {
         );
         assert_eq!(published.built_tier, Some(3));
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default())
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued())
             .expect("a board with a current room ranks");
         let choice = ranked_choice(&advice, 0).expect("the change offer is ranked");
         assert_eq!(choice.built_tier, Tier::T3);
@@ -2397,7 +2782,7 @@ mod tests {
             vec![offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
         let published = slice
             .panel
             .expect("panel")
@@ -2408,7 +2793,7 @@ mod tests {
         assert_eq!(published.display_name, None);
         assert_eq!(published.built_tier, None);
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default())
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued())
             .expect("a board with a current room still ranks its doors");
         assert!(
             advice.warnings.contains(&Warning::UnknownCurrentTier),
@@ -2439,7 +2824,7 @@ mod tests {
             vec![offer("Zalatl", "Atlas of Worlds", OfferKind::Upgrade)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
         let published = slice
             .panel
             .expect("panel")
@@ -2450,7 +2835,7 @@ mod tests {
         assert_eq!(published.display_name.as_deref(), Some("Atlas of Worlds"));
         assert_eq!(published.built_tier, Some(3));
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default())
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued())
             .expect("ranks");
         assert!(
             !advice.warnings.contains(&Warning::UnknownCurrentTier),
@@ -2482,7 +2867,7 @@ mod tests {
             vec![offer("Zalatl", "Atlas of Worlds", OfferKind::Upgrade)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
         let published = slice
             .panel
             .expect("panel")
@@ -2493,7 +2878,7 @@ mod tests {
         assert_eq!(published.display_name.as_deref(), Some("Atlas of Worlds"));
         assert_eq!(published.built_tier, Some(3));
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default())
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued())
             .expect("ranks");
         assert!(
             !advice.warnings.contains(&Warning::UnknownCurrentTier),
@@ -2525,7 +2910,7 @@ mod tests {
             vec![offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
         let published = slice
             .panel
             .expect("panel")
@@ -2567,7 +2952,7 @@ mod tests {
     fn a_disagreeing_current_plate_beats_the_side_panel_title() {
         let (layout, rooms, panel) = disagreeing_board();
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
         let published = slice
             .panel
             .expect("panel")
@@ -2593,7 +2978,7 @@ mod tests {
     fn a_current_room_the_two_sources_disagree_about_reaches_the_page_as_a_warning() {
         let (layout, rooms, panel) = disagreeing_board();
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default())
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued())
             .expect("ranks");
 
         assert!(
@@ -2630,7 +3015,7 @@ mod tests {
             vec![offer("Uromoti", "Gemcutter's Workshop", OfferKind::Change)],
         );
 
-        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
         let published = slice
             .panel
             .expect("panel")
@@ -2662,7 +3047,7 @@ mod tests {
             ],
         );
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default())
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued())
             .expect("ranks");
 
         assert_eq!(
@@ -2694,7 +3079,7 @@ mod tests {
             ],
         );
 
-        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default())
+        let advice = advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued())
             .expect("ranks");
 
         let top = advice
@@ -2736,7 +3121,7 @@ mod tests {
         .into_iter()
         .collect();
 
-        let slice = project(&read(&layout, &rooms, &panel, Some(&settled), None), None);
+        let slice = project(&read(&layout, &rooms, &panel, Some(&settled), None, &valued()), None);
 
         let view = slice.layout.expect("layout");
         assert_eq!(
@@ -2775,7 +3160,8 @@ mod tests {
         );
         let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
         let panel = panel("Chasm", Some(6), Vec::new());
-        let mut result = read(&layout, &rooms, &panel, None, None);
+        let valued = valued();
+        let mut result = read(&layout, &rooms, &panel, None, None, &valued);
         result.marker_error = Some("read 3 door markers for a 4-neighbour room".to_string());
 
         let slice = project(&result, None);
@@ -3382,7 +3768,7 @@ mod tests {
         let rooms = board_rooms(&[(Slot::E1, "Chamber of Iron")]);
         let panel = panel("Chamber of Iron", Some(6), Vec::new());
 
-        let s = project(&read(&layout, &rooms, &panel, None, None), None);
+        let s = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         assert!(!s.waiting_for_panel);
     }
@@ -3422,9 +3808,10 @@ mod tests {
         let rooms = board_rooms(&[(Slot::E1, "Chamber of Iron")]);
         let panel = panel("Chamber of Iron", None, Vec::new());
         let notice = "Temple: panel ROI [1920, 4, 544, 454] is outside the capture — windowed client?";
+        let valued = valued();
         let result = ReadResult {
             read_notice: Some(notice.to_string()),
-            ..read(&layout, &rooms, &panel, None, None)
+            ..read(&layout, &rooms, &panel, None, None, &valued)
         };
 
         let s = project(&result, None);
@@ -3446,7 +3833,7 @@ mod tests {
         let rooms = board_rooms(&[(Slot::E1, "Chamber of Iron")]);
         let panel = panel("Chamber of Iron", Some(6), Vec::new());
 
-        let s = project(&read(&layout, &rooms, &panel, None, None), None);
+        let s = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         assert_eq!(s.read_notice, None);
     }
@@ -3464,16 +3851,25 @@ mod tests {
         let panel = panel("Chamber of Iron", Some(6), Vec::new());
         let config = TempleConfig { artefacts_of_the_vaal: false, scarab_of_timelines: true };
         let profile = TempleProfileSettings { path_cost: 3.5, ..Default::default() };
+        let custom = TempleCustomSettings { drops_weight: 0.0, ..Default::default() };
+        let valued = valued();
         let result = ReadResult {
             config: config.clone(),
             profile: profile.clone(),
-            ..read(&layout, &rooms, &panel, None, None)
+            preset: Preset::Custom,
+            custom: custom.clone(),
+            ..read(&layout, &rooms, &panel, None, None, &valued)
         };
 
         let published = project(&result, None);
 
         assert_eq!(published.config, config);
         assert_eq!(published.profile, profile);
+        // POE-257: the preset and its table echo like the other two. The
+        // Custom table echoes whether or not Custom is the preset in force,
+        // because the page has to show what switching would give back.
+        assert_eq!(published.preset, Preset::Custom);
+        assert_eq!(published.custom, custom);
     }
 
     // ------------------------------------ the never-cover set (POE-244) --
@@ -3493,7 +3889,7 @@ mod tests {
         let rooms = board_rooms(&[]);
         let panel = panel("Chamber of Iron", Some(6), Vec::new());
 
-        let published = project(&read(&layout, &rooms, &panel, None, None), None)
+        let published = project(&read(&layout, &rooms, &panel, None, None, &valued()), None)
             .layout
             .expect("a read publishes a layout");
         let rois = published.rois;
@@ -3592,7 +3988,7 @@ mod tests {
         let rooms = board_rooms(&[]);
         let panel = panel("Chamber of Iron", Some(6), Vec::new());
 
-        let diamond = project(&read(&layout, &rooms, &panel, None, None), None)
+        let diamond = project(&read(&layout, &rooms, &panel, None, None, &valued()), None)
             .layout
             .and_then(|l| l.diamond)
             .expect("a current room publishes a diamond");
@@ -3634,7 +4030,7 @@ mod tests {
             let layout = layout(Some(current), &[], &[]);
             let rooms = board_rooms(&[]);
             let panel = panel("Chamber of Iron", Some(6), Vec::new());
-            let diamond = project(&read(&layout, &rooms, &panel, None, None), None)
+            let diamond = project(&read(&layout, &rooms, &panel, None, None, &valued()), None)
                 .layout
                 .and_then(|l| l.diamond)
                 .expect("a current room publishes a diamond");
@@ -3676,7 +4072,7 @@ mod tests {
         let rooms = board_rooms(&[]);
         let panel = panel("Chamber of Iron", Some(6), Vec::new());
 
-        let diamond = project(&read(&layout, &rooms, &panel, None, None), None)
+        let diamond = project(&read(&layout, &rooms, &panel, None, None, &valued()), None)
             .layout
             .and_then(|l| l.diamond)
             .expect("a current room publishes a diamond");
@@ -3710,7 +4106,7 @@ mod tests {
         let rooms = board_rooms(&[]);
         let panel = panel("Chamber of Iron", Some(6), Vec::new());
 
-        let published = project(&read(&layout, &rooms, &panel, None, None), None);
+        let published = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
         assert_eq!(published.status, TempleStatus::NoCurrentRoom);
         assert_eq!(published.layout.and_then(|l| l.diamond), None);
@@ -3733,7 +4129,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"status":"idle","waitingForPanel":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
+            r#"{"status":"idle","waitingForPanel":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":true},"preset":"default","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":1.0,"comboPremium":0.0,"rooms":{}},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
         );
     }
 
@@ -3846,6 +4242,41 @@ mod tests {
                     grade: Some("C".to_string()),
                     line_top: Some("Sadist's Den".to_string()),
                     rect: Some([1300, 140, 280, 43]),
+                    // POE-257: what the ranking priced this kill's room at,
+                    // from the table it ranked on. A tier-2 row, so
+                    // `scaledFromTier3` is set and the drivers below are the
+                    // TIER-3 row's terms — a mirror that summed them would
+                    // print 12.5 + 10.0 for a room worth 10.
+                    value: Some(RoomValueView {
+                        total: 10.0,
+                        priced: "partial".to_string(),
+                        guessed: true,
+                        league: "Allflame".to_string(),
+                        as_of: Some(1_788_665_199_649),
+                        scaled_from_tier3: Some(12.5),
+                        drivers: vec![
+                            DriverView {
+                                kind: "sale".to_string(),
+                                name: "Sadist's Den".to_string(),
+                                count: None,
+                                unit_price: Some(22.5),
+                                chaos: Some(12.5),
+                                guessed: false,
+                                low_confidence: true,
+                                window_priced: true,
+                            },
+                            DriverView {
+                                kind: "tier_fraction".to_string(),
+                                name: "Sadist's Den".to_string(),
+                                count: Some(0.8),
+                                unit_price: Some(12.5),
+                                chaos: Some(10.0),
+                                guessed: false,
+                                low_confidence: false,
+                                window_priced: false,
+                            },
+                        ],
+                    }),
                 }],
                 incursions_remaining: Some(6),
             }),
@@ -3898,6 +4329,19 @@ mod tests {
                 reroll_until_favourable: true,
                 r4_keep_upgrade_targets: false,
             },
+            // POE-257. Non-default on both counts, so the pin catches a mirror
+            // that dropped either: the preset is the one that is NOT the serde
+            // default, and the table carries one rate and one override so its
+            // nested map shape is pinned too.
+            preset: Preset::Custom,
+            custom: TempleCustomSettings {
+                drops_weight: 0.0,
+                rooms: BTreeMap::from([(
+                    "corruption".to_string(),
+                    vec![None, None, Some(500.0)],
+                )]),
+                ..Default::default()
+            },
             unknown_rooms: vec!["D3".to_string()],
             last_read_at: Some(1_700_000_000_000),
             calibration: Some(AnchorCalibration { screen_w: 2560, screen_h: 1440, scale: 0.99 }),
@@ -3913,7 +4357,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43]}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///
@@ -3960,9 +4404,15 @@ mod tests {
         assert!(p.validate().is_err(), "NaN makes the whole ranking arbitrary");
     }
 
-    /// The four settings fields reach the profile they tune, and the fields
-    /// they do NOT own are left at the Rush's values. Fails if `to_profile`
-    /// drops a field or rebuilds the profile from scratch.
+    /// The four settings fields reach the profile they tune, the two flags
+    /// pass through untouched, and the fields NOT in the settings block are
+    /// the fixture's own. Fails if `to_profile` drops a field, and fails if it
+    /// starts deriving `mode_rule` or `blast_discount` from the valuation.
+    ///
+    /// The two weights are SCALED — see
+    /// `the_abstract_weights_are_rescaled_into_the_valuations_units` for the
+    /// rule and why. Here the valuation is built so the scale is exactly 1,
+    /// which is what isolates "did the field arrive" from "was it rescaled".
     #[test]
     fn profile_settings_override_only_their_own_four_fields() {
         let settings = TempleProfileSettings {
@@ -3971,18 +4421,648 @@ mod tests {
             reroll_until_favourable: true,
             r4_keep_upgrade_targets: false,
         };
+        let rush = StrategyProfile::locus_doryani_rush();
 
-        let profile = settings.to_profile();
+        let profile = settings.to_profile(&reference_scale_valuation());
 
         assert_eq!(profile.apex_score, 8.5);
         assert_eq!(profile.path_cost, 0.4);
         assert!(profile.reroll_until_favourable);
         assert!(!profile.r4_keep_upgrade_targets);
+        // Neither of these is a settings field and neither is a magnitude, so
+        // both come through the fixture untouched. `mode_rule` names the two
+        // lines RV and the mode flip read; `blast_discount` is a fraction of a
+        // score difference, which is scale-free by construction. A bridge that
+        // RESCALED `blast_discount` would slip past here — the scale is 1 —
+        // and is caught by
+        // `the_abstract_weights_are_rescaled_into_the_valuations_units`; what
+        // these two catch is the bridge dropping or overwriting them.
+        assert_eq!(profile.mode_rule, rush.mode_rule);
         assert_eq!(
-            profile.combinations,
-            StrategyProfile::locus_doryani_rush().combinations,
-            "the strategy's identity is not a settings field",
+            profile.mode_rule,
+            ModeRule::LinesConnected(vec![Line::Corruption, Line::Gem]),
         );
+        assert_eq!(profile.blast_discount, rush.blast_discount);
+    }
+
+    /// The valuation the bridge tests price against: the committed Allflame
+    /// capture under the Default preset, whose top tier-3 room is Locus of
+    /// Corruption at its 846 c sale delta.
+    fn allflame_valuation() -> Valued {
+        value_read(
+            &TempleSettings::default(),
+            &crate::temple::market::allflame(),
+        )
+    }
+
+    /// Every one of the 25 room lines reaches `room_values`, in chaos.
+    ///
+    /// The rusher profile prices four lines and leaves the other 21 absent,
+    /// which `sum_room_values` reads as zero. That was the strategy; POE-257's
+    /// L1 lock is that the advisor values the whole board. Fails if the bridge
+    /// keeps splatting the fixture's four-entry map, or if a key stops
+    /// resolving through `Line::named` and lands twice.
+    #[test]
+    fn the_bridge_prices_all_twenty_five_lines_in_chaos() {
+        let valuation = allflame_valuation();
+
+        let profile = TempleProfileSettings::default().to_profile(&valuation);
+
+        assert_eq!(profile.room_values.len(), 25, "one entry per room line");
+        for (line, values) in &profile.room_values {
+            for value in values {
+                assert!(
+                    value.is_finite() && *value >= 0.0,
+                    "{:?} is priced {values:?}",
+                    line,
+                );
+            }
+        }
+        // The two the feed actually printed, at the numbers it printed.
+        assert_eq!(profile.room_values[&Line::Corruption][2], 846.0);
+        assert_eq!(profile.room_values[&Line::Gem][2], 390.0);
+        // And a line the rusher never named, priced by its bonus rather than
+        // sitting at the zero an absent key would have scored.
+        let crucible = profile.room_values[&Line::named("crucible_of_flame")][2];
+        assert!(crucible > 0.0, "crucible of flame is priced {crucible}");
+    }
+
+    /// The upgrade and explosives lines are priced at their LETTER, and the
+    /// bridge copies that number rather than zeroing it or summing the room.
+    ///
+    /// Three claims, one behaviour — every one of them breaks together if the
+    /// bridge stops copying the valuation for these two lines. Temple Nexus is
+    /// B+ (105.75 on the capture) and Shrine of Unmaking is D (2.115); what
+    /// the rooms themselves drop is a 6 c quantity bonus, which is the number
+    /// that used to put the shrine under a junk C-grade room and produce the
+    /// board-7 miss.
+    #[test]
+    fn the_two_instrumental_lines_are_priced_at_their_letter_by_the_bridge() {
+        let valuation = allflame_valuation();
+
+        let profile = TempleProfileSettings::default().to_profile(&valuation);
+
+        assert!(
+            close(profile.room_values[&Line::Upgrade][2], 105.75),
+            "Temple Nexus B+, got {}",
+            profile.room_values[&Line::Upgrade][2],
+        );
+        assert!(
+            close(profile.room_values[&Line::Explosive][2], 2.115),
+            "Shrine of Unmaking D, got {}",
+            profile.room_values[&Line::Explosive][2],
+        );
+        assert_eq!(
+            profile.room_values[&Line::Upgrade][2],
+            valuation.get("upgrade", Tier::T3).expect("valued").total,
+            "the bridge copies the valuation, it does not recompute it",
+        );
+    }
+
+    /// The four abstract magnitudes move with the units the rooms are priced
+    /// in (POE-257 D5).
+    ///
+    /// `apex_score` 2, `apex_mixed_increment` 0.5, `room_baseline` 0.05 and
+    /// `path_cost` were all chosen next to a top room worth 9. Beside a top
+    /// room worth 846 they would be dust: RD would stop being able to say
+    /// "opening something beats opening nothing", and the Apex would become
+    /// unrankable noise. Fails if any of the four is copied through unscaled.
+    #[test]
+    fn the_abstract_weights_are_rescaled_into_the_valuations_units() {
+        let valuation = allflame_valuation();
+        // 846 / 9 — the fixture's Locus against the ranking the constants were
+        // written for.
+        let scale = 94.0;
+        let settings = TempleProfileSettings { path_cost: 1.5, ..Default::default() };
+        let rush = StrategyProfile::locus_doryani_rush();
+
+        let profile = settings.to_profile(&valuation);
+
+        assert_eq!(profile.value_scale(), scale);
+        assert_eq!(profile.apex_score, settings.apex_score * scale);
+        assert_eq!(profile.apex_mixed_increment, rush.apex_mixed_increment * scale);
+        assert_eq!(profile.room_baseline, rush.room_baseline * scale);
+        assert_eq!(profile.path_cost, settings.path_cost * scale);
+        // A fraction of a score difference, not a magnitude — scaling it would
+        // change what RE means rather than restating it.
+        assert_eq!(profile.blast_discount, rush.blast_discount);
+    }
+
+    /// No combination by default, because the per-room sum already IS the
+    /// pair's agreed value.
+    ///
+    /// A `Combination` REPLACES the sum rather than adding to it, so emitting
+    /// one worth exactly `Locus + Doryani` would delete every OTHER reached
+    /// line's value from a finished board. Fails if the bridge carries the
+    /// fixture's 10-point entry through, or emits a sum-valued one.
+    #[test]
+    fn the_bridge_emits_no_combination_while_the_premium_is_zero() {
+        let valuation = allflame_valuation();
+        assert_eq!(valuation.knobs().combo_premium, 0.0, "precondition");
+
+        let profile = TempleProfileSettings::default().to_profile(&valuation);
+
+        assert!(profile.combinations.is_empty());
+        let both = profile.aggregate(
+            &[(Line::Corruption, Tier::T3), (Line::Gem, Tier::T3)],
+            false,
+            0,
+        );
+        assert_eq!(both, 846.0 + 390.0, "the pair is the sum of its two deltas");
+    }
+
+    /// A stated premium brings the combination back, at the sum plus the
+    /// premium. Fails if the premium is dropped, or used as the whole score.
+    #[test]
+    fn a_stated_combo_premium_prices_the_pair_above_the_sum_of_its_rooms() {
+        let settings = TempleSettings {
+            preset: Preset::Custom,
+            custom: TempleCustomSettings { combo_premium: 250.0, ..Default::default() },
+            ..Default::default()
+        };
+        let valuation = value_read(&settings, &crate::temple::market::allflame());
+
+        let profile = settings.profile.to_profile(&valuation);
+
+        assert_eq!(profile.combinations.len(), 1);
+        assert_eq!(profile.combinations[0].score, 846.0 + 390.0 + 250.0);
+        assert_eq!(
+            profile.combinations[0].requires,
+            vec![(Line::Corruption, Tier::T3), (Line::Gem, Tier::T3)],
+        );
+    }
+
+    /// A premium that would make the pair worth LESS than one of its rooms is
+    /// refused, not honoured.
+    ///
+    /// `Combination` REPLACES the per-room sum rather than adding to it, so a
+    /// negative premium is not "the pair is worth a bit less" — at -500 it
+    /// makes reaching Locus AND Doryani score 736 where reaching Locus alone
+    /// scores 846, and the advisor would start steering the player away from
+    /// its own second target line. Only a hand-edited file can produce one.
+    /// Fails if the bridge accepts any non-zero premium.
+    #[test]
+    fn a_premium_that_would_invert_the_pair_is_refused() {
+        for premium in [-500.0, f64::NAN, f64::NEG_INFINITY] {
+            let settings = TempleSettings {
+                preset: Preset::Custom,
+                custom: TempleCustomSettings {
+                    combo_premium: premium,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let valuation = value_read(&settings, &crate::temple::market::allflame());
+
+            let profile = settings.profile.to_profile(&valuation);
+
+            assert!(
+                profile.combinations.is_empty(),
+                "premium {premium} must not build a combination",
+            );
+            assert_eq!(
+                profile.aggregate(
+                    &[(Line::Corruption, Tier::T3), (Line::Gem, Tier::T3)],
+                    false,
+                    0,
+                ),
+                846.0 + 390.0,
+                "and the pair stays worth the sum of its two rooms",
+            );
+        }
+    }
+
+    /// The shipped fixture profile is not what the bridge produces, and the
+    /// bridge does not edit it.
+    ///
+    /// `locus_doryani_rush` is the fixture behind the pinned 10/9/7/2 and
+    /// retrospective-board suites, and those suites only keep their meaning
+    /// while it is Sebastian's measured ranking rather than today's market.
+    /// Fails if the bridge ever mutates the constructor it splats over.
+    #[test]
+    fn the_bridge_leaves_the_pinned_fixture_profile_alone() {
+        let after = TempleProfileSettings::default().to_profile(&allflame_valuation());
+        let rush = StrategyProfile::locus_doryani_rush();
+
+        // The fixture still states Sebastian's measured ranking, not today's
+        // market, and the bridge's own answer is a different object.
+        assert_ne!(after.room_values, rush.room_values);
+        assert_eq!(rush.room_values[&Line::Corruption], [0.0, 0.0, 9.0]);
+        assert_eq!(rush.room_values[&Line::Gem], [0.0, 0.0, 7.0]);
+        assert_eq!(rush.combinations.len(), 1, "and 9 + 7 still yields 10");
+        assert_eq!(rush.combinations[0].score, 10.0);
+        assert_eq!(rush.value_scale(), 1.0, "the reference scale is its own");
+    }
+
+    // ------------------------------------- shown = ranked (POE-257 D6) --
+
+    /// The offer box publishes the number the RANKING used, off the same
+    /// table.
+    ///
+    /// This is the whole of "shown = ranked". A projection that recomputed the
+    /// valuation from its own market read would show a number the
+    /// recommendation never saw — and the two reads are a tick apart at worst
+    /// and a preset switch apart at best, so the disagreement would be real
+    /// and invisible. Fails if `offer_view` values the offer from anything but
+    /// `ReadResult::valuation`.
+    #[test]
+    fn an_offer_publishes_the_same_chaos_the_advisor_ranked_on() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Catalyst of Corruption")]);
+        let panel = panel(
+            "Catalyst of Corruption",
+            Some(6),
+            vec![offer("Guatelitzi", "Locus of Corruption", OfferKind::Upgrade)],
+        );
+        let valued = allflame_valuation();
+        let ranked = TempleProfileSettings::default().to_profile(&valued);
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued), None);
+
+        let value = slice.panel.expect("a read publishes its panel").offers[0]
+            .value
+            .clone()
+            .expect("a resolved offer carries its value");
+        assert_eq!(value.total, 846.0, "Locus at the capture's sale delta");
+        assert_eq!(
+            value.total, ranked.room_values[&Line::Corruption][2],
+            "the box and the ranking read one table",
+        );
+        assert_eq!(value.priced, "partial");
+        assert_eq!(value.league, "Allflame");
+        assert_eq!(value.as_of, Some(1_788_665_199_649));
+        assert_eq!(value.scaled_from_tier3, None, "this IS the tier-3 row");
+    }
+
+    /// A tier-1 offer says what it was scaled from, so nothing sums its
+    /// drivers.
+    ///
+    /// Epic lock L2 makes a tier-1 room 80 % of its LINE's tier-3 total, and
+    /// the row carries the tier-3 row's terms unscaled plus one
+    /// `tier_fraction` driver holding the whole answer. A surface that summed
+    /// that list would print a Locus tier-1 room as 846 + 676.80. Fails if
+    /// `scaledFromTier3` is null on a scaled row, or set on an unscaled one.
+    #[test]
+    fn a_lower_tier_offer_names_the_tier_three_total_it_was_scaled_from() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let panel = panel(
+            "Chasm",
+            Some(6),
+            vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
+        );
+        let valued = allflame_valuation();
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued), None);
+
+        let offer = slice.panel.expect("a read publishes its panel").offers.remove(0);
+        assert_eq!(offer.built_tier, Some(1), "precondition: a tier-1 kill");
+        let value = offer.value.expect("a resolved offer carries its value");
+        assert_eq!(value.total, 846.0 * 0.8);
+        assert_eq!(value.scaled_from_tier3, Some(846.0));
+        // The copied sale term still carries the TIER-3 number, which is
+        // exactly why the list must not be summed.
+        let sale = value
+            .drivers
+            .iter()
+            .find(|d| d.kind == "sale")
+            .expect("the tier-3 sale term is carried down");
+        assert_eq!(sale.chaos, Some(846.0));
+        let fraction = value
+            .drivers
+            .iter()
+            .find(|d| d.kind == "tier_fraction")
+            .expect("and the fraction driver holds the answer");
+        assert_eq!(fraction.chaos, Some(846.0 * 0.8));
+    }
+
+    /// A Temple Nexus offer publishes exactly the number the ranking used.
+    ///
+    /// The two instrumental lines are where "shown = ranked" was hardest to
+    /// keep, and where it was briefly broken: while they scored zero in
+    /// `room_values`, the box showed a Temple Nexus offer as worth its 6 c
+    /// quantity bonus and the advisor ranked it at nothing — two numbers for
+    /// one room. Now the valuation prices the line at its B+ rung and the
+    /// bridge copies THAT, so the two agree by construction.
+    ///
+    /// Fails if the bridge goes back to zeroing the line, and fails if the
+    /// valuation goes back to summing the room's own bonus for it: 6 is not
+    /// 105.75.
+    #[test]
+    fn an_instrumental_offer_publishes_the_same_total_the_ranking_used() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Sanctum of Unity")]);
+        let panel = panel(
+            "Sanctum of Unity",
+            Some(6),
+            vec![offer("Quipolatl", "Temple Nexus", OfferKind::Upgrade)],
+        );
+        let valued = allflame_valuation();
+        let ranked = TempleProfileSettings::default().to_profile(&valued);
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued), None);
+
+        let value = slice.panel.expect("a read publishes its panel").offers[0]
+            .value
+            .clone()
+            .expect("a resolved offer carries its value");
+        assert!(close(value.total, 105.75), "the B+ rung, was {}", value.total);
+        assert_eq!(
+            value.total, ranked.room_values[&Line::Upgrade][2],
+            "the box and the ranking read one table, this line included",
+        );
+        assert_eq!(value.priced, "instrumental", "and says why it has no terms");
+    }
+
+    /// A Custom override on an instrumental line reaches the ranking, like
+    /// every other room's.
+    ///
+    /// It did not use to: the bridge zeroed those two lines whatever the table
+    /// said, so a player typing 500 c against Temple Nexus moved the box and
+    /// nothing else, and `overrides()` had to warn about it. The warning is
+    /// gone because the behaviour is. Fails if the bridge starts special-casing
+    /// the line again.
+    #[test]
+    fn an_override_on_an_instrumental_line_reaches_the_ranking_too() {
+        let settings = TempleSettings {
+            preset: Preset::Custom,
+            custom: TempleCustomSettings {
+                rooms: BTreeMap::from([("upgrade".to_string(), vec![None, None, Some(500.0)])]),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let valuation = value_read(&settings, &crate::temple::market::allflame());
+
+        let profile = settings.profile.to_profile(&valuation);
+
+        assert_eq!(
+            valuation.get("upgrade", Tier::T3).expect("valued").total,
+            500.0,
+            "the box shows what the player typed",
+        );
+        assert_eq!(
+            profile.room_values[&Line::Upgrade][2],
+            500.0,
+            "and so does the ranking",
+        );
+    }
+
+    /// The five most valuable tier-3 rooms on the committed capture, in order,
+    /// through the PRODUCTION entry point.
+    ///
+    /// `value_read` with the Default preset is what `run::full_read` calls, and
+    /// this is the ordering the advisor inherits from it. Every other bridge
+    /// test here asserts a mechanism; this one asserts the answer, so a change
+    /// that quietly re-ranks the board — a drop count edited, a rate moved, the
+    /// floor rule changed, the fallback cap loosened — fails with the room that
+    /// moved named.
+    ///
+    /// Temple Nexus is THIRD, at its B+ rung of 105.75, above two rooms the
+    /// feed prices — and that is the visible cost of the board-7 fix: the
+    /// upgrade line is paid its letter on top of the tiers it lifts. Conduit
+    /// of Lightning (56.13) is sixth, not fifth; the POE-257 brief's list put
+    /// Factory there and the capture disagrees with both.
+    #[test]
+    fn the_live_captures_five_best_rooms_are_these_in_this_order() {
+        let valued = value_read(&TempleSettings::default(), &crate::temple::market::allflame());
+
+        let mut ranked: Vec<(&str, f64)> = valued
+            .lines()
+            .map(|(key, tiers)| (key, tiers[2].total))
+            .collect();
+        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("no NaN in a valued table"));
+
+        let top: Vec<&str> = ranked.iter().take(5).map(|(key, _)| *key).collect();
+        assert_eq!(
+            top,
+            vec![
+                "corruption",
+                "gem",
+                "upgrade",
+                "crucible_of_flame",
+                "sanctum_of_immortality",
+            ],
+        );
+        assert_eq!(ranked[0].1, 846.0, "Locus of Corruption, its sale delta");
+        assert_eq!(ranked[1].1, 390.0, "Doryani's Institute, its sale delta");
+        assert!(close(ranked[2].1, 105.75), "Temple Nexus, its B+ rung");
+        assert!(close(ranked[3].1, 67.35), "Crucible of Flame");
+        assert!(close(ranked[4].1, 60.75), "Sanctum of Immortality");
+        assert!(close(ranked[5].1, 56.125), "and Conduit of Lightning is sixth");
+    }
+
+    /// An offer whose printed target did not resolve publishes no value —
+    /// there is no room to have one, exactly as there is no `displayName` and
+    /// no `grade`. Fails if the projection defaults it to a zero-valued row,
+    /// which the box would render as "worth nothing".
+    #[test]
+    fn an_unresolved_offer_publishes_no_value_rather_than_a_zero_one() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let panel = panel(
+            "Chasm",
+            Some(6),
+            vec![offer("Nobody", "Definitely Not A Room", OfferKind::Change)],
+        );
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
+
+        let offer = slice.panel.expect("a read publishes its panel").offers.remove(0);
+        assert_eq!(offer.display_name, None, "precondition: nothing resolved");
+        assert_eq!(offer.value, None);
+    }
+
+    // ------------------------- the two acceptance boards (POE-257 D7) --
+
+    /// The Allflame market, as the whole chain sees it: settings in, advice
+    /// out, one table behind both.
+    fn advise_at_allflame_prices(
+        layout: &TempleLayout,
+        rooms: &[RoomReading],
+        panel: &PanelReading,
+        valued: &Valued,
+    ) -> Advice {
+        advise_read(layout, rooms, panel, None, &TempleSettings::default(), valued)
+            .expect("a board with a current room ranks")
+    }
+
+    /// What the top recommendation's kill builds, as `(kind, line, tier)`.
+    fn top_kill(advice: &Advice) -> (OfferKind, Line, u8) {
+        let architect = advice.recommendations[0]
+            .option
+            .architect
+            .as_ref()
+            .expect("the acceptance boards both print resolvable blocks");
+        (
+            architect.kind,
+            architect.line.clone(),
+            architect.built_tier.get(),
+        )
+    }
+
+    /// **Acceptance (1).** Standing in a tier-1 vial room with two `change`
+    /// offers, the advice is to switch — and to switch onto the corruption
+    /// line rather than the gem one.
+    ///
+    /// The board is Pools of Restoration (the vial line at tier 1, worth 48.60
+    /// on the committed capture) against Corruption Chamber (676.80) and
+    /// Gemcutter's Workshop (312.00). Under the shipped rusher fixture all
+    /// three of those rooms score ZERO — it prices tiers 1 and 2 at nothing
+    /// and the vial line not at all — so the kill would be a free choice and
+    /// the door chain would decide it. That is exactly the regression this
+    /// pins: it fails if `to_profile` stops pricing the board in chaos, and it
+    /// fails if the two switches stop being ordered by what the feed pays.
+    #[test]
+    fn acceptance_a_tier_one_vial_room_switches_to_the_better_of_two_lines() {
+        let layout = layout(
+            Some(Slot::C1),
+            &[(Slot::C1, Slot::D1), (Slot::D1, Slot::E1)],
+            &[],
+        );
+        let rooms = board_rooms(&[
+            (Slot::C1, "Pools of Restoration"),
+            (Slot::D1, "Chasm"),
+            (Slot::E1, "Entrance"),
+        ]);
+        let panel = panel(
+            "Pools of Restoration",
+            Some(6),
+            // Gemcutter's is block 0 ON PURPOSE. The ranking keeps first-seen
+            // order through every tie, so a board whose two kills score equal
+            // resolves to block 0 — which is what the rusher fixture does
+            // here, pricing both of these tier-2 rooms at nothing. Putting the
+            // corruption line SECOND means reaching it takes a valuation that
+            // actually separates the two.
+            vec![
+                offer("Tacati", "Gemcutter's Workshop", OfferKind::Change),
+                offer("Guatelitzi", "Corruption Chamber", OfferKind::Change),
+            ],
+        );
+        let valued = allflame_valuation();
+
+        let advice = advise_at_allflame_prices(&layout, &rooms, &panel, &valued);
+
+        let (kind, line, tier) = top_kill(&advice);
+        assert_eq!(kind, OfferKind::Change, "the verdict is a switch");
+        assert_eq!(line, Line::Corruption, "onto the line the feed pays most for");
+        assert_eq!(
+            tier, 2,
+            "a `change` in a tier-1 room builds the new line at tier 2",
+        );
+        // And the board really is being ranked in chaos: a finished temple
+        // scored on the 1-10 fixture ranking cannot reach three figures.
+        assert!(
+            advice.recommendations[0].ev > 100.0,
+            "ranked in chaos, got EV {}",
+            advice.recommendations[0].ev,
+        );
+        // Both offers really were switches worth making: the room being given
+        // up is worth a fraction of either, on the same table the ranking used.
+        let staying = valued
+            .get("sanctum_of_immortality", Tier::T1)
+            .expect("the vial line is valued")
+            .total;
+        let corruption = valued.get("corruption", Tier::T2).expect("valued").total;
+        let gem = valued.get("gem", Tier::T2).expect("valued").total;
+        assert!(close(staying, 48.6), "the vial room is worth {staying}");
+        assert!(close(corruption, 676.8), "the corruption switch is {corruption}");
+        assert!(close(gem, 312.0), "the gem switch is {gem}");
+        assert!(staying < gem && gem < corruption, "switching wins either way");
+    }
+
+    /// The PROJECTION of acceptance (1)'s board names the driving item and
+    /// what the feed paid for it.
+    ///
+    /// Not an acceptance test and deliberately not named as one: it calls
+    /// `project`, not `advise_read`, so it pins what the offer box will show
+    /// beside the switch rather than the verdict itself — the verdict is
+    /// `acceptance_a_tier_one_vial_room_switches_to_the_better_of_two_lines`.
+    ///
+    /// The verdict on its own is a number the player cannot argue with. The
+    /// `drivers` list is what makes it arguable: Locus of Corruption sold at
+    /// 856 against a 10 c floor, which is the whole of the 846 the switch is
+    /// worth. Fails if the projection publishes the total without its terms,
+    /// or drops the unit price the term was computed from.
+    #[test]
+    fn the_projected_switch_names_the_room_and_its_feed_price() {
+        let layout = layout(Some(Slot::C1), &[], &[]);
+        let rooms = board_rooms(&[(Slot::C1, "Pools of Restoration")]);
+        let panel = panel(
+            "Pools of Restoration",
+            Some(6),
+            vec![
+                offer("Guatelitzi", "Corruption Chamber", OfferKind::Change),
+                offer("Tacati", "Gemcutter's Workshop", OfferKind::Change),
+            ],
+        );
+        let valued = allflame_valuation();
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued), None);
+
+        let value = slice.panel.expect("a read publishes its panel").offers[0]
+            .value
+            .clone()
+            .expect("the corruption switch carries its value");
+        assert_eq!(value.total, 846.0 * 0.8, "the tier-2 corruption room");
+        let sale = value
+            .drivers
+            .iter()
+            .find(|d| d.kind == "sale")
+            .expect("the switch is priced by a sale");
+        assert_eq!(sale.name, "Locus of Corruption", "the item is named");
+        assert_eq!(sale.unit_price, Some(856.0), "and so is what it sold for");
+        assert_eq!(sale.chaos, Some(846.0), "856 less the 10 c floor");
+    }
+
+    /// **Acceptance (2).** Standing on the gem line at tier 2, with a `change`
+    /// to a vial room on offer, the advice is to upgrade.
+    ///
+    /// Department of Thaumaturgy (312.00) upgrades to Doryani's Institute
+    /// (390.00); the change would build Sanctum of Immortality (60.75) and
+    /// throw the gem line away. Fails if the bridge stops pricing the vial
+    /// line, which would make the two kills indistinguishable, and fails if it
+    /// prices the change above the upgrade.
+    #[test]
+    fn acceptance_tier_two_on_the_gem_line_upgrades_rather_than_changing_to_a_vial_room() {
+        let layout = layout(
+            Some(Slot::C1),
+            &[(Slot::C1, Slot::D1), (Slot::D1, Slot::E1)],
+            &[],
+        );
+        let rooms = board_rooms(&[
+            (Slot::C1, "Department of Thaumaturgy"),
+            (Slot::D1, "Chasm"),
+            (Slot::E1, "Entrance"),
+        ]);
+        let panel = panel(
+            "Department of Thaumaturgy",
+            Some(6),
+            vec![
+                offer("Hayoxi", "Doryani's Institute", OfferKind::Upgrade),
+                offer("Xopec", "Sanctum of Immortality", OfferKind::Change),
+            ],
+        );
+        let valued = allflame_valuation();
+
+        let advice = advise_at_allflame_prices(&layout, &rooms, &panel, &valued);
+
+        let (kind, line, tier) = top_kill(&advice);
+        assert_eq!(kind, OfferKind::Upgrade, "the verdict is an upgrade");
+        assert_eq!(line, Line::Gem);
+        assert_eq!(tier, 3, "the upgrade banks Doryani's Institute");
+        assert!(
+            advice.recommendations[0].ev > 100.0,
+            "ranked in chaos, got EV {}",
+            advice.recommendations[0].ev,
+        );
+        let doryani = valued.get("gem", Tier::T3).expect("valued").total;
+        let vial = valued
+            .get("sanctum_of_immortality", Tier::T3)
+            .expect("valued")
+            .total;
+        assert_eq!(doryani, 390.0);
+        assert!(vial < doryani, "the vial room is worth {vial}");
     }
 
     // ------------------------------------------------ settings round-trip --
@@ -4001,6 +5081,13 @@ mod tests {
             config: TempleConfig {
                 artefacts_of_the_vaal: false,
                 scarab_of_timelines: true,
+            },
+            preset: Preset::Custom,
+            custom: TempleCustomSettings {
+                tier_fraction: 0.6,
+                drops_weight: 0.0,
+                rooms: BTreeMap::from([("gem".to_string(), vec![None, Some(20.0), Some(400.0)])]),
+                ..Default::default()
             },
         };
 

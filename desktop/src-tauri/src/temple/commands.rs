@@ -110,7 +110,8 @@ pub fn temple_set_profile(profile: TempleProfileSettings, app: AppHandle) -> Res
     crate::app_log(
         &app,
         format!(
-            "Temple: profile — apex {:.2}, path cost {:.2}, reroll {}, R4 carve-out {}",
+            "Temple: profile — apex {:.2} (top room = 9), path cost {:.2} \
+             (top room = 9), reroll {}, R4 carve-out {}",
             profile.apex_score,
             profile.path_cost,
             profile.reroll_until_favourable,

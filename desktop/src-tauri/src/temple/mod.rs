@@ -101,6 +101,7 @@ pub mod lattice;
 pub mod market;
 pub mod markers;
 pub mod panel;
+pub mod preset;
 pub mod reader;
 pub mod rooms;
 pub mod run;

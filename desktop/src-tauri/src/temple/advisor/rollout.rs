@@ -157,9 +157,18 @@ impl Valuation {
             .map(|i| i as u8 + 1)
             .collect();
 
-        // The prototype hard-coded 7.0 — the score of "Doryani alone", i.e. the
-        // cheapest single target outcome. Derived here so a profile that prices
-        // its targets differently gets its own threshold instead of Sebastian's.
+        // The lowest POSITIVE tier-3 value among the lines `mode_rule` names
+        // as targets — the cheapest single-target outcome that still counts as
+        // one.
+        //
+        // The prototype hard-coded 7.0, the rusher fixture's score for
+        // "Doryani alone" on Sebastian's 1-10 ranking. Since POE-257 the
+        // profile the app actually ranks with is denominated in CHAOS, so the
+        // same expression yields 390 on the 2026-09-06 capture (Doryani's
+        // Institute's sale delta) and 400 on a cold read (its A+ rung). No
+        // rescale is applied or needed: this is DERIVED from `room_values`, so
+        // it is already in whatever unit those are — which is why
+        // `StrategyProfile::value_scale`'s table does not list it.
         let lost_threshold = required
             .iter()
             .filter_map(|line| profile.room_values.get(line))

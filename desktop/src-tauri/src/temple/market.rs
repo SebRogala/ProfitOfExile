@@ -55,7 +55,6 @@ use super::strategy::Tier;
 /// typical snapshot 84 of the 86 rooms read zero, and the two that do not are
 /// the rooms worth selling.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub struct RoomQuote {
     /// The feed's price for this room-tier, in chaos.
     pub chaos: f64,
@@ -72,7 +71,6 @@ pub struct RoomQuote {
 
 /// One recipe member's price — a vial, a base unique or an upgraded unique.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub struct ItemQuote {
     /// Chaos price. Zero is legal and means the feed prices it at zero; an item
     /// nobody is selling is in [`MarketInput::unpriced`] instead.
@@ -89,7 +87,6 @@ pub struct ItemQuote {
 /// `vial` + `base` -> `upgraded`. Names only; the prices live in
 /// [`MarketInput::items`] so a member appearing in two recipes is priced once.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub struct Recipe {
     /// The vial that performs the upgrade.
     pub vial: String,
@@ -104,7 +101,6 @@ pub struct Recipe {
 /// One market snapshot, as the valuation reads it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(from = "WireMarket")]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub struct MarketInput {
     /// The league the server priced against, as it named it — `"Allflame"` on
     /// the committed capture. Prices are league-local: a Standard read and a
@@ -138,7 +134,6 @@ impl MarketInput {
     /// This is what a valuation gets before the first poll answers, and it is
     /// what makes every room fall back to its grade ladder value rather than to
     /// zero.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn none() -> MarketInput {
         MarketInput {
             league: String::new(),
@@ -154,22 +149,59 @@ impl MarketInput {
 
     /// [`Self::as_of`] as epoch milliseconds — the form the slice's staleness
     /// clock and the overlay's price-age line work in.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn as_of_ms(&self) -> Option<i64> {
         self.as_of.map(|at| at.timestamp_millis())
     }
 
     /// Whether this read may be priced against at all — a stale read may not.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn is_live(&self) -> bool {
         !self.stale
+    }
+
+    /// Whether this read's floor is a number a sale delta can be measured
+    /// against.
+    ///
+    /// The server computes the floor as the median of all 86 room-tier lines
+    /// (POE-255), so zero is not a market state anybody can reach by trading —
+    /// it is a broken or empty feed. Left unguarded it turns every room's raw
+    /// price into its "sale delta", which would anchor the grade ladder on the
+    /// most expensive room in the game and cap the rungs against the cheapest.
+    /// [`Self::prices_anything`] therefore reads it as no market at all.
+    pub fn has_usable_floor(&self) -> bool {
+        self.floor.is_finite() && self.floor > 0.0
+    }
+
+    /// Whether anything in this read can put chaos on a term.
+    ///
+    /// A read that answers `false` is COLD in the sense epic lock L4 means it:
+    /// the valuation prices no room from it and reads the whole board off the
+    /// preset's base-value ladder instead
+    /// (`valuation::Valued::compute_with`). Three ways to be cold, and a
+    /// caller must not have to tell them apart — [`Self::none`] before the
+    /// first poll answers, a payload the client has judged [`Self::stale`],
+    /// which every accessor here already answers as absent, and a payload with
+    /// no usable floor.
+    ///
+    /// The floor belongs in this answer rather than only in the two derived
+    /// numbers that read it. Guarding only those leaves a third state: the
+    /// board would still SUM the payload's own `saleDelta`s while every
+    /// unpriced and instrumental room took the cold, UNCAPPED rung — Temple
+    /// Nexus at 100 over a room the feed prices at 3 — which is a board ranked
+    /// in two units at once and is exactly what the cap exists to prevent.
+    ///
+    /// Rooms OR items: a payload that carries no room quotes can still price a
+    /// vial, and a valuation that ignored it would throw away the only number
+    /// it had.
+    pub fn prices_anything(&self) -> bool {
+        self.is_live()
+            && self.has_usable_floor()
+            && !(self.rooms.is_empty() && self.items.is_empty())
     }
 
     /// The quote for one room-tier, by the name poe.ninja publishes for it.
     ///
     /// `None` while [`Self::stale`] is set, so a stale read is indistinguishable
     /// from no read at every call site.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn room(&self, name: &str, tier: Tier) -> Option<&RoomQuote> {
         if self.stale {
             return None;
@@ -183,7 +215,6 @@ impl MarketInput {
     /// and when the read is stale. Negative and non-finite deltas are read as
     /// `0.0` — a room cannot be worth less than not selling it, and the
     /// valuation's "never NaN, never negative" invariant starts here.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn sale_delta(&self, name: &str, tier: Tier) -> f64 {
         match self.room(name, tier) {
             Some(quote) if quote.sale_delta.is_finite() && quote.sale_delta > 0.0 => {
@@ -196,7 +227,6 @@ impl MarketInput {
     /// The price of one recipe member, by poe.ninja's own name for it.
     ///
     /// `None` for an unpriced item and for every item while the read is stale.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn price(&self, item: &str) -> Option<&ItemQuote> {
         if self.stale {
             return None;
@@ -207,7 +237,6 @@ impl MarketInput {
     /// Whether the payload carried this item and could not price it — the
     /// reason a drop term contributes nothing, as opposed to the item simply
     /// not being in the recipe table.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn is_unpriced(&self, item: &str) -> bool {
         self.unpriced.contains(item)
     }
