@@ -55,10 +55,16 @@ use super::valuation::{Driver, DriverKind, RoomValue, Valued};
 /// The profile fields a user may set (POE-167 §4: *everything a player might
 /// disagree on is a profile field, never a code branch*).
 ///
-/// Four of [`StrategyProfile`]'s fields, not the whole struct: `room_values`,
-/// `combinations` and `mode_rule` describe what "Locus + Doryani Rush" *is*,
-/// and a user editing them is choosing a different strategy rather than tuning
-/// this one. Those arrive as a second shipped profile, not as settings JSON.
+/// Four of [`StrategyProfile`]'s fields, not the whole struct — and since
+/// POE-257 the other three no longer divide the way this doc used to say.
+///
+/// `room_values` and `combinations` ARE settings-fed now, just not from this
+/// struct: the board is priced in chaos from a market read plus the Custom
+/// preset's own override table and `combo_premium`
+/// ([`Self::to_profile`], `temple/preset.rs`, ADR-022). What used to read
+/// "those arrive as a second shipped profile, not as settings JSON" holds for
+/// `mode_rule` alone — it names the two lines the build chases, and a user
+/// editing it is choosing a different strategy rather than tuning this one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TempleProfileSettings {
@@ -600,9 +606,12 @@ pub struct RoomValueView {
     /// priced at their grade rung and copied into `room_values` like any
     /// other. There is no line whose shown value differs from its ranked one.
     pub total: f64,
-    /// `"market"`, `"partial"`, `"fallback"` or `"override"` — how complete
-    /// the sum behind [`Self::total`] is
-    /// ([`Priced`](super::valuation::Priced)).
+    /// `"market"`, `"partial"`, `"fallback"`, `"instrumental"` or
+    /// `"override"` — how complete the sum behind [`Self::total`] is
+    /// ([`Priced`](super::valuation::Priced)). `"instrumental"` is not a
+    /// missing price: it is one of the two
+    /// [`INSTRUMENTAL_LINES`](super::strategy::INSTRUMENTAL_LINES), priced at
+    /// its grade rung because summing is the wrong question for it.
     pub priced: String,
     /// Whether any term that actually contributed chaos rests on somebody's
     /// estimate — a guessed drop count, one of the two unmeasured bonus rates,
@@ -638,7 +647,7 @@ pub struct RoomValueView {
 pub struct DriverView {
     /// `"sale"`, `"unique_drop"`, `"vial_drop"`, `"mod_item"`,
     /// `"quantity_bonus"`, `"rarity_bonus"`, `"tier_fraction"`,
-    /// `"grade_fallback"` or `"custom_override"`
+    /// `"grade_fallback"`, `"instrumental"` or `"custom_override"`
     /// ([`DriverKind`](super::valuation::DriverKind)). `snake_case`, this
     /// app's convention for enum variants on the wire.
     pub kind: String,

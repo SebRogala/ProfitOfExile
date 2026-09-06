@@ -8,7 +8,9 @@ touching `desktop/src-tauri/src/temple/{trigger,run,slice}.rs` or the temple ove
 Related: [Overlay Guide](OVERLAY-GUIDE.md) (windows, click-through, smoke items),
 [ADR-014](adr/014-desktop-features-are-modules-with-a-work-toggle-and-a-view-page.md)
 (the module contract; the POE-246 amendment note), [ADR-019](adr/019-nothing-a-module-draws-may-cover-what-that-module-reads.md),
-[ADR-020](adr/020-one-shared-screen-scale-a-module-corroborates-or-withholds.md).
+[ADR-020](adr/020-one-shared-screen-scale-a-module-corroborates-or-withholds.md),
+[ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md)
+(what a room is worth, added 2026-09-06 by POE-257: `cd5627c`, `f722d49`).
 
 ## The one sentence
 
@@ -53,6 +55,15 @@ Consequences that follow from the order, not from extra rules:
   still opens nothing and still says so (`NoUsableDoor` / `RuDeclined`, and the key still
   reads unspendable in `warnings`): the faint mark is what to do with a key the move has no
   use for, never the move.
+
+**The read carries a valuation** (POE-257, commits `cd5627c` + `f722d49`). Row 2's full read
+does not only produce a board — `run::full_read` builds ONE `valuation::Valued` for it (via `slice::value_read`), the 25 x 3
+table of what each room-tier is worth in chaos, and hands the same object to the ranking and to
+the offer boxes, so the number shown is the number ranked. It is built from a `MarketInput`
+that arrives as state, never fetched: the 650 ms tick still does no HTTP, and until POE-258
+lands the poll `run.rs` passes `MarketInput::none()`, on which every room falls back to its
+grade rung rather than to zero. The rules and their homes are in the table below, the decision
+is [ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md).
 
 Four residuals the rules above produce, all ACCEPTED with their answer named (POE-249, owner
 decisions 1, 3 and 4 of the plan review):
@@ -150,6 +161,12 @@ Facts that shape the rules (PC mining):
 | where the notice ships and where the boxes are drawn | `desktop/src/lib/temple/overlay-geometry.ts` (`waitingDefaultPlacement` for the notice's offered default, `offerStackPlacement` for the column in the sheet's left margin) |
 | what ENDS the advice (and with it the room widget) | `temple/trigger.rs` (`advice_end`) decides, `temple/slice.rs` (`clear_advice`, `force_off`) writes |
 | never-cover set and placement | `temple/run.rs::read_rois` → `layout.rois`; `desktop/src/lib/temple/overlay-geometry.ts` (ADR-019) |
+| what one room-tier is WORTH, in chaos — sale + drops + bonus, the tier fraction, the drivers behind the number | `temple/valuation.rs` (`Valued::compute_with`, `RoomValue`, `Driver`, `Knobs`) — [ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md) |
+| the market read a valuation is computed against, and what "stale" costs | `temple/market.rs` (`MarketInput`, `prices_anything`, `sale_delta`, `price`) — mirrors POE-255's `GET /api/analysis/temple-market`; **no HTTP here**, POE-258 owns the poll |
+| the fallback when nothing is priced — the letter grade in chaos | `temple/rooms.rs` (`Grade::fallback_chaos` cold, `Grade::fallback_chaos_scaled` live) and `temple/valuation.rs` (`rung`, `fallback_cap`): a read that is not live values EVERY room at the cold ladder; a live read keeps measured sums and caps a letter-priced room at the lowest sale-priced room |
+| which valuation is in force, and the player's own numbers | `temple/preset.rs` (`Preset`, `TempleCustomSettings`, `value_table`) persisted as two separate `settings.rs` fields, `temple_preset` and `temple_custom`; one malformed entry costs its own room, never the table |
+| the bridge from a chaos valuation to the advisor's profile, and the relative-unit rescale | `temple/slice.rs` (`TempleProfileSettings::to_profile`) and `temple/strategy.rs` (`REFERENCE_TOP_ROOM_VALUE`, `StrategyProfile::value_scale` — that doc's table is the normative list of the five scaled magnitudes) |
+| ONE valuation per read, shown and ranked | `temple/slice.rs` (`value_read`, called once in `temple/run.rs::full_read`) handed to `advise_read` AND to `project` → `OfferView.value` |
 | smoke items per rule | `OVERLAY-GUIDE.md` "Windows smoke checks" |
 
 ## Owner decisions this encodes (2026-09-04)
