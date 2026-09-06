@@ -479,7 +479,12 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 							// from a build before it carries no field, and the
 							// box tests `value === null` to decide whether to
 							// print a price line at all.
-							value: offer.value ?? null
+							value: offer.value ?? null,
+							// POE-260's recipe, same rule again: the box tests
+							// `recipe === null` to decide whether it prints an
+							// upgrade line at all, and `undefined` there is
+							// falsy by accident rather than by contract.
+							recipe: offer.recipe ?? null
 						}))
 					},
 		advice: incoming.advice ?? null,

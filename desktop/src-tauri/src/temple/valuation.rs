@@ -375,6 +375,39 @@ pub struct RoomValue {
     pub priced: Priced,
 }
 
+// -------------------------------------------------------------- the recipe --
+
+/// One member of a vial recipe, priced (POE-260).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecipeItem {
+    /// poe.ninja's own name for the item — the join key the price came from,
+    /// and the name the icon endpoint is asked for.
+    pub name: String,
+    /// Chaos, or `None` where this read priced nothing for it: the feed carries
+    /// no usable line, the payload is cold, or the read is stale. Never `0.0`
+    /// standing in for a missing price.
+    pub chaos: Option<f64>,
+}
+
+/// A line's vial upgrade: base unique + vial -> upgraded unique, priced.
+///
+/// The recipe is a property of the LINE and the market read, not of a tier's
+/// sum — no term of [`RoomValue`] comes from it. It is published because the
+/// three prices together are the one thing that says whether the unique a room
+/// drops is worth *keeping* or worth *upgrading*, which is a decision the box
+/// otherwise leaves the player to make off the drop price alone.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecipeValue {
+    /// The unique the line's tier-3 chest drops — [`LineDrops::unique`].
+    pub base: RecipeItem,
+    /// The vial that transforms it. **Not** necessarily the vial the line's
+    /// own architect rolls for: on Locus of Corruption those are different
+    /// items, which is why this is looked up by BASE and never by vial.
+    pub vial: RecipeItem,
+    /// What the two become.
+    pub upgraded: RecipeItem,
+}
+
 /// The whole 25 x 3 table for one market read and one set of knobs.
 ///
 /// One table per read is the point (POE-257 D6): the advisor ranks on it and
@@ -383,6 +416,7 @@ pub struct RoomValue {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Valued {
     lines: BTreeMap<&'static str, [RoomValue; 3]>,
+    recipes: BTreeMap<&'static str, RecipeValue>,
     knobs: Knobs,
     league: String,
     as_of_ms: Option<i64>,
@@ -447,6 +481,9 @@ impl Valued {
 
         Valued {
             lines,
+            // Computed from the SAME read, so a box cannot show a recipe
+            // priced off one snapshot beside a total priced off another.
+            recipes: recipe_table(market),
             knobs: *knobs,
             league: market.league.clone(),
             // WITHHELD on a stale read, which is not the same claim
@@ -468,6 +505,19 @@ impl Valued {
             1..=3 => Some(&tiers[tier.get() as usize - 1]),
             _ => None,
         }
+    }
+
+    /// The vial upgrade for one line's unique, or `None` (POE-260).
+    ///
+    /// `None` is the ordinary answer and covers three different facts, all of
+    /// which the surface renders the same way — by printing no recipe line:
+    /// the line drops no unique of its own (eighteen of the twenty-five), its
+    /// unique is not the BASE of any recipe (Locus of Corruption drops
+    /// Shadowstitch and rolls an amulet vial that upgrades somebody else's
+    /// item), or the payload carried no recipe table at all, which is what a
+    /// read that has never reached the server looks like.
+    pub fn recipe(&self, key: &str) -> Option<&RecipeValue> {
+        self.recipes.get(key)
     }
 
     /// Every line's three tiers, tier 1 first, in key order.
@@ -512,6 +562,49 @@ impl Valued {
 /// the only caller iterates the three slots of a `[_; 3]`.
 fn tier_of(index: usize) -> Tier {
     Tier::new(index as u8 + 1).expect("a [_; 3] index is 0..=2")
+}
+
+/// Every line's vial upgrade, priced off this read (POE-260).
+///
+/// Keyed by BASE and never by vial, because the two are not the same question:
+/// [`LineDrops::vial`] is the vial the line's architect ROLLS FOR, and the
+/// recipe is about the vial that TRANSFORMS the unique this line's chest drops.
+/// They coincide on the six chest lines and diverge on Locus of Corruption,
+/// which is the case that proves the rule (`drops.rs`'s module header).
+///
+/// A line whose unique the recipe table does not name gets no entry at all
+/// rather than an entry with three empty prices — the recipe does not exist,
+/// which is a different fact from a recipe nothing priced.
+fn recipe_table(market: &MarketInput) -> BTreeMap<&'static str, RecipeValue> {
+    let mut out = BTreeMap::new();
+    for line in LINES.iter() {
+        let Some(unique) = line.drops().unique() else {
+            continue;
+        };
+        let Some(recipe) = market.recipes.iter().find(|r| r.base == unique) else {
+            continue;
+        };
+        out.insert(
+            line.key(),
+            RecipeValue {
+                base: recipe_item(market, &recipe.base),
+                vial: recipe_item(market, &recipe.vial),
+                upgraded: recipe_item(market, &recipe.upgraded),
+            },
+        );
+    }
+    out
+}
+
+/// One recipe member with whatever this read prices it at.
+///
+/// `MarketInput::price` is the single staleness gate (its module header), so a
+/// stale read answers `None` here for every member without a second check.
+fn recipe_item(market: &MarketInput, name: &str) -> RecipeItem {
+    RecipeItem {
+        name: name.to_string(),
+        chaos: market.price(name).map(|quote| quote.chaos),
+    }
 }
 
 /// The best tier-3 sale delta this read carries, or `None`.
@@ -1003,7 +1096,7 @@ fn scale_from_tier3(line: &RoomLine, tier3: &RoomValue, knobs: &Knobs) -> RoomVa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::temple::market::allflame;
+    use crate::temple::market::{allflame, STALE_AFTER_MS};
     use crate::temple::rooms::Grade;
 
     fn tier(n: u8) -> Tier {
@@ -1907,5 +2000,80 @@ mod tests {
             .collect();
 
         assert_eq!(measured, vec!["corruption", "gem"]);
+    }
+
+    // ------------------------------------------------------- the recipe --
+
+    #[test]
+    fn a_lines_recipe_names_its_unique_the_vial_that_transforms_it_and_the_result() {
+        // Crucible of Flame on the 2026-09-06 capture: the chest drops Story of
+        // the Vaal, Vial of Fate turns it into Fate of the Vaal, and all three
+        // are priced. The prices are the capture's own, so a projection that
+        // read the wrong member — or dropped the price and kept the name —
+        // fails on the number rather than on the shape.
+        let valued = Valued::compute(&allflame(), &Knobs::default());
+
+        let recipe = valued
+            .recipe("crucible_of_flame")
+            .expect("Story of the Vaal is a recipe base");
+
+        assert_eq!(recipe.base.name, "Story of the Vaal");
+        assert_eq!(recipe.base.chaos, Some(5.0));
+        assert_eq!(recipe.vial.name, "Vial of Fate");
+        assert_eq!(recipe.vial.chaos, Some(1.0));
+        assert_eq!(recipe.upgraded.name, "Fate of the Vaal");
+        assert_eq!(recipe.upgraded.chaos, Some(39.2));
+    }
+
+    #[test]
+    fn a_line_whose_own_unique_no_vial_upgrades_has_no_recipe() {
+        // Locus of Corruption is the case that proves the lookup is by BASE.
+        // It drops Shadowstitch, which no recipe transforms, while the vial its
+        // architect rolls for — Vial of Sacrifice — IS a recipe vial, of
+        // Sacrificial Heart. A lookup keyed on the vial would hand this line
+        // somebody else's upgrade and print two items it never drops.
+        let valued = Valued::compute(&allflame(), &Knobs::default());
+
+        assert_eq!(valued.recipe("corruption"), None);
+    }
+
+    #[test]
+    fn a_line_that_drops_no_unique_has_no_recipe() {
+        // Eighteen of the twenty-five, and Chamber of Iron is one: no chest
+        // unique, so there is nothing for a vial to transform.
+        let valued = Valued::compute(&allflame(), &Knobs::default());
+
+        assert_eq!(valued.recipe("chamber_of_iron"), None);
+    }
+
+    #[test]
+    fn a_stale_read_keeps_the_recipes_names_and_prices_none_of_its_members() {
+        // Epic lock L4 on the recipe line: a stale snapshot prices nothing, and
+        // the box draws an em dash rather than yesterday's number. The RECIPE
+        // itself survives, because which vial upgrades which unique is a fact
+        // of the game and not of the market.
+        let stale = allflame().aged_at(1_788_665_199_649 + STALE_AFTER_MS + 1);
+        let valued = Valued::compute(&stale, &Knobs::default());
+
+        let recipe = valued
+            .recipe("crucible_of_flame")
+            .expect("the recipe table survives a stale read");
+
+        assert_eq!(recipe.base.name, "Story of the Vaal");
+        assert_eq!(
+            (recipe.base.chaos, recipe.vial.chaos, recipe.upgraded.chaos),
+            (None, None, None),
+            "a stale read prices no recipe member"
+        );
+    }
+
+    #[test]
+    fn a_read_that_has_never_reached_the_server_has_no_recipe_table_at_all() {
+        // `MarketInput::none()` carries no recipes, which is a different fact
+        // from a recipe nothing priced: the app does not know the table yet, so
+        // it states nothing rather than printing three em dashes.
+        let valued = Valued::compute(&MarketInput::none(), &Knobs::default());
+
+        assert_eq!(valued.recipe("crucible_of_flame"), None);
     }
 }

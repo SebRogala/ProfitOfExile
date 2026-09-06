@@ -13,6 +13,10 @@ import { describe, expect, it } from 'vitest';
 import {
 	BANNER_TOP_CSS,
 	CALLOUT_GAP_CSS,
+	DIAGONAL_BUDGET_CSS,
+	FULL_BOX_MAX_CSS,
+	FULL_PAIR_CSS,
+	MAX_FOLDABLE_DRIVERS,
 	SEAL_RADIUS,
 	SEAL_RADIUS_SECONDARY,
 	SEAL_RADIUS_SUGGESTED,
@@ -25,6 +29,7 @@ import {
 	killGlyphs,
 	neverCoverRects,
 	offerStackPlacement,
+	offersCompact,
 	roiRect,
 	sealVisible,
 	waitingDefaultPlacement
@@ -498,6 +503,176 @@ describe('offerStackPlacement', () => {
 		).toEqual([{ x: 8, y: 150, ...BOX }, null]);
 	});
 
+	/**
+	 * The v3 pair on the frame the design was sized against (POE-260).
+	 *
+	 * The first block at y 133 is the design's stated assumption — architect
+	 * block rects are OCR-derived and pinned by no fixture — and it is MORE
+	 * CONSERVATIVE than the dump's y 114 (`PANEL_BLOCKS` above, the real
+	 * measurement): a lower block is less room down to plate C0, so a diagonal
+	 * that clears at 133 clears at 114 too. 316 is exactly `449 - 133`, plate
+	 * C0's crop being what ends the staggered strip. The blocks are on the two
+	 * sides the game draws them: the first right of the panel crop's centre
+	 * (1403), the second left of it.
+	 */
+	const V3_BLOCKS = [
+		{ x: 1484, y: 133, w: 154, h: 54 },
+		{ x: 1188, y: 289, w: 160, h: 39 }
+	];
+	/** One v3 box at the DIAGONAL's budget: the registry's width, and the
+	 *  height the staggered strip has room for. Not `FULL_BOX_MAX_CSS`, which
+	 *  is the tallest a box can BE — a box that tall gives up the diagonal
+	 *  instead, which is the case the second test below is about. */
+	const V3_BOX = { w: 300, h: DIAGONAL_BUDGET_CSS };
+
+	it('seats a full-height v3 box on the diagonal, clear of all 42 read regions', () => {
+		// The height budget, checked against the real rects rather than against
+		// the design's arithmetic. Column = 556 - 16 - 300 = 240, staggered =
+		// 240 + 175 = 415, so the box occupies x 415..715 and y 133..449 —
+		// flush under plate C0's crop and inside none of them. A box that grew
+		// a row past 316 is what this catches.
+		const obstacles = committedRegions();
+
+		const placed = offerStackPlacement({
+			blocks: V3_BLOCKS,
+			panel: COMMITTED_PANEL,
+			boxes: [V3_BOX, V3_BOX],
+			obstacles,
+			host: HOST
+		}) as WidgetRect[];
+
+		expect(placed[0]).toEqual({ x: 415, y: 133, ...V3_BOX });
+		expect(rectIsClear(placed[0], obstacles)).toBe(true);
+		expect(rectIsClear(placed[1], [...obstacles, placed[0]])).toBe(true);
+	});
+
+	it('gives up the DIAGONAL rather than the content when the block sits lower', () => {
+		// The design's stated trade (§1): a first block below y 133 pushes the
+		// staggered box past plate C0, and `avoidRects` slides it back toward
+		// the column at the same y. The box is still drawn and still 316 px —
+		// no line of the explanation is lost — which is why clearing the plate
+		// is NOT a collapse trigger.
+		const obstacles = committedRegions();
+		const lower = [{ ...V3_BLOCKS[0], y: 200 }, V3_BLOCKS[1]];
+
+		const placed = offerStackPlacement({
+			blocks: lower,
+			panel: COMMITTED_PANEL,
+			boxes: [V3_BOX, V3_BOX],
+			obstacles,
+			host: HOST
+		}) as WidgetRect[];
+
+		expect(placed[0].h).toBe(DIAGONAL_BUDGET_CSS);
+		expect(placed[0].x).toBeLessThan(415);
+		expect(rectIsClear(placed[0], obstacles)).toBe(true);
+	});
+
+	/**
+	 * `TempleOfferBoxes.svelte`'s full form, row by row, in CSS px — each entry
+	 * is that rule's own `height`/`line-height` plus its stated `margin-top`,
+	 * for the WORST shape the wording can build: a `market` or `partial` box on
+	 * the pick (2 px frame) that is also a scaled row (`scale`) on a four-term
+	 * room (`fold`).
+	 *
+	 * What it guards is `FULL_BOX_MAX_CSS` against this table. It cannot see a
+	 * row ADDED to the component — nothing here reads the stylesheet — so a new
+	 * row has to land in both places or the budget is quietly short.
+	 */
+	const FULL_BOX_ROWS = {
+		border: 2 * 2,
+		padding: 2 * 8,
+		headline: 20,
+		builds: 17,
+		value: 8 + 28,
+		scale: 6 + 15,
+		drivers: 8 + 3 * 26 + 2 * 6,
+		fold: 6 + 15,
+		bonus: 6 + 15,
+		recipe: 8 + 13 + 2 + 24,
+		rating: 8 + 14,
+		reason: 2 + 14,
+		age: 6 + 13
+	};
+	const WORST_FULL_BOX = Object.values(FULL_BOX_ROWS).reduce((sum, row) => sum + row, 0);
+
+	it('budgets the pair against the tallest box the wording can build, not the design\'s typical one', () => {
+		// 358, not the 316 of the design's priced artboard: that artboard has
+		// neither the scale note a tier-1 kill adds nor the fold a fourth term
+		// adds, and both are ordinary boards. A constant sized on the typical
+		// box is a pair that fits on paper and clamps on screen.
+		expect(WORST_FULL_BOX).toBe(358);
+		expect(FULL_BOX_MAX_CSS).toBe(WORST_FULL_BOX);
+		expect(FULL_BOX_MAX_CSS).toBeGreaterThan(DIAGONAL_BUDGET_CSS);
+	});
+
+	it('seats two worst-case boxes without clamping at exactly the clearance the compact rule allows', () => {
+		// The two constants meeting. `offersCompact` lets the pair render full
+		// down to `FULL_PAIR_CSS` of host below the first block, so at exactly
+		// that clearance two of the TALLEST boxes must still stack: the first
+		// level with its block, the second `STACK_GAP_CSS` under it, and the
+		// second's bottom edge flush with the host.
+		//
+		// Under-budget `FULL_PAIR_CSS` and this is what happens instead: the
+		// lower box's wanted y runs past the host, `avoidRects` clamps it up
+		// onto the box above, and it is then displaced across the screen or
+		// dropped — the box the player was comparing against, gone, on a board
+		// the collapse rule said was fine.
+		const obstacles = committedRegions();
+		const top = HOST.height - FULL_PAIR_CSS;
+		// Both blocks LEFT of the panel crop's centre, so both boxes take the
+		// plain column (x 240) — the strip that is clear for the host's whole
+		// height. The diagonal has its own case above.
+		const blocks = [
+			{ x: 1140, y: top, w: 280, h: 43 },
+			{ x: 1140, y: top + 60, w: 280, h: 43 }
+		];
+		const box = { w: 300, h: WORST_FULL_BOX };
+
+		expect(
+			offersCompact({ driverCounts: [3, 3], blocks, panel: COMMITTED_PANEL, host: HOST })
+		).toBe(false);
+		expect(
+			offerStackPlacement({ blocks, panel: COMMITTED_PANEL, boxes: [box, box], obstacles, host: HOST })
+		).toEqual([
+			{ x: 240, y: top, ...box },
+			{ x: 240, y: top + WORST_FULL_BOX + STACK_GAP_CSS, ...box }
+		]);
+	});
+
+	it('draws BOTH compact boxes on a host too short for the full pair', () => {
+		// The design's own promise: the box is never dropped, it collapses.
+		// The compact form is 136 px, so the pair needs 280 of the 300 this
+		// host leaves under the block — and both must come back placed. A
+		// collapse rule that fired but a form that did not shrink puts the
+		// lower box past the host's bottom edge, where the clamp walks it onto
+		// its neighbour and `avoidRects` answers null: one box on screen,
+		// which is the comparison gone.
+		const obstacles = committedRegions();
+		const shortHost = { width: 1920, height: 600 };
+		const blocks = [
+			{ x: 1140, y: 300, w: 280, h: 43 },
+			{ x: 1140, y: 340, w: 280, h: 43 }
+		];
+		const compactBox = { w: 300, h: 136 };
+
+		expect(
+			offersCompact({ driverCounts: [3, 3], blocks, panel: COMMITTED_PANEL, host: shortHost })
+		).toBe(true);
+		expect(
+			offerStackPlacement({
+				blocks,
+				panel: COMMITTED_PANEL,
+				boxes: [compactBox, compactBox],
+				obstacles,
+				host: shortHost
+			})
+		).toEqual([
+			{ x: 240, y: 300, ...compactBox },
+			{ x: 240, y: 300 + 136 + STACK_GAP_CSS, ...compactBox }
+		]);
+	});
+
 	it('places nothing at all with an empty never-cover set', () => {
 		// The rule this file's other three placers state, and the one this
 		// placer needs most: `boardLeft` is a minimum over that set, so an empty
@@ -513,6 +688,89 @@ describe('offerStackPlacement', () => {
 				host: HOST
 			})
 		).toEqual([null, null]);
+	});
+});
+
+describe('offersCompact', () => {
+	/** A first block where the game normally draws it — the design's y 133. */
+	const HIGH = [{ x: 1484, y: 133, w: 154, h: 54 }, { x: 1188, y: 289, w: 160, h: 39 }];
+	/** Three driver rows on each box: the full form's own cap. */
+	const THREE = [3, 3];
+
+	it('keeps the full form where the host has room for two of them', () => {
+		// 1080 - 133 is 947, and two full boxes plus the stack gap need 640.
+		expect(offersCompact({ driverCounts: THREE, blocks: HIGH, panel: COMMITTED_PANEL, host: HOST })).toBe(
+			false
+		);
+	});
+
+	it('collapses when what is left of the host under the first block cannot seat the pair', () => {
+		// The boundary itself: a first block at y 441 leaves exactly 639 px,
+		// one short of the pair. The rule is about what is BELOW the block,
+		// because the stack starts level with it and grows downward — a test on
+		// the host's height alone would pass on a screen with no room at all.
+		const low = [{ ...HIGH[0], y: HOST.height - FULL_PAIR_CSS + 1 }, HIGH[1]];
+
+		expect(offersCompact({ driverCounts: THREE, blocks: low, panel: COMMITTED_PANEL, host: HOST })).toBe(
+			true
+		);
+	});
+
+	it('keeps the full form at exactly the pair\'s own height', () => {
+		// One pixel the other side of the same boundary, so the comparison is
+		// pinned rather than the direction of it.
+		const exact = [{ ...HIGH[0], y: HOST.height - FULL_PAIR_CSS }, HIGH[1]];
+
+		expect(
+			offersCompact({ driverCounts: THREE, blocks: exact, panel: COMMITTED_PANEL, host: HOST })
+		).toBe(false);
+	});
+
+	it('collapses when one box has more drivers than a fold can honestly hide', () => {
+		// Design §7.1. Past `MAX_FOLDABLE_DRIVERS` the fold line would be hiding
+		// more items than the three rows above it show, and a box whose
+		// explanation is mostly "and some others" is not an explanation. It
+		// takes ONE box over the line: the pair collapses together, because two
+		// boxes in different forms read as two different kinds of answer.
+		expect(
+			offersCompact({
+				driverCounts: [MAX_FOLDABLE_DRIVERS + 1, 2],
+				blocks: HIGH,
+				panel: COMMITTED_PANEL,
+				host: HOST
+			})
+		).toBe(true);
+	});
+
+	it('folds rather than collapsing at the cap itself', () => {
+		expect(
+			offersCompact({
+				driverCounts: [MAX_FOLDABLE_DRIVERS, 2],
+				blocks: HIGH,
+				panel: COMMITTED_PANEL,
+				host: HOST
+			})
+		).toBe(false);
+	});
+
+	it('measures from the panel crop when the read carried no block rect', () => {
+		// The same fallback chain `offerStackPlacement` uses for the first box's
+		// top, and it has to be the same one: a rule measuring from a different
+		// origin than the stack starts at would collapse a pair that fits, or
+		// keep a pair that does not.
+		const shortHost = { width: 1920, height: COMMITTED_PANEL.y + FULL_PAIR_CSS - 1 };
+
+		expect(
+			offersCompact({ driverCounts: THREE, blocks: [null, null], panel: COMMITTED_PANEL, host: shortHost })
+		).toBe(true);
+	});
+
+	it('measures from the banner top when there is neither a block nor a panel', () => {
+		const shortHost = { width: 1920, height: BANNER_TOP_CSS + FULL_PAIR_CSS - 1 };
+
+		expect(
+			offersCompact({ driverCounts: THREE, blocks: [null, null], panel: null, host: shortHost })
+		).toBe(true);
 	});
 });
 

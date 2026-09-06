@@ -1253,6 +1253,69 @@ touching the named path.
   block it points at actually reads as the pointer at a glance, over the game.
   If it does not, the fix is a product decision about where the column sits, not
   a change to `offerStackPlacement`.
+- **The offer box explains the number, in each of its five states** (POE-260):
+  the box now leads with what the room is WORTH in chaos and shows what makes
+  that number up, so what this item checks is that every state says something
+  true and none of them invents a number. One read per state; the state is
+  visible on the Temple page's value table (`values.ts`'s letter) if a box is
+  ambiguous.
+
+  1. **Priced.** Open a panel on a board with a chest-unique line — Crucible of
+     Flame, Toxic Grove, Sanctum of Immortality, Hybridisation Chamber, Conduit
+     of Lightning or Defense Research Lab. The box must show a chaos figure with
+     `per run` beside it, up to three ICON rows under it, each with the item's
+     own price and its per-run count (`×0.25`, `×0.1`, `×2`), the
+     `+6% quant · +12% rarity` line, and — on those six lines, and NOT on Locus
+     of Corruption — an `UPGRADE RECIPE` row of three icons with prices. Icons
+     that render as a `?` mean the server's `/api/gem-icon/<name>` did not answer
+     for that poe.ninja name; check one by hand before assuming the row is wrong.
+     The row prices are the ITEM's, not the term's: `Story of the Vaal 68c
+     ×0.25` is right and `17c` is the bug.
+  2. **Partial.** A board where the feed carries no line for one of the items —
+     the vials are the usual case. The unpriced row must keep its icon and read
+     `no price`, never `0c` and never be missing, and the headline number must
+     carry a `floor · N unpriced` chip in place of `per run`.
+  3. **Fallback.** Force it by starting the app with no network (or point the
+     server URL at nothing) and opening a panel. Both boxes must show
+     `grade <letter>` with an `F` mark instead of a chaos figure, every row price
+     must be an em dash `—`, and the age line must read
+     `prices unavailable — base values`. A chaos number on a board with no market
+     is the failure this state exists to make impossible.
+  4. **Stale.** Hardest to force deliberately — leave the app running against a
+     server whose temple recompute has stopped for over two hours, or check it
+     opportunistically. What to expect is the FALLBACK box with one extra line,
+     not the priced box with a warning on it: ADR-022's rule 3 turns the whole
+     valuation on `MarketInput::prices_anything()`, a stale read is not live, so
+     every room comes back with the single cold-ladder driver. So the box must
+     read `grade <letter>` with an `F` mark and no chaos figure, carry NO driver
+     rows and no quant/rarity line, show an em dash for each recipe price — and
+     the age line, in yellow, must read `prices stale (<N> h) — base values`,
+     which is the one thing that tells this state from state 3. The dotted
+     yellow underline sits on whatever the value slot carries, which here is the
+     grade.
+
+     **The box gets SHORTER when the board goes stale** — about 197 px against
+     the priced form's 316 — because the cold ladder wiped its terms. That is
+     the expected form and not a regression; the regression is a chaos figure,
+     a driver row or a `per run` surviving into it, which would be the box
+     justifying its number with prices the ranking refused to use.
+  5. **Compact.** Force it by making the room below the first architect block
+     too small for the pair — run the game WINDOWED at roughly 720 px tall, or
+     find a board whose first block sits low. BOTH boxes must collapse together
+     to the icons-and-prices strip with one foot line; one full box beside one
+     compact box is the regression, because the two then read as two different
+     kinds of answer.
+
+  **And the blink must be gone.** Watch either box for three unbroken minutes on
+  a live board. It must NOT flicker as the age line rolls from `prices 12 min
+  old` to `13 min old` — that was POE-258's accepted defect and POE-260's fixed
+  box width is what ends it. A flicker on the minute means something text-shaped
+  is back in `offerBoxSignature`.
+
+  **Owner judgement, not arithmetic**: whether the box is still readable at arm's
+  length over a game now that it carries icons and four more lines, and whether
+  the pick's cyan frame still wins the eye against them. If it does not, the fix
+  is a product decision about what the box drops, not a change to the geometry.
 - **The waiting notice, from Alva's start line to the sheet** (POE-249): with the
   temple module on and the game focused, click Alva and open the incursion
   portal WITHOUT opening the layout sheet. `app.log` must carry

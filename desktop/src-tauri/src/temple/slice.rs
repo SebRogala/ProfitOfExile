@@ -48,7 +48,7 @@ use super::preset::{self, Preset, TempleCustomSettings};
 use super::reader::TempleLayout;
 use super::rooms::{self, Match, OfferKind, RoomIdentity};
 use super::strategy::{Combination, Line, Mode, StrategyProfile, TempleConfig, Tier};
-use super::valuation::{Driver, DriverKind, RoomValue, Valued};
+use super::valuation::{Driver, DriverKind, RecipeItem, RecipeValue, RoomValue, Valued};
 
 // ---------------------------------------------------------------- settings --
 
@@ -591,6 +591,46 @@ pub struct OfferView {
     /// "no value" rather than failing the whole slice.
     #[serde(default)]
     pub value: Option<RoomValueView>,
+    /// The vial upgrade for the unique this kill's LINE drops, priced off the
+    /// same read as [`value`](Self::value) — base + vial -> upgraded (POE-260).
+    ///
+    /// `None` far more often than not, and every reason for it renders the
+    /// same way (no recipe line on the box): see
+    /// [`Valued::recipe`](super::valuation::Valued::recipe).
+    ///
+    /// On the OFFER rather than inside [`RoomValueView`], because it is a
+    /// property of the LINE and not of a tier's sum: the same three items and
+    /// the same three prices would otherwise be repeated on all three rows of
+    /// every `temple_value_table` line, where nothing reads them.
+    ///
+    /// `serde(default)` for the same reason as `value`.
+    #[serde(default)]
+    pub recipe: Option<RecipeView>,
+}
+
+/// One line's vial upgrade on the wire (POE-260).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecipeView {
+    /// The unique this line's tier-3 chest drops.
+    pub base: RecipeItemView,
+    /// The vial that transforms it — not necessarily the one this line's
+    /// architect rolls for.
+    pub vial: RecipeItemView,
+    /// What the two become.
+    pub upgraded: RecipeItemView,
+}
+
+/// One priced member of a [`RecipeView`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecipeItemView {
+    /// poe.ninja's own name — the price's join key, and what the icon endpoint
+    /// is asked for.
+    pub name: String,
+    /// Chaos, or `null` where this read priced nothing for it. Never `0.0`
+    /// standing in for a missing price.
+    pub chaos: Option<f64>,
 }
 
 /// One room-tier's chaos value and the terms behind it, on the wire.
@@ -1347,6 +1387,31 @@ fn offer_view(
                 .get(r.line.key(), r.built_tier)
                 .map(|value| room_value_view(value, valuation))
         }),
+        // Off the LINE alone, and deliberately not off `built_tier`: the chest
+        // that drops the unique is the tier-3 one, and a kill landing on tier 1
+        // is still a kill on the line whose upgrade this is. The box shows the
+        // recipe under the same "what this line is worth" heading its unscaled
+        // tier-3 drivers already sit under (epic lock L2).
+        recipe: resolved
+            .as_ref()
+            .and_then(|r| valuation.recipe(r.line.key()))
+            .map(recipe_view),
+    }
+}
+
+/// One line's vial upgrade on the wire.
+fn recipe_view(recipe: &RecipeValue) -> RecipeView {
+    RecipeView {
+        base: recipe_item_view(&recipe.base),
+        vial: recipe_item_view(&recipe.vial),
+        upgraded: recipe_item_view(&recipe.upgraded),
+    }
+}
+
+fn recipe_item_view(item: &RecipeItem) -> RecipeItemView {
+    RecipeItemView {
+        name: item.name.clone(),
+        chaos: item.chaos,
     }
 }
 
@@ -4541,6 +4606,25 @@ mod tests {
                             },
                         ],
                     }),
+                    // POE-260. Hand-built like everything else here, and the
+                    // upgraded member is deliberately UNPRICED so the mirror's
+                    // `number | null` is pinned on both branches — a recipe
+                    // whose result the feed cannot price is the ordinary case
+                    // the box has to draw an em dash for.
+                    recipe: Some(RecipeView {
+                        base: RecipeItemView {
+                            name: "Story of the Vaal".to_string(),
+                            chaos: Some(5.0),
+                        },
+                        vial: RecipeItemView {
+                            name: "Vial of Fate".to_string(),
+                            chaos: Some(1.0),
+                        },
+                        upgraded: RecipeItemView {
+                            name: "Fate of the Vaal".to_string(),
+                            chaos: None,
+                        },
+                    }),
                 }],
                 incursions_remaining: Some(6),
             }),
@@ -4631,7 +4715,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"unavailable":true},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]},"recipe":{"base":{"name":"Story of the Vaal","chaos":5.0},"vial":{"name":"Vial of Fate","chaos":1.0},"upgraded":{"name":"Fate of the Vaal","chaos":null}}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"unavailable":true},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///
@@ -5168,6 +5252,68 @@ mod tests {
             .find(|d| d.kind == "tier_fraction")
             .expect("and the fraction driver holds the answer");
         assert_eq!(fraction.chaos, Some(846.0 * 0.8));
+    }
+
+    /// The offer carries the vial upgrade for the unique its LINE drops
+    /// (POE-260).
+    ///
+    /// Three names and three prices, all from the same read the total came
+    /// from: the box's recipe line is what tells a player whether the unique
+    /// falling out of the chest is worth keeping or worth upgrading, and a
+    /// recipe priced off a second market read would answer that question with
+    /// numbers the ranking never saw. Fails if the projection drops the
+    /// recipe, prices a member from anywhere but this read, or hands the offer
+    /// a recipe belonging to another line.
+    #[test]
+    fn an_offer_publishes_the_vial_upgrade_for_the_unique_its_line_drops() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Omnitect Forge")]);
+        let panel = panel(
+            "Omnitect Forge",
+            Some(6),
+            vec![offer("Puhuarte", "Crucible of Flame", OfferKind::Upgrade)],
+        );
+        let valued = allflame_valuation();
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued), None);
+
+        let recipe = slice.panel.expect("a read publishes its panel").offers[0]
+            .recipe
+            .clone()
+            .expect("Story of the Vaal is a recipe base");
+        assert_eq!(recipe.base.name, "Story of the Vaal");
+        assert_eq!(recipe.base.chaos, Some(5.0));
+        assert_eq!(recipe.vial.name, "Vial of Fate");
+        assert_eq!(recipe.vial.chaos, Some(1.0));
+        assert_eq!(recipe.upgraded.name, "Fate of the Vaal");
+        assert_eq!(recipe.upgraded.chaos, Some(39.2));
+    }
+
+    /// An offer on a line no vial upgrades carries no recipe.
+    ///
+    /// Locus of Corruption drops Shadowstitch, which is nobody's recipe base,
+    /// while the vial its architect rolls for upgrades somebody else's item.
+    /// The box then prints no recipe line at all, which is the honest answer:
+    /// there is no upgrade for what this room drops. Fails if the projection
+    /// starts keying the lookup on the vial, which would put Sacrificial Heart
+    /// and Zerphi's Heart on a box for a room that drops neither.
+    #[test]
+    fn an_offer_whose_unique_no_vial_upgrades_carries_no_recipe() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Catalyst of Corruption")]);
+        let panel = panel(
+            "Catalyst of Corruption",
+            Some(6),
+            vec![offer("Guatelitzi", "Locus of Corruption", OfferKind::Upgrade)],
+        );
+        let valued = allflame_valuation();
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None, &valued), None);
+
+        assert_eq!(
+            slice.panel.expect("a read publishes its panel").offers[0].recipe,
+            None
+        );
     }
 
     /// A Temple Nexus offer publishes exactly the number the ranking used.

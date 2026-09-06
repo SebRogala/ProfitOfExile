@@ -250,6 +250,122 @@ export function offerStackPlacement(input: {
 }
 
 /**
+ * What the panel's own DIAGONAL has room for, CSS px (POE-260 design §1).
+ *
+ * MEASURED: on the committed 1920x1080 frame the staggered strip — the column
+ * plus [`STACK_STAGGER_CSS`] — is clear only down to y 449, where plate C0's
+ * crop begins, and the design sizes against a first architect block at y 133.
+ * 449 - 133 is the whole of it.
+ *
+ * This is an ASSUMPTION about the board and not a ceiling on the box: a box
+ * taller than this still draws every line it has, and `offerStackPlacement`
+ * gives up the diagonal for it (slides it back onto the column) rather than
+ * dropping content. So it is not what [`offersCompact`] budgets against —
+ * [`FULL_BOX_MAX_CSS`] is — and the two are kept apart because the design's
+ * priced form happens to be exactly 316 px, which is how they were conflated
+ * in the first place.
+ */
+export const DIAGONAL_BUDGET_CSS = 316;
+
+/**
+ * The tallest a FULL offer box can actually be, CSS px (POE-260).
+ *
+ * Summed from `TempleOfferBoxes.svelte`'s own fixed row heights — every row in
+ * the full form is a `height` or a `line-height` with a stated margin, which is
+ * what makes a box's geometry a function of its SHAPE — for the worst case the
+ * wording can produce: a `market` or `partial` box on the advisor's pick, so a
+ * 2 px frame, with the value row, a scale note, three driver rows, a fold line,
+ * a bonus line, a recipe, a rating, a reason and the age line.
+ *
+ *     border 2x2 4 + padding 2x8 16 + headline 20 + builds 17
+ *     + value (8 + 28) 36 + scale (6 + 15) 21 + drivers (8 + 3x26 + 2x6) 98
+ *     + fold (6 + 15) 21 + bonus (6 + 15) 21 + recipe (8 + 13, 2 + 24) 47
+ *     + rating (8 + 14) 22 + reason (2 + 14) 16 + age (6 + 13) 19 = 358
+ *
+ * The design's 316 is that same box WITHOUT the scale note and the fold, which
+ * are the two rows a tier-1 or tier-2 kill on a four-term room adds — a shape
+ * the wording produces on ordinary boards, so it is the one the pair has to be
+ * budgeted for. `note` is not in the sum and cannot be: `valuation.rs` gives an
+ * instrumental and an overridden room exactly ONE driver, of a kind that is not
+ * a row, so the line that says "valued at its letter" is only ever on a box
+ * with no rows, no fold and no bonus.
+ *
+ * Not measured from the DOM because this app has no DOM harness for a
+ * `.svelte` file; `overlay-geometry.test.ts` restates the row table beside the
+ * constant so a row added to the component without a number here fails.
+ */
+export const FULL_BOX_MAX_CSS = 358;
+
+/** What two FULL boxes and the gap between them need, CSS px — the clearance
+ *  [`offersCompact`] demands before it lets the pair render full. Off the
+ *  WORST case rather than the design's typical one, because the box that gets
+ *  clamped for want of it is the LOWER one, and a clamped box lands on the box
+ *  above it and is then moved or dropped entirely. */
+export const FULL_PAIR_CSS = FULL_BOX_MAX_CSS * 2 + STACK_GAP_CSS;
+
+/**
+ * More driver rows than folding one line can honestly hide (POE-260 design
+ * §7.1).
+ *
+ * At four rows the fold hides one and shows three, which is a summary; at six
+ * it hides three and shows three, which is not. The cap sits one row below that
+ * crossing, so five — hiding two under three — is the last shape that still
+ * reads as a summary.
+ *
+ * **Unreachable as the wording stands**, and kept anyway. `view.ts`'s
+ * `ROW_KINDS` has four entries — sale, unique drop, vial drop, mod item — and a
+ * room publishes at most one driver of each, so `driverCount` cannot exceed 4
+ * today and this trigger never fires. It fires the day a fifth `ROW_KIND` is
+ * added, which is the day the fold would start hiding as much as it shows; a
+ * collapse rule that only appeared then would be a rule written under the
+ * pressure of the feature that broke it.
+ */
+export const MAX_FOLDABLE_DRIVERS = 5;
+
+/**
+ * Whether the pair of offer boxes draws in its COMPACT form (POE-260).
+ *
+ * Both tests read inputs that exist BEFORE the boxes render. Neither may read a
+ * measured height: the component measures and then places, so a fit test on the
+ * measured height would change the height it was testing and oscillate for as
+ * long as the board is up.
+ *
+ * Two triggers, and they are different kinds of "does not fit":
+ *
+ * 1. **Too many drivers to fold.** More than [`MAX_FOLDABLE_DRIVERS`] rows on
+ *    ANY box and the pair goes compact — the fold line would be hiding more
+ *    than the rows it sits under show.
+ * 2. **Not enough screen under the first block.** The stack starts level with
+ *    block 0 (or, with no block rect, at the panel crop's top, or at
+ *    [`BANNER_TOP_CSS`]) and grows downward, so what is left of the host below
+ *    that point is the whole budget. Under [`FULL_PAIR_CSS`] the pair cannot
+ *    both be full.
+ *
+ * **Together, never one each.** Two boxes in different forms read as two
+ * different kinds of answer, and the whole point of the pair is that the player
+ * is comparing them.
+ *
+ * Explicitly NOT a trigger: whether the staggered box clears the first plate.
+ * `offerStackPlacement` already answers that by sliding the box back onto the
+ * column, and its answer keeps every line of content — the diagonal is what
+ * gives there, not the explanation.
+ */
+export function offersCompact(input: {
+	/** Every box's driver-row count, in box order (`OfferBox.driverCount`). */
+	driverCounts: readonly number[];
+	/** Each offer's block rect in CSS px, `blocks[i]` for box `i`. */
+	blocks: readonly (WidgetRect | null)[];
+	/** The side panel's OCR crop in CSS px. */
+	panel: WidgetRect | null;
+	host: HostSize;
+}): boolean {
+	const { driverCounts, blocks, panel, host } = input;
+	if (driverCounts.some((count) => count > MAX_FOLDABLE_DRIVERS)) return true;
+	const top = blocks[0]?.y ?? panel?.y ?? BANNER_TOP_CSS;
+	return host.height - top < FULL_PAIR_CSS;
+}
+
+/**
  * Where the door diamond sits until the user drags it.
  *
  * Below the panel's crop and lined up with the panel's own diamond, which is
