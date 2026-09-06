@@ -523,11 +523,6 @@ impl<T> Salvaged<T> {
         }
     }
 
-    /// The value itself.
-    pub fn get(&self) -> &T {
-        &self.value
-    }
-
     /// Whether the file's own value was refused and this default stood in.
     pub fn was_salvaged(&self) -> bool {
         self.salvaged
@@ -1673,6 +1668,116 @@ mod tests {
                 .total,
             -5.0,
             "and the refused room is back on the formula, not at its bad value",
+        );
+    }
+
+    /// The table the load STORES is the salvaged one, so one bad entry in a
+    /// hand-edited file does not write-lock the editor (POE-259).
+    ///
+    /// The echo the editor reads is this stored table, and the editor writes a
+    /// WHOLE table back. Store the file's own and the bad entry rides in the
+    /// echo, straight into `TempleCustomSettings::validate` — which is
+    /// `temple_set_custom`'s only gate — and every later edit is refused over
+    /// a room the player is not touching and cannot see. Fails if the raw
+    /// table is stored again: the unrelated edit below stops being accepted.
+    ///
+    /// The surviving entry is asserted alongside, because the cheap way to
+    /// pass the first half is to store nothing at all.
+    #[test]
+    fn a_bad_entry_is_dropped_from_the_stored_table_so_the_next_edit_is_still_accepted() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"temple_preset":"custom",
+                "temple_custom":{"rooms":{"corruption":[null,null,-5],
+                                          "gem":[null,null,777]}}}"#,
+        )
+        .expect("a hand-edited file must still parse");
+
+        let state = test_app_state();
+        let _ = apply_to_state(&parsed, &state);
+        let stored = state.temple_settings.lock().unwrap().custom.clone();
+
+        assert!(
+            !stored.rooms.contains_key("corruption"),
+            "the entry the load refused is not in the echo: {:?}",
+            stored.rooms,
+        );
+        assert_eq!(
+            stored.rooms.get("gem").map(Vec::as_slice),
+            Some([None, None, Some(777.0)].as_slice()),
+            "and the entry it accepted is, unchanged",
+        );
+
+        // What the editor does next: the echo it just read, with one unrelated
+        // cell changed, handed back whole.
+        let mut edited = stored.clone();
+        edited
+            .rooms
+            .insert("gem".to_string(), vec![Some(12.0), None, Some(777.0)]);
+
+        assert_eq!(
+            edited.validate(),
+            Ok(()),
+            "an edit to another room is not refused over the bad entry",
+        );
+    }
+
+    /// A rate this build cannot apply is reset to the shipped one, said out
+    /// loud, and does not write-lock the editor either (POE-259).
+    ///
+    /// The knob half of the same failure as the test above. A hand-edited
+    /// `"tierFraction": 2.5` is well-typed, so `Salvaged` never sees it and it
+    /// reaches the echo as a number — where it would be handed back to
+    /// `TempleCustomSettings::validate` on the player's next cell edit and
+    /// refuse a write about a room entirely. Both bad rates are stated, so the
+    /// load cannot pass by stopping at the first.
+    ///
+    /// Reset and not merely reported: `valuation::tier_fraction` would clamp
+    /// 2.5 to 1.0 and `valuation::rate` would floor -1 to 0, so leaving the
+    /// file's numbers in the echo shows the player two rates the app does not
+    /// apply.
+    #[test]
+    fn a_rate_this_build_cannot_apply_is_reset_to_the_shipped_one_and_named() {
+        let parsed: Settings = serde_json::from_str(
+            r#"{"temple_preset":"custom",
+                "temple_custom":{"tierFraction":2.5,"dropsWeight":-1}}"#,
+        )
+        .expect("a hand-edited file must still parse");
+
+        let state = test_app_state();
+        let rejected = apply_to_state(&parsed, &state);
+        let stored = state.temple_settings.lock().unwrap().custom.clone();
+
+        assert_eq!(stored.tier_fraction, 0.8, "the shipped fraction is in force");
+        assert_eq!(stored.drops_weight, 1.0, "and the shipped drops weight");
+        assert_eq!(rejected.len(), 2, "one line per reset rate: {rejected:?}");
+        assert!(
+            rejected
+                .iter()
+                .any(|line| line.contains("tier fraction")
+                    && line.contains("2.5")
+                    && line.contains("0.8")),
+            "the fraction's line names the knob, the file's number and the default: {rejected:?}",
+        );
+        assert!(
+            rejected
+                .iter()
+                .any(|line| line.contains("drops weight")
+                    && line.contains("-1")
+                    && line.contains("1")),
+            "and so does the drops weight's: {rejected:?}",
+        );
+
+        // What the editor does next: the echo it just read, with one unrelated
+        // cell changed, handed back whole.
+        let mut edited = stored.clone();
+        edited
+            .rooms
+            .insert("gem".to_string(), vec![None, None, Some(777.0)]);
+
+        assert_eq!(
+            edited.validate(),
+            Ok(()),
+            "an edit to a room is not refused over the rate that was reset",
         );
     }
 
@@ -2895,9 +3000,16 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
     // its own room and the other 24 load. `TempleCustomSettings::overrides`
     // owns that rule and names every entry it refused; the warnings join the
     // same `rejected` list, so the disagreement between the file and the
-    // running value is reported either way. The stored table is the file's
-    // own, unrewritten — the app refuses an entry, it does not silently edit
-    // what the player typed.
+    // running value is reported either way.
+    //
+    // What is STORED is the salvaged table, not the file's own (POE-259). The
+    // echo the editor reads is this value, and the editor writes back a whole
+    // table — so a raw bad entry, or a rate this build cannot apply, would be
+    // handed straight to `TempleCustomSettings::validate`, which refuses the
+    // write over a value the player is not editing and cannot see. The rule
+    // for both halves is `TempleCustomSettings::salvaged`, which is also where
+    // the trade-off is written down: what it changed, having been reported
+    // here, does not survive the next save.
     //
     // The warnings are about a table that may not be the one in force, so each
     // one says which it is rather than being suppressed. Suppressing them
@@ -2918,7 +3030,8 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
         rejected.push("temple preset was not a known preset; using Default".to_string());
     }
     let in_force = *settings.temple_preset == crate::temple::preset::Preset::Custom;
-    for warning in settings.temple_custom.overrides().1 {
+    let (accepted_table, warnings) = settings.temple_custom.salvaged();
+    for warning in warnings {
         rejected.push(if in_force {
             warning
         } else {
@@ -2938,7 +3051,7 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
             },
             config: settings.temple_config.clone(),
             preset: *settings.temple_preset,
-            custom: settings.temple_custom.get().clone(),
+            custom: accepted_table,
         };
 
     // The enabled-guide set (POE-199), with its one-time migration from the

@@ -548,6 +548,31 @@ export interface TempleCustom {
 	rooms: Record<string, (number | null)[]>;
 }
 
+/** One room LINE's three tier values, as `temple_value_table` hands them over
+ *  (POE-259).
+ *
+ *  NOT part of `TempleSlice`, and deliberately: the preset editor is the only
+ *  thing that wants all 75 values and it wants them while it is open, so
+ *  publishing them on every SSOT snapshot would put a payload nothing reads on
+ *  the poll that carries the board. `templeValueTable()` asks for them.
+ *
+ *  The cells are the same `RoomValueView` an offer box carries, built by the
+ *  same Rust projection, so a number in the editor and a number on the board
+ *  cannot disagree about what a room is worth. */
+export interface TempleValueRow {
+	/** The room LINE's key — the string `TempleCustom.rooms` keys its
+	 *  overrides by, which is what makes a cell addressable. */
+	key: string;
+	/** The TIER-3 room's name: what the player calls the family, and what
+	 *  Vertolka graded. The tier-1 name is only its root. */
+	name: string;
+	/** Vertolka's letter for the line — what prices a room nothing else
+	 *  priced. */
+	grade: string;
+	/** Tier 1, tier 2, tier 3, in that order. */
+	tiers: [RoomValueView, RoomValueView, RoomValueView];
+}
+
 /** The four tunable fields of the strategy profile. */
 export interface TempleProfile {
 	/** What the Apex is worth on its own, **in units where the top tier-3 room

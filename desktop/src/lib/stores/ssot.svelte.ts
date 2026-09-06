@@ -45,9 +45,12 @@ import {
 	isTempleStatus,
 	templeSliceDefault,
 	type TempleConfig,
+	type TempleCustom,
 	type TempleDebugReport,
+	type TemplePreset,
 	type TempleProfile,
-	type TempleSlice
+	type TempleSlice,
+	type TempleValueRow
 } from '$lib/temple/slice';
 
 /**
@@ -781,6 +784,65 @@ export function setTempleProfile(profile: TempleProfile): Promise<string | null>
 /** Force the next tick to do a full read, whatever the read gate thinks. */
 export function rearmTemple(): Promise<string | null> {
 	return templeCommand('temple_rearm', {});
+}
+
+/**
+ * Set which room valuation is in force — Default or Custom (POE-259).
+ *
+ * The preset CHOICE only. It never carries the Custom table with it, which is
+ * the whole reason Rust keeps the two in separate settings fields: switching
+ * to Default and back has to return the player's own numbers unchanged, and a
+ * setter that wrote both would delete them on the way past.
+ */
+export function setTemplePreset(preset: TemplePreset): Promise<string | null> {
+	return templeCommand('temple_set_preset', { preset });
+}
+
+/**
+ * Set the Custom preset's rates and per-room override table (POE-259).
+ *
+ * The one temple setter that does not go through `templeCommand`, because an
+ * ACCEPTED write can still have something to say: Rust hands back the notes
+ * that are not refusals — today, that pricing both target lines at zero stops
+ * them scoring without stopping the advisor protecting them — and the page
+ * shows them beside the controls. A rejection comes back as `error` exactly
+ * like every other temple command's, and is logged by the same helper.
+ *
+ * On success it re-fetches for `sliceCommand`'s reason: the slice is
+ * Rust-owned, so the echo of what was just accepted arrives with the next
+ * snapshot and not from a local write.
+ */
+export async function setTempleCustom(
+	custom: TempleCustom
+): Promise<{ error: string | null; notes: string[] }> {
+	let notes: string[];
+	try {
+		notes = await invoke<string[]>('temple_set_custom', { custom });
+	} catch (e) {
+		return { error: await sliceCommandFailed('temple', 'temple_set_custom', e), notes: [] };
+	}
+	await fetchSsot();
+	return { error: null, notes };
+}
+
+/**
+ * The 25 x 3 chaos table `preset` produces against the market read in force
+ * (POE-259).
+ *
+ * Asked for rather than published: the editor is the only thing that wants all
+ * 75 values, so they are not on the slice. It takes the preset because the
+ * editor asks two questions — what is on screen now, and what Default would
+ * give the player if they hit Copy — and the second must be answerable without
+ * switching preset to find out.
+ */
+export async function templeValueTable(
+	preset: TemplePreset
+): Promise<{ rows: TempleValueRow[]; error: string | null }> {
+	try {
+		return { rows: await invoke<TempleValueRow[]>('temple_value_table', { preset }), error: null };
+	} catch (e) {
+		return { rows: [], error: await sliceCommandFailed('temple', 'temple_value_table', e) };
+	}
 }
 
 /**

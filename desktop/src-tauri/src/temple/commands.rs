@@ -1,7 +1,10 @@
 //! The temple module's Tauri surface (POE-171).
 //!
-//! Five commands, all of them thin: four setters that validate, persist and
-//! nudge the SSOT, and one debug dump that runs the whole read path over a real
+//! Seven commands, all of them thin: five setters that validate, persist and
+//! nudge the SSOT — the two config flags, the profile, and (POE-259) the
+//! preset and the Custom table — one read that hands the editor the whole
+//! 25 x 3 value table on demand rather than on every poll, and one debug dump
+//! that runs the whole read path over a real
 //! screen (or a saved PNG) and writes every intermediate to disk — including
 //! (POE-243) `ocr-lines.json`, every OCR line with its box in the ENGINE's own
 //! order, which is what settles whether a missing architect was cropped out or
@@ -41,6 +44,7 @@ use tauri::{AppHandle, Manager};
 
 use super::lattice::Lattice;
 use super::panel::{self, SystemOcr};
+use super::preset::{Preset, TempleCustomSettings};
 use super::reader;
 use super::slice::{self, TempleProfileSettings};
 use super::strategy::TempleConfig;
@@ -120,6 +124,137 @@ pub fn temple_set_profile(profile: TempleProfileSettings, app: AppHandle) -> Res
     );
     rearm(&app);
     Ok(())
+}
+
+/// Set which valuation the board is ranked and shown with (POE-259).
+///
+/// No validation, and none is missing: [`Preset`] has two variants and serde
+/// refuses anything else at the command boundary, so a value that reaches this
+/// function is one of the two by construction. The Custom TABLE is a separate
+/// command for the reason it is a separate settings field — switching to
+/// Default must not touch the player's numbers, and switching back must return
+/// them unchanged.
+#[tauri::command]
+pub fn temple_set_preset(preset: Preset, app: AppHandle) -> Result<(), String> {
+    {
+        let state = app.state::<AppState>();
+        state
+            .temple_settings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .preset = preset;
+    }
+    crate::persist_settings(&app);
+    // Same echo as `temple_set_config` — see the note there.
+    super::run::publish(&app, |s| s.preset = preset);
+    crate::app_log(
+        &app,
+        format!(
+            "Temple: preset — {}",
+            match preset {
+                Preset::Default => "Default",
+                Preset::Custom => "Custom",
+            }
+        ),
+    );
+    rearm(&app);
+    Ok(())
+}
+
+/// Set the Custom preset's rates and its per-room override table (POE-259).
+///
+/// # It refuses where the loader salvages, and that is deliberate
+///
+/// `settings::apply_to_state` keeps the 24 entries a hand-edited file got
+/// right and names the one it did not, because the file arrives once, whole
+/// and unasked. This table arrives from the app's own editor, so a value the
+/// next load would throw away — or that `valuation::rate` would read as `0`
+/// behind the player's back — must not be stored at all:
+/// [`TempleCustomSettings::validate`] refuses the write and the message goes
+/// back to the control that produced it.
+///
+/// # The one note that is not a refusal comes back too
+///
+/// Pricing BOTH target lines at zero is a position a player may hold, so it is
+/// accepted — but `mode_rule` and RV still name those two lines structurally,
+/// and the player is owed that sentence where they are looking rather than in
+/// a log they will not open. Hence `Vec<String>` and not `()`: the accepted
+/// write can still have something to say.
+#[tauri::command]
+pub fn temple_set_custom(
+    custom: TempleCustomSettings,
+    app: AppHandle,
+) -> Result<Vec<String>, String> {
+    if let Err(e) = custom.validate() {
+        crate::app_log(&app, format!("Temple: custom table rejected — {e}"));
+        return Err(e);
+    }
+    let notes = custom.overrides().1;
+    {
+        let state = app.state::<AppState>();
+        state
+            .temple_settings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .custom = custom.clone();
+    }
+    crate::persist_settings(&app);
+    // Same echo as `temple_set_config` — see the note there.
+    super::run::publish(&app, |s| s.custom = custom.clone());
+    crate::app_log(
+        &app,
+        format!(
+            "Temple: custom — tier fraction {:.2}, {:.2} c per quantity %, {:.2} c per rarity %, \
+             drops weight {:.2}, combo premium {:.2}, {} room override{}",
+            custom.tier_fraction,
+            custom.c_per_quantity,
+            custom.c_per_rarity,
+            custom.drops_weight,
+            custom.combo_premium,
+            custom.rooms.len(),
+            if custom.rooms.len() == 1 { "" } else { "s" },
+        ),
+    );
+    for note in &notes {
+        crate::app_log(&app, note.clone());
+    }
+    rearm(&app);
+    Ok(notes)
+}
+
+/// The 25 x 3 table `preset` produces against the market read in force
+/// (POE-259).
+///
+/// A command rather than a slice field. The editor is the only thing that
+/// wants all 75 values, and it wants them while it is open; publishing them on
+/// every SSOT snapshot would put a payload nothing reads on the poll that
+/// carries the board.
+///
+/// It takes the preset rather than reading the one in force, because the
+/// editor asks two different questions: *what is on screen now* (the preset in
+/// force) and *what would Default give me* (the Copy button's source), and the
+/// second one must be answerable without switching preset to find out.
+///
+/// The Custom table it values with is the STORED one, not one passed in: this
+/// is a read of the app's own state, and a caller that could pass a table
+/// would be able to show a board the ranking never used.
+#[tauri::command]
+pub fn temple_value_table(
+    preset: Preset,
+    app: AppHandle,
+) -> Result<Vec<slice::RoomValueRowView>, String> {
+    let custom = {
+        let state = app.state::<AppState>();
+        let settings = state
+            .temple_settings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        settings.custom.clone()
+    };
+    let market = crate::ssot::temple_market_now(&app);
+    Ok(slice::value_rows(&super::preset::value_table(
+        preset, &custom, &market,
+    )))
 }
 
 /// Force the next tick to do a full read, whatever the gate thinks.

@@ -641,6 +641,37 @@ pub struct RoomValueView {
     pub drivers: Vec<DriverView>,
 }
 
+/// One room LINE's three tier values, for the settings editor (POE-259).
+///
+/// The whole 25 x 3 board is not on [`TempleSlice`] and is not going to be:
+/// the page needs it while somebody is editing the preset, which is a fraction
+/// of the time the SSOT is polled, and 75 of these on every snapshot would be
+/// a payload nothing reads. `commands::temple_value_table` hands them over on
+/// demand instead.
+///
+/// The values are the SAME [`RoomValueView`] an offer box carries, built by
+/// the same [`room_value_view`], so a cell in the editor and a number on the
+/// board cannot disagree about what a room is worth.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomValueRowView {
+    /// [`RoomLine::key`](super::rooms::RoomLine::key) — the same string
+    /// [`TempleCustomSettings::rooms`] keys its overrides by, which is what
+    /// makes an edited cell addressable at all.
+    pub key: String,
+    /// The tier-3 room's name. The line's own identity: it is what the player
+    /// calls the family and what Vertolka graded, and the tier-1 name is only
+    /// its root.
+    pub name: String,
+    /// Vertolka's letter for the line
+    /// ([`Grade::as_str`](super::rooms::Grade::as_str)). Shown beside the
+    /// values because it is what prices a room nothing else priced.
+    pub grade: String,
+    /// Tier 1, tier 2, tier 3 — an array and not a `Vec`, because a row is
+    /// exactly three tiers and the editor indexes them.
+    pub tiers: [RoomValueView; 3],
+}
+
 /// One term of a [`RoomValueView`]'s sum.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1237,6 +1268,40 @@ fn room_value_view(value: &RoomValue, valuation: &Valued) -> RoomValueView {
             .and_then(|d| d.unit_price),
         drivers: value.drivers.iter().map(driver_view).collect(),
     }
+}
+
+/// Every line's three tier values, for the preset editor (POE-259).
+///
+/// Sorted by the tier-3 ROOM NAME, not by key and not in `rooms::LINES`'s
+/// sheet order. The keys are POE-167's four mechanical names plus 21 slugs, so
+/// key order interleaves `corruption` and `gem` into a list a player is
+/// scanning by the name printed on the plate; the sheet's own order is a third
+/// thing again, and nothing on screen states it.
+///
+/// A line the table does not price is impossible by construction —
+/// [`Valued`] tables all 25 keys at all three tiers — and so is a key that is
+/// not one of the 25, which is why the name and grade lookups have no
+/// not-found branch to test: [`Valued::lines`] is filled FROM
+/// [`rooms::LINES`].
+pub fn value_rows(valuation: &Valued) -> Vec<RoomValueRowView> {
+    let mut rows: Vec<RoomValueRowView> = valuation
+        .lines()
+        .filter_map(|(key, tiers)| {
+            let line = rooms::LINES.iter().find(|line| line.key() == key)?;
+            Some(RoomValueRowView {
+                key: key.to_string(),
+                name: line.name(Tier::T3)?.to_string(),
+                grade: line.grade().as_str().to_string(),
+                tiers: [
+                    room_value_view(&tiers[0], valuation),
+                    room_value_view(&tiers[1], valuation),
+                    room_value_view(&tiers[2], valuation),
+                ],
+            })
+        })
+        .collect();
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    rows
 }
 
 fn offer_view(
@@ -4662,6 +4727,166 @@ mod tests {
             &TempleSettings::default(),
             &crate::temple::market::allflame(),
         )
+    }
+
+    /// The editor's table states every line this build knows, and no other.
+    ///
+    /// The `filter_map` in `value_rows` can silently drop a row — that is what
+    /// a `?` in a closure does — so the count and the key SET are both
+    /// asserted: 25 rows of the wrong 25 keys would pass a length check alone.
+    /// Fails if a line stops resolving, and fails if a key is emitted twice.
+    #[test]
+    fn the_editor_table_states_every_one_of_the_twenty_five_lines() {
+        let rows = value_rows(&allflame_valuation());
+
+        assert_eq!(rows.len(), rooms::LINES.len());
+        let keys: BTreeSet<&str> = rows.iter().map(|row| row.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            rooms::LINES
+                .iter()
+                .map(|line| line.key())
+                .collect::<BTreeSet<&str>>(),
+        );
+    }
+
+    /// A row is labelled by its TIER-3 room and Vertolka's letter for the
+    /// line.
+    ///
+    /// The tier-1 name is the line's root and not its identity, so a row
+    /// headed "Sacrificial Chamber" would send a player looking for the wrong
+    /// plate. Fails if the name is taken from `Tier::T1`, and fails if the
+    /// grade stops being the sheet's own spelling.
+    #[test]
+    fn a_row_is_named_by_its_tier_three_room_and_carries_the_line_grade() {
+        let rows = value_rows(&allflame_valuation());
+
+        let locus = rows
+            .iter()
+            .find(|row| row.key == "corruption")
+            .expect("the corruption line is one of the 25");
+        assert_eq!(locus.name, "Locus of Corruption");
+        assert_eq!(locus.grade, "A++");
+    }
+
+    /// The three cells are tier 1, tier 2, tier 3 — in that order.
+    ///
+    /// `scaledFromTier3` is the discriminator and not a proxy for one: it is
+    /// `null` on a tier-3 row by construction (`room_value_view`) and set on
+    /// the two rows scaled from it. Fails if the array is built reversed,
+    /// which would show a player 677 c for the room worth 846.
+    #[test]
+    fn a_rows_three_cells_run_tier_one_first() {
+        let valued = allflame_valuation();
+
+        let rows = value_rows(&valued);
+
+        let locus = rows
+            .iter()
+            .find(|row| row.key == "corruption")
+            .expect("the corruption line is one of the 25");
+        assert_eq!(locus.tiers[2].scaled_from_tier3, None, "tier 3 is the root");
+        assert_eq!(locus.tiers[0].scaled_from_tier3, Some(846.0));
+        assert_eq!(locus.tiers[1].scaled_from_tier3, Some(846.0));
+        assert_eq!(locus.tiers[2].total, 846.0);
+    }
+
+    /// A cell is the number the ranking used, not a second computation of it.
+    ///
+    /// ADR-022 §2's "one read, shown and ranked" reaches the editor too: the
+    /// projection has to run over the SAME `Valued` the advisor was handed.
+    /// Fails if `value_rows` ever recomputes a total, and fails if it stops
+    /// publishing the provenance the cell's mark is derived from.
+    #[test]
+    fn a_cell_states_the_same_total_and_provenance_the_offer_box_would() {
+        let valued = allflame_valuation();
+        let ranked = valued
+            .get("gem", Tier::T3)
+            .expect("the gem line is priced at tier 3");
+
+        let rows = value_rows(&valued);
+
+        let gem = rows
+            .iter()
+            .find(|row| row.key == "gem")
+            .expect("the gem line is one of the 25");
+        assert_eq!(gem.tiers[2].total, ranked.total);
+        assert_eq!(gem.tiers[2].priced, ranked.priced.as_str());
+        assert_eq!(gem.tiers[2].guessed, ranked.guessed);
+    }
+
+    /// POE-259's acceptance criterion, asserted on the table the editor draws:
+    /// a zero drops weight leaves a drop-driven room worth its sale and its
+    /// bonus alone.
+    ///
+    /// The rusher's setting, and the one a player will check first after
+    /// typing it — so it is asserted where they will look, on the derived
+    /// rows, and not only on `Valued` inside the valuation's own tests. The
+    /// arithmetic is stated rather than snapshotted: `total` minus the drop
+    /// drivers' chaos IS what the zero-weight table must produce, so this
+    /// fails whether the weight stops applying or applies to the wrong term.
+    #[test]
+    fn the_editor_table_under_a_zero_drops_weight_prices_a_drop_room_at_its_sale_and_bonus() {
+        let market = crate::temple::market::allflame();
+        let shipped = value_rows(&value_read(&TempleSettings::default(), &market));
+        let rusher = value_rows(&value_read(
+            &TempleSettings {
+                preset: Preset::Custom,
+                custom: TempleCustomSettings {
+                    drops_weight: 0.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            &market,
+        ));
+
+        let find = |rows: &[RoomValueRowView], key: &str| {
+            rows.iter()
+                .find(|row| row.key == key)
+                .expect("crucible_of_flame is one of the 25")
+                .tiers[2]
+                .clone()
+        };
+        let before = find(&shipped, "crucible_of_flame");
+        let after = find(&rusher, "crucible_of_flame");
+        let dropped: f64 = before
+            .drivers
+            .iter()
+            .filter(|d| d.kind == "mod_item" || d.kind == "unique_drop" || d.kind == "vial_drop")
+            .filter_map(|d| d.chaos)
+            .sum();
+
+        assert!(dropped > 0.0, "the fixture room has a priced drop term");
+        assert!(
+            close(after.total, before.total - dropped),
+            "{} c with the drops weight at 0, expected {} c ({} minus {} of drops)",
+            after.total,
+            before.total - dropped,
+            before.total,
+            dropped,
+        );
+    }
+
+    /// The rows are ordered by the room NAME the player is scanning for.
+    ///
+    /// Not by key: the four mechanical lines are keyed `corruption`, `gem`,
+    /// `upgrade` and `explosive`, which in key order drops "Locus of
+    /// Corruption" between two unrelated C-grade rooms. Fails if the sort is
+    /// dropped — the `Valued` this runs over is a `BTreeMap`, so the
+    /// unsorted order really is key order and really does differ.
+    #[test]
+    fn the_rows_are_ordered_by_the_room_name_and_not_by_the_key() {
+        let rows = value_rows(&allflame_valuation());
+
+        let names: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        assert_eq!(names, sorted, "the table reads alphabetically by room");
+        let keys: Vec<&str> = rows.iter().map(|row| row.key.as_str()).collect();
+        let mut by_key = keys.clone();
+        by_key.sort_unstable();
+        assert_ne!(keys, by_key, "and key order is a different order");
     }
 
     /// Every one of the 25 room lines reaches `room_values`, in chaos.

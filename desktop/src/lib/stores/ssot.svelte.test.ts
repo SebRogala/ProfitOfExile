@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ssot, applySnapshot, type ScreenSlice, type SsotSnapshot } from './ssot.svelte';
 import type { MercenarySlice } from '../mercenaries/capture';
-import { templeSliceDefault, type TempleSlice } from '../temple/slice';
+import { templeSliceDefault, type TempleCustom, type TempleSlice } from '../temple/slice';
 
 // The store reaches Rust through `invoke` only; the real core module cannot load
 // outside a webview. Same shape as desktop/src/lib/compass/layout-loader.test.ts:13.
@@ -1212,6 +1212,142 @@ describe('temple slice', () => {
 		it('re-arms with no arguments', async () => {
 			expect(await mod.rearmTemple()).toBeNull();
 			expect(callsOf('temple_rearm')).toEqual([{}]);
+		});
+
+		it('sends the preset as the wire string Rust spells it', async () => {
+			expect(await mod.setTemplePreset('custom')).toBeNull();
+			expect(callsOf('temple_set_preset')).toEqual([{ preset: 'custom' }]);
+		});
+	});
+
+	describe('the preset and its table (POE-259)', () => {
+		/** The shipped rates and no overrides. */
+		function table(over: Partial<TempleCustom> = {}): TempleCustom {
+			return {
+				tierFraction: 0.8,
+				cPerQuantity: 0.5,
+				cPerRarity: 0.25,
+				dropsWeight: 1,
+				comboPremium: 0,
+				rooms: {},
+				...over
+			};
+		}
+
+		it('never writes the Custom table while switching preset, there and back', async () => {
+			// The acceptance criterion: Default → Custom → Default → Custom
+			// returns the player's numbers unchanged, and it only can if the
+			// switch carries nothing. A picker that "helpfully" saved the table
+			// on the way past is the regression this refuses.
+			await mod.setTemplePreset('custom');
+			await mod.setTemplePreset('default');
+			await mod.setTemplePreset('custom');
+
+			expect(callsOf('temple_set_preset')).toEqual([
+				{ preset: 'custom' },
+				{ preset: 'default' },
+				{ preset: 'custom' }
+			]);
+			expect(callsOf('temple_set_custom')).toEqual([]);
+		});
+
+		it('sends the rusher’s zero drops weight through untouched', async () => {
+			// POE-259's second acceptance criterion reaches Rust through this
+			// one argument; a store that dropped or defaulted it would leave
+			// the rusher on the full drops term with the control reading 0.
+			invokeMock.mockImplementation(async (command: string) => {
+				if (command === 'temple_set_custom') return [];
+				return command === 'get_ssot' ? { league } : undefined;
+			});
+			const custom = table({ dropsWeight: 0, rooms: { corruption: [null, null, 500] } });
+
+			expect(await mod.setTempleCustom(custom)).toEqual({ error: null, notes: [] });
+			expect(callsOf('temple_set_custom')).toEqual([{ custom }]);
+		});
+
+		it('hands back the notes an accepted write still had to say', async () => {
+			// Pricing both target lines at zero is accepted AND worth a
+			// sentence. Swallowing it would leave the player with a board they
+			// cannot explain.
+			const notes = ['temple custom: "corruption" and "gem" are both priced 0 at tier 3 — …'];
+			invokeMock.mockImplementation(async (command: string) => {
+				if (command === 'temple_set_custom') return notes;
+				return command === 'get_ssot' ? { league } : undefined;
+			});
+
+			expect(await mod.setTempleCustom(table())).toEqual({ error: null, notes });
+		});
+
+		it('re-fetches the snapshot after an accepted table, so the echo lands', async () => {
+			invokeMock.mockImplementation(async (command: string) => {
+				if (command === 'temple_set_custom') return [];
+				return command === 'get_ssot' ? { league } : undefined;
+			});
+			const before = callsOf('get_ssot').length;
+
+			await mod.setTempleCustom(table());
+
+			expect(callsOf('get_ssot').length).toBe(before + 1);
+		});
+
+		it('returns a refused table’s reason instead of throwing, and does not re-fetch', async () => {
+			invokeMock.mockImplementation(async (command: string) => {
+				if (command === 'temple_set_custom') {
+					throw new Error(
+						'that write was refused: "corruption" tier 3 is -5, not a chaos amount'
+					);
+				}
+				return command === 'get_ssot' ? { league } : undefined;
+			});
+			const before = callsOf('get_ssot').length;
+
+			const { error, notes } = await mod.setTempleCustom(
+				table({ rooms: { corruption: [null, null, -5] } })
+			);
+
+			expect(error).toContain('not a chaos amount');
+			expect(notes).toEqual([]);
+			expect(callsOf('get_ssot').length).toBe(before);
+		});
+
+		it('logs a refused table, which is the only channel a shipped build has', async () => {
+			invokeMock.mockImplementation(async (command: string) => {
+				if (command === 'temple_set_custom') throw new Error('tier fraction must be');
+				return command === 'get_ssot' ? { league } : undefined;
+			});
+
+			await mod.setTempleCustom(table({ tierFraction: 2.5 }));
+
+			const logged = callsOf('app_log_from_frontend') as { msg: string }[];
+			expect(logged).toHaveLength(1);
+			expect(logged[0].msg).toContain('temple_set_custom');
+		});
+
+		it('asks for the value table of the preset it was given', async () => {
+			// The editor asks two questions — what is on screen now, and what
+			// Default would give — so the preset has to be an argument rather
+			// than read from the slice.
+			const rows = [{ key: 'corruption', name: 'Locus of Corruption', grade: 'A++', tiers: [] }];
+			invokeMock.mockImplementation(async (command: string) =>
+				command === 'temple_value_table' ? rows : { league }
+			);
+
+			expect(await mod.templeValueTable('custom')).toEqual({ rows, error: null });
+			expect(callsOf('temple_value_table')).toEqual([{ preset: 'custom' }]);
+		});
+
+		it('returns an empty table and the reason when the read fails', async () => {
+			// Not a thrown error: the editor stays open and shows why it has
+			// no numbers, rather than taking the settings page down with it.
+			invokeMock.mockImplementation(async (command: string) => {
+				if (command === 'temple_value_table') throw new Error('no market');
+				return { league };
+			});
+
+			const { rows, error } = await mod.templeValueTable('custom');
+
+			expect(rows).toEqual([]);
+			expect(error).toContain('no market');
 		});
 
 		it('re-fetches the snapshot so the echo lands without waiting out a poll', async () => {
