@@ -489,6 +489,12 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 		// Default the module is actually running.
 		preset: incoming.preset ?? fresh.preset,
 		custom: incoming.custom ?? fresh.custom,
+		// POE-258, same rule as the settings echo above: a payload from a build
+		// before the market poll carries no field, and `marketNote` reads
+		// `market.asOf` — `undefined.asOf` throws inside an overlay window with
+		// no devtools. The fresh default says "unavailable", which is exactly
+		// what such a build is.
+		market: incoming.market ?? fresh.market,
 		unknownRooms: incoming.unknownRooms ?? [],
 		lastReadAt: incoming.lastReadAt ?? null,
 		calibration: incoming.calibration ?? null,

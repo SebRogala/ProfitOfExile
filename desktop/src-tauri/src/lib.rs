@@ -417,6 +417,18 @@ pub struct AppState {
     /// writes the calibration back, and the `temple_set_*` commands are what
     /// the user edits while that loop is running.
     pub temple_settings: Mutex<temple::slice::TempleSettings>,
+    /// The market read the temple valuation prices a board against (POE-258).
+    ///
+    /// Written ONLY by `ssot::spawn_temple_market_poll` and by
+    /// `ssot::on_server_url_changed`; read through `ssot::temple_market_now`,
+    /// which is what applies the staleness judgement. Nothing reads this field
+    /// directly — the raw payload carries `stale: false` as it arrived from the
+    /// wire, and a board priced off it would be priced off a market of any age.
+    ///
+    /// Not a setting and not persisted: it is a copy of what a server said, and
+    /// a copy reloaded from disk at the next launch would be a price with no
+    /// server behind it. Acquired alone, like every other module-owned Mutex.
+    pub temple_market: Mutex<temple::market::MarketInput>,
     /// Whether Client.txt has put an incursion in scope (POE-242) — with, since
     /// POE-246, the stamp of the last area change that took the player away from
     /// the temple, so the capture loop's own panel clock cannot outlive the
@@ -885,11 +897,41 @@ fn restart_log_watcher(app: AppHandle) {
     spawn_log_watcher(app.clone());
 }
 
+/// Write the server url, and report whether it actually moved.
+///
+/// The answer is what gates the reset below: saving the url ALREADY in force —
+/// Settings' Save on an untouched field, a DEBUG/PROD click on the side the app
+/// is already on — must not drop the temple market and re-resolve the league,
+/// because nothing on screen came from a server the app has left. The webview
+/// makes the same distinction for the same reason (`stores/status.svelte.ts`,
+/// `noteServerUrl`: a status that repeats the url is not a change).
+///
+/// Takes the mutex rather than the `AppHandle` so the rule is testable without
+/// a running app — the same extraction `write_debug_mode` makes, and poison is
+/// recovered rather than propagated for the same reason.
+fn write_server_url(held: &Mutex<String>, url: String) -> bool {
+    let mut guard = held.lock().unwrap_or_else(|e| e.into_inner());
+    if *guard == url {
+        return false;
+    }
+    *guard = url;
+    true
+}
+
 #[tauri::command]
 fn set_server_url(url: String, app: AppHandle) {
-    let state = app.state::<AppState>();
-    *state.server_url.lock().unwrap_or_else(|e| e.into_inner()) = url;
+    let changed = {
+        let state = app.state::<AppState>();
+        write_server_url(&state.server_url, url)
+    };
     persist_settings(&app);
+    // Everything keyed to the OLD server, dropped and re-asked (POE-258): the
+    // temple market's prices and the resolved league they are keyed on. Only on
+    // an actual change — the guard above is scoped so this reads the url just
+    // written.
+    if changed {
+        ssot::on_server_url_changed(&app);
+    }
     emit_status(&app);
 }
 
@@ -3898,6 +3940,7 @@ pub fn run() {
         merc_template_generation: AtomicU64::new(0),
         temple: Mutex::new(temple::slice::TempleSlice::default()),
         temple_settings: Mutex::new(temple::slice::TempleSettings::default()),
+        temple_market: Mutex::new(temple::market::MarketInput::none()),
         temple_arm: Mutex::new(temple::trigger::ArmState::default()),
         temple_rearm: AtomicU64::new(0),
         temple_epoch: AtomicU64::new(0),
@@ -4076,6 +4119,12 @@ pub fn run() {
             // retry). Until it succeeds the SSOT stays unresolved and every
             // trade lookup fails closed — by design (POE-128 chunk 3).
             ssot::spawn_league_fetch(handle.clone());
+            // The temple market poll (POE-258). Unconditional like the two
+            // spawns above and independent of the temple module's toggle: the
+            // Temple page states the age of the prices its board was valued at
+            // whether or not the capture loop is running, and the poll's first
+            // attempt waits on the league fetch above rather than on a timer.
+            ssot::spawn_temple_market_poll(handle.clone());
             emit_status(&handle);
             emit_logs(&handle);
             // Modules start LAST: the owner map is effective by now
@@ -4241,7 +4290,8 @@ mod tests {
         body_excerpt, clamp_overlay_height, clickthrough_outcome, crop_shortfall,
         dictionary_reject_reason, effective_region, is_resizable_overlay_label,
         min_overlay_height, ocr_warning_field, overlay_focus_action, region_override,
-        region_source, retry_after_delay, write_debug_mode, CaptureRegion, ClickthroughSetup,
+        region_source, retry_after_delay, write_debug_mode, write_server_url, CaptureRegion,
+        ClickthroughSetup,
         CLICKTHROUGH_WINDOW_GONE, FONT_PANEL_REF, GEM_REGION_REF, SHIPPED_FONT_PANEL_1080P,
         SHIPPED_GEM_REGION_1080P,
     };
@@ -4262,6 +4312,37 @@ mod tests {
         write_debug_mode(&flag, true);
 
         assert!(*flag.lock().expect("an unpoisoned flag"));
+    }
+
+    /// Pointing the app at a different server is a change, and the url in force
+    /// is the new one.
+    ///
+    /// The bool is what `set_server_url` gates the market drop and the league
+    /// re-resolve on, so a writer that reported no change would leave the board
+    /// on the old server's prices until the next five-minute poll.
+    #[test]
+    fn a_new_server_url_is_a_change() {
+        let held = Mutex::new(String::from("https://profitofexile.top"));
+
+        let changed = write_server_url(&held, String::from("http://localhost:8080"));
+
+        assert!(changed);
+        assert_eq!(*held.lock().expect("an unpoisoned url"), "http://localhost:8080");
+    }
+
+    /// Re-saving the url already in force is NOT a change.
+    ///
+    /// Settings' Save on an untouched field, or a DEBUG/PROD click on the side
+    /// the app is already on: nothing on screen came from a server the app has
+    /// left, so the reset must not fire — it would blank a good market read and
+    /// restart league resolution for nothing. Fails if the equality guard goes.
+    #[test]
+    fn re_saving_the_same_server_url_is_not_a_change() {
+        let held = Mutex::new(String::from("https://profitofexile.top"));
+
+        let changed = write_server_url(&held, String::from("https://profitofexile.top"));
+
+        assert!(!changed);
     }
 
     // --- the click-through setup's outcome ----------------------------------

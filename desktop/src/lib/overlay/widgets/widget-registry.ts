@@ -137,8 +137,9 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		// used — `overlay-geometry.ts`'s `offerStackPlacement` decides it per
 		// read, in the sheet's left margin — but the registry's own invariant is
 		// that every default is a real rectangle, so the numbers are the ones
-		// ONE box would occupy: 260 wide, and tall enough for the four lines a
-		// box carries (headline, what it builds, the rating, one reason).
+		// ONE box would occupy: 260 wide, and tall enough for the five lines a
+		// box carries (headline, what it builds, the rating, one reason, and
+		// POE-258's price-age line).
 		defaults: { x: 40, y: 115, w: 260, h: 200 },
 		resizable: false,
 		anchored: true

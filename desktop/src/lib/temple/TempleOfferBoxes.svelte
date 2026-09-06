@@ -103,7 +103,30 @@
 	 * did not, so anything keyed on the reference would re-key and re-measure
 	 * several times a second. These change only when the rendered text does.
 	 * `pick` is in them because the frame is 2 px on the pick and 1 px
-	 * otherwise, which is 2 px of box.
+	 * otherwise, which is 2 px of box. `market` (POE-258) is in them for the
+	 * plainer reason that it is a rendered line — and it is the one entry that
+	 * changes while the board does not, when the price age rolls over a minute.
+	 *
+	 * # ACCEPTED: the boxes blink once a minute, at the age rollover
+	 *
+	 * `market` in the signature costs a re-measure and one hidden frame every
+	 * time `prices 12 min old` becomes `prices 13 min old`. Reviewed 2026-09-06
+	 * and KEPT, because the alternative does not hold under this box's own
+	 * geometry: pinning the line to one row (`white-space: nowrap` +
+	 * `text-overflow: ellipsis`) fixes its HEIGHT but not its WIDTH — the box is
+	 * content-sized against a `max-width` ceiling, so a market line that is the
+	 * widest line in the box still decides the box's width, and a box placed
+	 * from a width it no longer has is a box that can land on a read region,
+	 * which is the one thing ADR-019 forbids. Making the width invariant instead
+	 * means either a FIXED box width (the box redesign, POE-260's, not this
+	 * file's to make) or `width: 0; min-width: 100%` on the line, which silently
+	 * ellipsises the honesty line on a box whose other four lines are short.
+	 *
+	 * Neither is a change this repository can defend with a test: the vitest
+	 * suite runs on the `node` environment with no jsdom and no component
+	 * harness, so `offsetWidth`/`offsetHeight` — the only observables that would
+	 * prove the geometry did not move — do not exist here. The blink is one
+	 * hidden frame a minute; the risk it buys off is a box over an OCR crop.
 	 */
 	const signatures = $derived(
 		boxes.map((box) =>
@@ -114,6 +137,7 @@
 				box.rating,
 				box.reason,
 				box.forced,
+				box.market,
 				box.pick
 			].join(' ')
 		)
@@ -198,6 +222,7 @@
 		{#if box.reason}
 			<p class="reason">{box.reason}</p>
 		{/if}
+		<p class="market">{box.market}</p>
 	</div>
 {/each}
 
@@ -259,5 +284,14 @@
 	.reason {
 		font-size: 12px;
 		color: var(--color-lab-text-secondary);
+	}
+
+	/* Where the numbers above came from (POE-258). Faintest line in the box and
+	   deliberately so: it qualifies the comparison rather than being part of
+	   it, and it is always present, so anything louder would compete with the
+	   headline on every board. */
+	.market {
+		font-size: 11px;
+		color: var(--color-lab-text-muted);
 	}
 </style>

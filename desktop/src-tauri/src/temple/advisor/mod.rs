@@ -918,9 +918,9 @@ mod tests {
 
     /// The profile the SHIPPED app ranks with (POE-257): the settings defaults
     /// bridged over a cold valuation, which is what `run::full_read` builds
-    /// until POE-258's poll answers. Every room is priced at its cold grade
-    /// rung, so the whole board carries a value where the fixture priced four
-    /// lines and left 21 at zero.
+    /// whenever POE-258's poll has no prices in hand. Every room is priced at
+    /// its cold grade rung, so the whole board carries a value where the fixture
+    /// priced four lines and left 21 at zero.
     fn production_profile() -> StrategyProfile {
         crate::temple::slice::TempleProfileSettings::default().to_profile(
             &crate::temple::slice::value_read(
@@ -930,8 +930,8 @@ mod tests {
         )
     }
 
-    /// The same bridge over the COMMITTED ALLFLAME CAPTURE — what the app will
-    /// rank with the moment POE-258's poll answers.
+    /// The same bridge over the COMMITTED ALLFLAME CAPTURE — what the app ranks
+    /// with whenever POE-258's poll is holding prices.
     ///
     /// The difference from [`production_profile`] is not cosmetic: the cold
     /// ladder tops out at 800 with every room on a ten-rung scale, while the

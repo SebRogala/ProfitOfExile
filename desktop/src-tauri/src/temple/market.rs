@@ -128,6 +128,17 @@ pub struct MarketInput {
     pub recipes: Vec<Recipe>,
 }
 
+/// How old an observation may be before the read stops pricing anything, in
+/// milliseconds: two hours (POE-258 D2).
+///
+/// Four poe.ninja collection cycles. The server recomputes the temple market
+/// hourly, so one missed cycle is normal and must not blank the board; four
+/// missed cycles is a feed that has stopped, and a room valued from prices that
+/// old is a number the player cannot act on. Crossing it does not blank the
+/// board either — [`MarketInput::prices_anything`] falls the whole read back to
+/// the preset's base values, which is epic lock L4.
+pub const STALE_AFTER_MS: i64 = 2 * 60 * 60 * 1000;
+
 impl MarketInput {
     /// The empty read: no observation, no rooms, no prices.
     ///
@@ -151,6 +162,32 @@ impl MarketInput {
     /// clock and the overlay's price-age line work in.
     pub fn as_of_ms(&self) -> Option<i64> {
         self.as_of.map(|at| at.timestamp_millis())
+    }
+
+    /// This read with [`Self::stale`] judged against `now_ms`.
+    ///
+    /// **Judged at USE time, never at poll time** (POE-258 D2). The poll stores
+    /// the payload as it arrived and every reader asks for the judgement it
+    /// needs by calling this with the current clock, so a server that stops
+    /// recomputing goes stale on its own — with a poll cadence of
+    /// `ssot::TEMPLE_MARKET_POLL` a flag stamped at fetch time would say "live"
+    /// for as long as the fetches keep succeeding against a frozen cache.
+    ///
+    /// A read with no observation ([`Self::none`], and the cold answer that
+    /// becomes it) is NOT stale at any age: `stale` is the claim that a real
+    /// observation is too old, and the empty read has none to be old. The
+    /// distinction is the one [`Self::none`]'s own test pins.
+    ///
+    /// Consuming rather than borrowing, so the judgement cannot be forgotten:
+    /// a caller holding a [`MarketInput`] has either asked the clock or is
+    /// holding the poll's own untouched copy, and there is no third state where
+    /// `stale` is a value somebody set by hand.
+    pub fn aged_at(mut self, now_ms: i64) -> MarketInput {
+        self.stale = match self.as_of_ms() {
+            Some(at) => now_ms.saturating_sub(at) > STALE_AFTER_MS,
+            None => false,
+        };
+        self
     }
 
     /// Whether this read may be priced against at all — a stale read may not.
@@ -532,6 +569,55 @@ mod tests {
         assert!(market.room("Locus of Corruption", tier(3)).is_none());
         assert_eq!(market.sale_delta("Locus of Corruption", tier(3)), 0.0);
         assert!(market.price("Vial of Summoning").is_none());
+    }
+
+    /// The capture's own `asOf`, so the ages below are measured from a real
+    /// observation rather than from a number invented for the assertion.
+    const CAPTURE_AS_OF_MS: i64 = 1_788_665_199_649;
+    const ONE_HOUR_MS: i64 = 60 * 60 * 1000;
+
+    /// Age is measured from the payload's own `asOf` and NOT from when the poll
+    /// fetched it — the arrange step is a read the poll just handed over, and
+    /// it is stale all the same because the server's cache is what froze.
+    #[test]
+    fn a_read_three_hours_old_prices_nothing() {
+        let market = allflame().aged_at(CAPTURE_AS_OF_MS + 3 * ONE_HOUR_MS);
+
+        assert!(market.stale);
+        assert!(!market.prices_anything());
+        assert_eq!(market.sale_delta("Locus of Corruption", tier(3)), 0.0);
+    }
+
+    #[test]
+    fn a_read_one_hour_old_still_prices_its_rooms() {
+        let market = allflame().aged_at(CAPTURE_AS_OF_MS + ONE_HOUR_MS);
+
+        assert!(!market.stale);
+        assert!(market.prices_anything());
+        assert_eq!(market.sale_delta("Locus of Corruption", tier(3)), 846.0);
+    }
+
+    /// The boundary itself, so the comparison cannot drift to `>=` unnoticed:
+    /// a read exactly [`STALE_AFTER_MS`] old is the last live one, and one
+    /// millisecond later is the first stale one.
+    #[test]
+    fn the_stale_boundary_is_exclusive_to_the_millisecond() {
+        let at_the_line = allflame().aged_at(CAPTURE_AS_OF_MS + STALE_AFTER_MS);
+        let one_past_it = allflame().aged_at(CAPTURE_AS_OF_MS + STALE_AFTER_MS + 1);
+
+        assert!(!at_the_line.stale, "two hours old is still priceable");
+        assert!(one_past_it.stale, "a millisecond past two hours is not");
+    }
+
+    /// The empty read has no observation, so it has nothing that can be too
+    /// old — `stale` is a claim ABOUT an observation and `none()` is the
+    /// absence of one. Fails if `aged_at` starts judging a `None` `as_of`.
+    #[test]
+    fn the_empty_read_is_never_stale_however_late_the_clock() {
+        let market = MarketInput::none().aged_at(CAPTURE_AS_OF_MS + 10 * 365 * 24 * ONE_HOUR_MS);
+
+        assert!(!market.stale);
+        assert!(market.is_live(), "empty is not the same claim as stale");
     }
 
     #[test]

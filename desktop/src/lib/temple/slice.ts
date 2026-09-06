@@ -571,6 +571,33 @@ export interface TempleProfile {
 	r4KeepUpgradeTargets: boolean;
 }
 
+/**
+ * What the prices behind the board are worth saying (POE-258).
+ *
+ * Rust's market poll (`src-tauri/src/ssot.rs`) publishes this on every poll and
+ * every read; `marketNote()` in `view.ts` is the one place that turns it into
+ * words. The age is a TIMESTAMP and not a rendered string on purpose — a
+ * "12 min old" composed in Rust would stand frozen until the next poll five
+ * minutes later, while the page re-derives it from the clock on every render.
+ */
+export interface MarketView {
+	/** Unix ms of the server's last observation, or null when nothing has been
+	 *  read.
+	 *
+	 *  Set whether or not the read is `stale`, which is the difference from
+	 *  `RoomValueView.asOf` (null on a stale read, because a stale read priced
+	 *  the room at nothing). Here the age IS the message. */
+	asOf: number | null;
+	/** Whether the read is older than the two hours Rust judges it against. */
+	stale: boolean;
+	/** Whether the board is on the preset's base values rather than on prices.
+	 *  Every way to get there at once — nothing polled yet, a cold server, a
+	 *  payload from another league, a stale read, an unusable floor — because
+	 *  the player's question is whether the number is a price or a ladder rung
+	 *  and the answer is the same in all five. */
+	unavailable: boolean;
+}
+
 /** The `temple` SSOT slice. Rust-owned; read-only in the webview. */
 export interface TempleSlice {
 	status: TempleStatus;
@@ -607,6 +634,10 @@ export interface TempleSlice {
 	 *  the preset in force — the page has to be able to show what switching
 	 *  would give back. */
 	custom: TempleCustom;
+	/** The prices the board was valued against, or the absence of them. A fact
+	 *  about the SERVER and not about a read, so it survives the module being
+	 *  switched off the way `config` does. */
+	market: MarketView;
 	/** Slots whose plate did not resolve, by key. Surfaced, never hidden. */
 	unknownRooms: SlotId[];
 	/** Unix ms of the last completed read. */
@@ -659,6 +690,10 @@ export function templeSliceDefault(): TempleSlice {
 			comboPremium: 0.0,
 			rooms: {}
 		},
+		// `unavailable: true` is the Rust default too, and it is the honest one:
+		// a window that has not yet been answered by a poll is showing base
+		// values, not prices.
+		market: { asOf: null, stale: false, unavailable: true },
 		unknownRooms: [],
 		lastReadAt: null,
 		calibration: null,

@@ -41,9 +41,19 @@ import {
 	unknownRoomsBadge,
 	chosenOffer,
 	doorWarning,
+	marketNote,
 	offerBoxes
 } from './view';
-import { templeSliceDefault, type AdviceView, type LayoutView, type OfferView, type RankedView, type SlotId, type SlotView, type TempleStatus } from './slice';
+import { templeSliceDefault, type AdviceView, type LayoutView, type MarketView, type OfferView, type RankedView, type SlotId, type SlotView, type TempleStatus } from './slice';
+
+/** A fixed clock, so every age below is the difference the test states. */
+const NOW = 1_788_665_199_649;
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+
+/** The market a build that has never reached a server is on — Rust's own
+ *  default, taken from the mirror rather than retyped. */
+const NO_MARKET: MarketView = templeSliceDefault().market;
 
 /** Every wire status, listed once so the totality checks below cannot drift. */
 const ALL_STATUSES: TempleStatus[] = [
@@ -884,6 +894,104 @@ describe('offerBoxes', () => {
 	it('draws nothing with no panel to draw about', () => {
 		expect(offerBoxes({ ...templeSliceDefault(), advice: advice() })).toEqual([]);
 		expect(offerBoxes(templeSliceDefault())).toEqual([]);
+	});
+
+	it('tells every box where the numbers on it came from', () => {
+		// POE-258: the box exists to make one comparison readable at arm's
+		// length, and "these came from the grade ladder, not the market" is
+		// part of that comparison. On EVERY box, and the same line on both —
+		// Rust values a read once, so two different answers here would be two
+		// answers to a question with one.
+		const priced = {
+			...slice([offer({ index: 0 }), offer({ index: 1 })]),
+			market: { asOf: NOW - 12 * MINUTE, stale: false, unavailable: false }
+		};
+
+		const boxes = offerBoxes(priced, NOW);
+
+		expect(boxes.map((box) => box.market)).toEqual([
+			'prices 12 min old',
+			'prices 12 min old'
+		]);
+	});
+
+	it('says on the box when the ranking is running on base values', () => {
+		// The failure this catches is the one the player cannot see: a board
+		// ranked off the cold grade ladder prints the same kind of chaos number
+		// as a board ranked off the feed. Fails if the box stops carrying the
+		// note, or carries the priced wording for an unavailable market.
+		const cold = { ...slice([offer({ index: 0 })]), market: NO_MARKET };
+
+		const boxes = offerBoxes(cold, NOW);
+
+		expect(boxes[0].market).toBe('prices unavailable — base values');
+	});
+});
+
+describe('marketNote', () => {
+	it('states the age of the prices the board was valued at', () => {
+		const market: MarketView = {
+			asOf: NOW - 12 * MINUTE,
+			stale: false,
+			unavailable: false
+		};
+
+		expect(marketNote(market, NOW)).toBe('prices 12 min old');
+	});
+
+	it('says a stale read is stale AND how old it is', () => {
+		// The age is what tells a feed that has stopped from a server that was
+		// never reached — both leave the board on base values, and only one is
+		// worth waiting out. Fails if the stale branch drops the age, or if it
+		// stops saying base values are in force.
+		const market: MarketView = { asOf: NOW - 3 * HOUR, stale: true, unavailable: true };
+
+		expect(marketNote(market, NOW)).toBe('prices stale (3 h) — base values');
+	});
+
+	it('says prices are unavailable when nothing has been read', () => {
+		expect(marketNote(NO_MARKET, NOW)).toBe('prices unavailable — base values');
+	});
+
+	it('says prices are unavailable for a read that priced nothing', () => {
+		// Reachable server, real observation, and still no usable price — an
+		// unusable floor, or a league the payload did not price. `asOf` alone is
+		// not the test: fails if the note reads the timestamp and skips
+		// `unavailable`, which would print an age beside base-value numbers.
+		const market: MarketView = { asOf: NOW - 5 * MINUTE, stale: false, unavailable: true };
+
+		expect(marketNote(market, NOW)).toBe('prices unavailable — base values');
+	});
+
+	it('switches from minutes to hours at the hour and not before', () => {
+		// The boundary gets its own test so a drifted threshold names itself:
+		// 59 minutes is still minutes, 60 is one hour.
+		const at59: MarketView = { asOf: NOW - 59 * MINUTE, stale: false, unavailable: false };
+		const at60: MarketView = { asOf: NOW - HOUR, stale: false, unavailable: false };
+
+		expect(marketNote(at59, NOW)).toBe('prices 59 min old');
+		expect(marketNote(at60, NOW)).toBe('prices 1 h old');
+	});
+
+	it('floors the age rather than rounding it up', () => {
+		// A 59-minute read must not be announced as an hour old at exactly the
+		// moment the next server recompute is due. Fails if `marketAge` rounds.
+		const nearlyAnHour: MarketView = {
+			asOf: NOW - (59 * MINUTE + 59_000),
+			stale: false,
+			unavailable: false
+		};
+
+		expect(marketNote(nearlyAnHour, NOW)).toBe('prices 59 min old');
+	});
+
+	it('reads a server clock that runs ahead as no age at all', () => {
+		// Clamped rather than printed: "prices -3 min old" is not a state, and
+		// the two clocks are independent. Fails if the subtraction is left
+		// unguarded.
+		const ahead: MarketView = { asOf: NOW + 3 * MINUTE, stale: false, unavailable: false };
+
+		expect(marketNote(ahead, NOW)).toBe('prices 0 min old');
 	});
 });
 
