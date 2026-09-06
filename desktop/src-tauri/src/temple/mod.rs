@@ -25,6 +25,21 @@
 //! - [`advisor`] (POE-170) — the board graph, the Monte-Carlo rollout and the
 //!   rule layer that ranks `(architect kill, door set)` and decides whether to
 //!   leave the map. Consumes every module above it and is pure.
+//! - [`market`] (POE-257) — the desktop's mirror of POE-255's
+//!   `GET /api/analysis/temple-market` payload ([`market::MarketInput`]): room
+//!   sale deltas, recipe-member prices, the floor, the league. It does no HTTP
+//!   — POE-258 owns the poll — and a stale read answers as if it carried
+//!   nothing, in one place.
+//! - [`valuation`] (POE-257) — what one room-tier is worth, in CHAOS: sale +
+//!   drops + bonus, tiers 1 and 2 at a fraction of tier 3, every term a
+//!   [`valuation::Driver`] carrying its count, price and provenance, and
+//!   [`rooms::Grade`]'s ladder standing in only where nothing was summed.
+//!   ADR-022.
+//! - [`preset`] (POE-257) — the two valuations the player chooses between,
+//!   Default and Custom ([`preset::Preset`]), the Custom table's rates and
+//!   per-room overrides ([`preset::TempleCustomSettings`], persisted in its own
+//!   settings block with a per-entry fallback), and
+//!   [`preset::value_table`], the one call a read makes.
 //!
 //! The lifecycle these modules implement — what arms the loop, when a full read
 //! runs, when each overlay shows — is normative in `docs/TEMPLE-LIFECYCLE.md`.
@@ -82,7 +97,11 @@
 //! depend on what the player is farming. Everything a player might disagree on
 //! (how much the Apex is worth, whether traversal time is priced in, whether a
 //! junk-vs-junk kill should reroll) is a **field of a profile, never a code
-//! branch**.
+//! branch**. POE-257 widened what counts as such a field — the whole 25 x 3
+//! room-value table, in chaos, now reaches the profile from a market read plus
+//! the player's own overrides ([`preset`], [`valuation`], ADR-022) — and added
+//! no branch: `strategy::StrategyProfile::locus_doryani_rush` is still the one
+//! structure every profile is built on.
 
 // POE-171 (this module's overlay loop and SSOT slice) is the live caller every
 // sub-module was waiting for: `run` captures and reads, `slice` projects, and
@@ -96,15 +115,19 @@ pub mod advisor;
 pub mod anchor;
 pub mod commands;
 pub mod doors;
+pub mod drops;
 pub mod lattice;
+pub mod market;
 pub mod markers;
 pub mod panel;
+pub mod preset;
 pub mod reader;
 pub mod rooms;
 pub mod run;
 pub mod slice;
 pub mod strategy;
 pub mod trigger;
+pub mod valuation;
 
 /// Why a screenshot did not yield a board.
 ///

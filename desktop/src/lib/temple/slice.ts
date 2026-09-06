@@ -318,6 +318,122 @@ export interface OfferView {
 	 *  is what a surface must test before drawing: a missing rect is not the
 	 *  screen origin. */
 	rect: CaptureRect | null;
+	/** What this kill's room is worth in chaos, from the SAME table the ranking
+	 *  used (POE-257). Null when the printed target did not resolve — the same
+	 *  silence as `displayName` and `grade`.
+	 *
+	 *  Optional on the wire: a snapshot from a build before POE-257 carries no
+	 *  field at all, so read it as `offer.value ?? null`. */
+	value?: RoomValueView | null;
+	/** The vial upgrade for the unique this kill's LINE drops, priced off the
+	 *  same read as `value` — base + vial → upgraded (POE-260).
+	 *
+	 *  Null far more often than not, and the box draws nothing for every one
+	 *  of the reasons: eighteen lines drop no unique, Locus of Corruption's
+	 *  Shadowstitch is nobody's recipe base, and a payload that has never
+	 *  reached the server carries no recipe table to look in.
+	 *
+	 *  On the OFFER rather than inside `RoomValueView`, because it is a fact
+	 *  about the LINE and not about a tier's sum — the same three prices would
+	 *  otherwise ride on all three rows of every `temple_value_table` line,
+	 *  where nothing reads them.
+	 *
+	 *  Optional on the wire and normalised to `null` by `normaliseTemple`. */
+	recipe?: RecipeView | null;
+}
+
+/** One line's vial upgrade: base unique + vial → upgraded unique (POE-260). */
+export interface RecipeView {
+	/** The unique this line's tier-3 chest drops. */
+	base: RecipeItemView;
+	/** The vial that transforms it. NOT necessarily the vial this line's own
+	 *  architect rolls for — on Locus of Corruption they are different items,
+	 *  which is why Rust keys the lookup on `base`. */
+	vial: RecipeItemView;
+	/** What the two become. */
+	upgraded: RecipeItemView;
+}
+
+/** One priced member of a `RecipeView`. */
+export interface RecipeItemView {
+	/** poe.ninja's own name — the price's join key, and what `/api/gem-icon/`
+	 *  is asked for. */
+	name: string;
+	/** Chaos, or null where this read priced nothing for it. Never `0` standing
+	 *  in for a missing price. */
+	chaos: number | null;
+}
+
+/** One room-tier's chaos value and the terms behind it. */
+export interface RoomValueView {
+	/** Chaos. The number the advisor ranked this room on — every line, with no
+	 *  exception: the two instrumental lines (upgrade, explosives) are priced
+	 *  at their grade rung and copied into the ranking like any other. */
+	total: number;
+	/** `"market"` (every term this room names turned into chaos), `"partial"`
+	 *  (some did), `"fallback"` (none did, so the grade ladder stood in),
+	 *  `"instrumental"` (one of the two lines whose worth is what it DOES —
+	 *  the tiers the upgrade line lifts, the rooms the explosives line clears
+	 *  — so it is priced at its letter rather than at its own drops) or
+	 *  `"override"` (the player stated this number outright in the Custom
+	 *  table). A flag for the box, never a filter. */
+	priced: string;
+	/** Whether any term that actually contributed chaos rests on somebody's
+	 *  estimate — a guessed drop count, one of the two unmeasured bonus rates,
+	 *  or the grade ladder. */
+	guessed: boolean;
+	/** The league these prices came from, `""` on a cold read. A price is
+	 *  league-local, so a value shown without one cannot be checked. */
+	league: string;
+	/** Unix ms of the market read behind this value. Null on a cold read AND on
+	 *  a stale one — a stale read prices nothing, so it has no age to show. */
+	asOf: number | null;
+	/** The tier-3 total this row was scaled from, or null when this IS the
+	 *  tier-3 row.
+	 *
+	 *  **Branch on this before touching `drivers`.** On a tier-3 row the
+	 *  drivers sum to `total`. On a tier-1 or tier-2 row they are the TIER-3
+	 *  row's terms, copied unscaled, plus one `tier_fraction` driver whose
+	 *  `chaos` is the whole total — a lower tier is worth a fraction of the
+	 *  LINE, not of its own separate drops (epic lock L2). Summing that list
+	 *  would print a Locus tier-1 room as 846 + 676.80. */
+	scaledFromTier3: number | null;
+	/** Every term of the sum, including the ones that contributed nothing — a
+	 *  term silently dropped from a total is indistinguishable from a term
+	 *  worth zero. */
+	drivers: DriverView[];
+}
+
+/** One term of a `RoomValueView`'s sum. */
+export interface DriverView {
+	/** `"sale"`, `"unique_drop"`, `"vial_drop"`, `"mod_item"`,
+	 *  `"quantity_bonus"`, `"rarity_bonus"`, `"tier_fraction"`,
+	 *  `"grade_fallback"`, `"instrumental"` or `"custom_override"`.
+	 *  `snake_case`, this app's convention for enum variants on the wire.
+	 *
+	 *  `"instrumental"` carries the whole total for the upgrade and explosives
+	 *  lines and has no count and no unit price: the room is valued at its
+	 *  letter because its worth is the tiers it lifts / the rooms it clears,
+	 *  and that mechanical effect is modelled in the advisor's rollout rather
+	 *  than priced here. */
+	kind: string;
+	/** What is being priced, as its source spells it — the poe.ninja room or
+	 *  item name, the game's own bonus wording, or the grade letter. */
+	name: string;
+	/** Expected count per run, the bonus percentage, or the tier fraction. Null
+	 *  where the term has no count, or where nobody has stated one. */
+	count: number | null;
+	/** Chaos per unit of `count`. Null where nothing priced it. */
+	unitPrice: number | null;
+	/** What this term added. Null when it added nothing because a count or a
+	 *  price was missing — which is why it is listed at all. */
+	chaos: number | null;
+	/** Whether this term rests on an estimate rather than on measured data. */
+	guessed: boolean;
+	/** POE-131's thin-market flag on the price behind this term. */
+	lowConfidence: boolean;
+	/** POE-252: that price is a trailing-window median, not the newest print. */
+	windowPriced: boolean;
 }
 
 /** The side panel, as text gave it. */
@@ -358,6 +474,19 @@ export interface ConvenienceView {
 	/** Rust's one line, naming the door and the walk: `convenience door B0-C1:
 	 *  shortens the Entrance → Apex walk, 5 → 4 hops`. */
 	reason: string;
+}
+
+/** The recommended exit's label: which corridor, and the room behind it — see
+ *  `AdviceView.recommendedExit`. */
+export interface ExitLabelView {
+	/** `"C1-C2"` — the corridor the top recommendation opens. */
+	door: EdgeId;
+	/** The game's own name for the plate behind it, at the tier THAT read gave
+	 *  the plate. Rust's string, drawn as it arrives: no truncation here and no
+	 *  second lookup — a name shortened on the wire cannot be lengthened by a
+	 *  wider widget, and a lookup here would be a second answer to what the
+	 *  board says the room is. */
+	name: string;
 }
 
 /** The decision, with everything needed to justify it. */
@@ -401,6 +530,23 @@ export interface AdviceView {
 	 *  OPTIONAL on the wire for the same reason `secondaryDoor` is;
 	 *  `convenienceDoor()` / `convenienceNote()` coerce `undefined` to null. */
 	convenience?: ConvenienceView | null;
+	/** The room the top recommendation's door opens into, named by RUST
+	 *  (POE-261, owner: *"put the name of the exit (the next room) to the solid
+	 *  purple exit (only to that recommended one)"*).
+	 *
+	 *  `slice.rs`'s `recommended_exit` is the ONE place the name is decided,
+	 *  and this side must not second-guess it: the name depends on the far
+	 *  plate's READ TIER, so deriving one here from `layout.slots` would be a
+	 *  second answer to what the board says is behind that door — the same rule
+	 *  `secondaryDoor` and `convenience` keep about the doors themselves.
+	 *
+	 *  Null is an ANSWER: the move opens no door, or the plate behind it did
+	 *  not resolve. The widget then draws the purple seal unlabelled rather
+	 *  than guessing.
+	 *
+	 *  OPTIONAL on the wire for the reason `secondaryDoor` is;
+	 *  `recommendedExit()` in `view.ts` coerces `undefined` to null. */
+	recommendedExit?: ExitLabelView | null;
 	/** `"continue"` or `"leaveMap"` — R5's verdict for the top recommendation.
 	 *  Note the camelCase: `MapAction` is projected through a hand-written
 	 *  `match`, not through `rename_all`, so this one string is NOT snake_case
@@ -438,17 +584,139 @@ export interface TempleConfig {
 	scarabOfTimelines: boolean;
 }
 
+/** Which room valuation is in force (POE-257). `snake_case` wire strings, like
+ *  `TempleStatus` and unlike the camelCase FIELDS around them. */
+export type TemplePreset = 'default' | 'custom';
+
+/** The Custom preset's rates and per-room chaos overrides.
+ *
+ *  Persisted separately from the preset choice, and echoed onto the slice
+ *  whether or not Custom is in force: the table has to survive periods of not
+ *  being used, or looking at Default once would lose the player's numbers. */
+export interface TempleCustom {
+	/** What a tier-1 or tier-2 room is worth as a fraction of its line's
+	 *  tier-3 total (epic lock L2's 80 %). */
+	tierFraction: number;
+	/** Chaos per point of `increased Quantity of Items found in this Area`. A
+	 *  guess — nobody has measured a rate. */
+	cPerQuantity: number;
+	/** Chaos per point of `increased Rarity of Items found in this Area`. Same
+	 *  standing as `cPerQuantity`. */
+	cPerRarity: number;
+	/** Expected vials per run at tier 3 on a line whose raw poedb vial chance
+	 *  is the anchor (Conduit, Crucible, Sanctum). Every other line scales off
+	 *  it by that stat — Glittering Halls ×1.67, Locus and Throne ×0.012.
+	 *  Vertolka's proposed 0.1; `0` removes every vial term. */
+	vialsPerRun: number;
+	/** A global multiplier on the whole drops term. A rusher who never opens a
+	 *  chest sets it to 0, which reduces the ranking to sale value alone. */
+	dropsWeight: number;
+	/** What the Locus + Doryani pair is worth ON TOP of the sum of the two
+	 *  rooms. 0 by default: the pair is the sum of its two above-floor deltas
+	 *  and no more. */
+	comboPremium: number;
+	/** Per-room-tier chaos overrides, keyed by the room LINE's key, tier 1
+	 *  first. `null` in a slot means "use the computed value for this tier". */
+	rooms: Record<string, (number | null)[]>;
+}
+
+/** One room LINE's three tier values, as `temple_value_table` hands them over
+ *  (POE-259).
+ *
+ *  NOT part of `TempleSlice`, and deliberately: the preset editor is the only
+ *  thing that wants all 75 values and it wants them while it is open, so
+ *  publishing them on every SSOT snapshot would put a payload nothing reads on
+ *  the poll that carries the board. `templeValueTable()` asks for them.
+ *
+ *  The cells are the same `RoomValueView` an offer box carries, built by the
+ *  same Rust projection, so a number in the editor and a number on the board
+ *  cannot disagree about what a room is worth. */
+export interface TempleValueRow {
+	/** The room LINE's key — the string `TempleCustom.rooms` keys its
+	 *  overrides by, which is what makes a cell addressable. */
+	key: string;
+	/** The TIER-3 room's name: what the player calls the family, and what
+	 *  Vertolka graded. The tier-1 name is only its root. */
+	name: string;
+	/** Vertolka's letter for the line — what prices a room nothing else
+	 *  priced. */
+	grade: string;
+	/** Tier 1, tier 2, tier 3, in that order. */
+	tiers: [RoomValueView, RoomValueView, RoomValueView];
+}
+
 /** The four tunable fields of the strategy profile. */
 export interface TempleProfile {
-	/** What the Apex is worth on its own. */
+	/** What the Apex is worth on its own, **in units where the top tier-3 room
+	 *  is worth 9** — relative, not chaos.
+	 *
+	 *  2.0 means "the Apex is worth a bit under a quarter of the best room on
+	 *  the board", a judgement that survives the currency moving and a league
+	 *  ending. Rust multiplies it by the live valuation's scale, so the same
+	 *  2.0 is 188 c beside a top room worth 846. A control for this field must
+	 *  say so: a slider reading "2" next to three-figure chaos room values is a
+	 *  slider nobody can set (POE-259). */
 	apexScore: number;
-	/** Run-time traversal weight per BFS hop from the Entrance. 0 for the Rush. */
+	/** Run-time traversal weight per BFS hop from the Entrance, in the SAME
+	 *  relative units as `apexScore`: 9 is the top tier-3 room. 0 for the
+	 *  Rush. */
 	pathCost: number;
 	/** Prefer `change` over `upgrade` while no favourable line exists. */
 	rerollUntilFavourable: boolean;
 	/** R4's carve-out: keep a slot in the drop pool while an adjacent upgrade
 	 *  room can still hit it. */
 	r4KeepUpgradeTargets: boolean;
+}
+
+/**
+ * What the prices behind a board are worth saying (POE-258).
+ *
+ * `marketNote()` in `view.ts` is the one place that turns it into words. The age
+ * is a TIMESTAMP and not a rendered string on purpose — a "12 min old" composed
+ * in Rust would stand frozen until the next poll five minutes later, while the
+ * page re-derives it from the clock on every render. `staleAfterMs` rides along
+ * for the same reason: the age moves between publishes, so the line it crosses
+ * has to travel with it or the page could only re-derive half the sentence.
+ *
+ * The slice carries TWO of these and they answer different questions:
+ * `TempleSlice.market` is the read on screen, `TempleSlice.pollMarket` is the
+ * latest poll.
+ */
+export interface MarketView {
+	/** Unix ms of the server's last observation, or null when nothing has been
+	 *  read.
+	 *
+	 *  Set whether or not the read is `stale`, which is the difference from
+	 *  `RoomValueView.asOf` (null on a stale read, because a stale read priced
+	 *  the room at nothing). Here the age IS the message. */
+	asOf: number | null;
+	/** Rust's staleness answer at the moment this view was published.
+	 *
+	 *  `marketStale()` prefers the CLOCK whenever `asOf` is set — that is what
+	 *  ages a board left on screen into `prices stale (3 h)` with no republish
+	 *  behind it — and falls back to this flag only for a view carrying no
+	 *  observation to measure. */
+	stale: boolean;
+	/** How old an observation may be before it stops pricing, in ms — Rust's
+	 *  `market::STALE_AFTER_MS` (two hours), published so this side re-judges
+	 *  `stale` against the same line rather than hard-coding it a second time.
+	 *
+	 *  A payload from a build before the field falls back to the constant on
+	 *  both sides (Rust's `serde(default = ...)`, `normaliseTemple` here) rather
+	 *  than to zero, which would read as "every observation is instantly stale"
+	 *  — a claim about the market that an absent field is not making. */
+	staleAfterMs: number;
+	/** Whether the board WAS on the preset's base values when it was valued.
+	 *  Every way to get there at once — nothing polled yet, a cold server, a
+	 *  payload from another league, a stale read, an unusable floor — because
+	 *  the player's question is whether the number is a price or a ladder rung
+	 *  and the answer is the same in all five.
+	 *
+	 *  Read as a fact about the NUMBERS and not about the age, which is what
+	 *  gates `marketNote`'s `— base values` suffix: a read that priced live and
+	 *  has merely aged past `staleAfterMs` since carries `unavailable: false`
+	 *  and gets no suffix, because its figures are real prices gone old. */
+	unavailable: boolean;
 }
 
 /** The `temple` SSOT slice. Rust-owned; read-only in the webview. */
@@ -481,6 +749,29 @@ export interface TempleSlice {
 	config: TempleConfig;
 	/** The four tunable profile fields in force. Same ownership as `config`. */
 	profile: TempleProfile;
+	/** Which valuation preset is in force. Same ownership as `config`. */
+	preset: TemplePreset;
+	/** The Custom preset's rates and overrides, echoed whether or not Custom is
+	 *  the preset in force — the page has to be able to show what switching
+	 *  would give back. */
+	custom: TempleCustom;
+	/** The prices THIS board was valued against, or the absence of them.
+	 *
+	 *  Written by `slice::project` alone, from the very market read the board's
+	 *  own valuation used, so a surface showing this board's numbers and this
+	 *  line can never be made to disagree with itself by something that happened
+	 *  after the read. Every per-read surface — the offer boxes above all —
+	 *  reads THIS field. */
+	market: MarketView;
+	/** The prices the NEXT read will be valued against — the latest poll.
+	 *
+	 *  Written by `ssot::publish_market_view` alone, on every poll and on a
+	 *  server-URL change, so it moves with nobody looking at a temple. The
+	 *  Temple page's reader meta row reads this one: its question is "what is
+	 *  the app priced against right now", not "what was that board priced
+	 *  against". Seeded from the read's own market by `project`, which is exact
+	 *  — at the moment of a read the two are the same view. */
+	pollMarket: MarketView;
 	/** Slots whose plate did not resolve, by key. Surfaced, never hidden. */
 	unknownRooms: SlotId[];
 	/** Unix ms of the last completed read. */
@@ -524,6 +815,23 @@ export function templeSliceDefault(): TempleSlice {
 			rerollUntilFavourable: false,
 			r4KeepUpgradeTargets: true
 		},
+		preset: 'default',
+		custom: {
+			tierFraction: 0.8,
+			cPerQuantity: 0.5,
+			cPerRarity: 0.25,
+			vialsPerRun: 0.1,
+			dropsWeight: 1.0,
+			comboPremium: 0.0,
+			rooms: {}
+		},
+		// `unavailable: true` is the Rust default too, and it is the honest one:
+		// a window that has not yet been answered by a poll is showing base
+		// values, not prices. `staleAfterMs` is Rust's `STALE_AFTER_MS`, which
+		// `MarketView::default()` carries because it is a constant and not a
+		// reading.
+		market: { asOf: null, stale: false, staleAfterMs: 7_200_000, unavailable: true },
+		pollMarket: { asOf: null, stale: false, staleAfterMs: 7_200_000, unavailable: true },
 		unknownRooms: [],
 		lastReadAt: null,
 		calibration: null,

@@ -55,7 +55,13 @@ without reading this ADR. The rule it does not change: a table carrying
 league-dependent observations joins the wipe set at creation, and an exclusion
 has to argue league-invariance the way this one does.
 
-At each league rollover, deliberately **wipe** the outgoing league's fourteen scoped
+**Amended 2026-09-06 (POE-254):** `item_snapshots` joins the wipe set (now
+sixteen scoped tables). It carries poe.ninja item-overview observations —
+IncursionTemple, Vial and the five unique slots — for one league, so the
+league-dependence test the POE-200 exclusion had to argue against is met
+outright. Every table added to the league-scoped schema joins it at creation.
+
+At each league rollover, deliberately **wipe** the outgoing league's sixteen scoped
 tables (`TRUNCATE`) rather than keeping them live, and **preserve** that league's
 data as a dedicated dump stored outside the nightly rotation. Analysis of a past
 league is served by restoring its dump to a scratch database, not by a live query.
@@ -86,7 +92,7 @@ lifetime" is superseded: that reach now requires a dump restore.
 ## Evidence
 
 - `docs/LEAGUE-SCHEMA-MIGRATION-RUNBOOK.md` — "Production execution (wipe-first)":
-  ordering (truncate before deploy), the fourteen-table `TRUNCATE`, and the
+  ordering (truncate before deploy), the sixteen-table `TRUNCATE`, and the
   preserve-dump step.
 - Rehearsal 2026-07-24: restored the `profitofexile` nightly (~27M `gem_snapshots`)
   to a disposable scratch DB; `TRUNCATE` 27M → 0 in ~3.5 s directly on the

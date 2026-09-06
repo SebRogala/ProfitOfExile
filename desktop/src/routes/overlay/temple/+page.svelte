@@ -121,6 +121,7 @@
 		overlayShowsBoard,
 		overlayShowsDoors,
 		overlayShowsWaiting,
+		recommendedExit,
 		suggestedDoors
 	} from '$lib/temple/view';
 	import { ssot } from '$lib/stores/ssot.svelte';
@@ -156,6 +157,12 @@
 	 *  answer either way, and never merged into `suggested`: that list is what
 	 *  the MOVE opens. `faintDoor()` says why one seal carries both. */
 	const secondary = $derived(faintDoor(temple.advice));
+	/** The name on the solid purple exit — the room that door opens into, at
+	 *  the tier this read gave the plate (POE-261). Rust's string, read and not
+	 *  derived: `slice.rs::recommended_exit` is the one place it is decided, and
+	 *  null there is an answer (no door, or a plate that did not resolve) that
+	 *  leaves the seal unlabelled. */
+	const exit = $derived(recommendedExit(temple.advice));
 	const leaveBanner = $derived(leaveMapBanner(temple.advice));
 
 	/** The banner's measured box, CSS px. Zero until the first frame — the same
@@ -312,6 +319,7 @@
 				{suggested}
 				{secondary}
 				room={temple.panel?.room ?? null}
+				{exit}
 				offer={chosen}
 				{offers}
 				warning={doorWarning(temple.layout)}
@@ -367,7 +375,7 @@
 				blocks={blockRects(frame.scaleFactor)}
 				panel={roiRect(temple.layout, 'panel', frame.scaleFactor)}
 				host={frame.host}
-				maxWidth={spec.defaults.w}
+				width={spec.defaults.w}
 			/>
 		{/if}
 	{/snippet}

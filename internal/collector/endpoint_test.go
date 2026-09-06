@@ -334,6 +334,11 @@ func TestFetchResult_Validate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "valid item data only",
+			result:  FetchResult{ItemData: []ItemSnapshot{{Category: "Vial", NinjaID: 42, Chaos: 7}}},
+			wantErr: false,
+		},
+		{
 			name:    "valid empty result (no data, not modified false)",
 			result:  FetchResult{},
 			wantErr: false,
@@ -361,6 +366,24 @@ func TestFetchResult_Validate(t *testing.T) {
 			result: FetchResult{
 				GemData:      []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}},
 				CurrencyData: []CurrencySnapshot{{CurrencyID: "divine", Chaos: 210}},
+			},
+			wantErr: true,
+			errMsg:  "multiple data slices are populated",
+		},
+		{
+			name: "NotModified with ItemData populated returns error",
+			result: FetchResult{
+				NotModified: true,
+				ItemData:    []ItemSnapshot{{Category: "Vial", NinjaID: 42, Chaos: 7}},
+			},
+			wantErr: true,
+			errMsg:  "NotModified=true but data slices are populated",
+		},
+		{
+			name: "both ItemData and FragmentData populated returns error",
+			result: FetchResult{
+				ItemData:     []ItemSnapshot{{Category: "Vial", NinjaID: 42, Chaos: 7}},
+				FragmentData: []FragmentSnapshot{{FragmentID: "sacrifice-at-dusk", Chaos: 5}},
 			},
 			wantErr: true,
 			errMsg:  "multiple data slices are populated",

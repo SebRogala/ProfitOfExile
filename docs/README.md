@@ -9,8 +9,8 @@ This is the documentation entry point. Documents are classified so historical pl
 - [Product vision](product-vision.md) — historical strategy-simulation domain and future scope; not current architecture.
 - [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — current workflows plus clearly labeled reliability targets for collection, native trade, contributions, optional server trading, pairing, and Mercure.
 - [Overlay Guide](OVERLAY-GUIDE.md) — maintained Windows/Tauri overlay mechanics and regression guards.
-- [Temple Lifecycle](TEMPLE-LIFECYCLE.md) — normative order of arming, detection, OCR and overlay show/hide for the temple module (POE-249, implemented 2026-09-04); every rule tagged shipped with the commit that shipped it.
-- [Game facts](GAME-FACTS.md) — current, dated reference of Path of Exile facts the code treats as invariants: one golden door per lab run, temple rooms log nothing, Divine Font wordings and parser anchors, Dedication rules, exchange sidebar categories, trade complexity; unvalidated claims kept in their own section.
+- [Temple Lifecycle](TEMPLE-LIFECYCLE.md) — normative order of arming, detection, OCR and overlay show/hide for the temple module (POE-249, implemented 2026-09-04); every rule tagged shipped with the commit that shipped it, plus where the POE-257 room valuation, market read and presets live.
+- [Game facts](GAME-FACTS.md) — current, dated reference of Path of Exile facts the code treats as invariants: one golden door per lab run, temple rooms log nothing, Divine Font wordings and parser anchors, Dedication rules, the vial recipe table and poedb's per-tier temple room bonuses, exchange sidebar categories, trade complexity; unvalidated claims kept in their own section.
 - [Collector Endpoint Guide](COLLECTOR-ENDPOINTS.md) — current cross-layer recipe for adding a market-data source.
 - [Gem and Item Icons](GEM-ICONS.md) — current procedure for adding or changing an icon, and why seeding precedes deploy.
 - [Deployment](DEPLOY.md) — how main reaches production, why the deploy is path-filtered, and what a green pipeline does not tell you, desktop release channels (stable / beta by device role), the public-repo rules for beta testers, and the one-off POE-215 merc registration-reset runbook.
@@ -32,12 +32,12 @@ The three are interdependent: league identity scopes events and data, Mercure de
 
 ## Accepted architecture decisions
 
-- [ADR-001: Go module path](adr/001-go-module-path.md)
+- [ADR-001: Go module path](adr/001-go-module-path-short-local-identifier.md)
 - [ADR-003: Direct pgx, no ORM](adr/003-no-orm-direct-pgx-queries.md)
-- [ADR-004: Database migration strategy](adr/004-database-migration-strategy.md)
+- [ADR-004: Database migration strategy](adr/004-database-migration-strategy-auto-migrate-on-start-with-golang-migrate.md)
 - [ADR-005: Gem snapshot row model](adr/005-gem-snapshots-unified-row-model.md)
-- [ADR-006: Database-backed gem colors](adr/006-gem-colors-db-backed-upsert-table.md)
-- [ADR-007: Unified analysis pipeline](adr/007-v3-hybrid-analysis-unified-pipeline.md)
+- [ADR-006: Database-backed gem colors](adr/006-gem-colors-database-backed-upsert-lookup-table-with-in-memory-resolver.md)
+- [ADR-007: Unified analysis pipeline](adr/007-v3-hybrid-analysis-unified-pipeline-with-trade-enriched-features.md)
 - [ADR-008: Current Go package architecture](adr/008-current-go-package-architecture.md)
 - [ADR-009: League-scoped repository convention](adr/009-league-scoped-repository-convention.md)
 - [ADR-010: Archived league history is retained indefinitely](adr/010-archived-league-history-is-retained-indefinitely.md)
@@ -52,6 +52,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-019: Nothing a module draws may cover what that module reads](adr/019-nothing-a-module-draws-may-cover-what-that-module-reads.md)
 - [ADR-020: One shared screen scale; a module corroborates or withholds](adr/020-one-shared-screen-scale-a-module-corroborates-or-withholds.md)
 - [ADR-021: A module draws one window on the game's monitor, and widgets inside it](adr/021-a-module-draws-one-window-on-the-game-monitor-and-widgets-inside-it.md) — Proposed
+- [ADR-022: Room values are chaos-denominated and market-fed; presets are Default and Custom](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md)
 
 Superseded:
 

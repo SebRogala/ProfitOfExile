@@ -131,15 +131,28 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		id: 'temple.offers',
 		module: 'temple',
 		label: 'Temple offer boxes',
-		// ANCHORED: only `w` is read, as the wrap ceiling for each box's own
-		// text. A box wider than this reads as a paragraph over the game, which
-		// is the thing POE-244 replaced and POE-249 kept. The position is never
-		// used — `overlay-geometry.ts`'s `offerStackPlacement` decides it per
-		// read, in the sheet's left margin — but the registry's own invariant is
-		// that every default is a real rectangle, so the numbers are the ones
-		// ONE box would occupy: 260 wide, and tall enough for the four lines a
-		// box carries (headline, what it builds, the rating, one reason).
-		defaults: { x: 40, y: 115, w: 260, h: 200 },
+		// ANCHORED: only `w` is read, and since POE-260 it is the box's ACTUAL
+		// width rather than a wrap ceiling — `TempleOfferBoxes.svelte` applies
+		// it as `width` on a `border-box` element, so the number here is the
+		// number on screen and `offsetWidth` cannot disagree with it. That is
+		// what lets the boxes' geometry depend on their STATE alone: a box
+		// sized by its longest string re-measures every time the price age
+		// rolls over a minute, and a box placed from a width it no longer has
+		// can land on a read region (ADR-019).
+		//
+		// 300 (up from POE-249's 260) is what the driver rows need: a 26 px
+		// icon, an item name that does not ellipsise at four words, its price
+		// and its count. The margin holds up to 532 px on the committed
+		// 1920×1080 frame, so this is nowhere near a limit. The position is
+		// never used — `overlay-geometry.ts`'s `offerStackPlacement` decides it
+		// per read, in the sheet's left margin — but the registry's own
+		// invariant is that every default is a real rectangle, so `h` is the
+		// tallest a FULL box can be (`FULL_BOX_MAX_CSS`, summed from the
+		// component's own row heights). The panel diagonal's 316
+		// (`DIAGONAL_BUDGET_CSS`) is a fact about the BOARD, not about this
+		// box, and a default that stated it would be a rectangle the widget
+		// can exceed.
+		defaults: { x: 40, y: 115, w: 300, h: 358 },
 		resizable: false,
 		anchored: true
 	},

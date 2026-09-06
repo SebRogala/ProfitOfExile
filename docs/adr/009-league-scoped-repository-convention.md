@@ -18,6 +18,17 @@ through `internal/exchange`'s scope-taking repository.
 fifteen), created with `league TEXT NOT NULL REFERENCES leagues(id)` and read
 and written only through `internal/lab`'s scope-taking repository.
 
+**Amended 2026-09-06 (POE-254):** `item_snapshots` joins the set (now sixteen),
+created with `league TEXT NOT NULL REFERENCES leagues(id)` and written only
+through `internal/collector`'s scope-taking repository.
+
+**Amended 2026-09-06 (POE-255):** `item_snapshots` is also read through
+`internal/temple`'s scope-taking repository, which serves the temple market
+endpoint. Writer and reader in separate packages is the same arrangement
+`gem_snapshots` already has (written by `internal/collector`, read by
+`internal/lab`); what the convention binds is that every repository touching the
+table takes `league.Scope`, not that one package owns it.
+
 ## Context
 
 POE-119 adds a league column to its twelve historical data tables and introduces

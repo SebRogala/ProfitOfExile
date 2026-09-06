@@ -193,8 +193,31 @@ func main() {
 		return repo.LastFragmentSnapshotTime(ctx, scope)
 	}
 
+	// One EndpointConfig per poe.ninja item-overview category (POE-254). They
+	// share one fetch implementation and one repository pair, but each runs as
+	// its own scheduler endpoint with its own ETag, staleness read and Mercure
+	// topic — which is what makes a category 404ing for this league cost only
+	// that category's tick.
+	endpoints := []collector.EndpointConfig{gemEndpoint, currencyEndpoint, fragmentEndpoint}
+	for _, item := range collector.ItemEndpoints {
+		// All ten ninja endpoints share the one 3-slot Source: "ninja"
+		// semaphore, so the three original endpoints can now wait behind up to
+		// two item fetch-and-store cycles (~100 ms of store each, measured
+		// locally). Accepted: the cap is what bounds concurrency toward
+		// poe.ninja, and raising it or giving items their own Source would
+		// change an external rate limit rather than a local scheduling choice.
+		itemEndpoint := ninjaCfg
+		itemEndpoint.Name = item.Endpoint
+		itemEndpoint.FetchFunc = fetcher.ItemEndpointFetcher(item.Category)
+		itemEndpoint.StoreFunc = itemStoreFunc(repo.InsertItemSnapshots, scope, item.Category, logger)
+		itemEndpoint.StalenessFunc = func(ctx context.Context) (time.Time, error) {
+			return repo.LastItemSnapshotTime(ctx, scope, item.Category)
+		}
+		endpoints = append(endpoints, itemEndpoint)
+	}
+
 	scheduler, err := collector.NewScheduler(
-		[]collector.EndpointConfig{gemEndpoint, currencyEndpoint, fragmentEndpoint},
+		endpoints,
 		resolver,
 		scope,
 		mercureURL,
@@ -408,6 +431,33 @@ func main() {
 	}
 
 	slog.Info("collector stopped")
+}
+
+// itemInserter is the one repository call itemStoreFunc needs, taken as a
+// function value so the store behaviour can be exercised without a database.
+type itemInserter func(ctx context.Context, scope league.Scope, snapTime time.Time, snapshots []collector.ItemSnapshot) (int, error)
+
+// itemStoreFunc builds the StoreFunc for one poe.ninja item-overview category.
+//
+// Unlike the gem, currency and fragment endpoints, an empty 200 here is a
+// legitimate answer, not a symptom: a category can genuinely have nothing
+// listed for the resolved league — Vial and IncursionTemple are thin at league
+// start, and a league where nobody has run a temple yet serves `lines: []` for
+// days. Treating that as an error would put the category into the MinSleep
+// retry loop and log an error every cycle for a correct upstream response, so
+// the empty case is a normal tick: nothing stored, and one Info line naming the
+// category so an operator can still see which one is empty. The three original
+// endpoints keep their empty-200 guard — currency, fragments and gems are never
+// legitimately empty in a live league, so an empty payload there really is the
+// transient API issue their message names.
+func itemStoreFunc(insert itemInserter, scope league.Scope, category string, logger *slog.Logger) collector.StoreFunc {
+	return func(ctx context.Context, snapTime time.Time, result *collector.FetchResult) (int, error) {
+		if len(result.ItemData) == 0 {
+			logger.Info("ninja: category served no lines", "category", category, "league", scope.ID())
+			return 0, nil
+		}
+		return insert(ctx, scope, snapTime, result.ItemData)
+	}
 }
 
 // checkExpectedLeague enforces the optional EXPECTED_LEAGUE deploy assertion.

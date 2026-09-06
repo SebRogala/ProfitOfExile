@@ -56,6 +56,122 @@ is not mistaken for a fact.
   from the title by this rule when OCR loses the verb, which Windows OCR did
   on a legible crop on 2026-09-05 (`(KILL TO TO SHRINE OF`).
 
+### Vial recipes: nine vials, eleven transformations
+
+A vial is consumed at the Altar of Sacrifice together with a **base** unique and
+transforms it into an **upgraded** unique. **The direction is the part that is
+easy to get backwards**: the vial's own in-game currency text names the item you
+SACRIFICE, not the item you receive — "Sacrifice this item on the Altar of
+Sacrifice along with Coward's Chains to transform it" means Coward's Chains →
+Coward's Legacy, not the reverse.
+
+Verified 2026-09-06 against poedb.tw's per-vial pages, with four independent
+signals agreeing on every row: the game's own currency text, the vial's icon
+file name (`VialCowardsChains`, `VialSlumber`, …), poedb's prose blurb, and its
+Recipe block ("Offer: `<UPGRADED>`; Your Offer: 1x `<BASE>`, 1x `<VIAL>`"). The
+game text settles a disagreement, because it is the item's own description
+rather than a site's rendering of it. Normative home:
+`internal/temple/recipes.go`.
+
+| Vial | Base | Upgraded |
+|---|---|---|
+| Vial of Awakening | Apep's Slumber | Apep's Supremacy |
+| Vial of Consequence | Coward's Chains | Coward's Legacy |
+| Vial of Dominance | Architect's Hand | Slavedriver's Hand |
+| Vial of Fate | Story of the Vaal | Fate of the Vaal |
+| Vial of Sacrifice | Sacrificial Heart | Zerphi's Heart |
+| Vial of Summoning | Mask of the Spirit Drinker | Mask of the Stitched Demon |
+| Vial of Transcendence | Tempered Flesh | Transcendent Flesh |
+| Vial of Transcendence | Tempered Mind | Transcendent Mind |
+| Vial of Transcendence | Tempered Spirit | Transcendent Spirit |
+| Vial of the Ghost | Soul Catcher | Soul Ripper |
+| Vial of the Ritual | Dance of the Offered | Omeyocan |
+
+Nine vials, eleven recipes: Vial of Transcendence upgrades any of Tempered
+Flesh / Mind / Spirit, so it appears three times.
+
+- **The vial a room rolls for is not always the vial that upgrades that room's
+  own unique.** It is on the six chest lines; it is not on Locus of Corruption
+  (drops Shadowstitch, rolls Vial of Sacrifice), Glittering Halls (rolls Vial of
+  Transcendence, drops no unique) or Throne of Atziri (rolls Vial of the Ghost,
+  drops no unique). Source: poedb room pages plus Vertolka's sheet, both read
+  2026-09-06, which agree independently on all nine room → vial pairs
+  (`desktop/src-tauri/src/temple/drops.rs`).
+- **poe.ninja prices neither Shadowstitch nor any temple-mod item.**
+  Shadowstitch is the one unique in the drop table with no line in the live
+  item-overview feed (checked for league Allflame, 2026-09-06), so the server
+  never serves a price for it and Locus of Corruption's unique term contributes
+  nothing. The architects' signature drops are mod-rolled RARES, which poe.ninja
+  does not publish at all; the one number the code has for them is Vertolka's
+  stated guess for Crucible of Flame, verbatim: *"Crucible of Flames is giving
+  on average 2 temple gloves per run and their base price is usually around
+  30c"* (2026-09-06) — **a guess**, carried as `TempleMod::base_price_chaos`
+  and the only manual price in the table.
+
+### Temple room bonuses per tier (poedb, 2026-09-06)
+
+Read off each room's own poedb.tw page for all 75 tiered rooms and carried in
+`desktop/src-tauri/src/temple/drops.rs`. Percentages are `increased Quantity of
+Items` / `increased Rarity of Items` / `increased Pack Size` in this area, tier
+1 / tier 2 / tier 3. Fourteen of the 25 lines print no such line at all and are
+`None` rather than zero.
+
+| Line (room key) | Quantity % | Rarity % | Pack size % |
+|---|---|---|---|
+| the standard eight (see below) | 2 / 4 / 6 | 4 / 8 / 12 | 1 / 2 / 3 |
+| Factory | 22 / 44 / 66 | 4 / 8 / 12 | 1 / 2 / 3 |
+| Glittering Halls | — | 20 / 40 / 60 | — |
+| Hall of War | — | — | 10 / 20 / 30 |
+
+The standard eight are `chamber_of_iron`, `conduit_of_lightning`,
+`crucible_of_flame`, `defense_research_lab`, `hall_of_champions`,
+`hybridisation_chamber`, `sanctum_of_immortality` and `upgrade` (Temple Nexus).
+Factory differs on quantity alone; its rarity and pack-size lines are the
+standard ones.
+
+Two places where Vertolka's sheet claims a bonus and poedb prints no percentage:
+Toxic Grove ("increase quantity/rarity") and Storm of Corruption ("high rarity
+buff"). Both are recorded as absent rather than as a figure nobody wrote down.
+
+- **The "chance" integers have no published scale.** poedb prints a per-tier
+  stat on all nine vial lines — `map incursion boss chance to drop <tag> vial %
+  [N]` — and a second on four of them — `map incursion boss chance to drop
+  <tag> item % [33/66/100]`. The vial values run **7 to 2815** (Locus of
+  Corruption and Throne of Atziri share 7 / 13 / 20 at the bottom, Glittering
+  Halls has 929 / 1886 / 2815 at the top) and **nothing on the page states what unit they are in**. They are
+  carried verbatim as `u32` (`vial_chance_raw`, `mod_item_chance_raw`) and are
+  never multiplied by a price. Anyone who finds the scale should record it here
+  first.
+
+  **The scale is still unknown; a CONVENTION was fixed on 2026-09-06 (POE-262)
+  for the vial stat only.** Vertolka's "0.1 vials per run" was stated for six
+  lines, three of which print **1689** at tier 3, so the app reads *raw 1689 =
+  the configured rate per run* and scales every other line and tier by its own
+  integer over 1689. At the shipped 0.1 that gives Glittering Halls 0.1667 per
+  run, Hybridisation Chamber 0.0595, Defense Research Lab 0.0476, Toxic Grove
+  0.0119, and Locus of Corruption and Throne of Atziri 0.00118 — which is his
+  "small chance" as a number. **This is a ratio, not a unit**: it says one
+  line's rate relative to another's, and it says nothing about what raw 1689
+  means in the game. `mod_item_chance_raw` has no such anchor (nobody has stated
+  a per-run rate for the architect's rare) and stays raw and unmultiplied.
+- **Uniques drop at tier 3 only.** Vertolka-stated 2026-09-06: "only tier 3
+  rooms can drop unique, but T1 and T2 adding chance to drop vial and provide
+  smaller quant/rarity bonuses". His two drop rates — 0.25 uniques per run and
+  0.1 vials per run at tier 3 — are **guesses**, stated as "price of unique
+  divided by 4 + price of vial divided by 10". The unique rate is flat: no page
+  prints a per-tier chest-unique chance to scale it by. The vial rate is the
+  ANCHOR of the convention above and is a user setting; he proposed doubling it
+  to 0.2 on 2026-09-06.
+- **What a point of quantity or rarity is worth has never been measured.** The
+  only figures anyone has proposed are Vertolka's, in the same 2026-09-06
+  message: *"Maybe there we can setup something like 1% quant = 0,5c, 1% rarity
+  = 0,25c"* — a proposal he flagged as such, and the default of the two knobs
+  the code prices area bonuses with. **Pack size has no proposed rate at all**
+  and is deliberately not priced. All three are flagged wherever they reach a
+  number ([ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md)).
+  Vertolka 2026-09-06 proposed 0.4 c per rarity % as a possible Default; today
+  it is a Custom edit; owner call open.
+
 ## Divine Font
 
 Source: poewiki.net/wiki/Divine_Font plus community data, as of the Mirage

@@ -77,6 +77,103 @@ impl Grade {
             Grade::APlusPlus => "A++",
         }
     }
+
+    /// What this grade stands in for, in chaos, when **nothing about the room
+    /// is priced** — POE-257's fallback and epic lock L1's only use of the
+    /// letter in arithmetic.
+    ///
+    /// **PROVISIONAL, calibrated 2026-09-06.** The ladder is geometric and it
+    /// is anchored on the one thing the market states outright: on that day's
+    /// Allflame capture (`assets/temple-market-allflame-2026-09-06.json`) the
+    /// two rooms above the 10 c floor were Locus of Corruption at 856 c (A++)
+    /// and Doryani's Institute at 400 c (A+). The rungs 800 and 400 keep those
+    /// two in the feed's order at roughly the feed's ratio, and the rest of the
+    /// ladder halves down from there. Nothing else about it is measured: no
+    /// feed prices a C+ room above the floor, so those rungs are a ranking, not
+    /// a valuation.
+    ///
+    /// Read ONLY where nothing is priced. A room with a live sale, a priced
+    /// drop or a priced bonus is worth what was summed and never touches this
+    /// — otherwise a third-party letter would silently outrank the feed.
+    /// POE-259's Custom preset overrides it per room, which is the intended
+    /// escape when a player disagrees with a rung.
+    ///
+    /// **These ten rungs are absolute chaos amounts fixed on one day, which is
+    /// exactly the shape `AGENTS.md` warns about**: an absolute price cutoff
+    /// stops meaning what it meant as the league ages and the currency moves.
+    /// 800 c was two thirds of Locus on 2026-09-06; it will be a different
+    /// fraction of it next month, and the ladder will quietly re-rank the
+    /// unpriced rooms against the priced ones without anyone editing it.
+    /// [`Self::fallback_chaos_scaled`] is the answer, and it is what a live
+    /// read uses; these ten numbers are the COLD ladder, kept for the read
+    /// that has no anchor to take a fraction of.
+    pub fn fallback_chaos(self) -> f64 {
+        match self {
+            Grade::D => 2.0,
+            Grade::CMinus => 5.0,
+            Grade::C => 10.0,
+            Grade::CPlus => 20.0,
+            Grade::BMinus => 30.0,
+            Grade::B => 50.0,
+            Grade::BPlus => 100.0,
+            Grade::A => 200.0,
+            Grade::APlus => 400.0,
+            Grade::APlusPlus => 800.0,
+        }
+    }
+
+    /// [`Self::fallback_chaos`] re-anchored on a chaos amount THIS read
+    /// produced.
+    ///
+    /// Every rung is multiplied by `anchor / 800`, so A++ equals the anchor
+    /// exactly and the ratios between the ten rungs are the ones
+    /// [`Self::fallback_chaos`] fixes — the ladder moves with the market
+    /// instead of standing still while the currency does.
+    ///
+    /// **Why this exists rather than the ten absolute numbers alone.** The
+    /// absolute rungs reproduce an inversion the epic's L1 lock forbids: at
+    /// `Grade::APlus` = 400 an A+ line that summed NOTHING outranks Doryani's
+    /// Institute, whose 390 the feed actually printed. That is a third-party
+    /// letter beating the market, and it is structural — not a property of the
+    /// 2026-09-06 capture, where it happens not to fire because both A+ lines
+    /// price something.
+    ///
+    /// # Which anchor, and what that buys
+    ///
+    /// [`crate::temple::valuation::Valued`] owns the choice and passes two
+    /// different ones, because the two rung-priced paths answer different
+    /// questions (ADR-022 §3 as amended by POE-262, and §4):
+    ///
+    /// - a room that **summed nothing** is anchored on
+    ///   `valuation::lowest_summed_room_total` — the lowest tier-3 total among
+    ///   the rooms that summed something, over the FORMULA sums of the 23
+    ///   non-instrumental lines with Custom overrides ignored, 1.857 on the
+    ///   committed capture. Since A++ equals the anchor and every lower grade
+    ///   is a fixed fraction of it, no letter can reach a room something
+    ///   priced. That CLOSES the fork ADR-022 §3 recorded: Apex of Ascension
+    ///   (B−, nothing summed) used to stand at 31.7 over Chamber of Iron's
+    ///   measured 6, and now reads 0.0696;
+    /// - the two `strategy::INSTRUMENTAL_LINES` are anchored on the read's
+    ///   best tier-3 sale delta and then capped at the lowest sale-priced room
+    ///   (846 and 390 on the capture, so Temple Nexus reads its B+ 105.75 and
+    ///   the Shrine of Unmaking its D 2.115). That two-step is §4's, it rests
+    ///   on board-7 evidence, and POE-262 left it alone.
+    ///
+    /// The rescale on its own guarantees NEITHER — it is arithmetic, and this
+    /// doc once claimed otherwise. A++ equals whatever it is handed, so the
+    /// property each path holds is a property of the ANCHOR that path picks.
+    ///
+    /// A non-finite or non-positive `anchor` is not a read to anchor on, and
+    /// falls back to [`Self::fallback_chaos`] — that is the cold-read path,
+    /// and the caller ([`crate::temple::valuation::Valued`]) also withholds a
+    /// stale read's numbers so a stale market cannot re-anchor the ladder
+    /// either.
+    pub fn fallback_chaos_scaled(self, anchor: f64) -> f64 {
+        if !anchor.is_finite() || anchor <= 0.0 {
+            return self.fallback_chaos();
+        }
+        self.fallback_chaos() * (anchor / Grade::APlusPlus.fallback_chaos())
+    }
 }
 
 // ------------------------------------------------------------------- lines --
@@ -97,7 +194,6 @@ impl RoomLine {
     /// POE-167's key, so [`RoomLine::mechanical_line`] round-trips through
     /// [`Line::named`]; for the other 21 it is a snake_case slug of the tier-3
     /// name, which is the name the strategy layer talks about.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn key(self) -> &'static str {
         self.key
     }
@@ -929,6 +1025,92 @@ mod tests {
         assert_eq!(line_by_key("corruption").grade().as_str(), "A++");
         assert_eq!(line_by_key("gem").grade(), Grade::APlus);
         assert_eq!(line_by_key("explosive").grade(), Grade::D);
+    }
+
+    #[test]
+    fn the_fallback_ladder_rises_with_the_grade() {
+        // The ladder stands in for a market that said nothing, so the one
+        // thing it can honestly claim is the sheet's own ordering. A rung out
+        // of place would rank a worse room above a better one on a cold read,
+        // and nothing else in the valuation would notice.
+        let worst_first = [
+            Grade::D,
+            Grade::CMinus,
+            Grade::C,
+            Grade::CPlus,
+            Grade::BMinus,
+            Grade::B,
+            Grade::BPlus,
+            Grade::A,
+            Grade::APlus,
+            Grade::APlusPlus,
+        ];
+
+        for pair in worst_first.windows(2) {
+            let (worse, better) = (pair[0], pair[1]);
+            assert!(better > worse, "the arrangement is worst-first");
+            assert!(
+                better.fallback_chaos() > worse.fallback_chaos(),
+                "{} stands in for {} c, which does not beat {}'s {} c",
+                better.as_str(),
+                better.fallback_chaos(),
+                worse.as_str(),
+                worse.fallback_chaos()
+            );
+        }
+    }
+
+    /// The top rung IS the read's best sale delta, and 800 is the one delta
+    /// that leaves the ladder where it stands.
+    ///
+    /// The boundary matters because the two ladders have to be the same object
+    /// seen from two sides: a scaled ladder that did not reduce to the cold
+    /// one at its own anchor would silently re-rank every unpriced room the
+    /// first time a market read arrived.
+    #[test]
+    fn the_scaled_ladder_is_the_cold_ladder_at_its_own_anchor() {
+        let top = Grade::APlusPlus.fallback_chaos();
+
+        assert_eq!(Grade::APlusPlus.fallback_chaos_scaled(top), top);
+        assert_eq!(Grade::D.fallback_chaos_scaled(top), Grade::D.fallback_chaos());
+        assert_eq!(Grade::A.fallback_chaos_scaled(top), Grade::A.fallback_chaos());
+    }
+
+    /// Every rung is the same share of the anchor that it is of 800.
+    ///
+    /// This is the arithmetic and nothing more. The claim this test used to
+    /// make — "a letter stays below the feed" — is FALSE of the rescale on its
+    /// own: anchored on the capture's 846, A+ scales to 423, which is above
+    /// the 390 the feed pays for Doryani's Institute. The property that does
+    /// hold is a property of the ANCHOR `valuation::Valued` picks, and it is
+    /// tested through the real chain there
+    /// (`no_letter_reaches_a_room_that_summed_something`).
+    #[test]
+    fn every_scaled_rung_is_its_cold_share_of_the_anchor() {
+        let anchor = 390.0;
+        let share = anchor / Grade::APlusPlus.fallback_chaos();
+
+        assert_eq!(Grade::APlus.fallback_chaos_scaled(anchor), 400.0 * share);
+        assert_eq!(Grade::C.fallback_chaos_scaled(anchor), 10.0 * share);
+        assert_eq!(
+            Grade::APlusPlus.fallback_chaos_scaled(anchor),
+            anchor,
+            "the top rung IS the anchor",
+        );
+    }
+
+    /// A read with no top delta is not a read to anchor on, and falls back to
+    /// the cold rungs rather than to zero — which would price every unpriced
+    /// room in the game at nothing the moment a market went quiet.
+    #[test]
+    fn a_read_with_no_top_delta_leaves_the_cold_ladder_standing() {
+        for top in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                Grade::A.fallback_chaos_scaled(top),
+                Grade::A.fallback_chaos(),
+                "top delta {top} is not an anchor",
+            );
+        }
     }
 
     // ------------------------------------------------- bridge to POE-167 --

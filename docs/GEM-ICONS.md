@@ -4,7 +4,8 @@ Status: current guide.
 
 The server serves artwork at `/api/gem-icon/{name}` from `internal/gemicon`. Each
 name is resolved against the category maps in `internal/gemicon/urls/` —
-`gems.json` and `items.json` today — which are compiled into the binary
+`gems.json`, `items.json` and `temple.json` today — which are compiled into the
+binary
 (`//go:embed urls/*.json`) and merged into one flat lookup at construction. A
 name absent from that merged map returns `404` and the UI renders its `?`
 fallback.
@@ -459,6 +460,46 @@ offline, and go back up under their new names.
    proves the item seed is readable. One alone proves half a migration. Only
    after both do you remove `GEM_ICON_CACHE_DIR` from the environment and drop
    `$SERVER_SERVICE_ID-profitofexile-gem-icons`.
+
+## Temple items
+
+Status: current. Added 2026-09-06 (POE-255).
+
+`GET /api/analysis/temple-market` serves an icon path per room-tier and per vial
+recipe member, all through the **existing** `/api/gem-icon/{name}` route — no new
+route, no new cache set, no new sub-directory. The map is a third category file,
+`internal/gemicon/urls/temple.json`, which the loader discovers on its own; the
+only Go that knows about it is `temple.IconPath`, which builds
+`/api/gem-icon/<name, escaped as one path segment>`.
+
+It holds 32 entries: the 31 distinct members of the eleven vial recipes, plus
+one shared room artwork. All 86 room-tier lines are lines on one Chronicle of
+Atzoatl and poe.ninja serves them the same image, so they resolve to the single
+key `Chronicle of Atzoatl` and one cached file.
+
+Like the Currency Exchange map, this one is **generated** and hand edits are lost
+on the next run. From the repository root:
+
+```
+python3 scripts/generate-temple-icons.py --league Allflame
+```
+
+The URLs come from poe.ninja's own `icon` field on the item-overview lines the
+collector already polls (`web.poecdn.com/gen/image/...`), not from poewiki — they
+are content-addressed and stable per artwork. The item names are read out of
+`internal/temple/recipes.go` rather than restated in the script, so the map
+cannot drift from the served set; `TestIconMap_coversTheServedSetAndTheRoomArtwork`
+re-checks the committed file against `temple.ItemNames()` and
+`temple.RoomIconName` on every test run and fails on an entry in either
+direction. The script refuses to write if the room category does not serve one
+shared artwork, or if any served name has no icon on the feed. Re-run it once per
+league, or after adding a vial to the recipe table.
+
+Then follow [Adding an icon](#adding-an-icon) from step 3: pull the files, seed
+the production volume **before** the deploy that carries the map, deploy, verify.
+The seed is not optional — the production VPS cannot fetch `web.poecdn.com` any
+more than it can fetch poewiki, so a map entry deployed ahead of its bytes is a
+permanent `502` for that name (ADR-012).
 
 ## What "missing" looks like
 
