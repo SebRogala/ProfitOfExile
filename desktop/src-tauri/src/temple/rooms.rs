@@ -106,7 +106,7 @@ impl Grade {
     /// unpriced rooms against the priced ones without anyone editing it.
     /// [`Self::fallback_chaos_scaled`] is the answer, and it is what a live
     /// read uses; these ten numbers are the COLD ladder, kept for the read
-    /// that has no top delta to take a fraction of.
+    /// that has no anchor to take a fraction of.
     pub fn fallback_chaos(self) -> f64 {
         match self {
             Grade::D => 2.0,
@@ -122,13 +122,13 @@ impl Grade {
         }
     }
 
-    /// [`Self::fallback_chaos`] re-anchored on what the feed is paying TODAY.
+    /// [`Self::fallback_chaos`] re-anchored on a chaos amount THIS read
+    /// produced.
     ///
-    /// `top_sale_delta` is the best tier-3 sale delta in the live market read.
-    /// Every rung is multiplied by `top_sale_delta / 800`, so A++ equals that
-    /// delta and the ratios between the ten rungs are the ones
-    /// [`Self::fallback_chaos`] fixes — the ladder moves with the feed instead
-    /// of standing still while the currency does.
+    /// Every rung is multiplied by `anchor / 800`, so A++ equals the anchor
+    /// exactly and the ratios between the ten rungs are the ones
+    /// [`Self::fallback_chaos`] fixes — the ladder moves with the market
+    /// instead of standing still while the currency does.
     ///
     /// **Why this exists rather than the ten absolute numbers alone.** The
     /// absolute rungs reproduce an inversion the epic's L1 lock forbids: at
@@ -138,40 +138,41 @@ impl Grade {
     /// 2026-09-06 capture, where it happens not to fire because both A+ lines
     /// price something.
     ///
-    /// # What the rescale does and does not guarantee
+    /// # Which anchor, and what that buys
     ///
-    /// Rescaling alone does NOT keep a letter under the feed, and this doc
-    /// used to claim it did. A++ equals the top sale delta by construction, so
-    /// on the committed capture A+ scales to 423 — still above the 390 the
-    /// feed pays for Doryani's Institute. The guarantee is imposed one layer
-    /// up, by [`crate::temple::valuation::Valued`], which CAPS every fallback
-    /// room at the lowest tier-3 total among the rooms whose sale is above the
-    /// floor. What holds, exactly:
+    /// [`crate::temple::valuation::Valued`] owns the choice and passes two
+    /// different ones, because the two rung-priced paths answer different
+    /// questions (ADR-022 §3 as amended by POE-262, and §4):
     ///
-    /// - on a live read a letter never exceeds the LOWEST sale-priced room
-    ///   (390 on the capture, so the 423 above becomes 390);
-    /// - a letter CAN still outrank a room whose own measured value is small.
-    ///   Apex of Ascension is B− and summed nothing, so it stands in at 31.7;
-    ///   Chamber of Iron summed a real 6 c quantity bonus and stays at 6. The
-    ///   letter wins, and it is a guess beating a measurement.
+    /// - a room that **summed nothing** is anchored on
+    ///   `valuation::lowest_summed_room_total` — the lowest tier-3 total among
+    ///   the rooms that summed something, over the FORMULA sums of the 23
+    ///   non-instrumental lines with Custom overrides ignored, 2.65 on the
+    ///   committed capture. Since A++ equals the anchor and every lower grade
+    ///   is a fixed fraction of it, no letter can reach a room something
+    ///   priced. That CLOSES the fork ADR-022 §3 recorded: Apex of Ascension
+    ///   (B−, nothing summed) used to stand at 31.7 over Chamber of Iron's
+    ///   measured 6, and now reads 0.0994;
+    /// - the two `strategy::INSTRUMENTAL_LINES` are anchored on the read's
+    ///   best tier-3 sale delta and then capped at the lowest sale-priced room
+    ///   (846 and 390 on the capture, so Temple Nexus reads its B+ 105.75 and
+    ///   the Shrine of Unmaking its D 2.115). That two-step is §4's, it rests
+    ///   on board-7 evidence, and POE-262 left it alone.
     ///
-    /// That second bullet is the **owner's open fork**, recorded rather than
-    /// closed: the alternative rule is to cap at the lowest MEASURED room
-    /// rather than the lowest SALE-PRICED one, which would pull every letter
-    /// under 6 c on this capture and make the ladder almost inert. Neither
-    /// choice is measured; the shipped one keeps the ladder useful for the ~15
-    /// rooms nobody prices at all.
+    /// The rescale on its own guarantees NEITHER — it is arithmetic, and this
+    /// doc once claimed otherwise. A++ equals whatever it is handed, so the
+    /// property each path holds is a property of the ANCHOR that path picks.
     ///
-    /// A non-finite or non-positive `top_sale_delta` is not a read to anchor
-    /// on, and falls back to [`Self::fallback_chaos`] — that is the cold-read
-    /// path, and the caller ([`crate::temple::valuation::Valued`]) also
-    /// withholds a stale read's delta so a stale market cannot re-anchor the
-    /// ladder either.
-    pub fn fallback_chaos_scaled(self, top_sale_delta: f64) -> f64 {
-        if !top_sale_delta.is_finite() || top_sale_delta <= 0.0 {
+    /// A non-finite or non-positive `anchor` is not a read to anchor on, and
+    /// falls back to [`Self::fallback_chaos`] — that is the cold-read path,
+    /// and the caller ([`crate::temple::valuation::Valued`]) also withholds a
+    /// stale read's numbers so a stale market cannot re-anchor the ladder
+    /// either.
+    pub fn fallback_chaos_scaled(self, anchor: f64) -> f64 {
+        if !anchor.is_finite() || anchor <= 0.0 {
             return self.fallback_chaos();
         }
-        self.fallback_chaos() * (top_sale_delta / Grade::APlusPlus.fallback_chaos())
+        self.fallback_chaos() * (anchor / Grade::APlusPlus.fallback_chaos())
     }
 }
 
@@ -1081,9 +1082,9 @@ mod tests {
     /// make — "a letter stays below the feed" — is FALSE of the rescale on its
     /// own: anchored on the capture's 846, A+ scales to 423, which is above
     /// the 390 the feed pays for Doryani's Institute. The property that does
-    /// hold is imposed by the cap in `valuation::Valued`, and it is tested
-    /// through the real chain there
-    /// (`the_live_ladder_never_prices_a_letter_above_the_cheapest_sale_priced_room`).
+    /// hold is a property of the ANCHOR `valuation::Valued` picks, and it is
+    /// tested through the real chain there
+    /// (`no_letter_reaches_a_room_that_summed_something`).
     #[test]
     fn every_scaled_rung_is_its_cold_share_of_the_anchor() {
         let anchor = 390.0;

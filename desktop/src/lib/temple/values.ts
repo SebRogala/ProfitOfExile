@@ -169,9 +169,42 @@ export function markTitle(value: RoomValueView): string {
 	return parts.join(' · ');
 }
 
-/** A chaos amount, short enough for a table cell. */
+/**
+ * A chaos amount, short enough for a table cell.
+ *
+ * Three bands, and the smallest one is POE-262's. At 100 c and up the decimals
+ * are noise and the figure is rounded; from 1 c up two decimals are the
+ * difference between two rooms. BELOW 1 c two decimals stop being a rendering
+ * and start being a claim: since a room nothing priced is now a fraction of the
+ * cheapest room something priced, a D-grade rung is 0.0066 c on the committed
+ * capture, and `toFixed(2)` prints that as `0.01` — or, once the vial rate
+ * lands, as `0.00`, which reads as ZERO and is the one thing epic lock L4
+ * forbids a fallback from saying. Under 1 c the value keeps two SIGNIFICANT
+ * digits instead, so 0.015 prints as `0.015` and 0.0051 as `0.0051`.
+ *
+ * Zero, negatives and `NaN` keep the two-decimal form they had: zero is a
+ * value a player can state outright ("this room is worth nothing to me") and
+ * `0.00` is the honest rendering of it, unlike a rung that was rounded there.
+ *
+ * Two bands the significant-digit rule would otherwise reach, and both are
+ * about the CELL rather than about the number:
+ *
+ * - **`[0.995, 1)` takes the two-decimal form.** `toPrecision(2)` rounds
+ *   0.999 up and prints it as `1.0`, a third format in a column that has only
+ *   ever had two. The band hands it to `toFixed(2)` instead, so it reads
+ *   `1.00` beside every other near-one figure.
+ * - **Under `0.0001` the literal `<0.0001` is printed.** `toPrecision(2)`
+ *   switches to exponential below 1e-6 — `1.0e-7` in a table cell — and the
+ *   digits it would print above that are past anything a player acts on. The
+ *   `<` form keeps the one claim that matters: not zero. It is non-zero by
+ *   construction, since this branch is only reached for `chaos > 0`, which is
+ *   what epic lock L4 forbids a fallback from contradicting.
+ */
 export function formatChaos(chaos: number): string {
-	return chaos >= 100 ? Math.round(chaos).toString() : chaos.toFixed(2);
+	if (chaos >= 100) return Math.round(chaos).toString();
+	if (chaos >= 0.995 || !(chaos > 0)) return chaos.toFixed(2);
+	if (chaos < 0.0001) return '<0.0001';
+	return chaos.toPrecision(2);
 }
 
 // --- the rows the editor renders -------------------------------------------

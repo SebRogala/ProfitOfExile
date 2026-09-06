@@ -5813,8 +5813,8 @@ mod tests {
     /// this is the ordering the advisor inherits from it. Every other bridge
     /// test here asserts a mechanism; this one asserts the answer, so a change
     /// that quietly re-ranks the board — a drop count edited, a rate moved, the
-    /// floor rule changed, the fallback cap loosened — fails with the room that
-    /// moved named.
+    /// floor rule changed, the fallback anchor widened — fails with the room
+    /// that moved named.
     ///
     /// Temple Nexus is THIRD, at its B+ rung of 105.75, above two rooms the
     /// feed prices — and that is the visible cost of the board-7 fix: the
