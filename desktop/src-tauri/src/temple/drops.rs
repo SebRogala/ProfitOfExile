@@ -43,29 +43,60 @@
 //! [`TierDrops::uniques_per_run`] is `None` at tiers 1 and 2 for every line, and
 //! his 0.25 sits at tier 3 for the six lines whose sheet row names a unique.
 //!
-//! # The vial rate is deliberately thin, and the raw stat is why
+//! # One vial rate for the whole table: an anchor, times poedb's ratio
 //!
-//! He gave one vial number — 0.1 per run — and no number at all for tiers 1/2
-//! or for the three lines whose vial he called a "small chance" (Locus of
-//! Corruption, Throne of Atziri) or listed without a unique (Glittering Halls).
-//! Rather than invent fractions, [`TierDrops::vials_per_run`] carries his 0.1 at
-//! tier 3 for those six unique lines and `None` everywhere else.
+//! He gave one vial number — 0.1 per run at tier 3 — and no number at all for
+//! tiers 1/2 or for the three lines whose vial he called a "small chance" (Locus
+//! of Corruption, Throne of Atziri) or listed without a unique (Glittering
+//! Halls). The table used to carry that 0.1 on six rows and `None` on the other
+//! three, which priced Glittering Halls' vial — the highest vial chance in the
+//! temple — at zero.
 //!
-//! What fills that gap is [`TierDrops::vial_chance_raw`]: poedb prints a
+//! [`TierDrops::vial_chance_raw`] is what closes the gap: poedb prints a
 //! per-tier stat on all nine vial lines — `map incursion boss chance to drop
-//! <tag> vial % [N]` — and this field is that integer **verbatim**. Its scale is
-//! not printed anywhere on the page (the values run 7 to 2815), so it is a `u32`
-//! and not an [`Estimate`]: it must not be multiplied by a price until POE-257
-//! settles what the units are. It is still the measured shape of the tier
-//! progression, and it is the only reason Glittering Halls — the highest vial
-//! chance in the temple — is not silently a zero here.
+//! <tag> vial % [N]` — and this field is that integer **verbatim** (the values
+//! run 7 to 2815). No page prints its scale, so it stays a `u32` and not an
+//! [`Estimate`]. What POE-262 settles is not that scale but a CONVENTION on top
+//! of it (2026-09-06):
+//!
+//! ```text
+//! vials per run at a tier = anchor_rate x vial_chance_raw / VIAL_RATE_ANCHOR_RAW
+//! ```
+//!
+//! [`VIAL_RATE_ANCHOR_RAW`] is 1689, the tier-3 integer on Conduit of Lightning,
+//! Crucible of Flame and Sanctum of Immortality — three of the six lines
+//! Vertolka's 0.1 was stated for, and the value most of them share. **Raw 1689
+//! means the anchor rate per run**, and the anchor rate is a knob
+//! ([`Knobs::vials_per_run`](super::valuation::Knobs), 0.1 by default), because
+//! it is his estimate and he has proposed doubling it.
+//!
+//! At the default anchor the nine lines derive, at tier 3:
+//!
+//! ```text
+//! Glittering Halls       2815 -> 0.1667    Toxic Grove             201 -> 0.0119
+//! Conduit / Crucible /                     Locus of Corruption      20 -> 0.00118
+//!   Sanctum              1689 -> 0.1       Throne of Atziri         20 -> 0.00118
+//! Hybridisation Chamber  1005 -> 0.0595
+//! Defense Research Lab    804 -> 0.0476
+//! ```
+//!
+//! — and Locus and Throne's 0.00118 is Vertolka's "small chance", now a number
+//! rather than a silence. Tiers 1 and 2 derive by the same rule off their own
+//! integers, so the tier progression the raw stat measures is the progression
+//! the rate carries.
+//!
+//! [`TierDrops::uniques_per_run`] does NOT scale: no stat on any page states a
+//! per-tier chest-unique chance, so his 0.25 stays a flat tier-3 number on the
+//! six lines whose sheet row names a unique.
 //!
 //! The same pages print a second stat of that family on four of those lines —
 //! `map incursion boss chance to drop <tag> item % [33/66/100]`, on Conduit of
 //! Lightning, Crucible of Flame, Hybridisation Chamber and Sanctum of
 //! Immortality — and [`TierDrops::mod_item_chance_raw`] is that integer,
-//! verbatim, under exactly the same rule: raw, unscaled, never multiplied by a
-//! price here. It is the game's own per-tier handle on how often the
+//! verbatim, and it keeps the rule the vial stat has now left: raw, unscaled,
+//! never multiplied by a price. Nobody has stated an anchor for it — Vertolka
+//! priced the gloves per RUN, not per point of this stat — so there is no
+//! ratio to hang it off. It is the game's own per-tier handle on how often the
 //! architect's signature rare ([`TempleMod`]) drops, which otherwise carries a
 //! number only where Vertolka guessed one. Defense Research Lab and Toxic Grove
 //! name a temple mod but their pages print no such stat, so both are `None`.
@@ -141,6 +172,28 @@ pub const VERTOLKA_SHEET: &str = "Vertolka's sheet, 2026-09-06";
 /// here is a [`Basis::Guess`]; he offered the numbers as his own estimates.
 #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub const VERTOLKA_MSG: &str = "Vertolka, 2026-09-06 message (POE-124)";
+/// [`TierDrops::vials_per_run`], which has TWO parents and neither on its own:
+/// Vertolka's per-run anchor and poedb's per-line ratio. A guess, because the
+/// anchor is one.
+pub const VIAL_RATE_DERIVED: &str =
+    "Vertolka's per-run vial anchor (2026-09-06 message, POE-124) scaled by poedb's \
+     `chance to drop <tag> vial` ratio (poedb.tw room pages, 2026-09-06) — POE-262";
+
+/// The tier-3 `chance to drop <tag> vial` integer the vial rate is anchored on:
+/// **raw 1689 means the anchor rate per run** (POE-262, 2026-09-06).
+///
+/// 1689 is what Conduit of Lightning, Crucible of Flame and Sanctum of
+/// Immortality print at tier 3 — three of the six lines Vertolka stated *"price
+/// of vial divided by 10"* for, and the value shared by most of them (the other
+/// three print 804, 1005 and 201). Anchoring on the shared value is what makes
+/// his number mean what he said it means on the rooms he was talking about.
+///
+/// **The scale of the raw integer is still unknown.** This settles a CONVENTION,
+/// not a unit: one line's rate is another's in the ratio poedb prints, and the
+/// whole ladder moves with [`Knobs::vials_per_run`](super::valuation::Knobs).
+/// [`TierDrops::mod_item_chance_raw`] stays raw and unmultiplied — nobody has
+/// stated an anchor for it.
+pub const VIAL_RATE_ANCHOR_RAW: u32 = 1689;
 
 /// Factory is the one room whose page prints the quantity stat twice: Jiquani's
 /// own `20/40/60% increased Quantity of Items found in this Area` and the
@@ -322,7 +375,6 @@ impl TempleMod {
 #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub struct TierDrops {
     uniques_per_run: Option<Estimate>,
-    vials_per_run: Option<Estimate>,
     vial_chance_raw: Option<u32>,
     mod_item_chance_raw: Option<u32>,
     quantity_pct: Option<Estimate>,
@@ -336,7 +388,6 @@ impl TierDrops {
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub const NONE: TierDrops = TierDrops {
         uniques_per_run: None,
-        vials_per_run: None,
         vial_chance_raw: None,
         mod_item_chance_raw: None,
         quantity_pct: None,
@@ -346,22 +397,32 @@ impl TierDrops {
 
     /// Expected tier-3 chest uniques per run. Always `None` at tiers 1 and 2 —
     /// the game drops the chest unique at tier 3 only.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn uniques_per_run(self) -> Option<Estimate> {
         self.uniques_per_run
     }
 
-    /// Expected vials per run. Vertolka's 0.1 at tier 3 on the six chest lines,
-    /// `None` elsewhere; see [`TierDrops::vial_chance_raw`] for what the game
-    /// itself states.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
-    pub fn vials_per_run(self) -> Option<Estimate> {
-        self.vials_per_run
+    /// Expected vials per run at this tier, DERIVED (POE-262).
+    ///
+    /// `anchor_rate × vial_chance_raw / `[`VIAL_RATE_ANCHOR_RAW`] — Vertolka's
+    /// per-run number for a standard vial room, scaled by poedb's own per-line,
+    /// per-tier ratio. `None` exactly where [`TierDrops::vial_chance_raw`] is
+    /// `None`: a line poedb prints no vial stat for drops no vial, and that is
+    /// still a different claim from zero.
+    ///
+    /// Always a [`Basis::Guess`] against [`VIAL_RATE_DERIVED`], whatever the
+    /// anchor: the ratio is measured but the number it is anchored on is
+    /// Vertolka's estimate, and half a measurement is not a measurement.
+    pub fn vials_per_run(self, anchor_rate: f64) -> Option<Estimate> {
+        let raw = self.vial_chance_raw?;
+        let scaled = anchor_rate * f64::from(raw) / f64::from(VIAL_RATE_ANCHOR_RAW);
+        Some(Estimate::guess(scaled, VIAL_RATE_DERIVED))
     }
 
     /// poedb's `map incursion boss chance to drop <tag> vial % [N]` integer,
     /// verbatim. **Not a probability** — the page prints no scale, so this is
-    /// not an [`Estimate`] and must not be multiplied by a price.
+    /// not an [`Estimate`] and is never multiplied by a price directly. It is
+    /// read as a RATIO against [`VIAL_RATE_ANCHOR_RAW`] instead, which needs no
+    /// scale: [`TierDrops::vials_per_run`] is what a caller prices against.
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn vial_chance_raw(self) -> Option<u32> {
         self.vial_chance_raw
@@ -404,15 +465,22 @@ impl TierDrops {
     }
 
     /// Whether any number on this tier is somebody's estimate.
+    ///
+    /// `vial_chance_raw` counts, and it is the one field here read for its
+    /// PRESENCE rather than its basis: poedb's ratio is measured, but
+    /// [`TierDrops::vials_per_run`] anchors it on Vertolka's number, so every
+    /// tier that names a vial chance produces a guessed count at every anchor.
+    /// Asking [`TierDrops::vials_per_run`] for an anchor to answer with would
+    /// make a provenance question depend on a knob.
     #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn has_guess(self) -> bool {
-        any_guess(&[
-            self.uniques_per_run,
-            self.vials_per_run,
-            self.quantity_pct,
-            self.rarity_pct,
-            self.pack_size_pct,
-        ])
+        self.vial_chance_raw.is_some()
+            || any_guess(&[
+                self.uniques_per_run,
+                self.quantity_pct,
+                self.rarity_pct,
+                self.pack_size_pct,
+            ])
     }
 }
 
@@ -561,7 +629,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
@@ -570,7 +637,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -579,7 +645,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
@@ -603,7 +668,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(557),
                 mod_item_chance_raw: Some(33),
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
@@ -612,7 +676,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(1131),
                 mod_item_chance_raw: Some(66),
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -621,7 +684,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                vials_per_run: Some(Estimate::guess(0.1, VERTOLKA_MSG)),
                 vial_chance_raw: Some(1689),
                 mod_item_chance_raw: Some(100),
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
@@ -657,7 +719,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(557),
                 mod_item_chance_raw: Some(33),
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
@@ -666,7 +727,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(1131),
                 mod_item_chance_raw: Some(66),
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -675,7 +735,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                vials_per_run: Some(Estimate::guess(0.1, VERTOLKA_MSG)),
                 vial_chance_raw: Some(1689),
                 mod_item_chance_raw: Some(100),
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
@@ -702,7 +761,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(265),
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
@@ -711,7 +769,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(539),
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -720,7 +777,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                vials_per_run: Some(Estimate::guess(0.1, VERTOLKA_MSG)),
                 vial_chance_raw: Some(804),
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
@@ -750,7 +806,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(22.0, FACTORY_QUANTITY)),
@@ -759,7 +814,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(44.0, FACTORY_QUANTITY)),
@@ -768,7 +822,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(66.0, FACTORY_QUANTITY)),
@@ -786,7 +839,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(929),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -795,7 +847,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(1886),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -804,7 +855,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(2815),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -822,7 +872,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
@@ -831,7 +880,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -840,7 +888,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
@@ -870,7 +917,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -879,7 +925,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -888,7 +933,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -929,7 +973,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(332),
                 mod_item_chance_raw: Some(33),
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
@@ -938,7 +981,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(674),
                 mod_item_chance_raw: Some(66),
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -947,7 +989,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                vials_per_run: Some(Estimate::guess(0.1, VERTOLKA_MSG)),
                 vial_chance_raw: Some(1005),
                 mod_item_chance_raw: Some(100),
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
@@ -970,7 +1011,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(7),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -979,7 +1019,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(13),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -988,7 +1027,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(20),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -1036,7 +1074,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(557),
                 mod_item_chance_raw: Some(33),
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
@@ -1045,7 +1082,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(1131),
                 mod_item_chance_raw: Some(66),
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -1054,7 +1090,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                vials_per_run: Some(Estimate::guess(0.1, VERTOLKA_MSG)),
                 vial_chance_raw: Some(1689),
                 mod_item_chance_raw: Some(100),
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
@@ -1102,7 +1137,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(2.0, POEDB)),
@@ -1111,7 +1145,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(4.0, POEDB)),
@@ -1120,7 +1153,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: None,
                 mod_item_chance_raw: None,
                 quantity_pct: Some(Estimate::measured(6.0, POEDB)),
@@ -1138,7 +1170,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(7),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -1147,7 +1178,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(13),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -1156,7 +1186,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(20),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -1184,7 +1213,6 @@ pub const DROPS: [LineDrops; 25] = [
         tiers: [
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(66),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -1193,7 +1221,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: None,
-                vials_per_run: None,
                 vial_chance_raw: Some(135),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -1202,7 +1229,6 @@ pub const DROPS: [LineDrops; 25] = [
             },
             TierDrops {
                 uniques_per_run: Some(Estimate::guess(0.25, VERTOLKA_MSG)),
-                vials_per_run: Some(Estimate::guess(0.1, VERTOLKA_MSG)),
                 vial_chance_raw: Some(201),
                 mod_item_chance_raw: None,
                 quantity_pct: None,
@@ -1257,7 +1283,9 @@ mod tests {
     }
 
     /// The six lines whose sheet row names a tier-3 chest unique, and so the
-    /// six that carry Vertolka's per-run guesses.
+    /// six that carry his 0.25 unique rate. NOT the six that carry a guess —
+    /// since POE-262 every line naming a vial does, which is nine; see
+    /// [`VIAL_LINES`].
     const CHEST_LINES: [&str; 6] = [
         "conduit_of_lightning",
         "crucible_of_flame",
@@ -1566,7 +1594,13 @@ mod tests {
             for drops in row.tiers() {
                 assert!(drops.is_empty(), "{key} has a non-empty tier");
                 assert_eq!(drops.quantity_pct(), None);
-                assert_eq!(drops.vials_per_run(), None);
+                // "None" survives the POE-262 derivation: a line poedb prints
+                // no vial stat for drops no vial at ANY anchor, and 0.0 is a
+                // different claim. Fails if `vials_per_run` ever answers
+                // `Some(0.0)` on a line with no `vial_chance_raw`.
+                for anchor in [0.0, 0.1, 5.0] {
+                    assert_eq!(drops.vials_per_run(anchor), None, "{key} at {anchor}");
+                }
             }
         }
 
@@ -1593,12 +1627,13 @@ mod tests {
     }
 
     // The two rushed lines. Doryani's Institute drops nothing this table
-    // prices; Locus of Corruption names a unique and a vial but nobody has
-    // stated a rate for either, so its value must not arrive as a guess.
-    // Fails if Vertolka's 0.25 / 0.1 are applied to Locus by pattern rather
-    // than because his sheet states them.
+    // prices; Locus of Corruption names a unique nobody has rated — Vertolka's
+    // 0.25 is stated for the six chest lines and Locus is not one of them —
+    // while its VIAL rate is derived from poedb's own 7/13/20, which is his
+    // "small chance" as a number. Fails if the 0.25 is applied to Locus by
+    // pattern rather than because his sheet states it.
     #[test]
-    fn the_rushed_lines_name_no_per_run_rate() {
+    fn the_rushed_lines_name_no_unique_rate_and_derive_the_smallest_vial_rate() {
         let doryani = drops_for("gem");
         assert!(doryani.is_empty(), "Doryani's Institute is not empty");
 
@@ -1613,33 +1648,56 @@ mod tests {
                 "Locus tier {} claims a unique rate",
                 index + 1
             );
-            assert_eq!(
-                drops.vials_per_run(),
-                None,
-                "Locus tier {} claims a vial rate",
-                index + 1
-            );
         }
-        assert!(!locus.has_guess(), "Locus carries no guessed number");
         assert_eq!(locus.tiers()[2].vial_chance_raw(), Some(20));
+        // 0.1 x 20 / 1689 = 0.001184..., the smallest rate in the table and
+        // the whole of what "small chance" now means. Fails if the derivation
+        // is anchored on the line's own raw (which would read 0.1) or on the
+        // table's largest (0.1 x 20 / 2815 = 0.00071).
+        let vial = locus.tiers()[2]
+            .vials_per_run(0.1)
+            .expect("poedb prints a vial chance for Locus");
+        assert!(
+            (vial.value() - 0.1 * 20.0 / 1689.0).abs() < 1e-12,
+            "Locus tier 3 vial rate was {}",
+            vial.value(),
+        );
+        assert!(vial.is_guess(), "the anchor it scales is Vertolka's");
+        // And it is the ONLY guessed number on the line, which `has_guess`
+        // alone does not say — it answers "any", not "only". So the other
+        // three tier fields are pinned empty beside it: the vial chance is the
+        // whole of what poedb prints for Locus, and the temple mod and the
+        // unique rate are already `None` above. Fails if a bonus percentage is
+        // ever transcribed onto this line, which would quietly make its `G`
+        // mark rest on two numbers instead of one.
+        assert!(locus.has_guess(), "the derived vial rate is a guess");
+        for (index, drops) in locus.tiers().iter().enumerate() {
+            assert_eq!(drops.quantity_pct(), None, "Locus tier {}", index + 1);
+            assert_eq!(drops.rarity_pct(), None, "Locus tier {}", index + 1);
+            assert_eq!(drops.pack_size_pct(), None, "Locus tier {}", index + 1);
+        }
     }
 
     // has_guess is what POE-257/260 read to mark a value as somebody's
-    // estimate, so it must be true exactly where Vertolka's numbers live and
-    // false on every line built only from poedb. Fails if a Guess is stored as
-    // Measured, or if has_guess stops walking the tiers. (The temple-mod half
-    // of has_guess is NOT pinned here and cannot be: every line whose temple
-    // mod is guessed also carries guessed tier rates, so the two arms are
-    // indistinguishable on the real table. That arm is pinned by
+    // estimate, and since POE-262 the set it is true on is exactly the nine
+    // lines poedb prints a vial chance on: each of those scales Vertolka's
+    // anchor, so each derives a guessed rate. The six chest lines carrying his
+    // 0.25 are a SUBSET of the nine, which is why the equality below covers
+    // both his numbers with one assertion rather than two. Fails if a Guess is
+    // stored as Measured, if has_guess stops walking the tiers, or if it goes
+    // back to reading a stored vial rate that only six lines carried. (The
+    // temple-mod half of has_guess is NOT pinned here and cannot be: every line
+    // whose temple mod is guessed also carries guessed tier rates, so the two
+    // arms are indistinguishable on the real table. That arm is pinned by
     // `a_guess_that_sits_only_in_the_temple_mod_still_marks_the_line`.)
     #[test]
-    fn has_guess_is_true_exactly_for_the_lines_carrying_vertolkas_numbers() {
+    fn has_guess_marks_every_line_that_names_a_vial_and_no_other() {
         let guessed: Vec<&str> = DROPS
             .iter()
             .filter(|row| row.has_guess())
             .map(|row| row.key())
             .collect();
-        assert_eq!(guessed, CHEST_LINES);
+        assert_eq!(guessed, VIAL_LINES);
 
         // A temple mod is not guessed merely by existing: Crucible's carries
         // Vertolka's two numbers, Storm of Corruption's carries none. Fails if
@@ -1660,38 +1718,46 @@ mod tests {
             "Topotante's mod group has no number to guess at"
         );
 
-        // Every guessed number in the table is attributed to him by name.
+        // Every guessed number in the table is attributed by name, and the
+        // two per-run rates cite DIFFERENT sources on purpose: the unique rate
+        // is Vertolka's message alone, the vial rate has two parents and says
+        // so. Fails if the derived rate is attributed to him as though he had
+        // stated it per line, or to poedb as though the anchor were measured.
         for row in DROPS.iter() {
             for drops in row.tiers() {
-                for estimate in [drops.uniques_per_run(), drops.vials_per_run()]
-                    .into_iter()
-                    .flatten()
-                {
-                    assert_eq!(estimate.source(), VERTOLKA_MSG, "{}", row.key());
-                    assert!(estimate.is_guess(), "{}", row.key());
+                if let Some(unique) = drops.uniques_per_run() {
+                    assert_eq!(unique.source(), VERTOLKA_MSG, "{}", row.key());
+                    assert!(unique.is_guess(), "{}", row.key());
+                }
+                if let Some(vial) = drops.vials_per_run(0.1) {
+                    assert_eq!(vial.source(), VIAL_RATE_DERIVED, "{}", row.key());
+                    assert!(vial.is_guess(), "{}", row.key());
                 }
             }
         }
 
         // And the lines that only carry poedb percentages are not marked.
-        for key in [
-            "factory",
-            "glittering_halls",
-            "hall_of_war",
-            "chamber_of_iron",
-        ] {
+        // Glittering Halls left this list at POE-262 — its vial rate is now
+        // derived off Vertolka's anchor, so the line is no longer purely
+        // measured. Factory names no vial and never was.
+        for key in ["factory", "hall_of_war", "chamber_of_iron"] {
             assert!(
                 !drops_for(key).has_guess(),
                 "{key} is measured, not guessed"
             );
         }
+        assert!(
+            drops_for("glittering_halls").has_guess(),
+            "its vial rate rests on Vertolka's anchor",
+        );
     }
 
-    // Vertolka's two ratios are the whole of POE-257's drop term, so the
-    // values themselves are pinned: 1/4 of a unique and 1/10 of a vial per run
-    // at tier 3. Fails on an off-by-a-decimal (0.025) or on swapping the two.
+    // Vertolka's unique ratio is a flat number on the six chest lines: 1/4 of
+    // a unique per run at tier 3, and no page states a per-tier chance to
+    // scale it by. Fails on an off-by-a-decimal (0.025) and on a rate leaking
+    // onto a seventh line.
     #[test]
-    fn tier_three_carries_vertolkas_quarter_unique_and_tenth_vial() {
+    fn tier_three_carries_vertolkas_quarter_unique_unscaled() {
         for key in CHEST_LINES {
             let t3 = drops_for(key).tier(Tier::T3).expect("tier 3 exists");
             assert_eq!(
@@ -1699,10 +1765,76 @@ mod tests {
                 Some(0.25),
                 "{key} unique rate"
             );
+        }
+    }
+
+    // The POE-262 convention, stated as the number each line actually gets:
+    // raw 1689 IS the anchor rate, and every other line is that rate times its
+    // own raw over 1689. Three lines print 1689 at tier 3 and must read the
+    // anchor back EXACTLY — that is what makes the convention a convention
+    // rather than an approximation.
+    //
+    // Fails if the anchor constant moves (2815 would put Glittering Halls at
+    // 0.1 and Conduit at 0.06), if the ratio is inverted (Glittering Halls
+    // would read 0.06), and if the anchor stops being applied per tier.
+    #[test]
+    fn every_vial_line_derives_its_tier_three_rate_from_the_anchor() {
+        // Vertolka's anchor and the nine lines' tier-3 rates under it.
+        const EXPECTED: [(&str, f64); 9] = [
+            ("conduit_of_lightning", 0.1),
+            ("crucible_of_flame", 0.1),
+            ("defense_research_lab", 0.1 * 804.0 / 1689.0),
+            ("glittering_halls", 0.1 * 2815.0 / 1689.0),
+            ("hybridisation_chamber", 0.1 * 1005.0 / 1689.0),
+            ("corruption", 0.1 * 20.0 / 1689.0),
+            ("sanctum_of_immortality", 0.1 * 1689.0 / 1689.0),
+            ("throne_of_atziri", 0.1 * 20.0 / 1689.0),
+            ("toxic_grove", 0.1 * 201.0 / 1689.0),
+        ];
+        // Same lines, same order: the table below is the whole vial set, so a
+        // tenth line gaining a rate is caught rather than skipped over.
+        let keys: Vec<&str> = EXPECTED.iter().map(|(key, _)| *key).collect();
+        assert_eq!(keys, VIAL_LINES);
+
+        for (key, expected) in EXPECTED {
+            let value = drops_for(key)
+                .tier(Tier::T3)
+                .expect("tier 3 exists")
+                .vials_per_run(0.1)
+                .unwrap_or_else(|| panic!("{key} names a vial and derives a rate"))
+                .value();
+            assert!(
+                (value - expected).abs() < 1e-12,
+                "{key} tier 3 derived {value}, not {expected}",
+            );
+        }
+
+        // The three lines the anchor was READ OFF answer it exactly — not
+        // 0.09999999. Fails the moment the derivation stops being an identity
+        // at the anchor.
+        for key in [
+            "conduit_of_lightning",
+            "crucible_of_flame",
+            "sanctum_of_immortality",
+        ] {
+            let t3 = drops_for(key).tier(Tier::T3).expect("tier 3 exists");
+            assert_eq!(t3.vial_chance_raw(), Some(VIAL_RATE_ANCHOR_RAW));
             assert_eq!(
-                t3.vials_per_run().map(Estimate::value),
+                t3.vials_per_run(0.1).map(Estimate::value),
                 Some(0.1),
-                "{key} vial rate"
+                "{key} is an anchor line and must read the anchor back",
+            );
+            // And the anchor is the knob, not the constant 0.1: Vertolka's
+            // proposed 0.2 comes straight back out.
+            assert_eq!(
+                t3.vials_per_run(0.2).map(Estimate::value),
+                Some(0.2),
+                "{key}"
+            );
+            assert_eq!(
+                t3.vials_per_run(0.0).map(Estimate::value),
+                Some(0.0),
+                "{key}"
             );
         }
     }

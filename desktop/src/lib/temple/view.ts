@@ -47,6 +47,7 @@ import type {
 	TempleSlice,
 	TempleStatus
 } from './slice';
+import { formatCount } from './values';
 
 // ------------------------------------------------------------ the status --
 
@@ -867,7 +868,9 @@ function offerDriverTerms(value: RoomValueView, state: OfferValueState): DriverT
 			// count beside it. Two different numbers, because a drop's own
 			// contribution — 0.25 of a unique — is not a price anybody trades
 			// at, and a player checking the box against poe.ninja is looking up
-			// the item.
+			// the item. The count goes through `formatCount` because since
+			// POE-262 a vial rate is DERIVED (0.1 x 2815/1689), and the raw
+			// float renders as `×0.16666666666666666`.
 			//
 			// On a SCALED box the delta is the one thing the sale row may not
 			// print — see [`rowsAreTier3`] — so it falls back to the same
@@ -889,7 +892,7 @@ function offerDriverTerms(value: RoomValueView, state: OfferValueState): DriverT
 					iconName: sale || kind === 'mod' ? null : driver.name,
 					price: driverPrice(shown, ladder, saleDelta),
 					priced: shown !== null,
-					perRun: driver.count === null || sale ? null : `×${driver.count}`,
+					perRun: driver.count === null || sale ? null : `×${formatCount(driver.count)}`,
 					marks: driverMarks(driver)
 				},
 				shown,

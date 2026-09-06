@@ -7,6 +7,7 @@ import {
 	VALUE_MARK_LEGEND,
 	copyValuesInto,
 	formatChaos,
+	formatCount,
 	markTitle,
 	overrideCount,
 	overrideOf,
@@ -64,6 +65,7 @@ function custom(over: Partial<TempleCustom> = {}): TempleCustom {
 		tierFraction: 0.8,
 		cPerQuantity: 0.5,
 		cPerRarity: 0.25,
+		vialsPerRun: 0.1,
 		dropsWeight: 1,
 		comboPremium: 0,
 		rooms: {},
@@ -455,6 +457,84 @@ describe('formatChaos', () => {
 	});
 });
 
+describe('formatCount', () => {
+	// The architect's two gloves per run, the one whole count the shipped table
+	// states. Fails if the trim is dropped: `toPrecision(2)` renders it `2.0`,
+	// which reads as a price rather than as two items.
+	it('prints a whole count whole', () => {
+		expect(formatCount(2)).toBe('2');
+	});
+
+	// The counterpart: a fraction nobody would read as a whole number keeps
+	// both its digits.
+	it('keeps both digits of a quarter', () => {
+		expect(formatCount(0.25)).toBe('0.25');
+	});
+
+	// The anchor rate itself, and the one that shows the trim doing work:
+	// `toPrecision(2)` renders a tenth as `0.10`, a form no other count in the
+	// list takes. Fails if the trailing-zero trim is dropped.
+	it('trims the trailing zero off the anchor rate', () => {
+		expect(formatCount(0.1)).toBe('0.1');
+	});
+
+	// Glittering Halls' derived rate, 0.1 x 2815/1689. Fails if the count is
+	// interpolated raw — `0.16666666666666666` — and fails on `toFixed(2)`,
+	// which would print `0.17` here but `0.00` four rows down.
+	it('rounds a derived rate to two significant digits', () => {
+		expect(formatCount(0.1 * (2815 / 1689))).toBe('0.17');
+	});
+
+	// Hybridisation Chamber, 0.1 x 1005/1689: `0.060` before the trim.
+	it('trims a derived rate that lands on a trailing zero', () => {
+		expect(formatCount(0.1 * (1005 / 1689))).toBe('0.06');
+	});
+
+	// Defense Research Lab (0.1 x 804/1689) and Toxic Grove (0.1 x 201/1689):
+	// two and three decimals deep, and both still two significant digits.
+	// Fails on `toFixed(2)`, which prints them as `0.05` and `0.01`.
+	it('keeps two significant digits on the rates two and three decimals deep', () => {
+		expect(formatCount(0.1 * (804 / 1689))).toBe('0.048');
+		expect(formatCount(0.1 * (201 / 1689))).toBe('0.012');
+	});
+
+	// Locus of Corruption and Throne of Atziri, 0.1 x 20/1689 — the smallest
+	// rate in the table. Fails on `toFixed(2)`, which prints `0.00` and says
+	// the room rolls for no vial at all.
+	it('keeps the smallest rate in the table visible rather than printing it as zero', () => {
+		expect(formatCount(0.1 * (20 / 1689))).toBe('0.0012');
+	});
+
+	// A `vialsPerRun` of 0 leaves the row listed with the count it now has, so
+	// zero is a value this reaches. Fails if zero falls into the `<0.0001`
+	// band — the room would read as rolling for a vial the player just priced
+	// at nothing — and fails if the trim is dropped (`0.0`).
+	it('prints a count zeroed by the knob as a plain zero', () => {
+		expect(formatCount(0)).toBe('0');
+	});
+
+	// `toPrecision(2)` prints 19.6 as `20`, so a blanket trailing-zero strip
+	// would return `2` — an order of magnitude, silently. Reachable: the knob
+	// has no maximum, and at a `vialsPerRun` of 11.76 Glittering Halls' count
+	// is 19.6. Fails if the trim stops being confined to a fraction.
+	it('does not trim a zero out of a whole-number rounding', () => {
+		expect(formatCount(19.6)).toBe('20');
+	});
+
+	// `toPrecision(2)` goes exponential the moment two significant digits
+	// cannot hold the integer part. Fails if the round-whole band is dropped:
+	// `1.7e+2` in a `x` cell. The knob has no maximum, so this is reachable.
+	it('rounds a count too large for two significant digits rather than printing an exponent', () => {
+		expect(formatCount(166.66)).toBe('167');
+	});
+
+	// The other end of the same rule, and the same claim `formatChaos` makes:
+	// the room does roll for the item. Fails if the literal band is dropped.
+	it('prints a count too small to write as under a ten-thousandth', () => {
+		expect(formatCount(1.2e-7)).toBe('<0.0001');
+	});
+});
+
 describe('TIERS', () => {
 	it('is the three tiers a room line has, tier 1 first', () => {
 		expect(TIERS).toEqual([1, 2, 3]);
@@ -554,13 +634,15 @@ describe('PRESET_OPTIONS', () => {
 });
 
 describe('KNOBS', () => {
-	it('names all five rates the Custom preset carries', () => {
+	it('names all six rates the Custom preset carries', () => {
 		// One missing spec is one rate with no control, which is a setting the
-		// player can only reach by hand-editing settings.json.
+		// player can only reach by hand-editing settings.json. `vialsPerRun`
+		// arrived with POE-262 and sits beside the other two guessed rates.
 		expect(KNOBS.map((k) => k.field)).toEqual([
 			'tierFraction',
 			'cPerQuantity',
 			'cPerRarity',
+			'vialsPerRun',
 			'dropsWeight',
 			'comboPremium'
 		]);

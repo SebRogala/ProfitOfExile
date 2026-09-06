@@ -1132,6 +1132,30 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.drivers[0].iconName).toBe('Story of the Vaal');
 	});
 
+	// The count on the row beside it is no longer a number anybody typed:
+	// POE-262 derives a vial rate per line from poedb's chance stat, so
+	// Glittering Halls' is 0.1 x 2815/1689 and interpolating it raw puts
+	// `×0.16666666666666666` in a 24 px overlay cell. Fails if `formatCount`
+	// stops being applied to the count.
+	it('rounds a DERIVED count rather than printing the float the wire carried', () => {
+		const box = only(
+			offer({
+				value: value({
+					drivers: [
+						vialTerm({
+							name: 'Vial of Transcendence',
+							count: 0.1 * (2815 / 1689),
+							unitPrice: 428,
+							chaos: 71.33
+						})
+					]
+				})
+			})
+		);
+
+		expect(box.drivers[0].perRun).toBe('×0.17');
+	});
+
 	it('prints the sale row as the delta above the floor, in the gain form', () => {
 		// The one row whose number IS its contribution: what the room pays above
 		// the floor. The `+` is the difference from a drop price, and the row
