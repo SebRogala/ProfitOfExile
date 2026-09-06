@@ -86,6 +86,12 @@ use super::state::{
 /// own standard error. The floor exists so the chain still decides a genuine
 /// coin flip at large rollout counts: live board 1 split by 0.007 and case 6 by
 /// 0.001, both far under any sampling error.
+///
+/// **Stated against [`crate::temple::strategy::REFERENCE_TOP_ROOM_VALUE`]**,
+/// which is the scale `locus_doryani_rush` scores on. It is an EV gap in SCORE
+/// units, so a chaos-denominated profile (POE-257) reads it through
+/// [`StrategyProfile::value_scale`] — 0.05 out of 9 stays 0.05 out of 9,
+/// whatever 9 has become.
 pub const NOISE_FLOOR: f64 = 0.05;
 
 /// How many standard errors wide the indistinguishable band is.
@@ -102,11 +108,17 @@ const NOISE_SIGMAS: f64 = 3.0;
 /// The margin two EVs must differ by before the ranking trusts the difference.
 ///
 /// [`NOISE_SIGMAS`] standard errors of the best estimate, floored at
-/// [`NOISE_FLOOR`]. The floor carries boards where the rollout count is high
-/// enough that the standard error vanishes but the options are still a genuine
-/// coin flip — live board 1 split by 0.007 and case 6 by 0.001.
-pub fn noise_margin(best_stderr: f64) -> f64 {
-    NOISE_FLOOR.max(NOISE_SIGMAS * best_stderr)
+/// [`NOISE_FLOOR`] **in the profile's own units**. The floor carries boards
+/// where the rollout count is high enough that the standard error vanishes but
+/// the options are still a genuine coin flip — live board 1 split by 0.007 and
+/// case 6 by 0.001.
+///
+/// The sigma term needs no scaling: a standard error is measured in the same
+/// units as the scores it came from, so it moves with them on its own. Only
+/// the floor is a stated magnitude, and it is the only thing `profile` is read
+/// for.
+pub fn noise_margin(profile: &StrategyProfile, best_stderr: f64) -> f64 {
+    (NOISE_FLOOR * profile.value_scale()).max(NOISE_SIGMAS * best_stderr)
 }
 
 // ------------------------------------------------------------- decisions ----
@@ -1887,8 +1899,61 @@ mod tests {
     // coin flips at high rollout counts.
     #[test]
     fn the_noise_margin_never_falls_below_its_floor() {
-        assert_eq!(noise_margin(0.0), NOISE_FLOOR);
-        assert!(noise_margin(1.0) > NOISE_FLOOR);
-        assert!(noise_margin(0.15) > noise_margin(0.05));
+        assert_eq!(noise_margin(&rush(), 0.0), NOISE_FLOOR);
+        assert!(noise_margin(&rush(), 1.0) > NOISE_FLOOR);
+        assert!(noise_margin(&rush(), 0.15) > noise_margin(&rush(), 0.05));
+    }
+
+    // POE-257: the floor is a magnitude, so it has to move with the units the
+    // profile scores in. A profile whose rooms are priced in chaos separates
+    // its options by hundreds, and a 0.05 floor there is no band at all — the
+    // chain would stop deciding coin flips the moment the valuation switched
+    // denominations.
+    #[test]
+    fn the_floor_is_the_same_fraction_of_a_chaos_denominated_profiles_scale() {
+        let mut chaos = rush();
+        // Locus at its 2026-09-06 sale delta rather than at 9 on the 1-10
+        // ranking: the same room, the same strategy, a hundredfold scale.
+        chaos.room_values.insert(Line::Corruption, [0.0, 0.0, 900.0]);
+
+        assert_eq!(noise_margin(&chaos, 0.0), NOISE_FLOOR * 100.0);
+        assert_eq!(
+            noise_margin(&rush(), 0.0),
+            NOISE_FLOOR,
+            "and the reference profile is untouched",
+        );
+    }
+
+    // POE-257: only the FLOOR is a stated magnitude. A standard error is
+    // measured in the units of the scores it was computed from, so it already
+    // moves with them — scaling it too would widen the band by the square of
+    // the denomination and hand every close board to noise.
+    #[test]
+    fn the_sigma_term_is_the_same_band_whatever_the_profile_is_denominated_in() {
+        let mut chaos = rush();
+        chaos.room_values.insert(Line::Corruption, [0.0, 0.0, 900.0]);
+        // Large enough that the sigma term is what the max picks, on BOTH
+        // profiles: 30 beats the reference floor of 0.05 and the chaos floor
+        // of 5.0.
+        let stderr = 10.0;
+
+        assert_eq!(noise_margin(&chaos, stderr), NOISE_SIGMAS * stderr);
+        assert_eq!(
+            noise_margin(&chaos, stderr),
+            noise_margin(&rush(), stderr),
+            "a standard error carries its own units",
+        );
+    }
+
+    // A table the player zeroed outright has no scale to take a fraction of.
+    // Answering 0 would set the band to the sampling error alone and hand
+    // every genuine coin flip to noise.
+    #[test]
+    fn a_profile_worth_nothing_keeps_the_reference_floor() {
+        let mut nothing = rush();
+        nothing.room_values.insert(Line::Corruption, [0.0, 0.0, 0.0]);
+        nothing.room_values.insert(Line::Gem, [0.0, 0.0, 0.0]);
+
+        assert_eq!(noise_margin(&nothing, 0.0), NOISE_FLOOR);
     }
 }

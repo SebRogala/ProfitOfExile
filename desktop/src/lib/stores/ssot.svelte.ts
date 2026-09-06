@@ -470,13 +470,25 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 						offers: (incoming.panel.offers ?? []).map((offer) => ({
 							...offer,
 							grade: offer.grade ?? null,
-							lineTop: offer.lineTop ?? null
+							lineTop: offer.lineTop ?? null,
+							// POE-257's chaos value, same rule and same reason:
+							// `serde(default)` on the Rust side, so a payload
+							// from a build before it carries no field, and the
+							// box tests `value === null` to decide whether to
+							// print a price line at all.
+							value: offer.value ?? null
 						}))
 					},
 		advice: incoming.advice ?? null,
 		mode: incoming.mode ?? null,
 		config: incoming.config ?? fresh.config,
 		profile: incoming.profile ?? fresh.profile,
+		// The settings echo, same rule as `config` and `profile`: a payload
+		// from a build before POE-257 carries neither, and a control rendered
+		// off `undefined` would show the page an empty preset rather than the
+		// Default the module is actually running.
+		preset: incoming.preset ?? fresh.preset,
+		custom: incoming.custom ?? fresh.custom,
 		unknownRooms: incoming.unknownRooms ?? [],
 		lastReadAt: incoming.lastReadAt ?? null,
 		calibration: incoming.calibration ?? null,
