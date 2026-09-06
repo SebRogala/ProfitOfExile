@@ -60,10 +60,18 @@ Consequences that follow from the order, not from extra rules:
 does not only produce a board — `run::full_read` builds ONE `valuation::Valued` for it (via `slice::value_read`), the 25 x 3
 table of what each room-tier is worth in chaos, and hands the same object to the ranking and to
 the offer boxes, so the number shown is the number ranked. It is built from a `MarketInput`
-that arrives as state, never fetched: the 650 ms tick still does no HTTP, and until POE-258
-lands the poll `run.rs` passes `MarketInput::none()`, on which every room falls back to its
-grade rung rather than to zero. The rules and their homes are in the table below, the decision
-is [ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md).
+that arrives as state, never fetched: the 650 ms tick still does no HTTP. Since POE-258 that
+state is real — `ssot::spawn_temple_market_poll` reads `GET /api/analysis/temple-market` every
+five minutes and stores the payload, and `run::full_read` takes it through
+`ssot::temple_market_now`, which judges staleness against THIS tick's clock. A poll that
+FAILS and a server that answers COLD both leave the last good read standing — neither says
+anything about prices already in hand, and they age into stale on their own. What drops the
+read is a payload keyed to another league or a server switch. So the board runs on grade rungs
+rather than zero whenever no usable read is in hand: before the first poll answers, on a server
+that has never priced anything, after a league mismatch or a switch, and on a read older than
+two hours. What the player sees said about it is one line,
+`view.ts::marketNote`, on the Temple page's Reader row and on every offer box. The rules and
+their homes are in the table below, the decision is [ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md).
 
 Four residuals the rules above produce, all ACCEPTED with their answer named (POE-249, owner
 decisions 1, 3 and 4 of the plan review):
@@ -162,7 +170,9 @@ Facts that shape the rules (PC mining):
 | what ENDS the advice (and with it the room widget) | `temple/trigger.rs` (`advice_end`) decides, `temple/slice.rs` (`clear_advice`, `force_off`) writes |
 | never-cover set and placement | `temple/run.rs::read_rois` → `layout.rois`; `desktop/src/lib/temple/overlay-geometry.ts` (ADR-019) |
 | what one room-tier is WORTH, in chaos — sale + drops + bonus, the tier fraction, the drivers behind the number | `temple/valuation.rs` (`Valued::compute_with`, `RoomValue`, `Driver`, `Knobs`) — [ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md) |
-| the market read a valuation is computed against, and what "stale" costs | `temple/market.rs` (`MarketInput`, `prices_anything`, `sale_delta`, `price`) — mirrors POE-255's `GET /api/analysis/temple-market`; **no HTTP here**, POE-258 owns the poll |
+| the market read a valuation is computed against, and what "stale" costs | `temple/market.rs` (`MarketInput`, `prices_anything`, `sale_delta`, `price`, `aged_at`, `STALE_AFTER_MS`) — mirrors POE-255's `GET /api/analysis/temple-market`; **no HTTP here** |
+| where that read comes from, how often, and what a wrong-league or unreachable server does to it | `ssot.rs` (`spawn_temple_market_poll`, `TEMPLE_MARKET_POLL` 5 min, `judge_market` → `MarketPoll`, `store_market`, `temple_market_now`, `on_server_url_changed`) — POE-258. A failed poll AND a cold server both KEEP the last good read and let it age — neither is evidence about the prices in hand; only a payload for another league and a server switch drop it to `MarketInput::none()` |
+| what the player is told about the prices behind a number | `temple/slice.rs` (`MarketView`, `market_view`) on the wire, `desktop/src/lib/temple/view.ts` (`marketNote`) in words — three states: `prices 12 min old`, `prices stale (3 h) — base values`, `prices unavailable — base values` |
 | the fallback when nothing is priced — the letter grade in chaos | `temple/rooms.rs` (`Grade::fallback_chaos` cold, `Grade::fallback_chaos_scaled` live) and `temple/valuation.rs` (`rung`, `fallback_cap`): a read that is not live values EVERY room at the cold ladder; a live read keeps measured sums and caps a letter-priced room at the lowest sale-priced room |
 | which valuation is in force, and the player's own numbers | `temple/preset.rs` (`Preset`, `TempleCustomSettings`, `value_table`) persisted as two separate `settings.rs` fields, `temple_preset` and `temple_custom`; one malformed entry costs its own room, never the table |
 | the bridge from a chaos valuation to the advisor's profile, and the relative-unit rescale | `temple/slice.rs` (`TempleProfileSettings::to_profile`) and `temple/strategy.rs` (`REFERENCE_TOP_ROOM_VALUE`, `StrategyProfile::value_scale` — that doc's table is the normative list of the five scaled magnitudes) |

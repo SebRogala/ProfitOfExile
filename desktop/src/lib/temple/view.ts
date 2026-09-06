@@ -34,6 +34,7 @@ import type {
 	AdviceView,
 	EdgeId,
 	LayoutView,
+	MarketView,
 	OfferView,
 	RankedView,
 	SlotId,
@@ -525,6 +526,14 @@ export interface OfferBox {
 	 *  advice is not recommending). So a board with the note always has a pick
 	 *  to carry it; this is not an accepted narrowing. */
 	forced: string | null;
+	/** What the prices behind this box's numbers are — `marketNote()`'s one
+	 *  line (POE-258).
+	 *
+	 *  On EVERY box, including a live one: the box's whole job is to make a
+	 *  comparison readable at arm's length over a game, and "these two numbers
+	 *  came from the grade ladder, not from the market" is the difference
+	 *  between a ranking the player can trust and one they cannot. */
+	market: string;
 }
 
 /**
@@ -595,11 +604,15 @@ function offerReason(advice: AdviceView, index: number): string | null {
  * and draws nothing, rather than showing two unmarked boxes the player could
  * read as "the advisor has no preference".
  */
-export function offerBoxes(slice: TempleSlice): OfferBox[] {
+export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferBox[] {
 	const advice = slice.advice;
 	const panel = slice.panel;
 	if (advice === null || panel === null) return [];
 	const chosenIndex = topRecommendation(advice)?.architectIndex ?? null;
+	// One line for the whole read, not one per box: both boxes are priced off
+	// the same market by construction (Rust values a read once), so a per-box
+	// answer would be the same string twice with room to drift.
+	const market = marketNote(slice.market, now);
 	return panel.offers.map((offer) => {
 		const pick = chosenIndex !== null && chosenIndex === offer.index;
 		return {
@@ -612,7 +625,8 @@ export function offerBoxes(slice: TempleSlice): OfferBox[] {
 			// Only on the pick: the note says the kill on the frame was the only
 			// one there was, and a note on the block the advisor did NOT choose
 			// would be saying that about the wrong box.
-			forced: pick ? forcedKillNote(advice) : null
+			forced: pick ? forcedKillNote(advice) : null,
+			market
 		};
 	});
 }
@@ -786,4 +800,49 @@ export function modeLabel(mode: string | null): string | null {
 export function lastReadText(lastReadAt: number | null): string | null {
 	if (lastReadAt === null) return null;
 	return new Date(lastReadAt).toLocaleTimeString();
+}
+
+/** An hour, in ms — where `marketAge` switches units. */
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * How old an observation is, in the coarsest unit that still says something.
+ *
+ * Minutes under the hour, whole hours above it, FLOORED in both: "12 min old"
+ * is a claim about a price the player may act on, and rounding a 59-minute read
+ * up to "1 h" would make it sound older than it is at exactly the moment the
+ * next server recompute is due. A clock that runs behind the server's clamps to
+ * zero rather than printing a negative age.
+ */
+function marketAge(asOf: number, now: number): string {
+	const ms = Math.max(0, now - asOf);
+	if (ms < HOUR_MS) return `${Math.floor(ms / 60_000)} min`;
+	return `${Math.floor(ms / HOUR_MS)} h`;
+}
+
+/**
+ * What the page and the offer boxes say about the prices behind the board
+ * (POE-258).
+ *
+ * Three states, always one of them — this is never null, because "nothing said
+ * about the prices" is the state the player cannot tell from "priced": a room
+ * valued at its grade rung and one valued off the feed print the same kind of
+ * number, and only this line says which.
+ *
+ * - `prices 12 min old` — the board is priced.
+ * - `prices stale (3 h) — base values` — there IS a read and it is too old to
+ *   price with, so the age is stated: it is what tells a stalled feed from a
+ *   server that was never reached.
+ * - `prices unavailable — base values` — everything else: no poll has landed,
+ *   the server's cache is cold, the payload priced another league, or the floor
+ *   was unusable. The player's move is the same in all four, so they get one
+ *   sentence rather than four.
+ *
+ * `now` is a parameter so the age is testable; callers pass nothing.
+ */
+export function marketNote(market: MarketView, now: number = Date.now()): string {
+	if (market.asOf === null) return 'prices unavailable — base values';
+	if (market.stale) return `prices stale (${marketAge(market.asOf, now)}) — base values`;
+	if (market.unavailable) return 'prices unavailable — base values';
+	return `prices ${marketAge(market.asOf, now)} old`;
 }

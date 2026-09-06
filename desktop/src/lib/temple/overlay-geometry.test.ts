@@ -205,7 +205,7 @@ describe('offerStackPlacement', () => {
 		{ x: 1484, y: 114, w: 154, h: 54 },
 		{ x: 1188, y: 289, w: 160, h: 39 }
 	];
-	/** What one box measures once it has rendered its four lines. */
+	/** What one box measures once it has rendered its five lines. */
 	const BOX = { w: 260, h: 96 };
 
 	it('stacks both boxes in the left margin, each level with its own block', () => {

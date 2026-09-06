@@ -14,11 +14,13 @@ player might disagree with is a settings field split across exactly two presets.
 Accepted (POE-257, commits `cd5627c` (WI-1) + `f722d49` (WI-2), 2026-09-06),
 under epic POE-124. Supersedes nothing.
 
-Two things it decides are **not yet reachable by a user**, and both are named in
-Consequences: `run.rs` passes `MarketInput::none()` until POE-258 lands the
-poll, so production runs the cold-ladder branch today; and POE-257 shipped no
-preset setters, so the preset is reachable only by editing `settings.json`
-(POE-259 adds `temple_set_preset` / `temple_set_custom`).
+Two things it decided were **not yet reachable by a user** when it was accepted.
+One of them has since landed: POE-258 wired the poll, so `run.rs` now prices a
+board against a real market read (`ssot::temple_market_now`) and takes the
+cold-ladder branch only when there is nothing to price with — see the amended
+Consequences bullet. The other stands: POE-257 shipped no preset setters, so the
+preset is reachable only by editing `settings.json` (POE-259 adds
+`temple_set_preset` / `temple_set_custom`).
 
 Related: [ADR-013](013-ui-picks-persist-in-a-schema-less-prefs-map.md) — the two
 new settings blocks are TYPED, against that ADR's default, because Rust reads
@@ -379,11 +381,18 @@ number it replaced there.
 
 ## Consequences
 
-- **Production runs the cold branch today.** `run.rs` passes
-  `MarketInput::none()` until POE-258 lands the poll, so every room is valued at
-  its cold grade rung. That is a working ranking rather than a placeholder —
-  which is the point of L4 — but no shipped build has yet ranked a board on live
-  prices.
+- **Production runs on live prices since POE-258.** `run.rs` reads the market
+  from `ssot::temple_market_now`, which `ssot::spawn_temple_market_poll` fills
+  every five minutes and which judges staleness against the tick's own clock.
+  The cold branch is still the whole fallback and is still what L4 asks for —
+  before the first poll answers, on a server that has never priced anything, on
+  a payload keyed to another league, and on a read older than two hours, every
+  room is valued at its cold grade rung. A poll that fails and a server that
+  answers cold both KEEP the last good read instead of blanking it, so a
+  restarted server does not take a board off prices that are still minutes old;
+  the read ages into stale on its own. What changed is that the player is now told
+  which of the two is on screen (`view.ts::marketNote`), because a rung and a
+  price print the same kind of number.
 - **No preset is reachable from the UI.** POE-257 shipped no setters; the preset
   and the Custom table are settings-file-only until POE-259.
 - **`room_baseline` is 4.44 c on a cold read** — 0.05 × (800 / 9) — which is

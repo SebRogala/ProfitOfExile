@@ -3437,12 +3437,16 @@ fn full_read(
     // boxes below (POE-257 D6). Two calls would let the number on screen come
     // from a market read the recommendation never saw.
     //
-    // `MarketInput::none()` until POE-258 lands the poll: with no market every
-    // room falls back to its grade ladder value rather than to zero, which is
-    // epic lock L4 and is what makes this a working ranking rather than a
-    // placeholder. The tick must not fetch it — `docs/TEMPLE-LIFECYCLE.md`
-    // forbids HTTP here — so it arrives from the poller as state.
-    let valuation = slice::value_read(settings, &crate::temple::market::MarketInput::none());
+    // The market arrives as STATE, never as a fetch: `crate::ssot` polls it
+    // every `ssot::TEMPLE_MARKET_POLL` and this reads what it stored, because
+    // `docs/TEMPLE-LIFECYCLE.md` forbids network work on this tick. Read here
+    // rather than passed in, so the read is as fresh as this tick and the
+    // staleness judgement is made against THIS clock (POE-258 D2) — before the
+    // first poll answers, and whenever the last read has aged out, it is
+    // `MarketInput::none()` in effect and every room falls back to its grade
+    // ladder value rather than to zero, which is epic lock L4.
+    let market = crate::ssot::temple_market_now(app);
+    let valuation = slice::value_read(settings, &market);
     let advice = slice::advise_read(
         &read.layout,
         &read.rooms,
@@ -3470,6 +3474,10 @@ fn full_read(
             preset: settings.preset,
             custom: settings.custom.clone(),
             valuation: &valuation,
+            // The SAME read the valuation above was computed from, so the
+            // price-age line and the numbers on the offer boxes can never be
+            // about different markets.
+            market: slice::market_view(&market),
             read_at: now_ms(),
         },
         // The calibration THIS capture measured, which is what the page's

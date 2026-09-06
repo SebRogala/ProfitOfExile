@@ -26,6 +26,7 @@
 		lastReadText,
 		leaveMapBanner,
 		markerFallbackNotice,
+		marketNote,
 		modeLabel,
 		offerBuilds,
 		offerHeadline,
@@ -61,6 +62,12 @@
 	 *  reason: it is one fact about the head of the list, and it is what the
 	 *  overlay's faint seal means when there is no primary door. */
 	const convenience = $derived(convenienceNote(advice));
+
+	/** What the prices behind every chaos value on this page are — one line,
+	 *  always present (POE-258). It is re-derived on every SSOT poll rather
+	 *  than composed in Rust, so the age it prints follows the clock instead of
+	 *  standing still between the market poller's five-minute ticks. */
+	const market = $derived(marketNote(temple.market));
 
 	const unknownBadge = $derived(unknownRoomsBadge(temple));
 	const markerNotice = $derived(markerFallbackNotice(layout));
@@ -169,6 +176,11 @@
 			{#if layout}
 				<span class="meta">panel NCC {layout.ncc.toFixed(3)} · {layout.confidence} confidence</span>
 			{/if}
+			<span
+				class="meta"
+				title="Where the chaos values on this page come from. Prices are polled from the server every five minutes; a missing or stale read leaves every room at the preset's base value."
+				>{market}</span
+			>
 			<span class="spacer"></span>
 			<Button
 				onclick={() => void apply(rearmTemple)}
