@@ -22,6 +22,16 @@ board against a real market read (`ssot::temple_market_now`) and takes the
 cold-ladder branch only when there is nothing to price with — see the amended
 Consequences bullet.
 
+**Amended 2026-09-06 (POE-262 WI-1):** §3's recorded owner fork is CLOSED, in
+Vertolka's favour. On a live read a room that summed nothing is anchored on the
+LOWEST tier-3 total among the rooms that summed something — 2.65 on the
+committed capture, where it used to be the top sale delta capped at the lowest
+sale-priced room — so a letter can no longer outrank a measurement. That
+anchor is over the formula sums of the 23 non-instrumental lines with Custom
+overrides ignored. §4's two instrumental lines keep the old anchor-and-cap
+unchanged, on their own board-7 evidence. See the rewritten §3 and the new
+Alternatives entries.
+
 **Amended 2026-09-06 (POE-259):** the presets are reachable from the UI. The
 Temple page carries a Default / Custom picker and an editor over the 25 lines by
 3 tiers, served by three commands — `temple_set_preset` (the choice alone, so
@@ -170,11 +180,23 @@ stale, a usable (non-zero, finite) floor, and at least one room or item quote.
   its cold rung, `Grade::fallback_chaos` — A++ 800, A+ 400, A 200, B+ 100, B 50,
   B− 30, C+ 20, C 10, C− 5, D 2 chaos. Those ten rungs ARE the preset's
   base-value table that L4 names.
-- **Live**: the formula is summed. The ladder stands in only for a room where
-  **nothing at all was summed** — no sale, no priced drop, no bonus — and there
-  it is `Grade::fallback_chaos_scaled(top)`, every rung multiplied by
-  `top_sale_delta / 800`, then **capped at the lowest tier-3 total among the
-  rooms whose sale is above the floor**.
+- **Live** (**amended 2026-09-06, POE-262 WI-1**): the formula is summed. The
+  ladder stands in only for a room where **nothing at all was summed** — no
+  sale, no priced drop, no bonus — and there it is
+  `Grade::fallback_chaos_scaled(L)`, where **L is the lowest tier-3 total among
+  the rooms that SUMMED something on this read** (`Priced::Market` or
+  `Priced::Partial` — `valuation::lowest_summed_room_total`). The set is **the
+  formula sums of the 23 non-instrumental lines, overrides ignored**: a
+  player's stated number is not a sum, so it never enters the set and never
+  moves it, while the line's own formula sum always does. The two instrumental
+  lines are out because their totals are letters rather than sums (§4). A++
+  lands on L exactly and every lower grade on a fixed fraction of it. On the
+  committed capture L is Toxic Grove's 2.65, so B− reads 0.0994 and D reads
+  0.0066.
+
+  As accepted this bullet read `Grade::fallback_chaos_scaled(top_sale_delta)`
+  capped at the lowest sale-priced room. That two-step survives for the §4
+  lines and for nothing else.
 
 **`guessed` is asymmetric across those two branches, deliberately**
 (`valuation.rs`, module header): a COLD rung reads `guessed: false`, because it
@@ -191,22 +213,35 @@ first cut did, and it produced a board where a grade-A room sat at 6 c under a
 grade-C room at 10 c. Half a formula and half a ladder is not a ranking in
 either unit.
 
-**Why the cap.** On the committed capture the only two above-floor rooms are
-Locus of Corruption tier 3 (856 c, delta 846) and Doryani's Institute tier 3
-(400 c, delta 390) against a floor of 10. Anchored on 846 the A+ rung scales to
-423, which still outranks the 390 the feed actually printed. The cap pulls it
-to 390. Rescaling alone does not keep a letter under the feed; the cap does, and
-only against the LOWEST sale-priced room.
+**Why the cap — history, and now §4's rule only.** On the committed capture the
+only two above-floor rooms are Locus of Corruption tier 3 (856 c, delta 846) and
+Doryani's Institute tier 3 (400 c, delta 390) against a floor of 10. Anchored on
+846 the A+ rung scales to 423, which still outranks the 390 the feed actually
+printed. The cap pulls it to 390. Rescaling alone does not keep a letter under
+the feed; the cap does, and only against the LOWEST sale-priced room. That
+reasoning still stands — it is why `valuation::lowest_sale_priced_room_total`
+exists — but since POE-262 it holds up the §4 instrumental lines and nothing
+else.
 
-**The residual, recorded and not claimed away.** A letter can still outrank a
-room whose own MEASURED value is small: Apex of Ascension is B−, sums nothing
-and stands in at 31.725, while Chamber of Iron summed a real 6.00 c area bonus
-(6 % quantity x 0.5 + 12 % rarity x 0.25) and stays at 6.00. And the cap is a function of which rooms the feed
-prices: on a read where Locus is the only sale-priced room the cap is 846, so an
-A+ line that summed nothing reads its full 423. **Owner's open fork**: cap at
-the lowest MEASURED total instead, which on this capture would pull every letter
-under 6 c and make the ladder nearly inert for the ~15 rooms nobody prices at
-all. Neither rule is measured; the shipped one keeps the ladder useful.
+**The residual is CLOSED (POE-262 WI-1, 2026-09-06).** As accepted, a letter
+could still outrank a room whose own MEASURED value was small: Apex of Ascension
+is B−, summed nothing and stood in at 31.725, while Chamber of Iron summed a
+real 6.00 c area bonus (6 % quantity × 0.5 + 12 % rarity × 0.25) and stayed at
+6.00. And the cap was a function of which rooms the feed priced: on a read where
+Locus is the only sale-priced room the cap was 846, so an A+ line that summed
+nothing read its full 423. Vertolka's rule, from his 2026-09-06 review of the
+value table, decides it: *"if temple does not have APEX, value of room itself is
+just zero and should be counted only based on what you can drop from it"* — an
+unpriced room is worth less than every room something priced, and the letter
+only orders the unpriced rooms among themselves. Anchoring on L delivers both
+halves in one multiplication, and it makes a room's rung a function of its own
+letter and L alone rather than of which OTHER rooms happened to fall back. L is
+over the formula sums of the 23 non-instrumental lines, **overrides ignored** —
+a player's stated number never enters the set and never moves it — so the anchor
+is a property of the READ, and one Custom edit cannot move the other eleven
+unpriced rooms. Apex now reads 0.0994 against Chamber of Iron's 6.00. The ladder is not inert for the
+eleven rooms nobody prices: it still ranks them against each other, which is
+what a ranking of unpriced rooms can honestly be.
 
 The whole ladder is **PROVISIONAL, calibrated 2026-09-06** on that capture, and
 its ten absolute numbers are exactly the shape `AGENTS.md` warns about — which
@@ -361,10 +396,21 @@ number it replaced there.
 - **Rescaling without the cap.** A++ equals the top delta by construction, so A+
   scales to 423 and the inversion survives at a smaller margin. The guarantee
   has to be imposed a layer up.
-- **Capping at the lowest MEASURED total** rather than the lowest sale-priced
-  one. Not rejected on evidence — it is the recorded owner fork above. On this
-  capture it caps everything at 6 c and makes the ladder inert for the rooms it
-  exists for.
+- **Anchoring the fallback ladder on the top sale delta and capping it at the
+  lowest sale-priced room** (the rule as accepted for POE-257, superseded by
+  POE-262 WI-1).
+  A letter still outranked a small measured room — Apex of Ascension's 31.725
+  over Chamber of Iron's 6.00 — and the cap moved with which rooms the feed
+  happened to price, so a room's rung changed when a DIFFERENT room lost its
+  price. Its reasoning survives for the §4 instrumental lines, which take that
+  anchor and that cap unchanged.
+- **Clipping every rung at L** rather than scaling the ladder onto it. Every
+  grade above the clip collapses to L, so B− and C tie at 2.65 on the capture
+  and the letters stop ordering the unpriced rooms — the half of Vertolka's
+  rule the grades exist for.
+- **Anchoring the board's top FALLBACK letter on L.** A C room's value would
+  then move the moment a B− room lost its price, which is exactly the
+  dependence on other rooms' fortunes that the old cap was rejected for.
 - **Valuing the two instrumental lines at what they drop.** That is the 6 c
   area bonus, and it is the number that produced the board-7 miss. The
   explosive line drops nothing at all, so for the Shrine of Unmaking this
@@ -430,6 +476,28 @@ number it replaced there.
 - **The grade ladder is provisional and dated.** It is calibrated on one day's
   capture, and it is the only place a third-party LETTER (Vertolka's grade)
   enters arithmetic — through a rung this project chose, not one he stated.
+- **On a live read the letters read as FRACTIONS OF A CHAOS, and that is the
+  point** (POE-262). Anchored on the cheapest summed room, a C rung is 0.0331 c
+  and a D rung 0.0066 c on the committed capture. A number that small is not the
+  claim that the room is nearly worthless in the game — it is the claim that
+  nothing on this read priced it, which is what the `F` mark beside it says.
+  `values.ts::formatChaos` keeps two significant digits under 1 c for the same
+  reason: `0.00` would read as zero, and epic lock L4 forbids a fallback from
+  saying zero. Two bands are carved out of that rule for the CELL rather than
+  for the number — `[0.995, 1)` keeps the two-decimal form so 0.999 reads
+  `1.00` rather than introducing a third format, and anything under 0.0001
+  prints the literal `<0.0001` rather than the exponential `1.0e-7`.
+- **`advisor::rollout`'s `lost_threshold` moves with the anchor** (POE-262).
+  It is the minimum POSITIVE tier-3 value among the lines the mode rule names
+  as TARGETS (the corruption and gem lines for the shipped profiles). Both are
+  sale-priced on the committed capture, so it reads 390 and nothing about it
+  changes. On a read where a target line loses its price, its tier-3 value is
+  now a rung — a fraction of a chaos — and the risk band collapses with it.
+  Accepted rather than guarded: a target line the market does not price is a
+  board with no target, and the band is measuring nothing that read.
+  `rules::noise_margin` is unaffected — it scales on
+  `StrategyProfile::value_scale`, which reads the MAXIMUM tier-3 value, and the
+  top of the board is a summed room on every read that prices anything.
 - **POE-260 must branch on `scaledFromTier3` before rendering `drivers`.** The
   copied tier-3 terms are unscaled by design; the `tier_fraction` driver is the
   headline.

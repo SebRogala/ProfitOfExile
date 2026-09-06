@@ -412,6 +412,47 @@ describe('formatChaos', () => {
 	it('rounds a three-figure value, where they are noise', () => {
 		expect(formatChaos(676.8)).toBe('677');
 	});
+
+	// POE-262: a room nothing priced is a fraction of the cheapest room
+	// something priced, so a low rung is a sub-chaos figure and two decimals
+	// would round it to 0.01 or to a flat 0.00. Fails if the sub-1 c band is
+	// dropped back to `toFixed(2)`.
+	it('keeps two significant digits under a chaos, where two decimals would round the rung away', () => {
+		expect(formatChaos(0.015)).toBe('0.015');
+	});
+
+	it('keeps a rung four decimals deep visible rather than printing it as zero', () => {
+		expect(formatChaos(0.0051)).toBe('0.0051');
+	});
+
+	// The boundary itself: 1 c is the first value the two-decimal band owns.
+	it('takes two decimals at one chaos', () => {
+		expect(formatChaos(1)).toBe('1.00');
+	});
+
+	// A stated zero is not a rounded-away rung, and reads as the zero it is.
+	it('prints a value stated at nothing as a plain zero', () => {
+		expect(formatChaos(0)).toBe('0.00');
+	});
+
+	// Two significant digits would print 0.999 as `1.0`, a third format in a
+	// column that has only ever had two. Fails if the two-decimal band starts
+	// at 1 rather than at 0.995.
+	it('keeps the two-decimal form for a value that rounds up to one chaos', () => {
+		expect(formatChaos(0.999)).toBe('1.00');
+	});
+
+	// Two significant digits go EXPONENTIAL below 1e-6, and a table cell
+	// reading `1.0e-7` is not a price. Fails if the literal band is dropped.
+	it('prints a rung too small to write as under a ten-thousandth, not in exponent form', () => {
+		expect(formatChaos(1e-7)).toBe('<0.0001');
+	});
+
+	// The boundary the literal band does NOT own: 0.0001 is still written out.
+	// Fails if the comparison becomes `<=`.
+	it('still writes out a ten-thousandth of a chaos', () => {
+		expect(formatChaos(0.0001)).toBe('0.00010');
+	});
 });
 
 describe('TIERS', () => {
