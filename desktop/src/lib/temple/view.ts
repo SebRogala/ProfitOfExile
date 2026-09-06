@@ -34,6 +34,7 @@ import type {
 	AdviceView,
 	DriverView,
 	EdgeId,
+	ExitLabelView,
 	LayoutView,
 	MarketView,
 	OfferView,
@@ -1296,6 +1297,29 @@ export function convenienceNote(advice: AdviceView | null): string | null {
  */
 export function faintDoor(advice: AdviceView | null): EdgeId | null {
 	return secondDoor(advice) ?? convenienceDoor(advice);
+}
+
+/**
+ * The name on the solid purple exit, or null (POE-261).
+ *
+ * A READER, the way `secondDoor` and `convenienceDoor` are readers. Rust's
+ * `slice.rs::recommended_exit` decided both halves — which corridor, and what
+ * the plate behind it read as at its own tier — and this file is not allowed a
+ * second opinion about either: a name assembled here out of `layout.slots`
+ * would be a second answer to what the board says, and it would go on saying it
+ * after a re-read moved the plate's tier.
+ *
+ * Null is an ANSWER and not a gap, so nothing may fill it: the move opens no
+ * door, or the plate behind the door did not resolve. The widget draws the seal
+ * unlabelled — an unread room named by guess is worse than an unnamed one.
+ *
+ * `?? null` because the field is optional on the wire, the same reason
+ * `secondDoor` has one: a payload from a build before POE-261 carries no field
+ * at all, and `undefined` reaching the widget inside an overlay window fails
+ * with no devtools to see it.
+ */
+export function recommendedExit(advice: AdviceView | null): ExitLabelView | null {
+	return advice?.recommendedExit ?? null;
 }
 
 // ------------------------------------------------------------- the panel --

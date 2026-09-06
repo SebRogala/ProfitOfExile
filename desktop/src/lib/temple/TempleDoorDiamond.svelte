@@ -19,7 +19,8 @@
 	 * - the OUTLINE, always;
 	 * - every corridor the read SETTLED, in the game's own colours: green for a
 	 *   passage, red for a wall;
-	 * - the advisor's door, purple and bigger;
+	 * - the advisor's door, purple and bigger, carrying the NAME of the room it
+	 *   opens into (POE-261) — that one exit and no other;
 	 * - the door a SECOND Stone of Passage would buy — or, when the move opens
 	 *   nothing, the convenience door that shortens the walk — in the same
 	 *   purple at half opacity and a radius between the two;
@@ -66,7 +67,7 @@
 		type ArchitectKind
 	} from './overlay-geometry';
 	import { EDGE_STATE_LABEL } from './view';
-	import type { DiamondView, EdgeId, LayoutView, OfferView } from './slice';
+	import type { DiamondView, EdgeId, ExitLabelView, LayoutView, OfferView } from './slice';
 
 	let {
 		diamond,
@@ -74,6 +75,7 @@
 		suggested,
 		secondary,
 		room,
+		exit,
 		offer,
 		offers,
 		warning
@@ -92,6 +94,13 @@
 		secondary: EdgeId | null;
 		/** The room's name, or null when neither source named it. */
 		room: string | null;
+		/** The room the SOLID PURPLE exit opens into, or null (POE-261) —
+		 *  `recommendedExit()` over the advice. Rust named it, off the far
+		 *  plate's own read tier; this file draws the string and looks nothing
+		 *  up. Null when the move opens no door or the plate behind it did not
+		 *  resolve, and the seal is then drawn unlabelled: an unread room named
+		 *  by guess is worse than an unnamed one. */
+		exit: ExitLabelView | null;
 		/** The architect block the advisor chose, or null when the ranking named
 		 *  none. Its `rect` is what places the glyph — the half of the room the
 		 *  game drew this block's icon in — and its `kind` is what shapes it. */
@@ -106,7 +115,7 @@
 		warning: string | null;
 	} = $props();
 
-	const geometry = $derived(diamondGeometry(diamond, layout, suggested, secondary));
+	const geometry = $derived(diamondGeometry(diamond, layout, suggested, secondary, exit));
 	const drawn = $derived(geometry.seals.filter(sealVisible));
 	const glyphs = $derived(killGlyphs(diamond, offer, offers));
 
@@ -144,52 +153,71 @@
 	{#if room}
 		<p class="room">{room}</p>
 	{/if}
-	<svg
-		class="shape"
-		viewBox={geometry.viewBox}
-		style="aspect-ratio:{geometry.aspectRatio}"
-		role="img"
-		aria-label="the room's doors"
-	>
-		<polygon
-			class="outline"
-			points={geometry.outline}
-			vector-effect="non-scaling-stroke"
-		/>
-		{#each drawn as seal (seal.edge)}
-			<circle
-				class="seal {seal.state} {seal.kind}"
-				cx={seal.x}
-				cy={seal.y}
-				r={seal.radius}
+	<!-- The positioning context for the exit label, and nothing else. The label
+	     is pinned INSIDE the shape's own box so it moves with the seal at any
+	     widget size and costs the widget no height — see `ExitLabelPlacement`,
+	     which is the whole of why it cannot leave the footprint. -->
+	<div class="stage">
+		{#if exit && geometry.exitLabel}
+			{@const at = geometry.exitLabel}
+			<!-- ONE label, and only ever on the solid purple seal: `exitLabel` is
+			     null unless the door Rust named is a seal this shape classified
+			     `suggested`. -->
+			<p
+				class="exit"
+				class:from-right={at.side === 'right'}
+				style="{at.side}:{at.inset}%;top:{at.top}%;max-width:{at.width}%"
+			>
+				{exit.name}
+			</p>
+		{/if}
+		<svg
+			class="shape"
+			viewBox={geometry.viewBox}
+			style="aspect-ratio:{geometry.aspectRatio}"
+			role="img"
+			aria-label="the room's doors"
+		>
+			<polygon
+				class="outline"
+				points={geometry.outline}
 				vector-effect="non-scaling-stroke"
-			>
-				<title>{seal.edge} — {EDGE_STATE_LABEL[seal.state]}</title>
-			</circle>
-		{/each}
-		{#each glyphs as mark, i (i)}
-			<!-- Drawn twice: a dark stroke underneath so the cyan reads over the
-			     game's own gold and dark-red panel art, then the glyph itself.
-			     Both are non-scaling, so the widget can be dragged to any size
-			     and the mark keeps the weight it was designed at. The whole
-			     group fades for the block nobody chose, so the halo fades with
-			     it and the faint mark keeps its own separation from the art. -->
-			<g
-				class="glyph"
-				class:faint={!mark.chosen}
-				transform="translate({mark.position.x} {mark.position.y})"
-			>
-				<path class="kill-shadow" d={GLYPH[mark.kind]} vector-effect="non-scaling-stroke" />
-				<path class="kill" d={GLYPH[mark.kind]} vector-effect="non-scaling-stroke">
-					<title
-						>{mark.chosen
-							? `kill the ${mark.kind} architect`
-							: `the ${mark.kind} block, not chosen`}</title
-					>
-				</path>
-			</g>
-		{/each}
-	</svg>
+			/>
+			{#each drawn as seal (seal.edge)}
+				<circle
+					class="seal {seal.state} {seal.kind}"
+					cx={seal.x}
+					cy={seal.y}
+					r={seal.radius}
+					vector-effect="non-scaling-stroke"
+				>
+					<title>{seal.edge} — {EDGE_STATE_LABEL[seal.state]}</title>
+				</circle>
+			{/each}
+			{#each glyphs as mark, i (i)}
+				<!-- Drawn twice: a dark stroke underneath so the cyan reads over the
+				     game's own gold and dark-red panel art, then the glyph itself.
+				     Both are non-scaling, so the widget can be dragged to any size
+				     and the mark keeps the weight it was designed at. The whole
+				     group fades for the block nobody chose, so the halo fades with
+				     it and the faint mark keeps its own separation from the art. -->
+				<g
+					class="glyph"
+					class:faint={!mark.chosen}
+					transform="translate({mark.position.x} {mark.position.y})"
+				>
+					<path class="kill-shadow" d={GLYPH[mark.kind]} vector-effect="non-scaling-stroke" />
+					<path class="kill" d={GLYPH[mark.kind]} vector-effect="non-scaling-stroke">
+						<title
+							>{mark.chosen
+								? `kill the ${mark.kind} architect`
+								: `the ${mark.kind} block, not chosen`}</title
+						>
+					</path>
+				</g>
+			{/each}
+		</svg>
+	</div>
 	{#if warning}
 		<!-- Never dropped to make the widget smaller: it is the one line that
 		     says the shape above it may be wrong, and it is on the only surface
@@ -231,6 +259,47 @@
 	.shape {
 		width: 100%;
 		height: auto;
+	}
+
+	/* The shape's own box, and the exit label's positioning context. It has no
+	   size of its own: the `<svg>` inside it is `width: 100%` with an
+	   `aspect-ratio`, so the stage is exactly the shape, which is the box
+	   `ExitLabelPlacement`'s percentages are stated in. */
+	.stage {
+		position: relative;
+		width: 100%;
+	}
+
+	/* The name of the room the solid purple exit opens into (POE-261).
+	   OUT OF FLOW, and that is the load-bearing part: the door widget's shipped
+	   190x215 rectangle is what `doorDefaultPlacement` clears the module's own
+	   read regions with, so a label that added a line under the shape would
+	   grow the drawn box past the rectangle that clearance was computed for
+	   (ADR-019). Pinned instead, at the seal's own height and running INWARD
+	   across the room — `inset` + `max-width` is the whole stage, so the text
+	   wraps rather than ever leaving the widget.
+
+	   11px and `--color-lab-text`: the widget's own text size, at full strength
+	   because this is a thing to do now, the same rule that keeps the
+	   alternatives faint. The dark halo does the job `.kill-shadow` does for
+	   the glyphs — it has the room's fill and the game behind it. */
+	.exit {
+		position: absolute;
+		transform: translateY(-50%);
+		font-size: 11px;
+		line-height: 1.3;
+		color: var(--color-lab-text);
+		text-align: left;
+		text-shadow:
+			0 0 3px rgb(4 6 10 / 90%),
+			0 0 3px rgb(4 6 10 / 90%);
+		/* It lies OVER the shape, unlike the two flow lines, so a drag started
+		   on the name still has to reach the widget frame. */
+		pointer-events: none;
+	}
+
+	.exit.from-right {
+		text-align: right;
 	}
 
 	.outline {

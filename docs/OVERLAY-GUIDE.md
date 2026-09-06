@@ -1478,6 +1478,27 @@ touching the named path.
   door already bought, every pair may be RV-excluded, or RU may have declined the
   second key outright — the Temple page's reasons for the top recommendation are
   where to look before filing it.
+- **The recommended exit carries the next room's name** (POE-261): with a kill
+  ranked and a door to open, the bright purple seal has the name of the room
+  behind it beside it, level with the mark and running INWARD across the shape —
+  and nothing else on the widget is labelled, the faint seal included. Check the
+  name against the Temple page's own plate for that corridor's far end: it must
+  be that plate's name at the tier the page shows, not the line's tier-3 room.
+  **An unread plate behind the door draws NO name** (`unknown rooms` on the
+  Temple page names the slot): a name there would be a guess, and the seal is
+  the instruction either way. And the label must not push the shape down or the
+  warning line off the box — it is pinned inside the shape's own box and costs
+  no height, so a widget that grew taller when the name appeared is the
+  regression (its shipped rectangle is what `doorDefaultPlacement` cleared the
+  read regions with).
+  **The wrapped name has to stay readable, and has to stay out of the way** —
+  the half only a build can answer. Force the worst case if the board offers it
+  (`Breach Containment Chamber` is the longest name in the vocabulary, and at
+  the shipped widget width it wraps to two lines): every word must read against
+  the room's own fill and the game behind it, and neither line may sit on top of
+  the purple seal it belongs to or on either cyan kill glyph. A name that
+  swallows its own mark has replaced the instruction with a caption, and the
+  answer is the widget's width or the text's halo, not dropping the label.
 - **The unchosen kill is drawn faint** (POE-248): with both architect blocks read,
   the widget carries TWO cyan glyphs — the advisor's at full strength, the other
   block's at about a quarter, at the opposite icon spot and with its OWN shape

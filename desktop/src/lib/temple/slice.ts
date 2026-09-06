@@ -476,6 +476,19 @@ export interface ConvenienceView {
 	reason: string;
 }
 
+/** The recommended exit's label: which corridor, and the room behind it — see
+ *  `AdviceView.recommendedExit`. */
+export interface ExitLabelView {
+	/** `"C1-C2"` — the corridor the top recommendation opens. */
+	door: EdgeId;
+	/** The game's own name for the plate behind it, at the tier THAT read gave
+	 *  the plate. Rust's string, drawn as it arrives: no truncation here and no
+	 *  second lookup — a name shortened on the wire cannot be lengthened by a
+	 *  wider widget, and a lookup here would be a second answer to what the
+	 *  board says the room is. */
+	name: string;
+}
+
 /** The decision, with everything needed to justify it. */
 export interface AdviceView {
 	/** Best first. */
@@ -517,6 +530,23 @@ export interface AdviceView {
 	 *  OPTIONAL on the wire for the same reason `secondaryDoor` is;
 	 *  `convenienceDoor()` / `convenienceNote()` coerce `undefined` to null. */
 	convenience?: ConvenienceView | null;
+	/** The room the top recommendation's door opens into, named by RUST
+	 *  (POE-261, owner: *"put the name of the exit (the next room) to the solid
+	 *  purple exit (only to that recommended one)"*).
+	 *
+	 *  `slice.rs`'s `recommended_exit` is the ONE place the name is decided,
+	 *  and this side must not second-guess it: the name depends on the far
+	 *  plate's READ TIER, so deriving one here from `layout.slots` would be a
+	 *  second answer to what the board says is behind that door — the same rule
+	 *  `secondaryDoor` and `convenience` keep about the doors themselves.
+	 *
+	 *  Null is an ANSWER: the move opens no door, or the plate behind it did
+	 *  not resolve. The widget then draws the purple seal unlabelled rather
+	 *  than guessing.
+	 *
+	 *  OPTIONAL on the wire for the reason `secondaryDoor` is;
+	 *  `recommendedExit()` in `view.ts` coerces `undefined` to null. */
+	recommendedExit?: ExitLabelView | null;
 	/** `"continue"` or `"leaveMap"` — R5's verdict for the top recommendation.
 	 *  Note the camelCase: `MapAction` is projected through a hand-written
 	 *  `match`, not through `rename_all`, so this one string is NOT snake_case

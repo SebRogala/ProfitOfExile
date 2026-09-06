@@ -1979,6 +1979,7 @@ mod tests {
                 gambles: Vec::new(),
                 secondary_door: None,
                 convenience: None,
+                recommended_exit: None,
                 map_action: "leaveMap".to_string(),
                 warnings: Vec::new(),
                 forced_kill: false,
