@@ -98,6 +98,7 @@ pub mod commands;
 pub mod doors;
 pub mod drops;
 pub mod lattice;
+pub mod market;
 pub mod markers;
 pub mod panel;
 pub mod reader;
@@ -106,6 +107,7 @@ pub mod run;
 pub mod slice;
 pub mod strategy;
 pub mod trigger;
+pub mod valuation;
 
 /// Why a screenshot did not yield a board.
 ///
