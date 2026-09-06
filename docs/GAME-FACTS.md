@@ -164,7 +164,30 @@ groups never fit) is in
 budget is at least 116: on 2026-08-26 saved searches with two, three and four
 `mercenary` groups of four filters each all loaded in a logged-in browser.
 That is why the mercenary guides can carry searches the app itself could never
-send.
+send. The API says so itself — measured 2026-09-05 by posting the Path of
+Evening cheap Manyshot search (`8r8JqonVIV`, cost 96 under the model)
+anonymously: `400 {"error":{"code":2,"message":"Query is too complex. Please
+reduce the amount of filters used.\nLogging in will increase this limit."}}`.
+This is why the mercenary module's `trade ↗` link (opened in the user's
+browser, logged in) and the query the app posts (anonymous) are two different
+shapes.
+
+## Mercenaries
+
+- **Mercenary class primaries.** Every mercenary of a class carries the class's
+  two primary skills; the rest of its kit is rolled. Wiki-sourced, 2026-09-06
+  ([List of mercenary classes](https://www.poewiki.net/wiki/List_of_mercenary_classes),
+  "Always has these skills"): Manyshot — Ice Shot, Vaal Grace; Kinetist —
+  Elemental Weakness, Flame Wall; Combatant — Inspiring Cry, Herald of Ice;
+  Blade Ambusher — Blade Trap, Trarthan Agility; Sniper — Ensnaring Arrow,
+  Poacher's Mark; Cruel Mistress — Despair, Void Sphere; Stormhand —
+  Conductivity, Sigil of Power. The wiki table predates the Allflame return of
+  mercenaries and no capture has yet contradicted it; treat a capture carrying
+  a class read and only one of its primaries as the signal to re-check. The
+  mercenary module's trade link leaves a recognised class's primaries out of
+  its `and` group (`CLASS_PRIMARIES` in
+  `desktop/src-tauri/src/mercenary/search.rs`, ids pinned against the stat
+  vocabulary by test) because a filter every listing satisfies adds nothing.
 
 ## Not validated
 

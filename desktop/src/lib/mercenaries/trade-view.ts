@@ -12,7 +12,7 @@
  */
 
 import { formatListingAmount, type MercTradeResult } from '$lib/tradeApi';
-import type { MercTradeState } from './capture';
+import type { MercStatus, MercTradeState } from './capture';
 import type { OutcomeTone } from './capture-view';
 
 /**
@@ -23,14 +23,26 @@ import type { OutcomeTone } from './capture-view';
  * (`waiting-league`) from "the app is waiting its turn" (`queued`). Collapsing
  * any two of them would make a bounded wait look like a broken feature.
  *
+ * `off` needs the MODULE's status to be worded: the trade status starts as
+ * `off` and is only rewritten by the capture loop once a complete capture is on
+ * screen (Rust's `MercTradeStatus::default`), so an armed module that has not
+ * read a recruit window yet still carries it. Read on its own it said "module
+ * off" next to a module that was on (seen 2026-09-06); with the module status
+ * beside it, it says what is actually true — the search is waiting for a
+ * capture — and "module off" is reserved for a module that is off.
+ *
  * `cancelled` is not a failure — it is what retiring a capture mid-search
  * leaves behind (Rust's `CANCELLED`), so it is worded as the deliberate act it
  * is rather than as an error the user should go fix.
  */
-export function tradeStatusLabel(state: MercTradeState): string {
+export function tradeStatusLabel(state: MercTradeState, module: MercStatus): string {
 	switch (state.status) {
 		case 'off':
-			return 'module off';
+			return module === 'off'
+				? 'module off'
+				: module === 'unavailable'
+					? 'module unavailable'
+					: 'waiting for a capture';
 		case 'idle':
 			return 'not searching';
 		case 'waiting-league':

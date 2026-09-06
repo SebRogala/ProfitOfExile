@@ -4,7 +4,7 @@ import {
 	tradeStatusLabel,
 	tradeStatusTone
 } from './trade-view';
-import type { MercTradeState, MercTradeStatus } from './capture';
+import type { MercStatus, MercTradeState, MercTradeStatus } from './capture';
 import type { MercTradeListing, MercTradeResult } from '$lib/tradeApi';
 
 /**
@@ -79,19 +79,19 @@ describe('tradeStatusLabel', () => {
 	 * collapsing two `case` arms into one would do.
 	 */
 	it('gives every status a label no other status uses', () => {
-		const labels = ALL_STATUSES.map((status) => tradeStatusLabel(state({ status })));
+		const labels = ALL_STATUSES.map((status) => tradeStatusLabel(state({ status }), 'idle'));
 		expect(new Set(labels).size).toBe(ALL_STATUSES.length);
 	});
 
 	it.each([
-		['off', 'module off'],
+		['off', 'waiting for a capture'],
 		['idle', 'not searching'],
 		['waiting-league', 'waiting for league'],
 		['queued', 'queued'],
 		['searching', 'searching'],
 		['done', 'search done']
 	] as [MercTradeStatus, string][])('labels %s as "%s"', (status, expected) => {
-		expect(tradeStatusLabel(state({ status }))).toBe(expected);
+		expect(tradeStatusLabel(state({ status }), 'idle')).toBe(expected);
 	});
 
 	/**
@@ -100,15 +100,33 @@ describe('tradeStatusLabel', () => {
 	 * to say so rather than send them hunting for a failure that did not happen.
 	 */
 	it('labels a cancelled error as a cancellation rather than a failure', () => {
-		expect(tradeStatusLabel(state({ status: 'error', error: 'cancelled' }))).toBe(
+		expect(tradeStatusLabel(state({ status: 'error', error: 'cancelled' }), 'idle')).toBe(
 			'search cancelled'
 		);
 	});
 
 	it('labels any other error as a failure', () => {
-		expect(tradeStatusLabel(state({ status: 'error', error: 'rate limited' }))).toBe(
+		expect(tradeStatusLabel(state({ status: 'error', error: 'rate limited' }), 'idle')).toBe(
 			'search failed'
 		);
+	});
+
+	/**
+	 * The trade status starts as `off` and stays there until the capture loop
+	 * publishes over it, so an armed module that has not read a window yet
+	 * carries it too. The module's own status is what tells the two apart:
+	 * "module off" is for a module that is off, and an armed module is waiting
+	 * for a capture, whatever the loop is doing meanwhile.
+	 */
+	it.each([
+		['off', 'module off'],
+		['unavailable', 'module unavailable'],
+		['idle', 'waiting for a capture'],
+		['scanning', 'waiting for a capture'],
+		['live', 'waiting for a capture'],
+		['done', 'waiting for a capture']
+	] as [MercStatus, string][])('labels a pre-capture off status with the module %s as "%s"', (module, expected) => {
+		expect(tradeStatusLabel(state({ status: 'off' }), module)).toBe(expected);
 	});
 });
 
