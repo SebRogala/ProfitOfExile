@@ -1061,6 +1061,36 @@ describe('temple slice', () => {
 			expect(mod.ssot.temple.calibration).toBeNull();
 			expect(mod.ssot.temple.lastError).toBeNull();
 			expect(mod.ssot.temple.unknownRooms).toEqual([]);
+			// Both market views, and `pollMarket` above all: a build from before
+			// the two-field split sends `market` alone, and `marketNote` reads
+			// `.asOf` off whichever field the surface asked for — `undefined.asOf`
+			// throws inside an overlay window with no devtools. The fresh default
+			// says "unavailable", which is the truthful reading of a payload that
+			// has not told us what the next read will price with.
+			expect(mod.ssot.temple.market).toEqual(templeSliceDefault().market);
+			expect(mod.ssot.temple.pollMarket).toEqual(templeSliceDefault().pollMarket);
+		});
+
+		it('fills a market view\'s missing staleAfterMs from the default, not with undefined', () => {
+			// One level deeper, and the one that fails SILENTLY rather than
+			// throwing: `marketStale` compares `now - asOf > staleAfterMs`, and
+			// `undefined` on the right makes every such comparison false — a
+			// market that can never go stale, which is the one answer this field
+			// must not be able to give by accident. A payload from a build before
+			// the field carries the view but not the line.
+			mod.applySnapshot({
+				league,
+				temple: {
+					...readSlice(),
+					market: { asOf: 1_788_665_199_649, stale: false, unavailable: false }
+				} as unknown as TempleSlice,
+			});
+
+			expect(mod.ssot.temple.market.staleAfterMs).toBe(7_200_000);
+			// The rest of the view is the payload's own and is not defaulted
+			// over: only the missing field is filled.
+			expect(mod.ssot.temple.market.asOf).toBe(1_788_665_199_649);
+			expect(mod.ssot.temple.market.unavailable).toBe(false);
 		});
 
 		it('defaults a missing waitingForPanel to false, never undefined', () => {
@@ -1382,7 +1412,13 @@ describe('temple slice', () => {
 		}
 
 		it('hands the rejection back to the caller instead of throwing', async () => {
-			rejectWith('temple_set_profile', 'apex_score must be a finite number ≥ 0, got NaN');
+			rejectWith(
+				'temple_set_profile',
+				// Rust's own wording, verbatim from `TempleProfileSettings::validate`
+				// — the units clause included. A message this mock invents is a mock
+				// that would keep passing after the real one changed shape.
+				'apex_score must be a finite number ≥ 0 in units where the top tier-3 room is worth 9, got NaN'
+			);
 			// Never throws — a rejected setting must not take the page with it.
 			const error = await mod.setTempleProfile({
 				apexScore: Number.NaN,
@@ -1397,7 +1433,10 @@ describe('temple slice', () => {
 			// console.warn goes nowhere in a release webview (no devtools), so a
 			// validation rejection that only warned would be invisible to the
 			// user AND to a log dump.
-			rejectWith('temple_set_profile', 'apex_score must be a finite number ≥ 0, got NaN');
+			rejectWith(
+				'temple_set_profile',
+				'apex_score must be a finite number ≥ 0 in units where the top tier-3 room is worth 9, got NaN'
+			);
 			await mod.setTempleProfile({
 				apexScore: Number.NaN,
 				pathCost: 0,

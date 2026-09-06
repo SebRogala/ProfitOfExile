@@ -480,10 +480,19 @@
 	}
 
 	/* Marked on the value itself, because that is what a player would otherwise
-	   act on. What the slot carries on a stale board is the GRADE and not a
-	   chaos figure — Rust prices nothing off a stale snapshot, so the box is in
-	   its fallback form (`OfferBox.state`) — and the underline says that the
-	   letter standing there is standing in. */
+	   act on. Since POE-258's M1 fix `OfferBox.stale` is a CLOCK verdict
+	   (`view.ts::marketStale`, the read's own `asOf` against the published
+	   `staleAfterMs`), so the slot under this underline carries one of two
+	   things and the mark means the same thing about both — do not act on this
+	   number:
+
+	   - the GRADE, on a board Rust valued off an already-stale snapshot: it
+	     priced nothing, so the box is in its fallback form (`OfferBox.state`)
+	     and the underline says the letter standing there is standing in;
+	   - a real CHAOS FIGURE, on a board that priced live and has since aged
+	     past two hours with nothing re-read: the number is a price that has
+	     gone old rather than a stand-in, which is also why `marketNote` drops
+	     its `— base values` suffix in exactly this case. */
 	.value.stale .num {
 		border-bottom: 1px dotted var(--color-lab-yellow);
 	}

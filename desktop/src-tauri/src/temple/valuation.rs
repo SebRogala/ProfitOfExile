@@ -45,11 +45,14 @@
 //!
 //! Epic lock L4: a missing or stale market falls back to the preset's base
 //! value. There are two shapes of that, and which one applies turns on
-//! [`MarketInput::is_live`] alone.
+//! [`MarketInput::prices_anything`] — live AND a usable floor AND at least one
+//! room or item — which is the predicate `compute_with` and `rung` actually
+//! branch on. Not [`MarketInput::is_live`] alone: that is one of its three
+//! terms, and a payload with a zero floor is live and still prices nothing.
 //!
-//! **A read that is not live** — [`MarketInput::none`] before the first poll
-//! answers, or a stale payload — prices EVERY room at
-//! [`Grade::fallback_chaos`](super::rooms::Grade::fallback_chaos), the cold
+//! **A read that prices nothing** — [`MarketInput::none`] before the first poll
+//! answers, a stale payload, or one with an unusable floor — prices EVERY room
+//! at [`Grade::fallback_chaos`](super::rooms::Grade::fallback_chaos), the cold
 //! ladder, and nothing else. Those ten rungs ARE the preset's base-value table
 //! that L4 names. Mixing them with the terms that survive a cold market — a
 //! poedb quantity bonus, `drops.rs`'s manually priced temple-mod item — is

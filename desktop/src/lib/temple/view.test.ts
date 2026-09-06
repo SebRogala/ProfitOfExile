@@ -43,6 +43,7 @@ import {
 	chosenOffer,
 	doorWarning,
 	marketNote,
+	marketStale,
 	offerBoxes,
 	offerBoxSignature,
 	offerChaos,
@@ -58,6 +59,10 @@ const HOUR = 60 * MINUTE;
 /** The market a build that has never reached a server is on — Rust's own
  *  default, taken from the mirror rather than retyped. */
 const NO_MARKET: MarketView = templeSliceDefault().market;
+
+/** The line an age is judged against — Rust's `market::STALE_AFTER_MS`, taken
+ *  from the mirror rather than retyped, like `NO_MARKET` above. */
+const STALE_AFTER = NO_MARKET.staleAfterMs;
 
 /** Every wire status, listed once so the totality checks below cannot drift. */
 const ALL_STATUSES: TempleStatus[] = [
@@ -908,7 +913,7 @@ describe('offerBoxes', () => {
 		// answers to a question with one.
 		const priced = {
 			...slice([offer({ index: 0 }), offer({ index: 1 })]),
-			market: { asOf: NOW - 12 * MINUTE, stale: false, unavailable: false }
+			market: { asOf: NOW - 12 * MINUTE, stale: false, staleAfterMs: STALE_AFTER, unavailable: false }
 		};
 
 		const boxes = offerBoxes(priced, NOW);
@@ -930,13 +935,63 @@ describe('offerBoxes', () => {
 
 		expect(boxes[0].market).toBe('prices unavailable — base values');
 	});
+
+	it("prices its line off the READ's market and never off the latest poll", () => {
+		// The M1 defect, in the shape that shipped: the board on screen was
+		// priced twelve minutes ago against a live read, and a DEBUG/PROD switch
+		// has since dropped the market — so the POLL says unavailable while the
+		// boxes still carry real chaos figures from the read. The box must
+		// describe its own numbers. Fails the moment `offerBoxes` reads
+		// `pollMarket`.
+		const switched = {
+			...slice([offer({ index: 0 }), offer({ index: 1 })]),
+			market: LIVE_MARKET,
+			pollMarket: NO_MARKET
+		};
+
+		const boxes = offerBoxes(switched, NOW);
+
+		expect(boxes.map((box) => box.market)).toEqual([
+			'prices 12 min old',
+			'prices 12 min old'
+		]);
+		// And the other half of the same fact: the page's row is the poll's.
+		expect(marketNote(switched.pollMarket, NOW)).toBe('prices unavailable — base values');
+	});
+
+	it('ages a standing board into stale on the clock, with nothing republished', () => {
+		// A read published while the market was live, still on screen three
+		// hours later. Rust's `stale` was FALSE when this view was written and
+		// nothing has rewritten it — `TempleSlice.market` belongs to the read —
+		// so a box that trusted the wire flag would still print `prices 3 h old`
+		// beside numbers nobody should trade on. Fails if `marketStale` stops
+		// reading `staleAfterMs` and the clock.
+		//
+		// And NO `— base values` suffix: this box's chaos figures came off a
+		// live market and have merely gone old. The suffix is a claim about the
+		// numbers, and here it would be false.
+		const aged = {
+			...slice([offer({ index: 0 })]),
+			market: { asOf: NOW - 3 * HOUR, stale: false, staleAfterMs: STALE_AFTER, unavailable: false }
+		};
+
+		const boxes = offerBoxes(aged, NOW);
+
+		expect(boxes[0].market).toBe('prices stale (3 h)');
+		expect(boxes[0].stale).toBe(true);
+	});
 });
 
 
 // ------------------------------------------- the value fixtures (POE-260) --
 
 /** A live read, twelve minutes old — the age the design's artboards print. */
-const LIVE_MARKET: MarketView = { asOf: NOW - 12 * MINUTE, stale: false, unavailable: false };
+const LIVE_MARKET: MarketView = {
+	asOf: NOW - 12 * MINUTE,
+	stale: false,
+	staleAfterMs: STALE_AFTER,
+	unavailable: false
+};
 
 /**
  * One room-tier's value, as Rust publishes it.
@@ -1497,7 +1552,12 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		// read priced nothing — so the field that withholds the age cannot be
 		// the one that reports it. Reading it there would leave a stale board
 		// looking fresh.
-		const stale = { asOf: NOW - 3 * 60 * MINUTE, stale: true, unavailable: true };
+		const stale = {
+			asOf: NOW - 3 * 60 * MINUTE,
+			stale: true,
+			staleAfterMs: STALE_AFTER,
+			unavailable: true
+		};
 
 		expect(only(offer({ value: value() }), stale).stale).toBe(true);
 		expect(only(offer({ value: value() })).stale).toBe(false);
@@ -1646,6 +1706,7 @@ describe('marketNote', () => {
 		const market: MarketView = {
 			asOf: NOW - 12 * MINUTE,
 			stale: false,
+			staleAfterMs: STALE_AFTER,
 			unavailable: false
 		};
 
@@ -1657,9 +1718,68 @@ describe('marketNote', () => {
 		// never reached — both leave the board on base values, and only one is
 		// worth waiting out. Fails if the stale branch drops the age, or if it
 		// stops saying base values are in force.
-		const market: MarketView = { asOf: NOW - 3 * HOUR, stale: true, unavailable: true };
+		const market: MarketView = {
+			asOf: NOW - 3 * HOUR,
+			stale: true,
+			staleAfterMs: STALE_AFTER,
+			unavailable: true
+		};
 
 		expect(marketNote(market, NOW)).toBe('prices stale (3 h) — base values');
+	});
+
+	it('drops the base-values suffix when the read priced and only the clock aged it', () => {
+		// The pair that makes the suffix mean something. Same age, same stale
+		// verdict, and the numbers beside the line are different in kind: the
+		// test above is a read that was ALREADY too old when it was valued, so
+		// its board came off the cold grade ladder and `— base values` describes
+		// it. This one priced off a live market and has since gone old, so the
+		// figures on the box are real prices — the caution belongs on the age
+		// and the suffix would be a false claim about the numbers. Fails if the
+		// stale branch appends the suffix unconditionally.
+		const aged: MarketView = {
+			asOf: NOW - 3 * HOUR,
+			stale: false,
+			staleAfterMs: STALE_AFTER,
+			unavailable: false
+		};
+
+		expect(marketNote(aged, NOW)).toBe('prices stale (3 h)');
+	});
+
+	it('holds the staleness line to the millisecond', () => {
+		// The boundary gets its own case so a drifted comparison names itself,
+		// and it is the mirror of Rust's own
+		// `the_stale_boundary_is_exclusive_to_the_millisecond`: a read exactly
+		// `staleAfterMs` old is the last live one and one millisecond older is
+		// the first stale one. Fails if `marketStale` relaxes `>` to `>=`.
+		const at: MarketView = {
+			asOf: NOW - STALE_AFTER,
+			stale: false,
+			staleAfterMs: STALE_AFTER,
+			unavailable: false
+		};
+		const past: MarketView = { ...at, asOf: NOW - STALE_AFTER - 1 };
+
+		expect(marketStale(at, NOW)).toBe(false);
+		expect(marketStale(past, NOW)).toBe(true);
+	});
+
+	it('keeps the suffix for a read that priced nothing for a reason other than age', () => {
+		// The third way into the stale branch, and the one that would slip
+		// through a guard reading `stale` alone: an unusable floor. The read is
+		// not flagged stale, it prices nothing all the same (`prices_anything`
+		// is false), and the clock has since taken it past two hours — so the
+		// board IS on base values and must say so. Fails if the suffix is gated
+		// on `stale` instead of on both flags.
+		const noFloor: MarketView = {
+			asOf: NOW - 3 * HOUR,
+			stale: false,
+			staleAfterMs: STALE_AFTER,
+			unavailable: true
+		};
+
+		expect(marketNote(noFloor, NOW)).toBe('prices stale (3 h) — base values');
 	});
 
 	it('says prices are unavailable when nothing has been read', () => {
@@ -1671,7 +1791,12 @@ describe('marketNote', () => {
 		// unusable floor, or a league the payload did not price. `asOf` alone is
 		// not the test: fails if the note reads the timestamp and skips
 		// `unavailable`, which would print an age beside base-value numbers.
-		const market: MarketView = { asOf: NOW - 5 * MINUTE, stale: false, unavailable: true };
+		const market: MarketView = {
+			asOf: NOW - 5 * MINUTE,
+			stale: false,
+			staleAfterMs: STALE_AFTER,
+			unavailable: true
+		};
 
 		expect(marketNote(market, NOW)).toBe('prices unavailable — base values');
 	});
@@ -1679,8 +1804,18 @@ describe('marketNote', () => {
 	it('switches from minutes to hours at the hour and not before', () => {
 		// The boundary gets its own test so a drifted threshold names itself:
 		// 59 minutes is still minutes, 60 is one hour.
-		const at59: MarketView = { asOf: NOW - 59 * MINUTE, stale: false, unavailable: false };
-		const at60: MarketView = { asOf: NOW - HOUR, stale: false, unavailable: false };
+		const at59: MarketView = {
+			asOf: NOW - 59 * MINUTE,
+			stale: false,
+			staleAfterMs: STALE_AFTER,
+			unavailable: false
+		};
+		const at60: MarketView = {
+			asOf: NOW - HOUR,
+			stale: false,
+			staleAfterMs: STALE_AFTER,
+			unavailable: false
+		};
 
 		expect(marketNote(at59, NOW)).toBe('prices 59 min old');
 		expect(marketNote(at60, NOW)).toBe('prices 1 h old');
@@ -1692,6 +1827,7 @@ describe('marketNote', () => {
 		const nearlyAnHour: MarketView = {
 			asOf: NOW - (59 * MINUTE + 59_000),
 			stale: false,
+			staleAfterMs: STALE_AFTER,
 			unavailable: false
 		};
 
@@ -1702,7 +1838,12 @@ describe('marketNote', () => {
 		// Clamped rather than printed: "prices -3 min old" is not a state, and
 		// the two clocks are independent. Fails if the subtraction is left
 		// unguarded.
-		const ahead: MarketView = { asOf: NOW + 3 * MINUTE, stale: false, unavailable: false };
+		const ahead: MarketView = {
+			asOf: NOW + 3 * MINUTE,
+			stale: false,
+			staleAfterMs: STALE_AFTER,
+			unavailable: false
+		};
 
 		expect(marketNote(ahead, NOW)).toBe('prices 0 min old');
 	});

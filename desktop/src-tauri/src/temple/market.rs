@@ -450,6 +450,43 @@ mod tests {
         assert!(!locus.low_confidence);
     }
 
+    /// Every tier-3 room `rooms::LINES` names is a tier-3 line the server
+    /// prices — the JOIN the sale half of the valuation is made of.
+    ///
+    /// `MarketInput` is keyed on the name poe.ninja publishes and `rooms.rs`
+    /// holds the only copy of those names in the crate, so the two tables are
+    /// joined by string and by nothing else. A rename on EITHER side — a typo
+    /// fixed in `LINES`, a room the feed starts publishing under a new name —
+    /// takes `sale_delta` to `0.0` for that line and moves it silently down the
+    /// board: no panic, no warning, just a room the advisor stops valuing. Both
+    /// counts are asserted so the check cannot pass by both tables shrinking.
+    ///
+    /// Tier 3 alone because it is the tier the feed and the grade ladder are
+    /// both about (`RoomLine`'s own note), and because epic lock L2 prices the
+    /// lower two as a fraction of this line rather than from their own quote.
+    #[test]
+    fn every_tier_three_room_name_is_a_line_the_capture_prices() {
+        let market = allflame();
+
+        let missing: Vec<&str> = super::super::rooms::LINES
+            .iter()
+            .map(|line| line.tiers()[2])
+            .filter(|name| market.room(name, tier(3)).is_none())
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "tier-3 names the capture does not price: {missing:?}"
+        );
+        assert_eq!(super::super::rooms::LINES.len(), 25, "the 25 room lines");
+        assert_eq!(
+            market.rooms.keys().filter(|(_, t)| *t == 3).count(),
+            25,
+            "and the 25 tier-3 lines the capture carries — no room priced under a name \
+             `LINES` does not know either",
+        );
+    }
+
     #[test]
     fn a_room_at_the_floor_has_no_sale_value() {
         let market = allflame();

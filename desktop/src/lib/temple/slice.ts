@@ -664,13 +664,18 @@ export interface TempleProfile {
 }
 
 /**
- * What the prices behind the board are worth saying (POE-258).
+ * What the prices behind a board are worth saying (POE-258).
  *
- * Rust's market poll (`src-tauri/src/ssot.rs`) publishes this on every poll and
- * every read; `marketNote()` in `view.ts` is the one place that turns it into
- * words. The age is a TIMESTAMP and not a rendered string on purpose — a
- * "12 min old" composed in Rust would stand frozen until the next poll five
- * minutes later, while the page re-derives it from the clock on every render.
+ * `marketNote()` in `view.ts` is the one place that turns it into words. The age
+ * is a TIMESTAMP and not a rendered string on purpose — a "12 min old" composed
+ * in Rust would stand frozen until the next poll five minutes later, while the
+ * page re-derives it from the clock on every render. `staleAfterMs` rides along
+ * for the same reason: the age moves between publishes, so the line it crosses
+ * has to travel with it or the page could only re-derive half the sentence.
+ *
+ * The slice carries TWO of these and they answer different questions:
+ * `TempleSlice.market` is the read on screen, `TempleSlice.pollMarket` is the
+ * latest poll.
  */
 export interface MarketView {
 	/** Unix ms of the server's last observation, or null when nothing has been
@@ -680,13 +685,32 @@ export interface MarketView {
 	 *  `RoomValueView.asOf` (null on a stale read, because a stale read priced
 	 *  the room at nothing). Here the age IS the message. */
 	asOf: number | null;
-	/** Whether the read is older than the two hours Rust judges it against. */
+	/** Rust's staleness answer at the moment this view was published.
+	 *
+	 *  `marketStale()` prefers the CLOCK whenever `asOf` is set — that is what
+	 *  ages a board left on screen into `prices stale (3 h)` with no republish
+	 *  behind it — and falls back to this flag only for a view carrying no
+	 *  observation to measure. */
 	stale: boolean;
-	/** Whether the board is on the preset's base values rather than on prices.
+	/** How old an observation may be before it stops pricing, in ms — Rust's
+	 *  `market::STALE_AFTER_MS` (two hours), published so this side re-judges
+	 *  `stale` against the same line rather than hard-coding it a second time.
+	 *
+	 *  A payload from a build before the field falls back to the constant on
+	 *  both sides (Rust's `serde(default = ...)`, `normaliseTemple` here) rather
+	 *  than to zero, which would read as "every observation is instantly stale"
+	 *  — a claim about the market that an absent field is not making. */
+	staleAfterMs: number;
+	/** Whether the board WAS on the preset's base values when it was valued.
 	 *  Every way to get there at once — nothing polled yet, a cold server, a
 	 *  payload from another league, a stale read, an unusable floor — because
 	 *  the player's question is whether the number is a price or a ladder rung
-	 *  and the answer is the same in all five. */
+	 *  and the answer is the same in all five.
+	 *
+	 *  Read as a fact about the NUMBERS and not about the age, which is what
+	 *  gates `marketNote`'s `— base values` suffix: a read that priced live and
+	 *  has merely aged past `staleAfterMs` since carries `unavailable: false`
+	 *  and gets no suffix, because its figures are real prices gone old. */
 	unavailable: boolean;
 }
 
@@ -726,10 +750,23 @@ export interface TempleSlice {
 	 *  the preset in force — the page has to be able to show what switching
 	 *  would give back. */
 	custom: TempleCustom;
-	/** The prices the board was valued against, or the absence of them. A fact
-	 *  about the SERVER and not about a read, so it survives the module being
-	 *  switched off the way `config` does. */
+	/** The prices THIS board was valued against, or the absence of them.
+	 *
+	 *  Written by `slice::project` alone, from the very market read the board's
+	 *  own valuation used, so a surface showing this board's numbers and this
+	 *  line can never be made to disagree with itself by something that happened
+	 *  after the read. Every per-read surface — the offer boxes above all —
+	 *  reads THIS field. */
 	market: MarketView;
+	/** The prices the NEXT read will be valued against — the latest poll.
+	 *
+	 *  Written by `ssot::publish_market_view` alone, on every poll and on a
+	 *  server-URL change, so it moves with nobody looking at a temple. The
+	 *  Temple page's reader meta row reads this one: its question is "what is
+	 *  the app priced against right now", not "what was that board priced
+	 *  against". Seeded from the read's own market by `project`, which is exact
+	 *  — at the moment of a read the two are the same view. */
+	pollMarket: MarketView;
 	/** Slots whose plate did not resolve, by key. Surfaced, never hidden. */
 	unknownRooms: SlotId[];
 	/** Unix ms of the last completed read. */
@@ -784,8 +821,11 @@ export function templeSliceDefault(): TempleSlice {
 		},
 		// `unavailable: true` is the Rust default too, and it is the honest one:
 		// a window that has not yet been answered by a poll is showing base
-		// values, not prices.
-		market: { asOf: null, stale: false, unavailable: true },
+		// values, not prices. `staleAfterMs` is Rust's `STALE_AFTER_MS`, which
+		// `MarketView::default()` carries because it is a constant and not a
+		// reading.
+		market: { asOf: null, stale: false, staleAfterMs: 7_200_000, unavailable: true },
+		pollMarket: { asOf: null, stale: false, staleAfterMs: 7_200_000, unavailable: true },
 		unknownRooms: [],
 		lastReadAt: null,
 		calibration: null,

@@ -52,6 +52,7 @@ function market(over: Partial<MarketView> = {}): MarketView {
 	return {
 		asOf: 1_788_665_199_649,
 		stale: false,
+		staleAfterMs: 2 * 60 * 60 * 1000,
 		unavailable: false,
 		...over
 	};

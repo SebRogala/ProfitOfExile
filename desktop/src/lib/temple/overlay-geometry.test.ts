@@ -215,7 +215,18 @@ describe('offerStackPlacement', () => {
 		{ x: 1484, y: 114, w: 154, h: 54 },
 		{ x: 1188, y: 289, w: 160, h: 39 }
 	];
-	/** What one box measures once it has rendered its five lines. */
+	/**
+	 * An ARBITRARY box, and not a measurement of the shipped one.
+	 *
+	 * `offerStackPlacement` takes whatever size it is handed, so these cases
+	 * pick a rectangle whose arithmetic a reader can check by hand — the column
+	 * lands at `556 - 16 - 260 = 280` and the stack step is `96 + 8`. The width
+	 * is NOT irrelevant (it is what puts the column at 280), it is simply not
+	 * the shipped number: the v3 box is 300 wide and is `V3_BOX` below, which
+	 * the POE-260 cases use. It once said "its five lines", which stopped being
+	 * a shape any box has when POE-260 gave the full form the row table
+	 * `FULL_BOX_ROWS` restates.
+	 */
 	const BOX = { w: 260, h: 96 };
 
 	it('stacks both boxes in the left margin, each level with its own block', () => {

@@ -1281,6 +1281,17 @@ touching the named path.
      must be an em dash `—`, and the age line must read
      `prices unavailable — base values`. A chaos number on a board with no market
      is the failure this state exists to make impossible.
+
+     **Then the other half, which is the POE-258 correction**: with a PRICED
+     board still on screen, flip the DEBUG/PROD toggle. The Temple page's Reader
+     row must go to `prices unavailable — base values` within the click — that
+     row reads `pollMarket`, the latest poll — while the standing board's boxes
+     keep their chaos figures AND keep their own `prices N min old` line, because
+     those numbers really were priced against that read. A box that flips to
+     `prices unavailable` over chaos figures it is still showing, or a Reader row
+     that stays priced after the switch, means the two `MarketView` fields have
+     been crossed again. Re-read (or take the next incursion) and both must land
+     on base values together.
   4. **Stale.** Hardest to force deliberately — leave the app running against a
      server whose temple recompute has stopped for over two hours, or check it
      opportunistically. What to expect is the FALLBACK box with one extra line,
@@ -1294,11 +1305,41 @@ touching the named path.
      yellow underline sits on whatever the value slot carries, which here is the
      grade.
 
+     **The line goes stale on the CLOCK, not on a republish** (POE-258's M1
+     correction): `view.ts::marketStale` judges the read's own `asOf` against
+     the published `staleAfterMs`, so a board left on screen crosses two hours
+     by itself. Watch one over the line if you can: the age line must flip from
+     `prices 1 h old` to `prices stale (2 h)` with nothing having been
+     republished behind it, and the box's dotted yellow underline must appear on
+     the same tick. A line that stays `prices 2 h old` means the wording is back
+     on the wire's `stale` flag.
+
+     **And that clock-aged line carries NO `— base values` suffix**, which is
+     the one wording difference between this case and the paragraph above. The
+     suffix is a claim about the NUMBERS, not about the age: it says they came
+     off the cold grade ladder. A board the clock aged after the fact is still
+     showing real prices that have merely gone old, so `prices stale (2 h)` is
+     the whole truth about it and `— base values` would be false — the numbers
+     become base values at the NEXT read, which is the read that will actually
+     take the cold branch. So the two forms to tell apart on screen:
+     `grade <letter>` + `F` + `prices stale (N h) — base values` is the read that
+     was already too old when it was valued; chaos figures + driver rows +
+     `prices stale (N h)` is the read that has aged under the player. A suffix
+     over chaos figures, or a missing suffix over an `F` box, is the regression.
+
      **The box gets SHORTER when the board goes stale** — about 197 px against
      the priced form's 316 — because the cold ladder wiped its terms. That is
      the expected form and not a regression; the regression is a chaos figure,
      a driver row or a `per run` surviving into it, which would be the box
      justifying its number with prices the ranking refused to use.
+
+     **316 and 358 are two different budgets and neither is wrong.** 316 is
+     `DIAGONAL_BUDGET_CSS` — what the panel's own diagonal has room for once the
+     column is staggered — and it happens to equal the design's typical priced
+     box, which is how the two got conflated. 358 is `FULL_BOX_MAX_CSS`, the
+     tallest a full box can actually be: the same box plus the scale note and
+     the fold, the two rows a tier-1 or tier-2 kill on a four-term room adds.
+     `offersCompact` budgets the PAIR against 358, never against 316.
   5. **Compact.** Force it by making the room below the first architect block
      too small for the pair — run the game WINDOWED at roughly 720 px tall, or
      find a board whose first block sits low. BOTH boxes must collapse together

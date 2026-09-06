@@ -27,6 +27,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
 use crate::temple::market::MarketInput;
+use crate::temple::slice::{MarketView, TempleSlice};
 use crate::trade::TradeApiClient;
 use crate::AppState;
 
@@ -1299,13 +1300,30 @@ pub fn temple_market_now(app: &AppHandle) -> MarketInput {
 
 /// Publish the stored read's age and availability onto the temple slice.
 ///
+/// **`TempleSlice::poll` and NOTHING else.** `TempleSlice::market` belongs to
+/// the read that produced the board on screen and is written by
+/// `temple::slice::project` alone; a poll writing it would put this market's
+/// line over that read's numbers — "prices 3 min old" over a board on the cold
+/// grade ladder, or "prices unavailable" over a priced board one DEBUG/PROD
+/// switch later. The two fields are the answer to two different questions and
+/// this function may only answer one of them.
+///
 /// Through `temple::run::publish`, which is the same path the `temple_set_*`
 /// commands write their echoes through: it writes under the temple mutex,
 /// compares, and emits `ssot-changed` only when something actually moved — so a
 /// poll that changes nothing costs every overlay's poll nothing.
 fn publish_market_view(app: &AppHandle) {
     let view = crate::temple::slice::market_view(&temple_market_now(app));
-    crate::temple::run::publish(app, |slice| slice.market = view.clone());
+    crate::temple::run::publish(app, |slice| apply_market_view(slice, view.clone()));
+}
+
+/// Where a poll's view lands on the slice, as a function of the slice alone.
+///
+/// Extracted from [`publish_market_view`] for the reason [`store_market`] and
+/// [`drop_market`] are extracted: the rule is one line, it is the whole
+/// contract, and behind an `AppHandle` there is nothing to assert it against.
+fn apply_market_view(slice: &mut TempleSlice, view: MarketView) {
+    slice.poll = view;
 }
 
 /// Store what a poll decided. Returns whether the stored read actually changed.
@@ -1396,7 +1414,10 @@ async fn poll_temple_market_once(app: &AppHandle) -> PollOutcome {
     };
     // Published on EVERY poll and not only on a change, because the view
     // carries an age: a last-good read that has just crossed the stale line
-    // moves this slice while the stored payload sits still.
+    // moves `TempleSlice::poll` while the stored payload sits still. It does
+    // NOT touch `TempleSlice::market` — that field belongs to the read whose
+    // board is on screen, and a poll re-labelling it is the defect this split
+    // exists to end.
     publish_market_view(app);
     if changed && verdict == MarketPoll::Accepted {
         if let Some((as_of, rooms)) = priced {
@@ -1509,10 +1530,17 @@ pub fn spawn_temple_market_poll(app: AppHandle) {
 /// change. Two things, in this order:
 ///
 /// 1. **The market is dropped immediately.** Its prices came from the other
-///    server's league and nothing from it may be shown as current, so the board
-///    falls back to base values within the same click rather than at the next
-///    poll — the webview's own entitlement reset (`stores/status.svelte.ts`,
-///    commit a4414ef) makes exactly this trade for exactly this reason.
+///    server's league and nothing from it may be priced as current, so the very
+///    next read falls back to base values rather than waiting five minutes for
+///    a poll to say so — the webview's own entitlement reset
+///    (`stores/status.svelte.ts`, commit a4414ef) makes exactly this trade for
+///    exactly this reason.
+///
+///    What it does NOT do is re-label the board already on screen.
+///    `publish_market_view` moves `TempleSlice::poll`, so the page's reader row
+///    says "prices unavailable" within the same click while the standing
+///    board's own boxes keep the line they were priced under — which is the
+///    truth about them until a read replaces them.
 /// 2. **The league is resolved again.** The name standing was read from the
 ///    other server, and the market poll keys on it: without this a payload from
 ///    the new server would be discarded as `WrongLeague` on every poll for the
@@ -3080,5 +3108,27 @@ mod tests {
         let stored = Mutex::new(MarketInput::none());
 
         assert!(!drop_market(&stored));
+    }
+
+    /// A poll publish moves `poll` and leaves the READ's market exactly where
+    /// it was.
+    ///
+    /// The whole point of two fields. A poll that also wrote `market` would put
+    /// its own line over a board it knows nothing about — "prices 3 min old"
+    /// across a board on the cold grade ladder, and after a DEBUG/PROD switch
+    /// "prices unavailable — base values" across a board of real chaos figures.
+    /// Fails if `apply_market_view` writes both.
+    #[test]
+    fn a_poll_publish_moves_the_poll_view_and_not_the_read_it_found() {
+        let read = crate::temple::slice::market_view(&crate::temple::market::allflame());
+        let mut slice = TempleSlice { market: read.clone(), ..TempleSlice::default() };
+        // What a server switch publishes: nothing priced, nothing observed.
+        let after_switch = crate::temple::slice::market_view(&MarketInput::none());
+        assert_ne!(after_switch, read, "precondition: the two views differ");
+
+        apply_market_view(&mut slice, after_switch.clone());
+
+        assert_eq!(slice.market, read, "the read's own market is untouched");
+        assert_eq!(slice.poll, after_switch, "and the poll's view is what moved");
     }
 }
