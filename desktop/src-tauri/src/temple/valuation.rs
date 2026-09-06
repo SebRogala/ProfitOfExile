@@ -80,8 +80,8 @@
 //! of the 23 non-instrumental lines, overrides ignored — a player's stated
 //! number is not a sum, so it never enters the set and never moves it, while
 //! the line's own formula sum always does. On the committed capture the
-//! anchor is Toxic Grove's 2.65, so A++ reads 2.65, B− reads 0.0994 and D
-//! reads 0.0066.
+//! anchor is Toxic Grove's 1.857, so A++ reads 1.857, B− reads 0.0696 and D
+//! reads 0.0046.
 //!
 //! That is Vertolka's rule (POE-262, 2026-09-06): *"if temple does not have
 //! APEX, value of room itself is just zero and should be counted only based on
@@ -694,7 +694,7 @@ fn top_tier3_sale_delta(market: &MarketInput) -> Option<f64> {
 ///
 /// **Not the anchor a room that summed nothing takes** — that is
 /// [`lowest_summed_room_total`], a strictly wider set and a much lower number
-/// (2.65 against 390 on the capture). The two are deliberately separate
+/// (1.857 against 390 on the capture). The two are deliberately separate
 /// rather than folded into one: §4's departure from L1 rests on its own
 /// board-7 evidence, and holding the upgrade line at 0.0033 of the cheapest
 /// summed room would reproduce the miss that evidence is about.
@@ -743,7 +743,7 @@ fn lowest_sale_priced_room_total(market: &MarketInput, knobs: &Knobs) -> Option<
 ///
 /// - a room is IN when its own sum produced chaos, [`Priced::Market`] or
 ///   [`Priced::Partial`] alike — a partial sum is still a price somebody
-///   printed, and Toxic Grove's partial 2.65 is exactly the number the capture
+///   printed, and Toxic Grove's partial 1.857 is exactly the number the capture
 ///   turns on;
 /// - the two [`INSTRUMENTAL_LINES`] are OUT, because their totals are letters
 ///   rather than sums (ADR-022 §4) and anchoring the ladder on a rung of
@@ -751,9 +751,9 @@ fn lowest_sale_priced_room_total(market: &MarketInput, knobs: &Knobs) -> Option<
 /// - a Custom override neither adds to the set nor removes from it. The
 ///   player's stated number is not a sum, so it never enters; the line's own
 ///   formula sum is a sum, so it always does. That keeps the anchor a property
-///   of the READ alone — one Custom edit cannot move the other eleven unpriced
+///   of the READ alone — one Custom edit cannot move the other ten unpriced
 ///   rooms, which excluding the overridden line would do (overriding the
-///   capture's anchor room would raise every rung by 6.00/2.65, and overriding
+///   capture's anchor room would raise every rung by 6.00/1.857, and overriding
 ///   the last summed room would drop the whole board onto the cold ladder,
 ///   from 0.03 c to 30 c in one edit).
 ///
@@ -2197,7 +2197,7 @@ mod tests {
     /// has none priced) but through the room it is measured against.
     ///
     /// Stated here rather than buried because it is the surprising half: a
-    /// player who doubles the anchor sees eleven rooms they never think of as
+    /// player who doubles the anchor sees ten rooms they never think of as
     /// vial rooms move as well. Fails if the rung stops reading the live
     /// anchor, and fails if the anchor stops summing the vial term.
     #[test]
@@ -2343,8 +2343,8 @@ mod tests {
     /// the feed printed.
     ///
     /// The set is what moves here, not the rule: the same expression that gives
-    /// 2.65 at the shipped knobs gives 390 at these. Fails if the anchor is
-    /// hard-coded to the capture's 2.65, and fails if it goes back to the top
+    /// 1.857 at the shipped knobs gives 390 at these. Fails if the anchor is
+    /// hard-coded to the capture's 1.857, and fails if it goes back to the top
     /// sale delta (Crucible would read 423, over Doryani).
     #[test]
     fn the_rushers_knobs_leave_the_two_sale_priced_rooms_as_the_whole_anchor_set() {
@@ -2412,16 +2412,16 @@ mod tests {
     /// and a Custom override changes neither membership nor value: the player's
     /// number is not a sum so it never enters the set, and the line's own
     /// formula sum is one so it never leaves. Toxic Grove is the room to prove
-    /// it on because it IS the capture's anchor at 2.65, and the two override
+    /// it on because it IS the capture's anchor at 1.857, and the two override
     /// values bracket it from both sides — 0 below, 500 above.
     ///
     /// POE-262 WI-2 moved the anchor from 2.65 to 1.857 by deriving its vial
     /// rate; the property this pins is unchanged and its number is not.
     ///
     /// Excluding an overridden line instead is the tempting reading, and it is
-    /// the one this pins against: it would make one Custom edit move eleven
+    /// the one this pins against: it would make one Custom edit move ten
     /// other rooms (the anchor would jump to Chamber of Iron's 6.00 and every
-    /// rung would rise by 6.00/2.65), and overriding the LAST summed room would
+    /// rung would rise by 6.00/1.857), and overriding the LAST summed room would
     /// drop the whole board onto the cold ladder — a C room going from 0.033 c
     /// to 10 c because of an edit made somewhere else.
     ///
@@ -2463,8 +2463,8 @@ mod tests {
     ///
     /// The other half of the same rule, and the one a player would hit first:
     /// writing 0.5 c against the room that IS the anchor must not drag all
-    /// eleven unpriced rooms down by a factor of five. Toxic Grove is the room
-    /// because its stated 0.5 sits below its own formula sum of 2.65, so the
+    /// ten unpriced rooms down by a factor of five. Toxic Grove is the room
+    /// because its stated 0.5 sits below its own formula sum of 1.857, so the
     /// two answers are distinguishable on the row and on every rung — its
     /// formula sum is `ANCHOR`, 1.857.
     ///
@@ -2504,8 +2504,8 @@ mod tests {
     /// evidence and it is `advisor::tests`'s, not this module's.
     ///
     /// Fails if the two lines are routed through `fallback_rung`: at the
-    /// capture's 2.65 anchor Temple Nexus would read 0.33125 and the shrine
-    /// 0.006625, which is the shape that produced the board-7 miss.
+    /// capture's 1.857 anchor Temple Nexus would read 0.232138 and the shrine
+    /// 0.0046428, which is the shape that produced the board-7 miss.
     #[test]
     fn the_instrumental_lines_are_not_re_anchored_on_the_cheapest_summed_room() {
         let valued = Valued::compute(&allflame(), &Knobs::default());
