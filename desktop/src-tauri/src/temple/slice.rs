@@ -788,6 +788,24 @@ pub struct ConvenienceView {
     pub reason: String,
 }
 
+/// The recommended exit's own label: which corridor, and the room behind it
+/// (POE-261).
+///
+/// The door carries its name so the surface never has to work out which seal
+/// the name belongs to. That is not defensiveness — it is what makes "only the
+/// recommended exit is labelled" checkable at the draw site: the widget matches
+/// this `door` against the seal it already classified `suggested`, so a label
+/// can never land on a plain or a faint one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExitLabelView {
+    /// `"C1-C2"` — the corridor the top recommendation opens.
+    pub door: String,
+    /// The game's own name for the plate that corridor opens into, at the tier
+    /// THIS read gave it (`rooms::RoomIdentity::display_name`).
+    pub name: String,
+}
+
 /// The decision, with everything needed to justify it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -832,6 +850,31 @@ pub struct AdviceView {
     /// `serde(default)` for the same reason `secondary_door` carries one.
     #[serde(default)]
     pub convenience: Option<ConvenienceView>,
+    /// The room the top recommendation's door opens into, named once, here
+    /// (POE-261 — owner: *"put the name of the exit (the next room) to the
+    /// solid purple exit (only to that recommended one)"*).
+    ///
+    /// Decided in [`recommended_exit`] and nowhere else. The webview renders
+    /// this string; it does not look a plate up, and it must not — the name
+    /// depends on the plate's READ TIER, and a second lookup on the far side
+    /// would be a second answer to what the board says the room is.
+    ///
+    /// `None` is the answer, not a gap, in four cases, and only the first is
+    /// about the advice: the move opens no door at all; the far plate did not
+    /// resolve (an unread or unmatched plate has no name, and a guess is worse
+    /// than silence); the recommendation opens MORE than one door, so there is
+    /// no single exit to name (not reachable at [`KEYS_IN_HAND`] = 1, and a
+    /// second bright seal is what it would look like if it were); and there is
+    /// no current room, which is already `advise_read`'s refusal.
+    ///
+    /// Beside [`Self::secondary_door`] and [`Self::convenience`] rather than on
+    /// [`RankedView`]: all three are statements about the TOP recommendation
+    /// that only the room widget draws, and none of them is a property of a
+    /// ranked option in the list.
+    ///
+    /// `serde(default)` for the same reason its two neighbours carry one.
+    #[serde(default)]
+    pub recommended_exit: Option<ExitLabelView>,
     /// `"continue"` or `"leaveMap"`. R5's verdict for the top recommendation —
     /// as prominent as the kill when it says leave.
     pub map_action: String,
@@ -1435,7 +1478,55 @@ fn panel_view(read: &ReadResult<'_>) -> PanelView {
     }
 }
 
-fn advice_view(advice: &Advice) -> AdviceView {
+/// The label the room widget puts on the solid purple exit, or `None`
+/// (POE-261).
+///
+/// The ONE place the name is decided. It reads two things the read already
+/// settled and joins them: which corridor the top recommendation opens, and
+/// what the plate on the far side of it turned out to be. Nothing here ranks,
+/// guesses or falls back — an unresolved plate produces no label, which is the
+/// same discipline `slot_view` keeps when it publishes `known: false` rather
+/// than a name.
+///
+/// `rooms` is indexed by search rather than by [`Slot::index`] because a caller
+/// may hand over a short vector; a missing plate is then simply unnamed.
+fn recommended_exit(
+    advice: &Advice,
+    current: Option<Slot>,
+    rooms: &[RoomReading],
+) -> Option<ExitLabelView> {
+    let current = current?;
+    let mut doors = advice.recommendations.first()?.option.doors.iter();
+    let door = *doors.next()?;
+    if doors.next().is_some() {
+        // Two bright seals, so no single exit to name. `KEYS_IN_HAND` = 1 puts
+        // at most one door in a set, so this is unreachable in production —
+        // and if a second key ever comes back, silence is the honest answer
+        // until someone decides which of the two the name belongs to.
+        return None;
+    }
+    let far = match door.ends() {
+        (a, b) if a == current => b,
+        (a, b) if b == current => a,
+        // Not a corridor of the room the player is standing in.
+        // `advisor::rules::door_sets` enumerates only `closed_doors_from(position)`,
+        // so this cannot happen; if it did, "the far end" would not be defined
+        // and there would be nothing honest to write on the seal.
+        _ => return None,
+    };
+    let name = rooms
+        .iter()
+        .find(|reading| reading.slot == far)?
+        .identity
+        .identity()?
+        .display_name();
+    Some(ExitLabelView {
+        door: door.to_string(),
+        name: name.to_string(),
+    })
+}
+
+fn advice_view(advice: &Advice, exit: Option<ExitLabelView>) -> AdviceView {
     AdviceView {
         recommendations: advice
             .recommendations
@@ -1468,6 +1559,7 @@ fn advice_view(advice: &Advice) -> AdviceView {
             door: door.door.to_string(),
             reason: door.describe(),
         }),
+        recommended_exit: exit,
         map_action: match advice.map_action {
             MapAction::Continue => "continue".to_string(),
             MapAction::LeaveMap => "leaveMap".to_string(),
@@ -1527,7 +1619,12 @@ pub fn project(read: &ReadResult<'_>, calibration: Option<AnchorCalibration>) ->
         waiting_for_panel: false,
         layout: Some(layout_view(read)),
         panel: Some(panel_view(read)),
-        advice: read.advice.map(advice_view),
+        advice: read.advice.map(|advice| {
+            advice_view(
+                advice,
+                recommended_exit(advice, read.layout.current, read.rooms),
+            )
+        }),
         mode: read.advice.map(|a| mode_label(a.mode)),
         config: read.config.clone(),
         profile: read.profile.clone(),
@@ -2497,7 +2594,7 @@ mod tests {
         let advice =
             advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued()).expect("ranks");
 
-        let view = advice_view(&advice);
+        let view = advice_view(&advice, None);
 
         let top = view
             .recommendations
@@ -2529,7 +2626,7 @@ mod tests {
             advice.warnings.contains(&Warning::NoBudget),
             "precondition: an unread budget warns",
         );
-        let view = advice_view(&advice);
+        let view = advice_view(&advice, None);
         assert!(
             view.warnings.iter().any(|w| w.contains("incursions remaining")),
             "the warning must reach the page as prose, got {:?}",
@@ -2615,7 +2712,7 @@ mod tests {
             .expect("precondition: an all-closed room has a second corridor to buy")
             .to_string();
 
-        let view = advice_view(&advice);
+        let view = advice_view(&advice, None);
 
         assert_eq!(view.secondary_door.as_deref(), Some(door.as_str()));
         assert!(
@@ -2657,7 +2754,7 @@ mod tests {
             .convenience_door
             .expect("precondition: the move opens nothing and C1 has in-cluster corridors");
 
-        let view = advice_view(&advice);
+        let view = advice_view(&advice, None);
 
         let projected = view.convenience.expect("projected beside the top recommendation");
         assert_eq!(projected.door, door.door.to_string());
@@ -2665,6 +2762,213 @@ mod tests {
         assert!(projected.reason.starts_with(&format!("convenience door {}", projected.door)));
         assert!(view.recommendations[0].doors.is_empty());
         assert_eq!(view.secondary_door, None);
+    }
+
+    /// One recommendation that opens exactly `doors`, with `secondary` beside
+    /// it — the arrange step for [`recommended_exit`].
+    ///
+    /// Hand-built rather than ranked, because the subject is the JOIN of a door
+    /// with the plate behind it and nothing else. Driving it through `advise`
+    /// would make the door an output of the rollout, and the assertion would
+    /// then have to re-derive which corridor won before it could name the room
+    /// — which is the ranking's answer restated, not this function's.
+    fn advice_opening(doors: &[(Slot, Slot)], secondary: Option<(Slot, Slot)>) -> Advice {
+        Advice {
+            mode: Mode::Chase,
+            recommendations: vec![advisor::Ranked {
+                option: advisor::rules::Decision {
+                    architect: None,
+                    doors: doors.iter().map(|(a, b)| Edge::new(*a, *b)).collect(),
+                },
+                ev: 0.0,
+                reasons: Vec::new(),
+            }],
+            gambles: Vec::new(),
+            secondary_door: secondary.map(|(a, b)| Edge::new(a, b)),
+            convenience_door: None,
+            map_action: MapAction::Continue,
+            warnings: Vec::new(),
+        }
+    }
+
+    /// The recommended exit is labelled with the far plate's name AT THE TIER
+    /// THIS READ GAVE IT (POE-261).
+    ///
+    /// Three tiers of one line, because the tier is the whole of what makes
+    /// this a read and not a lookup: `Armourer's Workshop`, `Armoury` and
+    /// `Chamber of Iron` are the same room family and a surface that showed the
+    /// family would be telling the player nothing about what is behind the
+    /// door.
+    ///
+    /// Fails if the label is taken off the line's tier-1 or tier-3 name
+    /// regardless of the read, off the CURRENT room instead of the far one, or
+    /// dropped altogether.
+    #[test]
+    fn the_recommended_exit_is_named_at_the_far_plate_s_read_tier() {
+        for name in ["Armourer's Workshop", "Armoury", "Chamber of Iron"] {
+            let rooms = board_rooms(&[(Slot::C1, "Chasm"), (Slot::C2, name)]);
+            let advice = advice_opening(&[(Slot::C1, Slot::C2)], None);
+
+            let exit = recommended_exit(&advice, Some(Slot::C1), &rooms)
+                .expect("a read plate behind the recommended door is a name");
+
+            assert_eq!(exit.door, "C1-C2");
+            assert_eq!(exit.name, name);
+        }
+    }
+
+    /// The longest name in the vocabulary reaches the wire whole (POE-261).
+    ///
+    /// `Breach Containment Chamber` is the longest of the 75 tier names in
+    /// [`rooms::LINES`] at 26 characters, and it is what the widget's own
+    /// footprint is budgeted against
+    /// (`overlay-geometry.test.ts`'s exit-label tests). Fails if the projection
+    /// ever truncates or ellipsises the name — a decision that belongs to CSS,
+    /// where it can be undone, and never to the wire.
+    #[test]
+    fn the_longest_room_name_reaches_the_wire_whole() {
+        let longest = rooms::LINES
+            .iter()
+            .flat_map(|line| line.tiers())
+            .max_by_key(|name| name.chars().count())
+            .expect("25 lines of three tiers");
+        assert_eq!(
+            longest, "Breach Containment Chamber",
+            "the measured worst case moved; re-budget the widget's footprint",
+        );
+
+        let rooms = board_rooms(&[(Slot::C1, "Chasm"), (Slot::C2, longest)]);
+        let advice = advice_opening(&[(Slot::C1, Slot::C2)], None);
+
+        let exit = recommended_exit(&advice, Some(Slot::C1), &rooms)
+            .expect("a read plate behind the recommended door is a name");
+        assert_eq!(exit.name, longest);
+    }
+
+    /// A plate the read could not resolve gets NO label — the widget then draws
+    /// the purple seal unlabelled rather than guessing what is behind it.
+    ///
+    /// Fails if the projection substitutes the slot key, the printed line, an
+    /// empty string, or the current room's own name.
+    #[test]
+    fn an_unread_plate_behind_the_recommended_door_is_not_named() {
+        // C2 is left Unknown: `board_rooms` reads every unnamed slot that way.
+        let rooms = board_rooms(&[(Slot::C1, "Chasm")]);
+        let advice = advice_opening(&[(Slot::C1, Slot::C2)], None);
+
+        assert_eq!(recommended_exit(&advice, Some(Slot::C1), &rooms), None);
+    }
+
+    /// Between rooms there is no exit to label: with no current room, "the far
+    /// end" of a corridor is not defined.
+    ///
+    /// `advise_read` already refuses to rank without a position, so a slice
+    /// carrying advice always has one — but this function takes the position as
+    /// an `Option` and must not answer from a substitute. Fails if the missing
+    /// room is defaulted to a slot, which would name whichever plate that slot's
+    /// corridor happens to reach.
+    #[test]
+    fn a_board_with_no_current_room_labels_no_exit() {
+        let rooms = board_rooms(&[(Slot::C1, "Chasm"), (Slot::C2, "Chamber of Iron")]);
+        let advice = advice_opening(&[(Slot::C1, Slot::C2)], None);
+
+        assert_eq!(recommended_exit(&advice, None, &rooms), None);
+    }
+
+    /// A move that opens nothing has no exit to label. Fails if the projection
+    /// falls back to the faint seal's door — which is what a key the move has
+    /// no use for would buy, not the move.
+    #[test]
+    fn a_move_that_opens_no_door_is_not_labelled() {
+        let rooms = board_rooms(&[(Slot::C1, "Chasm"), (Slot::C2, "Chamber of Iron")]);
+        let advice = advice_opening(&[], Some((Slot::C1, Slot::C2)));
+
+        assert_eq!(recommended_exit(&advice, Some(Slot::C1), &rooms), None);
+    }
+
+    /// The faint second-stone door is never the one named: the label belongs to
+    /// the door the move opens NOW (POE-261 D2, one label and only on the solid
+    /// seal).
+    ///
+    /// Fails if the projection reads `secondary_door`, or names whichever plate
+    /// happens to be nearest, instead of the far end of `recommendations[0]`'s
+    /// own door.
+    #[test]
+    fn the_second_stone_s_door_is_not_the_one_named() {
+        let rooms = board_rooms(&[
+            (Slot::C1, "Chasm"),
+            (Slot::C2, "Chamber of Iron"),
+            (Slot::D2, "Hall of War"),
+        ]);
+        let advice = advice_opening(&[(Slot::C1, Slot::C2)], Some((Slot::C1, Slot::D2)));
+
+        let exit = recommended_exit(&advice, Some(Slot::C1), &rooms).expect("the primary door");
+
+        assert_eq!(exit.door, "C1-C2");
+        assert_eq!(exit.name, "Chamber of Iron");
+    }
+
+    /// Two doors in one recommendation produce NO label: there would be two
+    /// solid purple seals and no single exit the name belongs to.
+    ///
+    /// Unreachable at [`KEYS_IN_HAND`] = 1 and asserted anyway — the advisor
+    /// still takes a `keys` parameter, and the day a second stone comes back
+    /// this branch is what keeps a name off the wrong seal instead of on the
+    /// lower-sorted one.
+    #[test]
+    fn a_two_door_recommendation_names_neither_exit() {
+        let rooms = board_rooms(&[
+            (Slot::C1, "Chasm"),
+            (Slot::C2, "Chamber of Iron"),
+            (Slot::D2, "Hall of War"),
+        ]);
+        let advice = advice_opening(&[(Slot::C1, Slot::C2), (Slot::C1, Slot::D2)], None);
+
+        assert_eq!(recommended_exit(&advice, Some(Slot::C1), &rooms), None);
+    }
+
+    /// The label reaches the SLICE, beside the recommendation it belongs to.
+    ///
+    /// The advice is hand-built for the reason [`advice_opening`] gives, and
+    /// the act is `project` rather than `advice_view`: this is the wiring test
+    /// — fails if the projection builds the label and drops it, or never asks
+    /// for it, which is what every other test here passes `None` past.
+    #[test]
+    fn the_projection_publishes_the_recommended_exit_beside_the_advice() {
+        let layout = layout(Some(Slot::C1), &[], &[]);
+        let rooms = board_rooms(&[(Slot::C1, "Chasm"), (Slot::C2, "Chamber of Iron")]);
+        let panel = panel("Chasm", Some(6), Vec::new());
+        let advice = advice_opening(&[(Slot::C1, Slot::C2)], None);
+
+        let slice = project(
+            &read(&layout, &rooms, &panel, None, Some(&advice), &valued()),
+            None,
+        );
+
+        let exit = slice
+            .advice
+            .expect("the advice reaches the slice")
+            .recommended_exit
+            .expect("and so does its exit label");
+        assert_eq!(exit.door, "C1-C2");
+        assert_eq!(exit.name, "Chamber of Iron");
+    }
+
+    /// A door that does not touch the room the player is in has no far end, so
+    /// it has no name. Fails if the projection picks an endpoint by position
+    /// (`ends().0`) instead of by which one is NOT the current room — which on
+    /// this input would label the exit with a plate on the other side of the
+    /// board.
+    #[test]
+    fn a_door_that_does_not_touch_the_current_room_is_not_named() {
+        let rooms = board_rooms(&[
+            (Slot::C1, "Chasm"),
+            (Slot::C2, "Chamber of Iron"),
+            (Slot::D2, "Hall of War"),
+        ]);
+        let advice = advice_opening(&[(Slot::C2, Slot::D2)], None);
+
+        assert_eq!(recommended_exit(&advice, Some(Slot::C1), &rooms), None);
     }
 
     /// A one-of-two read reaches the surfaces BOTH ways: as prose in
@@ -2690,7 +2994,7 @@ mod tests {
             advice.warnings,
         );
 
-        let view = advice_view(&advice);
+        let view = advice_view(&advice, None);
 
         assert!(view.forced_kill, "the kill on screen is the only kill there was");
         assert!(
@@ -2727,7 +3031,7 @@ mod tests {
             "precondition: nothing resolved, so the top move carries no kill",
         );
 
-        let view = advice_view(&advice);
+        let view = advice_view(&advice, None);
 
         assert!(!view.forced_kill, "there is no kill on the headline to mark");
         assert!(
@@ -2760,7 +3064,7 @@ mod tests {
         let advice =
             advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued()).expect("ranks");
 
-        assert!(!advice_view(&advice).forced_kill);
+        assert!(!advice_view(&advice, None).forced_kill);
     }
 
     /// Nothing read at all is NOT a forced kill: there is no kill on screen to
@@ -2774,7 +3078,7 @@ mod tests {
         let advice =
             advise_read(&layout, &rooms, &panel, None, &TempleSettings::default(), &valued()).expect("ranks");
 
-        let view = advice_view(&advice);
+        let view = advice_view(&advice, None);
 
         assert!(!view.forced_kill);
         assert!(
@@ -3223,7 +3527,7 @@ mod tests {
             "the conflict must be stated, got {:?}",
             advice.warnings,
         );
-        let rendered = advice_view(&advice).warnings;
+        let rendered = advice_view(&advice, None).warnings;
         assert!(
             rendered
                 .iter()
@@ -3896,6 +4200,7 @@ mod tests {
                 gambles: Vec::new(),
                 secondary_door: None,
                 convenience: None,
+                recommended_exit: None,
                 map_action: "leaveMap".to_string(),
                 warnings: Vec::new(),
                 forced_kill: false,
@@ -4631,8 +4936,14 @@ mod tests {
             advice: Some(AdviceView {
                 recommendations: vec![RankedView {
                     headline: "upgrade → Locus of Corruption".to_string(),
-                    doors_label: "C1-C2, B0-C1".to_string(),
-                    doors: vec!["C1-C2".to_string(), "B0-C1".to_string()],
+                    // ONE door, and that is not decoration: `KEYS_IN_HAND` is 1,
+                    // so a set never holds two — and `recommended_exit` refuses
+                    // a two-door recommendation outright, which would make the
+                    // non-null `recommended_exit` below a pairing the projection
+                    // cannot produce. The sample is hand-built, but it must not
+                    // be hand-built into a shape that contradicts itself.
+                    doors_label: "C1-C2".to_string(),
+                    doors: vec!["C1-C2".to_string()],
                     architect_index: Some(0),
                     ev: 12.5,
                     risk: None,
@@ -4650,12 +4961,22 @@ mod tests {
                 // Non-null on purpose: `None` would pin only the field's
                 // presence, and the mirror's `string | null` has two branches.
                 // Like every other value in this sample it is hand-built and
-                // states nothing about what the projection would pair with a
-                // two-door recommendation —
+                // states nothing about which corridor the projection would
+                // actually pair with this recommendation —
                 // `case_eight_lightning_workshop_names_the_conditional_second_door`
                 // is where the pairing is asserted.
                 secondary_door: Some("C1-D2".to_string()),
                 convenience: None,
+                // Non-null for the reason `secondary_door` above is: the
+                // mirror's `ExitLabelView | null` has two branches and a
+                // `None` here would pin only one. Hand-built like the rest —
+                // the projection's own pairing of a door with the plate behind
+                // it is asserted by
+                // `the_recommended_exit_is_named_at_the_far_plate_s_read_tier`.
+                recommended_exit: Some(ExitLabelView {
+                    door: "C1-C2".to_string(),
+                    name: "Chamber of Iron".to_string(),
+                }),
                 map_action: "leaveMap".to_string(),
                 // Two warnings, and the second is the one `forced_kill`
                 // mirrors. Hand-built, like every other field of this sample —
@@ -4715,7 +5036,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]},"recipe":{"base":{"name":"Story of the Vaal","chaos":5.0},"vial":{"name":"Vial of Fate","chaos":1.0},"upgraded":{"name":"Fate of the Vaal","chaos":null}}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"unavailable":true},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]},"recipe":{"base":{"name":"Story of the Vaal","chaos":5.0},"vial":{"name":"Vial of Fate","chaos":1.0},"upgraded":{"name":"Fate of the Vaal","chaos":null}}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"unavailable":true},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///

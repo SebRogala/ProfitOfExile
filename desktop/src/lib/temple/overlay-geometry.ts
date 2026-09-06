@@ -1,6 +1,6 @@
 /**
  * Where the temple's overlay surfaces go, and what shape the room widget draws
- * (POE-244, POE-248, POE-249).
+ * (POE-244, POE-248, POE-249, POE-261).
  *
  * The sibling of `view.ts`: that file words the advice, this one places it. Both
  * exist because a `.svelte` file has no unit-test harness in this app and an
@@ -30,7 +30,14 @@
  */
 import { avoidRects } from '$lib/overlay/widgets/widget-avoid';
 import type { HostSize, WidgetRect } from '$lib/overlay/widgets/widget-geometry';
-import type { CaptureRect, DiamondView, EdgeId, LayoutView, SlotId } from './slice';
+import type {
+	CaptureRect,
+	DiamondView,
+	EdgeId,
+	ExitLabelView,
+	LayoutView,
+	SlotId
+} from './slice';
 import { edgeState, type EdgeState } from './view';
 
 /** Gap between a placed box and the thing it is placed against, CSS px. */
@@ -571,6 +578,41 @@ const SEAL_RADII: Record<SealKind, number> = {
 	suggested: SEAL_RADIUS_SUGGESTED
 };
 
+/**
+ * Where the recommended exit's NAME is drawn, as percentages of the shape's own
+ * box (POE-261).
+ *
+ * Percentages and not pixels, and out of the widget's flow: the label is pinned
+ * inside the `<svg>`'s own box, so it moves with the seal when the widget is
+ * resized and it costs the widget NO height. That second half is what keeps
+ * ADR-019 answered without re-measuring anything — the room widget's shipped
+ * rectangle is what [`doorDefaultPlacement`] clears the read regions with, and
+ * a label that added a line under the shape would grow the drawn box past the
+ * rectangle that clearance was computed for.
+ *
+ * The text runs from the seal toward the room's INTERIOR, never outward: pinned
+ * to the far side of the box, so `inset` + `width` is exactly 100 and the
+ * label's span is the box from the mark's inner rim to that far edge. It
+ * therefore cannot leave the widget's footprint whatever the name is — which is
+ * the whole reason the placement is stated in these terms and not as a width in
+ * characters.
+ */
+export interface ExitLabelPlacement {
+	/** Which side of the box the label is pinned to — the CSS property the
+	 *  widget sets. Always the side OPPOSITE the seal. */
+	side: 'left' | 'right';
+	/** How far that pinned edge sits from its side of the box, as a percentage
+	 *  of the box's width. It clears the seal by one [`SEAL_RADIUS_SUGGESTED`],
+	 *  so the text starts at the mark's inner rim rather than under it. */
+	inset: number;
+	/** The seal's own height in the box, as a percentage. The label is centred
+	 *  on it, so the name sits level with the mark it belongs to. */
+	top: number;
+	/** How much of the box's width is left between the seal and the far edge —
+	 *  the label's `max-width`, as a percentage. */
+	width: number;
+}
+
 /** The diamond as an SVG can draw it. */
 export interface DiamondGeometry {
 	/** `"x,y x,y x,y x,y"` for a `<polygon points=…>`. */
@@ -587,6 +629,60 @@ export interface DiamondGeometry {
 	 *  stylesheet would be a second answer that silently letterboxes the shape
 	 *  the first time either moves. */
 	aspectRatio: number;
+	/** Where the recommended exit's name goes, or null when there is no name to
+	 *  draw — see [`ExitLabelPlacement`]. Null too when the named door is not a
+	 *  seal this shape drew SUGGESTED, which is what makes *"only the solid
+	 *  purple exit is labelled"* a property of the geometry rather than of the
+	 *  markup. */
+	exitLabel: ExitLabelPlacement | null;
+}
+
+/**
+ * The name's place on the shape, or null (POE-261).
+ *
+ * Two gates, and both are refusals rather than fallbacks:
+ *
+ * 1. **No name.** Rust published none — the move opens no door, or the plate
+ *    behind it did not resolve (`slice.rs::recommended_exit` owns every reason,
+ *    and `view.ts::recommendedExit` is the reader). Nothing here invents one.
+ * 2. **The named door is not the solid purple seal.** The label belongs to the
+ *    seal the ranking made `suggested`; a name landing on a plain corridor or
+ *    on the faint second-stone seal would be an instruction the advisor never
+ *    gave. Matching on the door rather than trusting the order is what makes
+ *    ONE label the shape's own guarantee.
+ */
+function exitLabelPlacement(
+	seals: readonly PlacedSeal[],
+	frame: { x: number; y: number; w: number; h: number },
+	exit: ExitLabelView | null
+): ExitLabelPlacement | null {
+	if (exit === null) return null;
+	const seal = seals.find((s) => s.edge === exit.door && s.kind === 'suggested');
+	if (seal === undefined) return null;
+	// The frame is the corners' bounding box grown by the SAME margin on all
+	// four sides, so its 50 % is the room's own centre and this comparison is
+	// "which half of the room is this door on".
+	const x = ((seal.x - frame.x) / frame.w) * 100;
+	const side = x > 50 ? 'right' : 'left';
+	// The text starts at the mark's INNER RIM, not at its centre: a label pinned
+	// to the seal's own point begins under the seal, and the biggest circle the
+	// widget draws is the one it would begin under. One suggested radius of
+	// clearance is the smallest offset that cannot do that, and it is taken from
+	// [`SEAL_RADIUS_SUGGESTED`] rather than written as a number so a resized seal
+	// moves the text with it.
+	//
+	// It buys the clearance out of the label's own room — `inset` gains it and
+	// `width` gives it up — so `inset` + `width` is still exactly 100 and the
+	// label still ends at the far edge. The footprint claim is unchanged; what
+	// changed is where the span STARTS.
+	const clear = (SEAL_RADIUS_SUGGESTED / frame.w) * 100;
+	const near = side === 'right' ? 100 - x : x;
+	return {
+		side,
+		inset: near + clear,
+		top: ((seal.y - frame.y) / frame.h) * 100,
+		width: 100 - near - clear
+	};
 }
 
 /**
@@ -610,7 +706,8 @@ export function diamondGeometry(
 	diamond: DiamondView,
 	layout: LayoutView | null,
 	suggested: readonly EdgeId[],
-	secondary: EdgeId | null = null
+	secondary: EdgeId | null = null,
+	exit: ExitLabelView | null = null
 ): DiamondGeometry {
 	const xs = diamond.corners.map(([x]) => x);
 	const ys = diamond.corners.map(([, y]) => y);
@@ -619,29 +716,31 @@ export function diamondGeometry(
 	const minY = Math.min(...ys) - margin;
 	const width = Math.max(...xs) + margin - minX;
 	const height = Math.max(...ys) + margin - minY;
+	const seals: PlacedSeal[] = diamond.seals.map((seal) => {
+		// `suggested` wins a corridor that is somehow in both: it is the door
+		// to open NOW, and drawing it as the conditional one would tell the
+		// player to wait for a stone they do not need.
+		const kind: SealKind = suggested.includes(seal.edge)
+			? 'suggested'
+			: seal.edge === secondary
+				? 'secondary'
+				: 'plain';
+		return {
+			edge: seal.edge,
+			neighbour: seal.neighbour,
+			x: seal.pos[0],
+			y: seal.pos[1],
+			radius: SEAL_RADII[kind],
+			state: edgeState(seal.edge, layout),
+			kind
+		};
+	});
 	return {
 		aspectRatio: width / height,
 		outline: diamond.corners.map(([x, y]) => `${x},${y}`).join(' '),
-		seals: diamond.seals.map((seal) => {
-			// `suggested` wins a corridor that is somehow in both: it is the
-			// door to open NOW, and drawing it as the conditional one would
-			// tell the player to wait for a stone they do not need.
-			const kind: SealKind = suggested.includes(seal.edge)
-				? 'suggested'
-				: seal.edge === secondary
-					? 'secondary'
-					: 'plain';
-			return {
-				edge: seal.edge,
-				neighbour: seal.neighbour,
-				x: seal.pos[0],
-				y: seal.pos[1],
-				radius: SEAL_RADII[kind],
-				state: edgeState(seal.edge, layout),
-				kind
-			};
-		}),
-		viewBox: `${minX} ${minY} ${width} ${height}`
+		seals,
+		viewBox: `${minX} ${minY} ${width} ${height}`,
+		exitLabel: exitLabelPlacement(seals, { x: minX, y: minY, w: width, h: height }, exit)
 	};
 }
 

@@ -34,6 +34,7 @@ import {
 	convenienceDoor,
 	convenienceNote,
 	faintDoor,
+	recommendedExit,
 	secondDoor,
 	suggestedDoors,
 	topGamble,
@@ -1783,6 +1784,47 @@ describe('convenienceDoor', () => {
 		const both = advice({ recommendations: [ranked({ doors: [] })], convenience });
 		expect(suggestedDoors(both)).toEqual([]);
 		expect(convenienceDoor(both)).toBe('B0-C1');
+	});
+});
+
+describe('recommendedExit', () => {
+	const exit = { door: 'C1-C2', name: 'Chamber of Iron' };
+
+	it('reads the name Rust put on the door the move opens', () => {
+		// Both halves are Rust's: which corridor, and what the plate behind it
+		// read as AT ITS OWN TIER. `Chamber of Iron` is the tier-3 room of the
+		// line whose tier-1 is `Armourer's Workshop`, so a reader that resolved
+		// the family instead of the tier would show the player a room they are
+		// not walking into.
+		expect(recommendedExit(advice({ recommendedExit: exit }))).toEqual(exit);
+	});
+
+	it('is null when Rust named nothing', () => {
+		// Every reason lives on the Rust side — the move opens no door, or the
+		// plate behind it did not resolve. Both arrive as one null, and the
+		// widget then draws the purple seal with no name rather than a guess.
+		expect(recommendedExit(advice({ recommendedExit: null }))).toBeNull();
+		expect(recommendedExit(null)).toBeNull();
+	});
+
+	it('is null for a payload from a build before the field existed', () => {
+		// The field is optional on the wire, and `undefined` reaching the
+		// widget inside an overlay window fails with no devtools to see it.
+		expect(recommendedExit(advice())).toBeNull();
+	});
+
+	it('does not name the faint door, whichever answer is standing beside it', () => {
+		// One label, and on the door to open NOW. A reader that fell back to
+		// `secondaryDoor` or to `convenience` would put a name on the seal that
+		// says *what a key the move has no use for would buy*.
+		const both = advice({
+			recommendations: [ranked({ doors: ['C1-C2'] })],
+			recommendedExit: exit,
+			secondaryDoor: 'B0-C1'
+		});
+		expect(recommendedExit(both)?.door).toBe('C1-C2');
+		expect(faintDoor(both)).toBe('B0-C1');
+		expect(recommendedExit(advice({ secondaryDoor: 'B0-C1' }))).toBeNull();
 	});
 });
 

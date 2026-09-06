@@ -40,6 +40,11 @@ import type { WidgetRect } from '$lib/overlay/widgets/widget-geometry';
 import { widgetsFor } from '$lib/overlay/widgets/widget-registry';
 import { TEMPLE_WINDOW_LABEL } from '$lib/overlay/manager';
 import type { CaptureRect, DiamondView, LayoutView, RoiView } from './slice';
+// The room widget's own source. Vite's `?raw`, the mechanism
+// `overlay-defaults.test.ts` documents: one claim below is about a CSS
+// declaration whose effect only a browser can show, and this app has no DOM
+// harness for a `.svelte` file.
+import doorSource from './TempleDoorDiamond.svelte?raw';
 
 const HOST = { width: 1920, height: 1080 };
 
@@ -1115,6 +1120,158 @@ describe('diamondGeometry', () => {
 		expect(minY).toBeLessThanOrEqual(-2 - SEAL_RADIUS_SUGGESTED);
 		expect(minX + width).toBeGreaterThanOrEqual(2 + SEAL_RADIUS_SUGGESTED);
 		expect(minY + height).toBeGreaterThanOrEqual(2 + SEAL_RADIUS_SUGGESTED);
+	});
+
+	describe('the exit label', () => {
+		/**
+		 * The longest of the 75 tier names in `src-tauri/src/temple/rooms.rs`'s
+		 * `LINES`, at 26 characters.
+		 *
+		 * Restated here rather than imported — the vocabulary is Rust's and
+		 * there is no TypeScript copy of it — and pinned on the Rust side by
+		 * `the_longest_room_name_reaches_the_wire_whole`, which fails if a
+		 * longer name is ever added. That is the seam: this file budgets the
+		 * footprint against the worst case, and the other end guarantees which
+		 * case that is.
+		 */
+		const LONGEST_ROOM = 'Breach Containment Chamber';
+
+		/**
+		 * The suggested seal's radius as a percentage of the fixture's box.
+		 *
+		 * The box spans -2.459..2.459 — the corners at ±2 grown by
+		 * `SEAL_RADIUS_SUGGESTED * 1.35` on each side — so it is 4.918 wide and
+		 * the biggest seal the widget draws is 0.34/4.918 of it, i.e. 6.91 %.
+		 * That is the clearance the text starts past the mark.
+		 */
+		const SEAL_PCT = (SEAL_RADIUS_SUGGESTED / 4.918) * 100;
+
+		it('pins the name beside the solid purple seal, running into the room', () => {
+			// C1-C2's seal is at x 2, i.e. 90.67 % across the box and level with
+			// the centre. The door is on the RIGHT half, so the text is pinned by
+			// its `right` edge and runs leftward — across the room, never out over
+			// the game — starting at the mark's inner rim rather than under it:
+			// 9.33 % in from that side for the seal's own point, plus one
+			// suggested radius.
+			const at = diamondGeometry(diamond, board, ['C1-C2'], null, {
+				door: 'C1-C2',
+				name: LONGEST_ROOM
+			}).exitLabel;
+			expect(at?.side).toBe('right');
+			expect(at?.inset).toBeCloseTo(9.33 + SEAL_PCT, 1);
+			expect(at?.top).toBeCloseTo(50, 1);
+			expect(at?.width).toBeCloseTo(90.67 - SEAL_PCT, 1);
+		});
+
+		it('runs the name the other way for a door on the left of the room', () => {
+			// The mirror of the case above: C0-C1's seal is at x -2, so the text
+			// is pinned by its `left` edge and runs rightward. Inward is the rule;
+			// which CSS side that is is a consequence of where the door is, and
+			// the clearance past the mark is the same one.
+			const at = diamondGeometry(diamond, board, ['C0-C1'], null, {
+				door: 'C0-C1',
+				name: LONGEST_ROOM
+			}).exitLabel;
+			expect(at?.side).toBe('left');
+			expect(at?.inset).toBeCloseTo(9.33 + SEAL_PCT, 1);
+			expect(at?.width).toBeCloseTo(90.67 - SEAL_PCT, 1);
+		});
+
+		it('starts the name clear of every mark, whichever wall the door is on', () => {
+			// The offset is a property of the placement, not of the two cases
+			// above: on EVERY seal the text begins one suggested radius past the
+			// seal's own point, which is the rim of the biggest circle the widget
+			// draws. Dropping it puts the first letters under the mark the label
+			// is about. Asserted against the seal's own published position, so a
+			// re-fit of `markers::seal_position` moves both sides together.
+			for (const seal of diamond.seals) {
+				const at = diamondGeometry(diamond, board, [seal.edge], null, {
+					door: seal.edge,
+					name: LONGEST_ROOM
+				}).exitLabel;
+				const centre = ((seal.pos[0] + 2.459) / 4.918) * 100;
+				const near = at!.side === 'right' ? 100 - centre : centre;
+				expect(at!.inset, seal.edge).toBeCloseTo(near + SEAL_PCT, 6);
+			}
+		});
+
+		it('keeps the name inside the shape whatever the room is called', () => {
+			// The footprint claim, and it is a property of the PLACEMENT rather
+			// than of any particular string: the label's span is exactly the box
+			// from the mark's inner rim to the far edge — the clearance is bought
+			// out of the label's own room, so the two still sum to the whole box
+			// — and a longer name therefore wraps instead of reaching past the
+			// widget. Checked on every seal the fixture has,
+			// with the longest name the vocabulary can produce — and against a
+			// one-character name, because a placement that measured the text
+			// would answer those two differently.
+			for (const seal of diamond.seals) {
+				const at = diamondGeometry(diamond, board, [seal.edge], null, {
+					door: seal.edge,
+					name: LONGEST_ROOM
+				}).exitLabel;
+				expect(at, seal.edge).not.toBeNull();
+				expect(at!.inset + at!.width, seal.edge).toBeCloseTo(100, 6);
+				expect(at!.inset, seal.edge).toBeGreaterThanOrEqual(0);
+				expect(at!.width, seal.edge).toBeGreaterThan(0);
+				expect(at!.top, seal.edge).toBeGreaterThanOrEqual(0);
+				expect(at!.top, seal.edge).toBeLessThanOrEqual(100);
+				expect(
+					diamondGeometry(diamond, board, [seal.edge], null, {
+						door: seal.edge,
+						name: 'X'
+					}).exitLabel,
+					seal.edge
+				).toEqual(at);
+			}
+		});
+
+		it('costs the widget no height, so its shipped rectangle is still the drawn box', () => {
+			// The reason this is asserted on the SOURCE: the label's height is
+			// only observable in a browser, and this app has no DOM harness for a
+			// `.svelte` file (the same bargain `FULL_BOX_MAX_CSS` and
+			// `overlay-defaults.test.ts` strike). What it protects is
+			// `doorDefaultPlacement`'s promise: that function clears the read
+			// regions for a 190x215 box — the registry's — and the test above,
+			// `never ships on top of a read region`, is the check. A label that
+			// joined the widget's column would add a line the placement never
+			// budgeted for, and the widget would grow into a crop the module
+			// reads back as game pixels (ADR-019).
+			const exit = doorSource.slice(doorSource.indexOf('\t.exit {'));
+			expect(exit).toContain('position: absolute;');
+		});
+
+		it('draws no name when Rust published none', () => {
+			// Null is the answer for a move that opens no door and for a plate
+			// that did not resolve — `slice.rs::recommended_exit` owns both — and
+			// nothing here fills it in from the seal's own neighbour.
+			expect(diamondGeometry(diamond, board, ['C1-C2'], null, null).exitLabel).toBeNull();
+			expect(diamondGeometry(diamond, board, ['C1-C2']).exitLabel).toBeNull();
+		});
+
+		it('never puts the name on the faint second-stone seal', () => {
+			// One label, and on the door to open NOW. The faint seal is what a
+			// key the move has no use for would buy; a name on it would read as
+			// the instruction.
+			expect(
+				diamondGeometry(diamond, board, ['C1-C2'], 'B0-C1', {
+					door: 'B0-C1',
+					name: LONGEST_ROOM
+				}).exitLabel
+			).toBeNull();
+		});
+
+		it('never puts the name on a corridor the advisor said nothing about', () => {
+			// The same rule from the other side: the label is matched to the
+			// seal the shape classified `suggested`, so a stale or mismatched
+			// door on the wire labels nothing rather than the nearest seal.
+			expect(
+				diamondGeometry(diamond, board, ['C1-C2'], null, {
+					door: 'C1-D2',
+					name: LONGEST_ROOM
+				}).exitLabel
+			).toBeNull();
+		});
 	});
 
 	describe('sealVisible', () => {
