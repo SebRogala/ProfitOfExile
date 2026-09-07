@@ -147,7 +147,11 @@ and `target`, so:
 - anything you put inside `DESKTOP_WIN_DIR` that is not in `desktop/` is
   deleted on the next sync. Keep private scripts and captures outside it.
 
-Sync is one-way. Edit in WSL; never edit the Windows copy.
+Sync is one-way. Edit in WSL; never edit the Windows copy: rsync keeps the
+WSL mtime, so a file changed on Windows and then overwritten by a sync carries
+an mtime older than the last build, cargo takes it as unchanged, and `tauri
+dev` relaunches the stale binary (seen 2026-09-07). `touch` the file on the
+Windows side to force the rebuild.
 
 ## 4. Run the desktop app
 
@@ -165,16 +169,20 @@ starts Vite on port 1420 (`tauri.conf.json` `devUrl`), builds the Rust crate,
 and opens the app; Svelte changes hot-reload, Rust changes relink. The debug
 exe lands at `src-tauri\target\debug\ProfitOfExile.exe`.
 
-**Quick rebuilds, and why the dev build is not slow any more (2026-09-07).**
-`npx tauri dev` is the fast loop. Its Rust build used to be unoptimized, and
-the app's pixel loops — capture conversion, the temple anchor correlation, the
-OCR crop prep — ran 10–20× slower than release: a full temple read measured
-4247 ms on the dev build against 666 ms on release, same code, same PC. The
-`[profile.dev]` in `src-tauri/Cargo.toml` now compiles dependencies at
-`opt-level = 3` and this crate at `1`, which keeps incremental rebuilds quick
-and the loops close to release. Check with the `Temple: read timings` line in
-`app.log`; if `cheap detect` or `anchor` still sit an order of magnitude above
-the release numbers in `docs/TEMPLE-LIFECYCLE.md`, raise the crate to `2`.
+**Quick rebuilds (measured 2026-09-07).** `npx tauri dev` is the edit loop:
+Svelte changes hot-reload, a Rust change rebuilds this crate and relinks. The
+`[profile.dev.package."*"]` in `src-tauri/Cargo.toml` compiles dependencies at
+`opt-level = 3` and leaves this crate at the default `0`. On the PC a one-line
+change rebuilt in 16 s at `0` against 70 s with the crate at `1`, and a
+from-scratch crate build took 87 s against about 4 min. The optimized
+dependencies are paid once, about 7.5 min for all of them, the first time the
+profile lands on the Windows copy and again after `cargo clean` or a dependency
+bump; that build looks like a hung rebuild and is not. The trade-off is that
+this crate's pixel loops (the temple anchor correlation, the OCR crop prep) run
+unoptimized in dev: an all-unoptimized dev build measured a full temple read at
+4247 ms against 666 ms on release, same code, same PC. Answer timing questions
+on the release build below, and read `Temple: read timings` in `app.log` with
+the build in mind.
 
 **Release build without the installer.** For a timing question or an A/B
 against the installed app, build the synced copy in release: from WSL
