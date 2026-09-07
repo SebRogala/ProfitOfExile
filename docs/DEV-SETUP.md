@@ -165,6 +165,32 @@ starts Vite on port 1420 (`tauri.conf.json` `devUrl`), builds the Rust crate,
 and opens the app; Svelte changes hot-reload, Rust changes relink. The debug
 exe lands at `src-tauri\target\debug\ProfitOfExile.exe`.
 
+**Quick rebuilds, and why the dev build is not slow any more (2026-09-07).**
+`npx tauri dev` is the fast loop. Its Rust build used to be unoptimized, and
+the app's pixel loops — capture conversion, the temple anchor correlation, the
+OCR crop prep — ran 10–20× slower than release: a full temple read measured
+4247 ms on the dev build against 666 ms on release, same code, same PC. The
+`[profile.dev]` in `src-tauri/Cargo.toml` now compiles dependencies at
+`opt-level = 3` and this crate at `1`, which keeps incremental rebuilds quick
+and the loops close to release. Check with the `Temple: read timings` line in
+`app.log`; if `cheap detect` or `anchor` still sit an order of magnitude above
+the release numbers in `docs/TEMPLE-LIFECYCLE.md`, raise the crate to `2`.
+
+**Release build without the installer.** For a timing question or an A/B
+against the installed app, build the synced copy in release: from WSL
+
+```
+make desktop-release-windows
+```
+
+syncs `desktop/` and runs `scripts/build-release.cmd` (double-clickable on
+Windows too); the exe lands at `src-tauri\target\release\ProfitOfExile.exe`
+with the frontend embedded, sharing `settings.json` and `app.log` with the
+installed app. Close a running `ProfitOfExile.exe` first — Windows will not
+overwrite a running binary and cargo fails at the link step with `failed to
+remove file`. First build ~7 min cold, incremental afterwards. It is a
+dev-salt device on prod unless `APP_FINGERPRINT_SECRET` is set (below).
+
 **Which server it talks to.** The Rust default for `server_url` is the
 build-time `POE_SERVER_URL` and the web side's is `VITE_SERVER_URL`
 (`settings.rs`, `api.ts`); unset, both are `https://profitofexile.localhost`.

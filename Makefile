@@ -1,4 +1,4 @@
-.PHONY: help build test test-integration qa up down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-test desktop-test-js desktop-build desktop-deploy desktop-sync desktop-watch merc-seed-art
+.PHONY: help build test test-integration qa up down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-test desktop-test-js desktop-build desktop-deploy desktop-sync desktop-release-windows desktop-watch merc-seed-art
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' Makefile | sed 's/:.*## /\t/' | awk -F '\t' '{printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -140,6 +140,15 @@ endif
 		--exclude node_modules --exclude .svelte-kit --exclude build \
 		--exclude target \
 		desktop/ $(DESKTOP_WIN_DIR)/
+
+# The Windows RELEASE exe of the synced copy, no installer (POE-249, 2026-09-07).
+# A debug `tauri dev` build reads the temple sheet 10-20x slower than release
+# (measured 4247 ms vs 666 ms on the PC), so a timing question is answered on
+# this build. Close a running ProfitOfExile.exe first: Windows will not
+# overwrite a running binary and cargo fails at the link step. Output:
+# $(DESKTOP_WIN_DIR)/src-tauri/target/release/ProfitOfExile.exe
+desktop-release-windows: desktop-sync ## Sync, then build the Windows release exe (no installer); close the running app first
+	/mnt/c/Windows/System32/cmd.exe /c "$$(wslpath -w $(DESKTOP_WIN_DIR))\scripts\build-release.cmd"
 
 desktop-watch: ## Watch + sync desktop/ to Windows on changes
 ifndef DESKTOP_WIN_DIR
