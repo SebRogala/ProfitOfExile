@@ -1,33 +1,153 @@
 <script lang="ts">
 	let currentFeature = $state(0);
+	/** The lightbox image: a `static/` path, or null when closed. */
 	let zoomedImg = $state<string | null>(null);
+
+	// Icon paths (24×24 outline strokes).
+	const ICON_DOC = 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z';
+	const ICON_EYE = 'M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z';
+	const ICON_COIN = 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z';
+	const ICON_OVERLAY = 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z';
+	const ICON_FLASK = 'M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z';
+
+	/** How It Works — the mechanism every module shares. Module-specific detail belongs in `modules`, not here. */
 	const features = [
 		{
-			title: 'OCR Gem Detection',
-			desc: 'Hover over Font options — the app reads gem names directly from your screen and compares them instantly.',
-			icon: 'M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z',
+			title: 'Client.txt Triggers',
+			desc: 'Path of Exile logs zone changes and NPC lines to a plain-text file. The app reads it to know when a panel is worth looking at — and looks only then.',
+			icon: ICON_DOC,
 		},
 		{
-			title: 'Live Trade Prices',
-			desc: 'Direct GGG trade API lookups from your machine. See real listings, seller concentration, price outliers.',
-			icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+			title: 'Screen Reading',
+			desc: "On a trigger, the app captures the panel's region and reads it with Windows' built-in OCR. Read-only: no game memory, no input, and no screenshot leaves your machine.",
+			icon: ICON_EYE,
 		},
 		{
-			title: 'In-Game Overlay',
-			desc: 'Transparent overlay with gem comparison, pick buttons, and trade data — fully click-through, never blocks the game.',
-			icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
+			title: 'Live Market Data',
+			desc: "The public Trade API from your own machine (opt-in), GGG's currency-exchange feed and poe.ninja baselines — real listings, seller concentration, price outliers.",
+			icon: ICON_COIN,
 		},
 		{
-			title: 'Font Craft Tracking',
-			desc: 'Automatically captures craft options, tracks remaining uses, detects jackpots. Session data sent to server for analysis.',
-			icon: 'M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z',
+			title: 'In-Game Overlays',
+			desc: 'Click-through windows show the verdict where you are looking and never block the game. Place each one once in Settings.',
+			icon: ICON_OVERLAY,
 		},
 		{
-			title: 'Lab Map Overlays',
-			desc: 'Compass and path strip overlays show your route through the labyrinth with room content markers, navigation cues, and lab room progress.',
-			icon: 'M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7',
+			title: 'Server-Side Analysis',
+			desc: 'The ranking and pricing models run on the ProfitOfExile server and feed both the app and the web dashboard.',
+			icon: ICON_FLASK,
 		},
 	];
+
+	interface Screenshot {
+		/** Path under `static/`. */
+		src: string;
+		alt: string;
+		caption: string;
+	}
+
+	interface Module {
+		/** Anchor: the entry renders as `#module-<id>`. */
+		id: string;
+		name: string;
+		/** 'beta' modules are hidden until the device is promoted (POE-203); the section's footnote says how. */
+		status: 'available' | 'beta';
+		tagline: string;
+		/** What arms it — a Client.txt event, a button, or nothing. */
+		trigger: string;
+		/** The screen region it reads, or "nothing". This line is what the Transparency section points at. */
+		reads: string;
+		/** What the player gets, one line each. */
+		gives: string[];
+		/** Anything the player must set up by hand for this module alone. */
+		setup?: string;
+		screenshots: Screenshot[];
+	}
+
+	/**
+	 * The Modules section, one entry per module. Adding a module is adding an
+	 * entry here plus its screenshots in `static/`; the rest of the page is
+	 * module-agnostic and should not need touching.
+	 */
+	const modules: Module[] = [
+		{
+			id: 'lab',
+			name: 'Lab Farming',
+			status: 'available',
+			tagline: 'Divine Font farming in the Labyrinth: which gem to take, and at what price.',
+			trigger: "Entering the 3rd Aspirant's Trial, from Client.txt.",
+			reads: 'The gem tooltip while you hover Font options, and the Font craft panel.',
+			gives: [
+				'Comparator overlay: the gems on offer with live trade prices, seller concentration and outliers, plus pick buttons.',
+				'Path strip and compass overlays: your route through the lab with room contents and navigation cues.',
+				'Font craft tracking: remaining uses and jackpots, with each session sent to the server to feed the dashboard.',
+			],
+			setup: 'Its two OCR regions are placed by hand once — Settings → OCR Regions: the gem tooltip (top of screen) and the Font craft panel (centre).',
+			screenshots: [
+				{ src: '/setup-gem-region.png', alt: 'Gem tooltip OCR region', caption: 'Gem tooltip region' },
+				{ src: '/setup-font-region.png', alt: 'Font panel OCR region', caption: 'Font panel region' },
+				{ src: '/overlay-labmap.png', alt: 'Lab map path strip overlay', caption: 'Path strip overlay — lab progress with room contents' },
+			],
+		},
+		{
+			id: 'temple',
+			name: 'Temple of Atzoatl',
+			status: 'beta',
+			tagline: "Alva's incursions: which architect to kill and which door to open.",
+			trigger: "Alva's start line (\"Time to go\"), from Client.txt; any other Alva line or a zone change stands it down.",
+			reads: 'The temple sheet — the 13 rooms and both architect offers — once per board.',
+			gives: [
+				'The ranked recommendation with its reasons, and the gambles with their measured risk.',
+				'Room values in chaos, fed by the market (Default) or by your own numbers (Custom).',
+			],
+			// TODO screenshots: static/module-temple-overlay.png (the overlay over the temple sheet), static/module-temple-page.png (the Temple page).
+			screenshots: [],
+		},
+		{
+			id: 'mercenaries',
+			name: 'Mercenaries',
+			status: 'beta',
+			tagline: 'Is this recruit worth the wager?',
+			trigger: "The recruit's voice line, from Client.txt — or Scan now on the page.",
+			reads: 'The recruit window, row by row.',
+			gives: [
+				'A verdict per community guide ruleset, with per-row glyphs on an overlay strip that clears four seconds after the window closes.',
+				'What the same mercenary is going for on trade (opt-in, with a searches-spent counter), plus links to the trade searches and a warrant price check.',
+				'Gem icons it learns from the recruit window are pooled through the server as 24×24 signatures of the icon itself, so every device recognises them.',
+			],
+			// TODO screenshots: static/module-merc-overlay.png (the verdict strip over the recruit window), static/module-merc-page.png (the Mercenaries page).
+			screenshots: [],
+		},
+		{
+			id: 'exchange',
+			name: 'Currency Exchange',
+			status: 'beta',
+			tagline: 'Arbitrage flips on the in-game Currency Exchange, ranked.',
+			trigger: "None — the server ranks plays from GGG's public currency-exchange feed.",
+			reads: 'Nothing on your screen.',
+			gives: [
+				'Each play as a five-step route — spend, buy, sell, convert, get — worded as orders the exchange will actually take.',
+				'The worthwhile size derived for you: a scanner, not a calculator. Investment and ROI, net beside raw.',
+			],
+			// TODO screenshot: static/module-exchange-page.png (the Currency Exchange page).
+			screenshots: [],
+		},
+	];
+
+	/**
+	 * The OCR-pack walkthrough and Transparency are collapsed by default. The
+	 * desktop app links to the former by hash, and a <details> a hash points into
+	 * does not open on its own in every browser, so the hash opens it here — on
+	 * landing and on change.
+	 */
+	let ocrPackOpen = $state(false);
+	let transparencyOpen = $state(false);
+	function openFromHash() {
+		if (location.hash === '#ocr-language-pack') ocrPackOpen = true;
+		if (location.hash === '#transparency') transparencyOpen = true;
+	}
+	// Landing from the app's link: no hashchange fires, so check once on mount.
+	$effect(openFromHash);
 
 	function cycleFeature() {
 		currentFeature = (currentFeature + 1) % features.length;
@@ -54,9 +174,11 @@
 	});
 </script>
 
+<svelte:window onhashchange={openFromHash} />
+
 <svelte:head>
-	<title>ProfitOfExile — Lab Farming Companion for Path of Exile 1</title>
-	<meta name="description" content="Real-time gem comparison, OCR-powered overlay, and profit analysis for Divine Font farming in Path of Exile." />
+	<title>ProfitOfExile — Companion Overlays for Wraeclast</title>
+	<meta name="description" content="Companion app for Path of Exile 1: reads the game's log and screen, checks the market, and shows the verdict in in-game overlays — Labyrinth, Temple of Atzoatl, Mercenaries and the Currency Exchange." />
 	<link rel="preconnect" href="https://fonts.googleapis.com" />
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
 	<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300&display=swap" rel="stylesheet" />
@@ -72,13 +194,13 @@
 	<header class="hero">
 		<div class="hero-content">
 			<img src="/logo-128.png" alt="ProfitOfExile" class="hero-logo" />
-		<p class="tagline">Divine Font Farming Companion</p>
+		<p class="tagline">Path of Exile Companion</p>
 			<h1 class="title">
 				<span class="title-profit">Profit</span><span class="title-of">Of</span><span class="title-exile">Exile</span>
 			</h1>
 			<p class="subtitle">
-				Real-time gem comparison with OCR detection, in-game overlay,
-				and profit analysis for Path of Exile 1 lab farming.
+				Reads the game's own log and screen (where needed), checks the market,
+				and shows the verdict in in-game overlays.
 			</p>
 
 			<div class="cta-row">
@@ -94,6 +216,9 @@
 			<p class="platform-note">
 				Windows only. Requires Path of Exile 1.
 				<a href="https://github.com/SebRogala/ProfitOfExile/releases/latest/download/ProfitOfExile-standalone.exe" class="portable-link">Portable version (no install)</a>
+				<br />
+				Non-English Windows may need the English OCR pack —
+				<a href="#ocr-language-pack" class="portable-link" onclick={() => (ocrPackOpen = true)}>instructions</a>
 			</p>
 		</div>
 
@@ -126,7 +251,58 @@
 
 	</section>
 
-	<!-- Setup -->
+	<!-- Modules — one entry per module in `modules` (script). A new module is a new entry plus its screenshots in static/. -->
+	<section class="modules" id="modules">
+		<h2 class="section-heading">Modules</h2>
+		<p class="modules-intro">
+			Every module has the same shape: a Client.txt event arms it, it reads one panel while that panel is on
+			screen, and it shows its verdict in an overlay you place once. Switch each on or off in the app's sidebar.
+		</p>
+		<div class="module-list">
+			{#each modules as m (m.id)}
+				<article class="module" id="module-{m.id}">
+					<header class="module-head">
+						<h3 class="module-name">{m.name}</h3>
+						<span class="module-status" class:beta={m.status === 'beta'}>{m.status === 'beta' ? 'Beta' : 'Available'}</span>
+					</header>
+					<p class="module-tagline">{m.tagline}</p>
+					<dl class="module-facts">
+						<dt>Trigger</dt>
+						<dd>{m.trigger}</dd>
+						<dt>Reads</dt>
+						<dd>{m.reads}</dd>
+					</dl>
+					<ul class="module-gives">
+						{#each m.gives as line}
+							<li>{line}</li>
+						{/each}
+					</ul>
+					{#if m.setup}
+						<p class="module-setup"><strong>Setup:</strong> {m.setup}</p>
+					{/if}
+					{#if m.screenshots.length}
+						<div class="step-images">
+							{#each m.screenshots as shot (shot.src)}
+								<figure class="step-figure">
+									<button class="step-img-button" type="button" onclick={() => zoomImage(shot.src)} aria-label="Enlarge: {shot.alt}">
+										<img src={shot.src} alt={shot.alt} class="step-img" loading="lazy" />
+									</button>
+									<figcaption>{shot.caption} <span class="click-hint">(click to enlarge)</span></figcaption>
+								</figure>
+							{/each}
+						</div>
+					{/if}
+				</article>
+			{/each}
+		</div>
+		<p class="modules-beta-note">
+			Beta modules are switched on per device. Ask on
+			<a href="https://discord.gg/QX53hrv5GP" target="_blank" rel="noopener">Discord</a>
+			with the device id the app shows under Ctrl+Shift+F11 &rarr; Identify.
+		</p>
+	</section>
+
+	<!-- Setup — module-agnostic. Anything one module needs by hand goes in its `modules` entry (`setup`), not here. -->
 	<section class="setup">
 		<h2 class="section-heading">Quick Setup</h2>
 
@@ -141,44 +317,22 @@
 			<div class="step">
 				<span class="step-num">2</span>
 				<div class="step-content">
-					<h3>Configure OCR Regions</h3>
-					<p>Go to Settings &rarr; Game Integration. Configure two red rectangles: one for the <strong>gem tooltip area</strong> (top of screen, where gem names appear on hover), and one for the <strong>font craft panel</strong> (center, where craft options are listed).</p>
-					<div class="step-images">
-						<figure class="step-figure">
-							<button class="step-img-button" type="button" onclick={() => zoomImage('gem')} aria-label="Enlarge gem tooltip OCR region">
-								<img src="/setup-gem-region.png" alt="Gem tooltip OCR region" class="step-img" />
-							</button>
-							<figcaption>Gem tooltip region <span class="click-hint">(click to enlarge)</span></figcaption>
-						</figure>
-						<figure class="step-figure">
-							<button class="step-img-button" type="button" onclick={() => zoomImage('font')} aria-label="Enlarge font panel OCR region">
-								<img src="/setup-font-region.png" alt="Font panel OCR region" class="step-img" />
-							</button>
-							<figcaption>Font panel region <span class="click-hint">(click to enlarge)</span></figcaption>
-						</figure>
-					</div>
+					<h3>Check Client.txt</h3>
+					<p>Settings &rarr; Game Integration. The app finds <code>Client.txt</code> in the GGG and Steam install folders on its own; if the status says the file is missing, browse to the <code>logs</code> folder of your install.</p>
 				</div>
 			</div>
 			<div class="step">
 				<span class="step-num">3</span>
 				<div class="step-content">
-					<h3>Position the Overlays</h3>
-					<p>Settings &rarr; Overlays to configure three in-game overlays: the <strong>Comparator</strong> (gem comparison with trade data), the <strong>Path Strip</strong> (lab room progress), and the <strong>Compass</strong> (room map with content markers and navigation). Drag each red rectangle where you want it.</p>
-					<div class="step-images">
-						<figure class="step-figure">
-							<button class="step-img-button" type="button" onclick={() => zoomImage('labmap')} aria-label="Enlarge lab map path strip overlay">
-								<img src="/overlay-labmap.png" alt="Lab map path strip overlay" class="step-img" />
-							</button>
-							<figcaption>Path strip overlay — lab progress with room contents <span class="click-hint">(click to enlarge)</span></figcaption>
-						</figure>
-					</div>
+					<h3>Place the Overlays</h3>
+					<p>Settings &rarr; Overlays. Each module has its own group of red rectangles; drag them where you want them over the game and save.</p>
 				</div>
 			</div>
 			<div class="step">
 				<span class="step-num">4</span>
 				<div class="step-content">
-					<h3>Run the Lab</h3>
-					<p>The app detects when you enter the 3rd Aspirant's Trial and starts scanning automatically. Hover over Font gems — they appear in the comparator and overlay instantly.</p>
+					<h3>Play</h3>
+					<p>Switch modules on and off in the sidebar. Each one arms itself from Client.txt, reads its panel while it is on screen, and shows its verdict in the overlay. On a non-English Windows, install the <a href="#ocr-language-pack" onclick={() => (ocrPackOpen = true)}>English OCR pack</a> first.</p>
 				</div>
 			</div>
 		</div>
@@ -202,52 +356,59 @@
 			onclick={closeZoom}
 			onkeydown={handleLightboxKeydown}
 		>
-			<img src={zoomedImg === 'gem' ? '/setup-gem-region.png' : zoomedImg === 'font' ? '/setup-font-region.png' : '/overlay-labmap.png'} alt="Enlarged view" class="lightbox-img" />
+			<img src={zoomedImg} alt="Enlarged view" class="lightbox-img" />
 		</div>
 	{/if}
 
 	<!-- Transparency -->
-	<section class="transparency" id="transparency">
-		<h2 class="section-heading">Transparency & Terms of Service</h2>
+	<section class="transparency">
+		<details class="section-details" id="transparency" bind:open={transparencyOpen}>
+		<summary class="section-heading section-summary">Transparency & Terms of Service</summary>
 		<p class="transparency-intro">
-			We believe transparency is non-negotiable. This section explains exactly what the desktop app does,
+			Transparency is non-negotiable here. This section explains exactly what the desktop app does,
 			what it doesn't do, and where the gray areas are.
 		</p>
 
 		<div class="transparency-block">
-			<h3 class="transparency-subheading">What We Do</h3>
+			<h3 class="transparency-subheading">What the App Does</h3>
 			<div class="transparency-items">
 				<div class="transparency-item">
 					<span class="transparency-label">1. Read Client.txt</span>
-					<p>Path of Exile writes a plain-text log file called <code>Client.txt</code>. We watch this file to detect
-						game events &mdash; which zone you entered, when the Font of Divine Skill craft options appear, when you
-						exit the Labyrinth. This is read-only. We never write to or modify this file.</p>
+					<p>Path of Exile writes a plain-text log file called <code>Client.txt</code>. The app watches this file to detect
+						game events &mdash; which zone you entered, NPC lines such as Alva's or a recruit's, when the Font of Divine Skill
+						craft options appear, when you exit the Labyrinth. This is read-only. The app never writes to or modifies this file.</p>
 				</div>
 				<div class="transparency-item">
 					<span class="transparency-label">2. Screen Capture & OCR</span>
-					<p>When the Font craft options appear (detected via Client.txt), the app automatically captures a small region
-						of your screen (550&times;75 pixels by default) using the standard Windows screenshot API. It then runs
-						Windows' built-in text recognition (Windows.Media.Ocr) to read gem names. This runs every 250ms for a
-						maximum of 45 seconds, then stops. The automatic trigger is a quality-of-life choice &mdash; there is no
-						time limit on the Font interaction. We trigger it automatically because Client.txt tells us exactly when
-						the craft options are on screen, so there's no reason to make you press a hotkey.</p>
+					<p>When a Client.txt event says a panel is on screen, the app captures the region that panel occupies using
+						the standard Windows screenshot API and reads it with Windows' built-in text recognition (Windows.Media.Ocr).
+						It reads only while the panel is up and within a fixed budget, then stops. Which panel each module reads, and
+						what triggers it, is stated in its entry under <a href="#modules">Modules</a>. The automatic trigger is a
+						quality-of-life choice &mdash; none of these interactions has a time limit. Client.txt says exactly when the
+						panel is on screen, so there's no reason to make you press a hotkey.</p>
 					<p><strong>Important privacy detail:</strong> no screenshot or screen capture ever leaves your machine.
 						The captured image is processed entirely locally by Windows' built-in OCR engine, then immediately
-						discarded. The only data sent to the server is the extracted text &mdash; gem names and font crafting
-						option wording. Plain text, nothing else.</p>
+						discarded. The only data that reaches the server is plain text the app extracted or recorded &mdash; gem names, craft option
+						wording, lab run outcomes &mdash; with one exception: the Mercenaries module learns gem icons from the recruit
+						window and pools each one through the server as a 24&times;24-pixel signature of the icon's disc, so every
+						device recognises it. An icon the pool already knows is matched locally and nothing is sent, so a synced
+						device uploads only when it meets art the pool has never seen. Game art only; no screenshot and nothing else
+						of your screen ever leaves your machine.</p>
 				</div>
 				<div class="transparency-item">
 					<span class="transparency-label">3. Trade API (opt-in)</span>
-					<p>The app can query GGG's public Trade API to look up gem prices &mdash; but this is <strong>off by
-						default</strong>. You enable it manually via the "auto-trade" option in the comparator. When enabled,
-						our rate limiter reads GGG's own rate-limit headers and stays at 65% of the allowed budget with
+					<p>The app can query GGG's public Trade API to look up prices &mdash; gems in the lab, what a captured mercenary is
+						going for &mdash; but this is <strong>off by default</strong>. You enable it per module: the comparator's
+						"auto-trade" option, the Mercenaries page's trade setting. When enabled,
+						the app's rate limiter reads GGG's own rate-limit headers and stays at 65% of the allowed budget with
 						additional safety padding.</p>
 				</div>
 				<div class="transparency-item">
-					<span class="transparency-label">4. Price Data from poe.ninja</span>
+					<span class="transparency-label">4. Price Data from poe.ninja and GGG's Exchange Feed</span>
 					<p>Gem and currency prices come from <a href="https://poe.ninja" target="_blank" rel="noopener">poe.ninja</a>
-						&mdash; a third-party community aggregator. Our server fetches this data periodically, not the desktop
-						app directly. We do not scrape the Path of Exile website.</p>
+						&mdash; a third-party community aggregator; Currency Exchange plays come from GGG's public currency-exchange feed.
+						The ProfitOfExile server fetches both periodically, not the desktop app directly. Nothing scrapes the Path of
+						Exile website.</p>
 				</div>
 				<div class="transparency-item">
 					<span class="transparency-label">5. Display an Overlay</span>
@@ -259,15 +420,15 @@
 		</div>
 
 		<div class="transparency-block">
-			<h3 class="transparency-subheading">What We Never Do</h3>
+			<h3 class="transparency-subheading">What the App Never Does</h3>
 			<ul class="transparency-never">
 				<li><strong>Inject code</strong> into the Path of Exile process</li>
-				<li><strong>Read game memory</strong> &mdash; we have zero access to game internals</li>
+				<li><strong>Read game memory</strong> &mdash; the app has zero access to game internals</li>
 				<li><strong>Modify game files</strong> &mdash; not the executable, not data files, nothing</li>
 				<li><strong>Send input</strong> to the game &mdash; no clicks, no keystrokes, no mouse movements</li>
 				<li><strong>Hook game functions</strong> &mdash; no DLL injection, no API hooking</li>
 				<li><strong>Automate gameplay</strong> &mdash; the app does not play the game for you in any way</li>
-				<li><strong>Connect to game servers</strong> &mdash; we only use the public Trade API (when you opt in), same as the official trade website</li>
+				<li><strong>Connect to game servers</strong> &mdash; the app only uses the public Trade API (when you opt in), same as the official trade website</li>
 			</ul>
 		</div>
 
@@ -283,7 +444,7 @@
 		</div>
 
 		<div class="transparency-block">
-			<h3 class="transparency-subheading">Where We Sit Among Community Tools</h3>
+			<h3 class="transparency-subheading">Where the App Sits Among Community Tools</h3>
 			<p>Not all tools work the same way. Here's an honest comparison:</p>
 			<div class="transparency-table-wrap">
 				<table class="transparency-table">
@@ -328,8 +489,8 @@
 					</tbody>
 				</table>
 			</div>
-			<p>Each technique we use exists individually across established community tools: auto-trigger from Client.txt
-				(LabCompass, TraXile), screen reading (MercuryTrade, Exile-UI). We combine them.</p>
+			<p>Each technique the app uses exists individually across established community tools: auto-trigger from Client.txt
+				(LabCompass, TraXile), screen reading (MercuryTrade, Exile-UI). The app combines them.</p>
 		</div>
 
 		<div class="transparency-block">
@@ -340,14 +501,14 @@
 				<code>/hideout</code> or a trade whisper &mdash; but not both. This is why overlay tools with trade response
 				buttons or party management are considered fine.</p>
 			<p>ProfitOfExile doesn't send any input to the game at all. No chat commands, no clicks, no keystrokes &mdash;
-				nothing. We are entirely below the threshold of what GGG has explicitly allowed for community tools.</p>
+				nothing. The app is entirely below the threshold of what GGG has explicitly allowed for community tools.</p>
 		</div>
 
 		<div class="transparency-block transparency-gray">
 			<h3 class="transparency-subheading">The Gray Area &mdash; Honest Assessment</h3>
 			<p>GGG's Terms of Use prohibit <em>"automated software or bots in relation to your access or use of the
 				Services."</em></p>
-			<p><strong>Our position:</strong></p>
+			<p><strong>The author's position:</strong></p>
 			<ul class="transparency-position">
 				<li>The app is <strong>passive</strong> &mdash; it reads information and displays it. It never acts on your behalf.</li>
 				<li>It does not automate gameplay. You still make every decision and every click yourself.</li>
@@ -361,12 +522,12 @@
 				<li><strong>GGG has never explicitly approved any local third-party tool.</strong> Not Awakened PoE Trade,
 					not Exile-UI, not Path of Building, not LabCompass. Community tools exist in a space of implicit tolerance.</li>
 				<li><strong>No bans have been reported</strong> for using OCR-based overlay tools. This is weak but real evidence.</li>
-				<li><strong>Auto-triggered OCR is the part closest to the line.</strong> We believe it falls on the right side
-					because it's read-only information display, not automation &mdash; but we cannot guarantee GGG sees it the
+				<li><strong>Auto-triggered OCR is the part closest to the line.</strong> I believe it falls on the right side
+					because it's read-only information display, not automation &mdash; but I cannot guarantee GGG sees it the
 					same way.</li>
 			</ul>
-			<p class="transparency-promise">If GGG ever communicates that this approach crosses a line, we will change it
-				immediately. We have no interest in putting your account at risk.</p>
+			<p class="transparency-promise">If GGG ever communicates that this approach crosses a line, I will change it
+				immediately. I have no interest in putting your account at risk.</p>
 		</div>
 
 		<div class="transparency-block">
@@ -378,6 +539,75 @@
 					&mdash; you can inspect exactly what it does</li>
 			</ul>
 		</div>
+		</details>
+	</section>
+
+	<!-- English OCR pack — the desktop app links here (Settings → OCR Regions warning) with #ocr-language-pack; keep the id stable. -->
+	<section class="setup ocr-pack">
+		<details class="section-details" id="ocr-language-pack" bind:open={ocrPackOpen}>
+		<summary class="section-heading section-summary">English OCR Language Pack</summary>
+		<p class="ocr-pack-intro">
+			The app reads gem names with the OCR built into Windows, pinned to <strong>English (United States)</strong> because Path of Exile draws its UI in English whatever language Windows runs in. Without that pack Windows falls back to your own language and gem names come out garbled — the app then shows a red warning at the top of Settings &rarr; OCR Regions. Installing the pack takes a minute and does not change your Windows display language.
+		</p>
+
+		<div class="steps">
+			<div class="step">
+				<span class="step-num">1</span>
+				<div class="step-content">
+					<h3>Open the language settings</h3>
+					<p>Windows Settings &rarr; <strong>Time &amp; language</strong> &rarr; <strong>Language &amp; region</strong>. On Windows 10 the page is called <strong>Language</strong>.</p>
+				</div>
+			</div>
+			<div class="step">
+				<span class="step-num">2</span>
+				<div class="step-content">
+					<h3>Add English (United States)</h3>
+					<p>Under <strong>Preferred languages</strong> click <strong>Add a language</strong>, search for <strong>English (United States)</strong> and click <strong>Next</strong>. If it is already in the list, open its <strong>&hellip;</strong> menu &rarr; <strong>Language options</strong> instead and continue with step 3.</p>
+					<div class="step-images">
+						<figure class="step-figure">
+							<button class="step-img-button" type="button" onclick={() => zoomImage('/setup-ocr-pack-language.png')} aria-label="Enlarge the Add a language dialog">
+								<img src="/setup-ocr-pack-language.png" alt="Add a language dialog with English (United States) found" class="step-img" />
+							</button>
+							<figcaption>Add a language &rarr; English (United States) <span class="click-hint">(click to enlarge)</span></figcaption>
+						</figure>
+					</div>
+				</div>
+			</div>
+			<div class="step">
+				<span class="step-num">3</span>
+				<div class="step-content">
+					<h3>Install Optical character recognition</h3>
+					<p>On the <strong>Install language features</strong> page, <strong>Optical character recognition</strong> is listed under <strong>Required language features</strong> and installs with the language on its own — if it is missing there, that Windows build has no OCR for the language. Untick every <strong>Optional language feature</strong>, leave <strong>Set as my Windows display language</strong> unticked, then click <strong>Install</strong>. For a language that was already listed, the feature sits under <strong>Language features</strong> on its Language options page with a download button beside it.</p>
+					<div class="step-images">
+						<figure class="step-figure">
+							<button class="step-img-button" type="button" onclick={() => zoomImage('/setup-ocr-pack-features.png')} aria-label="Enlarge the Install language features page">
+								<img src="/setup-ocr-pack-features.png" alt="Install language features page, Optical character recognition under Required language features" class="step-img" />
+							</button>
+							<figcaption>Optical character recognition under Required language features <span class="click-hint">(click to enlarge)</span></figcaption>
+						</figure>
+					</div>
+				</div>
+			</div>
+			<div class="step">
+				<span class="step-num">4</span>
+				<div class="step-content">
+					<h3>Restart Profit of Exile</h3>
+					<p>The app picks its recognizer once per session, so close and reopen it after the download finishes. With the pack in place the warning in Settings &rarr; OCR Regions is gone.</p>
+				</div>
+			</div>
+			<div class="step">
+				<span class="step-num step-num-text">PS</span>
+				<div class="step-content">
+					<h3>PowerShell instead of Settings</h3>
+					<p>Open <strong>Windows PowerShell</strong> as administrator (not PowerShell 7) and run the two lines; the first is the basic pack the OCR pack depends on. The download can take a few minutes.</p>
+					<pre class="ocr-pack-code"><code>Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.Basic*en-US*' &#125; | Add-WindowsCapability -Online
+Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*en-US*' &#125; | Add-WindowsCapability -Online</code></pre>
+					<p>To check, run the line below: <code>State : Installed</code> means the pack is in place.</p>
+					<pre class="ocr-pack-code"><code>Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*en-US*' &#125;</code></pre>
+				</div>
+			</div>
+		</div>
+		</details>
 	</section>
 
 	<!-- Credits -->
@@ -705,6 +935,154 @@
 		font-weight: 300;
 	}
 
+	/* === Modules === */
+	.modules {
+		position: relative;
+		z-index: 2;
+		max-width: 760px;
+		margin: 0 auto;
+		padding: 60px 24px 80px;
+		border-top: 1px solid rgba(201, 170, 113, 0.08);
+	}
+
+	.modules-intro {
+		font-size: 1.05rem;
+		line-height: 1.6;
+		color: #a0a0b0;
+		font-weight: 300;
+		text-align: center;
+		max-width: 640px;
+		margin: -24px auto 40px;
+	}
+
+	.module-list {
+		display: flex;
+		flex-direction: column;
+		gap: 32px;
+	}
+
+	.module {
+		background: rgba(26, 26, 46, 0.6);
+		border: 1px solid rgba(201, 170, 113, 0.08);
+		padding: 28px 24px;
+	}
+
+	.module-head {
+		display: flex;
+		align-items: baseline;
+		flex-wrap: wrap;
+		gap: 12px;
+		margin-bottom: 6px;
+	}
+
+	.module-name {
+		font-family: 'Cinzel', serif;
+		font-size: 1.25rem;
+		font-weight: 700;
+		color: #e0e0e0;
+		letter-spacing: 0.03em;
+	}
+
+	.module-status {
+		font-size: 0.7rem;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		padding: 2px 8px;
+		border: 1px solid rgba(201, 170, 113, 0.3);
+		border-radius: 2px;
+		color: #c9aa71;
+	}
+
+	.module-status.beta {
+		border-color: rgba(94, 234, 212, 0.4);
+		color: #5eead4;
+	}
+
+	.module-tagline {
+		font-size: 1.05rem;
+		line-height: 1.6;
+		color: #a0a0b0;
+		font-weight: 300;
+		margin-bottom: 16px;
+	}
+
+	.module-facts {
+		display: grid;
+		grid-template-columns: max-content 1fr;
+		gap: 6px 16px;
+		margin: 0 0 16px;
+		font-size: 0.95rem;
+		line-height: 1.5;
+	}
+
+	.module-facts dt {
+		color: #c9aa71;
+		font-size: 0.75rem;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		padding-top: 3px;
+	}
+
+	.module-facts dd {
+		margin: 0;
+		color: #a0a0b0;
+		font-weight: 300;
+	}
+
+	.module-gives {
+		list-style: none;
+		padding: 0;
+		margin: 0 0 16px;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.module-gives li {
+		position: relative;
+		padding-left: 18px;
+		font-size: 1rem;
+		line-height: 1.6;
+		color: #a0a0b0;
+		font-weight: 300;
+	}
+
+	.module-gives li::before {
+		content: '\25C6';
+		position: absolute;
+		left: 0;
+		top: 0;
+		font-size: 0.55rem;
+		line-height: 1.6rem;
+		color: rgba(201, 170, 113, 0.5);
+	}
+
+	.module-setup {
+		font-size: 0.95rem;
+		line-height: 1.6;
+		color: #a0a0b0;
+		font-weight: 300;
+	}
+
+	.module-setup strong {
+		color: #e0e0e0;
+		font-weight: 500;
+	}
+
+	.modules-beta-note {
+		margin-top: 32px;
+		text-align: center;
+		font-size: 0.9rem;
+		line-height: 1.6;
+		color: #7a7a8a;
+	}
+
+	.modules-beta-note a {
+		color: #c9aa71;
+		text-decoration: none;
+		border-bottom: 1px solid rgba(201, 170, 113, 0.3);
+	}
+
 	/* === Setup === */
 	.setup {
 		position: relative;
@@ -821,6 +1199,76 @@
 
 	.step-content a:hover {
 		border-color: #c9aa71;
+	}
+
+	.ocr-pack {
+		padding: 40px 24px 60px;
+		border-top: 1px solid rgba(201, 170, 113, 0.08);
+	}
+
+	.section-summary {
+		cursor: pointer;
+		list-style: none;
+		margin-bottom: 0;
+		user-select: none;
+	}
+
+	.section-summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.section-summary::after {
+		content: '\25BE';
+		display: inline-block;
+		margin-left: 12px;
+		color: rgba(201, 170, 113, 0.6);
+		transition: transform 0.2s;
+	}
+
+	.section-details[open] > .section-summary {
+		margin-bottom: 40px;
+	}
+
+	.section-details[open] > .section-summary::after {
+		transform: rotate(180deg);
+	}
+
+	.step-num-text {
+		font-size: 1rem;
+		padding-top: 8px;
+	}
+
+	.ocr-pack-intro {
+		font-size: 1.05rem;
+		line-height: 1.6;
+		color: #a0a0b0;
+		font-weight: 300;
+		margin-bottom: 32px;
+	}
+
+	.ocr-pack-intro strong,
+	.ocr-pack .step-content strong {
+		color: #e0e0e0;
+		font-weight: 500;
+	}
+
+	.ocr-pack-code {
+		margin: 12px 0;
+		padding: 10px 12px;
+		background: rgba(201, 170, 113, 0.08);
+		border: 1px solid rgba(201, 170, 113, 0.15);
+		border-radius: 4px;
+		font-family: monospace;
+		font-size: 0.85rem;
+		line-height: 1.5;
+		color: #d4b87a;
+		overflow-x: auto;
+		white-space: pre;
+	}
+
+	.step-content code {
+		font-family: monospace;
+		color: #d4b87a;
 	}
 
 	/* === Dashboard Link === */
