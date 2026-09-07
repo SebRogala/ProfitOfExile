@@ -1508,6 +1508,10 @@
 			resizable: false,
 			shadow: false,
 			skipTaskbar: true,
+			// NOT `contentProtected`. Held permanently, the exclude-from-capture
+			// affinity also removed the strip from the player's own screenshots
+			// (smoke test 2026-09-07). Rust holds it for the duration of each
+			// grab instead — `capture.rs`, `EXCLUDED_WHILE_GRABBING`.
 			// Built without stealing the foreground. Tauri focuses a new window
 			// by default, and this one has teeth: activation makes the game stop
 			// being the foreground window, which drops `game_in_foreground` and

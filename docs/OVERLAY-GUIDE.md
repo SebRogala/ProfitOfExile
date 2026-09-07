@@ -771,6 +771,17 @@ runtime failure mode:
   path is deliberately limited to one `Relaxed` `AtomicU64` store — both are
   what keep the recovery from becoming the next timeout.
 
+- Windows' exclude-from-capture affinity (`SetWindowDisplayAffinity`,
+  `WDA_EXCLUDEFROMCAPTURE`) removes a transparent always-on-top WebView2 window
+  from xcap's monitor grab entirely — omitted, not blanked: game pixels where it
+  stood — and, held permanently, from the player's own screenshots too
+  (measured 2026-09-07 on the PC, first through Tauri's `contentProtected`, then
+  through the per-grab hold in `capture.rs`, ADR-023). Set and cleared around a
+  single grab it produced no visible flicker on that machine at the 2 s / 10 s
+  cadence. One machine: a flicker report from elsewhere is new evidence, not a
+  contradiction, and the status-gated hold in ADR-023's alternatives is the
+  fallback that keeps the design.
+
 Do not delete these observations merely because a future code path appears
 simpler; reproduce the Windows behavior first or supersede them with a dated
 regression test/decision.
@@ -1555,7 +1566,9 @@ touching the named path.
   static gates cannot reach, because the failure is the app reading its own
   overlay back as game pixels. With the offer boxes and the door diamond both on
   screen over a live panel, press **Debug capture** in the Temple page and open
-  the dump: the capture is a real screen grab, so the overlay is IN it. Then
+  the dump: the capture is a real screen grab, so the overlay is IN it (a
+  window in `capture.rs`'s `EXCLUDED_WHILE_GRABBING` is the one exception — the
+  merc item below is its check). Then
   compare `report.json` against a dump taken with the temple module's overlay
   toggled off on the same board — the room title, both architect blocks, the
   incursion count, `current`, `doors` and `unknownRooms` must be identical. Any
@@ -1572,6 +1585,24 @@ touching the named path.
   `avoidRects` cannot protect the second one —
   once the user places the widget it goes where they put it — so a difference
   that only appears after a drag is the user's placement and not a defect.
+- **The merc strip is OUT of the reader's grab and IN the player's screenshot**
+  (ADR-023, 2026-09-07): park the strip over the recruit rows (Settings →
+  Overlay Positions), open a recruit window, and with the strip up press
+  **Debug capture** on the Mercenaries page. In the dump's `screen.png` the
+  strip's rectangle (`mercenary_overlay` in `settings.json`) must show game
+  pixels only — not the strip, and not a black box. `app.log` must carry
+  `capture: overlay 'mercenary' is excluded from each grab while it is taken`
+  once for the session and never `… — the merc strip is IN every grab`. Then
+  take an ordinary screenshot with the strip up: the strip must be in it. A
+  pass on the PC is dump `merc-debug/1788782245765`. Triage: strip in the dump
+  and no `capture:` line at all — the guard never ran, the window was not
+  built or the module was off when the grab happened; strip in the dump and
+  the IN-every-grab line — the OS refused the affinity (older than Windows 10
+  2004, or a window style the call rejects) and the fix is in `capture.rs`,
+  not in placement; a black box — the grab path blanks instead of omitting,
+  which is not xcap's GDI path and means the read is polluted regardless;
+  strip missing from screenshots — the clear half is failing, look at the
+  guard's `Drop`.
 - **The room widget survives the incursion, and the stand-down** (POE-244,
   POE-246's arming, rewritten in POE-248): with the panel open and a room read,
   note the outline, the green open and red closed seals, the purple suggested

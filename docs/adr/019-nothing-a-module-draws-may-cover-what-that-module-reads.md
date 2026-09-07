@@ -14,6 +14,12 @@ the one carve-out this ADR took for a PLACER's own output, the kill callout's
 arrow, is gone with the arrow. The stored-placement carve-out below is
 untouched.
 
+Amended 2026-09-07 by [ADR-023](023-a-window-excluded-from-the-grab-may-cover-what-its-module-reads.md)
+— see [the amendment at the end](#amendment-a-window-excluded-from-the-grab-is-outside-this-rule-2026-09-07):
+a window named in `capture.rs`'s `EXCLUDED_WHILE_GRABBING` is removed from
+every grab while it is taken, so this rule's premise does not hold for it.
+Today that is the merc verdict strip; every other surface stays bound.
+
 Scope: every overlay surface a module draws over a screen the same module OCRs
 or samples. Today that is the temple; the merc verdict strip and the lab
 overlays are the next candidates, and the rule is written for them rather than
@@ -230,3 +236,17 @@ POE-249 also retired the first member of that list: `calloutPlacement` and
 never-cover set, the same empty-set refusal and the same `null`-means-not-drawn
 answer — per BOX, so one that cannot be placed clear is dropped while its
 neighbour is still drawn.
+
+## Amendment: a window excluded from the grab is outside this rule (2026-09-07)
+
+[ADR-023](023-a-window-excluded-from-the-grab-may-cover-what-its-module-reads.md).
+This rule rests on one fact — the grab contains the app's own overlay — and
+`capture_screen` now removes the windows listed in `EXCLUDED_WHILE_GRABBING`
+from each grab for its duration (Windows' exclude-from-capture affinity, set
+and cleared around the copy). For such a window there is no read region to
+avoid, because its pixels are never in a frame; the never-cover set, the
+empty-set refusal and the `null` answer do not apply to it, and it may draw on
+the very cells its module matches. The merc verdict strip is the first and only
+member. Nothing else moves: the temple's placers, the stored-placement
+carve-out and the Debug-capture diff stay exactly as written, and a temple
+surface joins the list only by its own amendment to ADR-023.

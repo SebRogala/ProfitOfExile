@@ -94,11 +94,102 @@ mod platform {
     use super::{Capture, GameMonitor};
     use image::DynamicImage;
     use tauri::{AppHandle, Emitter, Manager};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Gdi::{
         GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
     };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
+    };
     use xcap::Monitor;
+
+    /// Overlay windows kept out of a screen grab WHILE it is taken.
+    ///
+    /// The merc strip draws over the recruit panel and the reader grabs the
+    /// whole monitor, so whatever the strip paints is otherwise in the frame
+    /// the icons are matched on. Windows' exclude-from-capture affinity removes
+    /// a window from captures without changing what is on screen — measured
+    /// 2026-09-07 through Tauri's `contentProtected`, which sets the same flag:
+    /// the strip vanished from the reader's dump AND from the player's own
+    /// screenshots. The second half is the cost, so the flag is not held
+    /// permanently: [`ExcludedFromCapture`] sets it just before a grab and
+    /// clears it right after, on every grab in the app. Between grabs — at
+    /// the reader's 2 s live / 10 s paused cadence, nearly always — a
+    /// screenshot tool sees the strip.
+    ///
+    /// Labels, not handles: a window that is not built right now is simply
+    /// skipped, and one rebuilt later is picked up by the next grab.
+    const EXCLUDED_WHILE_GRABBING: &[&str] = &["mercenary"];
+
+    /// The affinity held for one grab. `Drop` clears it, so an error between
+    /// `hold` and the end of the grab cannot leave the strip out of screenshots.
+    struct ExcludedFromCapture {
+        hwnds: Vec<HWND>,
+    }
+
+    /// Reported once per process, not once per grab: the reader grabs every
+    /// few seconds, and a failure here is a configuration fact, not news.
+    static AFFINITY_FAILURE_REPORTED: AtomicBool = AtomicBool::new(false);
+
+    /// The one line that says the mechanism is active in this session — the
+    /// first successful hold. A troubled session with no `capture:` line at
+    /// all never had a strip to exclude (module off, window not built).
+    static AFFINITY_ARMED_REPORTED: AtomicBool = AtomicBool::new(false);
+
+    impl ExcludedFromCapture {
+        fn hold(app: &AppHandle) -> Self {
+            let mut hwnds = Vec::new();
+            for label in EXCLUDED_WHILE_GRABBING {
+                let Some(window) = app.get_webview_window(label) else { continue };
+                // `hwnd()` is a blocking round-trip to the event loop (see the
+                // click-through setup in `lib.rs`); one per grab is a few
+                // hundred microseconds against a full-monitor copy.
+                let hwnd = match window.hwnd() {
+                    Ok(hwnd) => HWND(hwnd.0 as *mut _),
+                    Err(e) => {
+                        report_once(app, format!("overlay '{label}' HWND lookup failed: {e}"));
+                        continue;
+                    }
+                };
+                match unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) } {
+                    Ok(()) => {
+                        if !AFFINITY_ARMED_REPORTED.swap(true, Ordering::Relaxed) {
+                            crate::app_log(
+                                app,
+                                format!("capture: overlay '{label}' is excluded from each grab while it is taken"),
+                            );
+                        }
+                        hwnds.push(hwnd)
+                    }
+                    Err(e) => report_once(
+                        app,
+                        format!("overlay '{label}' could not be excluded from capture: {e}"),
+                    ),
+                }
+            }
+            Self { hwnds }
+        }
+    }
+
+    impl Drop for ExcludedFromCapture {
+        fn drop(&mut self) {
+            for hwnd in &self.hwnds {
+                // A clear that fails leaves the strip out of screenshots until
+                // the next grab's clear; there is no `app` here to log with,
+                // and the set half of the same call already reports.
+                let _ = unsafe { SetWindowDisplayAffinity(*hwnd, WDA_NONE) };
+            }
+        }
+    }
+
+    /// Guard 6 of the overlay guide, without a line per grab.
+    fn report_once(app: &AppHandle, msg: String) {
+        if AFFINITY_FAILURE_REPORTED.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        crate::app_log(app, format!("capture: {msg} — the merc strip is IN every grab"));
+    }
 
     /// Capture the display the game is on — or the primary one until something
     /// has said where the game is.
@@ -161,9 +252,13 @@ mod platform {
 
         let monitor_id = monitor.id();
         let origin = (monitor.x(), monitor.y());
-        let img = monitor
-            .capture_image()
-            .map_err(|e| format!("Screen capture failed: {}", e))?;
+        let img = {
+            // Held for exactly this copy — see `EXCLUDED_WHILE_GRABBING`.
+            let _excluded = ExcludedFromCapture::hold(app);
+            monitor
+                .capture_image()
+                .map_err(|e| format!("Screen capture failed: {}", e))?
+        };
 
         Ok(Capture { image: DynamicImage::ImageRgba8(img), monitor_id, origin })
     }
