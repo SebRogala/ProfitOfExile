@@ -473,22 +473,53 @@ struct KillClause {
     kill_at: usize,
     /// The verb between the two `to`s, when it was read as one.
     verb: Option<OfferKind>,
-    /// Index of the target's first word — the one after the trailing `to`.
-    /// At most `words.len()`, so it always slices.
+    /// Index of the target's first word — the one after the trailing `to`,
+    /// or after the verb when the trailing `to` was not read. At most
+    /// `words.len()`, so it always slices.
     target_at: usize,
 }
 
+/// Longest a token in the trailing `to`'s slot may be and still be read as
+/// that `to`, slipped: the length of `to` itself.
+///
+/// **MEASURED slip.** PC debug dump `1788807773525` (2026-09-07, Halls): the
+/// crop printed `(Kill to change to Shrine of` legibly and Windows.Media.Ocr
+/// returned `(KILL TO CHANGE •ro SHRINE OF` — the trailing `to` read as
+/// `•ro`, which normalises to `ro` and scores 0.67 against `to`, under
+/// [`KEYWORD`]. The verb was read whole. A parser that required the trailing
+/// `to` dropped Jiquani's offer, the overlay said `only architect read`, and
+/// every retry round of two reads returned the same slip: the crop is what it
+/// is, so a retry cannot buy this one back.
+///
+/// The bound is what tells a slipped `to` from a dropped one — `kill to
+/// change Shrine of` — where the word in the slot is the room's own first
+/// word and must be kept. No name in the room vocabulary starts with a word
+/// shorter than four letters (`Apex`, `Hall`, `Pits`), so a token this short
+/// in that slot is never the room. The failure direction is a slip that GREW
+/// the token (`toShrine`): it is then kept as the target's first word and the
+/// room match has to carry it, which nothing measured has asked of it.
+const SLIPPED_TO_MAX_CHARS: usize = 2;
+
 /// The `kill to <verb> to` clause in `words`.
 ///
-/// Both `to`s are required and the verb is not. The trailing `to` is what
-/// pins the room's first word; without it a title such as `Architect of the
-/// Hoard` could swallow the verb position. The verb is the clause's only
-/// dispensable word, and the one OCR has been seen to lose
-/// ([`PrintedOffer::verb`]): `kill to to <room>` is that measured shape, and
-/// `kill to <junk> to <room>` — a verb read as neither keyword — is the same
-/// clause with the slip landing inside the word instead of on it. Both come
-/// back with no verb, and the kind is settled from the panel instead
-/// ([`decide_kind`]).
+/// `kill to` is required. Of the two words after it, the verb and the trailing
+/// `to`, ONE must be read, because either pins where the room name starts —
+/// the trailing `to` directly, the verb by position. Both are words OCR has
+/// been seen to lose, each measured once:
+///
+/// - the verb ([`PrintedOffer::verb`]): `kill to to <room>` is the measured
+///   shape, and `kill to <junk> to <room>` — a verb read as neither keyword —
+///   is the same clause with the slip landing inside the word instead of on
+///   it. Both come back with no verb, and the kind is settled from the panel
+///   instead ([`decide_kind`]);
+/// - the trailing `to` ([`SLIPPED_TO_MAX_CHARS`]): `kill to change ro <room>`
+///   is the measured shape, and `kill to change <room>` the same word dropped
+///   whole. Both come back with the verb, and the target starts at the first
+///   word that is not a slipped `to`.
+///
+/// Neither read — `kill to <junk> <junk> <room>` — pins nothing, and the block
+/// is not an offer. Without that floor a title such as `Architect of the
+/// Hoard` could swallow the verb position.
 fn kill_clause(words: &[Word<'_>]) -> Option<KillClause> {
     for i in 0..words.len().saturating_sub(2) {
         if !word_is(&words[i].key, "kill") || !word_is(&words[i + 1].key, "to") {
@@ -498,9 +529,6 @@ fn kill_clause(words: &[Word<'_>]) -> Option<KillClause> {
         if word_is(&words[i + 2].key, "to") {
             return Some(KillClause { kill_at: i, verb: None, target_at: i + 3 });
         }
-        if !matches!(words.get(i + 3), Some(w) if word_is(&w.key, "to")) {
-            continue;
-        }
         let verb = if word_is(&words[i + 2].key, "change") {
             Some(OfferKind::Change)
         } else if word_is(&words[i + 2].key, "upgrade") {
@@ -508,7 +536,21 @@ fn kill_clause(words: &[Word<'_>]) -> Option<KillClause> {
         } else {
             None
         };
-        return Some(KillClause { kill_at: i, verb, target_at: i + 4 });
+        if matches!(words.get(i + 3), Some(w) if word_is(&w.key, "to")) {
+            return Some(KillClause { kill_at: i, verb, target_at: i + 4 });
+        }
+        // No trailing `to`: only a read verb pins the clause without it.
+        if verb.is_none() {
+            continue;
+        }
+        let target_at = match words.get(i + 3) {
+            // A token no longer than `to` itself is that `to`, slipped.
+            Some(w) if w.key.chars().count() <= SLIPPED_TO_MAX_CHARS => i + 4,
+            // The `to` was dropped whole, or nothing follows the verb — then
+            // `target_at` is `words.len()` and the target comes back empty.
+            _ => i + 3,
+        };
+        return Some(KillClause { kill_at: i, verb, target_at });
     }
     None
 }
@@ -1531,6 +1573,31 @@ mod tests {
         .collect()
     }
 
+    /// The PC side panel exactly as Windows.Media.Ocr boxed it — debug dump
+    /// `1788807773525` (2026-09-07), `ocr-lines.json`, capture px, engine
+    /// order, panel region at origin (1131, 5). Halls at E0.
+    ///
+    /// The third real-OCR fixture, kept for what the engine did to Jiquani's
+    /// clause: the crop printed `(Kill to change to Shrine of` legibly and
+    /// the engine returned `(KILL TO CHANGE •ro SHRINE OF` — the trailing
+    /// `to` slipped, the verb intact. `nory` is a fragment of the map's info
+    /// block at the crop's right edge.
+    fn pc_halls_panel_as_ocr_boxed_it() -> Vec<OcrLineBox> {
+        [
+            ([1383, 80, 64, 19], "HALLS"),
+            ([1484, 122, 154, 11], "QUIPOIATL, ARCHITECT OF THE"),
+            ([1545, 136, 32, 9], "NEXUS"),
+            ([1478, 150, 165, 11], "(KILL TO CHANGE TO WORKSHOP)"),
+            ([1182, 289, 172, 11], "JIQUANI, ARCHITECT OF INDUSTRY"),
+            ([1189, 303, 157, 11], "(KILL TO CHANGE •ro SHRINE OF"),
+            ([1227, 317, 83, 11], "EMPOWERMENT)"),
+            ([1631, 422, 33, 14], "nory"),
+        ]
+        .into_iter()
+        .map(|([x, y, w, h], text)| OcrLineBox { text: text.to_string(), x, y, w, h })
+        .collect()
+    }
+
     /// The same six lines with their boxes thrown away — what the parsers saw
     /// before POE-243, and what a transcript-only caller still sees.
     fn texts(lines: &[OcrLineBox]) -> Vec<String> {
@@ -2102,6 +2169,59 @@ mod tests {
         assert_eq!(got.identity_name(), None, "`Storage Room` is block text, not the title");
         assert_eq!(got.architects.len(), 1);
         assert_eq!(got.architects[0].architect_name, "Juatalotli");
+    }
+
+    // ------------------------------------------ the slipped trailing to --
+
+    // The PC panel as the engine boxed it: Jiquani's clause came back
+    // `(KILL TO CHANGE •ro SHRINE OF` — the verb whole, the trailing `to`
+    // read as a two-character token that scores 0.67 against it. The verb
+    // already pins the clause, so the offer is still an offer and its target
+    // starts after the slip.
+    //
+    // Fails if `kill_clause` requires the trailing `to` (one offer, the
+    // shipped bug), and fails if the slipped token is kept as the target's
+    // first word (`ro Shrine of Empowerment` is nothing in the vocabulary).
+    #[test]
+    fn the_pc_panel_whose_trailing_to_the_engine_slipped_still_yields_both_offers() {
+        let lines = pc_halls_panel_as_ocr_boxed_it();
+
+        let got = read_panel(&lines);
+
+        assert_eq!(got.identity_name(), Some("Halls"));
+        assert_eq!(got.architects.len(), 2, "both offers: {:?}", got.architects);
+        assert_eq!(got.architects[0].architect_name, "QUIPOIATL");
+        assert_eq!(got.architects[0].kind, OfferKind::Change);
+        assert_eq!(got.architects[0].printed_target, "WORKSHOP");
+        assert_eq!(got.architects[1].architect_name, "JIQUANI");
+        assert_eq!(got.architects[1].kind, OfferKind::Change);
+        assert_eq!(got.architects[1].printed_target, "SHRINE OF EMPOWERMENT");
+        assert!(got.architects[1].target.is_known());
+        assert_eq!(got.architects[1].rect, Some([1182, 289, 172, 39]));
+    }
+
+    // The trailing `to` dropped whole rather than slipped: the word in its
+    // slot is the room's own first word and is kept. Fails if a read verb
+    // always skips the word after it.
+    #[test]
+    fn a_clause_whose_trailing_to_was_dropped_keeps_the_rooms_first_word() {
+        let got = offer(&["Tzamoto, Architect of Torments (Kill to change Shrine of Empowerment)"]);
+
+        assert_eq!(got.kind, OfferKind::Change);
+        assert_eq!(got.printed_target, "Shrine of Empowerment");
+    }
+
+    // Neither the verb nor the trailing `to` was read: nothing pins where the
+    // room name starts, so the line is not an offer. Fails if a clause is
+    // accepted on `kill to` alone.
+    #[test]
+    fn a_clause_that_lost_both_the_verb_and_the_trailing_to_is_not_an_offer() {
+        assert_eq!(
+            parse_architect_block(
+                "Tzamoto, Architect of Torments (Kill to cl1nn ro Shrine of Empowerment)"
+            ),
+            None
+        );
     }
 
     // ------------------------------------------------------ block rects --
