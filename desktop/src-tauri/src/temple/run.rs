@@ -708,6 +708,12 @@ impl LoopState {
     /// the loop probes for a new one instead of standing down on the old one.
     /// An Alva line or a zone change moves the epoch the same way, though those
     /// have already disarmed the gate by their own rule.
+    ///
+    /// What is NOT asked is whether that read came out UNCLEAN with rounds
+    /// still owed — the question [`Self::gate`] does ask — so a sheet closed
+    /// mid-budget completes its cycle and loses the rest of [`RETRIES`]. That
+    /// is an accepted residual with Re-arm as its answer; it is named in
+    /// `docs/TEMPLE-LIFECYCLE.md` with the rest of them.
     pub fn has_read(&self, key: (u64, u64)) -> bool {
         matches!(&self.board, Some(board) if board.key == key)
     }
@@ -1352,7 +1358,10 @@ pub fn wants_full_read(
 /// completed does not end anything, because the incursion this arm was bought
 /// for has not been read yet. That is the player who opened the sheet on a frame
 /// the anchor missed, or closed it again before the read landed, and the answer
-/// for them is that the loop keeps probing.
+/// for them is that the loop keeps probing. A read that COMPLETED unclean is
+/// still a read here, so a sheet closed while retry rounds are owed ends the
+/// cycle and loses them — accepted, with Re-arm as the answer, and named as a
+/// residual in `docs/TEMPLE-LIFECYCLE.md`.
 ///
 /// `looked` is `false` for a tick that FAILED rather than missed ([`miss`]'s
 /// `errored`): a screen grab that returned an error says nothing about whether
