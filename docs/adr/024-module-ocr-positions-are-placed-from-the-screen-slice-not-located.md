@@ -132,3 +132,20 @@ inputs to fixture coordinates, not panel-position constants (POE-266).
 - A seed that is wrong for both machines is a code defect. The bug capture is
   the owner-facing correction path; the release user is not made to wait for a
   seed fix (POE-266; owner decision 2026-09-07).
+
+## Amendment: POE-268 landed the placement projection (2026-09-07)
+
+POE-268 is implemented. `ssot::placements(&ScreenSlice)` now exists as the
+single derived source for the Lab, Temple and Merc placement values, and the
+snapshot exposes it without persisting a second geometry owner.
+
+The Lab migration is complete: `effective_region` and
+`Settings.gem_region` / `Settings.font_region` are gone, along with the old
+user-rectangle precedence rule. Lab rows derive from the same projection as
+the OCR loop and no longer accept a manually placed rectangle.
+
+The current capture still supplies the full monitor capture as `ScreenSlice.client`.
+POE-272 owns the live client-rectangle read and its refresh rule for focused
+window moves and resizes; this amendment does not pull that follow-up into
+POE-268. The Temple and Merc locating callers remain transitional until
+POE-269 and POE-270 land, as the original Status caveat states.

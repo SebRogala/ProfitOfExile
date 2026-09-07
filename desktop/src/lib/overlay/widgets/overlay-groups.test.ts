@@ -156,21 +156,17 @@ describe('a widget row geometry line', () => {
 });
 
 describe('whether another Configure flow may be started', () => {
-	const IDLE = { region: false, position: false, widgets: false };
+	const IDLE = { position: false, widgets: false };
 
 	it('allows one when no configuration window is up', () => {
 		expect(canStartConfigure(IDLE)).toBe(true);
 	});
 
-	// Each of the three below is a window that is interactive over the game and
+	// Each of the two below is a window that is interactive over the game and
 	// ends only through its OWN Save/Cancel. Starting a second flow leaves the
 	// first one click-eating behind it, and the page's overlay-save handler
 	// dispatches to whichever it finds first — so the second bar the user
 	// reaches stands down the wrong window.
-	it('refuses one while an OCR region window is on screen', () => {
-		expect(canStartConfigure({ ...IDLE, region: true })).toBe(false);
-	});
-
 	it('refuses one while a per-window position copy is on screen', () => {
 		expect(canStartConfigure({ ...IDLE, position: true })).toBe(false);
 	});

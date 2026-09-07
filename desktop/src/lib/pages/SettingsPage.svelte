@@ -92,7 +92,7 @@
 	});
 	// Every rendering decision, including the one that matters, lives in
 	// `geometry/view.ts` where a test can reach it.
-	const screenGeometry = $derived(screenGeometryView(ssot.screen, geometryNow));
+	const screenGeometry = $derived(screenGeometryView(ssot.screen, geometryNow, ssot.placements));
 
 	let recalibrating = $state(false);
 
@@ -162,17 +162,15 @@
 	}
 
 	// Save/Cancel from overlay buttons (overlay-save/overlay-cancel events).
-	// Works for OCR region overlays, comparator position, and compass position overlays.
+	// Works for comparator and position overlays; OCR previews are read-only.
 	$effect(() => {
-		if (!overlayVisible && !anyPositionOverlayOpen) return;
+		if (!anyPositionOverlayOpen) return;
 		const unlistenSave = listen('overlay-save', () => {
-			if (overlayVisible) { saveRegion(); return; }
 			for (const name of Object.keys(positionOverlays)) {
 				if (positionOverlays[name]) { savePositionOverlay(name); return; }
 			}
 		});
 		const unlistenCancel = listen('overlay-cancel', () => {
-			if (overlayVisible) { cancelRegion(); return; }
 			for (const name of Object.keys(positionOverlays)) {
 				if (positionOverlays[name]) { cancelPositionOverlay(name); return; }
 			}
@@ -183,9 +181,6 @@
 		};
 	});
 
-	let overlayWin = $state<any>(null);
-	let overlayOrigin = $state({ x: 0, y: 0 });
-	let overlayVisible = $state<string | null>(null); // null = hidden, 'gem' or 'font' = which region
 	let ocrRects = $state<OcrRectView[]>([]);
 	let ocrRectsLoaded = $state(false);
 	let previewWin = $state<any>(null);
@@ -335,83 +330,6 @@
 		};
 	});
 
-	// --- Region Overlay (shared for gem tooltip + font panel) ---
-	async function showRegionOverlay(type: 'gem' | 'font') {
-		await destroyPreviewOverlay();
-		notifyConfigStart();
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
-		const monitor = await resolveOverlayMonitor('region config overlay');
-		overlayOrigin = monitor?.origin ?? { x: 0, y: 0 };
-		if (overlayWin) {
-			try { await overlayWin.destroy(); } catch (e) { console.error(e); }
-			overlayWin = null;
-		}
-		// Read fresh from Rust (not store — store may lag behind after save)
-		const command = type === 'gem' ? 'get_gem_region' : 'get_font_region';
-		const region = await invoke<{ x: number; y: number; w: number; h: number }>(command).catch((e) => {
-			console.warn(`[settings] ${command} failed:`, e);
-			return null;
-		});
-		const px = region?.x ?? 30;
-		const py = region?.y ?? 45;
-		const pw = region?.w ?? 550;
-		const ph = region?.h ?? (type === 'font' ? 350 : 75);
-		// Create without position — constructor DPI conversion is unreliable.
-		const win = new WebviewWindow('overlay', {
-			url: '/overlay',
-			transparent: true,
-			decorations: false,
-			alwaysOnTop: true,
-			resizable: true,
-			shadow: false,
-			skipTaskbar: true,
-			width: 550,
-			height: 350,
-		});
-		win.once('tauri://created', async () => {
-			// Set physical position + size (same space as outerPosition used by save)
-			await win.setPosition(new PhysicalPosition(overlayOrigin.x + px, overlayOrigin.y + py))
-				.catch(e => console.warn('[region] setPosition failed:', e));
-			await win.setSize(new PhysicalSize(pw, ph))
-				.catch(e => console.warn('[region] setSize failed:', e));
-			overlayWin = win;
-			overlayVisible = type;
-		});
-		win.once('tauri://error', (e: any) => console.error('Overlay failed:', e));
-	}
-
-	async function saveRegion() {
-		if (!overlayWin || !overlayVisible) return;
-		const command = overlayVisible === 'gem' ? 'set_gem_region' : 'set_font_region';
-		try {
-			const w = overlayWin.window ?? overlayWin;
-			const pos = await w.outerPosition();
-			const size = await w.outerSize();
-			await invoke(command, {
-				x: pos.x - overlayOrigin.x,
-				y: pos.y - overlayOrigin.y,
-				w: size.width,
-				h: size.height,
-			});
-		} catch (e) {
-			console.error('Save region failed:', e);
-			return;
-		}
-		try { await overlayWin.destroy(); } catch (e) { console.error(e); }
-		overlayWin = null;
-		overlayVisible = null;
-		await reclaimMouse();
-	}
-
-	async function cancelRegion() {
-		if (!overlayWin) return;
-		try { await overlayWin.destroy(); } catch (e) { console.error(e); }
-		overlayWin = null;
-		overlayVisible = null;
-		await reclaimMouse();
-	}
-
 	/** After closing a config overlay, emit toggle-reset so the layout
 	 *  moves the comparator to its saved position and re-establishes focus. */
 	async function reclaimMouse() {
@@ -419,41 +337,8 @@
 		notifyConfigEnd();
 	}
 
-	function formatRegion(region: any): string {
-		if (!region) return 'Not set';
-		return `(${region.x}, ${region.y}) ${region.w}\u00d7${region.h}`;
-	}
-
 	function findOcrRect(key: string): OcrRectView | undefined {
-		const published = ocrRects.find((row) => row.key === key);
-		const label = published?.label ?? key;
-
-		if (key === 'lab.gem' || key === 'lab.font') {
-			const region = key === 'lab.gem' ? store.status?.gem_region : store.status?.font_region;
-			const source = key === 'lab.gem'
-				? store.status?.gem_region_source
-				: store.status?.font_region_source;
-			if (!region) return published ?? { key, label, rect: null, source: 'unlocated' };
-			return {
-				key,
-				label,
-				rect: [region.x, region.y, region.w, region.h],
-				source: source ?? published?.source ?? 'default',
-			};
-		}
-
-		if (key === 'temple.panel' || key === 'temple.remaining') {
-			const kind = key === 'temple.panel' ? 'panel' : 'remaining';
-			const rect = ssot.temple.layout?.rois?.find((roi) => roi.kind === kind)?.rect ?? null;
-			return { key, label, rect, source: rect ? 'derived' : 'unlocated' };
-		}
-
-		if (key === 'merc.panel') {
-			const rect = ssot.mercenary.capture?.panel ?? null;
-			return { key, label, rect, source: rect ? 'derived' : 'unlocated' };
-		}
-
-		return published;
+		return ocrRects.find((row) => row.key === key);
 	}
 
 	function formatOcrRect(rect: OcrRectView['rect']): string {
@@ -464,13 +349,10 @@
 		return row?.rect ? `Preview ${row.label}` : 'Not located yet — open the panel once';
 	}
 
-	/** Where the rect beside it came from (POE-233). The lab row always shows a
-	 *  rect — an unset region is a real, derived rect, not a blank — so this is
-	 *  the only thing that tells the user whether it follows the screen. */
+	/** Where the rect came from in the shared placement contract. */
 	function ocrSourceLabel(source: string | undefined): string {
-		if (source === 'user') return '(set by you)';
-		if (source === 'default') return '(default, scaled from reference)';
-		if (source === 'derived') return '(derived)';
+		if (source === 'seed') return '(seed, scaled from reference)';
+		if (source === 'remembered') return '(remembered anchor)';
 		if (source === 'unlocated') return '(unlocated)';
 		return '';
 	}
@@ -484,9 +366,8 @@
 		}
 	}
 
-	// Labels come from one fetch when this always-mounted page becomes visible.
-	// Geometry below is read from the owning SSOT/status stores, while the preview
-	// action reads a fresh Rust snapshot before opening.
+	// Labels and current rectangles come from Rust's five-row projection. The
+	// preview action reads a fresh snapshot before opening.
 	$effect(() => {
 		if (nav.view !== 'settings' || ocrRectsLoaded) return;
 		void loadOcrRects();
@@ -494,7 +375,6 @@
 
 	async function previewOcrRegion(key: string): Promise<void> {
 		await destroyPreviewOverlay();
-		if (overlayVisible) return;
 
 		try {
 			const rows = await invoke<OcrRectView[]>('get_ocr_rects');
@@ -1141,7 +1021,6 @@
 	 *  three flows are mutually exclusive — see `canStartConfigure`. */
 	let configureAllowed = $derived(
 		canStartConfigure({
-			region: !!overlayVisible,
 			position: anyPositionOverlayOpen,
 			widgets: widgetConfiguring !== null
 		})
@@ -1271,45 +1150,25 @@
 			{/if}
 
 			<div class="setting-row">
-					<span class="setting-label">{findOcrRect(LAB_GEM_PREVIEW_KEY)?.label ?? 'Gem Tooltip Region'}</span>
-				{#if overlayVisible === 'gem'}
-					<span class="setting-value">Positioning overlay...</span>
-					<Button variant="save" onclick={saveRegion}>Save</Button>
-					<Button onclick={cancelRegion}>Cancel</Button>
-				{:else}
-					<span class="setting-value mono">{formatRegion(store.status?.gem_region)}</span>
-						<span class="region-source">{ocrSourceLabel(findOcrRect(LAB_GEM_PREVIEW_KEY)?.source)}</span>
-					<Button onclick={() => showRegionOverlay('gem')} disabled={!!overlayVisible}>Configure</Button>
-					<Button
-							onclick={() => previewOcrRegion(LAB_GEM_PREVIEW_KEY)}
-							disabled={!!overlayVisible || !findOcrRect(LAB_GEM_PREVIEW_KEY)?.rect}
-							title={ocrPreviewTitle(findOcrRect(LAB_GEM_PREVIEW_KEY))}
-					>Preview</Button>
-					{#if store.status?.gem_region_source === 'user'}
-						<Button onclick={() => invoke('reset_gem_region').catch(e => console.error(e))} title="Follow the measured screen again">Reset to default</Button>
-					{/if}
-				{/if}
+				<span class="setting-label">{findOcrRect(LAB_GEM_PREVIEW_KEY)?.label ?? 'Gem Tooltip Region'}</span>
+				<span class="setting-value mono">{formatOcrRect(findOcrRect(LAB_GEM_PREVIEW_KEY)?.rect ?? null)}</span>
+				<span class="region-source">{ocrSourceLabel(findOcrRect(LAB_GEM_PREVIEW_KEY)?.source)}</span>
+				<Button
+					onclick={() => previewOcrRegion(LAB_GEM_PREVIEW_KEY)}
+					disabled={!findOcrRect(LAB_GEM_PREVIEW_KEY)?.rect}
+					title={ocrPreviewTitle(findOcrRect(LAB_GEM_PREVIEW_KEY))}
+				>Preview</Button>
 			</div>
 
 			<div class="setting-row">
-					<span class="setting-label">{findOcrRect(LAB_FONT_PREVIEW_KEY)?.label ?? 'Font Panel Region'}</span>
-				{#if overlayVisible === 'font'}
-					<span class="setting-value">Positioning overlay...</span>
-					<Button variant="save" onclick={saveRegion}>Save</Button>
-					<Button onclick={cancelRegion}>Cancel</Button>
-				{:else}
-					<span class="setting-value mono">{formatRegion(store.status?.font_region)}</span>
-						<span class="region-source">{ocrSourceLabel(findOcrRect(LAB_FONT_PREVIEW_KEY)?.source)}</span>
-					<Button onclick={() => showRegionOverlay('font')} disabled={!!overlayVisible}>Configure</Button>
-					<Button
-							onclick={() => previewOcrRegion(LAB_FONT_PREVIEW_KEY)}
-							disabled={!!overlayVisible || !findOcrRect(LAB_FONT_PREVIEW_KEY)?.rect}
-							title={ocrPreviewTitle(findOcrRect(LAB_FONT_PREVIEW_KEY))}
-					>Preview</Button>
-					{#if store.status?.font_region_source === 'user'}
-						<Button onclick={() => invoke('reset_font_region').catch(e => console.error(e))} title="Follow the measured screen again">Reset to default</Button>
-					{/if}
-				{/if}
+				<span class="setting-label">{findOcrRect(LAB_FONT_PREVIEW_KEY)?.label ?? 'Font Panel Region'}</span>
+				<span class="setting-value mono">{formatOcrRect(findOcrRect(LAB_FONT_PREVIEW_KEY)?.rect ?? null)}</span>
+				<span class="region-source">{ocrSourceLabel(findOcrRect(LAB_FONT_PREVIEW_KEY)?.source)}</span>
+				<Button
+					onclick={() => previewOcrRegion(LAB_FONT_PREVIEW_KEY)}
+					disabled={!findOcrRect(LAB_FONT_PREVIEW_KEY)?.rect}
+					title={ocrPreviewTitle(findOcrRect(LAB_FONT_PREVIEW_KEY))}
+				>Preview</Button>
 			</div>
 
 			{#if hasFeature(TEMPLE_FEATURE)}
@@ -1321,7 +1180,7 @@
 						<span class="region-source">{ocrSourceLabel(row?.source)}</span>
 						<Button
 							onclick={() => previewOcrRegion(key)}
-							disabled={!!overlayVisible || !row?.rect}
+							disabled={!row?.rect}
 							title={ocrPreviewTitle(row)}
 						>Preview</Button>
 					</div>
@@ -1337,7 +1196,7 @@
 						<span class="region-source">{ocrSourceLabel(row?.source)}</span>
 						<Button
 							onclick={() => previewOcrRegion(key)}
-							disabled={!!overlayVisible || !row?.rect}
+							disabled={!row?.rect}
 							title={ocrPreviewTitle(row)}
 						>Preview</Button>
 					</div>
@@ -1375,9 +1234,29 @@
 				<Button onclick={recalibrateGeometry} disabled={recalibrating}>Recalibrate</Button>
 			</div>
 
+			<div class="setting-row">
+				<span class="setting-label">Lab gem</span>
+				<span class="setting-value mono">{screenGeometry.placements.labGem}</span>
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">Lab font</span>
+				<span class="setting-value mono">{screenGeometry.placements.labFont}</span>
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">Temple Entrance</span>
+				<span class="setting-value mono">{screenGeometry.placements.templeEntrance}</span>
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">Merc panel</span>
+				<span class="setting-value mono">{screenGeometry.placements.mercPanel}</span>
+			</div>
+
 			<p class="setting-note">
-				Remembered once measured; verified on use; re-measured only when the screen size
-				changes, verification fails, or you press Recalibrate.
+				Remembered once measured; verified on use; re-measured only when the screen or
+				game-client geometry changes, verification fails, or you press Recalibrate.
 			</p>
 		</section>
 

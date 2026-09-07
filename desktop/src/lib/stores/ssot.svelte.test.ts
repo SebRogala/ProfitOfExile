@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ssot, applySnapshot, type ScreenSlice, type SsotSnapshot } from './ssot.svelte';
+import {
+	ssot,
+	applySnapshot,
+	type Placements,
+	type ScreenSlice,
+	type SsotSnapshot
+} from './ssot.svelte';
 import type { MercenarySlice } from '../mercenaries/capture';
 import { templeSliceDefault, type TempleCustom, type TempleSlice } from '../temple/slice';
 
@@ -1493,7 +1499,18 @@ const referenceScreen: ScreenSlice = {
 	measuredAtMs: 1_700_000_000_000,
 	verifiedThisSession: true,
 	monitorId: 65_537,
-	origin: [0, 0]
+	origin: [0, 0],
+	client: [0, 0, 1920, 1200],
+	anchors: null
+};
+
+const referencePlacements: Placements = {
+	temple: { entranceOrigin: [960, 792] },
+	merc: { panel: [698, 615, 555, 477] },
+	lab: {
+		gem: [33, 50, 611, 83],
+		font: [511, 300, 589, 389]
+	}
 };
 
 // A `ScreenSlice` carrying a source string Rust never emits. Deliberately not a
@@ -1516,11 +1533,16 @@ describe('screen slice (POE-214)', () => {
 	// below cover the rune the Settings "Screen geometry" card reads (POE-227).
 
 	it('projects a measured screen onto the rune, whole', () => {
-		const snap: SsotSnapshot = { league: { name: 'Mirage' }, screen: referenceScreen };
+		const snap: SsotSnapshot = {
+			league: { name: 'Mirage' },
+			screen: referenceScreen,
+			placements: referencePlacements
+		};
 
 		applySnapshot(snap);
 
 		expect(ssot.screen).toEqual(referenceScreen);
+		expect(ssot.placements).toEqual(referencePlacements);
 	});
 
 	// `screen: null` rather than an absent key, because that is the payload Rust

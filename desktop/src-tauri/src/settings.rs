@@ -8,8 +8,6 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
 
-use crate::CaptureRegion;
-
 const SETTINGS_FILENAME: &str = "settings.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,34 +15,6 @@ const SETTINGS_FILENAME: &str = "settings.json";
 pub struct Settings {
     pub client_txt_path: String,
     pub server_url: String,
-    /// The gem OCR rect the user placed in Settings, or `None` when they never
-    /// placed one — in which case the app derives it from
-    /// [`crate::GEM_REGION_REF`] and the measured screen (POE-233).
-    ///
-    /// **Migration.** Before POE-233 this field was non-optional and every file
-    /// ever written carried the shipped 1080p literal, whether or not the user
-    /// had touched the region. A persisted rect EQUAL to
-    /// [`crate::SHIPPED_GEM_REGION_1080P`] is therefore read back as `None`
-    /// ([`user_set_region`]), so those users get the scaled default instead of a
-    /// 1080p rect frozen as an override. The cost is exact and accepted: a user
-    /// who deliberately placed the region on the shipped literal loses that
-    /// choice and gains the same rect on a 1080p screen, and a different one on
-    /// any other screen (on the 1200p machine the same user gets
-    /// `{33, 50, 611, 83}`).
-    ///
-    /// **`skip_serializing_if` is a rollback guard, not tidiness.** Serialised
-    /// as `"gem_region": null`, this field is REJECTED by the pre-POE-233 build
-    /// whose field was non-optional — `load` there discards the whole file and
-    /// the next persist overwrites it with defaults, so a beta-channel rollback
-    /// would cost the user every setting. Omitting the key entirely reads as
-    /// "absent" on both builds.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gem_region: Option<CaptureRegion>,
-    /// The font panel rect the user placed, or `None` — same migration rule as
-    /// [`Settings::gem_region`], against [`crate::SHIPPED_FONT_PANEL_1080P`],
-    /// and the same rollback guard.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub font_region: Option<CaptureRegion>,
     pub window: Option<WindowSettings>,
     pub sidebar_open: bool,
     pub comparator_overlay: Option<OverlaySettings>,
@@ -320,7 +290,7 @@ pub fn widgets_for_module(
 /// `Remembered`, so a stored label could only restate one of those two facts —
 /// and a hand-edited one would invite a reader to trust a cue that never
 /// measured anything.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct ScreenScaleSetting {
     /// Screen width in physical px, as captured.
     pub width: u32,
@@ -349,6 +319,50 @@ pub struct ScreenScaleSetting {
     /// and the unknown value — the id, not this, is the identity.
     #[serde(default)]
     pub origin: (i32, i32),
+    /// The capture rectangle in capture-relative physical px. POE-268 stores
+    /// the whole captured screen; old files omitted it and deserialize to that
+    /// full-capture value, while POE-272 will supply the live client rectangle.
+    pub client: [i32; 4],
+    /// Capture-relative module origins learned after the screen measurement.
+    #[serde(default)]
+    pub anchors: Option<crate::ssot::Anchors>,
+}
+
+#[derive(Deserialize)]
+struct ScreenScaleSettingWire {
+    width: u32,
+    height: u32,
+    ui_scale: f32,
+    measured_at_ms: u64,
+    #[serde(default)]
+    monitor_id: u32,
+    #[serde(default)]
+    origin: (i32, i32),
+    #[serde(default)]
+    client: Option<[i32; 4]>,
+    #[serde(default)]
+    anchors: Option<crate::ssot::Anchors>,
+}
+
+impl<'de> Deserialize<'de> for ScreenScaleSetting {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = ScreenScaleSettingWire::deserialize(deserializer)?;
+        Ok(Self {
+            width: wire.width,
+            height: wire.height,
+            ui_scale: wire.ui_scale,
+            measured_at_ms: wire.measured_at_ms,
+            monitor_id: wire.monitor_id,
+            origin: wire.origin,
+            client: wire
+                .client
+                .unwrap_or([0, 0, wire.width as i32, wire.height as i32]),
+            anchors: wire.anchors,
+        })
+    }
 }
 
 impl ScreenScaleSetting {
@@ -397,6 +411,8 @@ impl ScreenScaleSetting {
                 measured_at_ms: slice.measured_at_ms,
                 monitor_id: slice.monitor_id,
                 origin: slice.origin,
+                client: slice.client,
+                anchors: slice.anchors,
             }),
         }
     }
@@ -420,6 +436,8 @@ impl ScreenScaleSetting {
             verified_this_session: crate::ssot::verifies_the_screen(source),
             monitor_id: self.monitor_id,
             origin: self.origin,
+            client: self.client,
+            anchors: self.anchors,
         }
     }
 
@@ -613,8 +631,6 @@ impl Default for Settings {
         Self {
             client_txt_path: crate::detect_client_txt_path(),
             server_url: String::from(option_env!("POE_SERVER_URL").unwrap_or("https://profitofexile.localhost")),
-            gem_region: None,
-            font_region: None,
             window: None,
             sidebar_open: true,
             comparator_overlay: None,
@@ -687,23 +703,6 @@ fn settings_path(app: &tauri::AppHandle) -> Option<PathBuf> {
 }
 
 /// Load settings from disk. Returns defaults if file doesn't exist or is invalid.
-/// Read a persisted lab OCR rect as an OVERRIDE: a rect that is the shipped
-/// 1080p literal was never a choice, so it comes back as `None`.
-///
-/// Pure and separate from [`load`] because it is the whole of the POE-233
-/// migration — every settings file written before that change carries the
-/// shipped literal in a field that had no way to say "unset", and reading those
-/// back as overrides would freeze every existing user on a 1080p rect for good.
-fn user_set_region(
-    persisted: Option<CaptureRegion>,
-    shipped: &CaptureRegion,
-) -> Option<CaptureRegion> {
-    match persisted {
-        Some(ref rect) if rect == shipped => None,
-        other => other,
-    }
-}
-
 pub fn load(app: &tauri::AppHandle) -> Settings {
     let path = match settings_path(app) {
         Some(p) => p,
@@ -712,11 +711,8 @@ pub fn load(app: &tauri::AppHandle) -> Settings {
     match fs::read_to_string(&path) {
         Ok(contents) => {
             match serde_json::from_str::<Settings>(&contents) {
-                Ok(mut s) => {
+                Ok(s) => {
                     log::info!("Settings loaded from {:?}", path);
-                    s.gem_region = user_set_region(s.gem_region, &crate::SHIPPED_GEM_REGION_1080P);
-                    s.font_region =
-                        user_set_region(s.font_region, &crate::SHIPPED_FONT_PANEL_1080P);
                     s
                 }
                 Err(e) => {
@@ -790,8 +786,6 @@ pub fn from_state(state: &crate::AppState) -> Settings {
     Settings {
         client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        gem_region: state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        font_region: state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         window: None, // Window settings are saved separately on close, not from AppState
         sidebar_open: *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()),
         comparator_overlay: None, // Overlay settings saved separately, not from AppState
@@ -972,8 +966,6 @@ mod tests {
             detected_gems: Mutex::new(Vec::new()),
             lab_state: Mutex::new(crate::lab_state::LabState::Idle),
             logs: Mutex::new(Vec::new()),
-            gem_region: Mutex::new(None),
-            font_region: Mutex::new(None),
             sidebar_open: Mutex::new(true),
             game_focused: Mutex::new(false),
             trade_client: crate::trade::TradeApiClient::new(),
@@ -990,6 +982,8 @@ mod tests {
             gem_scan_generation: AtomicU64::new(0),
             font_scan_generation: AtomicU64::new(0),
             font_scan_live_gen: AtomicU64::new(0),
+            lab_scan_live_gen: AtomicU64::new(0),
+            lab_scan_generation: AtomicU64::new(0),
             font_opened_seq: AtomicU64::new(0),
             aspirant_trial_count: AtomicU32::new(0),
             font_session: Mutex::new(crate::FontSessionData::default()),
@@ -1200,6 +1194,8 @@ mod tests {
             // tests below run against the flag the app actually publishes.
             verified_this_session: crate::ssot::verifies_the_screen(source),
             measured_at_ms: 1_724_000_000_000,
+            client: [0, 0, 1920, 1080],
+            anchors: None,
         }
     }
 
@@ -1212,8 +1208,15 @@ mod tests {
     #[test]
     fn a_frame_measured_screen_scale_round_trips_through_state_as_remembered() {
         let state = test_app_state();
+        let anchors = Some(crate::ssot::Anchors {
+            temple_entrance: Some([111, 222]),
+            merc_panel: Some([120, 220]),
+        });
         *state.screen.lock().unwrap() =
-            Some(measured_screen(crate::ssot::ScreenScaleSource::MercFrame));
+            Some(crate::ssot::ScreenSlice {
+                anchors,
+                ..measured_screen(crate::ssot::ScreenScaleSource::MercFrame)
+            });
 
         let saved = from_state(&state);
         let stored = saved
@@ -1222,6 +1225,8 @@ mod tests {
         assert_eq!((stored.width, stored.height), (1920, 1080));
         assert_eq!(stored.ui_scale, 0.9);
         assert_eq!(stored.measured_at_ms, 1_724_000_000_000);
+        assert_eq!(stored.client, [0, 0, 1920, 1080]);
+        assert_eq!(stored.anchors, anchors);
 
         // Next launch: a fresh state loads that file.
         let reloaded = test_app_state();
@@ -1243,6 +1248,8 @@ mod tests {
             crate::ssot::ScreenScaleSource::Remembered,
             "a loaded scale was not measured this run and must say so",
         );
+        assert_eq!(loaded.client, [0, 0, 1920, 1080]);
+        assert_eq!(loaded.anchors, anchors);
     }
 
     /// POE-237's half of the same cycle: WHICH display the number was measured
@@ -1378,6 +1385,8 @@ mod tests {
                 // to comparing dimensions alone for.
                 monitor_id: 0,
                 origin: (0, 0),
+                client: [0, 0, 1920, 1200],
+                anchors: None,
             }),
             ..Settings::default()
         };
@@ -1410,6 +1419,8 @@ mod tests {
                 // to comparing dimensions alone for.
                 monitor_id: 0,
                 origin: (0, 0),
+                client: [0, 0, 1920, 1080],
+                anchors: None,
             }),
             ..Settings::default()
         };
@@ -1431,18 +1442,23 @@ mod tests {
     /// caught rather than showing up as a few px of drift next session.
     /// 0.8985 is a real fit value, not a round one.
     #[test]
-    fn a_measured_ui_scale_survives_the_json_text_round_trip_exactly() {
+    fn a_screen_scale_survives_the_json_text_round_trip_exactly() {
         let settings = Settings {
             screen_scale: Some(ScreenScaleSetting {
                 width: 2560,
                 height: 1440,
                 ui_scale: 0.8985_f32,
                 measured_at_ms: 1_724_000_000_123,
-                // A file written before POE-237: the display is unknown, which is
-                // what `#[serde(default)]` fills in and what the prune falls back
-                // to comparing dimensions alone for.
+                // A windowed client is smaller and offset inside the captured
+                // monitor; both it and the remembered module origins must stay
+                // intact through the JSON text path.
                 monitor_id: 0,
                 origin: (0, 0),
+                client: [120, 40, 1600, 900],
+                anchors: Some(crate::ssot::Anchors {
+                    temple_entrance: Some([920, 753]),
+                    merc_panel: Some([748, 594]),
+                }),
             }),
             ..Settings::default()
         };
@@ -1454,6 +1470,14 @@ mod tests {
         assert_eq!((stored.width, stored.height), (2560, 1440));
         assert_eq!(stored.ui_scale, 0.8985_f32, "the fit must come back bit-equal");
         assert_eq!(stored.measured_at_ms, 1_724_000_000_123);
+        assert_eq!(stored.client, [120, 40, 1600, 900]);
+        assert_eq!(
+            stored.anchors,
+            Some(crate::ssot::Anchors {
+                temple_entrance: Some([920, 753]),
+                merc_panel: Some([748, 594]),
+            }),
+        );
     }
 
     /// The shape a save from an OCR-only session used to write, and the one a
@@ -2055,6 +2079,8 @@ mod tests {
                     // to comparing dimensions alone for.
                     monitor_id: 0,
                     origin: (0, 0),
+                    client: [0, 0, width as i32, height as i32],
+                    anchors: None,
                 }),
                 ..Settings::default()
             };
@@ -2099,6 +2125,8 @@ mod tests {
                 // to comparing dimensions alone for.
                 monitor_id: 0,
                 origin: (0, 0),
+                client: [0, 0, 1920, 1200],
+                anchors: None,
             }),
             ..Settings::default()
         };
@@ -2135,6 +2163,8 @@ mod tests {
             verified_this_session: crate::ssot::verifies_the_screen(
                 crate::ssot::ScreenScaleSource::MercFrame,
             ),
+            client: [0, 0, 2560, 1440],
+            anchors: None,
         });
         let existing = Settings {
             screen_scale: Some(ScreenScaleSetting {
@@ -2147,6 +2177,8 @@ mod tests {
                 // to comparing dimensions alone for.
                 monitor_id: 0,
                 origin: (0, 0),
+                client: [0, 0, 1920, 1200],
+                anchors: None,
             }),
             ..Settings::default()
         };
@@ -2186,6 +2218,8 @@ mod tests {
                 // to comparing dimensions alone for.
                 monitor_id: 0,
                 origin: (0, 0),
+                client: [0, 0, 1920, 1200],
+                anchors: None,
             }),
             ..Settings::default()
         };
@@ -2472,6 +2506,8 @@ mod tests {
                 // to comparing dimensions alone for.
                 monitor_id: 0,
                 origin: (0, 0),
+                client: [0, 0, 1920, 1080],
+                anchors: None,
             }),
             ..Settings::default()
         };
@@ -2503,6 +2539,8 @@ mod tests {
                 // to comparing dimensions alone for.
                 monitor_id: 0,
                 origin: (0, 0),
+                client: [0, 0, 1920, 1200],
+                anchors: None,
             }),
             ..Settings::default()
         };
@@ -2516,9 +2554,11 @@ mod tests {
             measured_at_ms: 1_724_000_600_000,
             monitor_id: 65_537,
             origin: (0, 0),
+            client: [0, 0, 2560, 1440],
             verified_this_session: crate::ssot::verifies_the_screen(
                 crate::ssot::ScreenScaleSource::MercFrame,
             ),
+            anchors: None,
         };
         let record = {
             let mut slot = state.screen.lock().unwrap();
@@ -2906,128 +2946,45 @@ mod tests {
         assert_eq!(compass.x, 50);
     }
 
-    // --- the lab OCR regions (POE-233) ---------------------------------------
-    //
-    // These pin the MIGRATION, which is the half of POE-233 that can silently
-    // hurt existing users: the resolution arithmetic itself is pinned beside
-    // `effective_region` in lib.rs.
+    // --- removed lab-region settings migration (POE-268) -------------------
 
-    /// Every settings.json written before POE-233 carries the shipped 1080p
-    /// rect in a field that had no way to say "the user never set one". Read
-    /// back as an override it would pin every existing user to a 1080p rect
-    /// forever — on a 1440p screen, permanently 25% too small — and no UI would
-    /// say why, because the row would look identical to a deliberate choice.
+    /// Old settings may still contain the retired region fields. Serde ignores
+    /// them, and the next write must not recreate either field.
     #[test]
-    fn a_persisted_rect_equal_to_the_shipped_default_loads_as_unset() {
-        let loaded = user_set_region(
-            Some(crate::SHIPPED_GEM_REGION_1080P),
-            &crate::SHIPPED_GEM_REGION_1080P,
-        );
+    fn retired_lab_region_settings_are_read_and_dropped() {
+        let old = r#"{
+            "server_url": "https://example.invalid",
+            "gem_region": {"x": 118, "y": 64, "w": 702, "h": 91},
+            "font_region": {"x": 17, "y": 23, "w": 590, "h": 390}
+        }"#;
+        let parsed: Settings = serde_json::from_str(old).expect("retired fields must not break load");
 
-        assert_eq!(loaded, None, "an untouched region must not survive as an override");
+        assert_eq!(parsed.server_url, "https://example.invalid");
+        let rewritten = serde_json::to_string(&parsed).expect("settings must remain writable");
+        assert!(!rewritten.contains("gem_region"), "retired gem region must stay gone: {rewritten}");
+        assert!(!rewritten.contains("font_region"), "retired font region must stay gone: {rewritten}");
     }
 
-    /// The other side of the same rule, and the one that makes it safe: a rect
-    /// the user actually placed is not the shipped literal, so it is kept.
+    /// A pre-POE-268 screen-scale record had no client or anchors. It means a
+    /// fullscreen capture of the stored dimensions and starts with no learned
+    /// module placement.
     #[test]
-    fn a_persisted_rect_the_user_placed_loads_as_an_override() {
-        let placed = CaptureRegion { x: 120, y: 64, w: 700, h: 90 };
+    fn an_old_screen_scale_record_defaults_client_to_the_capture() {
+        let old = r#"{
+            "width": 1920,
+            "height": 1080,
+            "ui_scale": 0.9,
+            "measured_at_ms": 1724000000000,
+            "monitor_id": 0,
+            "origin": [0, 0]
+        }"#;
+        let parsed: ScreenScaleSetting =
+            serde_json::from_str(old).expect("old screen-scale fields must still load");
 
-        let loaded = user_set_region(Some(placed.clone()), &crate::SHIPPED_GEM_REGION_1080P);
-
-        assert_eq!(loaded, Some(placed));
+        assert_eq!(parsed.client, [0, 0, 1920, 1080]);
+        assert_eq!(parsed.anchors, None);
     }
 
-    /// A file written AFTER POE-233 by a user who never placed a region has no
-    /// rect at all (serde fills the field from `Settings::default`). It must
-    /// stay unset rather than acquiring the shipped literal on the way in,
-    /// which would re-create the very override this migration removes.
-    #[test]
-    fn an_absent_rect_stays_unset() {
-        assert_eq!(user_set_region(None, &crate::SHIPPED_FONT_PANEL_1080P), None);
-    }
-
-    /// The whole chain for a placed region: owner → [`from_state`] → the JSON
-    /// text that reaches the disk → [`apply_to_state`] → owner. Asymmetric
-    /// numbers on all four fields because a crossed pair (`x`/`y` are `i32`,
-    /// `w`/`h` are `u32`) would put the crop somewhere plausible instead of
-    /// somewhere obviously wrong.
-    #[test]
-    fn a_placed_gem_region_round_trips_through_state_and_the_file() {
-        let saved_from = test_app_state();
-        *saved_from.gem_region.lock().unwrap() =
-            Some(CaptureRegion { x: 118, y: 64, w: 702, h: 91 });
-
-        let text = serde_json::to_string(&from_state(&saved_from)).expect("must serialize");
-        let parsed: Settings = serde_json::from_str(&text).expect("its own output must parse");
-        let loaded_into = test_app_state();
-        let _ = apply_to_state(&parsed, &loaded_into);
-
-        assert_eq!(
-            *loaded_into.gem_region.lock().unwrap(),
-            Some(CaptureRegion { x: 118, y: 64, w: 702, h: 91 }),
-        );
-    }
-
-    /// The unset case must survive the file as unset. It is the one that
-    /// regresses invisibly: a projection that wrote the RESOLVED rect instead
-    /// of the override would turn "follows the screen" into a frozen override
-    /// on the next save, for every user, without anyone touching a setting.
-    #[test]
-    fn an_unset_font_region_round_trips_through_state_and_the_file_as_unset() {
-        let saved_from = test_app_state();
-        *saved_from.font_region.lock().unwrap() = None;
-
-        let text = serde_json::to_string(&from_state(&saved_from)).expect("must serialize");
-        let parsed: Settings = serde_json::from_str(&text).expect("its own output must parse");
-        let loaded_into = test_app_state();
-        *loaded_into.font_region.lock().unwrap() =
-            Some(CaptureRegion { x: 1, y: 2, w: 3, h: 4 });
-        let _ = apply_to_state(&parsed, &loaded_into);
-
-        assert_eq!(*loaded_into.font_region.lock().unwrap(), None);
-    }
-
-    /// The rollback guard. Written as `"gem_region": null`, this field is
-    /// rejected by the pre-POE-233 build whose `gem_region` was non-optional:
-    /// its `load` fails the whole parse, falls back to `Settings::default()`,
-    /// and the next persist overwrites the file — every stored setting gone
-    /// because one field said `null`. The beta channel makes that rollback a
-    /// real path, so the unset region must leave NO key behind.
-    #[test]
-    fn an_unset_gem_region_writes_no_key_at_all() {
-        let text = serde_json::to_string(&Settings { gem_region: None, ..Settings::default() })
-            .expect("must serialize");
-
-        assert!(!text.contains("gem_region"), "an unset region must be absent, not null: {text}");
-    }
-
-    /// Same guard for the font panel, whose field carries the same attribute
-    /// and the same rollback consequence.
-    #[test]
-    fn an_unset_font_region_writes_no_key_at_all() {
-        let text = serde_json::to_string(&Settings { font_region: None, ..Settings::default() })
-            .expect("must serialize");
-
-        assert!(!text.contains("font_region"), "an unset region must be absent, not null: {text}");
-    }
-
-    /// The other side of the skip: a region the user placed still reaches the
-    /// file, with its values. A `skip_serializing` (no `_if`) would satisfy the
-    /// two tests above while silently dropping every user's override.
-    #[test]
-    fn a_placed_gem_region_still_writes_its_key_and_values() {
-        let text = serde_json::to_string(&Settings {
-            gem_region: Some(CaptureRegion { x: 118, y: 64, w: 702, h: 91 }),
-            ..Settings::default()
-        })
-        .expect("must serialize");
-
-        assert!(
-            text.contains(r#""gem_region":{"x":118,"y":64,"w":702,"h":91}"#),
-            "a placed region must reach the file verbatim: {text}",
-        );
-    }
 }
 
 /// Apply loaded settings to AppState.
@@ -3046,8 +3003,6 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
     let mut rejected: Vec<String> = Vec::new();
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = settings.client_txt_path.clone();
     *state.server_url.lock().unwrap_or_else(|e| e.into_inner()) = settings.server_url.clone();
-    *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = settings.gem_region.clone();
-    *state.font_region.lock().unwrap_or_else(|e| e.into_inner()) = settings.font_region.clone();
     *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()) = settings.sidebar_open;
     *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_warn_secs;
     *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_critical_secs;

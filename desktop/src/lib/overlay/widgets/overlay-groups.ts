@@ -169,8 +169,6 @@ export function overlayGroups(grants: OverlayGroupGrants): OverlayGroup[] {
  * right now, as `SettingsPage.svelte` reads them.
  */
 export interface OpenConfigFlows {
-	/** An OCR region window is on screen (`overlayVisible`). */
-	region: boolean;
 	/** A per-window position COPY is on screen (`anyPositionOverlayOpen`). */
 	position: boolean;
 	/** A module's in-window widget config session is running
@@ -181,7 +179,7 @@ export interface OpenConfigFlows {
 /**
  * Whether Overlay Positions may START another Configure flow.
  *
- * The three flows are mutually exclusive, and the reason is the same for every
+ * The two flows are mutually exclusive, and the reason is the same for the
  * pair: each one makes a DIFFERENT window interactive over the game, and each
  * ends only through its own Save/Cancel. A second one started on top leaves two
  * click-eating rectangles over the game, and whichever bar the user reaches
@@ -198,7 +196,7 @@ export interface OpenConfigFlows {
  * window over the game that no gate can see.
  */
 export function canStartConfigure(open: OpenConfigFlows): boolean {
-	return !open.region && !open.position && !open.widgets;
+	return !open.position && !open.widgets;
 }
 
 /**

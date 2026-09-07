@@ -75,6 +75,34 @@ const POOLS = ['skill', 'transfigured'] as const;
  */
 export type ScreenScaleSource = 'merc-frame' | 'merc-ocr' | 'temple-anchor' | 'remembered';
 
+/** Capture-relative module origins learned after the screen seed. */
+export interface Anchors {
+	/** Temple Entrance origin, or null while the seed is still in force. */
+	templeEntrance: [number, number] | null;
+	/** Merc panel top-left, or null while the seed is still in force. */
+	mercPanel: [number, number] | null;
+}
+
+/** Capture-relative geometry derived from the current screen slice. */
+export interface TemplePlacements {
+	entranceOrigin: [number, number];
+}
+
+export interface MercPlacements {
+	panel: [number, number, number, number];
+}
+
+export interface LabPlacements {
+	gem: [number, number, number, number];
+	font: [number, number, number, number];
+}
+
+export interface Placements {
+	temple: TemplePlacements | null;
+	merc: MercPlacements | null;
+	lab: LabPlacements;
+}
+
 /**
  * The screen the game is drawn on and the game-UI scale measured on it
  * (POE-214). TypeScript mirror of Rust's `ScreenSlice`.
@@ -145,6 +173,10 @@ export interface ScreenSlice {
 	 * not this, is the identity.
 	 */
 	origin: [number, number];
+	/** Capture rectangle in physical px; POE-268 uses the full capture, POE-272 adds the live client offset. */
+	client: [number, number, number, number];
+	/** Learned capture-relative module origins, or null before calibration. */
+	anchors: Anchors | null;
 }
 
 /** Serialized Rust `AppSsotSnapshot` — `league.name` is `string | null`. */
@@ -186,6 +218,8 @@ export interface SsotSnapshot {
 	 *  the same reason — it is what lets a case build the one-field snapshot it
 	 *  is about. Only the `| null` above says anything about the payload. */
 	screen?: ScreenSlice | null;
+	/** Capture-relative placements derived from `screen`, never stored separately. */
+	placements?: Placements;
 }
 
 /**
@@ -242,6 +276,8 @@ export const ssot = $state({
 	 *  a 1080p machine by 11%. Its consumer is the Settings "Screen geometry"
 	 *  card (POE-227), which renders the `null` as "not measured yet". */
 	screen: null as ScreenSlice | null,
+	/** Derived capture-relative placements, projected by Rust at snapshot time. */
+	placements: null as Placements | null,
 });
 
 /** The three market fields, which share the write-through + poll-guard machinery. */
@@ -556,6 +592,7 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	// (`Option<ScreenSlice>` carries no `skip_serializing_if`), so an absent one
 	// only ever means a payload older than the field.
 	ssot.screen = snap.screen ?? null;
+	ssot.placements = snap.placements ?? null;
 }
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;

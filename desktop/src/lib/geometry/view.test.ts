@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { screenGeometryView } from './view';
-import type { ScreenSlice } from '$lib/stores/ssot.svelte';
+import type { Placements, ScreenSlice } from '$lib/stores/ssot.svelte';
 
 /** The reference measurement — 1920x1200 at 1.0 IS the reference fixture. */
 const referenceScreen: ScreenSlice = {
@@ -11,10 +11,21 @@ const referenceScreen: ScreenSlice = {
 	measuredAtMs: 1_700_000_000_000,
 	verifiedThisSession: true,
 	monitorId: 65_537,
-	origin: [0, 0]
+	origin: [0, 0],
+	client: [0, 0, 1920, 1200],
+	anchors: null
 };
 
 const NOW = new Date(1_700_000_000_000 + 2 * 60 * 60 * 1000);
+
+const placements: Placements = {
+	temple: { entranceOrigin: [960, 713] },
+	merc: { panel: [698, 615, 555, 477] },
+	lab: {
+		gem: [30, 45, 550, 75],
+		font: [460, 270, 530, 350]
+	}
+};
 
 describe('screenGeometryView', () => {
 	it('never prints a number for an unmeasured screen', () => {
@@ -47,6 +58,17 @@ describe('screenGeometryView', () => {
 		expect(view.unmeasured).toBe(false);
 		expect(view.resolution).toBe('1920×1200');
 		expect(view.uiScale).toBe('1.000');
+	});
+
+	it('renders the capture-relative placements projected with the screen', () => {
+		const view = screenGeometryView(referenceScreen, NOW, placements);
+
+		expect(view.placements).toEqual({
+			labGem: '[30, 45, 550, 75]',
+			labFont: '[460, 270, 530, 350]',
+			templeEntrance: '(960, 713)',
+			mercPanel: '[698, 615, 555, 477]'
+		});
 	});
 
 	it('keeps three decimals of scale, because the deadband is 0.01', () => {

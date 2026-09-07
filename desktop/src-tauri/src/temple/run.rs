@@ -2269,9 +2269,10 @@ pub fn hint_for_capture(
     screen: Option<&crate::ssot::ScreenSlice>,
     capture: (u32, u32),
     monitor_id: u32,
+    client: [i32; 4],
 ) -> Option<anchor::AnchorCalibration> {
     let screen = screen?;
-    if !crate::ssot::screen_matches(&Some(*screen), capture, monitor_id) {
+    if !crate::ssot::screen_matches(&Some(*screen), capture, monitor_id, client) {
         return None;
     }
     if !screen.ui_scale.is_finite() || screen.ui_scale <= 0.0 {
@@ -2358,6 +2359,7 @@ fn hint_from_slice(
     app: &AppHandle,
     capture: (u32, u32),
     monitor_id: u32,
+    client: [i32; 4],
 ) -> (Option<anchor::AnchorCalibration>, Option<crate::ssot::ScreenScaleSource>) {
     let screen = {
         let state = app.state::<AppState>();
@@ -2365,7 +2367,7 @@ fn hint_from_slice(
         *slot
     };
     (
-        hint_for_capture(screen.as_ref(), capture, monitor_id),
+        hint_for_capture(screen.as_ref(), capture, monitor_id, client),
         screen.map(|s| s.source),
     )
 }
@@ -2453,8 +2455,9 @@ fn publish_anchor_scale(
     capture: (u32, u32),
     monitor_id: u32,
     origin: (i32, i32),
+    client: [i32; 4],
 ) {
-    let next = match screen_from_anchor(layout.scale, hint, capture, monitor_id, origin, now_ms())
+    let next = match screen_from_anchor(layout.scale, hint, capture, monitor_id, origin, client, now_ms())
     {
         Ok(next) => next,
         Err(line) => {
@@ -2548,6 +2551,7 @@ fn screen_from_anchor(
     capture: (u32, u32),
     monitor_id: u32,
     origin: (i32, i32),
+    client: [i32; 4],
     measured_at_ms: u64,
 ) -> Result<crate::ssot::ScreenSlice, String> {
     let withheld = match hint {
@@ -2556,7 +2560,7 @@ fn screen_from_anchor(
     };
     match withheld {
         Some(line) => Err(line),
-        None => Ok(anchored_screen(scale, capture, monitor_id, origin, measured_at_ms)),
+        None => Ok(anchored_screen(scale, capture, monitor_id, origin, client, measured_at_ms)),
     }
 }
 
@@ -2608,6 +2612,7 @@ pub fn anchored_screen(
     capture: (u32, u32),
     monitor_id: u32,
     origin: (i32, i32),
+    client: [i32; 4],
     measured_at_ms: u64,
 ) -> crate::ssot::ScreenSlice {
     let source = crate::ssot::ScreenScaleSource::TempleAnchor;
@@ -2620,6 +2625,8 @@ pub fn anchored_screen(
         verified_this_session: crate::ssot::verifies_the_screen(source),
         monitor_id,
         origin,
+        client,
+        anchors: None,
     }
 }
 
@@ -3019,6 +3026,7 @@ fn tick(
     session.tick_stages.capture = grabbed_at.elapsed();
     let monitor_id = grab.monitor_id;
     let origin = grab.origin;
+    let client = grab.client;
     let img = grab.image;
     let capture = (img.width(), img.height());
     // Before ANY remembered geometry is read (POE-227): a screen scale measured
@@ -3026,7 +3034,7 @@ fn tick(
     // slice on the first capture that disagrees with it. FIRST, because the
     // hint below is derived from that slice — a stale value read one line
     // earlier would be the temple anchoring on the screen the game has left.
-    if crate::ssot::drop_if_mismatched(app, capture, monitor_id) {
+    if crate::ssot::drop_if_mismatched(app, capture, monitor_id, client) {
         // `slice_answered` is a claim about THIS screen, and this capture is a
         // different one — so the emptying that just happened is a resolution or
         // monitor change, not a Recalibrate, and the plate must not be dropped
@@ -3043,7 +3051,7 @@ fn tick(
     // converted into this module's unit and handed to the anchor as its hint.
     // There is no second store to prune any more; the prune above IS this
     // module's prune.
-    let (hint, hint_source) = hint_from_slice(app, capture, monitor_id);
+    let (hint, hint_source) = hint_from_slice(app, capture, monitor_id, client);
     if let Some(line) = hint_line(&mut session.hint_said, hint, hint_source) {
         crate::app_log(app, line);
     }
@@ -3191,7 +3199,7 @@ fn tick(
     // the cold sweep, and the promoted read — publish, including the ticks whose
     // board looked unchanged and bought no read. `ssot::accepts` is what makes
     // that affordable on a 650 ms loop.
-    publish_anchor_scale(app, session, &layout, hint, capture, monitor_id, origin);
+    publish_anchor_scale(app, session, &layout, hint, capture, monitor_id, origin, client);
     session.cheap_hint = Some(CheapHint {
         calibration: layout.calibration,
         origin: layout.origin,
@@ -6573,6 +6581,8 @@ mod tests {
             verified_this_session: crate::ssot::verifies_the_screen(source),
             monitor_id,
             origin: (0, 0),
+            client: [0, 0, width as i32, height as i32],
+            anchors: None,
         }
     }
 
@@ -6592,7 +6602,8 @@ mod tests {
     fn a_remembered_scale_for_this_screen_becomes_the_hint_the_table_measured() {
         let screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, 0.90, 7);
 
-        let hint = hint_for_capture(Some(&screen), (1920, 1080), 7).expect("this screen has one");
+        let hint = hint_for_capture(Some(&screen), (1920, 1080), 7, [0, 0, 1920, 1080])
+            .expect("this screen has one");
 
         let measured = anchor::table_scale(1920, 1080).expect("1920x1080 is the measured row");
         assert!(
@@ -6611,7 +6622,7 @@ mod tests {
     fn a_scale_measured_on_another_display_is_not_a_hint() {
         let screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, 0.90, 7);
 
-        assert_eq!(hint_for_capture(Some(&screen), (1920, 1080), 9), None);
+        assert_eq!(hint_for_capture(Some(&screen), (1920, 1080), 9, [0, 0, 1920, 1080]), None);
     }
 
     /// `monitor_id == 0` is UNKNOWN, not an identity: a slice persisted before
@@ -6626,15 +6637,15 @@ mod tests {
         let known = remembered(ScreenScaleSource::Remembered, 1920, 1080, 0.90, 7);
 
         assert!(
-            hint_for_capture(Some(&no_id), (1920, 1080), 7).is_some(),
+            hint_for_capture(Some(&no_id), (1920, 1080), 7, [0, 0, 1920, 1080]).is_some(),
             "a pre-POE-237 stored scale still hints on a capture of its size",
         );
         assert!(
-            hint_for_capture(Some(&known), (1920, 1080), 0).is_some(),
+            hint_for_capture(Some(&known), (1920, 1080), 0, [0, 0, 1920, 1080]).is_some(),
             "a capture with no display id still gets the hint its size earns",
         );
         assert_eq!(
-            hint_for_capture(Some(&no_id), (2560, 1440), 7),
+            hint_for_capture(Some(&no_id), (2560, 1440), 7, [0, 0, 2560, 1440]),
             None,
             "…and an unknown id does not excuse a different resolution",
         );
@@ -6648,7 +6659,7 @@ mod tests {
     fn a_scale_measured_at_another_resolution_is_not_a_hint() {
         let screen = remembered(ScreenScaleSource::MercFrame, 2560, 1440, 1.20, 7);
 
-        assert_eq!(hint_for_capture(Some(&screen), (1920, 1080), 7), None);
+        assert_eq!(hint_for_capture(Some(&screen), (1920, 1080), 7, [0, 0, 1920, 1080]), None);
     }
 
     /// The whole Recalibrate path, through the decisions the tick actually
@@ -6692,7 +6703,7 @@ mod tests {
         // The press: `ssot::geometry_recalibrate` empties the slice. Everything
         // below is what the next tick then decides.
         let emptied: Option<&crate::ssot::ScreenSlice> = None;
-        let hint = hint_for_capture(emptied, capture, 7);
+        let hint = hint_for_capture(emptied, capture, 7, [0, 0, capture.0 as i32, capture.1 as i32]);
         assert_eq!(hint, None, "an empty slice hints nothing");
 
         // `true`: the slice HAD answered for this screen — that is what the
@@ -6717,7 +6728,15 @@ mod tests {
         // And what that sweep finds is published and written back.
         let mut slot = None;
         let swept =
-            screen_from_anchor(LIVE_CAPTURE_SCALE, hint, capture, 7, (0, 0), 1_700_000_000_002)
+            screen_from_anchor(
+                LIVE_CAPTURE_SCALE,
+                hint,
+                capture,
+                7,
+                (0, 0),
+                [0, 0, capture.0 as i32, capture.1 as i32],
+                1_700_000_000_002,
+            )
                 .expect("with the slice emptied, the capture height corroborates the anchor");
         let record = crate::ssot::record_screen(&mut slot, swept);
         assert!(record.accepted && record.changed, "the re-measurement must land and wake the app");
@@ -6813,7 +6832,7 @@ mod tests {
             let screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, bad, 7);
 
             assert_eq!(
-                hint_for_capture(Some(&screen), (1920, 1080), 7),
+                hint_for_capture(Some(&screen), (1920, 1080), 7, [0, 0, 1920, 1080]),
                 None,
                 "ui_scale {bad} is not a screen",
             );
@@ -7243,7 +7262,15 @@ mod tests {
     /// published, so the gate is not simply refusing everything.
     #[test]
     fn an_anchor_the_capture_height_does_not_corroborate_is_not_published() {
-        let refused = screen_from_anchor(2.05, None, (1920, 1080), 7, (0, 0), 1_700_000_000_000)
+        let refused = screen_from_anchor(
+            2.05,
+            None,
+            (1920, 1080),
+            7,
+            (0, 0),
+            [0, 0, 1920, 1080],
+            1_700_000_000_000,
+        )
             .expect_err("2.05 on a 1080p capture is 2.28 of unit ratio against k's 1.11");
         assert!(
             refused.contains("not corroborated by the capture"),
@@ -7256,6 +7283,7 @@ mod tests {
             (1920, 1080),
             7,
             (0, 0),
+            [0, 0, 1920, 1080],
             1_700_000_000_000,
         )
         .expect("the measured anchor on the capture it was measured from");
@@ -7292,7 +7320,15 @@ mod tests {
         );
 
         let published =
-            screen_from_anchor(slider.scale, Some(slider), (1920, 1080), 7, (0, 0), 1_700_000_000_000)
+            screen_from_anchor(
+                slider.scale,
+                Some(slider),
+                (1920, 1080),
+                7,
+                (0, 0),
+                [0, 0, 1920, 1080],
+                1_700_000_000_000,
+            )
                 .expect("the standing measurement is what corroborates it");
         let standing = crate::ssot::ScreenSlice {
             ui_scale: 1.00,
@@ -7310,6 +7346,7 @@ mod tests {
             (1920, 1080),
             7,
             (0, 0),
+            [0, 0, 1920, 1080],
             1_700_000_000_000,
         )
         .expect_err("an anchor two steps off the hint did not come from it");
@@ -7332,7 +7369,14 @@ mod tests {
     fn an_anchor_publishes_the_scale_the_shared_unit_calls_it() {
         let measured = anchor::table_scale(1920, 1080).expect("1920x1080 is the measured row");
 
-        let next = anchored_screen(measured, (1920, 1080), 7, (-1920, 0), 1_700_000_000_000);
+        let next = anchored_screen(
+            measured,
+            (1920, 1080),
+            7,
+            (-1920, 0),
+            [0, 0, 1920, 1080],
+            1_700_000_000_000,
+        );
 
         let definition = 1080.0 / UI_SCALE_REFERENCE_HEIGHT;
         assert!(
@@ -7365,6 +7409,7 @@ mod tests {
             (1920, 1080),
             7,
             (0, 0),
+            [0, 0, 1920, 1080],
             1_700_000_000_001,
         );
         let elsewhere = anchored_screen(
@@ -7372,6 +7417,7 @@ mod tests {
             (1920, 1080),
             9,
             (-1920, 0),
+            [0, 0, 1920, 1080],
             1_700_000_000_001,
         );
         let disagreeing = anchored_screen(
@@ -7379,6 +7425,7 @@ mod tests {
             (1920, 1080),
             7,
             (0, 0),
+            [0, 0, 1920, 1080],
             1_700_000_000_001,
         );
 
@@ -7428,6 +7475,7 @@ mod tests {
             (1920, 1080),
             7,
             (0, 0),
+            [0, 0, 1920, 1080],
             1_700_000_000_000,
         );
 
@@ -7461,6 +7509,7 @@ mod tests {
             (1920, 1080),
             7,
             (0, 0),
+            [0, 0, 1920, 1080],
             1_700_000_000_000,
         );
 
