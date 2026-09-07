@@ -84,6 +84,10 @@ ADRs record decisions at a point in time. If implementation later supersedes a d
 - [PoE Trade API Research — 2026-03-16](RESEARCH-poe-trade-api.md) — historical research notes. Verify unstable API/policy facts against current official documentation before implementation.
 - [Gem Market Findings — March 2026](research/market-findings-2026-03.md) — preserved seven-day research observations without a reproducible query artifact; rerun before using as current truth.
 
+## Proposed specifications
+
+- [Merc overlay: in-place marks and a beside panel](superpowers/specs/2026-09-07-merc-overlay-in-place-design.md) — proposed/unimplemented (POE-274); the target form of the merc verdict overlay, its automatic fallback to the shipped strip, and the design sources beside it.
+
 ## Historical architecture, designs, and plans
 
 These are retained as implementation history. They may contain obsolete paths, APIs, topology, or incomplete work and must not override current code, accepted ADRs, or active proposed specifications.
