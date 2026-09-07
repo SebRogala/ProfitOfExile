@@ -401,3 +401,7 @@ names the two costs apart — `valuation N ms (cached | computed), advise N ms` 
 cached?" was a question `app.log` could not answer while the two were one number, and the owner's
 "I thought it was cheap one" is exactly the belief a single lumped field let stand.
 
+- **R5 (leave the map) is withheld from every surface — 2026-09-07 (owner).** The rule as
+  written gives false advice on live boards. The advisor still computes and tests it;
+  `R5_WITHHELD` in `slice.rs` projects a `LeaveMap` verdict as `continue`, so the page and
+  overlay banners never render. Lifting it is flipping that const and inverting its test.

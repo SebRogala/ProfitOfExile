@@ -369,7 +369,9 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   `doorWarning()`, on the door widget, because it says do not act on the shape
   it sits under and that widget is the one still on screen while the player is
   acting; and the `leaveMap` banner, which is a decision about the map rather
-  than a reading.
+  than a reading. **Withheld since 2026-09-07** (owner): the wire never says
+  `leaveMap` while `R5_WITHHELD` in `temple/slice.rs` holds, so neither banner
+  renders; the surfaces stay for the day it is lifted.
   **Retired again in POE-248**, after the first live session: the callout's
   ARROW (owner: no arrows anywhere — placement points, and the room widget's
   glyph is what survives the panel closing), the room widget's two text lines
@@ -1697,7 +1699,8 @@ touching the named path.
   shafts or the dark halo have been retuned past what the widget's own size
   supports (`SHAFT` and `.kill-shadow` in `TempleDoorDiamond.svelte`), and an
   `upgrade` mark then looks the same as a `change` one at a glance.
-- **The leave-the-map banner clears the panel** (POE-244): get a `leaveMap`
+- **The leave-the-map banner clears the panel** (POE-244; **not exercisable while
+  R5 is withheld** — `R5_WITHHELD` in `temple/slice.rs`, 2026-09-07): get a `leaveMap`
   verdict with the layout panel open (R5 fires when the temple has what it needs
   from the map). The yellow banner must not overlap the side panel — at 1920×1080
   a centred banner reaches x 1200 and the panel's crop starts at 1131, so it will

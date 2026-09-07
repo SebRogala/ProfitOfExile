@@ -817,6 +817,10 @@ fn opening_for(
 /// - the recommended kill advanced a still-missing target line to **below tier
 ///   3**. At tier 3 the room has left the drop pool on its own and R5 has
 ///   nothing left to protect.
+///
+/// **Withheld on the wire since 2026-09-07** (owner): still computed and tested
+/// here, but `slice::R5_WITHHELD` publishes `continue` whatever this returns,
+/// until the rule is reworked.
 fn map_action(
     board: &BoardState,
     top: Option<&Ranked>,
