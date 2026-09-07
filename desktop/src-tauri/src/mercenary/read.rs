@@ -10,7 +10,7 @@
 //! of a row's name band, because that IS an OCR call; the caller does that and
 //! hands the text in ([`pass2_texts`]).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use image::{DynamicImage, GenericImageView, RgbaImage};
 use serde::Serialize;
@@ -46,6 +46,12 @@ pub struct CellDebug {
 pub struct ReadResult {
     pub capture: MercCapture,
     pub cells: Vec<CellDebug>,
+    /// Geometry rows whose left skill icon is occupied. Occupancy is the
+    /// independent icon-count sensor: it comes from the same stddev gate that
+    /// decides which support cells enter the capture.
+    pub rows_on_screen: usize,
+    /// Geometry rows whose skill OCR resolved to anything other than Unknown.
+    pub rows_read: usize,
     /// The PRE-HOVER crop of every occupied cell, keyed `(row key, slot)`.
     ///
     /// D5's rule in data form: the template a hover-confirm learns comes from
@@ -121,6 +127,7 @@ pub fn build_capture(
     // cell still claims its key.
     let mut row_keys: Vec<String> = Vec::with_capacity(layout.rows.len());
     let mut rows = Vec::with_capacity(layout.rows.len());
+    let mut row_icons = Vec::with_capacity(layout.rows.len());
 
     for (i, row) in layout.rows.iter().enumerate() {
         let raw = row_texts.get(i).cloned().unwrap_or_else(|| row.text.clone());
@@ -136,6 +143,8 @@ pub fn build_capture(
         // once per row, from the skill the row just resolved to.
         let key = row_key(&skill);
         row_keys.push(key.clone());
+
+        row_icons.push(occupied(img, frame.local(row.skill_icon), g));
 
         let mut supports = Vec::new();
         for (slot, rect) in row.cells.iter().enumerate() {
@@ -217,6 +226,55 @@ pub fn build_capture(
         });
     }
 
+    // A placed panel's fixed geometry can extend beyond a mercenary who has
+    // fewer rows than the seed allows. Keep every row when no icon is visible
+    // (that preserves an OCR-only read and its honest unknown rows), but once
+    // the icon sensor sees a row, do not publish trailing geometry whose icon
+    // cell is dark. `row_icons` is computed above, alongside support-cell
+    // occupancy, so this trim cannot turn an occupied support into "nothing".
+    if let Some(last_occupied) = row_icons.iter().rposition(|&occupied| occupied) {
+        let retained_len = last_occupied + 1;
+        if retained_len < rows.len() {
+            let removed_keys = row_keys[retained_len..]
+                .iter()
+                .cloned()
+                .collect::<HashSet<_>>();
+            sigs.retain(|(key, _): &(String, u8), _| !removed_keys.contains(key));
+            rows.truncate(retained_len);
+            row_keys.truncate(retained_len);
+            let last_index = rows.last().map_or(0, |row| row.index);
+            cells_debug.retain(|cell| cell.row <= last_index);
+        }
+    }
+
+    // The icon sensor also samples one pitch outside the enumerated geometry.
+    // Those probes are counters only: there is no row geometry to publish for
+    // them, but they catch a panel that extends just beyond the seed.
+    let pitch = if layout.row_pitch.is_finite() && layout.row_pitch > 0.0 {
+        layout.row_pitch
+    } else {
+        g.row_pitch * layout.scale
+    };
+    let mut rows_on_screen = row_icons.iter().filter(|&&occupied| occupied).count();
+    if pitch.is_finite() && pitch > 0.0 {
+        if let Some(first) = layout.rows.first() {
+            let above = shifted_y(first.skill_icon, -(pitch.round() as i32));
+            if occupied(img, frame.local(above), g) {
+                rows_on_screen += 1;
+            }
+        }
+        if let Some(last) = layout.rows.last() {
+            let below = shifted_y(last.skill_icon, pitch.round() as i32);
+            if occupied(img, frame.local(below), g) {
+                rows_on_screen += 1;
+            }
+        }
+    }
+    let rows_read = rows
+        .iter()
+        .filter(|row| row.skill.state != ReadState::Unknown)
+        .count();
+
     // COLLIDING ROWS CACHE NOTHING. `row_key` is a resolved skill id or a
     // lowercased raw OCR line, and neither is unique across the rows of one
     // panel: a fuzzy match can land on the same skill twice, and two unread
@@ -249,11 +307,19 @@ pub fn build_capture(
             panel: None,
             header: layout.header.clone(),
             rows,
+            rows_on_screen,
+            rows_read,
             partial: false,
         },
         cells: cells_debug,
+        rows_on_screen,
+        rows_read,
         sigs,
     }
+}
+
+fn shifted_y(rect: [i32; 4], delta: i32) -> [i32; 4] {
+    [rect[0], rect[1] + delta, rect[2], rect[3]]
 }
 
 /// `(family, tier)` → the vocabulary link(s) it names (D4's resolution table).
@@ -623,9 +689,10 @@ pub fn crop_rgba(img: &DynamicImage, rect: [i32; 4], g: &MercGeometry) -> Option
 
 /// Pass 2 (D2): re-OCR each row's name band on its own.
 ///
-/// The whole-screen pass 1 reads the name at native size; a 44 px-tall band
-/// goes through `preprocess_for_ocr`, which upscales it 2× and stretches its
-/// contrast — measurably better on small text (POE-116).
+/// The placed-crop pass 1 reads the name at native size; a 44 px-tall band goes
+/// through `preprocess_for_ocr`, which upscales it 2× and stretches its
+/// contrast — measurably better on small text (POE-116). The debug command's
+/// full-screen replay uses the same pass-2 path.
 ///
 /// Every failure falls back to the pass-1 text rather than blanking the row:
 /// an off-image band, an OCR error (which is EVERY call on non-Windows), an
@@ -768,6 +835,8 @@ mod tests {
         assert_eq!(out.capture.rows.len(), 2);
         assert_eq!(out.capture.rows[0].skill.name.as_deref(), Some("Ice Shot"));
         assert_eq!(out.capture.rows[0].skill.state, ReadState::Matched);
+        assert_eq!(out.rows_on_screen, 0);
+        assert_eq!(out.rows_read, 2);
         assert!(
             !out.capture.rows[0].skill.ids.is_empty(),
             "a matched skill must carry the vocabulary id the verdict engine keys on",
@@ -820,6 +889,8 @@ mod tests {
             out.cells.iter().all(|c| !c.occupied),
             "the debug cells still record the rejected slots and why",
         );
+        assert_eq!(out.rows_on_screen, 0);
+        assert_eq!(out.rows_read, 2);
     }
 
     /// An occupied cell with an EMPTY template store is `unknown` — the page's
@@ -841,6 +912,8 @@ mod tests {
         assert_eq!(supports[0].slot, 0);
         assert_eq!(supports[0].state, ReadState::Unknown);
         assert!(supports[0].ids.is_empty());
+        assert_eq!(out.rows_on_screen, 0);
+        assert_eq!(out.rows_read, 2);
         assert!(
             out.sigs.contains_key(&(row_key(&out.capture.rows[0].skill), 0)),
             "the pre-hover crop must be cached so a later confirm can learn it",
@@ -1359,6 +1432,8 @@ mod tests {
                 .enumerate()
                 .map(|(i, name)| named_row(i as u8, name))
                 .collect(),
+            rows_on_screen: rows.len(),
+            rows_read: rows.len(),
             partial: false,
         }
     }
@@ -1526,6 +1601,8 @@ mod tests {
             screen: [2560, 1440],
             panel: None,
             header,
+            rows_on_screen: rows.len(),
+            rows_read: rows.len(),
             rows,
             partial: false,
         }

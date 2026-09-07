@@ -24,7 +24,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use image::{DynamicImage, GenericImageView};
+use image::{DynamicImage, GenericImageView, Rgba};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
@@ -64,6 +64,10 @@ pub struct MercDebugReport {
     /// `"screen"`, or the path of the image that was read instead.
     pub source: String,
     pub screen: [u32; 2],
+    /// The SSOT panel placement used to replay the placed geometry path, when
+    /// the current measured screen matches the dump.
+    #[serde(default)]
+    pub placement: Option<[i32; 4]>,
     pub geometry_source: String,
     pub geometry_error: Option<String>,
     pub ocr_lines: usize,
@@ -118,7 +122,6 @@ pub struct CellFitReport {
     pub cell_size: i32,
     pub cells_used: u8,
     pub slot_span: u8,
-    pub moved_px: i32,
     pub row_dy: Vec<i32>,
     pub residual_row_pitch: f32,
 }
@@ -133,7 +136,6 @@ impl From<&super::cellfit::CellFit> for CellFitReport {
             cell_size: fit.cell_size,
             cells_used: fit.cells_used,
             slot_span: fit.slot_span,
-            moved_px: fit.moved_px,
             row_dy: fit.row_dy.clone(),
             residual_row_pitch: fit.residual_row_pitch,
         }
@@ -160,6 +162,8 @@ pub fn cell_file(row: u8, slot: u8) -> String {
 /// The images one dump writes.
 pub struct DumpImages<'a> {
     pub screen: &'a DynamicImage,
+    /// Name-band rects drawn onto `screen.png` for geometry inspection.
+    pub bands: Vec<[i32; 4]>,
     /// `(row index, name-band rect)` — the crop pass 2 re-OCRs.
     pub rows: Vec<(u8, [i32; 4])>,
     /// `(row index, slot, cell rect)`.
@@ -183,8 +187,7 @@ pub fn write_images(dir: &Path, input: &DumpImages) -> Result<Vec<String>, Strin
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut written = Vec::new();
 
-    input
-        .screen
+    screen_with_bands(input.screen, &input.bands)
         .save(dir.join("screen.png"))
         .map_err(|e| format!("screen.png: {e}"))?;
     written.push("screen.png".to_string());
@@ -204,6 +207,38 @@ pub fn write_images(dir: &Path, input: &DumpImages) -> Result<Vec<String>, Strin
         }
     }
     Ok(written)
+}
+
+/// Draw the geometry-derived row bands onto the screen artifact without
+/// changing the source image used for OCR or cell crops.
+fn screen_with_bands(screen: &DynamicImage, bands: &[[i32; 4]]) -> DynamicImage {
+    let mut image = screen.to_rgba8();
+    let (width, height) = image.dimensions();
+    let colour = Rgba([255, 80, 80, 255]);
+
+    for [x, y, w, h] in bands.iter().copied() {
+        if w <= 0 || h <= 0 {
+            continue;
+        }
+        let left = x.max(0) as u32;
+        let top = y.max(0) as u32;
+        let right = x.saturating_add(w).min(width as i32).max(0) as u32;
+        let bottom = y.saturating_add(h).min(height as i32).max(0) as u32;
+        if left >= right || top >= bottom || left >= width || top >= height {
+            continue;
+        }
+
+        for px in left..right {
+            image.put_pixel(px, top, colour);
+            image.put_pixel(px, bottom - 1, colour);
+        }
+        for py in top..bottom {
+            image.put_pixel(left, py, colour);
+            image.put_pixel(right - 1, py, colour);
+        }
+    }
+
+    DynamicImage::ImageRgba8(image)
 }
 
 /// A dump's complete file list: the images, then the report that names them.
@@ -320,11 +355,20 @@ fn debug_capture_blocking(
     };
     timings.push(timing("capture", started));
     let (iw, ih) = img.dimensions();
+    let placement = {
+        let state = app.state::<AppState>();
+        let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
+        screen
+            .filter(|screen| screen.width == iw && screen.height == ih)
+            .and_then(|screen| crate::ssot::placements_for(Some(&screen)).merc)
+            .map(|merc| merc.panel)
+    };
 
     let mut report = MercDebugReport {
         dump_dir: dir.display().to_string(),
         source,
         screen: [iw, ih],
+        placement,
         geometry_source: geometry_source.to_string(),
         geometry_error,
         ocr_lines: 0,
@@ -360,6 +404,7 @@ fn debug_capture_blocking(
                 &dir,
                 &DumpImages {
                     screen: &img,
+                    bands: Vec::new(),
                     rows: Vec::new(),
                     cells: Vec::new(),
                 },
@@ -390,14 +435,21 @@ fn debug_capture_blocking(
     report.anchor_kind = anchor.map(|(_, kind)| kind);
 
     let started = Instant::now();
-    // `None`, always: a debug capture is a one-shot grab with no session behind
-    // it, so it has no last-known panel rect to offer. That makes the dump
-    // STRICTER than the live loop, not equivalent to it — a frame whose chrome
-    // anchor was covered reports "no layout" here while the running loop, which
-    // does hold a rect, would have detected it. A dump that says no layout is
-    // therefore not evidence the live loop missed the panel; reproduce that
-    // claim against the loop's own log, not against this report.
-    let layout = geometry::detect(&lines, &g, &vocab, None);
+    // Replay the same placed geometry when the report carries an SSOT panel;
+    // otherwise retain the full-screen locator for older/unmeasured dumps.
+    let layout = match report.placement {
+        Some(panel) => {
+            let scale = {
+                let state = app.state::<AppState>();
+                let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
+                screen
+                    .filter(|screen| screen.width == iw && screen.height == ih)
+                    .map_or(crate::ASSUMED_UI_SCALE, |screen| screen.ui_scale)
+            };
+            geometry::placed_layout(&lines, panel, &g, scale, g.row_pitch * scale)
+        }
+        None => geometry::detect_reason(&lines, &g, &vocab, None),
+    };
     report.timings.push(timing("detect", started));
 
     // The same hook the live loop takes (POE-214), so a dump reports the rects
@@ -405,7 +457,8 @@ fn debug_capture_blocking(
     // them — the cell PNGs below are cut from these.
     let layout = layout.map(|layout| {
         let started = Instant::now();
-        // Always a WHOLE screen here, like the crop below.
+        // The dump still reads the whole image for cell crops, but its row
+        // geometry follows the placed replay when one is available.
         let refined = super::cellfit::refine(&img, Frame::full([iw, ih]), layout, &g);
         report.timings.push(timing("fit", started));
         report.fit = refined.fit.as_ref().map(CellFitReport::from);
@@ -421,14 +474,14 @@ fn debug_capture_blocking(
         Vec<(u8, [i32; 4])>,
         Vec<String>,
     ) = match &layout {
-        None => {
-            notes.push(detect_note(&report));
+        Err(why) => {
+            notes.push(format!("{} — {why}", detect_note(&report)));
             (None, Vec::new(), Vec::new(), Vec::new())
         }
-        Some(layout) => {
+        Ok(layout) => {
             let started = Instant::now();
-            // The dump always reads a WHOLE screen (a grab or a saved PNG):
-            // it never takes the loop's cropped re-detect path.
+            // The dump reads a WHOLE screen (a grab or a saved PNG); only the
+            // geometry source changes to the placed path when it is measured.
             let frame = Frame::full([iw, ih]);
             let texts = pass2_texts(&img, frame, layout, &g);
             report.timings.push(timing("pass2", started));
@@ -479,6 +532,7 @@ fn debug_capture_blocking(
         &dir,
         &DumpImages {
             screen: &img,
+            bands: rows.iter().map(|(_, rect)| *rect).collect(),
             rows,
             cells: cell_files,
         },
@@ -812,6 +866,7 @@ mod tests {
             dump_dir: "/tmp/merc-debug/1".into(),
             source: "screen".into(),
             screen: [200, 120],
+            placement: None,
             geometry_source: "default".into(),
             geometry_error: None,
             ocr_lines: 7,
@@ -854,6 +909,17 @@ mod tests {
         assert_eq!(cell_file(2, 3), "cell-2-3.png");
     }
 
+    /// The screen artifact carries the geometry-derived row bands, while the
+    /// source image remains available for the unmodified row and cell crops.
+    #[test]
+    fn the_screen_artifact_marks_row_bands() {
+        let img = screen();
+        let marked = screen_with_bands(&img, &[[10, 20, 30, 40]]);
+
+        assert_ne!(img.get_pixel(10, 20), marked.get_pixel(10, 20));
+        assert_eq!(img.get_pixel(11, 21), marked.get_pixel(11, 21));
+    }
+
     /// The whole dump: the screen, one crop per row, one per cell — written
     /// under the given directory, which may not exist yet.
     #[test]
@@ -865,6 +931,7 @@ mod tests {
             &dir,
             &DumpImages {
                 screen: &img,
+                bands: Vec::new(),
                 rows: vec![(0, [0, 0, 60, 20])],
                 cells: vec![(0, 0, [0, 0, 40, 40]), (0, 1, [40, 0, 40, 40])],
             },
@@ -915,6 +982,7 @@ mod tests {
             &dir,
             &DumpImages {
                 screen: &img,
+                bands: Vec::new(),
                 rows: Vec::new(),
                 cells: Vec::new(),
             },
@@ -954,6 +1022,7 @@ mod tests {
             &dir,
             &DumpImages {
                 screen: &img,
+                bands: Vec::new(),
                 rows: Vec::new(),
                 cells: vec![(0, 0, [180, 100, 44, 44]), (0, 1, [-4, 0, 44, 44])],
             },

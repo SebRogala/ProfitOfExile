@@ -21,8 +21,8 @@ four seconds longer**:
 | Module status | Strip | What it shows |
 |---|---|---|
 | `scanning` | shown, for as long as the burst looks | `scanning for the recruit window…`, prefixed `heard <name> · ` when a voice line named the speaker — a `Scan now` burst has no speaker and shows the bare line |
-| `live` | shown, for as long as the read lasts | `reading · N rows · …`, header, verdict line, per-row glyphs |
-| `done` | shown, for as long as the window is on screen | `done · N rows · …`, header, verdict line, per-row glyphs |
+| `live` | shown, for as long as the read lasts | `reading · N rows · …`, or `N rows on screen, M read` when the sensor is ahead, plus header, verdict line and per-row glyphs |
+| `done` | shown, for as long as the window is on screen | `done · N rows · …`, or `N rows on screen, M read` when the sensor is ahead, plus header, verdict line and per-row glyphs |
 | `idle` — window gone | shown for **4 s** after the retire, then cleared | `recruit window gone — last read` over the last verdict |
 | `idle` — waiting | shown for **4 s** after going idle, then cleared | `waiting for a mercenary · Scan now on the page` |
 | `off`, `unavailable` | never shown | — |
@@ -56,3 +56,18 @@ module was not pixel-identical to an overlay that failed to build; 2026-09-01
 that permanence was withdrawn in favour of the four-second linger, because a
 panel that stays over the game after the decision is made costs more than it
 tells.
+
+### Placed crop and row counters
+
+The normal detect reads the SSOT-placed panel crop. Its fixed padding is about
+45% of the full-screen area on the reference geometry, so the accepted saving
+is approximately 2× in OCR work, not an order of magnitude. The 4,504 ms
+full-screen baseline quoted by ADR-024 is the original README/module baseline;
+it is not a placed-crop timing claim.
+
+Rust publishes `rowsOnScreen` and `rowsRead` on every capture. The first is the
+skill-icon sensor, including one-pitch probes above and below the enumerated
+geometry; the second is the number of published rows whose skill OCR resolved.
+The strip prints both whenever the counters differ. A placed geometry seed is
+trimmed at the last occupied skill icon when the button line is absent, so
+phantom trailing rows do not reach the verdict engine.

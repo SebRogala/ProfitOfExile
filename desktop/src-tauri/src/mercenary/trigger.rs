@@ -27,23 +27,25 @@
 //! two is "is the recruit window's chrome on screen?".
 //!
 //! 1. Voice line (module on, speaker ∉ denylist) → **+500 ms** → ONE targeted
-//!    probe: `run::probe_tick` OCRs the anchor band alone
-//!    ([`super::geometry::probe_band_bounds`]), not the 39-line full screen.
+//!    probe: `run::probe_tick` OCRs the placed recruit crop, not the 39-line
+//!    full screen.
 //! 2. Nothing → ONE retry at **+1.5 s from the line**, or [`PROBE_GAP_MS`]
 //!    after the first probe actually ran when the game was not in front for it.
 //! 3. Still nothing → **stand down**. No burst, no scanning: the player was
 //!    walking past. One log line says so.
-//! 4. Chrome found → the probe hands its own frame to a full detect in the SAME
-//!    iteration, and the pre-existing live behaviour takes over unchanged
-//!    (re-detect 2 s, hover 400 ms, retire after two misses).
+//! 4. Chrome found → the probe hands its own frame to the placed detect in the
+//!    SAME iteration; only a crop failure spends the one full-screen fallback,
+//!    and the pre-existing live behaviour takes over unchanged (re-detect 2 s,
+//!    hover 400 ms, retire after two misses).
 //! 5. A voice line arriving while a capture is HELD ([`capture_held`]) is
 //!    ignored outright. The window is on screen and being read; re-arming can
 //!    only make the loop re-detect a panel the cursor is over — which is how
 //!    09:41:56 turned a chattering mercenary into a phantom retire.
 //!
-//! **Scan now bypasses the gate**: it asks for a full detect and gets one, the
-//! first moment the game is in front. It is the manual safety net for every
-//! window the gate stood down on.
+//! **Scan now bypasses the voice gate**: it asks for one detect, which reads the
+//! placed crop first and escalates to the one full-screen fallback only when
+//! crop verification fails. It is the manual safety net for every window the
+//! gate stood down on.
 //!
 //! # Why a denylist and not a pattern
 //!
@@ -69,7 +71,7 @@
 //!
 //! # The cost of being wrong
 //!
-//! A false trigger costs two band OCRs per line and is invisible (nothing is
+//! A false trigger costs two placed-crop OCRs per line and is invisible (nothing is
 //! found, nothing is published) — an order less than the burst it replaced,
 //! which is what makes the shape affordable in an arena full of mercenaries. A
 //! missed trigger costs the capture entirely — which is what Scan now exists
@@ -80,7 +82,7 @@
 //! of the approach line and it is the click that opens a window. So a
 //! chattering mercenary does keep buying looks — capped by
 //! [`LINE_STALE_MS`] from the FIRST line of the chain, which is ten seconds of
-//! band OCRs against the ten seconds of full-screen ones POE-198 paid for
+//! placed-crop OCRs against the ten seconds of full-screen ones POE-198 paid for
 //! exactly the same chatter.
 //!
 //! # Pure vs glue
@@ -107,7 +109,7 @@ const SHIPPED_DENYLIST: &str = include_str!("assets/npc-denylist.txt");
 /// The window is not open when the line lands: the click that opens it is what
 /// fires the line, and the panel animates in behind it. Half a second is the
 /// design's allowance for that, and the probe is cheap enough that being early
-/// costs one band OCR rather than a capture.
+/// costs one placed-crop OCR rather than a capture.
 pub const PROBE_DELAY_MS: u64 = 500;
 
 /// How long after the voice line the RETRY probe looks.
@@ -147,7 +149,7 @@ pub const PROBE_GAP_MS: u64 = PROBE_RETRY_MS - PROBE_DELAY_MS;
 /// Ten seconds because that is what POE-198's burst was sized at, for the same
 /// reason: it is the outside of "the player is still standing where they were".
 /// What has changed is what the ten seconds BUY. They used to be ten seconds of
-/// full-screen OCR; they are now the shelf life of a right to two band looks.
+/// full-screen OCR; they are now the shelf life of a right to two placed-crop looks.
 ///
 /// Measured from the FIRST line of an unbroken chain by the same speaker, not
 /// from the latest one. Every line re-arms both probes ([`BurstGate::hear`]),
@@ -183,8 +185,8 @@ pub const MAX_BACKDATE_MS: u64 = 10_000;
 ///
 /// Scan now is clicked in OUR window, which by definition means the game is not
 /// the foreground window and the capture loop is napping. So the request is not
-/// a deadline to meet but a debt to settle: it is owed ONE full detect, and it
-/// gets it at the first moment the game IS in front. This bounds the wait, so a
+/// a deadline to meet but a debt to settle: it is owed ONE detect, and it gets
+/// it at the first moment the game IS in front. This bounds the wait, so a
 /// click that is never followed by an alt-tab does not leave the module holding
 /// a detect for the rest of the session.
 pub const MANUAL_ARM_GRACE_MS: u64 = 60_000;
@@ -561,9 +563,9 @@ pub enum GateStep {
     /// because the loop naps a quantum here rather than an idle nap: a 500 ms
     /// probe rounded up to the next 250 ms boundary is a 750 ms probe.
     Waiting,
-    /// Run the anchor-band probe now.
+    /// Run the placed-panel crop probe now.
     Probe,
-    /// Run a FULL detect now — Scan now, which does not go through the band.
+    /// Run one detect now — Scan now, which reads the placed crop directly.
     FullDetect,
 }
 
@@ -597,8 +599,9 @@ pub fn scan_outranks(status: MercStatus) -> bool {
 /// The gate the capture loop asks "should I be looking at all?".
 ///
 /// Two independent slots, because the two triggers are different promises. A
-/// voice line buys [`PROBES_PER_LINE`] band looks on a deadline it cannot
-/// extend; Scan now buys ONE full detect whenever the game next comes forward.
+    /// voice line buys [`PROBES_PER_LINE`] placed-crop looks on a deadline it cannot
+    /// extend; Scan now buys ONE placed-crop detect, with one full fallback on a
+    /// crop miss, whenever the game next comes forward.
 /// Folding them into one slot is what made the old burst re-armable by a
 /// chattering mercenary — every line pushed the expiry out, so a mercenary who
 /// spoke every two seconds held a full-screen hunt open indefinitely.
@@ -610,15 +613,20 @@ pub fn scan_outranks(status: MercStatus) -> bool {
 pub struct BurstGate {
     /// The voice line being probed for.
     probe: Option<ArmedProbe>,
-    /// When a Scan now asked for its full detect. `None` — nothing owed.
+    /// When a Scan now asked for its detect. `None` — nothing owed.
     manual_at_ms: Option<u64>,
-    /// Probes this ARMING has spent, across every line that re-armed it.
+    /// Diagnostic count of probes this ARMING has spent, across every line that
+    /// re-armed it. No runtime policy consumes it; tests and diagnostics do.
     ///
     /// Monotonic while the gate stays armed, zeroed only when a RESTING gate is
     /// armed afresh. `ArmedProbe::fired` cannot serve here: every new line
-    /// resets it, so a band keyed on that would sit on the remembered rect for
-    /// as long as a mercenary kept talking. See [`Self::hear`].
+    /// resets it, so geometry keyed on that would sit on an earlier arm for as
+    /// long as a mercenary kept talking. See [`Self::hear`].
     looks: u32,
+    /// Monotonic identity of the current voice/manual arm. The merc fallback
+    /// budget keys on this plus `merc_refit`, so a fresh gate gets one locate
+    /// even when its probe count returns to zero.
+    generation: u64,
 }
 
 impl BurstGate {
@@ -643,9 +651,9 @@ impl BurstGate {
     ///   the first line of the chain and continuous chatter still stands the
     ///   gate down. A different speaker starts a new chain — different
     ///   mercenary, different click, its own ten seconds;
-    /// - [`Self::looks`] keeps counting across the re-arm, so `run::probe_band`
-    ///   widens on the second LOOK rather than on the second probe of some
-    ///   line. Chatter cannot pin the probe to the remembered band.
+    /// - [`Self::looks`] keeps counting across the re-arm, so `run::probe_tick`
+    ///   remains keyed to the current placed crop rather than the second probe
+    ///   of some earlier line.
     pub fn hear(&mut self, speaker: String, line_at_ms: u64) -> bool {
         let chain_at_ms = self
             .probe
@@ -655,6 +663,7 @@ impl BurstGate {
         let fresh = self.probe.is_none();
         if fresh {
             self.looks = 0;
+            self.generation = self.generation.saturating_add(1);
         }
         self.probe = Some(ArmedProbe {
             speaker,
@@ -666,18 +675,21 @@ impl BurstGate {
         fresh
     }
 
-    /// Scan now: owe one full detect.
+    /// Scan now: owe one detect.
     ///
     /// `true` when nothing was owed already, so a double-click logs once.
     pub fn request_full_detect(&mut self, now_ms: u64) -> bool {
         let fresh = self.manual_at_ms.is_none();
+        if fresh {
+            self.generation = self.generation.saturating_add(1);
+        }
         self.manual_at_ms = Some(now_ms);
         fresh
     }
 
     /// What the loop should do this iteration.
     ///
-    /// Scan now outranks a probe: it is a person asking, and the full detect it
+    /// Scan now outranks a probe: it is a person asking, and the detect it
     /// runs answers the probe's question as a side effect.
     pub fn step(&self, now_ms: u64) -> GateStep {
         if self.manual_at_ms.is_some() {
@@ -696,12 +708,18 @@ impl BurstGate {
         self.probe.as_ref().map(|p| p.speaker.as_str())
     }
 
-    /// How many probes this ARMING has spent — the attempt number
-    /// `run::probe_band` widens the band on. 0 for a gate armed afresh.
+    /// Diagnostic count of probes this ARMING has spent — the attempt number
+    /// `run::probe_tick` has spent. Runtime policy does not consume it. 0 for a
+    /// gate armed afresh.
     ///
     /// Deliberately not `ArmedProbe::fired`: see [`Self::looks`] the field.
     pub fn looks(&self) -> u32 {
         self.looks
+    }
+
+    /// The current arm identity for one-shot fallback work.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// A probe just ran, at `now_ms`. Spending it here rather than on the hit
@@ -898,7 +916,8 @@ pub fn take_stood_down(app: &AppHandle, now_ms: u64) -> Option<StandDown> {
     stood_down
 }
 
-/// How many probes this arming has spent. See [`BurstGate::looks`].
+/// Diagnostic count of how many probes this arming has spent. See
+/// [`BurstGate::looks`]; no runtime policy consumes this value.
 pub fn looks(app: &AppHandle) -> u32 {
     let state = app.state::<AppState>();
     let looks = state
@@ -907,6 +926,17 @@ pub fn looks(app: &AppHandle) -> u32 {
         .unwrap_or_else(|e| e.into_inner())
         .looks();
     looks
+}
+
+/// The current voice/manual arm identity for merc fallback budgeting.
+pub fn generation(app: &AppHandle) -> u64 {
+    let state = app.state::<AppState>();
+    let generation = state
+        .merc_burst
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .generation();
+    generation
 }
 
 /// A probe ran — spend it.
@@ -919,7 +949,7 @@ pub fn note_probe(app: &AppHandle, now_ms: u64) {
         .note_probe(now_ms);
 }
 
-/// The Scan now got its full detect.
+/// The Scan now got its detect.
 pub fn note_full_detect(app: &AppHandle) {
     let state = app.state::<AppState>();
     state
@@ -949,18 +979,17 @@ pub fn disarm_probe(app: &AppHandle) {
         .disarm_probe();
 }
 
-/// Scan now: ask for one full detect (POE-198 AC 3).
+/// Scan now: ask for one detect (POE-198 AC 3).
 ///
 /// Refuses loudly rather than arming a gate nothing will read: with the module
 /// off there is no loop, and where capture is unavailable there is no OCR. A
 /// button that silently does nothing is the failure this refusal replaces.
 ///
-/// **It bypasses the probe gate entirely** (POE-204 WI-C). The gate exists to
+/// **It bypasses the voice probe gate** (POE-204 WI-C). The gate exists to
 /// decide whether a voice line is worth a look; a person pressing this button
-/// has already decided, and the band probe could only turn their answer into a
-/// stand-down. So the request is for the full detect the probe would have led
-/// to, and it is served the first moment the game is in front — see
-/// [`MANUAL_ARM_GRACE_MS`].
+/// has already decided. The request is served as one placed-crop detect, with
+/// the same one-shot full fallback as the live path, the first moment the game
+/// is in front — see [`MANUAL_ARM_GRACE_MS`].
 ///
 /// **Over a HELD capture it does exactly one thing: a re-detect off the
 /// cadence** — cropped to the panel when one is known, which `run::detect_tick`
@@ -991,7 +1020,7 @@ pub fn scan_now(app: &AppHandle) -> Result<(), String> {
     // states — and with no speaker, because Scan now heard nobody.
     announce(app, None);
     if fresh {
-        crate::app_log(app, "Merc: Scan now — full detect requested".to_string());
+        crate::app_log(app, "Merc: Scan now — detect requested".to_string());
     }
     Ok(())
 }
@@ -1602,12 +1631,11 @@ mod tests {
         );
     }
 
-    /// The re-arm must not hand the probe its remembered band back. `fired`
-    /// resets on every line, so a band keyed on THAT would sit on the last
-    /// panel's rect for as long as the mercenary kept talking — and the one
-    /// failure the remembered band has (the player moved the window) is silent.
+    /// The re-arm must not hand the probe stale geometry. `fired` resets on
+    /// every line, so geometry keyed on THAT would stay tied to an earlier
+    /// arm while the mercenary kept talking.
     #[test]
-    fn chatter_cannot_pin_the_probe_to_the_remembered_band() {
+    fn chatter_cannot_pin_the_probe_to_earlier_geometry() {
         let mut gate = heard();
         gate.note_probe(LINE + PROBE_DELAY_MS);
 
@@ -1701,8 +1729,7 @@ mod tests {
         assert_eq!(gate.speaker(), None);
     }
 
-    /// The probe band widens on the second look, and this is the number it
-    /// keys on.
+    /// The placed-crop probe budget is keyed by the number of looks spent.
     #[test]
     fn the_gate_counts_the_looks_it_has_spent() {
         let mut gate = heard();
@@ -1718,9 +1745,8 @@ mod tests {
     }
 
     /// The counter is per ARMING, not per session: a gate that stood down and
-    /// was armed again gets the remembered band back for its first look. It is
-    /// the cheap one — 7% of the screen against the default's 55% — and a
-    /// window reopens where it opened last.
+    /// was armed again starts against the current SSOT placement on its first
+    /// look.
     #[test]
     fn a_gate_armed_afresh_starts_its_looks_over() {
         let mut gate = heard();
@@ -1736,7 +1762,7 @@ mod tests {
     // -- Scan now bypasses the gate ----------------------------------------
 
     /// The button asks for the detect the probe would have led to. Running the
-    /// band first could only turn a person's answer into a stand-down.
+    /// crop first could only turn a person's answer into a stand-down.
     #[test]
     fn scan_now_asks_for_a_full_detect_immediately() {
         let mut gate = BurstGate::default();
@@ -1806,9 +1832,8 @@ mod tests {
         );
     }
 
-    /// A person asking outranks a probe that has not run yet: the full detect
-    /// answers the probe's question as a side effect, and running the band
-    /// first would only spend a probe on it.
+    /// A person asking outranks a probe that has not run yet: the placed detect
+    /// answers the probe's question directly, and no voice probe is spent.
     #[test]
     fn scan_now_outranks_a_probe_that_is_due() {
         let mut gate = heard();

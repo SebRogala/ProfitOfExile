@@ -67,14 +67,20 @@ function row(index: number, states: ReadState[]): MercRow {
 	};
 }
 
-function capture(rows: MercRow[], header: Partial<MercCapture['header']> = {}): MercCapture {
+function capture(
+	rows: MercRow[],
+	header: Partial<MercCapture['header']> = {},
+	counters: Partial<Pick<MercCapture, 'rowsOnScreen' | 'rowsRead'>> = {}
+): MercCapture {
 	return {
 		capturedAtMs: 1_755_000_000_000,
 		live: true,
 		scale: 1,
 		screen: [2560, 1440],
 		header: { name: 'Cai, the Lout', class: 'Shock Ambusher', level: 70, wager: 1028, ...header },
-		rows
+		rows,
+		rowsOnScreen: counters.rowsOnScreen ?? rows.length,
+		rowsRead: counters.rowsRead ?? rows.length
 	};
 }
 
@@ -327,6 +333,22 @@ describe('the status line', () => {
 		expect(
 			statusLine(slice('done', capture([row(0, ['matched']), row(1, ['confirmed'])])))
 		).toBe('done · 2 rows · all icons read');
+	});
+
+	it('shows rows the icon sensor sees but skill OCR did not read', () => {
+		expect(
+			statusLine(
+				slice('live', capture([row(0, ['matched'])], {}, { rowsOnScreen: 6, rowsRead: 5 }))
+			)
+		).toBe('reading · 6 rows on screen, 5 read · all icons read');
+	});
+
+	it('does not show a mismatch when the sensor is behind skill OCR', () => {
+		expect(
+			statusLine(
+				slice('live', capture([row(0, ['matched'])], {}, { rowsOnScreen: 5, rowsRead: 6 }))
+			)
+		).toBe('reading · 1 row · all icons read');
 	});
 
 	// `done` is Rust's claim that everything was read. The line checks it

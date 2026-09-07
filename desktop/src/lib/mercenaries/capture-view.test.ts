@@ -75,7 +75,9 @@ function capture(rows: MercCapture['rows']): MercCapture {
 		scale: 1,
 		screen: [2560, 1440],
 		header: { name: 'Cai, the Lout', class: 'Shock Ambusher', level: 70, wager: 1028 },
-		rows
+		rows,
+		rowsOnScreen: rows.length,
+		rowsRead: rows.length
 	};
 }
 

@@ -96,6 +96,10 @@ export interface MercCapture {
 	panel?: [number, number, number, number] | null;
 	header: MercHeader;
 	rows: MercRow[];
+	/** Number of row positions the icon sensor sees on screen. */
+	rowsOnScreen: number;
+	/** Number of published rows whose skill OCR resolved to a known state. */
+	rowsRead: number;
 	/**
 	 * The icon pass has not run on this frame: the rows carry their skill
 	 * names and no support cells, and the full read is on its way. Rust

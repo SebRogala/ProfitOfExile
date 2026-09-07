@@ -24,11 +24,11 @@
 //! does it look, and only while the game is the foreground window.
 //!
 //! The two asks buy different looks (POE-204 WI-C). A voice line buys two
-//! [`probe_tick`]s — a band OCR at 500 ms and, if that saw nothing, one more at
-//! 1.5 s — and then the gate stands down, because a mercenary speaks on
+//! [`probe_tick`]s — a placed-crop OCR at 500 ms and, if that saw no recruit
+//! chrome, one more at 1.5 s — and then the gate stands down, because a mercenary speaks on
 //! approach as often as on click and most lines are for a window nobody opened.
-//! Scan now buys one full [`detect_tick`], because a person asking has already
-//! answered the question the probe would ask. Either way, the first detected
+//! Scan now arms one detect: the placed crop is read first and a crop failure
+//! escalates to the one full fallback. Either way, the first detected
 //! window disarms the gate and the live behaviour below takes over unchanged;
 //! a gate that finds nothing says so once and the loop goes back to waiting.
 //!
@@ -88,7 +88,7 @@ const TICK: Duration = Duration::from_millis(100);
 /// Detect cadence while no window is captured (D6).
 ///
 /// Since POE-204 WI-C almost nothing runs at it. The gate answers a voice line
-/// with two band probes rather than a cadence of detects, and Scan now with one
+/// with two placed-crop probes rather than a cadence of detects, and Scan now with one
 /// detect; what is left for this constant is the SECOND detect of a hunt that
 /// has not landed yet — a probe hit whose detect found nothing, on the tick
 /// after. It is kept at 1 s because the backoff below still measures against
@@ -122,18 +122,16 @@ const HOVER_INTERVAL: Duration = Duration::from_millis(400);
 ///   FIRST detect after a voice line waited [`DETECT_INTERVAL_SLOW`] — 3 s of
 ///   "nothing happening" bought by a number that was mostly a tooltip OCR the
 ///   backoff has no say over.
-/// - **Not a cropped re-detect** (POE-204 WI-B review). A crop of a known panel
-///   is a fraction of a full-screen OCR by construction, so feeding those in
-///   would decay the backoff on evidence about a cheaper question — and the
-///   `crop→full` re-take is the opposite bias, a tick carrying two OCRs. Both
-///   run only while a window is live, where the cadence is
-///   [`REDETECT_INTERVAL`] and the backoff has no say either way. See
-///   [`LoopState::note_tick_duration`].
+/// - **Not the placed crop**. A crop of a placed panel is a fraction of a
+///   full-screen OCR by construction, so feeding it into the hunt backoff would
+///   decay the backoff on evidence about a cheaper question. Placed reads run
+///   while a window is live, where the cadence is [`REDETECT_INTERVAL`] and the
+///   backoff has no say either way. See [`LoopState::note_tick_duration`].
 const SLOW_TICK: Duration = Duration::from_millis(1500);
 /// Consecutive detects at or under [`SLOW_TICK`] that clear the backoff.
 ///
 /// The backoff used to be sticky for the life of the thread, on the reasoning
-/// that "this machine is slow" does not become false. The cropped re-detect
+/// that "this machine is slow" does not become false. The placed re-detect
 /// (POE-204 WI-B) makes it false on purpose — the same machine that took
 /// 4.5 s on a full-screen tick reads a crop of the known panel in a fraction
 /// of it — and a slow FIRST detect would otherwise hold the 3 s hunt cadence
@@ -547,7 +545,7 @@ pub enum DetectStep {
 /// each, then two more 10 s ticks to retire — 40 s of `done` verdict for a
 /// window that closed. Dropping the hold puts those ticks back on
 /// [`REDETECT_INTERVAL`], which is the cadence the cap was sized against, and
-/// the same close retires in 28 s. It costs one cropped re-detect every 2 s
+/// the same close retires in 28 s. It costs one placed-crop detect every 2 s
 /// while a tooltip is up, and only after one has already failed.
 pub fn detect_step(
     state: &LoopState,
@@ -564,18 +562,6 @@ pub fn detect_step(
     }
 }
 
-/// The rect a detect tick OCRs, or `None` for the whole screen.
-///
-/// One place answers "is there a known panel to re-read", rather than every
-/// reader of `Session::crop` re-deriving it. The two fields are cleared
-/// together on retire, so the filter looks redundant — it is not: the crop is
-/// a rect measured from a layout, and using it while nothing is live would
-/// hunt for a new window inside the last one's outline and never find one
-/// anywhere else on screen.
-pub fn detect_frame(crop: Option<[i32; 4]>, panel: Option<[i32; 4]>) -> Option<[i32; 4]> {
-    crop.filter(|_| panel.is_some())
-}
-
 /// What one detect tick reports back to the loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DetectTick {
@@ -584,16 +570,15 @@ pub struct DetectTick {
     /// [`burst_satisfied`]).
     pub outcome: Option<DetectOutcome>,
     /// Whether this tick OCR'd the WHOLE screen and nothing else — the only
-    /// kind of tick whose duration the backoff may read. A crop, and the
-    /// `crop→full` re-take that carries two OCRs, are both excluded. See
-    /// [`SLOW_TICK`].
+    /// kind of tick whose duration the backoff may read. A placed crop is
+    /// excluded. See [`SLOW_TICK`].
     pub full_frame: bool,
 }
 
 impl DetectTick {
     /// What a PROBE reports, whatever it saw.
     ///
-    /// `full_frame: false` is the load-bearing half: a band OCR says nothing
+    /// `full_frame: false` is the load-bearing half: a placed-crop OCR says nothing
     /// about what a full-screen hunt costs on this machine, and the probe runs
     /// twice per voice line in an arena full of mercenaries — reporting `true`
     /// would decay a backoff the hunt earned, on evidence about a cheaper
@@ -606,6 +591,10 @@ impl DetectTick {
     pub fn probe() -> Self {
         Self { outcome: None, full_frame: false }
     }
+}
+
+fn detect_report(outcome: Option<DetectOutcome>, full_frame: bool) -> DetectTick {
+    DetectTick { outcome, full_frame }
 }
 
 /// Whether the cursor was over a rect, given THIS frame's rect and the one the
@@ -745,6 +734,14 @@ pub fn header_log_line(header: &MercHeader, last: &Option<String>) -> Option<Str
     (last.as_deref() != Some(line.as_str())).then_some(line)
 }
 
+fn row_mismatch_line(rows_on_screen: usize, rows_read: usize) -> Option<String> {
+    (rows_on_screen > rows_read).then(|| {
+        format!(
+            "Merc: row mismatch — {rows_on_screen} rows on screen, {rows_read} read"
+        )
+    })
+}
+
 /// What the loop does with one iteration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoopStep {
@@ -795,9 +792,9 @@ pub fn next_step(live: bool, gate: trigger::GateStep, focused: bool) -> LoopStep
 pub enum Look {
     /// Nothing this iteration — the live cadence is not up.
     None,
-    /// The gate's cheap anchor band ([`probe_tick`]).
+    /// The gate's cheap placed-panel crop ([`probe_tick`]).
     Probe,
-    /// A full detect ([`detect_tick`]).
+    /// A detect ([`detect_tick`]).
     Detect,
 }
 
@@ -805,16 +802,15 @@ pub enum Look {
 ///
 /// The precedence is what keeps the probe cheap. Read top to bottom:
 ///
-/// - **Scan now first.** A person asked for a full detect; the band probe could
-///   only turn their answer into a stand-down, and the full detect answers the
-///   probe's question as a side effect.
+/// - **Scan now first.** A person asked for a detect; it reads the placed crop
+///   directly and escalates only if crop verification fails.
 /// - **A live capture next, on its own cadence.** [`detect_step`] owns that
 ///   cadence and its hold, and a gate armed over a live window (which
 ///   `trigger::capture_held` makes rare, not impossible — a line can land in
 ///   the gap between the arm and the detect that captures) must not displace a
 ///   re-detect with a probe that has nothing to add.
 /// - **Then the probe.** This is the only branch that reaches [`probe_tick`],
-///   which is what makes "a voice line costs one band OCR" a property of one
+///   which is what makes "a voice line costs one placed-crop OCR" a property of one
 ///   function rather than of the loop body's shape.
 pub fn look_step(live: bool, gate: trigger::GateStep, detect: DetectStep) -> Look {
     if gate == trigger::GateStep::FullDetect {
@@ -847,41 +843,16 @@ pub fn burst_satisfied(outcome: Option<DetectOutcome>) -> bool {
     )
 }
 
-/// The rect one probe OCRs.
-///
-/// `remembered` is [`geometry::probe_band_bounds`] of the last panel this
-/// SESSION saw — not `Session::panel`, which a retire clears. A window that was
-/// on screen a minute ago is overwhelmingly likely to reopen where it was, and
-/// remembering the band is what makes the ordinary probe 7% of a screen instead
-/// of 40%.
-///
-/// **The retry drops it.** `attempt` 0 uses the remembered band; every later
-/// one uses [`geometry::default_probe_band`]. The remembered band has exactly
-/// one failure mode — the player moved the window, or changed the UI scale —
-/// and it is silent: the probe looks at empty screen, sees no chrome, and the
-/// gate stands down on a window that is plainly open. The retry exists to cover
-/// lag, and covering a moved window with it costs nothing that was not already
-/// being spent.
-///
-/// `attempt` is [`trigger::BurstGate::looks`] — probes spent by this ARMING,
-/// across every voice line that re-armed it — and not the current line's own
-/// count. A new line resets that one, so keying the band on it would let a
-/// mercenary who talks every second hold the probe on the remembered rect for
-/// the whole of the gate's life, which is precisely the case whose window is
-/// most likely to have moved.
-///
-/// **A band from a different SCREEN is dropped outright**, not left to the
-/// retry. The band survives retires by design and so it survives a resolution
-/// change too, and a rect past the new screen's edge is not merely a bad guess:
-/// `crop_imm` clamps it to nothing, `recognize_lines` fails on the empty image,
-/// and the player gets an OCR error on the slice for walking past a mercenary
-/// after changing their display settings. One `encloses` is cheaper than that
-/// diagnosis.
-pub fn probe_band(remembered: Option<[i32; 4]>, screen: [u32; 2], attempt: u32) -> [i32; 4] {
-    remembered
-        .filter(|_| attempt == 0)
-        .filter(|band| geometry::encloses([0, 0, screen[0] as i32, screen[1] as i32], *band))
-        .unwrap_or_else(|| geometry::default_probe_band(screen))
+fn fallback_allowed(gate: trigger::GateStep) -> bool {
+    matches!(gate, trigger::GateStep::Probe | trigger::GateStep::FullDetect)
+}
+
+fn full_fallback_needed(
+    placement: Option<([i32; 4], f32)>,
+    force_full: bool,
+    allow: bool,
+) -> bool {
+    placement.is_none() || (allow && force_full)
 }
 
 /// How many times a cell that ALREADY reads as `Matched` may be re-OCR'd by the
@@ -1772,6 +1743,54 @@ struct Retained {
     at: Instant,
 }
 
+/// Identity of one merc fallback opportunity. `merc_refit` handles a manual
+/// geometry reset; the trigger generation handles a fresh voice/manual arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FallbackKey {
+    refit: u64,
+    gate: u64,
+}
+
+/// One full-screen locate per key.
+///
+/// A successful merc read has no genuinely withheld SSOT measurement to repay:
+/// the only `accepted == false` path is `MercOcr` drift refusal, which is an
+/// intentional rejection of a restatement inside the drift band.
+#[derive(Debug, Default)]
+struct FallbackBudget {
+    key: Option<FallbackKey>,
+    uses: u8,
+}
+
+impl FallbackBudget {
+    fn take(&mut self, key: FallbackKey) -> bool {
+        if self.key != Some(key) {
+            self.key = Some(key);
+            self.uses = 0;
+        }
+        if self.uses == 0 {
+            self.uses += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn decide(&mut self, key: FallbackKey) -> FallbackDecision {
+        if self.take(key) {
+            FallbackDecision::Locate
+        } else {
+            FallbackDecision::Miss
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FallbackDecision {
+    Locate,
+    Miss,
+}
+
 /// Everything the loop carries between ticks.
 struct Session {
     geometry: MercGeometry,
@@ -1812,25 +1831,19 @@ struct Session {
     /// knows the pitch. See [`super::geometry::header_guard_bounds`] and
     /// [`publishable_header`]. Cleared with `panel` on retire.
     header_guard: Option<[i32; 4]>,
-    /// The rect the next re-detect grabs and OCRs, from
-    /// [`geometry::crop_around`]. `None` — no known panel, so the next
-    /// detect takes the whole screen. Cleared with `panel` on retire.
-    crop: Option<[i32; 4]>,
-    /// The band the next PROBE OCRs, from [`geometry::probe_band_bounds`].
-    ///
-    /// Deliberately NOT cleared on retire, unlike every other rect on this
-    /// struct. The three above are statements about a capture the loop is
-    /// holding and must not outlive it; this one is a statement about where
-    /// recruit windows appear on this player's screen, and its whole value is
-    /// that it survives the window it was measured on — the probe that uses it
-    /// runs when nothing is captured, by construction. See [`probe_band`].
-    probe_band: Option<[i32; 4]>,
+    /// One placed/full fallback budget per `(merc_refit, trigger generation)`.
+    fallback: FallbackBudget,
+    /// The first crop detect's timing is emitted once per session.
+    crop_detect_logged: bool,
     /// The open run of detects the panel was covered for. See [`OcclusionRun`].
     occlusion: OcclusionRun,
     /// The header line as last LOGGED — the once-per-change gate for
     /// [`header_log_line`], so a re-detect does not reprint the same three
     /// fields every cadence.
     header_logged: Option<String>,
+    /// The last positive icon/read row mismatch that was logged. A dark icon
+    /// clears the state without emitting a line; repeated ticks emit once.
+    row_mismatch_logged: Option<String>,
     /// What the last retire left for a re-detect of the same panel.
     retained: Option<Retained>,
     /// The trade-search budget for the capture on screen (POE-202).
@@ -2362,10 +2375,11 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         miss_logged: false,
         panel: None,
         header_guard: None,
-        crop: None,
-        probe_band: None,
+        fallback: FallbackBudget::default(),
+        crop_detect_logged: false,
         occlusion: OcclusionRun::default(),
         header_logged: None,
+        row_mismatch_logged: None,
         retained: None,
         trade: None,
         fitted: None,
@@ -2592,7 +2606,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             break;
         }
 
-        // What this iteration points at the screen: the gate's band, the live
+        // What this iteration points at the screen: the gate's placed crop, the live
         // cadence's detect, or nothing. See [`look_step`] for the precedence.
         let look = look_step(
             session.state.live,
@@ -2605,25 +2619,29 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             ),
         );
 
-        // The probe, and the frame it hands on when it saw the chrome. A hit
-        // runs the full detect in THIS iteration rather than the next one:
-        // waiting a cadence is the 2-4 s of "nothing happening" WI-B measured,
-        // and the probe has already paid for the grab.
+        // The probe, and the frame it hands on whether it saw the chrome or
+        // spent its one keyed full fallback. A hit runs the normal crop detect
+        // in THIS iteration; a miss uses the same grab for the fallback rather
+        // than paying for a second screen capture.
         let mut probed: Option<crate::capture::Capture> = None;
+        let mut probe_missed = false;
+        let mut probed_lines: Option<Vec<geometry::OcrLineBox>> = None;
         // When the probe's GRAB started, on the iterations a hit hands that
         // grab to the detect below. See the timing comment there.
         let mut probe_started: Option<Instant> = None;
         if look == Look::Probe {
             let started = Instant::now();
-            let (tick, image) = probe_tick(&app, &mut session);
+            let (tick, image, lines, crop_missed) = probe_tick(&app, &mut session);
             trigger::note_probe(&app, now);
             // Reported for the same reason a detect is, and it is always a
-            // no-op: a band OCR carries `full_frame: false`, which is precisely
+            // no-op: a placed-crop OCR carries `full_frame: false`, which is precisely
             // the duration the backoff must not read. Going through the state
             // machine anyway is what stops a later reader deciding the probe is
             // the exempt path.
             session.state.note_tick_duration(tick.full_frame, Duration::ZERO);
             probed = image;
+            probed_lines = lines;
+            probe_missed = crop_missed;
             probe_started = probed.is_some().then_some(started);
         }
 
@@ -2634,15 +2652,22 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         // rule — see [`SLOW_TICK`].
         //
         // On the PROBE-HIT path the clock starts before the probe's grab, not
-        // here: the detect then runs on that grab instead of taking one of its
-        // own, so a clock started here would report a full-screen detect at OCR
-        // cost only. That reading feeds the backoff (a probe hit on an unknown
-        // panel OCRs the whole screen, so it carries `full_frame: true`), and a
-        // machine that cannot hunt at 1 Hz would look like one that can for
-        // exactly the ticks that hunt.
+        // here: the detect then runs on that grab and reuses its translated
+        // lines. That reading feeds the backoff for the whole crop tick; a
+        // crop miss is the path that escalates to full-screen OCR.
         if look == Look::Detect || probed.is_some() {
             let started = probe_started.unwrap_or_else(Instant::now);
-            let tick = detect_tick(&app, &mut session, cursor, &cancel, probed);
+            let tick = detect_tick(
+                &app,
+                &mut session,
+                cursor,
+                &cancel,
+                probed,
+                probed_lines,
+                probe_started,
+                fallback_allowed(gate),
+                probe_missed,
+            );
             let took = started.elapsed();
             last_detect = Instant::now();
             // A Scan now is owed ONE detect, and this was it — whatever it
@@ -2789,6 +2814,78 @@ pub(super) fn debug_mode(app: &AppHandle) -> bool {
     debug
 }
 
+/// The current SSOT placement and scale, copied before capture work starts.
+/// A null slice is the cold-start case; no session rectangle fills that gap.
+fn merc_placement(app: &AppHandle) -> Option<([i32; 4], f32)> {
+    let screen = {
+        let state = app.state::<AppState>();
+        let screen = state.screen.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        screen
+    }?;
+    let merc = crate::ssot::placements_for(Some(&screen)).merc?;
+    Some((merc.panel, screen.ui_scale))
+}
+
+fn fallback_key(app: &AppHandle) -> FallbackKey {
+    FallbackKey { refit: refit_counter(app), gate: trigger::generation(app) }
+}
+
+fn grow_rect(held: Option<[i32; 4]>, fresh: Option<[i32; 4]>) -> Option<[i32; 4]> {
+    match (held, fresh) {
+        (Some(held), Some(fresh)) => {
+            let x = held[0].min(fresh[0]);
+            let y = held[1].min(fresh[1]);
+            let right = (held[0] + held[2]).max(fresh[0] + fresh[2]);
+            let bottom = (held[1] + held[3]).max(fresh[1] + fresh[3]);
+            Some([x, y, right - x, bottom - y])
+        }
+        (held, fresh) => held.or(fresh),
+    }
+}
+
+const MERC_GEOMETRY_NOTICE_LINE: &str =
+    "Merc: geometry notice pending — placed panel contradicted by detect (POE-271)";
+
+fn fallback_panel(
+    placement: Option<([i32; 4], f32)>,
+    layout: &Result<geometry::MercLayout, geometry::DetectMiss>,
+    g: &MercGeometry,
+) -> (Option<[i32; 4]>, Option<[i32; 2]>, Option<String>) {
+    let Some((placed, scale)) = placement else {
+        return (None, None, None);
+    };
+    let Ok(found) = layout else {
+        return (None, None, None);
+    };
+    let Some(located) = geometry::panel_bounds(found, g) else {
+        return (None, None, None);
+    };
+    if !geometry::placed_panel_contradicted(placed, located, g, scale) {
+        return (None, None, None);
+    }
+    (
+        Some(located),
+        Some([located[0], located[1]]),
+        Some(format!(
+            "merc: placed panel [{},{},{},{}] contradicted by detect [{},{},{},{}]",
+            placed[0], placed[1], placed[2], placed[3], located[0], located[1], located[2], located[3]
+        )),
+    )
+}
+
+/// Publish a successful fallback read before remembering its located origin.
+/// The miss path returns before this success-only effect seam.
+fn publish_then_remember(
+    publish: impl FnOnce(),
+    origin: Option<[i32; 2]>,
+    remember: impl FnOnce([i32; 2]),
+) {
+    publish();
+    if let Some(origin) = origin {
+        remember(origin);
+    }
+}
+
 /// Log `msg` the first time this loop sees it, and record it as `last_error`.
 fn fail(app: &AppHandle, session: &mut Session, msg: String) {
     if let Some(line) = session.errors.admit(&msg) {
@@ -2834,7 +2931,6 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
         };
         session.panel = None;
         session.header_guard = None;
-        session.crop = None;
         session.sigs.clear();
         // With the crops. An uncorroborated claim is about a cell on a window
         // that is gone, and the confirmations that DO survive a retire survive
@@ -2877,31 +2973,19 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
 
 /// One targeted probe: is the recruit window's chrome on screen?
 ///
-/// The voice-line gate's whole screen cost (POE-204 WI-C). It grabs the screen
-/// like a detect does — the platform layer captures a monitor, not a region —
-/// and then OCRs [`probe_band`] alone: on the 2026-08-24 dump's geometry that
-/// is 7% of the pixels a detect reads, and the OCR is the expensive half.
-///
-/// On a HIT it returns the whole `Capture` it grabbed — the pixels AND the
-/// display they came off (POE-237) — so the full detect that follows runs on
-/// the SAME frame rather than waiting a cadence for one of its own, and stamps
-/// its measurement with the monitor that frame was actually taken on.
-/// That is the difference between "the probe found the window" and "the probe
-/// found the window and the player saw it a second later".
-///
-/// Its tick reports `full_frame: false` whatever it saw. A band OCR says
-/// nothing about what a full-screen hunt costs on this machine, and feeding one
-/// to the backoff would decay a cadence on evidence about a cheaper question —
-/// the same rule the cropped re-detect follows ([`SLOW_TICK`]).
-///
-/// `outcome` is `None` on a miss, never [`DetectOutcome::Missed`]: a probe that
-/// saw no chrome has not detected anything and has not MISSED anything either,
-/// and routing it through [`LoopState::on_detect`] would let a probe advance
-/// the retire counter of a capture it was never asked about.
+/// The platform still captures a whole monitor, but the voice gate OCRs the
+/// SSOT-placed crop. A null slice skips probe OCR and hands the frame to the one
+/// full detect allowed by the fallback budget; this prevents a cold-start probe
+/// plus detect from becoming two full-screen OCRs.
 fn probe_tick(
     app: &AppHandle,
     session: &mut Session,
-) -> (DetectTick, Option<crate::capture::Capture>) {
+) -> (
+    DetectTick,
+    Option<crate::capture::Capture>,
+    Option<Vec<geometry::OcrLineBox>>,
+    bool,
+) {
     let tick = DetectTick::probe();
 
     let started = Instant::now();
@@ -2909,7 +2993,7 @@ fn probe_tick(
         Ok(grab) => grab,
         Err(e) => {
             fail(app, session, format!("Merc: screen capture failed — {e}"));
-            return (tick, None);
+            return (tick, None, None, false);
         }
     };
     let img = &grab.image;
@@ -2918,9 +3002,21 @@ fn probe_tick(
         img.dimensions()
     };
     let screen = [iw, ih];
-    let band = probe_band(session.probe_band, screen, trigger::looks(app));
-    let cropped = img.crop_imm(band[0] as u32, band[1] as u32, band[2] as u32, band[3] as u32);
-    let frame = geometry::Frame::probe((band[0], band[1]), screen);
+    let grabbed_on = (grab.monitor_id, grab.origin, grab.client);
+    crate::ssot::drop_if_mismatched(app, (iw, ih), grabbed_on.0, grabbed_on.2);
+    let Some((panel, scale)) = merc_placement(app) else {
+        if debug_mode(app) {
+            crate::app_log(
+                app,
+                "Merc: probe has no placed panel — handing the frame to the cold fallback"
+                    .to_string(),
+            );
+        }
+        return (tick, Some(grab), None, false);
+    };
+    let crop = geometry::placed_panel_crop(panel, scale, screen);
+    let cropped = img.crop_imm(crop[0] as u32, crop[1] as u32, crop[2] as u32, crop[3] as u32);
+    let frame = geometry::Frame::cropped((crop[0], crop[1]), screen);
 
     // Through the frame like every other OCR result, though nothing downstream
     // of `probe_hit` reads a box: ONE seam between OCR space and screen space,
@@ -2930,7 +3026,7 @@ fn probe_tick(
         Ok(lines) => frame.to_screen(lines),
         Err(e) => {
             fail(app, session, format!("Merc: OCR failed — {e}"));
-            return (tick, None);
+            return (tick, None, None, false);
         }
     };
     let hit = geometry::probe_hit(&lines, &session.geometry);
@@ -2938,7 +3034,7 @@ fn probe_tick(
         crate::app_log(
             app,
             format!(
-                "Merc: probe on the {} frame {band:?} took {} ms, {} lines — {}",
+                "Merc: probe on the {} frame {crop:?} took {} ms, {} lines — {}",
                 frame.describe(),
                 started.elapsed().as_millis(),
                 lines.len(),
@@ -2946,7 +3042,7 @@ fn probe_tick(
             ),
         );
     }
-    (tick, hit.then_some(grab))
+    (tick, Some(grab), Some(lines), !hit)
 }
 
 /// The screen slice a detect tick publishes for `screen` at `scale`.
@@ -3036,27 +3132,19 @@ fn detect_tick(
     cursor: Option<(i32, i32)>,
     cancel: &watch::Receiver<bool>,
     grabbed: Option<crate::capture::Capture>,
+    probed_lines: Option<Vec<geometry::OcrLineBox>>,
+    tick_started: Option<Instant>,
+    allow_fallback: bool,
+    probe_missed: bool,
 ) -> DetectTick {
-    // A KNOWN panel is re-read on a crop of itself. The full-screen OCR is the
-    // tick's dominant cost, and once the panel has been found the whole answer
-    // lives inside `geometry::crop_around`. The grab stays full — the
-    // platform layer captures a monitor, not a region — so what the crop buys
-    // is the OCR, which is the expensive half.
-    //
-    // Decided before the grab so every exit below, the failed ones included,
-    // reports the same frame kind to the backoff.
-    let crop = detect_frame(session.crop, session.panel);
-    let full_frame = crop.is_none();
-    let report = |outcome: Option<DetectOutcome>| DetectTick { outcome, full_frame };
-
-    let started = Instant::now();
+    let started = tick_started.unwrap_or_else(Instant::now);
     let grab = match grabbed {
         Some(grab) => grab,
         None => match crate::capture::capture_screen(app) {
             Ok(grab) => grab,
             Err(e) => {
                 fail(app, session, format!("Merc: screen capture failed — {e}"));
-                return report(Some(miss(app, session, true)));
+                return detect_report(Some(miss(app, session, true)), true);
             }
         },
     };
@@ -3077,76 +3165,120 @@ fn detect_tick(
     // dropped here, which is the first moment anything in the app can tell.
     crate::ssot::drop_if_mismatched(app, (iw, ih), grabbed_on.0, grabbed_on.2);
 
-    let cropped = crop.map(|r| img.crop_imm(r[0] as u32, r[1] as u32, r[2] as u32, r[3] as u32));
-    let mut view = cropped.as_ref().unwrap_or(&img);
-    let mut frame = match crop {
-        Some(r) => geometry::Frame::cropped((r[0], r[1]), screen),
-        None => geometry::Frame::full(screen),
+    let placement = merc_placement(app);
+    let crop = placement.map(|(panel, scale)| geometry::placed_panel_crop(panel, scale, screen));
+    let mut full_frame = crop.is_none();
+    let key = fallback_key(app);
+    let mut used_fallback = false;
+    let force_full_fallback = probe_missed && crop.is_some() && allow_fallback;
+    if full_fallback_needed(placement, force_full_fallback, allow_fallback) {
+        match session.fallback.decide(key) {
+            FallbackDecision::Locate => {}
+            FallbackDecision::Miss => {
+                return detect_report(Some(miss(app, session, false)), full_frame);
+            }
+        }
+        used_fallback = true;
+        full_frame = true;
+    }
+
+    let cropped = if force_full_fallback {
+        None
+    } else {
+        crop.map(|r| img.crop_imm(r[0] as u32, r[1] as u32, r[2] as u32, r[3] as u32))
+    };
+    let mut view: &image::DynamicImage = cropped.as_ref().unwrap_or(&img);
+    let mut frame = match (crop, force_full_fallback) {
+        (_, true) | (None, false) => geometry::Frame::full(screen),
+        (Some(r), false) => geometry::Frame::cropped((r[0], r[1]), screen),
     };
 
     // TRANSLATED THE INSTANT IT COMES BACK. Windows OCR reports boxes in the
     // pixels it was handed, and every rule below this line — the known-panel
     // anchor, the column-x test, the cell rects the hover tick hit-tests the
     // real cursor against — is screen-absolute. See `geometry::Frame`.
-    let mut lines = match crate::ocr::recognize_lines(view) {
-        Ok(lines) => frame.to_screen(lines),
-        Err(e) => {
-            fail(app, session, format!("Merc: OCR failed — {e}"));
-            return report(Some(miss(app, session, true)));
+    let mut lines = match probed_lines {
+        Some(lines) if !force_full_fallback => lines,
+        _ => match crate::ocr::recognize_lines(view) {
+            Ok(lines) => frame.to_screen(lines),
+            Err(e) => {
+                fail(app, session, format!("Merc: OCR failed — {e}"));
+                return detect_report(Some(miss(app, session, true)), full_frame);
+            }
+        },
+    };
+    let known_panel = session.panel.or_else(|| placement.map(|(panel, _)| panel));
+
+    let fitted_pitch = session
+        .fitted
+        .map(|fit| fit.pitch)
+        .unwrap_or_else(|| placement.map_or(session.geometry.row_pitch, |(_, scale)| session.geometry.row_pitch * scale));
+    let mut layout = if force_full_fallback {
+        geometry::detect_reason(&lines, &session.geometry, &session.vocab, known_panel)
+    } else {
+        match placement {
+            Some((panel, scale)) => geometry::placed_layout(
+                &lines,
+                panel,
+                &session.geometry,
+                session.fitted.map_or(scale, |fit| fit.scale),
+                fitted_pitch,
+            ),
+            None => geometry::detect_reason(&lines, &session.geometry, &session.vocab, known_panel),
         }
     };
+    let mut located_panel = None;
+    let mut remember_origin = None;
 
-    // The last known panel rect goes IN: a tooltip over the footer deletes the
-    // anchor line this frame would otherwise need, and rows landing in the rect
-    // the panel was last measured at say the same thing the missing line did.
-    // It is the UNION of every rect this capture has been measured at, so a
-    // partial read cannot shrink the anchor out from under the next full one.
-    // See `geometry::panel_anchor` and `geometry::union_rect`.
-    //
-    // `detect_reason`, not `detect`: the miss branch below prints the step that
-    // gave up, and a `None` cannot say which one it was.
-    let mut layout =
-        geometry::detect_reason(&lines, &session.geometry, &session.vocab, session.panel);
-
-    // A crop that came back empty — or with a panel that does not FIT inside it
-    // — has not seen the whole screen, and a window that MOVED is not a window
-    // that closed. One full look before any of this counts. It costs the OCR
-    // again but not the grab: the full frame is already in hand.
-    let mut retook = false;
-    if geometry::crop_needs_full_look(
-        crop,
-        layout.as_ref().ok().and_then(|l| geometry::panel_bounds(l, &session.geometry)),
-        screen,
-    ) {
+    // The crop is the normal path. A gate-approved miss buys exactly one full
+    // locate for this fallback key; the same frame is reused, so this is one
+    // additional OCR rather than a second screen grab.
+    // A placed column contradiction is different from an ordinary miss: it is
+    // evidence that the SSOT placement is wrong, so it also buys the one
+    // corrective locate on the live cadence.
+    let placed_column_moved = matches!(
+        &layout,
+        Err(geometry::DetectMiss {
+            stage: geometry::DetectStage::NoAnchor {
+                panel: geometry::PanelAnchor::ColumnMoved { .. },
+                ..
+            },
+            ..
+        })
+    );
+    if layout.is_err()
+        && crop.is_some()
+        && !force_full_fallback
+        && (allow_fallback || placed_column_moved)
+        && session.fallback.take(key)
+    {
+        used_fallback = true;
+        full_frame = true;
         view = &img;
         frame = geometry::Frame::full(screen);
-        // Through `to_screen` like the first pass, though this frame IS the
-        // screen and the translation is the identity: ONE seam between OCR
-        // space and screen space, taken by every line vector that leaves the
-        // engine. A second, exempt path is how the next frame kind gets it
-        // wrong (`geometry::Frame`).
         lines = match crate::ocr::recognize_lines(view) {
             Ok(lines) => frame.to_screen(lines),
             Err(e) => {
                 fail(app, session, format!("Merc: OCR failed — {e}"));
-                return report(Some(miss(app, session, true)));
+                return detect_report(Some(miss(app, session, true)), full_frame);
             }
         };
-        layout =
-            geometry::detect_reason(&lines, &session.geometry, &session.vocab, session.panel);
-        retook = true;
+        layout = geometry::detect_reason(&lines, &session.geometry, &session.vocab, known_panel);
+    }
+
+    if used_fallback {
+        let (located_from_fallback, fallback_origin, contradiction) =
+            fallback_panel(placement, &layout, &session.geometry);
+        located_panel = located_from_fallback;
+        remember_origin = fallback_origin;
+        if let Some(line) = contradiction {
+            crate::app_log(app, line);
+            crate::app_log(app, MERC_GEOMETRY_NOTICE_LINE.to_string());
+        }
     }
 
     let took = started.elapsed().as_millis();
-    // `crop→full` is its own state in the log, not a plain `full`: it is what a
-    // window that MOVED looks like from here, and it costs two OCRs.
-    let how = if retook { "crop→full" } else { frame.describe() };
-    if debug_mode(app) {
-        crate::app_log(
-            app,
-            format!("Merc: detect on the {how} frame took {took} ms, {} lines", lines.len()),
-        );
-    }
+    let how = frame.describe();
 
     let layout = match layout {
         Ok(layout) => layout,
@@ -3161,8 +3293,8 @@ fn detect_tick(
                 crate::app_log(
                     app,
                     format!(
-                        "Merc: no layout on the {how} frame — {why}; known panel {:?}, cursor {:?}",
-                        session.panel, cursor
+                        "Merc: no layout on the {how} frame — {why}; placed panel {:?}, cursor {:?}",
+                        placement.map(|(panel, _)| panel).or(session.panel), cursor
                     ),
                 );
             }
@@ -3171,7 +3303,11 @@ fn detect_tick(
             // under it — so this tick is not evidence the window closed.
             // No layout means no rect from THIS frame; the session's is all there
             // is. See [`cursor_on_panel`].
-            let in_panel = cursor_on_panel(None, session.panel, cursor);
+            let in_panel = cursor_on_panel(
+                placement.map(|(panel, _)| panel),
+                session.panel,
+                cursor,
+            );
             let live = session.state.live;
             if session.occlusion.on_occluded(live, in_panel, Instant::now()) == MissKind::Occluded {
                 if session.occlusion.announce() {
@@ -3180,7 +3316,7 @@ fn detect_tick(
                         "Merc: panel occluded (cursor over it) — holding the capture".to_string(),
                     );
                 }
-                return report(Some(DetectOutcome::Occluded));
+                return detect_report(Some(DetectOutcome::Occluded), full_frame);
             }
             // Logged once per focus session: a loop that never detects would
             // otherwise leave no trace of having looked at all.
@@ -3203,7 +3339,7 @@ fn detect_tick(
                     ),
                 );
             }
-            return report(Some(miss(app, session, false)));
+            return detect_report(Some(miss(app, session, false)), full_frame);
         }
     };
     // Read BEFORE the fit rewrites `layout.scale`: the log line's whole job is
@@ -3271,11 +3407,6 @@ fn detect_tick(
     // POE-214: the OCR line centres put the whole grid 6-12 px left of the gold
     // frame the icons are actually drawn in, so before ANY rect derived from
     // this layout is used, measure the frame and rewrite the layout onto it.
-    // Here and not earlier because `crop_needs_full_look` above is deliberately
-    // still on the PRE-fit `panel_bounds`: that test asks whether the crop saw
-    // the whole panel, the fit moves its edges by at most 12 px, and
-    // `CROP_SIDE_PITCHES` already reaches ~175 px past them — re-deriving it
-    // after the fit would cost a second OCR to answer the same question.
     let stage = Instant::now();
     let refined = cellfit::refine(view, frame, layout, &session.geometry);
     let fit_ms = stage.elapsed().as_millis();
@@ -3290,7 +3421,7 @@ fn detect_tick(
         None => false,
     };
     // EVERYTHING downstream reads the SESSION's registration, never the raw
-    // per-tick fit: `panel_bounds`, `probe_band_bounds`, `pass2_texts`,
+    // per-tick fit: the placed row bands, `pass2_texts`,
     // `seed::rederive_for_window` (whose memo key is the window `layout.scale`
     // implies), `build_capture` and the `MercCapture.scale` the SSOT publishes
     // all read this one layout. So a fresh measurement the deadband refused
@@ -3376,7 +3507,7 @@ fn detect_tick(
                     app,
                     format!(
                         "Merc: frame fit scale {:.3} (ocr {:.3}) X0 {:.1} pitch {:.2} dark {}, \
-                         {} cells span {}, moved {} px, row-pitch residual {:.1}{held}",
+                         {} cells span {}, row-pitch residual {:.1}{held}",
                         fit.scale,
                         s_ocr,
                         fit.x0,
@@ -3384,7 +3515,6 @@ fn detect_tick(
                         fit.dark_side,
                         fit.cells_used,
                         fit.slot_span,
-                        fit.moved_px,
                         fit.residual_row_pitch,
                     ),
                 );
@@ -3402,19 +3532,10 @@ fn detect_tick(
         }
     }
 
-    // From the LAYOUT, not the capture: the capture drops the cells past the
-    // first empty slot, and the panel is as wide as its grid either way.
-    // Computed here rather than at the end of the tick because the header fold
-    // below needs to know whether the cursor is on the panel.
-    let panel = geometry::panel_bounds(&layout, &session.geometry);
-    // The band the next voice line's probe will look in. Same layout, a
-    // different question — see `geometry::probe_band_bounds`.
-    let next_band = geometry::probe_band_bounds(&layout, &session.geometry, screen);
-
     // Pass 2 is up to `max_rows` more OCR calls. A stop signal that arrived
     // during pass 1 stops here, leaving the state exactly as it was.
     if *cancel.borrow() {
-        return report(None);
+        return detect_report(None, full_frame);
     }
     // FIRST LOOK at a window: the rows go out NOW, before the read below,
     // which is the tick's expensive half (2.2 s on a six-row panel in the
@@ -3457,7 +3578,16 @@ fn detect_tick(
             &store,
         )
     };
+    result.capture.rows_on_screen = result.rows_on_screen;
+    result.capture.rows_read = result.rows_read;
     let icons_ms = stage.elapsed().as_millis();
+    let row_mismatch = row_mismatch_line(result.rows_on_screen, result.rows_read);
+    if session.row_mismatch_logged.as_deref() != row_mismatch.as_deref() {
+        if let Some(line) = row_mismatch.as_deref() {
+            crate::app_log(app, line.to_string());
+        }
+        session.row_mismatch_logged = row_mismatch;
+    }
     // Where a slow tick went. The loop's own line says only that the tick was
     // slow; this one says which stage to look at. Always in debug mode, and
     // on every tick the backoff would call slow otherwise.
@@ -3472,6 +3602,13 @@ fn detect_tick(
                  on the {how} frame",
                 result.capture.rows.len()
             ),
+        );
+    }
+    if crop.is_some() && !force_full_fallback && !session.crop_detect_logged {
+        session.crop_detect_logged = true;
+        crate::app_log(
+            app,
+            format!("Merc: detect on the crop frame took {} ms", started.elapsed().as_millis()),
         );
     }
     // Before ANY use of this frame's header — the fold below, and the
@@ -3529,10 +3666,9 @@ fn detect_tick(
         // a claim made on the old one must not be corroborated by a read of the
         // new one that happens to land on a row keying the same way.
         session.pending_confirm = None;
-        // The rects are NOT cleared here. `replaced` is carried down to
-        // [`geometry::next_panel`], which is the one place that decides
-        // whether a remembered rect may be grown by this frame — see its doc
-        // for why a replaced panel takes the fresh measurement alone.
+        // The placed rect remains the SSOT geometry. A replacement clears the
+        // live occlusion rect below only through the next published capture;
+        // it does not make OCR rows a second placement source.
     }
     // AFTER the identity check: a confirmation belongs to the window it was
     // made on, and re-applying the old window's cells to a new mercenary's rows
@@ -3589,42 +3725,28 @@ fn detect_tick(
     // here — this is the one place that can tell whether its row survived.
     session.pending_confirm =
         drop_pending_off_capture(session.pending_confirm.take(), &result.capture);
-    // GROW-ONLY within one live capture. A partial read under a tooltip
-    // measures a shorter panel, and writing that rect over the full one turns
-    // the known-panel anchor against the next FULL read — six row centres, a
-    // rect that holds two — which is how a window still on screen retired at
-    // 16:08:28 in the 2026-08-26 smoke. The two exceptions — a REPLACED window
-    // and a panel whose column moved — are the fold's own, not the caller's:
-    // see [`geometry::next_panel`]. Cleared on retire, so nothing here can
-    // span two windows the fold never saw.
-    let column_tolerance = geometry::column_tolerance(&session.geometry, layout.scale);
-    session.panel = geometry::next_panel(session.panel, panel, replaced, column_tolerance);
+    // The placed rect is the geometry source for the normal path. A full
+    // fallback uses the located panel for this read, and a cold-start full
+    // detect derives one from its rows until the SSOT placement is available
+    // on the next tick.
+    let current_panel = located_panel
+        .or_else(|| placement.map(|(panel, _)| panel))
+        .or_else(|| geometry::panel_bounds(&layout, &session.geometry));
+    session.panel = current_panel;
     // Publish the same settled panel rect the next detect will use. The
     // preview reads this capture field; it must not infer a rect from rows.
     result.capture.panel = session.panel;
     session.current = Some(result.capture.clone());
     session.revision += 1;
-    session.header_guard =
-        geometry::next_panel(session.header_guard, header_guard, replaced, column_tolerance);
-    // FROM THE RECT THE LOOP NOW HOLDS, never from this frame's layout. The
-    // crop is what the NEXT re-detect gets to see, and the rect above is the
-    // panel the next anchor will be measured against; deriving the crop from a
-    // partial layout instead would hand the next full read a frame cropped out
-    // of the rows it is expected to find. [`geometry::crop_around`] reaches
-    // outward on every axis, so a crop built from the held rect encloses it —
-    // and the header band above it — by construction.
-    session.crop = session.panel.map(|held| {
-        geometry::crop_around(
-            held,
-            geometry::effective_pitch(&layout, &session.geometry),
-            screen,
-        )
-    });
-    // Only ever replaced by a better measurement, never cleared: a band from
-    // the window that just closed is the best guess available for the next one.
-    if next_band.is_some() {
-        session.probe_band = next_band;
-    }
+    // The placed path gets fixed row bands from the SSOT panel, so partial OCR
+    // cannot shrink its header guard. A full fallback may see fewer rows under
+    // a tooltip; retain the previous guard there and grow only.
+    let previous_header_guard = session.header_guard;
+    session.header_guard = if used_fallback {
+        grow_rect(previous_header_guard, header_guard)
+    } else {
+        header_guard
+    };
     session.occlusion.on_hit();
 
     // The header as the player will see it, once per CHANGE. Every tick would
@@ -3664,14 +3786,22 @@ fn detect_tick(
         // [`miss`].
         session.trade.get_or_insert_with(MercTradeSession::new);
     }
-    publish(app, |slice| {
-        slice.status = live_status(complete);
-        // Whatever armed this scan has been answered by the window on screen.
-        slice.burst_speaker = None;
-        slice.capture = Some(result.capture);
-        slice.last_error = None;
-    });
-    report(Some(outcome))
+    publish_then_remember(
+        || {
+            publish(app, |slice| {
+                slice.status = live_status(complete);
+                // Whatever armed this scan has been answered by the window on screen.
+                slice.burst_speaker = None;
+                slice.capture = Some(result.capture);
+                slice.last_error = None;
+            });
+        },
+        remember_origin,
+        |origin| {
+            crate::ssot::remember_anchor(app, crate::ssot::AnchorModule::MercPanel, origin);
+        },
+    );
+    detect_report(Some(outcome), full_frame)
 }
 
 /// The rows as pass 1 read them, before the icon pass — the capture the first
@@ -3687,7 +3817,7 @@ fn first_look(
     g: &MercGeometry,
     vocab: &MercVocab,
 ) -> MercCapture {
-    let rows = layout
+    let rows: Vec<MercRow> = layout
         .rows
         .iter()
         .map(|row| {
@@ -3705,6 +3835,10 @@ fn first_look(
             }
         })
         .collect();
+    let rows_read = rows
+        .iter()
+        .filter(|row| row.skill.state != ReadState::Unknown)
+        .count();
     MercCapture {
         captured_at_ms,
         live: true,
@@ -3712,6 +3846,8 @@ fn first_look(
         screen,
         panel: None,
         header: layout.header.clone(),
+        rows_on_screen: rows.len(),
+        rows_read,
         rows,
         partial: true,
     }
@@ -4359,6 +4495,8 @@ mod tests {
             screen: [2560, 1440],
             panel: None,
             header: Default::default(),
+            rows_on_screen: rows.len(),
+            rows_read: rows.len(),
             rows,
             partial: false,
         }
@@ -4376,6 +4514,119 @@ mod tests {
             },
             supports: cells,
         }
+    }
+
+    #[test]
+    fn a_fallback_budget_spends_one_locate_per_key() {
+        let key = FallbackKey { refit: 4, gate: 9 };
+        let mut budget = FallbackBudget::default();
+
+        assert!(budget.take(key));
+        assert!(!budget.take(key));
+    }
+
+    #[test]
+    fn a_spent_fallback_budget_takes_the_miss_path() {
+        let key = FallbackKey { refit: 4, gate: 9 };
+        let mut budget = FallbackBudget::default();
+
+        assert_eq!(budget.decide(key), FallbackDecision::Locate);
+
+        let mut state = LoopState::default();
+        assert_eq!(state.on_detect(true), DetectOutcome::Captured);
+        assert_eq!(budget.decide(key), FallbackDecision::Miss);
+        assert_eq!(state.on_detect(false), DetectOutcome::Missed);
+        assert!(state.live, "the spent fallback is a counted miss, not a no-op");
+        assert_eq!(state.on_detect(false), DetectOutcome::Retired);
+    }
+
+    #[test]
+    fn a_crop_miss_gets_one_full_locate_only_while_the_gate_owes_a_look() {
+        assert!(!fallback_allowed(trigger::GateStep::Resting));
+        assert!(fallback_allowed(trigger::GateStep::Probe));
+        assert!(fallback_allowed(trigger::GateStep::FullDetect));
+
+        let key = FallbackKey { refit: 4, gate: 9 };
+        let mut budget = FallbackBudget::default();
+        assert!(budget.take(key), "the gate-approved crop miss buys one locate");
+        assert!(!budget.take(key), "the same key cannot buy a second locate");
+    }
+
+    #[test]
+    fn a_null_slice_gets_one_cold_start_locate_per_key() {
+        let placement: Option<([i32; 4], f32)> = None;
+        let key = FallbackKey { refit: 4, gate: 9 };
+        let mut budget = FallbackBudget::default();
+
+        assert!(full_fallback_needed(placement, false, true));
+        assert!(full_fallback_needed(placement, false, false));
+        assert!(!full_fallback_needed(Some(([100, 200, 300, 400], 1.0)), false, true));
+        assert!(budget.take(key));
+        assert!(!budget.take(key), "the cold-start key cannot buy a second locate");
+    }
+
+    #[test]
+    fn a_fallback_header_guard_grows_without_shrinking() {
+        assert_eq!(
+            grow_rect(Some([10, 20, 100, 100]), Some([20, 10, 50, 50])),
+            Some([10, 10, 100, 110])
+        );
+        assert_eq!(grow_rect(None, Some([20, 10, 50, 50])), Some([20, 10, 50, 50]));
+    }
+
+    #[test]
+    fn a_new_refit_or_gate_generation_gets_a_new_fallback_budget() {
+        let first = FallbackKey { refit: 4, gate: 9 };
+        let next_refit = FallbackKey { refit: 5, gate: 9 };
+        let next_gate = FallbackKey { refit: 4, gate: 10 };
+        let mut budget = FallbackBudget::default();
+
+        assert!(budget.take(first));
+        assert!(budget.take(next_refit));
+        assert!(budget.take(next_gate));
+    }
+
+    #[test]
+    fn a_contradiction_is_logged_and_remembered_only_after_a_successful_read() {
+        let g = MercGeometry::default();
+        let layout = detected_layout();
+        let located = geometry::panel_bounds(&layout, &g).expect("the located layout has a panel");
+        let placed = [located[0] - 100, located[1], located[2], located[3]];
+        let found = Ok(layout.clone());
+        let expected = "merc: placed panel [-22,29,568,289] contradicted by detect [78,29,568,289]";
+
+        let (panel, origin, line) = fallback_panel(Some((placed, 1.0)), &found, &g);
+        assert_eq!(panel, Some(located));
+        assert_eq!(origin, Some([located[0], located[1]]));
+        assert_eq!(line.as_deref(), Some(expected));
+
+        let failed = Err(geometry::DetectMiss {
+            candidates: 0,
+            column_x0: None,
+            stage: geometry::DetectStage::TooFewCandidates { needed: 1 },
+        });
+        let (_, no_origin, no_line) = fallback_panel(Some((placed, 1.0)), &failed, &g);
+        assert_eq!(no_origin, None);
+        assert_eq!(no_line, None);
+    }
+
+    #[test]
+    fn a_successful_fallback_publishes_before_remembering_its_origin() {
+        let effects = std::cell::RefCell::new(Vec::new());
+        publish_then_remember(
+            || effects.borrow_mut().push("publish"),
+            Some([745, 561]),
+            |_| effects.borrow_mut().push("remember"),
+        );
+        assert_eq!(effects.into_inner(), vec!["publish", "remember"]);
+
+        let effects = std::cell::RefCell::new(Vec::new());
+        publish_then_remember(
+            || effects.borrow_mut().push("publish"),
+            None,
+            |_| panic!("a miss has no fallback origin to remember"),
+        );
+        assert_eq!(effects.into_inner(), vec!["publish"]);
     }
 
     /// A window that blinks for one tick must NOT be retired — the page would
@@ -4489,7 +4740,7 @@ mod tests {
     /// The decay. MEASURED 2026-08-26 (app.log 09:40:06): ONE 4504 ms reading
     /// latched the backoff for the life of the thread, and every first detect
     /// after a voice line from then on waited 3 s. Once the machine is
-    /// demonstrably keeping up again — which the cropped re-detect is what
+    /// demonstrably keeping up again — which the placed-crop detect is what
     /// makes possible — the hunt goes back to 1 Hz.
     #[test]
     fn a_run_of_fast_detects_takes_the_backoff_off_again() {
@@ -4540,7 +4791,7 @@ mod tests {
         assert_eq!(st.note_tick_duration(FULL, SLOW_TICK), None);
     }
 
-    /// The crop gate. A cropped re-detect is a fraction of a full-screen OCR by
+    /// The crop gate. A placed-crop detect is a fraction of a full-screen OCR by
     /// construction, so a slow one is not evidence that hunting at 1 Hz is
     /// unaffordable — and the cadence it would slow down does not run while a
     /// panel is known anyway.
@@ -4553,10 +4804,10 @@ mod tests {
     }
 
     /// The PROBE is on the same side of that gate, and it is the one that
-    /// would break it fastest: a band OCR is nearly free and the gate fires two
+    /// would break it fastest: a placed-crop OCR is nearly free and the gate fires two
     /// of them per voice line, so a probe reporting `full_frame: true` would
     /// take a backoff off within seconds of walking through an arena — on
-    /// evidence about 7% of the screen.
+    /// evidence about a known panel rather than a full-screen hunt.
     #[test]
     fn a_probes_tick_never_decays_the_backoff() {
         let mut st = LoopState::default();
@@ -4734,32 +4985,6 @@ mod tests {
         st.on_detect(true);
 
         assert_eq!(detect_step(&st, true, OCCLUDED, REDETECT_INTERVAL), DetectStep::Run);
-    }
-
-    // -- which frame a detect takes -----------------------------------------
-
-    /// The crop is a rect measured from a layout that is no longer on screen.
-    /// Re-using it with nothing captured would hunt for the NEXT recruit window
-    /// inside the last one's outline and never look anywhere else.
-    #[test]
-    fn a_leftover_crop_is_not_taken_when_no_panel_is_known() {
-        assert_eq!(detect_frame(Some([100, 100, 400, 400]), None), None);
-    }
-
-    /// The ordinary re-detect: a known panel is re-read on a crop of itself,
-    /// which is what takes the full-screen OCR out of the tick.
-    #[test]
-    fn a_known_panels_crop_is_the_frame_the_re_detect_takes() {
-        let crop = [100, 100, 400, 400];
-
-        assert_eq!(detect_frame(Some(crop), Some([150, 150, 200, 200])), Some(crop));
-    }
-
-    /// A panel known but no crop measured for it — the state a layout with no
-    /// bounds leaves — is the full screen, not a panic and not a stale rect.
-    #[test]
-    fn a_known_panel_with_no_crop_measured_takes_the_full_screen() {
-        assert_eq!(detect_frame(None, Some([150, 150, 200, 200])), None);
     }
 
     // -- the off-tick template-store write ----------------------------------
@@ -6738,21 +6963,20 @@ mod tests {
     // -- what a working iteration points at the screen ----------------------
 
     /// The gate's own promise, in the one function that can break it: a voice
-    /// line buys the BAND, never the 39-line full screen. Anything that reached
+    /// line buys the PLACED CROP, never the 39-line full screen. Anything that reached
     /// `Look::Detect` here would be the burst back, one probe at a time.
     #[test]
-    fn a_due_probe_looks_at_the_band_and_not_the_screen() {
+    fn a_due_probe_looks_at_the_crop_and_not_the_screen() {
         assert_eq!(
             look_step(false, trigger::GateStep::Probe, DetectStep::Run),
             Look::Probe,
         );
     }
 
-    /// Scan now bypasses the band. A person asking has already answered the
-    /// question the probe would ask, and the probe could only turn that answer
-    /// into a stand-down.
+    /// Scan now bypasses the voice probe. It reads the placed crop directly;
+    /// a crop miss can still spend the one full-screen fallback.
     #[test]
-    fn scan_now_looks_at_the_whole_screen() {
+    fn scan_now_runs_a_detect() {
         assert_eq!(
             look_step(false, trigger::GateStep::FullDetect, DetectStep::Wait),
             Look::Detect,
@@ -6796,55 +7020,6 @@ mod tests {
         assert_eq!(
             look_step(false, trigger::GateStep::Resting, DetectStep::Run),
             Look::None,
-        );
-    }
-
-    // -- which band a probe reads -------------------------------------------
-
-    /// A window reopens where it opened last, so the remembered band is the
-    /// cheap one: 7% of the screen against the default's 40%.
-    #[test]
-    fn the_first_probe_reads_the_band_the_last_panel_left() {
-        let remembered = [650, 900, 651, 240];
-
-        assert_eq!(probe_band(Some(remembered), [1920, 1200], 0), remembered);
-    }
-
-    /// The remembered band has exactly one failure mode — the player moved the
-    /// window or changed the UI scale — and it is SILENT: the probe reads empty
-    /// screen, sees no chrome, and the gate stands down on a window that is
-    /// plainly open. The retry is already being spent, so widening it there
-    /// costs nothing and covers the case.
-    #[test]
-    fn the_retry_widens_to_the_default_band() {
-        let remembered = [650, 900, 651, 240];
-
-        assert_eq!(
-            probe_band(Some(remembered), [1920, 1200], 1),
-            geometry::default_probe_band([1920, 1200]),
-        );
-    }
-
-    /// The band outlives the capture it was measured on, so it outlives a
-    /// resolution change too. A rect past the new screen's edge crops to
-    /// nothing and the OCR call FAILS on the empty image — the player would get
-    /// "Merc: OCR failed" on the slice for walking past a mercenary after
-    /// changing their display settings.
-    #[test]
-    fn a_band_from_a_bigger_screen_is_dropped_rather_than_cropped_to_nothing() {
-        let remembered = [1600, 900, 300, 240];
-
-        assert_eq!(
-            probe_band(Some(remembered), [1280, 1024], 0),
-            geometry::default_probe_band([1280, 1024]),
-        );
-    }
-
-    #[test]
-    fn a_session_that_has_never_seen_a_panel_reads_the_default_band() {
-        assert_eq!(
-            probe_band(None, [1920, 1200], 0),
-            geometry::default_probe_band([1920, 1200]),
         );
     }
 
@@ -7159,6 +7334,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn row_mismatch_requires_more_sensor_rows_than_read_rows() {
+        assert_eq!(row_mismatch_line(5, 6), None);
+        assert_eq!(
+            row_mismatch_line(6, 5).as_deref(),
+            Some("Merc: row mismatch — 6 rows on screen, 5 read")
+        );
+    }
+
     /// Once per CHANGE, not per tick: the re-detect runs every 2 s and the
     /// header is the same three fields each time.
     #[test]
@@ -7313,10 +7497,11 @@ mod tests {
             miss_logged: false,
             panel: None,
             header_guard: None,
-            crop: None,
+            fallback: FallbackBudget::default(),
+            crop_detect_logged: false,
             occlusion: OcclusionRun::default(),
-            probe_band: None,
             header_logged: None,
+            row_mismatch_logged: None,
             retained: None,
             trade: None,
             fitted: None,
