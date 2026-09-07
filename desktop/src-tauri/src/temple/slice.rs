@@ -1590,6 +1590,15 @@ fn recommended_exit(
     })
 }
 
+/// R5's verdict (`leaveMap`) is WITHHELD from the wire — owner decision
+/// 2026-09-07: the rule as written gives false advice on live boards, so no
+/// surface may show it until it is reworked. The advisor still computes it
+/// (`advisor::map_action` and its tests stand); this projection is the one
+/// place the verdict leaves Rust, so it is the one place it is held back —
+/// the page banner and the overlay banner both key on the wire string.
+/// Flip to `false` to restore them.
+pub(crate) const R5_WITHHELD: bool = true;
+
 fn advice_view(advice: &Advice, exit: Option<ExitLabelView>) -> AdviceView {
     AdviceView {
         recommendations: advice
@@ -1625,8 +1634,8 @@ fn advice_view(advice: &Advice, exit: Option<ExitLabelView>) -> AdviceView {
         }),
         recommended_exit: exit,
         map_action: match advice.map_action {
-            MapAction::Continue => "continue".to_string(),
-            MapAction::LeaveMap => "leaveMap".to_string(),
+            MapAction::LeaveMap if !R5_WITHHELD => "leaveMap".to_string(),
+            MapAction::LeaveMap | MapAction::Continue => "continue".to_string(),
         },
         warnings: advice.warnings.iter().map(|w| w.describe()).collect(),
         // Two conditions, and the second is not redundant.
@@ -3034,6 +3043,22 @@ mod tests {
             map_action: MapAction::Continue,
             warnings: Vec::new(),
         }
+    }
+
+    /// While R5 is withheld (`R5_WITHHELD`), a `LeaveMap` verdict leaves Rust
+    /// as `"continue"` — the string both banners key on — so nothing on the
+    /// page or the overlay can show it. Fails if the const is flipped back or
+    /// the projection stops honouring it; when the owner restores R5, this
+    /// test is the one to invert.
+    #[test]
+    fn a_leave_map_verdict_is_withheld_from_the_wire() {
+        assert!(R5_WITHHELD, "this test asserts the withheld state; invert it when R5 is restored");
+        let mut advice = advice_opening(&[(Slot::C1, Slot::C2)], None);
+        advice.map_action = MapAction::LeaveMap;
+
+        let view = advice_view(&advice, None);
+
+        assert_eq!(view.map_action, "continue");
     }
 
     /// The recommended exit is labelled with the far plate's name AT THE TIER

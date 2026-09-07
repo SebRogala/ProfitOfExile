@@ -550,7 +550,8 @@ export interface AdviceView {
 	/** `"continue"` or `"leaveMap"` — R5's verdict for the top recommendation.
 	 *  Note the camelCase: `MapAction` is projected through a hand-written
 	 *  `match`, not through `rename_all`, so this one string is NOT snake_case
-	 *  like `TempleStatus`. */
+	 *  like `TempleStatus`. Never `"leaveMap"` while `R5_WITHHELD` in `slice.rs`
+	 *  holds (owner, 2026-09-07); `leaveMapBanner()` stays for the day it is lifted. */
 	mapAction: string;
 	warnings: string[];
 	/** Whether the kill on the top recommendation is the ONLY kill the read saw
