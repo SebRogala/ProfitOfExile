@@ -19,6 +19,9 @@ and `WATCHDOG_PERIOD_MS` (same section, item 9). Everything else in this ADR is
 merged and has been exercised in at least one live session (POE-245, POE-248
 were both filed FROM one).
 
+Amended 2026-09-07 (POE-271) — see
+[the geometry-notice amendment at the end](#amendment-one-app-level-geometry-notice-window-2026-09-07).
+
 Extends [ADR-014](014-desktop-features-are-modules-with-a-work-toggle-and-a-view-page.md):
 that ADR gave a module a work toggle and a view page; this one says what a
 module's third surface — the thing it draws over the game — is made of.
@@ -233,3 +236,19 @@ everything it draws over the game is a WIDGET inside that window.**
   the merc strip are the named follow-ups (epic D1). Each arrives as a widget
   registry entry and a host mount, and a surface that cannot express itself that
   way is a new decision rather than an exception folded in here.
+
+## Amendment: one app-level geometry notice window (2026-09-07)
+
+POE-271. The geometry notice is one app-level window and the single non-module
+window. It draws only while a notice is active and claims clicks through hot
+rects, using the same per-window declaration that this ADR already assigns to
+interactive overlay claims under §3.
+
+The geometry notice is that new decision, recorded as an amendment because it
+reuses this ADR's window/click contract verbatim; that clause is superseded for
+this one window (POE-271).
+
+There are two notice flavours: informational `GeometryContradicted`, which
+offers a bug capture, and `SetupChanged`, which offers **Recalibrate** (POE-271).
+The notice implementation is pending POE-271; this amendment defines its window
+ownership and click contract.
