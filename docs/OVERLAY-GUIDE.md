@@ -1463,8 +1463,10 @@ touching the named path.
   advance. Do NOT use the `Temple: rois …` line for this: it prints once per
   DISTINCT value, so a re-read at the same origin and scale prints nothing
   either way. A static reopen that keeps taking the `found` branch has two
-  causes, in this order: the board read UNCLEAN and still owes a retry
-  (`slice::unclean`, `RETRIES`) — check the unreadable-region item below first —
+  causes, in this order: the board read UNCLEAN and still owes a round
+  (`slice::unclean`, `RETRIES`; the read line's `round N of 3: …` names which
+  round it is and what it re-read) — check the unreadable-region item below
+  first —
   or the anchor is landing more than 2 px from where it did
   (`slice::FRAME_ORIGIN_TOLERANCE`), which
   `Temple: anchor origin keeps moving on a board already read N times …` turning
@@ -1493,7 +1495,8 @@ touching the named path.
   agreeing with the screen, so a `layout panel gone` that lands a tick late is
   `RETIRE_AFTER` back at 2. A room widget that goes with the boxes is the POE-248
   regression and is checked in its own item below.
-- **An unreadable region costs at most two more reads** (POE-249): open the
+- **An unreadable region costs at most two more rounds, and those re-read only
+  it** (POE-249; partial rounds added 2026-09-07 by WI-2): open the
   sheet and keep it open for the whole check — the retries run while the sheet is
   on screen, which is what `LoopState::live` keeps the loop armed for (WI-1); a
   sheet closed after the first read ends the cycle instead. Open it with a plate
@@ -1505,7 +1508,25 @@ touching the named path.
   (`slice::merge_reads`). A `last read` that keeps advancing every tick means the
   budget is not being spent or the board identity is changing under it. A region
   the app reports as CLIPPED (the windowed-client case in the POE-230 item
-  above) is exempt and buys no retries at all — it cannot improve.
+  above) is exempt and buys no rounds at all — it cannot improve.
+  **What `app.log` must say per round** (WI-2): each `Temple: read timings …`
+  line ends `round N of 3: <what it read>; clean | unclean, N retries left`. The
+  first is `round 1 of 3: full`; the second and third must NAME the regions and
+  nothing else — with one plate covered, `round 2 of 3: re-read 1 plate`. The
+  stage timings on those same lines are the corroboration and the whole point of
+  the change: a `re-read 1 plate` round whose `plates` stage is as long as round
+  1's, or whose `text ocr` is non-zero when the round did not name a text
+  region, means the plan is not being executed. `full` on a RETRY is not itself
+  a fault: `slice::ReadPlan::describe` prints `full` whenever the plan equals
+  `ReadPlan::full()`, so a round 1 that read nothing usable — a half-drawn panel
+  — legitimately plans and prints `full` again on round 2. What points at a real
+  fault is a `full` retry whose round-1 line showed SOME clean regions: that is
+  `run::kept_for` having dropped the kept reading, so check for `anchor origin
+  keeps moving` beside it, which is the geometry case and is the item below, not
+  this one.
+  `round … : nothing left to re-read` is not expected in ordinary play: it means
+  the round was bought by a region whose crop then fell off the capture, and it
+  costs one anchor resolve and no OCR.
 - **`anchor origin keeps moving` must not appear at all** (POE-249): in a normal
   session, on either machine, `app.log` must not carry
   `Temple: anchor origin keeps moving on a board already read N times …`. It is

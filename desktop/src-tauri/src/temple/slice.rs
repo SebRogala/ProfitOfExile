@@ -2052,11 +2052,12 @@ pub struct KeptRead {
 /// Fold a retry into the read it is retrying, region by region.
 ///
 /// POE-249 row 2: a read whose regions did not all come out clean is re-taken
-/// at most [`super::run::RETRIES`] more times, and each re-take is a WHOLE read
-/// — the anchor moved by a pixel, the crops are new, and OCR is not
-/// deterministic across two frames of a game that is still drawing. So a retry
-/// can be WORSE than the read it followed, region by region, and merging is
-/// what stops the second attempt at a board undoing the first one's answers.
+/// at most [`super::run::RETRIES`] more times. Each re-take is a fresh look at
+/// the regions it re-reads ([`plan_read`] since WI-2 decides which) — the
+/// anchor moved by a pixel, the crops are new, and OCR is not deterministic
+/// across two frames of a game that is still drawing. So a retry can be WORSE
+/// than the read it followed, region by region, and merging is what stops the
+/// second attempt at a board undoing the first one's answers.
 ///
 /// The rule is the same everywhere: a region the fresh read RESOLVED wins,
 /// because it is the newer look at the same panel; a region it did not resolve
@@ -2087,12 +2088,46 @@ pub struct KeptRead {
 /// future loosening of "same board" is then visibly a TWO-place edit, and a
 /// one-place loosening fails this file's tests rather than shipping.
 ///
+/// What that arm now COSTS if the two ever drift is bigger than it was (WI-2).
+/// Before partial rounds, `fresh` was always a complete read, so returning it
+/// alone published a whole board read from one frame. It can now be a round
+/// that OCRed almost nothing — thirteen [`Match::Unknown`] plates, the empty
+/// [`PanelReading`] `super::panel::read_panel` returns for no lines, and no
+/// door set — so the same arm reached mid-retry would publish a BLANK board
+/// over a good one. It is unreachable from this loop today, for the reason
+/// above; that is the whole of what keeps the cost hypothetical.
+///
 /// So the tolerance is here too. Inside [`FRAME_ORIGIN_TOLERANCE`] px and
 /// [`FRAME_SCALE_TOLERANCE_DENOM`]'s one per cent, a re-anchored sheet is the
 /// same board and the retry merges into what the first read got; beyond it, the
 /// window was dragged or the UI was rescaled and the fresh read stands alone,
 /// which it must, because the merged read takes the FRESH layout and every ROI
 /// the slice publishes is placed from it.
+///
+/// # What a region the fresh read did NOT LOOK AT merges to (WI-2)
+///
+/// Since POE-249 WI-2 a retry round OCRs only what [`plan_read`] asked for, so
+/// a `fresh` reaching here can carry regions nobody read. That is not a new
+/// merge rule — it is the existing "the fresh read did not resolve it" arm,
+/// stated as a contract rather than left to luck, and each skipped region
+/// arrives as the value that arm already falls back on:
+///
+/// - **a skipped plate** is [`Match::Unknown`] (`super::panel::read_slots`
+///   fills it), which is what an unread plate is, so the kept identity stands;
+/// - **a skipped text region** contributes no OCR lines, so
+///   `super::panel::read_panel` returns an EMPTY [`PanelReading`] — an
+///   `Unknown` title with no rect, no architect blocks and no budget — and each
+///   of the three falls back to the kept panel's answer. The architect arm gets
+///   there through its LENGTH rule (`0 < kept.panel.architects.len()` takes the
+///   kept list wholesale), which is the same branch a half-drawn panel takes.
+///   A kept panel that has no blocks EITHER takes the equal arm instead, which
+///   zips two empty lists to the same empty answer, so the outcome does not
+///   turn on which of the two ran;
+/// - **a skipped diamond** is `settled: None` with no `marker_error`, which is
+///   the third state the door arm below now names explicitly. Keyed on the
+///   ERROR — as it was — that state read as "the diamond succeeded and found
+///   nothing" and cleared the kept door set, which is the one place a partial
+///   round would have regressed a board.
 ///
 /// # The one region that is taken wholesale
 ///
@@ -2165,13 +2200,30 @@ pub fn merge_reads(kept: &KeptRead, fresh: KeptRead) -> KeptRead {
         kept.panel.architects.clone()
     };
 
-    // A fresh marker error is the whole diamond failing, not one seal: the read
-    // has no door set at all, so the kept one's set AND the reason it might
-    // itself carry are what the projection still has to work from.
-    let (settled, marker_error) = if fresh_marker_error.is_none() {
-        (fresh_settled, None)
-    } else {
-        (kept.settled.clone(), kept.marker_error.clone())
+    // The diamond, keyed on whether the fresh read HAS a door set rather than
+    // on whether it reported an error, because since WI-2 there are three
+    // states and not two (see the note above):
+    //
+    // - `Some(set)` — read and settled. The newest look at the seals wins.
+    // - `None` with an error — read and failed. The read has no door set at
+    //   all, so the kept one's set AND the reason it might itself carry are
+    //   what the projection still has to work from.
+    // - `None` with no error — NOT READ, because the plan skipped it. Same
+    //   answer, and stating it as the same arm is what stops a skipped diamond
+    //   from clearing a door set the kept read had.
+    //
+    // The fourth pair — `Some(set)` WITH an error — is DEAD, recorded rather
+    // than ruled on: the only producer is `super::run::full_read`'s
+    // `read_markers` match, which yields `(Some, None)`, `(None, Some)` or
+    // `(None, None)` and never both. So the first arm carrying
+    // `fresh_marker_error` through (where the error-keyed form this replaced
+    // took the KEPT pair) changes nothing any caller can reach; it carries it
+    // because a `Some` set is the read the projection now works from, and
+    // pairing that set with a stale kept reason would describe a different
+    // read than the one it publishes.
+    let (settled, marker_error) = match fresh_settled {
+        Some(set) => (Some(set), fresh_marker_error),
+        None => (kept.settled.clone(), kept.marker_error.clone()),
     };
 
     KeptRead {
@@ -2190,45 +2242,159 @@ pub fn merge_reads(kept: &KeptRead, fresh: KeptRead) -> KeptRead {
     }
 }
 
-/// Whether this read is worth spending a retry on — POE-249 row 2's four
-/// causes, minus the ones a clipped crop explains.
+/// What one round of reading a board will OCR — POE-249 WI-2.
+///
+/// # The rule it expresses (owner, 2026-09-07)
+///
+/// *"We do up to 2 more rounds of temple reading, but only for the parts that
+/// was previously not clear, so we in fact do 3 reading rounds total."*
+///
+/// Round 1 of a board has no kept read to improve on and reads everything
+/// ([`Self::full`]). Rounds 2 and 3 — the [`super::run::RETRIES`] budget — read
+/// ONLY the regions the kept read still has unclean, and the decision is made
+/// from the kept read BEFORE any OCR is paid for.
+///
+/// # Why it is the same function as [`unclean`]
+///
+/// The two questions are one question asked twice: "is this read worth another
+/// round?" and "which parts of it is that round for?". Answering them from two
+/// bodies of code is a drift the compiler cannot see — a region added to one
+/// would buy rounds that never re-read it, or be re-read on a board nothing
+/// said was dirty. So [`retry_plan`] is the single set of per-region
+/// predicates, [`plan_read`] is its front door and [`unclean`] is
+/// `!plan.is_empty()`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadPlan {
+    /// The plate slots to OCR. Every other slot is filled with
+    /// [`Match::Unknown`] by `super::panel::read_slots`, which is exactly the
+    /// value [`merge_reads`] falls back to the kept identity on.
+    pub plates: Vec<Slot>,
+    /// The text regions to crop, by name, in `super::run::text_regions`' own
+    /// order. [`PANEL_REGION`] and [`REMAINING_REGION`] are the two names, and
+    /// they are declared here for this reason: the plan, [`unclean`] and the
+    /// region list must agree letter for letter.
+    pub text: Vec<&'static str>,
+    /// Whether to read the door diamond.
+    pub markers: bool,
+}
+
+impl ReadPlan {
+    /// Everything: 13 plates, both text regions, the diamond. What round 1 of
+    /// every board reads, and what a board whose kept reading was dropped
+    /// (another key, a moved frame — `super::run::kept_for`) reads again.
+    pub fn full() -> Self {
+        Self {
+            plates: Slot::ALL.to_vec(),
+            text: vec![PANEL_REGION, REMAINING_REGION],
+            markers: true,
+        }
+    }
+
+    /// Nothing left to re-read — the read this plan was derived from is clean.
+    pub fn is_empty(&self) -> bool {
+        self.plates.is_empty() && self.text.is_empty() && !self.markers
+    }
+
+    /// What the round did, for the read line
+    /// (`super::run::read_timings_line`): `full`, or the regions it re-read.
+    ///
+    /// `full` is decided by comparing against [`Self::full`] rather than by the
+    /// round number, so a round 2 that happens to owe every region says `full`
+    /// and means it.
+    pub fn describe(&self) -> String {
+        if *self == Self::full() {
+            return "full".to_string();
+        }
+        if self.is_empty() {
+            return "nothing left to re-read".to_string();
+        }
+        let mut parts = Vec::new();
+        match self.plates.len() {
+            0 => {}
+            1 => parts.push("1 plate".to_string()),
+            n => parts.push(format!("{n} plates")),
+        }
+        parts.extend(self.text.iter().map(|name| (*name).to_string()));
+        if self.markers {
+            parts.push("markers".to_string());
+        }
+        format!("re-read {}", parts.join(", "))
+    }
+}
+
+/// The regions a RETRY of `read` would be for — POE-249 row 2's four causes,
+/// minus the ones a clipped crop explains, each as the region it names rather
+/// than as a bool.
 ///
 /// `clipped` is the region names `super::run::clipped_text_rois` reported as
 /// falling entirely OUTSIDE the capture this read was taken from. A region that
 /// is not on screen cannot read better next time, so the failures it explains
-/// are not counted: with [`REMAINING_REGION`] outside, the budget is missing
-/// because the crop was empty, and with [`PANEL_REGION`] outside, so are the
-/// architect blocks. Without this a windowed client whose panel crop has walked
-/// off the monitor would pay three full reads per board forever and publish the
-/// same empty panel every time.
+/// are neither counted nor re-read: with [`REMAINING_REGION`] outside, the
+/// budget is missing because the crop was empty, and with [`PANEL_REGION`]
+/// outside, so are the architect blocks. Without this a windowed client whose
+/// panel crop has walked off the monitor would pay three rounds per board
+/// forever, re-crop the same empty region in each of them, and publish the same
+/// empty panel every time.
 ///
 /// The plates and the door diamond have no such exemption: they are placed off
 /// the anchor inside the board itself, so a plate that did not read is a plate
 /// OCR could not name, which is exactly what a retry is for.
-pub fn unclean(read: &KeptRead, clipped: &[&'static str]) -> bool {
-    if read.rooms.iter().any(|reading| !reading.identity.is_known()) {
-        return true;
-    }
-    if read.marker_error.is_some() {
-        return true;
+fn retry_plan(read: &KeptRead, clipped: &[&'static str]) -> ReadPlan {
+    let plates = read
+        .rooms
+        .iter()
+        .filter(|reading| !reading.identity.is_known())
+        .map(|reading| reading.slot)
+        .collect();
+    // In `super::run::text_regions`' order, which is what makes an all-regions
+    // plan compare equal to `ReadPlan::full`.
+    let mut text = Vec::new();
+    if !clipped.contains(&PANEL_REGION)
+        && (read.panel.architects.len() < ARCHITECTS_PER_PANEL
+            || read
+                .panel
+                .architects
+                .iter()
+                .any(|offer| offer.target.identity().is_none()))
+    {
+        text.push(PANEL_REGION);
     }
     if !clipped.contains(&REMAINING_REGION) && read.panel.incursions_remaining.is_none() {
-        return true;
+        text.push(REMAINING_REGION);
     }
-    if !clipped.contains(&PANEL_REGION) {
-        if read.panel.architects.len() < ARCHITECTS_PER_PANEL {
-            return true;
-        }
-        if read
-            .panel
-            .architects
-            .iter()
-            .any(|offer| offer.target.identity().is_none())
-        {
-            return true;
-        }
+    ReadPlan {
+        plates,
+        text,
+        markers: read.marker_error.is_some(),
     }
-    false
+}
+
+/// What the round about to run should OCR, decided from the kept read alone.
+///
+/// `kept` is `super::run::kept_for`'s answer: the reading this loop may legally
+/// fold into, which is `None` for the first look at a board and for a board
+/// whose key or frame moved. No kept reading means nothing to improve on, so
+/// there is nothing to be partial about and the round is [`ReadPlan::full`].
+///
+/// Called BEFORE any OCR of the round it plans — that is the whole point, and
+/// it is why this takes a borrow: `super::run::full_read` still `take`s the
+/// kept reading at the merge, so a round that bails out (a stop signal, a dead
+/// OCR engine) leaves it standing for the next one.
+pub fn plan_read(kept: Option<&KeptRead>, clipped: &[&'static str]) -> ReadPlan {
+    match kept {
+        None => ReadPlan::full(),
+        Some(read) => retry_plan(read, clipped),
+    }
+}
+
+/// Whether this read is worth spending a retry on — [`retry_plan`] asked as a
+/// bool.
+///
+/// The causes, the clipped exemptions and their reasons are all
+/// [`retry_plan`]'s: a read is unclean exactly when a retry would have
+/// something to re-read.
+pub fn unclean(read: &KeptRead, clipped: &[&'static str]) -> bool {
+    !retry_plan(read, clipped).is_empty()
 }
 
 /// The user's Re-arm button, as a counter the loop spends once.
@@ -4201,8 +4367,10 @@ mod tests {
 
     /// …unless the budget's own crop fell off the capture, which is a windowed
     /// client and not something a retry can fix. Fails if the exemption is
-    /// missing: such a machine would pay three full reads for every board it
-    /// ever sees and publish the same empty footer each time.
+    /// missing: such a machine would pay three rounds for every board it ever
+    /// sees — rounds 2 and 3 reading only what is unclean, which under this
+    /// exemption is nothing at all — and publish the same empty footer each
+    /// time.
     #[test]
     fn a_budget_whose_crop_is_off_the_capture_is_not_worth_a_retry() {
         let mut read = clean_read();
@@ -4233,6 +4401,275 @@ mod tests {
         read.panel.architects = Vec::new();
 
         assert!(!unclean(&read, &[PANEL_REGION]));
+    }
+
+    // ------------------------------------- what a ROUND of reading re-reads --
+
+    /// Round 1 of a board has nothing to improve on, so it reads everything:
+    /// all thirteen plates, both text regions and the diamond.
+    ///
+    /// Fails on the mutation `plan_read`'s `None` arm returning an empty plan —
+    /// the plausible misreading of "only the parts that were not clear", which
+    /// would leave the first look at every board OCRing nothing at all.
+    #[test]
+    fn a_board_with_no_kept_reading_is_planned_whole() {
+        assert_eq!(
+            plan_read(None, &[]),
+            ReadPlan {
+                plates: Slot::ALL.to_vec(),
+                text: vec![PANEL_REGION, REMAINING_REGION],
+                markers: true,
+            },
+        );
+    }
+
+    /// A retry round re-reads the plates the kept read could not name and
+    /// NOTHING else — the panel and the diamond it already got are not paid for
+    /// a second time.
+    ///
+    /// Fails on the mutation `retry_plan`'s plate filter dropping its
+    /// `!…is_known()` (every round would re-read all thirteen), and on
+    /// `markers: true` (every round would re-read the diamond).
+    #[test]
+    fn a_retry_round_plans_the_unread_plates_and_nothing_else() {
+        let mut kept = clean_read();
+        kept.rooms[Slot::C1.index()].identity = Match::Unknown;
+        kept.rooms[Slot::D2.index()].identity = Match::Unknown;
+
+        assert_eq!(
+            plan_read(Some(&kept), &[]),
+            ReadPlan {
+                plates: vec![Slot::C1, Slot::D2],
+                text: Vec::new(),
+                markers: false,
+            },
+        );
+    }
+
+    /// An offer the panel printed and the vocabulary could not resolve plans
+    /// the PANEL region — and only that one: the budget line came out fine and
+    /// is a separate crop.
+    ///
+    /// Fails on the mutation `text.push(REMAINING_REGION)` beside it (the
+    /// budget's crop would be paid for on every panel retry), and on dropping
+    /// the offer-resolution clause (the round would be bought by `unclean` and
+    /// then re-read nothing).
+    #[test]
+    fn an_unresolved_offer_plans_the_panel_region() {
+        let mut kept = clean_read();
+        kept.panel.architects[1] = offer("Ticaba", "qqqq zzzz", OfferKind::Upgrade);
+
+        assert_eq!(
+            plan_read(Some(&kept), &[]),
+            ReadPlan {
+                plates: Vec::new(),
+                text: vec![PANEL_REGION],
+                markers: false,
+            },
+        );
+    }
+
+    /// …unless that region's own crop fell off the capture, in which case it is
+    /// not planned at all. A region that is not on screen cannot read better
+    /// next time, and this is the same exemption [`unclean`] applies to the
+    /// causes it explains — the two are one function, so a windowed client
+    /// neither buys rounds for its missing panel nor re-crops it.
+    ///
+    /// Fails on the mutation dropping `!clipped.contains(&PANEL_REGION) &&`.
+    #[test]
+    fn a_clipped_panel_region_is_not_planned() {
+        let mut kept = clean_read();
+        kept.panel.architects = Vec::new();
+
+        assert_eq!(
+            plan_read(Some(&kept), &[PANEL_REGION]),
+            ReadPlan {
+                plates: Vec::new(),
+                text: Vec::new(),
+                markers: false,
+            },
+        );
+    }
+
+    /// A footer that did not read plans the BUDGET LINE's region — and only
+    /// that one: it is its own crop, and the side panel came out fine.
+    ///
+    /// The mirror of the panel-region case, and the pair is what pins the claim
+    /// that the plan names regions rather than "the text". Fails on the
+    /// mutation `text.push(REMAINING_REGION)` becoming `text.push(PANEL_REGION)`
+    /// — every board that lost its footer would re-crop the whole side panel.
+    #[test]
+    fn a_missing_budget_plans_the_remaining_region() {
+        let mut kept = clean_read();
+        kept.panel.incursions_remaining = None;
+
+        assert_eq!(
+            plan_read(Some(&kept), &[]),
+            ReadPlan {
+                plates: Vec::new(),
+                text: vec![REMAINING_REGION],
+                markers: false,
+            },
+        );
+    }
+
+    /// A diamond that failed plans the diamond, and leaves the plates and the
+    /// panel the same read got alone.
+    ///
+    /// Fails on the mutation `markers: false` — the board would keep spending
+    /// rounds on a marker error no round ever re-reads.
+    #[test]
+    fn a_kept_marker_error_plans_the_diamond() {
+        let mut kept = clean_read();
+        kept.marker_error = Some("read 3 door markers for a 4-neighbour room".to_string());
+
+        assert_eq!(
+            plan_read(Some(&kept), &[]),
+            ReadPlan {
+                plates: Vec::new(),
+                text: Vec::new(),
+                markers: true,
+            },
+        );
+    }
+
+    // ------------------------------------ merging a round that read PART of it --
+
+    /// The contract a partial round rests on: a region nobody looked at merges
+    /// to the kept value, in every region at once.
+    ///
+    /// `fresh` here is what `super::run::full_read` builds from an EMPTY plan —
+    /// thirteen `Unknown` plates (`super::panel::read_slots` fills them), the
+    /// empty [`PanelReading`] `read_panel` returns for no lines at all, and a
+    /// diamond with neither a door set nor a reason. The merged read must be
+    /// the kept one, unchanged.
+    ///
+    /// Fails on the mutation restoring the door arm's old error-keyed form
+    /// (`if fresh_marker_error.is_none() { (fresh_settled, None) }`), which
+    /// reads "not looked at" as "looked and found nothing" and clears the kept
+    /// corridors — the one place a partial round would have regressed a board.
+    #[test]
+    fn a_round_that_read_nothing_leaves_the_kept_read_untouched() {
+        let kept = clean_read();
+        let fresh = KeptRead {
+            layout: kept.layout.clone(),
+            rooms: board_rooms(&[]),
+            panel: PanelReading {
+                room: Match::Unknown,
+                room_rect: None,
+                architects: Vec::new(),
+                incursions_remaining: None,
+            },
+            settled: None,
+            marker_error: None,
+        };
+
+        assert_eq!(merge_reads(&kept, fresh), kept);
+    }
+
+    /// The round a missing footer buys: the budget line's region re-read, the
+    /// side panel not. The merged panel is the kept one with the budget filled
+    /// in — the title, its rect and BOTH offer blocks survive a round that did
+    /// not look at them.
+    ///
+    /// This is the case the whole partial round is for, and the one an empty
+    /// fresh panel could quietly wreck: `read_panel` over the footer alone
+    /// answers `Unknown`/no rect/no blocks (pinned in `panel.rs` by
+    /// `a_budget_line_on_its_own_names_no_room`), so every arm of the panel
+    /// merge is exercised at once. Fails on the mutation of the architect
+    /// length rule's short arm taking `architects` — the fresh empty list —
+    /// instead of `kept.panel.architects.clone()`, and on the title arm
+    /// preferring the fresh `Unknown`.
+    #[test]
+    fn a_round_that_re_read_only_the_budget_keeps_the_rest_of_the_panel() {
+        let mut kept = clean_read();
+        kept.panel.incursions_remaining = None;
+        kept.panel.room_rect = Some([1, 2, 3, 4]);
+        let fresh = KeptRead {
+            layout: kept.layout.clone(),
+            rooms: board_rooms(&[]),
+            panel: PanelReading {
+                room: Match::Unknown,
+                room_rect: None,
+                architects: Vec::new(),
+                incursions_remaining: Some(6),
+            },
+            settled: None,
+            marker_error: None,
+        };
+
+        assert_eq!(
+            merge_reads(&kept, fresh).panel,
+            PanelReading {
+                incursions_remaining: Some(6),
+                ..kept.panel.clone()
+            },
+        );
+    }
+
+    /// The same rule on the round the loop actually runs: one plate re-read,
+    /// the diamond skipped because the kept read had settled it.
+    ///
+    /// Named separately from the empty-plan case because the failure it
+    /// describes is the visible one — the room widget losing every corridor on
+    /// the retry that was supposed to fill in a plate. Fails on the same
+    /// mutation.
+    #[test]
+    fn a_round_that_skipped_the_diamond_keeps_the_kept_door_set() {
+        let mut kept = clean_read();
+        kept.rooms[Slot::C1.index()].identity = Match::Unknown;
+        let fresh = KeptRead {
+            layout: kept.layout.clone(),
+            rooms: board_rooms(&[(Slot::C1, "Chasm")]),
+            panel: PanelReading {
+                room: Match::Unknown,
+                room_rect: None,
+                architects: Vec::new(),
+                incursions_remaining: None,
+            },
+            settled: None,
+            marker_error: None,
+        };
+
+        assert_eq!(
+            merge_reads(&kept, fresh).settled,
+            kept.settled,
+            "a diamond nobody looked at is not a diamond that found nothing",
+        );
+    }
+
+    /// Which room the player is standing in is answered from BOTH sources, and
+    /// on a partial round the two can only meet on the merged read: a round
+    /// that re-read the side panel alone carries a fresh title over thirteen
+    /// `Unknown` plates, so its own frames have nothing to disagree with.
+    ///
+    /// This is the seam `super::run::full_read`'s disagreement log line and
+    /// `super::advisor::state`'s overlay warning both sit on, which is why they
+    /// have to read the same merged value.
+    ///
+    /// Fails on the mutation of the plate arm taking the fresh `Unknown`
+    /// wholesale, and on the title arm dropping its `identity().is_some()`
+    /// test for the kept title unconditionally — either leaves one source
+    /// unnamed, and [`current_identity`] reports agreement on a board where the
+    /// two OCR passes named different rooms.
+    #[test]
+    fn a_kept_plate_and_a_freshly_read_title_disagree_only_on_the_merged_read() {
+        let kept = kept_read(&[(Slot::B0, "Chasm")], "qqqq zzzz", Some(6), Vec::new());
+        let fresh = kept_read(&[], "Storage Room", Some(6), Vec::new());
+
+        let merged = merge_reads(&kept, fresh.clone());
+
+        assert_eq!(
+            current_identity(merged.layout.current, &identities(&merged.rooms), &merged.panel)
+                .disagreement,
+            Some(("Storage Room", "Chasm")),
+        );
+        assert_eq!(
+            current_identity(fresh.layout.current, &identities(&fresh.rooms), &fresh.panel)
+                .disagreement,
+            None,
+            "the round's own frames named one source, so nothing there disagrees",
+        );
     }
 
     /// `rearm_pending` is a pure peek: it reports the bump and spends nothing.

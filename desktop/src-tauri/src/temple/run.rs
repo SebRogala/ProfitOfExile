@@ -88,11 +88,16 @@
 //! nothing.
 //!
 //! A read that came out unclean — an unread plate, an unresolved offer, a
-//! marker mismatch, an unread budget — is re-taken at most [`RETRIES`] more
-//! times and each retry is merged into the read it is retrying
-//! ([`slice::merge_reads`]), so a worse second look never undoes a good first
-//! one. After that all OCR stops for this board. There is no periodic panel
-//! re-OCR: see docs/TEMPLE-LIFECYCLE.md rows 2 and 3, which this implements.
+//! marker mismatch, an unread budget — buys at most [`RETRIES`] more ROUNDS,
+//! for three in total. Round 1 is the full 28 calls; rounds 2 and 3 OCR only
+//! the regions the kept read still has unclean, which
+//! [`slice::plan_read`] decides from that read BEFORE any of this round's OCR
+//! is paid for (POE-249 WI-2, owner 2026-09-07). Every round is merged into
+//! the read it is retrying ([`slice::merge_reads`]), so a worse second look
+//! never undoes a good first one and a region no round looked at comes through
+//! as the value the kept read had. After the third round all OCR stops for this
+//! board. There is no periodic panel re-OCR: see docs/TEMPLE-LIFECYCLE.md rows
+//! 2 and 3, which this implements.
 //!
 //! # The detect cadence
 //!
@@ -487,11 +492,13 @@ pub struct BoardRead {
     /// Whether some region of that read did not come out clean
     /// ([`slice::unclean`]).
     pub unclean: bool,
-    /// Full re-reads still owed to an unclean board.
+    /// Reading rounds still owed to an unclean board.
     ///
     /// Spent by a RETRY — a read of the same board in the same place — and by
     /// nothing else. A geometry-only move carries it across unchanged; see
-    /// [`LoopState::note_read`].
+    /// [`LoopState::note_read`]. What a retry round actually OCRs is
+    /// [`slice::plan_read`]'s answer and is usually a fraction of a full read;
+    /// this budget bounds the ROUNDS, not the calls.
     pub retries_left: u8,
     /// Reads this board has paid for a MOVED frame alone: same key, same
     /// content, origin or scale outside the band. Reset to 0 when the key or the
@@ -505,14 +512,20 @@ pub struct BoardRead {
     pub geometry_reads: u8,
 }
 
-/// Extra full reads an UNCLEAN board is worth, on top of the first.
+/// Extra reading rounds an UNCLEAN board is worth, on top of the first.
 ///
-/// Two, owner-decided (docs/TEMPLE-LIFECYCLE.md row 2: "at most 2 more times").
-/// The failures a retry recovers are the ones a redraw fixes — OCR over a
-/// half-drawn panel, a plate the game was still fading in — and those are gone
-/// by the second look. Past that the cause is the read itself (a plate name
-/// outside the vocabulary, a diamond the selection frame covers) and paying 28
-/// OCR calls every 650 ms for the rest of the incursion buys nothing.
+/// Two, owner-decided — docs/TEMPLE-LIFECYCLE.md row 2, and restated
+/// 2026-09-07: *"We do up to 2 more rounds of temple reading, but only for the
+/// parts that was previously not clear, so we in fact do 3 reading rounds
+/// total."* The failures a retry recovers are the ones a redraw fixes — OCR
+/// over a half-drawn panel, a plate the game was still fading in — and those
+/// are gone by the second look. Past that the cause is the read itself (a plate
+/// name outside the vocabulary, a diamond the selection frame covers) and
+/// paying for it every 650 ms for the rest of the incursion buys nothing.
+///
+/// The second half of the quote is [`slice::plan_read`]: rounds 2 and 3 re-read
+/// only the unclean regions, so this budget costs three FULL reads only on a
+/// board where every region failed.
 pub const RETRIES: u8 = 2;
 
 /// Reads one board is worth for GEOMETRY alone, before the gate stops paying.
@@ -864,7 +877,8 @@ pub struct TickStages {
 pub struct ReadStages {
     /// The panel and budget-line OCR (`panel_text`).
     pub text_ocr: Duration,
-    /// The 26 plate OCR calls (`panel::read_board`).
+    /// The plate OCR calls (`panel::read_slots`): up to 26, two per PLANNED
+    /// plate, so 26 on a full round and two per still-unread plate on a retry.
     pub plate_ocr: Duration,
     /// The door markers (`read_markers`).
     pub markers: Duration,
@@ -917,8 +931,25 @@ pub fn slow_tick_line(
 
 /// The line every full read writes: each stage from the grab to the publish,
 /// the total, the read's own `last_read_at` stamp so the overlay's
-/// `[temple-overlay] board read at …` line can be matched to it, and whether
-/// the read was clean or is buying a retry.
+/// `[temple-overlay] board read at …` line can be matched to it, WHICH ROUND
+/// this was and what it re-read, and whether the read was clean or is buying
+/// another round.
+///
+/// # The round (WI-2)
+///
+/// `round N of {RETRIES + 1}: full | re-read 3 plates, panel` — what the round
+/// did, then what it found. It is the only place the partial-round cost is
+/// visible: with the stage timings beside it, `text ocr` and `plates` on a
+/// round that named neither are the measurement of what skipping them bought,
+/// which is why docs/TEMPLE-LIFECYCLE.md quotes no figure of its own.
+///
+/// `N` is derived from `retries_left` AFTER [`LoopState::note_read`] has spent
+/// this read's share, so it counts what actually happened rather than what the
+/// plan intended: a first look leaves the whole [`RETRIES`] budget and is round
+/// 1, and each retry spends one. A geometry-only re-read carries the budget
+/// rather than spending it and therefore repeats its round number — which is
+/// the honest answer, because `kept_for` dropped the kept reading and it read
+/// everything again.
 pub fn read_timings_line(
     tick: &TickStages,
     read: &ReadStages,
@@ -926,14 +957,16 @@ pub fn read_timings_line(
     read_at: u64,
     unclean: bool,
     retries_left: Option<u8>,
+    plan: &slice::ReadPlan,
 ) -> String {
     let verdict = match (unclean, retries_left) {
         (false, _) => "clean".to_string(),
         (true, Some(n)) => format!("unclean, {n} retries left"),
         (true, None) => "unclean".to_string(),
     };
+    let round = RETRIES + 1 - retries_left.unwrap_or(RETRIES).min(RETRIES);
     format!(
-        "Temple: read timings — capture {} ms, cheap detect {} ms, anchor {} ms, text ocr {} ms, plates {} ms, markers {} ms, advise {} ms, publish {} ms — {} ms from grab to publish, read at {}; {}",
+        "Temple: read timings — capture {} ms, cheap detect {} ms, anchor {} ms, text ocr {} ms, plates {} ms, markers {} ms, advise {} ms, publish {} ms — {} ms from grab to publish, read at {}; round {} of {}: {}; {}",
         ms(tick.capture),
         ms(tick.cheap),
         ms(tick.anchor),
@@ -944,6 +977,9 @@ pub fn read_timings_line(
         ms(read.publish),
         ms(total),
         read_at,
+        round,
+        RETRIES + 1,
+        plan.describe(),
         verdict,
     )
 }
@@ -3123,8 +3159,10 @@ fn tick(
     });
 
     // The OCR gate (POE-249, docs/TEMPLE-LIFECYCLE.md rows 2-3). Everything
-    // above this line runs on every sighting; the 28 OCR calls below it run once
-    // per board, plus at most `RETRIES` retries while some region is unclean.
+    // above this line runs on every sighting; the OCR below it runs once per
+    // board as the full 28 calls, plus at most `RETRIES` further rounds while
+    // some region is unclean — and those re-read only the unclean regions
+    // (`slice::plan_read`), not the 28.
     //
     // The frame costs nothing here: it is read off the layout the anchor above
     // already resolved, and it is what stops a reopen answering with the
@@ -3367,14 +3405,27 @@ pub fn text_regions(layout: &TempleLayout) -> [(&'static str, [i32; 4]); 2] {
 /// A crop that lands outside the capture contributes nothing rather than
 /// failing the read: the two regions are independent, and losing the budget
 /// line costs a warning, not the board.
+///
+/// `wanted` is the region names this round is reading — [`slice::ReadPlan`]'s
+/// `text`, which for round 1 is both of them and for a retry round is only the
+/// ones the kept panel still owes (WI-2). A region left out is not cropped and
+/// not OCR'd, so it contributes no lines and [`panel::read_panel`] answers
+/// `Unknown`/empty/`None` for it — which is exactly what
+/// [`slice::merge_reads`] falls back to the kept panel on. An EMPTY `wanted`
+/// therefore returns `Some(vec![])` rather than `None`: a round that reads no
+/// text is a round, not a failure.
 fn panel_text(
     app: &AppHandle,
     session: &mut Session,
     img: &DynamicImage,
     layout: &TempleLayout,
+    wanted: &[&'static str],
 ) -> Option<Vec<crate::mercenary::geometry::OcrLineBox>> {
     let mut lines = Vec::new();
-    for (_, rect) in text_regions(layout) {
+    for (name, rect) in text_regions(layout) {
+        if !wanted.contains(&name) {
+            continue;
+        }
         let Some((crop, origin)) = crop_clipped(img, rect) else {
             continue;
         };
@@ -3621,19 +3672,29 @@ const K_TOLERANCE: f32 = 0.01;
 /// [`full_read`] needs an `AppHandle`, a capture and an OCR engine, and this
 /// needs none of them. It was an `if` in there, and deleting it passed every
 /// test.
-fn kept_for(
-    kept: Option<slice::KeptRead>,
+///
+/// # Why it is generic over the reading (WI-2)
+///
+/// [`full_read`] asks this TWICE and must get the same answer both times: once
+/// on a BORROW before any OCR, to plan which regions this round re-reads
+/// ([`slice::plan_read`]), and once on the OWNED reading at the merge. The
+/// predicate is the ownership rule, not the ownership: making the reading the
+/// type parameter is what keeps both calls on the one rule instead of leaving
+/// the planning half to a hand-written copy of it. A board this loop has not
+/// read still reaches neither the plan nor [`slice::merge_reads`].
+fn kept_for<T>(
+    kept: Option<T>,
     state: &LoopState,
     key: (u64, u64),
     frame: &slice::BoardFrame,
-) -> Option<slice::KeptRead> {
+) -> Option<T> {
     kept.filter(|_| state.same_board(key, frame))
 }
 
 /// The expensive half of one tick: the side panel, the 13 plates, the door
 /// diamond, the advisor, and one publish.
 ///
-/// # Once per board, plus at most [`RETRIES`] retries (POE-249)
+/// # Three rounds per board at most: one full, then at most [`RETRIES`] partial
 ///
 /// The caller has already decided this board is worth reading —
 /// [`LoopState::reshow`] answered `None`, which is the form the loop calls
@@ -3642,17 +3703,33 @@ fn kept_for(
 /// it: the fresh reading is MERGED into whatever this loop kept for the same
 /// board ([`slice::merge_reads`]), the merged read is what the advisor ranks and
 /// [`slice::project`] publishes, and [`LoopState::note_read`] records whether it
-/// is still unclean and spends one retry.
+/// is still unclean and spends one round.
 ///
 /// `key` and `frame` are the caller's — the same pair the gate decided on,
 /// passed down rather than recomputed, so the read is recorded under the
 /// identity it was let through as.
 ///
+/// # What this round OCRs, decided before it OCRs anything (WI-2)
+///
+/// [`slice::plan_read`] is asked FIRST, from the kept reading
+/// [`kept_for`] allows and the clipped-region list this capture produced: a
+/// board with nothing kept is read whole, and a retry round reads only the
+/// plates still unnamed, the text regions the kept panel still owes, and the
+/// diamond if it failed. Every OCR call below is behind that plan.
+///
+/// The ORDER is the point. The kept reading is only borrowed for the plan;
+/// `session.kept` is still `take`n at the merge, so a round that bails out
+/// between the two — a cancelled thread, a dead OCR engine — leaves it standing
+/// and the next round plans from it again rather than reading the board whole.
+///
 /// The merge is what makes a retry safe. Two reads of one board are two OCR
 /// passes over two frames, so the second can be WORSE than the first — a plate
 /// that read on the first attempt and not on the second, a panel caught
 /// mid-redraw. Replacing the kept read wholesale would let that regress a board
-/// the player is looking at; merging region by region cannot.
+/// the player is looking at; merging region by region cannot. That same merge is
+/// what a SKIPPED region rides out on: it arrives as the placeholder an unread
+/// region produces, and the kept value wins — see [`slice::merge_reads`]'s note
+/// on the region nobody looked at, and the diamond arm it names.
 ///
 /// A read that bails out (a cancelled thread, a failed OCR engine) records
 /// nothing, so the next tick reads the same board from scratch.
@@ -3695,17 +3772,32 @@ fn full_read(
             .join("; ")
     });
 
+    // WHAT THIS ROUND READS, decided before a single OCR call (WI-2). The kept
+    // reading is only BORROWED here — `kept_for` owns which reading this round
+    // may look at, and `full_read` still `take`s it at the merge, so a round
+    // that bails out below leaves it standing for the next one.
+    //
+    // The names, not the rects: `slice::plan_read` asks only WHICH regions fell
+    // off the capture, because a region that is not on screen cannot read
+    // better on a retry — it must neither buy a round nor be re-read by one.
+    let clipped_names: Vec<&'static str> = clipped.iter().map(|(name, _)| *name).collect();
+    let plan = slice::plan_read(
+        kept_for(session.kept.as_ref(), &session.state, key, &frame),
+        &clipped_names,
+    );
+
     let reading_text = Instant::now();
-    let panel = match panel_text(app, session, img, &layout) {
+    let panel = match panel_text(app, session, img, &layout, &plan.text) {
         Some(lines) => panel::read_panel(&lines),
         None => return,
     };
     stages.text_ocr = reading_text.elapsed();
 
-    // 26 more OCR calls follow — two per plate. A stop that arrived during the
+    // Up to 26 more OCR calls follow — two per PLANNED plate, so 26 on round 1
+    // and two per still-unread plate on a retry. A stop that arrived during the
     // text OCR must not buy them: this is the loop's longest blocking stretch
     // and a detached thread cannot be aborted out of it. The check is passed
-    // INTO `read_board` as well, so a stop lands between two plate crops rather
+    // INTO `read_slots` as well, so a stop lands between two plate crops rather
     // than after all 26. Bailing records no board, so the next start reads this
     // one from scratch.
     if *cancel.borrow() {
@@ -3714,31 +3806,22 @@ fn full_read(
     let lattice = Lattice::new(layout.origin, layout.scale);
     let stop = || *cancel.borrow();
     let reading_plates = Instant::now();
-    let rooms = panel::read_board(&SystemOcr, img, &lattice, &stop);
+    let rooms = panel::read_slots(&SystemOcr, img, &lattice, &plan.plates, &stop);
     stages.plate_ocr = reading_plates.elapsed();
     if *cancel.borrow() {
         return;
     }
 
-    // Both name-sources for the room the player is standing in read, and they
-    // disagree: the advice carries a warning for the overlay, and this puts the
-    // same fact in the app log, which is what a user can send back. `log::` is
-    // not that — it goes nowhere under `windows_subsystem = "windows"`.
-    if let Some((title, plate)) =
-        slice::current_identity(layout.current, &slice::identities(&rooms), &panel).disagreement
-    {
-        crate::app_log(
-            app,
-            format!(
-                "Temple: side panel says {title:?} but the current plate says {plate:?}; using the plate"
-            ),
-        );
-    }
-
     let reading_markers = Instant::now();
-    let (settled, marker_error) = match read_markers(img, &layout) {
-        Ok(set) => (Some(set), None),
-        Err(e) => (None, Some(e)),
+    // A round that did not plan the diamond leaves BOTH halves empty, which is
+    // `slice::merge_reads`' "not read" state and merges to the kept door set.
+    // It is not `Ok(empty set)` — that would publish a room with no corridors.
+    let (settled, marker_error) = match plan.markers {
+        false => (None, None),
+        true => match read_markers(img, &layout) {
+            Ok(set) => (Some(set), None),
+            Err(e) => (None, Some(e)),
+        },
     };
     stages.markers = reading_markers.elapsed();
 
@@ -3755,6 +3838,37 @@ fn full_read(
         Some(kept) => slice::merge_reads(&kept, fresh),
         None => fresh,
     };
+
+    // Both name-sources for the room the player is standing in read, and they
+    // disagree: the advice carries a warning for the overlay, and this puts the
+    // same fact in the app log, which is what a user can send back. `log::` is
+    // not that — it goes nowhere under `windows_subsystem = "windows"`.
+    //
+    // Decided on the MERGED read, and it has to be (WI-2): since a retry round
+    // OCRs only what is still unclean, this round's own `rooms`/`panel` can each
+    // be the placeholder an unread region produces, so a round that re-read only
+    // the side panel would compare a fresh title against thirteen `Unknown`
+    // plates and never fire. `advisor/state.rs` raises the overlay warning from
+    // the merged read, so reading anything else here would put a DIFFERENT fact
+    // in the log than the one on screen — which is the opposite of what this
+    // block is for. `slice::merge_reads`' own tests pin the seam (a kept plate
+    // under a freshly read title disagrees only after the merge); the ordering
+    // of these two statements is not itself covered, because the only seam that
+    // would cover it needs an `AppHandle`.
+    if let Some((title, plate)) = slice::current_identity(
+        read.layout.current,
+        &slice::identities(&read.rooms),
+        &read.panel,
+    )
+    .disagreement
+    {
+        crate::app_log(
+            app,
+            format!(
+                "Temple: side panel says {title:?} but the current plate says {plate:?}; using the plate"
+            ),
+        );
+    }
     // ONE valuation for this read, handed to the ranking AND to the offer
     // boxes below (POE-257 D6). Two calls would let the number on screen come
     // from a market read the recommendation never saw.
@@ -3816,10 +3930,10 @@ fn full_read(
         // frame the player is looking at.
         Some(read.layout.calibration),
     );
-    // The names, not the rects: `slice::unclean` asks only WHICH regions fell
-    // off the capture, because a region that is not on screen cannot read better
-    // on a retry and its failures must not spend one.
-    let clipped_names: Vec<&'static str> = clipped.iter().map(|(name, _)| *name).collect();
+    // The same `clipped_names` the plan above was built from — `slice::unclean`
+    // and `slice::plan_read` are one function asked twice, and asking them with
+    // two different exemption lists inside one read would let a round be bought
+    // for a region the next round then refuses to look at.
     let unclean = slice::unclean(&read, &clipped_names);
     session.state.note_read(key, &frame, projected.status, unclean);
     session.kept = Some(read);
@@ -3840,6 +3954,7 @@ fn full_read(
             read_at,
             unclean,
             session.state.board.as_ref().map(|board| board.retries_left),
+            &plan,
         ),
     );
 }
@@ -4873,6 +4988,170 @@ mod tests {
             .is_some(),
             "the window has passed",
         );
+    }
+
+    /// The stage timings a read line is built from, distinct per stage so a
+    /// line that printed one under another's label is visible.
+    fn read_stages() -> (TickStages, ReadStages) {
+        (
+            TickStages {
+                capture: Duration::from_millis(35),
+                cheap: Duration::from_millis(64),
+                anchor: Duration::from_millis(96),
+            },
+            ReadStages {
+                text_ocr: Duration::from_millis(165),
+                plate_ocr: Duration::from_millis(102),
+                markers: Duration::from_millis(6),
+                advise: Duration::from_millis(193),
+                publish: Duration::from_millis(4),
+            },
+        )
+    }
+
+    /// The first look at a board is round 1 of 3 and reads everything — and the
+    /// line still carries every stage measurement, which is what the owner's
+    /// ~1 s budget is checked against.
+    ///
+    /// `retries_left` is what `note_read` leaves after a first look: the whole
+    /// `RETRIES` budget. Fails on the mutation `round = RETRIES + 1 -
+    /// retries_left` becoming a constant `1`, which the next test catches from
+    /// the other side, and on `plan.describe()` being dropped from the line.
+    #[test]
+    fn the_read_line_names_a_first_look_as_round_one_of_three_full() {
+        let (tick, read) = read_stages();
+
+        let line = read_timings_line(
+            &tick,
+            &read,
+            Duration::from_millis(666),
+            1788567663863,
+            false,
+            Some(RETRIES),
+            &slice::ReadPlan::full(),
+        );
+
+        assert!(line.contains("round 1 of 3: full;"), "{line}");
+        assert!(line.contains("text ocr 165 ms, plates 102 ms, markers 6 ms"), "{line}");
+        assert!(line.contains("666 ms from grab to publish"), "{line}");
+        assert!(line.ends_with("clean"), "{line}");
+    }
+
+    /// A retry round names its number AND the regions it re-read, which is the
+    /// only place the partial round's cost is visible: `plates 12 ms` beside
+    /// `re-read 2 plates` is the measurement of what skipping the other eleven
+    /// bought.
+    ///
+    /// The round is derived from the retry budget AFTER `note_read` spent this
+    /// read's share, so one retry left is round 2. Fails on a constant round
+    /// number, on the arithmetic being inverted (`RETRIES + 1 - 1` would print
+    /// round 2 for the first look as well), and on the plan's regions being
+    /// left off the line.
+    #[test]
+    fn the_read_line_names_a_retry_round_and_the_regions_it_re_read() {
+        let (tick, read) = read_stages();
+        let plan = slice::ReadPlan {
+            plates: vec![lattice::Slot::C1, lattice::Slot::D2],
+            text: vec![slice::PANEL_REGION],
+            markers: false,
+        };
+
+        let line = read_timings_line(
+            &tick,
+            &read,
+            Duration::from_millis(210),
+            1788567664551,
+            true,
+            Some(1),
+            &plan,
+        );
+
+        assert!(line.contains("round 2 of 3: re-read 2 plates, panel;"), "{line}");
+        assert!(line.ends_with("unclean, 1 retries left"), "{line}");
+    }
+
+    /// The last round the budget allows says so, and a plan of the diamond
+    /// alone names the diamond. Fails if `describe` prints a region the plan
+    /// did not carry, or if the round stops counting at 2.
+    #[test]
+    fn the_read_line_names_the_last_round_and_a_markers_only_plan() {
+        let (tick, read) = read_stages();
+        let plan = slice::ReadPlan {
+            plates: Vec::new(),
+            text: Vec::new(),
+            markers: true,
+        };
+
+        let line = read_timings_line(
+            &tick,
+            &read,
+            Duration::from_millis(120),
+            1788567665204,
+            true,
+            Some(0),
+            &plan,
+        );
+
+        assert!(line.contains("round 3 of 3: re-read markers;"), "{line}");
+    }
+
+    /// One plate is `re-read 1 plate`, not `1 plates` — the literal
+    /// docs/OVERLAY-GUIDE.md's smoke check reads off `app.log` for the round a
+    /// single covered plate buys, so the singular is part of the check and not
+    /// a nicety.
+    ///
+    /// Fails on the mutation dropping `slice::ReadPlan::describe`'s `1 =>` arm:
+    /// the count would fall through to the plural `{n} plates`.
+    #[test]
+    fn the_read_line_puts_a_single_re_read_plate_in_the_singular() {
+        let (tick, read) = read_stages();
+        let plan = slice::ReadPlan {
+            plates: vec![lattice::Slot::C1],
+            text: Vec::new(),
+            markers: false,
+        };
+
+        let line = read_timings_line(
+            &tick,
+            &read,
+            Duration::from_millis(180),
+            1788567664551,
+            true,
+            Some(1),
+            &plan,
+        );
+
+        assert!(line.contains("round 2 of 3: re-read 1 plate;"), "{line}");
+    }
+
+    /// A round bought by a region whose crop then fell off the capture plans
+    /// nothing, and the line says `nothing left to re-read` — the other literal
+    /// the smoke check names, and the one that tells a reader the round cost an
+    /// anchor resolve and no OCR rather than that the line lost its regions.
+    ///
+    /// Fails on the mutation dropping `slice::ReadPlan::describe`'s
+    /// `is_empty()` arm: the empty plan would fall through to the join and
+    /// print a bare `re-read `.
+    #[test]
+    fn the_read_line_names_a_round_with_nothing_left_to_re_read() {
+        let (tick, read) = read_stages();
+        let plan = slice::ReadPlan {
+            plates: Vec::new(),
+            text: Vec::new(),
+            markers: false,
+        };
+
+        let line = read_timings_line(
+            &tick,
+            &read,
+            Duration::from_millis(101),
+            1788567665204,
+            false,
+            Some(1),
+            &plan,
+        );
+
+        assert!(line.contains("round 2 of 3: nothing left to re-read;"), "{line}");
     }
 
     // ------------------------------------------------ the cheap detect gate --
