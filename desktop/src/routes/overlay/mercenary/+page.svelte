@@ -71,7 +71,8 @@
 	 * strip can never grow over the taskbar, and re-applies the position because
 	 * the WebView2 transparency resize workaround has been observed to disturb
 	 * it. Width and position are never touched by this path; they stay whatever
-	 * the user set in Settings → Overlay Positions.
+	 * the user set in Settings → Overlay Positions — the PANEL shrink-wraps to
+	 * its content inside that width (see `.panel`), the window does not.
 	 *
 	 * This cannot oscillate. The panel's height is content-driven and its width
 	 * comes from the fixed-inset root, so a height change never re-wraps text
@@ -87,6 +88,7 @@
 	 */
 	import { untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
+	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { ssot } from '$lib/stores/ssot.svelte';
 	import { MERCENARY_WINDOW_LABEL } from '$lib/overlay/manager';
 	import { overlayHeightRequest } from '$lib/overlay/content-height';
@@ -94,16 +96,19 @@
 	import { enabledSources } from '$lib/mercenaries/merc-prefs';
 	import { evaluateCapture } from '$lib/mercenaries/verdict';
 	import {
-		guidesLine,
-		headerLine,
 		lingerAdvance,
 		lingerInit,
 		lingerRemainingMs,
+		overlayHeader,
 		overlayShowsVerdict,
 		overlayShown,
 		liveRowGlyphs,
 		statusLine,
-		unreadNote
+		statusPulse,
+		stripSide,
+		unreadNote,
+		verdictBlock,
+		type StripSide
 	} from '$lib/mercenaries/overlay-view';
 
 	const merc = $derived(ssot.mercenary);
@@ -150,21 +155,53 @@
 	const showsVerdict = $derived(overlayShowsVerdict(merc));
 	const status = $derived(statusLine(merc));
 	const enabled = $derived(enabledSources(merc.sourcesOff));
-	// Not on a first look: the icons are unread, and `guidesLine` says the
+	// Not on a first look: the icons are unread, and `verdictBlock` says the
 	// verdict is pending instead (`MercCapture.partial`).
 	const verdict = $derived(
 		capture === null || capture.partial
 			? null
 			: evaluateCapture(capture, MERC_SOURCES, enabled, ssot.league)
 	);
-	// ONE line for every enabled guide, not one per guide: the strip used to
+	// ONE headline for every enabled guide, not one per guide: the strip used to
 	// spend two lines saying SKIP twice (2026-08-25 smoke). The page keeps the
-	// full per-guide view.
-	const guides = $derived(guidesLine(verdict, capture));
+	// full per-guide view; the chips under a WORTH are the rungs to comp against.
+	const block = $derived(verdictBlock(verdict, capture));
+	const pulse = $derived(statusPulse(merc));
 	const unread = $derived(unreadNote(merc));
 	// WHICH cells still need a hover, not just how many. The live-only gate is
 	// inside `liveRowGlyphs`, where it is tested.
 	const glyphRows = $derived(liveRowGlyphs(merc));
+
+	// --- Which edge the panel hugs ---
+	//
+	// The panel shrink-wraps inside a window the user sized, so the slack is on
+	// one side; it should face the screen's middle, where the game is. The
+	// side is `stripSide`'s (tested); this route only fetches the two inputs
+	// the slice cannot carry — the window's own position and size, in the
+	// physical pixels the screen slice is measured in.
+	//
+	// Re-measured on EVERY poll rather than on a move event: Settings moves this
+	// window with `move_overlay` without recreating it, and the guide records
+	// window events as unreliable in overlay windows. Two IPC calls every three
+	// seconds is the price of never being stuck on the wrong edge.
+	let side = $state<StripSide>('left');
+	let sideFailureReported = false;
+	$effect(() => {
+		void merc;
+		const screen = ssot.screen;
+		const win = getCurrentWindow();
+		Promise.all([win.outerPosition(), win.outerSize()])
+			.then(([pos, size]) => {
+				side = stripSide({ x: pos.x, width: size.width }, screen);
+			})
+			.catch((e) => {
+				// Guard 6, once: the panel stays on the left, which is what it
+				// always did, and the log says why it never moves.
+				if (sideFailureReported) return;
+				sideFailureReported = true;
+				logMerc(`own position unreadable, the panel stays left-aligned: ${e}`);
+			});
+	});
 
 	// --- Height follows content (see the header) ---
 
@@ -234,43 +271,74 @@
 	});
 </script>
 
-<div class="overlay-root">
+<div class="overlay-root side-{side}">
 	{#if shown}
 		<div class="panel" bind:this={panelEl}>
-			<!-- The module's pulse. Drawn for every running status, capture or
-			     not — an empty overlay and a dead one used to look the same. -->
-			{#if status}
-				<p class="status">{status}</p>
-			{/if}
-
 			{#if showsVerdict && capture}
-				<p class="header">{headerLine(capture)}</p>
+				{@const header = overlayHeader(capture)}
+				<div class="header">
+					<p class="name">{header.name}</p>
+					<p class="detail">{header.detail}</p>
+				</div>
 
-				<!-- The verdict, in one line. Every case it can be in — including
+				<!-- The verdict: the headline on its own line, then one chip per
+				     rung that said WORTH. Every case it can be in — including
 				     "no guides enabled" — is worded in `overlay-view`. -->
-				{#if guides}
-					<p class="guide"><span class="badge tone-{guides.tone}">{guides.text}</span></p>
+				{#if block}
+					<div class="verdict">
+						<p class="headline tone-{block.tone}">{block.headline}</p>
+						{#if block.chips.length > 0}
+							<div class="chips">
+								{#each block.chips as chip, i (i)}
+									<span class="chip">
+										<span class="chip-guide">{chip.guide}</span>
+										<span class="chip-ruleset">{chip.ruleset}</span>
+										{#if chip.tierLabel}<span class="tier tier-{chip.tier}">{chip.tierLabel}</span>{/if}
+									</span>
+								{/each}
+							</div>
+						{/if}
+					</div>
 				{/if}
 
-				{#each glyphRows as glyphRow (glyphRow.index)}
-					<p class="row">
-						<span class="row-skill">{glyphRow.skill}</span>
-						<span class="row-glyphs">
-							<!-- One span per cell so each glyph carries its own
-							     tone: ✓ read, ? would be settled by a hover, ✕
-							     not read at all. -->
-							{#each glyphRow.glyphs as cell, slot (slot)}<span
-									class="tone-{cell.tone}">{cell.glyph}</span
-								>{/each}{#if glyphRow.note}<span class="row-note">{glyphRow.note}</span>{/if}
-						</span>
-					</p>
-				{/each}
+				<!-- The rows in the panel's own order, cells left-aligned in slot
+				     order at a square rhythm, so the second cell of a row IS the
+				     second icon of that row in the game (2026-09-07 redesign: the
+				     old right-aligned glyph run read against the panel's
+				     left-aligned icons). -->
+				{#if glyphRows.length > 0}
+					<div class="rows">
+						{#each glyphRows as glyphRow (glyphRow.index)}
+							<p class="row-skill">{glyphRow.skill}</p>
+							<div class="cells">
+								<!-- One box per cell so each carries its own tone: ✓
+								     read, ? would be settled by a hover, ✕ not read
+								     at all. -->
+								{#each glyphRow.glyphs as cell, slot (slot)}
+									<span class="cell tone-{cell.tone}">{cell.glyph}</span>
+								{/each}
+								{#if glyphRow.note}<span class="row-note">{glyphRow.note}</span>{/if}
+							</div>
+						{/each}
+					</div>
+				{/if}
 
 				<!-- What the read could not settle, on the surface the player
 				     decides from. Compact, but never dropped. -->
 				{#if unread}
 					<p class="note">{unread}</p>
 				{/if}
+			{/if}
+
+			<!-- The module's pulse. Drawn for every running status, capture or
+			     not — an empty overlay and a dead one used to look the same. At
+			     the foot since the redesign: the verdict is what the player
+			     reads first, the pulse is what they glance at. -->
+			{#if status}
+				<p class="status">
+					<span class="dot pulse-{pulse}"></span>
+					<span>{status}</span>
+				</p>
 			{/if}
 		</div>
 	{/if}
@@ -289,43 +357,167 @@
 		background: transparent;
 	}
 
+	/* The font is set HERE: the overlay layout imports the palette alone, so
+	   without it the strip fell to WebView2's default serif (seen on every
+	   screenshot before the 2026-09-07 redesign). The stack is `app.css`'s.
+
+	   Width follows content too, INSIDE the window: the panel shrink-wraps to
+	   its widest line and the rest of the window stays transparent, so the
+	   width set in Settings → Overlay Positions is a cap, not the drawn width
+	   (owner: "that big gap to the right", 2026-09-07). The window itself is
+	   never resized on this axis — see "Height follows content" above — and a
+	   name longer than the cap wraps rather than pushing the panel past it. */
 	.panel {
 		display: flex;
 		flex-direction: column;
-		gap: 3px;
+		gap: 6px;
+		width: max-content;
+		max-width: 100%;
 		padding: 8px 10px;
 		background: rgb(15 17 23 / 82%);
 		border: 1px solid var(--color-lab-border);
 		border-radius: 6px;
 		color: var(--color-lab-text);
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 		font-size: 13px;
+		line-height: 1.3;
+	}
+
+	/* The slack faces the screen's middle — see "Which edge the panel hugs". */
+	.side-right .panel {
+		margin-left: auto;
 	}
 
 	.header {
-		font-size: 14px;
-		font-weight: 700;
-		color: var(--color-lab-text);
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		min-width: 0;
 	}
 
-	/* The pulse line. Muted rather than coloured: it is always present, so a
-	   colour here would compete with the badges and the honesty notes, which
-	   are the two things on this strip that mean act now. */
-	.status {
+	/* Wraps rather than clips: a mangled name is the clue the header read is
+	   wrong, and an ellipsis would hide it. */
+	.name {
+		font-size: 13px;
+		font-weight: 700;
+		line-height: 1.25;
+		color: var(--color-lab-text);
+		overflow-wrap: anywhere;
+	}
+
+	.detail {
 		font-size: 11px;
-		line-height: 1.3;
 		color: var(--color-lab-text-secondary);
 	}
 
-	.row {
+	.verdict {
 		display: flex;
-		align-items: baseline;
-		gap: 6px;
-		min-width: 0;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	/* The answer, as a tinted bar: the one element on the strip that means act
+	   now, so it gets the one filled surface. The tint follows the tone. */
+	.headline {
+		padding: 3px 8px;
+		border-radius: 3px;
+		border: 1px solid currentcolor;
+		font-size: 12px;
+		font-weight: 700;
+		letter-spacing: 0.05em;
+	}
+
+	.headline.tone-pass {
+		background: rgba(34, 197, 94, 0.12);
+		border-color: rgba(34, 197, 94, 0.45);
+	}
+
+	.headline.tone-fail {
+		background: rgba(239, 68, 68, 0.12);
+		border-color: rgba(239, 68, 68, 0.45);
+	}
+
+	.headline.tone-unknown {
+		background: rgba(234, 179, 8, 0.12);
+		border-color: rgba(234, 179, 8, 0.45);
+	}
+
+	.headline.tone-muted {
+		background: rgba(136, 136, 136, 0.1);
+		border-color: rgba(136, 136, 136, 0.35);
+	}
+
+	.chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		padding: 1px 6px;
+		border-radius: 3px;
+		border: 1px solid rgba(34, 197, 94, 0.5);
+		font-size: 10.5px;
+		line-height: 16px;
+		white-space: nowrap;
+	}
+
+	.chip-guide {
+		font-weight: 600;
+		color: var(--color-lab-text);
+	}
+
+	.chip-ruleset {
+		color: var(--color-lab-text-secondary);
+	}
+
+	/* The rung's tier as a tag whose fill deepens up the ladder — mv, mid, end,
+	   gg (`rulesets.ts` TIERS) — so the grade reads at a glance before the word
+	   does. A tier key outside the four gets the outline alone. */
+	.tier {
+		padding: 0 4px;
+		border-radius: 2px;
+		font-size: 9px;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		line-height: 14px;
+		border: 1px solid rgba(34, 197, 94, 0.5);
+		color: var(--color-lab-text);
+	}
+
+	.tier-mv {
+		background: rgba(34, 197, 94, 0.18);
+	}
+
+	.tier-mid {
+		background: rgba(34, 197, 94, 0.35);
+	}
+
+	.tier-end {
+		background: rgba(34, 197, 94, 0.6);
+		color: var(--color-lab-bg);
+	}
+
+	.tier-gg {
+		background: rgba(34, 197, 94, 0.9);
+		color: var(--color-lab-bg);
+	}
+
+	/* Name column, then the cells. The name never pushes the cells around: it
+	   is the cells' left edge that has to line up from row to row. */
+	.rows {
+		display: grid;
+		grid-template-columns: 140px minmax(0, 1fr);
+		column-gap: 10px;
+		row-gap: 5px;
+		align-items: center;
 	}
 
 	.row-skill {
-		flex: 1 1 auto;
-		min-width: 0;
 		font-size: 11px;
 		color: var(--color-lab-text-secondary);
 		overflow: hidden;
@@ -333,34 +525,50 @@
 		white-space: nowrap;
 	}
 
-	/* The glyphs must never be the part that gets ellipsised — they are the
-	   answer the row exists to give. */
-	.row-glyphs {
+	.cells {
 		display: flex;
-		flex: 0 0 auto;
-		gap: 3px;
-		font-size: 11px;
-		color: var(--color-lab-text);
-	}
-
-	/* A row the panel shows with no supports. Muted, because nothing failed
-	   here — the `✕` next to it is what "there is a cell I could not read"
-	   looks like. */
-	.row-note {
-		color: var(--color-lab-text-muted);
-	}
-
-	.guide {
-		display: flex;
-		align-items: baseline;
-		gap: 6px;
+		align-items: center;
+		gap: 5px;
 		min-width: 0;
 	}
 
-	.badge {
-		font-size: 12px;
+	/* 22 px boxes at a 27 px pitch, matching the 5 px row gap under 22 px rows:
+	   a square rhythm like the panel's, whose cell pitch equals its row pitch. */
+	.cell {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 22px;
+		height: 22px;
+		flex: 0 0 auto;
+		border-radius: 3px;
+		border: 1px solid currentcolor;
+		font-size: 11px;
 		font-weight: 700;
-		letter-spacing: 0.05em;
+	}
+
+	.cell.tone-pass {
+		background: rgba(34, 197, 94, 0.12);
+		border-color: rgba(34, 197, 94, 0.55);
+	}
+
+	.cell.tone-unknown {
+		background: rgba(234, 179, 8, 0.16);
+		border-color: rgba(234, 179, 8, 0.7);
+	}
+
+	.cell.tone-fail {
+		background: rgba(239, 68, 68, 0.14);
+		border-color: rgba(239, 68, 68, 0.6);
+	}
+
+	/* A row the panel shows with no supports, or one whose icons are still
+	   being read. Muted, because nothing failed here — the `✕` box is what
+	   "there is a cell I could not read" looks like. */
+	.row-note {
+		font-size: 11px;
+		line-height: 22px;
+		color: var(--color-lab-text-muted);
 	}
 
 	/* The same three buckets the page paints its headlines in. */
@@ -384,7 +592,44 @@
 	/* One colour for "this is not settled" across every overlay in the app. */
 	.note {
 		font-size: 11px;
-		line-height: 1.3;
 		color: var(--color-lab-yellow);
+	}
+
+	/* The pulse line. Muted rather than coloured: it is always present, so a
+	   colour here would compete with the headline and the honesty note, which
+	   are the two things on this strip that mean act now. The dot is what
+	   says "alive". */
+	.status {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 11px;
+		color: var(--color-lab-text-secondary);
+	}
+
+	.dot {
+		width: 6px;
+		height: 6px;
+		flex: 0 0 auto;
+		border-radius: 50%;
+		background: var(--color-lab-green);
+	}
+
+	.dot.pulse-beating {
+		animation: beat 1.6s ease-in-out infinite;
+	}
+
+	.dot.pulse-off {
+		background: var(--color-lab-text-muted);
+	}
+
+	@keyframes beat {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.35;
+		}
 	}
 </style>

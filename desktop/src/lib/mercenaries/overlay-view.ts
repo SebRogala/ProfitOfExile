@@ -3,11 +3,11 @@
  *
  * The overlay is the surface the player reads WHILE the recruit window is open,
  * so it carries the same wording rules the page does and one extra: it is the
- * compact form. One status line, one header line, ONE line for all the enabled
- * guides together, one glyph line per row, one honesty line for what the reader
- * could not settle. Every line has to earn the screen space it takes over the
- * game — the 2026-08-25 smoke spent two of them saying SKIP twice. Nothing here
- * decides anything —
+ * compact form. One status line, one header, ONE headline for all the enabled
+ * guides together (with a chip per rung that said WORTH), one glyph row per
+ * row, one honesty line for what the reader could not settle. Every line has
+ * to earn the screen space it takes over the game — the 2026-08-25 smoke spent
+ * two of them saying SKIP twice. Nothing here decides anything —
  * `verdict.ts` owns every outcome and `capture-view.ts` owns the vocabulary
  * (`HEADLINE_LABEL`, `HEADLINE_TONE`), which this file reuses rather than
  * respells.
@@ -370,53 +370,88 @@ export const READING_ICONS_NOTE = 'reading the icons…';
  *  would fail every guide that keys on links, so none is drawn yet. */
 export const VERDICT_PENDING_LINE = 'still reading — verdict follows';
 
+/** The header, in the two weights the strip draws it: the name, and the rest. */
+export interface OverlayHeader {
+	/** Who this is — the bold line. */
+	name: string;
+	/** `<class> · lvl <n>` — the quiet line under it. */
+	detail: string;
+}
+
 /**
- * The header line: who this is, as far as the reader got.
+ * The header: who this is, as far as the reader got.
+ *
+ * Two parts rather than one joined line (2026-09-07 redesign): the name is what
+ * the player matches against the window in front of them, so it carries the
+ * weight, and the class and level ride under it. A name the OCR mangled wraps
+ * rather than being clipped — the page's screenshots showed
+ * `UNAFFE ED BYDAMAGING AILMENTÄ`, and a strip that cut that short would hide
+ * the one clue that the header read is wrong.
  *
  * Every field is best-effort in the capture, and a field that was not read says
  * so rather than being dropped — a strip reading `Nytra · lvl 68` with the class
  * silently missing looks like a mercenary with no class, which is not a thing.
  */
-export function headerLine(capture: MercCapture): string {
+export function overlayHeader(capture: MercCapture): OverlayHeader {
 	const header = capture.header;
-	return [
-		header.name ?? 'name not read',
-		header.class ?? 'class not read',
-		header.level === null ? 'level not read' : `lvl ${header.level}`
-	].join(' · ');
+	return {
+		name: header.name ?? 'name not read',
+		detail: [
+			header.class ?? 'class not read',
+			header.level === null ? 'level not read' : `lvl ${header.level}`
+		].join(' · ')
+	};
 }
 
-/** The one line the strip gives every enabled guide, together. */
-export interface OverlayGuidesLine {
-	/** The whole line, already worded. */
-	text: string;
+/** One passing rung, as a chip under the WORTH headline. */
+export interface OverlayGuideChip {
+	/** The guide that said WORTH — `MercSourceVerdict.label`. */
+	guide: string;
+	/** The rung's own label — `Kinetist`, `Combatant`. */
+	ruleset: string;
+	/** The ladder tier key, for the chip's grade; null for an untiered ruleset. */
+	tier: string | null;
+	/** The tier as the strip prints it — the rung's own wording when it has one. */
+	tierLabel: string | null;
+}
+
+/** The verdict block: one headline, and the chips that earned it. */
+export interface OverlayVerdictBlock {
+	/** The headline, already worded. */
+	headline: string;
 	/** The page's colour bucket for it. */
 	tone: OutcomeTone;
+	/** One chip per passing rung of every guide that said WORTH; empty otherwise. */
+	chips: OverlayGuideChip[];
 }
 
-/** What the line says when every guide is switched off in Settings. */
+/** What the headline says when every guide is switched off in Settings. */
 export const NO_GUIDES_NOTE = 'no guides enabled';
 
-/** What the line says when no enabled guide found anything worth paying for. */
+/** What the headline says when no enabled guide found anything worth paying for. */
 export const SKIP_LINE = 'SKIP';
 
-/** What the line says when the read was not good enough to decide on. */
+/** What the headline says when the read was not good enough to decide on. */
 export const UNKNOWN_LINE = 'unknown';
 
 /**
- * ONE line for every enabled guide, not one line per guide (2026-08-25 smoke).
+ * ONE headline for every enabled guide, and a chip per rung that said WORTH
+ * (2026-08-25 smoke; reshaped 2026-09-07).
  *
  * The strip used to print one `<guide> SKIP` line per guide, which was two
- * lines of the player's screen spent saying "no" twice. The player's
- * question is not "what did each guide think" — that is the page, which keeps
- * its full per-guide view — it is "do I pay for this one".
+ * lines of the player's screen spent saying "no" twice. The player's question
+ * is not "what did each guide think" — that is the page, which keeps its full
+ * per-guide view — it is "do I pay for this one".
  *
- * So the line answers that, and only names guides when naming them tells the
- * player something:
+ * So the headline answers that, and guides are named only when naming them
+ * tells the player something:
  *
- * - **any WORTH** — the passing guides are named WITH what they passed on,
- *   because that is what the player is about to act on and the tier is the
- *   difference between the cheapest rung and the top one;
+ * - **any WORTH** — the headline is the bare word, and under it one chip per
+ *   passing rung, guide and rung named WITH the tier, because that is what the
+ *   player is about to act on and the tier is the difference between the
+ *   cheapest rung and the top one. Chips rather than one joined line: three
+ *   guides at once wrapped a single line into two on the 2026-09-07
+ *   screenshots, and a mangled name above it made the block unreadable;
  * - **no WORTH, and something decided it** — a single `SKIP`. Which guide said
  *   no is not a decision the player makes differently;
  * - **nothing decided** — `unknown`, with the unread-icon count that is the
@@ -428,56 +463,62 @@ export const UNKNOWN_LINE = 'unknown';
  * live status line carries the unread count either way, so nothing is hidden by
  * the shorter wording.
  */
-export function guidesLine(
+export function verdictBlock(
 	verdict: MercVerdict | null,
 	capture: MercCapture | null
-): OverlayGuidesLine | null {
-	if (capture?.partial) return { text: VERDICT_PENDING_LINE, tone: HEADLINE_TONE.unknown };
+): OverlayVerdictBlock | null {
+	if (capture?.partial) {
+		return { headline: VERDICT_PENDING_LINE, tone: HEADLINE_TONE.unknown, chips: [] };
+	}
 	if (verdict === null || capture === null) return null;
 	const enabled = verdict.sources.filter((source) => source.headline !== 'off');
-	if (enabled.length === 0) return { text: NO_GUIDES_NOTE, tone: HEADLINE_TONE.off };
+	if (enabled.length === 0) return { headline: NO_GUIDES_NOTE, tone: HEADLINE_TONE.off, chips: [] };
 
 	const worth = enabled.filter((source) => source.headline === 'worth');
 	if (worth.length > 0) {
-		const named = worth.map((source) => {
-			const detail = bestDetail(source);
-			return detail === '' ? source.label : `${source.label} (${detail})`;
-		});
-		return { text: `${HEADLINE_LABEL.worth} · ${named.join(', ')}`, tone: HEADLINE_TONE.worth };
+		return {
+			headline: HEADLINE_LABEL.worth,
+			tone: HEADLINE_TONE.worth,
+			chips: worth.flatMap(bestChips)
+		};
 	}
 
 	if (enabled.every((source) => source.headline === 'unknown')) {
 		const unread = unreadIconCount(capture);
 		const why = unread === 0 ? '' : ` — ${unread} ${unread === 1 ? 'icon' : 'icons'} unread`;
-		return { text: `${UNKNOWN_LINE}${why}`, tone: HEADLINE_TONE.unknown };
+		return { headline: `${UNKNOWN_LINE}${why}`, tone: HEADLINE_TONE.unknown, chips: [] };
 	}
 
-	return { text: SKIP_LINE, tone: HEADLINE_TONE.skip };
+	return { headline: SKIP_LINE, tone: HEADLINE_TONE.skip, chips: [] };
 }
 
 /**
- * What a WORTH is worth — the passing rulesets by name, tier included.
+ * What a WORTH is worth — the passing rulesets, tier included, one chip each.
  *
  * The tier is the point on guide B's ladder: "WORTH" alone does not tell the
  * player whether this is the cheapest rung or the top one, which is the whole
- * question when deciding what to pay. Untiered rulesets print their bare name.
- *
- * The tier rides after the name with no bracket of its own: the whole detail
- * already sits inside the guide's brackets on the strip, and nesting a second
- * pair there is noise on the one line the player reads under pressure.
+ * question when deciding what to pay. Untiered rulesets carry no tier.
  *
  * A rung that spells its own tier out prints that wording instead of the key:
  * one ladder can seat two rungs at one tier, and "Frost Blades end" would not
- * say which of the two searches the player is being sent to.
+ * say which of the two searches the player is being sent to. The key still
+ * rides along as `tier`, because the chip's grade — how deep its tag is
+ * filled — is the ladder position, and "20D" says nothing about that.
+ *
+ * A guide with a WORTH headline and an empty `best` gets no chip at all — the
+ * headline already says WORTH, and a chip with no rung would be a claim with
+ * nothing to comp against.
  */
-function bestDetail(source: MercSourceVerdict): string {
-	if (source.headline !== 'worth') return '';
+function bestChips(source: MercSourceVerdict): OverlayGuideChip[] {
+	if (source.headline !== 'worth') return [];
 	return source.rulesets
 		.filter((ruleset) => source.best.includes(ruleset.id))
-		.map((ruleset) =>
-			ruleset.tier ? `${ruleset.label} ${ruleset.tierLabel ?? ruleset.tier}` : ruleset.label
-		)
-		.join(', ');
+		.map((ruleset) => ({
+			guide: source.label,
+			ruleset: ruleset.label,
+			tier: ruleset.tier,
+			tierLabel: ruleset.tier ? (ruleset.tierLabel ?? ruleset.tier) : null
+		}));
 }
 
 /**
@@ -511,6 +552,57 @@ export function unreadIconCount(capture: MercCapture): number {
 export function unreadNote(slice: MercenarySlice): string | null {
 	if (slice.capture === null || onScreen(slice)) return null;
 	return unreadPhrase(unreadIconCount(slice.capture));
+}
+
+/**
+ * What the dot beside the status line does.
+ *
+ * `beating` while something is LOOKING — a burst armed, a read filling in —
+ * because the 2026-08-25 report was that a still strip and a dead one look the
+ * same; `steady` once the read is done and nothing on the strip will move;
+ * `off` for the idle linger, where the line is a marker for a window that is
+ * gone or a module waiting. Named here rather than keyed on the status in the
+ * route, so a status added later has to be given a beat on purpose.
+ */
+export type StatusPulse = 'beating' | 'steady' | 'off';
+
+export function statusPulse(slice: MercenarySlice): StatusPulse {
+	switch (slice.status) {
+		case 'scanning':
+		case 'live':
+			return 'beating';
+		case 'done':
+			return 'steady';
+		default:
+			return 'off';
+	}
+}
+
+/** Which edge of its window the panel hugs. */
+export type StripSide = 'left' | 'right';
+
+/**
+ * Which edge the panel hugs: the one nearer the screen's middle is the one
+ * AWAY from the panel, so the panel sits against the outer edge and the empty
+ * remainder of the window faces the screen centre where the game is.
+ *
+ * Decided by the WINDOW'S CENTRE against the SCREEN'S centre, in the physical
+ * pixels both are measured in — Tauri's `outerPosition`/`outerSize` for the
+ * window, the SSOT screen slice for the display the game is on, with its
+ * origin subtracted so a second monitor to the right of the primary does not
+ * read as "far right" of the primary. Left when there is no screen measured
+ * yet: the panel used to be left-aligned always, and a strip that jumped edges
+ * when a measurement arrived would be worse than one that starts where it
+ * always has. (Owner, 2026-09-07: "that big gap to the right … auto-detect
+ * based on which half of the screen the overlay is".)
+ */
+export function stripSide(
+	win: { x: number; width: number },
+	screen: { origin: [number, number]; width: number } | null
+): StripSide {
+	if (screen === null || screen.width <= 0) return 'left';
+	const centre = win.x + win.width / 2 - screen.origin[0];
+	return centre < screen.width / 2 ? 'left' : 'right';
 }
 
 /** One support cell as the strip draws it: the mark, and the colour it wears. */
