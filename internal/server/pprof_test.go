@@ -27,7 +27,7 @@ const pprofBodyMarker = "goroutine profile:"
 // could pass on the 404 alone while production quietly served something else.
 func spaFS() fstest.MapFS {
 	return fstest.MapFS{
-		"index.html": &fstest.MapFile{Data: []byte("<html><body>ProfitOfExile</body></html>")},
+		"200.html": &fstest.MapFile{Data: []byte("<html><body>ProfitOfExile</body></html>")},
 	}
 }
 

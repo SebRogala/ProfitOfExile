@@ -9,6 +9,10 @@ RUN npm ci
 
 COPY frontend/ .
 RUN npm run build
+# The Go static handler serves 200.html for client-only routes (internal/server/
+# static.go) and index.html is the prerendered landing page. A build without the
+# shell would deploy fine and 404 every client route, so fail the image instead.
+RUN test -f build/200.html && test -f build/index.html
 
 # Stage 1: Build the Go binary
 FROM golang:1.23 AS build
