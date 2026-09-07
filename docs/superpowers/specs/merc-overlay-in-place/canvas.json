@@ -1,0 +1,123 @@
+{
+  "pages": [
+    {
+      "id": "page-1",
+      "name": "Proposal"
+    },
+    {
+      "id": "page-2",
+      "name": "Earlier directions"
+    }
+  ],
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 892,
+      "h": 304,
+      "title": "In place + beside panel",
+      "page": "page-1"
+    },
+    {
+      "file": "PanelStates.dc.html",
+      "x": 980,
+      "y": 0,
+      "w": 332,
+      "h": 640,
+      "title": "Beside panel — states",
+      "page": "page-1"
+    },
+    {
+      "file": "Current.dc.html",
+      "x": 0,
+      "y": 470,
+      "w": 465,
+      "h": 168,
+      "title": "Current (screenshot)",
+      "page": "page-1"
+    },
+    {
+      "file": "Mirror.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 500,
+      "h": 300,
+      "title": "Mirror",
+      "page": "page-2"
+    },
+    {
+      "file": "InContext.dc.html",
+      "x": 600,
+      "y": 0,
+      "w": 1068,
+      "h": 310,
+      "title": "Mirror beside the recruit panel",
+      "page": "page-2"
+    },
+    {
+      "file": "DirectionB.dc.html",
+      "x": 0,
+      "y": 470,
+      "w": 500,
+      "h": 360,
+      "title": "B — Names",
+      "page": "page-2"
+    },
+    {
+      "file": "DirectionC.dc.html",
+      "x": 600,
+      "y": 470,
+      "w": 552,
+      "h": 272,
+      "title": "C — In place",
+      "page": "page-2"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "note-main",
+      "x": 0,
+      "y": -150,
+      "w": 520,
+      "page": "page-1",
+      "text": "Marks painted under each support icon from the cell rects the capture already has (3 px bar; a ? badge on a cell a hover would settle). Name, verdict and status live in a panel anchored 12 px right of the recruit panel, top-aligned with its first row.\nSettled 2026-09-07: the reader grabs the whole monitor, so the strip's window is excluded from capture for the duration of each grab (capture.rs) and stays in the player's own screenshots between grabs."
+    },
+    {
+      "id": "note-states",
+      "x": 980,
+      "y": -110,
+      "w": 420,
+      "page": "page-1",
+      "text": "Same panel in four states: SKIP while reading; WORTH with one guide; WORTH with three guides and a name the OCR mangled; WORTH with a tiered rung. WORTH sits on its own line, the guides as chips on the line below; a rung's tier rides on its chip as a tag whose fill deepens up the ladder (mv · mid · end · gg). Guide pairings in the last panel are sample values."
+    },
+    {
+      "id": "note-mirror",
+      "x": 0,
+      "y": -150,
+      "w": 480,
+      "page": "page-2",
+      "text": "Mirror: rows in the game's order, cells left-aligned in slot order at a square rhythm. Same window, same width, no engine change. Tradeoff: correspondence is by order, not by screen position."
+    },
+    {
+      "id": "note-names",
+      "x": 0,
+      "y": 330,
+      "w": 480,
+      "page": "page-2",
+      "text": "B — Names. Support NAMES instead of marks. Tradeoff: taller and wraps at 460 px; an unread cell has no name to show. Gem names here are sample values."
+    },
+    {
+      "id": "note-inplace",
+      "x": 600,
+      "y": 330,
+      "w": 480,
+      "page": "page-2",
+      "text": "C — In place. Marks painted under each icon; verdict and status as small tags on the two empty rows. Superseded by the Proposal page."
+    }
+  ],
+  "launch": {
+    "view": "canvas",
+    "page": "page-1"
+  }
+}

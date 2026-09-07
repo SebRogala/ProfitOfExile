@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #6b6866; }
+    a { color: #3b82f6; } a:hover { color: #e4e4e7; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  </style>
+</helmet>
+<div style="position: relative; width: 552px; height: 272px; background: #6b6866; overflow: hidden;">
+  <img src="game-panel.jpg" alt="Recruit panel" style="position: absolute; left: 0; top: 0; width: 552px; height: 272px; display: block;">
+
+  <!-- Blood Mortar: read, unsure, read -->
+  <div style="position: absolute; left: 284px; top: 90px; width: 30px; height: 3px; border-radius: 2px; background: #22c55e;"></div>
+  <div style="position: absolute; left: 328px; top: 90px; width: 30px; height: 3px; border-radius: 2px; background: #eab308;"></div>
+  <div style="position: absolute; left: 351px; top: 49px; width: 15px; height: 15px; border-radius: 3px; background: #eab308; color: #0f1117; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center;">?</div>
+  <div style="position: absolute; left: 372px; top: 90px; width: 30px; height: 3px; border-radius: 2px; background: #22c55e;"></div>
+
+  <!-- Lacerate: five read -->
+  <div style="position: absolute; left: 284px; top: 134px; width: 30px; height: 3px; border-radius: 2px; background: #22c55e;"></div>
+  <div style="position: absolute; left: 328px; top: 134px; width: 30px; height: 3px; border-radius: 2px; background: #22c55e;"></div>
+  <div style="position: absolute; left: 372px; top: 134px; width: 30px; height: 3px; border-radius: 2px; background: #22c55e;"></div>
+  <div style="position: absolute; left: 416px; top: 134px; width: 30px; height: 3px; border-radius: 2px; background: #22c55e;"></div>
+  <div style="position: absolute; left: 460px; top: 134px; width: 30px; height: 3px; border-radius: 2px; background: #22c55e;"></div>
+
+  <!-- Perforate: read, read, read, unsure, read -->
+  <div style="position: absolute; left: 284px; top: 177px; width: 30px; height: 3px; border-radius: 2px; background: #22c55e;"></div>
+  <div style="position: absolute; left: 328px; top: 177px; width: 30px; height: 3px; border-radius: 2px; background: #22c55e;"></div>
+  <div style="position: absolute; left: 372px; top: 177px; width: 30px; height: 3px; border-radius: 2px; background: #22c55e;"></div>
+  <div style="position: absolute; left: 416px; top: 177px; width: 30px; height: 3px; border-radius: 2px; background: #eab308;"></div>
+  <div style="position: absolute; left: 439px; top: 136px; width: 15px; height: 15px; border-radius: 3px; background: #eab308; color: #0f1117; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center;">?</div>
+  <div style="position: absolute; left: 460px; top: 177px; width: 30px; height: 3px; border-radius: 2px; background: #22c55e;"></div>
+
+  <!-- Oil Slick: two read -->
+  <div style="position: absolute; left: 284px; top: 221px; width: 30px; height: 3px; border-radius: 2px; background: #22c55e;"></div>
+  <div style="position: absolute; left: 328px; top: 221px; width: 30px; height: 3px; border-radius: 2px; background: #22c55e;"></div>
+
+  <!-- Verdict chip, on the empty Bloodthirst row -->
+  <div style="position: absolute; right: 10px; top: 14px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+    <div style="padding: 2px 8px; border-radius: 3px; border: 1px solid rgba(239, 68, 68, 0.55); background: rgba(15, 17, 23, 0.85); color: #ef4444; font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;">SKIP</div>
+    <div style="padding: 1px 6px; border-radius: 3px; background: rgba(15, 17, 23, 0.85); color: #9ca3af; font-size: 10px; white-space: nowrap;">Vaudren · Infamous Bloodletter · lvl 83</div>
+  </div>
+
+  <!-- Status tag, on the empty Dash row -->
+  <div style="position: absolute; right: 10px; bottom: 10px; display: flex; align-items: center; gap: 5px; padding: 1px 6px; border-radius: 3px; background: rgba(15, 17, 23, 0.85); color: #9ca3af; font-size: 10px; white-space: nowrap;">
+    <span style="width: 6px; height: 6px; border-radius: 50%; background: #22c55e; animation: pulse 1.6s ease-in-out infinite; flex: 0 0 auto;"></span>
+    <span>reading · 2 icons unread — hover to confirm</span>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>
