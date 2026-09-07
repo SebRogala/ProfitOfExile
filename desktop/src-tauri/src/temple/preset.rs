@@ -524,13 +524,22 @@ impl EntryRefusal {
 
 /// The 25 x 3 table the active preset produces for one market read.
 ///
-/// ONE call per read (POE-257 D6): the advisor ranks on the returned table and
-/// the offer views are projected from the same object, so the number shown is
-/// the number ranked.
+/// **The one compute path, and NO READ calls it directly** (POE-257 WI-3,
+/// 2026-09-07). A read reaches it through [`compute_valuation`], and only when
+/// [`cached_valuation`] answered `None` for this read's [`ValuationKey`]; a
+/// read whose key is unchanged looks the answer up. The one direct caller left
+/// is `commands::temple_value_table`'s preview of the preset that is NOT in
+/// force — the Copy button's "what would Default give me" — which computes on
+/// the spot and stores nothing, because a probe that evicted the cache would
+/// cost the next read a rebuild. POE-257 D6 —
+/// the advisor ranks on the returned table and the offer views are projected
+/// from the same object, so the number shown is the number ranked — is
+/// unchanged and now holds ACROSS reads as well as within one, because a run
+/// of reads on unchanged inputs shares one object.
 ///
 /// The warnings [`TempleCustomSettings::overrides`] produces are dropped here
-/// on purpose. This runs on every read; the place a refused entry has to be
-/// reported is the load, once, where a user can act on it.
+/// on purpose. The place a refused entry has to be reported is the load,
+/// once, where a user can act on it.
 pub fn value_table(preset: Preset, custom: &TempleCustomSettings, market: &MarketInput) -> Valued {
     match preset {
         Preset::Default => Valued::compute(market, &Knobs::default()),
@@ -539,6 +548,135 @@ pub fn value_table(preset: Preset, custom: &TempleCustomSettings, market: &Marke
             Valued::compute_with(market, &custom.knobs(), &overrides)
         }
     }
+}
+
+// --------------------------------------------------------------- the cache --
+
+/// Everything the 25 x 3 table is a function of, and nothing else.
+///
+/// [`value_table`] reads exactly three things: which preset is in force, the
+/// Custom table's rates and overrides, and the market read. So two keys that
+/// compare equal cannot produce two different tables, which is what makes a
+/// stored table safe to hand back without recomputing it.
+///
+/// **The whole `MarketInput` and not a digest of it.** The staleness verdict
+/// (`stale`, judged per read against the clock by `ssot::temple_market_now`),
+/// the league and `as_of` are all fields of it, and so are the room quotes,
+/// the item quotes and the floor the formula actually sums — a key that named
+/// only the first three would serve a table computed from other prices to a
+/// read whose payload had changed underneath them. Comparing the payload is a
+/// `BTreeMap` walk over ~75 room-tiers; the compute it decides against is the
+/// largest stage of a read (193-245 ms measured on the PC's release build,
+/// `app.log` 2026-09-06 23:33).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValuationKey {
+    /// [`TempleSettings::preset`](super::slice::TempleSettings::preset).
+    pub preset: Preset,
+    /// [`TempleSettings::custom`](super::slice::TempleSettings::custom) —
+    /// cloned into the key whether or not Custom is in force, because
+    /// switching to Custom must miss.
+    pub custom: TempleCustomSettings,
+    /// The market read as `ssot::temple_market_now` answered it: the stored
+    /// payload with `stale` judged against THIS tick's clock.
+    pub market: MarketInput,
+}
+
+/// Where a table came from — the word the read line prints.
+///
+/// [`Self::Computed`] is the default because [`Duration::ZERO`] is what a
+/// stage that did not run measures, and a zero-millisecond *cached* is a
+/// plausible real measurement (a hit IS ~0 ms) while a zero-millisecond
+/// *computed* is obviously the not-run state.
+///
+/// [`Duration::ZERO`]: std::time::Duration::ZERO
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ValuationSource {
+    /// The stored table answered: its key equalled this read's.
+    Cached,
+    /// No stored table matched, so [`value_table`] ran and the answer was
+    /// stored.
+    #[default]
+    Computed,
+}
+
+impl ValuationSource {
+    /// The word for the read line.
+    pub fn word(self) -> &'static str {
+        match self {
+            ValuationSource::Cached => "cached",
+            ValuationSource::Computed => "computed",
+        }
+    }
+}
+
+/// A stored table and the inputs it was computed from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CachedValuation {
+    /// What [`Self::valued`] was computed from. A table is only ever handed
+    /// back for a key that equals this one.
+    pub key: ValuationKey,
+    /// The table [`value_table`] produced for [`Self::key`].
+    pub valued: Valued,
+}
+
+// The cache decision is three functions — look up, compute, store — because the
+// COMPUTE MUST NOT HAPPEN UNDER THE SLOT LOCK.
+//
+// One function that took the slot and built a missing table inside it would hold
+// `AppState.temple_valuation` for the whole 193-245 ms build, and that mutex is
+// shared with every read: a read arriving while a warm-up computed would block on
+// it and then report `cached` for a wait it did not spend, and in the interleaving
+// where the market moved between the warm's lookup and its store it would block
+// AND then miss AND then pay the build again. `ssot::temple_valuation_now`
+// therefore calls `cached_valuation` under the lock, drops the guard, calls
+// `compute_valuation` with NOTHING held, and re-takes the lock only to
+// `store_valuation`. A lost race costs one wasted build; it can never cost a
+// blocked read.
+//
+// All three take the slot or the key rather than the `AppHandle` so the rule is
+// unit-testable without a running app — the same extraction `ssot::store_market`
+// and `ssot::drop_market` make, and for the same reason.
+
+/// The stored table when its key equals this read's, and `None` otherwise.
+///
+/// **This is the total guard, not an optimisation.** The owner's rule is that
+/// the table is computed when an input changes and a read LOOKS IT UP
+/// (2026-09-07); the warm-up calls that make a read's lookup a hit are
+/// best-effort, and this comparison is what makes a MISSED warm-up cost a
+/// recompute rather than a wrong board. A read can never be handed a table
+/// computed from other inputs, because the only way out of here with a stored
+/// table is key equality.
+///
+/// Takes a SHARED borrow and computes nothing: what the caller holds the slot
+/// mutex for is a `ValuationKey` comparison — a `BTreeMap` walk over ~75
+/// room-tiers — and never a build.
+pub fn cached_valuation(slot: &Option<CachedValuation>, key: &ValuationKey) -> Option<Valued> {
+    match slot.as_ref() {
+        Some(cached) if &cached.key == key => Some(cached.valued.clone()),
+        _ => None,
+    }
+}
+
+/// The table the key names: [`value_table`] read out of the key's own three
+/// fields, and the ONE build a missed lookup performs.
+///
+/// Separate from [`cached_valuation`] so the caller can run it with no lock
+/// held, and named on the key rather than on the three fields so a caller
+/// cannot compute one thing and store it under a key for another.
+pub fn compute_valuation(key: &ValuationKey) -> Valued {
+    value_table(key.preset, &key.custom, &key.market)
+}
+
+/// What a miss leaves behind for the next lookup.
+///
+/// **Last writer wins, and that is harmless.** Two threads that missed on the
+/// same key computed the same table, so whichever lands second stores an equal
+/// object. A store under a key some later input has already moved past is not
+/// dangerous either: it is [`cached_valuation`]'s comparison — rebuilt from the
+/// CURRENT settings and market on every call — that decides whether a stored
+/// table is served, never the store.
+pub fn store_valuation(slot: &mut Option<CachedValuation>, key: ValuationKey, valued: Valued) {
+    *slot = Some(CachedValuation { key, valued });
 }
 
 #[cfg(test)]
@@ -1124,6 +1262,282 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Preset::default()).expect("a preset serialises"),
             "\"default\"",
+        );
+    }
+
+    // ------------------------------------------------- the cache (WI-3) --
+
+    /// The key every miss test perturbs one field of: the shipped preset on
+    /// the committed capture.
+    fn base_key() -> ValuationKey {
+        ValuationKey {
+            preset: Preset::Default,
+            custom: TempleCustomSettings::default(),
+            market: allflame(),
+        }
+    }
+
+    /// A table `value_table` cannot produce for [`base_key`], so a hit that
+    /// silently recomputed is visible in the VALUE and not only in the
+    /// verdict: Custom with the corruption line pinned at a number no formula
+    /// arrives at.
+    ///
+    /// Priming with it is what makes "did not recompute" observable at all —
+    /// two equal tables would leave a recompute indistinguishable from a
+    /// lookup.
+    fn sentinel_table() -> Valued {
+        let custom = TempleCustomSettings {
+            rooms: BTreeMap::from([("corruption".to_string(), vec![None, None, Some(4242.0)])]),
+            ..Default::default()
+        };
+        value_table(Preset::Custom, &custom, &allflame())
+    }
+
+    /// A slot already holding [`sentinel_table`] under [`base_key`].
+    fn primed() -> Option<CachedValuation> {
+        Some(CachedValuation {
+            key: base_key(),
+            valued: sentinel_table(),
+        })
+    }
+
+    /// The three halves in the order `ssot::temple_valuation_now` runs them:
+    /// look up, and on a miss compute and store. The accessor puts a lock
+    /// take/drop around the first and the third and holds nothing across the
+    /// second; the ORDER is what these tests pin, and it is the only thing this
+    /// helper adds to the production functions it calls.
+    fn look_up_or_compute(
+        slot: &mut Option<CachedValuation>,
+        key: ValuationKey,
+    ) -> (Valued, ValuationSource) {
+        if let Some(valued) = cached_valuation(slot, &key) {
+            return (valued, ValuationSource::Cached);
+        }
+        let valued = compute_valuation(&key);
+        store_valuation(slot, key, valued.clone());
+        (valued, ValuationSource::Computed)
+    }
+
+    /// A key that hits hands back the STORED table — the whole point of the
+    /// cache, and the reason the read line's `cached` is a claim about the
+    /// object and not just about the clock.
+    ///
+    /// The sentinel is what proves no recompute happened: `value_table` on
+    /// this key prices corruption off the market, never at 4242, so a
+    /// recomputing implementation returns a different table while still
+    /// reporting whatever verdict it likes.
+    ///
+    /// Fails on the mutation making `cached_valuation` return `None`
+    /// unconditionally (recompute always): the answer becomes the Default table
+    /// and the source `Computed`.
+    #[test]
+    fn a_key_that_matches_returns_the_stored_table_without_recomputing_it() {
+        let mut slot = primed();
+
+        let (valued, source) = look_up_or_compute(&mut slot, base_key());
+
+        assert_eq!(source, ValuationSource::Cached);
+        assert_eq!(valued, sentinel_table(), "the STORED table came back");
+        assert_ne!(
+            valued,
+            value_table(Preset::Default, &TempleCustomSettings::default(), &allflame()),
+            "and the sentinel is distinguishable from what a recompute produces",
+        );
+    }
+
+    /// A key that misses comes back as `None` and leaves the slot ALONE.
+    ///
+    /// This is the property that lets `ssot::temple_valuation_now` drop the
+    /// `AppState.temple_valuation` guard before it builds anything: a lookup
+    /// that computed on a miss would put the 193-245 ms build back under the
+    /// lock, where every concurrent read waits behind it.
+    ///
+    /// Fails on the mutation making `cached_valuation` fall back to
+    /// `Some(compute_valuation(key))` on a miss, and on one that stores the
+    /// asked-for key over the sentinel.
+    #[test]
+    fn a_key_that_misses_returns_nothing_and_leaves_the_slot_alone() {
+        let slot = primed();
+
+        let looked_up = cached_valuation(
+            &slot,
+            &ValuationKey {
+                preset: Preset::Custom,
+                ..base_key()
+            },
+        );
+
+        assert_eq!(looked_up, None, "the lookup half builds nothing");
+        assert_eq!(slot, primed(), "and leaves the stored table where it was");
+    }
+
+    /// Every miss test is the same three lines: prime under [`base_key`], ask
+    /// under a key that differs in ONE field, and read both halves of the
+    /// answer — the verdict AND that the sentinel did not come back.
+    fn misses_on(key: ValuationKey) -> Valued {
+        let mut slot = primed();
+        let (valued, source) = look_up_or_compute(&mut slot, key.clone());
+        assert_eq!(source, ValuationSource::Computed, "the changed input missed");
+        assert_ne!(valued, sentinel_table(), "and the stored table was not served");
+        assert_eq!(
+            valued,
+            value_table(key.preset, &key.custom, &key.market),
+            "the answer is the table the NEW key names",
+        );
+        valued
+    }
+
+    /// Switching preset misses. The Custom table is carried in the key whether
+    /// or not it is in force, so this is the switch and nothing else.
+    ///
+    /// Fails on the mutation replacing `ValuationKey`'s derived `PartialEq`
+    /// with one that compares `custom` and `market` only.
+    #[test]
+    fn a_different_preset_misses() {
+        misses_on(ValuationKey {
+            preset: Preset::Custom,
+            ..base_key()
+        });
+    }
+
+    /// One Custom knob moved misses — under the CUSTOM preset, where the knob
+    /// is what the table is built from.
+    ///
+    /// `drops_weight` at zero is the rusher's setting and reduces the ranking
+    /// to sale value alone, so the table it produces is nothing like the one
+    /// beside it.
+    ///
+    /// Fails on the mutation replacing `ValuationKey`'s derived `PartialEq`
+    /// with one that compares `preset` and `market` only.
+    #[test]
+    fn one_custom_knob_moved_misses() {
+        let rusher = TempleCustomSettings {
+            drops_weight: 0.0,
+            ..Default::default()
+        };
+        let mut slot = Some(CachedValuation {
+            key: ValuationKey {
+                preset: Preset::Custom,
+                custom: TempleCustomSettings::default(),
+                market: allflame(),
+            },
+            valued: sentinel_table(),
+        });
+
+        let (valued, source) = look_up_or_compute(
+            &mut slot,
+            ValuationKey {
+                preset: Preset::Custom,
+                custom: rusher.clone(),
+                market: allflame(),
+            },
+        );
+
+        assert_eq!(source, ValuationSource::Computed);
+        assert_eq!(valued, value_table(Preset::Custom, &rusher, &allflame()));
+    }
+
+    /// A payload observed at a different moment misses. `as_of` is what the
+    /// staleness clock is measured from and what the offer boxes print, so a
+    /// table built under the old stamp would state the wrong age for prices
+    /// nobody re-read.
+    ///
+    /// Fails on the mutation replacing `ValuationKey`'s derived `PartialEq`
+    /// with one that compares `preset` and `custom` only.
+    #[test]
+    fn a_market_observed_at_a_different_moment_misses() {
+        let mut later = allflame();
+        later.as_of = later.as_of.map(|at| at + chrono::Duration::minutes(7));
+
+        misses_on(ValuationKey {
+            market: later,
+            ..base_key()
+        });
+    }
+
+    /// A payload for a different league misses. Prices are league-local, and
+    /// the league rides on the table the offer boxes show.
+    ///
+    /// Fails on the mutation replacing `ValuationKey`'s derived `PartialEq`
+    /// with one that compares `preset` and `custom` only.
+    #[test]
+    fn a_market_priced_in_a_different_league_misses() {
+        let mut mirage = allflame();
+        mirage.league = "Mirage".to_string();
+
+        misses_on(ValuationKey {
+            market: mirage,
+            ..base_key()
+        });
+    }
+
+    /// The same payload judged STALE misses — the input that moves with the
+    /// clock and with nothing else, and the one no update path can announce.
+    /// Past `market::STALE_AFTER_MS` every room falls back to its grade rung
+    /// (epic lock L4), so serving the live table here would price a board off
+    /// a market the app has already ruled out.
+    ///
+    /// Fails on the mutation replacing `ValuationKey`'s derived `PartialEq`
+    /// with one that compares `preset` and `custom` only.
+    #[test]
+    fn the_same_payload_gone_stale_misses() {
+        let observed = allflame()
+            .as_of_ms()
+            .expect("the committed capture carries an observation");
+        let stale = allflame().aged_at(observed + crate::temple::market::STALE_AFTER_MS + 1);
+        assert!(stale.stale, "the arrange step actually aged it out");
+
+        let valued = misses_on(ValuationKey {
+            market: stale,
+            ..base_key()
+        });
+
+        assert_eq!(
+            total(&valued, "corruption", 3),
+            crate::temple::rooms::Grade::APlusPlus.fallback_chaos(),
+            "and the recomputed table is the cold ladder, not the live prices",
+        );
+    }
+
+    /// A miss stores what it computed, and what it computed is exactly the
+    /// table the same inputs produce through the settings-shaped entry point.
+    ///
+    /// The second half is the one that matters: the cache is only ever allowed
+    /// to be a faster way to the SAME answer, so this pins the stored object
+    /// against `slice::value_read` rather than against itself.
+    ///
+    /// Fails on the mutation making `compute_valuation` call `value_table` on
+    /// `Preset::Default` regardless of `key.preset`.
+    #[test]
+    fn a_miss_stores_the_table_the_settings_shaped_compute_produces() {
+        let custom = TempleCustomSettings {
+            c_per_quantity: 9.0,
+            ..Default::default()
+        };
+        let settings = crate::temple::slice::TempleSettings {
+            preset: Preset::Custom,
+            custom: custom.clone(),
+            ..Default::default()
+        };
+        let market = allflame();
+        let mut slot = None;
+
+        let (valued, source) = look_up_or_compute(
+            &mut slot,
+            ValuationKey {
+                preset: Preset::Custom,
+                custom,
+                market: market.clone(),
+            },
+        );
+
+        let expected = crate::temple::slice::value_read(&settings, &market);
+        assert_eq!(source, ValuationSource::Computed);
+        assert_eq!(valued, expected, "the answer");
+        assert_eq!(
+            slot.expect("a miss stores what it computed").valued,
+            expected,
+            "and the object left behind for the next read",
         );
     }
 }

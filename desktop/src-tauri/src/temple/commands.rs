@@ -157,6 +157,10 @@ pub fn temple_set_preset(preset: Preset, app: AppHandle) -> Result<(), String> {
             }
         ),
     );
+    // "Computed on update" (POE-257 WI-3): the preset is one of the three
+    // inputs the valuation is a function of, so the new table is built here —
+    // off this thread — rather than by the read `rearm` is about to force.
+    crate::ssot::warm_temple_valuation(&app);
     rearm(&app);
     Ok(())
 }
@@ -219,6 +223,9 @@ pub fn temple_set_custom(
     for note in &notes {
         crate::app_log(&app, note.clone());
     }
+    // Same as `temple_set_preset` — see the note there. The editor writes on a
+    // 300 ms debounce, which is why the warm must not run on this thread.
+    crate::ssot::warm_temple_valuation(&app);
     rearm(&app);
     Ok(notes)
 }
@@ -239,23 +246,47 @@ pub fn temple_set_custom(
 /// The Custom table it values with is the STORED one, not one passed in: this
 /// is a read of the app's own state, and a caller that could pass a table
 /// would be able to show a board the ranking never used.
+///
+/// # The two questions take two paths (POE-257 WI-3, 2026-09-07)
+///
+/// *What is on screen now* is answered from `ssot::temple_valuation_now`, the
+/// same lookup `run::full_read` makes — so the page and the board are one
+/// object and not two equal ones, which is POE-257 D6 held across reads.
+///
+/// *What would the other preset give me* is computed here and NEVER stored:
+/// the cache holds one table, and letting the Copy button's probe evict it
+/// would make every look at Default cost the next read a rebuild. It is the
+/// rarer question and the one whose answer nothing ranks.
+///
+/// **ONE settings read decides both** (WI-3 fix round, 2026-09-07). The
+/// snapshot that answers `preset == settings.preset` is the same one handed to
+/// the accessor and the same one the other-preset branch takes its Custom table
+/// from. Reading the mutex twice — once for the comparison, once inside the
+/// accessor — let a `temple_set_preset` landing between them return the newly
+/// chosen preset's table under the preset the caller asked for.
 #[tauri::command]
 pub fn temple_value_table(
     preset: Preset,
     app: AppHandle,
 ) -> Result<Vec<slice::RoomValueRowView>, String> {
-    let custom = {
+    let settings = {
         let state = app.state::<AppState>();
         let settings = state
             .temple_settings
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        settings.custom.clone()
+        settings.clone()
     };
-    let market = crate::ssot::temple_market_now(&app);
-    Ok(slice::value_rows(&super::preset::value_table(
-        preset, &custom, &market,
-    )))
+    let valued = if preset == settings.preset {
+        crate::ssot::temple_valuation_now(&app, &settings).0
+    } else {
+        super::preset::value_table(
+            preset,
+            &settings.custom,
+            &crate::ssot::temple_market_now(&app),
+        )
+    };
+    Ok(slice::value_rows(&valued))
 }
 
 /// Force the next tick to do a full read, whatever the gate thinks.

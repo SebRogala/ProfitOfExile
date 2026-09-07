@@ -1027,6 +1027,7 @@ mod tests {
             temple: Mutex::new(crate::temple::slice::TempleSlice::default()),
             temple_settings: Mutex::new(crate::temple::slice::TempleSettings::default()),
             temple_market: Mutex::new(crate::temple::market::MarketInput::none()),
+            temple_valuation: Mutex::new(None),
             temple_arm: Mutex::new(crate::temple::trigger::ArmState::default()),
             temple_rearm: AtomicU64::new(0),
             temple_epoch: AtomicU64::new(0),

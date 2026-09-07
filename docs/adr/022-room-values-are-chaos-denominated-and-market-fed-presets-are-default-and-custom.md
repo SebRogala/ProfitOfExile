@@ -52,6 +52,34 @@ by the same per-entry rules the loader salvages by) and `temple_value_table` (th
 SSOT snapshot carries no room values). Editing `settings.json` by hand is no
 longer the only way in.
 
+**Amended 2026-09-07 (POE-257 WI-3):** WHERE the table is computed and WHEN.
+The decision itself is unchanged — chaos-denominated, market-fed, two presets,
+one object shown and ranked. What changed is that the object is no longer
+rebuilt per read. It is a function of the preset, the Custom table and the
+market read alone, so it is built when one of those changes and a read LOOKS
+IT UP: `ssot::temple_valuation_now` rebuilds a `preset::ValuationKey` on every
+call and hands back the stored `valuation::Valued` when the key is equal, over
+`AppState.temple_valuation`. `preset::value_table` is the one compute, and no
+READ reaches it except through that accessor (`preset::cached_valuation`
+decides, `preset::compute_valuation` builds, `preset::store_valuation` stores
+— three functions and not one so the build runs with the slot mutex DROPPED,
+which is what stops a read from queueing behind a warm-up's compute and then
+reporting `cached` for the wait); `slice::value_read` is `#[cfg(test)]`, so no
+read can rebuild the table. The one direct caller of the compute is the Temple
+page's preview of the preset that is NOT in force, which computes on the spot
+and never stores. The builds happen on the market poll, on a server switch, in
+`temple_set_preset` / `temple_set_custom` and on `reset_all_settings`
+(`ssot::warm_temple_valuation`, off-thread) — but those are the optimisation
+and the key is the guard: a missed one costs one read a rebuild, never a board
+priced off other inputs. `temple_value_table` answers the preset in force
+through the same accessor — out of the same stored table the board was ranked
+on — so the page and the board are one object, and it passes the one settings
+snapshot it answered `in force` from rather than letting the accessor read the
+mutex a second time. Owner, 2026-09-07: *"they are cached, and computed on
+update, and module uses already computed weightings each time."* See §2 as
+amended and [TEMPLE-LIFECYCLE.md](../TEMPLE-LIFECYCLE.md), "The read carries a
+valuation".
+
 Related: [ADR-013](013-ui-picks-persist-in-a-schema-less-prefs-map.md) — the two
 new settings blocks are TYPED, against that ADR's default, because Rust reads
 them. [ADR-017](017-no-default-engine-floor-may-hide-a-live-market.md) and
@@ -206,6 +234,27 @@ and to `slice::project`, which publishes it as `OfferView.value:
 Option<RoomValueView>`. There is no second computation on the view path, so the
 number in the offer box is the number the recommendation used, for all 25 lines
 including the two instrumental ones.
+
+**Amended 2026-09-07 (WI-3): the read does not BUILD it, it looks it up.** As
+accepted, `full_read` called the compute once per read — an unchanged answer
+rebuilt every 650 ms tick that read a sheet, and 193-245 ms of a measured 666 ms
+read (`app.log` 2026-09-06 23:33, where the stage still lumped it with the
+advisor's own 13-22 ms ranking). Two things in the paragraph above are now
+spelled differently. The compute is named `preset::value_table(preset, custom,
+market)`; `slice::value_read` is the same call in settings shape and is
+`#[cfg(test)]`, so nothing on the read path reaches it. And `run::full_read`
+does not call it — it GETS one table per read from
+`ssot::temple_valuation_now(app, settings)` and hands that same object on to
+`slice::advise_read` and `slice::project`, exactly as the paragraph describes.
+The table is stored beside the market in `AppState.temple_valuation`, and the
+accessor's `preset::ValuationKey` — preset, Custom table, whole `MarketInput`
+including the staleness verdict — is rebuilt on every call and compared before
+anything is handed back. The settings it keys on are the CALLER'S, so the
+numbers and the preset echoed beside them are one read's. "One object, shown and
+ranked" therefore holds ACROSS reads as well as within one, and the Temple
+page's own table joins it: `temple_value_table` answers the preset in force
+through the same accessor. The read line names the two costs apart, `valuation N
+ms (cached | computed), advise N ms`.
 
 `RoomValueView` carries `total`, `priced`, `guessed`, `league`, `asOf`,
 `scaledFromTier3` and the full `drivers` list. **A tier-1 or tier-2 row's

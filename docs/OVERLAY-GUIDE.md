@@ -1527,6 +1527,21 @@ touching the named path.
   `round … : nothing left to re-read` is not expected in ordinary play: it means
   the round was bought by a region whose crop then fell off the capture, and it
   costs one anchor resolve and no OCR.
+- **The valuation is CACHED across a session** (POE-257 WI-3): the read line's
+  `valuation N ms (cached | computed)` field is the whole check, and it needs a
+  session rather than one read. Open a sheet, let it read, then take two or three
+  more incursions and read the field on every `Temple: read timings …` line in
+  `app.log`. The FIRST read of a session may say `(computed)` — nothing has been
+  built yet — and so may the first read after the five-minute market poll lands a
+  new payload or after you switch Default/Custom on the Temple page, because each
+  of those moves an input the table is keyed on. **Every other read of the session
+  must say `(cached)`, at a single-digit ms.** A three-digit `(computed)` on a read
+  that follows an unchanged one is the regression this item exists for: it means
+  the `preset::ValuationKey` carries something that moves per read rather than per
+  input, so the lookup can never hit. Report it with the TWO read lines — the one
+  before and the one that recomputed — because which read it follows is what names
+  the input. A single-digit `(computed)` is not this bug and not worth a report;
+  that is a cold-market table, which is cheap to build.
 - **`anchor origin keeps moving` must not appear at all** (POE-249): in a normal
   session, on either machine, `app.log` must not carry
   `Temple: anchor origin keeps moving on a board already read N times …`. It is

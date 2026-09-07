@@ -38,8 +38,13 @@
 //! - [`preset`] (POE-257) — the two valuations the player chooses between,
 //!   Default and Custom ([`preset::Preset`]), the Custom table's rates and
 //!   per-room overrides ([`preset::TempleCustomSettings`], persisted in its own
-//!   settings block with a per-entry fallback), and
-//!   [`preset::value_table`], the one call a read makes.
+//!   settings block with a per-entry fallback), [`preset::value_table`], the
+//!   one compute, and (POE-257 WI-3) the cache in front of it —
+//!   [`preset::ValuationKey`], [`preset::cached_valuation`],
+//!   [`preset::compute_valuation`], [`preset::store_valuation`] — which is why
+//!   a read LOOKS the table up (`crate::ssot::temple_valuation_now`) instead of
+//!   building one. The three are separate so the accessor can build with the
+//!   slot mutex DROPPED.
 //!
 //! The lifecycle these modules implement — what arms the loop, when a full read
 //! runs, when each overlay shows — is normative in `docs/TEMPLE-LIFECYCLE.md`.

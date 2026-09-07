@@ -84,14 +84,14 @@ Consequences that follow from the order, not from extra rules:
   reads unspendable in `warnings`): the faint mark is what to do with a key the move has no
   use for, never the move.
 
-**The read carries a valuation** (POE-257, commits `cd5627c` + `f722d49`). Row 2's full read
-does not only produce a board — `run::full_read` builds ONE `valuation::Valued` for it (via `slice::value_read`), the 25 x 3
-table of what each room-tier is worth in chaos, and hands the same object to the ranking and to
-the offer boxes, so the number shown is the number ranked. It is built from a `MarketInput`
-that arrives as state, never fetched: the 650 ms tick still does no HTTP. Since POE-258 that
-state is real — `ssot::spawn_temple_market_poll` reads `GET /api/analysis/temple-market` every
-five minutes and stores the payload, and `run::full_read` takes it through
-`ssot::temple_market_now`, which judges staleness against THIS tick's clock. A poll that
+**The read carries a valuation, and LOOKS IT UP** (POE-257, commits `cd5627c` + `f722d49`;
+the lookup is WI-3, 2026-09-07). Row 2's full read does not only produce a board — it carries
+ONE `valuation::Valued`, the 25 x 3 table of what each room-tier is worth in chaos, and hands
+the same object to the ranking and to the offer boxes, so the number shown is the number ranked.
+It is built from a `MarketInput` that arrives as state, never fetched: the 650 ms tick still does
+no HTTP. Since POE-258 that state is real — `ssot::spawn_temple_market_poll` reads
+`GET /api/analysis/temple-market` every five minutes and stores the payload, and the read takes
+it through `ssot::temple_market_now`, which judges staleness against THIS tick's clock. A poll that
 FAILS and a server that answers COLD both leave the last good read standing — neither says
 anything about prices already in hand, and they age into stale on their own. What drops the
 read is a payload keyed to another league or a server switch. So the board runs on grade rungs
@@ -105,6 +105,36 @@ what the next read will use (`TempleSlice::poll`, written by `ssot::publish_mark
 One field written by both let a poll put `prices 3 min old` over a board on the cold ladder, and
 a DEBUG/PROD switch put `prices unavailable` over a priced one. The rules and
 their homes are in the table below, the decision is [ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md).
+
+**That table is built once per (preset, Custom table, market read), not once per read** (WI-3,
+2026-09-07 — the owner's quote is in "Owner decisions this encodes" below). The accessor is
+`ssot::temple_valuation_now(app, settings)`: it rebuilds a `preset::ValuationKey` from the
+settings its CALLER hands it and the market standing now, and hands back the stored `Valued`
+when the key is equal. **No READ reaches `preset::value_table` except through that accessor**;
+the Temple page's preview of the OTHER preset computes it on the spot and never stores it (see
+below), and it is the only direct caller left. That is the whole guard, and the reason
+`slice::value_read` is now `#[cfg(test)]`: a read cannot be handed a table built from other
+inputs even if an update path is missed. The settings arrive as an argument so the numbers and
+the preset echoed beside them are always the same read's — `run::full_read` passes its own tick
+snapshot and `commands::temple_value_table` passes the one snapshot it answered `in force` from,
+so a `temple_set_preset` landing mid-read cannot cross the two. The update paths —
+`ssot::warm_temple_valuation`, called off-thread from the market poll, from
+`ssot::on_server_url_changed`, from `temple_set_preset` / `temple_set_custom` and from
+`reset_all_settings` — exist only so that the read's call is a HIT, and a missed one costs that
+read a rebuild rather than a wrong board. The build itself runs with the `temple_valuation`
+mutex DROPPED — taken for the key comparison, released, re-taken to store — so a read arriving
+while a warm-up builds waits for a key compare and never for the build; a lost race costs one
+wasted rebuild and never a blocked read. The Temple page's own 25 x 3 table goes through the
+same accessor for the preset in force (`commands::temple_value_table`), so the page and the
+board are one object; the OTHER preset — the Copy button's "what would Default give me" — is
+computed on the spot and never stored, because a probe that evicted the cache would make every
+look at Default cost the next read a rebuild. The one input no update path can announce is the
+market crossing `market::STALE_AFTER_MS` while nothing else moves: staleness is judged against
+the calling clock, so the key flips on its own — the five-minute poll's warm-up normally reaches
+it first, and at worst one read pays for it. What this bought: `advise` was **193-245 ms of a
+666 ms read** on the PC's release build (`app.log` 2026-09-06 23:33) with the advisor's own
+ranking — 13-22 ms of it, `advisor/mod.rs::the_conditional_ranking_cost_on_case_eight` — lumped
+in. The read line now measures the two apart, and says which of the two the valuation was.
 
 Seven residuals the rules above produce, all ACCEPTED with their answer named (POE-249, owner
 decisions 1, 3 and 4 of the plan review; the last three re-derived under WI-1, 2026-09-07, and
@@ -200,13 +230,15 @@ Facts that shape the rules (PC mining):
   Panel open → next cheap tick (0–650 ms) → one full read → publish → the overlay's next
   snapshot. **Measured 2026-09-06 on the PC, same code, same evening, one A/B on the build
   profile:** the release build read the sheet in **666 ms from grab to publish** (capture 35,
-  cheap detect 64, anchor 96, text OCR 165, plates 102, markers 6, advise 193) and the overlay
-  showed it **+43 ms** later; the DEBUG `tauri dev` build read the same sheet in **4247 ms**
-  (cheap detect 1042, anchor 1351, text OCR 1076, plates 496) with the overlay again at +44 ms —
-  the "5–6 s verdict" of that session, tick wait included, was the build profile and nothing
-  else. So the budget holds on release at the cadence (≤ 650 + 666 + 43 ms worst case) and can
-  not hold on a debug build. Nothing in the code asserts the budget — the two log lines below
-  MEASURE it per read, and that is how a regression is found: in `app.log`, not in a test.
+  cheap detect 64, anchor 96, text OCR 165, plates 102, markers 6, advise 193 — the pair
+  POE-257 WI-3 then split and printed apart, the valuation being nearly all of that 193 and,
+  since WI-3, a lookup) and the overlay showed it **+43 ms** later; the DEBUG `tauri dev` build
+  read the same sheet in **4247 ms** (cheap detect 1042, anchor 1351, text OCR 1076, plates 496)
+  with the overlay again at +44 ms — the "5–6 s verdict" of that session, tick wait included,
+  was the build profile and nothing else. So the budget holds on release at the cadence (≤ 650 +
+  666 + 43 ms worst case) and can not hold on a debug build. Nothing in the code asserts the
+  budget — the two log lines below MEASURE it per read, and that is how a regression is found:
+  in `app.log`, not in a test.
 - Cheap presence tick: `DETECT_INTERVAL` **650 ms, shipped** (15eb3f8). Cost: one monitor grab
   (225 ms on the laptop's debug build, `temple-debug/1788516327712`; **52 ms on the PC's release
   build**, `temple-debug/1788567663863`) plus one windowed correlation. **There is no slow-machine
@@ -220,7 +252,8 @@ Facts that shape the rules (PC mining):
   bounds to Alva's window.
 - **Measured, every time** (`run.rs`, `TickStages` / `ReadStages`): every read writes
   `Temple: read timings — capture N ms, cheap detect N ms, anchor N ms, text ocr N ms, plates N
-  ms, markers N ms, advise N ms, publish N ms — N ms from grab to publish, read at <unix ms>;
+  ms, markers N ms, valuation N ms (cached | computed), advise N ms, publish N ms — N ms from
+  grab to publish, read at <unix ms>;
   round N of 3: full | re-read 3 plates, panel | re-read markers | nothing left to re-read;
   clean | unclean, N retries left`, and the temple overlay writes `[temple-overlay] board read at
   <unix ms> on screen +N ms (via nudge | poll | write)` against the same stamp
@@ -286,14 +319,15 @@ Facts that shape the rules (PC mining):
 | never-cover set and placement | `temple/run.rs::read_rois` → `layout.rois`; `desktop/src/lib/temple/overlay-geometry.ts` (ADR-019) |
 | what the recommended exit is CALLED, and where that name is drawn | `temple/slice.rs` (`recommended_exit` → `AdviceView.recommended_exit`, the ONE decision: the far plate's `RoomIdentity::display_name` at the tier THIS read gave it, `None` for a move with no door, an unresolved plate or more than one door) and `desktop/src/lib/temple/overlay-geometry.ts` (`diamondGeometry`'s `exitLabel` — pinned inside the shape's own box, on the `suggested` seal alone, costing the widget no height) |
 | what one room-tier is WORTH, in chaos — sale + drops + bonus, the tier fraction, the drivers behind the number | `temple/valuation.rs` (`Valued::compute_with`, `RoomValue`, `Driver`, `Knobs`) — [ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md) |
-| the market read a valuation is computed against, and what "stale" costs | `temple/market.rs` (`MarketInput`, `prices_anything`, `sale_delta`, `price`, `aged_at`, `STALE_AFTER_MS`) — mirrors POE-255's `GET /api/analysis/temple-market`; **no HTTP here** |
+| the market read a valuation is computed against, and what "stale" costs | `temple/market.rs` (`MarketInput`, `prices_anything`, `sale_delta`, `price`, `aged_at`, `STALE_AFTER_MS`) — mirrors POE-255's `GET /api/analysis/temple-market`; **no HTTP here**. The whole payload is in `ValuationKey`, so a price that moved invalidates the stored table |
 | where that read comes from, how often, and what a wrong-league or unreachable server does to it | `ssot.rs` (`spawn_temple_market_poll`, `TEMPLE_MARKET_POLL` 5 min, `judge_market` → `MarketPoll`, `store_market`, `temple_market_now`, `on_server_url_changed`) — POE-258. A failed poll AND a cold server both KEEP the last good read and let it age — neither is evidence about the prices in hand; only a payload for another league and a server switch drop it to `MarketInput::none()` |
 | what the player is told about the prices behind a number | `temple/slice.rs` (`MarketView`, `market_view`) on the wire, `desktop/src/lib/temple/view.ts` (`marketNote`, `marketStale`) in words — `prices 12 min old`, `prices stale (3 h) — base values`, `prices stale (3 h)`, `prices unavailable — base values`. The age AND the stale verdict are re-derived from `asOf` + the published `staleAfterMs` + the clock at render time, so a line ages without a republish. The `— base values` suffix is a claim about the NUMBERS and not about the age: it rides only when the read was ALREADY unpriced when it was valued (stale or unavailable at read time, so the board came off the cold ladder). A read that priced live and has since aged past the line says `prices stale (3 h)` alone — its figures are real prices gone old, and they become base values at the next read |
-| WHICH market a surface is talking about | TWO fields, one writer each: `TempleSlice::market` is the read on screen (`slice::project` alone, from the very `MarketInput` that board was valued with) and every per-read surface — the offer boxes — reads it; `TempleSlice::poll` (`pollMarket` on the wire) is the latest poll (`ssot::publish_market_view` alone, on every poll and on a server switch) and the Temple page's reader row and value table read it. `project` seeds `poll` from the read because it replaces the whole slice, and that seed is exact — `run::full_read` takes its market from `ssot::temple_market_now`. One field written by both let a poll re-label a standing board |
+| WHICH market a surface is talking about | TWO fields, one writer each: `TempleSlice::market` is the read on screen (`slice::project` alone, from the very `MarketInput` that board was valued with) and every per-read surface — the offer boxes — reads it; `TempleSlice::poll` (`pollMarket` on the wire) is the latest poll (`ssot::publish_market_view` alone, on every poll and on a server switch) and the Temple page's reader row and value table read it. `project` seeds `poll` from the read because it replaces the whole slice, and that seed is exact — `run::full_read` takes its market from the same `ssot::temple_valuation_now` call that gave it the table, which reads `ssot::temple_market_now`. One field written by both let a poll re-label a standing board |
 | the fallback when nothing is priced — the letter grade in chaos | `temple/rooms.rs` (`Grade::fallback_chaos` cold, `Grade::fallback_chaos_scaled` live) and `temple/valuation.rs` (`fallback_rung`, `lowest_summed_room_total`): a read that is not live values EVERY room at the cold ladder; on a live read a room that summed nothing hangs its letter off the LOWEST tier-3 total among the rooms that summed something, so no letter reaches a room the market priced (POE-262, ADR-022 §3 as amended). The two `INSTRUMENTAL_LINES` are the exception and keep their own anchor-and-cap — `instrumental_rung` + `lowest_sale_priced_room_total`, ADR-022 §4 |
 | which valuation is in force, and the player's own numbers | `temple/preset.rs` (`Preset`, `TempleCustomSettings`, `value_table`) persisted as two separate `settings.rs` fields, `temple_preset` and `temple_custom`; one malformed entry costs its own room, never the table |
 | the bridge from a chaos valuation to the advisor's profile, and the relative-unit rescale | `temple/slice.rs` (`TempleProfileSettings::to_profile`) and `temple/strategy.rs` (`REFERENCE_TOP_ROOM_VALUE`, `StrategyProfile::value_scale` — that doc's table is the normative list of the five scaled magnitudes) |
-| ONE valuation per read, shown and ranked | `temple/slice.rs` (`value_read`, called once in `temple/run.rs::full_read`) handed to `advise_read` AND to `project` → `OfferView.value` |
+| ONE valuation per read, shown and ranked | the object `run::full_read` gets from `ssot::temple_valuation_now`, handed to `slice::advise_read` AND to `slice::project` → `OfferView.value` |
+| where that object comes from, and when it is BUILT | `temple/preset.rs` (`ValuationKey`, `CachedValuation`, `ValuationSource`, and the cache decision as three pure functions — `cached_valuation`, `compute_valuation`, `store_valuation`) behind `ssot::temple_valuation_now(app, settings)` over `AppState.temple_valuation`; built on an input change by `ssot::warm_temple_valuation` (POE-257 WI-3) and never on the read path unless a key moved. Three functions and not one so the accessor builds with the slot mutex dropped. `slice::value_read` is `#[cfg(test)]` — no read may rebuild the table |
 | smoke items per rule | `OVERLAY-GUIDE.md` "Windows smoke checks" |
 
 ## Owner decisions this encodes (2026-09-04, amended 2026-09-06 and 2026-09-07)
@@ -343,3 +377,14 @@ One deviation from those words, recorded rather than resolved silently: the noti
 TOP centre, not the screen centre, because a centred box covers plates C1/D1/D2 in the very
 capture that reads them (ADR-019). It is placeable, so the centre is one drag away and is then
 the user's own placement.
+
+2026-09-07 (WI-3): *"What I expected from the advisor and prices, was that they are cached, and
+computed on update, and module uses already computed weightings each time — I thought it was
+cheap one."* Encoded as "The read carries a valuation" above: the table is a function of the
+preset, the Custom table and the market read alone, so it is built when one of those changes
+(`ssot::warm_temple_valuation`) and a read looks it up (`ssot::temple_valuation_now`). The key
+is the guard and the warm-ups are the optimisation, not the other way round. The read line now
+names the two costs apart — `valuation N ms (cached | computed), advise N ms` — because "is it
+cached?" was a question `app.log` could not answer while the two were one number, and the owner's
+"I thought it was cheap one" is exactly the belief a single lumped field let stand.
+
