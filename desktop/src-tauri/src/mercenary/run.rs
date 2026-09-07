@@ -2694,6 +2694,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         slice.burst_speaker = None;
         if let Some(capture) = slice.capture.as_mut() {
             capture.live = false;
+            capture.panel = None;
         }
     });
     crate::app_log(&app, "Module mercenary: stopped".to_string());
@@ -2712,6 +2713,7 @@ fn unavailable(app: &AppHandle, cancel: &watch::Receiver<bool>, reason: String) 
         slice.last_error = Some(reason.clone());
         if let Some(capture) = slice.capture.as_mut() {
             capture.live = false;
+            capture.panel = None;
         }
     });
     while nap(cancel, UNFOCUSED_NAP) {}
@@ -2860,6 +2862,7 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
             slice.burst_speaker = None;
             if let Some(capture) = slice.capture.as_mut() {
                 capture.live = false;
+                capture.panel = None;
             }
         }
         // A clean miss — the loop looked and saw no recruit window — means the
@@ -3584,8 +3587,6 @@ fn detect_tick(
     // here — this is the one place that can tell whether its row survived.
     session.pending_confirm =
         drop_pending_off_capture(session.pending_confirm.take(), &result.capture);
-    session.current = Some(result.capture.clone());
-    session.revision += 1;
     // GROW-ONLY within one live capture. A partial read under a tooltip
     // measures a shorter panel, and writing that rect over the full one turns
     // the known-panel anchor against the next FULL read — six row centres, a
@@ -3596,6 +3597,11 @@ fn detect_tick(
     // span two windows the fold never saw.
     let column_tolerance = geometry::column_tolerance(&session.geometry, layout.scale);
     session.panel = geometry::next_panel(session.panel, panel, replaced, column_tolerance);
+    // Publish the same settled panel rect the next detect will use. The
+    // preview reads this capture field; it must not infer a rect from rows.
+    result.capture.panel = session.panel;
+    session.current = Some(result.capture.clone());
+    session.revision += 1;
     session.header_guard =
         geometry::next_panel(session.header_guard, header_guard, replaced, column_tolerance);
     // FROM THE RECT THE LOOP NOW HOLDS, never from this frame's layout. The
@@ -3702,6 +3708,7 @@ fn first_look(
         live: true,
         scale: layout.scale,
         screen,
+        panel: None,
         header: layout.header.clone(),
         rows,
         partial: true,
@@ -4348,6 +4355,7 @@ mod tests {
             live: true,
             scale: 1.0,
             screen: [2560, 1440],
+            panel: None,
             header: Default::default(),
             rows,
             partial: false,

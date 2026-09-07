@@ -246,6 +246,7 @@ pub fn build_capture(
             // crop to this — clamping it to the panel would cut every tooltip
             // that opens outside the grid.
             screen: frame.screen(),
+            panel: None,
             header: layout.header.clone(),
             rows,
             partial: false,
@@ -1351,6 +1352,7 @@ mod tests {
             live: true,
             scale: 1.0,
             screen: [2560, 1440],
+            panel: None,
             header: header_of,
             rows: rows
                 .iter()
@@ -1522,6 +1524,7 @@ mod tests {
             live: true,
             scale: 1.0,
             screen: [2560, 1440],
+            panel: None,
             header,
             rows,
             partial: false,

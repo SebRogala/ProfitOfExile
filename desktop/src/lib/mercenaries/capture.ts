@@ -92,6 +92,8 @@ export interface MercCapture {
 	scale: number;
 	/** `[width, height]` of the screen the capture was taken from. */
 	screen: [number, number];
+	/** Last settled recruit-window rect in capture pixels; null/absent when unlocated. */
+	panel?: [number, number, number, number] | null;
 	header: MercHeader;
 	rows: MercRow[];
 	/**

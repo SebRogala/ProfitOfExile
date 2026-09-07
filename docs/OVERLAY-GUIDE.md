@@ -1,7 +1,7 @@
 # Tauri v2 Overlay Guide
 
 > **Status: Current implementation guide.** Last verified against desktop code:
-> 2026-09-02. Runtime observations that are valuable but not statically provable
+> 2026-09-07. Runtime observations that are valuable but not statically provable
 > are labelled as such. Earlier debugging detail is preserved in
 > [the historical overlay notes](history/overlay-debugging-notes.md).
 
@@ -72,6 +72,17 @@ window's own page:
 Outside config mode a window's `WS_EX_TRANSPARENT` is never cleared, so a
 button appearing and disappearing is a hot rect being declared and withdrawn,
 never a transparency flip.
+
+The OCR Region Preview is the display-only `overlay-preview` window opened by
+Settings at `/overlay?preview=<key>`. Settings reads `get_ocr_rects`, positions
+the frame in capture pixels plus the game-monitor origin, applies the WebView2
+transparency nudge, calls `set_overlay_clickthrough`, and owns its 10-second
+timer and destruction. The route only renders the query's label and
+`[x, y, w, h]`; it declares no hot rects, never enters config mode, and has no
+Save, Cancel, drag, or resize controls. Escape is handled by the Settings
+window, which destroys the preview. `overlay-preview` is excluded from every
+screen grab while the grab is taken, so its frame and label cannot become OCR
+input.
 
 The comparator is the interactive one today: its page declares the button
 column (and the trade-queue row while that shows) and maps the emitted
