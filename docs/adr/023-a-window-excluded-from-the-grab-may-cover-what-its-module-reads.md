@@ -15,7 +15,8 @@ Accepted (2026-09-07, owner smoke on the PC; no ticket — it fell out of the
 merc overlay redesign, whose canvas is the only artefact so far). Amends
 [ADR-019](019-nothing-a-module-draws-may-cover-what-that-module-reads.md):
 that rule's premise — the grab contains the app's own overlay — no longer holds
-for a window on the list. Today the list is `mercenary`, the merc verdict strip.
+for a window on the list. Today the list is `mercenary`, the merc verdict strip,
+and `overlay-preview`, the Settings-owned read-only OCR frame.
 
 ## Context
 
@@ -62,12 +63,16 @@ Windows has a primitive for the second: `SetWindowDisplayAffinity` with
   `EXCLUDED_WHILE_GRABBING` is what releases it from ADR-019's never-cover set,
   and it needs a line in this ADR's list. The temple's surfaces stay under
   ADR-019 until someone adds them here on their own evidence.
-- **Failure is loud, once.** The first successful hold logs
+- **The current excluded-window list is:** `mercenary` for the in-place verdict
+  strip, and `overlay-preview` for the Settings-owned OCR frame and label. Both
+  are excluded only for the duration of each grab; every other overlay remains
+  under ADR-019.
+- **Failure is loud, once per process.** The first successful hold of ANY listed label logs (one flag for the whole list, so with two labels only the first exclusion logs)
   `capture: overlay '<label>' is excluded from each grab while it is taken`;
   the first refused call — an HWND that cannot be resolved, or an affinity the
   OS rejects (from training data: `WDA_EXCLUDEFROMCAPTURE` needs Windows 10
   2004 or later, unverified here) — logs
-  `capture: overlay '<label>' … — the merc strip is IN every grab`. One line
+  `capture: overlay '<label>' … — the listed overlay is IN every grab`. One line
   per process each, because the grab runs every few seconds and the fact does
   not change between them.
 

@@ -1,8 +1,8 @@
 /**
  * How a failed `set_overlay_clickthrough` is reported (POE-227).
  *
- * The command awaits its own setup and returns a reason now, and the five
- * per-window overlays REPORT that reason rather than tearing the window down.
+ * The command awaits its own setup and returns a reason now, and each caller
+ * reports that reason rather than hiding it in an unlabelled catch.
  * Which leaves one decision worth getting right: not every failure means the
  * player has a click-eating window on screen.
  *

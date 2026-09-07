@@ -339,6 +339,10 @@ pub struct MercCapture {
     pub scale: f32,
     /// `[width, height]` of the screen the capture came from.
     pub screen: [u32; 2],
+    /// The last settled recruit-window rect in capture pixels. Absent until a
+    /// full detect settles a panel, and not retained after the window is lost.
+    #[serde(default)]
+    pub panel: Option<[i32; 4]>,
     pub header: MercHeader,
     pub rows: Vec<MercRow>,
     /// The icon pass has not run on this frame: the rows carry their skill
@@ -815,6 +819,7 @@ mod tests {
                 live: true,
                 scale: 0.974,
                 screen: [2560, 1440],
+                panel: Some([120, 220, 620, 520]),
                 header: MercHeader {
                     name: Some("Cai, the Lout".into()),
                     class: Some("Shock Ambusher".into()),
@@ -905,6 +910,7 @@ mod tests {
         assert_eq!(cap["capturedAtMs"], 1_700_000_000_000u64);
         assert_eq!(cap["live"], true);
         assert_eq!(cap["screen"], serde_json::json!([2560, 1440]));
+        assert_eq!(cap["panel"], serde_json::json!([120, 220, 620, 520]));
         assert_eq!(cap["header"]["class"], "Shock Ambusher");
         assert_eq!(cap["header"]["wager"], 1028);
         let row = &cap["rows"][0];

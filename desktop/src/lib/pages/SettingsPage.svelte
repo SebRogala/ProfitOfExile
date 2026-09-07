@@ -8,9 +8,11 @@
 	import { store } from '$lib/stores/status.svelte';
 	import { hasFeature, MERC_FEATURE, TEMPLE_FEATURE } from '$lib/stores/entitlements.svelte';
 	import { ssot, fetchSsot } from '$lib/stores/ssot.svelte';
+	import { nav } from '$lib/stores/navigation.svelte';
 	import { screenGeometryView } from '$lib/geometry/view';
 	import { MERC_OVERLAY_DEFAULTS, physicalGeometry } from '$lib/overlay/overlay-defaults';
 	import { chooseMonitor, type GameMonitorInfo } from '$lib/overlay/monitor-choice';
+	import { clickthroughReport } from '$lib/overlay/clickthrough-report';
 	import {
 		canStartConfigure,
 		overlayGroups,
@@ -23,6 +25,24 @@
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import { getVersion } from '@tauri-apps/api/app';
+
+	type OcrRectView = {
+		key: string;
+		label: string;
+		rect: [number, number, number, number] | null;
+		source: string;
+	};
+
+	const LAB_PREVIEW_KEYS = ['lab.gem', 'lab.font'] as const;
+	const TEMPLE_PREVIEW_KEYS = ['temple.panel', 'temple.remaining'] as const;
+	const MERC_PREVIEW_KEYS = ['merc.panel'] as const;
+	const LAB_GEM_PREVIEW_KEY = LAB_PREVIEW_KEYS[0];
+	const LAB_FONT_PREVIEW_KEY = LAB_PREVIEW_KEYS[1];
+
+	type OverlayMonitorPlacement = {
+		origin: { x: number; y: number };
+		scaleFactor: number;
+	};
 
 	// --- Update ---
 	let appVersion = $state('...');
@@ -164,7 +184,12 @@
 	});
 
 	let overlayWin = $state<any>(null);
+	let overlayOrigin = $state({ x: 0, y: 0 });
 	let overlayVisible = $state<string | null>(null); // null = hidden, 'gem' or 'font' = which region
+	let ocrRects = $state<OcrRectView[]>([]);
+	let ocrRectsLoaded = $state(false);
+	let previewWin = $state<any>(null);
+	let previewTimer: ReturnType<typeof setTimeout> | undefined;
 
 	// Inline editing states
 	let editingServerUrl = $state(false);
@@ -231,18 +256,103 @@
 		getCurrentWebviewWindow().emit('overlay-config-end', {}).catch(() => {});
 	}
 
+	async function resolveOverlayMonitor(context: string): Promise<OverlayMonitorPlacement | null> {
+		const { availableMonitors, currentMonitor, primaryMonitor } = await import(
+			'@tauri-apps/api/window'
+		);
+		const primary =
+			(await primaryMonitor().catch((e: any) => {
+				console.warn(`[settings] primaryMonitor failed for ${context}:`, e);
+				return null;
+			})) ?? (await currentMonitor().catch((e: any) => {
+				console.warn(`[settings] currentMonitor failed for ${context}:`, e);
+				return null;
+			}));
+		const game = await invoke<GameMonitorInfo | null>('get_game_monitor').catch((e: any) => {
+			console.warn(`[settings] get_game_monitor failed for ${context}:`, e);
+			return null;
+		});
+		const listed = await availableMonitors().catch((e: any) => {
+			console.warn(`[settings] availableMonitors failed for ${context}:`, e);
+			return [];
+		});
+		const monitor = chooseMonitor(game, listed, primary);
+		if (!monitor) {
+			console.error(`[settings] ${context} has no monitor to build on`);
+			return null;
+		}
+		if (game && (monitor.position.x !== game.x || monitor.position.y !== game.y)) {
+			console.warn(
+				`[settings] ${context} monitor disagreement: game at (${game.x}, ${game.y}), ` +
+				`using primary at (${monitor.position.x}, ${monitor.position.y})`
+			);
+		}
+		return {
+			origin: { x: monitor.position.x, y: monitor.position.y },
+			scaleFactor: monitor.scaleFactor > 0 ? monitor.scaleFactor : 1,
+		};
+	}
+
+	function reportClickthroughFailure(label: string, reason: unknown): void {
+		const report = clickthroughReport(label, reason);
+		if (report.level === 'error') console.error(`[overlay] ${report.message}`);
+		else console.info(`[overlay] ${report.message}`);
+		invoke('app_log_from_frontend', { msg: report.message })
+			.catch((e) => console.error('[overlay] app log unreachable:', e));
+	}
+
+	// Destroy the owner-side preview window — retries up to 5 times for async
+	// Tauri/Win32 cleanup, matching the comparator's close+destroy sequence.
+	async function destroyPreviewOverlay(): Promise<void> {
+		previewWin = null;
+		if (previewTimer) {
+			clearTimeout(previewTimer);
+			previewTimer = undefined;
+		}
+
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		for (let i = 0; i < 5; i++) {
+			const existing = await WebviewWindow.getByLabel('overlay-preview').catch(() => null);
+			if (!existing) return;
+			try { await existing.close(); } catch (_) {}
+			try { await existing.destroy(); } catch (_) {}
+			if (i < 4) await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		const remaining = await WebviewWindow.getByLabel('overlay-preview').catch(() => null);
+		if (remaining) console.error('[settings] destroying OCR preview failed after 5 attempts');
+	}
+
+	// The preview is focusless, so Escape belongs to the Settings window that
+	// created it. Component cleanup owns the same destroy path.
+	$effect(() => {
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === 'Escape' && previewWin) void destroyPreviewOverlay();
+		};
+		window.addEventListener('keydown', onKeyDown);
+		return () => {
+			window.removeEventListener('keydown', onKeyDown);
+			void destroyPreviewOverlay();
+		};
+	});
+
 	// --- Region Overlay (shared for gem tooltip + font panel) ---
 	async function showRegionOverlay(type: 'gem' | 'font') {
+		await destroyPreviewOverlay();
 		notifyConfigStart();
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
 		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
+		const monitor = await resolveOverlayMonitor('region config overlay');
+		overlayOrigin = monitor?.origin ?? { x: 0, y: 0 };
 		if (overlayWin) {
 			try { await overlayWin.destroy(); } catch (e) { console.error(e); }
 			overlayWin = null;
 		}
 		// Read fresh from Rust (not store — store may lag behind after save)
 		const command = type === 'gem' ? 'get_gem_region' : 'get_font_region';
-		const region = await invoke<{ x: number; y: number; w: number; h: number }>(command).catch(() => null);
+		const region = await invoke<{ x: number; y: number; w: number; h: number }>(command).catch((e) => {
+			console.warn(`[settings] ${command} failed:`, e);
+			return null;
+		});
 		const px = region?.x ?? 30;
 		const py = region?.y ?? 45;
 		const pw = region?.w ?? 550;
@@ -261,7 +371,7 @@
 		});
 		win.once('tauri://created', async () => {
 			// Set physical position + size (same space as outerPosition used by save)
-			await win.setPosition(new PhysicalPosition(px, py))
+			await win.setPosition(new PhysicalPosition(overlayOrigin.x + px, overlayOrigin.y + py))
 				.catch(e => console.warn('[region] setPosition failed:', e));
 			await win.setSize(new PhysicalSize(pw, ph))
 				.catch(e => console.warn('[region] setSize failed:', e));
@@ -278,7 +388,12 @@
 			const w = overlayWin.window ?? overlayWin;
 			const pos = await w.outerPosition();
 			const size = await w.outerSize();
-			await invoke(command, { x: pos.x, y: pos.y, w: size.width, h: size.height });
+			await invoke(command, {
+				x: pos.x - overlayOrigin.x,
+				y: pos.y - overlayOrigin.y,
+				w: size.width,
+				h: size.height,
+			});
 		} catch (e) {
 			console.error('Save region failed:', e);
 			return;
@@ -309,13 +424,140 @@
 		return `(${region.x}, ${region.y}) ${region.w}\u00d7${region.h}`;
 	}
 
-	/** Where the rect beside it came from (POE-233). The row always shows a
+	function findOcrRect(key: string): OcrRectView | undefined {
+		const published = ocrRects.find((row) => row.key === key);
+		const label = published?.label ?? key;
+
+		if (key === 'lab.gem' || key === 'lab.font') {
+			const region = key === 'lab.gem' ? store.status?.gem_region : store.status?.font_region;
+			const source = key === 'lab.gem'
+				? store.status?.gem_region_source
+				: store.status?.font_region_source;
+			if (!region) return published ?? { key, label, rect: null, source: 'unlocated' };
+			return {
+				key,
+				label,
+				rect: [region.x, region.y, region.w, region.h],
+				source: source ?? published?.source ?? 'default',
+			};
+		}
+
+		if (key === 'temple.panel' || key === 'temple.remaining') {
+			const kind = key === 'temple.panel' ? 'panel' : 'remaining';
+			const rect = ssot.temple.layout?.rois?.find((roi) => roi.kind === kind)?.rect ?? null;
+			return { key, label, rect, source: rect ? 'derived' : 'unlocated' };
+		}
+
+		if (key === 'merc.panel') {
+			const rect = ssot.mercenary.capture?.panel ?? null;
+			return { key, label, rect, source: rect ? 'derived' : 'unlocated' };
+		}
+
+		return published;
+	}
+
+	function formatOcrRect(rect: OcrRectView['rect']): string {
+		return rect ? `[${rect.join(', ')}]` : 'unlocated';
+	}
+
+	function ocrPreviewTitle(row: OcrRectView | undefined): string {
+		return row?.rect ? `Preview ${row.label}` : 'Not located yet — open the panel once';
+	}
+
+	/** Where the rect beside it came from (POE-233). The lab row always shows a
 	 *  rect — an unset region is a real, derived rect, not a blank — so this is
 	 *  the only thing that tells the user whether it follows the screen. */
-	function regionSourceLabel(source: 'default' | 'user' | undefined): string {
+	function ocrSourceLabel(source: string | undefined): string {
 		if (source === 'user') return '(set by you)';
 		if (source === 'default') return '(default, scaled from reference)';
+		if (source === 'derived') return '(derived)';
+		if (source === 'unlocated') return '(unlocated)';
 		return '';
+	}
+
+	async function loadOcrRects(): Promise<void> {
+		try {
+			ocrRects = await invoke<OcrRectView[]>('get_ocr_rects');
+			ocrRectsLoaded = true;
+		} catch (e) {
+			console.error('[settings] get_ocr_rects failed:', e);
+		}
+	}
+
+	// Labels come from one fetch when this always-mounted page becomes visible.
+	// Geometry below is read from the owning SSOT/status stores, while the preview
+	// action reads a fresh Rust snapshot before opening.
+	$effect(() => {
+		if (nav.view !== 'settings' || ocrRectsLoaded) return;
+		void loadOcrRects();
+	});
+
+	async function previewOcrRegion(key: string): Promise<void> {
+		await destroyPreviewOverlay();
+		if (overlayVisible) return;
+
+		try {
+			const rows = await invoke<OcrRectView[]>('get_ocr_rects');
+			ocrRects = rows;
+			const row = rows.find((item) => item.key === key);
+			if (!row?.rect) {
+				console.warn(`[settings] OCR preview '${key}' is unlocated`);
+				return;
+			}
+			const monitor = await resolveOverlayMonitor('OCR preview');
+			if (!monitor) return;
+
+			const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+			const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
+
+			const [x, y, width, height] = row.rect;
+			const win = new WebviewWindow('overlay-preview', {
+				url: `/overlay?preview=${encodeURIComponent(key)}&label=${encodeURIComponent(row.label)}&rect=${row.rect.join(',')}`,
+				transparent: true,
+				decorations: false,
+				alwaysOnTop: true,
+				resizable: false,
+				shadow: false,
+				skipTaskbar: true,
+				focus: false,
+				width: Math.max(1, Math.round(width / monitor.scaleFactor)),
+				height: Math.max(1, Math.round(height / monitor.scaleFactor)),
+			});
+			previewWin = win;
+			win.once('tauri://created', async () => {
+				if (previewWin !== win) return;
+				try {
+					const position = new PhysicalPosition(monitor.origin.x + x, monitor.origin.y + y);
+					const exactSize = new PhysicalSize(width, height);
+					await win.setPosition(position);
+					await win.setSize(exactSize);
+					const size = await win.outerSize();
+					await win.setSize(new PhysicalSize(size.width + 1, size.height + 1));
+					await win.setSize(new PhysicalSize(size.width, size.height));
+					if (previewWin !== win) return;
+					await win.setPosition(position);
+					await win.setSize(exactSize);
+					try {
+						await invoke('set_overlay_clickthrough', { label: win.label });
+					} catch (e) {
+						reportClickthroughFailure(win.label, e);
+						await destroyPreviewOverlay();
+						return;
+					}
+					if (previewWin !== win) return;
+					previewTimer = setTimeout(() => { void destroyPreviewOverlay(); }, 10_000);
+				} catch (e) {
+					console.error('[settings] positioning OCR preview failed:', e);
+					await destroyPreviewOverlay();
+				}
+			});
+			win.once('tauri://error', (e: any) => {
+				console.error('[settings] OCR preview creation failed:', e);
+				void destroyPreviewOverlay();
+			});
+		} catch (e) {
+			console.error('[settings] OCR preview failed:', e);
+		}
 	}
 
 	// --- Comparator Overlay Position (red frame for positioning) ---
@@ -1029,15 +1271,20 @@
 			{/if}
 
 			<div class="setting-row">
-				<span class="setting-label">Gem Tooltip Region</span>
+					<span class="setting-label">{findOcrRect(LAB_GEM_PREVIEW_KEY)?.label ?? 'Gem Tooltip Region'}</span>
 				{#if overlayVisible === 'gem'}
 					<span class="setting-value">Positioning overlay...</span>
 					<Button variant="save" onclick={saveRegion}>Save</Button>
 					<Button onclick={cancelRegion}>Cancel</Button>
 				{:else}
 					<span class="setting-value mono">{formatRegion(store.status?.gem_region)}</span>
-					<span class="region-source">{regionSourceLabel(store.status?.gem_region_source)}</span>
+						<span class="region-source">{ocrSourceLabel(findOcrRect(LAB_GEM_PREVIEW_KEY)?.source)}</span>
 					<Button onclick={() => showRegionOverlay('gem')} disabled={!!overlayVisible}>Configure</Button>
+					<Button
+							onclick={() => previewOcrRegion(LAB_GEM_PREVIEW_KEY)}
+							disabled={!!overlayVisible || !findOcrRect(LAB_GEM_PREVIEW_KEY)?.rect}
+							title={ocrPreviewTitle(findOcrRect(LAB_GEM_PREVIEW_KEY))}
+					>Preview</Button>
 					{#if store.status?.gem_region_source === 'user'}
 						<Button onclick={() => invoke('reset_gem_region').catch(e => console.error(e))} title="Follow the measured screen again">Reset to default</Button>
 					{/if}
@@ -1045,20 +1292,57 @@
 			</div>
 
 			<div class="setting-row">
-				<span class="setting-label">Font Panel Region</span>
+					<span class="setting-label">{findOcrRect(LAB_FONT_PREVIEW_KEY)?.label ?? 'Font Panel Region'}</span>
 				{#if overlayVisible === 'font'}
 					<span class="setting-value">Positioning overlay...</span>
 					<Button variant="save" onclick={saveRegion}>Save</Button>
 					<Button onclick={cancelRegion}>Cancel</Button>
 				{:else}
 					<span class="setting-value mono">{formatRegion(store.status?.font_region)}</span>
-					<span class="region-source">{regionSourceLabel(store.status?.font_region_source)}</span>
+						<span class="region-source">{ocrSourceLabel(findOcrRect(LAB_FONT_PREVIEW_KEY)?.source)}</span>
 					<Button onclick={() => showRegionOverlay('font')} disabled={!!overlayVisible}>Configure</Button>
+					<Button
+							onclick={() => previewOcrRegion(LAB_FONT_PREVIEW_KEY)}
+							disabled={!!overlayVisible || !findOcrRect(LAB_FONT_PREVIEW_KEY)?.rect}
+							title={ocrPreviewTitle(findOcrRect(LAB_FONT_PREVIEW_KEY))}
+					>Preview</Button>
 					{#if store.status?.font_region_source === 'user'}
 						<Button onclick={() => invoke('reset_font_region').catch(e => console.error(e))} title="Follow the measured screen again">Reset to default</Button>
 					{/if}
 				{/if}
 			</div>
+
+			{#if hasFeature(TEMPLE_FEATURE)}
+				{#each TEMPLE_PREVIEW_KEYS as key}
+					{@const row = findOcrRect(key)}
+					<div class="setting-row">
+						<span class="setting-label">{row?.label ?? key}</span>
+						<span class="setting-value mono">{formatOcrRect(row?.rect ?? null)}</span>
+						<span class="region-source">{ocrSourceLabel(row?.source)}</span>
+						<Button
+							onclick={() => previewOcrRegion(key)}
+							disabled={!!overlayVisible || !row?.rect}
+							title={ocrPreviewTitle(row)}
+						>Preview</Button>
+					</div>
+				{/each}
+			{/if}
+
+			{#if hasFeature(MERC_FEATURE)}
+				{#each MERC_PREVIEW_KEYS as key}
+					{@const row = findOcrRect(key)}
+					<div class="setting-row">
+						<span class="setting-label">{row?.label ?? key}</span>
+						<span class="setting-value mono">{formatOcrRect(row?.rect ?? null)}</span>
+						<span class="region-source">{ocrSourceLabel(row?.source)}</span>
+						<Button
+							onclick={() => previewOcrRegion(key)}
+							disabled={!!overlayVisible || !row?.rect}
+							title={ocrPreviewTitle(row)}
+						>Preview</Button>
+					</div>
+				{/each}
+			{/if}
 		</section>
 
 		<!-- Screen geometry -->

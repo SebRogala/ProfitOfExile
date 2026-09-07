@@ -18,7 +18,8 @@ Amended 2026-09-07 by [ADR-023](023-a-window-excluded-from-the-grab-may-cover-wh
 — see [the amendment at the end](#amendment-a-window-excluded-from-the-grab-is-outside-this-rule-2026-09-07):
 a window named in `capture.rs`'s `EXCLUDED_WHILE_GRABBING` is removed from
 every grab while it is taken, so this rule's premise does not hold for it.
-Today that is the merc verdict strip; every other surface stays bound.
+At that amendment the list was only the merc verdict strip; a later addition
+must amend this ADR.
 
 Scope: every overlay surface a module draws over a screen the same module OCRs
 or samples. Today that is the temple; the merc verdict strip and the lab
@@ -236,6 +237,12 @@ POE-249 also retired the first member of that list: `calloutPlacement` and
 never-cover set, the same empty-set refusal and the same `null`-means-not-drawn
 answer — per BOX, so one that cannot be placed clear is dropped while its
 neighbour is still drawn.
+
+## Amendment: the read-only OCR preview is outside this rule (2026-09-07)
+
+POE-267. `overlay-preview` joins `EXCLUDED_WHILE_GRABBING`, so it is removed
+from each grab while it is shown and may cover the lab, temple, or merc region
+it previews.
 
 ## Amendment: a window excluded from the grab is outside this rule (2026-09-07)
 

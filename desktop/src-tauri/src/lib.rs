@@ -30,6 +30,14 @@ pub struct CaptureRegion {
     pub h: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OcrRectView {
+    pub key: String,
+    pub label: String,
+    pub rect: Option<[i32; 4]>,
+    pub source: String,
+}
+
 /// The gem name tooltip rect in REFERENCE px — the 1920x1200 unit
 /// [`ssot::ScreenSlice::ui_scale`] measures, where 1080p is 0.90 (the game's UI
 /// scales with screen HEIGHT).
@@ -177,6 +185,87 @@ fn measured_ui_scale(state: &AppState) -> Option<f32> {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .map(|slice| slice.ui_scale)
+}
+
+fn ocr_rect_view(
+    key: &'static str,
+    label: &'static str,
+    rect: Option<[i32; 4]>,
+    source: impl Into<String>,
+) -> OcrRectView {
+    OcrRectView {
+        key: key.to_string(),
+        label: label.to_string(),
+        rect,
+        source: source.into(),
+    }
+}
+
+fn capture_rect(region: CaptureRegion) -> [i32; 4] {
+    [region.x, region.y, region.w as i32, region.h as i32]
+}
+
+fn temple_rects_from_rois(
+    rois: &[crate::temple::slice::RoiView],
+) -> (Option<[i32; 4]>, Option<[i32; 4]>) {
+    (
+        rois
+            .iter()
+            .find(|roi| roi.kind == crate::temple::slice::PANEL_REGION)
+            .map(|roi| roi.rect),
+        rois
+            .iter()
+            .find(|roi| roi.kind == crate::temple::slice::REMAINING_REGION)
+            .map(|roi| roi.rect),
+    )
+}
+
+/// Assemble the five display-only OCR preview rows from the owners' current
+/// geometry. Lab regions are resolved exactly like the scan loops; temple
+/// regions use the published layout ROIs; merc uses its last settled panel.
+fn assemble_ocr_rects(
+    gem_user: Option<CaptureRegion>,
+    font_user: Option<CaptureRegion>,
+    ui_scale: Option<f32>,
+    temple_rects: Option<(Option<[i32; 4]>, Option<[i32; 4]>)>,
+    merc_panel: Option<[i32; 4]>,
+) -> Vec<OcrRectView> {
+    let gem_source = region_source(&gem_user);
+    let font_source = region_source(&font_user);
+    let (temple_panel, temple_remaining) = temple_rects.unwrap_or((None, None));
+
+    vec![
+        ocr_rect_view(
+            "lab.gem",
+            "Gem tooltip",
+            Some(capture_rect(effective_region(gem_user, GEM_REGION_REF, ui_scale))),
+            gem_source,
+        ),
+        ocr_rect_view(
+            "lab.font",
+            "Font panel",
+            Some(capture_rect(effective_region(font_user, FONT_PANEL_REF, ui_scale))),
+            font_source,
+        ),
+        ocr_rect_view(
+            "temple.panel",
+            "Temple panel",
+            temple_panel,
+            if temple_panel.is_some() { "derived" } else { "unlocated" },
+        ),
+        ocr_rect_view(
+            "temple.remaining",
+            "Temple remaining",
+            temple_remaining,
+            if temple_remaining.is_some() { "derived" } else { "unlocated" },
+        ),
+        ocr_rect_view(
+            "merc.panel",
+            "Merc window",
+            merc_panel,
+            if merc_panel.is_some() { "derived" } else { "unlocated" },
+        ),
+    ]
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1060,6 +1149,33 @@ fn get_lab_catchup(app: AppHandle) -> serde_json::Value {
 fn get_gem_region(state: tauri::State<AppState>) -> CaptureRegion {
     let user = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
     effective_region(user, GEM_REGION_REF, measured_ui_scale(&state))
+}
+
+/// Return the current OCR regions in capture pixels for the read-only preview.
+/// This assembles owners' published geometry only; it never captures or OCRs.
+#[tauri::command]
+fn get_ocr_rects(state: tauri::State<AppState>) -> Vec<OcrRectView> {
+    let snapshot = ssot::build_snapshot(&state);
+    let gem_user = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let font_user = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let temple_rects = snapshot
+        .temple
+        .layout
+        .as_ref()
+        .map(|layout| temple_rects_from_rois(&layout.rois));
+    let merc_panel = snapshot
+        .mercenary
+        .capture
+        .as_ref()
+        .and_then(|capture| capture.panel);
+
+    assemble_ocr_rects(
+        gem_user,
+        font_user,
+        snapshot.screen.map(|screen| screen.ui_scale),
+        temple_rects,
+        merc_panel,
+    )
 }
 
 #[tauri::command]
@@ -4009,6 +4125,7 @@ pub fn run() {
             set_auto_trade,
             get_logs,
             get_gem_region,
+            get_ocr_rects,
             set_gem_region,
             reset_gem_region,
             get_font_region,
@@ -4322,9 +4439,9 @@ pub fn run() {
 mod tests {
     use super::{
         body_excerpt, clamp_overlay_height, clickthrough_outcome, crop_shortfall,
-        dictionary_reject_reason, effective_region, is_resizable_overlay_label,
+        assemble_ocr_rects, capture_rect, dictionary_reject_reason, effective_region, is_resizable_overlay_label,
         min_overlay_height, ocr_warning_field, overlay_focus_action, region_override,
-        region_source, retry_after_delay, write_debug_mode, write_server_url, CaptureRegion,
+        region_source, retry_after_delay, temple_rects_from_rois, write_debug_mode, write_server_url, CaptureRegion,
         ClickthroughSetup,
         CLICKTHROUGH_WINDOW_GONE, FONT_PANEL_REF, GEM_REGION_REF, SHIPPED_FONT_PANEL_1080P,
         SHIPPED_GEM_REGION_1080P,
@@ -4901,5 +5018,110 @@ mod tests {
     #[test]
     fn an_unplaced_region_reports_the_default_source() {
         assert_eq!(region_source(&None), "default");
+    }
+
+    // --- read-only OCR region preview assembly (POE-267) -------------------
+
+    #[test]
+    fn temple_preview_rects_use_published_rois_at_known_origin_and_scale() {
+        let rois = crate::temple::run::read_rois((960, 713), 1.0);
+        let temple_rects = Some(temple_rects_from_rois(&rois));
+        let rects = assemble_ocr_rects(None, None, Some(1.0), temple_rects, None);
+
+        let panel = rects
+            .iter()
+            .find(|rect| rect.key == "temple.panel")
+            .expect("temple panel preview row must exist");
+        let remaining = rects
+            .iter()
+            .find(|rect| rect.key == "temple.remaining")
+            .expect("temple remaining preview row must exist");
+
+        assert_eq!(panel.rect, Some([1131, 4, 544, 454]));
+        assert_eq!(remaining.rect, Some([810, 771, 300, 46]));
+        assert_eq!(panel.source, "derived");
+        assert_eq!(remaining.source, "derived");
+    }
+
+    #[test]
+    fn lab_preview_rects_use_user_regions_and_report_user_sources() {
+        let gem = CaptureRegion { x: 7, y: 11, w: 613, h: 84 };
+        let font = CaptureRegion { x: 17, y: 23, w: 590, h: 390 };
+        let rects = assemble_ocr_rects(
+            Some(gem.clone()),
+            Some(font.clone()),
+            Some(0.9),
+            None,
+            None,
+        );
+
+        let gem_view = rects.iter().find(|rect| rect.key == "lab.gem").unwrap();
+        let font_view = rects.iter().find(|rect| rect.key == "lab.font").unwrap();
+        assert_eq!(gem_view.rect, Some([7, 11, 613, 84]));
+        assert_eq!(font_view.rect, Some([17, 23, 590, 390]));
+        assert_eq!(gem_view.source, "user");
+        assert_eq!(font_view.source, "user");
+    }
+
+    #[test]
+    fn lab_preview_rects_use_derived_regions_and_report_default_sources() {
+        let rects = assemble_ocr_rects(None, None, Some(0.9), None, None);
+        let gem_view = rects.iter().find(|rect| rect.key == "lab.gem").unwrap();
+        let font_view = rects.iter().find(|rect| rect.key == "lab.font").unwrap();
+        assert_eq!(gem_view.rect, Some([30, 45, 550, 75]));
+        assert_eq!(font_view.rect, Some([460, 270, 530, 350]));
+        assert_eq!(gem_view.source, "default");
+        assert_eq!(font_view.source, "default");
+    }
+
+    #[test]
+    fn merc_preview_rect_uses_the_published_panel() {
+        let panel = [120, 220, 620, 520];
+        let rects = assemble_ocr_rects(None, None, Some(1.0), None, Some(panel));
+        let view = rects.iter().find(|rect| rect.key == "merc.panel").unwrap();
+        assert_eq!(view.rect, Some(panel));
+        assert_eq!(view.source, "derived");
+    }
+
+    #[test]
+    fn merc_preview_rect_is_unlocated_without_a_published_panel() {
+        let rects = assemble_ocr_rects(None, None, Some(1.0), None, None);
+        let view = rects.iter().find(|rect| rect.key == "merc.panel").unwrap();
+        assert_eq!(view.rect, None);
+        assert_eq!(view.source, "unlocated");
+    }
+
+    #[test]
+    fn temple_rects_from_rois_preserves_each_published_region() {
+        let rois = vec![
+            crate::temple::slice::RoiView {
+                kind: crate::temple::slice::PANEL_REGION.to_string(),
+                of: None,
+                rect: [1, 2, 3, 4],
+            },
+            crate::temple::slice::RoiView {
+                kind: crate::temple::slice::REMAINING_REGION.to_string(),
+                of: None,
+                rect: [11, 12, 13, 14],
+            },
+        ];
+        assert_eq!(
+            temple_rects_from_rois(&rois),
+            (Some([1, 2, 3, 4]), Some([11, 12, 13, 14]))
+        );
+    }
+
+    #[test]
+    fn temple_preview_rects_are_unlocated_without_a_published_layout() {
+        let rects = assemble_ocr_rects(None, None, Some(1.0), None, None);
+
+        for key in ["temple.panel", "temple.remaining"] {
+            let view = rects
+                .iter()
+                .find(|rect| rect.key == key)
+                .expect("temple preview row must exist");
+            assert_eq!(view.rect, None);
+            assert_eq!(view.source, "unlocated");
+        }
     }
 }

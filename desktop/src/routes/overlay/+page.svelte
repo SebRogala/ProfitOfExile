@@ -5,7 +5,19 @@
 	import { onMount } from 'svelte';
 
 	// If ?sync=<label>, move that window to match this one in real-time
-	const syncTarget = new URLSearchParams(window.location.search).get('sync');
+	const query = new URLSearchParams(window.location.search);
+	const syncTarget = query.get('sync');
+	const previewKey = query.get('preview');
+	const previewLabel = query.get('label') || previewKey || 'OCR region';
+
+	function parsePreviewRect(raw: string | null): [number, number, number, number] | null {
+		const values = raw?.split(',').map(Number);
+		if (!values || values.length !== 4 || values.some((value) => !Number.isFinite(value))) return null;
+		return values as [number, number, number, number];
+	}
+
+	const previewRect = parsePreviewRect(query.get('rect'));
+	const previewNumbers = previewRect ? `[${previewRect.join(', ')}]` : 'unlocated';
 
 	const BASE_EDGE = 10;
 
@@ -69,7 +81,9 @@
 	let syncInterval: ReturnType<typeof setInterval> | undefined;
 
 	onMount(() => {
+		if (previewKey) return;
 		const win = getCurrentWebviewWindow();
+
 		(async () => {
 			try {
 				const size = await win.outerSize();
@@ -101,16 +115,30 @@
 	});
 </script>
 
-<div class="overlay" role="presentation" onmousedown={handleMouseDown} onmousemove={handleMouseMove}>
-	<div class="border-top"></div>
-	<div class="border-bottom"></div>
-	<div class="border-left"></div>
-	<div class="border-right"></div>
-	<div class="label">
-		<button class="ctrl-btn save" onpointerup={handleSave}>Save</button>
-		<button class="ctrl-btn cancel" onpointerup={handleCancel}>Cancel</button>
+
+{#if previewKey}
+	<div class="preview" role="img" aria-label={`${previewLabel} OCR region preview`}>
+		<div class="border-top"></div>
+		<div class="border-bottom"></div>
+		<div class="border-left"></div>
+		<div class="border-right"></div>
+		<div class="preview-label">
+			<span>{previewLabel}</span>
+			<span>{previewNumbers}</span>
+		</div>
 	</div>
-</div>
+{:else}
+	<div class="overlay" role="presentation" onmousedown={handleMouseDown} onmousemove={handleMouseMove}>
+		<div class="border-top"></div>
+		<div class="border-bottom"></div>
+		<div class="border-left"></div>
+		<div class="border-right"></div>
+		<div class="label">
+			<button class="ctrl-btn save" onpointerup={handleSave}>Save</button>
+			<button class="ctrl-btn cancel" onpointerup={handleCancel}>Cancel</button>
+		</div>
+	</div>
+{/if}
 
 <style>
 	:global(html), :global(body) {
@@ -127,6 +155,16 @@
 		cursor: move;
 		position: relative;
 		box-sizing: border-box;
+	}
+
+	.preview {
+		width: 100vw;
+		height: 100vh;
+		background: transparent;
+		position: relative;
+		box-sizing: border-box;
+		pointer-events: none;
+		user-select: none;
 	}
 
 	.border-top, .border-bottom, .border-left, .border-right {
@@ -148,6 +186,25 @@
 		gap: 6px;
 		align-items: center;
 		font-family: -apple-system, sans-serif;
+		white-space: nowrap;
+		z-index: 10;
+	}
+
+	.preview-label {
+		position: absolute;
+		top: 8px;
+		left: 50%;
+		transform: translateX(-50%);
+		display: flex;
+		gap: 8px;
+		align-items: center;
+		padding: 4px 8px;
+		border-radius: 3px;
+		background: rgba(17, 17, 17, 0.82);
+		color: #fff;
+		font-family: -apple-system, sans-serif;
+		font-size: 11px;
+		font-weight: 600;
 		white-space: nowrap;
 		z-index: 10;
 	}

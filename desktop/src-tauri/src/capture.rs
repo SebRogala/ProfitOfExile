@@ -108,22 +108,24 @@ mod platform {
     ///
     /// The merc strip draws over the recruit panel and the reader grabs the
     /// whole monitor, so whatever the strip paints is otherwise in the frame
-    /// the icons are matched on. Windows' exclude-from-capture affinity removes
-    /// a window from captures without changing what is on screen — measured
-    /// 2026-09-07 through Tauri's `contentProtected`, which sets the same flag:
-    /// the strip vanished from the reader's dump AND from the player's own
-    /// screenshots. The second half is the cost, so the flag is not held
-    /// permanently: [`ExcludedFromCapture`] sets it just before a grab and
-    /// clears it right after, on every grab in the app. Between grabs — at
-    /// the reader's 2 s live / 10 s paused cadence, nearly always — a
-    /// screenshot tool sees the strip.
+    /// the icons are matched on. The preview can sit over any module's OCR
+    /// region for the same reason. Windows' exclude-from-capture affinity
+    /// removes a window from captures without changing what is on screen —
+    /// measured 2026-09-07 through Tauri's `contentProtected`, which sets the
+    /// same flag: the strip vanished from the reader's dump AND from the
+    /// player's own screenshots. The second half is the cost, so the flag is
+    /// not held permanently: [`ExcludedFromCapture`] sets it just before a
+    /// grab and clears it right after, on every grab in the app. Between grabs
+    /// — at the reader's 2 s live / 10 s paused cadence, nearly always — a
+    /// screenshot tool sees the listed window.
     ///
     /// Labels, not handles: a window that is not built right now is simply
     /// skipped, and one rebuilt later is picked up by the next grab.
-    const EXCLUDED_WHILE_GRABBING: &[&str] = &["mercenary"];
+    const EXCLUDED_WHILE_GRABBING: &[&str] = &["mercenary", "overlay-preview"];
 
     /// The affinity held for one grab. `Drop` clears it, so an error between
-    /// `hold` and the end of the grab cannot leave the strip out of screenshots.
+    /// `hold` and the end of the grab cannot leave a listed window out of
+    /// screenshots.
     struct ExcludedFromCapture {
         hwnds: Vec<HWND>,
     }
@@ -134,7 +136,7 @@ mod platform {
 
     /// The one line that says the mechanism is active in this session — the
     /// first successful hold. A troubled session with no `capture:` line at
-    /// all never had a strip to exclude (module off, window not built).
+    /// all never had a listed window to exclude (module off, preview not built).
     static AFFINITY_ARMED_REPORTED: AtomicBool = AtomicBool::new(false);
 
     impl ExcludedFromCapture {
@@ -175,7 +177,7 @@ mod platform {
     impl Drop for ExcludedFromCapture {
         fn drop(&mut self) {
             for hwnd in &self.hwnds {
-                // A clear that fails leaves the strip out of screenshots until
+                // A clear that fails leaves the window out of screenshots until
                 // the next grab's clear; there is no `app` here to log with,
                 // and the set half of the same call already reports.
                 let _ = unsafe { SetWindowDisplayAffinity(*hwnd, WDA_NONE) };
@@ -188,7 +190,7 @@ mod platform {
         if AFFINITY_FAILURE_REPORTED.swap(true, Ordering::Relaxed) {
             return;
         }
-        crate::app_log(app, format!("capture: {msg} — the merc strip is IN every grab"));
+        crate::app_log(app, format!("capture: {msg} — the listed overlay is IN every grab"));
     }
 
     /// Capture the display the game is on — or the primary one until something
