@@ -1,11 +1,13 @@
 //! Recruit-window panel geometry (POE-165 D2) — pure over OCR line rects.
 //!
-//! There is no fixed capture region: the recruit window can sit anywhere, at
-//! any UI scale. [`detect`] takes the OCR lines of a whole screen and answers
+//! ADR-024 / POE-270 makes the screen-slice placed recruit rect the normal input:
+//! the shipped placement is the seed, and the first read verifies it. Until
+//! POE-270 lands, [`detect`] still takes OCR lines of a whole screen and answers
 //! "is a recruit window on screen, and where are its rows and support cells?"
 //! using nothing but the lines' text and rects, so every rule in it is unit
 //! testable on this Linux host — the Windows half (screen grab, OCR call,
-//! tick loop) contributes no logic.
+//! tick loop) contributes no logic. After POE-270, the whole-screen path becomes
+//! the one fallback locate ADR-024 allows; today it is the primary detect.
 //!
 //! The contract is that [`detect_reason`] is PURE — not that the module is.
 //! [`occupied`] and [`stddev`] both touch pixels, and the frame-anchored fit

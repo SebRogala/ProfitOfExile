@@ -18,6 +18,9 @@ Amended 2026-09-04 (POE-233) — see
 the slice's second consumer is named, and it is the one place a `null` slice
 does not fail closed.
 
+Amended 2026-09-07 (POE-266) — see
+[the position amendment at the end](#amendment-module-rects-are-offsets-from-a-client-rect-placed-anchor-2026-09-07).
+
 Extends the module contract in
 [ADR-014](014-desktop-features-are-modules-with-a-work-toggle-and-a-view-page.md):
 that ADR made shared state flow only through SSOT slices; this one says what a
@@ -178,6 +181,9 @@ board. The edge-keyed crops cut the panel in half: the title read
 `NG WORKSHOP`, the lower-left architect block fell outside the crop, and the
 diamond read 5 of 6 seals and fell back to the beam read.
 
+For ADR-024, §6's "the anchor it just measured" is the retired half: the anchor
+is now placed, and measuring it is the fallback.
+
 An edge-keyed rect is a second, worse answer to the same question the anchor
 already answered. The measurement instrument for it is one `app.log` line per
 distinct geometry (`Temple: rois panel […] diamond […] remaining […]`), said
@@ -254,3 +260,18 @@ that settles them is a gem-tooltip and a font-panel read on each machine at its
 own resolution; until it runs, this consumer's placement is arithmetic and not a
 measurement. See `desktop/src/lib/README.md`'s Screen Geometry (SSOT)
 "Placement" paragraph, which is normative for the mechanics.
+
+## Amendment: module rects are offsets from a client-rect-placed anchor (2026-09-07)
+
+POE-265/POE-266. §6 survives with one clarification: rects are offsets from the
+module anchor; the anchor itself is placed from the game's client rect under
+[ADR-024](024-module-ocr-positions-are-placed-from-the-screen-slice-not-located.md).
+The client rect, keyed with the monitor id, is the geometry key for windowed
+support — POE-234 §1 called it the first step — rather than the screen edge
+(POE-234 §1; POE-266).
+
+The current `ScreenSlice` still carries capture dimensions, monitor id and
+origin but no client rect (`desktop/src-tauri/src/ssot.rs:176-229`), so the
+capture plumbing and the placement implementation remain pending in POE-267…POE-272.
+The hypothesis `ui_scale = client_height / 1200` is pending measurement in
+POE-267; it is not an accepted invariant (owner, 2026-09-07).

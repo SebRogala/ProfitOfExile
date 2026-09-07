@@ -11,15 +11,18 @@
 //! crop carries that mis-registration back (POE-208's `SEED_ART_OFFSET_FRAC`
 //! IS the offset, measured and pushed into the seed renderer).
 //!
-//! So this module stops deriving the grid and MEASURES it: the frame is a
-//! 1-px dark line with a 2-px light line inside it and flat panel outside, and
-//! that signature is sharp enough to locate on a global `(X0, pitch)` grid.
-//! [`refine`] rewrites the layout onto the frame it found and reports what it
-//! moved; a frame it cannot find leaves the layout exactly as the OCR built it.
-//! A caller that has fitted BEFORE does better than that last part: it holds
-//! the registration it settled on ([`FittedScale`]) and writes it back with
-//! [`apply_held`], so one dark tick does not put the whole capture back on the
-//! drift this module exists to remove.
+//! Under ADR-024 / POE-270, the placed screen-slice rect becomes [`refine`]'s
+//! normal input; this module's frame measurement and `geometry`'s Wager/Recruit
+//! text anchors are the verification. The one fallback locate ADR-024 allows is
+//! `geometry`'s whole-screen detect, not this search. Until POE-270 lands, this
+//! module still measures the frame on a global `(X0, pitch)` grid: the frame is
+//! a 1-px dark line with a 2-px light line inside it and flat panel outside, and
+//! that signature is sharp enough to locate. [`refine`] rewrites the layout onto
+//! the frame it found and reports what it moved; a frame it cannot find leaves
+//! the layout exactly as the OCR built it. A caller that has fitted BEFORE does
+//! better than that last part: it holds the registration it settled on
+//! ([`FittedScale`]) and writes it back with [`apply_held`], so one dark tick does
+//! not put the whole capture back on the drift this module exists to remove.
 //!
 //! # Why here and not in `geometry`
 //!
