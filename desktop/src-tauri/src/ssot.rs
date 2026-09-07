@@ -39,7 +39,7 @@
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
@@ -227,6 +227,176 @@ pub struct ScreenSlice {
     /// produced the measurement (`crate::capture::Capture::origin`), and asking
     /// again later is the POE-237 bug in miniature.
     pub origin: (i32, i32),
+    /// The capture rectangle in capture-relative physical px: x, y, w, h.
+    /// POE-268's capture path is fullscreen, so this is the whole capture,
+    /// `[0, 0, width, height]`; POE-272 will make it a live client rectangle.
+    pub client: [i32; 4],
+    /// Capture-relative origins learned by a module's later calibration pass.
+    /// `None` means the corresponding placement still uses its seed.
+    pub anchors: Option<Anchors>,
+}
+
+/// Capture-relative placement anchors learned after the screen seed was
+/// published. The temple value is the Entrance origin; the merc value is the
+/// panel's top-left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Anchors {
+    pub temple_entrance: Option<[i32; 2]>,
+    pub merc_panel: Option<[i32; 2]>,
+}
+
+/// The only module origins that the shared placement state can remember.
+/// Taking this enum at the public seam keeps an unknown string from becoming a
+/// silent no-op or a misspelled persisted anchor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnchorModule {
+    TempleEntrance,
+    MercPanel,
+}
+
+/// Derived capture-relative geometry consumed by OCR and preview surfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplePlacements {
+    pub entrance_origin: (i32, i32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MercPlacements {
+    pub panel: [i32; 4],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabPlacements {
+    pub gem: [i32; 4],
+    pub font: [i32; 4],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Placements {
+    pub temple: Option<TemplePlacements>,
+    pub merc: Option<MercPlacements>,
+    pub lab: LabPlacements,
+}
+
+/// **PROVISIONAL** temple seed from one measurement: a 1920x1080 laptop at UI
+/// scale 0.90 reported the Entrance origin at `(960, 713)`; the y seed is that
+/// point converted back to reference px, and its y edge was not measured.
+pub const TEMPLE_ENTRANCE_Y_REF: f32 = 792.2;
+
+/// **PROVISIONAL** merc seed from one measurement: the documented 1920x1200
+/// laptop panel geometry in `mercenary/geometry.rs` (the panel literal around
+/// lines 1112-1117). Its edge is unmeasured; no second point confirms it.
+pub const MERC_PANEL_REF: [i32; 4] = [698, 615, 555, 477];
+
+impl Default for Placements {
+    fn default() -> Self {
+        placements_for(None)
+    }
+}
+
+fn valid_scale(screen: Option<&ScreenSlice>) -> f32 {
+    screen
+        .map(|screen| screen.ui_scale)
+        .filter(|scale| scale.is_finite() && *scale > 0.0)
+        .unwrap_or(crate::ASSUMED_UI_SCALE)
+}
+
+fn scale_value(value: i32, scale: f32) -> i32 {
+    (value as f32 * scale).round() as i32
+}
+
+fn scale_region(reference: [i32; 4], scale: f32, client: [i32; 4]) -> [i32; 4] {
+    [
+        client[0] + scale_value(reference[0], scale),
+        client[1] + scale_value(reference[1], scale),
+        scale_value(reference[2], scale).max(0),
+        scale_value(reference[3], scale).max(0),
+    ]
+}
+
+/// Derive all capture-relative placements from the current screen slice.
+/// Seeds are scaled reference geometry; a remembered anchor replaces only the
+/// origin it owns and leaves the documented seed size intact.
+pub fn placements(screen: &ScreenSlice) -> Placements {
+    placements_for(Some(screen))
+}
+
+/// Derive placements when the screen has not been measured yet. Lab retains its
+/// existing 1080p assumption; temple and merc remain unlocated until a capture
+/// establishes a client rectangle.
+pub fn placements_for(screen: Option<&ScreenSlice>) -> Placements {
+    let Some(screen) = screen else {
+        return Placements {
+            temple: None,
+            merc: None,
+            lab: LabPlacements {
+                gem: [
+                    crate::SHIPPED_GEM_REGION_1080P.x,
+                    crate::SHIPPED_GEM_REGION_1080P.y,
+                    crate::SHIPPED_GEM_REGION_1080P.w as i32,
+                    crate::SHIPPED_GEM_REGION_1080P.h as i32,
+                ],
+                font: [
+                    crate::SHIPPED_FONT_PANEL_1080P.x,
+                    crate::SHIPPED_FONT_PANEL_1080P.y,
+                    crate::SHIPPED_FONT_PANEL_1080P.w as i32,
+                    crate::SHIPPED_FONT_PANEL_1080P.h as i32,
+                ],
+            },
+        };
+    };
+
+    let scale = valid_scale(Some(screen));
+    let client = screen.client;
+    let lab = LabPlacements {
+        gem: scale_region(
+            [
+                crate::GEM_REGION_REF.x,
+                crate::GEM_REGION_REF.y,
+                crate::GEM_REGION_REF.w as i32,
+                crate::GEM_REGION_REF.h as i32,
+            ],
+            scale,
+            client,
+        ),
+        font: scale_region(
+            [
+                crate::FONT_PANEL_REF.x,
+                crate::FONT_PANEL_REF.y,
+                crate::FONT_PANEL_REF.w as i32,
+                crate::FONT_PANEL_REF.h as i32,
+            ],
+            scale,
+            client,
+        ),
+    };
+    let temple_seed = (
+        client[0] + client[2] / 2,
+        client[1] + (TEMPLE_ENTRANCE_Y_REF * scale).round() as i32,
+    );
+    let temple_origin = screen
+        .anchors
+        .and_then(|anchors| anchors.temple_entrance)
+        .map(|[x, y]| (x, y))
+        .unwrap_or(temple_seed);
+    let merc_seed = scale_region(MERC_PANEL_REF, scale, client);
+    let merc_origin = screen
+        .anchors
+        .and_then(|anchors| anchors.merc_panel)
+        .unwrap_or([merc_seed[0], merc_seed[1]]);
+
+    Placements {
+        temple: Some(TemplePlacements { entrance_origin: temple_origin }),
+        merc: Some(MercPlacements {
+            panel: [merc_origin[0], merc_origin[1], merc_seed[2], merc_seed[3]],
+        }),
+        lab,
+    }
 }
 
 /// Full app-wide SSOT snapshot. Cloned for both the poll response and the
@@ -295,6 +465,9 @@ pub struct AppSsotSnapshot {
     /// measurement (the 1920x1200 reference) and assuming it would silently
     /// mis-scale every rect on a 1080p machine by 11%.
     pub screen: Option<ScreenSlice>,
+    /// Capture-relative OCR and module placements derived from `screen`.
+    /// These are projected at snapshot time, never stored as a second owner.
+    pub placements: Placements,
     // future slices (e.g. account, config) added here as later tasks land.
 }
 
@@ -362,6 +535,7 @@ fn compose_snapshot(
     if modules.get(TEMPLE_MODULE_ID) != Some(&true) {
         crate::temple::slice::force_off(&mut temple);
     }
+    let placements = placements_for(screen.as_ref());
     AppSsotSnapshot {
         normal_variant,
         dedication_variant,
@@ -370,6 +544,7 @@ fn compose_snapshot(
         mercenary,
         temple,
         screen,
+        placements,
         ..base
     }
 }
@@ -495,6 +670,9 @@ const UI_SCALE_EPS: f32 = 0.01;
 /// any rect cut from a capture of it — the window that DOES care is rebuilt
 /// from `game-monitor-changed`, not from this.
 ///
+/// The client rectangle and remembered anchors are included: either changes
+/// the capture-relative geometry a consumer reads.
+///
 /// `None` — nothing published yet — is always a change.
 ///
 /// Pure so the gate is unit-testable without an `AppHandle`, the same reason
@@ -508,6 +686,8 @@ fn screen_changed(current: Option<&ScreenSlice>, next: &ScreenSlice) -> bool {
                 || (current.ui_scale - next.ui_scale).abs() >= UI_SCALE_EPS
                 || current.source != next.source
                 || current.monitor_id != next.monitor_id
+                || current.client != next.client
+                || current.anchors != next.anchors
         }
     }
 }
@@ -622,6 +802,7 @@ pub(crate) fn accepts(current: Option<&ScreenSlice>, next: &ScreenSlice) -> bool
             different_monitor(current.monitor_id, next.monitor_id)
                 || current.width != next.width
                 || current.height != next.height
+                || current.client != next.client
                 || (current.ui_scale - next.ui_scale).abs() > OCR_DRIFT_BAND
         }
     }
@@ -662,13 +843,28 @@ pub struct ScreenRecord {
 ///
 /// Split out of [`publish_screen`] with no `AppHandle` precisely so those rules
 /// are pinned by tests rather than by the prose above them.
-pub(crate) fn record_screen(current: &mut Option<ScreenSlice>, next: ScreenSlice) -> ScreenRecord {
+fn same_screen_geometry(current: &ScreenSlice, next: &ScreenSlice) -> bool {
+    current.width == next.width
+        && current.height == next.height
+        && !different_monitor(current.monitor_id, next.monitor_id)
+        && current.client == next.client
+        && (current.ui_scale - next.ui_scale).abs() < UI_SCALE_EPS
+}
+
+pub(crate) fn record_screen(current: &mut Option<ScreenSlice>, mut next: ScreenSlice) -> ScreenRecord {
     if !accepts(current.as_ref(), &next) {
         // A refusal is only ever over a value that is there — an empty slot
         // takes anything — so the scale that survived is the standing one,
         // never `next`'s.
         let standing = current.as_ref().unwrap_or(&next).ui_scale;
         return ScreenRecord { accepted: false, changed: false, standing_ui_scale: standing };
+    }
+    if next.anchors.is_none()
+        && current
+            .as_ref()
+            .is_some_and(|standing| same_screen_geometry(standing, &next))
+    {
+        next.anchors = current.as_ref().and_then(|standing| standing.anchors);
     }
     let changed = screen_changed(current.as_ref(), &next);
     *current = Some(next);
@@ -701,13 +897,6 @@ pub fn publish_screen(app: &AppHandle, next: ScreenSlice) -> ScreenRecord {
     };
     if record.changed {
         emit_ssot(app);
-        // `AppStatus::gem_region` and `font_region` are DERIVED from this scale
-        // (`crate::effective_region`), so a new measurement silently moves the
-        // rects the Settings rows display. `ssot-changed` does not carry them —
-        // they live on `status-changed` — so without this the Settings row keeps
-        // showing the rect measured against the previous screen until some
-        // unrelated command happens to re-emit status.
-        crate::emit_status(app);
     }
     record
 }
@@ -780,6 +969,7 @@ pub fn screen_matches(
     current: &Option<ScreenSlice>,
     capture: (u32, u32),
     monitor_id: u32,
+    client: [i32; 4],
 ) -> bool {
     match current {
         None => true,
@@ -787,19 +977,20 @@ pub fn screen_matches(
             !different_monitor(current.monitor_id, monitor_id)
                 && current.width == capture.0
                 && current.height == capture.1
+                && current.client == client
         }
     }
 }
 
-/// Forget the remembered screen scale when this capture is a different size
+/// Forget the remembered screen scale when this capture has different geometry
 /// (POE-227). Returns whether anything was dropped.
 ///
 /// This is the lazy prune the startup load could not do: `settings::apply_to_state`
 /// loads and trusts a stored `screen_scale` with no `AppHandle` and no idea what
 /// size the screen is, so a value carried over from another monitor stays
 /// readable until someone captures one. Every detect tick that grabs a screen
-/// calls this first, which makes the FIRST capture after a resolution change the
-/// moment the stale value dies. It was the temple's own `settings_for_capture` /
+/// calls this first, which makes the FIRST capture after a resolution or client
+/// geometry change the moment the stale value dies. It was the temple's own `settings_for_capture` /
 /// `forget_calibration` pair before POE-234 WI-2 generalised it here; the temple
 /// now derives its hint from this slice, so this prune IS the temple's prune.
 ///
@@ -811,11 +1002,16 @@ pub fn screen_matches(
 ///
 /// Lock-then-drop-then-emit, like [`publish_screen`]: the `screen` guard is
 /// scoped to the block, so it is dropped before the log, the emit and the write.
-pub fn drop_if_mismatched(app: &AppHandle, capture: (u32, u32), monitor_id: u32) -> bool {
+pub fn drop_if_mismatched(
+    app: &AppHandle,
+    capture: (u32, u32),
+    monitor_id: u32,
+    client: [i32; 4],
+) -> bool {
     let dropped = {
         let state = app.state::<AppState>();
         let mut current = state.screen.lock().unwrap_or_else(|e| e.into_inner());
-        if screen_matches(&current, capture, monitor_id) {
+        if screen_matches(&current, capture, monitor_id, client) {
             None
         } else {
             current.take()
@@ -834,6 +1030,49 @@ pub fn drop_if_mismatched(app: &AppHandle, capture: (u32, u32), monitor_id: u32)
     emit_ssot(app);
     crate::settings::persist_forgetting_screen_scale(app);
     true
+}
+
+fn set_anchor(anchors: &mut Option<Anchors>, module: AnchorModule, origin: [i32; 2]) -> bool {
+    match module {
+        AnchorModule::TempleEntrance => {
+            let anchors = anchors.get_or_insert(Anchors { temple_entrance: None, merc_panel: None });
+            if anchors.temple_entrance == Some(origin) { return false; }
+            anchors.temple_entrance = Some(origin);
+            true
+        }
+        AnchorModule::MercPanel => {
+            let anchors = anchors.get_or_insert(Anchors { temple_entrance: None, merc_panel: None });
+            if anchors.merc_panel == Some(origin) { return false; }
+            anchors.merc_panel = Some(origin);
+            true
+        }
+    }
+}
+
+/// Remember a module's capture-relative placement origin for later ticks.
+/// Callers that own the temple and merc calibration passes will use this seam;
+/// current detect ticks deliberately do not write anchors yet. A screen that
+/// has not been measured is a no-op and returns `false`; the enum makes an
+/// unknown module impossible at this boundary.
+pub fn remember_anchor(app: &AppHandle, module: AnchorModule, origin: [i32; 2]) -> bool {
+    let changed = {
+        let state = app.state::<AppState>();
+        let mut screen = state.screen.lock().unwrap_or_else(|e| e.into_inner());
+        screen.as_mut().is_some_and(|screen| set_anchor(&mut screen.anchors, module, origin))
+    };
+    remember_anchor_effects(changed, || crate::persist_settings(app), || emit_ssot(app))
+}
+
+fn remember_anchor_effects<P, E>(changed: bool, persist: P, emit: E) -> bool
+where
+    P: FnOnce(),
+    E: FnOnce(),
+{
+    if changed {
+        persist();
+        emit();
+    }
+    changed
 }
 
 /// Forget every remembered geometry measurement and force a fresh one
@@ -2345,6 +2584,8 @@ mod tests {
             // with the term deleted.
             monitor_id: REFERENCE_MONITOR,
             origin: (0, 0),
+            client: [0, 0, 1920, 1200],
+            anchors: None,
         }
     }
 
@@ -2405,6 +2646,256 @@ mod tests {
         let screen = out.screen.expect("the composed snapshot carries the measurement");
         assert_eq!(screen.ui_scale, 0.9);
         assert_eq!(screen.source, ScreenScaleSource::MercFrame);
+        assert_eq!(out.placements.lab.gem, [30, 45, 550, 75]);
+        assert_eq!(
+            out.placements.temple.expect("a measured screen has a temple placement").entrance_origin,
+            (960, 713),
+        );
+    }
+
+    #[test]
+    fn unmeasured_placements_keep_the_1080p_lab_assumption_only() {
+        let placements = placements_for(None);
+
+        assert_eq!(placements.temple, None);
+        assert_eq!(placements.merc, None);
+        assert_eq!(placements.lab.gem, [30, 45, 550, 75]);
+        assert_eq!(placements.lab.font, [460, 270, 530, 350]);
+    }
+
+    #[test]
+    fn reference_screen_placements_scale_from_the_client_origin() {
+        let placements = placements(&reference_screen());
+
+        assert_eq!(
+            placements.temple.expect("the reference screen has a temple placement").entrance_origin,
+            (960, 792),
+        );
+        assert_eq!(placements.merc.expect("the reference screen has a merc placement").panel, [698, 615, 555, 477]);
+        assert_eq!(placements.lab.gem, [33, 50, 611, 83]);
+        assert_eq!(placements.lab.font, [511, 300, 589, 389]);
+    }
+
+    #[test]
+    fn zero_ui_scale_keeps_the_shipped_lab_gem_rect() {
+        let screen = ScreenSlice { ui_scale: 0.0, ..reference_screen() };
+
+        assert_eq!(placements(&screen).lab.gem, [30, 45, 550, 75]);
+    }
+
+    #[test]
+    fn nan_ui_scale_keeps_the_shipped_lab_gem_rect() {
+        let screen = ScreenSlice { ui_scale: f32::NAN, ..reference_screen() };
+
+        assert_eq!(placements(&screen).lab.gem, [30, 45, 550, 75]);
+    }
+
+    #[test]
+    fn a_fractional_ui_scale_rounds_the_lab_gem_rect() {
+        let screen = ScreenSlice { ui_scale: 1.2, ..reference_screen() };
+
+        assert_eq!(placements(&screen).lab.gem, [40, 60, 733, 100]);
+    }
+
+    #[test]
+    fn the_measured_1080p_seed_reproduces_the_recorded_laptop_points() {
+        let screen = ScreenSlice {
+            width: 1920,
+            height: 1080,
+            ui_scale: 0.9,
+            client: [0, 0, 1920, 1080],
+            ..reference_screen()
+        };
+        let placements = placements(&screen);
+
+        assert_eq!(
+            placements.temple.expect("the measured screen has a temple placement").entrance_origin,
+            (960, 713),
+        );
+        assert_eq!(placements.merc.expect("the measured screen has a merc placement").panel, [628, 554, 500, 429]);
+        assert_eq!(placements.lab.gem, [30, 45, 550, 75]);
+        assert_eq!(placements.lab.font, [460, 270, 530, 350]);
+    }
+
+    #[test]
+    fn placements_add_the_client_offset_before_scaling_reference_geometry() {
+        let screen = ScreenSlice {
+            width: 1920,
+            height: 1080,
+            ui_scale: 0.9,
+            client: [120, 40, 1600, 900],
+            ..reference_screen()
+        };
+        let placements = placements(&screen);
+
+        assert_eq!(
+            placements.temple.expect("the client has a temple placement").entrance_origin,
+            (920, 753),
+        );
+        assert_eq!(placements.merc.expect("the client has a merc placement").panel, [748, 594, 500, 429]);
+        assert_eq!(placements.lab.gem, [150, 85, 550, 75]);
+    }
+
+    #[test]
+    fn remembered_anchors_replace_only_their_owned_placement_origins() {
+        let screen = ScreenSlice {
+            width: 1920,
+            height: 1080,
+            ui_scale: 0.9,
+            client: [0, 0, 1920, 1080],
+            anchors: Some(Anchors {
+                temple_entrance: Some([111, 222]),
+                merc_panel: Some([120, 220]),
+            }),
+            ..reference_screen()
+        };
+        let placements = placements(&screen);
+
+        assert_eq!(
+            placements.temple.expect("the remembered temple anchor is located").entrance_origin,
+            (111, 222),
+        );
+        assert_eq!(placements.merc.expect("the remembered merc anchor is located").panel, [120, 220, 500, 429]);
+        assert_eq!(placements.lab.gem, [30, 45, 550, 75]);
+    }
+
+    #[test]
+    fn a_repeat_measurement_keeps_remembered_anchors_when_the_writer_has_none() {
+        let anchors = Some(Anchors {
+            temple_entrance: Some([111, 222]),
+            merc_panel: Some([120, 220]),
+        });
+        let current = ScreenSlice { anchors, ..reference_screen() };
+        let mut slot = Some(current);
+        let next = ScreenSlice {
+            measured_at_ms: current.measured_at_ms + 5_000,
+            anchors: None,
+            ..current
+        };
+
+        let record = record_screen(&mut slot, next);
+
+        assert!(record.accepted);
+        assert!(!record.changed);
+        assert_eq!(slot.expect("the repeated measurement remains").anchors, anchors);
+    }
+
+    #[test]
+    fn a_client_change_drops_remembered_anchors_with_the_old_geometry() {
+        let current = ScreenSlice {
+            anchors: Some(Anchors {
+                temple_entrance: Some([111, 222]),
+                merc_panel: Some([120, 220]),
+            }),
+            ..reference_screen()
+        };
+        let mut slot = Some(current);
+        let next = ScreenSlice {
+            client: [20, 0, 1920, 1200],
+            anchors: None,
+            ..current
+        };
+
+        let record = record_screen(&mut slot, next);
+
+        assert!(record.accepted);
+        assert!(record.changed);
+        assert_eq!(slot.expect("the changed client is stored").anchors, None);
+    }
+
+    #[test]
+    fn a_scale_change_drops_remembered_anchors_with_the_old_geometry() {
+        let current = ScreenSlice {
+            anchors: Some(Anchors {
+                temple_entrance: Some([111, 222]),
+                merc_panel: Some([120, 220]),
+            }),
+            ..reference_screen()
+        };
+        let mut slot = Some(current);
+        let next = ScreenSlice {
+            ui_scale: 1.2,
+            anchors: None,
+            ..current
+        };
+
+        let record = record_screen(&mut slot, next);
+
+        assert!(record.accepted);
+        assert!(record.changed);
+        assert_eq!(slot.expect("the changed scale is stored").anchors, None);
+    }
+
+    #[test]
+    fn a_display_identity_upgrade_keeps_anchors_when_geometry_is_unchanged() {
+        let current = ScreenSlice {
+            monitor_id: 0,
+            anchors: Some(Anchors {
+                temple_entrance: Some([111, 222]),
+                merc_panel: None,
+            }),
+            ..reference_screen()
+        };
+        let mut slot = Some(current);
+        let next = ScreenSlice {
+            monitor_id: REFERENCE_MONITOR,
+            anchors: None,
+            ..current
+        };
+
+        record_screen(&mut slot, next);
+
+        assert_eq!(
+            slot.expect("the known display replaces the unknown identity").anchors,
+            current.anchors,
+        );
+    }
+
+    #[test]
+    fn anchor_helper_updates_each_known_module() {
+        let mut anchors = None;
+
+        assert!(set_anchor(&mut anchors, AnchorModule::TempleEntrance, [111, 222]));
+        assert!(set_anchor(&mut anchors, AnchorModule::MercPanel, [120, 220]));
+        assert_eq!(
+            anchors,
+            Some(Anchors {
+                temple_entrance: Some([111, 222]),
+                merc_panel: Some([120, 220]),
+            }),
+        );
+    }
+
+    #[test]
+    fn anchor_helper_ignores_a_repeated_origin() {
+        let mut anchors = None;
+
+        assert!(set_anchor(&mut anchors, AnchorModule::TempleEntrance, [111, 222]));
+        assert!(!set_anchor(&mut anchors, AnchorModule::TempleEntrance, [111, 222]));
+    }
+
+    #[test]
+    fn a_changed_anchor_persists_before_it_emits() {
+        let effects = std::cell::RefCell::new(Vec::new());
+
+        assert!(remember_anchor_effects(
+            true,
+            || effects.borrow_mut().push("persist"),
+            || effects.borrow_mut().push("emit"),
+        ));
+        assert_eq!(*effects.borrow(), vec!["persist", "emit"]);
+    }
+
+    #[test]
+    fn an_unchanged_anchor_skips_persistence_and_emit() {
+        let effects = std::cell::RefCell::new(Vec::new());
+
+        assert!(!remember_anchor_effects(
+            false,
+            || effects.borrow_mut().push("persist"),
+            || effects.borrow_mut().push("emit"),
+        ));
+        assert!(effects.borrow().is_empty());
     }
 
     /// The wire contract the TS `ScreenSlice` mirrors: camelCase keys on the
@@ -2412,7 +2903,11 @@ mod tests {
     /// `rename_all` renames these and the store reads `undefined` in silence.
     #[test]
     fn the_snapshot_exposes_the_screen_slice_under_its_camel_case_keys() {
-        let snap = AppSsotSnapshot { screen: Some(reference_screen()), ..Default::default() };
+        let snap = AppSsotSnapshot {
+            screen: Some(reference_screen()),
+            placements: placements(&reference_screen()),
+            ..Default::default()
+        };
 
         let json = serde_json::to_value(&snap).unwrap();
 
@@ -2423,6 +2918,11 @@ mod tests {
         assert_eq!(json["screen"]["verifiedThisSession"], true);
         assert_eq!(json["screen"]["monitorId"], REFERENCE_MONITOR);
         assert_eq!(json["screen"]["origin"], serde_json::json!([0, 0]));
+        assert_eq!(json["screen"]["client"], serde_json::json!([0, 0, 1920, 1200]));
+        assert_eq!(json["screen"]["anchors"], serde_json::Value::Null);
+        assert_eq!(json["placements"]["temple"]["entranceOrigin"], serde_json::json!([960, 792]));
+        assert_eq!(json["placements"]["merc"]["panel"], serde_json::json!([698, 615, 555, 477]));
+        assert_eq!(json["placements"]["lab"]["gem"], serde_json::json!([33, 50, 611, 83]));
     }
 
     /// The four source strings, exactly. They are read by a TS union
@@ -2921,7 +3421,7 @@ mod tests {
     /// has never measured a screen.
     #[test]
     fn an_unmeasured_screen_matches_any_capture() {
-        assert!(screen_matches(&None, (1920, 1080), REFERENCE_MONITOR));
+        assert!(screen_matches(&None, (1920, 1080), REFERENCE_MONITOR, [0, 0, 1920, 1080]));
     }
 
     /// The keep case: the remembered measurement describes the screen just
@@ -2929,7 +3429,22 @@ mod tests {
     /// scale on every tick, which is the whole thing WI-B2 exists to avoid.
     #[test]
     fn a_measurement_of_the_same_screen_is_kept() {
-        assert!(screen_matches(&Some(reference_screen()), (1920, 1200), REFERENCE_MONITOR));
+        assert!(screen_matches(
+            &Some(reference_screen()),
+            (1920, 1200),
+            REFERENCE_MONITOR,
+            [0, 0, 1920, 1200],
+        ));
+    }
+
+    #[test]
+    fn a_different_client_rect_is_not_the_same_screen_geometry() {
+        assert!(!screen_matches(
+            &Some(reference_screen()),
+            (1920, 1200),
+            REFERENCE_MONITOR,
+            [20, 0, 1920, 1200],
+        ));
     }
 
     /// A different WIDTH is a different screen. Fails if the predicate compares
@@ -2938,7 +3453,12 @@ mod tests {
     /// else the app can see.
     #[test]
     fn a_measurement_from_a_different_width_is_dropped() {
-        assert!(!screen_matches(&Some(reference_screen()), (2560, 1200), REFERENCE_MONITOR));
+        assert!(!screen_matches(
+            &Some(reference_screen()),
+            (2560, 1200),
+            REFERENCE_MONITOR,
+            [0, 0, 2560, 1200],
+        ));
     }
 
     /// A different HEIGHT is a different screen. Fails if the predicate
@@ -2947,7 +3467,12 @@ mod tests {
     /// gets 11% wrong.
     #[test]
     fn a_measurement_from_a_different_height_is_dropped() {
-        assert!(!screen_matches(&Some(reference_screen()), (1920, 1080), REFERENCE_MONITOR));
+        assert!(!screen_matches(
+            &Some(reference_screen()),
+            (1920, 1080),
+            REFERENCE_MONITOR,
+            [0, 0, 1920, 1080],
+        ));
     }
 
     /// The scale is NOT part of the question. Two runs on the same monitor can
@@ -2959,7 +3484,12 @@ mod tests {
     fn a_wobbled_scale_on_the_same_screen_is_still_a_match() {
         let drifted = ScreenSlice { ui_scale: 0.87, ..reference_screen() };
 
-        assert!(screen_matches(&Some(drifted), (1920, 1200), REFERENCE_MONITOR));
+        assert!(screen_matches(
+            &Some(drifted),
+            (1920, 1200),
+            REFERENCE_MONITOR,
+            [0, 0, 1920, 1200],
+        ));
     }
 
     /// The blind spot POE-237 closes, and the one POE-227 could not: two
@@ -2969,7 +3499,12 @@ mod tests {
     /// monitor term is dropped from the predicate.
     #[test]
     fn a_measurement_from_a_different_monitor_of_the_same_size_is_dropped() {
-        assert!(!screen_matches(&Some(reference_screen()), (1920, 1200), OTHER_MONITOR));
+        assert!(!screen_matches(
+            &Some(reference_screen()),
+            (1920, 1200),
+            OTHER_MONITOR,
+            [0, 0, 1920, 1200],
+        ));
     }
 
     /// A capture that cannot say which display it came off must not prune a
@@ -2978,7 +3513,7 @@ mod tests {
     /// whose handle truncated to zero.
     #[test]
     fn a_capture_with_no_display_keeps_a_measurement_of_the_same_size() {
-        assert!(screen_matches(&Some(reference_screen()), (1920, 1200), 0));
+        assert!(screen_matches(&Some(reference_screen()), (1920, 1200), 0, [0, 0, 1920, 1200]));
     }
 
     /// The other half, and a separate behaviour: an unknown display disables
@@ -2986,7 +3521,7 @@ mod tests {
     /// a different size prunes exactly as it did before POE-237.
     #[test]
     fn a_capture_with_no_display_still_prunes_on_a_size_that_disagrees() {
-        assert!(!screen_matches(&Some(reference_screen()), (1920, 1080), 0));
+        assert!(!screen_matches(&Some(reference_screen()), (1920, 1080), 0, [0, 0, 1920, 1080]));
     }
 
     /// The upgrade case: every scale persisted before POE-237 loads with
@@ -2997,7 +3532,7 @@ mod tests {
     fn a_scale_remembered_without_a_display_survives_a_capture_that_names_one() {
         let upgraded = ScreenSlice { monitor_id: 0, ..reference_screen() };
 
-        assert!(screen_matches(&Some(upgraded), (1920, 1200), OTHER_MONITOR));
+        assert!(screen_matches(&Some(upgraded), (1920, 1200), OTHER_MONITOR, [0, 0, 1920, 1200]));
     }
 
     /// The other half, and a separate behaviour: an unknown STORED display
@@ -3007,7 +3542,7 @@ mod tests {
     fn a_scale_remembered_without_a_display_still_prunes_on_a_size_that_disagrees() {
         let upgraded = ScreenSlice { monitor_id: 0, ..reference_screen() };
 
-        assert!(!screen_matches(&Some(upgraded), (1920, 1080), OTHER_MONITOR));
+        assert!(!screen_matches(&Some(upgraded), (1920, 1080), OTHER_MONITOR, [0, 0, 1920, 1080]));
     }
 
     /// `Frame` is the plain case: this tick measured the gold frame, so the

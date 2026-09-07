@@ -275,3 +275,16 @@ origin but no client rect (`desktop/src-tauri/src/ssot.rs:176-229`), so the
 capture plumbing and the placement implementation remain pending in POE-267…POE-272.
 The hypothesis `ui_scale = client_height / 1200` is pending measurement in
 POE-267; it is not an accepted invariant (owner, 2026-09-07).
+
+## Amendment: POE-268 makes the Lab row derive from the SSOT placement projection (2026-09-07)
+
+POE-268 landed the Lab consumer described by this ADR's scale lifecycle. The
+Lab row now derives from `ssot::placements(&ScreenSlice)`, which scales the
+reference gem and font rectangles from the accepted `ui_scale` and the current
+capture rectangle. The OCR loop, preview rows and Settings geometry card read
+that same projection; no Lab-specific region or user-rectangle precedence is
+stored here.
+
+For the current fullscreen task, `ScreenSlice.client` is the full capture
+rectangle. A live client read and its refresh rule remain POE-272 work, and the
+`ui_scale = client_height / 1200` hypothesis remains pending POE-267.

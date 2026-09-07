@@ -42,9 +42,9 @@ pub struct OcrRectView {
 /// [`ssot::ScreenSlice::ui_scale`] measures, where 1080p is 0.90 (the game's UI
 /// scales with screen HEIGHT).
 ///
-/// **Derived, not measured, and provisional until both smoke machines (laptop
-/// 1.0, PC 0.90) confirm it.** The number it comes from is the shipped 1080p
-/// literal [`SHIPPED_GEM_REGION_1080P`], divided by 0.90 and rounded:
+/// **PROVISIONAL, from one shipped-geometry derivation.** The number it comes
+/// from is the shipped 1080p literal [`SHIPPED_GEM_REGION_1080P`], divided by
+/// 0.90 and rounded:
 /// `{30, 45, 550, 75} / 0.90 = {33.3, 50, 611.1, 83.3}`. The rounding is
 /// lossless in the direction that matters — scaling these back by 0.90 and
 /// rounding reproduces the shipped literal exactly, which
@@ -60,11 +60,11 @@ pub struct OcrRectView {
 pub const GEM_REGION_REF: CaptureRegion = CaptureRegion { x: 33, y: 50, w: 611, h: 83 };
 
 /// The font panel rect (craft options + "Crafts Remaining") in REFERENCE px.
-/// Same derivation and the same provisional status as [`GEM_REGION_REF`]:
+/// Same derivation and PROVISIONAL status as [`GEM_REGION_REF`]:
 /// `{460, 270, 530, 350} / 0.90 = {511.1, 300, 588.9, 388.9}`.
 pub const FONT_PANEL_REF: CaptureRegion = CaptureRegion { x: 511, y: 300, w: 589, h: 389 };
 
-/// What [`effective_region`] assumes when NOTHING has measured a screen: that
+/// What the placement layer assumes when NOTHING has measured a screen: that
 /// the game is running at 1080p. It is the `ui_scale` a 1920x1080 screen
 /// measures (1080/1200).
 ///
@@ -78,78 +78,13 @@ pub const FONT_PANEL_REF: CaptureRegion = CaptureRegion { x: 511, y: 300, w: 589
 pub const ASSUMED_UI_SCALE: f32 = 0.90;
 
 /// The gem rect this app shipped with, a fixed 1080p literal. Two live roles:
-/// it is what [`effective_region`] falls back to (via [`ASSUMED_UI_SCALE`]), and
-/// it is the value [`settings::user_set_region`] treats as "the user never set
-/// one" when it loads a settings file written before POE-233.
+/// it is the value the placement layer returns for an unmeasured screen.
 pub const SHIPPED_GEM_REGION_1080P: CaptureRegion = CaptureRegion { x: 30, y: 45, w: 550, h: 75 };
 
 /// The font panel rect this app shipped with. Same two roles as
 /// [`SHIPPED_GEM_REGION_1080P`].
 pub const SHIPPED_FONT_PANEL_1080P: CaptureRegion =
     CaptureRegion { x: 460, y: 270, w: 530, h: 350 };
-
-/// The rect a lab OCR loop crops with: the user's if they set one, else the
-/// reference rect scaled to the measured screen, else the shipped 1080p rect.
-///
-/// Pure, and the only place the three-way choice is made — `build_status`, both
-/// scan loops and the Settings "Configure" overlay all resolve through it, so
-/// what the user sees in Settings is what the OCR crops.
-///
-/// The `None` `ui_scale` branch is "assume 1080p", not fail-closed: see
-/// [`ASSUMED_UI_SCALE`] for why an OCR region differs from a widget rect here.
-/// A `ui_scale` that is not a positive finite number takes that same branch: a
-/// `0.0` or NaN measurement would otherwise collapse the rect to `0x0` or to a
-/// NaN cast (which saturates to `0` in Rust), and an OCR loop cropping nothing
-/// is exactly the fail-closed outcome this function is written to avoid.
-pub fn effective_region(
-    user: Option<CaptureRegion>,
-    reference: CaptureRegion,
-    ui_scale: Option<f32>,
-) -> CaptureRegion {
-    match user {
-        Some(rect) => rect,
-        None => {
-            let scale = ui_scale
-                .filter(|s| s.is_finite() && *s > 0.0)
-                .unwrap_or(ASSUMED_UI_SCALE);
-            scale_region(&reference, scale)
-        }
-    }
-}
-
-/// What a Configure → Save should STORE for the rect the user just confirmed:
-/// `None` when it is exactly the rect the screen already derives, `Some`
-/// otherwise.
-///
-/// The overlay opens on the rect IN FORCE ([`get_gem_region`]), so opening
-/// Configure and saving without moving the frame hands the setter the derived
-/// default. Storing that unconditionally would freeze the current screen's
-/// arithmetic as a user override — the region silently stops following the
-/// screen, and the Settings row flips to "user" for a choice nobody made.
-///
-/// Pure so the decision is testable without an `AppHandle`, the same reason
-/// [`effective_region`] is.
-fn region_override(
-    incoming: CaptureRegion,
-    reference: CaptureRegion,
-    ui_scale: Option<f32>,
-) -> Option<CaptureRegion> {
-    if incoming == effective_region(None, reference, ui_scale) {
-        None
-    } else {
-        Some(incoming)
-    }
-}
-
-/// Reference px -> physical px, rounded to whole pixels on every field.
-fn scale_region(reference: &CaptureRegion, ui_scale: f32) -> CaptureRegion {
-    CaptureRegion {
-        x: (reference.x as f32 * ui_scale).round() as i32,
-        y: (reference.y as f32 * ui_scale).round() as i32,
-        w: (reference.w as f32 * ui_scale).round().max(0.0) as u32,
-        h: (reference.h as f32 * ui_scale).round().max(0.0) as u32,
-    }
-}
 
 /// The one line a scan loop logs when the rect it asked for came back smaller
 /// than it asked for, `None` when the crop is the requested size.
@@ -170,23 +105,6 @@ fn crop_shortfall(region: &CaptureRegion, cropped_w: u32, cropped_h: u32) -> Opt
     ))
 }
 
-/// How [`AppStatus::gem_region`] was arrived at, for the Settings row.
-fn region_source(user: &Option<CaptureRegion>) -> String {
-    match user {
-        Some(_) => "user".to_string(),
-        None => "default".to_string(),
-    }
-}
-
-/// The measured game-UI scale, or `None` when nothing has measured a screen yet.
-fn measured_ui_scale(state: &AppState) -> Option<f32> {
-    state
-        .screen
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .map(|slice| slice.ui_scale)
-}
-
 fn ocr_rect_view(
     key: &'static str,
     label: &'static str,
@@ -201,8 +119,8 @@ fn ocr_rect_view(
     }
 }
 
-fn capture_rect(region: CaptureRegion) -> [i32; 4] {
-    [region.x, region.y, region.w as i32, region.h as i32]
+fn capture_region(rect: [i32; 4]) -> CaptureRegion {
+    CaptureRegion { x: rect[0], y: rect[1], w: rect[2].max(0) as u32, h: rect[3].max(0) as u32 }
 }
 
 fn temple_rects_from_rois(
@@ -220,50 +138,56 @@ fn temple_rects_from_rois(
     )
 }
 
-/// Assemble the five display-only OCR preview rows from the owners' current
-/// geometry. Lab regions are resolved exactly like the scan loops; temple
-/// regions use the published layout ROIs; merc uses its last settled panel.
+/// Assemble the five display-only OCR preview rows from the derived placements.
+/// Temple rows are generated from the placement's canonical Entrance origin;
+/// they never read the last located layout.
 fn assemble_ocr_rects(
-    gem_user: Option<CaptureRegion>,
-    font_user: Option<CaptureRegion>,
-    ui_scale: Option<f32>,
+    placements: &ssot::Placements,
     temple_rects: Option<(Option<[i32; 4]>, Option<[i32; 4]>)>,
-    merc_panel: Option<[i32; 4]>,
+    anchors: Option<ssot::Anchors>,
 ) -> Vec<OcrRectView> {
-    let gem_source = region_source(&gem_user);
-    let font_source = region_source(&font_user);
     let (temple_panel, temple_remaining) = temple_rects.unwrap_or((None, None));
+    let temple_source = if anchors.and_then(|a| a.temple_entrance).is_some() {
+        "remembered"
+    } else {
+        "seed"
+    };
+    let merc_source = if anchors.and_then(|a| a.merc_panel).is_some() {
+        "remembered"
+    } else {
+        "seed"
+    };
 
     vec![
         ocr_rect_view(
             "lab.gem",
             "Gem tooltip",
-            Some(capture_rect(effective_region(gem_user, GEM_REGION_REF, ui_scale))),
-            gem_source,
+            Some(placements.lab.gem),
+            "seed",
         ),
         ocr_rect_view(
             "lab.font",
             "Font panel",
-            Some(capture_rect(effective_region(font_user, FONT_PANEL_REF, ui_scale))),
-            font_source,
+            Some(placements.lab.font),
+            "seed",
         ),
         ocr_rect_view(
             "temple.panel",
             "Temple panel",
             temple_panel,
-            if temple_panel.is_some() { "derived" } else { "unlocated" },
+            if temple_panel.is_some() { temple_source } else { "unlocated" },
         ),
         ocr_rect_view(
             "temple.remaining",
             "Temple remaining",
             temple_remaining,
-            if temple_remaining.is_some() { "derived" } else { "unlocated" },
+            if temple_remaining.is_some() { temple_source } else { "unlocated" },
         ),
         ocr_rect_view(
             "merc.panel",
             "Merc window",
-            merc_panel,
-            if merc_panel.is_some() { "derived" } else { "unlocated" },
+            placements.merc.map(|merc| merc.panel),
+            if placements.merc.is_some() { merc_source } else { "unlocated" },
         ),
     ]
 }
@@ -277,20 +201,6 @@ pub struct AppStatus {
     pub client_txt_path: String,
     pub client_txt_exists: bool,
     pub server_url: String,
-    /// The gem rect the OCR loop will actually crop with — the user's if they
-    /// set one, otherwise the reference rect scaled to the measured screen
-    /// (`effective_region`). NOT the stored value: `gem_region_source` says
-    /// which of the two this is.
-    pub gem_region: CaptureRegion,
-    /// `"user"` when the rect above came from Settings -> Configure, `"default"`
-    /// when it was derived from `GEM_REGION_REF`. The Settings row needs the
-    /// difference: a derived rect follows the screen and can be reset, a user
-    /// rect does neither.
-    pub gem_region_source: String,
-    /// The font panel rect in force — see `gem_region`.
-    pub font_region: CaptureRegion,
-    /// See `gem_region_source`.
-    pub font_region_source: String,
     pub sidebar_open: bool,
     pub game_focused: bool,
     pub trade_stale_warn_secs: u32,
@@ -323,18 +233,6 @@ pub struct AppState {
     pub detected_gems: Mutex<Vec<String>>,
     pub lab_state: Mutex<lab_state::LabState>,
     pub logs: Mutex<Vec<String>>,
-    /// The gem OCR rect the USER set in Settings, or `None` when they never did
-    /// (POE-233). The owner of `Settings.gem_region`, and deliberately the
-    /// override alone rather than the resolved rect: a resolved rect stored here
-    /// would be projected straight back into the settings file by
-    /// `settings::from_state`, and every user would silently acquire a
-    /// hand-placed region they never placed.
-    ///
-    /// What the OCR loops crop with is `effective_region(user, ref, ui_scale)`,
-    /// re-resolved per iteration so a mid-session measurement takes effect.
-    pub gem_region: Mutex<Option<CaptureRegion>>,
-    /// The font panel rect the user set, or `None` — see `gem_region`.
-    pub font_region: Mutex<Option<CaptureRegion>>,
     pub sidebar_open: Mutex<bool>,
     pub game_focused: Mutex<bool>,
     pub trade_client: trade::TradeApiClient,
@@ -355,12 +253,11 @@ pub struct AppState {
     pub trade_auto_refresh_secs: Mutex<u32>,
     pub auto_trade_enabled: Mutex<bool>,
     /// Generation counter for gem OCR scans. Incremented on each start trigger
-    /// (FontOpened, manual scan). The capture loop checks this every iteration —
-    /// if it doesn't match the generation it was spawned with, it exits.
+    /// (FontOpened, manual scan).
     pub gem_scan_generation: AtomicU64,
     /// Generation counter for font panel OCR scans.
     pub font_scan_generation: AtomicU64,
-    /// Generation of the font scan loop that is currently running, or 0 when
+    /// Generation of the font scan session that is currently running, or 0 when
     /// none is. `FontOpened` re-arms the scan when it reads 0 — after a portal
     /// trip no further `LabFinished` fires, so the event is the only chance to
     /// bring the panel OCR back. Written by `spawn_font_scan` (its own
@@ -368,6 +265,10 @@ pub struct AppState {
     /// cannot clear its replacement's token) and by anything that bumps
     /// `font_scan_generation` without starting a replacement.
     pub font_scan_live_gen: AtomicU64,
+    /// Liveness token for the single merged lab OCR thread.
+    pub lab_scan_live_gen: AtomicU64,
+    /// Counter from which the merged lab thread mints its liveness token.
+    pub lab_scan_generation: AtomicU64,
     /// Monotonic count of `FontOpened` events. The craft ledger gates every
     /// count change on it: the panel's count cannot change without a CRAFT
     /// click, and a CRAFT click always fires this event, so a count change with
@@ -376,7 +277,8 @@ pub struct AppState {
     pub font_opened_seq: AtomicU64,
     /// Aspirant's Trial entry count (reset on Aspirants' Plaza). Font OCR starts at 3.
     pub aspirant_trial_count: AtomicU32,
-    /// Font session data — accumulated rounds, shared between font scan loop and handlers.
+    /// Font session data — accumulated rounds, shared between the lab scan loop
+    /// and handlers.
     pub font_session: Mutex<FontSessionData>,
     /// True when player is inside the labyrinth (between PlazaEntered and LabExited).
     /// Used by lab_navigation to determine if a non-lab area entry is a lab exit.
@@ -636,12 +538,6 @@ pub struct AppState {
 fn build_status(state: &AppState) -> AppStatus {
     let client_txt_path = state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let client_txt_exists = std::path::Path::new(&client_txt_path).exists();
-    // Bound here rather than inside the struct literal: a temporary guard in a
-    // literal lives to the end of the whole statement, and `screen` is one of
-    // the mutexes taken alone (see src/modules.rs "Lock order").
-    let ui_scale = measured_ui_scale(state);
-    let gem_user = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let font_user = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
     AppStatus {
         state: format!("{:?}", *state.lab_state.lock().unwrap_or_else(|e| e.into_inner())),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -650,10 +546,6 @@ fn build_status(state: &AppState) -> AppStatus {
         client_txt_path,
         client_txt_exists,
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        gem_region: effective_region(gem_user.clone(), GEM_REGION_REF, ui_scale),
-        gem_region_source: region_source(&gem_user),
-        font_region: effective_region(font_user.clone(), FONT_PANEL_REF, ui_scale),
-        font_region_source: region_source(&font_user),
         sidebar_open: *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()),
         game_focused: *state.game_focused.lock().unwrap_or_else(|e| e.into_inner()),
         trade_stale_warn_secs: *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()),
@@ -1142,107 +1034,28 @@ fn get_lab_catchup(app: AppHandle) -> serde_json::Value {
     serde_json::json!({ "events": events, "in_lab": in_lab })
 }
 
-/// The gem rect IN FORCE, which is what the Settings "Configure" overlay opens
-/// on. It is the resolved rect, not the stored override — an unset region must
-/// put the frame where the OCR is actually reading, not at (0, 0).
-#[tauri::command]
-fn get_gem_region(state: tauri::State<AppState>) -> CaptureRegion {
-    let user = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    effective_region(user, GEM_REGION_REF, measured_ui_scale(&state))
-}
-
 /// Return the current OCR regions in capture pixels for the read-only preview.
 /// This assembles owners' published geometry only; it never captures or OCRs.
 #[tauri::command]
 fn get_ocr_rects(state: tauri::State<AppState>) -> Vec<OcrRectView> {
     let snapshot = ssot::build_snapshot(&state);
-    let gem_user = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let font_user = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let temple_rects = snapshot
-        .temple
-        .layout
-        .as_ref()
-        .map(|layout| temple_rects_from_rois(&layout.rois));
-    let merc_panel = snapshot
-        .mercenary
-        .capture
-        .as_ref()
-        .and_then(|capture| capture.panel);
+    let temple_rects = snapshot.placements.temple.and_then(|temple| {
+        let scale = snapshot
+            .screen
+            .map(|screen| screen.ui_scale)
+            .filter(|scale| scale.is_finite() && *scale > 0.0)
+            .map(crate::temple::anchor::scale_for_ui_scale)?;
+        Some(temple_rects_from_rois(&crate::temple::run::read_rois(
+            temple.entrance_origin,
+            scale,
+        )))
+    });
 
     assemble_ocr_rects(
-        gem_user,
-        font_user,
-        snapshot.screen.map(|screen| screen.ui_scale),
+        &snapshot.placements,
         temple_rects,
-        merc_panel,
+        snapshot.screen.and_then(|screen| screen.anchors),
     )
-}
-
-#[tauri::command]
-fn set_gem_region(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
-    let state = app.state::<AppState>();
-    let region = CaptureRegion { x, y, w, h };
-    let stored = region_override(region, GEM_REGION_REF, measured_ui_scale(&state));
-    app_log(
-        &app,
-        match stored {
-            Some(_) => format!("Region set: ({}, {}) {}x{}", x, y, w, h),
-            None => format!(
-                "Region saved unchanged at ({}, {}) {}x{} — left unset so it keeps following the screen",
-                x, y, w, h
-            ),
-        },
-    );
-    *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = stored;
-    persist_settings(&app);
-    emit_status(&app);
-}
-
-/// Drop the user's gem rect so the region follows the measured screen again.
-#[tauri::command]
-fn reset_gem_region(app: AppHandle) {
-    let state = app.state::<AppState>();
-    app_log(&app, "Gem region reset to the default (scaled from the reference rect)".to_string());
-    *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    persist_settings(&app);
-    emit_status(&app);
-}
-
-/// The font panel rect IN FORCE — see [`get_gem_region`].
-#[tauri::command]
-fn get_font_region(state: tauri::State<AppState>) -> CaptureRegion {
-    let user = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    effective_region(user, FONT_PANEL_REF, measured_ui_scale(&state))
-}
-
-#[tauri::command]
-fn set_font_region(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
-    let state = app.state::<AppState>();
-    let region = CaptureRegion { x, y, w, h };
-    let stored = region_override(region, FONT_PANEL_REF, measured_ui_scale(&state));
-    app_log(
-        &app,
-        match stored {
-            Some(_) => format!("Font region set: ({}, {}) {}x{}", x, y, w, h),
-            None => format!(
-                "Font region saved unchanged at ({}, {}) {}x{} — left unset so it keeps following the screen",
-                x, y, w, h
-            ),
-        },
-    );
-    *state.font_region.lock().unwrap_or_else(|e| e.into_inner()) = stored;
-    persist_settings(&app);
-    emit_status(&app);
-}
-
-/// Drop the user's font panel rect — see [`reset_gem_region`].
-#[tauri::command]
-fn reset_font_region(app: AppHandle) {
-    let state = app.state::<AppState>();
-    app_log(&app, "Font panel region reset to the default (scaled from the reference rect)".to_string());
-    *state.font_region.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    persist_settings(&app);
-    emit_status(&app);
 }
 
 /// Read the cursor position. READ ONLY — nothing in this app moves the cursor
@@ -1273,11 +1086,12 @@ fn capture_mouse_position() -> Result<(i32, i32), String> {
 /// - Clears comparator (gems-cleared)
 /// - Bumps generation counter (cancels any running scan)
 /// - Sets state to PickingGems
-/// - Spawns a new capture loop with the current generation
+/// - Ensures the single merged Lab capture loop is running
 fn spawn_gem_scan(app: &AppHandle, source: &str) {
     let state = app.state::<AppState>();
 
-    // Bump generation — any running capture loop will see the mismatch and exit.
+    // Bump generation — the merged capture loop resets its gem-local state on
+    // the next tick.
     let gen = state.gem_scan_generation.fetch_add(1, Ordering::SeqCst) + 1;
 
     // Clear frontend comparator.
@@ -1290,13 +1104,26 @@ fn spawn_gem_scan(app: &AppHandle, source: &str) {
 
     app_log(app, format!("Gem scan started ({}, gen={})", source, gen));
 
+    ensure_lab_scan(app);
+}
+
+/// Start the one dedicated OS thread shared by gem and font OCR. The liveness
+/// token prevents a gem trigger and a font trigger from starting two monitor
+/// grabs for the same Lab tick.
+fn ensure_lab_scan(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let generation = font_session::next_scan_generation(&state.lab_scan_generation);
+    if state
+        .lab_scan_live_gen
+        .compare_exchange(0, generation, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
     let app_capture = app.clone();
-    // Capture loop uses blocking Windows COM APIs (screen capture + OCR).
-    // Must run on a dedicated OS thread — tokio's runtime and spawn_blocking
-    // pool both cause deadlocks with apartment-threaded WinRT objects.
-    std::thread::spawn(move || {
-        gem_scan_loop(app_capture, gen);
-    });
+    // Screen capture and OCR use blocking Windows COM APIs and must stay on a
+    // dedicated OS thread.
+    std::thread::spawn(move || lab_scan_loop(app_capture, generation));
 }
 
 #[tauri::command]
@@ -2742,441 +2569,487 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
     }
 }
 
-/// Gem-only OCR scan on a dedicated OS thread.
-///
-/// Scans the gem tooltip region every 250ms looking for transfigured gem names.
-/// Stops when:
-///   - 3 gems detected (all options scanned)
-///   - 45s timeout (user walked away or didn't hover all gems)
-///   - Generation mismatch (new scan started or manual stop)
-///   - Lab state changed to non-PickingGems (zone change)
-fn gem_scan_loop(app: AppHandle, generation: u64) {
-    let state = app.state::<AppState>();
-
-    // Load gem names for matching — abort early if server unreachable.
-    let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let http = state.server_http.clone();
-    let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let gem_names = tauri::async_runtime::block_on(fetch_gem_names(&app, &server, &http, &lab_mode));
-    if gem_names.is_empty() {
-        // States its own cause rather than deferring upward: the abort is shared
-        // by both modes (Normal has no halves to fail), and an empty dictionary
-        // reaches here from a legitimate 200 as well as from a request failure.
-        app_log(&app, "Gem scan aborted — the gem dictionary loaded 0 names, so no OCR read could match. Either the request failed or this league has no gem dictionary yet; the preceding 'gem names' lines say which.".to_string());
-        if state.gem_scan_generation.load(Ordering::SeqCst) == generation {
-            *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::Idle;
-            emit_status(&app);
-        }
-        return;
-    }
-    let matcher = gem_matcher::GemMatcher::new(gem_names.clone());
-    app_log(&app, format!("Gem scan: loaded {} gem names", gem_names.len()));
-    // Surface which OCR recognizer is active (and any en-US fallback warning) —
-    // this is the only breadcrumb the LOGS panel gets for a silent CJK fallback.
-    report_ocr_engine(&app);
-
-    let mut seen_gems: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut gems_found = 0u32;
-    let mut loop_count = 0u32;
-    // Rejection log, deduplicated by message and capped per scan.
-    //
-    // Every rejection is worth a line — a player whose third option never
-    // appears otherwise gets no breadcrumb at all, and the throttled raw
-    // candidate dump below fires on one loop in eight and cannot say which gate
-    // discarded the text. But the loop reads the same tooltip four times a
-    // second for up to 45s, and the LOGS panel keeps only 50 entries, so
-    // unbounded reject lines would push every other diagnostic out of the
-    // buffer. Deduplicating collapses the repeats; the cap bounds OCR text that
-    // differs slightly frame to frame.
-    const MAX_REJECT_LOGS: usize = 12;
-    let mut logged_rejects: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut rejects_suppressed = false;
-    // One line per scan session each, not per iteration: the loop runs four
-    // times a second and the LOGS panel keeps 50 entries, so an unthrottled
-    // notice would push every other diagnostic out of the buffer.
-    let mut logged_assumed_1080p = false;
-    let mut logged_short_crop = false;
-    let start = std::time::Instant::now();
-    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
-    const MAX_GEMS: u32 = 3;
-    const SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
-
-    loop {
-        // Check generation — if bumped, a new scan was started or we were stopped.
-        if state.gem_scan_generation.load(Ordering::SeqCst) != generation {
-            app_log(&app, "Gem scan stopped (new scan or manual stop)".to_string());
-            break;
-        }
-
-        // Check lab state — zone change sets this to Idle.
-        {
-            let current = state.lab_state.lock().unwrap_or_else(|e| e.into_inner()).clone();
-            if current != lab_state::LabState::PickingGems {
-                app_log(&app, "Gem scan stopped (state changed)".to_string());
-                break;
-            }
-        }
-
-        // Check timeout.
-        if start.elapsed() >= TIMEOUT {
-            app_log(&app, format!("Gem scan timed out after 45s ({} gems found)", gems_found));
-            break;
-        }
-
-        loop_count += 1;
-
-        // Re-resolved every iteration, not once before the loop: the merc
-        // detect tick can publish the first screen measurement in the middle of
-        // a gem scan, and the rect this scan crops with should follow it.
-        let gem_user = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let ui_scale = measured_ui_scale(&state);
-        let gem_region = effective_region(gem_user.clone(), GEM_REGION_REF, ui_scale);
-        if gem_user.is_none() && ui_scale.is_none() && !logged_assumed_1080p {
-            logged_assumed_1080p = true;
-            app_log(&app, format!(
-                "lab OCR regions unscaled: no screen measured yet — the gem region assumes 1080p ({}, {}) {}x{}",
-                gem_region.x, gem_region.y, gem_region.w, gem_region.h,
-            ));
-        }
-        let screen = match capture::capture_screen(&app) {
-            Ok(c) => c.image,
-            Err(e) => {
-                if loop_count % 20 == 1 {
-                    app_log(&app, format!("Screen capture failed: {}", e));
-                }
-                std::thread::sleep(SCAN_INTERVAL);
-                continue;
-            }
-        };
-
-        let cropped = screen.crop_imm(gem_region.x.max(0) as u32, gem_region.y.max(0) as u32, gem_region.w, gem_region.h);
-        if !logged_short_crop {
-            if let Some(line) = crop_shortfall(&gem_region, cropped.width(), cropped.height()) {
-                logged_short_crop = true;
-                app_log(&app, line);
-            }
-        }
-        let processed = capture::preprocess_for_ocr(&cropped);
-        let lines = match ocr::recognize_text(&processed) {
-            Ok(l) => l,
-            Err(e) => {
-                if loop_count % 20 == 1 {
-                    app_log(&app, format!("Gem OCR failed: {}", e));
-                }
-                std::thread::sleep(SCAN_INTERVAL);
-                continue;
-            }
-        };
-
-        let candidates = ocr::extract_gem_candidates(&lines);
-        // Diagnostic: log raw OCR candidates (throttled ~2s) so false positives
-        // can be traced to the on-screen text that triggered them. See POE gem
-        // OCR false-positive investigation ("Divine Ire of Disintegration").
-        if !candidates.is_empty() && loop_count % 8 == 1 {
-            app_log(&app, format!("Gem OCR candidates: {:?}", candidates));
-        }
-        let mut best: Option<gem_matcher::GemMatch> = None;
-        for candidate in &candidates {
-            match matcher.match_gem(candidate) {
-                Ok(m) => {
-                    if best.as_ref().map_or(true, |b| m.score > b.score) {
-                        best = Some(m);
-                    }
-                }
-                Err(reason) => {
-                    let line = format!("Gem OCR rejected {:?}: {}", candidate, reason);
-                    if logged_rejects.len() < MAX_REJECT_LOGS {
-                        if logged_rejects.insert(line.clone()) {
-                            app_log(&app, line);
-                        }
-                    } else if !rejects_suppressed {
-                        rejects_suppressed = true;
-                        app_log(&app, format!(
-                            "Gem OCR: {} distinct rejections logged — further rejections suppressed for this scan",
-                            MAX_REJECT_LOGS,
-                        ));
-                    }
-                }
-            }
-        }
-
-        if let Some(gem_match) = best {
-            if !seen_gems.contains(&gem_match.name) {
-                seen_gems.insert(gem_match.name.clone());
-                gems_found += 1;
-                app_log(&app, format!(
-                    "Gem detected: {} (score: {:.2}) [{}/{}] from OCR {:?}",
-                    gem_match.name, gem_match.score, gems_found, MAX_GEMS, gem_match.ocr_raw
-                ));
-
-                let all_gems = {
-                    let mut gems = state.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
-                    gems.push(gem_match.name.clone());
-                    let cloned = gems.clone();
-                    drop(gems);
-                    cloned
-                };
-                if let Err(e) = app.emit("gem-detected", &gem_match.name) { log::warn!("emit gem-detected failed: {}", e); }
-                emit_status(&app);
-                let app_clone = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    send_gems_to_server(&app_clone, all_gems).await;
-                });
-
-                // All 3 gems found — stop scanning.
-                if gems_found >= MAX_GEMS {
-                    app_log(&app, "Gem scan complete (3/3 gems detected)".to_string());
-                    break;
-                }
-            }
-        }
-
-        std::thread::sleep(SCAN_INTERVAL);
-    }
-
-    // Transition state back to Idle if WE are still the active scan.
-    // Hold the lab_state lock while checking generation to prevent TOCTOU
-    // race with spawn_gem_scan (which bumps generation then sets PickingGems).
-    {
-        let mut lab = state.lab_state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.gem_scan_generation.load(Ordering::SeqCst) == generation {
-            *lab = lab_state::LabState::Idle;
-            drop(lab);
-            emit_status(&app);
-        }
-    }
-}
-
-/// Start font panel OCR. Bumps generation to cancel any running scan, spawns a new loop.
+/// Start font panel OCR in the shared Lab scan loop. Bumps the font generation
+/// to cancel the previous font session, claims its liveness token before the
+/// reset is visible to `FontOpened`, and then reuses an existing Lab thread when
+/// one is already running.
 fn spawn_font_scan(app: &AppHandle) {
     let state = app.state::<AppState>();
-    // Minted, not `fetch_add` + 1: the liveness token reads generation 0 as
-    // "no scan running", so no loop may ever own it.
-    let gen = font_session::next_scan_generation(&state.font_scan_generation);
-    // Claim the liveness token before the thread starts, so a `FontOpened`
-    // arriving in between does not re-arm a scan that is already on its way.
-    state.font_scan_live_gen.store(gen, Ordering::SeqCst);
+    let generation = font_session::next_scan_generation(&state.font_scan_generation);
+    state.font_scan_live_gen.store(generation, Ordering::SeqCst);
 
-    // Reset font session for the new scan. The temporary guard is dropped at the
-    // end of this statement, so the emit below cannot self-deadlock on
-    // `build_status` re-reading `font_session`.
     *state.font_session.lock().unwrap_or_else(|e| e.into_inner()) = FontSessionData::default();
-
-    app_log(app, format!("Font scan started (gen={})", gen));
-    // `font_session_rounds` dropped back to 0 — clear the Discard affordance
-    // left over from the previous run instead of waiting for the next emit.
+    app_log(app, format!("Font scan started (gen={})", generation));
     emit_status(app);
 
-    let app_capture = app.clone();
-    std::thread::spawn(move || {
-        font_scan_loop(app_capture, gen);
-    });
+    ensure_lab_scan(app);
 }
 
-/// Font panel OCR loop on a dedicated OS thread.
+/// The merged Lab OCR loop on one dedicated OS thread.
 ///
-/// Scans the font region every 250ms looking for craft options (CRAFT screen).
-/// Stores detected options in AppState.font_session, sealing a round whenever
-/// the panel's craft count changes (`font_ledger`).
-///
-/// Stops on a generation bump — `ZoneChanged`, lab exit, a replacement scan or
-/// app shutdown — or after `IDLE_LIMIT` with no active font panel on screen.
-/// There is deliberately no wall-clock timeout: a font run has no bounded length
-/// (stash trips, town portals, a player reading the options), and the scan
-/// expiring under a still-open panel silently lost every remaining craft. The
-/// idle limit measures from the last frame that saw the panel, so it can only
-/// fire on a scan that has nothing left to read — the case where every stop
-/// event was missed, e.g. the player never opened the font and the game was
-/// killed rather than exited. That path sends the session itself, because no
-/// caller follows it and the next re-arm would reset the rounds it sealed.
-fn font_scan_loop(app: AppHandle, generation: u64) {
+/// A Lab tick takes one monitor grab, then crops and OCRs the gem and font
+/// placements independently. Each region keeps its prior cadence, timeout and
+/// diagnostic messages; the shared thread is the only part that changed.
+fn lab_scan_loop(app: AppHandle, lab_generation: u64) {
     let state = app.state::<AppState>();
-    let mut loop_count = 0u32;
     const SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+    const GEM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
     const IDLE_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
-    let mut last_active = std::time::Instant::now();
-    // What the previous iteration's frame saw. The tick reads it at the top of
-    // the loop rather than where the panel is parsed, so the capture- and
-    // OCR-failure paths below cannot `continue` past the expiry check — a
-    // permanently failing capture is exactly the case this guard exists for.
-    let mut frame_saw_panel = false;
-    // One line per scan session each — see the gem loop.
-    let mut logged_assumed_1080p = false;
-    let mut logged_short_crop = false;
+    const MAX_GEMS: u32 = 3;
+    const MAX_REJECT_LOGS: usize = 12;
 
-    // Surface which OCR recognizer is active (and any en-US fallback warning) so a
-    // silent CJK fallback shows up in the LOGS panel, not just stderr.
+    let mut gem_generation_seen = 0;
+    let mut gem_started_at: Option<std::time::Instant> = None;
+    let mut gem_finished = false;
+    let mut gem_loop_count = 0u32;
+    let mut gem_matcher: Option<gem_matcher::GemMatcher> = None;
+    let mut gem_names_rx: Option<tokio::sync::oneshot::Receiver<Vec<String>>> = None;
+    let mut seen_gems = std::collections::HashSet::<String>::new();
+    let mut gems_found = 0u32;
+    let mut logged_gem_rejects = std::collections::HashSet::<String>::new();
+    let mut gem_rejects_suppressed = false;
+    let mut logged_gem_assumed_1080p = false;
+    let mut logged_gem_short_crop = false;
+
+    let mut font_generation_seen = 0;
+    let mut font_loop_count = 0u32;
+    let mut font_last_active = std::time::Instant::now();
+    let mut font_frame_saw_panel = false;
+    let mut logged_font_assumed_1080p = false;
+    let mut logged_font_short_crop = false;
+    let mut logged_tick_cost = false;
+
     report_ocr_engine(&app);
 
     loop {
-        // Check generation.
-        if state.font_scan_generation.load(Ordering::SeqCst) != generation {
-            app_log(&app, "Font scan stopped (generation mismatch)".to_string());
-            break;
-        }
-
-        let (deadline, idle_expired) = font_session::idle_tick(
-            last_active,
-            std::time::Instant::now(),
-            frame_saw_panel,
-            IDLE_LIMIT,
-        );
-        last_active = deadline;
-        frame_saw_panel = false;
-        if idle_expired {
-            app_log(&app, "Font scan stopped (no font panel for 10 minutes)".to_string());
-            // The only stop that no sender follows: ZoneChanged and the send
-            // path seal and POST for themselves, and the next re-arm's
-            // `spawn_font_scan` resets the session. Without this, rounds sealed
-            // before the player wandered off are dropped.
-            send_font_session_data(&app);
-            break;
-        }
-
-        loop_count += 1;
-
-        // Re-resolved every iteration — see the gem loop: a font scan outlives
-        // several merc detect ticks, so the first measurement of the session can
-        // land under it.
-        let font_user = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let ui_scale = measured_ui_scale(&state);
-        let font_region = effective_region(font_user.clone(), FONT_PANEL_REF, ui_scale);
-        if font_user.is_none() && ui_scale.is_none() && !logged_assumed_1080p {
-            logged_assumed_1080p = true;
-            app_log(&app, format!(
-                "lab OCR regions unscaled: no screen measured yet — the font panel region assumes 1080p ({}, {}) {}x{}",
-                font_region.x, font_region.y, font_region.w, font_region.h,
-            ));
-        }
-        let screen = match capture::capture_screen(&app) {
-            Ok(c) => c.image,
-            Err(e) => {
-                if loop_count % 40 == 1 {
-                    app_log(&app, format!("Font scan: screen capture failed: {}", e));
-                }
-                std::thread::sleep(SCAN_INTERVAL);
-                continue;
+        let gem_generation = state.gem_scan_generation.load(Ordering::SeqCst);
+        let previous_gem_generation = gem_generation_seen;
+        if gem_generation != gem_generation_seen {
+            if previous_gem_generation != 0 {
+                app_log(&app, "Gem scan stopped (new scan or manual stop)".to_string());
+                report_ocr_engine(&app);
             }
-        };
+            gem_generation_seen = gem_generation;
+            gem_started_at = None;
+            gem_finished = false;
+            gem_loop_count = 0;
+            gem_matcher = None;
+            gem_names_rx = None;
+            seen_gems.clear();
+            gems_found = 0;
+            logged_gem_rejects.clear();
+            gem_rejects_suppressed = false;
+            logged_gem_assumed_1080p = false;
+            logged_gem_short_crop = false;
 
-        let cropped = screen.crop_imm(
-            font_region.x.max(0) as u32,
-            font_region.y.max(0) as u32,
-            font_region.w,
-            font_region.h,
-        );
-        if !logged_short_crop {
-            if let Some(line) = crop_shortfall(&font_region, cropped.width(), cropped.height()) {
-                logged_short_crop = true;
-                app_log(&app, line);
+            // Start the dictionary request at the generation boundary, but
+            // hand its result back without blocking this shared capture thread.
+            // The gem timeout starts only after the vocabulary is ready, so a
+            // request cannot stall the font session or spend its scan budget.
+            if gem_generation != 0 {
+                let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let http = state.server_http.clone();
+                let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let app_for_fetch = app.clone();
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                tauri::async_runtime::spawn(async move {
+                    let gem_names = fetch_gem_names(&app_for_fetch, &server, &http, &lab_mode).await;
+                    let _ = tx.send(gem_names);
+                });
+                gem_names_rx = Some(rx);
             }
         }
-        let processed = capture::preprocess_for_ocr(&cropped);
-        let lines = match ocr::recognize_text(&processed) {
-            Ok(l) => l,
-            Err(e) => {
-                if loop_count % 40 == 1 {
-                    app_log(&app, format!("Font scan: OCR failed: {}", e));
-                }
-                std::thread::sleep(SCAN_INTERVAL);
-                continue;
+
+        let font_generation = state.font_scan_generation.load(Ordering::SeqCst);
+        let previous_font_generation = font_generation_seen;
+        if font_generation != font_generation_seen {
+            if previous_font_generation != 0 {
+                app_log(&app, "Font scan stopped (generation mismatch)".to_string());
+                report_ocr_engine(&app);
             }
-        };
-
-        let panel = font_parser::parse_font_panel(&lines);
-        frame_saw_panel = panel.font_active;
-
-        // Silent-failure breadcrumb: OCR produced text but nothing parsed as an
-        // active font panel — usually the panel garbled (e.g. a wrong-language
-        // recognizer). Throttled like the capture/OCR-failure logs above.
-        if !panel.font_active && !lines.is_empty() && loop_count % 40 == 1 {
-            app_log(&app, format!("Font OCR raw (inactive, {} lines): {}", lines.len(), lines.join(" | ")));
+            font_generation_seen = font_generation;
+            font_loop_count = 0;
+            font_last_active = std::time::Instant::now();
+            font_frame_saw_panel = false;
+            logged_font_assumed_1080p = false;
+            logged_font_short_crop = false;
         }
 
-        if panel.font_active && !panel.options.is_empty() {
-            // Apply the frame under lock, then log/emit outside it.
-            let outcome = {
-                let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
-                // Re-check the generation while holding the session lock: this
-                // frame was captured before the check at the top of the
-                // iteration, and `spawn_font_scan` resets the session under this
-                // same lock right after bumping the generation. Without the
-                // re-check a stale frame lands in the fresh session.
-                if state.font_scan_generation.load(Ordering::SeqCst) != generation {
-                    None
-                } else {
-                    // Read the event counter as late as possible. A `FontOpened`
-                    // that lands between the capture and here at worst makes a
-                    // pre-click frame read as the already-accepted count (a
-                    // `Same`); reading it earlier would instead make the frame
-                    // that first shows the new count look like a misread.
-                    let event_seq = state.font_opened_seq.load(Ordering::SeqCst);
-                    Some(font_session::apply_font_frame(&mut session, &panel, event_seq))
-                }
-            }; // lock released
-
-            let outcome = match outcome {
-                Some(outcome) => outcome,
-                None => {
-                    app_log(&app, "Font scan stopped (generation mismatch)".to_string());
-                    break;
-                }
-            };
-
-            if let Some(sealed) = &outcome.sealed {
-                app_log(&app, format!(
-                    "Font round {} sealed ({} options{})",
-                    sealed.number,
-                    sealed.round.options.len(),
-                    sealed.round.crafts_remaining.map_or(
-                        ", last craft".to_string(),
-                        |n| format!(", {} remaining", n),
-                    ),
-                ));
-                // `rounds` just grew, and `font_session_rounds` is what gates
-                // the Discard affordance and its round count.
+        let picking_gems = *state.lab_state.lock().unwrap_or_else(|e| e.into_inner())
+            == lab_state::LabState::PickingGems;
+        let mut gem_active = gem_generation != 0 && picking_gems && !gem_finished;
+        if gem_generation != previous_gem_generation
+            && previous_gem_generation != 0
+            && !picking_gems
+        {
+            gem_finished = true;
+            gem_active = false;
+        }
+        if gem_generation != 0
+            && previous_gem_generation != 0
+            && !picking_gems
+            && !gem_finished
+        {
+            gem_finished = true;
+            gem_active = false;
+            app_log(&app, "Gem scan stopped (state changed)".to_string());
+        }
+        if gem_active
+            && gem_started_at
+                .is_some_and(|started_at| started_at.elapsed() >= GEM_TIMEOUT)
+        {
+            app_log(&app, format!("Gem scan timed out after 45s ({} gems found)", gems_found));
+            gem_finished = true;
+            gem_active = false;
+            let mut lab_state = state.lab_state.lock().unwrap_or_else(|e| e.into_inner());
+            if state.gem_scan_generation.load(Ordering::SeqCst) == gem_generation
+                && *lab_state == lab_state::LabState::PickingGems
+            {
+                *lab_state = lab_state::LabState::Idle;
+                drop(lab_state);
                 emit_status(&app);
             }
+        }
 
-            if outcome.buffer_grew {
-                // Re-log the raw OCR each time the round buffer grows so later
-                // captures in the same scan aren't blinded (was a one-shot flag).
-                app_log(&app, format!("Font OCR raw ({} lines): {}", lines.len(), lines.join(" | ")));
-                app_log(&app, format!(
-                    "Font options captured: {} options{}{}",
-                    outcome.buffer.len(),
-                    if panel.jackpot_detected { " *** JACKPOT! ***" } else { "" },
-                    outcome.crafts_remaining.map_or(
-                        " (last craft)".to_string(),
-                        |n| format!(" (remaining: {})", n),
-                    ),
-                ));
-                for opt in &outcome.buffer {
-                    app_log(&app, format!("  - {} {}", opt.option_type,
-                        opt.value.map(|v| format!("({})", v)).unwrap_or_default()));
+        let mut font_active =
+            font_session::font_scan_is_live(state.font_scan_live_gen.load(Ordering::SeqCst));
+        if font_active {
+            let (deadline, idle_expired) = font_session::idle_tick(
+                font_last_active,
+                std::time::Instant::now(),
+                font_frame_saw_panel,
+                IDLE_LIMIT,
+            );
+            font_last_active = deadline;
+            font_frame_saw_panel = false;
+            if idle_expired {
+                app_log(&app, "Font scan stopped (no font panel for 10 minutes)".to_string());
+                send_font_session_data(&app);
+                if state
+                    .font_scan_live_gen
+                    .compare_exchange(font_generation, 0, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    font_active = false;
+                } else {
+                    font_active = font_session::font_scan_is_live(
+                        state.font_scan_live_gen.load(Ordering::SeqCst),
+                    );
                 }
+            }
+        }
 
-                if panel.jackpot_detected {
-                    if let Err(e) = app.emit("font-jackpot", true) {
-                        log::warn!("emit font-jackpot failed: {}", e);
+        if gem_active && gem_matcher.is_none() {
+            let dictionary = match gem_names_rx.as_mut() {
+                Some(rx) => match rx.try_recv() {
+                    Ok(names) => Some(names),
+                    Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
+                    Err(tokio::sync::oneshot::error::TryRecvError::Closed) => Some(Vec::new()),
+                },
+                None => None,
+            };
+            if let Some(gem_names) = dictionary {
+                gem_names_rx = None;
+                if gem_names.is_empty() {
+                    app_log(&app, "Gem scan aborted — the gem dictionary loaded 0 names, so no OCR read could match. Either the request failed or this league has no gem dictionary yet; the preceding 'gem names' lines say which.".to_string());
+                    if state.gem_scan_generation.load(Ordering::SeqCst) == gem_generation {
+                        gem_finished = true;
+                        gem_active = false;
+                        let mut lab_state = state.lab_state.lock().unwrap_or_else(|e| e.into_inner());
+                        if *lab_state == lab_state::LabState::PickingGems {
+                            *lab_state = lab_state::LabState::Idle;
+                            drop(lab_state);
+                            emit_status(&app);
+                        }
+                    }
+                } else {
+                    app_log(&app, format!("Gem scan: loaded {} gem names", gem_names.len()));
+                    gem_matcher = Some(gem_matcher::GemMatcher::new(gem_names));
+                    gem_started_at = Some(std::time::Instant::now());
+                }
+            }
+        }
+
+        if !gem_active && !font_active {
+            let pending = state.font_scan_live_gen.load(Ordering::SeqCst) != 0
+                || (*state.lab_state.lock().unwrap_or_else(|e| e.into_inner())
+                    == lab_state::LabState::PickingGems);
+            if pending {
+                // A trigger can land between the active-state read and this
+                // branch. Keep the shared thread idle without spinning while
+                // the replacement generation becomes visible.
+                std::thread::sleep(SCAN_INTERVAL);
+                continue;
+            }
+            if font_session::try_clear_live(&state.lab_scan_live_gen, lab_generation) {
+                // The token is clear now, so a trigger arriving after this
+                // point can claim it and start a replacement thread. A trigger
+                // that arrived before the clear was rejected while this thread
+                // still owned the token; reclaim it so this worker handles that
+                // pending generation instead of exiting with no worker behind it.
+                let pending_after_clear = state.font_scan_live_gen.load(Ordering::SeqCst) != 0
+                    || (*state.lab_state.lock().unwrap_or_else(|e| e.into_inner())
+                        == lab_state::LabState::PickingGems);
+                if pending_after_clear
+                    && state
+                        .lab_scan_live_gen
+                        .compare_exchange(0, lab_generation, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok()
+                {
+                    continue;
+                }
+                break;
+            }
+            continue;
+        }
+
+        let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
+        let lab = ssot::placements_for(screen.as_ref()).lab;
+        let gem_region = capture_region(lab.gem);
+        let font_region = capture_region(lab.font);
+        if screen.is_none() {
+            if !logged_gem_assumed_1080p && gem_active {
+                logged_gem_assumed_1080p = true;
+                app_log(&app, format!(
+                    "lab OCR regions unscaled: no screen measured yet — the gem region assumes 1080p ({}, {}) {}x{}",
+                    gem_region.x, gem_region.y, gem_region.w, gem_region.h,
+                ));
+            }
+            if !logged_font_assumed_1080p && font_active {
+                logged_font_assumed_1080p = true;
+                app_log(&app, format!(
+                    "lab OCR regions unscaled: no screen measured yet — the font panel region assumes 1080p ({}, {}) {}x{}",
+                    font_region.x, font_region.y, font_region.w, font_region.h,
+                ));
+            }
+        }
+
+        if gem_active {
+            gem_loop_count += 1;
+        }
+        if font_active {
+            font_loop_count += 1;
+        }
+        let tick_started = std::time::Instant::now();
+        let grab = match capture::capture_screen(&app) {
+            Ok(grab) => grab,
+            Err(e) => {
+                if gem_active && gem_loop_count % 20 == 1 {
+                    app_log(&app, format!("Screen capture failed: {}", e));
+                }
+                if font_active && font_loop_count % 40 == 1 {
+                    app_log(&app, format!("Font scan: screen capture failed: {}", e));
+                }
+                if *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner()) && !logged_tick_cost {
+                    logged_tick_cost = true;
+                    app_log(&app, format!("Lab scan tick: {} ms", tick_started.elapsed().as_millis()));
+                }
+                std::thread::sleep(SCAN_INTERVAL);
+                continue;
+            }
+        };
+
+        if gem_active && gem_matcher.is_some() {
+            let cropped = grab.image.crop_imm(
+                gem_region.x.max(0) as u32,
+                gem_region.y.max(0) as u32,
+                gem_region.w,
+                gem_region.h,
+            );
+            if !logged_gem_short_crop {
+                if let Some(line) = crop_shortfall(&gem_region, cropped.width(), cropped.height()) {
+                    logged_gem_short_crop = true;
+                    app_log(&app, line);
+                }
+            }
+            let processed = capture::preprocess_for_ocr(&cropped);
+            match ocr::recognize_text(&processed) {
+                Ok(lines) => {
+                    let candidates = ocr::extract_gem_candidates(&lines);
+                    if !candidates.is_empty() && gem_loop_count % 8 == 1 {
+                        app_log(&app, format!("Gem OCR candidates: {:?}", candidates));
+                    }
+                    if let Some(matcher) = gem_matcher.as_ref() {
+                        let mut best: Option<gem_matcher::GemMatch> = None;
+                        for candidate in &candidates {
+                            match matcher.match_gem(candidate) {
+                                Ok(m) => {
+                                    if best.as_ref().map_or(true, |b| m.score > b.score) {
+                                        best = Some(m);
+                                    }
+                                }
+                                Err(reason) => {
+                                    let line = format!("Gem OCR rejected {:?}: {}", candidate, reason);
+                                    if logged_gem_rejects.len() < MAX_REJECT_LOGS {
+                                        if logged_gem_rejects.insert(line.clone()) {
+                                            app_log(&app, line);
+                                        }
+                                    } else if !gem_rejects_suppressed {
+                                        gem_rejects_suppressed = true;
+                                        app_log(&app, format!(
+                                            "Gem OCR: {} distinct rejections logged — further rejections suppressed for this scan",
+                                            MAX_REJECT_LOGS,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(gem_match) = best {
+                            if state.gem_scan_generation.load(Ordering::SeqCst) == gem_generation
+                                && seen_gems.insert(gem_match.name.clone())
+                            {
+                                gems_found += 1;
+                                app_log(&app, format!(
+                                    "Gem detected: {} (score: {:.2}) [{}/{}] from OCR {:?}",
+                                    gem_match.name, gem_match.score, gems_found, MAX_GEMS, gem_match.ocr_raw
+                                ));
+                                let all_gems = {
+                                    let mut gems = state.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+                                    gems.push(gem_match.name.clone());
+                                    let cloned = gems.clone();
+                                    drop(gems);
+                                    cloned
+                                };
+                                if let Err(e) = app.emit("gem-detected", &gem_match.name) {
+                                    log::warn!("emit gem-detected failed: {}", e);
+                                }
+                                emit_status(&app);
+                                let app_clone = app.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    send_gems_to_server(&app_clone, all_gems).await;
+                                });
+                                if gems_found >= MAX_GEMS {
+                                    app_log(&app, "Gem scan complete (3/3 gems detected)".to_string());
+                                    gem_finished = true;
+                                    let mut lab_state =
+                                        state.lab_state.lock().unwrap_or_else(|e| e.into_inner());
+                                    if state.gem_scan_generation.load(Ordering::SeqCst) == gem_generation {
+                                        *lab_state = lab_state::LabState::Idle;
+                                        drop(lab_state);
+                                        emit_status(&app);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    if gem_loop_count % 20 == 1 {
+                        app_log(&app, format!("Gem OCR failed: {}", e));
                     }
                 }
             }
         }
 
+        if font_active {
+            let cropped = grab.image.crop_imm(
+                font_region.x.max(0) as u32,
+                font_region.y.max(0) as u32,
+                font_region.w,
+                font_region.h,
+            );
+            if !logged_font_short_crop {
+                if let Some(line) = crop_shortfall(&font_region, cropped.width(), cropped.height()) {
+                    logged_font_short_crop = true;
+                    app_log(&app, line);
+                }
+            }
+            let processed = capture::preprocess_for_ocr(&cropped);
+            match ocr::recognize_text(&processed) {
+                Ok(lines) => {
+                    let panel = font_parser::parse_font_panel(&lines);
+                    font_frame_saw_panel = panel.font_active;
+                    if !panel.font_active && !lines.is_empty() && font_loop_count % 40 == 1 {
+                        app_log(&app, format!(
+                            "Font OCR raw (inactive, {} lines): {}",
+                            lines.len(),
+                            lines.join(" | ")
+                        ));
+                    }
+                    if panel.font_active && !panel.options.is_empty() {
+                        let outcome = {
+                            let mut session =
+                                state.font_session.lock().unwrap_or_else(|e| e.into_inner());
+                            if state.font_scan_generation.load(Ordering::SeqCst) != font_generation
+                                || !font_session::font_scan_is_live(
+                                    state.font_scan_live_gen.load(Ordering::SeqCst),
+                                )
+                            {
+                                None
+                            } else {
+                                let event_seq = state.font_opened_seq.load(Ordering::SeqCst);
+                                Some(font_session::apply_font_frame(&mut session, &panel, event_seq))
+                            }
+                        };
+                        if let Some(outcome) = outcome {
+                            if let Some(sealed) = &outcome.sealed {
+                                app_log(&app, format!(
+                                    "Font round {} sealed ({} options{})",
+                                    sealed.number,
+                                    sealed.round.options.len(),
+                                    sealed.round.crafts_remaining.map_or(
+                                        ", last craft".to_string(),
+                                        |n| format!(", {} remaining", n),
+                                    ),
+                                ));
+                                emit_status(&app);
+                            }
+                            if outcome.buffer_grew {
+                                app_log(&app, format!(
+                                    "Font OCR raw ({} lines): {}",
+                                    lines.len(),
+                                    lines.join(" | ")
+                                ));
+                                app_log(&app, format!(
+                                    "Font options captured: {} options{}{}",
+                                    outcome.buffer.len(),
+                                    if panel.jackpot_detected { " *** JACKPOT! ***" } else { "" },
+                                    outcome.crafts_remaining.map_or(
+                                        " (last craft)".to_string(),
+                                        |n| format!(" (remaining: {})", n),
+                                    ),
+                                ));
+                                for opt in &outcome.buffer {
+                                    app_log(&app, format!(
+                                        "  - {} {}",
+                                        opt.option_type,
+                                        opt.value.map(|v| format!("({})", v)).unwrap_or_default()
+                                    ));
+                                }
+                                if panel.jackpot_detected {
+                                    if let Err(e) = app.emit("font-jackpot", true) {
+                                        log::warn!("emit font-jackpot failed: {}", e);
+                                    }
+                                }
+                            }
+                        } else {
+                            app_log(&app, "Font scan stopped (generation mismatch)".to_string());
+                        }
+                    }
+                }
+                Err(e) => {
+                    if font_loop_count % 40 == 1 {
+                        app_log(&app, format!("Font scan: OCR failed: {}", e));
+                    }
+                }
+            }
+        }
+
+        if *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner()) && !logged_tick_cost {
+            logged_tick_cost = true;
+            app_log(&app, format!("Lab scan tick: {} ms", tick_started.elapsed().as_millis()));
+        }
         std::thread::sleep(SCAN_INTERVAL);
     }
-
-    // Release the liveness token unless a replacement scan already claimed it,
-    // so the next `FontOpened` knows whether the panel is still being watched.
-    font_session::try_clear_live(&state.font_scan_live_gen, generation);
+    font_session::try_clear_live(&state.lab_scan_live_gen, lab_generation);
 }
 
 /// Seal the round buffer left over when the session ends without another craft.
 ///
 /// Tauri-side adapter over `font_session::seal_leftover_round`: locks, seals,
 /// logs and emits. Rounds are otherwise sealed by the craft-count ledger inside
-/// `font_scan_loop`; `FontOpened` seals nothing, because it fires on font open
+/// `lab_scan_loop`; `FontOpened` seals nothing, because it fires on font open
 /// as well as on CRAFT.
 fn seal_font_round(app: &AppHandle) {
     let state = app.state::<AppState>();
@@ -3912,6 +3785,8 @@ fn spawn_log_watcher(app: AppHandle) {
                                         font_session::FontOpenedEffect::StopGemScan => {
                                             // Even: CONFIRM click → stop scanning, clear comparator
                                             state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
+                                            *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
+                                                lab_state::LabState::Idle;
                                             detected_gems.clear();
                                             *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
                                             if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
@@ -4032,8 +3907,6 @@ pub fn run() {
         detected_gems: Mutex::new(Vec::new()),
         lab_state: Mutex::new(lab_state::LabState::Idle),
         logs: Mutex::new(Vec::new()),
-        gem_region: Mutex::new(None),
-        font_region: Mutex::new(None),
         sidebar_open: Mutex::new(true),
         game_focused: Mutex::new(false),
         trade_client: trade::TradeApiClient::new(),
@@ -4050,6 +3923,8 @@ pub fn run() {
         gem_scan_generation: AtomicU64::new(0),
         font_scan_generation: AtomicU64::new(0),
         font_scan_live_gen: AtomicU64::new(0),
+        lab_scan_live_gen: AtomicU64::new(0),
+        lab_scan_generation: AtomicU64::new(0),
         font_opened_seq: AtomicU64::new(0),
         aspirant_trial_count: AtomicU32::new(0),
         font_session: Mutex::new(FontSessionData::default()),
@@ -4124,13 +3999,7 @@ pub fn run() {
             set_trade_staleness_settings,
             set_auto_trade,
             get_logs,
-            get_gem_region,
             get_ocr_rects,
-            set_gem_region,
-            reset_gem_region,
-            get_font_region,
-            set_font_region,
-            reset_font_region,
             capture_mouse_position,
             start_scanning,
             stop_scanning,
@@ -4439,12 +4308,11 @@ pub fn run() {
 mod tests {
     use super::{
         body_excerpt, clamp_overlay_height, clickthrough_outcome, crop_shortfall,
-        assemble_ocr_rects, capture_rect, dictionary_reject_reason, effective_region, is_resizable_overlay_label,
-        min_overlay_height, ocr_warning_field, overlay_focus_action, region_override,
-        region_source, retry_after_delay, temple_rects_from_rois, write_debug_mode, write_server_url, CaptureRegion,
+        assemble_ocr_rects, dictionary_reject_reason, is_resizable_overlay_label,
+        min_overlay_height, ocr_warning_field, overlay_focus_action,
+        retry_after_delay, temple_rects_from_rois, write_debug_mode, write_server_url, CaptureRegion,
         ClickthroughSetup,
-        CLICKTHROUGH_WINDOW_GONE, FONT_PANEL_REF, GEM_REGION_REF, SHIPPED_FONT_PANEL_1080P,
-        SHIPPED_GEM_REGION_1080P,
+        CLICKTHROUGH_WINDOW_GONE,
     };
     use std::sync::Mutex;
     use std::time::Duration;
@@ -4843,136 +4711,7 @@ mod tests {
         );
     }
 
-    // --- the lab OCR capture regions (POE-233) ------------------------------
-    //
-    // `effective_region` is the whole of the three-way choice, so these are the
-    // tests that say what the OCR loops crop. The two `× 0.90` cases are the
-    // release gate: they are what makes this change a no-op for every existing
-    // 1080p user, which is the only claim a smoke on two machines cannot check
-    // for the machines it is not run on.
-
-    #[test]
-    fn a_region_the_user_placed_wins_over_the_measured_screen() {
-        let placed = CaptureRegion { x: 118, y: 64, w: 702, h: 91 };
-
-        let resolved = effective_region(Some(placed.clone()), GEM_REGION_REF, Some(1.0));
-
-        assert_eq!(resolved, placed, "a placed region is an override, not a starting point");
-    }
-
-    /// The derivation the reference rect exists to satisfy: scaled back by the
-    /// 1080p `ui_scale`, `GEM_REGION_REF` must land EXACTLY on the rect this app
-    /// has always cropped. Anything else and POE-233 silently moves the gem
-    /// tooltip crop for every 1080p user who never touched Settings.
-    #[test]
-    fn the_gem_reference_rect_reproduces_the_shipped_1080p_rect() {
-        let resolved = effective_region(None, GEM_REGION_REF, Some(0.90));
-
-        assert_eq!(resolved, SHIPPED_GEM_REGION_1080P);
-    }
-
-    /// Same gate for the font panel, whose rect is nearly five times the area —
-    /// a rounding slip there loses a craft option, not a few pixels of margin.
-    #[test]
-    fn the_font_reference_rect_reproduces_the_shipped_1080p_rect() {
-        let resolved = effective_region(None, FONT_PANEL_REF, Some(0.90));
-
-        assert_eq!(resolved, SHIPPED_FONT_PANEL_1080P);
-    }
-
-    /// `ui_scale` 1.0 IS the 1920x1200 reference fixture, so the reference rect
-    /// is the physical rect there — the identity that makes these constants
-    /// readable as reference px rather than as some third unit. What it CATCHES
-    /// is the measurement being dropped: a resolution that scaled by
-    /// `ASSUMED_UI_SCALE` instead of the measured value passes every 1080p test
-    /// in this file and is wrong on exactly the machine the reference describes.
-    #[test]
-    fn the_reference_rect_is_the_physical_rect_on_the_reference_screen() {
-        let resolved = effective_region(None, GEM_REGION_REF, Some(1.0));
-
-        assert_eq!(resolved, GEM_REGION_REF);
-    }
-
-    /// The "assume 1080p" branch, stated as a test because it is the one place
-    /// this module deliberately does NOT fail closed: an unmeasured screen must
-    /// keep cropping exactly where the app cropped before POE-233, because the
-    /// alternative for an OCR loop is reading nothing at all.
-    #[test]
-    fn an_unmeasured_screen_assumes_1080p() {
-        let resolved = effective_region(None, GEM_REGION_REF, None);
-
-        assert_eq!(resolved, SHIPPED_GEM_REGION_1080P);
-    }
-
-    /// A measured 1440p screen, to pin that the rect actually TRACKS the
-    /// measurement rather than only reproducing the two calibrated points:
-    /// 1440/1200 = 1.2, so every field is the reference rect times 1.2.
-    #[test]
-    fn a_taller_screen_scales_the_region_up() {
-        let resolved = effective_region(None, GEM_REGION_REF, Some(1.2));
-
-        assert_eq!(resolved, CaptureRegion { x: 40, y: 60, w: 733, h: 100 });
-    }
-
-    /// A `0.0` scale is arithmetically valid and catastrophic: every field
-    /// multiplies to zero, so the OCR loop would crop a `0x0` rect and read
-    /// nothing at all, silently, for the rest of the session. The assumed-1080p
-    /// branch is the right answer for a nonsense measurement for the same reason
-    /// it is the right answer for a missing one.
-    #[test]
-    fn a_zero_ui_scale_falls_back_to_the_1080p_rect() {
-        let resolved = effective_region(None, GEM_REGION_REF, Some(0.0));
-
-        assert_eq!(resolved, SHIPPED_GEM_REGION_1080P);
-    }
-
-    /// NaN is the other way the measurement arrives broken (a `0 / 0` height
-    /// ratio off a capture that reported no rows). `f32 as u32` saturates NaN to
-    /// `0` rather than trapping, so without the guard this is the `0x0` crop
-    /// again — with no division by zero anywhere to notice.
-    #[test]
-    fn a_nan_ui_scale_falls_back_to_the_1080p_rect() {
-        let resolved = effective_region(None, GEM_REGION_REF, Some(f32::NAN));
-
-        assert_eq!(resolved, SHIPPED_GEM_REGION_1080P);
-    }
-
-    // --- what a Configure → Save stores (POE-233) ---------------------------
-
-    /// Configure opens the frame on the rect IN FORCE, so "open it, look, save"
-    /// hands the setter the derived default. Storing that would freeze this
-    /// screen's arithmetic as a user override: the region stops following the
-    /// screen and the Settings row says "user" for a choice nobody made.
-    #[test]
-    fn saving_the_derived_rect_unchanged_leaves_the_region_unset() {
-        let derived = effective_region(None, GEM_REGION_REF, Some(1.2));
-
-        let stored = region_override(derived, GEM_REGION_REF, Some(1.2));
-
-        assert_eq!(stored, None, "an unmoved frame is not an override");
-    }
-
-    /// The other side, and the one that makes the rule safe: a frame the user
-    /// actually moved is not the derived rect, so it is stored verbatim.
-    #[test]
-    fn saving_a_moved_rect_stores_it_as_an_override() {
-        let moved = CaptureRegion { x: 118, y: 64, w: 702, h: 91 };
-
-        let stored = region_override(moved.clone(), GEM_REGION_REF, Some(1.2));
-
-        assert_eq!(stored, Some(moved));
-    }
-
-    /// The comparison is against the rect derived for THIS screen, not against
-    /// the reference rect or the shipped literal. On a 1440p screen the shipped
-    /// 1080p rect is a real, deliberate override — a user who wants the old crop
-    /// back — and swallowing it as "unchanged" would discard it on every save.
-    #[test]
-    fn saving_the_1080p_rect_on_a_taller_screen_is_an_override() {
-        let stored = region_override(SHIPPED_GEM_REGION_1080P, GEM_REGION_REF, Some(1.2));
-
-        assert_eq!(stored, Some(SHIPPED_GEM_REGION_1080P));
-    }
+    // --- derived lab placements and read-only preview assembly (POE-268) ---
 
     /// `image`'s `crop_imm` clamps rather than failing, so a region that hangs
     /// off the bottom of the capture yields a SHORTER crop and the OCR quietly
@@ -5006,27 +4745,39 @@ mod tests {
         assert_eq!(crop_shortfall(&CaptureRegion { x: 30, y: 45, w: 550, h: 75 }, 550, 75), None);
     }
 
-    /// The two labels the Settings row switches on. They cross the Rust/TS
-    /// boundary as bare strings (`AppStatus.gem_region_source`), so swapping
-    /// them would tell every user with a placed region that it is a default —
-    /// and offer them a Reset that does nothing they can see.
-    #[test]
-    fn a_placed_region_reports_the_user_source() {
-        assert_eq!(region_source(&Some(CaptureRegion { x: 1, y: 2, w: 3, h: 4 })), "user");
-    }
+    // --- read-only OCR region preview assembly (POE-268) -------------------
 
-    #[test]
-    fn an_unplaced_region_reports_the_default_source() {
-        assert_eq!(region_source(&None), "default");
+    fn measured_screen(
+        width: u32,
+        height: u32,
+        ui_scale: f32,
+        anchors: Option<crate::ssot::Anchors>,
+    ) -> crate::ssot::ScreenSlice {
+        crate::ssot::ScreenSlice {
+            width,
+            height,
+            ui_scale,
+            source: crate::ssot::ScreenScaleSource::MercFrame,
+            measured_at_ms: 1_700_000_000_000,
+            verified_this_session: true,
+            monitor_id: 1,
+            origin: (0, 0),
+            client: [0, 0, width as i32, height as i32],
+            anchors,
+        }
     }
-
-    // --- read-only OCR region preview assembly (POE-267) -------------------
 
     #[test]
     fn temple_preview_rects_use_published_rois_at_known_origin_and_scale() {
-        let rois = crate::temple::run::read_rois((960, 713), 1.0);
+        let screen = measured_screen(1920, 1080, 0.9, None);
+        let placements = crate::ssot::placements(&screen);
+        let origin = placements.temple.expect("a measured screen has a temple seed").entrance_origin;
+        let rois = crate::temple::run::read_rois(
+            origin,
+            crate::temple::anchor::scale_for_ui_scale(screen.ui_scale),
+        );
         let temple_rects = Some(temple_rects_from_rois(&rois));
-        let rects = assemble_ocr_rects(None, None, Some(1.0), temple_rects, None);
+        let rects = assemble_ocr_rects(&placements, temple_rects, screen.anchors);
 
         let panel = rects
             .iter()
@@ -5039,53 +4790,71 @@ mod tests {
 
         assert_eq!(panel.rect, Some([1131, 4, 544, 454]));
         assert_eq!(remaining.rect, Some([810, 771, 300, 46]));
-        assert_eq!(panel.source, "derived");
-        assert_eq!(remaining.source, "derived");
+        assert_eq!(panel.source, "seed");
+        assert_eq!(remaining.source, "seed");
     }
 
     #[test]
-    fn lab_preview_rects_use_user_regions_and_report_user_sources() {
-        let gem = CaptureRegion { x: 7, y: 11, w: 613, h: 84 };
-        let font = CaptureRegion { x: 17, y: 23, w: 590, h: 390 };
-        let rects = assemble_ocr_rects(
-            Some(gem.clone()),
-            Some(font.clone()),
-            Some(0.9),
-            None,
-            None,
-        );
-
-        let gem_view = rects.iter().find(|rect| rect.key == "lab.gem").unwrap();
-        let font_view = rects.iter().find(|rect| rect.key == "lab.font").unwrap();
-        assert_eq!(gem_view.rect, Some([7, 11, 613, 84]));
-        assert_eq!(font_view.rect, Some([17, 23, 590, 390]));
-        assert_eq!(gem_view.source, "user");
-        assert_eq!(font_view.source, "user");
-    }
-
-    #[test]
-    fn lab_preview_rects_use_derived_regions_and_report_default_sources() {
-        let rects = assemble_ocr_rects(None, None, Some(0.9), None, None);
+    fn lab_preview_rects_use_derived_regions_and_report_seed_sources() {
+        let screen = measured_screen(1920, 1080, 0.9, None);
+        let placements = crate::ssot::placements(&screen);
+        let rects = assemble_ocr_rects(&placements, None, screen.anchors);
         let gem_view = rects.iter().find(|rect| rect.key == "lab.gem").unwrap();
         let font_view = rects.iter().find(|rect| rect.key == "lab.font").unwrap();
         assert_eq!(gem_view.rect, Some([30, 45, 550, 75]));
         assert_eq!(font_view.rect, Some([460, 270, 530, 350]));
-        assert_eq!(gem_view.source, "default");
-        assert_eq!(font_view.source, "default");
+        assert_eq!(gem_view.source, "seed");
+        assert_eq!(font_view.source, "seed");
     }
 
     #[test]
-    fn merc_preview_rect_uses_the_published_panel() {
-        let panel = [120, 220, 620, 520];
-        let rects = assemble_ocr_rects(None, None, Some(1.0), None, Some(panel));
+    fn a_remembered_temple_anchor_drives_preview_origin_and_source() {
+        let anchors = Some(crate::ssot::Anchors {
+            temple_entrance: Some([111, 222]),
+            merc_panel: None,
+        });
+        let screen = measured_screen(1920, 1200, 1.0, anchors);
+        let placements = crate::ssot::placements(&screen);
+        let origin = placements.temple.expect("the temple placement is located").entrance_origin;
+        let rois = crate::temple::run::read_rois(origin, 1.0);
+        let rects = assemble_ocr_rects(&placements, Some(temple_rects_from_rois(&rois)), screen.anchors);
+
+        for key in ["temple.panel", "temple.remaining"] {
+            let view = rects.iter().find(|rect| rect.key == key).unwrap();
+            assert_eq!(view.source, "remembered");
+        }
+    }
+
+    #[test]
+    fn a_remembered_merc_anchor_drives_preview_origin_and_source() {
+        let anchors = Some(crate::ssot::Anchors {
+            temple_entrance: None,
+            merc_panel: Some([120, 220]),
+        });
+        let screen = measured_screen(1920, 1200, 1.0, anchors);
+        let placements = crate::ssot::placements(&screen);
+        let rects = assemble_ocr_rects(&placements, None, screen.anchors);
+
         let view = rects.iter().find(|rect| rect.key == "merc.panel").unwrap();
-        assert_eq!(view.rect, Some(panel));
-        assert_eq!(view.source, "derived");
+        assert_eq!(view.rect, Some([120, 220, 555, 477]));
+        assert_eq!(view.source, "remembered");
+    }
+
+    #[test]
+    fn a_seed_merc_placement_has_a_rect_and_seed_source() {
+        let screen = measured_screen(1920, 1200, 1.0, None);
+        let placements = crate::ssot::placements(&screen);
+        let rects = assemble_ocr_rects(&placements, None, screen.anchors);
+
+        let view = rects.iter().find(|rect| rect.key == "merc.panel").unwrap();
+        assert_eq!(view.rect, Some([698, 615, 555, 477]));
+        assert_eq!(view.source, "seed");
     }
 
     #[test]
     fn merc_preview_rect_is_unlocated_without_a_published_panel() {
-        let rects = assemble_ocr_rects(None, None, Some(1.0), None, None);
+        let placements = crate::ssot::placements_for(None);
+        let rects = assemble_ocr_rects(&placements, None, None);
         let view = rects.iter().find(|rect| rect.key == "merc.panel").unwrap();
         assert_eq!(view.rect, None);
         assert_eq!(view.source, "unlocated");
@@ -5113,7 +4882,8 @@ mod tests {
 
     #[test]
     fn temple_preview_rects_are_unlocated_without_a_published_layout() {
-        let rects = assemble_ocr_rects(None, None, Some(1.0), None, None);
+        let placements = crate::ssot::placements_for(None);
+        let rects = assemble_ocr_rects(&placements, None, None);
 
         for key in ["temple.panel", "temple.remaining"] {
             let view = rects

@@ -2966,10 +2966,10 @@ fn published_screen(
     scale: f32,
     cue: ScaleSource,
     measured_at_ms: u64,
-    grabbed_on: (u32, (i32, i32)),
+    grabbed_on: (u32, (i32, i32), [i32; 4]),
 ) -> crate::ssot::ScreenSlice {
     let source = crate::ssot::screen_scale_source(cue);
-    let (monitor_id, origin) = grabbed_on;
+    let (monitor_id, origin, client) = grabbed_on;
     crate::ssot::ScreenSlice {
         width: screen[0],
         height: screen[1],
@@ -2979,6 +2979,8 @@ fn published_screen(
         verified_this_session: crate::ssot::verifies_the_screen(source),
         monitor_id,
         origin,
+        client,
+        anchors: None,
     }
 }
 
@@ -3061,7 +3063,7 @@ fn detect_tick(
     // The display travels with the pixels, whether this tick grabbed them or a
     // probe did (POE-237): both halves come off one `Capture`, so the id
     // published below always names the monitor the scale was measured on.
-    let grabbed_on = (grab.monitor_id, grab.origin);
+    let grabbed_on = (grab.monitor_id, grab.origin, grab.client);
     let img = grab.image;
     let (iw, ih) = {
         use image::GenericImageView;
@@ -3073,7 +3075,7 @@ fn detect_tick(
     // monitor, and only the OCR view is narrowed below — so this is the screen's
     // real size on every path. A scale remembered from another monitor is
     // dropped here, which is the first moment anything in the app can tell.
-    crate::ssot::drop_if_mismatched(app, (iw, ih), grabbed_on.0);
+    crate::ssot::drop_if_mismatched(app, (iw, ih), grabbed_on.0, grabbed_on.2);
 
     let cropped = crop.map(|r| img.crop_imm(r[0] as u32, r[1] as u32, r[2] as u32, r[3] as u32));
     let mut view = cropped.as_ref().unwrap_or(&img);
@@ -5455,7 +5457,7 @@ mod tests {
     #[test]
     fn the_published_screen_slice_is_verified_only_by_a_frame_cue() {
         let at = 1_724_000_000_000;
-        let on = (65_537, (0, 0));
+        let on = (65_537, (0, 0), [0, 0, 2560, 1440]);
 
         assert!(
             published_screen([2560, 1440], 1.25, ScaleSource::Frame, at, on).verified_this_session
@@ -5483,12 +5485,12 @@ mod tests {
     /// here rather than passing on a coincidence.
     #[test]
     fn the_published_slice_carries_the_display_its_frame_came_off() {
-        let grabbed_on = (131_074, (-1920, 0));
+        let grabbed_on = (131_074, (-1920, 0), [0, 0, 1920, 1080]);
 
         let slice =
             published_screen([1920, 1080], 1.0, ScaleSource::Frame, 1_724_000_000_000, grabbed_on);
 
-        assert_eq!((slice.monitor_id, slice.origin), grabbed_on);
+        assert_eq!((slice.monitor_id, slice.origin, slice.client), grabbed_on);
     }
 
     /// The hover box is mostly ABOVE the cursor, scaled with the panel — the

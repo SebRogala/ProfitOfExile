@@ -39,6 +39,10 @@ pub struct Capture {
     /// future build drops PMv2 the two APIs report different (virtualised)
     /// spaces and that lookup is the thing that breaks first.
     pub origin: (i32, i32),
+    /// The capture rectangle in this capture's physical pixels: x, y, w, h.
+    /// POE-268 treats the capture as fullscreen, so this is always the whole
+    /// image. POE-272 will add the live client offset for windowed support.
+    pub client: [i32; 4],
 }
 
 /// The display the GAME is drawn on, as the focus poller last resolved it
@@ -262,7 +266,8 @@ mod platform {
                 .map_err(|e| format!("Screen capture failed: {}", e))?
         };
 
-        Ok(Capture { image: DynamicImage::ImageRgba8(img), monitor_id, origin })
+        let client = [0, 0, img.width() as i32, img.height() as i32];
+        Ok(Capture { image: DynamicImage::ImageRgba8(img), monitor_id, origin, client })
     }
 
     /// The primary display, or any display at all — the pre-POE-237 target,
