@@ -882,7 +882,26 @@ pub struct ReadStages {
     pub plate_ocr: Duration,
     /// The door markers (`read_markers`).
     pub markers: Duration,
-    /// Valuation plus the advisor's ranking.
+    /// Getting the 25 x 3 valuation table — a LOOKUP when nothing it depends
+    /// on has moved (`ssot::temple_valuation_now`), the build when something
+    /// has. Split off `advise` by POE-257 WI-3 (2026-09-07) because the two
+    /// were one number and the owner's question — is the table cached? — could
+    /// not be answered from the log: the pair measured 193-245 ms on the PC's
+    /// release build while the advisor's own ranking is 13-22 ms of it
+    /// (`advisor/mod.rs`, `the_conditional_ranking_cost_on_case_eight`).
+    ///
+    /// **It measures the lookup or the build, never a lock wait.** The accessor
+    /// holds `AppState.temple_valuation` for a `ValuationKey` comparison and
+    /// drops it before building, so this number cannot be inflated by another
+    /// thread's in-flight compute. A `cached` reading here is therefore a claim
+    /// about the work this read did and not about what it waited for — which is
+    /// what makes a two-digit `(cached)` a real finding rather than contention.
+    pub valuation: Duration,
+    /// Whether [`Self::valuation`] measured a lookup or a build. The read line
+    /// prints the word, so a session that is paying for the compute every read
+    /// says so instead of being inferred from the milliseconds.
+    pub valuation_source: crate::temple::preset::ValuationSource,
+    /// The advisor's ranking alone (`slice::advise_read`).
     pub advise: Duration,
     /// Projecting the slice and emitting it.
     pub publish: Duration,
@@ -935,6 +954,15 @@ pub fn slow_tick_line(
 /// this was and what it re-read, and whether the read was clean or is buying
 /// another round.
 ///
+/// # The valuation field (WI-3)
+///
+/// `valuation N ms (cached | computed)` sits where the single `advise` field
+/// used to, and `advise N ms` follows it: the pair was one number until
+/// POE-257 WI-3, and the owner's question — is the table cached? — could not be
+/// answered from a log that added them together. The WORD carries the half the
+/// milliseconds cannot: a hit and a fast machine's rebuild both round to a
+/// small number, and only `computed` on every read says the cache is missing.
+///
 /// # The round (WI-2)
 ///
 /// `round N of {RETRIES + 1}: full | re-read 3 plates, panel` — what the round
@@ -966,13 +994,15 @@ pub fn read_timings_line(
     };
     let round = RETRIES + 1 - retries_left.unwrap_or(RETRIES).min(RETRIES);
     format!(
-        "Temple: read timings — capture {} ms, cheap detect {} ms, anchor {} ms, text ocr {} ms, plates {} ms, markers {} ms, advise {} ms, publish {} ms — {} ms from grab to publish, read at {}; round {} of {}: {}; {}",
+        "Temple: read timings — capture {} ms, cheap detect {} ms, anchor {} ms, text ocr {} ms, plates {} ms, markers {} ms, valuation {} ms ({}), advise {} ms, publish {} ms — {} ms from grab to publish, read at {}; round {} of {}: {}; {}",
         ms(tick.capture),
         ms(tick.cheap),
         ms(tick.anchor),
         ms(read.text_ocr),
         ms(read.plate_ocr),
         ms(read.markers),
+        ms(read.valuation),
+        read.valuation_source.word(),
         ms(read.advise),
         ms(read.publish),
         ms(total),
@@ -3873,17 +3903,32 @@ fn full_read(
     // boxes below (POE-257 D6). Two calls would let the number on screen come
     // from a market read the recommendation never saw.
     //
+    // LOOKED UP, not built (POE-257 WI-3): `ssot::temple_valuation_now` hands
+    // back the table already computed for the preset, the Custom rates and this
+    // market read, and only builds one when one of those has moved — the
+    // owner's "computed on update, and the module uses already computed
+    // weightings each time". It is the same call `commands::temple_value_table`
+    // makes for the preset in force, so the page and this board are one object.
+    //
     // The market arrives as STATE, never as a fetch: `crate::ssot` polls it
     // every `ssot::TEMPLE_MARKET_POLL` and this reads what it stored, because
-    // `docs/TEMPLE-LIFECYCLE.md` forbids network work on this tick. Read here
-    // rather than passed in, so the read is as fresh as this tick and the
-    // staleness judgement is made against THIS clock (POE-258 D2) — before the
-    // first poll answers, and whenever the last read has aged out, it is
-    // `MarketInput::none()` in effect and every room falls back to its grade
-    // ladder value rather than to zero, which is epic lock L4.
+    // `docs/TEMPLE-LIFECYCLE.md` forbids network work on this tick. It comes
+    // back FROM the accessor rather than being read again here, so the table
+    // and the `market_view` under the offer boxes can never be about two
+    // different reads. The staleness judgement is made against THIS clock
+    // (POE-258 D2) — before the first poll answers, and whenever the last read
+    // has aged out, it is `MarketInput::none()` in effect and every room falls
+    // back to its grade ladder value rather than to zero, which is epic lock
+    // L4.
+    let valuing = Instant::now();
+    // THIS TICK'S settings snapshot, not the live ones: the table has to be
+    // about the same preset and Custom table the projection echoes below and
+    // `advise_read` ranks with, or a setter landing mid-read would publish one
+    // preset's numbers under the other preset's name for a tick.
+    let (valuation, market, valuation_source) = crate::ssot::temple_valuation_now(app, settings);
+    stages.valuation = valuing.elapsed();
+    stages.valuation_source = valuation_source;
     let advising = Instant::now();
-    let market = crate::ssot::temple_market_now(app);
-    let valuation = slice::value_read(settings, &market);
     let advice = slice::advise_read(
         &read.layout,
         &read.rooms,
@@ -3908,6 +3953,11 @@ fn full_read(
             // mid-read echoes its new value onto the slice and then loses it
             // again for one tick when this projection overwrites it — the
             // setters' own `rearm` forces the next read, which restores it.
+            //
+            // The VALUATION above is from this same snapshot (POE-257 WI-3
+            // fix round, 2026-09-07): `ssot::temple_valuation_now` is handed
+            // `settings` rather than re-reading the live mutex, so the numbers
+            // and the echo beside them are always the same preset's.
             config: settings.config.clone(),
             profile: settings.profile.clone(),
             preset: settings.preset,
@@ -5003,7 +5053,14 @@ mod tests {
                 text_ocr: Duration::from_millis(165),
                 plate_ocr: Duration::from_millis(102),
                 markers: Duration::from_millis(6),
-                advise: Duration::from_millis(193),
+                // The 2026-09-06 release-build read's 193 ms `advise`, split
+                // the way POE-257 WI-3 splits it: the valuation is nearly all
+                // of it and the advisor's own ranking is the 13-22 ms
+                // `advisor/mod.rs::the_conditional_ranking_cost_on_case_eight`
+                // measures.
+                valuation: Duration::from_millis(180),
+                valuation_source: crate::temple::preset::ValuationSource::Cached,
+                advise: Duration::from_millis(13),
                 publish: Duration::from_millis(4),
             },
         )
@@ -5035,6 +5092,67 @@ mod tests {
         assert!(line.contains("text ocr 165 ms, plates 102 ms, markers 6 ms"), "{line}");
         assert!(line.contains("666 ms from grab to publish"), "{line}");
         assert!(line.ends_with("clean"), "{line}");
+    }
+
+    /// The valuation is its OWN field beside the advisor's ranking, in the
+    /// slot the single `advise` field used to occupy (POE-257 WI-3).
+    ///
+    /// Why the run of four stages is asserted as one literal rather than
+    /// each in isolation: the numbers in the fixture are distinct per stage,
+    /// so a line that printed the advisor's milliseconds under `valuation` —
+    /// or that folded the two back into one number — reads exactly like the
+    /// line this WI was opened to correct, and only the ORDER catches it.
+    ///
+    /// Fails on the mutation swapping `ms(read.valuation)` and
+    /// `ms(read.advise)` in `read_timings_line`'s argument list: the line
+    /// would say `valuation 13 ms (cached), advise 180 ms`.
+    #[test]
+    fn the_read_line_measures_the_valuation_apart_from_the_ranking() {
+        let (tick, read) = read_stages();
+
+        let line = read_timings_line(
+            &tick,
+            &read,
+            Duration::from_millis(666),
+            1788567663863,
+            false,
+            Some(RETRIES),
+            &slice::ReadPlan::full(),
+        );
+
+        assert!(
+            line.contains(
+                "markers 6 ms, valuation 180 ms (cached), advise 13 ms, publish 4 ms"
+            ),
+            "{line}",
+        );
+    }
+
+    /// A read that had to BUILD the table says so, and the word is the whole
+    /// point of the field: the milliseconds alone cannot distinguish a cache
+    /// that is working from one that is missing on every read on a fast
+    /// machine, which is the regression this WI can otherwise only be
+    /// suspected of.
+    ///
+    /// Fails on the mutation making `preset::ValuationSource::word` answer
+    /// `"cached"` for both variants.
+    #[test]
+    fn the_read_line_says_computed_when_the_read_built_the_valuation() {
+        let (tick, mut read) = read_stages();
+        read.valuation_source = crate::temple::preset::ValuationSource::Computed;
+
+        let line = read_timings_line(
+            &tick,
+            &read,
+            Duration::from_millis(666),
+            1788567663863,
+            false,
+            Some(RETRIES),
+            &slice::ReadPlan::full(),
+        );
+
+        assert!(line.contains("valuation 180 ms (computed),"), "{line}");
+        assert!(!line.contains("(cached)"), "{line}");
     }
 
     /// A retry round names its number AND the regions it re-read, which is the

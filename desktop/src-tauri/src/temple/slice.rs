@@ -44,7 +44,7 @@ use super::lattice::{Edge, Lattice, Slot};
 use super::markers;
 use super::market::MarketInput;
 use super::panel::{ARCHITECTS_PER_PANEL, ArchitectOffer, PanelReading, RoomReading};
-use super::preset::{self, Preset, TempleCustomSettings};
+use super::preset::{Preset, TempleCustomSettings};
 use super::reader::TempleLayout;
 use super::rooms::{self, Match, OfferKind, RoomIdentity};
 use super::strategy::{Combination, Line, Mode, StrategyProfile, TempleConfig, Tier};
@@ -1165,9 +1165,10 @@ pub struct ReadResult<'a> {
     /// [`advise_read`] was given (POE-257 D6).
     ///
     /// A borrow and not a value so the "one table per read" rule is visible at
-    /// the call site: `run` builds one [`Valued`] with [`value_read`] and
-    /// hands it to both, and the offer boxes cannot be showing a number the
-    /// recommendation did not use.
+    /// the call site: `run` looks ONE [`Valued`] up — since POE-257 WI-3
+    /// through `ssot::temple_valuation_now`, which is where the table is built
+    /// and stored — and hands it to both, so the offer boxes cannot be showing
+    /// a number the recommendation did not use.
     pub valuation: &'a Valued,
     /// The market this read was valued against, as the slice states it
     /// (POE-258).
@@ -1181,10 +1182,11 @@ pub struct ReadResult<'a> {
     /// carried here at all: the projection replaces the whole slice, and a
     /// field it did not set would be blanked by every board until the next poll
     /// five minutes later. Seeding it with this view is exact rather than
-    /// approximate — `run::full_read` takes the read's market from
-    /// `ssot::temple_market_now`, so the read's market and the poll's are the
-    /// same object at the moment of a read; they only diverge afterwards, which
-    /// is precisely what the two fields exist to record.
+    /// approximate — `run::full_read` takes the read's market from the same
+    /// `ssot::temple_valuation_now` call that gave it [`Self::valuation`] (and
+    /// that call reads `ssot::temple_market_now`), so the read's market and the
+    /// poll's are the same object at the moment of a read; they only diverge
+    /// afterwards, which is precisely what the two fields exist to record.
     pub market: MarketView,
     pub read_at: u64,
 }
@@ -1750,18 +1752,28 @@ pub fn advise_read(
     ))
 }
 
-/// The 25 x 3 table one read ranks on and shows from (POE-257 D6).
+/// [`super::preset::value_table`] in settings shape — the two fields of
+/// [`TempleSettings`] it reads, pulled out at one call site instead of at
+/// thirteen.
 ///
-/// **Call this ONCE per read** and hand the same object to [`advise_read`] and
-/// to [`ReadResult::valuation`]. That is the whole of "shown = ranked": two
-/// calls a tick apart would price the offer boxes off a market read the
-/// recommendation never saw, and the player would be told a number that did
-/// not produce the advice.
+/// **`#[cfg(test)]` since POE-257 WI-3 (2026-09-07), and that is the point.**
+/// It used to be the read's own call, one per read (POE-257 D6). The read now
+/// LOOKS THE TABLE UP — `ssot::temple_valuation_now`, which computes only when
+/// the preset, the Custom table or the market read has moved — so a production
+/// caller here would rebuild a table the app already holds, 193-245 ms at a
+/// time. The attribute is what makes that unreachable rather than merely
+/// discouraged; the same shape `market::allflame` has, for the same reason.
+///
+/// What POE-257 D6 asserted is unchanged and now stronger: [`advise_read`] and
+/// [`ReadResult::valuation`] are handed the SAME object, and since WI-3 that
+/// object is shared across reads as well as within one, so the number shown is
+/// the number ranked.
 ///
 /// It does no HTTP and takes no clock — `market` arrives from POE-258's poll,
 /// because `docs/TEMPLE-LIFECYCLE.md` forbids network work on the 650 ms tick.
+#[cfg(test)]
 pub fn value_read(settings: &TempleSettings, market: &MarketInput) -> Valued {
-    preset::value_table(settings.preset, &settings.custom, market)
+    super::preset::value_table(settings.preset, &settings.custom, market)
 }
 
 /// Drop the move the module is recommending, keeping the board it was read
@@ -6259,9 +6271,11 @@ mod tests {
     }
 
     /// The five most valuable tier-3 rooms on the committed capture, in order,
-    /// through the PRODUCTION entry point.
+    /// through the production FORMULA.
     ///
-    /// `value_read` with the Default preset is what `run::full_read` calls, and
+    /// `value_read` with the Default preset is the one compute
+    /// `run::full_read`'s lookup resolves to (`preset::value_table` via
+    /// `ssot::temple_valuation_now`), and
     /// this is the ordering the advisor inherits from it. Every other bridge
     /// test here asserts a mechanism; this one asserts the answer, so a change
     /// that quietly re-ranks the board — a drop count edited, a rate moved, the

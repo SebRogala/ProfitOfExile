@@ -917,8 +917,10 @@ mod tests {
     }
 
     /// The profile the SHIPPED app ranks with (POE-257): the settings defaults
-    /// bridged over a cold valuation, which is what `run::full_read` builds
-    /// whenever POE-258's poll has no prices in hand. Every room is priced at
+    /// bridged over a cold valuation — the one compute `run::full_read`'s
+    /// lookup resolves to (`preset::value_table` via
+    /// `ssot::temple_valuation_now`) whenever POE-258's poll has no prices in
+    /// hand. Every room is priced at
     /// its cold grade rung, so the whole board carries a value where the fixture
     /// priced four lines and left 21 at zero.
     fn production_profile() -> StrategyProfile {

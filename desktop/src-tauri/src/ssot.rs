@@ -25,6 +25,16 @@
 //! temple valuation. It lives here and not in `temple/` because
 //! `docs/TEMPLE-LIFECYCLE.md` forbids network work on the module's 650 ms tick
 //! — the tick reads state, and this is what puts the state there.
+//!
+//! POE-257 WI-3 (2026-09-07) puts the VALUATION beside that market for the same
+//! reason: `temple_valuation_now` is the read's lookup and
+//! `warm_temple_valuation` is what the poll and the settings commands call to
+//! make it a hit, so the 193-245 ms table build happens on an input change and
+//! not on the tick that needs the answer. The decision the cache serves is
+//! `temple::preset`'s `cached_valuation` / `compute_valuation` /
+//! `store_valuation`, which are pure and live with the compute; only the
+//! `AppHandle` half — and the rule that the BUILD happens with no lock held —
+//! is here.
 
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -34,7 +44,9 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
 use crate::temple::market::MarketInput;
-use crate::temple::slice::{MarketView, TempleSlice};
+use crate::temple::preset::{ValuationKey, ValuationSource};
+use crate::temple::slice::{MarketView, TempleSettings, TempleSlice};
+use crate::temple::valuation::Valued;
 use crate::trade::TradeApiClient;
 use crate::AppState;
 
@@ -1305,6 +1317,115 @@ pub fn temple_market_now(app: &AppHandle) -> MarketInput {
     stored.aged_at(chrono::Utc::now().timestamp_millis())
 }
 
+/// The 25 x 3 valuation table as of NOW for the CALLER'S settings, with the
+/// market it prices and whether it had to be built: **a read LOOKS THIS UP**
+/// (POE-257 WI-3, 2026-09-07).
+///
+/// The owner's rule, 2026-09-07: *"What I expected from the advisor and prices,
+/// was that they are cached, and computed on update, and module uses already
+/// computed weightings each time."* The table is a function of the preset, the
+/// Custom rates and overrides, and the market read — nothing about the board on
+/// screen — so rebuilding it per read was rebuilding an unchanged answer.
+/// Measured on the PC's release build (`app.log` 2026-09-06 23:33) that cost
+/// **193-245 ms of a 666 ms read** with the advisor's own ranking, 13-22 ms of
+/// it, lumped in; `run::ReadStages` now times the two apart.
+///
+/// **The settings come IN, they are not read here.** `run::full_read` hands its
+/// own tick snapshot — the very [`TempleSettings`] the projection echoes and
+/// `slice::advise_read` ranks with — so a `temple_set_preset` that lands
+/// mid-read cannot put the new preset's numbers beside the old preset's echo.
+/// `commands::temple_value_table` hands the one snapshot it read for its
+/// `in_force` comparison, so the table it returns is the table for the preset
+/// it named. The only caller with no snapshot to hand is
+/// [`warm_temple_valuation`], which reads the live settings itself because it
+/// is answering "what is true now", not "what was this read about".
+///
+/// **This function is the guard, and the warm-ups are not.**
+/// [`warm_temple_valuation`] is called from everything that changes an input
+/// so that a read's call here is a hit, but the answer is decided by
+/// [`crate::temple::preset::cached_valuation`] comparing a key rebuilt from the
+/// caller's settings and the CURRENT market. A warm-up this file forgets to add
+/// — or one that loses a race — costs one read a recompute; it can never hand a
+/// read a table built from other inputs.
+///
+/// The one input change no warm-up sees is the market crossing
+/// `market::STALE_AFTER_MS` while nothing else moves: staleness is judged
+/// against the calling clock, not stored, so the key flips on its own. The
+/// five-minute poll's warm-up usually reaches it first; at worst one read pays
+/// for it, twice in a session that runs past two hours without a poll landing.
+///
+/// **NOTHING IS HELD ACROSS THE BUILD.** The `temple_valuation` guard is taken
+/// for the key comparison, dropped, and re-taken only to store — so a read that
+/// arrives while a warm-up is building waits for a `ValuationKey` compare and
+/// not for 193-245 ms of `value_table`, and never reports `cached` for time it
+/// spent queueing. What that costs is a lost race: two threads that miss on the
+/// same key both build, and the second store overwrites an equal table. One
+/// wasted build is the price of never blocking a read, and it is the right way
+/// round — the build is off the read path either way, and a blocked read is on
+/// it by definition. `temple_market` (inside [`temple_market_now`]) is likewise
+/// taken alone and dropped before any of this, which is the discipline
+/// `src/modules.rs` records for module-owned state.
+pub fn temple_valuation_now(
+    app: &AppHandle,
+    settings: &TempleSettings,
+) -> (Valued, MarketInput, ValuationSource) {
+    let market = temple_market_now(app);
+    let key = ValuationKey {
+        preset: settings.preset,
+        custom: settings.custom.clone(),
+        market: market.clone(),
+    };
+    let state = app.state::<AppState>();
+    {
+        let slot = state
+            .temple_valuation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(valued) = crate::temple::preset::cached_valuation(&slot, &key) {
+            return (valued, market, ValuationSource::Cached);
+        }
+    }
+    // Guard dropped. This is the 193-245 ms stage, and it runs with no lock
+    // held so a concurrent read's lookup above is never queued behind it.
+    let valued = crate::temple::preset::compute_valuation(&key);
+    let mut slot = state
+        .temple_valuation
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    crate::temple::preset::store_valuation(&mut slot, key, valued.clone());
+    (valued, market, ValuationSource::Computed)
+}
+
+/// Build the valuation for the inputs standing NOW, off this thread, and throw
+/// the table away: the point is the store, not the value.
+///
+/// This is "computed on update". Its callers are everything that moves an
+/// input — the market poll after it stores a payload, [`on_server_url_changed`]
+/// after it drops one, and `temple_set_preset` / `temple_set_custom` after they
+/// write settings — so that the next read's [`temple_valuation_now`] is a
+/// lookup.
+///
+/// **Off-thread, and that is not incidental.** The compute is the 193-245 ms
+/// stage this work item exists to take off the read path; run inline it would
+/// land on a Tauri command's thread (the preset picker and the value editor,
+/// which writes on a 300 ms debounce per keystroke batch) or on an async
+/// runtime worker (the poll). The read is at least one 650 ms detect tick away
+/// from any of those, so the warm normally wins the race — and when it does
+/// not, [`temple_valuation_now`]'s key makes losing cost a recompute rather
+/// than a wrong table. For the same reason two overlapping warms are harmless:
+/// each reads the settings and market standing when IT runs.
+pub fn warm_temple_valuation(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        // The LIVE settings, read on this thread: a warm has no read to be
+        // about, so "what is in force now" is the only question it can ask.
+        // `run::settings_snapshot` is that read, and taking it through the same
+        // function `run::full_read` does keeps one settings reader in the module.
+        let settings = crate::temple::run::settings_snapshot(&app);
+        let _ = temple_valuation_now(&app, &settings);
+    });
+}
+
 /// Publish the stored read's age and availability onto the temple slice.
 ///
 /// **`TempleSlice::poll` and NOTHING else.** `TempleSlice::market` belongs to
@@ -1426,6 +1547,13 @@ async fn poll_temple_market_once(app: &AppHandle) -> PollOutcome {
     // board is on screen, and a poll re-labelling it is the defect this split
     // exists to end.
     publish_market_view(app);
+    // "Computed on update", for the one input that updates on a timer: the
+    // valuation is rebuilt HERE and not on the read that needs it. Warmed on
+    // every poll rather than only on `changed`, because the market's own
+    // staleness verdict moves with the clock while the stored payload sits
+    // still — this is what keeps the two-hourly stale flip off the read path
+    // as well.
+    warm_temple_valuation(app);
     if changed && verdict == MarketPoll::Accepted {
         if let Some((as_of, rooms)) = priced {
             log::info!(
@@ -1548,6 +1676,10 @@ pub fn spawn_temple_market_poll(app: AppHandle) {
 ///    says "prices unavailable" within the same click while the standing
 ///    board's own boxes keep the line they were priced under — which is the
 ///    truth about them until a read replaces them.
+///
+///    The valuation is rebuilt against the dropped market in the same step
+///    ([`warm_temple_valuation`]), so the first read on the new server looks
+///    up its grade-ladder table instead of building one.
 /// 2. **The league is resolved again.** The name standing was read from the
 ///    other server, and the market poll keys on it: without this a payload from
 ///    the new server would be discarded as `WrongLeague` on every poll for the
@@ -1559,6 +1691,10 @@ pub fn on_server_url_changed(app: &AppHandle) {
         drop_market(&state.temple_market);
     }
     publish_market_view(app);
+    // The dropped market is an input change like any other, and the very next
+    // read is the one that falls back to the grade ladder — so it is built
+    // here rather than paid for there.
+    warm_temple_valuation(app);
     rearm_league(app.clone());
 }
 

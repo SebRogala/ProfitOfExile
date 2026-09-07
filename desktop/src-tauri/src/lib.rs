@@ -429,6 +429,29 @@ pub struct AppState {
     /// a copy reloaded from disk at the next launch would be a price with no
     /// server behind it. Acquired alone, like every other module-owned Mutex.
     pub temple_market: Mutex<temple::market::MarketInput>,
+    /// The valuation table computed from the preset, the Custom table and the
+    /// market read above — stored so a read LOOKS IT UP instead of rebuilding
+    /// it (POE-257 WI-3, 2026-09-07; the owner's "computed on update, and the
+    /// module uses already computed weightings each time").
+    ///
+    /// Written and read through `ssot::temple_valuation_now` alone, which is
+    /// the total guard: it rebuilds the `temple::preset::ValuationKey` from the
+    /// CALLER'S settings and the market on every call and hands back what is
+    /// stored only when the two keys are equal. The five warm-up callers
+    /// (`ssot::warm_temple_valuation` from the market poll, from
+    /// `ssot::on_server_url_changed`, from `temple_set_preset` /
+    /// `temple_set_custom` and from `reset_all_settings`) are what make a read's
+    /// lookup a HIT; a missed one costs that read a recompute, never a wrong
+    /// table.
+    ///
+    /// Not persisted, for the reason `temple_market` is not: it is a function
+    /// of a market read, and one reloaded from disk would be a valuation with
+    /// no server behind it. Acquired ALONE — after the `temple_market` guard
+    /// has been dropped, never inside it — and never held across the table
+    /// BUILD: the accessor takes it to compare keys, drops it, builds, and
+    /// re-takes it to store, so a read is never queued behind another thread's
+    /// 193-245 ms compute.
+    pub temple_valuation: Mutex<Option<temple::preset::CachedValuation>>,
     /// Whether Client.txt has put an incursion in scope (POE-242) — with, since
     /// 2026-09-07 (WI-1), the word the next stand-down is reported with
     /// (`temple::trigger::StandDown`). The single owner of "may the temple loop
@@ -829,6 +852,13 @@ fn reset_all_settings(app: AppHandle) {
     for rejection in settings::apply_to_state(&defaults, &state) {
         app_log(&app, rejection);
     }
+    // The apply above rewrote `temple_settings.preset` and `.custom`, which are
+    // two of the three inputs the valuation is keyed on, so the stored table is
+    // now for settings nobody is running (POE-257 WI-3 fix round, 2026-09-07).
+    // Warm it here for the same reason `temple_set_preset` and
+    // `temple_set_custom` do: without it the next board read pays the 193-245 ms
+    // rebuild itself. Nothing depends on it landing — the key is the guard.
+    ssot::warm_temple_valuation(&app);
     // Re-detect Client.txt
     let detected = detect_client_txt_path();
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = detected;
@@ -3941,6 +3971,7 @@ pub fn run() {
         temple: Mutex::new(temple::slice::TempleSlice::default()),
         temple_settings: Mutex::new(temple::slice::TempleSettings::default()),
         temple_market: Mutex::new(temple::market::MarketInput::none()),
+        temple_valuation: Mutex::new(None),
         temple_arm: Mutex::new(temple::trigger::ArmState::default()),
         temple_rearm: AtomicU64::new(0),
         temple_epoch: AtomicU64::new(0),
