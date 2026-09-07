@@ -3,7 +3,8 @@
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<title>ProfitOfExile</title>
+		<!-- No <title> here: every page sets its own in <svelte:head>, and a static one
+		     would come first in the prerendered HTML and win over the page's. -->
 		%sveltekit.head%
 	</head>
 	<body>

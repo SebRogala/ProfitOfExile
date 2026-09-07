@@ -112,7 +112,7 @@ func TestNewRouter_StaticCatchAllServesFiles(t *testing.T) {
 
 func TestNewRouter_StaticCatchAllFallbackForUnknownPaths(t *testing.T) {
 	frontendFS := fstest.MapFS{
-		"index.html": &fstest.MapFile{
+		"200.html": &fstest.MapFile{
 			Data: []byte("<html><body>ProfitOfExile</body></html>"),
 		},
 	}
