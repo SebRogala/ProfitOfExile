@@ -12,8 +12,7 @@ import {
 	UNKNOWN_LINE,
 	WINDOW_GONE_NOTE,
 	captureRetired,
-	guidesLine,
-	headerLine,
+	overlayHeader,
 	lingerAdvance,
 	lingerInit,
 	lingerRemainingMs,
@@ -23,8 +22,10 @@ import {
 	overlayVisible,
 	rowGlyphs,
 	statusLine,
+	stripSide,
 	unreadIconCount,
-	unreadNote
+	unreadNote,
+	verdictBlock
 } from './overlay-view';
 import { mercenarySliceDefault } from './capture';
 import { HEADLINE_TONE } from './capture-view';
@@ -425,42 +426,47 @@ describe('marking a capture whose window is gone', () => {
 	});
 });
 
-describe('the header line', () => {
-	it('names the mercenary, the class and the level', () => {
-		expect(headerLine(capture([]))).toBe('Cai, the Lout · Shock Ambusher · lvl 70');
+describe('the header', () => {
+	it('names the mercenary in the bold line and puts the class and level under it', () => {
+		expect(overlayHeader(capture([]))).toEqual({
+			name: 'Cai, the Lout',
+			detail: 'Shock Ambusher · lvl 70'
+		});
 	});
 
-	// Dropping the field instead would print `Cai, the Lout · lvl 70`, which
-	// reads as a mercenary with no class rather than as a field nobody read.
+	// Dropping the field instead would print `lvl 70` alone under the name,
+	// which reads as a mercenary with no class rather than as a field nobody read.
 	it('says a field was not read rather than leaving it out', () => {
-		expect(headerLine(capture([], { class: null }))).toBe(
-			'Cai, the Lout · class not read · lvl 70'
-		);
+		expect(overlayHeader(capture([], { class: null })).detail).toBe('class not read · lvl 70');
 	});
 
 	it('says the level was not read rather than printing a zero', () => {
-		expect(headerLine(capture([], { level: null }))).toBe(
-			'Cai, the Lout · Shock Ambusher · level not read'
+		expect(overlayHeader(capture([], { level: null })).detail).toBe(
+			'Shock Ambusher · level not read'
 		);
+	});
+
+	it('says the name was not read rather than drawing an empty bold line', () => {
+		expect(overlayHeader(capture([], { name: null })).name).toBe('name not read');
 	});
 });
 
-describe('the one guides line', () => {
+describe('the verdict block', () => {
 	// The smoke complaint: the strip spent one SKIP line per guide, two of them
 	// at the time. Which guide said no is not a decision the player makes
 	// differently — the page keeps the per-guide breakdown.
-	it('says SKIP once however many guides decided against it', () => {
-		const line = guidesLine(
+	it('says SKIP once, with no chips, however many guides decided against it', () => {
+		const block = verdictBlock(
 			verdict([source('guide-a', 'ckaiba', 'skip'), source('guide-b', 'Nerotox', 'skip')]),
 			capture([])
 		);
-		expect(line).toEqual({ text: SKIP_LINE, tone: 'fail' });
+		expect(block).toEqual({ headline: SKIP_LINE, tone: 'fail', chips: [] });
 	});
 
-	// The one case where naming guides earns its line: this is what the player
-	// is about to pay for.
-	it('names only the guides that said WORTH', () => {
-		const line = guidesLine(
+	// The one case where naming guides earns its space: this is what the player
+	// is about to pay for. The headline is the bare word; the rung is the chip.
+	it('puts only the guide that said WORTH on a chip, with its rung and tier', () => {
+		const block = verdictBlock(
 			verdict([
 				source('guide-a', 'ckaiba', 'skip'),
 				source('guide-b', 'Nerotox', 'worth', ['kinetist-mid'], [
@@ -470,13 +476,18 @@ describe('the one guides line', () => {
 			]),
 			capture([])
 		);
-		expect(line).toEqual({ text: 'WORTH · Nerotox (Kinetist mid)', tone: 'pass' });
+		expect(block).toEqual({
+			headline: 'WORTH',
+			tone: 'pass',
+			chips: [{ guide: 'Nerotox', ruleset: 'Kinetist', tier: 'mid', tierLabel: 'mid' }]
+		});
 	});
 
-	// A ladder can seat two rungs at one tier, and the strip is the line the
-	// player acts on: 'Frost Blades end' would not say which search to open.
-	it('names a rung sharing its tier by the wording that tells the two apart', () => {
-		const line = guidesLine(
+	// A ladder can seat two rungs at one tier, and the chip is what the player
+	// acts on: 'Frost Blades end' would not say which search to open. The key
+	// still rides along, because the chip's grade is the ladder position.
+	it('prints a rung sharing its tier by the wording that tells the two apart', () => {
+		const block = verdictBlock(
 			verdict([
 				source('guide-b', 'Nerotox', 'worth', ['fb-end-return'], [
 					ruleset('fb-end-return', 'Frost Blades', 'end', 'endgame (return)')
@@ -484,11 +495,13 @@ describe('the one guides line', () => {
 			]),
 			capture([])
 		);
-		expect(line?.text).toBe('WORTH · Nerotox (Frost Blades endgame (return))');
+		expect(block?.chips).toEqual([
+			{ guide: 'Nerotox', ruleset: 'Frost Blades', tier: 'end', tierLabel: 'endgame (return)' }
+		]);
 	});
 
-	it('names every guide that said WORTH when more than one did', () => {
-		const line = guidesLine(
+	it('gives every guide that said WORTH its own chip', () => {
+		const block = verdictBlock(
 			verdict([
 				source('guide-a', 'ckaiba', 'worth', ['manyshot'], [ruleset('manyshot', 'Manyshot', null)]),
 				source('guide-b', 'Nerotox', 'worth', ['kinetist-mid'], [
@@ -497,15 +510,36 @@ describe('the one guides line', () => {
 			]),
 			capture([])
 		);
-		expect(line?.text).toBe('WORTH · ckaiba (Manyshot), Nerotox (Kinetist mid)');
+		expect(block?.chips).toEqual([
+			{ guide: 'ckaiba', ruleset: 'Manyshot', tier: null, tierLabel: null },
+			{ guide: 'Nerotox', ruleset: 'Kinetist', tier: 'mid', tierLabel: 'mid' }
+		]);
 	});
 
-	// Three guides now, and the strip is still ONE line: the two saying no cost
-	// it nothing, and the third is named because it is what the player acts on.
-	// An untiered guide-c ruleset prints its bare label, so "CaptainLance
-	// (Kinetist)" is the whole detail with no tier word trailing it.
-	it('names the one guide that said WORTH when the other two skipped', () => {
-		const line = guidesLine(
+	// `best` names the highest passing rung of EACH ladder, so one guide can
+	// earn two chips — one per ladder — and both carry the guide's name.
+	it('gives a guide one chip per ladder it passed', () => {
+		const block = verdictBlock(
+			verdict([
+				source('guide-b', 'Nerotox', 'worth', ['kinetist-mid', 'manyshot-end'], [
+					ruleset('kinetist-mv', 'Kinetist', 'mv'),
+					ruleset('kinetist-mid', 'Kinetist', 'mid'),
+					ruleset('manyshot-end', 'Manyshot', 'end')
+				])
+			]),
+			capture([])
+		);
+		expect(block?.chips.map((chip) => `${chip.guide} ${chip.ruleset} ${chip.tier}`)).toEqual([
+			'Nerotox Kinetist mid',
+			'Nerotox Manyshot end'
+		]);
+	});
+
+	// Three guides now, and the strip is still ONE headline: the two saying no
+	// cost it nothing, and the third is named because it is what the player
+	// acts on. An untiered guide-c ruleset carries no tier tag at all.
+	it('chips the one guide that said WORTH when the other two skipped', () => {
+		const block = verdictBlock(
 			verdict([
 				source('guide-a', 'ckaiba', 'skip'),
 				source('guide-b', 'Nerotox', 'skip'),
@@ -515,16 +549,19 @@ describe('the one guides line', () => {
 			]),
 			capture([])
 		);
-		expect(line).toEqual({ text: 'WORTH · CaptainLance (Kinetist)', tone: 'pass' });
+		expect(block).toEqual({
+			headline: 'WORTH',
+			tone: 'pass',
+			chips: [{ guide: 'CaptainLance', ruleset: 'Kinetist', tier: null, tierLabel: null }]
+		});
 	});
 
 	// Two guides publish ONE saved search — XTheFarmerX's 20D rung is Nerotox's
-	// Kinetist MV link — so a mercenary answering it is WORTH to both. The line
-	// names both rather than collapsing them: they are two independent
-	// endorsements, and each names the rung whose search to comp against, which
-	// is the thing the player opens next.
-	it('names both guides when the one search they share is what said WORTH', () => {
-		const line = guidesLine(
+	// Kinetist MV link — so a mercenary answering it is WORTH to both. Both get
+	// a chip rather than collapsing into one: they are two independent
+	// endorsements, and each names the rung whose search to comp against.
+	it('chips both guides when the one search they share is what said WORTH', () => {
+		const block = verdictBlock(
 			verdict([
 				source('guide-b', 'Nerotox', 'worth', ['guide-b-kinetist-mv'], [
 					ruleset('guide-b-kinetist-mv', 'Kinetist', 'mv')
@@ -535,82 +572,115 @@ describe('the one guides line', () => {
 			]),
 			capture([])
 		);
-		expect(line?.text).toBe('WORTH · Nerotox (Kinetist mv), XTheFarmerX (Kinetist 20D)');
+		expect(block?.chips).toEqual([
+			{ guide: 'Nerotox', ruleset: 'Kinetist', tier: 'mv', tierLabel: 'mv' },
+			{ guide: 'XTheFarmerX', ruleset: 'Kinetist', tier: 'mid', tierLabel: '20D' }
+		]);
 	});
 
 	// A WORTH outranks a SKIP beside it: one guide paying for this mercenary is
 	// the actionable fact, and hiding it behind the other guide's no would lose
 	// the play entirely.
 	it('reports a WORTH even when another guide said SKIP', () => {
-		const line = guidesLine(
+		const block = verdictBlock(
 			verdict([
 				source('guide-a', 'ckaiba', 'skip'),
 				source('guide-b', 'Nerotox', 'worth', ['manyshot'], [ruleset('manyshot', 'Manyshot', null)])
 			]),
 			capture([])
 		);
-		expect(line?.tone).toBe('pass');
+		expect(block?.tone).toBe('pass');
 	});
 
 	// Nothing decided, and the reason is on the same line: a hover would change
 	// this answer, which is not true of a SKIP.
 	it('says unknown with the unread count when no guide could decide', () => {
-		const line = guidesLine(
+		const block = verdictBlock(
 			verdict([source('guide-a', 'ckaiba', 'unknown'), source('guide-b', 'Nerotox', 'unknown')]),
 			capture([row(0, ['unknown', 'ambiguous'])])
 		);
-		expect(line).toEqual({ text: 'unknown — 2 icons unread', tone: 'unknown' });
+		expect(block).toEqual({ headline: 'unknown — 2 icons unread', tone: 'unknown', chips: [] });
 	});
 
 	it('counts one unread icon in the singular', () => {
-		const line = guidesLine(
+		const block = verdictBlock(
 			verdict([source('guide-a', 'ckaiba', 'unknown')]),
 			capture([row(0, ['unknown', 'matched'])])
 		);
-		expect(line?.text).toBe('unknown — 1 icon unread');
+		expect(block?.headline).toBe('unknown — 1 icon unread');
 	});
 
 	// An unknown with nothing to hover is an unread SKILL name, not an unread
-	// icon — so the line must not offer a hover that would settle nothing.
+	// icon — so the headline must not offer a hover that would settle nothing.
 	it('leaves the count off an unknown with every icon read', () => {
-		const line = guidesLine(
+		const block = verdictBlock(
 			verdict([source('guide-a', 'ckaiba', 'unknown')]),
 			capture([row(0, ['matched'])])
 		);
-		expect(line?.text).toBe(UNKNOWN_LINE);
+		expect(block?.headline).toBe(UNKNOWN_LINE);
 	});
 
 	// A guide DID decide. The strip's live status line carries the unread count
 	// either way, so the shorter wording hides nothing.
 	it('reads a mixed SKIP and unknown as a SKIP', () => {
-		const line = guidesLine(
+		const block = verdictBlock(
 			verdict([source('guide-a', 'ckaiba', 'skip'), source('guide-b', 'Nerotox', 'unknown')]),
 			capture([row(0, ['unknown'])])
 		);
-		expect(line?.text).toBe(SKIP_LINE);
+		expect(block?.headline).toBe(SKIP_LINE);
 	});
 
 	// The engine's own `off` headline is the one place the enabled set is read,
-	// so a switched-off guide takes no part in the line.
+	// so a switched-off guide takes no part in the block.
 	it('ignores a guide the user switched off', () => {
-		const line = guidesLine(
+		const block = verdictBlock(
 			verdict([source('guide-a', 'ckaiba', 'off'), source('guide-b', 'Nerotox', 'skip')]),
 			capture([])
 		);
-		expect(line?.text).toBe(SKIP_LINE);
+		expect(block?.headline).toBe(SKIP_LINE);
 	});
 
 	// Drawing SKIP here would put a verdict on screen that no guide gave.
 	it('says so when every guide is switched off rather than drawing a SKIP', () => {
-		const line = guidesLine(
+		const block = verdictBlock(
 			verdict([source('guide-a', 'ckaiba', 'off'), source('guide-b', 'Nerotox', 'off')]),
 			capture([])
 		);
-		expect(line).toEqual({ text: NO_GUIDES_NOTE, tone: 'muted' });
+		expect(block).toEqual({ headline: NO_GUIDES_NOTE, tone: 'muted', chips: [] });
 	});
 
 	it('has nothing to say before anything is captured', () => {
-		expect(guidesLine(null, null)).toBeNull();
+		expect(verdictBlock(null, null)).toBeNull();
+	});
+});
+
+describe('which edge the panel hugs', () => {
+	const screen = { origin: [0, 0] as [number, number], width: 1920 };
+
+	it('hugs the left edge of a window on the left half of the screen', () => {
+		expect(stripSide({ x: 40, width: 460 }, screen)).toBe('left');
+	});
+
+	it('hugs the right edge of a window on the right half of the screen', () => {
+		expect(stripSide({ x: 1458, width: 460 }, screen)).toBe('right');
+	});
+
+	// The window's LEFT EDGE is in the left half here; its centre is not. A
+	// strip straddling the middle belongs to the side most of it is on.
+	it('decides by the centre of the window, not by its left edge', () => {
+		expect(stripSide({ x: 900, width: 460 }, screen)).toBe('right');
+	});
+
+	// The second monitor starts at x 1920, so a window at x 2000 is at the
+	// LEFT of that display, not two screens to the right of the primary.
+	it('measures against the origin of the screen the game is on', () => {
+		const second = { origin: [1920, 0] as [number, number], width: 1920 };
+		expect(stripSide({ x: 2000, width: 460 }, second)).toBe('left');
+	});
+
+	it('stays left until a screen has been measured', () => {
+		expect(stripSide({ x: 1458, width: 460 }, null)).toBe('left');
+		expect(stripSide({ x: 1458, width: 460 }, { origin: [0, 0], width: 0 })).toBe('left');
 	});
 });
 
@@ -816,9 +886,10 @@ describe('a first look at a window', () => {
 	});
 
 	it('says the verdict is pending, whatever a verdict on the skills alone would say', () => {
-		expect(guidesLine(null, first())).toEqual({
-			text: VERDICT_PENDING_LINE,
-			tone: HEADLINE_TONE.unknown
+		expect(verdictBlock(null, first())).toEqual({
+			headline: VERDICT_PENDING_LINE,
+			tone: HEADLINE_TONE.unknown,
+			chips: []
 		});
 	});
 });
