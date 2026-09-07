@@ -1249,7 +1249,10 @@ pub fn crop_lines(crop: &DynamicImage, origin: (i32, i32)) -> Result<Vec<OcrLine
         .collect())
 }
 
-/// Read every plate's name off a board.
+/// Read every plate's name off a board — [`read_slots`] over all thirteen.
+///
+/// What round 1 of a board pays for. A retry round reads only the plates it
+/// still owes; see [`read_slots`].
 ///
 /// A slot whose crop falls outside the capture, or whose OCR call fails, comes
 /// back as [`Match::Unknown`] rather than being dropped: the board always has
@@ -1272,11 +1275,38 @@ pub fn read_board(
     lattice: &Lattice,
     should_stop: &dyn Fn() -> bool,
 ) -> Vec<RoomReading> {
+    read_slots(recognizer, img, lattice, &Slot::ALL, should_stop)
+}
+
+/// [`read_board`] over a SUBSET of the plates — the partial retry round
+/// (POE-249 WI-2).
+///
+/// Rounds 2 and 3 of a board re-read only the plates the kept read could not
+/// name (`super::slice::plan_read`), which on the measured boards is one or two
+/// of the thirteen rather than all of them: 2 OCR calls instead of 26.
+///
+/// **Still thirteen readings**, in [`Slot::ALL`] order, whatever `slots` holds.
+/// The board always has 13 plates — `super::slice::project` publishes one entry
+/// per slot and the advisor scores the graph they form — so a slot this round
+/// did not look at comes back [`Match::Unknown`], the same value an unreadable
+/// plate gets and the value `super::slice::merge_reads` falls back to the kept
+/// identity on. Returning only the read slots would shorten the merged board
+/// instead.
+///
+/// A slot named twice in `slots` is read once; a slot named that is not on the
+/// board cannot exist, because [`Slot`] is the board.
+pub fn read_slots(
+    recognizer: &dyn TextRecognizer,
+    img: &DynamicImage,
+    lattice: &Lattice,
+    slots: &[Slot],
+    should_stop: &dyn Fn() -> bool,
+) -> Vec<RoomReading> {
     Slot::ALL
         .into_iter()
         .map(|slot| RoomReading {
             slot,
-            identity: if should_stop() {
+            identity: if !slots.contains(&slot) || should_stop() {
                 Match::Unknown
             } else {
                 read_plate(recognizer, img, lattice, slot)
@@ -2727,6 +2757,74 @@ mod tests {
             board[3..].iter().all(|r| r.identity == Match::Unknown),
             "the slots the walk never reached are Unknown, never guessed",
         );
+    }
+
+    // A retry round OCRs only the plates it named (POE-249 WI-2). Counted at
+    // the recogniser, which is the only place the saving is real: this fails at
+    // 26 calls if `read_slots` ignores `slots` and reads the whole board, and
+    // the identity check fails if it reads the FIRST two slots of the walk
+    // rather than the two it was handed.
+    #[test]
+    fn a_partial_round_ocrs_only_the_plates_it_named() {
+        use std::cell::Cell;
+
+        struct Counting {
+            calls: Cell<usize>,
+        }
+        impl TextRecognizer for Counting {
+            fn recognize(&self, _img: &DynamicImage) -> Result<Vec<OcrLineBox>, String> {
+                self.calls.set(self.calls.get() + 1);
+                Ok(vec![boxed("Tombs", 0, 0)])
+            }
+        }
+
+        let img = blank(1374, 862);
+        let lattice = Lattice::new((673, 682), 0.99);
+        let recognizer = Counting { calls: Cell::new(0) };
+
+        let board = read_slots(&recognizer, &img, &lattice, &[Slot::C1, Slot::D2], &|| false);
+
+        assert_eq!(
+            recognizer.calls.get(),
+            4,
+            "two calls per planned plate — a name and a numeral — and none for the other eleven",
+        );
+        assert_eq!(
+            board.iter().filter(|r| r.identity.is_known()).map(|r| r.slot).collect::<Vec<_>>(),
+            vec![Slot::C1, Slot::D2],
+            "and the identities land on the slots that were planned",
+        );
+    }
+
+    // …and it still reports every slot, which is what `slice::merge_reads`
+    // folds a partial round back through: a shortened board would file one
+    // plate's identity under another's. Fails if `read_slots` filters
+    // `Slot::ALL` down to `slots` instead of mapping over it.
+    #[test]
+    fn a_partial_round_still_reports_every_slot() {
+        let img = blank(1374, 862);
+        let lattice = Lattice::new((673, 682), 0.99);
+
+        let board = read_slots(&Canned::name("Tombs"), &img, &lattice, &[Slot::C1], &|| false);
+
+        assert_eq!(
+            board.iter().map(|r| r.slot).collect::<Vec<_>>(),
+            Slot::ALL.to_vec(),
+            "a partial round reports 13 readings, in board order",
+        );
+    }
+
+    // The line set a WI-2 round that re-read the budget region alone hands in.
+    // The footer must not be read as a room title: through
+    // `slice::merge_reads`' "the fresh read resolved it" arm a title invented
+    // here would REPLACE the room name a full read already got, on a round that
+    // never looked at the side panel. Fails if the vocabulary gates
+    // (`rooms::MATCH`, `RATIO_MIN`) are loosened enough to let the footer score.
+    #[test]
+    fn a_budget_line_on_its_own_names_no_room() {
+        let read = read_panel(&["9 Incursions Remaining"]);
+
+        assert_eq!(read.room, Match::Unknown, "the footer is not a room name");
     }
 
     // The numeral cross-check runs on the real crop path: a plate whose name
