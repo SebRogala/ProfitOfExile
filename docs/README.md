@@ -53,6 +53,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-020: One shared screen scale; a module corroborates or withholds](adr/020-one-shared-screen-scale-a-module-corroborates-or-withholds.md)
 - [ADR-021: A module draws one window on the game's monitor, and widgets inside it](adr/021-a-module-draws-one-window-on-the-game-monitor-and-widgets-inside-it.md) — Proposed
 - [ADR-022: Room values are chaos-denominated and market-fed; presets are Default and Custom](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md)
+- [ADR-023: A window excluded from the grab may cover what its module reads](adr/023-a-window-excluded-from-the-grab-may-cover-what-its-module-reads.md) — amends ADR-019
 
 Superseded:
 
