@@ -1027,12 +1027,22 @@ touching the named path.
   actually looking for is a line per SECOND, which means the gate is not latching
   at all. Then start an incursion:
   the log gets
-  `Temple: capture armed by Alva` (exactly one line — the capture loop owns the
-  arm/disarm line, the Client.txt trigger writes state and says nothing), the
-  status returns to `idle`, and opening the layout panel reads the board as
-  before. Walk into the temple and out again: the arm survives the whole run (an
-  area arm carries no deadline) and the `You have entered` line back into the map
-  stands it down. Restart the app INSIDE the temple — the catch-up must log
+  `Temple: capture armed by Alva's start line` (exactly one line — the capture
+  loop owns the arm/disarm line, the Client.txt trigger writes state and says
+  nothing), the status returns to `idle`, and opening the layout panel reads the
+  board as before. Close the sheet and the loop stands down on that tick with
+  `Temple: capture stood down — the sheet was read and closed` (2026-09-07,
+  WI-1): reopening it shows no offer boxes until **Re-arm**, which is the
+  accepted cost and not a defect to report. Let Alva say anything else instead —
+  `Good job.` at the end of the run — and the stand-down says
+  `— Alva's line` on the next iteration, not two minutes later. Walk into the
+  temple and out again: the arm survives the whole run — an area arm carries no
+  deadline, Alva's banter inside is the one line that does NOT stand it down, and
+  a sheet read and closed inside the temple does NOT end the cycle either, so
+  every room's sheet reads without a Re-arm — and the `You have entered` line
+  back into the map stands it down with `— the zone changed`. A temple run that
+  needs a Re-arm after the first room is the `TempleArea` carve-out having been
+  lost and is worth reporting. Restart the app INSIDE the temple — the catch-up must log
   `the log's newest area is the temple, armed` rather than leaving the module
   waiting for a line that is never coming. A tail with **no** `You have entered`
   line in it (a quiet log, or one truncated between area changes) seeds
@@ -1046,20 +1056,20 @@ touching the named path.
   already there. It does NOT acquire a panel from a stood-down state — opening
   the layout panel with the loop already stood down and Alva silent (the hideout
   read, item 3 of the POE-242 list) still needs **Re-arm**, exactly as it did
-  after POE-242. An area change out of the temple ends the panel's claim
-  immediately, so walking out does not carry two minutes of capture into the next
-  zone.
+  after POE-242. Since 2026-09-07 (WI-1) the retention is ONE detect tick
+  (`LoopState::live`) rather than a 120 s tail, so an area change carries at most
+  650 ms of capture into the next zone and that tick is the one that finds the
+  sheet gone.
 
-  1. **The panel outlives Client.txt.** Right after Alva speaks — with
-     `Temple: capture armed by Alva` in the log, so the loop is known to be armed
-     — open the layout panel and leave it open for more than two minutes. The
-     advice must stay on screen for as long as the panel is, whatever Client.txt
-     said and however long ago. `app.log` may pick up
-     `Temple: capture armed by the panel on screen` as the Alva tail expires
-     under the open panel — that line IS the fix reporting itself. Measured
-     before it, on the laptop 2026-09-03: `layout panel found` 14:36:14 →
-     `capture stood down — waiting for Alva` 14:37:00 with the panel still open,
-     and the overlay hid with the status.
+  1. **The panel outlives Client.txt.** Press **Re-arm**, open the layout panel
+     and leave it open for more than a minute — past `MANUAL_ARM_GRACE_MS`, which
+     since WI-1 is the only deadline left. The advice must stay on screen for as
+     long as the panel is, whatever Client.txt said and however long ago.
+     `app.log` may pick up `Temple: capture armed by the panel on screen` as the
+     grace expires under the open panel — that line IS the fix reporting itself.
+     Measured before POE-246, on the laptop 2026-09-03: `layout panel found`
+     14:36:14 → `capture stood down — waiting for Alva` 14:37:00 with the panel
+     still open, and the overlay hid with the status.
   2. **A module toggled on over an open panel reads it.** With the panel open and
      Alva silent, switch the temple module off and on. The board must appear
      without pressing Re-arm, and it must appear on the PROBE tick — about a
@@ -1069,17 +1079,19 @@ touching the named path.
      loop that has spent it stands down. Before POE-246 this logged `capture loop
      started` and `capture stood down` in the same second (17:28:31, same laptop)
      and the owner saw the overlay "blink and disappear".
-  3. **A closed panel still stands the loop down.** Close the panel and stay in
-     the map with Alva quiet. `Temple: capture stood down` must arrive about two
-     minutes later (`temple::trigger::PANEL_TAIL_MS`) — and it must ARRIVE,
-     because POE-242's whole point is that a closed panel does not keep the loop
+  3. **A closed panel still stands the loop down, on the next tick.** Close the
+     panel and stay in the map with Alva quiet. `Temple: capture stood down`
+     must arrive within a tick or two — since WI-1 there is no tail to wait out,
+     and the cause on the line says which rule fired: `— the sheet was read and
+     closed` when the board had been read (the ordinary case), `— Re-arm's grace
+     is over` when it had not and the grace ran out first. It must ARRIVE, because
+     POE-242's whole point is that a closed panel does not keep the loop
      capturing. A stand-down that never comes means something on an empty screen
      is clearing `anchor::NCC_FLOOR` every tick, which is worth a
      `temple_debug_capture` dump rather than a tuning change here. Leaving the
-     zone is the fast path to the same place: walk out of the temple (or take a
-     portal) and the `You have entered` line must stand the loop down on the next
-     iteration, NOT two minutes later — the sighting is a claim about a screen
-     the player has left.
+     zone reaches the same place by the other rule: walk out of the temple (or
+     take a portal) and the `You have entered` line must stand the loop down on
+     the next iteration with `— the zone changed`.
 - **The panel and diamond crops land on the real panel** (POE-230): the check the
   fixtures cannot make, because the repository has exactly one full-frame temple
   capture and the bug was a property of a frame's SIZE. With a layout panel open,
@@ -1437,11 +1449,16 @@ touching the named path.
   down)`): the line that ARMED a read is spoken seconds before it, and
   `trigger::advice_end` refuses to clear on that one, which is deliberate and
   not a missed clear.
-- **A sheet reopened inside one incursion is not re-read** (POE-249): with a
-  board on screen, close the layout sheet and open it again without leaving the
-  room. `app.log` must say `Temple: layout panel back — same board, no read` and
-  must NOT say `Temple: layout panel found …` — the two branches are exclusive,
-  and the reopen taking the second one means the board identity did not match.
+- **A sheet reopened in the same room is not re-read** (POE-249; re-targeted at
+  the temple run 2026-09-07 by WI-1's fix round — see the note under it, which is
+  why this is no longer a map-side item): run **The Temple of Atzoatl**, stand in
+  one room and open the layout sheet; let it read; close it; then open it again
+  **without walking anywhere and without pressing Re-arm**. `app.log` must say
+  `Temple: layout panel back — same board, no read` and must NOT say
+  `Temple: layout panel found …` — the two branches are exclusive, and the reopen
+  taking the second one means the board identity did not match. Walking to
+  another room between the two opens moves `layout.current`, which is a NEW board
+  and reads: that is the gate working, not this item failing.
   The corroborating half is the Temple page's `last read <time>`, which must NOT
   advance. Do NOT use the `Temple: rois …` line for this: it prints once per
   DISTINCT value, so a re-read at the same origin and scale prints nothing
@@ -1453,19 +1470,34 @@ touching the named path.
   `Temple: anchor origin keeps moving on a board already read N times …` turning
   up alongside it confirms. The second is POE-247 territory, and worth a
   `temple_debug_capture` dump rather than a tolerance change here.
+  **Why the temple and not a map** (WI-1): map-side, the close COMPLETES the
+  cycle — `capture stood down — the sheet was read and closed` — and the loop
+  stops capturing, so a reopen is not sighted at all and there is no line to
+  check. That is WI-1's accepted cost, not a defect. Nor does Re-arm turn it back
+  into this item: Re-arm bumps `temple_rearm`, which is half the board key, so
+  the gate answers `Read` and the reopen logs `Temple: layout panel found …`
+  every time. Inside the temple the sheet is the run's navigation aid, so
+  `ArmReason::TempleArea` is carved out of the completed cycle
+  (`trigger::ArmState::complete_cycle`) and the arm survives the close — which is
+  what makes the reshow branch reachable here and nowhere else.
 - **The sheet-bound overlays go within one tick** (POE-249): with a board on
   screen, close the layout sheet and time it. The offer boxes and the
   leave-the-map banner must be gone within one cheap tick — 650 ms; there is no
   backoff since 2026-09-06, a machine that cannot hold 650 ms simply runs at
   tick + 650 ms per detect — and `Temple: layout panel gone` must be in
-  the log on that SAME tick; the ROOM WIDGET must STAY. The hide never depended
+  the log on that SAME tick, followed by `Temple: capture stood down — the sheet
+  was read and closed` on the next loop iteration (WI-1); the ROOM WIDGET must
+  STAY through both. The hide never depended
   on `RETIRE_AFTER`: `miss` published `panel_not_visible` on the first clean miss
   at 2 as well. What 1 buys is the log line, `LoopState::live` and the arm gate
   agreeing with the screen, so a `layout panel gone` that lands a tick late is
   `RETIRE_AFTER` back at 2. A room widget that goes with the boxes is the POE-248
   regression and is checked in its own item below.
 - **An unreadable region costs at most two more reads** (POE-249): open the
-  sheet with a plate covered — parking the cursor over one so the game's own
+  sheet and keep it open for the whole check — the retries run while the sheet is
+  on screen, which is what `LoopState::live` keeps the loop armed for (WI-1); a
+  sheet closed after the first read ends the cycle instead. Open it with a plate
+  covered — parking the cursor over one so the game's own
   tooltip is on it as the sheet opens is the reliable way. The Temple page's
   `last read <time>` may advance at most THREE times in total (the read plus
   `RETRIES` = 2) and must then stop while the sheet stays open, with the
@@ -1510,12 +1542,15 @@ touching the named path.
   whole timed run — the layout panel and the game's own diamond are gone by then, and
   this widget is the only surface left.
   **And they must still be there after `Temple: capture stood down` appears in
-  `app.log`**, which is the POE-248 half. That line arrives roughly two minutes
-  after the panel was last on screen — mid-incursion, in the live session that
-  produced this item (`12:32:10 capture armed by the panel on screen` …
-  `12:39:05 capture stood down`, widget gone). The capture stopping is a
-  statement about whether anything is LOOKING; the incursion is not over because
-  of it. What DOES take the widget down is a zone change, the next Alva voice
+  `app.log`**, which is the POE-248 half. Since 2026-09-07 (WI-1) that line
+  arrives on the tick the sheet closes — `— the sheet was read and closed` — which
+  is the moment the player steps through the door, so this check now happens at
+  the START of the run rather than minutes into it. (Before WI-1 it landed
+  roughly two minutes later, mid-incursion, in the live session that produced this
+  item: `12:32:10 capture armed by the panel on screen` … `12:39:05 capture stood
+  down`, widget gone.) The capture stopping is a statement about whether anything
+  is LOOKING; the incursion is not over because of it, and WI-1 makes the gap
+  between the two longer rather than shorter. What DOES take the widget down is a zone change, the next Alva voice
   line after the read, a new read, or the module switch — look for
   `Temple: advice cleared — <reason>` in `app.log` and check the widget went at
   that line and no earlier.

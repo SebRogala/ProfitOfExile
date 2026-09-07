@@ -430,12 +430,12 @@ pub struct AppState {
     /// server behind it. Acquired alone, like every other module-owned Mutex.
     pub temple_market: Mutex<temple::market::MarketInput>,
     /// Whether Client.txt has put an incursion in scope (POE-242) — with, since
-    /// POE-246, the stamp of the last area change that took the player away from
-    /// the temple, so the capture loop's own panel clock cannot outlive the
-    /// screen it measured. The single owner of "may the temple loop capture
-    /// right now". Written by the log watcher on every line and by
-    /// `temple_rearm`; read once per loop iteration. Acquired alone, like every
-    /// other module-owned Mutex.
+    /// 2026-09-07 (WI-1), the word the next stand-down is reported with
+    /// (`temple::trigger::StandDown`). The single owner of "may the temple loop
+    /// capture right now". Written by the log watcher on every line, by
+    /// `temple_rearm`, and by the capture loop when it has read a board and
+    /// watched the sheet close; read once per loop iteration. Acquired alone,
+    /// like every other module-owned Mutex.
     ///
     /// Kept current even while the temple module is OFF: it is a fact about the
     /// game, and a player who switches the module on inside a temple must get a

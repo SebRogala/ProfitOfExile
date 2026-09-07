@@ -41,16 +41,21 @@
 //! started by one of those would put a waiting notice on screen for an
 //! incursion that is already over.
 //!
-//! ANY Alva line still ARMS, and ANY Alva line ENDS a cycle. The asymmetry is
-//! deliberate: an unheard start variant costs a Re-arm (one incursion in 342
-//! carried no start line at all, so that fallback is load-bearing anyway),
-//! while an unheard END variant would leave the notice standing — a claim on
-//! screen that is false. Arming is also wider than "the incursion is starting"
-//! on purpose: after an incursion closes the player is still map-side and may
-//! open the layout panel to read what the kill changed, so arming on
-//! `Good job.` is WANTED, not the free-running bug coming back — the window it
-//! buys is bounded by [`ALVA_TAIL_MS`], and the first `You have entered` line
-//! after it disarms whatever the tail had left.
+//! ANY Alva line still ENDS a cycle, and since 2026-09-07 (WI-1) only a START
+//! phrase ARMS one. The asymmetry is deliberate: an unheard start variant costs
+//! a Re-arm (one incursion in 342 carried no start line at all, so that
+//! fallback is load-bearing anyway), while an unheard END variant would leave
+//! the notice standing — a claim on screen that is false.
+//!
+//! **A non-START Alva line now stands the capture DOWN** rather than arming it
+//! for two minutes. Owner, 2026-09-07: *"After leaving the incursion, OCR never
+//! stops probing, and it should on any Alva voiceline, or zone change."* What
+//! that gives up is the map-side reopen after `Good job.` — the player who
+//! wants to see what the kill changed presses Re-arm, which is the same
+//! fallback an unheard start variant already leans on. What it buys is the
+//! thing the owner asked for: nothing is looking between incursions. The one
+//! exception is Alva's own banter inside The Temple of Atzoatl, which must not
+//! cut a [`ArmReason::TempleArea`] arm short — see [`apply_line`].
 //!
 //! `Time to go, exile.` does not exist in either log — the `, exile` variant is
 //! on the END line — which is why the start table is matched EXACTLY rather
@@ -61,23 +66,53 @@
 //! arm. Such a player is not broken, only unautomated — `temple_rearm`
 //! ("Re-arm") is the same fallback the merc module's **Scan now** is.
 //!
-//! # The three clocks
+//! # What opens the gate, and what shuts it (2026-09-07, WI-1)
 //!
-//! - a **voice line** is evidence about the screen at the moment it was spoken,
-//!   so it arms for [`ALVA_TAIL_MS`] measured from the LINE's own stamp
-//!   ([`crate::mercenary::trigger::line_timestamp_ms`]), and a line older than
-//!   [`LINE_STALE_MS`] on arrival is not evidence about now at all;
+//! - a **START phrase** arms with NO deadline. The portal wait is unbounded
+//!   (the mining holds one 22-minute gap), so nothing but an END line, a zone
+//!   change or the completed cycle below may end it. A line older than
+//!   [`LINE_STALE_MS`] on arrival is not evidence about now at all and arms
+//!   nothing;
 //! - an **area** is a state, not a burst: `: You have entered The Temple of
 //!   Atzoatl.` arms with NO deadline, and the next `You have entered` line —
 //!   whatever it names — is what ends it;
 //! - the **panel on screen** is not in Client.txt at all: while the capture
-//!   loop's detect tick keeps finding the layout panel the gate stays open, and
-//!   [`PANEL_TAIL_MS`] runs from the tick that saw it LAST (POE-246,
-//!   [`arm_source`]).
+//!   loop's last detect tick found the layout panel the gate stays open
+//!   ([`arm_source`]'s `panel_live`, `super::run::LoopState::live`), whatever
+//!   Client.txt says. That is what lets a Re-arm read finish and retry while the
+//!   player holds the sheet open past the grace;
+//! - **Re-arm** arms for [`MANUAL_ARM_GRACE_MS`], the one deadline left in this
+//!   module.
 //!
-//! # The clock measures absence, not presence (POE-246)
+//! Four things shut it, and each has a word for the app log
+//! ([`StandDown`]): the sheet was read and then closed
+//! ([`ArmState::complete_cycle`], driven by the capture loop), a non-START Alva
+//! line, a `You have entered <not the temple>` line, and Re-arm's grace running
+//! out.
 //!
-//! MEASURED on the laptop, 2026-09-03, on the build POE-242 shipped:
+//! # There are no tails any more (2026-09-07, WI-1)
+//!
+//! Until WI-1 a voice line armed for `ALVA_TAIL_MS` (120 s) and the last panel
+//! sighting held the gate for `PANEL_TAIL_MS` (120 s) after the sheet closed.
+//! Both are retired. Owner, 2026-09-07: *"Once the full sheet is read once in
+//! the incursion, we stop reading the sheet … once the sheet is closed, we can
+//! already stop OCRing, hide the explanation, keep the diamond overlay, and upon
+//! stop encounter, we hide the diamond overlay."*
+//!
+//! What replaces them is a CYCLE rather than a clock: the START arm holds
+//! indefinitely, the loop reads the board once, and the first clean miss after
+//! that read completes the cycle and stands the capture down
+//! (`super::run::cycle_complete`). A sheet closed BEFORE a read completed does
+//! not complete anything — the loop keeps probing, which is the case the tails
+//! were really covering.
+//!
+//! The accepted cost, owner-decided 2026-09-07: reopening the sheet later in the
+//! SAME incursion shows no offer boxes until Re-arm, because nothing is looking
+//! any more. The room diamond is unaffected — it lives with the incursion, not
+//! with the capture (POE-248).
+//!
+//! What POE-246 measured still holds and is what `panel_live` keeps. MEASURED on
+//! the laptop, 2026-09-03, on the build POE-242 shipped:
 //!
 //! - 14:30:24 `capture armed by Re-arm` → 14:36:14 `layout panel found` →
 //!   14:37:00 `capture stood down — waiting for Alva`, **with the layout panel
@@ -88,25 +123,13 @@
 //!   Alva silent: `capture loop started`, then `capture stood down` in the same
 //!   second. Owner: *"it blinked and disappeared"*.
 //!
-//! Both are one bug. The two clocks above measure how long ago something was
-//! SAID; nothing asked the screen. A tick that had just anchored the panel did
-//! not extend the arm, and a loop that started with the panel already open never
-//! armed at all.
-//!
-//! So the gate reads a third input — when the loop last SAW the panel — and the
-//! deadline restarts from every sighting. Stand-down now means "the panel has
-//! been gone for [`PANEL_TAIL_MS`]", which is what POE-242 was reaching for all
-//! along: its goal was no free-running capture while nothing is on screen, and a
-//! panel that IS on screen was never the case it meant to bound.
-//!
-//! Two costs, both accepted. Up to [`PANEL_TAIL_MS`] of cheap detect ticks after
-//! a panel closes — the same price the voice-line tail already pays, and cut
-//! short by the next area change, which is positive evidence that the screen the
-//! sighting described is gone ([`ArmState`]). And one
-//! trust the module did not need before: the gate is now bounded by the anchor's
-//! own honesty, so a detector that anchored on background pixels every tick
-//! would hold it open with nothing on screen. `anchor::NCC_FLOOR` is what that
-//! rests on, and it is the same floor the read itself is believed on.
+//! Both are one bug: nothing asked the SCREEN. The gate therefore still reads
+//! whether the loop's last tick found the panel, and the trust that buys is
+//! unchanged — a detector that anchored on background pixels every tick would
+//! hold the gate open with nothing on screen. `anchor::NCC_FLOOR` is what that
+//! rests on, and it is the same floor the read itself is believed on. What WI-1
+//! changed is the clock behind it: `panel_live` is one tick (650 ms at
+//! `super::run::DETECT_INTERVAL`), not two minutes.
 //!
 //! # The start-up probe
 //!
@@ -115,8 +138,8 @@
 //! coming (the 17:28:31 line above is that case), so the first detect tick a
 //! loop runs is not gated on the arm at all: [`ArmSource::StartupProbe`] opens
 //! the gate for exactly one tick and what that tick sees decides the rest. It
-//! anchors, the sighting is stamped and the gate stays open on the panel; it
-//! finds nothing, the next iteration stands down.
+//! anchors, the panel is live and the gate stays open on it; it finds nothing,
+//! the next iteration stands down.
 //!
 //! ONE tick per loop start, spent by `super::run::LoopState::on_detect`
 //! whatever the tick found — **including a tick that could not look at all**,
@@ -132,13 +155,13 @@
 //! `super::run::wants_full_read`), so a settings change would start a capture
 //! nobody asked for, which is the behaviour POE-242 removed.
 //!
-//! Arming never SHORTENS what is already armed ([`TempleArm::arm`]). That rule
-//! is what keeps Alva's own temple banter (`At last... Atzoatl.`, spoken
-//! seconds after the area line) from replacing the deadline-free temple arm
-//! with a two-minute one, which would blind the module part-way through a
-//! temple that took longer than that to run. It has exactly one exception, and
-//! [`apply_line`] rather than [`TempleArm::arm`] is where it lives: an END line
-//! over an [`ArmReason::AlvaStart`] arm.
+//! Arming never SHORTENS what is already armed ([`TempleArm::arm`]). Since WI-1
+//! retired the voice-line tail the only bid that could shorten anything is
+//! Re-arm's sixty seconds, and the rule is what stops it trading a deadline-free
+//! temple arm for that — the button is the user asking for MORE looking and must
+//! not be able to buy less. Alva's temple banter no longer reaches this rule at
+//! all: it does not arm, it is refused outright over a [`ArmReason::TempleArea`]
+//! arm ([`apply_line`]), and over anything else it stands the capture down.
 //!
 //! # The scope this draws, and the override outside it
 //!
@@ -158,13 +181,13 @@
 //! either direction. Two consequences, both load-bearing:
 //!
 //! - an arm bought by `It's time!` is never disarmed by the incursion, and
-//!   survives the return to the map; `Good job…` then extends it by a fresh
-//!   [`ALVA_TAIL_MS`]. **The post-incursion panel read is covered** — the
-//!   player who walks out of the incursion and opens the layout panel to see
-//!   what the kill changed is inside a live arm.
-//! - the ordinary end of a voice-line arm is therefore [`ALVA_TAIL_MS`]
-//!   expiring, not the next area line. The area line is the end only for a
-//!   temple run, where there is one.
+//!   survives the return to the map. Since WI-1 `Good job…` is what ENDS it
+//!   rather than what extends it, so the post-incursion panel read is no longer
+//!   covered by the arm — **Re-arm** is what covers it, by owner decision
+//!   (2026-09-07, above).
+//! - the ordinary end of a START arm is therefore that END line, or the
+//!   completed cycle when the player read the sheet and closed it. The area
+//!   line is the end only when the player leaves before either.
 //!
 //! What the log CANNOT show is the one thing the design turns on: whether
 //! Alva's line fires when the dialogue/panel OPENS or only when **Enter
@@ -211,43 +234,18 @@ pub const ALVA_SPEAKER: &str = "Alva, Master Explorer";
 /// The area name the temple itself enters under.
 pub const TEMPLE_AREA: &str = "The Temple of Atzoatl";
 
-/// How long one Alva voice line keeps the loop armed when no area change ever
-/// arrives.
-///
-/// Measured 2026-09-02, and it turns out to be the ORDINARY end of a
-/// voice-line arm rather than the backstop it was written as: the incursion
-/// instance logs no area change in either direction (see the module doc), so
-/// the player who hears `Time to go.`, runs the incursion and comes back to the
-/// map is inside one continuous arm that `Good job…` extends and nothing
-/// disarms. The area line ends a voice-line arm only when there is one — a
-/// temple run, or the next map.
-///
-/// **A GUESS, tunable** (owner decision 5 in the POE-223 follow-up plan): two
-/// minutes is "long enough to open a panel, read it and think", and its cost if
-/// wrong is bounded in both directions — too short loses a late panel open
-/// (Re-arm recovers it), too long spends detect ticks on a map, which is what
-/// the module did on every tick before this file existed.
-pub const ALVA_TAIL_MS: u64 = 120_000;
-
 /// How long a manual **Re-arm** keeps the loop armed.
 ///
 /// The merc module's own value, and for the same reason: it is a promise to the
 /// PERSON who pressed it rather than a deadline measured from an event, so it
 /// has to outlive an alt-tab back into the game.
-pub const MANUAL_ARM_GRACE_MS: u64 = crate::mercenary::trigger::MANUAL_ARM_GRACE_MS;
-
-/// How long the loop stays armed after the last detect tick that SAW the layout
-/// panel (POE-246).
 ///
-/// The same 120 s as [`ALVA_TAIL_MS`], and deliberately the same NUMBER: no
-/// measurement separates them, and both answer one question — how long after the
-/// last evidence is it still worth looking? What the pair has to cover is the
-/// player who closes the panel to kill an architect and reopens it to see what
-/// changed, and neither the close nor the reopen writes a line anywhere. A
-/// shorter panel tail stands the loop down inside that gap; a longer one spends
-/// cheap detect ticks on a screen with nothing on it. Split the two constants
-/// the moment either gets a measurement of its own.
-pub const PANEL_TAIL_MS: u64 = ALVA_TAIL_MS;
+/// **The only deadline left in this module** since WI-1 retired `ALVA_TAIL_MS`
+/// and `PANEL_TAIL_MS` (2026-09-07). It is what a manual stand-down reports
+/// ([`StandDown::GraceOver`]), and it is not the only way a manual arm ends: a
+/// Re-arm whose sheet is read and then closed ends by the cycle rule like any
+/// other arm.
+pub const MANUAL_ARM_GRACE_MS: u64 = crate::mercenary::trigger::MANUAL_ARM_GRACE_MS;
 
 // ---------------------------------------------------------------------------
 // Pure — the state machine
@@ -257,14 +255,12 @@ pub const PANEL_TAIL_MS: u64 = ALVA_TAIL_MS;
 /// loop asks [`TempleArm::is_armed`], never the reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArmReason {
-    /// A `Alva, Master Explorer:` voice line that is not one of the three
-    /// measured START phrases, map-side. Bounded by [`ALVA_TAIL_MS`].
-    AlvaLine,
     /// One of the three measured START phrases ([`classify`]). Armed with NO
     /// deadline: the start line fires when the portal OPENS, and nothing in the
     /// game times an open portal out — the mining holds one gap of 22 minutes
     /// between a start and its end, the player being away from the PC. What
-    /// ends this arm is an end line or an area change, never a clock.
+    /// ends this arm is an end line, an area change or the completed cycle
+    /// (`super::run::cycle_complete`), never a clock.
     AlvaStart,
     /// The player is inside The Temple of Atzoatl.
     TempleArea,
@@ -276,7 +272,6 @@ impl ArmReason {
     /// The words the app log uses for this reason.
     pub fn label(self) -> &'static str {
         match self {
-            ArmReason::AlvaLine => "Alva",
             ArmReason::AlvaStart => "Alva's start line",
             ArmReason::TempleArea => "the temple",
             ArmReason::Manual => "Re-arm",
@@ -284,11 +279,65 @@ impl ArmReason {
     }
 }
 
+/// Why the capture is NOT looking — the second half of the app log's gate
+/// vocabulary, added by WI-1 (2026-09-07).
+///
+/// Before WI-1 there was one stand-down line for every cause, because there was
+/// really one cause: a clock had run out. The clocks are gone, and the four ways
+/// a gate now shuts are four different things for a smoke run to check, so the
+/// line names which ([`super::run::gate_line`]).
+///
+/// Carried on [`ArmState`] rather than derived, because three of the four are
+/// EVENTS with no trace left in [`TempleArm`] afterwards — a disarmed arm looks
+/// the same whichever line disarmed it. What the field holds is the cause the
+/// NEXT stand-down reports, so every writer of the arm sets it: the two
+/// disarming lines in [`apply_line`], [`ArmState::complete_cycle`], and
+/// [`ArmState::arm_manual`], which sets [`Self::GraceOver`] up front because the
+/// grace expiring is the one stand-down no event announces.
+///
+/// The two deadline-free arms ([`ArmReason::AlvaStart`], [`ArmReason::TempleArea`])
+/// deliberately leave it alone: they cannot end on a clock, so whatever ends
+/// them writes its own cause first.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum StandDown {
+    /// Nothing has put an incursion in scope. The resting state, and where a
+    /// session spends nearly all of its time.
+    #[default]
+    Waiting,
+    /// The sheet was read and then closed: this cycle is finished (WI-1, owner
+    /// 2026-09-07). The next START phrase — or Re-arm — begins a fresh one.
+    CycleComplete,
+    /// A non-START [`ALVA_SPEAKER`] line: the incursion is over, or another has
+    /// begun.
+    AlvaLine,
+    /// `: You have entered <not the temple>` — the player left.
+    LeftArea,
+    /// A Re-arm nobody opened a sheet for, [`MANUAL_ARM_GRACE_MS`] later.
+    GraceOver,
+}
+
+impl StandDown {
+    /// The words the app log uses for this stand-down.
+    pub fn label(self) -> &'static str {
+        match self {
+            // The wording POE-242 shipped, kept verbatim: it is what
+            // `docs/OVERLAY-GUIDE.md` smoke item 12 tells the runner to look
+            // for.
+            StandDown::Waiting => "waiting for Alva",
+            StandDown::CycleComplete => "the sheet was read and closed",
+            StandDown::AlvaLine => "Alva's line",
+            StandDown::LeftArea => "the zone changed",
+            StandDown::GraceOver => "Re-arm's grace is over",
+        }
+    }
+}
+
 /// Why the capture loop is looking — [`arm_source`]'s answer, and the app log's
 /// whole vocabulary for the gate.
 ///
-/// [`ArmReason`] is the Client.txt half: the three ways a LINE can put an
-/// incursion in scope. The other two answers come from the loop itself and have
+/// [`ArmReason`] is the Client.txt half: the two ways a LINE can put an
+/// incursion in scope, plus Re-arm. The other two answers come from the loop
+/// itself and have
 /// no line behind them, which is why this is a second enum rather than two more
 /// variants of the first — a [`TempleArm`] can only ever hold an [`ArmReason`],
 /// and a type that could also hold [`ArmSource::PanelOnScreen`] would be able to
@@ -297,7 +346,9 @@ impl ArmReason {
 pub enum ArmSource {
     /// Client.txt put an incursion in scope.
     Trigger(ArmReason),
-    /// A detect tick saw the layout panel less than [`PANEL_TAIL_MS`] ago.
+    /// The loop's LAST detect tick found the layout panel
+    /// (`super::run::LoopState::live`). One tick, not a tail — see the module
+    /// doc's "There are no tails any more".
     PanelOnScreen,
     /// The one tick a starting loop runs before it may stand down.
     StartupProbe,
@@ -317,8 +368,9 @@ impl ArmSource {
 /// Whether the capture loop may look at the screen at all.
 ///
 /// The single owner of that answer, held in `AppState.temple_arm` and written
-/// from exactly two places: the Client.txt watcher (every line, whether or not
-/// the module is on) and `temple_rearm`.
+/// from exactly three places: the Client.txt watcher (every line, whether or not
+/// the module is on), `temple_rearm`, and — since WI-1 — the capture loop when
+/// it has read a board and watched the sheet close ([`complete_cycle`]).
 ///
 /// **Written while the module is off, too.** The state is a fact about the
 /// game, not about the module, and keeping it current is what lets a player who
@@ -353,14 +405,15 @@ pub enum Transition {
     /// line.
     Armed(ArmReason),
     /// A live arm was pushed out, was already reaching further than this line
-    /// would have bought, or — the two cases that are not about horizons — was
-    /// pulled IN to [`ALVA_TAIL_MS`] by an end line over a live
-    /// [`ArmReason::AlvaStart`] arm, or had its reason replaced in place by the
-    /// temple area line (both in [`apply_line`]). What the spelling means is
-    /// "the gate was already open", not "it now reaches further". Silent: Alva
-    /// speaks several times per incursion.
+    /// would have bought, or — the two cases that are not about horizons — had
+    /// its reason replaced in place by the temple area line, or was left exactly
+    /// as it was because the line was Alva's banter inside the temple (both in
+    /// [`apply_line`]). What the spelling means is "the gate was already open",
+    /// not "it now reaches further". Silent: Alva speaks several times per
+    /// incursion.
     Extended(ArmReason),
-    /// An area change ended the arm.
+    /// Something ended the arm: an area change, a non-START Alva line, or the
+    /// completed cycle ([`ArmState::complete_cycle`]).
     Disarmed,
 }
 
@@ -395,31 +448,28 @@ impl TempleArm {
     /// shortening a live arm**.
     ///
     /// The no-shortening rule is what makes the three reasons composable
-    /// without an order of precedence between them. Alva's temple banter lands
-    /// seconds after the temple area line and a plain "latest wins" would swap
-    /// the deadline-free arm for a two-minute one; Re-arm pressed inside a
-    /// temple would do the same with sixty seconds. Both are the user asking
-    /// for MORE looking, and neither can be allowed to buy less.
+    /// without an order of precedence between them. Re-arm pressed inside a
+    /// temple would swap the deadline-free arm for sixty seconds under a plain
+    /// "latest wins"; the button is the user asking for MORE looking, and it
+    /// cannot be allowed to buy less. Since WI-1 retired the voice-line tail
+    /// (2026-09-07) Re-arm is the ONLY bid with a deadline on it, so it is also
+    /// the only bid this rule can refuse.
     ///
     /// An EXPIRED arm is not a live one: it is replaced, and reported as a
     /// fresh arm, because that is what the log reader sees.
     ///
-    /// # The one permitted shortening, and why it is not here
+    /// # Nothing shortens a live arm any more
     ///
-    /// An [`ArmReason::AlvaStart`] arm carries no deadline and an END line
-    /// replaces it with an [`ALVA_TAIL_MS`] one — the only place in this module
-    /// where a live arm gets a nearer horizon. It is written out longhand in
-    /// [`apply_line`] rather than folded in here because its licence is not a
-    /// rule about horizons at all: the GAME said the incursion ended, which is
-    /// the one thing that outranks "the user asked for more looking". Every
-    /// other caller — Alva's temple banter over a [`ArmReason::TempleArea`]
-    /// arm, Re-arm pressed inside a temple — still gets the plain rule above.
+    /// Until WI-1 an END line replaced a deadline-free [`ArmReason::AlvaStart`]
+    /// arm with a two-minute one — the one place in this module where a live arm
+    /// got a nearer horizon. That line now DISARMS ([`apply_line`]), which needs
+    /// no horizon at all, so the exception is gone rather than moved.
     ///
-    /// That the banter case reads on a `TempleArea` arm at all is what the
-    /// temple area line's own branch in [`apply_line`] buys: it does not bid
-    /// through this method, it ASSIGNS the reason. A bid would buy nothing over
-    /// a live deadline-free `AlvaStart` arm — `outlives(None, None)` holds — and
-    /// the banter would arrive to find a START arm and shorten it.
+    /// The temple area line still ASSIGNS its reason rather than bidding through
+    /// this method. A bid would buy nothing over a live deadline-free
+    /// `AlvaStart` arm — `outlives(None, None)` holds — and Alva's banter
+    /// seconds later would then arrive to find a START arm and stand the capture
+    /// down mid-run.
     fn arm(&mut self, reason: ArmReason, until_ms: Option<u64>, now_ms: u64) -> Transition {
         let live = self.is_armed(now_ms);
         if live {
@@ -441,17 +491,8 @@ impl TempleArm {
         }
     }
 
-    /// The user pressed Re-arm: look for [`MANUAL_ARM_GRACE_MS`].
-    pub fn arm_manual(&mut self, now_ms: u64) -> Transition {
-        self.arm(
-            ArmReason::Manual,
-            Some(now_ms.saturating_add(MANUAL_ARM_GRACE_MS)),
-            now_ms,
-        )
-    }
-
-    /// The area changed to something that is not the temple: stop looking,
-    /// whatever armed it.
+    /// Stop looking, whatever armed it: the area changed, Alva spoke, or the
+    /// cycle finished.
     fn disarm(&mut self) -> Transition {
         let was_armed = matches!(self, TempleArm::Armed { .. });
         *self = TempleArm::Disarmed;
@@ -463,79 +504,131 @@ impl TempleArm {
     }
 }
 
-/// Everything one lock holds about the gate: what Client.txt has armed, and when
-/// the player was last seen LEAVING for somewhere that is not the temple.
+/// Everything one lock holds about the gate: what has armed the loop, and what
+/// the next stand-down will be reported as.
 ///
 /// The second field is not a second gate — [`TempleArm`] is still the only thing
-/// a line arms — it is what stops POE-246's panel clock outliving the screen it
-/// was measured on. `: You have entered <a map>` is positive evidence that
-/// whatever panel the loop last anchored went with the zone, so a sighting older
-/// than the change says nothing about the screen in front of the player now.
-/// Without it, walking out of a temple carried up to [`PANEL_TAIL_MS`] of
-/// capture at `super::run`'s `DETECT_INTERVAL` (~1.5 Hz, 650 ms) into the next
-/// zone, under a log line claiming the panel was on screen.
+/// that decides whether the loop may look. It is the WORD for the closed gate,
+/// and it is a field rather than a derivation because three of the four causes
+/// are events that leave no trace in `TempleArm`: a `Disarmed` arm looks
+/// identical whether Alva ended it, the zone did, or the cycle finished. See
+/// [`StandDown`], which owns the rule about which writer sets what.
 ///
-/// Stamped on EVERY non-temple area line rather than only on the ones that move
-/// the gate: the case that needs it is a loop the PANEL is keeping armed, whose
-/// `TempleArm` has usually expired already, and [`TempleArm::disarm`] reports
-/// `Ignored` rather than `Disarmed` for those.
-///
-/// # The clock this one is on, and why it is the exception
-///
-/// The three clocks above measure an Alva line from the LINE's own stamp. This
-/// one is `now_ms` at the moment the line was READ, and it has to be: its only
-/// use is a comparison against `super::run::LoopState::panel_seen_ms`, which the
-/// capture loop stamps off the same wall clock, and two values compared against
-/// each other must be on one clock or the comparison means nothing. The line's
-/// own stamp would also be a different RESOLUTION — Client.txt writes whole
-/// seconds — which is a second reason not to mix them.
-///
-/// The watcher's lag makes this later than the zone change really was, never
-/// earlier, and later is the safe direction: it can only invalidate a sighting
-/// that was in fact fine (the loop stands down and Re-arm recovers it), never
-/// keep one taken on a screen the player has already left.
+/// It replaced `left_area_ms` in WI-1 (2026-09-07). That field existed to stop
+/// POE-246's 120 s panel clock outliving the screen it was measured on; the
+/// clock is now one detect tick, so a zone change can carry at most 650 ms of
+/// capture into the next zone — and the tick that carries it is the one that
+/// finds the panel gone.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ArmState {
-    /// What Client.txt has armed.
+    /// What has armed the loop.
     pub arm: TempleArm,
-    /// When the newest `You have entered <not the temple>` line was READ — the
-    /// capture loop's wall clock, not the line's own stamp. `None` until one is.
-    pub left_area_ms: Option<u64>,
+    /// The words the NEXT stand-down is reported with — see [`StandDown`].
+    pub stood_down: StandDown,
+}
+
+impl ArmState {
+    /// The user pressed Re-arm: look for [`MANUAL_ARM_GRACE_MS`].
+    ///
+    /// The cause is written up front, and only when the bid actually took: a
+    /// Re-arm refused by the no-shortening rule ([`TempleArm::arm`]) has bought
+    /// no deadline, so it must not claim the next stand-down. This is the one
+    /// stand-down with no event behind it — a clock runs out and nothing is
+    /// written at the moment it does — which is why it is stamped here instead.
+    pub fn arm_manual(&mut self, now_ms: u64) -> Transition {
+        let transition = self.arm.arm(
+            ArmReason::Manual,
+            Some(now_ms.saturating_add(MANUAL_ARM_GRACE_MS)),
+            now_ms,
+        );
+        if self.arm.reason() == Some(ArmReason::Manual) {
+            self.stood_down = StandDown::GraceOver;
+        }
+        transition
+    }
+
+    /// The capture loop read this incursion's board and has now watched the
+    /// sheet close: the cycle is over, so stop looking (WI-1, owner
+    /// 2026-09-07).
+    ///
+    /// The loop OWNS the observation — it is the only thing that can see a sheet
+    /// close, and `super::run::cycle_complete` is the rule it applies — and this
+    /// owns what the observation does to the gate. What re-opens the gate is the
+    /// next START phrase or Re-arm, both of which arm from `Disarmed` like any
+    /// other resting state.
+    ///
+    /// # The exception, and it is the same one the END line has
+    ///
+    /// A live [`ArmReason::TempleArea`] arm is NOT ended by a completed cycle.
+    /// Inside The Temple of Atzoatl the sheet is the navigation aid and the
+    /// player opens and closes it once per ROOM, with nothing between the rooms
+    /// that moves the board key — no `EnteredTemple` bumps the epoch and the run
+    /// writes no area lines — so a cycle that completed on the first close would
+    /// cost a Re-arm for every remaining room of the run.
+    ///
+    /// That arm ends on leaving the area, as it always has. It is the same
+    /// carve-out [`apply_line`] gives Alva's temple banter and it is keyed the
+    /// same way, on the reason the temple's own area line ASSIGNS.
+    ///
+    /// # `key_current` — the observation is about a cycle that may be over
+    ///
+    /// The loop reads the board key `(temple_epoch, temple_rearm)` at the TOP of
+    /// its tick and reaches this at the BOTTOM, and a tick takes seconds — 5.3 s
+    /// for a cold sweep, ~4 s for a full read on a debug build. A START phrase
+    /// heard inside that window bumps the epoch and arms a fresh cycle; Re-arm
+    /// bumps the counter. Either way the arm this would disarm is no longer the
+    /// arm the sheet closed under, and standing it down would leave the NEXT
+    /// board unread until the player pressed Re-arm.
+    ///
+    /// So the caller says whether the key it observed is still the current one,
+    /// and a stale observation moves nothing — [`Transition::Ignored`], the same
+    /// word a line that changed nothing gets. A bool rather than the key itself
+    /// keeps the rule testable without an `AppHandle`, as [`arm_source`]'s two
+    /// loop inputs are; `complete_cycle` (the glue) is what reads the two
+    /// counters.
+    pub fn complete_cycle(&mut self, key_current: bool) -> Transition {
+        if !key_current {
+            return Transition::Ignored;
+        }
+        if self.arm.reason() == Some(ArmReason::TempleArea) {
+            return Transition::Extended(ArmReason::TempleArea);
+        }
+        self.stood_down = StandDown::CycleComplete;
+        self.arm.disarm()
+    }
 }
 
 /// The capture loop's whole arm gate: may it look right now, and on whose word.
 ///
-/// `None` is stood down. The three inputs are ORed — each is its own reason to
-/// look and none can shorten another — so the order below decides only which
-/// source the app log names ([`super::run::gate_line`]).
+/// `None` is stood down, and [`ArmState::stood_down`] is the word for it. The
+/// three inputs are ORed — each is its own reason to look and none can shorten
+/// another — so the order below decides only which source the app log names
+/// ([`super::run::gate_line`]).
 ///
 /// Client.txt comes first because a live incursion is what the module exists to
-/// follow and `armed by Alva` is the line the smoke item reads. The panel comes
-/// second, and is the whole of POE-246: it is checked against a deadline
-/// measured from the last SIGHTING, so a tick that anchors restarts it and the
-/// gate closes only once the panel has been gone for [`PANEL_TAIL_MS`]. The
-/// probe comes last because it is not evidence at all — it is the one look a
-/// starting loop owes itself before it may believe an empty screen.
+/// follow and `armed by Alva's start line` is the line the smoke item reads. The
+/// panel comes second, and is what is left of POE-246 after WI-1 retired its
+/// tail: `panel_live` is `super::run::LoopState::live`, which is true exactly
+/// while the loop's LAST detect tick found the sheet. A player holding the sheet
+/// open therefore keeps the gate open whatever Client.txt says, which is what
+/// lets a Re-arm read finish and retry past the sixty-second grace; a sheet that
+/// closes takes it with them on the next tick. The probe comes last because it
+/// is not evidence at all — it is the one look a starting loop owes itself
+/// before it may believe an empty screen.
 ///
-/// `panel_seen_ms` is `super::run::LoopState::panel_seen_ms`, stamped by an
-/// anchored tick and never by a miss; `probe_pending` is that state machine's
-/// unspent first look. Both are plain data here, so the whole gate is tested on
-/// Linux without a screen or a clock.
-///
-/// A sighting has to be NEWER than [`ArmState::left_area_ms`] to count. The
-/// panel clock measures a screen, and an area change is the one thing in the log
-/// that says the screen is gone.
+/// `probe_pending` is that state machine's unspent first look. Both loop inputs
+/// are plain bools here, so the whole gate is tested on Linux without a screen
+/// or a clock.
 pub fn arm_source(
     state: ArmState,
-    panel_seen_ms: Option<u64>,
+    panel_live: bool,
     probe_pending: bool,
     now_ms: u64,
 ) -> Option<ArmSource> {
     if let Some(reason) = state.arm.reason().filter(|_| state.arm.is_armed(now_ms)) {
         return Some(ArmSource::Trigger(reason));
     }
-    let seen_here = panel_seen_ms.filter(|seen| state.left_area_ms.is_none_or(|left| *seen > left));
-    if seen_here.is_some_and(|seen| now_ms < seen.saturating_add(PANEL_TAIL_MS)) {
+    if panel_live {
         return Some(ArmSource::PanelOnScreen);
     }
     probe_pending.then_some(ArmSource::StartupProbe)
@@ -662,25 +755,28 @@ pub fn classify(line: &str, now_ms: u64) -> Option<LineEvent> {
 /// One Client.txt line, folded into the arm state.
 ///
 /// [`classify`] answers what the line IS and this decides what that does to the
-/// gate. An [`LineEvent::AlvaEnd`] tail is measured from the LINE's own stamp
-/// rather than from `now_ms` — the watcher's hop is up to its 5 s
-/// `recv_timeout` fallback, and the tail would otherwise outlive the design by
-/// exactly that.
+/// gate.
 ///
-/// # The END line over a START arm
+/// # The END line stands the capture DOWN (WI-1, 2026-09-07)
 ///
 /// A START arm has no deadline (see [`ArmReason::AlvaStart`]), so something has
 /// to end it, and the END line is the game itself saying the incursion is over.
-/// It is the ONE case where a live arm is given a nearer horizon
-/// ([`TempleArm::arm`]) — and the horizon it is given is the ordinary
-/// [`ALVA_TAIL_MS`] one, because the player who walks out of the incursion may
-/// still open the layout panel to see what the kill changed.
+/// Until WI-1 that line traded the deadline-free arm for a two-minute tail so
+/// the player could reopen the sheet map-side; the owner's rule is that nothing
+/// should be probing between incursions, so it now disarms outright. The reopen
+/// is Re-arm's, and the module doc records the trade.
 ///
-/// A [`ArmReason::TempleArea`] or [`ArmReason::Manual`] arm is NOT shortened by
-/// an end line, and the case that needs that is Alva's own temple banter
-/// (`At last... Atzoatl.`): it is an [`LineEvent::AlvaEnd`] by this
-/// classification, and shortening the deadline-free area arm with it would
-/// blind the module part-way through a temple run.
+/// # The one exception: Alva inside the temple
+///
+/// `At last... Atzoatl.` and `No wonder it's lost…` are [`LineEvent::AlvaEnd`]
+/// by the phrase table and are spoken seconds into a temple run. Standing the
+/// capture down on them would blind the module for the whole run — the sheet is
+/// the navigation aid in there — so a live [`ArmReason::TempleArea`] arm is left
+/// exactly as it is, and only the area line out of the temple ends it.
+///
+/// The exception is keyed on the REASON and not on the area, because the reason
+/// is what the temple's own area line assigns ([`LineEvent::EnteredTemple`]).
+/// Every other arm — a START arm map-side, a Re-arm — is ended by the line.
 pub fn apply_line(state: &mut ArmState, line: &str, now_ms: u64) -> Transition {
     match classify(line, now_ms) {
         None => Transition::Ignored,
@@ -691,8 +787,9 @@ pub fn apply_line(state: &mut ArmState, line: &str, now_ms: u64) -> Transition {
             // [`ArmReason::AlvaStart`] arm's reason in place (both horizons are
             // `None`, so the bid buys nothing), and Alva's temple banter
             // seconds later — an [`LineEvent::AlvaEnd`] — would then find a
-            // START arm and shorten it to the tail, going blind part-way
-            // through the run.
+            // START arm and, since WI-1 (2026-09-07), stand it DOWN outright:
+            // blind for the rest of the run rather than for the tail's 120 s,
+            // and on the surface the run is played on.
             let live = state.arm.is_armed(now_ms);
             state.arm = TempleArm::Armed {
                 until_ms: None,
@@ -705,29 +802,23 @@ pub fn apply_line(state: &mut ArmState, line: &str, now_ms: u64) -> Transition {
             }
         }
         Some(LineEvent::LeftArea) => {
-            // Before the disarm, and unconditionally: this stamp is about the
-            // SCREEN (see [`ArmState`]) and the gate may already be closed.
-            state.left_area_ms = Some(now_ms);
+            // Written before the disarm and unconditionally: the gate may
+            // already be closed, and the cause is about the LINE rather than
+            // about what the line moved.
+            state.stood_down = StandDown::LeftArea;
             state.arm.disarm()
         }
         Some(LineEvent::AlvaStart) => state.arm.arm(ArmReason::AlvaStart, None, now_ms),
         Some(LineEvent::AlvaEnd) => {
-            let until = arm_at(now_ms, line_timestamp_ms(line)).saturating_add(ALVA_TAIL_MS);
-            let starting = matches!(
-                state.arm,
-                TempleArm::Armed {
-                    reason: ArmReason::AlvaStart,
-                    ..
-                }
-            ) && state.arm.is_armed(now_ms);
-            if starting {
-                state.arm = TempleArm::Armed {
-                    until_ms: Some(until),
-                    reason: ArmReason::AlvaLine,
-                };
-                return Transition::Extended(ArmReason::AlvaLine);
+            let in_temple = state.arm.reason() == Some(ArmReason::TempleArea);
+            if in_temple && state.arm.is_armed(now_ms) {
+                // Alva's temple banter. The arm is untouched — `Extended` is
+                // this module's word for "the gate was already open", which is
+                // exactly what happened.
+                return Transition::Extended(ArmReason::TempleArea);
             }
-            state.arm.arm(ArmReason::AlvaLine, Some(until), now_ms)
+            state.stood_down = StandDown::AlvaLine;
+            state.arm.disarm()
         }
     }
 }
@@ -864,13 +955,16 @@ pub fn catch_up_state(tail: &str) -> TempleArm {
 /// composes reasons *within* one log, and a catch-up is the app changing which
 /// log it believes.
 ///
-/// It writes the ARM only. [`ArmState::left_area_ms`] is a claim about the
-/// player's screen, and a catch-up runs when the watcher restarts — including
-/// when the user edits the Client.txt path with the layout panel open in front
-/// of them. Stamping "left the area" there would stand the capture down over a
-/// panel nobody moved away from.
+/// A seeded `Disarmed` also resets [`ArmState::stood_down`] to
+/// [`StandDown::Waiting`], which is what it means: this log says nothing is in
+/// scope, and the cause carried over from the previous log describes an
+/// incursion the app is no longer watching. The temple seed leaves it alone —
+/// that arm has no deadline, so whatever ends it writes its own cause first.
 pub fn apply_catch_up(state: &mut ArmState, tail: &str) -> TempleArm {
     state.arm = catch_up_state(tail);
+    if state.arm == TempleArm::Disarmed {
+        state.stood_down = StandDown::Waiting;
+    }
     state.arm
 }
 
@@ -895,8 +989,9 @@ pub fn arm_state(app: &AppHandle) -> ArmState {
 /// whether or not the temple module is on (logging here would narrate a module
 /// the user has switched off); when the module IS on, both would fire within a
 /// second and put two lines in `app.log` for one event; and the loop covers the
-/// transition this function cannot see at all — an [`ALVA_TAIL_MS`] arm
-/// expiring, which no Client.txt line announces.
+/// two transitions this function cannot see at all — [`MANUAL_ARM_GRACE_MS`]
+/// running out and the cycle completing, neither of which any Client.txt line
+/// announces.
 ///
 /// What it DOES log is the two facts the loop cannot see: the cycle beginning
 /// and ending (POE-249), and the advice being cleared (POE-248). Both are
@@ -1000,7 +1095,38 @@ pub fn arm_manual(app: &AppHandle) {
     let now = super::run::now_ms();
     let state = app.state::<AppState>();
     let mut arm = state.temple_arm.lock().unwrap_or_else(|e| e.into_inner());
-    arm.arm.arm_manual(now);
+    arm.arm_manual(now);
+}
+
+/// The cycle is over: the capture loop read this incursion's board and then
+/// watched the sheet close (WI-1).
+///
+/// The loop's own seam into the arm, and the sibling of [`arm_manual`] — both
+/// are one lock and one call, with the RULE next door: `super::run::cycle_complete`
+/// decides, [`ArmState::complete_cycle`] writes.
+///
+/// `key` is the board key the observation was taken under, read at the top of
+/// the tick that is now reporting the sheet closed. This re-reads the pair
+/// through `super::run::board_key` — the same two counters, in the same order,
+/// under the atomics the loop itself uses — and hands
+/// [`ArmState::complete_cycle`] the comparison, so a cycle that a START line or
+/// a Re-arm has already replaced during the tick is not stood down on the
+/// strength of the cycle before it. See that method for why a whole tick is
+/// long enough for that to happen.
+///
+/// The counters are read BEFORE the arm lock is taken: the window this closes is
+/// the tick's own seconds, and holding the lock across the reads would narrow
+/// nothing (they are atomics, and `on_client_line` bumps the epoch after it has
+/// released this lock).
+///
+/// It logs nothing, for the same reason [`on_client_line`] does not: the
+/// stand-down line has one owner, and it is `super::run::gate_line` on the next
+/// iteration of the loop that called this.
+pub fn complete_cycle(app: &AppHandle, key: (u64, u64)) {
+    let key_current = super::run::board_key(app) == key;
+    let state = app.state::<AppState>();
+    let mut arm = state.temple_arm.lock().unwrap_or_else(|e| e.into_inner());
+    arm.complete_cycle(key_current);
 }
 
 /// Seed the arm state from the log the watcher is about to tail.
@@ -1191,16 +1317,21 @@ mod tests {
 
     // ------------------------------------------------------- voice lines --
 
-    /// The trigger's whole reason for existing: until Alva speaks, the loop
-    /// must not look. Fails if the speaker match is wrong or absent.
+    /// The WI-1 rule, on a resting gate: an END line puts nothing in scope.
+    ///
+    /// Until 2026-09-07 this line armed for two minutes so the player could
+    /// reopen the sheet map-side; the owner's rule is that nothing probes
+    /// between incursions, and Re-arm is what covers the reopen. Fails the
+    /// moment the `AlvaEnd` branch arms again — the free-running capture between
+    /// incursions is exactly what the owner reported.
     #[test]
-    fn an_alva_voice_line_arms_the_loop() {
+    fn an_end_line_over_a_resting_gate_arms_nothing() {
         let mut state = ArmState::default();
 
         let transition = apply_line(&mut state, &alva_end(NOW), NOW);
 
-        assert_eq!(transition, Transition::Armed(ArmReason::AlvaLine));
-        assert!(state.arm.is_armed(NOW));
+        assert_eq!(transition, Transition::Ignored);
+        assert!(!state.arm.is_armed(NOW));
     }
 
     /// A line from any other speaker is not Alva. Fails if the match is a
@@ -1218,40 +1349,6 @@ mod tests {
 
         assert_eq!(transition, Transition::Ignored);
         assert!(!state.arm.is_armed(NOW));
-    }
-
-    /// A second line pushes the tail out from ITSELF, not from the first line.
-    /// Fails if a line over a live arm is dropped — the window would then end
-    /// two minutes after the player was first spoken to, part-way through an
-    /// incursion Alva is still narrating.
-    #[test]
-    fn a_second_alva_line_pushes_the_arm_out() {
-        let mut state = ArmState::default();
-        let later = NOW + 30_000;
-        apply_line(&mut state, &alva_end(NOW), NOW);
-
-        let transition = apply_line(&mut state, &alva_end(later), later);
-
-        assert_eq!(transition, Transition::Extended(ArmReason::AlvaLine));
-        assert_eq!(
-            state.arm,
-            TempleArm::Armed {
-                until_ms: Some(later + ALVA_TAIL_MS),
-                reason: ArmReason::AlvaLine,
-            },
-        );
-    }
-
-    /// The tail is the backstop for a run with no area change, and it does end.
-    /// Fails if the deadline is dropped (the arm would never expire) or applied
-    /// to the wrong clock.
-    #[test]
-    fn the_alva_tail_expires_when_no_area_change_arrives() {
-        let mut state = ArmState::default();
-        apply_line(&mut state, &alva_end(NOW), NOW);
-
-        assert!(state.arm.is_armed(NOW + ALVA_TAIL_MS - 1), "one ms inside the tail");
-        assert!(!state.arm.is_armed(NOW + ALVA_TAIL_MS), "the tail is exclusive");
     }
 
     /// A START line the watcher only reached a minute late — a path change, a
@@ -1274,25 +1371,24 @@ mod tests {
         assert_eq!(state.arm, TempleArm::Disarmed);
     }
 
-    /// The boundary, and the backdating with it: a line one ms inside the stale
-    /// window arms, and its tail is measured from the moment it was SPOKEN
-    /// rather than from the moment the watcher handed it over.
+    /// The other side of the staleness boundary, over the branch that ARMS: a
+    /// START line one second inside the window is still evidence about now.
     ///
-    /// Fails if the tail is measured from `now` (the arm would outlive the
-    /// design by the watcher's delay, up to its 5 s `recv_timeout` fallback),
-    /// or if the staleness comparison is off by one at the boundary.
+    /// Fails if the gate is inclusive, or is applied to `arm_at`'s laundered
+    /// stamp rather than the raw one — either way the module stops arming on
+    /// perfectly fresh lines and every incursion needs a Re-arm.
     #[test]
-    fn a_line_just_inside_the_stale_window_arms_from_its_own_stamp() {
+    fn a_start_line_just_inside_the_stale_window_still_arms() {
         let mut state = ArmState::default();
         let spoken = NOW - (LINE_STALE_MS - 1_000);
 
-        apply_line(&mut state, &alva_end(spoken), NOW);
+        apply_line(&mut state, &alva_start(spoken), NOW);
 
         assert_eq!(
             state.arm,
             TempleArm::Armed {
-                until_ms: Some(spoken + ALVA_TAIL_MS),
-                reason: ArmReason::AlvaLine,
+                until_ms: None,
+                reason: ArmReason::AlvaStart,
             },
         );
     }
@@ -1301,9 +1397,9 @@ mod tests {
     ///
     /// The start fires when the PORTAL OPENS and nothing in the game times an
     /// open portal out — the mining holds one 22-minute gap between a start and
-    /// its end, the player being away from the PC. Fails if the start is armed
-    /// with [`ALVA_TAIL_MS`] like the rest: the module would go blind two
-    /// minutes into a wait the game itself does not bound.
+    /// its end, the player being away from the PC. Fails if the start is given
+    /// any deadline at all: the module would go blind part-way into a wait the
+    /// game itself does not bound.
     #[test]
     fn a_start_phrase_arms_the_loop_with_no_deadline() {
         let mut state = ArmState::default();
@@ -1321,62 +1417,44 @@ mod tests {
         assert!(state.arm.is_armed(NOW + 3_600_000), "an hour later, still armed");
     }
 
-    /// The one permitted shortening: the game says the incursion ended, so the
-    /// deadline-free start arm becomes an ordinary [`ALVA_TAIL_MS`] one,
-    /// measured from the END line's own stamp.
+    /// The measured end of an incursion, and WI-1's headline: the game says the
+    /// incursion is over, so the deadline-free start arm ends there and then.
     ///
-    /// Fails if the end line is dropped over a live arm (the start arm would
-    /// last until the next zone change, capturing across the rest of the map)
-    /// or if the tail is measured from `now` rather than from the line.
+    /// Owner, 2026-09-07: *"After leaving the incursion, OCR never stops
+    /// probing, and it should on any Alva voiceline, or zone change."* Fails if
+    /// the end line is dropped over a live arm (the start arm would last until
+    /// the next zone change, capturing across the rest of the map) or if it is
+    /// put back to buying a tail.
     #[test]
-    fn an_end_line_shortens_a_start_arm_to_the_tail_from_its_own_stamp() {
+    fn an_end_line_stands_a_start_arm_down() {
         let mut state = ArmState::default();
         apply_line(&mut state, &alva_start(NOW), NOW);
         let ended = NOW + 34_000;
 
         let transition = apply_line(&mut state, &alva_end(ended), ended);
 
-        assert_eq!(transition, Transition::Extended(ArmReason::AlvaLine));
-        assert!(
-            state.arm.is_armed(ended + ALVA_TAIL_MS - 1),
-            "one ms inside the tail the end line bought",
-        );
-        assert!(
-            !state.arm.is_armed(ended + ALVA_TAIL_MS),
-            "and the start arm's own horizon is gone",
-        );
+        assert_eq!(transition, Transition::Disarmed);
+        assert_eq!(state.arm, TempleArm::Disarmed);
+        assert_eq!(state.stood_down, StandDown::AlvaLine, "and the log has a word for it");
     }
 
-    /// The shortening is keyed on the REASON, and this is the case that proves
-    /// it: a `Manual` arm reaching past the tail keeps its own horizon.
+    /// The stand-down is keyed on the REASON, and the temple is its ONLY
+    /// exception: a live Re-arm is ended by an end line like anything else.
     ///
-    /// The arm is hand-built because today's constants cannot produce one —
-    /// [`MANUAL_ARM_GRACE_MS`] is 60 s against [`ALVA_TAIL_MS`]'s 120 s, so a
-    /// live Re-arm never outlives an end line's tail. What the test pins is the
-    /// rule rather than the arithmetic: split those constants (their own docs
-    /// invite it) and the case becomes reachable. Fails if the shortening drops
-    /// its `AlvaStart` condition and takes any live arm with a further horizon.
+    /// The case is real — Re-arm pressed on a board that read wrong, then
+    /// `Good job.` as the architect dies — and it is the one that separates
+    /// "only a `TempleArea` arm survives" from "any live arm survives". Fails if
+    /// the exception is widened to every live arm, which would leave a Re-arm
+    /// probing for its whole grace after the incursion closed.
     #[test]
-    fn an_end_line_does_not_shorten_a_manual_arm_reaching_further() {
-        let far = NOW + 10 * ALVA_TAIL_MS;
-        let mut state = ArmState {
-            arm: TempleArm::Armed {
-                until_ms: Some(far),
-                reason: ArmReason::Manual,
-            },
-            left_area_ms: None,
-        };
+    fn an_end_line_stands_a_manual_arm_down() {
+        let mut state = ArmState::default();
+        state.arm_manual(NOW);
 
-        let transition = apply_line(&mut state, &alva_end(NOW), NOW);
+        let transition = apply_line(&mut state, &alva_end(NOW + 5_000), NOW + 5_000);
 
-        assert_eq!(transition, Transition::Extended(ArmReason::Manual));
-        assert_eq!(
-            state.arm,
-            TempleArm::Armed {
-                until_ms: Some(far),
-                reason: ArmReason::Manual,
-            },
-        );
+        assert_eq!(transition, Transition::Disarmed);
+        assert!(!state.arm.is_armed(NOW + 5_000));
     }
 
     // ------------------------------------------------------ area changes --
@@ -1415,12 +1493,13 @@ mod tests {
         assert!(!state.arm.is_armed(NOW + 60_000));
     }
 
-    /// The rule the tail is bounded BY: an area change outranks whatever the
-    /// voice line had left. Fails if the disarm is conditional on the reason.
+    /// An area change outranks a Re-arm the user pressed: the board they wanted
+    /// re-read is not on this screen. Fails if the disarm is conditional on the
+    /// reason, which would leave the grace probing across the next zone.
     #[test]
-    fn an_area_change_disarms_a_voice_line_arm() {
+    fn an_area_change_disarms_a_manual_arm() {
         let mut state = ArmState::default();
-        apply_line(&mut state, &alva_end(NOW), NOW);
+        state.arm_manual(NOW);
 
         let transition = apply_line(&mut state, &map_line(NOW + 5_000), NOW + 5_000);
 
@@ -1428,8 +1507,8 @@ mod tests {
         assert!(!state.arm.is_armed(NOW + 5_000));
     }
 
-    /// The START arm carries no deadline, so the zone change is one of only two
-    /// things that can end it — and the one that fires when the player
+    /// The START arm carries no deadline, so the zone change is one of only
+    /// three things that can end it — and the one that fires when the player
     /// abandons the incursion instead of finishing it.
     ///
     /// Fails if the [`LineEvent::LeftArea`] branch spares an
@@ -1455,17 +1534,16 @@ mod tests {
     /// see the bug.** Enter the temple from a resting gate and the arm is
     /// `TempleArea` whatever the entry branch does; enter it with a live
     /// deadline-free `AlvaStart` arm and a BID buys nothing (`outlives(None,
-    /// None)` holds), so the reason stays `AlvaStart` and the banter — an
-    /// [`LineEvent::AlvaEnd`] by the phrase table — hits the START-arm
-    /// shortening and trades the deadline-free arm for a two-minute one.
+    /// None)` holds), so the reason would stay `AlvaStart` and the banter — an
+    /// [`LineEvent::AlvaEnd`] by the phrase table — would find no `TempleArea`
+    /// arm to be excused by and stand the capture down seconds into the run.
     ///
     /// Fails if the temple entry bids through [`TempleArm::arm`] rather than
-    /// assigning, if arming is "latest wins", or if the end line's shortening
-    /// is applied to any live arm rather than only to an
-    /// [`ArmReason::AlvaStart`] one: the module would go blind in every temple
-    /// that took longer than the tail to run.
+    /// assigning, if arming is "latest wins", or if the end line's temple
+    /// exception is dropped: the module would go blind for the whole of every
+    /// temple run, which is where the sheet is the navigation aid.
     #[test]
-    fn an_alva_line_inside_the_temple_does_not_shorten_the_area_arm() {
+    fn an_alva_line_inside_the_temple_does_not_stand_the_area_arm_down() {
         let mut state = ArmState::default();
         apply_line(&mut state, &alva_start(NOW), NOW);
         apply_line(&mut state, &temple_line(NOW + 1_000), NOW + 1_000);
@@ -1498,7 +1576,7 @@ mod tests {
     fn a_manual_rearm_arms_for_the_grace_window() {
         let mut state = ArmState::default();
 
-        state.arm.arm_manual(NOW);
+        state.arm_manual(NOW);
 
         assert!(state.arm.is_armed(NOW + MANUAL_ARM_GRACE_MS - 1));
         assert!(!state.arm.is_armed(NOW + MANUAL_ARM_GRACE_MS));
@@ -1512,137 +1590,258 @@ mod tests {
         let mut state = ArmState::default();
         apply_line(&mut state, &temple_line(NOW), NOW);
 
-        state.arm.arm_manual(NOW + 1_000);
+        state.arm_manual(NOW + 1_000);
 
         assert!(state.arm.is_armed(NOW + MANUAL_ARM_GRACE_MS + 10_000));
     }
 
+    /// The grace is the one stand-down with no event behind it, so Re-arm
+    /// claims it at the moment it arms.
+    ///
+    /// Fails if the cause is left for the expiry to write — nothing runs at an
+    /// expiry, so the line would report whatever last closed the gate, which on
+    /// a fresh session is `waiting for Alva` and after an incursion is
+    /// `Alva's line`.
+    #[test]
+    fn a_manual_rearm_claims_the_stand_down_it_will_end_in() {
+        let mut state = ArmState::default();
+
+        state.arm_manual(NOW);
+
+        assert_eq!(state.stood_down, StandDown::GraceOver);
+    }
+
+    /// …and a Re-arm the no-shortening rule REFUSED has bought no deadline, so
+    /// it must not claim the stand-down either.
+    ///
+    /// The temple arm it lost to ends on the area line out, which writes
+    /// `the zone changed`. Fails if the cause is written unconditionally: the
+    /// log would blame Re-arm's grace for a stand-down sixty seconds of grace
+    /// had nothing to do with.
+    #[test]
+    fn a_manual_rearm_refused_by_a_temple_arm_does_not_claim_the_stand_down() {
+        let mut state = ArmState::default();
+        apply_line(&mut state, &temple_line(NOW), NOW);
+
+        state.arm_manual(NOW + 1_000);
+
+        assert_eq!(state.stood_down, StandDown::Waiting, "nothing has shut this gate yet");
+        apply_line(&mut state, &map_line(NOW + 2_000), NOW + 2_000);
+        assert_eq!(state.stood_down, StandDown::LeftArea);
+    }
+
+    // ------------------------------------------------ the completed cycle --
+
+    /// WI-1's own state (owner, 2026-09-07): the loop read the sheet and then
+    /// watched it close, so the arm goes down and the log has a word for why.
+    ///
+    /// Fails if `complete_cycle` leaves the arm alone — the loop would go on
+    /// probing for the rest of the incursion, which is the report this work item
+    /// answers.
+    #[test]
+    fn a_completed_cycle_stands_a_start_arm_down() {
+        let mut state = ArmState::default();
+        apply_line(&mut state, &alva_start(NOW), NOW);
+
+        let transition = state.complete_cycle(true);
+
+        assert_eq!(transition, Transition::Disarmed);
+        assert!(!state.arm.is_armed(NOW + 1_000));
+        assert_eq!(state.stood_down, StandDown::CycleComplete);
+    }
+
+    /// A completion whose board key has moved on stands NOTHING down: the tick
+    /// that observed the sheet close read its key seconds ago, and a START
+    /// phrase or a Re-arm inside that window armed a different cycle.
+    ///
+    /// The arm here is the FRESH one — the sheet the observation is about closed
+    /// under the previous key — so disarming it would leave the next incursion's
+    /// board unread until the player pressed Re-arm, with nothing on screen to
+    /// suggest why.
+    ///
+    /// Fails if the guard is dropped, or inverted so that only a stale key
+    /// completes.
+    #[test]
+    fn a_completed_cycle_whose_key_has_moved_on_stands_nothing_down() {
+        let mut state = ArmState::default();
+        apply_line(&mut state, &alva_start(NOW), NOW);
+
+        let transition = state.complete_cycle(false);
+
+        assert_eq!(transition, Transition::Ignored);
+        assert!(state.arm.is_armed(NOW + 1_000), "the fresh cycle is still armed");
+        assert_eq!(
+            state.stood_down,
+            StandDown::Waiting,
+            "and the log has not been handed a cause that did not happen",
+        );
+    }
+
+    /// And the next incursion is a fresh one. The completion is a resting state,
+    /// not a latch: a START phrase arms out of it exactly as it does out of
+    /// `Waiting`.
+    ///
+    /// Fails if completion is spelled as anything a later arm has to clear
+    /// explicitly — the module would read one incursion per session and then go
+    /// quiet, with Re-arm the only way back.
+    #[test]
+    fn a_start_phrase_after_a_completed_cycle_arms_a_fresh_one() {
+        let mut state = ArmState::default();
+        apply_line(&mut state, &alva_start(NOW), NOW);
+        state.complete_cycle(true);
+
+        let transition = apply_line(&mut state, &alva_start(NOW + 300_000), NOW + 300_000);
+
+        assert_eq!(transition, Transition::Armed(ArmReason::AlvaStart));
+        assert!(state.arm.is_armed(NOW + 300_000));
+    }
+
+    /// The Temple of Atzoatl run is the exception, and it is the same one the
+    /// END line has: the sheet is the navigation aid in there, opened and closed
+    /// once per ROOM, with nothing between the rooms that moves the board key.
+    ///
+    /// Fails if the completion is applied to every arm: the first room's close
+    /// would stand the capture down and every remaining room of the run would
+    /// need a Re-arm to get a board — which is the surface the run is played on.
+    #[test]
+    fn a_completed_cycle_does_not_stand_a_temple_arm_down() {
+        let mut state = ArmState::default();
+        apply_line(&mut state, &alva_start(NOW), NOW);
+        apply_line(&mut state, &temple_line(NOW + 1_000), NOW + 1_000);
+
+        let transition = state.complete_cycle(true);
+
+        assert_eq!(transition, Transition::Extended(ArmReason::TempleArea));
+        assert!(state.arm.is_armed(NOW + 3_600_000), "an hour into the run, still armed");
+        assert_eq!(state.stood_down, StandDown::Waiting, "and nothing has shut this gate");
+    }
+
+    /// …and the area line OUT is what does end it, cycle or no cycle. Fails if
+    /// the exception above is written as a latch rather than as a property of
+    /// the live arm — the temple would then hold the gate open into the next
+    /// map.
+    #[test]
+    fn leaving_the_temple_ends_the_arm_a_completed_cycle_spared() {
+        let mut state = ArmState::default();
+        apply_line(&mut state, &temple_line(NOW), NOW);
+        state.complete_cycle(true);
+
+        let transition = apply_line(&mut state, &map_line(NOW + 60_000), NOW + 60_000);
+
+        assert_eq!(transition, Transition::Disarmed);
+        assert_eq!(state.stood_down, StandDown::LeftArea);
+    }
+
+    /// Re-arm is the other way back, and it is the one a player reaches for when
+    /// they want the sheet read again inside the SAME incursion — the reopen the
+    /// owner accepted the cost of.
+    ///
+    /// Fails for the same mutation as the test above, through the surface the
+    /// user can actually press.
+    #[test]
+    fn a_rearm_after_a_completed_cycle_arms_again() {
+        let mut state = ArmState::default();
+        apply_line(&mut state, &alva_start(NOW), NOW);
+        state.complete_cycle(true);
+
+        state.arm_manual(NOW + 5_000);
+
+        assert!(state.arm.is_armed(NOW + 5_000));
+    }
+
     // --------------------------------------------- the panel on screen --
 
-    /// The 2026-09-03 bug, as the gate now answers it: the voice-line clock has
-    /// run out and the panel is still on screen, so the loop keeps looking.
+    /// The 2026-09-03 bug, as the gate answers it: Client.txt has nothing in
+    /// scope and the sheet is still on screen, so the loop keeps looking.
     ///
     /// Fails if the gate reads [`TempleArm`] alone — which is what stood the
     /// capture down at 14:37:00 over a layout panel the player was reading, and
     /// took the overlay with it.
     #[test]
-    fn a_panel_seen_a_moment_ago_keeps_the_loop_armed_past_the_voice_line_tail() {
-        let mut state = ArmState::default();
-        apply_line(&mut state, &alva_end(NOW), NOW);
-        let expired = NOW + ALVA_TAIL_MS + 1;
-        assert!(!state.arm.is_armed(expired), "the voice line has nothing left");
+    fn a_live_panel_keeps_the_loop_armed_with_nothing_in_client_txt() {
+        let state = ArmState::default();
+        assert!(!state.arm.is_armed(NOW), "Client.txt has nothing to say");
 
         assert_eq!(
-            arm_source(state, Some(expired - 1_000), false, expired),
+            arm_source(state, true, false, NOW),
             Some(ArmSource::PanelOnScreen),
         );
     }
 
-    /// The boundary the tail is: measured from the LAST sighting, exclusive at
-    /// its end. Fails if the deadline is measured from the first sighting, or
-    /// from the arm, or is inclusive — each of which is a stand-down one tick
-    /// away from where the design puts it.
+    /// The case rule 5 of WI-1 names: a Re-arm's sixty seconds have run out and
+    /// the player still has the sheet open, so the read that Re-arm bought may
+    /// finish and retry.
+    ///
+    /// Fails if the panel input is dropped or is ANDed with the arm instead of
+    /// ORed with it — pressing Re-arm and reading a slow board would then go
+    /// blind at the minute mark with the sheet in front of the player.
     #[test]
-    fn the_panel_tail_runs_from_the_last_sighting() {
-        let seen = NOW + 45_000;
+    fn a_live_panel_keeps_a_manual_arm_alive_past_its_grace() {
+        let mut state = ArmState::default();
+        state.arm_manual(NOW);
+        let expired = NOW + MANUAL_ARM_GRACE_MS + 1;
+        assert!(!state.arm.is_armed(expired), "the grace has nothing left");
 
         assert_eq!(
-            arm_source(ArmState::default(), Some(seen), false, seen + PANEL_TAIL_MS - 1),
+            arm_source(state, true, false, expired),
             Some(ArmSource::PanelOnScreen),
-            "one ms inside the tail",
-        );
-        assert_eq!(
-            arm_source(ArmState::default(), Some(seen), false, seen + PANEL_TAIL_MS),
-            None,
-            "the tail is exclusive",
         );
     }
 
-    /// POE-242's goal, unchanged by the third clock: nothing in the log and
-    /// nothing on screen means the loop stops looking. Fails if the panel input
-    /// is read as "was ever seen" rather than "was seen recently", which is the
-    /// free-running capture POE-242 removed, restored by this work item.
+    /// POE-242's goal, and WI-1's: nothing in the log and nothing on screen
+    /// means the loop stops looking.
+    ///
+    /// Fails if the panel branch is a constant, or reads "was ever seen" rather
+    /// than "the last tick saw it" — either is the free-running capture POE-242
+    /// removed.
     #[test]
-    fn a_panel_gone_longer_than_its_tail_stands_the_loop_down() {
+    fn a_panel_that_is_no_longer_live_stands_the_loop_down() {
         let mut state = ArmState::default();
-        apply_line(&mut state, &alva_end(NOW), NOW);
-        let seen = NOW + 1_000;
+        apply_line(&mut state, &alva_start(NOW), NOW);
+        apply_line(&mut state, &alva_end(NOW + 30_000), NOW + 30_000);
 
-        assert_eq!(
-            arm_source(state, Some(seen), false, seen + PANEL_TAIL_MS + ALVA_TAIL_MS),
-            None,
-        );
+        assert_eq!(arm_source(state, false, false, NOW + 30_001), None);
     }
 
     /// A live Client.txt arm is what the log names, even with the panel on
     /// screen. Fails if the panel branch is tried first — `capture armed by
-    /// Alva` is the line smoke item 12 reads, and it would become
+    /// Alva's start line` is the line smoke item 12 reads, and it would become
     /// `by the panel on screen` for every incursion the player has a panel open
     /// during.
     #[test]
     fn a_live_client_txt_arm_is_the_source_the_log_names() {
         let mut state = ArmState::default();
-        apply_line(&mut state, &alva_end(NOW), NOW);
+        apply_line(&mut state, &alva_start(NOW), NOW);
 
         assert_eq!(
-            arm_source(state, Some(NOW), false, NOW + 1_000),
-            Some(ArmSource::Trigger(ArmReason::AlvaLine)),
+            arm_source(state, true, false, NOW + 1_000),
+            Some(ArmSource::Trigger(ArmReason::AlvaStart)),
         );
     }
 
-    /// Walking out ends the PANEL's claim on the gate, not just Client.txt's:
-    /// the panel the loop last anchored went with the zone.
+    /// Walking out ends CLIENT.TXT's claim on the gate, and after that only a
+    /// sheet the loop's LAST tick saw can hold it open — which is the accepted
+    /// one-tick residual of WI-1 retiring `left_area_ms`.
     ///
-    /// Fails if the panel branch reads the sighting alone — the loop then
-    /// carries up to `PANEL_TAIL_MS` of capture at `super::run`'s
-    /// `DETECT_INTERVAL` (~1.5 Hz, 650 ms) into the next zone, under a log line
-    /// saying the panel is on screen.
+    /// The tick that carries it is the tick that finds the new zone empty, so
+    /// the gate is shut 650 ms later. Fails if the area line stops disarming, in
+    /// which case the map carries the whole arm rather than one tick of it.
     #[test]
-    fn an_area_change_ends_the_panel_arm_as_well_as_the_voice_line_one() {
+    fn an_area_change_leaves_only_a_live_panel_holding_the_gate() {
         let mut state = ArmState::default();
-        let seen = NOW;
+        apply_line(&mut state, &alva_start(NOW), NOW);
 
-        apply_line(&mut state, &map_line(seen + 1_000), seen + 1_000);
-
-        assert_eq!(arm_source(state, Some(seen), false, seen + 2_000), None);
-    }
-
-    /// A panel seen AFTER the zone change is evidence about the new screen and
-    /// arms again. Fails if the stamp is read as "an area change has happened"
-    /// rather than as the moment it did — the panel clock would be dead for the
-    /// rest of a session after the player's first map.
-    #[test]
-    fn a_panel_seen_after_the_area_change_arms_the_loop_again() {
-        let mut state = ArmState::default();
-        apply_line(&mut state, &map_line(NOW), NOW);
+        apply_line(&mut state, &map_line(NOW + 5_000), NOW + 5_000);
 
         assert_eq!(
-            arm_source(state, Some(NOW + 1_000), false, NOW + 2_000),
-            Some(ArmSource::PanelOnScreen),
-        );
-    }
-
-    /// The boundary between the two, pinned from both sides: a sighting stamped
-    /// at the moment of the zone change is not evidence about the zone after it,
-    /// and one a millisecond later is.
-    ///
-    /// Fails if the comparison is `>=` (a sighting the change should have
-    /// invalidated keeps the loop armed in the new zone) or `<` (the panel clock
-    /// dies the moment any area line lands and never recovers).
-    #[test]
-    fn a_sighting_counts_only_from_the_millisecond_after_the_area_change() {
-        let mut state = ArmState::default();
-        apply_line(&mut state, &map_line(NOW), NOW);
-
-        assert_eq!(
-            arm_source(state, Some(NOW), false, NOW + 1_000),
+            arm_source(state, false, false, NOW + 5_000),
             None,
-            "the same millisecond as the change is not after it",
+            "the zone change stands the loop down",
         );
         assert_eq!(
-            arm_source(state, Some(NOW + 1), false, NOW + 1_000),
+            arm_source(state, true, false, NOW + 5_000),
             Some(ArmSource::PanelOnScreen),
-            "one millisecond later is",
+            "and a sheet the last tick saw buys exactly one more tick",
         );
     }
 
@@ -1658,7 +1857,7 @@ mod tests {
     #[test]
     fn a_starting_loop_owes_itself_one_look_before_it_may_stand_down() {
         assert_eq!(
-            arm_source(ArmState::default(), None, true, NOW),
+            arm_source(ArmState::default(), false, true, NOW),
             Some(ArmSource::StartupProbe),
         );
     }
@@ -1669,7 +1868,7 @@ mod tests {
     /// which is the free-running capture with extra steps.
     #[test]
     fn a_spent_probe_that_saw_nothing_leaves_the_loop_stood_down() {
-        assert_eq!(arm_source(ArmState::default(), None, false, NOW), None);
+        assert_eq!(arm_source(ArmState::default(), false, false, NOW), None);
     }
 
     // ---------------------------------------------------------- catch-up --
@@ -1724,13 +1923,18 @@ mod tests {
                 until_ms: None,
                 reason: ArmReason::TempleArea,
             },
-            left_area_ms: None,
+            stood_down: StandDown::CycleComplete,
         };
         let tail = format!("{}\n", map_line(NOW - 1_000));
 
         apply_catch_up(&mut state, &tail);
 
         assert_eq!(state.arm, TempleArm::Disarmed);
+        assert_eq!(
+            state.stood_down,
+            StandDown::Waiting,
+            "and the cause carried over from the log it stopped tailing is gone",
+        );
     }
 
     /// Voice lines in the replay are history, not evidence about the screen.
@@ -1856,19 +2060,25 @@ mod tests {
 
     /// The two functions are asked about every line and must not have been
     /// collapsed into one: `Good job, exile.` is an [`LineEvent::AlvaEnd`] — it
-    /// starts no cycle, it ARMS the capture for [`ALVA_TAIL_MS`] (the player
-    /// may open the panel to see what the kill changed) and it ENDS the advice
-    /// of the incursion that produced it. A single verdict cannot say all
-    /// three.
+    /// starts no cycle, it ENDS the advice of the incursion that produced it,
+    /// and since WI-1 it also stands the CAPTURE down. Two of those are one
+    /// answer and one is the other, and a single verdict cannot say all three.
+    ///
+    /// The seam matters in the direction the merge would break it: the advice
+    /// clear is compared against the READ's stamp ([`advice_end`]) and the
+    /// stand-down is not, so folding them would make a stand-down conditional on
+    /// a board having been read after the line — which is the reopen case, and
+    /// exactly the one WI-1 stopped probing for.
     #[test]
-    fn the_end_line_still_arms_the_capture() {
+    fn the_end_line_stands_the_capture_down_and_ends_the_advice() {
         let mut state = ArmState::default();
+        apply_line(&mut state, &alva_start(NOW - 60_000), NOW - 60_000);
         let line = stamped(NOW, "Alva, Master Explorer: Good job, exile.");
 
         let transition = apply_line(&mut state, &line, NOW);
 
-        assert_eq!(transition, Transition::Armed(ArmReason::AlvaLine));
-        assert!(state.arm.is_armed(NOW));
+        assert_eq!(transition, Transition::Disarmed);
+        assert!(!state.arm.is_armed(NOW));
         assert_eq!(advice_end(&line, READ, NOW), Some(AdviceEnd::NewIncursion));
     }
 }

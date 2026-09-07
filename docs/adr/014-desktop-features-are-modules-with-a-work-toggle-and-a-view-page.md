@@ -126,6 +126,34 @@ stamps `left_area_ms` on the same clock, and the panel branch requires
 has left. A start-up probe gives a starting loop exactly one tick to notice a
 panel that is already there, spent whatever it finds.
 
+### Amended 2026-09-07 (POE-249 WI-1): the retention is one detect tick
+
+"The rule as shipped" above is history, and is left standing because it is what
+the incident was answered with. What ships now: `PANEL_TAIL_MS`,
+`LoopState.panel_seen_ms` and `left_area_ms` are all deleted. The panel branch of
+`temple::trigger::arm_source` reads `LoopState::live` — a bool the loop's LAST
+detect tick wrote — so the retention is **one detect tick (650 ms)**, re-earned
+by every anchored tick and lost on the tick that finds the sheet gone.
+
+The second clock goes with the first. `left_area_ms` existed only to stop a
+120 s sighting outliving the screen it was measured on; at one tick there is
+nothing to invalidate, and the Client.txt half of the claim already ends at once
+— `trigger::ends_epoch` bumps the epoch on the area line and `apply_line` disarms
+with `StandDown::LeftArea`, which is the word `app.log` prints.
+
+The rule the ADR states is unchanged and is what survived: the clock measures
+ABSENCE of the subject, not age of the announcement. What changed is that the
+absence is now observed rather than timed, which is the same answer taken to its
+limit — POE-246's 14:37:00 stand-down over an open panel cannot happen at any
+tail length, because the sheet on screen re-arms the gate every 650 ms.
+
+**The residual, named**: a zone change carries at most one capture into the next
+zone, and that capture is the one that finds no panel. (Its one extension: a tick
+whose screen grab ERRORED leaves `live` alone rather than retiring it — an errored
+tick is not evidence about the subject — so a capture failing on every tick holds
+the branch open until one succeeds. Stated in docs/TEMPLE-LIFECYCLE.md's
+residuals, where the trade is recorded.)
+
 ### Why it is a candidate for this ADR rather than a temple detail
 
 The temple is the first module whose work is gated on a signal at all, but the

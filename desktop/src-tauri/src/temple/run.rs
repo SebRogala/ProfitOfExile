@@ -25,14 +25,30 @@
 //! Until then it publishes [`TempleStatus::Waiting`] once and naps — no
 //! capture, no correlation, nothing. The module being ON is not the trigger.
 //!
-//! Three things open it, and only the first is Client.txt's: an Alva line or
-//! the temple area, the layout panel this loop can still SEE
-//! ([`LoopState::panel_seen_ms`], POE-246), and the one probe tick a starting
-//! loop runs before it may believe an empty screen
-//! ([`LoopState::probe_pending`]). The panel input is what makes stand-down mean
-//! "nothing has been on screen for [`super::trigger::PANEL_TAIL_MS`]" instead of
-//! "Client.txt has been quiet for that long" — measured 2026-09-03, the latter
-//! took the overlay off a panel the player was still reading.
+//! Three things open it, and only the first is Client.txt's: Alva's START line
+//! or the temple area, the layout panel this loop's last tick SAW
+//! ([`LoopState::live`], POE-246), and the one probe tick a starting loop runs
+//! before it may believe an empty screen ([`LoopState::probe_pending`]). The
+//! panel input is what stops a stand-down landing on a sheet the player is still
+//! reading — measured 2026-09-03, before it existed, the overlay went off a
+//! panel that was open.
+//!
+//! # What shuts it, and the cycle that WI-1 added (2026-09-07)
+//!
+//! Client.txt shuts it on a non-START Alva line or a zone change
+//! ([`super::trigger::apply_line`]). The fourth way is this loop's own, and it
+//! is the owner's rule that there are no tails any more: once a board has been
+//! READ, the first clean miss after it — the sheet closing — completes the cycle
+//! and the loop stops capturing entirely ([`cycle_complete`],
+//! [`super::trigger::ArmState::complete_cycle`]). A sheet closed BEFORE any read
+//! completed does not complete anything: the loop keeps probing, because the
+//! sheet it was armed for has not been read yet.
+//!
+//! The offer boxes were already coming down on that miss ([`miss`] publishes
+//! [`TickOutcome::NoPanel`]) and the room diamond already survives it (POE-248),
+//! so what the completion adds is the capture stopping. Accepted cost, owner
+//! 2026-09-07: reopening the sheet later in the same incursion shows no boxes
+//! until Re-arm, because nothing is looking any more.
 //!
 //! [`loop_step`] is that gate plus the focus check and the cadence check, as
 //! one pure function, so the property that matters ("a disarmed loop never
@@ -66,9 +82,10 @@
 //!    sheet is the same board — see [`slice::BoardFrame`].
 //!
 //! The order matters and is fixed: [`LoopState::on_detect`] and
-//! [`publish_anchor_scale`] sit BETWEEN the two, so the POE-246 panel clock and
-//! ADR-020's shared screen scale are stamped on every sighting including the
-//! ones that read nothing.
+//! [`publish_anchor_scale`] sit BETWEEN the two, so [`LoopState::live`] — which
+//! is what POE-246's 120 s panel clock became in WI-1 — and ADR-020's shared
+//! screen scale are stamped on every sighting including the ones that read
+//! nothing.
 //!
 //! A read that came out unclean — an unread plate, an unresolved offer, a
 //! marker mismatch, an unread budget — is re-taken at most [`RETRIES`] more
@@ -252,6 +269,24 @@ const MAX_DISTINCT_ERRORS: usize = 12;
 /// disagreeing with the status the user could see, for one tick. One makes them
 /// agree.
 ///
+/// # What WI-1 added to it (2026-09-07)
+///
+/// The retire is now also what ENDS THE CYCLE once a board has been read
+/// ([`cycle_complete`]), so the constant decides how long a sheet may drop out
+/// of the anchor's sight before the loop concludes the player closed it — and
+/// the conclusion is no longer recoverable by looking again, because the loop
+/// stops looking.
+///
+/// The residual is one anchor miss over a sheet that is still open: the offer
+/// boxes hide (which [`miss`] already did on the first clean miss at two as
+/// well) and, unlike before, do not come back on the next tick. It is bounded
+/// by the same Re-arm the owner accepted the reopen cost against, and it is
+/// bounded on the read side too — the board itself is already published, so what
+/// is lost is the boxes rather than the advice or the room widget. Raising the
+/// constant would trade that for a stand-down the player waits an extra tick for
+/// after every sheet they really did close, which is the thing POE-249 measured
+/// and shortened.
+///
 /// # The third consumer, and what one costs it
 ///
 /// [`LoopState::live`] is also an input to [`LoopState::note_cheap_detect`],
@@ -313,7 +348,14 @@ pub fn spawn(app: AppHandle, cancel: watch::Receiver<bool>) -> ModuleJoin {
 /// cadence problem and a second shape would be a second thing to reason about.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct LoopState {
-    /// A layout panel is on screen.
+    /// A layout panel is on screen — the loop's LAST detect tick found one.
+    ///
+    /// Since WI-1 (2026-09-07) this is also the arm gate's whole view of the
+    /// screen ([`trigger::arm_source`]'s `panel_live`): a sheet the player is
+    /// holding open keeps the loop armed whatever Client.txt says, and the tick
+    /// that finds it gone is the one that takes the gate with it. The 120 s
+    /// `panel_seen_ms` clock POE-246 measured this with is retired — see the
+    /// module doc.
     pub live: bool,
     /// Consecutive failed anchors since the last successful one.
     ///
@@ -325,21 +367,6 @@ pub struct LoopState {
     /// Cheap detect ticks since the last full read — see
     /// [`FULL_READ_EVERY_N_MISSES`].
     pub cheap_misses: u32,
-    /// When a tick last SAW the layout panel ([`now_ms`]), `None` until one has
-    /// (POE-246).
-    ///
-    /// The arm gate's third clock — [`trigger::arm_source`] keeps the loop armed
-    /// for [`trigger::PANEL_TAIL_MS`] past this, so the loop stands down for the
-    /// panel being ABSENT rather than for Client.txt having gone quiet. Written
-    /// by [`Self::on_detect`] on a sighting and by nothing else.
-    ///
-    /// **Retirement does not clear it**, deliberately: retiring is ONE missed
-    /// tick since POE-249 ([`RETIRE_AFTER`]) — 650 ms at [`DETECT_INTERVAL`] —
-    /// and the tail is the window a player has to close a panel and reopen it.
-    /// Clearing it here would stand the loop down within a second of every panel
-    /// close, which is the tail not existing. The shorter `RETIRE_AFTER` makes
-    /// that MORE true than it was at two, not less.
-    pub panel_seen_ms: Option<u64>,
     /// Whether the one detect a starting loop runs before it may stand down has
     /// been spent (POE-246 — see `trigger`'s start-up probe note).
     ///
@@ -428,8 +455,18 @@ pub struct LoopState {
 /// ([`LoopState::note_read`]), and [`GEOMETRY_READS_CAP`] stops paying
 /// altogether once the same board has been re-placed that many times. The smoke
 /// check is the `layout panel back — same board, no read` line appearing on a
-/// real reopen; its absence, with `anchor origin keeps moving` in its place, is
-/// the symptom to report.
+/// real reopen — **inside The Temple of Atzoatl**, which since WI-1 is the one
+/// place a reopen is sighted at all: a live [`trigger::ArmReason::TempleArea`]
+/// arm is the carve-out the completed cycle does not end, so the sheet may be
+/// opened and closed once per room on the same arm. Its absence there, with
+/// `anchor origin keeps moving` in its place, is the symptom to report.
+///
+/// A MAP-side reopen is not sighted, and that is the design rather than a
+/// defect: the cycle completed when the sheet closed and the loop stood down, so
+/// nothing is looking. Re-arm is the way back and it forces a READ — it is half
+/// the key — so it produces the `layout panel found` line and never the `back`
+/// one. See docs/TEMPLE-LIFECYCLE.md's residual, and OVERLAY-GUIDE.md's smoke
+/// item, which is written against the temple run for this reason.
 ///
 /// [`slice::merge_reads`] tests the SAME frame with the SAME predicate, so a
 /// retry this gate lets through as one board is one the merge will fold rather
@@ -541,24 +578,26 @@ pub enum DetectOutcome {
     Missed,
     /// The live panel just retired after [`RETIRE_AFTER`] misses.
     Retired,
+    /// The tick could not LOOK — the screen grab failed, so this tick is not
+    /// evidence about the panel either way ([`LoopState::on_blind_tick`]).
+    Blind,
 }
 
 impl LoopState {
     /// Fold one anchor result into the state.
     ///
-    /// `seen_at` is the moment the panel was seen ([`now_ms`]), and `None` is a
-    /// tick that found nothing. A timestamp rather than a `bool` because of what
-    /// it feeds: [`trigger::arm_source`]'s panel clock is what now decides when
-    /// the loop may stand down, and a shape where a miss carries no stamp is one
-    /// where a miss cannot extend the arm by accident (POE-246).
+    /// `seen` is whether this tick found the layout panel. A bool again since
+    /// WI-1 (2026-09-07): it carried a `now_ms` stamp only to feed POE-246's
+    /// 120 s panel clock, and the gate now reads [`Self::live`] — "the last tick
+    /// saw it" — which this method already maintains.
     ///
-    /// Every tick calls this exactly once — through [`miss`] or through the
-    /// anchored path — which is what makes it the place the start-up probe is
-    /// spent, whatever the tick found.
-    pub fn on_detect(&mut self, seen_at: Option<u64>) -> DetectOutcome {
+    /// Called by every tick that LOOKED — the anchored path and a clean miss —
+    /// which is what makes it the place those ticks spend the start-up probe.
+    /// A tick whose grab failed goes through [`Self::on_blind_tick`] instead;
+    /// between the two, every tick spends the probe exactly once.
+    pub fn on_detect(&mut self, seen: bool) -> DetectOutcome {
         self.probe_spent = true;
-        if let Some(at) = seen_at {
-            self.panel_seen_ms = Some(at);
+        if seen {
             self.misses = 0;
             if self.live {
                 DetectOutcome::Held
@@ -578,6 +617,34 @@ impl LoopState {
                 DetectOutcome::Missed
             }
         }
+    }
+
+    /// A tick whose screen GRAB failed: spend the start-up probe, and touch
+    /// nothing else.
+    ///
+    /// The rule, stated once: **an errored tick says nothing about the sheet.**
+    /// [`Self::live`] and [`Self::misses`] are left exactly as the last tick
+    /// that could see the screen left them, so a transient capture failure
+    /// cannot retire a panel that is in front of the player. Since WI-1 `live`
+    /// is the whole panel branch of the arm gate
+    /// ([`trigger::arm_source`]), and [`RETIRE_AFTER`] is 1 — so folding this
+    /// tick through [`Self::on_detect`] with `seen = false` would stand the
+    /// capture down on ONE failed grab whenever the panel is the only thing
+    /// holding the gate (a hideout read, a Re-arm whose grace has run out under
+    /// an open sheet), recoverable only by Re-arm.
+    ///
+    /// The probe IS spent, and that is the one thing this tick does prove: it
+    /// ran. A machine whose capture never succeeds must not hold the gate open
+    /// for the session (POE-246), so the debt a starting loop owes itself is
+    /// settled by a tick that failed as much as by one that looked.
+    ///
+    /// [`DetectOutcome::Blind`] rather than `Missed`: `Missed` is a claim about
+    /// the screen, and this tick did not see one. It is also what keeps
+    /// [`cycle_complete`] honest through the outcome alone — a blind tick can no
+    /// longer reach the `Retired` branch that rule keys on.
+    pub fn on_blind_tick(&mut self) -> DetectOutcome {
+        self.probe_spent = true;
+        DetectOutcome::Blind
     }
 
     /// Fold one cheap detect into the state, and say whether this tick pays for
@@ -612,6 +679,24 @@ impl LoopState {
     /// stand down (POE-246). [`trigger::arm_source`]'s third input.
     pub fn probe_pending(&self) -> bool {
         !self.probe_spent
+    }
+
+    /// Whether this loop has a completed read of the board `key` names (WI-1).
+    ///
+    /// [`cycle_complete`]'s second input, and the KEY half of the identity
+    /// alone: the frame is deliberately not asked about. A sheet that closed is
+    /// not on screen to compare a frame against, and what the cycle rule needs
+    /// to know is whether this incursion has been read at all — the board the
+    /// player walked away from and the board they would see if they reopened are
+    /// the same board while the key holds.
+    ///
+    /// The key IS asked about, and that is what makes Re-arm work: pressing it
+    /// bumps `temple_rearm`, so the read in hand is a read of another key and
+    /// the loop probes for a new one instead of standing down on the old one.
+    /// An Alva line or a zone change moves the epoch the same way, though those
+    /// have already disarmed the gate by their own rule.
+    pub fn has_read(&self, key: (u64, u64)) -> bool {
+        matches!(&self.board, Some(board) if board.key == key)
     }
 
     /// The OCR gate (POE-249): what this sighting of `(key, frame)` gets.
@@ -953,10 +1038,9 @@ pub struct SweepKey {
 /// it at one per [`FULL_READ_EVERY_N_MISSES`] ticks — 19.5 s at
 /// [`DETECT_INTERVAL`] — and only
 /// while the loop is ARMED, which POE-242 bounds to Alva's window rather than
-/// to the session (and POE-246 extends by [`super::trigger::PANEL_TAIL_MS`] past
-/// the last panel SIGHTING, which no screen without a panel on it ever gets). A
-/// player who never opens the layout panel during an incursion pays it at most
-/// twice.
+/// to the session — and which WI-1 narrowed again, to the window between a START
+/// line and the sheet closing on a read. A player who never opens the layout
+/// panel during an incursion pays it at most twice.
 ///
 /// # Why `temple_rearm` is not an input
 ///
@@ -1181,6 +1265,53 @@ pub fn wants_full_read(
     read
 }
 
+/// Whether this tick finished the incursion's cycle: the sheet was READ, and it
+/// has now gone (WI-1, owner 2026-09-07).
+///
+/// The rule the loop hands to [`trigger::ArmState::complete_cycle`], as a pure
+/// function of the three facts the tick has — what the panel state machine just
+/// answered, whether a read of the CURRENT board key is in hand
+/// ([`LoopState::has_read`]), and whether this tick could look at the screen at
+/// all. It lives here beside [`wants_full_read`] and [`loop_step`] for the same
+/// reason they do: the loop's gates belong in the tested surface, not in an `if`
+/// inside a function that needs a screen.
+///
+/// [`DetectOutcome::Retired`] and not `Missed`: `Retired` is the transition —
+/// the sheet was live on the previous tick and is not now — while `Missed` is
+/// the loop's resting state over an empty screen, and completing a cycle on that
+/// would stand the loop down on the very tick that armed it, before the player
+/// ever opened the sheet.
+///
+/// `read_in_hand` is the guard the owner kept: a sheet closed BEFORE any read
+/// completed does not end anything, because the incursion this arm was bought
+/// for has not been read yet. That is the player who opened the sheet on a frame
+/// the anchor missed, or closed it again before the read landed, and the answer
+/// for them is that the loop keeps probing.
+///
+/// `looked` is `false` for a tick that FAILED rather than missed ([`miss`]'s
+/// `errored`): a screen grab that returned an error says nothing about whether
+/// the sheet is still there, and a stand-down on a transient capture failure
+/// would cost the rest of the incursion. It is a parameter rather than an `if`
+/// at the call site so the failing-grab case is decided in the same tested
+/// function as the other two — `miss` needs an `AppHandle` and is not reachable
+/// from a unit test.
+///
+/// Since the WI-1 fix round it is the SECOND of two guards over the same fact
+/// and no longer the only one: an errored tick folds through
+/// [`LoopState::on_blind_tick`], which answers [`DetectOutcome::Blind`] and
+/// cannot reach the `Retired` branch above. That change was made for `live`
+/// rather than for this rule — one failed grab used to retire a panel that was
+/// on screen — and this parameter is kept because the rule reads true on its
+/// own: a tick that could not look completes nothing, whatever outcome it is
+/// handed.
+///
+/// What is NOT decided here is whether the key this tick observed is still the
+/// current one. That guard belongs to the writer, because the answer can change
+/// between this call and the lock — see `trigger::complete_cycle`.
+pub fn cycle_complete(outcome: DetectOutcome, read_in_hand: bool, looked: bool) -> bool {
+    looked && matches!(outcome, DetectOutcome::Retired) && read_in_hand
+}
+
 // ------------------------------------------------------ the loop's step --
 
 /// What one iteration of the loop does, decided before anything is captured.
@@ -1290,20 +1421,32 @@ pub fn gate_announcement(
 /// every Client.txt transition whether or not the module is running, so letting
 /// it log too put two lines in `app.log` for one event whenever the module was
 /// on. This one is the fact a smoke run is checking — the capture loop saying it
-/// has started (or stopped) looking — and it covers the two transitions no
-/// Client.txt line announces at all: an [`super::trigger::ALVA_TAIL_MS`] arm
-/// expiring, and (POE-246) the layout panel going off screen.
+/// has started (or stopped) looking — and it covers the three transitions no
+/// Client.txt line announces at all: [`super::trigger::MANUAL_ARM_GRACE_MS`]
+/// running out, (POE-246) the layout panel going off screen, and (WI-1) the
+/// cycle completing.
 ///
 /// # Why the source and not the publish
 ///
 /// Keyed on [`trigger::ArmSource`] rather than on the publish
 /// [`gate_announcement`] asks for, which POE-246 changed for two reasons. A gate
-/// that stays open while the REASON changes hands says so — Alva's tail expiring
-/// under a panel that is still on screen is the loop's whole new behaviour, and
-/// it is invisible in an armed-ness bit. And the re-assertion that corrects a
-/// foreign status write (POE-171 finding 15) stops putting a second `stood down`
-/// line in `app.log` for one stand-down: the publish is the correction, the line
-/// never was.
+/// that stays open while the REASON changes hands says so — a Re-arm's grace
+/// expiring under a panel that is still on screen is that shape, and it is
+/// invisible in an armed-ness bit. And the re-assertion that corrects a foreign
+/// status write (POE-171 finding 15) stops putting a second `stood down` line in
+/// `app.log` for one stand-down: the publish is the correction, the line never
+/// was.
+///
+/// # The stand-down names its CAUSE (WI-1, 2026-09-07)
+///
+/// Four things shut the gate now, and they are four different things for a smoke
+/// run to check, so `stood_down` rides on the line. The vocabulary is
+/// [`trigger::StandDown`]'s, which is also what writes it — this only prints —
+/// and the resting case keeps POE-242's exact wording because that is the string
+/// `docs/OVERLAY-GUIDE.md` smoke item 12 tells the runner to look for.
+///
+/// It is read on the `None` arm only. An armed gate names its SOURCE, and what
+/// last shut the gate says nothing about why it is open.
 ///
 /// `said` starts `None`, which is the same claim this line's `None` arm makes —
 /// a loop that has said nothing has not started looking — so the first source it
@@ -1311,6 +1454,7 @@ pub fn gate_announcement(
 fn gate_line(
     said: &mut Option<trigger::ArmSource>,
     source: Option<trigger::ArmSource>,
+    stood_down: trigger::StandDown,
 ) -> Option<String> {
     if *said == source {
         return None;
@@ -1321,7 +1465,10 @@ fn gate_line(
             "Temple: capture armed by {} — looking for the layout panel",
             source.label()
         ),
-        None => "Temple: capture stood down — waiting for Alva (Re-arm forces a read)".to_string(),
+        None => format!(
+            "Temple: capture stood down — {} (Re-arm forces a read)",
+            stood_down.label()
+        ),
     })
 }
 
@@ -2413,6 +2560,17 @@ fn rearm_counter(app: &AppHandle) -> u64 {
     counter
 }
 
+/// The board key as of NOW — `(temple_epoch, temple_rearm)`, in that order.
+///
+/// One place the pair is built, so the two readers cannot disagree about which
+/// counter is which half: [`tick`] takes it once at the top for the whole
+/// iteration, and `super::trigger::complete_cycle` takes it again when the
+/// stand-down actually lands, to check that the tick's key is still the current
+/// one. See [`BoardRead`] for what the pair means.
+pub(super) fn board_key(app: &AppHandle) -> (u64, u64) {
+    (temple_epoch(app), rearm_counter(app))
+}
+
 /// The incursion cycle this tick belongs to (POE-249 WI-1).
 ///
 /// Bumped by `trigger::on_client_line` on an Alva line or a non-temple area
@@ -2596,19 +2754,29 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         // gate (POE-242, POE-246) is asked only behind it, for two reasons: the
         // loop publishes nothing at all while the game is not in front (see
         // `TempleStatus::Idle`), and an unfocused iteration does the same thing
-        // either way. The panel clock is unaffected by the wait — it is a
-        // deadline, not a countdown, so an alt-tab that outlasts it stands the
-        // loop down on the tick focus comes back.
+        // either way. There is no panel clock for the wait to outlast since WI-1
+        // (2026-09-07): `LoopState::live` is a bool the LAST tick wrote, so an
+        // alt-tab of any length — a second or an hour — leaves the gate open for
+        // exactly one tick on the way back, and that tick is the one that finds
+        // the sheet gone.
         let focused = game_focused(&app);
-        let source = if focused {
-            trigger::arm_source(
-                trigger::arm_state(&app),
-                session.state.panel_seen_ms,
-                session.state.probe_pending(),
-                now_ms(),
+        // One read of the arm for both answers: the SOURCE that keeps the gate
+        // open, and the word for it if it is shut. Two reads could disagree —
+        // the watcher writes this lock from another thread — and the line would
+        // then name a cause the gate did not close for.
+        let (source, stood_down) = if focused {
+            let arm = trigger::arm_state(&app);
+            (
+                trigger::arm_source(
+                    arm,
+                    session.state.live,
+                    session.state.probe_pending(),
+                    now_ms(),
+                ),
+                arm.stood_down,
             )
         } else {
-            None
+            (None, trigger::StandDown::default())
         };
         let armed = source.is_some();
         if focused {
@@ -2629,7 +2797,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             }
             // Separately from the publish: the source can change hands while the
             // gate stays open, and that transition is the one a smoke run reads.
-            if let Some(line) = gate_line(&mut session.source_said, source) {
+            if let Some(line) = gate_line(&mut session.source_said, source, stood_down) {
                 crate::app_log(&app, line);
             }
         }
@@ -2744,6 +2912,20 @@ fn tick(
     // writes through to the session as it finishes.
     let grabbed_at = Instant::now();
     session.tick_stages = TickStages::default();
+    // The board key (POE-249). Read once, at the top, so all THREE consumers see
+    // the same reading of the same two counters: the anchor gate's `rearm`, the
+    // OCR gate's key, and — since WI-1 — the cycle rule in `miss`, which is
+    // reached from the failing-grab arm below and so cannot wait for the cheap
+    // half. A bump seen by one and not another would force a read the next gate
+    // then skipped, or stand the loop down on a board the user had just asked to
+    // be re-read.
+    //
+    // What ONE reading cannot do is stay current: this tick takes seconds (a
+    // cold sweep is 5.3 s), and a START line or a Re-arm inside it arms a fresh
+    // cycle. `trigger::complete_cycle` therefore re-reads the pair and refuses a
+    // stand-down whose key has moved on — see `miss`.
+    let key = board_key(app);
+    let rearm = key.1;
     let grab = match crate::capture::capture_screen(app) {
         Ok(grab) => grab,
         Err(e) => {
@@ -2755,7 +2937,7 @@ fn tick(
             // Through `miss`, which spends the start-up probe like any other
             // tick (POE-246): a machine whose capture never succeeds must not
             // hold the gate open for the session.
-            miss(app, session, true);
+            miss(app, session, true, key);
             return false;
         }
     };
@@ -2801,12 +2983,6 @@ fn tick(
     // time, and it is the most expensive input the reader has — see
     // `anchor::detect_cheap`, which answers "anything here?" for ~1/80 of the
     // price of finding out the long way.
-    let rearm = rearm_counter(app);
-    // The board key (POE-249). Read here, once, so the anchor gate's `rearm`
-    // and the OCR gate's key are the same reading of the same counter — the
-    // button is half the key, and a bump seen by one gate but not the other
-    // would either force a read the gate then skipped or skip one it forced.
-    let key = (temple_epoch(app), rearm);
     let probing = Instant::now();
     let cheap = anchor::detect_cheap(&img, session.cheap_hint.as_ref());
     session.tick_stages.cheap = probing.elapsed();
@@ -2868,7 +3044,7 @@ fn tick(
         first_tick,
         rearm,
     ) {
-        miss(app, session, false);
+        miss(app, session, false, key);
         // A sweep that found nothing still COST what a promoted tick costs, so
         // it is reported as one: `slow_tick_line` is for the cheap ticks, and a
         // sweep's seconds are a price the loop chose to pay, not a fact about
@@ -2892,7 +3068,7 @@ fn tick(
         // tick, and the table row for a capture size the sweep just searched
         // past. Nothing there can answer what the sweep could not.
         (None, _) if sweep_ran => {
-            miss(app, session, false);
+            miss(app, session, false, key);
             return true;
         }
         // `may_sweep` is still unspent here: the only way to reach this arm
@@ -2917,7 +3093,7 @@ fn tick(
                 // log line the loop would rewrite on every tick. A panel that
                 // anchors but reads badly is a different case, and reaches the
                 // slice as `layout.confidence`.
-                miss(app, session, false);
+                miss(app, session, false, key);
                 // This tick DID pay for the read; it just found nothing.
                 return true;
             }
@@ -2925,16 +3101,16 @@ fn tick(
     };
     session.tick_stages.anchor = anchoring.elapsed();
 
-    // The sighting the arm gate's panel clock is measured from (POE-246): stamped
-    // on every anchored tick, so the tail restarts while the panel is on screen
-    // and only starts running once it is not.
+    // The sighting the arm gate reads (POE-246, WI-1): every anchored tick sets
+    // `live`, so the gate stays open for as long as the sheet is in front of the
+    // player and shuts on the tick that finds it gone.
     //
     // BEFORE the OCR gate below, and that order is load-bearing (POE-249): a
-    // sighting that re-shows an already-read board is still a sighting, and the
-    // panel clock is what keeps the loop armed while the player reads the sheet.
-    // Gating this on the read would stand the module down `PANEL_TAIL_MS` after
-    // the read rather than after the sheet closed.
-    let detected = session.state.on_detect(Some(now_ms()));
+    // sighting that re-shows an already-read board is still a sighting, and it
+    // is what keeps the loop armed while the player reads the sheet. Gating this
+    // on the read would stand the module down after the READ rather than after
+    // the sheet closed.
+    let detected = session.state.on_detect(true);
     // The temple's WRITE of the shared slice (POE-234 WI-2). Here rather than in
     // `full_read`, so all three anchor paths — the cheap tick's verified hint,
     // the cold sweep, and the promoted read — publish, including the ticks whose
@@ -3058,10 +3234,22 @@ fn cold_sweep(
 
 /// A tick that produced no layout — nothing on screen, or the grab failed.
 ///
-/// A failed grab counts as a failed DETECTION rather than as its own kind of
-/// event: the loop cannot see the panel either way, and a board held alive
-/// through repeated failures would leave the page showing advice for a panel
-/// that closed two minutes ago.
+/// The two reach the page the same way — no board this tick — and they are
+/// DIFFERENT events to the panel state machine, which is the whole reason this
+/// function branches on `errored` at all. A clean miss is the loop looking and
+/// finding the sheet gone: it runs the rules below. A failed grab is the loop
+/// not looking at all, and since the WI-1 fix round it does one thing and
+/// returns — [`LoopState::on_blind_tick`], which spends the start-up probe and
+/// leaves [`LoopState::live`] where the last tick that could see the screen left
+/// it. [`fail`] has already put the status and the message on the page by then,
+/// so there is nothing here to publish.
+///
+/// The residual that buys, named in docs/TEMPLE-LIFECYCLE.md: while `live` is
+/// held by a capture that keeps failing, the panel branch of
+/// [`trigger::arm_source`] is ORed ABOVE Client.txt, so no Alva line and no zone
+/// change shuts the gate — the first grab that SUCCEEDS does, by finding no
+/// panel. Accepted against what it replaced, which was one TRANSIENT failure
+/// standing the capture down under a sheet the player was reading.
 ///
 /// `errored` is what keeps [`fail`]'s message on the page: a clean miss — the
 /// loop looked and there was no panel — means the last error is over, and
@@ -3093,26 +3281,53 @@ fn cold_sweep(
 /// takes the sheet-bound overlays down — that has always been on the first miss
 /// and is what `RETIRE_AFTER` now agrees with. It does NOT invalidate the board:
 /// a sheet reopened inside the same incursion re-shows it ([`LoopState::board`],
-/// docs/TEMPLE-LIFECYCLE.md row 3).
-fn miss(app: &AppHandle, session: &mut Session, errored: bool) {
-    // `None`: a tick that found nothing leaves `panel_seen_ms` where it was, so
-    // a miss can never extend the arm (POE-246).
-    let retired = session.state.on_detect(None) == DetectOutcome::Retired;
-    if retired {
-        crate::app_log(app, "Temple: layout panel gone".to_string());
-    }
-    if !retired && errored {
-        // A failed grab with no live panel — the loop's common failure, and
-        // `fail` has already written both the status and the message. Publishing
-        // `Failed` a second time here would say the same thing twice.
+/// docs/TEMPLE-LIFECYCLE.md row 3) — while the loop is still armed to see the
+/// reopen, which is what the paragraph below changed.
+///
+/// # And, since WI-1, the CYCLE (2026-09-07)
+///
+/// A retire over a board this loop has already read is the sheet closing on a
+/// finished cycle, so it stands the capture down for good: [`cycle_complete`]
+/// decides and `trigger::complete_cycle` writes, and the loop's next iteration
+/// finds the gate shut and says so. The clean/errored split is one guard — a
+/// tick that could not LOOK has learned nothing about the sheet, and since the
+/// fix round it cannot even reach `Retired` — the read-in-hand half of the rule
+/// is the second, so a sheet closed before its read landed leaves the loop
+/// probing, and [`trigger::ArmState::complete_cycle`] holds the third: a Temple
+/// of Atzoatl run is not ended by one of its rooms' sheets closing.
+///
+/// The `key` is passed on to `trigger::complete_cycle` and is the fourth guard.
+/// This tick's key was read at the top of [`tick`], which on a cold sweep is
+/// 5.3 s ago, so a START line or a Re-arm in between has already armed a FRESH
+/// cycle by the time this runs — and disarming that on the strength of the old
+/// key would leave the next board unread until Re-arm.
+///
+/// The stand-down is not logged here. [`gate_line`] owns that line and prints it
+/// on the next iteration, which is what keeps it one line per stand-down however
+/// the gate came to be shut.
+fn miss(app: &AppHandle, session: &mut Session, errored: bool, key: (u64, u64)) {
+    if errored {
+        // A tick that could not LOOK, and the whole of what it does: spend the
+        // start-up probe and leave the panel state where the last tick that
+        // COULD look left it ([`LoopState::on_blind_tick`], whose residual is
+        // named in docs/TEMPLE-LIFECYCLE.md). It retires nothing, so it says
+        // nothing about the sheet, completes no cycle and takes no overlay
+        // down; and [`fail`] has already published both the status and the
+        // message, so publishing here would say the same thing twice.
+        session.state.on_blind_tick();
         return;
     }
-    let outcome = if errored {
-        TickOutcome::Failed
-    } else {
-        TickOutcome::NoPanel
-    };
-    publish(app, |slice| apply_status(slice, outcome));
+    let outcome = session.state.on_detect(false);
+    if outcome == DetectOutcome::Retired {
+        crate::app_log(app, "Temple: layout panel gone".to_string());
+    }
+    // AFTER the `layout panel gone` line and before the publish, so `app.log`
+    // reads in the order the events happened: the sheet went, then the gate
+    // shut.
+    if cycle_complete(outcome, session.state.has_read(key), !errored) {
+        trigger::complete_cycle(app, key);
+    }
+    publish(app, |slice| apply_status(slice, TickOutcome::NoPanel));
 }
 
 /// The text crops this module OCRs, named, in the order they are read.
@@ -3713,9 +3928,9 @@ mod tests {
 
     // --------------------------------------------- the panel state machine --
 
-    /// A moment for the sighting stamps, in the shape [`now_ms`] returns
-    /// (2025-09-02 08:00 UTC). Nothing reads its value — the assertions are all
-    /// on differences from it.
+    /// A moment in the shape [`now_ms`] returns (2025-09-02 08:00 UTC), for the
+    /// arm-gate tests that need a clock. Nothing reads its value — the
+    /// assertions are all on differences from it.
     const SEEN: u64 = 1_756_800_000_000;
 
     /// A panel retires on its FIRST missed anchor (POE-249,
@@ -3726,12 +3941,12 @@ mod tests {
     /// gate's view of the panel — disagreeing with the status the player could
     /// see. Fails if `RETIRE_AFTER` is put back to two, or applied off by one in
     /// the other direction (a live panel that never retires holds the arm gate
-    /// open on `panel_seen_ms` for the rest of the session).
+    /// open for the rest of the session).
     #[test]
     fn a_live_panel_retires_on_its_first_missed_anchor() {
         let mut state = LoopState { live: true, ..LoopState::default() };
 
-        assert_eq!(state.on_detect(None), DetectOutcome::Retired);
+        assert_eq!(state.on_detect(false), DetectOutcome::Retired);
         assert!(!state.live);
     }
 
@@ -3742,9 +3957,9 @@ mod tests {
     #[test]
     fn a_sighting_after_a_retire_is_found_again() {
         let mut state = LoopState { live: true, ..LoopState::default() };
-        assert_eq!(state.on_detect(None), DetectOutcome::Retired, "precondition");
+        assert_eq!(state.on_detect(false), DetectOutcome::Retired, "precondition");
 
-        assert_eq!(state.on_detect(Some(SEEN)), DetectOutcome::Found);
+        assert_eq!(state.on_detect(true), DetectOutcome::Found);
     }
 
     // ------------------------------------------------------- the OCR gate --
@@ -4383,70 +4598,103 @@ mod tests {
     fn the_first_anchor_reports_found_and_later_ones_do_not() {
         let mut state = LoopState::default();
 
-        assert_eq!(state.on_detect(Some(SEEN)), DetectOutcome::Found);
-        assert_eq!(state.on_detect(Some(SEEN + 1_000)), DetectOutcome::Held);
+        assert_eq!(state.on_detect(true), DetectOutcome::Found);
+        assert_eq!(state.on_detect(true), DetectOutcome::Held);
     }
 
-    /// The write POE-246's whole stand-down rule rests on: every anchored tick
-    /// re-stamps the sighting, so the tail is measured from the LAST one.
+    /// The write POE-246's stand-down rule rests on, in the form WI-1 left it:
+    /// a tick that anchors leaves the panel LIVE, which is the arm gate's whole
+    /// view of the screen.
     ///
-    /// Fails if the stamp is written once (on `Found` only) — the loop would
-    /// then stand down [`trigger::PANEL_TAIL_MS`] after a panel OPENED rather
-    /// than after it closed, which is the 14:37:00 bug with a longer fuse.
+    /// Fails if `live` is set only on the `Found` transition — a `Held` tick
+    /// would then clear it and the loop would stand down under a sheet the
+    /// player is reading, which is the 14:37:00 bug.
     #[test]
-    fn every_anchored_tick_re_stamps_the_sighting() {
+    fn every_anchored_tick_leaves_the_panel_live() {
         let mut state = LoopState::default();
 
-        state.on_detect(Some(SEEN));
-        state.on_detect(Some(SEEN + 30_000));
+        state.on_detect(true);
+        state.on_detect(true);
 
-        assert_eq!(state.panel_seen_ms, Some(SEEN + 30_000));
+        assert!(state.live);
     }
 
-    /// And a miss never does. Fails if `on_detect` stamps unconditionally: a
-    /// loop looking at an empty screen would then hold its own gate open
-    /// forever, which is the free-running capture POE-242 removed.
+    /// A clean miss over a live panel is the sheet closing, and `live` goes with
+    /// it on that tick ([`RETIRE_AFTER`] = 1).
+    ///
+    /// Fails if a miss leaves `live` set: the gate would then stay open on a
+    /// panel that is gone for the rest of the session, which is the
+    /// free-running capture POE-242 removed.
     #[test]
-    fn a_tick_that_found_nothing_leaves_the_last_sighting_where_it_was() {
+    fn a_tick_that_found_nothing_takes_the_live_panel_with_it() {
         let mut state = LoopState { live: true, ..LoopState::default() };
-        state.on_detect(Some(SEEN));
 
-        state.on_detect(None);
+        state.on_detect(false);
 
-        assert_eq!(state.panel_seen_ms, Some(SEEN));
+        assert!(!state.live);
     }
 
-    /// Retiring a panel is not the same event as losing sight of it: the tail
-    /// keeps running from the last sighting for the seconds a player needs to
-    /// close a panel and reopen it. Fails if retirement clears the stamp — the
-    /// loop would stand down one tick after every close, which since POE-249 is
-    /// 650 ms.
-    #[test]
-    fn retiring_a_panel_does_not_clear_the_sighting_the_tail_is_measured_from() {
-        let mut state = LoopState::default();
-        state.on_detect(Some(SEEN));
-
-        assert_eq!(state.on_detect(None), DetectOutcome::Retired);
-
-        assert_eq!(state.panel_seen_ms, Some(SEEN));
-    }
-
-    /// The start-up probe is a debt one tick settles, whatever that tick found —
-    /// a clean miss and a FAILED screen grab alike, because [`miss`] folds both
-    /// through this call with no sighting to stamp.
+    /// The start-up probe is a debt one tick settles, whatever that tick found.
     ///
-    /// Fails if the probe is spent only on a sighting, or only on a tick that
-    /// ran clean: either way a machine whose capture keeps failing holds the
-    /// gate open for the rest of the session, which is the free-running capture
-    /// POE-242 removed with an error message on top of it.
+    /// Fails if the probe is spent only on a sighting: a loop started over an
+    /// empty screen would then hold the gate open for the rest of the session,
+    /// which is the free-running capture POE-242 removed.
     #[test]
-    fn the_first_tick_spends_the_start_up_probe_even_when_it_could_not_look() {
+    fn the_first_tick_spends_the_start_up_probe_even_when_it_finds_nothing() {
         let mut state = LoopState::default();
         assert!(state.probe_pending(), "a loop that has not looked owes one look");
 
-        state.on_detect(None);
+        state.on_detect(false);
 
         assert!(!state.probe_pending());
+    }
+
+    /// And a tick whose screen GRAB failed settles it too, because it also ran.
+    ///
+    /// Fails if [`LoopState::on_blind_tick`] leaves the debt standing: a machine
+    /// whose capture never succeeds would hold the gate open for the whole
+    /// session, which is POE-242's free-running capture with an error message on
+    /// top of it.
+    #[test]
+    fn a_failed_grab_still_spends_the_start_up_probe() {
+        let mut state = LoopState::default();
+        assert!(state.probe_pending(), "a loop that has not looked owes one look");
+
+        state.on_blind_tick();
+
+        assert!(!state.probe_pending());
+    }
+
+    /// The fix round's rule: an errored tick says nothing about the sheet, so it
+    /// leaves the panel exactly where the last tick that could SEE the screen
+    /// left it — and with it the arm gate, whose whole view of the screen is
+    /// [`LoopState::live`] since WI-1.
+    ///
+    /// The arm here is `default` — nothing in Client.txt — which is the case the
+    /// panel is the only thing holding the gate: a hideout read, or a Re-arm
+    /// whose sixty seconds have run out under an open sheet.
+    ///
+    /// Fails if the errored tick is folded through `on_detect(false)` like a
+    /// clean miss. At [`RETIRE_AFTER`] `= 1` that retires on the spot, so ONE
+    /// transient capture failure would stand the capture down with the sheet in
+    /// front of the player, recoverable only by Re-arm.
+    #[test]
+    fn a_failed_grab_does_not_stand_the_capture_down() {
+        let mut state = LoopState { live: true, ..LoopState::default() };
+
+        let outcome = state.on_blind_tick();
+
+        assert_eq!(outcome, DetectOutcome::Blind);
+        assert!(state.live, "the last tick that looked saw the sheet");
+        assert_eq!(
+            trigger::arm_source(
+                trigger::ArmState::default(),
+                state.live,
+                state.probe_pending(),
+                SEEN,
+            ),
+            Some(trigger::ArmSource::PanelOnScreen),
+        );
     }
 
     /// The 17:28:31 case end to end, over the two pure pieces the loop composes:
@@ -4462,15 +4710,15 @@ mod tests {
         let mut state = LoopState::default();
         let arm = trigger::ArmState::default();
         assert_eq!(
-            trigger::arm_source(arm, state.panel_seen_ms, state.probe_pending(), SEEN),
+            trigger::arm_source(arm, state.live, state.probe_pending(), SEEN),
             Some(trigger::ArmSource::StartupProbe),
             "the probe tick is allowed to run",
         );
 
-        state.on_detect(Some(SEEN));
+        state.on_detect(true);
 
         assert_eq!(
-            trigger::arm_source(arm, state.panel_seen_ms, state.probe_pending(), SEEN + 1_000),
+            trigger::arm_source(arm, state.live, state.probe_pending(), SEEN + 1_000),
             Some(trigger::ArmSource::PanelOnScreen),
         );
     }
@@ -4482,17 +4730,100 @@ mod tests {
     fn a_probe_tick_that_finds_nothing_stands_the_loop_down() {
         let mut state = LoopState::default();
 
-        state.on_detect(None);
+        state.on_detect(false);
 
         assert_eq!(
             trigger::arm_source(
                 trigger::ArmState::default(),
-                state.panel_seen_ms,
+                state.live,
                 state.probe_pending(),
                 SEEN,
             ),
             None,
         );
+    }
+
+    // ------------------------------------------------ the completed cycle --
+
+    /// WI-1's rule (owner, 2026-09-07): the sheet was READ and it has now gone,
+    /// so this incursion's cycle is over and the loop stops capturing.
+    ///
+    /// Fails if the retire is not consulted at all — the loop would then stand
+    /// down on the tick after the read rather than on the tick after the sheet
+    /// closed, taking the offer boxes off a sheet still in front of the player.
+    #[test]
+    fn a_retire_over_a_board_already_read_completes_the_cycle() {
+        assert!(cycle_complete(DetectOutcome::Retired, true, true));
+    }
+
+    /// The guard the owner kept: a sheet that closed before any read landed ends
+    /// nothing, because the incursion this arm was bought for has not been read.
+    ///
+    /// Fails if the read half is dropped — the first miss of an armed incursion
+    /// is the state the loop lives in while it waits for the player to open the
+    /// sheet, so the module would stand down seconds after every START line and
+    /// never read anything again without Re-arm.
+    #[test]
+    fn a_retire_with_no_read_in_hand_completes_nothing() {
+        assert!(!cycle_complete(DetectOutcome::Retired, false, true));
+    }
+
+    /// A tick whose screen grab FAILED learned nothing about the sheet, so it
+    /// completes nothing either — however much the panel state machine, fed the
+    /// same failure, reports a retire.
+    ///
+    /// Fails if the failing-grab case is dropped: one transient capture error
+    /// over a read board would stand the module down for the rest of the
+    /// incursion, and the recovery is a button the player has no reason to press
+    /// because nothing on screen changed.
+    #[test]
+    fn a_tick_that_could_not_look_completes_nothing() {
+        assert!(!cycle_complete(DetectOutcome::Retired, true, false));
+    }
+
+    /// Only the RETIRE completes it: the other three outcomes are not a sheet
+    /// leaving the screen.
+    ///
+    /// `Missed` is the one that matters — it is what every tick over an empty
+    /// screen answers, so a rule that took it would end the cycle on the tick
+    /// after a read no matter what the sheet was doing. `Blind` is the fix
+    /// round's: a failed grab reaches this rule through the same call and must
+    /// not end anything. Fails if the match is widened to "anything that is not
+    /// a sighting".
+    #[test]
+    fn no_other_detect_outcome_completes_the_cycle() {
+        for outcome in [
+            DetectOutcome::Found,
+            DetectOutcome::Held,
+            DetectOutcome::Missed,
+            DetectOutcome::Blind,
+        ] {
+            assert!(!cycle_complete(outcome, true, true), "{outcome:?}");
+        }
+    }
+
+    /// The read half is keyed on the CURRENT key, which is what makes Re-arm the
+    /// way back: pressing it bumps `temple_rearm`, so the read in hand is a read
+    /// of another key and the cycle is not complete.
+    ///
+    /// Fails if `has_read` answers "any read at all" — Re-arm would then arm the
+    /// loop and the very next miss would stand it straight back down, which is
+    /// the button doing nothing.
+    #[test]
+    fn a_read_of_another_key_is_not_a_read_of_this_one() {
+        let mut state = LoopState::default();
+        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
+
+        assert!(state.has_read(BOARD));
+        assert!(!state.has_read(NEXT_BOARD));
+    }
+
+    /// And a loop that has read nothing at all has no read for any key. Fails if
+    /// the `None` board answers `true`, which would stand a fresh loop down on
+    /// its first miss.
+    #[test]
+    fn a_loop_that_has_read_nothing_has_no_read_for_this_key() {
+        assert!(!LoopState::default().has_read(BOARD));
     }
 
     /// The slow-tick line is a measurement with a rate limit, not a switch:
@@ -4730,7 +5061,7 @@ mod tests {
 
         gate.refund_probe(
             laptop,
-            Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaLine)),
+            Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaStart)),
             false,
         );
 
@@ -5212,12 +5543,74 @@ mod tests {
         let mut said = None;
 
         assert_eq!(
-            gate_line(&mut said, Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaLine))),
-            Some("Temple: capture armed by Alva — looking for the layout panel".to_string()),
+            gate_line(
+                &mut said,
+                Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaStart)),
+                trigger::StandDown::Waiting,
+            ),
+            Some(
+                "Temple: capture armed by Alva's start line — looking for the layout panel"
+                    .to_string()
+            ),
         );
         assert_eq!(
-            gate_line(&mut said, None),
+            gate_line(&mut said, None, trigger::StandDown::Waiting),
             Some("Temple: capture stood down — waiting for Alva (Re-arm forces a read)".to_string()),
+        );
+    }
+
+    /// WI-1's line: the stand-down says WHY, so a smoke run can tell the cycle
+    /// completing from Alva ending it, from the player walking out, from a
+    /// Re-arm nobody used.
+    ///
+    /// Fails if the cause is dropped and the line goes back to one string — the
+    /// four stand-downs are four different checks, and `app.log` would not
+    /// separate them.
+    #[test]
+    fn the_stand_down_line_names_the_cause() {
+        for (cause, expected) in [
+            (
+                trigger::StandDown::CycleComplete,
+                "Temple: capture stood down — the sheet was read and closed (Re-arm forces a read)",
+            ),
+            (
+                trigger::StandDown::AlvaLine,
+                "Temple: capture stood down — Alva's line (Re-arm forces a read)",
+            ),
+            (
+                trigger::StandDown::LeftArea,
+                "Temple: capture stood down — the zone changed (Re-arm forces a read)",
+            ),
+            (
+                trigger::StandDown::GraceOver,
+                "Temple: capture stood down — Re-arm's grace is over (Re-arm forces a read)",
+            ),
+        ] {
+            let mut said = Some(trigger::ArmSource::PanelOnScreen);
+
+            assert_eq!(
+                gate_line(&mut said, None, cause),
+                Some(expected.to_string()),
+                "{cause:?}",
+            );
+        }
+    }
+
+    /// And an ARMED gate names its source, never the cause it last shut for.
+    /// Fails if the two are folded into one line — `capture armed by the sheet
+    /// was read and closed` is not a sentence, and the smoke item reads the
+    /// source.
+    #[test]
+    fn an_armed_gate_ignores_the_stand_down_cause() {
+        let mut said = None;
+
+        assert_eq!(
+            gate_line(
+                &mut said,
+                Some(trigger::ArmSource::Trigger(trigger::ArmReason::Manual)),
+                trigger::StandDown::CycleComplete,
+            ),
+            Some("Temple: capture armed by Re-arm — looking for the layout panel".to_string()),
         );
     }
 
@@ -5227,10 +5620,14 @@ mod tests {
     /// the panel on screen from one Client.txt is still arming.
     #[test]
     fn the_gate_line_names_the_panel_that_is_holding_the_gate_open() {
-        let mut said = Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaLine));
+        let mut said = Some(trigger::ArmSource::Trigger(trigger::ArmReason::Manual));
 
         assert_eq!(
-            gate_line(&mut said, Some(trigger::ArmSource::PanelOnScreen)),
+            gate_line(
+                &mut said,
+                Some(trigger::ArmSource::PanelOnScreen),
+                trigger::StandDown::GraceOver,
+            ),
             Some(
                 "Temple: capture armed by the panel on screen — looking for the layout panel"
                     .to_string()
@@ -5247,9 +5644,13 @@ mod tests {
         let mut said = None;
         let source = Some(trigger::ArmSource::PanelOnScreen);
 
-        assert!(gate_line(&mut said, source).is_some());
+        assert!(gate_line(&mut said, source, trigger::StandDown::Waiting).is_some());
 
-        assert_eq!(gate_line(&mut said, source), None, "and not again");
+        assert_eq!(
+            gate_line(&mut said, source, trigger::StandDown::Waiting),
+            None,
+            "and not again",
+        );
     }
 
     /// The status the arm gate publishes, and the one the plan names: "on,
