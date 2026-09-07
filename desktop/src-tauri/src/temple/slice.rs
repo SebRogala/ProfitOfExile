@@ -1970,12 +1970,9 @@ pub struct BoardFrame {
 ///   **2 px** from the true top-left. So two covers the measured case and half
 ///   the budgeted one.
 ///
-/// A tick that flips route — recheck fails for one frame, the fallback chain
-/// answers, then recheck resumes — can therefore land outside the band on a
-/// board nothing touched. That case is not free and is not silent: it costs one
-/// read, with the RETRY budget carried rather than restored
-/// (`super::run::LoopState::note_read`), and it is bounded by
-/// [`super::run::GEOMETRY_READS_CAP`]. It never produces a wrong board.
+/// A fallback can land outside the placed-origin band. That case is not free
+/// or silent: the read uses the fallback origin, and a successful read remembers
+/// it for later placements. The ordinary read/retry rules still apply.
 ///
 /// What the band stops is the unbounded version of the same thing: at zero
 /// tolerance every re-found origin is a new board with a fresh retry budget, so
@@ -2430,8 +2427,8 @@ pub fn unclean(read: &KeptRead, clipped: &[&'static str]) -> bool {
 /// own. This exists for the other half of the button's contract: a re-arm
 /// pressed while nothing is anchored must still force an anchor ATTEMPT, and
 /// nothing on an empty screen produces a key to compare. See
-/// `super::run::wants_full_read`, which peeks here and spends the bump on the
-/// tick it promoted for.
+/// `super::run::tick`, which spends the bump on the anchored tick that reads the
+/// board.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct RearmGate {
     rearm_seen: u64,

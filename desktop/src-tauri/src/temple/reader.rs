@@ -81,32 +81,13 @@ pub fn read_layout_with_hint(
     Ok(read_layout_at(img, anchor::anchor_with_hint(img, hint)?))
 }
 
-/// Read a board with only the attempts a CAPTURE LOOP may pay for.
-///
-/// [`read_layout_with_hint`] with [`anchor::anchor_for_loop`] in place of
-/// [`anchor::anchor_with_hint`] — same board, same hint discipline, and no
-/// exhaustive sweep behind it. `super::run` is the only caller, and
-/// `may_sweep` is its per-tick sweep budget; see `anchor_for_loop` for what
-/// that gates, what the loop gives up, and where the two chains can disagree.
-pub fn read_layout_for_loop(
-    img: &DynamicImage,
-    hint: Option<&AnchorCalibration>,
-    may_sweep: bool,
-    stop: &dyn Fn() -> bool,
-) -> Result<TempleLayout, ReadError> {
-    Ok(read_layout_at(
-        img,
-        anchor::anchor_for_loop(img, hint, may_sweep, stop)?,
-    ))
-}
-
 /// Read a board from an anchor that has already been found.
 ///
-/// [`anchor::detect_cheap`]'s hinted path returns a full-resolution match
+/// [`anchor::detect_cheap`]'s placed path returns a full-resolution match
 /// verified against [`anchor::NCC_FLOOR`]. It is not the same computation as
-/// [`anchor::anchor_with_hint`] (that one seeds its fine window from the ÷4
-/// coarse position; `recheck` seeds it from the remembered origin) — the two
-/// converge on the same board in practice, which
+/// [`anchor::anchor_with_hint`] (that one searches its full scale paths;
+/// `recheck` searches a window around the placed origin) — the two converge on
+/// the same board in practice, which
 /// `a_read_from_a_pre_found_anchor_reproduces_the_swept_read` pins on both
 /// fixtures. So the capture loop hands that anchor here rather than paying to
 /// find the plate twice on every tick a panel is open. Note the SCALE on this

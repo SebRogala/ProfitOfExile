@@ -68,8 +68,9 @@
 //!   [`run::GateAnswer`] over the epoch, the re-arm counter and
 //!   [`slice::BoardFrame`], with [`run::RETRIES`] merged re-reads
 //!   ([`slice::KeptRead`], [`slice::merge_reads`], [`slice::unclean`], and
-//!   `run::kept_for`) and [`run::GEOMETRY_READS_CAP`] bounding a flapping
-//!   anchor. `slice::panel_signature` and the periodic panel re-OCR are gone;
+//!   `run::kept_for`) and the placed-origin recheck plus explicit cold fallback
+//!   owning anchor recovery. `slice::panel_signature` and the periodic panel
+//!   re-OCR are gone;
 //!   [`slice::layout_signature`] survives as the semantic half of the identity
 //!   and `ReadGate` is now [`slice::RearmGate`], the re-arm counter alone.
 //! - 2026-09-07 (WI-1): the capture has no tails left. `ALVA_TAIL_MS` and

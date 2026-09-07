@@ -1491,11 +1491,10 @@ touching the named path.
   (`slice::unclean`, `RETRIES`; the read line's `round N of 3: …` names which
   round it is and what it re-read) — check the unreadable-region item below
   first —
-  or the anchor is landing more than 2 px from where it did
-  (`slice::FRAME_ORIGIN_TOLERANCE`), which
-  `Temple: anchor origin keeps moving on a board already read N times …` turning
-  up alongside it confirms. The second is POE-247 territory, and worth a
-  `temple_debug_capture` dump rather than a tolerance change here.
+  or the placed-origin recheck falls below the floor and an Alva-announced board
+  spends its one fallback. If that sweep lands elsewhere, check the exact
+  contradiction and geometry-notice lines and the fallback read before using
+  `temple_debug_capture`; the normal placed path has no moving-origin budget.
   **Why the temple and not a map** (WI-1): map-side, the close COMPLETES the
   cycle — `capture stood down — the sheet was read and closed` — and the loop
   stops capturing, so a reopen is not sighted at all and there is no line to
@@ -1566,12 +1565,13 @@ touching the named path.
   before and the one that recomputed — because which read it follows is what names
   the input. A single-digit `(computed)` is not this bug and not worth a report;
   that is a cold-market table, which is cheap to build.
-- **`anchor origin keeps moving` must not appear at all** (POE-249): in a normal
-  session, on either machine, `app.log` must not carry
-  `Temple: anchor origin keeps moving on a board already read N times …`. It is
-  the `GEOMETRY_READS_CAP` bound reporting that it is holding the cost of an
-  anchor that will not settle, so seeing it in ordinary play means the anchor
-  route is flapping — record the board and the log rather than raising the cap.
+- **No cold-sweep line on the placed path** (POE-269): with the Temple panel
+  open and the placed Entrance origin valid, the normal tick is one windowed
+  NCC recheck and must not log a cold sweep. If an Alva-announced below-floor
+  miss uses the one fallback and it lands elsewhere, `app.log` must contain the
+  exact contradiction line `temple: placed origin (x,y) contradicted by sweep
+  (x',y')` and the named geometry notice; the origin is remembered after the
+  successful read. A panel-not-open miss has the existing no-panel path.
 - **Nothing is drawn over what the module reads** (POE-244, widened in POE-249)
   — the check the
   static gates cannot reach, because the failure is the app reading its own

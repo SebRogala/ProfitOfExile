@@ -54,7 +54,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-021: A module draws one window on the game's monitor, and widgets inside it](adr/021-a-module-draws-one-window-on-the-game-monitor-and-widgets-inside-it.md) — Proposed
 - [ADR-022: Room values are chaos-denominated and market-fed; presets are Default and Custom](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md)
 - [ADR-023: A window excluded from the grab may cover what its module reads](adr/023-a-window-excluded-from-the-grab-may-cover-what-its-module-reads.md) — amends ADR-019
-- [ADR-024: Module OCR positions are placed from the screen slice, not located](adr/024-module-ocr-positions-are-placed-from-the-screen-slice-not-located.md) — Accepted; implementation pending (POE-265)
+- [ADR-024: Module OCR positions are placed from the screen slice, not located](adr/024-module-ocr-positions-are-placed-from-the-screen-slice-not-located.md) — Accepted; Temple placement shipped in POE-269, remaining epic tasks pending
 
 Superseded:
 

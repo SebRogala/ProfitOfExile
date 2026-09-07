@@ -17,6 +17,8 @@ re-detects per tick through the Temple and Merc paths
 (`desktop/src-tauri/src/temple/run.rs:2969-2979`,
 `desktop/src-tauri/src/mercenary/run.rs:3035-3045`); see Consequences.
 
+**Superseded by the POE-269 amendment below.**
+
 ## Context
 
 ADR-020 §5 defines the scale lifecycle as trusted at start, verified on first
@@ -117,6 +119,9 @@ inputs to fixture coordinates, not panel-position constants (POE-266).
   and Merc locate/re-detect paths; this ADR is the contract for replacing them,
   not a claim that implementation has shipped (`desktop/src-tauri/src/temple/run.rs:2969-2979`,
   `desktop/src-tauri/src/mercenary/run.rs:3035-3045`, POE-266).
+
+**Superseded by the POE-269 amendment below.**
+
 - A fallback that finds a panel elsewhere is read for the session and raises
   the geometry notice. The remembered anchor is slice-local and is discarded
   on its screen-key change or Recalibrate; it is not a persisted machine
@@ -149,3 +154,19 @@ POE-272 owns the live client-rectangle read and its refresh rule for focused
 window moves and resizes; this amendment does not pull that follow-up into
 POE-268. The Temple and Merc locating callers remain transitional until
 POE-269 and POE-270 land, as the original Status caveat states.
+
+## Amendment: POE-269 placed-origin fallback (2026-09-07)
+
+POE-269 is implemented. The Temple loop now derives its `CheapHint` from the
+current `ScreenSlice` placements and runs one windowed NCC at the placed
+Entrance origin on each detect tick. A below-floor placed miss gets one pyramid
+fallback per `(temple_epoch, temple_rearm)` key for any `ArmSource::Trigger(_)`
+arm; a null or unplaced slice uses the same key and releases it when a fallback
+leaves the slice unfilled. A fallback origin outside the placed tolerance is
+logged, noticed, read successfully and remembered through `ssot::remember_anchor`;
+a null-slice fallback origin is remembered the same way after a successful read.
+The old sweep cadence, coarse candidate pass, geometry cap and session plate
+memory are retired.
+
+That release buys one retry only; a second withheld sweep keeps the key spent
+until the `(temple_epoch, temple_rearm)` key changes.

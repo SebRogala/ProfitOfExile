@@ -55,116 +55,55 @@
 //! reaches `capture_screen`") is a property of the step rather than of a
 //! status.
 //!
-//! # Two gates before an expensive read (POE-249)
+//! # Two gates before an expensive read (POE-249, POE-269)
 //!
-//! A full read is 28 OCR calls: two bounded crops for the side panel and the
-//! budget line, and two per plate (name band + tier numeral) for all 13. That
-//! is far too much to run per frame, so the loop spends most of its time on the
-//! cheap half, and a tick passes through two INDEPENDENT gates:
+//! A full read is 28 OCR calls: two bounded text crops and two per plate for
+//! all 13. The detect half therefore does one full-resolution, windowed NCC at
+//! the Entrance origin supplied by [`crate::ssot::placements`]. That recheck is
+//! both the panel-presence test and the only steady-state anchor work.
 //!
-//! 1. **The anchor gate** ([`wants_full_read`]) — does this tick pay to resolve
-//!    the anchor at all? Its cheap input is one [`anchor::detect_cheap`], at
-//!    most two correlations and no OCR engine, run every
-//!    [`DETECT_INTERVAL`]. A tick that passes runs
-//!    [`reader::read_layout_for_loop`]; a resolution that fails is a [`miss`]
-//!    like any other.
-//! 2. **The OCR gate** ([`LoopState::wants_read`], called as
-//!    [`LoopState::reshow`]) — a panel is on screen and anchored; is it a board
-//!    this loop has already READ? The identity is `(temple_epoch,
-//!    temple_rearm)` plus a [`slice::BoardFrame`]: the epoch changes when Alva
-//!    speaks or the zone does, which is the only way the board's CONTENTS
-//!    change; the rearm counter is the user's own override; and the frame
-//!    catches what moves inside one epoch — the room the player walked to, a
-//!    corridor that opened, a window that was dragged more than
-//!    [`slice::FRAME_ORIGIN_TOLERANCE`] px. A board already read under that
-//!    identity, with no retry owed, answers [`TickOutcome::Reshown`] and costs
-//!    nothing. The frame is banded rather than hashed so a re-anchored still
-//!    sheet is the same board — see [`slice::BoardFrame`].
+//! A score below [`anchor::NCC_FLOOR`] is a miss. When the slice is null or has
+//! no placed Entrance origin, the first such tick per `(temple_epoch,
+//! temple_rearm)` key gets one cold-start sweep. If that sweep finds an anchor
+//! whose proposed slice is withheld, it buys exactly one retry; a second
+//! withheld result keeps the key spent until the key changes. When a placed
+//! board was announced by any `ArmSource::Trigger(_)`, the miss gets one
+//! explicit fallback sweep for that key. A sweep that finds another origin logs
+//! the contradiction, uses that origin for this read, and the successful read
+//! remembers it through the SSOT effects seam. There is no per-tick sweep
+//! cadence, moving-origin budget, or session plate memory. The per-key budget is
+//! sufficient because the shared slice is corroborated across modules (ADR-020),
+//! while the placed origin is verified on every tick by the recheck.
 //!
-//! The order matters and is fixed: [`LoopState::on_detect`] and
-//! [`publish_anchor_scale`] sit BETWEEN the two, so [`LoopState::live`] — which
-//! is what POE-246's 120 s panel clock became in WI-1 — and ADR-020's shared
-//! screen scale are stamped on every sighting including the ones that read
-//! nothing.
-//!
-//! A read that came out unclean — an unread plate, an unresolved offer, a
-//! marker mismatch, an unread budget — buys at most [`RETRIES`] more ROUNDS,
-//! for three in total. Round 1 is the full 28 calls; rounds 2 and 3 OCR only
-//! the regions the kept read still has unclean, which
-//! [`slice::plan_read`] decides from that read BEFORE any of this round's OCR
-//! is paid for (POE-249 WI-2, owner 2026-09-07). Every round is merged into
-//! the read it is retrying ([`slice::merge_reads`]), so a worse second look
-//! never undoes a good first one and a region no round looked at comes through
-//! as the value the kept read had. After the third round all OCR stops for this
-//! board. There is no periodic panel re-OCR: see docs/TEMPLE-LIFECYCLE.md rows
-//! 2 and 3, which this implements.
+//! The OCR gate remains independent: [`LoopState::gate`] compares the board key
+//! and [`slice::BoardFrame`], re-shows an already-read board, or pays for the
+//! read and its bounded [`RETRIES`] partial rounds. [`LoopState::on_detect`]
+//! and [`publish_anchor_scale`] still run before that gate on every sighting.
 //!
 //! # The detect cadence
 //!
-//! Gate 1 exists because gate 2 sits *behind* a read whose cost is
-//! upside down: a capture with the panel OPEN anchors in two correlations,
-//! while a capture with no panel on it runs the hint, the seeded band and the
-//! full sweep — ~105 correlations, measured 3.9 s on a 1539 px board. A closed
-//! panel is the state this loop lives in, so its steady state was its most
-//! expensive one.
+//! Every [`DETECT_INTERVAL`] the loop captures and runs the placed-origin
+//! recheck. Its NCC and elapsed milliseconds are logged once for the first
+//! placed recheck that anchors in a session. A successful read logs [`read_timings_line`];
+//! these timings are measurements, not gates.
 //!
-//! So every [`DETECT_INTERVAL`] the loop runs [`anchor::detect_cheap`] (~1/80
-//! of that, measured) and pays to RESOLVE THE ANCHOR only when:
+//! # The cold fallback (POE-234, POE-269)
 //!
-//! - the cheap tick anchored the remembered plate, or nominated a new one; or
-//! - a panel is already live — a live panel is the CHEAP input, and refusing
-//!   to read one because the cheap tick could not see it is how a panel whose
-//!   scale drifted would get retired instead of re-anchored; or
-//! - the user pressed re-arm ([`slice::RearmGate::rearm_pending`]), which the
-//!   promoting tick then spends ([`slice::RearmGate::note_rearm`]); or
-//! - this is the start-up probe tick (POE-246), whose cheap half has no
-//!   remembered plate to re-match and so cannot see a panel that is on screen;
-//!   or
-//! - [`FULL_READ_EVERY_N_MISSES`] cheap ticks in a row have said nothing —
-//!   the backstop for a UI-scale change, which is the one way a panel can be on
-//!   screen and invisible to the cheap tick.
-//!
-//! [`wants_full_read`] is all five rules in one pure function, so the
-//! composition is testable without a screen. A cheap tick that says nothing is
-//! a MISS in the sense [`LoopState`] already meant it, and the status machine
-//! is unchanged by all of this.
-//!
-//! "Pays" here is the ANCHOR, not the OCR: since POE-249 a tick that resolves
-//! one still asks gate 2 whether the board behind it has already been read.
-//!
-//! # The cold start (POE-234)
-//!
-//! All of the above assumes the cheap tick can SEE a panel that is on screen,
-//! and on a capture size nobody has measured it may not: its nominating scale
-//! is a guess, and a guess that misses is indistinguishable from an empty
-//! screen. Measured 2026-09-03 on a 1920x1080 laptop — panel open, true scale
-//! 1.000, guess 1.397, cheap score 0.66 against a 0.70 floor — the loop never
-//! promoted, never read, and sat on "looking for the layout panel" for the
-//! whole session.
-//!
-//! So a tick whose cheap detect did not verify an anchor buys a cold-start
-//! sweep — on the [`FULL_READ_EVERY_N_MISSES`] cadence, not once. Once is not
-//! enough: the loop arms on Client.txt when Alva speaks, which is seconds to
-//! minutes before the player opens the layout panel, so a single sweep almost
-//! always lands on a closed panel and finds nothing.
-//!
-//! [`SweepGate`] is that cadence. A screen with NO calibration sweeps on the
-//! first such tick and every Nth after; one WITH a calibration skips the first
-//! and keeps the cadence, because a hinted recheck that has missed for a whole
-//! cadence is the README's "the consuming module's own verification failing"
-//! and is the one shape of stale scale no prune can see. The sweep is the
-//! loop's longest blocking call (5.3 s on a 1920x1080 capture in the Linux
-//! container, release) and polls the stop signal inside itself.
+//! [`cold_sweep`] uses [`anchor::anchor_for_loop`]'s coarse-to-fine pyramid
+//! only on the explicit fallback paths above. A null or unplaced screen slice
+//! can spend it once per `(temple_epoch, temple_rearm)` key, plus one retry when
+//! a found anchor is withheld; a second withheld result holds the key until it
+//! changes. A placed miss under any trigger arm can spend it once per the same
+//! key. The sweep polls cancellation between its coarse correlations.
 //!
 //! # The exhaustive sweep is not reachable from here
 //!
 //! `anchor::anchor_with_hint`'s last resort is `anchor::full_sweep`, measured
 //! at 28.4 s in the container and 347.8 s on the laptop. Every anchoring call
-//! in this file goes through the loop-facing chain instead —
-//! [`anchor::anchor_for_loop`] and [`reader::read_layout_for_loop`], which are
-//! that chain with the pyramid sweep in the last-resort slot. The exhaustive one
-//! stays reachable from `super::commands::temple_debug_capture`, where a user
-//! pressed a button and is waiting for it.
+//! in this file goes through [`cold_sweep`] and [`anchor::anchor_for_loop`],
+//! whose pyramid sweep is the explicit fallback. The exhaustive one stays
+//! reachable from `super::commands::temple_debug_capture`, where a user pressed
+//! a button and is waiting for it.
 //!
 //! The two timings above were taken by [`anchor::detect_cheap`]'s own
 //! measurement, described in that function's note: `cargo test --release --lib`
@@ -292,47 +231,7 @@ const MAX_DISTINCT_ERRORS: usize = 12;
 /// after every sheet they really did close, which is the thing POE-249 measured
 /// and shortened.
 ///
-/// # The third consumer, and what one costs it
-///
-/// [`LoopState::live`] is also an input to [`LoopState::note_cheap_detect`],
-/// whose `|| self.live` promotes a live panel to the full read however blind the
-/// cheap tick is. That is the UI-scale-drift recovery: an open panel whose scale
-/// drifted past [`anchor::COARSE_CANDIDATE_FLOOR`] cannot be re-matched by the
-/// hint, so the cheap tick sees nothing and only `live` keeps the read running.
-/// At two, that recovery got two promoted anchor attempts before the panel
-/// retired and the board went away until the [`FULL_READ_EVERY_N_MISSES`]
-/// backstop; at one it gets ONE.
-///
-/// Judged worth it: the second attempt ran the same hint-and-band path over a
-/// capture the game had barely redrawn and failed the same way, so what it added
-/// was 650 ms of latency on the hide, not a second chance. The recovery that
-/// actually works is the backstop, and it is unchanged.
 const RETIRE_AFTER: u8 = 1;
-/// Cheap detect ticks that may say "nothing here" before one full read is
-/// forced anyway.
-///
-/// [`anchor::detect_cheap`] recovers a panel that MOVED on the next tick, and
-/// `crate::ssot::drop_if_mismatched` drops the remembered scale the moment the
-/// capture changes size, so this is not the recovery path for either of those.
-/// What it covers is the case neither of them can see: a capture that is still
-/// the same size and still holds a panel whose scale has drifted far enough from
-/// the one the shared slice remembers — and from `anchor::height_seed_scale`,
-/// which is what the nominating pass falls back on — that the pass no longer
-/// clears [`anchor::COARSE_CANDIDATE_FLOOR`]. The game's own UI-scale slider is
-/// the way that happens.
-///
-/// 30 ticks is 19.5 s at [`DETECT_INTERVAL`]. Long, deliberately: the case is
-/// rare and what the backstop forces is the ANCHOR RESOLVE — the ~80×-a-cheap-tick half
-/// (see [`anchor::detect_cheap`]) — which is the price this constant is
-/// budgeting and the one that recovers the drifted scale.
-///
-/// It does NOT force the 28 OCR calls. Since POE-249's split those are behind a
-/// second gate ([`LoopState::reshow`]), which may well refuse: a backstop tick
-/// that re-anchors a board this loop has already read re-shows it and reads
-/// nothing. That is the right answer — the drift this constant exists for is a
-/// geometry failure, and re-finding the panel is the whole fix — but it means
-/// the NAME predates the split and now overstates what the tick buys.
-const FULL_READ_EVERY_N_MISSES: u32 = 30;
 
 /// Spawn the capture loop. Called through `MODULES` — see `modules.rs`.
 pub fn spawn(app: AppHandle, cancel: watch::Receiver<bool>) -> ModuleJoin {
@@ -369,9 +268,6 @@ pub struct LoopState {
     /// kept as the seam a `RETIRE_AFTER > 1` would need, so do not read the
     /// counter as a live threshold — the threshold is the constant.
     pub misses: u8,
-    /// Cheap detect ticks since the last full read — see
-    /// [`FULL_READ_EVERY_N_MISSES`].
-    pub cheap_misses: u32,
     /// Whether the one detect a starting loop runs before it may stand down has
     /// been spent (POE-246 — see `trigger`'s start-up probe note).
     ///
@@ -452,19 +348,9 @@ pub struct LoopState {
 /// same shape as the missed-Alva-line orphan above and is bounded the same way:
 /// one incursion, ended by a line the loop is already watching for.
 ///
-/// **An origin that will not settle.** An anchor found by two different ROUTES
-/// on two frames of a still sheet can land outside the band — see
-/// [`slice::FRAME_ORIGIN_TOLERANCE`], which says what each route budgets. That
-/// costs a read, not a wrong board, and it is bounded twice over: the read
-/// carries the retry budget rather than restoring it
-/// ([`LoopState::note_read`]), and [`GEOMETRY_READS_CAP`] stops paying
-/// altogether once the same board has been re-placed that many times. The smoke
-/// check is the `layout panel back — same board, no read` line appearing on a
-/// real reopen — **inside The Temple of Atzoatl**, which since WI-1 is the one
-/// place a reopen is sighted at all: a live [`trigger::ArmReason::TempleArea`]
-/// arm is the carve-out the completed cycle does not end, so the sheet may be
-/// opened and closed once per room on the same arm. Its absence there, with
-/// `anchor origin keeps moving` in its place, is the symptom to report.
+/// **An origin that moves.** A frame outside the origin or scale band is a new
+/// board position and is read from the newly resolved anchor. It receives the
+/// ordinary read/retry rules; there is no separate geometry-only cap.
 ///
 /// A MAP-side reopen is not sighted, and that is the design rather than a
 /// defect: the cycle completed when the sheet closed and the loop stood down, so
@@ -500,16 +386,6 @@ pub struct BoardRead {
     /// [`slice::plan_read`]'s answer and is usually a fraction of a full read;
     /// this budget bounds the ROUNDS, not the calls.
     pub retries_left: u8,
-    /// Reads this board has paid for a MOVED frame alone: same key, same
-    /// content, origin or scale outside the band. Reset to 0 when the key or the
-    /// content changes, and capped by [`GEOMETRY_READS_CAP`].
-    ///
-    /// Not reset when a sighting lands back INSIDE the band, deliberately: a
-    /// flapping route settles on every other frame, so a counter that reset
-    /// there would never reach the cap, which is the case the cap exists for.
-    /// What it therefore counts is "re-placements of this board", not
-    /// "consecutive failures to settle".
-    pub geometry_reads: u8,
 }
 
 /// Extra reading rounds an UNCLEAN board is worth, on top of the first.
@@ -528,56 +404,13 @@ pub struct BoardRead {
 /// board where every region failed.
 pub const RETRIES: u8 = 2;
 
-/// Reads one board is worth for GEOMETRY alone, before the gate stops paying.
-///
-/// The second bound, and it answers a different failure from [`RETRIES`]. That
-/// one bounds a board whose OCR keeps coming back dirty. This one bounds a board
-/// whose OCR is fine and whose ANCHOR will not sit still: the origin lands
-/// outside [`slice::FRAME_ORIGIN_TOLERANCE`], the read is paid for, and the next
-/// tick it lands outside again. A flapping ROUTE does exactly that — the cheap
-/// recheck fails for one frame, the fallback chain answers up to
-/// `anchor::SWEEP_FINE_RADIUS` away, the recheck resumes — and because a
-/// geometry-only move carries the retry budget rather than spending it
-/// ([`LoopState::note_read`]), nothing else in the loop stops it.
-///
-/// Eight, judged rather than measured: enough that every ordinary reason to
-/// re-place a board inside one incursion (a window nudged, a UI-scale change, a
-/// route that settles after a frame or two) is paid in full, and small enough
-/// that a board which has failed to settle eight times is not going to.
-///
-/// What it costs when it fires: the overlay keeps the ROIs of the last read,
-/// which are up to a few px stale, instead of paying 28 OCR calls per tick for
-/// an anchor that will not agree with itself. A player who genuinely drags the
-/// game window more than this many times inside ONE incursion, with no Alva
-/// line and no room change between, is the case it gets wrong — and Re-arm is
-/// the answer, which the log line names.
-///
-/// A key change or a content change is never capped, so the temple run's next
-/// room and an opened corridor read normally however often this has fired.
-///
-/// **Smoke symptom**: `anchor origin keeps moving on a board already read N
-/// times` in `app.log`, with the board's outline sitting a few px off the panel.
-/// That line means the anchor is flapping and this is the thing holding the cost
-/// down; it is not itself the bug.
-pub const GEOMETRY_READS_CAP: u8 = 8;
-
 /// What the OCR gate decided about one sighting — [`LoopState::gate`].
-///
-/// Three answers rather than an `Option<TempleStatus>` because the tick has to
-/// treat one of the two re-shows differently: [`Self::Capped`] is the loop
-/// declining to chase an anchor that will not settle, which is a thing a user
-/// reading `app.log` needs told once. [`LoopState::reshow`] is this narrowed to
-/// the two-answer form everything else wants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateAnswer {
     /// Pay for the 28 OCR calls.
     Read,
     /// Re-show `status`: the same board, in the same place, with nothing owed.
     Reshow(TempleStatus),
-    /// Re-show `status` DESPITE the frame having moved, because this board has
-    /// been re-placed [`GEOMETRY_READS_CAP`] times — carrying the count, which
-    /// is what the log line prints.
-    Capped(TempleStatus, u8),
 }
 
 /// What one pixel tick did to the panel state.
@@ -660,34 +493,6 @@ impl LoopState {
         DetectOutcome::Blind
     }
 
-    /// Fold one cheap detect into the state, and say whether this tick pays for
-    /// the full read.
-    ///
-    /// Four ways in, and the counter resets on all four so a promotion for any
-    /// reason restarts the periodic one:
-    ///
-    /// 1. the cheap tick saw something ([`anchor::CheapDetect::worth_reading`]);
-    /// 2. a panel is already live. The loop lives in `live == false`, so the
-    ///    gate keeps all of its value — and what this buys is the case the
-    ///    cheap tick is blind to: an OPEN panel whose UI scale drifted past
-    ///    [`anchor::COARSE_CANDIDATE_FLOOR`] with a hint that no longer
-    ///    matches. Without it ONE such tick retires a panel that is on screen
-    ///    ([`RETIRE_AFTER`]) and the board goes away for
-    ///    [`FULL_READ_EVERY_N_MISSES`] ticks;
-    /// 3. the user pressed re-arm — which must force a read even while nothing
-    ///    is anchored, or the button does nothing on a panel that is open and
-    ///    unchanged;
-    /// 4. [`FULL_READ_EVERY_N_MISSES`] cheap ticks have said nothing.
-    pub fn note_cheap_detect(&mut self, detected: bool, rearmed: bool) -> bool {
-        if detected || self.live || rearmed || self.cheap_misses + 1 >= FULL_READ_EVERY_N_MISSES {
-            self.cheap_misses = 0;
-            true
-        } else {
-            self.cheap_misses += 1;
-            false
-        }
-    }
-
     /// Whether the loop still owes itself the one detect it runs before it may
     /// stand down (POE-246). [`trigger::arm_source`]'s third input.
     pub fn probe_pending(&self) -> bool {
@@ -720,21 +525,16 @@ impl LoopState {
 
     /// The OCR gate (POE-249): what this sighting of `(key, frame)` gets.
     ///
-    /// The whole rule, in one place, because the three answers are three
-    /// branches of one question and a caller that asked them separately could
-    /// see two of them disagree. [`Self::reshow`] and [`Self::wants_read`] are
-    /// views over it; the tick reads the [`GateAnswer`] itself, because the
-    /// capped branch is the one it has to say something about in the log.
+    /// The whole rule, in one place, because the two answers are two branches of
+    /// one question and a caller that asked them separately could see them
+    /// disagree. [`Self::reshow`] and [`Self::wants_read`] are views over it.
     ///
     /// The order is the order of the three thirds:
     ///
     /// 1. a different key, or a different `semantic`, is a different BOARD —
     ///    read, and the budget starts over;
     /// 2. the same board whose frame MOVED past the band is the same OCR
-    ///    content in a different place — the ROIs are stale, so read; unless
-    ///    this board has already been re-placed [`GEOMETRY_READS_CAP`] times, in
-    ///    which case the anchor is not going to settle and a few px of stale ROI
-    ///    is the cheaper wrong answer;
+    ///    content in a different place — the ROIs are stale, so read;
     /// 3. the same board in the same place re-shows, unless it read unclean and
     ///    is still owed a retry.
     pub fn gate(&self, key: (u64, u64), frame: &slice::BoardFrame) -> GateAnswer {
@@ -745,11 +545,7 @@ impl LoopState {
             return GateAnswer::Read;
         }
         if !board.frame.matches(frame) {
-            return if board.geometry_reads >= GEOMETRY_READS_CAP {
-                GateAnswer::Capped(board.status, board.geometry_reads)
-            } else {
-                GateAnswer::Read
-            };
+            return GateAnswer::Read;
         }
         if board.unclean && board.retries_left > 0 {
             return GateAnswer::Read;
@@ -767,8 +563,7 @@ impl LoopState {
     /// first?). [`Self::gate`] asks the same two questions in its own order
     /// because it has a third answer to give.
     ///
-    /// It is NOT the read decision: a moved frame is not the same board and
-    /// still re-shows once [`GEOMETRY_READS_CAP`] is reached.
+    /// It is NOT the read decision: a moved frame is not the same board.
     pub fn same_board(&self, key: (u64, u64), frame: &slice::BoardFrame) -> bool {
         matches!(&self.board, Some(board) if board.key == key && board.frame.matches(frame))
     }
@@ -783,7 +578,7 @@ impl LoopState {
     pub fn reshow(&self, key: (u64, u64), frame: &slice::BoardFrame) -> Option<TempleStatus> {
         match self.gate(key, frame) {
             GateAnswer::Read => None,
-            GateAnswer::Reshow(status) | GateAnswer::Capped(status, _) => Some(status),
+            GateAnswer::Reshow(status) => Some(status),
         }
     }
 
@@ -810,14 +605,10 @@ impl LoopState {
     ///
     /// - **the key or the content moved** — a different board is behind the
     ///   sheet, so this is a first look at it and it gets the whole [`RETRIES`]
-    ///   budget, and [`BoardRead::geometry_reads`] starts over;
-    /// - **only the geometry moved** — the same board, re-placed. The ROIs are
-    ///   stale, which is why it had to be READ, but the OCR content is the same
-    ///   content the last read was working on, so the budget is neither restored
-    ///   nor spent: it carries, and `geometry_reads` counts one. Restoring here
-    ///   was the unbounded case re-entered through another door — a flapping
-    ///   route on an unclean board would have reset the budget on every flip and
-    ///   paid 28 OCR calls every 650 ms for the rest of the incursion;
+    ///   budget;
+    /// - **only the geometry moved** — the same board was re-placed. The ROIs
+    ///   were stale, which is why it had to be read, but the OCR budget carries
+    ///   across unchanged;
     /// - **nothing moved** — a retry, and the only thing that spends one.
     ///
     /// The decrement is keyed on [`slice::BoardFrame::matches`] rather than on a
@@ -830,15 +621,15 @@ impl LoopState {
         status: TempleStatus,
         unclean: bool,
     ) {
-        let (retries_left, geometry_reads) = match &self.board {
+        let retries_left = match &self.board {
             Some(board) if board.key == key && board.frame.same_content(frame) => {
                 if board.frame.matches(frame) {
-                    (board.retries_left.saturating_sub(1), board.geometry_reads)
+                    board.retries_left.saturating_sub(1)
                 } else {
-                    (board.retries_left, board.geometry_reads.saturating_add(1))
+                    board.retries_left
                 }
             }
-            _ => (RETRIES, 0),
+            _ => RETRIES,
         };
         self.board = Some(BoardRead {
             key,
@@ -846,7 +637,6 @@ impl LoopState {
             status,
             unclean,
             retries_left,
-            geometry_reads,
         });
     }
 }
@@ -1020,323 +810,6 @@ pub fn read_timings_line(
     )
 }
 
-// ------------------------------------------------------- the cold sweep --
-
-/// The screen one cold-start sweep was run for.
-///
-/// Monitor id AND capture size, because either can change without the other:
-/// dragging the game to a second display of the same resolution changes only
-/// the id, and a resolution change changes only the size. `monitor_id` `0` is
-/// `crate::capture::Capture`'s unknown, and is carried here as an ordinary
-/// value rather than excluded — this is a "have I already tried this?" key, not
-/// an identity claim, so two unknown displays sharing a key costs one skipped
-/// sweep and never a wrong scale.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SweepKey {
-    pub monitor_id: u32,
-    pub width: u32,
-    pub height: u32,
-}
-
-/// How often the cold-start sweep may run, and when it stops.
-///
-/// # What it is budgeting
-///
-/// The cold-start sweep is the expensive answer to "what scale is this
-/// screen?" —
-/// measured 5.3 s in the Linux container (release) on a 1920x1080 capture, and
-/// the exhaustive path it replaces measured 347.8 s on the laptop that reported
-/// the bug. It runs on the capture loop's own thread, so a loop that ran it on
-/// every cheap miss would spend its whole life sweeping a screen with no panel
-/// on it.
-///
-/// # Why a cadence and not once
-///
-/// The loop arms on Client.txt when Alva speaks (POE-242), and the player opens
-/// the layout panel seconds to minutes after that. A single sweep therefore
-/// almost always lands on a CLOSED panel, finds nothing correctly, and — if
-/// that were the end of it — would leave the screen exactly as blind as before
-/// when the panel does open, because on an uncalibrated screen the cheap tick's
-/// nominating scale is the guess that started all this.
-///
-/// So the sweep repeats, on
-/// [`FULL_READ_EVERY_N_MISSES`] — the same cadence, and for the same reason, as
-/// the periodic full read: it is the interval this loop already treats as "long
-/// enough that an expensive answer is worth re-asking". 30 ticks is 19.5 s at
-/// [`DETECT_INTERVAL`].
-///
-/// The countdown is in TICKS, so shortening [`DETECT_INTERVAL`] to 650 ms
-/// (POE-249) shortened this with it: 5.3 s of sweeping every 19.5 s rather than
-/// every 30 s, which takes the duty cycle of an uncalibrated screen with no
-/// panel on it from ~18 % to ~27 %. Accepted — it is bounded by the arm window
-/// below, and the alternative is a second cadence in wall-clock time saying the
-/// same thing in a unit this loop does not otherwise use.
-///
-/// # What `calibrated` means since POE-234 WI-2, and what changed with it
-///
-/// It is "this tick has a hint" — [`hint_for_capture`] answered `Some`, which
-/// means the shared `crate::ssot::ScreenSlice` holds a scale for THIS screen. It
-/// was "the temple's own `settings.json` calibration is present"; that store is
-/// gone, and the provenance is wider now: ANY source counts, including a
-/// `Remembered` value the startup load put there and a `MercFrame` one the merc
-/// module measured, neither of which the temple has looked at.
-///
-/// **The head start moved with it, and that is a real delta.** A screen whose
-/// remembered value is WRONG but whose capture size has not changed — a scale
-/// carried in from a machine whose in-game UI slider differs, say — now counts
-/// as calibrated on the first tick and waits a whole
-/// [`FULL_READ_EVERY_N_MISSES`] cadence before its first sweep, where WI-1 swept
-/// on the first non-verified tick. That is the price of the hint being worth
-/// trying at all: it is one correlation against 5.3 s, and it is the case the
-/// whole WI exists for (a scale merc measured serving the temple with no
-/// search). The recovery is unchanged and one cadence away.
-///
-/// What a calibration buys, then, is the FIRST-tick sweep and nothing else: a
-/// hinted path that re-anchors the panel in one windowed match means a screen
-/// that has just been answered must not pay 5.3 s the moment Alva speaks — the
-/// panel is closed then, and the loop arms on every incursion.
-///
-/// It does not close the gate. `desktop/src/lib/README.md`'s "Screen Geometry
-/// (SSOT)" lifecycle re-measures on "the consuming module's own verification
-/// failing", and a hint whose recheck has missed for
-/// [`FULL_READ_EVERY_N_MISSES`] consecutive ticks IS that failure — it is the
-/// in-game UI-scale change [`FULL_READ_EVERY_N_MISSES`]'s own note describes,
-/// which no prune can see because the capture size never moved. So a calibrated
-/// screen keeps the cadence and loses only the head start.
-///
-/// # What that costs, at worst
-///
-/// One sweep is 5.3 s (Linux container, release, 1920x1080). The cadence caps
-/// it at one per [`FULL_READ_EVERY_N_MISSES`] ticks — 19.5 s at
-/// [`DETECT_INTERVAL`] — and only
-/// while the loop is ARMED, which POE-242 bounds to Alva's window rather than
-/// to the session — and which WI-1 narrowed again, to the window between a START
-/// line and the sheet closing on a read. A player who never opens the layout
-/// panel during an incursion pays it at most twice.
-///
-/// # Why `temple_rearm` is not an input
-///
-/// It was, and that was wrong. The settings commands bump that counter on
-/// EVERY change (see [`wants_full_read`]), and none of those is a reason to pay
-/// 5.3 s — a user adjusting three settings would have bought three sweeps.
-/// What the user actually presses when the geometry is wrong is Recalibrate,
-/// and `ssot::geometry_recalibrate` reaches this gate the honest way: it empties
-/// the shared screen scale, so [`hint_for_capture`] answers `None`, `calibrated`
-/// goes false, and a screen that has just LOST its scale restarts the countdown
-/// rather than serving out one some earlier state left running. That path needs
-/// [`cheap_hint_for`] to hold: a session still holding its remembered plate
-/// would re-anchor at the old scale on the next tick, and a verified tick never
-/// reaches this gate at all.
-///
-/// Pure over plain data — no `AppHandle`, no image — so the whole rule is
-/// testable without a screen.
-#[derive(Debug, Default)]
-pub struct SweepGate {
-    /// The screen the countdown belongs to. A different one starts over, which
-    /// is what makes a resolution or monitor change sweep immediately.
-    key: Option<SweepKey>,
-    /// Whether a hint existed **as of the last non-verified tick**, so the loss
-    /// of one is detectable — that transition is how Recalibrate reaches this
-    /// gate.
-    ///
-    /// The caveat is load-bearing, because [`Self::allow`] is deliberately not
-    /// called on a tick whose cheap detect VERIFIED an anchor. What makes the
-    /// transition observable at all is [`cheap_hint_for`]: a Recalibrate empties
-    /// a slice that had answered, the remembered plate goes with it, and the
-    /// next tick's cheap detect therefore has nothing to re-match and cannot
-    /// verify — so it reaches this field with `calibrated` false even while the
-    /// layout panel is continuously on screen. Without that drop, every tick in
-    /// that window would verify at the pre-Recalibrate scale, the transition
-    /// would never be observed here, and the press would re-publish the number
-    /// the user asked the app to forget. `ssot::geometry_recalibrate` also bumps
-    /// `temple_rearm`, which [`wants_full_read`] spends to force the read
-    /// itself; the two are the sweep and the read halves of one press.
-    calibrated: bool,
-    /// Ticks still owed before the next sweep on [`Self::key`]. `0` means the
-    /// next one sweeps.
-    countdown: u32,
-}
-
-impl SweepGate {
-    /// Whether this tick may pay for a cold-start sweep, spending the budget if
-    /// it may.
-    ///
-    /// Call it ONCE per tick, on every tick whose cheap detect did NOT verify
-    /// an anchor, and nowhere else.
-    ///
-    /// **Once**, because two paths in `tick` reach the same sweep — the cold
-    /// one calls it directly, and a promoted read reaches it as
-    /// [`anchor::anchor_for_loop`]'s last resort — so a budget consulted on
-    /// only one of them is not a budget: a screen whose background nominates
-    /// above [`anchor::COARSE_CANDIDATE_FLOOR`] promotes on every tick and
-    /// would pay 5.3 s on every tick through the other.
-    ///
-    /// **Not on a verified tick**, because a hint that re-matched IS the
-    /// calibration's own verification succeeding, and that is the event the
-    /// calibrated cadence counts the absence of. Letting a working panel
-    /// decrement the countdown would turn "N consecutive verification failures"
-    /// into "N ticks", which is a different and weaker thing.
-    pub fn allow(&mut self, key: SweepKey, calibrated: bool) -> bool {
-        // A new screen, or one that has just lost its calibration, starts its
-        // countdown over rather than serving out one that belonged to another
-        // state — losing a calibration is how Recalibrate reaches this gate.
-        if self.key != Some(key) || (self.calibrated && !calibrated) {
-            self.key = Some(key);
-            // An unknown scale is owed an answer NOW: `0` sweeps on this very
-            // tick. A known one is owed nothing until its own verification has
-            // failed a full cadence, so it starts a whole cadence away and the
-            // first sweep lands on tick N + 1.
-            self.countdown = if calibrated {
-                FULL_READ_EVERY_N_MISSES
-            } else {
-                0
-            };
-        }
-        self.calibrated = calibrated;
-        if self.countdown > 0 {
-            self.countdown -= 1;
-            return false;
-        }
-        // One short of the cadence: this call IS the first of the group, so
-        // `FULL_READ_EVERY_N_MISSES - 1` refusals put the next sweep exactly
-        // that many ticks later — the same arithmetic
-        // `LoopState::note_cheap_detect` does with `cheap_misses + 1`.
-        self.countdown = FULL_READ_EVERY_N_MISSES.saturating_sub(1);
-        true
-    }
-
-    /// Hand back a head start the START-UP PROBE spent on an empty screen
-    /// (POE-246).
-    ///
-    /// An uncalibrated screen is owed its first sweep NOW, and the probe tick is
-    /// usually the wrong tick to spend it on: it runs before anything has armed
-    /// the loop, so it lands on a closed panel, finds nothing correctly, and — if
-    /// it kept the budget — would leave the first ARMED tick with the panel
-    /// actually open waiting a whole [`FULL_READ_EVERY_N_MISSES`] cadence for the
-    /// answer. The probe still SWEEPS, because a module switched on over an open
-    /// panel is exactly what it exists to catch; it just does not pay for the
-    /// tick that finds nothing.
-    ///
-    /// # Only a tick the PROBE armed
-    ///
-    /// `source` is the gate's answer for this iteration
-    /// ([`trigger::arm_source`]), and only
-    /// [`trigger::ArmSource::StartupProbe`] refunds. An app started INSIDE a
-    /// temple is the case that needs the distinction: Client.txt arms it, its
-    /// first tick is an ordinary armed tick, and the loop keeps ticking after it
-    /// — refunding there buys a second 5.3 s sweep on the very next tick. That
-    /// source is also proof the tick is the loop's first, because
-    /// `arm_source` reaches the probe branch only while the probe is unspent, so
-    /// no second "is this the first tick?" argument is needed.
-    ///
-    /// The conditions are arguments rather than an `if` at the call site,
-    /// following [`slow_tick_line`]: the rule belongs in the
-    /// tested surface. A sweep that ANCHORED spends the budget like any other —
-    /// it bought the answer the budget is for.
-    ///
-    /// The key guard is defensive and unreachable on the present call path
-    /// ([`Self::allow`] set this very key a few lines earlier, on this capture).
-    /// It stays because it is the method's one invariant — a countdown is given
-    /// back to the screen that spent it — and the call site cannot state it.
-    pub fn refund_probe(
-        &mut self,
-        key: SweepKey,
-        source: Option<trigger::ArmSource>,
-        anchored: bool,
-    ) {
-        if !matches!(source, Some(trigger::ArmSource::StartupProbe))
-            || anchored
-            || self.key != Some(key)
-        {
-            return;
-        }
-        self.countdown = 0;
-    }
-}
-
-/// Whether this tick's cheap result leaves anything for a cold-start sweep to
-/// answer.
-///
-/// `false` for a verified anchor and nothing else. [`anchor::CheapDetect::Anchored`]
-/// is a full-resolution match against [`anchor::NCC_FLOOR`] — the calibration's
-/// own verification succeeding — so that tick already has its scale and must not
-/// spend a budget kept for the ticks that do not. It is the event
-/// [`SweepGate`]'s calibrated cadence counts the ABSENCE of, which is what makes
-/// that cadence "N consecutive verification failures" rather than "N ticks".
-///
-/// `true` for the other two, because both can reach the sweep: a `Candidate`
-/// promotes to a read whose last resort is [`anchor::anchor_for_loop`]'s sweep,
-/// and `Nothing` is the cold path itself.
-///
-/// A function rather than a `matches!` at the call site so the rule has a seam:
-/// it is one line in [`tick`], which needs a screen and an `AppHandle`.
-pub fn sweep_could_help(cheap: &anchor::CheapDetect) -> bool {
-    !matches!(cheap, anchor::CheapDetect::Anchored(_))
-}
-
-/// The ANCHOR gate: does this tick pay to resolve the anchor?
-///
-/// **Not "does it pay for OCR" — that is the second gate** (POE-249,
-/// [`LoopState::wants_read`]). What "promote" means here is that the tick runs
-/// [`reader::read_layout_for_loop`] instead of stopping at
-/// [`anchor::detect_cheap`]; whether the board it finds is then READ is a
-/// separate question, asked after the sighting has been stamped. The inputs and
-/// the rules below are unchanged by that split.
-///
-/// Pure over both state machines so the composition is testable without a
-/// screen or a clock — and the composition is where the interesting rule lives:
-/// **a promotion that happened because of a re-arm has to spend the bump right
-/// here.** Nothing else spends it: a re-arm pressed while no panel is on screen
-/// would otherwise stay pending on every subsequent tick and pin the loop into
-/// resolving an anchor over an empty screen for the rest of the session. The
-/// settings commands re-arm on every change, so that is not a corner case.
-///
-/// `swept` is the cold-start sweep's answer (POE-234), folded in as a fifth way
-/// in rather than short-circuiting around this function: a sweep that anchored
-/// is a detection by any reading, and routing it through here is what keeps
-/// [`LoopState::cheap_misses`] and the re-arm bump with one owner apiece.
-///
-/// `first_tick` is the sixth (POE-246): a loop's FIRST tick promotes whatever
-/// the cheap tick said, whoever opened the gate for it. It has to, and the
-/// reason is [`anchor::detect_cheap`]'s input rather than its floor — a fresh
-/// session holds no [`CheapHint`], because that hint carries an ORIGIN and only a
-/// previous read produces one, so the cheap tick on a starting loop is the
-/// nominating pass and nothing else. That is the pass POE-234 measured at 0.66
-/// against a 0.70 floor on a 1080p laptop with the panel open. Promoting reaches
-/// the read's own hinted chain instead, which is the remembered scale searched
-/// over the whole capture — [`anchor::anchor_for_loop`]'s note prices its two
-/// non-sweep steps at two correlations, so a first tick that finds nothing costs
-/// about what the cheap tick it followed cost.
-///
-/// # What it does to the sweep budget
-///
-/// Nothing here, and one thing next door. This promotion adds no sweep TRIGGER:
-/// the promoted read is handed [`SweepGate`]'s single per-tick answer like every
-/// other promotion, so an uncalibrated screen sweeps on the cadence it already
-/// had and a calibrated one pays the hint and the table.
-///
-/// What POE-246 did change is that the tick EXISTS. The start-up probe opens the
-/// gate for one iteration that a disarmed loop would not have run at all, so
-/// [`SweepGate::allow`] is asked on it — and on an uncalibrated screen that is
-/// the head-start sweep. [`SweepGate::refund_probe`] is the other half: it gives
-/// that head start back when the probe's sweep found nothing, so the first
-/// ARMED tick over an open panel still gets it.
-pub fn wants_full_read(
-    state: &mut LoopState,
-    gate: &mut slice::RearmGate,
-    cheap: &anchor::CheapDetect,
-    swept: bool,
-    first_tick: bool,
-    rearm: u64,
-) -> bool {
-    let rearmed = gate.rearm_pending(rearm);
-    let read = state.note_cheap_detect(cheap.worth_reading() || swept || first_tick, rearmed);
-    if read && rearmed {
-        gate.note_rearm(rearm);
-    }
-    read
-}
-
 /// Whether this tick finished the incursion's cycle: the sheet was READ, and it
 /// has now gone (WI-1, owner 2026-09-07).
 ///
@@ -1344,9 +817,9 @@ pub fn wants_full_read(
 /// function of the three facts the tick has — what the panel state machine just
 /// answered, whether a read of the CURRENT board key is in hand
 /// ([`LoopState::has_read`]), and whether this tick could look at the screen at
-/// all. It lives here beside [`wants_full_read`] and [`loop_step`] for the same
-/// reason they do: the loop's gates belong in the tested surface, not in an `if`
-/// inside a function that needs a screen.
+/// all. It lives here beside [`loop_step`] for the same reason: the loop's gates
+/// belong in the tested surface, not in an `if` inside a function that needs a
+/// screen.
 ///
 /// [`DetectOutcome::Retired`] and not `Missed`: `Retired` is the transition —
 /// the sheet was live on the previous tick and is not now — while `Missed` is
@@ -2212,54 +1685,27 @@ pub fn settings_snapshot(app: &AppHandle) -> TempleSettings {
     settings
 }
 
-/// The anchor hint this capture's remembered screen scale implies (POE-234
-/// WI-2) — the temple's whole READ of `crate::ssot::ScreenSlice`.
+/// The scale hint this capture's screen slice supplies (POE-234 WI-2).
 ///
-/// The shared slice is the app's one store of "what scale is this screen drawn
-/// at", written by whichever module could see its own UI first. This converts it
-/// into the temple's own unit through [`anchor::scale_for_ui_scale`] and hands
-/// it to [`anchor::anchor_for_loop`] as the hint — a single-scale coarse pass
-/// over the whole capture, verified against [`anchor::NCC_FLOOR`] like any other
-/// candidate. So a scale the MERC module measured saves the temple its 5.3 s
-/// cold-start sweep, and a scale the temple anchored is what merc's next session
-/// starts from; neither module keeps a second answer to the same question. The
-/// temple had one until this commit (`Settings::temple_calibration`), and it is
-/// gone: [`anchor::AnchorCalibration`] is now derived state — produced by a read
-/// (`TempleLayout::calibration`), remembered within a session as
-/// [`anchor::CheapHint`]'s (scale, origin) pair, and produced HERE from the
-/// slice — never a second persisted store.
+/// The shared slice is the app's one store of the screen's UI scale. This
+/// converts it into the temple unit through [`anchor::scale_for_ui_scale`]. The
+/// placed origin is added separately by [`cheap_hint_from_screen`]; this helper
+/// remains the scale-only geometry validation seam used by commands and tests.
 ///
 /// # Four sources can be behind the number, and one of them drifts
 ///
-/// `MercFrame`, `TempleAnchor` and a `Remembered` load are all measurements. The
-/// fourth is `MercOcr` — the line-pitch estimate POE-214 measured 6-12 px off
-/// the gold frame — which reaches the slice when it is the first value or when
-/// it is outside `ssot::accepts`' band. Nothing here filters it out, and that is
-/// deliberate: the bound is small and known. 0.01 of `ui_scale` is the band, so
-/// the worst hint an OCR seed can produce is `0.01 * k` = 0.011 of temple scale,
-/// about one [`anchor::SCALE_STEP`] — a single-scale search one step off the
-/// truth still clears [`anchor::NCC_FLOOR`] with room (0.9603 against the peak's
-/// 0.9936 on `board-ref-1374.png`).
-///
-/// What such a hint can NOT do is launder itself: the temple anchors at exactly
-/// the scale it was handed, so its republish reproduces the standing value,
-/// `ssot::accepts` refuses it as a restatement, and the slice keeps saying
-/// `merc-ocr`. An OCR seed is therefore a slightly worse starting point and
-/// never a promotion — and when the gold frame does land, the correction reaches
-/// the temple on the next tick through [`cheap_hint_for`].
-///
-/// `None` — no hint, and the caller is uncalibrated — in exactly three cases:
+/// `None` — no scale hint, and the caller is uncalibrated — in these cases:
 ///
 /// - nothing has measured a screen (fresh install, or the tick right after
 ///   `ssot::geometry_recalibrate`);
-/// - the remembered measurement is not of THIS capture. The rule is
+/// - the stored measurement is not of THIS capture. The rule is
 ///   `ssot::screen_matches`', reused rather than restated so the temple cannot
 ///   grow its own opinion of what "the same screen" means — in particular the
 ///   POE-237 one about `monitor_id == 0` being UNKNOWN and never compared as an
 ///   identity. In the capture loop this branch is nearly unreachable, because
 ///   `ssot::drop_if_mismatched` runs first on the same pixels and empties the
-///   slot; `super::commands::temple_debug_capture` is the caller that reaches
-///   it, since it can be handed an image file of any size;
+///   slot; `super::commands::temple_debug_capture` is the caller that can be
+///   handed an image file of any size;
 /// - the stored `ui_scale` cannot describe a screen. `settings::ScreenScaleSetting::is_sane`
 ///   refuses those at load and both writers measure rather than invent, so this
 ///   is the conversion being a total function rather than a claim that a zero
@@ -2285,71 +1731,26 @@ pub fn hint_for_capture(
     })
 }
 
-/// The session's remembered plate, kept only while the shared slice still
-/// agrees with it (POE-234 WI-2).
+/// Build the cheap recheck hint from the current screen slice.
 ///
-/// [`anchor::CheapHint`] is where the loop remembers WHERE it last saw the
-/// Entrance plate, and it carries the scale it saw it at. That makes it a second
-/// place a scale can live, and — until this function existed — one nothing could
-/// clear: `ssot::geometry_recalibrate` empties the shared slice, but a panel
-/// that is still on screen re-matches at the remembered scale on the very next
-/// tick, reports [`anchor::CheapDetect::Anchored`], keeps [`sweep_could_help`]
-/// from ever asking for a sweep, and hands [`publish_anchor_scale`] the number
-/// the user just asked the app to forget — which then goes back into the emptied
-/// slot and back into `settings.json`. Measured as unreachable it was not: it is
-/// the ordinary case of pressing Recalibrate with the layout panel open.
-///
-/// So the slice is the authority over this too. Two rules, and the second is
-/// what makes it more than a Recalibrate fix:
-///
-/// - **A hint that disagrees by more than one [`anchor::SCALE_STEP`] wins.** One
-///   step is the finest disagreement this module can express, so anything larger
-///   is the slice describing a screen the remembered plate is not on. This is
-///   also what lets a merc frame fit CORRECT the temple mid-session: without it,
-///   a session that first anchored on a drifting `MercOcr` seed would re-verify
-///   its own copy of that scale for the rest of its life and never notice the
-///   gold frame's better answer landing in the slice beside it.
-/// - **A hint that was there and is GONE takes the plate with it.** That is the
-///   Recalibrate case, and `answered` is what makes it distinguishable from the
-///   other empty slice — the screen nothing has measured yet.
-///
-/// # Why the empty slice needs `answered` and cannot simply drop the plate
-///
-/// [`screen_from_anchor`] withholds a measurement the capture's height does not
-/// corroborate, so there is a real configuration — a non-default in-game
-/// UI-scale slider, on a machine whose recruit window is never opened — where
-/// the temple anchors correctly every tick and the slice stays empty forever.
-/// Dropping the plate on an empty slice alone would take the cheap tick's hinted
-/// path away from exactly that user for the whole session: every tick would fall
-/// to the nominating pass, whose seed is the one that is wrong there, and the
-/// board would be read once per [`FULL_READ_EVERY_N_MISSES`] sweep instead of
-/// once a second. `answered` costs one bool and confines the drop to a slice
-/// that HAS held a scale for this session — an emptying, which is a decision,
-/// rather than an emptiness, which is just an unanswered question.
-///
-/// The residue is honest and small: on that same machine Recalibrate cannot drop
-/// a plate, because the module has never put a scale into the shared store for
-/// the button to undo. What it does drop there is nothing, which is the correct
-/// number of things.
-///
-/// Pure over plain data — the two hints and one bool — so all of it is testable
-/// without a screen.
-fn cheap_hint_for(
-    hint: Option<anchor::AnchorCalibration>,
-    held: Option<anchor::CheapHint>,
-    answered: bool,
-) -> Option<anchor::CheapHint> {
-    let held = held?;
-    match hint {
-        Some(hint) => {
-            ((hint.scale - held.calibration.scale).abs() <= anchor::SCALE_STEP).then_some(held)
-        }
-        None => (!answered).then_some(held),
-    }
+/// `ssot::placements` owns the Entrance origin, including any origin the
+/// fallback has remembered. The scale crosses units only through
+/// [`anchor::scale_for_ui_scale`]. The value is rebuilt for each capture and is
+/// never taken from the prior read.
+fn cheap_hint_from_screen(
+    screen: Option<&crate::ssot::ScreenSlice>,
+    capture: (u32, u32),
+    monitor_id: u32,
+    client: [i32; 4],
+) -> Option<CheapHint> {
+    let screen = screen?;
+    let calibration = hint_for_capture(Some(screen), capture, monitor_id, client)?;
+    let origin = crate::ssot::placements(screen).temple?.entrance_origin;
+    Some(CheapHint { calibration, origin })
 }
 
-/// The hint the loop should use for this capture, read under the slice's own
-/// lock and dropped before anything is done with it.
+/// The hint the loop should use for this capture, plus whether a screen slice
+/// existed, read under the slice's own lock and dropped before any image work.
 ///
 /// Lock-then-drop, like every other reader of an `AppState` mutex on this
 /// thread: the anchor search that follows takes seconds, and holding the screen
@@ -2360,16 +1761,123 @@ fn hint_from_slice(
     capture: (u32, u32),
     monitor_id: u32,
     client: [i32; 4],
-) -> (Option<anchor::AnchorCalibration>, Option<crate::ssot::ScreenScaleSource>) {
+) -> (
+    Option<CheapHint>,
+    Option<crate::ssot::ScreenScaleSource>,
+    bool,
+) {
     let screen = {
         let state = app.state::<AppState>();
         let slot = state.screen.lock().unwrap_or_else(|e| e.into_inner());
         *slot
     };
-    (
-        hint_for_capture(screen.as_ref(), capture, monitor_id, client),
-        screen.map(|s| s.source),
-    )
+    let hint = cheap_hint_from_screen(screen.as_ref(), capture, monitor_id, client);
+    (hint, screen.map(|s| s.source), screen.is_some())
+}
+
+/// Why one explicit cold fallback is allowed for a failed placed recheck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColdSweepReason {
+    /// No screen scale or placement exists yet.
+    NullSlice,
+    /// A trigger announced this board and its placed recheck fell below the floor.
+    PlacedMiss,
+}
+
+/// Decide whether this miss may spend the one cold fallback allowed for it.
+///
+/// A null or unplaced slice has no origin to verify, so it gets one cold-start
+/// attempt per key regardless of the arm source. A placed slice gets one
+/// fallback per key only when a trigger arm announced it; a panel or startup
+/// source is not an incursion trigger. The caller records the returned reason
+/// before invoking the sweep, which makes a miss consume the same one-shot
+/// budget as a successful sweep.
+fn cold_sweep_reason(
+    screen_present: bool,
+    placed_origin: Option<(i32, i32)>,
+    cheap: &anchor::CheapDetect,
+    source: Option<trigger::ArmSource>,
+    key: (u64, u64),
+    fallback_sweep_key: Option<(u64, u64)>,
+    null_sweep_key: Option<(u64, u64)>,
+) -> Option<ColdSweepReason> {
+    if cheap.ncc() >= anchor::NCC_FLOOR {
+        return None;
+    }
+    if !screen_present || placed_origin.is_none() {
+        return (null_sweep_key != Some(key)).then_some(ColdSweepReason::NullSlice);
+    }
+    (matches!(source, Some(trigger::ArmSource::Trigger(_)))
+        && fallback_sweep_key != Some(key))
+    .then_some(ColdSweepReason::PlacedMiss)
+}
+
+/// The origin a successful fallback should remember, or `None` when the sweep
+/// agrees with the placed origin inside the frame band.
+///
+/// A null slice has no competing placement, so the swept origin is still the
+/// corroborated answer and must reach `remember_anchor` after a successful read.
+fn placed_origin_contradiction(
+    placed_origin: Option<(i32, i32)>,
+    swept_origin: (i32, i32),
+) -> Option<(i32, i32)> {
+    match placed_origin {
+        None => Some(swept_origin),
+        Some(placed_origin)
+            if placed_origin.0.abs_diff(swept_origin.0)
+                > slice::FRAME_ORIGIN_TOLERANCE as u32
+                || placed_origin.1.abs_diff(swept_origin.1)
+                    > slice::FRAME_ORIGIN_TOLERANCE as u32 => Some(swept_origin),
+        Some(_) => None,
+    }
+}
+
+/// The contradiction line for a sweep that found the panel outside the placed
+/// Entrance origin's tolerance band.
+fn placed_origin_contradiction_line(
+    placed_origin: Option<(i32, i32)>,
+    swept_origin: (i32, i32),
+) -> Option<String> {
+    let placed_origin = placed_origin?;
+    placed_origin_contradiction(Some(placed_origin), swept_origin).map(|_| {
+        format!(
+            "temple: placed origin ({},{}) contradicted by sweep ({},{})",
+            placed_origin.0, placed_origin.1, swept_origin.0, swept_origin.1
+        )
+    })
+}
+
+/// Release a null-slice fallback key for one retry when a sweep found an anchor
+/// but its proposed screen slice was withheld. `released_key` records the key
+/// that already used that retry, so a second withheld sweep keeps its one-shot
+/// budget spent until the `(temple_epoch, temple_rearm)` key changes. A sweep
+/// that found no panel or filled the slice keeps the key spent.
+fn null_sweep_key_after_publish(
+    key: Option<(u64, u64)>,
+    released_key: Option<(u64, u64)>,
+    attempted: bool,
+    sweep_found: bool,
+    screen_filled: bool,
+) -> (Option<(u64, u64)>, Option<(u64, u64)>) {
+    if attempted && sweep_found && !screen_filled && released_key != key {
+        (None, key)
+    } else {
+        (key, released_key)
+    }
+}
+
+/// The single placeholder for the future geometry notice task.
+const GEOMETRY_NOTICE_LINE: &str =
+    "Temple: geometry notice pending — placed origin contradicted by sweep (POE-271)";
+
+/// Invoke anchor memory only at the end of a successful full read.
+fn remember_fallback_anchor(
+    fallback_origin: Option<(i32, i32)>,
+    remember: impl FnOnce([i32; 2]),
+) {
+    if let Some((x, y)) = fallback_origin {
+        remember([x, y]);
+    }
 }
 
 /// The line to log when the loop takes its hint from a scale ANOTHER module
@@ -2425,7 +1933,10 @@ fn hint_line(
 /// `ssot::accepts` inside [`crate::ssot::publish_screen`], which refuses a
 /// temple reading that only re-states a standing merc measurement within the
 /// drift band. So calling this every tick is cheap by construction — a refusal
-/// at either gate and an unchanged value all stop here.
+/// at either gate and an unchanged value all stop here. Returns whether the
+/// anchor produced a publishable screen slice; a withheld `k` measurement
+/// returns false so a null-slice fallback can release its key for one retry. A
+/// second withheld result keeps that key spent until the board key changes.
 ///
 /// Same shape as `mercenary::run`'s publish, deliberately: `publish_screen`
 /// drops the screen guard before it returns, and `persist_settings` re-takes the
@@ -2456,7 +1967,7 @@ fn publish_anchor_scale(
     monitor_id: u32,
     origin: (i32, i32),
     client: [i32; 4],
-) {
+) -> bool {
     let next = match screen_from_anchor(layout.scale, hint, capture, monitor_id, origin, client, now_ms())
     {
         Ok(next) => next,
@@ -2468,7 +1979,7 @@ fn publish_anchor_scale(
                 session.k_said = Some(line.clone());
                 crate::app_log(app, line);
             }
-            return;
+            return false;
         }
     };
     let record = crate::ssot::publish_screen(app, next);
@@ -2488,6 +1999,7 @@ fn publish_anchor_scale(
     if crate::ssot::should_remember_screen(record.changed, next.source) {
         crate::persist_settings(app);
     }
+    true
 }
 
 /// The screen slice one temple anchor may publish, or the line saying why it may
@@ -2567,13 +2079,11 @@ fn screen_from_anchor(
 /// The line to log when an anchor disagrees with the hint it was searched
 /// against, or `None` when the two corroborate each other.
 ///
-/// One [`anchor::SCALE_STEP`] is the same threshold [`cheap_hint_for`] uses on
-/// the same two numbers, and for the same reason: it is the finest disagreement
-/// this module's scale grid can express. Inside it the anchor confirms the
-/// standing measurement; outside it, the anchor came from somewhere other than
-/// the hint — the table row, or the sweep after the hint missed — and the temple
-/// is not the module that gets to overrule a measurement of this screen with a
-/// board it read (see [`screen_from_anchor`]'s second section).
+/// One [`anchor::SCALE_STEP`] is the finest disagreement this module's scale grid
+/// can express. Inside it the anchor confirms the standing measurement; outside
+/// it, the anchor came from elsewhere — the table row or an explicit fallback —
+/// and the temple does not overrule a measurement of this screen with a board it
+/// read (see [`screen_from_anchor`]'s second section).
 ///
 /// Pure, and separate from the height check, because the two withhold for
 /// genuinely different reasons and a user reading `app.log` needs to know which.
@@ -2721,19 +2231,18 @@ struct Session {
     /// [`kept_for`] the moment the board moves — two reads of two different
     /// boards must never reach [`slice::merge_reads`].
     kept: Option<slice::KeptRead>,
-    /// Where the last successful read found the Entrance plate, for
-    /// [`anchor::detect_cheap`] to look first.
-    ///
-    /// In memory, not in `settings.json`: it is a property of where the game
-    /// window sits, which the capture size the persisted
-    /// [`anchor::AnchorCalibration`] is keyed on does not pin. Never cleared —
-    /// [`anchor::AnchorCalibration::applies_to`] discards it on a capture-size
-    /// change, and a hint that is merely in the wrong PLACE costs one windowed
-    /// correlation and is caught by the nominating pass on the same tick.
-    cheap_hint: Option<CheapHint>,
-    /// How recently this session paid for a cold-start sweep on the screen it
-    /// is looking at, and whether that screen still needs one.
-    sweeps: SweepGate,
+    /// The board key for which the one placed-miss cold fallback was attempted.
+    fallback_sweep_key: Option<(u64, u64)>,
+    /// The `(temple_epoch, temple_rearm)` key for which the one null/unplaced
+    /// cold-start sweep was attempted. A key is released for one retry when its
+    /// sweep found an anchor but `screen_from_anchor` withheld the slice.
+    null_sweep_key: Option<(u64, u64)>,
+    /// The null-slice key that already spent its one retry after a found anchor
+    /// was withheld. It prevents that key from paying the cold sweep every tick.
+    null_sweep_released: Option<(u64, u64)>,
+    /// Whether the first successful placed-origin recheck has been measured and
+    /// logged.
+    placed_recheck_said: bool,
     /// The armed-ness the loop last announced, `None` before the first one.
     /// See [`gate_announcement`] — it is what makes `Waiting` one publish
     /// rather than one per nap. Not the only input: the slice's own status is
@@ -2753,12 +2262,6 @@ struct Session {
     /// holds for as long as the panel is on screen at that scale, and
     /// [`publish_anchor_scale`] is reached on every anchored tick.
     k_said: Option<String>,
-    /// The board key the `anchor origin keeps moving` line was last said for,
-    /// `None` before it has been. Once per KEY rather than once per value: the
-    /// condition holds for every tick of a board whose anchor will not settle,
-    /// and the next board is the next thing worth saying it about. See
-    /// [`anchor_unsettled_line`].
-    anchor_unsettled_said: Option<(u64, u64)>,
     /// The last [`rois_line`] announced, for the same reason: `app_log` keeps
     /// 50 entries and the rects are a function of `(origin, scale)` alone, so a
     /// line per READ would repeat one value up to [`RETRIES`] + 1 times per
@@ -2771,18 +2274,6 @@ struct Session {
     /// seam is the wrong shape for a condition a mouse drag re-states every
     /// tick.
     clipped_said: Option<Vec<&'static str>>,
-    /// Whether the shared slice has held a scale for this screen at any point in
-    /// this session. [`cheap_hint_for`]'s second input, and it is what separates
-    /// a slice that was EMPTIED — Recalibrate — from one that was never filled.
-    ///
-    /// Per SCREEN, not per session: `tick` clears it whenever
-    /// `ssot::drop_if_mismatched` reports that the capture no longer matches the
-    /// remembered measurement, because after that the question "has anything
-    /// measured this screen?" starts over with a new answer. Without the reset a
-    /// player who moves the game to an unmeasured second monitor would carry the
-    /// first monitor's `true` across, and the plate would be dropped every tick
-    /// there on the strength of an emptying that belonged to another display.
-    slice_answered: bool,
 }
 
 fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
@@ -2811,16 +2302,16 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         gate: slice::RearmGate::default(),
         errors: ErrorLog::default(),
         kept: None,
-        cheap_hint: None,
-        sweeps: SweepGate::default(),
+        fallback_sweep_key: None,
+        null_sweep_key: None,
+        null_sweep_released: None,
+        placed_recheck_said: false,
         gate_said: None,
         source_said: None,
         hint_said: None,
         k_said: None,
-        anchor_unsettled_said: None,
         rois_said: None,
         clipped_said: None,
-        slice_answered: false,
     };
     // Backdated so the first iteration ticks immediately rather than after a
     // full cadence of doing nothing.
@@ -2978,12 +2469,12 @@ fn fail(app: &AppHandle, session: &mut Session, msg: String) {
 /// when that board has not been read yet (POE-249's two gates — see the module
 /// note and docs/TEMPLE-LIFECYCLE.md rows 2-3).
 ///
-/// Returns whether this tick paid to RESOLVE THE ANCHOR — the caller writes
+/// Returns whether this tick paid to resolve the anchor — the caller writes
 /// [`slow_tick_line`] only for the ticks that did not, because a promoted tick
 /// is not evidence about what the cheap half costs, and a promoted tick that
 /// READ writes [`read_timings_line`] of its own. A tick that resolved an anchor
 /// and then re-showed an already-read board is a promoted tick by that measure:
-/// it paid for [`reader::read_layout_for_loop`] either way.
+/// it paid for the placed-origin check or its explicit fallback either way.
 fn tick(
     app: &AppHandle,
     session: &mut Session,
@@ -3031,157 +2522,85 @@ fn tick(
     let capture = (img.width(), img.height());
     // Before ANY remembered geometry is read (POE-227): a screen scale measured
     // on another monitor or at another resolution is dropped from the shared
-    // slice on the first capture that disagrees with it. FIRST, because the
-    // hint below is derived from that slice — a stale value read one line
-    // earlier would be the temple anchoring on the screen the game has left.
-    if crate::ssot::drop_if_mismatched(app, capture, monitor_id, client) {
-        // `slice_answered` is a claim about THIS screen, and this capture is a
-        // different one — so the emptying that just happened is a resolution or
-        // monitor change, not a Recalibrate, and the plate must not be dropped
-        // as though the user had asked for it. (It is dropped anyway on the same
-        // tick, by `anchor::AnchorCalibration::applies_to` inside the cheap
-        // detect, which is the rule that owns capture-size staleness.)
-        session.slice_answered = false;
-    }
+    // slice on the first capture that disagrees with it. The placed hint below is
+    // derived only after this prune.
+    crate::ssot::drop_if_mismatched(app, capture, monitor_id, client);
+
     let settings = settings_snapshot(app);
-    // The temple's READ of the shared slice (POE-234 WI-2): whatever measured
-    // this screen — merc's gold frame, an earlier temple anchor, last session
-    // remembered, or the merc OCR line pitch, which is the one that drifts and
-    // is bounded to about one `SCALE_STEP` here (see `hint_for_capture`) —
-    // converted into this module's unit and handed to the anchor as its hint.
-    // There is no second store to prune any more; the prune above IS this
-    // module's prune.
-    let (hint, hint_source) = hint_from_slice(app, capture, monitor_id, client);
+    // The screen slice is the sole source for both halves of the cheap hint:
+    // placements owns the Entrance origin and the scale crosses units through
+    // anchor::scale_for_ui_scale. The value is local to this tick; no prior
+    // read can supply an origin.
+    let (cheap_hint, hint_source, screen_present) =
+        hint_from_slice(app, capture, monitor_id, client);
+    let hint = cheap_hint.map(|hint| hint.calibration);
     if let Some(line) = hint_line(&mut session.hint_said, hint, hint_source) {
         crate::app_log(app, line);
     }
-    // BEFORE the cheap tick, because the plate the session remembers carries a
-    // scale of its own and the slice is the authority over that too — see
-    // `cheap_hint_for`. Dropping it here is what makes Recalibrate work with the
-    // panel on screen, and what lets a merc frame fit correct a session that
-    // anchored on a worse seed.
-    session.cheap_hint = cheap_hint_for(hint, session.cheap_hint, session.slice_answered);
-    session.slice_answered |= hint.is_some();
-    // The cheap gate. A closed panel is what this loop looks at nearly all the
-    // time, and it is the most expensive input the reader has — see
-    // `anchor::detect_cheap`, which answers "anything here?" for ~1/80 of the
-    // price of finding out the long way.
+
+    // One full-resolution windowed NCC at the placed origin is both the panel
+    // presence test and the steady-state detect path.
     let probing = Instant::now();
-    let cheap = anchor::detect_cheap(&img, session.cheap_hint.as_ref());
+    let cheap = anchor::detect_cheap(&img, cheap_hint.as_ref());
     session.tick_stages.cheap = probing.elapsed();
+    if !session.placed_recheck_said
+        && matches!(cheap, anchor::CheapDetect::Anchored(_))
+    {
+        session.placed_recheck_said = true;
+        crate::app_log(
+            app,
+            format!(
+                "Temple: placed-origin recheck — NCC {:.3}, {} ms",
+                cheap.ncc(),
+                ms(session.tick_stages.cheap)
+            ),
+        );
+    }
 
-    // The cold start (POE-234). The cheap tick's nominating scale is a GUESS on
-    // a capture size nobody has measured, and a guess that misses looks exactly
-    // like an empty screen: measured 2026-09-03 on a 1920x1080 laptop, the
-    // panel was open, the true scale was 1.000, the width-derived guess was
-    // 1.397 and the tick scored 0.66 — so the loop sat on "looking for the
-    // layout panel" for the whole session and never once paid to find out.
-    //
-    // So a tick buys a sweep on the `FULL_READ_EVERY_N_MISSES` cadence — see
-    // `SweepGate`, which owns that rule and the head start an uncalibrated
-    // screen gets on it. ONE decision, taken here, for BOTH the cold path below
-    // and the promoted read after it: those reach the same sweep, and a budget
-    // spent on only one of them leaves the other paying 5.3 s per tick on a
-    // screen whose background happens to nominate.
-    //
-    // Asked only when the cheap tick did NOT verify an anchor: a hint that
-    // re-matched is the calibration's own verification succeeding, and a tick
-    // that verified must not spend a budget kept for the ticks that could not.
-    // That is what makes the calibrated cadence mean "N consecutive
-    // verification failures" — the README's re-measure trigger — rather than
-    // "N ticks".
-    //
-    // "Calibrated" is "this tick has a hint", which since WI-2 means the shared
-    // slice holds a scale for this screen. That is the same transition the gate
-    // was built on — `ssot::geometry_recalibrate` empties the slice, so the hint
-    // goes with it and a screen that has just LOST its scale restarts the
-    // countdown — with one store instead of two behind it.
-    let calibrated = hint.is_some();
-    let screen = SweepKey {
-        monitor_id,
-        width: capture.0,
-        height: capture.1,
-    };
-    // Read BEFORE `on_detect` spends it, later in this tick: this is the loop's
-    // FIRST tick, which has no remembered plate for the cheap half to re-match
-    // whoever opened the gate for it (POE-246).
-    let first_tick = session.state.probe_pending();
-    let may_sweep = sweep_could_help(&cheap) && session.sweeps.allow(screen, calibrated);
-
+    // A null/unplaced slice gets one cold start per key, plus one retry when a
+    // found anchor is withheld. A placed miss gets one fallback only while a
+    // trigger arm identifies the current board.
+    let reason = cold_sweep_reason(
+        screen_present,
+        cheap_hint.as_ref().map(|hint| hint.origin),
+        &cheap,
+        source,
+        key,
+        session.fallback_sweep_key,
+        session.null_sweep_key,
+    );
+    let null_sweep_attempted = matches!(reason, Some(ColdSweepReason::NullSlice));
     let mut sweep_ran = false;
     let mut swept = None;
-    if !cheap.worth_reading() && may_sweep {
+    if let Some(reason) = reason {
+        match reason {
+            ColdSweepReason::NullSlice => session.null_sweep_key = Some(key),
+            ColdSweepReason::PlacedMiss => session.fallback_sweep_key = Some(key),
+        }
         sweep_ran = true;
         swept = cold_sweep(app, &img, hint.as_ref(), cancel);
-        // A sweep the START-UP PROBE armed is the one that lands on a closed
-        // panel by design — see `SweepGate::refund_probe`, which owns every
-        // condition, the arm source included.
-        session.sweeps.refund_probe(screen, source, swept.is_some());
     }
+    let null_sweep_found = null_sweep_attempted && swept.is_some();
 
-    if !wants_full_read(
-        &mut session.state,
-        &mut session.gate,
-        &cheap,
-        swept.is_some(),
-        first_tick,
-        rearm,
-    ) {
-        miss(app, session, false, key);
-        // A sweep that found nothing still COST what a promoted tick costs, so
-        // it is reported as one: `slow_tick_line` is for the cheap ticks, and a
-        // sweep's seconds are a price the loop chose to pay, not a fact about
-        // the cadence.
-        return sweep_ran;
-    }
+    let placed_origin = cheap_hint.as_ref().map(|hint| hint.origin);
+    let fallback_origin = swept.as_ref().and_then(|found| {
+        let fallback_origin = placed_origin_contradiction(placed_origin, found.origin)?;
+        if let Some(line) = placed_origin_contradiction_line(placed_origin, found.origin) {
+            crate::app_log(app, line);
+            crate::app_log(app, GEOMETRY_NOTICE_LINE.to_string());
+        }
+        Some(fallback_origin)
+    });
 
-    // A cheap tick that anchored has already done the expensive half of the
-    // read's own first step, at full resolution and against the same floor —
-    // so the promoted read takes that anchor instead of finding the plate a
-    // second time. A sweep that anchored is the same fact from the cold path.
-    // Every other promotion has no anchor to hand over.
     let anchoring = Instant::now();
-    let layout = match (swept, cheap) {
-        (Some(found), _) | (None, anchor::CheapDetect::Anchored(found)) => {
-            reader::read_layout_at(&img, found)
-        }
-        // The sweep just paid for the pyramid on this frame. Re-running the
-        // chain would re-pay it, and the two steps ahead of it are the cheap
-        // ones: the same hint `detect_cheap` already tried in a window this
-        // tick, and the table row for a capture size the sweep just searched
-        // past. Nothing there can answer what the sweep could not.
-        (None, _) if sweep_ran => {
+    let found = match (swept, cheap) {
+        (Some(found), _) | (None, anchor::CheapDetect::Anchored(found)) => found,
+        (None, anchor::CheapDetect::Nothing { .. }) => {
             miss(app, session, false, key);
-            return true;
+            return sweep_ran;
         }
-        // `may_sweep` is still unspent here: the only way to reach this arm
-        // with a spent budget is the one above, which returns. So a promotion
-        // over an uncalibrated screen sweeps on the same cadence as the cold
-        // path, and a promotion that arrives between cadences does the hint and
-        // table steps and reports a miss rather than blocking for seconds.
-        (None, _) => match reader::read_layout_for_loop(
-            &img,
-            hint.as_ref(),
-            may_sweep,
-            &|| *cancel.borrow(),
-        ) {
-            Ok(layout) => layout,
-            Err(_) => {
-                // Not an error path: "no layout panel on screen" is the state
-                // the loop spends most of its life in, and reporting it as a
-                // failure would put a permanent red line on the page.
-                // `AnchorNotFound` carries its best NCC, which IS worth seeing
-                // when the panel never anchors — but it varies per frame, so it
-                // belongs in `temple_debug_capture`'s report rather than in a
-                // log line the loop would rewrite on every tick. A panel that
-                // anchors but reads badly is a different case, and reaches the
-                // slice as `layout.confidence`.
-                miss(app, session, false, key);
-                // This tick DID pay for the read; it just found nothing.
-                return true;
-            }
-        },
     };
+    let layout = reader::read_layout_at(&img, found);
     session.tick_stages.anchor = anchoring.elapsed();
 
     // The sighting the arm gate reads (POE-246, WI-1): every anchored tick sets
@@ -3199,11 +2618,15 @@ fn tick(
     // the cold sweep, and the promoted read — publish, including the ticks whose
     // board looked unchanged and bought no read. `ssot::accepts` is what makes
     // that affordable on a 650 ms loop.
-    publish_anchor_scale(app, session, &layout, hint, capture, monitor_id, origin, client);
-    session.cheap_hint = Some(CheapHint {
-        calibration: layout.calibration,
-        origin: layout.origin,
-    });
+    let screen_filled =
+        publish_anchor_scale(app, session, &layout, hint, capture, monitor_id, origin, client);
+    (session.null_sweep_key, session.null_sweep_released) = null_sweep_key_after_publish(
+        session.null_sweep_key,
+        session.null_sweep_released,
+        null_sweep_attempted,
+        null_sweep_found,
+        screen_filled,
+    );
 
     // The OCR gate (POE-249, docs/TEMPLE-LIFECYCLE.md rows 2-3). Everything
     // above this line runs on every sighting; the OCR below it runs once per
@@ -3215,18 +2638,14 @@ fn tick(
     // already resolved, and it is what stops a reopen answering with the
     // previous ROOM's board inside one epoch — see `BoardRead`.
     let frame = slice::BoardFrame::of(&layout);
+    let rearmed = session.gate.rearm_pending(rearm);
     let answer = session.state.gate(key, &frame);
-    if let GateAnswer::Capped(_, reads) = answer {
-        // The one branch the log has to distinguish: this is not a quiet reopen,
-        // it is the loop declining to chase an anchor. See
-        // `anchor_unsettled_line`, which owns the once-per-key rule.
-        if let Some(line) = anchor_unsettled_line(&mut session.anchor_unsettled_said, key, reads) {
-            crate::app_log(app, line);
-        }
+    if matches!(answer, GateAnswer::Read) && rearmed {
+        session.gate.note_rearm(rearm);
     }
     let reshown = match answer {
         GateAnswer::Read => None,
-        GateAnswer::Reshow(status) | GateAnswer::Capped(status, _) => Some(status),
+        GateAnswer::Reshow(status) => Some(status),
     };
 
     // ONE line per reopen, and it says which way the gate went (POE-249).
@@ -3249,7 +2668,18 @@ fn tick(
     }
 
     let Some(status) = reshown else {
-        full_read(app, session, cancel, &img, layout, &settings, key, frame, grabbed_at);
+        full_read(
+            app,
+            session,
+            cancel,
+            &img,
+            layout,
+            &settings,
+            key,
+            frame,
+            grabbed_at,
+            fallback_origin,
+        );
         return true;
     };
 
@@ -3268,12 +2698,12 @@ fn tick(
 /// they mean different things to a user reading `app.log`, and neither is an
 /// error: a screen with no layout panel on it is the state the loop lives in.
 ///
-/// The miss line repeats on [`SweepGate`]'s cadence rather than once per
-/// screen, which is the honest reading of what it says: the loop IS still
-/// waiting for the panel, and one line every 19.5 s while an armed incursion has
-/// no readable board is the record of that. [`ErrorLog`] does not cap it,
-/// deliberately — this is not an error path and the cap exists for a failure
-/// that re-runs on every tick.
+/// The miss line is emitted for the one fallback attempt. A null or unplaced
+/// slice gets this path once per `(temple_epoch, temple_rearm)` key, plus one
+/// retry when a found anchor is withheld; a second withheld result keeps the
+/// key spent. A placed miss gets it only for a trigger-announced board that
+/// qualified for the fallback. [`ErrorLog`] does not cap it because this is not
+/// an error path and the caller already owns the bounded rule.
 ///
 /// # Blocking
 ///
@@ -3288,16 +2718,9 @@ fn cold_sweep(
     hint: Option<&anchor::AnchorCalibration>,
     cancel: &watch::Receiver<bool>,
 ) -> Option<anchor::Anchor> {
-    // The whole loop-facing chain, hint included. A CALIBRATED screen reaches
-    // here too now — on its cadence tick, when its hinted recheck has been
-    // failing — and handing that calibration in is worth one coarse pass at
-    // that one scale: `anchor_for_loop` searches it over the WHOLE capture,
-    // where `detect_cheap`'s `recheck` only looked in a window around the
-    // remembered origin, so a plate that MOVED is found for a fraction of the
-    // sweep behind it. `anchor.rs` verifies the result against `NCC_FLOOR` like
-    // anything else, so a hint that is wrong is never believed, only tried
-    // first.
-    let found = anchor::anchor_for_loop(img, hint, true, &|| *cancel.borrow());
+    // The placed recheck searched a small window. This explicit fallback searches
+    // the whole capture with the pyramid path, trying the placed scale first.
+    let found = anchor::anchor_for_loop(img, hint, &|| *cancel.borrow());
     if *cancel.borrow() {
         return None;
     }
@@ -3503,43 +2926,6 @@ fn panel_text(
 /// buffer and pushes other diagnostics out of it, which is the opposite of what
 /// a diagnostic is for.
 ///
-/// The `anchor origin keeps moving` line, at most once per board key.
-///
-/// [`GEOMETRY_READS_CAP`] has fired: the loop has stopped paying OCR for a
-/// board whose anchor keeps landing outside the band, and is re-showing the last
-/// read's ROIs a few px stale instead. That is a deliberate degradation and the
-/// user is the one who can see the result, so it says so, and it names the way
-/// out — Re-arm is half the board key, so pressing it forces the read this is
-/// declining.
-///
-/// Once per KEY, not per tick: the condition holds for every tick of a board
-/// that will not settle, and at 650 ms an unconditional line would empty
-/// `app_log`'s 50-entry buffer in half a minute. The memory is the key ALONE,
-/// so a board whose content changed under one key — the player walking to the
-/// next room — says nothing new even though the cap it hits there is its own.
-/// That is the accepted shape rather than an oversight: a flapping anchor is a
-/// property of the screen, not of the room, and one line per incursion is what a
-/// reader needs to see it. A key bump is also what Re-arm does, so pressing it
-/// and having the anchor fail again does say so again.
-///
-/// Pure over plain data, with the memory passed in, so both the format and the
-/// once-per-key rule are testable without an `AppHandle` — the same shape
-/// [`rois_line`] and [`hint_line`] use.
-fn anchor_unsettled_line(
-    said: &mut Option<(u64, u64)>,
-    key: (u64, u64),
-    reads: u8,
-) -> Option<String> {
-    if *said == Some(key) {
-        return None;
-    }
-    *said = Some(key);
-    Some(format!(
-        "Temple: anchor origin keeps moving on a board already read {reads} times — \
-         re-showing without OCR (Re-arm forces a read)"
-    ))
-}
-
 /// Pure over plain data, with the "already said" memory passed in, so both the
 /// format and the once-per-value rule are testable without an `AppHandle` — the
 /// same shape [`hint_line`] uses.
@@ -3780,6 +3166,11 @@ fn kept_for<T>(
 ///
 /// A read that bails out (a cancelled thread, a failed OCR engine) records
 /// nothing, so the next tick reads the same board from scratch.
+///
+/// `fallback_origin` is populated only when the explicit cold fallback found a
+/// panel away from the placed origin. It is remembered after this read has
+/// published successfully, so a failed or cancelled read cannot change the
+/// next tick's placement.
 fn full_read(
     app: &AppHandle,
     session: &mut Session,
@@ -3790,6 +3181,7 @@ fn full_read(
     key: (u64, u64),
     frame: slice::BoardFrame,
     since_grab: Instant,
+    fallback_origin: Option<(i32, i32)>,
 ) {
     let mut stages = ReadStages::default();
     publish(app, |slice| apply_status(slice, TickOutcome::Anchored));
@@ -4007,6 +3399,13 @@ fn full_read(
     let publishing = Instant::now();
     publish(app, |slice| *slice = projected);
     stages.publish = publishing.elapsed();
+    remember_fallback_anchor(fallback_origin, |origin| {
+        crate::ssot::remember_anchor(
+            app,
+            crate::ssot::AnchorModule::TempleEntrance,
+            origin,
+        );
+    });
     // One line per read, always: reads are once per board plus at most
     // `RETRIES`, and this line is how the owner's ~1 s panel-open → verdict
     // budget is checked against a real session (docs/TEMPLE-LIFECYCLE.md,
@@ -4430,263 +3829,6 @@ mod tests {
         );
 
         assert!(!state.same_board(BOARD, &opened));
-    }
-
-    // ------------------------------------------- the budget across a move --
-
-    /// A board that only MOVED is read again — the ROIs are stale — but on the
-    /// budget it already had, not a fresh one.
-    ///
-    /// This is the unbounded case re-entered through another door: a flapping
-    /// route (the cheap recheck fails for a frame, the fallback chain answers a
-    /// few px away, the recheck resumes) moves the geometry and nothing else, so
-    /// a restore here would reset the retry budget on every flip and pay 28 OCR
-    /// calls every 650 ms for the rest of the incursion.
-    ///
-    /// The board is left PART-WAY through its budget on purpose. At 0 the two
-    /// mutations are indistinguishable — a saturating decrement of 0 is 0, so
-    /// "kept" and "spent" agree — and at [`RETRIES`] a restore is
-    /// indistinguishable from keeping. One retry spent and one left is the only
-    /// arrangement where all three answers differ, so this one assertion fails
-    /// on a decrement (`RETRIES - 1` becomes 0) AND on a restore (it becomes
-    /// `RETRIES`), which is the form this replaced.
-    #[test]
-    fn a_geometry_only_move_reads_again_but_keeps_the_budget() {
-        assert!(
-            RETRIES >= 2,
-            "this arrangement needs a budget a board can be part-way through",
-        );
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        assert_eq!(
-            state.board.expect("a board was just recorded").retries_left,
-            RETRIES - 1,
-            "precondition: one retry spent, one still owed",
-        );
-        let moved = nudged(slice::FRAME_ORIGIN_TOLERANCE + 1, 0);
-        assert_eq!(state.reshow(BOARD, &moved), None, "precondition: a moved frame reads");
-
-        state.note_read(BOARD, &moved, TempleStatus::Read, true);
-
-        assert_eq!(
-            state.board.expect("a board was just recorded").retries_left,
-            RETRIES - 1,
-            "a move is neither a retry nor a new board's worth of OCR",
-        );
-    }
-
-    // ---------------------------------------- the anchor that will not settle --
-
-    /// A board is worth [`GEOMETRY_READS_CAP`] geometry-only reads, and the LAST
-    /// of them is the edge: the sighting taken with `geometry_reads` one below
-    /// the cap still reads.
-    ///
-    /// The loop runs to `CAP` inclusive for exactly that reason — it is the
-    /// iteration that pins the low edge, and an earlier version stopping one
-    /// short left `>= GEOMETRY_READS_CAP - 1` passing. Fails if the cap is
-    /// applied off by one at the low end, which costs the board its last
-    /// re-placement and leaves an overlay a nudge behind the panel.
-    #[test]
-    fn the_last_geometry_move_below_the_cap_is_still_read() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-
-        for step in 1..=GEOMETRY_READS_CAP {
-            let moved = nudged(i32::from(step) * 10, 0);
-            assert_eq!(
-                state.reshow(BOARD, &moved),
-                None,
-                "move {step} of {GEOMETRY_READS_CAP} must still be read",
-            );
-            state.note_read(BOARD, &moved, TempleStatus::Read, false);
-        }
-    }
-
-    /// …and the one past the cap is re-shown instead: the anchor is not going to
-    /// settle, and a few px of stale ROI is cheaper than 28 OCR calls every
-    /// 650 ms for the rest of the incursion. The count travels with the answer,
-    /// because it is what the log line prints.
-    ///
-    /// Fails if the cap is not consulted, and if `geometry_reads` is not counted
-    /// — either leaves the flapping board reading forever.
-    #[test]
-    fn a_board_re_placed_past_the_cap_is_re_shown_without_ocr() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-        for step in 1..=GEOMETRY_READS_CAP {
-            state.note_read(BOARD, &nudged(i32::from(step) * 10, 0), TempleStatus::Read, false);
-        }
-
-        assert_eq!(
-            state.gate(BOARD, &nudged(200, 0)),
-            GateAnswer::Capped(TempleStatus::Read, GEOMETRY_READS_CAP),
-        );
-    }
-
-    /// The cap outranks the RETRY branch, which is the case it was built for: an
-    /// UNCLEAN board whose anchor flaps is the one that would otherwise read
-    /// forever. A geometry-only move carries the retry budget rather than
-    /// spending it, so `unclean && retries_left > 0` never stops being true and
-    /// nothing else in the gate would ever refuse.
-    ///
-    /// Fails if branches 2 and 3 of `gate` are swapped — the retry branch would
-    /// answer `Read` first and the cap would be unreachable for exactly the
-    /// board it exists to bound. The clean-board cap test cannot see that swap,
-    /// because its retry branch is false either way.
-    #[test]
-    fn a_flapping_unclean_board_is_capped_rather_than_read_forever() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
-        for step in 1..=GEOMETRY_READS_CAP {
-            state.note_read(BOARD, &nudged(i32::from(step) * 10, 0), TempleStatus::Read, true);
-        }
-        let board = state.board.expect("a board was just recorded");
-        assert!(
-            board.unclean && board.retries_left > 0,
-            "precondition: this board is still owed a retry",
-        );
-
-        assert_eq!(
-            state.gate(BOARD, &nudged(200, 0)),
-            GateAnswer::Capped(TempleStatus::Read, GEOMETRY_READS_CAP),
-        );
-    }
-
-    /// A capped answer re-SHOWS through the narrowed view every other caller
-    /// uses, which is the whole point of capping rather than reading: the tick
-    /// publishes `Reshown(status)` and pays no OCR.
-    ///
-    /// Its own test rather than a second assertion beside the `gate` one,
-    /// because the mutation that breaks it — `GateAnswer::Capped(..) => None` in
-    /// `reshow` — leaves the `gate` assertion green, so they are two behaviours.
-    #[test]
-    fn a_capped_board_re_shows_through_the_narrowed_gate() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::NoCurrentRoom, false);
-        for step in 1..=GEOMETRY_READS_CAP {
-            state.note_read(
-                BOARD,
-                &nudged(i32::from(step) * 10, 0),
-                TempleStatus::NoCurrentRoom,
-                false,
-            );
-        }
-
-        assert_eq!(
-            state.reshow(BOARD, &nudged(200, 0)),
-            Some(TempleStatus::NoCurrentRoom),
-        );
-    }
-
-    /// A capped board that CHANGED is still read. The player walking to the next
-    /// room is the case, and it is the common one on a temple run.
-    ///
-    /// Fails if the cap is checked before the content — an anchor that had
-    /// flapped once would stop the module reading rooms at all.
-    #[test]
-    fn a_walk_to_the_next_room_past_the_cap_is_still_read() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-        for step in 1..=GEOMETRY_READS_CAP {
-            state.note_read(BOARD, &nudged(i32::from(step) * 10, 0), TempleStatus::Read, false);
-        }
-        assert!(
-            matches!(state.gate(BOARD, &nudged(200, 0)), GateAnswer::Capped(..)),
-            "precondition: this board is capped",
-        );
-
-        assert_eq!(state.gate(BOARD, &walked_frame()), GateAnswer::Read);
-    }
-
-    /// …and reading it starts the count over, so the next room gets the whole
-    /// allowance rather than the last one's exhausted cap. Fails if
-    /// `geometry_reads` is carried across a content change.
-    #[test]
-    fn a_walk_to_the_next_room_resets_the_geometry_count() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-        for step in 1..=GEOMETRY_READS_CAP {
-            state.note_read(BOARD, &nudged(i32::from(step) * 10, 0), TempleStatus::Read, false);
-        }
-
-        state.note_read(BOARD, &walked_frame(), TempleStatus::Read, false);
-
-        assert_eq!(
-            state.board.expect("a board was just recorded").geometry_reads,
-            0,
-        );
-    }
-
-    /// A new KEY past the cap is read too — this is the Re-arm the log line
-    /// tells the user to press, and it has to work. Fails if the cap is checked
-    /// before the key: the button would do nothing on exactly the board a user
-    /// pressed it over.
-    #[test]
-    fn a_new_key_past_the_cap_is_still_read() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-        for step in 1..=GEOMETRY_READS_CAP {
-            state.note_read(BOARD, &nudged(i32::from(step) * 10, 0), TempleStatus::Read, false);
-        }
-
-        assert_eq!(state.gate(NEXT_BOARD, &nudged(200, 0)), GateAnswer::Read);
-    }
-
-    /// …and starts the count over. Fails if `geometry_reads` is carried across
-    /// boards: the next incursion would inherit a cap it never earned.
-    #[test]
-    fn a_new_key_resets_the_geometry_count() {
-        let mut state = LoopState::default();
-        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
-        for step in 1..=GEOMETRY_READS_CAP {
-            state.note_read(BOARD, &nudged(i32::from(step) * 10, 0), TempleStatus::Read, false);
-        }
-
-        state.note_read(NEXT_BOARD, &nudged(200, 0), TempleStatus::Read, false);
-
-        assert_eq!(
-            state.board.expect("a board was just recorded").geometry_reads,
-            0,
-        );
-    }
-
-    /// The line says how many reads the board cost and how to force another.
-    /// Fails if the count is dropped from the format — a user reporting "the
-    /// outline is a bit off" has nothing to send that separates a flapping
-    /// anchor from a wrong scale.
-    #[test]
-    fn the_unsettled_anchor_line_names_the_count_and_the_way_out() {
-        let mut said = None;
-
-        let line = anchor_unsettled_line(&mut said, BOARD, GEOMETRY_READS_CAP)
-            .expect("the first cap on a key is announced");
-
-        assert!(line.contains(&GEOMETRY_READS_CAP.to_string()), "{line}");
-        assert!(line.contains("Re-arm"), "{line}");
-    }
-
-    /// It is said once per board key. Fails if the memory is not consulted: the
-    /// condition holds on every tick of a capped board, so at 650 ms the line
-    /// would empty `app_log`'s 50-entry buffer in half a minute.
-    #[test]
-    fn the_unsettled_anchor_line_is_not_repeated_for_one_key() {
-        let mut said = None;
-        anchor_unsettled_line(&mut said, BOARD, GEOMETRY_READS_CAP).expect("precondition: said");
-
-        assert_eq!(anchor_unsettled_line(&mut said, BOARD, GEOMETRY_READS_CAP), None);
-    }
-
-    /// …and the NEXT key says it again, which is what makes Re-arm's failure
-    /// visible: the button bumps the key, so a second line means the anchor
-    /// failed again on the read the user forced. Fails if the memory is a plain
-    /// "said once" bool rather than a key.
-    #[test]
-    fn the_unsettled_anchor_line_is_said_again_for_the_next_key() {
-        let mut said = None;
-        anchor_unsettled_line(&mut said, BOARD, GEOMETRY_READS_CAP).expect("precondition: said");
-
-        assert!(anchor_unsettled_line(&mut said, NEXT_BOARD, GEOMETRY_READS_CAP).is_some());
     }
 
     // ------------------------------------------------------ the kept read --
@@ -5296,404 +4438,230 @@ mod tests {
         anchor::CheapDetect::Nothing { best_ncc: 0.2 }
     }
 
-    // -------------------------------------------- the cold-start sweep gate --
-
-    fn screen(monitor_id: u32, width: u32, height: u32) -> SweepKey {
-        SweepKey {
-            monitor_id,
-            width,
-            height,
-        }
-    }
-
-    /// The first tick on a screen nobody has measured sweeps at once — this is
-    /// the bug POE-234 opened on, and a gate that made the user wait out a
-    /// cadence for the FIRST answer would leave it unfixed for 19.5 s
-    /// (30 × 650 ms).
     #[test]
-    fn the_first_tick_on_an_uncalibrated_screen_sweeps_at_once() {
-        let mut gate = SweepGate::default();
+    fn a_below_floor_placed_miss_spends_one_fallback_per_trigger_key() {
+        let key = BOARD;
+        let cheap = saw_nothing();
+        let placed = Some((960, 713));
 
-        assert!(gate.allow(screen(7, 1920, 1080), false));
-    }
-
-    /// …and the ticks after it wait out [`FULL_READ_EVERY_N_MISSES`] before the
-    /// next one. The sweep is seconds of work on the loop's own thread, so the
-    /// tick after a sweep must not buy another.
-    ///
-    /// Pinned as the exact tick the next sweep lands on, not as "eventually":
-    /// an off-by-one either sweeps twice in a row (2× the cost for one answer)
-    /// or drifts the cadence apart from the periodic full read it is
-    /// deliberately tied to.
-    #[test]
-    fn an_uncalibrated_screen_sweeps_again_only_after_the_cadence() {
-        let mut gate = SweepGate::default();
-        let laptop = screen(7, 1920, 1080);
-        assert!(gate.allow(laptop, false), "precondition: the first sweeps");
-
-        let mut swept_on = Vec::new();
-        for tick in 2..=(2 * FULL_READ_EVERY_N_MISSES) {
-            if gate.allow(laptop, false) {
-                swept_on.push(tick);
-            }
+        for reason in [
+            trigger::ArmReason::AlvaStart,
+            trigger::ArmReason::TempleArea,
+            trigger::ArmReason::Manual,
+        ] {
+            let source = Some(trigger::ArmSource::Trigger(reason));
+            assert_eq!(
+                cold_sweep_reason(true, placed, &cheap, source, key, None, None),
+                Some(ColdSweepReason::PlacedMiss),
+                "{reason:?} qualifies a placed miss",
+            );
+            assert_eq!(
+                cold_sweep_reason(true, placed, &cheap, source, key, Some(key), None),
+                None,
+                "{reason:?} spends only once per key",
+            );
         }
 
         assert_eq!(
-            swept_on,
-            vec![FULL_READ_EVERY_N_MISSES + 1],
-            "the sweeps after the first landed on ticks {swept_on:?}, not on \
-             tick {} alone",
-            FULL_READ_EVERY_N_MISSES + 1
+            cold_sweep_reason(true, placed, &cheap, Some(trigger::ArmSource::Trigger(
+                trigger::ArmReason::AlvaStart,
+            )), NEXT_BOARD, Some(key), None),
+            Some(ColdSweepReason::PlacedMiss),
         );
-    }
 
-    /// A screen whose scale is already known loses the FIRST-tick sweep and
-    /// keeps the cadence: refused for [`FULL_READ_EVERY_N_MISSES`] ticks, then
-    /// swept on the one after.
-    ///
-    /// Both halves are load-bearing and they pull opposite ways. Refusing the
-    /// first tick is what stops every armed incursion costing 5.3 s over a
-    /// closed panel the hint would have re-anchored anyway. Sweeping on the
-    /// cadence is `desktop/src/lib/README.md`'s "Screen Geometry (SSOT)"
-    /// lifecycle: a measurement is re-taken when the consuming module's own
-    /// verification fails, and a hinted recheck that has missed a whole cadence
-    /// is that failure — the in-game UI-scale change no prune can see, because
-    /// the capture size never moved.
-    ///
-    /// Fails both ways: a gate that refuses outright leaves that screen with no
-    /// automatic recovery at all, and one that sweeps at once makes the
-    /// calibration worthless.
-    #[test]
-    fn a_calibrated_screen_skips_the_first_tick_and_keeps_the_cadence() {
-        let mut gate = SweepGate::default();
-        let laptop = screen(7, 1920, 1080);
-
-        let mut swept_on = Vec::new();
-        for tick in 1..=(2 * FULL_READ_EVERY_N_MISSES) {
-            if gate.allow(laptop, true) {
-                swept_on.push(tick);
-            }
+        for source in [
+            Some(trigger::ArmSource::PanelOnScreen),
+            Some(trigger::ArmSource::StartupProbe),
+            None,
+        ] {
+            assert_eq!(
+                cold_sweep_reason(true, placed, &cheap, source, key, None, None),
+                None,
+                "{source:?} does not qualify a placed fallback",
+            );
         }
 
-        assert_eq!(
-            swept_on,
-            vec![FULL_READ_EVERY_N_MISSES + 1],
-            "a calibrated screen swept on ticks {swept_on:?}; it must skip the \
-             first and sweep once, on tick {}",
-            FULL_READ_EVERY_N_MISSES + 1
-        );
-    }
-
-    /// A screen that LOSES its calibration sweeps at once rather than serving
-    /// out a countdown that belonged to another state.
-    ///
-    /// This is how Recalibrate reaches this gate, and the only way it does:
-    /// `ssot::geometry_recalibrate` empties the shared screen scale, so
-    /// [`hint_for_capture`] stops answering and `calibrated` goes false, while
-    /// the `temple_rearm` counter it bumps alongside is deliberately NOT an
-    /// input here. Fails if the gate only restarts on a key change — the user
-    /// would press the button and wait 29 more ticks for the sweep it exists to
-    /// buy.
-    #[test]
-    fn a_screen_that_loses_its_calibration_sweeps_without_waiting_out_the_cadence() {
-        let mut gate = SweepGate::default();
-        let laptop = screen(7, 1920, 1080);
-        assert!(gate.allow(laptop, false), "the uncalibrated screen sweeps");
-        assert!(!gate.allow(laptop, true), "then a calibration lands");
-
-        assert!(gate.allow(laptop, false), "and Recalibrate clears it");
-    }
-
-    /// Nothing else restarts the countdown. The settings commands bump
-    /// `temple_rearm` on every change and this gate cannot see it, so three
-    /// settings edits in a row cost no sweeps at all — which is the whole
-    /// reason that counter was taken out of this gate.
-    ///
-    /// Fails if a second input is reintroduced that resets the countdown:
-    /// re-running the same call must decrement, never restart.
-    #[test]
-    fn repeated_identical_ticks_only_ever_decrement_the_countdown() {
-        let mut gate = SweepGate::default();
-        let laptop = screen(7, 1920, 1080);
-        assert!(gate.allow(laptop, false), "precondition: the first sweeps");
-
-        let sweeps = (0..FULL_READ_EVERY_N_MISSES - 1)
-            .filter(|_| gate.allow(laptop, false))
-            .count();
-
-        assert_eq!(
-            sweeps, 0,
-            "{sweeps} of the {} ticks inside the cadence bought a sweep",
-            FULL_READ_EVERY_N_MISSES - 1
-        );
-    }
-
-    /// The probe's sweep is free when it finds nothing: the tick that has
-    /// something to find still gets the uncalibrated screen's head start.
-    ///
-    /// Fails if the refund is dropped — the first ARMED tick over an open panel
-    /// then waits a whole cadence for the sweep that would have read it, on the
-    /// strength of a sweep spent seconds earlier on a closed one.
-    #[test]
-    fn a_probe_sweep_that_found_nothing_gives_the_head_start_back() {
-        let mut gate = SweepGate::default();
-        let laptop = screen(7, 1920, 1080);
-        assert!(gate.allow(laptop, false), "precondition: the probe tick sweeps");
-
-        gate.refund_probe(laptop, Some(trigger::ArmSource::StartupProbe), false);
-
-        assert!(gate.allow(laptop, false), "the next tick still sweeps at once");
-    }
-
-    /// A probe sweep that ANCHORED pays like any other: it bought the answer the
-    /// budget exists for. Fails if the refund ignores the outcome, which would
-    /// let a screen whose panel is being read sweep again on the next
-    /// non-verified tick.
-    #[test]
-    fn a_probe_sweep_that_anchored_spends_the_budget_like_any_other() {
-        let mut gate = SweepGate::default();
-        let laptop = screen(7, 1920, 1080);
-        assert!(gate.allow(laptop, false), "precondition: the probe tick sweeps");
-
-        gate.refund_probe(laptop, Some(trigger::ArmSource::StartupProbe), true);
-
-        assert!(!gate.allow(laptop, false), "the cadence is running");
-    }
-
-    /// A first tick CLIENT.TXT armed pays like any other, and the app started
-    /// inside a temple is that case: the loop keeps ticking after it, so a refund
-    /// there buys a second 5.3 s sweep on the very next tick.
-    ///
-    /// Fails if the refund reads "this is the first tick" instead of "the probe
-    /// is what opened the gate" — the two are the same tick only when nothing
-    /// else armed the loop.
-    #[test]
-    fn a_first_sweep_under_a_live_client_txt_arm_is_not_given_back() {
-        let mut gate = SweepGate::default();
-        let laptop = screen(7, 1920, 1080);
-        assert!(gate.allow(laptop, false), "precondition: this tick sweeps");
-
-        gate.refund_probe(
-            laptop,
-            Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaStart)),
-            false,
-        );
-
-        assert!(!gate.allow(laptop, false), "the cadence is running");
-    }
-
-    /// A different capture size is a different screen and sweeps immediately —
-    /// the scale is a property of the render resolution, so nothing measured at
-    /// 1920x1080 says anything about 2560x1440, and the countdown the old size
-    /// was part-way through does not apply to it.
-    #[test]
-    fn a_capture_size_change_sweeps_without_waiting_out_the_cadence() {
-        let mut gate = SweepGate::default();
-        assert!(gate.allow(screen(7, 1920, 1080), false));
-        assert!(
-            !gate.allow(screen(7, 1920, 1080), false),
-            "precondition: the cadence is running",
-        );
-
-        assert!(gate.allow(screen(7, 2560, 1440), false));
-    }
-
-    /// …and so is a different DISPLAY at the same resolution. Fails if the key
-    /// is the dimensions alone, which is the case POE-237 added the monitor id
-    /// for: two identical 1080p monitors are not one screen.
-    #[test]
-    fn a_monitor_change_at_the_same_resolution_sweeps_without_waiting() {
-        let mut gate = SweepGate::default();
-        assert!(gate.allow(screen(7, 1920, 1080), false));
-        assert!(
-            !gate.allow(screen(7, 1920, 1080), false),
-            "precondition: the cadence is running",
-        );
-
-        assert!(gate.allow(screen(9, 1920, 1080), false));
-    }
-
-    /// A tick whose hint re-anchored the panel has its scale, so it neither
-    /// needs a sweep nor may spend the budget for one — that is what keeps the
-    /// calibrated cadence counting verification FAILURES rather than ticks.
-    /// The other two outcomes can both reach the sweep and both count.
-    ///
-    /// Fails if the guard is inverted or dropped: a working panel would then
-    /// walk the countdown down and buy a 5.3 s sweep it has no use for.
-    #[test]
-    fn only_a_tick_that_verified_an_anchor_is_kept_off_the_sweep_budget() {
         let anchored = anchor::CheapDetect::Anchored(anchor::Anchor {
             origin: (960, 713),
             scale: 1.0,
-            ncc: 0.99,
+            ncc: anchor::NCC_FLOOR,
+        });
+        assert_eq!(
+            cold_sweep_reason(true, placed, &anchored, Some(trigger::ArmSource::Trigger(
+                trigger::ArmReason::AlvaStart,
+            )), key, None, None),
+            None,
+            "an anchored recheck does not buy a fallback",
+        );
+    }
+
+    #[test]
+    fn a_sweep_elsewhere_logs_the_contradiction() {
+        let line = placed_origin_contradiction_line(Some((960, 713)), (745, 561));
+
+        assert_eq!(
+            line.as_deref(),
+            Some("temple: placed origin (960,713) contradicted by sweep (745,561)"),
+        );
+    }
+
+    #[test]
+    fn a_sweep_elsewhere_remembers_after_successful_read() {
+        let placed = (960, 713);
+        let swept = (745, 561);
+        let remembered = std::cell::Cell::new(None);
+
+        remember_fallback_anchor(placed_origin_contradiction(Some(placed), swept), |origin| {
+            remembered.set(Some(origin));
         });
 
-        assert!(!sweep_could_help(&anchored), "a verified anchor needs no sweep");
-        assert!(sweep_could_help(&saw_something()), "a candidate can reach it");
-        assert!(sweep_could_help(&saw_nothing()), "and so can an empty screen");
+        assert_eq!(remembered.get(), Some([745, 561]));
     }
 
-    /// A cheap outcome that nominated something.
-    fn saw_something() -> anchor::CheapDetect {
-        anchor::CheapDetect::Candidate { coarse_ncc: 0.94 }
-    }
-
-    /// The bug the composition exists to prevent: the settings commands re-arm
-    /// on every change, and a re-arm pressed while no panel is on screen must
-    /// buy ONE anchor attempt — not pin the loop into one on every tick for the
-    /// rest of the session.
-    ///
-    /// Fails if the promoting tick does not spend the bump. Nothing else spends
-    /// it: since POE-249 the OCR gate reads the rearm counter as half the board
-    /// key and never writes it, so a bump left pending here is pending forever.
     #[test]
-    fn a_rearm_with_no_panel_on_screen_buys_exactly_one_full_read() {
-        let mut state = LoopState::default();
-        let mut gate = slice::RearmGate::default();
+    fn a_null_sweep_origin_is_remembered_after_successful_read() {
+        let swept = (745, 561);
+        let remembered = std::cell::Cell::new(None);
 
-        assert!(
-            !wants_full_read(&mut state, &mut gate, &saw_nothing(), false, false, 0),
-            "precondition: a quiet screen is a cheap tick — the loop has been\n             running, so its start-up probe is long spent (POE-246)",
+        assert_eq!(placed_origin_contradiction(None, swept), Some(swept));
+        remember_fallback_anchor(placed_origin_contradiction(None, swept), |origin| {
+            remembered.set(Some(origin));
+        });
+
+        assert_eq!(remembered.get(), Some([745, 561]));
+    }
+
+    #[test]
+    fn a_placed_origin_inside_the_tolerance_is_not_a_contradiction() {
+        let placed = (960, 713);
+
+        assert_eq!(placed_origin_contradiction(Some(placed), placed), None);
+        assert_eq!(
+            placed_origin_contradiction(Some(placed), (placed.0 + 1, placed.1)),
+            None,
         );
-
-        assert!(
-            wants_full_read(&mut state, &mut gate, &saw_nothing(), false, false, 1),
-            "the bump buys a read",
-        );
-        assert!(
-            !wants_full_read(&mut state, &mut gate, &saw_nothing(), false, false, 1),
-            "and exactly one — the tick after it is cheap again",
-        );
-        assert!(!wants_full_read(&mut state, &mut gate, &saw_nothing(), false, false, 1));
-    }
-
-    /// A sweep that anchored buys the read, whatever the cheap tick said.
-    ///
-    /// The cold path's whole point: on the screen POE-234 was opened on the
-    /// cheap tick reports NOTHING while the panel is open, so a promotion rule
-    /// that read only `CheapDetect::worth_reading` would throw the anchor the
-    /// sweep just paid 5.3 s for straight back into `miss` — no read, no scale
-    /// published to the shared slice, and the next tick's sweep gated behind
-    /// the cadence.
-    ///
-    /// Fails if `|| swept` is dropped from the promotion.
-    #[test]
-    fn a_sweep_that_anchored_buys_the_read() {
-        let mut state = LoopState::default();
-        let mut gate = slice::RearmGate::default();
-
-        assert!(wants_full_read(
-            &mut state,
-            &mut gate,
-            &saw_nothing(),
-            true,
-            false,
-            0
-        ));
-    }
-
-    /// The probe tick promotes whatever the cheap tick said, and that is what
-    /// makes a module toggled on over an open panel read it.
-    ///
-    /// The cheap half cannot answer on a starting loop: `detect_cheap`'s hint
-    /// carries an origin only a previous read produces, so tick one is the
-    /// nominating pass — measured at 0.66 against a 0.70 floor on the 1080p
-    /// laptop this was reported from, with the panel open. Fails if the probe is
-    /// dropped from the promotion, which leaves the probe looking through the
-    /// one pass that cannot see the panel it exists to find.
-    #[test]
-    fn the_start_up_probe_tick_pays_for_the_read_a_cheap_tick_would_have_skipped() {
-        let mut state = LoopState::default();
-        let mut gate = slice::RearmGate::default();
-
-        assert!(wants_full_read(&mut state, &mut gate, &saw_nothing(), false, true, 0));
-    }
-
-    /// A panel already on screen is read whatever the cheap tick says. It is
-    /// the CHEAP input, and the case this covers is the one the cheap tick is
-    /// blind to: an open panel whose UI scale drifted, with a hint that no
-    /// longer matches.
-    ///
-    /// Fails if the promotion is gated on the cheap outcome alone — ONE such
-    /// tick would then retire a panel that is on screen ([`RETIRE_AFTER`]), and
-    /// the board would disappear until the periodic backstop 30 ticks later.
-    #[test]
-    fn a_live_panel_is_read_even_when_the_cheap_tick_sees_nothing() {
-        let mut state = LoopState {
-            live: true,
-            ..LoopState::default()
-        };
-        let mut gate = slice::RearmGate::default();
-
-        assert!(wants_full_read(&mut state, &mut gate, &saw_nothing(), false, false, 0));
-    }
-
-    /// A cheap tick that saw something buys the full read. Fails if the
-    /// promotion on a detection is dropped — the loop would then only read on
-    /// the periodic backstop, i.e. up to 19.5 s (30 × 650 ms) after the panel
-    /// opened.
-    #[test]
-    fn a_cheap_detect_that_saw_something_promotes_to_the_full_read() {
-        let mut state = LoopState::default();
-
-        assert!(state.note_cheap_detect(true, false));
-    }
-
-    /// Re-arm promotes even while the cheap tick sees nothing. Fails if the
-    /// button is only honoured behind a detection, which would make it dead on
-    /// exactly the tick the user pressed it for.
-    #[test]
-    fn a_rearm_promotes_while_the_cheap_tick_sees_nothing() {
-        let mut state = LoopState::default();
-
-        assert!(state.note_cheap_detect(false, true));
-    }
-
-    /// The backstop fires on the Nth consecutive miss and NOT before it, and
-    /// the count restarts afterwards.
-    ///
-    /// Fails if the periodic path is removed (a panel the cheap tick cannot see
-    /// — a UI-scale change — would then never be read again), if it is off by
-    /// one, or if the counter is not reset (the backstop would fire on every
-    /// tick from the Nth onwards, which is the cost this whole gate removes).
-    #[test]
-    fn only_the_nth_consecutive_cheap_miss_promotes_and_the_count_restarts() {
-        let mut state = LoopState::default();
-
-        for i in 1..FULL_READ_EVERY_N_MISSES {
-            assert!(
-                !state.note_cheap_detect(false, false),
-                "miss {i} of {FULL_READ_EVERY_N_MISSES} must not promote",
-            );
-        }
-        assert!(
-            state.note_cheap_detect(false, false),
-            "the {FULL_READ_EVERY_N_MISSES}th miss is the backstop",
-        );
-
-        assert!(
-            !state.note_cheap_detect(false, false),
-            "the count restarts, so the tick after the backstop is cheap again",
+        assert_eq!(
+            placed_origin_contradiction_line(Some(placed), (placed.0 + 1, placed.1)),
+            None,
         );
     }
 
-    /// A promotion for any reason restarts the backstop's count. Fails if
-    /// `cheap_misses` is only cleared on the periodic path — a panel that is
-    /// open and being read would still drag the counter up to N and buy a
-    /// redundant forced read.
     #[test]
-    fn a_detection_restarts_the_backstops_count() {
-        let mut state = LoopState::default();
-        for _ in 1..FULL_READ_EVERY_N_MISSES {
-            state.note_cheap_detect(false, false);
-        }
+    fn a_null_screen_slice_spends_one_cold_start_fallback_per_key() {
+        let cheap = anchor::CheapDetect::Nothing { best_ncc: f32::NEG_INFINITY };
 
-        assert!(state.note_cheap_detect(true, false), "precondition: a detection");
-
-        assert!(
-            !state.note_cheap_detect(false, false),
-            "the next miss is the FIRST of a new run, not the backstop",
+        assert_eq!(
+            cold_sweep_reason(false, None, &cheap, None, BOARD, None, None),
+            Some(ColdSweepReason::NullSlice),
         );
+        assert_eq!(
+            cold_sweep_reason(false, None, &cheap, None, BOARD, None, Some(BOARD)),
+            None,
+        );
+        assert_eq!(
+            cold_sweep_reason(false, None, &cheap, None, NEXT_BOARD, None, Some(BOARD)),
+            Some(ColdSweepReason::NullSlice),
+        );
+    }
+
+    #[test]
+    fn a_withheld_null_sweep_releases_its_key_for_the_next_tick() {
+        let cheap = saw_nothing();
+        let withheld = screen_from_anchor(
+            1.25,
+            None,
+            (1920, 1080),
+            7,
+            (745, 561),
+            [0, 0, 1920, 1080],
+            1_700_000_000_002,
+        );
+        assert!(withheld.is_err(), "the height check withholds this anchor");
+
+        let (null_sweep_key, released_key) =
+            null_sweep_key_after_publish(Some(BOARD), None, true, true, false);
+        assert_eq!(null_sweep_key, None);
+        assert_eq!(released_key, Some(BOARD));
+        assert_eq!(
+            cold_sweep_reason(false, None, &cheap, None, BOARD, None, null_sweep_key),
+            Some(ColdSweepReason::NullSlice),
+            "a withheld slice leaves the next tick eligible to sweep",
+        );
+
+        let (second_key, released_key) =
+            null_sweep_key_after_publish(Some(BOARD), released_key, true, true, false);
+        assert_eq!(second_key, Some(BOARD), "a second withheld sweep does not release the key");
+        assert_eq!(released_key, Some(BOARD));
+        assert_eq!(
+            cold_sweep_reason(false, None, &cheap, None, BOARD, None, second_key),
+            None,
+            "the second withheld sweep does not buy another retry",
+        );
+
+        let (next_key, next_released_key) =
+            null_sweep_key_after_publish(Some(NEXT_BOARD), released_key, true, true, false);
+        assert_eq!(next_key, None, "a new board key gets its own withheld-sweep retry");
+        assert_eq!(next_released_key, Some(NEXT_BOARD));
+    }
+
+    /// Recalibrate empties the slice and changes the key the null-slice budget
+    /// belongs to, so the next Temple tick sweeps and can publish a fresh
+    /// corroborated measurement. This restores the deleted end-to-end decision
+    /// seam without reintroducing the retired cadence gate.
+    #[test]
+    fn recalibrate_leaves_the_temple_sweeping_and_republishing() {
+        let capture = (1920, 1080);
+        let client = [0, 0, capture.0 as i32, capture.1 as i32];
+        let hint = cheap_hint_from_screen(None, capture, 7, client);
+        assert!(hint.is_none(), "Recalibrate leaves the temple without a placed hint");
+
+        let cheap = saw_nothing();
+        let placed_origin = hint.as_ref().map(|hint| hint.origin);
+
+        let before = (4, 0);
+        assert_eq!(
+            cold_sweep_reason(false, placed_origin, &cheap, None, before, None, None),
+            Some(ColdSweepReason::NullSlice),
+            "an unspent null-slice key permits the cold-start sweep",
+        );
+        assert_eq!(
+            cold_sweep_reason(false, placed_origin, &cheap, None, before, None, Some(before)),
+            None,
+            "the null-slice fallback key is spent after its attempt",
+        );
+        let after_recalibrate = (4, 1);
+        assert_eq!(
+            cold_sweep_reason(
+                false,
+                placed_origin,
+                &cheap,
+                None,
+                after_recalibrate,
+                None,
+                Some(before),
+            ),
+            Some(ColdSweepReason::NullSlice),
+            "Recalibrate's rearm creates a fresh fallback key",
+        );
+
+        let swept = screen_from_anchor(
+            LIVE_CAPTURE_SCALE,
+            None,
+            capture,
+            7,
+            LIVE_CAPTURE_ORIGIN,
+            client,
+            1_700_000_000_002,
+        )
+        .expect("the corroborated anchor fits the empty slice's capture geometry");
+        let mut slot = None;
+        let record = crate::ssot::record_screen(&mut slot, swept);
+        assert!(record.accepted && record.changed, "the corroborated sweep is published");
+        let published = slot.expect("the published sweep fills the empty slice");
+        assert_eq!((published.width, published.height), capture);
+        assert_eq!(published.ui_scale, swept.ui_scale);
+        assert_eq!(published.source, swept.source);
+        assert_eq!(published.origin, swept.origin);
     }
 
     /// The rect reproduces the diamond centre measured on BOTH captures whose
@@ -6586,6 +5554,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_placed_origin_hint_uses_the_ssot_placement_on_the_reference_screen() {
+        let screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, 0.90, 7);
+        let placements = crate::ssot::placements(&screen);
+        let hint = cheap_hint_from_screen(
+            Some(&screen),
+            (1920, 1080),
+            7,
+            [0, 0, 1920, 1080],
+        )
+        .expect("the reference slice supplies a placed temple origin");
+
+        assert_eq!(
+            hint.origin,
+            placements.temple.expect("the screen has temple placements").entrance_origin,
+        );
+        assert_eq!(hint.origin, (960, 713));
+        assert!(
+            (hint.calibration.scale - 0.99999).abs() < 1e-6,
+            "the reference screen's measured temple scale is 0.99999, got {}",
+            hint.calibration.scale,
+        );
+    }
+
     /// The one capture size where BOTH units have been measured, so the
     /// conversion can be checked against something other than itself: a
     /// 1920x1080 screen measures `ui_scale` 1080/1200 = 0.90 by the shared
@@ -6660,165 +5652,6 @@ mod tests {
         let screen = remembered(ScreenScaleSource::MercFrame, 2560, 1440, 1.20, 7);
 
         assert_eq!(hint_for_capture(Some(&screen), (1920, 1080), 7, [0, 0, 1920, 1080]), None);
-    }
-
-    /// The whole Recalibrate path, through the decisions the tick actually
-    /// makes: the slice is empty, so there is no hint AND no remembered plate,
-    /// so the cheap detect cannot verify, so the gate sweeps at once — and the
-    /// anchor that sweep produces lands in the empty slot and is written back.
-    ///
-    /// The counterfactual is half the test and is what fails without
-    /// [`cheap_hint_for`]: with the plate kept, the same capture re-anchors at
-    /// the pre-Recalibrate scale, [`sweep_could_help`] answers false, the gate is
-    /// never asked, and `publish_anchor_scale` puts the forgotten number back —
-    /// with the layout panel on screen, which is when a user presses the button.
-    ///
-    /// Run on the real capture and through `anchor::detect_cheap`, not on a
-    /// hand-called `allow`: the property is a composition of four rules and
-    /// asserting the last one in isolation would pass with the first three
-    /// broken.
-    #[test]
-    fn recalibrate_leaves_the_temple_sweeping_and_republishing() {
-        let img = live_capture();
-        let capture = (img.width(), img.height());
-        let key = SweepKey { monitor_id: 7, width: capture.0, height: capture.1 };
-        // The state the button is pressed in: a panel on screen, anchored, and
-        // the session holding the plate it last saw.
-        let held = anchor::CheapHint {
-            calibration: anchor::AnchorCalibration {
-                screen_w: capture.0,
-                screen_h: capture.1,
-                scale: LIVE_CAPTURE_SCALE,
-            },
-            origin: LIVE_CAPTURE_ORIGIN,
-        };
-        assert!(
-            matches!(
-                anchor::detect_cheap(&img, Some(&held)),
-                anchor::CheapDetect::Anchored(_)
-            ),
-            "the pre-press state has to be a verifying tick, or this proves nothing",
-        );
-
-        // The press: `ssot::geometry_recalibrate` empties the slice. Everything
-        // below is what the next tick then decides.
-        let emptied: Option<&crate::ssot::ScreenSlice> = None;
-        let hint = hint_for_capture(emptied, capture, 7, [0, 0, capture.0 as i32, capture.1 as i32]);
-        assert_eq!(hint, None, "an empty slice hints nothing");
-
-        // `true`: the slice HAD answered for this screen — that is what the
-        // press emptied, and what tells the loop this is a decision rather than
-        // a screen nothing has measured yet.
-        let plate = cheap_hint_for(hint, Some(held), true);
-        assert_eq!(plate, None, "…and the remembered plate goes with it");
-
-        let cheap = anchor::detect_cheap(&img, plate.as_ref());
-        assert!(
-            sweep_could_help(&cheap),
-            "with nothing to re-match, the tick cannot verify: got {cheap:?}",
-        );
-
-        let mut gate = SweepGate::default();
-        assert!(!gate.allow(key, true), "a calibrated screen owes a whole cadence");
-        assert!(
-            gate.allow(key, hint.is_some()),
-            "losing the shared scale must sweep on the very next tick",
-        );
-
-        // And what that sweep finds is published and written back.
-        let mut slot = None;
-        let swept =
-            screen_from_anchor(
-                LIVE_CAPTURE_SCALE,
-                hint,
-                capture,
-                7,
-                (0, 0),
-                [0, 0, capture.0 as i32, capture.1 as i32],
-                1_700_000_000_002,
-            )
-                .expect("with the slice emptied, the capture height corroborates the anchor");
-        let record = crate::ssot::record_screen(&mut slot, swept);
-        assert!(record.accepted && record.changed, "the re-measurement must land and wake the app");
-        assert!(
-            crate::ssot::should_remember_screen(record.changed, swept.source),
-            "…and be written back, or the next launch starts blind again",
-        );
-    }
-
-    /// A merc frame fit landing in the slice CORRECTS a session that anchored on
-    /// a worse seed, on the next tick, by dropping the plate it was re-verifying.
-    ///
-    /// Without this the drifting `MercOcr` cue would lock a session: the temple
-    /// would re-match its own copy of that scale every tick, never fail
-    /// verification, never sweep, and never notice the gold frame's better answer
-    /// arriving beside it. One [`anchor::SCALE_STEP`] is the threshold, so the
-    /// per-frame wobble of a plate that has not moved keeps its hint.
-    #[test]
-    fn a_hint_that_moved_more_than_one_step_drops_the_remembered_plate() {
-        let held = anchor::CheapHint {
-            calibration: anchor::AnchorCalibration {
-                screen_w: 1920,
-                screen_h: 1080,
-                scale: 1.00,
-            },
-            origin: (960, 713),
-        };
-        let at = |scale| anchor::AnchorCalibration { screen_w: 1920, screen_h: 1080, scale };
-
-        assert_eq!(
-            cheap_hint_for(Some(at(1.00)), Some(held), true),
-            Some(held),
-            "a slice that agrees leaves the session where it is",
-        );
-        assert_eq!(
-            cheap_hint_for(Some(at(1.00 + anchor::SCALE_STEP)), Some(held), true),
-            Some(held),
-            "and so does one exactly a step away — that is the resolution of the grid",
-        );
-        assert_eq!(
-            cheap_hint_for(Some(at(1.00 + 2.0 * anchor::SCALE_STEP)), Some(held), true),
-            None,
-            "two steps is the slice describing a screen this plate is not on",
-        );
-    }
-
-    /// An empty slice takes the plate only when it was EMPTIED. A slice that has
-    /// never answered is a screen nothing has measured — including the machine
-    /// whose slider [`screen_from_anchor`] withholds a publish for — and the
-    /// plate is the only thing on it that knows the scale.
-    ///
-    /// Fails if the two empty slices are collapsed into one rule, which costs
-    /// that machine its hinted cheap tick for the whole session: every tick would
-    /// fall to a nominating seed that is wrong there, and the board would be read
-    /// once per sweep cadence instead of once a second.
-    ///
-    /// The third way into the `false` arm — moving the game to a screen nothing
-    /// has measured — has no pure seam and is not asserted here: `answered` is
-    /// reset in `tick`, on `ssot::drop_if_mismatched`'s return value, and both
-    /// sides of that need an `AppHandle`. What IS pinned is the rule the reset
-    /// feeds, which is this function.
-    #[test]
-    fn an_empty_slice_takes_the_plate_only_if_it_had_answered_before() {
-        let held = anchor::CheapHint {
-            calibration: anchor::AnchorCalibration {
-                screen_w: 1920,
-                screen_h: 1080,
-                scale: 1.00,
-            },
-            origin: (960, 713),
-        };
-
-        assert_eq!(
-            cheap_hint_for(None, Some(held), true),
-            None,
-            "a slice that answered and is now empty was emptied on purpose",
-        );
-        assert_eq!(
-            cheap_hint_for(None, Some(held), false),
-            Some(held),
-            "a slice that never answered has no claim to overrule the plate with",
-        );
     }
 
     /// A `ui_scale` that cannot describe a screen produces no hint rather than a

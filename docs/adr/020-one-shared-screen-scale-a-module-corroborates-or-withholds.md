@@ -166,6 +166,8 @@ clause is an EMPTYING, not an emptiness: a slice this session never filled
 leaves the plate alone, because a screen nothing has measured is not a decision
 to forget one.
 
+**Superseded by the POE-269 amendment below.**
+
 ### 6. Read regions are keyed on the layout anchor, never on the screen edge
 
 The same discipline one level down, and the clause that makes the shared scale
@@ -288,3 +290,19 @@ stored here.
 For the current fullscreen task, `ScreenSlice.client` is the full capture
 rectangle. A live client read and its refresh rule remain POE-272 work, and the
 `ui_scale = client_height / 1200` hypothesis remains pending POE-267.
+
+## Amendment: POE-269 placed-origin fallback (2026-09-07)
+
+POE-269 is implemented. The Temple detect loop derives its `CheapHint` from the
+current `ScreenSlice` placements and verifies the placed Entrance origin with
+one windowed NCC per detect tick. A null or unplaced slice gets one pyramid
+fallback per `(temple_epoch, temple_rearm)` key, and a below-floor placed miss
+gets one fallback per the same key for any `ArmSource::Trigger(_)` arm. A
+fallback origin outside the placed tolerance is logged and noticed, then
+remembered after a successful read; a null-slice fallback origin is remembered
+the same way. A fallback whose proposed slice is withheld releases the null key
+for the next tick. No sweep cadence, moving-origin budget or session plate
+memory is retained.
+
+That release buys one retry only; a second withheld sweep keeps the key spent
+until the `(temple_epoch, temple_rearm)` key changes.
