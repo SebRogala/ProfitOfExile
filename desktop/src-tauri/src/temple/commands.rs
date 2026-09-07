@@ -590,7 +590,7 @@ fn debug_capture_blocking(
         .collect();
     report.notes.push(format!("plates — {}", plates.join("; ")));
     report.notes.push(format!(
-        "panel — {} architect block(s), incursions remaining {:?}",
+        "panel — {} architect offer(s) parsed, incursions remaining {:?}",
         panel_reading.architects.len(),
         panel_reading.incursions_remaining
     ));
