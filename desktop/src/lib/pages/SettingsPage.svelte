@@ -1023,6 +1023,8 @@
 			{#if store.status?.ocr_language_warning}
 				<div class="warning-banner">
 					{store.status.ocr_language_warning}
+					<!-- The site and the API share a host, so the walkthrough lives on the server this build talks to. -->
+					<a class="warning-link" href="{store.status.server_url}/#ocr-language-pack" target="_blank">How to install it ↗</a>
 				</div>
 			{/if}
 
@@ -1416,6 +1418,15 @@
 		font-size: 0.8rem;
 		color: #fca5a5;
 		line-height: 1.4;
+	}
+
+	.warning-banner .warning-link {
+		display: inline-block;
+		margin-left: 6px;
+		color: #fecaca;
+		font-weight: 600;
+		text-decoration: underline;
+		white-space: nowrap;
 	}
 
 	.setting-value.muted {
