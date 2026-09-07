@@ -345,6 +345,13 @@ pub struct MercCapture {
     pub panel: Option<[i32; 4]>,
     pub header: MercHeader,
     pub rows: Vec<MercRow>,
+    /// Number of row positions the icon sensor sees on screen. This may be
+    /// larger than `rows_read` when a row's name is unreadable.
+    #[serde(default)]
+    pub rows_on_screen: usize,
+    /// Number of published rows whose skill OCR resolved to a known state.
+    #[serde(default)]
+    pub rows_read: usize,
     /// The icon pass has not run on this frame: the rows carry their skill
     /// names and NO support cells, and the full read is coming. Published
     /// once per window, on the first look, so the surfaces can show the rows
@@ -706,14 +713,16 @@ pub struct MercGeometry {
     pub cell_inset: f32,
     /// Support slots scanned per row before giving up.
     pub max_slots: u8,
-    /// Rows the pass-2 re-OCR will read before it stops (D2 pass 2).
+    /// Maximum rows in both pass-2 re-OCR and placed geometry (D2 pass 2).
     ///
     /// Pass 2 costs ONE OCR call per row inside a single tick, so an
     /// over-clustered detect — a chat column, a stash page, anything that
     /// yields twenty left-aligned "rows" — turns one tick into twenty OCR
-    /// calls and blows the loop's poll budget. 8 clears the 6 rows the
-    /// reference panel has with room to spare; rows past it keep their pass-1
-    /// text rather than being dropped.
+    /// calls and blows the loop's poll budget. The same cap bounds
+    /// `geometry::placed_row_centres`, so a malformed placement cannot create
+    /// unbounded geometry bands. 8 clears the 6 rows the reference panel has
+    /// with room to spare; rows past it keep their pass-1 text rather than
+    /// being dropped.
     pub max_rows: u8,
     /// Lines within this fraction of a line height of the column's median x0
     /// belong to the skill-name column.
@@ -853,6 +862,8 @@ mod tests {
                         ],
                     }],
                 }],
+                rows_on_screen: 1,
+                rows_read: 1,
                 partial: false,
             }),
             learned_families: vec!["Pierce--3".into()],
@@ -911,6 +922,8 @@ mod tests {
         assert_eq!(cap["live"], true);
         assert_eq!(cap["screen"], serde_json::json!([2560, 1440]));
         assert_eq!(cap["panel"], serde_json::json!([120, 220, 620, 520]));
+        assert_eq!(cap["rowsOnScreen"], 1);
+        assert_eq!(cap["rowsRead"], 1);
         assert_eq!(cap["header"]["class"], "Shock Ambusher");
         assert_eq!(cap["header"]["wager"], 1028);
         let row = &cap["rows"][0];

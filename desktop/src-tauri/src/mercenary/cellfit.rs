@@ -11,18 +11,13 @@
 //! crop carries that mis-registration back (POE-208's `SEED_ART_OFFSET_FRAC`
 //! IS the offset, measured and pushed into the seed renderer).
 //!
-//! Under ADR-024 / POE-270, the placed screen-slice rect becomes [`refine`]'s
-//! normal input; this module's frame measurement and `geometry`'s Wager/Recruit
-//! text anchors are the verification. The one fallback locate ADR-024 allows is
-//! `geometry`'s whole-screen detect, not this search. Until POE-270 lands, this
-//! module still measures the frame on a global `(X0, pitch)` grid: the frame is
-//! a 1-px dark line with a 2-px light line inside it and flat panel outside, and
-//! that signature is sharp enough to locate. [`refine`] rewrites the layout onto
-//! the frame it found and reports what it moved; a frame it cannot find leaves
-//! the layout exactly as the OCR built it. A caller that has fitted BEFORE does
-//! better than that last part: it holds the registration it settled on
-//! ([`FittedScale`]) and writes it back with [`apply_held`], so one dark tick does
-//! not put the whole capture back on the drift this module exists to remove.
+//! Under ADR-024 / POE-270, the placed screen-slice rect is [`refine`]'s normal
+//! input; this module's frame measurement is the scale verifier. The one
+//! fallback locate ADR-024 allows is `geometry`'s whole-screen detect, not this
+//! search. [`refine`] rewrites the placed layout onto the frame it measured. A
+//! caller that has fitted BEFORE holds the registration it settled on
+//! ([`FittedScale`]) and writes it back with [`apply_held`], so a declined fit
+//! does not put the capture back on the OCR-only registration.
 //!
 //! # Why here and not in `geometry`
 //!
@@ -172,9 +167,6 @@ pub struct CellFit {
     /// `max_slot - min_slot` over those cells — the lever arm the pitch was
     /// measured on. `0` from the one-cell fallback.
     pub slot_span: u8,
-    /// The largest `|x_fit - x_ocr|` over the slots — how far the rewrite moved
-    /// the grid. THE number the smoke check reads.
-    pub moved_px: i32,
     /// Per row that carried an accepted cell, the measured top line minus the
     /// OCR centre anchor's prediction of it. Evidence for POE-216: a row of
     /// zeros says the centre anchor is right.
@@ -241,7 +233,7 @@ impl std::fmt::Display for FitDecline {
 ///
 /// `frame` is the detect frame the OCR ran on, and every pixel read goes
 /// through [`Frame::local`] exactly as `read::build_capture` does — so the
-/// function is identical on a full grab and on the loop's cropped re-detect,
+/// function is identical on a full grab and on the loop's placed-crop detect,
 /// and every rect that comes back out is screen-absolute.
 ///
 /// A decline is not an error: the layout comes back untouched with the reason
@@ -597,7 +589,7 @@ fn one_cell_fallback(
     })
 }
 
-/// Write the measured grid into the layout and report what changed.
+/// Write the measured grid into the layout and report the measurement.
 ///
 /// `x = round(X0 + slot·pitch)` accumulated in float and rounded once, so slot
 /// 5 does not carry five roundings. `y` stays the OCR CENTRE anchor
@@ -605,8 +597,7 @@ fn one_cell_fallback(
 /// reports the residual instead of moving it, because the residual is already
 /// within 1 px on both fixtures and the centre is the more robust cue.
 /// `column_x0` and `row_pitch` are left alone: they are the OCR's own
-/// measurements and other rules (the panel anchor, the column-moved test) are
-/// calibrated against them.
+/// measurements and the row/header checks are calibrated against them.
 ///
 /// The two anchors are therefore different in kind — x is on the FRAME, y on
 /// the OCR centre — so the emitted rect can sit a px above the dark line it is
@@ -617,12 +608,12 @@ fn one_cell_fallback(
 /// moving y would put the fit's own noise into every crop.
 fn rewrite(layout: &mut MercLayout, m: &Measured, g: &MercGeometry) -> CellFit {
     let cell_size = fit_cell_size(m.scale, g);
-    let mut moved_px = 0;
+    let column_x0 = layout.column_x0;
     for row in &mut layout.rows {
         let y = (row.centre_y - cell_size as f32 / 2.0).round() as i32;
+        row.skill_icon = [column_x0 - cell_size, y, cell_size, cell_size];
         for (slot, rect) in row.cells.iter_mut().enumerate() {
             let x = (m.x0 + slot as f32 * m.pitch).round() as i32;
-            moved_px = moved_px.max((x - rect[0]).abs());
             *rect = [x, y, cell_size, cell_size];
         }
     }
@@ -668,7 +659,6 @@ fn rewrite(layout: &mut MercLayout, m: &Measured, g: &MercGeometry) -> CellFit {
         cell_size,
         cells_used: m.cells.len().min(u8::MAX as usize) as u8,
         slot_span: m.slot_span,
-        moved_px,
         row_dy,
         residual_row_pitch,
     }
@@ -700,9 +690,9 @@ fn median(values: &mut [f32]) -> f32 {
 /// [`apply_held`] is what writes it back into a layout.
 ///
 /// `x0_offset` is RELATIVE to the layout's own `column_x0` rather than an
-/// absolute screen x, so a recruit window the player dragged re-registers for
-/// free: the OCR measures the column on every tick, and the frame's offset from
-/// that column does not move with the window.
+/// absolute screen x, so a placed recruit window re-registers for free: the OCR
+/// measures the column on every tick, and the frame's offset from that column
+/// does not depend on the screen origin.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FittedScale {
     /// The frame-measured UI scale, in [`REF_PITCH`] units.
@@ -761,13 +751,15 @@ impl FittedScale {
 ///
 /// It is the reason a decline no longer drops the loop back to the OCR's
 /// 6-12 px drift: the session knows where the frame is, and the offset it knows
-/// it in survives the panel being dragged. `source` is the caller's, because
+/// relative to the placed column survives a moved screen origin. `source` is the caller's, because
 /// the same rects mean [`super::ScaleSource::Frame`] on a tick that measured
 /// them and [`super::ScaleSource::Held`] on a tick that did not.
 pub fn apply_held(layout: &mut MercLayout, held: &FittedScale, source: ScaleSource) {
     let x0 = layout.column_x0 as f32 + held.x0_offset;
+    let column_x0 = layout.column_x0;
     for row in &mut layout.rows {
         let y = (row.centre_y - held.cell_px as f32 / 2.0).round() as i32;
+        row.skill_icon = [column_x0 - held.cell_px, y, held.cell_px, held.cell_px];
         for (slot, rect) in row.cells.iter_mut().enumerate() {
             let x = (x0 + slot as f32 * held.pitch).round() as i32;
             *rect = [x, y, held.cell_px, held.cell_px];
@@ -832,8 +824,8 @@ struct LumaBand {
 impl LumaBand {
     /// Cut the band the search will touch out of `img`, clamped to it.
     ///
-    /// `None` when nothing of the band is on the image — a recruit window
-    /// dragged fully off screen, which the fit declines rather than guesses at.
+    /// `None` when nothing of the band is on the image — a placed crop with no
+    /// frame pixels, which the fit declines rather than guesses at.
     fn cut(
         img: &DynamicImage,
         frame: Frame,
@@ -1461,13 +1453,6 @@ mod tests {
             "the measured pitch is 48.67, not {}",
             fit.pitch,
         );
-        // 6 px at slot 0 and 11 at slot 5, both measured. Correcting
-        // `MercGeometry`'s pitch constants (POE-216) would narrow this to 2-6.
-        assert!(
-            (6..=13).contains(&fit.moved_px),
-            "the rewrite moved the grid {} px; the measured drift is 6-13",
-            fit.moved_px,
-        );
         assert_eq!(out.layout.scale_source, ScaleSource::Frame);
         assert_eq!(out.layout.scale, fit.scale);
         // POE-216's evidence, measured here rather than described in a doc: the
@@ -1830,8 +1815,8 @@ mod tests {
 
     /// What a tick whose fit DECLINED hands downstream: the registration the
     /// session settled on, re-applied to that tick's own OCR layout. The offset
-    /// is relative to `column_x0`, so a panel the player dragged carries the
-    /// frame with it — which is what lets a decline keep the fitted rects
+    /// is relative to `column_x0`, so the placed panel carries the frame with
+    /// it — which is what lets a decline keep the fitted rects
     /// instead of falling back to the 6-12 px drift.
     #[test]
     fn a_held_registration_follows_the_column_the_ocr_measured() {

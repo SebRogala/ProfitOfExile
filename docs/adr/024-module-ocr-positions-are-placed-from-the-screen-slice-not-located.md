@@ -170,3 +170,63 @@ memory are retired.
 
 That release buys one retry only; a second withheld sweep keeps the key spent
 until the `(temple_epoch, temple_rearm)` key changes.
+
+## Amendment: POE-270 — Merc placed crop and geometry rows (2026-09-07)
+
+POE-270 is implemented. Merc's normal detect now derives its padded OCR crop
+from `ssot::placements(&ScreenSlice).merc.panel`; the full-screen path is only
+the one-shot fallback. `cellfit::refine` still measures the gold support frame,
+settles the scale and writes the screen slice; it does not locate the panel.
+
+The fallback key is `(merc_refit, trigger_generation)`. A missing or unplaced
+screen slice, or a placed crop whose Wager/Recruit/button anchors are absent
+while the voice gate is active, spends one full-screen locate for that key. A
+successful merc read has no post-read withheld measurement to repay: the only
+`accepted == false` result at this seam is `MercOcr` drift refusal, so it does
+not release another locate. A located panel beyond the named half-cell origin
+tolerance is read for the current session and remembered through
+`ssot::remember_anchor` only after that read succeeds; the contradiction and
+the single geometry notice are logged at the merc detect seam.
+
+The live placed layout enumerates row centres from the placed panel, the fitted
+row pitch and the fitted cell size: the first is `panel.y + pitch + cell/2`,
+and the last is the smaller of `panel.bottom - 3*pitch - cell/2` and
+`button_y - pitch`. The interval is rounded to a count and capped by
+`MercGeometry::max_rows`; every geometry band is then read by pass 2. A text
+that does not resolve to a skill remains an unread row. The left skill-icon
+column is counted with the existing occupied-cell stddev gate, and the debug
+screen artifact retains the geometry-band diagnostic; together they retain
+POE-273's two independent diagnostics.
+
+Supersession pointers:
+
+- The original Merc whole-screen primary detect, crop selection and crop-to-full
+  retry in Status and Consequences are superseded by this amendment's placed
+  crop plus keyed fallback.
+- The original Merc panel-anchor/drag-tracking description in Decision 5 is
+  superseded by the placed geometry and `cellfit::refine` scale-verifier roles
+  above.
+- Amendment POE-268's statement that Merc remained transitional until POE-270
+  is superseded; POE-269 remains the Temple pattern this amendment mirrors.
+
+## Amendment: POE-270 fix round (2026-09-08)
+
+The merc seed's x is centre-anchored. Two machine fixtures measure the x
+anchor; the y top anchor remains provisional from one machine. The placed path
+now rejects a pass-1 name-column median that moves beyond the half-cell band,
+then spends the keyed full-screen fallback. Chrome-less fallback detects pass
+the known session/placement panel to the anchor rescue.
+
+The icon sensor samples one pitch above and below the enumerated rows, publishes
+`rowsOnScreen` and `rowsRead`, and the strip reports the gap only when the
+sensor is ahead. Dark trailing skill-icon rows are trimmed before publication
+when a placed geometry seed has no button-line bound. A null-slice full detect
+is budgeted even while the gate is resting, and a probe hit hands its translated
+OCR lines to the detect instead of OCRing the same crop again.
+
+The debug dump replays `placed_layout` when its report carries a matching SSOT
+placement and draws the resulting geometry bands. The crop is about 45% of the
+screen area, an accepted approximately 2× OCR saving; the 4,504 ms figure is
+the full-screen baseline quoted in the README/module documentation, not an
+order-of-magnitude crop claim. The crop timing line is emitted once after the
+whole crop tick, and row-mismatch logging is change-gated.

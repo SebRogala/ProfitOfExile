@@ -349,7 +349,10 @@ export const HEARD_PREFIX = 'heard ';
  */
 function countedLine(prefix: string, capture: MercCapture): string {
 	const rows = capture.rows.length;
-	const rowsPhrase = `${rows} ${rows === 1 ? 'row' : 'rows'}`;
+	const rowsPhrase =
+		capture.rowsOnScreen > capture.rowsRead
+			? `${capture.rowsOnScreen} rows on screen, ${capture.rowsRead} read`
+			: `${rows} ${rows === 1 ? 'row' : 'rows'}`;
 	// A first look has no cells to count: saying "all icons read" over it
 	// would be the exact claim `partial` exists to withhold.
 	if (capture.partial) return `${prefix} · ${rowsPhrase} · ${READING_ICONS_NOTE}`;

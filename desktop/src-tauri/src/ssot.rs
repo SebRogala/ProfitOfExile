@@ -288,9 +288,12 @@ pub struct Placements {
 /// point converted back to reference px, and its y edge was not measured.
 pub const TEMPLE_ENTRANCE_Y_REF: f32 = 792.2;
 
-/// **PROVISIONAL** merc seed from one measurement: the documented 1920x1200
-/// laptop panel geometry in `mercenary/geometry.rs` (the panel literal around
-/// lines 1112-1117). Its edge is unmeasured; no second point confirms it.
+/// **PROVISIONAL** merc seed from the documented 1920x1200 laptop panel
+/// geometry in `mercenary/geometry.rs` (the panel literal around lines
+/// 1112-1117). The x anchor has now been measured on two machines: it is the
+/// panel centre relative to the client centre, not a left-edge offset. The y
+/// anchor is measured on one machine and remains top-anchored; the panel edge
+/// and size are still the reference seed.
 pub const MERC_PANEL_REF: [i32; 4] = [698, 615, 555, 477];
 
 impl Default for Placements {
@@ -384,7 +387,18 @@ pub fn placements_for(screen: Option<&ScreenSlice>) -> Placements {
         .and_then(|anchors| anchors.temple_entrance)
         .map(|[x, y]| (x, y))
         .unwrap_or(temple_seed);
-    let merc_seed = scale_region(MERC_PANEL_REF, scale, client);
+    let merc_width_ref = MERC_PANEL_REF[2] as f32 * scale;
+    let merc_width = merc_width_ref.round().max(0.0) as i32;
+    let merc_seed = [
+        (client[0] as f32
+            + client[2] as f32 / 2.0
+            + (MERC_PANEL_REF[0] as f32 + MERC_PANEL_REF[2] as f32 / 2.0 - 960.0) * scale
+            - merc_width_ref / 2.0)
+            .round() as i32,
+        client[1] + scale_value(MERC_PANEL_REF[1], scale),
+        merc_width,
+        scale_value(MERC_PANEL_REF[3], scale).max(0),
+    ];
     let merc_origin = screen
         .anchors
         .and_then(|anchors| anchors.merc_panel)
@@ -2696,7 +2710,7 @@ mod tests {
     }
 
     #[test]
-    fn the_measured_1080p_seed_reproduces_the_recorded_laptop_points() {
+    fn the_two_machine_x_anchor_reproduces_the_recorded_laptop_points() {
         let screen = ScreenSlice {
             width: 1920,
             height: 1080,
@@ -2710,7 +2724,7 @@ mod tests {
             placements.temple.expect("the measured screen has a temple placement").entrance_origin,
             (960, 713),
         );
-        assert_eq!(placements.merc.expect("the measured screen has a merc placement").panel, [628, 554, 500, 429]);
+        assert_eq!(placements.merc.expect("the measured screen has a merc placement").panel, [724, 554, 500, 429]);
         assert_eq!(placements.lab.gem, [30, 45, 550, 75]);
         assert_eq!(placements.lab.font, [460, 270, 530, 350]);
     }
@@ -2730,7 +2744,7 @@ mod tests {
             placements.temple.expect("the client has a temple placement").entrance_origin,
             (920, 753),
         );
-        assert_eq!(placements.merc.expect("the client has a merc placement").panel, [748, 594, 500, 429]);
+        assert_eq!(placements.merc.expect("the client has a merc placement").panel, [684, 594, 500, 429]);
         assert_eq!(placements.lab.gem, [150, 85, 550, 75]);
     }
 
