@@ -7,6 +7,12 @@
 2026-09-06** (owner): the slow-machine backoff is retired, the loop probes at its one cadence
 straight from the arm, every read and every slow tick write a measured line, and the budget this
 whole document serves is stated where it belongs — "Cadences and budgets" and "Owner decisions".
+**Amended 2026-09-07 (WI-1, owner)**: the capture has no tails left. `ALVA_TAIL_MS` and
+`PANEL_TAIL_MS` are retired; a non-START Alva line and a zone change stand the capture DOWN at
+once (the temple's own banter excepted), and once a board has been READ the first miss after it —
+the sheet closing — ends the cycle and the loop stops capturing. Rows 1, 3 and 4, the
+consequences, the residuals and the tails bullet below carry the change; everything tagged
+2026-09-04 or 2026-09-06 is history and is left standing.
 Read this before
 touching `desktop/src-tauri/src/temple/{trigger,run,slice}.rs` or the temple overlay widgets.
 Related: [Overlay Guide](OVERLAY-GUIDE.md) (windows, click-through, smoke items),
@@ -18,9 +24,10 @@ Related: [Overlay Guide](OVERLAY-GUIDE.md) (windows, click-through, smoke items)
 
 ## The one sentence
 
-The capture runs only while something says an incursion is in scope; the sheet-bound overlays
-live with the temple **sheet** on screen; the room overlay lives with the **incursion**; a full
-OCR read happens once per board, with bounded retries, and then stops.
+The capture runs only while something says an incursion is in scope, and stops the moment the
+sheet it read closes; the sheet-bound overlays live with the temple **sheet** on screen; the room
+overlay lives with the **incursion**; a full OCR read happens once per board, with bounded
+retries, and then stops.
 
 ## States
 
@@ -36,19 +43,32 @@ of those names;
 
 | # | Event | Capture / OCR | Overlay | Status |
 |---|---|---|---|---|
-| 1 | **Alva START phrase** (`Time to go.` / `Let's go.` / `It's time!`) while `idle` — any other Alva line while `idle` arms the capture (POE-242 speaker match) but starts no cycle and shows no waiting overlay | arm the loop (`trigger.rs`): `trigger::classify` is the one owner of the per-line decision, and a START phrase arms `ArmReason::AlvaStart` with **no deadline** — the portal wait is unbounded (see the mining below), so the arm holds until an END line or a zone change. An END line is the one permitted shortening, and only of an `AlvaStart` arm: it becomes the ordinary `ALVA_TAIL_MS` tail from its own stamp. Walking into the temple **assigns** `ArmReason::TempleArea`, so the banter inside cannot cut the arm short. Cheap presence tick every **650 ms** (`DETECT_INTERVAL`: screen grab + one hinted correlation at the remembered screen scale, ADR-020) | the **"waiting for the temple panel"** notice, as the PLACEABLE widget `temple.waiting` — gated on `view.ts`'s `overlayShowsWaiting` (`waitingForPanel` and no board, so a START heard with the sheet already open never blinks it). Its shipped default is **top-centre**, `{830, 16, 260, 40}` CSS px, NOT the screen centre the owner asked for: at 1920×1080 the centre sits on plates C1/D1/D2 and the notice is on screen in the capture that reads the sheet, so a centred box is OCR input the app wrote itself (ADR-019). Measured clearance to `panel_rect` on the one committed 1920×1080 frame: 41 px. The Settings row's **Show** checkbox is the toggle, and one drag puts the box anywhere the user wants it — the centre included, at which point it is their own placement and outranks every default | arm **shipped** (0dde882 / eb760c2); the START-phrase cycle, the indefinite `AlvaStart` arm and `waiting_for_panel` **shipped** (fa5bc61); 650 ms **shipped** (15eb3f8); the notice **shipped** (8d287e5) |
+| 1 | **Alva START phrase** (`Time to go.` / `Let's go.` / `It's time!`) while `idle` — since 2026-09-07 (WI-1) it is the ONLY line that arms; any other Alva line stands the capture down (row 4) | arm the loop (`trigger.rs`): `trigger::classify` is the one owner of the per-line decision, and a START phrase arms `ArmReason::AlvaStart` with **no deadline** — the portal wait is unbounded (see the mining below), so the arm holds until an END line, a zone change or the completed cycle of row 3. Walking into the temple **assigns** `ArmReason::TempleArea`, so the banter inside cannot cut the arm short. Cheap presence tick every **650 ms** (`DETECT_INTERVAL`: screen grab + one hinted correlation at the remembered screen scale, ADR-020) | the **"waiting for the temple panel"** notice, as the PLACEABLE widget `temple.waiting` — gated on `view.ts`'s `overlayShowsWaiting` (`waitingForPanel` and no board, so a START heard with the sheet already open never blinks it). Its shipped default is **top-centre**, `{830, 16, 260, 40}` CSS px, NOT the screen centre the owner asked for: at 1920×1080 the centre sits on plates C1/D1/D2 and the notice is on screen in the capture that reads the sheet, so a centred box is OCR input the app wrote itself (ADR-019). Measured clearance to `panel_rect` on the one committed 1920×1080 frame: 41 px. The Settings row's **Show** checkbox is the toggle, and one drag puts the box anywhere the user wants it — the centre included, at which point it is their own placement and outranks every default | arm **shipped** (0dde882 / eb760c2); the START-phrase cycle, the indefinite `AlvaStart` arm and `waiting_for_panel` **shipped** (fa5bc61); 650 ms **shipped** (15eb3f8); the notice **shipped** (8d287e5); START-only arming 2026-09-07 (WI-1) |
 | 2 | **Sheet detected** (cheap tick anchors) | full read: anchor + 13 plates + panel + budget line + door markers, all regions keyed on the Entrance anchor (POE-230, 71df527). **Once per board identity** `(temple_epoch, temple_rearm, slice::BoardFrame)` — `LoopState::gate` answers `GateAnswer::Read` only for an identity this loop has not read. Regions that did not read cleanly (`slice::unclean`: unknown plate, unresolved or missing offer, marker error, unread budget — a region whose ROI was reported CLIPPED is exempt, it cannot improve) buy **at most `RETRIES` = 2 more** full reads, merged region by region (`slice::merge_reads` over `slice::KeptRead`: a clean region is never replaced by an unclean one, and the merge is refused unless both reads carry the same `layout_signature`); then **all OCR stops** — only the cheap presence tick continues. The 4 s periodic panel re-OCR is **gone**. | hide the info overlay; show the sheet-bound overlays (offer boxes with the cyan frame on the advisor's pick, POE-249) and the room overlay (POE-244/248: the room's outline; every corridor the read settled in the game's own colours, green open and red closed; the advisor's door purple and bigger, carrying the NAME of the room it opens into and nothing else on the widget does (POE-261: the far plate's own read tier, `slice::recommended_exit`; an unread plate gets no name); the door a SECOND Stone of Passage would buy in the same purple, smaller and at half opacity — or, when the move opens NOTHING, the **convenience door** in that same faint seal (owner, 2026-09-05: *"if all rooms have the connections, app doesn't suggest to open the doors anymore at all"*): the in-cluster corridor that most shortens the walk, ranked in `advisor/convenience.rs` by Entrance → Apex, then Entrance → the wanted rooms, then the wanted rooms → Apex, then the longest open loop, with RU's veto honoured and a merge corridor never taken (that is the ranking's answer); the two faint answers are exclusive by construction, so one seal carries both; and BOTH kills as cyan glyphs on the two architect icon spots, the block nobody chose at a quarter opacity — faint is the alternative, on both marks) | full read **shipped** (07cf80c, 71df527); read-once-per-board, the bounded retries and "no OCR after a clean read" **shipped** (15eb3f8); the offer boxes **shipped** (ee1f2c7); the convenience door **shipped** (7c725e7) |
-| 3 | **Sheet gone** (first missed cheap tick) | keep the cheap tick (armed by the panel tail, POE-246: 120 s from the last sighting) so a reopened sheet is noticed; a reopen whose sighting carries the SAME board identity re-shows the read at **zero OCR cost** (`TickOutcome::Reshown`, one `layout panel back — same board, no read` line). The identity is `(temple_epoch, temple_rearm, slice::BoardFrame)` — the anchor origin and scale inside a 2 px / 1 % band (`FRAME_ORIGIN_TOLERANCE`, `FRAME_SCALE_TOLERANCE_DENOM`) plus the exact `layout_signature` — so another room in the temple run, a moved frame or a corridor that has opened is a NEW board and is read. A frame that will not sit still is bounded by `GEOMETRY_READS_CAP` = 8 reads per board, after which the loop re-shows without OCR and says so once (`anchor origin keeps moving …`) | hide every sheet-bound overlay **on the first miss**; the **room overlay stays** (the player is inside the room, which is exactly when it is needed) | room-overlay persistence **shipped** (POE-248, b132e9b): `run::apply_gate` no longer drops the advice at stand-down, and `view.ts`'s `overlayShowsDoors` gates on the ADVICE plus a published room rather than on the status — so the widget also survives the stand-down itself, which on the live board landed mid-incursion (`12:39:05 capture stood down`). First-miss hide **shipped** (15eb3f8, `RETIRE_AFTER` = 1) — the STATUS already flipped on the first clean miss, so the overlays came down then; what one changed is that `LoopState::live`, the `layout panel gone` log line and the arm gate's view of the panel now agree with it. Re-show-without-OCR **shipped** (15eb3f8) |
-| 4 | **Alva voice line again, or zone change** | stand down: stop capturing, clear all read state (`left_area_ms` stamp on zone change, POE-246; the Alva clear is POE-248). The same line also **ends the cycle**: `waiting_for_panel` goes down and `AppState.temple_epoch` is bumped (`trigger::ends_epoch` over `LineEvent`), which invalidates the board row 3 keys on. The END line's own tail arm therefore still lets a sheet reopened after it be READ rather than re-shown — the epoch moved, so it is a new board | clear and hide every overlay — the incursion is finished or the player died, which is finished either way | zone change **shipped** (0dde882); Alva-line clear **shipped** (POE-248, b132e9b): `trigger::advice_end` is the pure decision over the line — a `You have entered <not the temple>` line, or an `ALVA_SPEAKER` line stamped AFTER the read (the line that armed the read is spoken seconds before it, so an unconditional clear would blank the board the same line was the reason for reading) — and `slice::clear_advice` is the one writer. Read state other than the advice is kept: the Temple PAGE goes on showing the last board under its own timestamp, which is what it already does between reads. The cycle end and the epoch bump are **shipped** (fa5bc61) |
+| 3 | **Sheet gone** (first missed cheap tick) | **read and then closed → stand down** (2026-09-07, WI-1): `run::cycle_complete` is the rule — `DetectOutcome::Retired` while `LoopState::has_read` holds a read for the current `(temple_epoch, temple_rearm)` key — and `trigger::ArmState::complete_cycle` writes it, so the loop stops capturing entirely and `app.log` says `capture stood down — the sheet was read and closed`. A sheet closed BEFORE any read completed does NOT complete anything: no read is in hand, so the loop keeps probing on its arm. A tick whose screen GRAB failed completes nothing either — it learned nothing about the sheet. **And an `ArmReason::TempleArea` arm is not ended by a completed cycle**, the same carve-out row 4 gives Alva's banter: inside The Temple of Atzoatl the sheet is opened and closed once per ROOM with nothing between the rooms that moves the board key, so a completion on the first close would cost a Re-arm for every remaining room. That arm ends on leaving the area, as it always has. While the loop is still armed, a reopen whose sighting carries the SAME board identity re-shows the read at **zero OCR cost** (`TickOutcome::Reshown`, one `layout panel back — same board, no read` line). The identity is `(temple_epoch, temple_rearm, slice::BoardFrame)` — the anchor origin and scale inside a 2 px / 1 % band (`FRAME_ORIGIN_TOLERANCE`, `FRAME_SCALE_TOLERANCE_DENOM`) plus the exact `layout_signature` — so another room in the temple run, a moved frame or a corridor that has opened is a NEW board and is read. A frame that will not sit still is bounded by `GEOMETRY_READS_CAP` = 8 reads per board, after which the loop re-shows without OCR and says so once (`anchor origin keeps moving …`) | hide every sheet-bound overlay **on the first miss**; the **room overlay stays** (the player is inside the room, which is exactly when it is needed). Unchanged by WI-1 — both were already true on that miss; what changed is that nothing is looking afterwards, so **reopening the sheet later in the same incursion shows no offer boxes until Re-arm** (accepted, owner 2026-09-07) | room-overlay persistence **shipped** (POE-248, b132e9b): `run::apply_gate` no longer drops the advice at stand-down, and `view.ts`'s `overlayShowsDoors` gates on the ADVICE plus a published room rather than on the status — so the widget also survives the stand-down itself, which on the live board landed mid-incursion (`12:39:05 capture stood down`). First-miss hide **shipped** (15eb3f8, `RETIRE_AFTER` = 1) — the STATUS already flipped on the first clean miss, so the overlays came down then; what one changed is that `LoopState::live`, the `layout panel gone` log line and the arm gate's view of the panel now agree with it. Re-show-without-OCR **shipped** (15eb3f8). The cycle stand-down is 2026-09-07 (WI-1) |
+| 4 | **Alva voice line that is not a START phrase, or zone change** | stand down **at once** (2026-09-07, WI-1): the arm goes to `Disarmed` on the line itself (`trigger::apply_line`), so the loop stops capturing on its next iteration rather than 120 s later. `ALVA_TAIL_MS` and `ArmReason::AlvaLine` are retired with it — a non-START Alva line never arms and never extends an arm. **One exception, unchanged:** inside The Temple of Atzoatl (`ArmReason::TempleArea`, assigned by `LineEvent::EnteredTemple`) Alva's banter leaves the arm alone; only the area line OUT ends that one. The same line also **ends the cycle**: `waiting_for_panel` goes down and `AppState.temple_epoch` is bumped (`trigger::ends_epoch` over `LineEvent`), which invalidates the board row 3 keys on. A sheet opened after this line is not read at all until Re-arm — the loop is not looking | clear and hide every overlay — the incursion is finished or the player died, which is finished either way | zone change **shipped** (0dde882); Alva-line clear **shipped** (POE-248, b132e9b): `trigger::advice_end` is the pure decision over the line — a `You have entered <not the temple>` line, or an `ALVA_SPEAKER` line stamped AFTER the read (the line that armed the read is spoken seconds before it, so an unconditional clear would blank the board the same line was the reason for reading) — and `slice::clear_advice` is the one writer. Read state other than the advice is kept: the Temple PAGE goes on showing the last board under its own timestamp, which is what it already does between reads. The cycle end and the epoch bump are **shipped** (fa5bc61). The immediate stand-down is 2026-09-07 (WI-1) |
 
 Consequences that follow from the order, not from extra rules:
 
 - The waiting overlay appears only on a START phrase heard while `idle`. The end line clears;
   it does not show "waiting" again, and a late end line arriving after a zone change (3 of 342
-  in the PC log) cannot start a cycle. The end line's arm still lets a reopened sheet be
-  read (the loop is armed), silently.
+  in the PC log) cannot start a cycle. Since 2026-09-07 (WI-1) the end line no longer leaves an
+  arm behind either: a sheet reopened after it is not read at all until **Re-arm**.
+- **Between incursions nothing is looking.** That is the point of WI-1: the four ways the gate
+  shuts (the cycle completing, a non-START Alva line, a zone change, Re-arm's grace running out)
+  leave the loop capturing nothing, and the app log names which one — `capture stood down —
+  the sheet was read and closed | Alva's line | the zone changed | Re-arm's grace is over |
+  waiting for Alva` (`trigger::StandDown`, printed by `run::gate_line`, one line per stand-down).
+- **A sheet on screen outranks all of it, for one tick.** `trigger::arm_source` reads
+  `LoopState::live` — the loop's LAST detect tick found the panel — so a player holding the sheet
+  open keeps the capture armed whatever Client.txt says, which is what lets a Re-arm read finish
+  and retry past its 60 s grace. It is one tick (650 ms), not POE-246's 120 s tail, so a zone
+  change carries at most one more capture into the next zone and that capture is the one that
+  finds the sheet gone.
 - A death is a zone change (row 4). A sheet opened from the hideout with Alva silent is not in
-  scope — **Re-arm** is the manual override (`temple_rearm`, 60 s), unchanged since POE-242.
+  scope — **Re-arm** is the manual override (`temple_rearm`, 60 s), unchanged since POE-242. A
+  manual cycle ends by row 3 like any other: read the sheet, close it, and the loop stands down
+  without waiting out the grace.
 - The keys setting (`temple_keys`) is GONE (POE-253): stones drop from the kill INSIDE the
   incursion, after the sheet has been read, so the count was a prediction nobody could fill
   in. POE-248 item 9 (the faint second-stone door) is the second stone's answer.
@@ -82,18 +102,35 @@ One field written by both let a poll put `prices 3 min old` over a board on the 
 a DEBUG/PROD switch put `prices unavailable` over a priced one. The rules and
 their homes are in the table below, the decision is [ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md).
 
-Four residuals the rules above produce, all ACCEPTED with their answer named (POE-249, owner
-decisions 1, 3 and 4 of the plan review):
+Seven residuals the rules above produce, all ACCEPTED with their answer named (POE-249, owner
+decisions 1, 3 and 4 of the plan review; the last three re-derived under WI-1, 2026-09-07, and
+the seventh added by WI-1's fix round the same day):
 
-- **A START with no incursion run** keeps the arm and the notice up until the zone changes or
-  Alva speaks again. That is what an indefinite arm means; the answer is the zone change, which
-  every map ends with.
-- **A missed END line** leaves a stale board on the next reopen — the epoch never moved, so the
-  reopen re-shows instead of reading. It lasts only until the next line that DOES end the epoch
-  (the next START, or the zone change out of the map), and **Re-arm** forces a read before that;
-  the parked third "still in the incursion" signal is the eventual fix and is not this task. The
-  mining below has no rate for a missed END — what it measured is the symmetric case, one
-  incursion in 342 with no START line at all.
+- **A START with no incursion run** keeps the arm and the notice up until the zone changes, Alva
+  speaks again, or the player opens the sheet and closes it — which under WI-1 is a third exit
+  the indefinite arm did not have before. The answer is still the zone change, which every map
+  ends with.
+- **A reopen after the sheet was read and closed shows no offer boxes** until **Re-arm**, because
+  the loop stood down when the sheet closed and nothing is looking. Accepted by the owner
+  2026-09-07 as the price of not probing between incursions. The room diamond is unaffected — it
+  lives with the incursion, not with the capture (POE-248). It does not apply inside The Temple
+  of Atzoatl, which row 3 carves out.
+- **Inside the temple the loop keeps probing for the whole run**, which is the one place WI-1
+  deliberately did not stop it. The sheet is the navigation aid there and the run writes no line
+  the gate could re-arm on, so the alternative was a Re-arm per room. The area line out ends it.
+- **A missed END line** no longer leaves a stale board on the next reopen, because there is no
+  reopen to serve: the cycle completed when the sheet closed, so the loop is stood down and
+  **Re-arm** is the only way to a board. What a missed END costs instead is that the epoch never
+  moves — the rearm counter is the other half of the key, so pressing the button still forces the
+  read. The parked third
+  "still in the incursion" signal is the eventual fix and is not this task. The mining below has
+  no rate for a missed END — what it measured is the symmetric case, one incursion in 342 with no
+  START line at all.
+- **One anchor miss over a sheet that is still open** ends the cycle, because `RETIRE_AFTER` = 1
+  and the loop cannot tell that miss from a close. The offer boxes hide (which they did on the
+  first clean miss at `RETIRE_AFTER` = 2 as well) and, unlike before WI-1, do not come back on
+  the next tick. Bounded by the same Re-arm, and by the board itself already being published —
+  what is lost is the boxes, not the advice or the room widget.
 - **A kill taken mid-incursion** changes panel content that no `BoardFrame` can see: the origin,
   the scale and the `layout_signature` are all unchanged. The answers are the END line's own
   epoch bump and Re-arm (`BoardRead` says so at the type).
@@ -101,6 +138,19 @@ decisions 1, 3 and 4 of the plan review):
   no room change between them, leave the overlay drawing the ROIs of the last read — a few px
   stale — until Re-arm or the next room. The alternative was 28 OCR calls every 650 ms for an
   anchor that will not agree with itself.
+- **A capture that fails on EVERY tick after a sighting keeps the gate open for as long as it
+  keeps failing** (WI-1 fix round, 2026-09-07). A tick whose screen grab errored is not evidence
+  about the sheet, so it leaves `run::LoopState::live` where the last tick that could SEE the
+  screen left it (`LoopState::on_blind_tick`) — it only spends the start-up probe. While `live`
+  is stuck true the panel branch of `trigger::arm_source` is ORed above Client.txt, so an Alva
+  line or a zone change disarms the TRIGGER without shutting the gate: what ends it is the first
+  grab that SUCCEEDS, which finds no panel, retires `live` and returns the loop to the ordinary
+  rules. What it costs meanwhile is a screen grab attempt every 650 ms and no OCR, with the
+  failure on the page (`last_error`) and one line in `app.log`. Accepted against the alternative
+  it replaced, which was worse and far more likely: at `RETIRE_AFTER` = 1 one TRANSIENT grab
+  failure retired a panel that was on screen, and with the panel the only thing holding the gate
+  — a hideout read, or a Re-arm whose grace has run out under an open sheet — the capture stood
+  down in front of the player with Re-arm the only way back.
 
 ## Alva's lines, as measured (Client.txt)
 
@@ -125,9 +175,9 @@ Facts that shape the rules (PC mining):
   through. Start → end is typically ~34 s; 9 cases ran over two minutes and one **22 min** — the
   long ones are not long incursions but the player being away from the PC with the portal
   waiting (owner): nothing in the game times out an open portal, so the gap between the start
-  line and entering is **unbounded**. The arm must therefore hold until an end line or a zone
-  change, never a fixed burst — the panel-on-screen clock (POE-246) and the incursion context
-  (POE-248) are what do that.
+  line and entering is **unbounded**. The arm must therefore hold until an end line, a zone
+  change or the read sheet closing, never a fixed burst — the panel on screen (POE-246) and the
+  incursion context (POE-248) are what do that.
 - **End lines can arrive after a zone change** (3 of 342: the player left the map mid-incursion
   and `Good job` fired seconds after re-entering). The zone change has already cleared the cycle
   by then; the late end line must NOT start a new one → **a cycle starts only on a known START
@@ -194,13 +244,20 @@ Facts that shape the rules (PC mining):
   on the same machine — when a session reads slow, check which build ran before anything else.
 - Cold start (no remembered scale): the pyramid sweep, 5.3 s in the release container (POE-234,
   29ac1b9), never the 348 s exhaustive sweep.
-- Tails: `ALVA_TAIL_MS` = `PANEL_TAIL_MS` = 120 s; `MANUAL_ARM_GRACE_MS` 60 s (`trigger.rs`).
+- Tails: **there are none since 2026-09-07 (WI-1)**. `ALVA_TAIL_MS` and `PANEL_TAIL_MS` (both
+  120 s) are retired; `MANUAL_ARM_GRACE_MS` 60 s (`trigger.rs`) is the only deadline left in the
+  module, and it is what a `Re-arm's grace is over` stand-down reports. What replaced the two
+  tails is not a shorter clock but a state: the START arm is indefinite until row 3 or row 4, and
+  a sheet on screen holds the gate through `LoopState::live` — one 650 ms tick, re-earned by
+  every anchored tick, for any arm reason.
 
 ## Where each rule lives
 
 | Rule | Home |
 |---|---|
-| what arms / disarms, the three clocks | `temple/trigger.rs` (`arm_source`, `ArmState`, `ArmReason`) |
+| what arms / disarms | `temple/trigger.rs` (`arm_source`, `ArmState`, `ArmReason`, `TempleArm`) — a START phrase or the temple area arms with no deadline, Re-arm for `MANUAL_ARM_GRACE_MS`, and `LoopState::live` holds the gate for whatever the last tick saw |
+| what SHUTS the gate, and the word the log uses | `temple/trigger.rs` (`StandDown` on `ArmState`, written by `apply_line`, `ArmState::arm_manual` and `ArmState::complete_cycle`) and `temple/run.rs` (`gate_line`, which prints it) — WI-1 |
+| the completed cycle — read once, sheet closed, stop looking | `temple/run.rs` (`cycle_complete` decides, `LoopState::has_read` is its board half, `miss` calls it with the key the tick opened on, `board_key` builds that pair) and `temple/trigger.rs` (`ArmState::complete_cycle` writes, and holds both the `TempleArea` carve-out and the `key_current` guard — a tick takes seconds, so a START line or a Re-arm inside it arms a cycle this observation is not about; `trigger::complete_cycle` is the loop's seam into the lock and re-reads the pair there) — WI-1 |
 | what ONE Client.txt line means — the area parse, the speaker match, the staleness gate and the three START phrases, decided once | `temple/trigger.rs` (`classify` → `LineEvent`, `ends_epoch`) |
 | tick order: prune → hint → cheap detect → sweep gate → promote → full read → publish | `temple/run.rs` (`tick`, `wants_full_read`, `full_read`, `SweepGate`) — the ANCHOR gate, unchanged by POE-249 |
 | the OCR gate: read this board, re-show it, or re-show it capped | `temple/run.rs` (`LoopState::gate` → `GateAnswer`, `LoopState::reshow`, `BoardRead`, `GEOMETRY_READS_CAP`) |
@@ -240,6 +297,24 @@ cheap — we can just straight go to it, without the need to do the weird logic.
 logging measurements, so we know what is really going on." Encoded as: no backoff, one cadence
 from the arm, and the three measured lines above. The 1 s is the owner's expectation of what is
 possible, not a number the code asserts — the lines are how it is checked.
+
+2026-09-07 (WI-1), after a session in which the loop kept probing after the incursion ended:
+"After leaving the incursion, OCR never stops probing, and it should on any Alva voiceline, or
+zone change." "Once the full sheet is read once in the incursion, we stop reading the sheet, we
+only need the read whether we are still in incursion to keep the overlay open, but in fact, once
+the sheet is closed, we can already stop OCRing, hide the explanation, keep the diamond overlay,
+and upon stop encounter, we hide the diamond overlay." Encoded as rows 3 and 4 above: no tails,
+a stand-down on any non-START Alva line or zone change, and a cycle that ends when the sheet the
+loop has read closes. The reopen inside the same incursion is the accepted cost, and Re-arm is
+its answer — the "still in the incursion" signal the second quote reaches for is the parked
+follow-up, not this work item.
+
+One reading recorded rather than resolved silently: the completed cycle is NOT applied to an
+`ArmReason::TempleArea` arm. The quote is about the timed incursion, and the same paragraph that
+grants Alva's banter its temple exception says that arm "ends only on leaving the area, as
+today"; applying the cycle there would have cost a Re-arm per room of the Temple of Atzoatl run,
+where the sheet is the surface the run is played on. One condition in
+`trigger::ArmState::complete_cycle` is the whole of it, if the owner wants the strict reading.
 
 One deviation from those words, recorded rather than resolved silently: the notice ships at the
 TOP centre, not the screen centre, because a centred box covers plates C1/D1/D2 in the very

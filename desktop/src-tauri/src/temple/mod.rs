@@ -53,7 +53,8 @@
 //!   anchor, never the capture's edge; `run::read_rois` is the never-cover set.
 //! - POE-243: [`panel`] reads BOXED lines; blocks group by geometry, offers and
 //!   the title carry screen rects; `Warning::PartialArchitects`.
-//! - POE-246: [`trigger`]'s clock measures absence (panel tail, start-up probe).
+//! - POE-246: [`trigger`]'s gate reads the SCREEN as well as Client.txt (the
+//!   panel on screen, the start-up probe).
 //! - POE-244: [`markers`] publishes the seal ring / rhombus the overlay draws — ADR-019.
 //! - POE-249: [`trigger::classify`] is the ONE owner of what a Client.txt line
 //!   means ([`trigger::LineEvent`], [`trigger::ends_epoch`], the three measured
@@ -66,6 +67,18 @@
 //!   anchor. `slice::panel_signature` and the periodic panel re-OCR are gone;
 //!   [`slice::layout_signature`] survives as the semantic half of the identity
 //!   and `ReadGate` is now [`slice::RearmGate`], the re-arm counter alone.
+//! - 2026-09-07 (WI-1): the capture has no tails left. `ALVA_TAIL_MS` and
+//!   `PANEL_TAIL_MS` are gone with [`trigger::ArmReason`]'s `AlvaLine`, a
+//!   non-START Alva line STANDS THE CAPTURE DOWN (the temple's own banter
+//!   excepted), the panel input is one tick ([`run::LoopState::live`]) rather
+//!   than 120 s, and the loop ends its own cycle once a board has been read and
+//!   the sheet closes ([`run::cycle_complete`],
+//!   [`trigger::ArmState::complete_cycle`]). The stand-down names its cause
+//!   ([`trigger::StandDown`]). Two guards from the same day's fix round: a tick
+//!   whose screen GRAB failed is not evidence about the sheet and leaves the
+//!   panel input alone ([`run::LoopState::on_blind_tick`]), and a completion is
+//!   refused when the board key has moved on since the tick that observed it
+//!   (`ArmState::complete_cycle`'s `key_current`).
 //!
 //! - [`trigger`] (POE-242) — what puts an incursion in scope, and so whether
 //!   [`run`]'s loop may capture at all: a pure state machine over the Client.txt
