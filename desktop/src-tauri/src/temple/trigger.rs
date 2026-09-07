@@ -152,8 +152,8 @@
 //! to: the button already arms the capture for [`MANUAL_ARM_GRACE_MS`], which is
 //! a longer version of the same look. Keying the probe on that counter would be
 //! worse than redundant — every settings command bumps it (see
-//! `super::run::wants_full_read`), so a settings change would start a capture
-//! nobody asked for, which is the behaviour POE-242 removed.
+//! the temple read gate), so a settings change would start a capture nobody
+//! asked for, which is the behaviour POE-242 removed.
 //!
 //! Arming never SHORTENS what is already armed ([`TempleArm::arm`]). Since WI-1
 //! retired the voice-line tail the only bid that could shorten anything is

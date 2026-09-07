@@ -958,10 +958,10 @@ pub fn should_remember_screen(changed: bool, source: ScreenScaleSource) -> bool 
 /// and spend a log line and a file write saying so on every tick.
 ///
 /// One blind spot is left, and it is not fixable from here: an in-game UI-scale
-/// change made while no verifying panel is on screen. That is the temple's
-/// `FULL_READ_EVERY_N_MISSES` class — a stale value only a re-read can catch —
-/// and [`ScreenSlice::verified_this_session`] is what carries the honesty about
-/// it (POE-240).
+/// change made while no verifying panel is on screen. The consuming module's
+/// explicit fallback is responsible for recovering from that case; this
+/// geometry predicate only decides whether the stored slice belongs to the
+/// capture.
 ///
 /// Pure so the rule is unit-testable without an `AppHandle`, the same reason
 /// [`should_flag_unreachable`] and [`record_screen`] are extracted.
@@ -1050,10 +1050,10 @@ fn set_anchor(anchors: &mut Option<Anchors>, module: AnchorModule, origin: [i32;
 }
 
 /// Remember a module's capture-relative placement origin for later ticks.
-/// Callers that own the temple and merc calibration passes will use this seam;
-/// current detect ticks deliberately do not write anchors yet. A screen that
-/// has not been measured is a no-op and returns `false`; the enum makes an
-/// unknown module impossible at this boundary.
+/// Temple calls this after a successful read from its explicit fallback; the
+/// ordinary placed path reads the origin already held by the current slice. A
+/// screen that has not been measured is a no-op and returns `false`; the enum
+/// makes an unknown module impossible at this boundary.
 pub fn remember_anchor(app: &AppHandle, module: AnchorModule, origin: [i32; 2]) -> bool {
     let changed = {
         let state = app.state::<AppState>();
@@ -1089,23 +1089,21 @@ where
 /// its owner and in the file. The temple's hint is derived from this slice
 /// through `k` on every tick, so emptying the slice is what un-calibrates the
 /// temple — there is no second store left to clear, and none to forget to.
+/// The per-key fallback is sufficient because the shared slice is corroborated
+/// across modules (ADR-020), while the placed origin is verified on every tick
+/// by the temple recheck.
 ///
 /// Clearing it is not enough on its own, because neither module re-measures
 /// just because the store is empty:
 ///
-/// - the temple's read gate skips a board that looks unchanged, so
-///   `temple_rearm` is bumped to force one full re-read. Its `SweepGate` needs
-///   no bump: the gate's `calibrated` input is "this tick has a hint", the hint
-///   is this slice, so emptying it is the calibration LOSS that gate restarts
-///   its countdown on (`temple::run::SweepGate::allow`). The session's OTHER
-///   memory of a scale — the plate `anchor::CheapHint` remembers, which a panel
-///   still on screen would re-match at the old scale and republish here — is
-///   dropped by `temple::run::cheap_hint_for` on the same tick, off the same
-///   emptied slot. Without it this press would be a no-op for the temple
-///   whenever the layout panel is up, which is when it is pressed. That drop is
-///   an EMPTYING and not an emptiness: a slice this session never filled leaves
-///   the plate alone, because there the button has nothing of the module's to
-///   undo (see that function for the machine it matters on);
+/// - the temple's placed-origin recheck reads the newly empty slice as a null
+///   placement, so its one cold-start fallback per `(temple_epoch,
+///   temple_rearm)` key can locate the panel again. If that fallback finds an
+///   anchor but its proposed slice is withheld, the key is released for one
+///   retry; a second withheld sweep keeps it spent until the
+///   `(temple_epoch, temple_rearm)` key changes. A successful fallback read
+///   remembers the discovered origin through this module. There is no second
+///   temple plate-memory store to clear;
 /// - the merc session HOLDS the frame registration it settled on and carries it
 ///   across every tick that cannot see the frame (`mercenary::run`'s
 ///   `next_fitted_scale` keeps it, `cellfit::apply_held` re-applies it). The

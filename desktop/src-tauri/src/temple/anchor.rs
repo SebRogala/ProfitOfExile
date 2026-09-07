@@ -6,19 +6,23 @@
 //! is the origin; everything else in [`super::lattice`] is a fixed multiple of
 //! it.
 //!
-//! # Why the search is coarse-to-fine, and why the winner is a FINE score
+//! # The two search paths
 //!
-//! Scale is not free: the same panel measured 0.99–1.00 on 1352–1385 px
-//! windows, 1.12 on 1494 px and 1.13 on 1539 px, and a fixed-scale match fell
-//! to NCC 0.57 on the 1494 px board.
+//! A placed Entrance origin is the normal path. The capture loop gives
+//! [`detect_cheap`] the origin from `ssot::placements` and this module performs
+//! one full-resolution, windowed correlation at that fixed scale and position.
+//! The score is verified against [`NCC_FLOOR`]; it is both the panel-presence
+//! test and the only steady-state detect work.
 //!
-//! Searching every scale at full resolution is too slow, so a ÷4 pass narrows
-//! the field — but **only to nominate**. On the 1539 px board the ÷4 pass
-//! ranked scale 1.09 *above* the true 1.13 (0.968 vs 0.961); trusting it
-//! anchored at NCC 0.829 and turned the closed Apex corridor into an open one.
-//! So each nominee is re-matched at full resolution and the winner is chosen on
-//! that fine score. Reverting to a coarse-only winner is a correctness
-//! regression, not a speed trade.
+//! A cold fallback has no trusted placement, or the placed recheck has failed
+//! on an announced board. That path remains coarse-to-fine:
+//! [`Scene::pyramid_sweep`] narrows the scale range and refines the best nominees
+//! at full resolution. Coarse scores nominate only; the final anchor is always
+//! selected by a fine score. On the 1539 px board the ÷4 pass ranked scale 1.09
+//! above the true 1.13 (0.968 vs 0.961), and trusting it anchored at NCC 0.829.
+//! The caller budgets this fallback per `(temple_epoch, temple_rearm)` key
+//! because the shared slice is corroborated across modules (ADR-020), while the
+//! placed origin is verified on every tick by the recheck.
 //!
 //! # Why there is a floor
 //!
@@ -127,11 +131,10 @@ pub fn ui_scale_for_scale(scale: f32) -> f32 {
 /// middle of that gap.
 pub const NCC_FLOOR: f32 = 0.88;
 
-/// Scale grid step, both in the seeded band and in the full sweep.
+/// Scale grid step in the measured band and in the full sweep.
 ///
-/// `pub` since POE-234 WI-2: `super::run` measures the agreement between the
-/// shared screen scale and the session's remembered plate against it, because
-/// one grid step is the finest disagreement this module can express at all.
+/// `pub` since POE-234 WI-2: `super::run` uses this as the conversion and
+/// corroboration tolerance for the shared screen scale.
 pub const SCALE_STEP: f32 = 0.01;
 /// Narrowest scale the fallback sweep considers, and its widest before the
 /// seed-relative raise of the ceiling in [`full_sweep`]. The floor is fixed.
@@ -170,14 +173,11 @@ const SWEEP_REFERENCE_HEIGHT: f32 = 1080.0;
 /// 2026-09-03 on a synthetic plate at scale 2.10 against a fixed 2.00 ceiling:
 /// the sweep answered 2.05 at NCC 0.9390, above [`NCC_FLOOR`].
 ///
-/// `super::run` would then persist that as the screen's calibration, and a
-/// calibration is what closes `super::run::SweepGate` — so a 2.5%-wrong scale
-/// would be remembered, the gate would shut, and the loop would build every
-/// lattice on it. A ceiling that follows the capture puts the true scale inside
-/// the grid at the game's DEFAULT UI scale, whatever the display — which is the
-/// case the soft edge would otherwise be reached by. The slider is a separate
-/// matter and is not covered here; see [`anchor_for_loop`]'s note on what the
-/// loop gives up.
+/// The caller accepts the result only through its placement/fallback policy. A
+/// ceiling that follows the capture puts the true scale inside the grid at the
+/// game's DEFAULT UI scale, whatever the display — which is the case the soft
+/// edge would otherwise be reached by. The slider is a separate matter and is
+/// resolved by the placed recheck or this explicit fallback.
 fn sweep_range(height: u32) -> (f32, f32) {
     (
         SWEEP_FLOOR,
@@ -426,9 +426,9 @@ pub fn anchor_with_hint(
 /// fine pass refines one [`SWEEP_NOMINATE_STEP`] beyond the top nominee, so a
 /// scale above the ceiling is answered APPROXIMATELY rather than refused
 /// (measured 2026-09-03 against a fixed 2.00 ceiling: a plate at 2.10 answered
-/// 2.05 at NCC 0.9390, above [`NCC_FLOOR`]). `super::run` would persist that as
-/// the screen's calibration and shut its own sweep gate on it.
-/// `temple_debug_capture` still reaches the exhaustive sweep, and a
+/// 2.05 at NCC 0.9390, above [`NCC_FLOOR`]). The caller must apply its placement
+/// and corroboration policy before using that approximate result as screen
+/// geometry. `temple_debug_capture` still reaches the exhaustive sweep, and a
 /// [`MEASURED_SCALES`] row makes it unnecessary.
 ///
 /// # And where the two can disagree
@@ -443,24 +443,15 @@ pub fn anchor_with_hint(
 /// question about the BOARD, open at the time of writing; what is settled is
 /// that the loop takes this one, because the other costs it a minute.
 ///
-/// # `may_sweep` is the caller's budget, not a preference
-///
-/// The last step costs seconds and the two before it cost two correlations, so
-/// only the caller knows whether this frame may pay — `super::run` asks its own
-/// `SweepGate` once per tick and hands the answer to every path that could
-/// reach the sweep. `false` means "hint and table only": the chain reports
-/// `AnchorNotFound` rather than blocking, which is the right answer for a
-/// promoted tick that arrived between cadences.
-///
+/// This is an explicit fallback, not a per-tick budget. The caller invokes it
+/// only after the placed-origin recheck has failed under the lifecycle rules.
 /// `stop` is polled between the sweep's coarse correlations — one per distinct
 /// coarse template size, ~23 of them over [`sweep_range`] — so a module being
 /// switched off mid-sweep stops within roughly a twenty-third of it. A stopped
-/// sweep reports `AnchorNotFound`: it found nothing, which is true, and the
-/// caller's next tick asks again.
+/// sweep reports `AnchorNotFound`: it found nothing, which is true.
 pub fn anchor_for_loop(
     img: &DynamicImage,
     hint: Option<&AnchorCalibration>,
-    may_sweep: bool,
     stop: &dyn Fn() -> bool,
 ) -> Result<Anchor, ReadError> {
     let scene = Scene::of(img);
@@ -486,7 +477,7 @@ pub fn anchor_for_loop(
             return Ok(best.expect("a cleared attempt recorded a best"));
         }
     }
-    if may_sweep && take(scene.pyramid_sweep(stop), &mut best) {
+    if take(scene.pyramid_sweep(stop), &mut best) {
         return Ok(best.expect("a cleared attempt recorded a best"));
     }
 
@@ -495,35 +486,32 @@ pub fn anchor_for_loop(
     })
 }
 
-/// What the cheap detect tick found — see [`detect_cheap`].
+/// What the placed-origin detect tick found — see [`detect_cheap`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CheapDetect {
-    /// The remembered plate re-matched where it was last seen, at or above
-    /// [`NCC_FLOOR`]. A real anchor, verified at full resolution.
+    /// The placed Entrance origin re-matched at or above [`NCC_FLOOR`]. A real
+    /// anchor, verified at full resolution.
     Anchored(Anchor),
-    /// Nothing was verified, but the nominating pass found something
-    /// plate-shaped at [`coarse_candidate`]'s one scale. A *candidate*, never
-    /// an anchor: coarse scores are the ones the whole module refuses to trust
-    /// (see the file header), so this only means "worth the full read".
-    Candidate { coarse_ncc: f32 },
-    /// Neither. The tick can be skipped.
+    /// The placed-origin recheck did not clear the floor. The score is retained
+    /// so the capture loop can decide whether its one explicit fallback applies.
     Nothing { best_ncc: f32 },
 }
 
 impl CheapDetect {
-    /// Whether this outcome is worth paying [`super::reader::read_layout_with_hint`] for.
-    pub fn worth_reading(&self) -> bool {
-        !matches!(self, CheapDetect::Nothing { .. })
+    /// The NCC observed by the one recheck, or negative infinity when no
+    /// recheck could run.
+    pub fn ncc(&self) -> f32 {
+        match self {
+            Self::Anchored(anchor) => anchor.ncc,
+            Self::Nothing { best_ncc } => *best_ncc,
+        }
     }
 }
 
-/// Where the cheap tick last saw the plate, so it can look there first.
+/// The placed origin and scale used by the one cheap recheck.
 ///
-/// Held in memory by the capture loop rather than persisted beside
-/// [`AnchorCalibration`]: the scale is a property of the capture SIZE, which is
-/// what that type is keyed on, while the origin is a property of the game
-/// window's POSITION, which the same capture size does not pin. Storing the two
-/// under one key would let a moved window write a stale origin to disk.
+/// The capture loop derives this value from the current `ScreenSlice` on every
+/// tick. It is not a remembered plate and is never carried from a prior read.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CheapHint {
     /// Screen size and scale, reusing [`AnchorCalibration::applies_to`].
@@ -536,91 +524,29 @@ pub struct CheapHint {
 // `reader::TempleLayout`, which already carries both fields, and a second way
 // to build a two-field struct would only be a second thing to keep in step.
 
-/// Coarse score above which the unverified nominating pass calls a candidate.
-///
-/// Measured 2026-08-19 at the width-derived scale alone, over the whole
-/// capture: the two committed boards nominate at **0.939** and **0.938**,
-/// deterministic noise of the same two sizes at **0.204** and **0.203**.
-///
-/// 0.70 sits in that gap, deliberately nearer the noise end. The two errors are
-/// not symmetric and neither is unbounded: a false candidate costs exactly one
-/// of the full reads the loop used to run on *every* tick, while a missed
-/// candidate hides the panel until the caller's periodic full read. Buying
-/// detection latency with an occasional tick of the old cost is the right side
-/// of that trade — but it is the reason this floor is not tuned any closer to
-/// 0.938 on a two-board sample.
-pub const COARSE_CANDIDATE_FLOOR: f32 = 0.70;
-
-/// The detect tick's cheap half: "is there anything here worth a full read?"
-///
-/// # Why this exists
-///
-/// [`anchor_with_hint`] is coarse-to-fine over a *band* of scales, and on a
-/// MISS it runs every attempt it has — hint, [`table_band`], [`full_sweep`] —
-/// because a miss is what "the band did not contain it" looks like. A closed
-/// layout panel misses, and a closed panel is the state the capture loop lives
-/// in, so the loop's steady state was the most expensive path in this module.
-///
-/// Measured 2026-08-19, release build, on deterministic noise the size of each
-/// committed board fixture — i.e. a focused game with no layout panel, which is
-/// where the loop spends its life:
-///
-/// | capture | [`super::reader::read_layout_with_hint`] | [`detect_cheap`] |
-/// |---|---|---|
-/// | 1374×542 | 92 correlations, 2 586 408 positions, 2.51 s | 2 correlations, 36 920 positions, 32 ms |
-/// | 1539×613 | 105 correlations, 3 860 177 positions, 3.91 s | 2 correlations, 46 795 positions, 47 ms |
-///
-/// **~1/80 of the cost**, on both units and on both boards. (For scale, the
-/// same hinted full read over a capture that *does* hold the panel is 2
-/// correlations — the expense is entirely the two fallbacks a miss runs
-/// through.)
-///
-/// This does at most two correlations instead, in this order:
-///
-/// 1. **The hint**, when one applies to this capture size: a single windowed
-///    match at the remembered scale, in the same [`FINE_RADIUS`] box the fine
-///    pass uses, around the remembered origin. Verified against [`NCC_FLOOR`]
-///    like any other anchor, so a stale hint is never *believed* — it is just
-///    the first place to look.
-/// 2. **One nominating correlation** at [`coarse_candidate`]'s scale, against
-///    [`COARSE_CANDIDATE_FLOOR`]. ONE scale, not a band, because the ÷4 pass is
-///    famously scale-insensitive here (it ranked 1.09 above the true 1.13 at
-///    0.968 vs 0.961) — the property that makes it useless as a *winner* is
-///    what makes one of its scales enough as a *detector*.
-///
-/// Step 2 runs even when a hint applied and missed, which is what bounds the
-/// recovery of a panel that moved or rescaled to one tick: without it a stale
-/// origin would hide the panel until the caller's periodic full read.
-///
-/// **Step 2 is only as good as its one scale.** It was the WIDTH seed until
-/// POE-234, which measured 1.397 against a true 1.000 on a 1920x1080 laptop and
-/// scored 0.66 — below the floor, on a panel that was open (2026-09-03). It is
-/// now [`table_scale`]'s measurement, or [`height_seed_scale`] on a capture size
-/// nobody has measured. What it still cannot see is a non-default in-game
-/// UI-scale slider, and the recovery from that is not here: it is
-/// [`anchor_for_loop`]'s hint — the shared screen scale, which a merc reading
-/// can have measured — and the cold-start sweep behind it, both of which
-/// `super::run` reaches on a cadence.
+/// The cheap detect tick: one full-resolution, windowed NCC at the placed
+/// Entrance origin. A successful score clears [`NCC_FLOOR`]; a lower score is
+/// returned as [`CheapDetect::Nothing`] for the caller's explicit fallback
+/// decision. A missing hint means there is no placed origin and therefore no
+/// correlation here.
 pub fn detect_cheap(img: &DynamicImage, hint: Option<&CheapHint>) -> CheapDetect {
     if let Some(h) = hint.filter(|h| h.calibration.applies_to(img)) {
         if let Some(found) = recheck(img, h) {
-            return CheapDetect::Anchored(found);
+            return if found.ncc >= NCC_FLOOR {
+                CheapDetect::Anchored(found)
+            } else {
+                CheapDetect::Nothing { best_ncc: found.ncc }
+            };
         }
     }
-    match coarse_candidate(img) {
-        Some(score) if score >= COARSE_CANDIDATE_FLOOR => CheapDetect::Candidate { coarse_ncc: score },
-        Some(score) => CheapDetect::Nothing { best_ncc: score },
-        None => CheapDetect::Nothing {
-            best_ncc: f32::NEG_INFINITY,
-        },
-    }
+    CheapDetect::Nothing { best_ncc: f32::NEG_INFINITY }
 }
 
 /// One full-resolution windowed match at the hint's scale and origin.
 ///
-/// `None` when the template does not fit, when the window is flat, or when the
-/// score is below [`NCC_FLOOR`] — the same refusal [`anchor_with_hint`] makes,
-/// for the same reason.
+/// `None` when the template does not fit or the window is flat. The score is
+/// returned even below [`NCC_FLOOR`] so [`detect_cheap`] can expose the exact
+/// failed recheck to the fallback policy without paying a second correlation.
 fn recheck(img: &DynamicImage, hint: &CheapHint) -> Option<Anchor> {
     let tmpl = template();
     let scale = hint.calibration.scale;
@@ -642,56 +568,11 @@ fn recheck(img: &DynamicImage, hint: &CheapHint) -> Option<Anchor> {
         hint.origin.1 - th as i32 / 2,
     );
     let (x, y, score) = locate(&level, &scaled, Some(box_around(top_left, FINE_RADIUS)))?;
-    (score >= NCC_FLOOR).then_some(Anchor {
+    Some(Anchor {
         origin: (x + tw as i32 / 2, y + th as i32 / 2),
         scale,
         ncc: score,
     })
-}
-
-/// The best ÷4 score at ONE nominating scale, over the whole capture.
-///
-/// The scale is [`table_scale`]'s when this capture size has been measured, and
-/// [`height_seed_scale`]'s otherwise. That order is the whole of the fix here:
-/// at 1920x1080 the retired WIDTH seed was 1.397 against a true 1.000 and this
-/// pass scored 0.66 — under [`COARSE_CANDIDATE_FLOOR`], so the loop never
-/// promoted and never found a panel that was on screen the whole time
-/// (measured 2026-09-03).
-///
-/// A height seed and not the width one, and not the shared slice either: the
-/// slice IS what `super::run` hands to [`anchor_for_loop`] as the hint, and it
-/// is the hint's job to convert. This pass runs on ticks that have no hint or
-/// whose hint just missed, so it needs the answer that costs nothing to know —
-/// and at the game's default UI scale [`height_seed_scale`] IS that answer,
-/// being `ui_scale * k` at the nominal unit. A player who moved the in-game
-/// slider is the case it misses, and the recovery for that is the capture
-/// loop's cold-start sweep ([`anchor_for_loop`]) and the hint step ahead of it
-/// — not this.
-///
-/// `None` when that scale produces a template the coarse level cannot hold.
-fn coarse_candidate(img: &DynamicImage) -> Option<f32> {
-    let level = coarse_level(img);
-    let tmpl = template();
-    let scale =
-        table_scale(img.width(), img.height()).unwrap_or_else(|| height_seed_scale(img.height()));
-    let size = (
-        (tmpl.width() as f32 * scale / COARSE_DIVISOR as f32) as u32,
-        (tmpl.height() as f32 * scale / COARSE_DIVISOR as f32) as u32,
-    );
-    if size.0 < 4
-        || size.1 < 4
-        || size.0 as usize >= level.gray.w
-        || size.1 as usize >= level.gray.h
-    {
-        return None;
-    }
-    let scaled = Gray::from_rgb(&image::imageops::resize(
-        tmpl,
-        size.0,
-        size.1,
-        FilterType::Triangle,
-    ));
-    locate(&level, &scaled, None).map(|(_, _, score)| score)
 }
 
 /// The scale the capture's own width implies.
@@ -705,23 +586,6 @@ fn seed_scale(width: u32) -> f32 {
     width as f32 / REFERENCE_SCREEN_WIDTH as f32
 }
 
-/// The scale the capture's own HEIGHT implies at the game's default UI scale.
-///
-/// `height / 1080`, and the divisor is [`SWEEP_REFERENCE_HEIGHT`] — the one
-/// full-screen capture ever measured, 1920x1080 anchoring at temple scale
-/// 1.000. So this reads 1.00 there by construction, which is the measurement,
-/// and not the 1.397 the retired width seed answered.
-///
-/// It is the same number the shared slice would give: `ui_scale * k` is
-/// `(height / 1200) * (1200 / 1080)` = `height / 1080` at the nominal unit
-/// [`TEMPLE_SCALE_PER_UI_SCALE`]'s denominator is taken from. That is why this
-/// is the right fallback for a screen nothing has measured — it is what the
-/// slice would say if the slice had an entry — and equally why it is only a
-/// FALLBACK: a real measurement of a non-default UI-scale slider disagrees with
-/// it, and that measurement reaches the anchor as the hint instead.
-fn height_seed_scale(height: u32) -> f32 {
-    height as f32 / SWEEP_REFERENCE_HEIGHT
-}
 
 /// The exhaustive sweep for a capture this wide, the last resort behind
 /// [`Scene::pyramid_sweep`].
@@ -790,8 +654,9 @@ impl Gray {
 ///
 /// `sum` and `sum_sq` are `(w+1) × (h+1)`, so a window's sum and sum of squares
 /// are O(1) and the only per-position work proportional to the template is the
-/// correlation itself. Both resolutions carry them: the nominating pass runs
-/// ~34 scales over the whole image and is where nearly all the time goes.
+/// correlation itself. Both resolutions carry them for the coarse-to-fine
+/// fallback searches; the placed detect path builds only the full-resolution
+/// level it needs.
 struct Level {
     gray: Gray,
     sum: Vec<f64>,
@@ -813,10 +678,8 @@ struct Scene {
 
 /// The capture at full resolution, with its prefix tables.
 ///
-/// Built apart from [`coarse_level`] so a caller can pay for one resolution
-/// instead of both. [`detect_cheap`] builds this one only when a hint applies,
-/// and the coarse one only when it has to nominate — which on a hinted MISS is
-/// both of them, because that path falls through from one to the other.
+/// Built apart from [`coarse_level`] so the placed detect path can pay for only
+/// this resolution. The fallback searches build [`Scene`] and pay for both.
 fn full_level(img: &DynamicImage) -> Level {
     Level::of(Gray::from_rgb(&img.to_rgb8()))
 }
@@ -1626,160 +1489,11 @@ mod tests {
         }
     }
 
-    /// With no hint the tick nominates rather than anchors: one *unwindowed*
-    /// ÷4 correlation at [`coarse_candidate`]'s one scale, above
-    /// [`COARSE_CANDIDATE_FLOOR`].
-    ///
-    /// Run on CAPTURES and no longer on the board crops (POE-234 WI-2). The
-    /// nominating scale is a property of the capture's own size, and a crop of
-    /// a panel is not a capture: `board-ref-1374.png` is 542 px tall, which
-    /// says nothing about the screen it was cut from. The crops passed this
-    /// against the retired WIDTH seed only because [`REFERENCE_SCREEN_WIDTH`]
-    /// was measured off one of them.
-    ///
-    /// Both branches of the scale choice are covered: 1920x1080 has a
-    /// [`MEASURED_SCALES`] row, and the resized capture does not, so it falls
-    /// to [`height_seed_scale`].
-    ///
-    /// One correlation, not the seeded band's fourteen: fails if the unhinted
-    /// path is widened back into a band, and fails if it starts verifying at
-    /// full resolution (which would register a windowed call).
+    /// A placed recheck that sees only noise is a miss and pays for one
+    /// windowed correlation, with no coarse or full-capture search behind it.
     #[test]
-    fn an_unhinted_cheap_detect_nominates_a_capture_in_one_coarse_pass() {
-        for (what, img) in unhinted_captures() {
-            let (found, tally) = search_tally(|| detect_cheap(&img, None));
-
-            let CheapDetect::Candidate { coarse_ncc } = found else {
-                panic!("{what}: expected a candidate, got {found:?}")
-            };
-            // The measured margin, not just the ordering: the two captures
-            // nominate at 0.9688 and 0.9495 (release, 2026-09-03), so pinning
-            // this against `COARSE_CANDIDATE_FLOOR` alone would let the pass
-            // degrade all the way to 0.70 — into the band where a busy game
-            // screen lives — while still passing.
-            assert!(
-                coarse_ncc >= 0.90,
-                "{what}: nominated at {coarse_ncc}; the measured captures score \
-                 0.9495+, and a pass that has drifted to the floor is not a \
-                 detector",
-            );
-            assert_eq!(tally.calls, 1, "{what}: one correlation");
-            assert_eq!(
-                tally.windowed_high_water, 0,
-                "{what}: the unhinted path must not verify at full resolution",
-            );
-        }
-    }
-
-    /// The seed the unhinted pass falls back on is the capture's HEIGHT over
-    /// the one height ever measured — not its width.
-    ///
-    /// Derived from the two units rather than from the function: 1920x1080
-    /// anchors at [`MEASURED_SCALES`]' 1.000, and the shared slice's own
-    /// definition puts a 1200 px screen at `ui_scale` 1.0, whose temple scale is
-    /// [`TEMPLE_SCALE_PER_UI_SCALE`] by definition. A height-tied seed hits both
-    /// on the nose; the retired width seed answers 1.397 at the first and is
-    /// what POE-234 was filed for.
-    #[test]
-    fn the_nominating_seed_follows_the_capture_height_and_not_its_width() {
-        let measured = table_scale(1920, 1080).expect("1920x1080 is the measured row");
-        assert!(
-            (height_seed_scale(1080) - measured).abs() < 1e-6,
-            "the measured capture's own height must seed its measured scale, not {}",
-            height_seed_scale(1080),
-        );
-        assert!(
-            (height_seed_scale(1200) - scale_for_ui_scale(1.0)).abs() < 1e-4,
-            "at the shared unit's reference height the seed IS k, not {}",
-            height_seed_scale(1200),
-        );
-        assert!(
-            (seed_scale(1920) - 1.397).abs() < 0.001,
-            "the width seed still says 1.397 there — it is out of this path, not fixed",
-        );
-    }
-
-    /// A screen with no plate on it is `Nothing`, hint or no hint — otherwise
-    /// the loop promotes to a full read on every tick and the cheap tick buys
-    /// nothing.
-    #[test]
-    fn a_capture_with_no_plate_is_nothing_with_or_without_a_hint() {
-        for (what, img) in unhinted_captures() {
-            let empty = DynamicImage::ImageRgb8(noise(img.width(), img.height()));
-            let hint = CheapHint {
-                calibration: AnchorCalibration {
-                    screen_w: img.width(),
-                    screen_h: img.height(),
-                    scale: height_seed_scale(img.height()),
-                },
-                origin: (img.width() as i32 / 2, img.height() as i32 / 2),
-            };
-
-            for hint in [None, Some(hint)] {
-                let found = detect_cheap(&empty, hint.as_ref());
-                let CheapDetect::Nothing { best_ncc } = found else {
-                    panic!("{what}: expected nothing, got {found:?}")
-                };
-                // Pinned as a margin and not against the floor alone: a pass
-                // that crept up to 0.69 on an empty screen still clears the
-                // floor and has no headroom left for a real game background.
-                assert!(
-                    best_ncc <= 0.35,
-                    "{what}: scored {best_ncc} on an empty screen; the measured \
-                     noise of these two sizes scores 0.2187 and 0.2488, and \
-                     {COARSE_CANDIDATE_FLOOR} is the floor this has to stay \
-                     clear of",
-                );
-            }
-        }
-    }
-
-    /// A panel that moved — the hint's scale still applies, its origin does
-    /// not — is found again on the SAME tick, as a candidate.
-    ///
-    /// This is what bounds the recovery of a moved or rescaled panel to one
-    /// tick. Fails if the hinted path returns early on its own miss, which
-    /// would hide the panel until the caller's periodic full read.
-    ///
-    /// On the CAPTURE, for [`an_unhinted_cheap_detect_nominates_a_capture_in_one_coarse_pass`]'s
-    /// reason: the fall-through it exercises is the nominating pass, whose scale
-    /// only means anything on a whole screen.
-    #[test]
-    fn a_hint_pointing_at_the_wrong_place_still_nominates_the_panel_it_moved_from() {
-        let img = full_screen_1080p();
-        let stale = CheapHint {
-            calibration: AnchorCalibration {
-                screen_w: img.width(),
-                screen_h: img.height(),
-                scale: LIVE_SCREEN_SCALE,
-            },
-            origin: (LIVE_SCREEN_ORIGIN.0 - 200, LIVE_SCREEN_ORIGIN.1 - 120),
-        };
-
-        let found = detect_cheap(&img, Some(&stale));
-
-        assert!(
-            matches!(found, CheapDetect::Candidate { .. }),
-            "a stale origin must fall through to the nominating pass, got {found:?}",
-        );
-    }
-
-    /// The point of the whole tick, as a ratio against the path it replaces:
-    /// on a capture with no panel — the state the capture loop lives in — the
-    /// cheap tick costs a bounded couple of correlations where
-    /// [`super::super::reader::read_layout_with_hint`] runs its hint, the
-    /// seeded band AND the full sweep.
-    ///
-    /// Measured on the real capture sizes (release, 2026-08-19): 2 correlations
-    /// and 46 795 positions against 105 and 3 860 177 — see [`detect_cheap`].
-    /// Asserted here on a small frame so the full path is affordable in a unit
-    /// test, and as a ratio against that path rather than as a pinned number,
-    /// so it cannot rot when the sweep's constants move.
-    ///
-    /// Fails if the cheap tick ever reaches [`table_band`] or [`full_sweep`].
-    #[test]
-    fn the_cheap_tick_costs_an_order_of_magnitude_less_than_the_read_it_gates() {
-        let empty = DynamicImage::ImageRgb8(noise(480, 360));
+    fn a_placed_recheck_below_the_floor_is_nothing_after_one_windowed_match() {
+        let img = DynamicImage::ImageRgb8(noise(480, 360));
         let hint = CheapHint {
             calibration: AnchorCalibration {
                 screen_w: 480,
@@ -1788,30 +1502,18 @@ mod tests {
             },
             origin: (240, 180),
         };
-        let calibration = hint.calibration;
 
-        let (found, cheap) = search_tally(|| detect_cheap(&empty, Some(&hint)));
-        assert!(matches!(found, CheapDetect::Nothing { .. }), "got {found:?}");
+        let (found, tally) = search_tally(|| detect_cheap(&img, Some(&hint)));
+
+        let CheapDetect::Nothing { best_ncc } = found else {
+            panic!("expected the placed recheck to miss, got {found:?}");
+        };
+        assert!(best_ncc < NCC_FLOOR, "noise scored {best_ncc}");
+        assert_eq!(tally.calls, 1, "the placed path performs one NCC");
         assert_eq!(
-            cheap.calls, 2,
-            "the cheap tick is one windowed match plus one nominating pass",
-        );
-
-        let (_, full) = search_tally(|| {
-            super::super::reader::read_layout_with_hint(&empty, Some(&calibration))
-        });
-
-        assert!(
-            full.calls >= 10 * cheap.calls,
-            "the read this gates ran {} correlations to the cheap tick's {}",
-            full.calls,
-            cheap.calls,
-        );
-        assert!(
-            full.positions >= 10 * cheap.positions,
-            "the read this gates scored {} positions to the cheap tick's {}",
-            full.positions,
-            cheap.positions,
+            tally.windowed_high_water,
+            ((2 * FINE_RADIUS + 1) as usize).pow(2),
+            "the only search is the placed-origin window",
         );
     }
 
@@ -1822,9 +1524,8 @@ mod tests {
     /// anchor without the exhaustive sweep.
     ///
     /// The board fixtures are panel CROPS, so they cannot exercise a path whose
-    /// input is the capture's own size — the cold-start sweep's range, and
-    /// [`coarse_candidate`]'s nominating scale. This one is the frame the laptop
-    /// dump carried, at its own resolution.
+    /// input is the capture's own size. This one is the frame the laptop dump
+    /// carried, at its own resolution.
     fn full_screen_1080p() -> DynamicImage {
         let path = format!(
             "{}/tests/fixtures/temple/screen-live-1920x1080.png",
@@ -1840,24 +1541,6 @@ mod tests {
     const LIVE_SCREEN_SCALE: f32 = 1.00;
     /// See [`LIVE_SCREEN_SCALE`].
     const LIVE_SCREEN_ORIGIN: (i32, i32) = (960, 713);
-
-    /// The captures the unhinted nominating pass is exercised on: the measured
-    /// one, and the same screen resampled to a size [`MEASURED_SCALES`] has no
-    /// row for.
-    ///
-    /// Resampling is what makes the second one a fair test rather than a
-    /// synthetic one: the plate art shrinks with the frame, so the resized
-    /// capture's true temple scale is `900/1080` of the original's measured
-    /// 1.000 — which is exactly what [`height_seed_scale`] answers for it. A
-    /// seed tied to the WIDTH would answer 1.164 there and nominate nothing.
-    fn unhinted_captures() -> Vec<(&'static str, DynamicImage)> {
-        let measured = full_screen_1080p();
-        let resized = measured.resize_exact(1600, 900, FilterType::Triangle);
-        vec![
-            ("1920x1080 (a measured row)", measured),
-            ("1600x900 (no measured row — the height seed)", resized),
-        ]
-    }
 
     /// The measurement the whole batch rests on: this capture anchors at scale
     /// 1.000, Entrance centre (960, 713), NCC 0.99999 (laptop dump
@@ -2039,7 +1722,7 @@ mod tests {
         // exhaustive pass is affordable in a unit test.
         let empty = DynamicImage::ImageRgb8(noise(1400, 200));
 
-        let (bounded, cheap) = search_tally(|| anchor_for_loop(&empty, None, true, &|| false));
+        let (bounded, cheap) = search_tally(|| anchor_for_loop(&empty, None, &|| false));
         let (exhaustive, dear) = search_tally(|| anchor_with_hint(&empty, None));
 
         assert!(
@@ -2062,10 +1745,10 @@ mod tests {
     ///
     /// The temple scale tracks the capture HEIGHT ([`SWEEP_REFERENCE_HEIGHT`]:
     /// 1080 px anchors at 1.000), and the ceiling is SOFT — a scale past it is
-    /// answered approximately rather than refused, and `super::run` persists
-    /// that approximate answer and shuts its sweep gate on it. So a capture
-    /// whose own height implies a scale outside the grid is the one case that
-    /// must not exist.
+    /// answered approximately rather than refused. A caller must apply its
+    /// placement and corroboration policy before accepting that result as screen
+    /// geometry. So a capture whose own height implies a scale outside the grid
+    /// is the one case that must not exist.
     ///
     /// Fails if the ceiling goes back to a fixed 2.00, which a 2880 px screen
     /// is already past.
@@ -2100,42 +1783,6 @@ mod tests {
         let (_, hi) = sweep_range(600);
 
         assert!(hi >= 2.00, "a 600 px capture narrowed the ceiling to {hi}");
-    }
-
-    /// A refused sweep budget stops the chain at the table, and the loop's
-    /// promoted read is what that protects.
-    ///
-    /// The case: a screen whose background nominates above
-    /// [`COARSE_CANDIDATE_FLOOR`] promotes on EVERY tick, and a promoted read
-    /// reaches this chain with no calibration and no table row. With the sweep
-    /// ungated that is 5.3 s of correlation per tick, for ever. With
-    /// `may_sweep = false` it is the two cheap attempts and a miss.
-    ///
-    /// Asserted as the cost, not as the outcome: both calls answer
-    /// `AnchorNotFound` on a frame with no plate, so an assertion on the RESULT
-    /// alone would pass with the flag ignored entirely.
-    #[test]
-    fn a_refused_sweep_budget_stops_the_chain_before_the_sweep() {
-        let empty = DynamicImage::ImageRgb8(noise(600, 400));
-
-        let (refused, cheap) = search_tally(|| anchor_for_loop(&empty, None, false, &|| false));
-        let (allowed, dear) = search_tally(|| anchor_for_loop(&empty, None, true, &|| false));
-
-        assert!(
-            refused.is_err() && allowed.is_err(),
-            "a frame with no plate anchors either way: {refused:?} / {allowed:?}"
-        );
-        assert_eq!(
-            cheap.calls, 0,
-            "a refused budget still ran {} correlations; with no hint and no \
-             table row for this size there is nothing left but the sweep",
-            cheap.calls
-        );
-        assert!(
-            dear.calls > 0,
-            "the allowed budget ran no correlations either, so this test is not \
-             comparing the two"
-        );
     }
 
     /// The two SEARCHES agree on the fixture: [`Scene::pyramid_sweep`] and
