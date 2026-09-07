@@ -142,9 +142,9 @@ endif
 		desktop/ $(DESKTOP_WIN_DIR)/
 
 # The Windows RELEASE exe of the synced copy, no installer (POE-249, 2026-09-07).
-# A debug `tauri dev` build reads the temple sheet 10-20x slower than release
-# (measured 4247 ms vs 666 ms on the PC), so a timing question is answered on
-# this build. Close a running ProfitOfExile.exe first: Windows will not
+# A `tauri dev` build leaves this crate unoptimized and reads the temple sheet
+# 10-20x slower than release (measured 4247 ms vs 666 ms on the PC), so a
+# timing question is answered on this build. Close a running ProfitOfExile.exe first: Windows will not
 # overwrite a running binary and cargo fails at the link step. Output:
 # $(DESKTOP_WIN_DIR)/src-tauri/target/release/ProfitOfExile.exe
 desktop-release-windows: desktop-sync ## Sync, then build the Windows release exe (no installer); close the running app first

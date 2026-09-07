@@ -56,17 +56,16 @@ windows = { version = "0.58", features = [
 ] }
 xcap = "0.0.13"
 
-# Dev profile: the app's hot loops (screen-capture conversion, the anchor
-# correlation, the OCR crop/bitmap prep) are pixel loops, and an unoptimized
-# build runs them 10-20x slower than release — measured 2026-09-06 on the PC:
-# a full temple read took 4247 ms on `tauri dev` and 666 ms on release, the
-# same code. Dependencies at opt-level 3 (their cost is compiled once), this
-# crate at 1 so incremental rebuilds stay quick. Judge it from app.log's
-# `Temple: read timings` line; if `cheap detect` / `anchor` are still an order
-# of magnitude off release, raise the crate to 2. The release profile is
-# untouched (docs/DEV-SETUP.md, "Quick rebuilds").
-[profile.dev]
-opt-level = 1
-
+# Dev profile, measured on the PC 2026-09-07 under `npx tauri dev` with a
+# one-line change in temple/run.rs: this crate at opt-level 1 rebuilt in 70 s,
+# at 0 in 16 s; a from-scratch crate build took ~4 min at 1 and 87 s at 0. So
+# this crate stays at the default 0, and the pixel loops that live here (the
+# anchor correlation, the OCR crop prep) run unoptimized in dev: an
+# all-unoptimized dev build measured a full temple read at 4247 ms against
+# 666 ms on release (2026-09-06). Timing questions go to the release exe
+# (`make desktop-release-windows`, docs/DEV-SETUP.md "Quick rebuilds").
+# Dependencies at opt-level 3: compiled once (~7.5 min for all 424 of them,
+# paid again only after `cargo clean` or a dependency bump), never part of an
+# incremental rebuild, and the capture/image crates run at release speed.
 [profile.dev.package."*"]
 opt-level = 3
