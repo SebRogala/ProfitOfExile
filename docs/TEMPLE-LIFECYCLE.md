@@ -136,9 +136,10 @@ it first, and at worst one read pays for it. What this bought: `advise` was **19
 ranking — 13-22 ms of it, `advisor/mod.rs::the_conditional_ranking_cost_on_case_eight` — lumped
 in. The read line now measures the two apart, and says which of the two the valuation was.
 
-Seven residuals the rules above produce, all ACCEPTED with their answer named (POE-249, owner
-decisions 1, 3 and 4 of the plan review; the last three re-derived under WI-1, 2026-09-07, and
-the seventh added by WI-1's fix round the same day):
+Nine residuals the rules above produce, all ACCEPTED with their answer named (POE-249, owner
+decisions 1, 3 and 4 of the plan review; the WI-1 rows re-derived 2026-09-07, the failing-capture
+residual added by WI-1's fix round the same day, and the retries-owed residual by the delivery
+audit that found the list short of it, also 2026-09-07):
 
 - **A START with no incursion run** keeps the arm and the notice up until the zone changes, Alva
   speaks again, or the player opens the sheet and closes it — which under WI-1 is a third exit
@@ -149,6 +150,18 @@ the seventh added by WI-1's fix round the same day):
   2026-09-07 as the price of not probing between incursions. The room diamond is unaffected — it
   lives with the incursion, not with the capture (POE-248). It does not apply inside The Temple
   of Atzoatl, which row 3 carves out.
+- **A sheet that closes while retry rounds are still owed ends the cycle anyway**: an UNCLEAN
+  first read loses the `RETRIES` = 2 more rounds row 2 buys it, because `run::cycle_complete` asks
+  `LoopState::has_read`, which is `board.key == key` alone and never asks whether the board is
+  `unclean` with `retries_left` above zero — the question `LoopState::gate` DOES ask on the same
+  tick when it decides the OCR. It follows from the owner's *"once the full sheet is read once in
+  the incursion, we stop reading the sheet … once the sheet is closed, we can already stop
+  OCRing"* (2026-09-07, quoted in full below): a read that landed is a read, clean or not. The
+  answer is **Re-arm**, which bumps `temple_rearm` so the read in hand is a read of ANOTHER key —
+  `LoopState::note_read`'s first-look arm, a whole `RETRIES` budget and round 1 again. The
+  [Overlay Guide](OVERLAY-GUIDE.md)'s retry smoke item says the same thing from the other side,
+  as a precondition: keep the sheet OPEN for the whole check, because closing it ends the cycle
+  instead of spending the budget.
 - **Inside the temple the loop keeps probing for the whole run**, which is the one place WI-1
   deliberately did not stop it. The sheet is the navigation aid there and the run writes no line
   the gate could re-arm on, so the alternative was a Re-arm per room. The area line out ends it.
