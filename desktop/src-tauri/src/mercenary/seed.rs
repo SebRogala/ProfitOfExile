@@ -1309,15 +1309,13 @@ mod tests {
     /// The corpus of live crops POE-207 measured the descriptor on.
     const CROP_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/merc-icon-crops");
 
-    /// The server's embedded name → URL maps, read from the repo rather than
-    /// mirrored: a `gem` these files do not carry 404s at runtime, and a copy
-    /// here would only tell us that the copy agreed with itself.
-    ///
-    /// A DIRECTORY of category files since POE-135, and `gem_icon_keys` unions
-    /// all of them for the same reason the server merges them: the contract is
-    /// what `/api/icon/gems/{name}` answers for, which is the merged gem map and not
-    /// any one category.
-    const GEM_ICON_URLS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../internal/icons/urls");
+    /// The server's embedded gem URL map. This is deliberately the gems map,
+    /// not the directory: `art_url` calls `/api/icon/gems/{name}`, while the
+    /// items and temple maps have different typed routes.
+    const GEM_ICON_URLS: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../internal/icons/urls/gems.json"
+    );
 
     /// Rewrites `seed-map.json` instead of checking it.
     const UPDATE_ENV: &str = "MERC_SEED_MAP_UPDATE";
@@ -1379,31 +1377,30 @@ mod tests {
         lowest.into_iter().collect()
     }
 
-    /// The names `/api/icon/gems/{name}` will serve art for: the UNION of every
-    /// category map in [`GEM_ICON_URLS`], which is what the server's loader
-    /// merges and therefore what the route answers for.
+    /// The names `/api/icon/gems/{name}` will serve art for: the entries in the
+    /// embedded gems map. Items and temple entries belong to other typed routes.
     fn gem_icon_keys() -> std::collections::BTreeSet<String> {
-        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(GEM_ICON_URLS)
-            .expect("internal/icons/urls is in this repo")
-            .map(|entry| entry.expect("read internal/icons/urls").path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
-            .collect();
-        files.sort();
-        assert!(!files.is_empty(), "internal/icons/urls carries no *.json category map");
+        let raw = std::fs::read_to_string(GEM_ICON_URLS)
+            .unwrap_or_else(|e| panic!("read {GEM_ICON_URLS}: {e}"));
+        serde_json::from_str::<std::collections::BTreeMap<String, String>>(&raw)
+            .unwrap_or_else(|e| panic!("parse {GEM_ICON_URLS}: {e}"))
+            .into_keys()
+            .collect()
+    }
 
-        let mut keys = std::collections::BTreeSet::new();
-        for path in files {
-            let raw = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-            let part = serde_json::from_str::<std::collections::BTreeMap<String, String>>(&raw)
-                .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
-            for key in part.into_keys() {
-                if !keys.insert(key.clone()) {
-                    panic!("duplicate icon key {key:?} across category maps");
-                }
-            }
-        }
-        keys
+    #[test]
+    fn gem_icon_keys_use_only_the_gems_category() {
+        let keys = gem_icon_keys();
+
+        assert!(keys.contains("Absolution"), "the gem map must supply gem art keys");
+        assert!(
+            !keys.contains("Gift to the Goddess"),
+            "the items map must not supply keys for /api/icon/gems"
+        );
+        assert!(
+            !keys.contains("Apep's Slumber"),
+            "the temple map must not supply keys for /api/icon/gems"
+        );
     }
 
     /// The explicit overrides, then the two naming rules, in order (POE-208

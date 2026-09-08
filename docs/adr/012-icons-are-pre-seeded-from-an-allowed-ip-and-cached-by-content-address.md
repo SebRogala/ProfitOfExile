@@ -405,10 +405,13 @@ independently to every map/output pair.
 
 The production migration is owner-run and was not executed by this change:
 production gems/ contains the 763 gem files plus two lab-offering files today.
-Move those two offering files into items/ before deploy, and seed temple/ as a
-new subdirectory with its 32 files. The final gems/ directory contains gem
-files only; leaving the offerings there is not harmless because items/ will not
-read them.
+Copy those two offering files into items/ before deploy, and seed temple/ as a
+new subdirectory with its 32 files. Those are the required states. The old
+offering files may remain in gems/ because the gems cache reads only filenames
+produced by gems.json; removing them is optional hygiene. Perform that cleanup
+by pruning a prepared local root and clearing the old files only through the
+normal full cache re-upload/replacement chain. The running server image has no
+shell, and docker cp only copies in, so production has no in-place sweep.
 The full operator procedure and the offline migrate commands are in
 [ICONS.md](../ICONS.md).
 
