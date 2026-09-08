@@ -271,3 +271,18 @@ registration without replacing the frame verification.
 
 The row-mismatch message remains change-gated: a correct read produces no line,
 and an unchanged mismatch is not re-emitted on each detect tick.
+
+## Amendment: the gem tooltip region is a fixed rule, not a scaled literal (2026-09-08)
+
+Owner ruling: the hovered gem's name prints anchored to the top border of the
+screen, so the lab gem region is not an anchor (there is nothing on screen to
+anchor it to) and not the shipped `[30, 45, 550, 75]` literal (which also took
+the tag and level lines). It is `[client.x, client.y, client.w −
+INVENTORY_PANEL_W_REF · ui_scale, GEM_NAME_BAND_H_REF · ui_scale]`: from the
+screen's left edge to the right-docked inventory's left edge, exactly one name
+line tall, never taller. The two reference px (731 and 44) are PROVISIONAL,
+measured off one 1920×1080 screenshot at ui_scale 0.90 (inventory frame at
+≈1262 px, name band ≈40 px), to be corrected from the OCR Regions preview on
+the game. An unmeasured screen gets the same rule at 1080p, `[0, 0, 1262, 40]`.
+The POE-233 per-user override deleted by POE-268 is not restored; the rule
+replaces it.
