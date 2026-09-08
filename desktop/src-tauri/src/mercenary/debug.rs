@@ -77,7 +77,7 @@ pub struct MercDebugReport {
     /// PoE surface listing skill names — whichever of the three
     /// ([`geometry::AnchorKind`]) this frame carried.
     ///
-    /// TEXT only: no position test is applied here, unlike `geometry::detect`,
+    /// TEXT only: no position test is applied here, unlike `geometry::detect_reason`,
     /// which additionally requires the line to sit within
     /// `wager_search_pitches` of the rows. So a report with an `anchor_text`
     /// and `detected: false` is a real and distinct state — the line was on

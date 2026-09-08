@@ -578,7 +578,7 @@ pub struct Thresholds {
     /// and the digit rule refuses it on the thing that actually distinguishes
     /// a label from a word.
     ///
-    /// Two further gates stand behind both halves. `geometry::detect` reaches
+    /// Two further gates stand behind both halves. `geometry::detect_reason` reaches
     /// this predicate only after two skill names have clustered into a
     /// left-aligned column, and then only accepts the line if it sits ABOVE
     /// row 1 within `wager_search_pitches` of it.
@@ -694,7 +694,7 @@ impl Default for BadgeGeometry {
 
 /// Recruit-window geometry in **reference px at scale 1.0**, plus the
 /// thresholds that go with it. The runtime scale `s` is derived per capture
-/// from the observed row pitch (see [`geometry::detect`]).
+/// from the observed row pitch (see [`geometry::detect_reason`]).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct MercGeometry {

@@ -198,7 +198,7 @@ pub const SEED_ART_FRAC: f32 = 1.125;
 ///
 /// **Chosen so the MEDIAN best alignment is (0, 0)** on the only
 /// frame-registered cells this repo holds, not so the score is highest. The
-/// search is for `geometry::detect`'s per-cell jitter; the calibration owes it
+/// search is for `geometry::detect_reason`'s per-cell jitter; the calibration owes it
 /// a zero mean.
 ///
 /// # Re-measured against registered cells (POE-215 WI-B, 2026-08-28)
@@ -294,7 +294,7 @@ pub(super) const SEED_ART_PREFIT: SeedArt = SeedArt {
     bg: SEED_ART_BG,
 };
 
-/// The outer cell size the detect emits at this scale — `geometry::detect`'s
+/// The outer cell size the detect emits at this scale — `geometry::detect_reason`'s
 /// own expression, so a seed is rendered into the cell the loop will read.
 pub fn cell_px(g: &MercGeometry, scale: f32) -> i32 {
     (g.cell_size * scale).round().max(1.0) as i32
@@ -1661,7 +1661,7 @@ mod tests {
     /// clearing `icon_match` — so that a ≤3 px calibration error could not
     /// hide inside the alignment search. It is not a property of the
     /// calibration alone, because the corpus crops carry
-    /// `geometry::detect`'s own per-cell jitter (POE-207 measured the same
+    /// `geometry::detect_reason`'s own per-cell jitter (POE-207 measured the same
     /// art in two cells at 0.45-0.70 unaligned): a crop cut 3 px off centre
     /// scores badly unshifted however right the constants are.
     ///
@@ -2232,7 +2232,7 @@ mod tests {
         }
         // The systematic component of the offset has to be ZERO, which is what
         // a median best shift of (0, 0) says: the ±3 px search exists for the
-        // per-cell jitter `geometry::detect` produces, and a calibration that
+        // per-cell jitter `geometry::detect_reason` produces, and a calibration that
         // spends it on a constant error leaves nothing for the cell that
         // jitters the same way. Ranking by score alone picks exactly that
         // calibration — the first run of this sweep did, and its winner's best
@@ -2323,7 +2323,7 @@ mod tests {
     ///
     /// 1. Every corpus-graded family's clean crops reach `icon_match` against
     ///    their own seed, and the MEDIAN best alignment over all of them is
-    ///    (0, 0) — the ±3 px search is spent on `geometry::detect`'s per-cell
+    ///    (0, 0) — the ±3 px search is spent on `geometry::detect_reason`'s per-cell
     ///    jitter, not on a constant this file got wrong. A systematic error
     ///    shows up in the median; per-cell jitter cannot move it.
     /// 1b. At least [`UNSHIFTED_FLOOR`] of those crops clear `icon_match`

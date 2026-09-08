@@ -723,7 +723,10 @@ fn text_anchor_at(
 /// Whether every detected row centre remains inside the last live panel rect.
 ///
 /// This is retained for the detect-reason regression suite and the occlusion
-/// path. Normal placed reads use [`placed_layout`] and do not locate or grow a
+/// path. The occlusion shape it exists for, measured on the 2026-08-26 smoke:
+/// a tooltip drawn over the lower rows leaves the header, the wager line and
+/// the top two of six skill rows, and the frame then detects as a two-row
+/// layout for a six-row window. Normal placed reads use [`placed_layout`] and do not locate or grow a
 /// session rectangle from OCR rows.
 pub(super) fn panel_anchor(
     rect: Option<[i32; 4]>,
