@@ -39,30 +39,33 @@ pub struct OcrRectView {
     pub source: String,
 }
 
-/// The gem name tooltip rect in REFERENCE px — the 1920x1200 unit
-/// [`ssot::ScreenSlice::ui_scale`] measures, where 1080p is 0.90 (the game's UI
-/// scales with screen HEIGHT).
+/// The gem name tooltip region is a FIXED rect, not an anchor — there is
+/// nothing on screen to anchor it to (owner ruling, 2026-09-08). The hovered
+/// gem's name prints anchored to the TOP border of the screen, so the region
+/// runs from the screen's left edge to the opened inventory's left edge and is
+/// exactly one name line tall — never taller: below the name sit the tag and
+/// level lines, which are not read.
 ///
-/// **PROVISIONAL, from one shipped-geometry derivation.** The number it comes
-/// from is the shipped 1080p literal [`SHIPPED_GEM_REGION_1080P`], divided by
-/// 0.90 and rounded:
-/// `{30, 45, 550, 75} / 0.90 = {33.3, 50, 611.1, 83.3}`. The rounding is
-/// lossless in the direction that matters — scaling these back by 0.90 and
-/// rounding reproduces the shipped literal exactly, which
-/// `the_gem_reference_rect_reproduces_the_shipped_1080p_rect` pins — so no
-/// 1080p user's crop moves by this change.
+/// The inventory is right-docked, so its left edge is `client_w -
+/// INVENTORY_PANEL_W_REF · ui_scale`; the band is `GEM_NAME_BAND_H_REF ·
+/// ui_scale` tall. Both numbers are in REFERENCE px — the 1920x1200 unit
+/// [`ssot::ScreenSlice::ui_scale`] measures, where 1080p is 0.90.
 ///
-/// **Aspect assumption.** `ui_scale` is tied to HEIGHT, so scaling `x`/`w` by it
-/// assumes the layout is as wide, relative to its height, as the reference —
-/// 16:9 or the 16:10 reference itself. Both smoke machines are 1920 wide, so a
-/// non-16:9 monitor is UNVERIFIED. Nothing here centres or letterboxes the rect;
-/// inventing a centring model without a screenshot to check it against would be
-/// a guess wearing arithmetic.
-pub const GEM_REGION_REF: CaptureRegion = CaptureRegion { x: 33, y: 50, w: 611, h: 83 };
+/// **PROVISIONAL, measured off ONE screenshot** (the owner's, 2026-09-08,
+/// 1920x1080 at ui_scale 0.90, taken 1:1): the inventory frame's left edge at
+/// ≈1262 px → 658 px wide → 731 reference px; the name band ≈40 px → 44
+/// reference px. Settings → OCR Regions → Preview shows the result on the
+/// game; correct these two numbers there, not the rule.
+pub const INVENTORY_PANEL_W_REF: i32 = 731;
+/// See [`INVENTORY_PANEL_W_REF`].
+pub const GEM_NAME_BAND_H_REF: i32 = 44;
 
 /// The font panel rect (craft options + "Crafts Remaining") in REFERENCE px.
-/// Same derivation and PROVISIONAL status as [`GEM_REGION_REF`]:
-/// `{460, 270, 530, 350} / 0.90 = {511.1, 300, 588.9, 388.9}`.
+/// **PROVISIONAL, from one shipped-geometry derivation**: the shipped 1080p
+/// literal [`SHIPPED_FONT_PANEL_1080P`] divided by 0.90 and rounded,
+/// `{460, 270, 530, 350} / 0.90 = {511.1, 300, 588.9, 388.9}`; scaling back by
+/// 0.90 reproduces the literal. `ui_scale` is tied to HEIGHT, so scaling `x`/`w`
+/// by it assumes a 16:9 or 16:10 layout; a non-16:9 monitor is UNVERIFIED.
 pub const FONT_PANEL_REF: CaptureRegion = CaptureRegion { x: 511, y: 300, w: 589, h: 389 };
 
 /// What the placement layer assumes when NOTHING has measured a screen: that
@@ -78,12 +81,9 @@ pub const FONT_PANEL_REF: CaptureRegion = CaptureRegion { x: 511, y: 300, w: 589
 /// instead of the assumption being silent.
 pub const ASSUMED_UI_SCALE: f32 = 0.90;
 
-/// The gem rect this app shipped with, a fixed 1080p literal. Two live roles:
-/// it is the value the placement layer returns for an unmeasured screen.
-pub const SHIPPED_GEM_REGION_1080P: CaptureRegion = CaptureRegion { x: 30, y: 45, w: 550, h: 75 };
-
-/// The font panel rect this app shipped with. Same two roles as
-/// [`SHIPPED_GEM_REGION_1080P`].
+/// The font panel rect this app shipped with, a fixed 1080p literal: the value
+/// the placement layer returns for an unmeasured screen. (The gem region has no
+/// shipped literal any more; an unmeasured screen gets the rule at 1080p.)
 pub const SHIPPED_FONT_PANEL_1080P: CaptureRegion =
     CaptureRegion { x: 460, y: 270, w: 530, h: 350 };
 
@@ -4840,7 +4840,7 @@ mod tests {
         let rects = assemble_ocr_rects(&placements, Some(&screen), None);
         let gem_view = rects.iter().find(|rect| rect.key == "lab.gem").unwrap();
         let font_view = rects.iter().find(|rect| rect.key == "lab.font").unwrap();
-        assert_eq!(gem_view.rect, Some([30, 45, 550, 75]));
+        assert_eq!(gem_view.rect, Some([0, 0, 1262, 40]));
         assert_eq!(font_view.rect, Some([460, 270, 530, 350]));
         assert_eq!(gem_view.source, "seed");
         assert_eq!(font_view.source, "seed");
