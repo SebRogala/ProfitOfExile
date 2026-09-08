@@ -1389,7 +1389,7 @@ fn read_plate(
         .collect::<Vec<_>>()
         .join(" ");
     let numeral = read_numeral(recognizer, img, lattice, slot);
-    rooms::cross_check_numeral(rooms::match_room_name(&joined), numeral)
+    rooms::match_plate_name(&joined, numeral)
 }
 
 fn read_numeral(
@@ -2800,6 +2800,34 @@ mod tests {
         assert_eq!(
             super::super::rooms::match_room_name("Workshop Gemcutter's"),
             Match::Unknown,
+        );
+    }
+
+    // The B1 plate of PC debug dump `1788822736579` (2026-09-08) through the
+    // seam: the name strip read `SANCTUMPF` / `IMMORTALITY` and the numeral
+    // crop `111`. The join alone is Unknown — 0.0350 of lead over `Sanctum of
+    // Vitality`, under `rooms::LEAD` — and the numeral is what names the
+    // plate, so this fails if `read_plate` hands the numeral to a cross-check
+    // that can only demote.
+    #[test]
+    fn a_plates_numeral_settles_a_name_read_whose_lead_is_short() {
+        let img = blank(1374, 862);
+        let lattice = Lattice::new((673, 682), 0.99);
+        let recognizer = Canned {
+            name: vec![boxed("SANCTUMPF", 0, 0), boxed("IMMORTALITY", 0, LINE_PITCH)],
+            numeral: vec![boxed("111", 0, 0)],
+        };
+
+        let board = read_board(&recognizer, &img, &lattice, &|| false);
+
+        assert!(board
+            .iter()
+            .all(|r| r.identity.identity().map(|id| id.display_name())
+                == Some("Sanctum of Immortality")));
+        assert_eq!(
+            super::super::rooms::match_room_name("SANCTUMPF IMMORTALITY"),
+            Match::Unknown,
+            "the name alone is the ambiguous read the numeral settles",
         );
     }
 

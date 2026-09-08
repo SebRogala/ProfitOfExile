@@ -596,6 +596,54 @@ fn debug_capture_blocking(
     ));
     report.notes.extend(lines.iter().take(60).map(|l| l.text.clone()));
 
+    // The plate OCR the loop does not keep. For each plate the read could not
+    // name: the name strip and the numeral box as crops, and what the engine
+    // returned for each — so the dump says WHY a plate is unread rather than
+    // only that it is (the 2026-09-08 `Sanctum of Immortality` dump could
+    // not). Two more OCR calls per unread plate, none on a board that read
+    // clean. The strip's lines are also in `ocr-lines.json`, boxed, so a
+    // wrong join order (`super::panel::read_plate`) is visible too.
+    let started = std::time::Instant::now();
+    for reading in rooms.iter().filter(|r| !r.identity.is_known()) {
+        let slot = reading.slot.as_str();
+        for (kind, rect) in [
+            ("plate", panel::name_strip(&lattice, reading.slot)),
+            ("numeral", panel::numeral_box(&lattice, reading.slot)),
+        ] {
+            let name = format!("{kind}-{slot}");
+            let Some((crop, origin)) = super::run::crop_clipped(&img, rect) else {
+                let note = format!("{name} {rect:?} falls outside the capture");
+                crate::app_log(&app, format!("Temple debug: {note}"));
+                report.notes.push(note);
+                continue;
+            };
+            let file = format!("{name}.png");
+            if let Some(line) = note_write(&mut report, &file, crop.save(dir.join(&file))) {
+                crate::app_log(&app, format!("Temple debug: {line}"));
+            }
+            match panel::crop_lines(&crop, origin) {
+                Ok(read) => {
+                    let texts: Vec<&str> = read.iter().map(|l| l.text.as_str()).collect();
+                    let note = format!("{name} — OCR {texts:?}");
+                    crate::app_log(&app, format!("Temple debug: {note}"));
+                    report.notes.push(note);
+                    dumped.push(DumpRegion {
+                        region: name,
+                        rect,
+                        origin: [origin.0, origin.1],
+                        lines_in_engine_order: read.iter().map(dump_line).collect(),
+                    });
+                }
+                Err(e) => {
+                    let note = format!("{name} OCR failed — {e}");
+                    crate::app_log(&app, format!("Temple debug: {note}"));
+                    report.notes.push(note);
+                }
+            }
+        }
+    }
+    report.timings.push(timing("unread plate ocr", started));
+
     // The whole read, next to the summary rather than instead of it: `notes`
     // is what a user pastes into a bug report, this is what answers a question
     // the summary raised. Written before `report.json`, which names it.
@@ -666,7 +714,9 @@ pub struct DumpLine {
 #[serde(rename_all = "camelCase")]
 pub struct DumpRegion {
     /// [`super::slice::PANEL_REGION`] or [`super::slice::REMAINING_REGION`] —
-    /// `super::run::text_regions` is what fills it.
+    /// `super::run::text_regions` is what fills it — or, for a plate the read
+    /// could not name, `plate-<slot>` (its name strip) and `numeral-<slot>`
+    /// (its tier numeral box).
     pub region: String,
     /// The ROI this region was cropped at, capture px.
     pub rect: [i32; 4],
