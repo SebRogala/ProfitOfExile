@@ -118,11 +118,21 @@ This section is an owner-run procedure. It was not executed by the route/layout
 change.
 
 Production gems/ currently contains the 763 gem files plus the two lab-offering
-files. Before deploying, move those two offering files into items/; do not
-re-pull them merely to change the layout. Seed temple/ with its 32 files, plus
-currency-exchange/ when that cache is being deployed. The final gems/ directory
-must contain the gem files only; the items cache will not read offering files
-left behind there.
+files. Before deploying, copy those two existing offering files into items/;
+do not re-pull them merely to change the layout. Seed temple/ with its 32
+files, plus currency-exchange/ when that cache is being deployed. These are the
+required states: the items cache must gain the offering bytes, and the temple
+cache must exist before the binary that embeds those maps is deployed.
+
+The old offering files may remain in gems/ temporarily. The gems cache reads
+only filenames produced by gems.json, so those extra files do not affect route
+correctness; removing them is optional hygiene, not a deployment precondition.
+To perform that cleanup, prune a prepared local cache root against
+internal/icons/urls, then include the cleaned gems/ directory in the normal
+full cache re-upload. The running server image has no shell, and docker cp
+only copies into it, so there is no in-place production sweep or delete step.
+The existing files are cleared only when the replacement cache root is
+re-uploaded through the deployment volume/container chain.
 
 For a prepared local root, the shape to copy is:
 

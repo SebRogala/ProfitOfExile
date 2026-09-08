@@ -179,7 +179,8 @@ func newSets(root string, fsys fs.FS, dir string) (*Sets, error) {
 
 	merged, mergeErr := mergeCategoryMaps(parts, dir)
 	if mergeErr != nil {
-		slog.Error("icons: compatibility alias rejected keys", "error", mergeErr)
+		// Return the detail to the router constructor, which logs the aggregate
+		// initialization error once alongside the cache root.
 		errs = append(errs, mergeErr)
 	}
 	// mergeCategoryMaps omits names that occur in more than one category. Those

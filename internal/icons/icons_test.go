@@ -435,6 +435,22 @@ func TestNewSets_createsOneCacheDirectoryPerCategory(t *testing.T) {
 	}
 }
 
+func TestNewSets_noURLMapFilesReturnsNoSets(t *testing.T) {
+	fsys := fstest.MapFS{"urls/README.md": urlFile("category maps live here")}
+
+	sets, err := newSets(t.TempDir(), fsys, "urls")
+
+	if err == nil {
+		t.Fatalf("newSets() error = nil, want no-map rejection (sets = %+v)", sets)
+	}
+	if sets != nil {
+		t.Fatalf("newSets() returned sets alongside no-map error: %+v", sets)
+	}
+	if !strings.Contains(err.Error(), "no url map files matched urls/*.json") {
+		t.Errorf("newSets() error = %q, want no-map cause", err)
+	}
+}
+
 // The two lab offerings are items the GEM endpoint has to answer for, because
 // MarketOverview routes offering names through it. Which file they live in is
 // the categorisation this split exists for, and nothing about the merged map
