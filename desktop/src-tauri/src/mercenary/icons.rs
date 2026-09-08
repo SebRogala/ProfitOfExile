@@ -313,7 +313,7 @@ impl CellSig {
 /// aligned search in [`cell_candidates`] is built on top of this, not beside
 /// it.
 ///
-/// Takes the cell's OUTER rect (what [`super::geometry::detect`] emits), reads
+/// Takes the cell's OUTER rect (what [`super::geometry::detect_reason`] emits), reads
 /// its inner region and then gives up [`SHIFT_MAX`] px per side of that — the
 /// alignment window. What is left of the cell frame after the inset is outside
 /// the disc mask, so the frame — identical on every cell — never reaches the

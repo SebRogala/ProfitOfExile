@@ -313,7 +313,7 @@ pub fn window_px(g: &MercGeometry, scale: f32) -> i32 {
 
 /// Render one gem art into a synthetic support cell.
 ///
-/// The cell is the OUTER rect [`super::geometry::detect`] would emit —
+/// The cell is the OUTER rect [`super::geometry::detect_reason`] would emit —
 /// `cell_size · scale` square — so the art then travels through
 /// [`super::icons::normalize_cell`] over exactly the door a live cell takes:
 /// the occupancy gate, [`super::geometry::inner_rect`], the alignment window,
