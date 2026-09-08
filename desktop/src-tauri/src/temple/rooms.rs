@@ -610,6 +610,10 @@ pub const MATCH: f64 = 0.88;
 /// Measured boundary: a read that drops one character (`Hall of Lo ds`) leads
 /// by 0.0308 and is genuinely ambiguous; a read with one substituted character
 /// (`Sanctum of Vitalitv`) leads by 0.0455 and is not. 0.04 splits them.
+///
+/// A plate read carries one more input, its tier numeral, and
+/// [`match_plate_name`] measures the lead over the rivals the numeral leaves
+/// standing — still required over them, never waived.
 pub const LEAD: f64 = 0.04;
 
 /// Narrowest `len(query) / len(candidate)` a fuzzy read may have, on
@@ -667,6 +671,43 @@ impl Match {
 /// foreign text, [`RATIO_MIN`]/[`RATIO_MAX`] reject fragments and run-together
 /// pairs, [`LEAD`] rejects a read that two names fit equally well.
 pub fn match_room_name(ocr_text: &str) -> Match {
+    decide(ocr_text, None)
+}
+
+/// [`match_room_name`] for a PLATE, whose tier numeral was read alongside
+/// ([`parse_numeral`]).
+///
+/// The numeral does two things, both resting on the fact that room names are
+/// unique per tier, so name→tier is a function:
+///
+/// - it still **demotes** a read whose name is of another tier
+///   ([`cross_check_numeral`]);
+/// - it **settles a short lead**. [`LEAD`] exists for a read two names fit
+///   almost equally well, and rejects it because either could be the plate. A
+///   numeral of the best name's own tier says the rivals of OTHER tiers
+///   cannot be, so the lead is measured over the rivals of that tier alone —
+///   and still required over them, which is what keeps `Hall of Lorks` (two
+///   tier-2 rivals at 0.9692 each) Unknown under a II.
+///
+/// **MEASURED.** PC debug dump `1788822736579` (2026-09-08), plate B1: the
+/// strip printed `Sanctum of` / `Immortality` legibly and Windows.Media.Ocr
+/// returned `SANCTUMPF` / `IMMORTALITY`. The join scores 0.9523 against
+/// `Sanctum of Immortality` and 0.9173 against `Sanctum of Vitality` — a lead
+/// of 0.0350, under [`LEAD`] — so the plate read Unknown on every retry, with
+/// the numeral crop reading `111` each time. Vitality is the line's tier 2;
+/// under a III it is not a rival, and the best tier-3 rival scores under
+/// 0.62.
+///
+/// The numeral confirms the best name or nothing: a numeral naming the RIVAL
+/// does not promote it — the demotion fires instead — because the name read
+/// is the primary evidence and the numeral only ever narrows it.
+pub fn match_plate_name(ocr_text: &str, numeral: Option<Tier>) -> Match {
+    cross_check_numeral(decide(ocr_text, numeral), numeral)
+}
+
+/// The gates of [`match_room_name`], with the numeral's narrowing of the
+/// [`LEAD`] rivals when a plate supplied one — see [`match_plate_name`].
+fn decide(ocr_text: &str, numeral: Option<Tier>) -> Match {
     let query = normalise(ocr_text);
     if query.is_empty() {
         return Match::Unknown;
@@ -698,19 +739,34 @@ pub fn match_room_name(ocr_text: &str) -> Match {
     };
     let (score, ref candidate, identity) = scored[best];
 
-    // A different SPELLING of the same identity is not a rival: `Apex of
-    // Ascencion` must not veto `Apex of Ascension`.
-    let runner_up = scored
-        .iter()
-        .filter(|(_, _, other)| *other != identity)
-        .map(|(s, _, _)| *s)
-        .fold(0.0_f64, f64::max);
-
     let ratio = query.chars().count() as f64 / candidate.chars().count() as f64;
     if !(RATIO_MIN..=RATIO_MAX).contains(&ratio) {
         return Match::Unknown;
     }
-    if score >= MATCH && score - runner_up >= LEAD {
+    if score < MATCH {
+        return Match::Unknown;
+    }
+
+    // A different SPELLING of the same identity is not a rival: `Apex of
+    // Ascencion` must not veto `Apex of Ascension`.
+    let rivals = scored.iter().filter(|(_, _, other)| *other != identity);
+    let runner_up = rivals.clone().map(|(s, _, _)| *s).fold(0.0_f64, f64::max);
+    if score - runner_up >= LEAD {
+        return Match::Fuzzy(identity, score);
+    }
+
+    // The lead is short. A numeral of the best name's own tier rules out
+    // every rival of another tier; the lead is then required over the rivals
+    // it leaves standing. A numeral of some OTHER tier settles nothing here —
+    // `cross_check_numeral` demotes that read anyway.
+    let Some(tier) = numeral.filter(|numeral| identity.tier() == *numeral) else {
+        return Match::Unknown;
+    };
+    let runner_up_in_tier = rivals
+        .filter(|(_, _, other)| other.tier() == tier)
+        .map(|(s, _, _)| *s)
+        .fold(0.0_f64, f64::max);
+    if score - runner_up_in_tier >= LEAD {
         Match::Fuzzy(identity, score)
     } else {
         Match::Unknown
@@ -1393,6 +1449,49 @@ mod tests {
         let filler = match_room_name("Tombs");
         assert_eq!(cross_check_numeral(filler, None), filler);
         assert_eq!(cross_check_numeral(filler, Some(Tier::T1)), Match::Unknown);
+    }
+
+    // The measured B1 read of PC debug dump `1788822736579` (2026-09-08):
+    // `Sanctum of` came back `SANCTUMPF`, so the join scores 0.9523 against
+    // `Sanctum of Immortality` and leads `Sanctum of Vitality` by only
+    // 0.0350 — under LEAD — while the numeral read `111`. Vitality is a
+    // tier-2 name and the plate says III, so the rival the lead gate was
+    // protecting against cannot be this plate. Fails if the numeral is used
+    // only to demote (the shipped behaviour: Unknown on every retry).
+    #[test]
+    fn a_numeral_settles_a_short_lead_when_the_rival_is_another_tier() {
+        let immortality = resolve_name("Sanctum of Immortality").expect("in vocabulary");
+        assert!(matches!(
+            match_plate_name("SANCTUMPF IMMORTALITY", Some(Tier::T3)),
+            Match::Fuzzy(got, _) if got == immortality
+        ));
+    }
+
+    // Without a numeral the same read is still ambiguous — LEAD holds. Fails
+    // if a short lead is ever accepted on its own.
+    #[test]
+    fn without_a_numeral_a_short_lead_is_still_unknown() {
+        assert_eq!(match_plate_name("SANCTUMPF IMMORTALITY", None), Match::Unknown);
+    }
+
+    // A numeral that names the RIVAL does not promote it: the numeral confirms
+    // the best-scoring name or nothing. Fails if the tie-break picks whichever
+    // candidate matches the numeral.
+    #[test]
+    fn a_numeral_naming_the_rival_does_not_promote_it() {
+        assert_eq!(
+            match_plate_name("SANCTUMPF IMMORTALITY", Some(Tier::T2)),
+            Match::Unknown
+        );
+    }
+
+    // `Hall of Lorks` against `Hall of Lords` and `Hall of Locks`: both are
+    // tier-2 names, so a II numeral rules neither out and the coin flip stays
+    // Unknown. Fails if the numeral is checked against the best name alone
+    // rather than against the rivals it has to eliminate.
+    #[test]
+    fn a_numeral_shared_by_both_rivals_settles_nothing() {
+        assert_eq!(match_plate_name("Hall of Lorks", Some(Tier::T2)), Match::Unknown);
     }
 }
 
