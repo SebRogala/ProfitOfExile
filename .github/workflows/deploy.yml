@@ -32,9 +32,9 @@ jobs:
               - 'go.sum'
             server:
               # The server binary imports across internal/ and go:embeds data
-              # files there (e.g. internal/gemicon/urls/*.json), so any
+              # files there (e.g. internal/icons/urls/*.json), so any
               # internal/ change can change what it serves. Listing packages
-              # individually silently skipped the deploy for gemicon, device,
+              # individually silently skipped the deploy for icons, device,
               # league, mercure, price and trade — a green run that shipped
               # nothing. Over-deploying on a collector-only change is the safe
               # direction; under-deploying is not. See docs/DEPLOY.md.

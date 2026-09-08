@@ -83,7 +83,7 @@ pub struct SeedEntry {
     /// the template store keys on.
     pub family: String,
     /// The player gem whose inventory art seeds it — a key of one of the
-    /// category maps under `internal/gemicon/urls/`, and the path segment
+    /// category maps under `internal/icons/urls/`, and the path segment
     /// `/api/gem-icon/{gem}` takes.
     pub gem: String,
     /// The family's LOWEST vocabulary tier, written by the generator.
@@ -1317,7 +1317,7 @@ mod tests {
     /// all of them for the same reason the server merges them: the contract is
     /// what `/api/gem-icon/{name}` answers for, which is the merged map and not
     /// any one category.
-    const GEM_ICON_URLS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../internal/gemicon/urls");
+    const GEM_ICON_URLS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../internal/icons/urls");
 
     /// Rewrites `seed-map.json` instead of checking it.
     const UPDATE_ENV: &str = "MERC_SEED_MAP_UPDATE";
@@ -1352,7 +1352,7 @@ mod tests {
     /// it (POE-211).
     ///
     /// `Area of Effect` is the fold of `Increased Area of Effect`, and the
-    /// player gem kept the old spelling: `internal/gemicon/urls/` carries
+    /// player gem kept the old spelling: `internal/icons/urls/` carries
     /// `Increased Area of Effect Support` and neither `Area of Effect Support`
     /// nor `Area of Effect Damage Support`. An override rather than a third
     /// name rule because it is a STATEMENT about one gem, not a pattern —
@@ -1384,12 +1384,12 @@ mod tests {
     /// merges and therefore what the route answers for.
     fn gem_icon_keys() -> std::collections::BTreeSet<String> {
         let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(GEM_ICON_URLS)
-            .expect("internal/gemicon/urls is in this repo")
-            .map(|entry| entry.expect("read internal/gemicon/urls").path())
+            .expect("internal/icons/urls is in this repo")
+            .map(|entry| entry.expect("read internal/icons/urls").path())
             .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
             .collect();
         files.sort();
-        assert!(!files.is_empty(), "internal/gemicon/urls carries no *.json category map");
+        assert!(!files.is_empty(), "internal/icons/urls carries no *.json category map");
 
         let mut keys = std::collections::BTreeSet::new();
         for path in files {
@@ -1783,7 +1783,7 @@ mod tests {
             "Support), then rule 1 '<family> Support' (46 hits), then rule 2 '<family> Damage Support'",
             "(4: Added Chaos/Cold/Fire/Lightning). family = merc display text minus '(Tier N)' minus a",
             "leading Lesser/Greater/Gilded, then the family alias table (vocab.rs). gem is a key of",
-            "one of the category maps under internal/gemicon/urls/.",
+            "one of the category maps under internal/icons/urls/.",
             "tier: the family's LOWEST vocabulary tier — one seed per family, under one key.",
             "verified: 'corpus' = every clean corpus crop of this family resolves to it through the real",
             "matcher (the acceptance test re-checks every ENABLED row that claims it, and re-derives the",

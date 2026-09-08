@@ -161,7 +161,7 @@ func DisplayName(id string) string {
 // IconURLs returns a fresh id → upstream poewiki URL map for every item that
 // has an icon.
 //
-// The copy is deliberate: the caller is internal/gemicon's cache constructor,
+// The copy is deliberate: the caller is internal/icons's cache constructor,
 // which keeps the map for the process's lifetime, and handing out the package's
 // own map would make the embedded asset mutable through a shared reference.
 func IconURLs() map[string]string {

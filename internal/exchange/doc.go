@@ -453,7 +453,7 @@
 //
 // Icons are not served from poewiki: it 403s the production VPS
 // (docs/adr/012-icons-are-pre-seeded-from-an-allowed-ip-and-cached-by-content-address.md),
-// so the server serves its own cached copy through internal/gemicon's cache the
+// so the server serves its own cached copy through internal/icons's cache the
 // way gem icons already work. IconURLs hands that cache a fresh id → upstream
 // URL map, and IconPath returns the API-relative client path
 // "/currency-exchange/icon/<escaped id>" — the id escaped as a SINGLE path
@@ -666,7 +666,7 @@
 //
 //	GET /api/currency-exchange/icon/{escaped metadata id}
 //
-// which is internal/gemicon's cache over IconURLs() and its own cache directory:
+// which is internal/icons's cache over IconURLs() and its own cache directory:
 // the currency-exchange/ sub-directory of ICON_CACHE_DIR (default
 // ./data/icons-cache; a persistent volume in production, shared with the gem
 // set but never the same directory — see internal/server on why the split is

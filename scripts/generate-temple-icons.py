@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Generate the temple icon map, ``internal/gemicon/urls/temple.json``.
+"""Generate the temple icon map, ``internal/icons/urls/temple.json``.
 
 The temple endpoint (``GET /api/analysis/temple-market``, POE-255) serves an
 icon path per room-tier and per recipe member. Icons are served by the existing
 cache (``GET /api/gem-icon/{name}``, ADR-012): it needs a committed
 name-to-upstream-URL map, and adding one is a new ``*.json`` file under
-``internal/gemicon/urls/`` with no Go change.
+``internal/icons/urls/`` with no Go change.
 
 Unlike the gem and currency-exchange maps, whose URLs come from poewiki, these
 come from poe.ninja's own ``icon`` field on the item-overview lines the
@@ -69,7 +69,7 @@ ROOM_ICON_NAME = "Chronicle of Atzoatl"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RECIPES_GO = REPO_ROOT / "internal" / "temple" / "recipes.go"
-OUTPUT = REPO_ROOT / "internal" / "gemicon" / "urls" / "temple.json"
+OUTPUT = REPO_ROOT / "internal" / "icons" / "urls" / "temple.json"
 
 RECIPE_LINE = re.compile(
     r'\{Vial: "([^"]+)", Base: "([^"]+)", Upgraded: "([^"]+)"\}'

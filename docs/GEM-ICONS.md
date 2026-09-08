@@ -2,8 +2,8 @@
 
 Status: current guide.
 
-The server serves artwork at `/api/gem-icon/{name}` from `internal/gemicon`. Each
-name is resolved against the category maps in `internal/gemicon/urls/` —
+The server serves artwork at `/api/gem-icon/{name}` from `internal/icons`. Each
+name is resolved against the category maps in `internal/icons/urls/` —
 `gems.json`, `items.json` and `temple.json` today — which are compiled into the
 binary
 (`//go:embed urls/*.json`) and merged into one flat lookup at construction. A
@@ -29,12 +29,12 @@ Both sets share **one** cache root — `ICON_CACHE_DIR`, default
 sub-directory per set**:
 
 ```
-<ICON_CACHE_DIR>/gems               internal/gemicon/urls/*.json
+<ICON_CACHE_DIR>/gems               internal/icons/urls/*.json
 <ICON_CACHE_DIR>/currency-exchange  internal/exchange/itemdata/icon-urls.json
 ```
 
 One cache sub-directory per icon **set**, not per source file: every category
-map under `internal/gemicon/urls/` feeds the one `/api/gem-icon/{name}` route
+map under `internal/icons/urls/` feeds the one `/api/gem-icon/{name}` route
 and therefore the one `gems/` directory.
 
 The sub-directories are load-bearing, not tidiness. Both sets run through the
@@ -66,8 +66,8 @@ name, cannot fetch it, and returns `502`.
    Inventory icons are `78 x 78` PNGs. Anything else means you followed a redirect to the wrong file — a page redirect can silently resolve to a *different item's* artwork.
 
 2. **Add the entry** to the category file it belongs in, keeping that file
-   sorted by key. `internal/gemicon/urls/gems.json` for a skill gem;
-   `internal/gemicon/urls/items.json` for anything that is not one — the two
+   sorted by key. `internal/icons/urls/gems.json` for a skill gem;
+   `internal/icons/urls/items.json` for anything that is not one — the two
    lab offerings live there because `MarketOverview.svelte` routes offering
    names through the gem endpoint. A category that does not exist yet is a new
    `*.json` file in the same directory and needs no code change; the same key
@@ -76,7 +76,7 @@ name, cannot fetch it, and returns `502`.
 3. **Pull the new file(s).** The puller writes using the server's exact cache-filename scheme — `<safe name>-<16 hex of the URL's SHA-256>.png` — and skips files already present under that name, so it is safe to re-run. Hand it the whole directory: it merges the category files the way the server does.
 
    ```
-   python3 scripts/download-gem-icons.py pull internal/gemicon/urls icons-cache/gems
+   python3 scripts/download-gem-icons.py pull internal/icons/urls icons-cache/gems
    ```
 
    To pull only new entries, hand it a JSON file containing just those keys.
@@ -101,7 +101,7 @@ name, cannot fetch it, and returns `502`.
 
 5. **Deploy** — the map is embedded, so the icon only resolves once the new binary
    is running. Merging to `main` deploys when the change touches a filtered path;
-   `internal/gemicon/**` does, so a map edit is enough. See
+   `internal/icons/**` does, so a map edit is enough. See
    [Deployment](DEPLOY.md) for why a green pipeline is not proof the deploy
    landed.
 
@@ -172,8 +172,8 @@ not by display name. Those icons are served at
 GET /api/currency-exchange/icon/{metadata id, %2F-escaped}
 ```
 
-by the **same** `internal/gemicon` cache over a second map —
-`gemicon.NewWithMap(exchange.IconURLs(), <ICON_CACHE_DIR>/currency-exchange)`.
+by the **same** `internal/icons` cache over a second map —
+`icons.NewWithMap(exchange.IconURLs(), <ICON_CACHE_DIR>/currency-exchange)`.
 Everything above about 404s, 502s, `no-store`, caching headers and seed-before-
 deploy applies unchanged, and so does the one-root/one-sub-directory layout: the
 two sets share a volume but never a directory, because they share the
@@ -403,7 +403,7 @@ offline, and go back up under their new names.
    full pull.
 
    ```
-   python3 scripts/download-gem-icons.py pull internal/gemicon/urls icons-cache/gems
+   python3 scripts/download-gem-icons.py pull internal/icons/urls icons-cache/gems
    python3 scripts/download-gem-icons.py pull \
      internal/exchange/itemdata/icon-urls.json icons-cache/currency-exchange
    ```
@@ -468,7 +468,7 @@ Status: current. Added 2026-09-06 (POE-255).
 `GET /api/analysis/temple-market` serves an icon path per room-tier and per vial
 recipe member, all through the **existing** `/api/gem-icon/{name}` route — no new
 route, no new cache set, no new sub-directory. The map is a third category file,
-`internal/gemicon/urls/temple.json`, which the loader discovers on its own; the
+`internal/icons/urls/temple.json`, which the loader discovers on its own; the
 only Go that knows about it is `temple.IconPath`, which builds
 `/api/gem-icon/<name, escaped as one path segment>`.
 
@@ -556,7 +556,7 @@ yet:
   prod seed before the deploy like any other addition.
 - **Strip the parenthetical in the handler** before the map lookup. One rule
   instead of 45 rows, and it keeps working for next league's compounds — but it
-  puts a name-shape rule inside `internal/gemicon`, which today knows nothing
+  puts a name-shape rule inside `internal/icons`, which today knows nothing
   about gems beyond the map.
 
 ### A cached 404 is why a `?` survives the deploy that fixes it

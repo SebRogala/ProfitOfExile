@@ -118,7 +118,7 @@ jobs:
         run: make test-integration
 
   # The icon cache filename scheme is implemented twice — Go
-  # (internal/gemicon.filePath) and Python (scripts/download-gem-icons.py) — and
+  # (internal/icons.filePath) and Python (scripts/download-gem-icons.py) — and
   # production reads only what the Python side writes, from a volume the server
   # may not refetch (ADR-012: poewiki 403s the VPS). So a scheme that drifts
   # between the two languages seeds files the server never looks for, and the

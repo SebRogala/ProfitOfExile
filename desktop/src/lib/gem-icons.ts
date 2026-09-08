@@ -2,7 +2,7 @@
  * Gem icon URL resolver.
  *
  * Returns a URL to the server's gem-icon endpoint, which serves the correct
- * poewiki image from a persistent server-side cache (see internal/gemicon).
+ * poewiki image from a persistent server-side cache (see internal/icons).
  * The server responds 404 for genuinely-unknown gems; GemIcon.svelte's onerror
  * handler renders the "?" fallback in that case.
  */

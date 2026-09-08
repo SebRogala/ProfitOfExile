@@ -5,10 +5,10 @@ import "net/url"
 // ICONS
 //
 // Temple artwork is served through the existing icon cache and its existing
-// route — GET /api/gem-icon/{name} over internal/gemicon — not through anything
+// route — GET /api/gem-icon/{name} over internal/icons — not through anything
 // new. The extension point that route documents is a category file: a new
-// name-to-upstream-URL map at internal/gemicon/urls/temple.json is discovered by
-// gemicon.loadURLMap with no Go change, and it is generated from the live feed
+// name-to-upstream-URL map at internal/icons/urls/temple.json is discovered by
+// icons.loadURLMap with no Go change, and it is generated from the live feed
 // by scripts/generate-temple-icons.py (see docs/GEM-ICONS.md).
 //
 // Production cannot fetch upstream, so the icon volume must be pre-seeded BEFORE

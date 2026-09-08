@@ -363,15 +363,15 @@ dispatch is the deliberate answer rather than building machinery around it.
 ## The incident this document exists for
 
 On 2026-07-26 commit `c5c612f` added six entries to
-`internal/gemicon/gem-icon-urls.json`, the `go:embed`ded icon map. "Test & Deploy"
+`internal/icons/gem-icon-urls.json`, the `go:embed`ded icon map. "Test & Deploy"
 went green **in 11 seconds** and shipped nothing.
 
 The workflow triggered (its trigger paths include `internal/**`) but the `server`
 filter listed packages individually — `cmd/server/**`, `internal/server/**`,
-`internal/db/**`, `internal/lab/**` — and `internal/gemicon/**` was absent. So
+`internal/db/**`, `internal/lab/**` — and `internal/icons/**` was absent. So
 `server` evaluated false, `deploy-server` was skipped, and the run passed.
 
-Six of the ten `internal/` packages were affected: `gemicon`, `device`, `league`,
+Six of the ten `internal/` packages were affected: `icons`, `device`, `league`,
 `mercure`, `price`, `trade`. A Go change to any of them was built, tested, passed,
 and silently never shipped. `validate` still ran (it gates on `go`, which matches
 `**/*.go`), so the pipeline looked entirely healthy. An earlier task shipped only

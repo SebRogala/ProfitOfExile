@@ -14,7 +14,7 @@ import (
 
 	"profitofexile/internal/device"
 	"profitofexile/internal/exchange"
-	"profitofexile/internal/gemicon"
+	"profitofexile/internal/icons"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
 	"profitofexile/internal/mercenary"
@@ -33,10 +33,10 @@ import (
 const DefaultIconCacheDir = "./data/icons-cache"
 
 // The icon cache root holds one sub-directory per icon set, and the split is
-// load-bearing rather than tidiness. Every set runs on the same internal/gemicon
+// load-bearing rather than tidiness. Every set runs on the same internal/icons
 // cache, which reduces a key to a filename with one shared scheme
-// (gemicon.safeFileName plus a hash of the source URL), and the key spaces are
-// generated independently — a gem display name from internal/gemicon/urls/, a
+// (icons.safeFileName plus a hash of the source URL), and the key spaces are
+// generated independently — a gem display name from internal/icons/urls/, a
 // Currency Exchange metadata id from the exchange asset — so neither generator
 // can see a collision with the other's keys. One flat directory would therefore
 // let two keys that reduce to the same safe name serve each other's artwork, but
@@ -145,7 +145,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	// /debug/pprof/goroutine as goroutines parked in Acquire.
 	//
 	// 20s sits above every measured worst case (6.35s under the POE-152 burst;
-	// gemicon's upstream fetch caps itself at 10s) and below the server's 30s
+	// icons's upstream fetch caps itself at 10s) and below the server's 30s
 	// WriteTimeout, so the timeout fires while the connection can still carry
 	// the response. chi's Timeout only cancels the context and writes 504 after
 	// the handler returns, so it cannot race a handler's own writes.
@@ -178,7 +178,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		iconRoot = DefaultIconCacheDir
 	}
 
-	if gemIcons, err := gemicon.New(filepath.Join(iconRoot, gemIconSubdir)); err != nil {
+	if gemIcons, err := icons.New(filepath.Join(iconRoot, gemIconSubdir)); err != nil {
 		slog.Error("gem icon cache init failed; /api/gem-icon disabled",
 			"root", iconRoot, "subdir", gemIconSubdir, "error", err)
 	} else {
@@ -190,7 +190,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	// here is a feed metadata id whose slashes arrive percent-encoded (%2F),
 	// which the handler unescapes before the map lookup — see exchange.IconPath,
 	// which is what builds the path clients request.
-	if itemIcons, err := gemicon.NewWithMap(exchange.IconURLs(), filepath.Join(iconRoot, currencyExchangeIconSubdir)); err != nil {
+	if itemIcons, err := icons.NewWithMap(exchange.IconURLs(), filepath.Join(iconRoot, currencyExchangeIconSubdir)); err != nil {
 		slog.Error("currency-exchange icon cache init failed; /api/currency-exchange/icon disabled",
 			"root", iconRoot, "subdir", currencyExchangeIconSubdir, "error", err)
 	} else {
