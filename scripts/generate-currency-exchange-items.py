@@ -173,7 +173,7 @@ BACKOFF_BASE_SECONDS = 1.0
 # nobody.
 CONSECUTIVE_FAILURE_LIMIT = 10
 
-# safeFileName in internal/gemicon: runs of non-alphanumerics collapse to "_",
+# safeFileName in internal/icons: runs of non-alphanumerics collapse to "_",
 # leading and trailing ones are trimmed. This is the NAME half of the cache
 # filename on both sides; since POE-136 a "-<16 hex of sha256(url)>" suffix
 # follows it (short_hash / cache_file_name in scripts/download-gem-icons.py).
@@ -182,7 +182,7 @@ _UNSAFE = re.compile(r"[^A-Za-z0-9]+")
 
 
 def safe_name(name: str) -> str:
-    """Reduce an id to the cache filename token gemicon.safeFileName produces."""
+    """Reduce an id to the cache filename token icons.safeFileName produces."""
     return _UNSAFE.sub("_", name).strip("_")
 
 

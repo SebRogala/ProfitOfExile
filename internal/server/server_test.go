@@ -273,7 +273,7 @@ func TestNewRouter_CurrencyExchangeIconRouteIsRegisteredWhenACacheRootIsConfigur
 func TestNewRouter_CurrencyExchangeIconRouteServesFromTheDefaultRootWhenNoneIsConfigured(t *testing.T) {
 	chdirToEmptyDir(t)
 
-	// The seed path restates DefaultIconCacheDir's value and gemicon's filename
+	// The seed path restates DefaultIconCacheDir's value and icons's filename
 	// scheme literally, as an independent oracle: deriving it from the constant
 	// would move the seed in lockstep with the value under test. The suffix is
 	// the first 16 hex characters of the SHA-256 of the URL the embedded item
@@ -330,7 +330,7 @@ func chdirToEmptyDir(t *testing.T) {
 // from serving each other's artwork.
 //
 // A pre-placed file per sub-directory is what makes that observable with no
-// network at all: gemicon's load() returns the disk copy when it exists and only
+// network at all: icons's load() returns the disk copy when it exists and only
 // fetches upstream when it does not, so a 200 carrying these exact bytes can
 // only have come from the directory the test wrote them to. Flatten both sets
 // into the root, or swap the two sub-directory constants, and each route misses
@@ -340,7 +340,7 @@ func chdirToEmptyDir(t *testing.T) {
 // rather than taken from the production constants and helpers, deliberately, as
 // an independent oracle. Seeding through gemIconSubdir would move the seed
 // whenever the constant moved and the swap above would go undetected; the file
-// names restate gemicon's whole cache-filename scheme — the safe name (runs of
+// names restate icons's whole cache-filename scheme — the safe name (runs of
 // [^A-Za-z0-9] collapsed to "_"), a "-", the first 16 hex characters of the
 // SHA-256 of the entry's SOURCE URL, and ".png" — for the same reason, and
 // because the seeding script and the operator runbook both hard-depend on that

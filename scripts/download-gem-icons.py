@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Seed, migrate and prune an icon cache directory.
 
-poewiki 403s datacenter IPs, so the server (internal/gemicon) cannot fetch icons
+poewiki 403s datacenter IPs, so the server (internal/icons) cannot fetch icons
 at runtime in production — its disk cache must be seeded from an allowed IP.
 
 This writes files using the SAME cache-filename scheme as the server:
 
     <safe_name(name)>-<short_hash(url)>.png
 
-`safe_name` mirrors gemicon.safeFileName (runs of [^A-Za-z0-9] -> "_", trimmed)
-and `short_hash` mirrors gemicon.shortHash (first 16 hex characters of the
+`safe_name` mirrors icons.safeFileName (runs of [^A-Za-z0-9] -> "_", trimmed)
+and `short_hash` mirrors icons.shortHash (first 16 hex characters of the
 SHA-256 of the SOURCE URL). The URL is in the filename because the server has no
 other invalidation: it returns its disk copy unconditionally when the file
 exists, so before POE-136 a corrected URL kept serving the old artwork forever.
@@ -20,7 +20,7 @@ That is also why this script has to agree with the server exactly: production
 reads what this writes and cannot recover by fetching. `_self_check()` runs at
 import and pins the full filename for one vector; the Go side pins the same one
 in TestFilePath_isSafeNameDashURLHashPNG / TestShortHash_pinnedVector
-(internal/gemicon/gemicon_test.go). Change the scheme and both must move.
+(internal/icons/icons_test.go). Change the scheme and both must move.
 
 MAP may be a single flat name -> URL file OR a DIRECTORY of category files
 (POE-135): a directory is merged from its `*.json` in sorted order, exactly as
@@ -34,7 +34,7 @@ filename scheme and a flat directory would let two keys reduce to the same file
 whenever they also share a source URL. So point OUT at the sub-directory for the
 map you are pulling, never at the root:
 
-    icons-cache/gems               internal/gemicon/urls  (a directory)
+    icons-cache/gems               internal/icons/urls  (a directory)
     icons-cache/currency-exchange  internal/exchange/itemdata/icon-urls.json
 
 Usage:
@@ -63,7 +63,7 @@ upstream fetch.
 """
 import argparse, glob, hashlib, json, os, re, sys, time, urllib.request
 
-DEFAULT_MAP = "internal/gemicon/urls"
+DEFAULT_MAP = "internal/icons/urls"
 DEFAULT_OUT = "icons-cache/gems"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -71,12 +71,12 @@ _unsafe = re.compile(r"[^A-Za-z0-9]+")
 
 
 def safe_name(name: str) -> str:
-    """The NAME half of the cache filename — gemicon.safeFileName."""
+    """The NAME half of the cache filename — icons.safeFileName."""
     return _unsafe.sub("_", name).strip("_")
 
 
 def short_hash(url: str) -> str:
-    """The URL half of the cache filename — gemicon.shortHash.
+    """The URL half of the cache filename — icons.shortHash.
 
     First 16 hex characters (8 bytes) of the SHA-256 of the URL. Short because
     it only has to discriminate within one safe_name bucket, which normally
@@ -98,7 +98,7 @@ def cache_file_name(name: str, url: str) -> str:
 def _self_check() -> None:
     """Fail at import if this file's scheme has drifted from the server's.
 
-    The vector is pinned in Go too (internal/gemicon/gemicon_test.go). Checking
+    The vector is pinned in Go too (internal/icons/icons_test.go). Checking
     the FULL filename rather than the hash alone is deliberate: a changed joiner
     or extension writes files the server never looks for just as surely as a
     changed hash, and on production that is a permanent 502 per icon, because
@@ -110,7 +110,7 @@ def _self_check() -> None:
     if got != want:
         raise AssertionError(
             f"cache filename scheme drifted: cache_file_name('Absolution', {url!r}) "
-            f"= {got!r}, want {want!r} — the server (internal/gemicon) pins this vector"
+            f"= {got!r}, want {want!r} — the server (internal/icons) pins this vector"
         )
 
 
@@ -120,7 +120,7 @@ _self_check()
 def load_map(path: str) -> dict:
     """Read one flat map file, or merge every *.json in a directory.
 
-    Mirrors internal/gemicon's loader: sorted file order, and a duplicate key
+    Mirrors internal/icons's loader: sorted file order, and a duplicate key
     across two files is fatal and names both files, never a silent winner.
     """
     if not os.path.isdir(path):

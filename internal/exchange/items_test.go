@@ -210,7 +210,7 @@ func TestDisplayName_idTheAssetDoesNotCover_fallsBackToHumanize(t *testing.T) {
 }
 
 func TestIconURLs_returnsACopyCallersCannotReachTheAssetThrough(t *testing.T) {
-	// The caller (internal/gemicon's constructor) keeps the map for the process's
+	// The caller (internal/icons's constructor) keeps the map for the process's
 	// lifetime, so handing out the package's own map would make the embedded
 	// asset mutable through a shared reference.
 	first := IconURLs()

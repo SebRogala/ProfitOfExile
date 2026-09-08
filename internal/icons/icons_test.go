@@ -1,4 +1,4 @@
-package gemicon
+package icons
 
 import (
 	"bytes"

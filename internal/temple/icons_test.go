@@ -7,9 +7,9 @@ import (
 )
 
 // templeIconMap is the committed category file the icon cache embeds. The test
-// reads it from disk rather than through internal/gemicon so a failure names the
+// reads it from disk rather than through internal/icons so a failure names the
 // file an operator has to regenerate.
-const templeIconMap = "../gemicon/urls/temple.json"
+const templeIconMap = "../icons/urls/temple.json"
 
 // TestIconMap_coversTheServedSetAndTheRoomArtwork pins the two halves that
 // IconPath deliberately does not check at runtime.

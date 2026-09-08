@@ -1,4 +1,4 @@
-// Package gemicon serves Path of Exile artwork to both the web and desktop
+// Package icons serves Path of Exile artwork to both the web and desktop
 // clients through a persistent, on-disk icon cache.
 //
 // It backs two endpoints over two independent instances: gem inventory icons at
@@ -27,7 +27,7 @@
 // never committed — they are copyrighted and heavy — so the cache directory is
 // git-ignored. In production the cache directory must be a persistent volume;
 // otherwise every redeploy starts with an empty cache and re-fetches.
-package gemicon
+package icons
 
 import (
 	"context"
@@ -165,10 +165,10 @@ func New(cacheDir string) (*Cache, error) {
 func loadURLMap(fsys fs.FS, dir string) (map[string]string, error) {
 	files, err := fs.Glob(fsys, dir+"/*.json")
 	if err != nil {
-		return nil, fmt.Errorf("gemicon: list url maps in %s: %w", dir, err)
+		return nil, fmt.Errorf("icons: list url maps in %s: %w", dir, err)
 	}
 	if len(files) == 0 {
-		return nil, fmt.Errorf("gemicon: no url map files matched %s/*.json", dir)
+		return nil, fmt.Errorf("icons: no url map files matched %s/*.json", dir)
 	}
 
 	urls := make(map[string]string)
@@ -176,11 +176,11 @@ func loadURLMap(fsys fs.FS, dir string) (map[string]string, error) {
 	for _, file := range files {
 		raw, err := fs.ReadFile(fsys, file)
 		if err != nil {
-			return nil, fmt.Errorf("gemicon: read url map %s: %w", file, err)
+			return nil, fmt.Errorf("icons: read url map %s: %w", file, err)
 		}
 		var part map[string]string
 		if err := json.Unmarshal(raw, &part); err != nil {
-			return nil, fmt.Errorf("gemicon: parse url map %s: %w", file, err)
+			return nil, fmt.Errorf("icons: parse url map %s: %w", file, err)
 		}
 		keys := make([]string, 0, len(part))
 		for key := range part {
@@ -189,14 +189,14 @@ func loadURLMap(fsys fs.FS, dir string) (map[string]string, error) {
 		sort.Strings(keys)
 		for _, key := range keys {
 			if first, dup := sourceFile[key]; dup {
-				return nil, fmt.Errorf("gemicon: duplicate icon key %q in %s and %s", key, first, file)
+				return nil, fmt.Errorf("icons: duplicate icon key %q in %s and %s", key, first, file)
 			}
 			sourceFile[key] = file
 			urls[key] = part[key]
 		}
 	}
 	if len(urls) == 0 {
-		return nil, fmt.Errorf("gemicon: url maps under %s hold no entries", dir)
+		return nil, fmt.Errorf("icons: url maps under %s hold no entries", dir)
 	}
 	return urls, nil
 }
@@ -221,10 +221,10 @@ func loadURLMap(fsys fs.FS, dir string) (map[string]string, error) {
 // collision.
 func NewWithMap(urls map[string]string, cacheDir string) (*Cache, error) {
 	if cacheDir == "" {
-		return nil, errors.New("gemicon: cache dir is required")
+		return nil, errors.New("icons: cache dir is required")
 	}
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		return nil, fmt.Errorf("gemicon: create cache dir %q: %w", cacheDir, err)
+		return nil, fmt.Errorf("icons: create cache dir %q: %w", cacheDir, err)
 	}
 	return newCache(urls, &http.Client{Timeout: 10 * time.Second}, cacheDir), nil
 }
@@ -285,7 +285,7 @@ func (c *Cache) Handler() http.HandlerFunc {
 			// map entry deployed ahead of its cache volume. ADR-012 makes the
 			// second live — poewiki 403s the production VPS, so an unseeded name
 			// fails here on every request, forever, until the volume is seeded.
-			slog.Error("gemicon: serve icon failed",
+			slog.Error("icons: serve icon failed",
 				"gem", name, "url", srcURL, "error", err)
 			// Headers are deliberately set only after load succeeds. A 502 must
 			// stay uncacheable so a later request can retry (see load).
@@ -379,7 +379,7 @@ func (c *Cache) load(ctx context.Context, name, srcURL string) ([]byte, error) {
 	if err := c.writeFile(path, body); err != nil {
 		// A disk-write failure must not break icon delivery: serve the bytes we
 		// already have. The next request will attempt the write again.
-		slog.Error("gemicon: persist icon failed; serving without caching",
+		slog.Error("icons: persist icon failed; serving without caching",
 			"gem", name, "path", path, "error", err)
 	}
 	return body, nil
@@ -398,7 +398,7 @@ func (c *Cache) fetch(ctx context.Context, srcURL string) ([]byte, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gemicon: upstream %s returned %d", srcURL, resp.StatusCode)
+		return nil, fmt.Errorf("icons: upstream %s returned %d", srcURL, resp.StatusCode)
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, maxImageBytes))
 }
