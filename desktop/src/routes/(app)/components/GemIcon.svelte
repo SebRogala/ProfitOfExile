@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { getGemIconUrl } from '$lib/gem-icons';
+	import { getIconUrl } from '$lib/icons';
 
 	let { name, size = 24 }: { name: string; size?: number } = $props();
 
-	let src = $derived(getGemIconUrl(name));
+	let src = $derived(getIconUrl('gems', name));
 	let errored = $state(false);
 </script>
 

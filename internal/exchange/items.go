@@ -21,13 +21,14 @@ import (
 //go:embed itemdata/items.json
 var itemDataJSON []byte
 
-// iconPathPrefix is the API-RELATIVE path of the currency-exchange icon route.
+// iconPathPrefix is the API-RELATIVE path of the typed currency-exchange icon
+// route.
 //
 // It deliberately omits the "/api" the router mounts the route under, because
 // every client already holds an API base that ends in "/api" (desktop:
 // getApiBase in desktop/src/lib/api.ts). A client joins base + path; putting
 // "/api" here too would produce "/api/api/...".
-const iconPathPrefix = "/currency-exchange/icon/"
+const iconPathPrefix = "/icon/currency-exchange/"
 
 // Item is the display data for one feed item id.
 //

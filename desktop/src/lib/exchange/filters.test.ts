@@ -56,10 +56,10 @@ function leg(overrides: Partial<CurrencyExchangeLeg> = {}): CurrencyExchangeLeg 
 		stock: 40,
 		suspect: false,
 		itemName: 'Divine Orb',
-		itemIcon: '/currency-exchange/icon/divine',
+		itemIcon: '/icon/currency-exchange/divine',
 		itemCategory: 'Currency',
 		quoteName: 'Chaos Orb',
-		quoteIcon: '/currency-exchange/icon/chaos',
+		quoteIcon: '/icon/currency-exchange/chaos',
 		quoteCategory: 'Currency',
 		...overrides
 	};
@@ -286,7 +286,7 @@ describe('playSides', () => {
 		expect(sides[0]).toEqual({
 			id: 'divine',
 			name: 'Divine Orb',
-			icon: '/currency-exchange/icon/divine',
+			icon: '/icon/currency-exchange/divine',
 			category: 'Fragments',
 			role: 'item'
 		});
@@ -1450,12 +1450,12 @@ describe('itemUniverse', () => {
 		const bare = play({ key: 'bare', legs: [leg({ item: 'divine', itemIcon: null })] });
 		const decorated = play({
 			key: 'decorated',
-			legs: [leg({ item: 'divine', itemIcon: '/currency-exchange/icon/divine' })]
+			legs: [leg({ item: 'divine', itemIcon: '/icon/currency-exchange/divine' })]
 		});
 
 		const divine = itemUniverse([bare, decorated]).find((item) => item.id === 'divine');
 
-		expect(divine?.icon).toBe('/currency-exchange/icon/divine');
+		expect(divine?.icon).toBe('/icon/currency-exchange/divine');
 	});
 
 	it('fills a missing category from another side of the same item that carries one', () => {

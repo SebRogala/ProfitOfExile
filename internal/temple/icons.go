@@ -4,21 +4,19 @@ import "net/url"
 
 // ICONS
 //
-// Temple artwork is served through the existing icon cache and its existing
-// route — GET /api/gem-icon/{name} over internal/icons — not through anything
-// new. The extension point that route documents is a category file: a new
-// name-to-upstream-URL map at internal/icons/urls/temple.json is discovered by
-// icons.loadURLMap with no Go change, and it is generated from the live feed
-// by scripts/generate-temple-icons.py (see docs/GEM-ICONS.md).
+// Temple artwork is served through the typed icon cache route —
+// GET /api/icon/temple/{name} — over internal/icons. The extension point is the
+// category file at internal/icons/urls/temple.json, generated from the live feed
+// by scripts/generate-temple-icons.py (see docs/ICONS.md).
 //
 // Production cannot fetch upstream, so the icon volume must be pre-seeded BEFORE
 // the deploy that carries the map, or every temple icon is a permanent 502
 // (ADR-012).
 
 // iconRoute is the prefix of the path a client fetches an icon from. It matches
-// the route registered in internal/server and the paths the web and desktop
-// clients build in their own gem-icons helpers.
-const iconRoute = "/api/gem-icon/"
+// the typed route registered in internal/server and the paths the web and
+// desktop clients build in their shared icons helpers.
+const iconRoute = "/api/icon/temple/"
 
 // RoomIconName is the icon-map key every room-tier's icon path is built from.
 //
@@ -33,7 +31,7 @@ const RoomIconName = "Chronicle of Atzoatl"
 // IconPath returns the API-relative path a client fetches name's artwork from.
 //
 // The name is escaped as a single path segment, the same way the web and desktop
-// clients escape a gem name (encodeURIComponent in their gem-icons helpers); the
+// clients escape a name (encodeURIComponent in their icons helpers); the
 // icon handler reverses it with url.PathUnescape before the map lookup.
 //
 // It does not consult the map. Membership is a build-time property here — the

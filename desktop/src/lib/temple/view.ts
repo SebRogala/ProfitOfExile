@@ -636,7 +636,7 @@ export interface OfferDriver {
 	name: string;
 	/** The poe.ninja name to fetch an icon for, or null where there is no item
 	 *  (the sale row is a coin glyph). NOT a URL: `view.ts` is pure and
-	 *  `getGemIconUrl` reads the configured server off the app store. */
+	 *  TempleOfferBoxes resolves it with the typed temple icon helper. */
 	iconName: string | null;
 	/** What the price cell prints: `"68c"`, `"+186c"`, `"no price"` or `"—"`.
 	 *  Already worded, so the difference between "looked up and came back
@@ -885,7 +885,7 @@ function offerDriverTerms(value: RoomValueView, state: OfferValueState): DriverT
 					// and none for a MOD row either. A mod's `name` is the
 					// prose hint `drops.rs` prices the architect's signature
 					// rare by (`temple gloves`), not a poe.ninja item, so
-					// `/api/gem-icon/temple%20gloves` is a request that cannot
+					// `/api/icon/temple/temple%20gloves` is a request that cannot
 					// succeed: every one of those rows would fetch a 404 and
 					// then draw the unresolved glyph anyway. Drawing it
 					// straight away is the same picture without the request.

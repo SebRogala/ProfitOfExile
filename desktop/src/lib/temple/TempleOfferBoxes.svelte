@@ -85,7 +85,7 @@
 	 * box. See the comments there; that is where the reasoning lives.
 	 */
 	import ItemIcon from '$lib/components/ItemIcon.svelte';
-	import { getGemIconUrl } from '$lib/gem-icons';
+	import { getIconUrl } from '$lib/icons';
 	import { offersCompact, offerStackPlacement } from './overlay-geometry';
 	import { offerBoxSignature } from './view';
 	import type { OfferBox, OfferDriver, OfferRecipeItem } from './view';
@@ -209,7 +209,7 @@
 	 *  `ItemIcon` renders nothing for a null `src`, which is what the sale row
 	 *  wants — its glyph is drawn instead. */
 	function iconSrc(name: string | null): string | null {
-		return name === null ? null : getGemIconUrl(name);
+		return name === null ? null : getIconUrl('temple', name);
 	}
 
 	/** The recipe's three members in the order they are consumed. */

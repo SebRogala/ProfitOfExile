@@ -4,7 +4,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"path/filepath"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -29,26 +28,8 @@ import (
 // is empty. In production it is a persistent volume (ICON_CACHE_DIR in
 // cmd/server); an ephemeral one there is not a slow first request but a
 // permanent 502, because poewiki 403s the VPS and the cache can only be
-// pre-seeded — see docs/GEM-ICONS.md and ADR-012.
+// pre-seeded — see docs/ICONS.md and ADR-012.
 const DefaultIconCacheDir = "./data/icons-cache"
-
-// The icon cache root holds one sub-directory per icon set, and the split is
-// load-bearing rather than tidiness. Every set runs on the same internal/icons
-// cache, which reduces a key to a filename with one shared scheme
-// (icons.safeFileName plus a hash of the source URL), and the key spaces are
-// generated independently — a gem display name from internal/icons/urls/, a
-// Currency Exchange metadata id from the exchange asset — so neither generator
-// can see a collision with the other's keys. One flat directory would therefore
-// let two keys that reduce to the same safe name serve each other's artwork, but
-// only when they also share a source URL. A new icon set gets a new
-// sub-directory here; nothing is ever cached in the root itself.
-//
-// These names are also the on-disk layout an operator seeds by hand (POE-221),
-// so changing one is a production migration, not a rename.
-const (
-	gemIconSubdir              = "gems"
-	currencyExchangeIconSubdir = "currency-exchange"
-)
 
 // RouterConfig holds optional configuration for the server router.
 type RouterConfig struct {
@@ -109,9 +90,10 @@ type RouterConfig struct {
 	FenceChecker handlers.LivenessChecker
 	// IconCacheDir is the ROOT of the persistent on-disk icon cache, not a
 	// cache directory itself: each icon set is served out of its own
-	// sub-directory beneath it (gemIconSubdir, currencyExchangeIconSubdir), for
-	// the collision reason documented on those constants. Empty falls back to
-	// DefaultIconCacheDir, so both icon routes are always registered.
+	// sub-directory beneath it, for the collision reason documented in
+	// internal/icons and ADR-012. Empty falls back to DefaultIconCacheDir, so the
+	// typed and compatibility icon routes are
+	// registered whenever the sets can be constructed.
 	IconCacheDir string
 	// MercTemplateRepo is the shared mercenary icon-template pool (POE-200).
 	// May be nil — the /api/desktop/merc-templates routes are then not
@@ -168,33 +150,25 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 
 	r.Get("/api/health", handlers.Health(pinger, cfg.FenceChecker))
 
-	// Icons: public, static, no league scope or auth. Both sets serve both
-	// clients from a persistent on-disk cache of poewiki images, rooted at one
-	// configured directory with one sub-directory per set. The root always
-	// resolves, so both routes are always registered and an ERROR below means
-	// the directory could not be opened, not that it was left unset.
+	// Icons: public, static, no league scope or auth. Each embedded source map is
+	// one typed cache under the configured root. A malformed category is allowed
+	// to degrade independently; NewSets returns the valid partial registry and
+	// logs the construction error, so the typed route can still serve its peers.
 	iconRoot := cfg.IconCacheDir
 	if iconRoot == "" {
 		iconRoot = DefaultIconCacheDir
 	}
 
-	if gemIcons, err := icons.New(filepath.Join(iconRoot, gemIconSubdir)); err != nil {
-		slog.Error("gem icon cache init failed; /api/gem-icon disabled",
-			"root", iconRoot, "subdir", gemIconSubdir, "error", err)
-	} else {
-		r.Get("/api/gem-icon/{name}", gemIcons.Handler())
+	iconSets, iconSetsErr := icons.NewSets(iconRoot)
+	if iconSetsErr != nil {
+		slog.Error("icon set initialization degraded", "root", iconRoot, "error", iconSetsErr)
 	}
-
-	// Currency Exchange item icons: the same cache implementation over the
-	// exchange asset's id→poewiki URL map and its own sub-directory. The {name}
-	// here is a feed metadata id whose slashes arrive percent-encoded (%2F),
-	// which the handler unescapes before the map lookup — see exchange.IconPath,
-	// which is what builds the path clients request.
-	if itemIcons, err := icons.NewWithMap(exchange.IconURLs(), filepath.Join(iconRoot, currencyExchangeIconSubdir)); err != nil {
-		slog.Error("currency-exchange icon cache init failed; /api/currency-exchange/icon disabled",
-			"root", iconRoot, "subdir", currencyExchangeIconSubdir, "error", err)
-	} else {
-		r.Get("/api/currency-exchange/icon/{name}", itemIcons.Handler())
+	if iconSets != nil {
+		if addErr := iconSets.Add("currency-exchange", exchange.IconURLs(), iconRoot); addErr != nil {
+			slog.Error("currency-exchange icon set initialization degraded", "root", iconRoot, "error", addErr)
+		}
+		r.Get("/api/icon/{type}/{name}", iconSets.Handler())
+		r.Get("/api/gem-icon/{name}", iconSets.AliasHandler())
 	}
 
 	// The whole /api/snapshots/* family is gone. /stats went first (POE-150):

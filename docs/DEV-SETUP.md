@@ -87,7 +87,7 @@ or capture code (Overlay Guide, "Windows smoke checks").
 `make merc-seed-art POE_SERVER_URL=https://profitofexile.top`. The PNGs are
 GGG art and deliberately not in git
 (`desktop/src-tauri/tests/fixtures/merc-seed-art/README.md`); a local server
-has no icons to serve until its cache is seeded per [GEM-ICONS.md](GEM-ICONS.md),
+has no icons to serve until its cache is seeded per [ICONS.md](ICONS.md),
 which is why the fetch points at production.
 
 ## 2. Windows side

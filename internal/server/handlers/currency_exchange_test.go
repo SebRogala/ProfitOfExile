@@ -245,7 +245,7 @@ func quoteOrNull(value *string) string {
 // Spelled out rather than built with exchange.IconPath: a test that asks the
 // production helper what to expect cannot notice the helper changing.
 func iconPath(id string) *string {
-	path := "/currency-exchange/icon/" + strings.ReplaceAll(id, "/", "%2F")
+	path := "/icon/currency-exchange/" + strings.ReplaceAll(id, "/", "%2F")
 	return &path
 }
 
@@ -621,7 +621,7 @@ func TestCurrencyExchangePlays_itemWithAnIcon_sendsQuoteIconAsAPath(t *testing.T
 	// client appends to its API base.
 	leg := firstLegRaw(t, getPlays(t, unknownItemCache(t), "/api/currency-exchange/plays"))
 
-	want := `"/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare"`
+	want := `"/icon/currency-exchange/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare"`
 	if got := string(leg["quoteIcon"]); got != want {
 		t.Errorf("quoteIcon = %s, want %s", got, want)
 	}

@@ -253,7 +253,7 @@ func TestIconPath_itemWithAnIcon_escapesTheIDIntoOneRouteSegment(t *testing.T) {
 	if !ok {
 		t.Fatalf("IconPath(%q) reported no icon, want a path", ChaosID)
 	}
-	want := "/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare"
+	want := "/icon/currency-exchange/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare"
 	if path != want {
 		t.Errorf("IconPath(%q) = %q, want %q", ChaosID, path, want)
 	}

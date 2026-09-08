@@ -265,7 +265,7 @@ does the metadata path (oils, catalysts, omens, tattoos and runegrafts all sit
 under `Metadata/Items/Currency/`). The curated mapping is `CATEGORY_RULES` in
 `scripts/generate-currency-exchange-items.py`, emitted into
 `internal/exchange/itemdata/items.json`; a rule naming a category outside the
-sixteen fails the run ([GEM-ICONS.md](GEM-ICONS.md), "Currency Exchange
+sixteen fails the run ([ICONS.md](ICONS.md), "Currency Exchange
 items"). One id prefix, `Currency/Ancestral`, holds both Omens and Tattoos and
 is split by name.
 

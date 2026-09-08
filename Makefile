@@ -96,7 +96,7 @@ merc-seed-art: ## Fetch the merc seed gem art fixture (see its README; honours P
 		out="$(MERC_SEED_ART_DIR)/$$slug.png"; \
 		if [ -s "$$out" ]; then skipped=$$((skipped+1)); continue; fi; \
 		code=$$(curl -s $(MERC_SEED_CURL_INSECURE) -o "$$out" -w '%{http_code}' --max-time 30 \
-			"$(POE_SERVER_URL)/api/gem-icon/$$enc" 2>/dev/null); \
+			"$(POE_SERVER_URL)/api/icon/gems/$$enc" 2>/dev/null); \
 		if [ "$$code" = "200" ] && [ -s "$$out" ]; then \
 			fetched=$$((fetched+1)); \
 		else \

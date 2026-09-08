@@ -1166,7 +1166,7 @@ export function rowCounts({
 /**
  * A leg's `itemIcon`/`quoteIcon` as a URL the browser can fetch.
  *
- * The server sends API-relative paths (`/currency-exchange/icon/<escaped id>`)
+ * The server sends API-relative paths (`/icon/currency-exchange/<escaped id>`)
  * rather than poewiki URLs, because production cannot reach poewiki (ADR-012)
  * and serves the artwork from its own cache instead. The join is here, not in
  * `ItemIcon.svelte`, so it is unit-testable and so the page reads the API base
@@ -1225,7 +1225,7 @@ export const DIVINE_ID = 'Metadata/Items/Currency/CurrencyModValues';
  * mismatched escaping would give.
  */
 export function currencyIconPath(id: string): string {
-	return `/currency-exchange/icon/${encodeURIComponent(id)}`;
+	return `/icon/currency-exchange/${encodeURIComponent(id)}`;
 }
 
 /** The API-relative artwork path for Chaos Orbs. */

@@ -1307,7 +1307,7 @@ touching the named path.
      Toxic Grove), the
      `+6% quant · +12% rarity` line, and — on those six lines, and NOT on Locus
      of Corruption — an `UPGRADE RECIPE` row of three icons with prices. Icons
-     that render as a `?` mean the server's `/api/gem-icon/<name>` did not answer
+     that render as a `?` mean the server's `/api/icon/gems/<name>` did not answer
      for that poe.ninja name; check one by hand before assuming the row is wrong.
      The row prices are the ITEM's, not the term's: `Story of the Vaal 68c
      ×0.25` is right and `17c` is the bug.

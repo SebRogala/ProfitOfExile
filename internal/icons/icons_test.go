@@ -348,7 +348,7 @@ func TestHandler_urlChangeForTheSameName_fetchesFreshBytes(t *testing.T) {
 
 // The name stays in the filename, so the hash is a tiebreaker and never the
 // identity. Two names legitimately share a URL (a Vaal alias pointing at the
-// base gem's artwork is the case docs/GEM-ICONS.md describes), and each must
+// base gem's artwork is the case docs/ICONS.md describes), and each must
 // keep its own file: one shared file would make the cache unreadable as a map
 // of what is seeded, and pruning or replacing one name's icon would silently
 // take the other's with it.
@@ -523,40 +523,45 @@ func TestLoadURLMap_ignoresNonJSONFiles(t *testing.T) {
 
 // The embedded categories, end to end: every entry of every file reaches the
 // map New builds, which is the property the split had to preserve.
-func TestNew_embeddedMap_holdsEveryCategorysEntries(t *testing.T) {
-	c, err := New(t.TempDir())
+func TestNewSets_embeddedCategoriesBuildIndependentCaches(t *testing.T) {
+	sets, err := NewSets(t.TempDir())
 	if err != nil {
-		t.Fatalf("New() error = %v, want nil", err)
+		t.Fatalf("NewSets() error = %v, want nil", err)
 	}
 
-	// The merged size across every category file: 765 for the two the split
-	// started with (gems.json, items.json) plus temple.json's 32 (POE-255). A
-	// category file dropped from the embed, or read and discarded, lands here.
-	// The number is deliberately hard-coded rather than summed from the same
-	// embed the map is built from, which would move with the defect.
-	if got, want := len(c.urls), 797; got != want {
-		t.Errorf("embedded map holds %d entries, want %d", got, want)
+	wantCounts := map[string]int{"gems": 763, "items": 2, "temple": 32}
+	for category, want := range wantCounts {
+		c := sets.caches[category]
+		if c == nil {
+			t.Fatalf("missing cache for category %q", category)
+		}
+		if got := len(c.urls); got != want {
+			t.Errorf("%s cache holds %d entries, want %d", category, got, want)
+		}
 	}
-	if got := c.urls["Absolution"]; got == "" {
+	if got := sets.caches["gems"].urls["Absolution"]; got == "" {
 		t.Error("embedded map missing a URL for a known gem \"Absolution\" (gems.json)")
 	}
-	if got := c.urls["Gift to the Goddess"]; got == "" {
+	if got := sets.caches["items"].urls["Gift to the Goddess"]; got == "" {
 		t.Error("embedded map missing a URL for a known offering \"Gift to the Goddess\" (items.json)")
 	}
-	if got := c.urls["Chronicle of Atzoatl"]; got == "" {
+	if got := sets.caches["temple"].urls["Chronicle of Atzoatl"]; got == "" {
 		t.Error("embedded map missing a URL for the shared temple room artwork \"Chronicle of Atzoatl\" (temple.json)")
 	}
 }
 
-func TestNew_createsTheCacheDirectory(t *testing.T) {
+func TestNewSets_createsOneCacheDirectoryPerCategory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "icons")
 
-	if _, err := New(dir); err != nil {
-		t.Fatalf("New() error = %v, want nil", err)
+	if _, err := NewSets(dir); err != nil {
+		t.Fatalf("NewSets() error = %v, want nil", err)
 	}
 
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		t.Errorf("New() must create the cache dir; stat err = %v", err)
+	for _, category := range []string{"gems", "items", "temple"} {
+		path := filepath.Join(dir, category)
+		if info, err := os.Stat(path); err != nil || !info.IsDir() {
+			t.Errorf("NewSets() must create the %s cache dir; stat err = %v", category, err)
+		}
 	}
 }
 
@@ -880,7 +885,7 @@ func TestNewWithMap_ServesTheRequestedKeyFromTheSuppliedMap(t *testing.T) {
 		t.Fatalf("NewWithMap() error = %v, want nil", err)
 	}
 
-	w := serveWith(c, "/api/currency-exchange/icon/{name}", url.PathEscape(divineIconKey))
+	w := serveWith(c, "/api/icon/currency-exchange/{name}", url.PathEscape(divineIconKey))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d (body: %q)", w.Code, http.StatusOK, w.Body.String())
@@ -904,7 +909,7 @@ func TestNewWithMap_KeyOutsideTheSuppliedMapReturns404WithoutFetching(t *testing
 		t.Fatalf("NewWithMap() error = %v, want nil", err)
 	}
 
-	w := serveWith(c, "/api/currency-exchange/icon/{name}", url.PathEscape("Metadata/Items/Currency/CurrencyNotInTheAssetYet"))
+	w := serveWith(c, "/api/icon/currency-exchange/{name}", url.PathEscape("Metadata/Items/Currency/CurrencyNotInTheAssetYet"))
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
@@ -934,18 +939,209 @@ func TestNewWithMap_EmptyCacheDirIsRejected(t *testing.T) {
 	}
 }
 
-// New is held to the same rule as NewWithMap since POE-221: this package holds
-// no default directory at all, because any default it held would be the GEM
-// set's and a second map could silently be handed it. The caller derives one
-// sub-directory per map from its configured root. Reintroduce a fallback inside
-// New and this fails on the nil error.
-func TestNew_EmptyCacheDirIsRejectedRatherThanDefaulted(t *testing.T) {
-	c, err := New("")
+// NewSets is held to the same rule as NewWithMap since POE-221: this package
+// holds no default directory at all, because any default it held would be the
+// GEM set's and a second map could silently be handed it. The caller owns the
+// root and this constructor derives one sub-directory per map.
+func TestNewSets_EmptyCacheDirIsRejectedRatherThanDefaulted(t *testing.T) {
+	sets, err := NewSets("")
 
 	if err == nil {
-		t.Fatalf("New(\"\") error = nil, want a rejection (cache = %+v)", c)
+		t.Fatalf("NewSets(\"\") error = nil, want a rejection (sets = %+v)", sets)
 	}
-	if c != nil {
-		t.Errorf("New returned a cache alongside an error: %+v", c)
+	if sets != nil {
+		t.Errorf("NewSets returned a sets value alongside an error: %+v", sets)
+	}
+}
+
+func TestSets_typedRoutesKeepCategoryLocalCacheFiles(t *testing.T) {
+	tests := []struct {
+		category string
+		name     string
+		body     []byte
+	}{
+		{category: "gems", name: "Absolution", body: []byte("gem-bytes")},
+		{category: "items", name: "Gift to the Goddess", body: []byte("item-bytes")},
+		{category: "temple", name: "Chronicle of Atzoatl", body: []byte("temple-bytes")},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.category, func(t *testing.T) {
+			root := t.TempDir()
+			sets, err := NewSets(root)
+			if err != nil {
+				t.Fatalf("NewSets() error = %v, want nil", err)
+			}
+
+			cache := sets.caches[tc.category]
+			writeIconFile(t, cache.filePath(tc.name, cache.urls[tc.name]), tc.body)
+
+			w := serveSetsRequest(sets, "/api/icon/"+tc.category+"/"+url.PathEscape(tc.name))
+			if w.Code != http.StatusOK {
+				t.Fatalf("typed route status = %d, want 200 (body: %s)", w.Code, w.Body.String())
+			}
+			if !bytes.Equal(w.Body.Bytes(), tc.body) {
+				t.Errorf("typed route body = %q, want %q", w.Body.Bytes(), tc.body)
+			}
+
+			for _, other := range []string{"gems", "items", "temple"} {
+				entries, err := os.ReadDir(filepath.Join(root, other))
+				if err != nil {
+					t.Fatalf("read %s cache dir: %v", other, err)
+				}
+				want := 0
+				if other == tc.category {
+					want = 1
+				}
+				if len(entries) != want {
+					t.Errorf("%s cache dir has %d entries, want %d", other, len(entries), want)
+				}
+			}
+		})
+	}
+}
+
+func TestSets_aliasResolvesGemsItemsAndTempleLikeTypedRoutes(t *testing.T) {
+	root := t.TempDir()
+	sets, err := NewSets(root)
+	if err != nil {
+		t.Fatalf("NewSets() error = %v, want nil", err)
+	}
+
+	tests := []struct {
+		category string
+		name     string
+		body     []byte
+	}{
+		{category: "gems", name: "Absolution", body: []byte("gem-alias-bytes")},
+		{category: "items", name: "Gift to the Goddess", body: []byte("item-alias-bytes")},
+		{category: "temple", name: "Chronicle of Atzoatl", body: []byte("temple-alias-bytes")},
+	}
+	for _, tc := range tests {
+		cache := sets.caches[tc.category]
+		writeIconFile(t, cache.filePath(tc.name, cache.urls[tc.name]), tc.body)
+
+		typed := serveSetsRequest(sets, "/api/icon/"+tc.category+"/"+url.PathEscape(tc.name))
+		alias := serveSetsRequest(sets, "/api/gem-icon/"+url.PathEscape(tc.name))
+		if typed.Code != http.StatusOK || alias.Code != http.StatusOK {
+			t.Fatalf("%s/%s typed=%d alias=%d, want both 200", tc.category, tc.name, typed.Code, alias.Code)
+		}
+		if !bytes.Equal(alias.Body.Bytes(), typed.Body.Bytes()) {
+			t.Errorf("alias body = %q, typed body = %q for %s/%s", alias.Body.Bytes(), typed.Body.Bytes(), tc.category, tc.name)
+		}
+	}
+}
+
+func TestSets_unknownTypeAndUnknownNameAreNotCacheable404s(t *testing.T) {
+	sets, err := NewSets(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSets() error = %v, want nil", err)
+	}
+
+	for _, path := range []string{
+		"/api/icon/nosuchtype/Absolution",
+		"/api/icon/gems/No%20Such%20Gem",
+		"/api/gem-icon/No%20Such%20Gem",
+	} {
+		w := serveSetsRequest(sets, path)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("GET %s status = %d, want 404", path, w.Code)
+		}
+		if got := w.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("GET %s Cache-Control = %q, want no-store", path, got)
+		}
+	}
+}
+
+func TestSets_currencyExchangeTypedRoutePreservesEscapedID(t *testing.T) {
+	root := t.TempDir()
+	sets, err := NewSets(root)
+	if err != nil {
+		t.Fatalf("NewSets() error = %v, want nil", err)
+	}
+	upstream := pathBodyUpstream(t)
+	const id = "Metadata/Items/Currency/CurrencyRerollRare"
+	if err := sets.Add("currency-exchange", map[string]string{id: upstream.URL + "/chaos"}, root); err != nil {
+		t.Fatalf("Sets.Add() error = %v, want nil", err)
+	}
+
+	w := serveSetsRequest(sets, "/api/icon/currency-exchange/"+url.PathEscape(id))
+	if w.Code != http.StatusOK {
+		t.Fatalf("typed exchange route status = %d, want 200 (body: %q)", w.Code, w.Body.String())
+	}
+	if got, want := w.Body.String(), "image-for/chaos"; got != want {
+		t.Errorf("typed exchange route body = %q, want %q", got, want)
+	}
+}
+
+func TestNewSets_duplicateKeyKeepsTypedCachesButRejectsAliasIndex(t *testing.T) {
+	fsys := fstest.MapFS{
+		"urls/gems.json":  urlFile(`{"Shared Name": "https://example.invalid/gem.png"}`),
+		"urls/items.json": urlFile(`{"Shared Name": "https://example.invalid/item.png"}`),
+	}
+	sets, err := newSets(t.TempDir(), fsys, "urls")
+	if err == nil {
+		t.Fatalf("newSets() error = nil, want duplicate-key rejection")
+	}
+	for _, want := range []string{"Shared Name", "urls/gems.json", "urls/items.json"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+	if sets.caches["gems"] == nil || sets.caches["items"] == nil {
+		t.Fatalf("duplicate alias key disabled a typed cache: caches = %#v", sets.caches)
+	}
+
+	for _, tc := range []struct {
+		category string
+		url      string
+		body     []byte
+	}{
+		{category: "gems", url: "https://example.invalid/gem.png", body: []byte("gem-shared-key")},
+		{category: "items", url: "https://example.invalid/item.png", body: []byte("item-shared-key")},
+	} {
+		cache := sets.caches[tc.category]
+		writeIconFile(t, cache.filePath("Shared Name", tc.url), tc.body)
+		w := serveSetsRequest(sets, "/api/icon/"+tc.category+"/Shared%20Name")
+		if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), tc.body) {
+			t.Errorf("typed %s route status/body = %d/%q, want 200/%q", tc.category, w.Code, w.Body.Bytes(), tc.body)
+		}
+	}
+}
+
+func TestNewSets_malformedCategoryDoesNotDisableValidCategories(t *testing.T) {
+	fsys := fstest.MapFS{
+		"urls/gems.json":   urlFile(`{"Absolution": "https://example.invalid/abs.png"}`),
+		"urls/items.json":  urlFile(`{"Gift to the Goddess": `),
+		"urls/temple.json": urlFile(`{"Chronicle of Atzoatl": "https://example.invalid/chronicle.png"}`),
+	}
+	sets, err := newSets(t.TempDir(), fsys, "urls")
+	if err == nil {
+		t.Fatal("newSets() error = nil, want malformed-category error")
+	}
+	if sets.caches["gems"] == nil || sets.caches["temple"] == nil {
+		t.Fatalf("valid categories were not constructed: caches = %#v", sets.caches)
+	}
+	if sets.caches["items"] != nil {
+		t.Fatal("malformed items category unexpectedly constructed")
+	}
+}
+
+func serveSetsRequest(sets *Sets, requestPath string) *httptest.ResponseRecorder {
+	router := chi.NewRouter()
+	router.Get("/api/icon/{type}/{name}", sets.Handler())
+	router.Get("/api/gem-icon/{name}", sets.AliasHandler())
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, requestPath, nil))
+	return w
+}
+
+func writeIconFile(t *testing.T, path string, body []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("seed icon dir %q: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("seed icon file %q: %v", path, err)
 	}
 }

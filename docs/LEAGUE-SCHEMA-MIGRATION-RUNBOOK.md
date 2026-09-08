@@ -324,7 +324,7 @@ encode these**; until it exists, follow them manually.
    ("empty data … possible transient API issue") and the server logs "no rows".
    Not errors — they clear once real data flows.
 7. **Gem icons need pre-population, not runtime fetch.** poewiki 403s the VPS
-   datacenter IP, so `/api/gem-icon` cannot fetch at runtime — seed the cache
+   datacenter IP, so the icon routes cannot fetch at runtime — seed the cache
    volume from an allowed IP (`scripts/download-gem-icons.py` → repopulate the
    volume). New-league gems also need color seeding (a `gem_colors` migration)
-   and their icon URLs added — see docs/KNOWN-MISSING-GEM-ICONS.md.
+   and their icon URLs added — see [ICONS.md](ICONS.md).

@@ -107,7 +107,7 @@ func seedGemSnapshotNoColor(t *testing.T, pool *pgxpool.Pool, leagueID string, t
 // beyond is_transfigured, which made it the widest unfiltered name source
 // feeding a gem icon. Measured 2026-08-05 on the latest local Allflame snapshot
 // it offered 247 names, 45 of them corrupted "Vaal <Base> (<Transfigured>)"
-// market identities the Font cannot hand out and /api/gem-icon has no entry for.
+// market identities the Font cannot hand out and the typed gems map has no entry for.
 //
 // One subtest per rule, each seeding the ineligible name beside an eligible
 // control under its own league: dropping any single SQL fragment fails exactly

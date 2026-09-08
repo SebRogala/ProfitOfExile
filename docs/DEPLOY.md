@@ -363,7 +363,7 @@ dispatch is the deliberate answer rather than building machinery around it.
 ## The incident this document exists for
 
 On 2026-07-26 commit `c5c612f` added six entries to
-`internal/icons/gem-icon-urls.json`, the `go:embed`ded icon map. "Test & Deploy"
+`internal/icons/urls/gems.json`, the `go:embed`ded gem icon map. "Test & Deploy"
 went green **in 11 seconds** and shipped nothing.
 
 The workflow triggered (its trigger paths include `internal/**`) but the `server`

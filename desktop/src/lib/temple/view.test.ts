@@ -1269,7 +1269,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 	it('gives a temple-mod row no icon, because its name is a hint and not an item', () => {
 		// `drops.rs` prices the architect's signature rare off a prose hint
 		// (`temple gloves`), which is not a poe.ninja name — so
-		// `/api/gem-icon/temple%20gloves` is a request that cannot succeed. The
+		// `/api/icon/temple/temple%20gloves` is a request that cannot succeed. The
 		// row draws the unresolved glyph either way; naming the item there only
 		// buys a guaranteed 404 per row.
 		const box = only(offer({ value: value({ drivers: [modTerm()] }) }));
