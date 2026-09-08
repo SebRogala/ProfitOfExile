@@ -201,7 +201,7 @@ def pull(map_path: str, out: str) -> int:
         total_ok += ok
         total_skip += skip
         total_fail.extend((pair_map, name, error) for name, error in fail)
-        print(f"  {pair_map}: {ok + skip}/{ok + skip + len(fail)} present -> {pair_out}")
+        print(f"  {pair_map}: {ok}/{ok + len(fail)} present -> {pair_out}")
     total = total_ok + len(total_fail)
     print(f"\nDONE: {total_ok}/{total} present ({total_skip} already had), "
           f"{len(total_fail)} failed -> {out}")
@@ -276,13 +276,20 @@ def prune_one(map_path: str, out: str, dry_run: bool, force: bool = False) -> No
     thing to check. `--force` is the override for the rare legitimate case (a
     map that genuinely dropped most of its entries).
 
-    The guard binds `--dry-run` too. A refused dry run prints the refusal
+    A missing category directory is also a refusal: it is an unseeded pair, not
+    a clean no-op. An existing empty (or already-clean) directory is allowed,
+    because there is nothing to delete. The guard binds `--dry-run` too. A
+    refused dry run prints the refusal
     instead of the list: the list is what an operator reads to decide, and
     handing them 700 lines of "WOULD DELETE" from a wrong pairing is exactly
     the confirmation that gets it run for real.
     """
     m = load_map(map_path)
     wanted = {cache_file_name(name, url) for name, url in m.items()}
+    if not os.path.isdir(out) and not force:
+        raise PruneRefused(
+            f"prune refused: cache directory {out} does not exist for {map_path}"
+        )
     on_disk = sorted(glob.glob(os.path.join(out, "*.png")))
     superseded = [p for p in on_disk if os.path.basename(p) not in wanted]
     keeping = len(on_disk) - len(superseded)
@@ -313,7 +320,7 @@ def prune_one(map_path: str, out: str, dry_run: bool, force: bool = False) -> No
     return None
 
 
-def prune(out: str, map_path: str, dry_run: bool, force: bool = False) -> int:
+def prune(map_path: str, out: str, dry_run: bool, force: bool = False) -> int:
     """Prune every paired cache directory and return 1 if any pair refuses."""
     refused = False
     for pair_map, pair_out in map_pairs(map_path, out):
@@ -358,7 +365,7 @@ def main(argv=None) -> int:
         return pull(args.map, args.out)
     if args.mode == "migrate":
         return migrate(args.map, args.out)
-    return prune(args.out, args.map, args.dry_run, args.force)
+    return prune(args.map, args.out, args.dry_run, args.force)
 
 
 if __name__ == "__main__":

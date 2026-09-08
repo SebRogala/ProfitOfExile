@@ -1,7 +1,9 @@
+import io
 import importlib.util
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -70,6 +72,23 @@ class DownloadGemIconsTests(unittest.TestCase):
         expected = out / self.icons.cache_file_name("Item One", "https://example.invalid/item.png")
         self.assertTrue(expected.is_file(), expected)
 
+    def test_pull_reports_an_already_present_file_once(self):
+        out = self.root / "icons-cache"
+        category = out / "gems"
+        category.mkdir(parents=True)
+        wanted = category / self.icons.cache_file_name("Gem One", "https://example.invalid/gem.png")
+        wanted.write_bytes(b"already seeded")
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(
+                self.icons.main(["pull", str(self.maps / "gems.json"), str(category)]),
+                0,
+            )
+
+        self.assertIn("1/1 present", output.getvalue())
+        self.assertNotIn("2/2 present", output.getvalue())
+
     def test_prune_directory_applies_wrong_pair_guard_per_category(self):
         out = self.root / "icons-cache"
         for category, name, url in [
@@ -115,6 +134,21 @@ class DownloadGemIconsTests(unittest.TestCase):
             0,
         )
         self.assertFalse(stale.exists())
+
+    def test_prune_directory_refuses_a_missing_category_directory(self):
+        out = self.root / "icons-cache"
+        gems = out / "gems"
+        gems.mkdir(parents=True)
+        wanted = self.icons.cache_file_name("Gem One", "https://example.invalid/gem.png")
+        (gems / wanted).write_bytes(b"wanted")
+
+        error = io.StringIO()
+        with redirect_stderr(error):
+            result = self.icons.main(["prune", str(out), "--map", str(self.maps)])
+
+        self.assertEqual(result, 1)
+        self.assertIn("does not exist", error.getvalue())
+        self.assertFalse((out / "items").exists())
 
 
 if __name__ == "__main__":

@@ -25,9 +25,10 @@ make merc-seed-art POE_SERVER_URL=https://profitofexile.top  # prod cache
 ```
 
 The target reads every `gem` in `desktop/src-tauri/src/mercenary/seed-map.json`
-and fetches it from `$POE_SERVER_URL/api/icon/gems/<name>` — the same route the
-desktop app itself uses (ADR-012), so what the tests measure is what the app
-will cache. Existing files are skipped, so it is cheap to re-run and safe to
+and fetches it from `$POE_SERVER_URL/api/icon/gems/<name>` — the typed route
+current desktop builds use (ADR-012), so what the tests measure is what the app
+will cache. The retained `/api/gem-icon/<name>` alias exists for older installed
+builds only. Existing files are skipped, so it is cheap to re-run and safe to
 interrupt. It prints how many were fetched, skipped and failed, and exits
 non-zero if any failed.
 

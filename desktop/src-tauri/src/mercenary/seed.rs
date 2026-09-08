@@ -3,7 +3,7 @@
 //! The recruit window's support icons ARE the player support gems' inventory
 //! art (measured 2026-08-27: poewiki's 78×78 `*_Support_inventory_icon.png`
 //! correlated 0.89-0.95 against live crops, next-best ≤ 0.84). The server
-//! already serves that art over `/api/gem-icon/{name}` (ADR-012), so a device
+//! already serves that art over `/api/icon/gems/{name}` (ADR-012), so a device
 //! can recognise a family it has never hovered — the hover stays the fallback
 //! for the ~100 families no player gem is named after.
 //!
@@ -84,7 +84,7 @@ pub struct SeedEntry {
     pub family: String,
     /// The player gem whose inventory art seeds it — a key of one of the
     /// category maps under `internal/icons/urls/`, and the path segment
-    /// `/api/gem-icon/{gem}` takes.
+    /// `/api/icon/gems/{gem}` takes.
     pub gem: String,
     /// The family's LOWEST vocabulary tier, written by the generator.
     ///
@@ -694,7 +694,7 @@ pub fn accept_art(reply: ArtReply) -> Result<Vec<u8>, String> {
     }
 }
 
-/// `{server}/api/gem-icon/{gem}`, with the gem percent-encoded as one path
+/// `{server}/api/icon/gems/{gem}`, with the gem percent-encoded as one path
 /// segment.
 ///
 /// `server_url` carries no `/api` suffix — the JS `apiBase` does, and a URL
@@ -707,7 +707,7 @@ pub fn accept_art(reply: ArtReply) -> Result<Vec<u8>, String> {
 /// misconfigured device, not a failed fetch — the caller skips the pass.
 pub fn art_url(server: &str, gem: &str) -> Option<String> {
     let mut url = reqwest::Url::parse(server).ok()?;
-    url.path_segments_mut().ok()?.pop_if_empty().extend(["api", "gem-icon", gem]);
+    url.path_segments_mut().ok()?.pop_if_empty().extend(["api", "icon", "gems", gem]);
     Some(url.to_string())
 }
 
@@ -1302,7 +1302,7 @@ mod tests {
     use crate::mercenary::Thresholds;
 
     /// Fetched (never committed — see the fixture README) gem art, one file per mapped gem, fetched over the
-    /// production route (`/api/gem-icon/{gem}`) so the bytes the tests reason
+    /// production route (`/api/icon/gems/{gem}`) so the bytes the tests reason
     /// about are the bytes the app will cache.
     const ART_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/merc-seed-art");
 
@@ -1315,7 +1315,7 @@ mod tests {
     ///
     /// A DIRECTORY of category files since POE-135, and `gem_icon_keys` unions
     /// all of them for the same reason the server merges them: the contract is
-    /// what `/api/gem-icon/{name}` answers for, which is the merged map and not
+    /// what `/api/icon/gems/{name}` answers for, which is the merged gem map and not
     /// any one category.
     const GEM_ICON_URLS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../internal/icons/urls");
 
@@ -1379,7 +1379,7 @@ mod tests {
         lowest.into_iter().collect()
     }
 
-    /// The names `/api/gem-icon/{name}` will serve art for: the UNION of every
+    /// The names `/api/icon/gems/{name}` will serve art for: the UNION of every
     /// category map in [`GEM_ICON_URLS`], which is what the server's loader
     /// merges and therefore what the route answers for.
     fn gem_icon_keys() -> std::collections::BTreeSet<String> {
@@ -1872,7 +1872,7 @@ mod tests {
 
     // -- map contract -------------------------------------------------------
 
-    /// Every `gem` has to be a name `/api/gem-icon/{name}` will answer for.
+    /// Every `gem` has to be a name `/api/icon/gems/{name}` will answer for.
     /// A name absent from the server's embedded map is a permanent 404 — the
     /// family would silently never seed, and the summary line would report it
     /// as "unavailable" forever.
@@ -1885,7 +1885,7 @@ mod tests {
             .filter(|e| !keys.contains(&e.gem))
             .map(|e| e.gem)
             .collect();
-        assert!(missing.is_empty(), "not served by /api/gem-icon: {missing:?}");
+        assert!(missing.is_empty(), "not served by /api/icon/gems: {missing:?}");
     }
 
     /// Every `family` has to be a vocabulary family, and `tier` its LOWEST
@@ -3158,18 +3158,18 @@ mod tests {
         );
     }
 
-    /// The gem is one percent-encoded path segment under `/api/gem-icon`, and
+    /// The gem is one percent-encoded path segment under `/api/icon/gems`, and
     /// `server_url` carries no `/api` of its own.
     #[test]
     fn the_art_url_encodes_the_gem_under_the_api_prefix() {
         assert_eq!(
             art_url("https://profitofexile.top", "Added Chaos Damage Support").as_deref(),
-            Some("https://profitofexile.top/api/gem-icon/Added%20Chaos%20Damage%20Support"),
+            Some("https://profitofexile.top/api/icon/gems/Added%20Chaos%20Damage%20Support"),
         );
         // A trailing slash on the configured server must not double up.
         assert_eq!(
             art_url("https://profitofexile.top/", "Fork Support").as_deref(),
-            Some("https://profitofexile.top/api/gem-icon/Fork%20Support"),
+            Some("https://profitofexile.top/api/icon/gems/Fork%20Support"),
         );
     }
 
