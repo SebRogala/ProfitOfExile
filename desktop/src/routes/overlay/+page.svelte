@@ -16,8 +16,44 @@
 		return values as [number, number, number, number];
 	}
 
+	type PreviewRow = [number, number, number, number];
+
+	function parsePreviewRows(raw: string | null): PreviewRow[] {
+		if (!raw) return [];
+		try {
+			const parsed: unknown = JSON.parse(raw);
+			if (!Array.isArray(parsed)) return [];
+			return parsed.flatMap((row): PreviewRow[] => {
+				if (!Array.isArray(row) || row.length !== 4) return [];
+				if (row.some((value) => typeof value !== 'number' || !Number.isFinite(value))) return [];
+				return [[row[0] as number, row[1] as number, row[2] as number, row[3] as number]];
+			});
+		} catch (_) {
+			return [];
+		}
+	}
+
+	function parsePreviewDpr(raw: string | null): number {
+		if (raw === null) return 1;
+		const value = Number(raw);
+		return Number.isFinite(value) && value > 0 ? value : 1;
+	}
+
 	const previewRect = parsePreviewRect(query.get('rect'));
+	const previewRows = parsePreviewRows(query.get('rows'));
+	const previewDpr = parsePreviewDpr(query.get('dpr'));
 	const previewNumbers = previewRect ? `[${previewRect.join(', ')}]` : 'unlocated';
+
+	function previewRowStyle(row: PreviewRow): string {
+		const originX = previewRect?.[0] ?? 0;
+		const originY = previewRect?.[1] ?? 0;
+		return [
+			`left: ${(row[0] - originX) / previewDpr}px`,
+			`top: ${(row[1] - originY) / previewDpr}px`,
+			`width: ${row[2] / previewDpr}px`,
+			`height: ${row[3] / previewDpr}px`,
+		].join('; ');
+	}
 
 	const BASE_EDGE = 10;
 
@@ -122,6 +158,11 @@
 		<div class="border-bottom"></div>
 		<div class="border-left"></div>
 		<div class="border-right"></div>
+		{#each previewRows as row, index}
+			<div class="preview-row" style={previewRowStyle(row)}>
+				<span>{index}</span>
+			</div>
+		{/each}
 		<div class="preview-label">
 			<span>{previewLabel}</span>
 			<span>{previewNumbers}</span>
@@ -207,6 +248,26 @@
 		font-weight: 600;
 		white-space: nowrap;
 		z-index: 10;
+	}
+
+	.preview-row {
+		position: absolute;
+		border: 1px solid rgba(83, 211, 255, 0.9);
+		box-sizing: border-box;
+		pointer-events: none;
+	}
+
+	.preview-row span {
+		position: absolute;
+		top: 0;
+		left: 0;
+		padding: 1px 3px;
+		background: rgba(17, 17, 17, 0.82);
+		color: #53d3ff;
+		font-family: -apple-system, sans-serif;
+		font-size: 9px;
+		font-weight: 600;
+		line-height: 11px;
 	}
 
 	.ctrl-btn {

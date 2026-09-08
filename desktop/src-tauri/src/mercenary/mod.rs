@@ -742,18 +742,21 @@ pub struct MercGeometry {
 
 impl Default for MercGeometry {
     /// Measured on `scratchpad/recruit-cai.png` (the only capture we have).
-    /// The row pitch is the D1 reference value 49.3; the same panel's OCR line
-    /// centres yield 48 (`s ≈ 0.974`), which is what a detect over that panel
-    /// must report — the two numbers are a reference constant and a
-    /// measurement, not a discrepancy.
+    /// The vertical row pitch is the D1 reference value 49.3; the same panel's
+    /// OCR line centres yield 48 (`s ≈ 0.974`), which is what a detect over
+    /// that panel must report — the two numbers are a reference constant and a
+    /// measurement, not a discrepancy. The horizontal frame slot pitch is a
+    /// separate quantity owned by [`cellfit::REF_PITCH`].
     ///
-    /// Two of them are KNOWN HIGH and deliberately left alone here: the
-    /// committed fixture's own gold frame measures a slot pitch of 48.67 and a
-    /// row pitch of 48.4, so `cell_pitch` is 0.7 % and `row_pitch` 1.8 % over
-    /// truth. `cellfit` owns the true unit (`REF_PITCH`) so the frame fit does
-    /// not inherit the error; correcting these two moves the OCR-path window,
-    /// the seed store's memo key and three geometry tests at once, which is its
-    /// own change — see POE-216.
+    /// The committed `merc-skills-panel.png` fixture measures a vertical row
+    /// pitch of 48.4 and a horizontal slot pitch of 48.67, so `row_pitch` 49.3
+    /// is 1.8 % high and `cell_pitch` 49.0 is 0.7 % high — both are KNOWN HIGH.
+    /// The PC replay measures vertical OCR gaps of 43.0–43.7 px at frame scale
+    /// 0.899–0.902, or 47.8–48.6 reference px; those agree with the fixture,
+    /// not with 49.3. The seeded OCR centres make the fallback tolerant
+    /// meanwhile. Correcting the two constants moves the OCR-path window, the
+    /// seed store's memo key and three geometry tests at once; that blast radius
+    /// is POE-216 (deferred out of POE-214 D7).
     fn default() -> Self {
         Self {
             row_pitch: 49.3,

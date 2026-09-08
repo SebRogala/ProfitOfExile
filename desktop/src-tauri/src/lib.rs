@@ -35,6 +35,7 @@ pub struct OcrRectView {
     pub key: String,
     pub label: String,
     pub rect: Option<[i32; 4]>,
+    pub rows: Vec<[i32; 4]>,
     pub source: String,
 }
 
@@ -109,12 +110,14 @@ fn ocr_rect_view(
     key: &'static str,
     label: &'static str,
     rect: Option<[i32; 4]>,
+    rows: Vec<[i32; 4]>,
     source: impl Into<String>,
 ) -> OcrRectView {
     OcrRectView {
         key: key.to_string(),
         label: label.to_string(),
         rect,
+        rows,
         source: source.into(),
     }
 }
@@ -154,13 +157,29 @@ fn assemble_ocr_rects(
     } else {
         "seed"
     };
-    let merc_rect = match (placements.merc, screen) {
-        (Some(merc), Some(screen)) => Some(crate::mercenary::geometry::placed_panel_crop(
-            merc.panel,
-            screen.ui_scale,
-            [screen.width, screen.height],
-        )),
-        _ => None,
+    let (merc_rect, merc_rows) = match (placements.merc, screen) {
+        (Some(merc), Some(screen)) => {
+            // The preview draws the SEED's shipped reference row geometry. It
+            // can differ from live tick geometry under a `merc-geometry.json`
+            // `rowPitch` override or a held fit.
+            let geometry = crate::mercenary::MercGeometry::default();
+            let pitch = geometry.row_pitch * screen.ui_scale;
+            (
+                Some(crate::mercenary::geometry::placed_panel_crop(
+                    merc.panel,
+                    screen.ui_scale,
+                    [screen.width, screen.height],
+                )),
+                crate::mercenary::geometry::placed_row_rects(
+                    merc.panel,
+                    &geometry,
+                    screen.ui_scale,
+                    pitch,
+                    None,
+                ),
+            )
+        }
+        _ => (None, Vec::new()),
     };
     let merc_source = if merc_rect.is_some() {
         if anchors.and_then(|a| a.merc_panel).is_some() {
@@ -177,30 +196,35 @@ fn assemble_ocr_rects(
             "lab.gem",
             "Gem tooltip",
             Some(placements.lab.gem),
+            Vec::new(),
             "seed",
         ),
         ocr_rect_view(
             "lab.font",
             "Font panel",
             Some(placements.lab.font),
+            Vec::new(),
             "seed",
         ),
         ocr_rect_view(
             "temple.panel",
             "Temple panel",
             temple_panel,
+            Vec::new(),
             if temple_panel.is_some() { temple_source } else { "unlocated" },
         ),
         ocr_rect_view(
             "temple.remaining",
             "Temple remaining",
             temple_remaining,
+            Vec::new(),
             if temple_remaining.is_some() { temple_source } else { "unlocated" },
         ),
         ocr_rect_view(
             "merc.panel",
             "Merc OCR crop",
             merc_rect,
+            merc_rows,
             merc_source,
         ),
     ]
@@ -4899,6 +4923,42 @@ mod tests {
         );
 
         assert_eq!(view.rect, Some(expected));
+    }
+
+    #[test]
+    fn the_merc_preview_publishes_vertical_seed_row_bands_in_capture_pixels() {
+        let screen = measured_screen(1920, 1200, 1.0, None);
+        let placements = crate::ssot::placements(&screen);
+        let rects = assemble_ocr_rects(&placements, Some(&screen), None);
+        let view = rects.iter().find(|rect| rect.key == "merc.panel").unwrap();
+
+        // At scale 1, the default vertical pitch is 49.3 and the cell is 44:
+        // row 0's cell top is round(615 + 49.3 + 22 - 22) = 664; each later
+        // band advances by 49.3 before integer rounding. The x band is the
+        // name column at 720 through the last slot at 1247.
+        assert_eq!(
+            view.rows,
+            vec![
+                [720, 664, 527, 44],
+                [720, 714, 527, 44],
+                [720, 763, 527, 44],
+                [720, 812, 527, 44],
+                [720, 862, 527, 44],
+                [720, 911, 527, 44],
+            ],
+        );
+    }
+
+    #[test]
+    fn non_merc_preview_rows_are_empty() {
+        let screen = measured_screen(1920, 1200, 1.0, None);
+        let placements = crate::ssot::placements(&screen);
+        let rects = assemble_ocr_rects(&placements, Some(&screen), None);
+
+        for key in ["lab.gem", "temple.panel"] {
+            let view = rects.iter().find(|rect| rect.key == key).unwrap();
+            assert!(view.rows.is_empty(), "{key} must not publish merc row bands");
+        }
     }
 
     #[test]

@@ -165,7 +165,13 @@ pub struct MercLayout {
     /// from. Never a single row's own x: a leading glyph's side bearing
     /// shifts one row by a couple of px and would skew that row's cells.
     pub column_x0: i32,
-    /// Observed row pitch in screen px, before the scale division.
+    /// The pitch the rows were laid out from — which of the two detect paths
+    /// wrote it decides what that means. `detect_reason` writes the OBSERVED
+    /// OCR line pitch, before the scale division, and its rows sit on the line
+    /// centres that measured it. `placed_layout` writes the ENUMERATION pitch
+    /// (a held fit's, else `row_pitch · scale`); there matched OCR lines
+    /// replace individual centres, so the rows' final spacing is NOT this
+    /// number.
     pub row_pitch: f32,
     pub rows: Vec<MercLayoutRow>,
     pub header: MercHeader,
@@ -859,11 +865,141 @@ pub fn placed_row_centres(
     (0..count).map(|i| first + i as f32 * pitch).collect()
 }
 
+struct PlacedRowGeometry {
+    centre_y: f32,
+    skill_icon: [i32; 4],
+    name_rect: [i32; 4],
+    cells: Vec<[i32; 4]>,
+    band: [i32; 4],
+}
+
+fn placed_row_geometry(
+    panel: [i32; 4],
+    g: &MercGeometry,
+    scale: f32,
+    centres: &[f32],
+) -> Vec<PlacedRowGeometry> {
+    let cell_size = (g.cell_size * scale).round().max(1.0) as i32;
+    let line_height = (g.ref_line_height * scale).round().max(1.0) as i32;
+    let column_x0 = panel[0] as f32 + g.cell_size * scale * PANEL_MARGIN_CELLS;
+    let cell_x0 = column_x0 + g.cell_offset_x * scale;
+    let name_x0 = column_x0.round() as i32;
+    let name_w = (cell_x0 - column_x0 - (4.0 * scale)).round().max(1.0) as i32;
+
+    centres
+        .iter()
+        .map(|&centre| {
+            let name_top = (centre - line_height as f32).round() as i32;
+            let name_rect = [name_x0, name_top, name_w, line_height * 2];
+            let cells = (0..g.max_slots)
+                .map(|slot| {
+                    let x = cell_x0 + slot as f32 * g.cell_pitch * scale;
+                    [
+                        x.round() as i32,
+                        (centre - cell_size as f32 / 2.0).round() as i32,
+                        cell_size,
+                        cell_size,
+                    ]
+                })
+                .collect::<Vec<_>>();
+            let top = cells
+                .first()
+                .map_or(name_rect[1], |cell| name_rect[1].min(cell[1]));
+            let right = cells.last().map_or(
+                name_rect[0] + name_rect[2],
+                |cell| (cell[0] + cell[2]).max(name_rect[0] + name_rect[2]),
+            );
+            let bottom = cells.last().map_or(
+                name_rect[1] + name_rect[3],
+                |cell| (cell[1] + cell[3]).max(name_rect[1] + name_rect[3]),
+            );
+
+            PlacedRowGeometry {
+                centre_y: centre,
+                skill_icon: skill_icon_rect(column_x0, centre, cell_size),
+                name_rect,
+                cells,
+                band: [name_rect[0], top, right - name_rect[0], bottom - top],
+            }
+        })
+        .collect()
+}
+
+/// Preview bands for the placed panel's fixed row geometry. This uses the same
+/// cell/name projection as [`placed_layout`], but has no OCR lines to seed it.
+pub fn placed_row_rects(
+    panel: [i32; 4],
+    g: &MercGeometry,
+    scale: f32,
+    fitted_pitch: f32,
+    button_y: Option<f32>,
+) -> Vec<[i32; 4]> {
+    let centres = placed_row_centres(panel, g, scale, fitted_pitch, button_y);
+    placed_row_geometry(panel, g, scale, &centres)
+        .into_iter()
+        .map(|row| row.band)
+        .collect()
+}
+
+fn placed_skill_name_lines<'a>(
+    lines: &'a [OcrLineBox],
+    g: &MercGeometry,
+    panel: [i32; 4],
+    scale: f32,
+    pitch: f32,
+    centres: &[f32],
+) -> Vec<&'a OcrLineBox> {
+    let column_x0 = panel[0] as f32 + g.cell_size * scale * PANEL_MARGIN_CELLS;
+    let line_height = (g.ref_line_height * scale).round().max(1.0) as f32;
+    let cell_x0 = column_x0 + g.cell_offset_x * scale;
+    lines
+        .iter()
+        .filter(|line| !matches!(text_anchor(&line.text, g), Some(_)))
+        .filter(|line| {
+            line.x as f32 >= column_x0 - line_height
+                && line.x as f32 <= cell_x0
+                && centres
+                    .iter()
+                    .any(|&centre| (line.centre_y() - centre).abs() <= pitch * 0.45)
+        })
+        .collect()
+}
+
+/// Candidate lines for the placed-column contradiction detector. This window
+/// stays crop-wide because a moved column is the case where the geometry's
+/// narrow skill-name band excludes the evidence we need to reject it.
+fn placed_contradiction_lines<'a>(
+    lines: &'a [OcrLineBox],
+    g: &MercGeometry,
+    panel: [i32; 4],
+    scale: f32,
+    pitch: f32,
+    centres: &[f32],
+) -> Vec<&'a OcrLineBox> {
+    let horizontal_pad = (PLACED_PANEL_PADDING_REF[0] as f32 * scale).round();
+    let crop_left = panel[0] as f32 - horizontal_pad;
+    let crop_right = panel[0] as f32 + panel[2] as f32 + horizontal_pad;
+    lines
+        .iter()
+        .filter(|line| !matches!(text_anchor(&line.text, g), Some(_)))
+        .filter(|line| {
+            line.x as f32 >= crop_left
+                && line.x as f32 <= crop_right
+                && centres
+                    .iter()
+                    .any(|&centre| (line.centre_y() - centre).abs() <= pitch * 0.45)
+        })
+        .collect()
+}
+
 /// Build the live layout from a placed panel and its fitted row pitch.
 ///
 /// Chrome is still required as the open-window proof, but skill-name OCR is
-/// only text assigned to already-known geometry bands. A mangled or absent
-/// pass-1 name therefore produces an unread row rather than deleting a row.
+/// only text assigned to already-known geometry bands. The geometry supplies
+/// the row count; each band's centre is replaced by the mean of its matched
+/// skill-name line centres when one exists, while an unread row keeps its
+/// geometry centre. A mangled or absent pass-1 name therefore produces an
+/// unread row rather than deleting a row.
 pub fn placed_layout(
     lines: &[OcrLineBox],
     panel: [i32; 4],
@@ -911,19 +1047,9 @@ pub fn placed_layout(
     }
 
     let column_x0 = panel[0] as f32 + g.cell_size * scale * PANEL_MARGIN_CELLS;
-    let horizontal_pad = (PLACED_PANEL_PADDING_REF[0] as f32 * scale).round();
-    let crop_left = panel[0] as f32 - horizontal_pad;
-    let crop_right = panel[0] as f32 + panel[2] as f32 + horizontal_pad;
-    let mut observed_name_xs = lines
-        .iter()
-        .filter(|line| !matches!(text_anchor(&line.text, g), Some(_)))
-        .filter(|line| {
-            line.x as f32 >= crop_left
-                && line.x as f32 <= crop_right
-                && centres
-                    .iter()
-                    .any(|&centre| (line.centre_y() - centre).abs() <= pitch * 0.45)
-        })
+    let mut observed_name_xs =
+        placed_contradiction_lines(lines, g, panel, scale, pitch, &centres)
+        .into_iter()
         .map(|line| line.x as f32)
         .collect::<Vec<_>>();
     if !observed_name_xs.is_empty() {
@@ -946,42 +1072,48 @@ pub fn placed_layout(
             });
         }
     }
-    let cell_size = (g.cell_size * scale).round().max(1.0) as i32;
-    let line_height = (g.ref_line_height * scale).round().max(1.0) as i32;
-    let cell_x0 = column_x0 + g.cell_offset_x * scale;
-    let name_x0 = column_x0.round() as i32;
-    let name_w = (cell_x0 - column_x0 - (4.0 * scale)).round().max(1.0) as i32;
-    let rows = centres
+    let seeded_centres = centres
+        .iter()
+        .map(|&geometry_centre| {
+            let matched = placed_skill_name_lines(
+                lines,
+                g,
+                panel,
+                scale,
+                pitch,
+                &[geometry_centre],
+            );
+            if matched.is_empty() {
+                geometry_centre
+            } else {
+                matched.iter().map(|line| line.centre_y()).sum::<f32>() / matched.len() as f32
+            }
+        })
+        .collect::<Vec<_>>();
+    let row_geometry = placed_row_geometry(panel, g, scale, &seeded_centres);
+    let rows = row_geometry
         .iter()
         .enumerate()
-        .map(|(i, &centre)| {
-            let name_top = (centre - line_height as f32).round() as i32;
-            let name_rect = [name_x0, name_top, name_w, line_height * 2];
+        .map(|(i, row)| {
             let text = lines
                 .iter()
                 .filter(|line| {
                     !matches!(text_anchor(&line.text, g), Some(_))
-                        && (line.centre_y() - centre).abs() <= pitch * 0.45
-                        && line.x as f32 >= column_x0 - line_height as f32
-                        && line.x as f32 <= cell_x0
+                        && (line.centre_y() - row.centre_y).abs() <= pitch * 0.45
+                        && line.x as f32 >= column_x0 - (g.ref_line_height * scale).round().max(1.0)
+                        && line.x as f32 <= column_x0 + g.cell_offset_x * scale
                 })
                 .map(|line| line.text.trim())
                 .filter(|text| !text.is_empty())
                 .collect::<Vec<_>>()
                 .join(" ");
-            let cells = (0..g.max_slots)
-                .map(|slot| {
-                    let x = cell_x0 + slot as f32 * g.cell_pitch * scale;
-                    [x.round() as i32, (centre - cell_size as f32 / 2.0).round() as i32, cell_size, cell_size]
-                })
-                .collect();
             MercLayoutRow {
                 index: i as u8,
-                centre_y: centre,
-                skill_icon: skill_icon_rect(column_x0, centre, cell_size),
-                name_rect,
+                centre_y: row.centre_y,
+                skill_icon: row.skill_icon,
+                name_rect: row.name_rect,
                 text,
-                cells,
+                cells: row.cells.clone(),
             }
         })
         .collect::<Vec<_>>();
@@ -2023,6 +2155,30 @@ mod tests {
     }
 
     #[test]
+    fn a_placed_crop_shifted_right_rejects_its_name_column() {
+        let g = MercGeometry::default();
+        let lines = crate::mercenary::cellfit::pc_lines();
+        let scale = 43.0 / g.row_pitch;
+        let miss = placed_layout(&lines, [824, 554, 500, 430], &g, scale, 43.0)
+            .expect_err("a crop shifted right by 100 px must spend the fallback");
+
+        assert_eq!(
+            miss.stage,
+            DetectStage::NoAnchor {
+                rows: 6,
+                // At the sibling test's scale 43.0 / 49.3 = 0.8722 the expected
+                // column is 824 + 44 · 0.8722 / 2 = 843.2 and the tolerance
+                // round(44 · 0.8722 · 0.5) = 19 — the mirror of the 643 / 19 above.
+                panel: PanelAnchor::ColumnMoved {
+                    column_x: 743,
+                    expected_x: 843,
+                    tolerance: 19,
+                },
+            }
+        );
+    }
+
+    #[test]
     fn placed_rows_survive_a_mangled_pass_one_name_as_an_unread_row() {
         let g = MercGeometry::default();
         let panel = [724, 554, 500, 429];
@@ -2067,6 +2223,68 @@ mod tests {
         assert_eq!(mangled.skill.state, ReadState::Unknown);
         assert_eq!(result.rows_on_screen, 6, "the left skill-icon sensor sees all six rows");
         assert_eq!(result.rows_read, 5, "the mangled pass-1 name is the one unread row");
+    }
+
+    #[test]
+    fn placed_rows_follow_pc_skill_line_centres_without_changing_the_geometry_count() {
+        let g = MercGeometry::default();
+        let layout = placed_layout(
+            &crate::mercenary::cellfit::pc_lines(),
+            [724, 554, 500, 430],
+            &g,
+            0.90,
+            g.row_pitch * 0.90,
+        )
+        .expect("the PC placed panel layout");
+        let expected = [616.5, 659.5, 703.5, 746.5, 790.5, 833.5];
+
+        assert_eq!(layout.rows.len(), 6);
+        for (row, expected_centre) in layout.rows.iter().zip(expected) {
+            assert!(
+                (row.centre_y - expected_centre).abs() <= 1.0,
+                "row {} centre {} drifted from {expected_centre}",
+                row.index,
+                row.centre_y,
+            );
+        }
+    }
+
+    #[test]
+    fn an_absent_pc_name_keeps_its_geometry_centre_as_an_unread_row() {
+        let g = MercGeometry::default();
+        let mut lines = crate::mercenary::cellfit::pc_lines();
+        lines.retain(|line| line.text != "Trarthan Agility");
+        let layout = placed_layout(
+            &lines,
+            [724, 554, 500, 430],
+            &g,
+            0.90,
+            g.row_pitch * 0.90,
+        )
+        .expect("the PC placed panel layout");
+
+        for (row_index, expected_centre) in [
+            (0, 616.5),
+            (1, 659.5),
+            (2, 703.5),
+            (3, 746.5),
+            (5, 833.5),
+        ] {
+            assert!(
+                (layout.rows[row_index].centre_y - expected_centre).abs() <= 1.0,
+                "row {row_index} centre {} drifted from {expected_centre}",
+                layout.rows[row_index].centre_y,
+            );
+        }
+        // 554 + 44.37 + 20 + 4·44.37; placed_row_centres uses the unrounded
+        // 19.8 half-cell.
+        let geometry_centre = 795.65;
+        assert!(
+            (layout.rows[4].centre_y - geometry_centre).abs() <= 0.01,
+            "row 4 must keep its geometry centre {geometry_centre}, got {}",
+            layout.rows[4].centre_y,
+        );
+        assert!(layout.rows[4].text.is_empty(), "the absent name remains unread");
     }
 
     #[test]
