@@ -316,8 +316,10 @@ fn union(a: [i32; 4], b: [i32; 4]) -> [i32; 4] {
 /// against the vocabulary and reads as an unread plate.
 ///
 /// So the sort is two-phase rather than one comparator: order by top, group the
-/// result into ROWS — a line joins the open row while its box overlaps the
-/// row's FIRST box vertically — then order each row left to right. Grouping
+/// result into ROWS — a line joins the open row only while its TOP is above the
+/// row's FIRST box's vertical centre — then order each row left to right. The
+/// centre rule keeps a few pixels of bottom-edge overlap from merging stacked
+/// lines, while top-jittered boxes on one row still share the row. Grouping
 /// against the row's first box and not its running span is what stops one tall
 /// line from chaining the whole panel into a single row.
 ///
@@ -326,32 +328,55 @@ fn union(a: [i32; 4], b: [i32; 4]) -> [i32; 4] {
 /// overlap pairwise down a staircase), and `sort_by` on a non-total order is
 /// documented to panic or return nonsense.
 ///
-/// # The premise the banding rests on, and which way it fails
+/// # Measured wrapped-name failure and accepted rule
 ///
-/// **Line PITCH exceeds glyph HEIGHT.** The band is one box's own height, so
-/// two lines land in one row exactly when the second starts before the first
-/// ends — which is what "the same visual row" means only while the game leaves
-/// leading between lines. Every measurement to hand does: the laptop panel
-/// capture reviewed for POE-243 reads h 12 against a 13 px pitch.
+/// PC temple debug dump `1788825245452` (2026-09-08), plate B1, returned
+/// `SANCTUM&OF` at capture box `[1025, 382, 81, 18]` and `IMMORTALITY` at
+/// `[1023, 398, 86, 14]`. The name crop starts at `(980, 377)`, so this
+/// function receives `[45, 5, 81, 18]` and `[43, 21, 86, 14]`: the first
+/// bottom is 23 and the second top is 21, a 2 px overlap. The old bottom-edge
+/// rule put both in one row; x-order then joined the second line first as
+/// `IMMORTALITY SANCTUM&OF`, which scored 0.56 against the vocabulary.
 ///
-/// That is **1 px of margin**, so name the failure direction rather than trust
-/// it. Where pitch ≤ height, a wrap bands into the row above it and the row is
-/// then ordered by x — so a wrapped line whose box starts further left than the
-/// line above would be emitted BEFORE it.
+/// The accepted banding rule is the first box's vertical centre, expressed
+/// without floating point as `2 * candidate_top < 2 * first_top + first_height`.
+/// A candidate exactly at the centre — half-pixel or not — starts a new row.
+/// The measured second line starts at 21, below the first centre at 14, so it
+/// is a new row: the stacking-side margin is 7 px. On the side-by-side side, the
+/// margin is about 3 px for a 9 px cap-height first box, against its 4.5 px
+/// half-height band and the 1–2 px top jitter the section above assumes (a
+/// hand-built fixture, not OCR output); the ~3 px that leaves is derived, not
+/// measured, and no side-by-side row in this file came off the engine.
 ///
-/// The two callers are not equally exposed:
+/// The panel path's own leading is tight too: the laptop panel capture
+/// reviewed for POE-243 reads h 12 against a 13 px pitch. The old bottom-edge
+/// rule had 1 px of margin there before a wrap banded into the row above; the
+/// centre rule has 7 (a wrap lands 13 px down, the centre 6).
 ///
-/// - the **panel** path is safe either way. Both lines of a block share the
-///   panel's left edge, and the within-row key is `(x, y)` — so a banded wrap
-///   ties on x and falls back to y, which is the order it was already in. It
-///   also does not matter to [`architect_blocks`], which reads the sequence
-///   and not the row structure.
-/// - the **plate strip** ([`read_plate`]) is where it would show. That crop is
-///   a two-line name band and the whole point of the row rule there is to join
-///   the halves in order; a wrapped second line indented LEFT of the first
-///   would then join as `Workshop Gemcutter's`. Nothing measured does that —
-///   the names are left-aligned — but it is the case to check first if a plate
-///   starts reading Unknown on a client whose line spacing is tighter.
+/// The accepted trade-off is that a row whose leftmost-top box is short and
+/// whose neighbour's top is more than half that height lower now splits and is
+/// emitted in top order. Emitting a genuine one-row pair in top order is
+/// exactly the `Champions Hall of` join the section above names — the margin
+/// buys that risk down, it does not remove it. Nothing measured shows a wrapped
+/// line landing left of the first INSIDE one merged row: the 2 px left indent
+/// measured above splits into its own row instead.
+///
+/// The callers are not equally exposed:
+///
+/// - the **panel** paths ([`architect_blocks`] and [`read_panel`]) remain
+///   ordered by their measured top-to-bottom lines. Splitting a row changes
+///   the emitted sequence only when a box the split pushes into a later
+///   sub-row has a smaller `x` than one that stays in an earlier sub-row. The
+///   panel column shares one `x`, so equal `x` falls back to `y` and both
+///   orders are top order; the only measured foreign box — map fragment
+///   `x=1659` versus panel `x=1480` — is to the right of every column box, so
+///   it never moves ahead of one. `architect_blocks` then uses that sequence
+///   for attachment; it does not consume row boundaries.
+/// - the **plate strip** ([`read_plate`]) is where the measured failure shows.
+///   That crop is a two-line name band, so the row rule must join the halves in
+///   printed order before matching the room name — the case to check first if
+///   a plate starts reading Unknown on a client whose line spacing runs tighter
+///   than what is measured here.
 fn reading_order<L: TextLine>(lines: &[L]) -> Vec<usize> {
     let mut order: Vec<usize> = (0..lines.len()).collect();
     let Some(rects) = lines.iter().map(|l| l.rect()).collect::<Option<Vec<_>>>() else {
@@ -369,7 +394,7 @@ fn reading_order<L: TextLine>(lines: &[L]) -> Vec<usize> {
     for i in order {
         let same_row = row
             .first()
-            .is_some_and(|&first| rects[i][1] < rects[first][1] + rects[first][3]);
+            .is_some_and(|&first| 2 * rects[i][1] < 2 * rects[first][1] + rects[first][3]);
         if !same_row {
             flush(&mut row, &mut out);
         }
@@ -1457,12 +1482,17 @@ mod tests {
     /// lines of different lengths still overlap horizontally, which is what
     /// [`continues`] tests.
     fn boxed(text: &str, x: i32, y: i32) -> OcrLineBox {
+        boxed_with_size(text, x, y, 8 * text.len() as i32, LINE_H)
+    }
+
+    /// Variant carrying OCR-measured width and height from a debug dump.
+    fn boxed_with_size(text: &str, x: i32, y: i32, w: i32, h: i32) -> OcrLineBox {
         OcrLineBox {
             text: text.to_string(),
             x,
             y,
-            w: 8 * text.len() as i32,
-            h: LINE_H,
+            w,
+            h,
         }
     }
 
@@ -1986,6 +2016,21 @@ mod tests {
             Match::Unknown,
             "the other order really is unreadable",
         );
+    }
+
+    // PC temple dump `1788825245452`, plate B1: the second top is 21 and the
+    // first bottom is 23, a 2 px overlap. The old rule puts both in one row and
+    // joins `IMMORTALITY SANCTUM&OF`; `[0, 1]` is also the input order, so the
+    // sibling `two_boxes_on_one_row_are_ordered_left_to_right_despite_a_jittered_top`
+    // pins the opposite, same-row direction.
+    #[test]
+    fn a_two_pixel_overlap_keeps_stacked_boxes_in_separate_reading_rows() {
+        let lines = vec![
+            boxed_with_size("SANCTUM&OF", 45, 5, 81, 18),
+            boxed_with_size("IMMORTALITY", 43, 21, 86, 14),
+        ];
+
+        assert_eq!(reading_order(&lines), vec![0, 1]);
     }
 
     // A RULE test, not a board: the two heights are the laptop capture's (a
@@ -2800,6 +2845,34 @@ mod tests {
         assert_eq!(
             super::super::rooms::match_room_name("Workshop Gemcutter's"),
             Match::Unknown,
+        );
+    }
+
+    // PC temple dump `1788825245452`, plate B1: the old bottom-edge rule puts
+    // these two lines in one row, so the plate path joins the tail first as
+    // `IMMORTALITY SANCTUM&OF` and cannot settle the plate.
+    #[test]
+    fn a_two_pixel_overlap_joins_a_wrapped_plate_name_top_line_first() {
+        let img = blank(1374, 862);
+        let lattice = Lattice::new((673, 682), 0.99);
+        let recognizer = Canned {
+            name: vec![
+                boxed_with_size("SANCTUM&OF", 45, 5, 81, 18),
+                boxed_with_size("IMMORTALITY", 43, 21, 86, 14),
+            ],
+            numeral: Vec::new(),
+        };
+
+        let board = read_board(&recognizer, &img, &lattice, &|| false);
+
+        assert!(board
+            .iter()
+            .all(|r| r.identity.identity().map(|id| id.display_name())
+                == Some("Sanctum of Immortality")));
+        assert_eq!(
+            super::super::rooms::match_plate_name("IMMORTALITY SANCTUM&OF", None),
+            Match::Unknown,
+            "the overlap rule's old x-order would join the tail before the lead",
         );
     }
 
