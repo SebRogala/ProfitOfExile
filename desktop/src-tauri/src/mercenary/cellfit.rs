@@ -949,7 +949,7 @@ pub(super) const PC_SCREEN: [u32; 2] = [1920, 1080];
 /// The PC panel's OCR lines, hand-authored in SCREEN px from the capture: six
 /// rows at y-centres 616/659/703/746/790/833 in a skill column at x 743, and
 /// the wager line above row 1. All six names are in `mercenary-stats.json`, so
-/// [`super::geometry::detect`] seeds its column off them exactly as it would
+/// [`super::geometry::detect_reason`] seeds its column off them exactly as it would
 /// off the real OCR's.
 ///
 /// `pub(super)` for the same reason [`super::geometry::reference_lines`] is:
@@ -1094,7 +1094,7 @@ pub(super) fn both_registrations(
     let g = MercGeometry::default();
     let img = fixture(file);
     let frame = Frame::cropped(origin, screen);
-    let ocr = super::geometry::detect(&lines, &g, &vocab(), None).expect("the panel");
+    let ocr = super::geometry::detect_reason(&lines, &g, &vocab(), None).expect("the panel");
     let refined = refine(&img, frame, ocr.clone(), &g);
     (img, frame, ocr, refined)
 }

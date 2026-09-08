@@ -708,11 +708,13 @@ impl BurstGate {
         self.probe.as_ref().map(|p| p.speaker.as_str())
     }
 
-    /// Diagnostic count of probes this ARMING has spent — the attempt number
-    /// `run::probe_tick` has spent. Runtime policy does not consume it. 0 for a
-    /// gate armed afresh.
+    /// Diagnostic count of probes this ARMING has spent. Runtime policy does
+    /// not consume it (the probe band that widened per look went with
+    /// POE-270); the tests read it to assert what a line bought. 0 for a gate
+    /// armed afresh.
     ///
     /// Deliberately not `ArmedProbe::fired`: see [`Self::looks`] the field.
+    #[cfg(test)]
     pub fn looks(&self) -> u32 {
         self.looks
     }
@@ -914,18 +916,6 @@ pub fn take_stood_down(app: &AppHandle, now_ms: u64) -> Option<StandDown> {
         .unwrap_or_else(|e| e.into_inner())
         .take_stood_down(now_ms);
     stood_down
-}
-
-/// Diagnostic count of how many probes this arming has spent. See
-/// [`BurstGate::looks`]; no runtime policy consumes this value.
-pub fn looks(app: &AppHandle) -> u32 {
-    let state = app.state::<AppState>();
-    let looks = state
-        .merc_burst
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .looks();
-    looks
 }
 
 /// The current voice/manual arm identity for merc fallback budgeting.

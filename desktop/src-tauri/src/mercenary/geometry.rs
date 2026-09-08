@@ -187,9 +187,21 @@ fn median(values: &mut [f32]) -> f32 {
     }
 }
 
+/// [`detect_reason`] as an `Option`, for the tests that only ask whether a
+/// frame detects. Production reads the reason.
+#[cfg(test)]
+pub fn detect(
+    lines: &[OcrLineBox],
+    g: &MercGeometry,
+    vocab: &MercVocab,
+    known_panel: Option<[i32; 4]>,
+) -> Option<MercLayout> {
+    detect_reason(lines, g, vocab, known_panel).ok()
+}
+
 /// Detect a recruit window in a screen's OCR lines.
 ///
-/// Returns `None` — never a partial guess — when any of the D2 preconditions
+/// Returns `Err` — never a partial guess — when any of the D2 preconditions
 /// fails: fewer than [`MercGeometry::min_skill_candidates`] skill-name
 /// candidates, or no panel anchor. The anchor is the discriminator against
 /// every other PoE surface that lists skill names (a gem tooltip, the
@@ -212,16 +224,8 @@ fn median(values: &mut [f32]) -> f32 {
 /// produced ([`panel_bounds`]), and it is a fourth anchor — see
 /// [`panel_anchor`]. `None` means there is no live capture, and
 /// then a frame anchors on its own chrome or not at all.
-pub fn detect(
-    lines: &[OcrLineBox],
-    g: &MercGeometry,
-    vocab: &MercVocab,
-    known_panel: Option<[i32; 4]>,
-) -> Option<MercLayout> {
-    detect_reason(lines, g, vocab, known_panel).ok()
-}
-
-/// [`detect`], with the reason a miss missed.
+///
+/// The `Err` carries the reason a miss missed.
 ///
 /// A miss is the failure mode that costs a capture: two of them retire the
 /// window, and the log line the loop prints for one ("looked, no recruit
@@ -644,7 +648,7 @@ pub fn is_button_line(text: &str, _g: &MercGeometry) -> bool {
     lower == "take item" || lower == "rematch"
 }
 
-/// Which of [`detect`]'s three TEXT anchors a line answered as.
+/// Which of [`detect_reason`]'s three TEXT anchors a line answered as.
 ///
 /// A label, for the debug report and the log line — nothing branches on it.
 /// It exists because "no anchor" and "anchored" were the only two things a
@@ -672,7 +676,7 @@ impl std::fmt::Display for AnchorKind {
 }
 
 /// Which text anchor a line reads as WITHOUT the positional test — the whole
-/// of [`detect`]'s step 4 rule except "is it near the rows".
+/// of [`detect_reason`]'s step 4 rule except "is it near the rows".
 ///
 /// Split out for the one caller that has no rows to measure against: the debug
 /// dump reports the anchor a frame carried even when the detect went on to
@@ -690,7 +694,7 @@ pub fn text_anchor(text: &str, g: &MercGeometry) -> Option<AnchorKind> {
     }
 }
 
-/// [`text_anchor`] plus [`detect`]'s positional test: the wager and the
+/// [`text_anchor`] plus [`detect_reason`]'s positional test: the wager and the
 /// recruit verdict must sit ABOVE row 1 within `reach`, a button BELOW the
 /// last row within the same reach.
 ///
@@ -1013,7 +1017,7 @@ pub fn contains(rect: [i32; 4], p: (i32, i32)) -> bool {
 /// Its one consumer is the occlusion rule (`run.rs`'s `miss_kind`): a detect
 /// that found nothing while the cursor was inside this rect is a tooltip drawn
 /// OVER the panel, not a window that closed. `None` for a layout with no rows,
-/// which [`detect`] never produces.
+/// which [`detect_reason`] never produces.
 ///
 /// This is NOT the rect the header-withholding rule keys on — see
 /// [`header_guard_bounds`] for why the two questions need different bottoms.
@@ -1077,14 +1081,6 @@ pub fn header_guard_bounds(layout: &MercLayout, g: &MercGeometry) -> Option<[i32
 /// three text anchors is enough for the cheap voice-gate proof.
 pub fn probe_hit(lines: &[OcrLineBox], g: &MercGeometry) -> bool {
     lines.iter().any(|l| text_anchor(&l.text, g).is_some())
-}
-
-/// Whether `outer` fully contains `inner` (`[x, y, w, h]`).
-pub fn encloses(outer: [i32; 4], inner: [i32; 4]) -> bool {
-    inner[0] >= outer[0]
-        && inner[1] >= outer[1]
-        && inner[0] + inner[2] <= outer[0] + outer[2]
-        && inner[1] + inner[3] <= outer[1] + outer[3]
 }
 
 /// The shared rect construction: the grid plus [`PANEL_MARGIN_CELLS`] either
@@ -1804,18 +1800,6 @@ mod tests {
         );
 
         assert!(detect(&stripped, &g, &vocab(), Some(half)).is_none());
-    }
-
-    /// The reference panel as a TOOLTIP leaves it: the header and the wager
-    /// line, and only the top two of its six skill rows. This is the shape the
-    /// 2026-08-26 smoke produced — the game draws the tooltip over the lower
-    /// rows, OCR reads what is left, and `detect` returns a two-row layout for
-    /// a six-row window.
-    fn partially_covered_reference_lines() -> Vec<OcrLineBox> {
-        reference_lines()
-            .into_iter()
-            .filter(|l| l.x != 134 || l.centre_y() <= 700.0)
-            .collect()
     }
 
     /// The reference panel with its wager line gone — what a tooltip over the
