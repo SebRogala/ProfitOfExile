@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { MarketOverviewData } from '$lib/api';
-	import { getGemIconUrl } from '$lib/gem-icons';
+	import { getIconUrl } from '$lib/icons';
 	import { formatPrice } from '$lib/price.svelte';
 	import OfferingChart from './OfferingChart.svelte';
 
@@ -127,7 +127,7 @@
 					<div class="off-card">
 						<div class="off-top-row">
 							<div class="off-identity">
-								<img src={getGemIconUrl(off.name)} alt={off.name} width="36" height="36" class="off-icon" />
+								<img src={getIconUrl('items', off.name)} alt={off.name} width="36" height="36" class="off-icon" />
 								<span class="off-name">{off.name}</span>
 								<span class="off-price">{formatPrice(off.currentPrice)}</span>
 							</div>

@@ -373,7 +373,7 @@ export type CurrencyExchangeHorizon = 'recent' | 'day';
  * this exact pair is the play.
  *
  * `itemIcon`/`quoteIcon` are API-RELATIVE paths into this server's icon route
- * (`/currency-exchange/icon/<escaped id>`), not upstream poewiki URLs —
+ * (`/icon/currency-exchange/<escaped id>`), not upstream poewiki URLs —
  * production cannot reach poewiki (ADR-012). Join them onto `getApiBase()` with
  * `$lib/exchange/view`'s `iconSrc`. `null` means the item has no artwork, which
  * is a different thing from a path that later 404s: the first renders no icon

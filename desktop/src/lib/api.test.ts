@@ -155,10 +155,10 @@ describe('fetchCurrencyExchangePlays', () => {
 		stock: 40,
 		suspect: false,
 		itemName: 'Chaos Orb',
-		itemIcon: '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare',
+		itemIcon: '/icon/currency-exchange/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare',
 		itemCategory: 'Currency',
 		quoteName: 'Exalted Orb',
-		quoteIcon: '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyAddModToRare',
+		quoteIcon: '/icon/currency-exchange/Metadata%2FItems%2FCurrency%2FCurrencyAddModToRare',
 		quoteCategory: 'Currency'
 	};
 
@@ -184,7 +184,7 @@ describe('fetchCurrencyExchangePlays', () => {
 		// usually do — the filter has to be able to match on either one.
 		itemCategory: 'Delirium',
 		quoteName: 'Chaos Orb',
-		quoteIcon: '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare',
+		quoteIcon: '/icon/currency-exchange/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare',
 		quoteCategory: 'Currency'
 	};
 
@@ -211,7 +211,7 @@ describe('fetchCurrencyExchangePlays', () => {
 		itemIcon: null,
 		itemCategory: '',
 		quoteName: 'Chaos Orb',
-		quoteIcon: '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare',
+		quoteIcon: '/icon/currency-exchange/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare',
 		quoteCategory: 'Currency'
 	};
 

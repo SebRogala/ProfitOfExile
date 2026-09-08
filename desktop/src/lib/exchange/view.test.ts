@@ -155,9 +155,9 @@ function play(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePl
 /** The rate every divine-entry fixture below is read back into chaos with. */
 const DIVINE_RATE = 200;
 /** What the server puts on a chaos-quoted leg's `quoteIcon`. */
-const CHAOS_ICON = '/currency-exchange/icon/Chaos';
+const CHAOS_ICON = '/icon/currency-exchange/Chaos';
 /** What the server puts on a divine-quoted leg's `quoteIcon`. */
-const DIVINE_ICON = '/currency-exchange/icon/Divine';
+const DIVINE_ICON = '/icon/currency-exchange/Divine';
 /** The quote side of any leg traded against divine. */
 const DIVINE_SIDE = { quote: DIVINE_ID, quoteName: 'Divine Orb', quoteIcon: DIVINE_ICON };
 
@@ -2397,7 +2397,7 @@ describe('iconSrc', () => {
 	// What `getApiBase()` hands the page: an origin plus the `/api` mount.
 	const BASE = 'https://server.test/api';
 	// What the server puts on a leg — `url.PathEscape`d id under the icon route.
-	const PATH = '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare';
+	const PATH = '/icon/currency-exchange/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare';
 
 	it('joins the API base onto the icon path the server sent', () => {
 		// The `%2F`s are the server's escaping of the metadata id's slashes; the
@@ -2408,7 +2408,7 @@ describe('iconSrc', () => {
 		// join that treated the path as origin-relative (`new URL(path, base)`)
 		// would drop the mount and request an endpoint the server does not serve.
 		expect(iconSrc(BASE, PATH)).toBe(
-			'https://server.test/api/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare'
+			'https://server.test/api/icon/currency-exchange/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare'
 		);
 	});
 
@@ -2430,13 +2430,13 @@ describe('iconSrc', () => {
 		// today". `//currency-exchange/...` is normalised by some proxies and
 		// 404d by others, so the trim is pinned for whatever base reaches it.
 		expect(iconSrc('https://server.test/api/', PATH)).toBe(
-			'https://server.test/api/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare'
+			'https://server.test/api/icon/currency-exchange/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare'
 		);
 	});
 
 	it('inserts the separator when the path arrives without a leading slash', () => {
-		expect(iconSrc(BASE, 'currency-exchange/icon/Chaos')).toBe(
-			'https://server.test/api/currency-exchange/icon/Chaos'
+		expect(iconSrc(BASE, 'icon/currency-exchange/Chaos')).toBe(
+			'https://server.test/api/icon/currency-exchange/Chaos'
 		);
 	});
 });
@@ -2447,7 +2447,7 @@ describe('chaosIconPath', () => {
 		// matches the route `IconPath` registers. Verified 200 against a running
 		// server — a differently escaped path would 404 and empty the tile again.
 		expect(chaosIconPath()).toBe(
-			'/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare'
+			'/icon/currency-exchange/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare'
 		);
 	});
 });
@@ -2455,7 +2455,7 @@ describe('chaosIconPath', () => {
 describe('currencyIconPath', () => {
 	it('escapes an id’s slashes the way the server’s path escaping does', () => {
 		expect(currencyIconPath(DIVINE_ID)).toBe(
-			'/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyModValues'
+			'/icon/currency-exchange/Metadata%2FItems%2FCurrency%2FCurrencyModValues'
 		);
 	});
 });
@@ -4231,7 +4231,7 @@ describe('anyConvertStep', () => {
 		itemIcon: '/icon/Scarab',
 		itemCategory: 'Scarabs',
 		quoteName: 'Chaos Orb',
-		quoteIcon: '/currency-exchange/icon/Chaos',
+		quoteIcon: '/icon/currency-exchange/Chaos',
 		quoteCategory: 'Currency'
 	};
 

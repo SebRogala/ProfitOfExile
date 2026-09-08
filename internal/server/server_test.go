@@ -228,7 +228,7 @@ func TestNewRouter_NilFrontendFSReturns404ForNonAPIPaths(t *testing.T) {
 // currencyExchangeIconPath is the escaped-id path clients request, built the way
 // exchange.IconPath builds it: the whole metadata id is ONE route segment, so
 // its slashes arrive as %2F.
-const currencyExchangeIconPath = "/api/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyNotInTheAssetYet"
+const currencyExchangeIconPath = "/api/icon/currency-exchange/Metadata%2FItems%2FCurrency%2FCurrencyNotInTheAssetYet"
 
 // The icon route is registered whenever the cache root resolves. An unknown id
 // is what proves it without a network call: the icon handler answers its own 404
@@ -252,6 +252,20 @@ func TestNewRouter_CurrencyExchangeIconRouteIsRegisteredWhenACacheRootIsConfigur
 	if got := w.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want %q — the icon handler answered this 404, chi's NotFound would not have set it",
 			got, "no-store")
+	}
+}
+
+func TestNewRouter_LegacyCurrencyExchangeIconRouteIsDropped(t *testing.T) {
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{IconCacheDir: t.TempDir()})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet,
+		"/api/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyNotInTheAssetYet", nil))
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("legacy currency-exchange icon route status = %d, want 404", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); got == "no-store" {
+		t.Fatalf("legacy currency-exchange icon route is still registered: Cache-Control = %q", got)
 	}
 }
 
@@ -287,7 +301,7 @@ func TestNewRouter_CurrencyExchangeIconRouteServesFromTheDefaultRootWhenNoneIsCo
 
 	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
 
-	itemURL := "/api/currency-exchange/icon/" + url.PathEscape(itemID)
+	itemURL := "/api/icon/currency-exchange/" + url.PathEscape(itemID)
 	req := httptest.NewRequest(http.MethodGet, itemURL, nil)
 	w := httptest.NewRecorder()
 
@@ -338,8 +352,8 @@ func chdirToEmptyDir(t *testing.T) {
 //
 // Both the sub-directory names and the two file names are written out here
 // rather than taken from the production constants and helpers, deliberately, as
-// an independent oracle. Seeding through gemIconSubdir would move the seed
-// whenever the constant moved and the swap above would go undetected; the file
+// an independent oracle. Seeding through the production cache helper would move
+// the seed whenever the layout moved and the swap above would go undetected; the file
 // names restate icons's whole cache-filename scheme — the safe name (runs of
 // [^A-Za-z0-9] collapsed to "_"), a "-", the first 16 hex characters of the
 // SHA-256 of the entry's SOURCE URL, and ".png" — for the same reason, and
@@ -357,7 +371,7 @@ func TestNewRouter_EachIconRouteServesFromItsOwnSubdirectoryOfTheCacheRoot(t *te
 	)
 	// The whole metadata id is ONE route segment, so its slashes are escaped —
 	// the same shape exchange.IconPath builds for clients.
-	itemEscapedURL := "/api/currency-exchange/icon/" + url.PathEscape(itemID)
+	itemEscapedURL := "/api/icon/currency-exchange/" + url.PathEscape(itemID)
 	gemBytes := []byte("\x89PNG\r\n\x1a\nseeded-into-the-gems-subdir")
 	itemBytes := []byte("\x89PNG\r\n\x1a\nseeded-into-the-currency-exchange-subdir")
 
@@ -372,9 +386,9 @@ func TestNewRouter_EachIconRouteServesFromItsOwnSubdirectoryOfTheCacheRoot(t *te
 	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{IconCacheDir: root})
 
 	gemW := httptest.NewRecorder()
-	router.ServeHTTP(gemW, httptest.NewRequest(http.MethodGet, "/api/gem-icon/"+gemName, nil))
+	router.ServeHTTP(gemW, httptest.NewRequest(http.MethodGet, "/api/icon/gems/"+gemName, nil))
 	if gemW.Code != http.StatusOK {
-		t.Fatalf("GET /api/gem-icon/%s status = %d, want %d — the gem route did not find its file under %q (body: %s)",
+		t.Fatalf("GET /api/icon/gems/%s status = %d, want %d — the gem route did not find its file under %q (body: %s)",
 			gemName, gemW.Code, http.StatusOK, gemDir, gemW.Body.String())
 	}
 	if !bytes.Equal(gemW.Body.Bytes(), gemBytes) {

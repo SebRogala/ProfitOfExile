@@ -28,6 +28,10 @@ Amended 2026-09-04 (POE-136) — Decision 3 is implemented. See the fourth
 amendment at the end for the scheme, what it does and does not fix, and the
 one-time production migration it requires.
 
+Amended 2026-09-08 (icon-route-and-layout) — the fifth amendment at the end
+supersedes the earlier current-route and current-layout claims. The
+content-addressed filename decision and seed-before-deploy ordering remain.
+
 ## Context
 
 The server serves gem and item artwork at `/api/gem-icon/{name}` from
@@ -158,7 +162,7 @@ positional-only when this amendment was written.)
 The gem seeding steps do not transfer verbatim: they hardcode the gem directory
 and the gem volume. The item set needs a second persistent volume, its own
 `CURRENCY_EXCHANGE_ICON_CACHE_DIR`, and its own copy — see
-[GEM-ICONS.md → Currency Exchange items → Pre-seeding production](../GEM-ICONS.md#pre-seeding-production)
+[ICONS.md → Currency Exchange items → Pre-seeding production](../ICONS.md#production-seeding-and-migration)
 for the four steps and the exact commands. **This is an operator step on
 production, and it has no substitute** — an unseeded item icon is a permanent
 502 there, not a slow first request.
@@ -244,7 +248,7 @@ existing gem files into `gems/` (764 files as of 2026-09-01 — a move, not a
 re-crawl), seed `currency-exchange/` from an allowed IP, set `ICON_CACHE_DIR`,
 then deploy, then drop the old volume. Seeding before the deploy is the same
 Decision 2 ordering as any icon addition, for the same reason.
-[GEM-ICONS.md → The one-time migration to a single volume](../GEM-ICONS.md#the-one-time-migration-to-a-single-volume-poe-221-and-to-content-addressed-names-poe-136)
+[ICONS.md → Production seeding and migration](../ICONS.md#production-seeding-and-migration)
 carries the commands.
 
 ## Amended 2026-09-04 (POE-135)
@@ -290,7 +294,7 @@ which is the merged map. `scripts/download-gem-icons.py` accepts a directory and
 merges it with the same duplicate-key failure.
 
 **Not done here, deliberately.** POE-135 also proposed renaming the package
-`icons` → `icons` and the route `/api/gem-icon/{name}` → `/api/icon/{name}`.
+`gemicon` → `icons` and the route `/api/gem-icon/{name}` → `/api/icon/{name}`.
 Both are left for the owner: the installed desktop builds call the current
 route, so a rename without an alias breaks them on the next server deploy, and
 the package's own doc comment records a later (POE-177) decision to keep its
@@ -324,7 +328,7 @@ remove the split: it is defence in depth, and the two sets are seeded, migrated
 and verified as separate operator steps against separate directories. The
 current-behaviour sites that state the hazard carry the qualifier inline —
 `internal/icons`, `internal/server`, their tests, the seeding script and
-docs/GEM-ICONS.md — while the dated POE-177 and POE-221 amendments above keep
+docs/ICONS.md — while the dated POE-177 and POE-221 amendments above keep
 their original unqualified wording, because an amendment records what was true
 when it was written.
 
@@ -344,6 +348,77 @@ every icon in both sets. The migration is offline and does not need a re-crawl:
 anything genuinely missing from an allowed IP, and `prune` sweeps what the
 current map no longer produces (Decision 3's garbage sweep; the "small script"
 the task called for, not a timer).
-[GEM-ICONS.md → Migration to content-addressed names](../GEM-ICONS.md#migration-to-content-addressed-names)
+[ICONS.md → Production seeding and migration](../ICONS.md#production-seeding-and-migration)
 carries the ordered chain, composed with the still-pending POE-221 single-volume
 migration so the two are run as one.
+
+## Amended 2026-09-08 (typed icon route and per-map layout)
+
+Status of this section: current. It supersedes the earlier current-behaviour
+claims about route names, package naming, map layout, and the production
+directory migration. The dated amendments above remain history.
+
+One typed route, one cache per source map. The package is internal/icons.
+icons.NewSets(root) constructs one Cache for each embedded
+internal/icons/urls/*.json file under root/<map basename>.
+Sets.Add("currency-exchange", exchange.IconURLs(), root) adds the caller-owned
+Currency Exchange map without making internal/icons import internal/exchange.
+The canonical route is:
+
+    GET /api/icon/{type}/{name}
+
+The valid type values are gems, items, temple, and currency-exchange. The map
+basename is therefore public API: renaming gems.json or another category file
+renames a route value and requires coordinated clients and cache seeding.
+
+The cache filename is unchanged from POE-136:
+<safeFileName(name)>-<shortHash(srcURL)>.png. A category move changes only the
+parent directory. The root is ICON_CACHE_DIR; no cache files are read from
+another category's directory.
+
+Compatibility alias and removal condition. GET /api/gem-icon/{name} is kept
+solely for installed desktop builds that can outlive the server deploy. It
+resolves the merged name-to-type index and delegates to the typed cache. The
+web client uses typed paths and has no need for the alias because the SPA and
+API deploy together. The access log's route field records chi's matched
+pattern, so the alias is measurable. Remove it one minor release after its
+share of icon requests reaches zero, and record that trigger before deleting
+the route.
+
+The old Currency Exchange route is dropped. There is no alias or deprecation
+window for GET /api/currency-exchange/icon/{name}. Currency Exchange clients
+use /api/icon/currency-exchange/{escaped id}.
+
+Per-category degradation is intentional. Category maps are read and
+constructed independently. A malformed category is logged and disables only
+that typed category; valid categories remain registered. Cross-map duplicate
+keys still reject the compatibility alias because one name cannot resolve to
+one type. The typed caches may still serve both categories because their
+routes are explicit.
+
+The puller follows the same layout. A directory map passed to
+scripts/download-gem-icons.py pull fans out to OUT/<map basename>/. A single
+flat map keeps writing to the output directory given, which is the Currency
+Exchange override. prune applies its wrong-pair blast-radius refusal
+independently to every map/output pair.
+
+The production migration is owner-run and was not executed by this change:
+existing gems/ files stay in place; items/ and temple/ are seeded as new
+subdirectories, and the two offering files stranded in gems/ are harmless.
+The full operator procedure and the offline migrate commands are in
+[ICONS.md](../ICONS.md).
+
+Verification uses GET, not HEAD:
+
+    curl -s -D- -o /dev/null "https://profitofexile.top/api/icon/temple/Vial%20of%20Fate"
+    curl -s -D- -o /dev/null "https://profitofexile.top/api/gem-icon/Absolution"
+    curl -s -D- -o /dev/null "https://profitofexile.top/api/icon/nosuchtype/Absolution"
+
+The first two are the typed and installed-build alias checks; the last must be
+404 with Cache-Control: no-store. The 45 missing
+Vaal <Base> (<Transfigured>) names remain out of scope because this route
+change does not decide which icon shape they should use.
+
+Mercenary icons remain separate: merc_icon_templates in PostgreSQL, device
+signatures, and /api/desktop/merc-templates; they do not use this cache or
+ICON_CACHE_DIR.

@@ -356,8 +356,7 @@ export interface RecipeView {
 
 /** One priced member of a `RecipeView`. */
 export interface RecipeItemView {
-	/** poe.ninja's own name — the price's join key, and what `/api/gem-icon/`
-	 *  is asked for. */
+	/** poe.ninja's own name — the price's join key and the temple icon key. */
 	name: string;
 	/** Chaos, or null where this read priced nothing for it. Never `0` standing
 	 *  in for a missing price. */

@@ -774,7 +774,7 @@ func (r *Repository) SparklineWindow(ctx context.Context, scope league.Scope, si
 // Measured 2026-08-05 on the latest local Allflame snapshot: it returned 247
 // names, 45 of them poe.ninja's corrupted "Vaal <Base> (<Transfigured>)" market
 // identities — Vaal Arc (Arc of Surging) and the like. The Font cannot hand one
-// out, /api/gem-icon has no entry for that name shape, so each rendered as the
+// out, and the typed gems map has no entry for that name shape, so each rendered as the
 // "?" fallback next to a compare card that can only answer NO_DATA. With the
 // filters the query returns 202.
 //

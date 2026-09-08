@@ -3,7 +3,7 @@
 
 The temple endpoint (``GET /api/analysis/temple-market``, POE-255) serves an
 icon path per room-tier and per recipe member. Icons are served by the existing
-cache (``GET /api/gem-icon/{name}``, ADR-012): it needs a committed
+cache (``GET /api/icon/temple/{name}``, ADR-012): it needs a committed
 name-to-upstream-URL map, and adding one is a new ``*.json`` file under
 ``internal/icons/urls/`` with no Go change.
 
@@ -31,7 +31,7 @@ upstream produces a zero-length diff.
 After regenerating, pre-seed the production icon volume BEFORE deploying: the
 production VPS cannot fetch upstream, so a map entry deployed ahead of its
 cached bytes is a permanent 502 for that name (ADR-012). See
-docs/GEM-ICONS.md, "Adding an icon", steps 3-6.
+docs/ICONS.md, "Adding an icon", steps 3-6.
 
 Exit codes: 0 success, 1 a coverage gate failed, 2 an upstream could not be
 read.

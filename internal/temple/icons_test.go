@@ -50,7 +50,7 @@ func TestIconPath_escapesTheNameAsOnePathSegment(t *testing.T) {
 	// arrive percent-encoded for the handler's url.PathUnescape to hand the map
 	// the name it was keyed on.
 	got := IconPath("Coward's Chains")
-	want := "/api/gem-icon/Coward%27s%20Chains"
+	want := "/api/icon/temple/Coward%27s%20Chains"
 	if got != want {
 		t.Errorf("IconPath(%q) = %q, want %q", "Coward's Chains", got, want)
 	}
@@ -60,7 +60,7 @@ func TestIconPath_roomArtworkIsOneSharedEntry(t *testing.T) {
 	// All 86 room-tier lines are lines on one Chronicle of Atzoatl and share its
 	// artwork, so they resolve to one cached file rather than 86.
 	got := IconPath(RoomIconName)
-	want := "/api/gem-icon/Chronicle%20of%20Atzoatl"
+	want := "/api/icon/temple/Chronicle%20of%20Atzoatl"
 	if got != want {
 		t.Errorf("IconPath(RoomIconName) = %q, want %q", got, want)
 	}

@@ -1,27 +1,16 @@
 // Package icons serves Path of Exile artwork to both the web and desktop
 // clients through a persistent, on-disk icon cache.
 //
-// It backs two endpoints over two independent instances: gem inventory icons at
-// /api/gem-icon/{name} from the embedded gem map (New), and currency exchange
-// item icons at /api/currency-exchange/icon/{name} from internal/exchange's
-// asset (NewWithMap). Nothing below is gem-specific — a key is whatever the
-// route parameter carries — so the package keeps its name for its origin, and
-// the description that follows says "gem" because that is the set it was
-// written for.
+// It backs the typed /api/icon/{type}/{name} route and the installed-client
+// compatibility alias /api/gem-icon/{name}. Each source map gets its own Cache
+// and on-disk sub-directory; the alias uses a merged name→type index.
 //
-// The clients only know a gem's display name (e.g. "Added Chaos Damage
-// Support"). The correct poewiki image URL is an /images/<h>/<hh>/ path that
-// MediaWiki derives from the MD5 of the image's FILE name — stable for that
-// name, so a re-upload keeps the URL, but not constructible from the gem's
-// display name — so a name→URL map is embedded from the category files under
-// urls/ (gems.json, items.json), merged into one flat map by loadURLMap, which
-// discovers whatever *.json is there. On the first request for a gem the
-// upstream image is fetched once and written to a persistent on-disk cache
-// directory ("our own copy"); every subsequent request — including after a
-// server restart — is served straight from disk with no upstream fetch. poewiki
-// is therefore hit at most once, ever, per gem. Clients additionally cache
-// aggressively via a long immutable Cache-Control header, so icons are not
-// re-downloaded on every app open.
+// The correct poewiki image URL is not constructible from a display name or a
+// metadata id, so name→URL maps are embedded from urls/*.json. On the first
+// request for an icon the upstream image is fetched once and written to a
+// persistent on-disk cache; subsequent requests, including after restart, are
+// served from disk. Clients additionally cache aggressively via a long immutable
+// Cache-Control header.
 //
 // Only URLs live in the repo (the embedded map). The fetched image bytes are
 // never committed — they are copyrighted and heavy — so the cache directory is
@@ -42,6 +31,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -53,9 +43,9 @@ import (
 )
 
 // urlFiles carries the source name→URL maps, split by category, one file per
-// category. The split is source-side only: the runtime lookup is the single
-// flat map loadURLMap merges them into, because the handler's key is whatever
-// the route parameter carries and knows nothing about categories.
+// category. NewSets gives each file its own Cache. loadURLMap still merges them
+// to build the compatibility alias's name→type index and to reject ambiguous
+// names.
 //
 // Embedding (rather than reading the directory at runtime) is ADR-012: the icon
 // set stays versioned with the binary that serves it, and production — which
@@ -80,7 +70,7 @@ const maxImageBytes = 5 << 20 // 5 MiB
 // what stops re-downloads on every app open.
 const cacheControl = "public, max-age=31536000, immutable"
 
-// notFoundCacheControl stops clients from caching an unknown-gem 404 at all.
+// notFoundCacheControl stops clients from caching an unknown-icon 404 at all.
 //
 // This is an explicit "do not keep this" rather than an absence of headers. A
 // 404 with no freshness information is heuristically cacheable under RFC 7234,
@@ -107,7 +97,8 @@ const notFoundCacheControl = "no-store"
 // map and, more importantly, prevents path traversal from a name value.
 var unsafeFileChars = regexp.MustCompile(`[^A-Za-z0-9]+`)
 
-// Cache resolves gem names to poewiki icons and persists fetched bytes to disk.
+// Cache resolves one icon category's keys to poewiki icons and persists fetched
+// bytes to disk.
 type Cache struct {
 	urls   map[string]string
 	client *http.Client
@@ -116,28 +107,173 @@ type Cache struct {
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
 
-	// etags memoises the strong ETag per gem name so a conditional request can
+	// etags memoises the strong ETag per icon key so a conditional request can
 	// be answered without reading the file or hashing it again. See etagOf.
 	etagMu sync.RWMutex
 	etags  map[string]string
 }
 
-// New builds a Cache from the embedded category files (see urlFiles) and
-// ensures cacheDir exists. It returns an error if those files are missing,
-// malformed, empty or share a key across two of them — all build-time defects,
-// see loadURLMap — or if cacheDir is empty or cannot be created.
-//
-// cacheDir is required here for the same reason NewWithMap requires it, and
-// this package deliberately holds no default: any default it held would be the
-// GEM set's directory, and nothing stops a second map from being handed it. The
-// caller owns the layout — internal/server derives one sub-directory per map
-// from a single configured cache root (POE-221).
-func New(cacheDir string) (*Cache, error) {
-	urls, err := loadURLMap(urlFiles, urlsDir)
+// Sets is the registry of typed icon caches and the compatibility alias index.
+// Its maps are immutable after server construction except through Add, which is
+// intended for startup wiring before the handlers are registered.
+type Sets struct {
+	caches   map[string]*Cache
+	nameType map[string]string
+}
+
+// NewSets builds one Cache per embedded category map at root/<category>. A bad
+// category is reported while the other categories continue constructing, so a
+// malformed map does not take down every icon surface. The returned Sets is
+// non-nil whenever the root and map directory could be inspected; callers can
+// register the typed handler for the successfully built categories even when
+// err is non-nil.
+func NewSets(root string) (*Sets, error) {
+	return newSets(root, urlFiles, urlsDir)
+}
+
+type categoryMap struct {
+	typeName string
+	file     string
+	urls     map[string]string
+}
+
+func newSets(root string, fsys fs.FS, dir string) (*Sets, error) {
+	if root == "" {
+		return nil, errors.New("icons: cache root is required")
+	}
+
+	files, err := urlMapFiles(fsys, dir)
 	if err != nil {
 		return nil, err
 	}
-	return NewWithMap(urls, cacheDir)
+
+	sets := &Sets{
+		caches:   make(map[string]*Cache, len(files)),
+		nameType: make(map[string]string),
+	}
+	var errs []error
+	parts := make([]categoryMap, 0, len(files))
+	for _, file := range files {
+		typeName := strings.TrimSuffix(path.Base(file), path.Ext(file))
+		part, err := readURLMap(fsys, file)
+		if err != nil {
+			slog.Error("icons: icon set disabled", "type", typeName, "map", file, "error", err)
+			errs = append(errs, fmt.Errorf("icons: set %s: %w", typeName, err))
+			continue
+		}
+		if len(part) == 0 {
+			err = fmt.Errorf("icons: set %s map %s holds no entries", typeName, file)
+			slog.Error("icons: icon set disabled", "type", typeName, "map", file, "error", err)
+			errs = append(errs, err)
+			continue
+		}
+
+		cache, err := NewWithMap(part, filepath.Join(root, typeName))
+		if err != nil {
+			slog.Error("icons: icon set disabled", "type", typeName, "map", file, "error", err)
+			errs = append(errs, fmt.Errorf("icons: set %s: %w", typeName, err))
+			continue
+		}
+		sets.caches[typeName] = cache
+		parts = append(parts, categoryMap{typeName: typeName, file: file, urls: part})
+	}
+
+	merged, err := mergeCategoryMaps(parts, dir)
+	if err != nil {
+		slog.Error("icons: compatibility alias disabled", "error", err)
+		errs = append(errs, err)
+	} else {
+		for _, part := range parts {
+			for name := range part.urls {
+				if _, ok := merged[name]; ok {
+					sets.nameType[name] = part.typeName
+				}
+			}
+		}
+	}
+
+	return sets, errors.Join(errs...)
+}
+
+// Add registers a caller-owned map, such as the currency-exchange asset, under
+// root/<typeName>. The map is also added to the alias index when its keys do not
+// collide with a name already registered by another category. A collision does
+// not remove the typed cache: the typed route remains unambiguous, while the
+// alias reports the construction error instead of choosing silently.
+func (s *Sets) Add(typeName string, urls map[string]string, root string) error {
+	if s == nil {
+		return errors.New("icons: cannot add to nil sets")
+	}
+	if typeName == "" {
+		return errors.New("icons: icon type is required")
+	}
+	if root == "" {
+		return errors.New("icons: cache root is required")
+	}
+
+	cache, err := NewWithMap(urls, filepath.Join(root, typeName))
+	if err != nil {
+		return err
+	}
+	s.caches[typeName] = cache
+
+	keys := make([]string, 0, len(urls))
+	for name := range urls {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	var errs []error
+	for _, name := range keys {
+		if previous, ok := s.nameType[name]; ok && previous != typeName {
+			errs = append(errs, fmt.Errorf("icons: duplicate icon key %q in %s and %s", name, previous, typeName))
+			continue
+		}
+		s.nameType[name] = typeName
+	}
+	return errors.Join(errs...)
+}
+
+// Handler serves GET /api/icon/{type}/{name}. An unknown type is a client bug,
+// so it gets the same no-store 404 as an unknown name.
+func (s *Sets) Handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		typeName := chi.URLParam(r, "type")
+		cache, ok := s.caches[typeName]
+		if !ok {
+			writeNotFound(w, r)
+			return
+		}
+		cache.Handler().ServeHTTP(w, r)
+	}
+}
+
+// AliasHandler serves the installed-desktop compatibility route
+// GET /api/gem-icon/{name}. It resolves the name to one category and then uses
+// that category's normal Cache handler, so alias and typed responses share all
+// cache, ETag and error behaviour.
+func (s *Sets) AliasHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := chi.URLParam(r, "name")
+		if decoded, err := url.PathUnescape(name); err == nil {
+			name = decoded
+		}
+		typeName, ok := s.nameType[name]
+		if !ok {
+			writeNotFound(w, r)
+			return
+		}
+		cache, ok := s.caches[typeName]
+		if !ok {
+			writeNotFound(w, r)
+			return
+		}
+		cache.Handler().ServeHTTP(w, r)
+	}
+}
+
+func writeNotFound(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", notFoundCacheControl)
+	http.NotFound(w, r)
 }
 
 // loadURLMap merges every *.json file directly under dir in fsys into one flat
@@ -163,6 +299,22 @@ func New(cacheDir string) (*Cache, error) {
 // fs.ReadDir, whose order is documented sorted, and the keys of each file are
 // visited in sorted order rather than in map order.
 func loadURLMap(fsys fs.FS, dir string) (map[string]string, error) {
+	files, err := urlMapFiles(fsys, dir)
+	if err != nil {
+		return nil, err
+	}
+	parts := make([]categoryMap, 0, len(files))
+	for _, file := range files {
+		part, err := readURLMap(fsys, file)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, categoryMap{typeName: strings.TrimSuffix(path.Base(file), path.Ext(file)), file: file, urls: part})
+	}
+	return mergeCategoryMaps(parts, dir)
+}
+
+func urlMapFiles(fsys fs.FS, dir string) ([]string, error) {
 	files, err := fs.Glob(fsys, dir+"/*.json")
 	if err != nil {
 		return nil, fmt.Errorf("icons: list url maps in %s: %w", dir, err)
@@ -170,29 +322,36 @@ func loadURLMap(fsys fs.FS, dir string) (map[string]string, error) {
 	if len(files) == 0 {
 		return nil, fmt.Errorf("icons: no url map files matched %s/*.json", dir)
 	}
+	return files, nil
+}
 
+func readURLMap(fsys fs.FS, file string) (map[string]string, error) {
+	raw, err := fs.ReadFile(fsys, file)
+	if err != nil {
+		return nil, fmt.Errorf("icons: read url map %s: %w", file, err)
+	}
+	var urls map[string]string
+	if err := json.Unmarshal(raw, &urls); err != nil {
+		return nil, fmt.Errorf("icons: parse url map %s: %w", file, err)
+	}
+	return urls, nil
+}
+
+func mergeCategoryMaps(parts []categoryMap, dir string) (map[string]string, error) {
 	urls := make(map[string]string)
 	sourceFile := make(map[string]string)
-	for _, file := range files {
-		raw, err := fs.ReadFile(fsys, file)
-		if err != nil {
-			return nil, fmt.Errorf("icons: read url map %s: %w", file, err)
-		}
-		var part map[string]string
-		if err := json.Unmarshal(raw, &part); err != nil {
-			return nil, fmt.Errorf("icons: parse url map %s: %w", file, err)
-		}
-		keys := make([]string, 0, len(part))
-		for key := range part {
+	for _, part := range parts {
+		keys := make([]string, 0, len(part.urls))
+		for key := range part.urls {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
 			if first, dup := sourceFile[key]; dup {
-				return nil, fmt.Errorf("icons: duplicate icon key %q in %s and %s", key, first, file)
+				return nil, fmt.Errorf("icons: duplicate icon key %q in %s and %s", key, first, part.file)
 			}
-			sourceFile[key] = file
-			urls[key] = part[key]
+			sourceFile[key] = part.file
+			urls[key] = part.urls[key]
 		}
 	}
 	if len(urls) == 0 {
@@ -229,8 +388,8 @@ func NewWithMap(urls map[string]string, cacheDir string) (*Cache, error) {
 	return newCache(urls, &http.Client{Timeout: 10 * time.Second}, cacheDir), nil
 }
 
-// newCache is the shared constructor used by New and by tests that inject a stub
-// upstream and a scratch directory.
+// newCache is the shared constructor used by NewWithMap and by tests that inject
+// a stub upstream and a scratch directory.
 func newCache(urls map[string]string, client *http.Client, dir string) *Cache {
 	return &Cache{
 		urls:   urls,
@@ -241,9 +400,10 @@ func newCache(urls map[string]string, client *http.Client, dir string) *Cache {
 	}
 }
 
-// Handler serves GET /api/gem-icon/{name}. Unknown names yield 404 (the client
-// renders its "?" fallback); upstream failures yield 502 and write nothing to
-// disk, so a later request can retry.
+// Handler serves one category's {name} request. Sets.Handler supplies the typed
+// route parameters, while Sets.AliasHandler supplies the compatibility route.
+// Unknown names yield 404 (the client renders its "?" fallback); upstream
+// failures yield 502 and write nothing to disk, so a later request can retry.
 func (c *Cache) Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := chi.URLParam(r, "name")

@@ -456,7 +456,7 @@
 // so the server serves its own cached copy through internal/icons's cache the
 // way gem icons already work. IconURLs hands that cache a fresh id → upstream
 // URL map, and IconPath returns the API-relative client path
-// "/currency-exchange/icon/<escaped id>" — the id escaped as a SINGLE path
+// "/icon/currency-exchange/<escaped id>" — the id escaped as a SINGLE path
 // segment, so its slashes are %2F — or false for an item with no icon, which
 // renders without one rather than requesting a URL that would 404 every time.
 // The prefix carries no "/api" because clients join it onto a base that already
@@ -664,7 +664,7 @@
 // distinction. Both sides carry one because a filter applies to whichever side
 // the reader is shopping for. The icons are served by
 //
-//	GET /api/currency-exchange/icon/{escaped metadata id}
+//	GET /api/icon/currency-exchange/{escaped metadata id}
 //
 // which is internal/icons's cache over IconURLs() and its own cache directory:
 // the currency-exchange/ sub-directory of ICON_CACHE_DIR (default
