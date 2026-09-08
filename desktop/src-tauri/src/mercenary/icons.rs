@@ -24,7 +24,7 @@
 //! channels — [`normalize_cell`] is the one place that derivation lives.
 //! Matching then slides the CELL, not the template: [`cell_candidates`] builds
 //! the same signature at all 49 alignments in ±[`SHIFT_MAX`] px, because the
-//! rects `geometry::detect` emits land 1-3 px off per cell and an unaligned
+//! rects `geometry::detect_reason` emits land 1-3 px off per cell and an unaligned
 //! comparison of one art against itself scored 0.45-0.70.
 //!
 //! Format 1 was 24×24 luma of the whole inner crop with no disc and no
@@ -67,7 +67,7 @@ const DISC_R_FRAC: f32 = 0.36;
 
 /// Alignment margin, in SCREEN pixels per side, never scaled.
 ///
-/// The cell rects `geometry::detect` emits land 1-3 px off per cell (the
+/// The cell rects `geometry::detect_reason` emits land 1-3 px off per cell (the
 /// column origin and the pitch are both fractional), and the same art in two
 /// cells scored 0.45-0.70 without alignment — under `icon_low`, so a cell the
 /// store already knew still read as unknown. The jitter is measured in screen
@@ -390,7 +390,7 @@ fn window_sig(img: &DynamicImage, win: [i32; 4], dx: i32, dy: i32) -> Option<Cel
 
 /// Every alignment of one cell, built once and matched many times (POE-207).
 ///
-/// The rects `geometry::detect` emits are 1-3 px off per cell, so a template
+/// The rects `geometry::detect_reason` emits are 1-3 px off per cell, so a template
 /// learned in one cell scores 0.45-0.70 against the same art in another. The
 /// fix is to let the CELL move, not the template: this holds the signature of
 /// the cell's window at all 49 shifts in `-SHIFT_MAX..=SHIFT_MAX`², and
@@ -1068,7 +1068,7 @@ impl TemplateStore {
     /// incumbent: the same cell rect read twice, which is the tooltip-lag
     /// mislabel and 19 of the 21 poisoned samples of 2026-08-26. It does NOT
     /// catch the same art cut from a DIFFERENT cell rect, on this device or
-    /// another: `geometry::detect` lands its rects 1-3 px apart, and the same
+    /// another: `geometry::detect_reason` lands its rects 1-3 px apart, and the same
     /// art in two cells scores 0.45-0.70 unaligned (see [`SHIFT_MAX`]) — under
     /// `icon_low`, let alone `icon_match`. Pooled samples are the same case by
     /// construction, since only the 1728-byte signature travels and this device
@@ -3057,7 +3057,7 @@ mod tests {
 
     /// The alignment tests below all learn ONE template from row 1 slot 0 and
     /// then probe a cell rect nudged off it. The nudge stands in for what the
-    /// live loop actually produces: `geometry::detect` builds the rect from a
+    /// live loop actually produces: `geometry::detect_reason` builds the rect from a
     /// fractional column origin and pitch, so the same art lands 1-3 px
     /// differently in different cells of one panel.
     fn store_of_one(img: &DynamicImage) -> TemplateStore {
@@ -5794,7 +5794,7 @@ mod tests {
         /// against the SAME family's tier-3 crop (the band below says so, by
         /// not naming those pairs), and no crop of either family comes within
         /// the matcher's lead of a different family (the cross-family band
-        /// says so). What is left is `geometry::detect`'s per-cell jitter on
+        /// says so). What is left is `geometry::detect_reason`'s per-cell jitter on
         /// art with little off-centre structure, which is the case the
         /// `LowConfidence` band exists for.
         const HARD_PAIRS: [(&str, &str); 2] = [
