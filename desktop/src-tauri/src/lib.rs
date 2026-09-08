@@ -140,22 +140,36 @@ fn temple_rects_from_rois(
 
 /// Assemble the five display-only OCR preview rows from the derived placements.
 /// Temple rows are generated from the placement's canonical Entrance origin;
-/// they never read the last located layout.
+/// they never read the last located layout. The merc row uses the same padded
+/// crop as the merc detect tick and stays unlocated without the snapshot screen.
 fn assemble_ocr_rects(
     placements: &ssot::Placements,
+    screen: Option<&ssot::ScreenSlice>,
     temple_rects: Option<(Option<[i32; 4]>, Option<[i32; 4]>)>,
-    anchors: Option<ssot::Anchors>,
 ) -> Vec<OcrRectView> {
     let (temple_panel, temple_remaining) = temple_rects.unwrap_or((None, None));
+    let anchors = screen.and_then(|screen| screen.anchors);
     let temple_source = if anchors.and_then(|a| a.temple_entrance).is_some() {
         "remembered"
     } else {
         "seed"
     };
-    let merc_source = if anchors.and_then(|a| a.merc_panel).is_some() {
-        "remembered"
+    let merc_rect = match (placements.merc, screen) {
+        (Some(merc), Some(screen)) => Some(crate::mercenary::geometry::placed_panel_crop(
+            merc.panel,
+            screen.ui_scale,
+            [screen.width, screen.height],
+        )),
+        _ => None,
+    };
+    let merc_source = if merc_rect.is_some() {
+        if anchors.and_then(|a| a.merc_panel).is_some() {
+            "remembered"
+        } else {
+            "seed"
+        }
     } else {
-        "seed"
+        "unlocated"
     };
 
     vec![
@@ -185,9 +199,9 @@ fn assemble_ocr_rects(
         ),
         ocr_rect_view(
             "merc.panel",
-            "Merc window",
-            placements.merc.map(|merc| merc.panel),
-            if placements.merc.is_some() { merc_source } else { "unlocated" },
+            "Merc OCR crop",
+            merc_rect,
+            merc_source,
         ),
     ]
 }
@@ -1042,6 +1056,7 @@ fn get_ocr_rects(state: tauri::State<AppState>) -> Vec<OcrRectView> {
     let temple_rects = snapshot.placements.temple.and_then(|temple| {
         let scale = snapshot
             .screen
+            .as_ref()
             .map(|screen| screen.ui_scale)
             .filter(|scale| scale.is_finite() && *scale > 0.0)
             .map(crate::temple::anchor::scale_for_ui_scale)?;
@@ -1053,8 +1068,8 @@ fn get_ocr_rects(state: tauri::State<AppState>) -> Vec<OcrRectView> {
 
     assemble_ocr_rects(
         &snapshot.placements,
+        snapshot.screen.as_ref(),
         temple_rects,
-        snapshot.screen.and_then(|screen| screen.anchors),
     )
 }
 
@@ -4777,7 +4792,7 @@ mod tests {
             crate::temple::anchor::scale_for_ui_scale(screen.ui_scale),
         );
         let temple_rects = Some(temple_rects_from_rois(&rois));
-        let rects = assemble_ocr_rects(&placements, temple_rects, screen.anchors);
+        let rects = assemble_ocr_rects(&placements, Some(&screen), temple_rects);
 
         let panel = rects
             .iter()
@@ -4798,7 +4813,7 @@ mod tests {
     fn lab_preview_rects_use_derived_regions_and_report_seed_sources() {
         let screen = measured_screen(1920, 1080, 0.9, None);
         let placements = crate::ssot::placements(&screen);
-        let rects = assemble_ocr_rects(&placements, None, screen.anchors);
+        let rects = assemble_ocr_rects(&placements, Some(&screen), None);
         let gem_view = rects.iter().find(|rect| rect.key == "lab.gem").unwrap();
         let font_view = rects.iter().find(|rect| rect.key == "lab.font").unwrap();
         assert_eq!(gem_view.rect, Some([30, 45, 550, 75]));
@@ -4817,7 +4832,11 @@ mod tests {
         let placements = crate::ssot::placements(&screen);
         let origin = placements.temple.expect("the temple placement is located").entrance_origin;
         let rois = crate::temple::run::read_rois(origin, 1.0);
-        let rects = assemble_ocr_rects(&placements, Some(temple_rects_from_rois(&rois)), screen.anchors);
+        let rects = assemble_ocr_rects(
+            &placements,
+            Some(&screen),
+            Some(temple_rects_from_rois(&rois)),
+        );
 
         for key in ["temple.panel", "temple.remaining"] {
             let view = rects.iter().find(|rect| rect.key == key).unwrap();
@@ -4826,17 +4845,21 @@ mod tests {
     }
 
     #[test]
-    fn a_remembered_merc_anchor_drives_preview_origin_and_source() {
+    fn a_remembered_merc_anchor_drives_preview_crop_and_source() {
         let anchors = Some(crate::ssot::Anchors {
             temple_entrance: None,
             merc_panel: Some([120, 220]),
         });
         let screen = measured_screen(1920, 1200, 1.0, anchors);
         let placements = crate::ssot::placements(&screen);
-        let rects = assemble_ocr_rects(&placements, None, screen.anchors);
+        let rects = assemble_ocr_rects(&placements, Some(&screen), None);
 
         let view = rects.iter().find(|rect| rect.key == "merc.panel").unwrap();
-        assert_eq!(view.rect, Some([120, 220, 555, 477]));
+        let merc = placements.merc.expect("merc placement is located");
+        assert_eq!(merc.panel, [120, 220, 555, 477]);
+        // The anchor sits nearer the edges than the padding is wide, so the crop
+        // clamps to x=0, y=0.
+        assert_eq!(view.rect, Some([0, 0, 872, 697]));
         assert_eq!(view.source, "remembered");
     }
 
@@ -4844,11 +4867,50 @@ mod tests {
     fn a_seed_merc_placement_has_a_rect_and_seed_source() {
         let screen = measured_screen(1920, 1200, 1.0, None);
         let placements = crate::ssot::placements(&screen);
-        let rects = assemble_ocr_rects(&placements, None, screen.anchors);
+        let rects = assemble_ocr_rects(&placements, Some(&screen), None);
 
         let view = rects.iter().find(|rect| rect.key == "merc.panel").unwrap();
-        assert_eq!(view.rect, Some([698, 615, 555, 477]));
+        assert_eq!(view.rect, Some([501, 0, 949, 1092]));
         assert_eq!(view.source, "seed");
+    }
+
+    #[test]
+    fn the_merc_preview_row_is_labelled_merc_ocr_crop() {
+        let screen = measured_screen(1920, 1080, 0.9, None);
+        let placements = crate::ssot::placements(&screen);
+        let rects = assemble_ocr_rects(&placements, Some(&screen), None);
+
+        let view = rects.iter().find(|rect| rect.key == "merc.panel").unwrap();
+        assert_eq!(view.label, "Merc OCR crop");
+    }
+
+    #[test]
+    fn the_merc_preview_draws_the_padded_ocr_crop_for_the_snapshot_screen() {
+        let screen = measured_screen(1920, 1080, 0.9, None);
+        let placements = crate::ssot::placements(&screen);
+        let rects = assemble_ocr_rects(&placements, Some(&screen), None);
+
+        let view = rects.iter().find(|rect| rect.key == "merc.panel").unwrap();
+        let merc = placements.merc.expect("merc placement is located");
+        let expected = crate::mercenary::geometry::placed_panel_crop(
+            merc.panel,
+            screen.ui_scale,
+            [screen.width, screen.height],
+        );
+
+        assert_eq!(view.rect, Some(expected));
+    }
+
+    #[test]
+    fn the_merc_preview_needs_the_screen_slice_even_when_a_placement_exists() {
+        let screen = measured_screen(1920, 1080, 0.9, None);
+        let placements = crate::ssot::placements(&screen);
+        // Defensive pairing only: get_ocr_rects cannot produce it because placements derive from the same screen option.
+        let rects = assemble_ocr_rects(&placements, None, None);
+
+        let view = rects.iter().find(|rect| rect.key == "merc.panel").unwrap();
+        assert_eq!(view.rect, None);
+        assert_eq!(view.source, "unlocated");
     }
 
     #[test]
