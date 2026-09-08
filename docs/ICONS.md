@@ -16,9 +16,11 @@ basename of the source map, so a map rename is a public API break and requires
 coordinated client changes.
 
 GET /api/gem-icon/{name} remains as a compatibility alias for installed
-desktop builds. It resolves the name through the merged name-to-type index and
-then uses the typed cache. The browser does not use the alias: the SPA and API
-ship together, while installed desktop builds can outlive the server deploy.
+desktop builds. It resolves the name through the merged embedded gems/items/
+temple index and then uses the typed cache. Currency-exchange ids are not in
+that index and the alias must not serve them. The browser does not use the
+alias: the SPA and API ship together, while installed desktop builds can
+outlive the server deploy.
 
 GET /api/currency-exchange/icon/{name} was dropped. It is not an alias and
 must not be reintroduced.
@@ -39,8 +41,9 @@ directory.
 
 Each embedded category is constructed independently. A malformed map disables
 that typed category and logs its error while valid categories remain available.
-Cross-map duplicate names still reject the compatibility alias because one
-name cannot resolve to one type; the typed routes remain unambiguous.
+Cross-map duplicate names are rejected individually from the compatibility
+alias, with an error naming both files; every non-conflicting name remains
+resolvable and the typed routes remain unambiguous.
 
 ## Client paths
 
@@ -114,11 +117,12 @@ Use --force only when the map really dropped most of that category.
 This section is an owner-run procedure. It was not executed by the route/layout
 change.
 
-The existing production gems/ files can stay where they are. Seed the new
-items/ and temple/ directories, plus currency-exchange/ when that cache is
-being deployed. Do not re-pull the 763 gems merely to change the layout. The
-two old offering files stranded in gems/ are harmless: the items cache only
-reads under items/. They can be removed later during a normal prune.
+Production gems/ currently contains the 763 gem files plus the two lab-offering
+files. Before deploying, move those two offering files into items/; do not
+re-pull them merely to change the layout. Seed temple/ with its 32 files, plus
+currency-exchange/ when that cache is being deployed. The final gems/ directory
+must contain the gem files only; the items cache will not read offering files
+left behind there.
 
 For a prepared local root, the shape to copy is:
 

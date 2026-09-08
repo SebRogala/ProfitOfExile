@@ -43,9 +43,8 @@ import (
 )
 
 // urlFiles carries the source name→URL maps, split by category, one file per
-// category. NewSets gives each file its own Cache. loadURLMap still merges them
-// to build the compatibility alias's name→type index and to reject ambiguous
-// names.
+// category. NewSets gives each file its own Cache and merges the files only to
+// build the compatibility alias's name→type index.
 //
 // Embedding (rather than reading the directory at runtime) is ADR-012: the icon
 // set stays versioned with the binary that serves it, and production — which
@@ -56,7 +55,7 @@ import (
 var urlFiles embed.FS
 
 // urlsDir is the directory inside urlFiles the category files live in. Adding a
-// category is one new *.json file there and no change here: loadURLMap
+// category is one new *.json file there and no change here: urlMapFiles
 // discovers the files rather than naming them.
 const urlsDir = "urls"
 
@@ -178,16 +177,18 @@ func newSets(root string, fsys fs.FS, dir string) (*Sets, error) {
 		parts = append(parts, categoryMap{typeName: typeName, file: file, urls: part})
 	}
 
-	merged, err := mergeCategoryMaps(parts, dir)
-	if err != nil {
-		slog.Error("icons: compatibility alias disabled", "error", err)
-		errs = append(errs, err)
-	} else {
-		for _, part := range parts {
-			for name := range part.urls {
-				if _, ok := merged[name]; ok {
-					sets.nameType[name] = part.typeName
-				}
+	merged, mergeErr := mergeCategoryMaps(parts, dir)
+	if mergeErr != nil {
+		slog.Error("icons: compatibility alias rejected keys", "error", mergeErr)
+		errs = append(errs, mergeErr)
+	}
+	// mergeCategoryMaps omits names that occur in more than one category. Those
+	// are the only entries not eligible for the alias; every other merged name
+	// keeps the type of the category file that supplied it.
+	for _, part := range parts {
+		for name := range part.urls {
+			if _, ok := merged[name]; ok {
+				sets.nameType[name] = part.typeName
 			}
 		}
 	}
@@ -196,10 +197,9 @@ func newSets(root string, fsys fs.FS, dir string) (*Sets, error) {
 }
 
 // Add registers a caller-owned map, such as the currency-exchange asset, under
-// root/<typeName>. The map is also added to the alias index when its keys do not
-// collide with a name already registered by another category. A collision does
-// not remove the typed cache: the typed route remains unambiguous, while the
-// alias reports the construction error instead of choosing silently.
+// root/<typeName>. Caller-owned maps are typed-only: the compatibility alias is
+// deliberately built from the embedded category files so it remains a gem/item/
+// temple compatibility surface and never becomes a second CX route.
 func (s *Sets) Add(typeName string, urls map[string]string, root string) error {
 	if s == nil {
 		return errors.New("icons: cannot add to nil sets")
@@ -216,21 +216,7 @@ func (s *Sets) Add(typeName string, urls map[string]string, root string) error {
 		return err
 	}
 	s.caches[typeName] = cache
-
-	keys := make([]string, 0, len(urls))
-	for name := range urls {
-		keys = append(keys, name)
-	}
-	sort.Strings(keys)
-	var errs []error
-	for _, name := range keys {
-		if previous, ok := s.nameType[name]; ok && previous != typeName {
-			errs = append(errs, fmt.Errorf("icons: duplicate icon key %q in %s and %s", name, previous, typeName))
-			continue
-		}
-		s.nameType[name] = typeName
-	}
-	return errors.Join(errs...)
+	return nil
 }
 
 // Handler serves GET /api/icon/{type}/{name}. An unknown type is a client bug,
@@ -243,7 +229,7 @@ func (s *Sets) Handler() http.HandlerFunc {
 			writeNotFound(w, r)
 			return
 		}
-		cache.Handler().ServeHTTP(w, r)
+		cache.serveHTTP(w, r)
 	}
 }
 
@@ -267,51 +253,13 @@ func (s *Sets) AliasHandler() http.HandlerFunc {
 			writeNotFound(w, r)
 			return
 		}
-		cache.Handler().ServeHTTP(w, r)
+		cache.serveHTTP(w, r)
 	}
 }
 
 func writeNotFound(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", notFoundCacheControl)
 	http.NotFound(w, r)
-}
-
-// loadURLMap merges every *.json file directly under dir in fsys into one flat
-// key→URL map. Each file is a category (gems.json, items.json, …) and none of
-// them is named here, so a new category is one new file and no Go change.
-//
-// A key present in two files is an ERROR naming the key and both files, not a
-// last-writer-wins merge. That silent winner is the one real hazard of a flat
-// runtime map: the category files are edited and generated independently, so
-// the loser's artwork would quietly be served under the winner's URL with
-// nothing anywhere to show for it. A duplicate key WITHIN one file is a
-// different, unguarded hazard: every loader that reads it (encoding/json here,
-// json.load in the puller, serde's BTreeMap in the desktop test) still
-// resolves it last-writer-wins with no error, so that case is guarded only by
-// the sorted-one-key-per-line file convention, not by code.
-//
-// Zero matching files and zero merged entries are errors too. Both produce a
-// Cache that answers 404 for every name — a broken build that would otherwise
-// present as "the icons stopped working" at runtime, which ADR-012's
-// seed-before-deploy ordering makes expensive to diagnose.
-//
-// Both file names in the duplicate error are deterministic: fs.Glob walks
-// fs.ReadDir, whose order is documented sorted, and the keys of each file are
-// visited in sorted order rather than in map order.
-func loadURLMap(fsys fs.FS, dir string) (map[string]string, error) {
-	files, err := urlMapFiles(fsys, dir)
-	if err != nil {
-		return nil, err
-	}
-	parts := make([]categoryMap, 0, len(files))
-	for _, file := range files {
-		part, err := readURLMap(fsys, file)
-		if err != nil {
-			return nil, err
-		}
-		parts = append(parts, categoryMap{typeName: strings.TrimSuffix(path.Base(file), path.Ext(file)), file: file, urls: part})
-	}
-	return mergeCategoryMaps(parts, dir)
 }
 
 func urlMapFiles(fsys fs.FS, dir string) ([]string, error) {
@@ -337,9 +285,14 @@ func readURLMap(fsys fs.FS, file string) (map[string]string, error) {
 	return urls, nil
 }
 
+// mergeCategoryMaps returns every non-conflicting name and an error for each
+// cross-file duplicate. A conflicted name is omitted from the alias index, but
+// the other names remain usable; typed caches do not depend on this merge.
 func mergeCategoryMaps(parts []categoryMap, dir string) (map[string]string, error) {
 	urls := make(map[string]string)
 	sourceFile := make(map[string]string)
+	conflicts := make(map[string]bool)
+	var errs []error
 	for _, part := range parts {
 		keys := make([]string, 0, len(part.urls))
 		for key := range part.urls {
@@ -348,16 +301,21 @@ func mergeCategoryMaps(parts []categoryMap, dir string) (map[string]string, erro
 		sort.Strings(keys)
 		for _, key := range keys {
 			if first, dup := sourceFile[key]; dup {
-				return nil, fmt.Errorf("icons: duplicate icon key %q in %s and %s", key, first, part.file)
+				if !conflicts[key] {
+					delete(urls, key)
+					conflicts[key] = true
+				}
+				errs = append(errs, fmt.Errorf("icons: duplicate icon key %q in %s and %s", key, first, part.file))
+				continue
 			}
 			sourceFile[key] = part.file
 			urls[key] = part.urls[key]
 		}
 	}
 	if len(urls) == 0 {
-		return nil, fmt.Errorf("icons: url maps under %s hold no entries", dir)
+		errs = append(errs, fmt.Errorf("icons: url maps under %s hold no entries", dir))
 	}
-	return urls, nil
+	return urls, errors.Join(errs...)
 }
 
 // NewWithMap builds a Cache over an arbitrary key→upstream-URL map, ensuring
@@ -405,65 +363,67 @@ func newCache(urls map[string]string, client *http.Client, dir string) *Cache {
 // Unknown names yield 404 (the client renders its "?" fallback); upstream
 // failures yield 502 and write nothing to disk, so a later request can retry.
 func (c *Cache) Handler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		name := chi.URLParam(r, "name")
-		// chi routes on the raw (still percent-encoded) path, so a name with
-		// spaces arrives as "Added%20Chaos...". Decode before the map lookup.
-		if decoded, err := url.PathUnescape(name); err == nil {
-			name = decoded
-		}
+	return c.serveHTTP
+}
 
-		srcURL, ok := c.urls[name]
-		if !ok {
-			// Set before NotFound: without an explicit directive a 404 is
-			// heuristically cacheable, and a client that cached one keeps
-			// rendering "?" after the deploy that adds the icon.
-			w.Header().Set("Cache-Control", notFoundCacheControl)
-			http.NotFound(w, r)
-			return
-		}
-
-		// A conditional request whose validator we already know is answered with
-		// no disk read and no hashing at all. This is the whole point of the
-		// memo: before it, a 304 cost exactly as much as a 200.
-		if etag, known := c.etagOf(name); known && r.Header.Get("If-None-Match") == etag {
-			writeIconHeaders(w, etag)
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-
-		body, err := c.load(r.Context(), name, srcURL)
-		if err != nil {
-			// This is the only failure on this route that breaks the render, and
-			// it is the one the client cannot tell apart from a 404: GemIcon
-			// flips to "?" on the <img> error event either way. Nothing else
-			// records it — a failed fetch writes no file and caches no marker —
-			// so without this line a 502 leaves no trace anywhere.
-			//
-			// srcURL is logged because the two causes need different fixes and
-			// only the URL separates them: a transient upstream blip versus a
-			// map entry deployed ahead of its cache volume. ADR-012 makes the
-			// second live — poewiki 403s the production VPS, so an unseeded name
-			// fails here on every request, forever, until the volume is seeded.
-			slog.Error("icons: serve icon failed",
-				"gem", name, "url", srcURL, "error", err)
-			// Headers are deliberately set only after load succeeds. A 502 must
-			// stay uncacheable so a later request can retry (see load).
-			http.Error(w, "gem icon unavailable", http.StatusBadGateway)
-			return
-		}
-
-		// Hash once per gem per process. Subsequent 200s reuse the memo: the
-		// bytes still have to be read because they go on the wire, but the
-		// SHA-256 does not have to be recomputed.
-		etag, known := c.etagOf(name)
-		if !known {
-			etag = etagFor(body)
-			c.rememberETag(name, etag)
-		}
-		writeIconHeaders(w, etag)
-		_, _ = w.Write(body)
+func (c *Cache) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	// chi routes on the raw (still percent-encoded) path, so a name with
+	// spaces arrives as "Added%20Chaos...". Decode before the map lookup.
+	if decoded, err := url.PathUnescape(name); err == nil {
+		name = decoded
 	}
+
+	srcURL, ok := c.urls[name]
+	if !ok {
+		// Set before NotFound: without an explicit directive a 404 is
+		// heuristically cacheable, and a client that cached one keeps
+		// rendering "?" after the deploy that adds the icon.
+		w.Header().Set("Cache-Control", notFoundCacheControl)
+		http.NotFound(w, r)
+		return
+	}
+
+	// A conditional request whose validator we already know is answered with
+	// no disk read and no hashing at all. This is the whole point of the
+	// memo: before it, a 304 cost exactly as much as a 200.
+	if etag, known := c.etagOf(name); known && r.Header.Get("If-None-Match") == etag {
+		writeIconHeaders(w, etag)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	body, err := c.load(r.Context(), name, srcURL)
+	if err != nil {
+		// This is the only failure on this route that breaks the render, and
+		// it is the one the client cannot tell apart from a 404: GemIcon
+		// flips to "?" on the <img> error event either way. Nothing else
+		// records it — a failed fetch writes no file and caches no marker —
+		// so without this line a 502 leaves no trace anywhere.
+		//
+		// srcURL is logged because the two causes need different fixes and
+		// only the URL separates them: a transient upstream blip versus a
+		// map entry deployed ahead of its cache volume. ADR-012 makes the
+		// second live — poewiki 403s the production VPS, so an unseeded name
+		// fails here on every request, forever, until the volume is seeded.
+		slog.Error("icons: serve icon failed",
+			"gem", name, "url", srcURL, "error", err)
+		// Headers are deliberately set only after load succeeds. A 502 must
+		// stay uncacheable so a later request can retry (see load).
+		http.Error(w, "gem icon unavailable", http.StatusBadGateway)
+		return
+	}
+
+	// Hash once per gem per process. Subsequent 200s reuse the memo: the
+	// bytes still have to be read because they go on the wire, but the
+	// SHA-256 does not have to be recomputed.
+	etag, known := c.etagOf(name)
+	if !known {
+		etag = etagFor(body)
+		c.rememberETag(name, etag)
+	}
+	writeIconHeaders(w, etag)
+	_, _ = w.Write(body)
 }
 
 // writeIconHeaders sets the headers common to a 200 and a 304. Every source is a

@@ -391,136 +391,6 @@ func urlFile(entries string) *fstest.MapFile {
 	return &fstest.MapFile{Data: []byte(entries)}
 }
 
-// The point of discovering the files instead of naming them: a category the
-// loader has never heard of — "alva" here — is picked up with no code change,
-// and every file's entries reach the merged map.
-func TestLoadURLMap_discoversEveryJSONFileInTheDirectory(t *testing.T) {
-	fsys := fstest.MapFS{
-		"urls/gems.json":  urlFile(`{"Absolution": "https://example.invalid/abs.png"}`),
-		"urls/items.json": urlFile(`{"Gift to the Goddess": "https://example.invalid/gift.png"}`),
-		"urls/alva.json":  urlFile(`{"Chamber of Sins": "https://example.invalid/sins.png"}`),
-	}
-
-	urls, err := loadURLMap(fsys, "urls")
-	if err != nil {
-		t.Fatalf("loadURLMap() error = %v, want nil", err)
-	}
-
-	want := map[string]string{
-		"Absolution":          "https://example.invalid/abs.png",
-		"Gift to the Goddess": "https://example.invalid/gift.png",
-		"Chamber of Sins":     "https://example.invalid/sins.png",
-	}
-	if len(urls) != len(want) {
-		t.Fatalf("merged map holds %d entries, want %d — a category file was not read", len(urls), len(want))
-	}
-	for key, wantURL := range want {
-		if got := urls[key]; got != wantURL {
-			t.Errorf("merged map[%q] = %q, want %q", key, got, wantURL)
-		}
-	}
-}
-
-// A silent last-writer-wins merge is the one real hazard of a flat runtime map:
-// the loser's name would serve the winner's artwork with nothing to show for
-// it. Both file names and the key are in the message because that is what makes
-// the failure actionable — which of the two files to edit is the whole question.
-func TestLoadURLMap_duplicateKeyAcrossFiles_failsNamingBothFilesAndTheKey(t *testing.T) {
-	fsys := fstest.MapFS{
-		"urls/a.json": urlFile(`{"Shared Name": "https://example.invalid/first.png"}`),
-		"urls/b.json": urlFile(`{"Shared Name": "https://example.invalid/second.png"}`),
-	}
-
-	urls, err := loadURLMap(fsys, "urls")
-
-	if err == nil {
-		t.Fatalf("loadURLMap() error = nil, want a duplicate-key rejection (map = %v)", urls)
-	}
-	if urls != nil {
-		t.Errorf("loadURLMap returned a map alongside the error: %v", urls)
-	}
-	for _, want := range []string{"Shared Name", "urls/a.json", "urls/b.json"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not name %q", err, want)
-		}
-	}
-}
-
-func TestLoadURLMap_malformedFile_failsNamingTheFile(t *testing.T) {
-	fsys := fstest.MapFS{
-		"urls/gems.json":   urlFile(`{"Absolution": "https://example.invalid/abs.png"}`),
-		"urls/broken.json": urlFile(`{"Absolution": `),
-	}
-
-	urls, err := loadURLMap(fsys, "urls")
-
-	if err == nil {
-		t.Fatalf("loadURLMap() error = nil, want a parse rejection (map = %v)", urls)
-	}
-	if urls != nil {
-		t.Errorf("loadURLMap returned a map alongside the error: %v", urls)
-	}
-	if !strings.Contains(err.Error(), "urls/broken.json") {
-		t.Errorf("error %q does not name the file that failed to parse", err)
-	}
-}
-
-// Boundary: a directory with no category map in it. The Cache this would build
-// answers 404 for every name, so it is a broken build and has to fail at
-// construction rather than at the first render.
-func TestLoadURLMap_noJSONFilesMatched_fails(t *testing.T) {
-	fsys := fstest.MapFS{"urls/README.md": urlFile("not a map")}
-
-	urls, err := loadURLMap(fsys, "urls")
-
-	if err == nil {
-		t.Fatalf("loadURLMap() error = nil, want a rejection (map = %v)", urls)
-	}
-	if urls != nil {
-		t.Errorf("loadURLMap returned a map alongside the error: %v", urls)
-	}
-	if !strings.Contains(err.Error(), "no url map files matched") {
-		t.Errorf("error %q does not report the no-files-matched cause", err)
-	}
-}
-
-// Boundary: every matched file parses but none of them carries an entry — e.g.
-// a category file was created and left `{}`. This is distinct from no files
-// matching at all: the glob succeeded, so the failure has to name the emptier
-// cause or it reads as the wrong boundary.
-func TestLoadURLMap_matchedFilesHoldNoEntries_fails(t *testing.T) {
-	fsys := fstest.MapFS{"urls/empty.json": urlFile(`{}`)}
-
-	urls, err := loadURLMap(fsys, "urls")
-
-	if err == nil {
-		t.Fatalf("loadURLMap() error = nil, want a rejection (map = %v)", urls)
-	}
-	if urls != nil {
-		t.Errorf("loadURLMap returned a map alongside the error: %v", urls)
-	}
-	if !strings.Contains(err.Error(), "hold no entries") {
-		t.Errorf("error %q does not report the zero-entries cause", err)
-	}
-}
-
-// The glob is *.json, not *: a note or a scratch file sitting beside the
-// category maps must not be handed to the JSON parser.
-func TestLoadURLMap_ignoresNonJSONFiles(t *testing.T) {
-	fsys := fstest.MapFS{
-		"urls/gems.json": urlFile(`{"Absolution": "https://example.invalid/abs.png"}`),
-		"urls/README.md": urlFile("Category files live here; one per category."),
-	}
-
-	urls, err := loadURLMap(fsys, "urls")
-	if err != nil {
-		t.Fatalf("loadURLMap() error = %v, want nil — a non-JSON neighbour was read", err)
-	}
-	if len(urls) != 1 {
-		t.Errorf("merged map holds %d entries, want 1", len(urls))
-	}
-}
-
 // The embedded categories, end to end: every entry of every file reaches the
 // map New builds, which is the property the split had to preserve.
 func TestNewSets_embeddedCategoriesBuildIndependentCaches(t *testing.T) {
@@ -1074,10 +944,10 @@ func TestSets_currencyExchangeTypedRoutePreservesEscapedID(t *testing.T) {
 	}
 }
 
-func TestNewSets_duplicateKeyKeepsTypedCachesButRejectsAliasIndex(t *testing.T) {
+func TestNewSets_duplicateKeyRejectsOnlyTheConflictingAliasName(t *testing.T) {
 	fsys := fstest.MapFS{
-		"urls/gems.json":  urlFile(`{"Shared Name": "https://example.invalid/gem.png"}`),
-		"urls/items.json": urlFile(`{"Shared Name": "https://example.invalid/item.png"}`),
+		"urls/gems.json":  urlFile(`{"Absolution": "https://example.invalid/abs.png", "Shared Name": "https://example.invalid/gem.png"}`),
+		"urls/items.json": urlFile(`{"Gift to the Goddess": "https://example.invalid/gift.png", "Shared Name": "https://example.invalid/item.png"}`),
 	}
 	sets, err := newSets(t.TempDir(), fsys, "urls")
 	if err == nil {
@@ -1106,6 +976,60 @@ func TestNewSets_duplicateKeyKeepsTypedCachesButRejectsAliasIndex(t *testing.T) 
 		if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), tc.body) {
 			t.Errorf("typed %s route status/body = %d/%q, want 200/%q", tc.category, w.Code, w.Body.Bytes(), tc.body)
 		}
+	}
+
+	for _, tc := range []struct {
+		category string
+		name     string
+		url      string
+		body     []byte
+	}{
+		{category: "gems", name: "Absolution", url: "https://example.invalid/abs.png", body: []byte("gem-unique-key")},
+		{category: "items", name: "Gift to the Goddess", url: "https://example.invalid/gift.png", body: []byte("item-unique-key")},
+	} {
+		cache := sets.caches[tc.category]
+		writeIconFile(t, cache.filePath(tc.name, tc.url), tc.body)
+		w := serveSetsRequest(sets, "/api/gem-icon/"+url.PathEscape(tc.name))
+		if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), tc.body) {
+			t.Errorf("alias %s/%s status/body = %d/%q, want 200/%q", tc.category, tc.name, w.Code, w.Body.Bytes(), tc.body)
+		}
+	}
+
+	duplicate := serveSetsRequest(sets, "/api/gem-icon/Shared%20Name")
+	if duplicate.Code != http.StatusNotFound {
+		t.Errorf("duplicate alias status = %d, want 404", duplicate.Code)
+	}
+	if got := duplicate.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("duplicate alias Cache-Control = %q, want no-store", got)
+	}
+}
+
+func TestSets_aliasDoesNotResolveCurrencyExchangeKeys(t *testing.T) {
+	root := t.TempDir()
+	sets, err := NewSets(root)
+	if err != nil {
+		t.Fatalf("NewSets() error = %v, want nil", err)
+	}
+	const id = "Metadata/Items/Currency/CurrencyRerollRare"
+	const sourceURL = "https://example.invalid/chaos.png"
+	if err := sets.Add("currency-exchange", map[string]string{id: sourceURL}, root); err != nil {
+		t.Fatalf("Sets.Add() error = %v, want nil", err)
+	}
+	cache := sets.caches["currency-exchange"]
+	body := []byte("currency-exchange-bytes")
+	writeIconFile(t, cache.filePath(id, sourceURL), body)
+
+	typed := serveSetsRequest(sets, "/api/icon/currency-exchange/"+url.PathEscape(id))
+	if typed.Code != http.StatusOK || !bytes.Equal(typed.Body.Bytes(), body) {
+		t.Fatalf("typed exchange route status/body = %d/%q, want 200/%q", typed.Code, typed.Body.Bytes(), body)
+	}
+
+	alias := serveSetsRequest(sets, "/api/gem-icon/"+url.PathEscape(id))
+	if alias.Code != http.StatusNotFound {
+		t.Errorf("exchange alias status = %d, want 404", alias.Code)
+	}
+	if got := alias.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("exchange alias Cache-Control = %q, want no-store", got)
 	}
 }
 

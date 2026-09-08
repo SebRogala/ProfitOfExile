@@ -255,17 +255,28 @@ func TestNewRouter_CurrencyExchangeIconRouteIsRegisteredWhenACacheRootIsConfigur
 	}
 }
 
-func TestNewRouter_LegacyCurrencyExchangeIconRouteIsDropped(t *testing.T) {
-	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{IconCacheDir: t.TempDir()})
+func TestNewRouter_DroppedCurrencyExchangeIconRouteFallsThroughToSPA(t *testing.T) {
+	frontendFS := fstest.MapFS{
+		"200.html": &fstest.MapFile{
+			Data: []byte("<html><body>exchange shell</body></html>"),
+		},
+	}
+	router := NewRouter(handlers.NopPinger{}, frontendFS, RouterConfig{IconCacheDir: t.TempDir()})
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet,
 		"/api/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyNotInTheAssetYet", nil))
 
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("legacy currency-exchange icon route status = %d, want 404", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("dropped currency-exchange icon route status = %d, want SPA 200", w.Code)
 	}
-	if got := w.Header().Get("Cache-Control"); got == "no-store" {
-		t.Fatalf("legacy currency-exchange icon route is still registered: Cache-Control = %q", got)
+	if got := w.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Errorf("dropped currency-exchange icon route Content-Type = %q, want SPA HTML", got)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("dropped currency-exchange icon route Cache-Control = %q, want no-cache", got)
+	}
+	if got := w.Body.String(); !strings.Contains(got, "exchange shell") {
+		t.Errorf("dropped currency-exchange icon route body = %q, want the SPA shell", got)
 	}
 }
 

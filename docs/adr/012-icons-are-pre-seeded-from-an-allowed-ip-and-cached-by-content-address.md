@@ -378,12 +378,13 @@ another category's directory.
 
 Compatibility alias and removal condition. GET /api/gem-icon/{name} is kept
 solely for installed desktop builds that can outlive the server deploy. It
-resolves the merged name-to-type index and delegates to the typed cache. The
-web client uses typed paths and has no need for the alias because the SPA and
-API deploy together. The access log's route field records chi's matched
-pattern, so the alias is measurable. Remove it one minor release after its
-share of icon requests reaches zero, and record that trigger before deleting
-the route.
+resolves the merged embedded gems/items/temple name-to-type index and delegates
+to the typed cache; the caller-owned Currency Exchange map is typed-only and
+never enters the alias index. The web client uses typed paths and has no need
+for the alias because the SPA and API deploy together. The access log's route
+field records chi's matched pattern, so the alias is measurable. Remove it one
+minor release after its share of icon requests reaches zero, and record that
+trigger before deleting the route.
 
 The old Currency Exchange route is dropped. There is no alias or deprecation
 window for GET /api/currency-exchange/icon/{name}. Currency Exchange clients
@@ -392,9 +393,9 @@ use /api/icon/currency-exchange/{escaped id}.
 Per-category degradation is intentional. Category maps are read and
 constructed independently. A malformed category is logged and disables only
 that typed category; valid categories remain registered. Cross-map duplicate
-keys still reject the compatibility alias because one name cannot resolve to
-one type. The typed caches may still serve both categories because their
-routes are explicit.
+keys are rejected individually from the compatibility alias, with the key and
+both files named in the error; non-conflicting names remain resolvable. The
+typed caches may still serve both categories because their routes are explicit.
 
 The puller follows the same layout. A directory map passed to
 scripts/download-gem-icons.py pull fans out to OUT/<map basename>/. A single
@@ -403,8 +404,11 @@ Exchange override. prune applies its wrong-pair blast-radius refusal
 independently to every map/output pair.
 
 The production migration is owner-run and was not executed by this change:
-existing gems/ files stay in place; items/ and temple/ are seeded as new
-subdirectories, and the two offering files stranded in gems/ are harmless.
+production gems/ contains the 763 gem files plus two lab-offering files today.
+Move those two offering files into items/ before deploy, and seed temple/ as a
+new subdirectory with its 32 files. The final gems/ directory contains gem
+files only; leaving the offerings there is not harmless because items/ will not
+read them.
 The full operator procedure and the offline migrate commands are in
 [ICONS.md](../ICONS.md).
 
