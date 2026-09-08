@@ -30,6 +30,7 @@
 		key: string;
 		label: string;
 		rect: [number, number, number, number] | null;
+		rows: [number, number, number, number][];
 		source: string;
 	};
 
@@ -392,7 +393,7 @@
 
 			const [x, y, width, height] = row.rect;
 			const win = new WebviewWindow('overlay-preview', {
-				url: `/overlay?preview=${encodeURIComponent(key)}&label=${encodeURIComponent(row.label)}&rect=${row.rect.join(',')}`,
+				url: `/overlay?preview=${encodeURIComponent(key)}&label=${encodeURIComponent(row.label)}&rect=${row.rect.join(',')}&rows=${encodeURIComponent(JSON.stringify(row.rows))}&dpr=${monitor.scaleFactor}`,
 				transparent: true,
 				decorations: false,
 				alwaysOnTop: true,

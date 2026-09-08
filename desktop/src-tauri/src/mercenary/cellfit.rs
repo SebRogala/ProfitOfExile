@@ -41,9 +41,15 @@ use super::{MercGeometry, ScaleSource};
 /// The gold frame's dark lines on `tests/fixtures/merc-skills-panel.png` sit at
 /// x 312 / 361 / 409-410 / 458 / 507 / 556, which is a pitch of 48.67 — not the
 /// 49.0 [`super::MercGeometry::cell_pitch`] carries (0.7 % high) and not the
-/// 49.3 its `row_pitch` carries. This module owns the true unit so the fit does
-/// not inherit that error; correcting the two `MercGeometry` constants is a
-/// separate change with a wider blast radius (POE-214 D7 → POE-216).
+/// 49.3 [`super::MercGeometry::row_pitch`] carries (1.8 % high against the
+/// fixture's measured 48.4 vertical row pitch). This module owns the horizontal
+/// slot-pitch unit so the frame fit does not inherit the vertical OCR reference;
+/// the PC's 47.8–48.6 reference px agree with the fixture, not with 49.3, and
+/// the seeded OCR centres make the fallback tolerant meanwhile. Correcting the
+/// two constants moves the OCR-path window, the seed store's memo key and three
+/// geometry tests at once; that blast radius is POE-216 (POE-214 D7 → POE-216).
+/// A user `rowPitch`
+/// override remains an explicit calibration of the OCR fallback.
 pub const REF_PITCH: f32 = 48.67;
 
 /// The reference fixture's MEASURED dark square side, in px at `ui_scale` 1.0.
@@ -970,6 +976,33 @@ pub(super) fn pc_lines() -> Vec<super::geometry::OcrLineBox> {
     ]
 }
 
+/// The Soryn replay's crop origin and screen unit. The committed fixture is a
+/// further lossless crop of the dump's OCR crop, taken at screen `(950, 590)`
+/// through `(1180, 984)` so all fifteen support cells and the footer button
+/// band have small local rects.
+#[cfg(test)]
+pub(super) const SORYN_ORIGIN: (i32, i32) = (950, 590);
+#[cfg(test)]
+pub(super) const SORYN_SCREEN: [u32; 2] = [1920, 1080];
+#[cfg(test)]
+pub(super) const SORYN_SCALE: f32 = 0.90093094;
+
+#[cfg(test)]
+pub(super) fn soryn_lines() -> Vec<super::geometry::OcrLineBox> {
+    vec![
+        super::geometry::OcrLineBox { text: "Nager: 6 832".into(), x: 698, y: 209, w: 114, h: 19 },
+        super::geometry::OcrLineBox { text: "FROST BOMB".into(), x: 743, y: 611, w: 76, h: 11 },
+        super::geometry::OcrLineBox { text: "FROSTBITE".into(), x: 743, y: 654, w: 61, h: 11 },
+        super::geometry::OcrLineBox { text: "ICESTORM".into(), x: 743, y: 698, w: 60, h: 11 },
+        super::geometry::OcrLineBox { text: "FROSTBOLT".into(), x: 743, y: 741, w: 65, h: 11 },
+        super::geometry::OcrLineBox { text: "LIGHTNING WARP".into(), x: 743, y: 785, w: 112, h: 11 },
+        super::geometry::OcrLineBox { text: "PURITY OF ICE".into(), x: 743, y: 828, w: 84, h: 11 },
+        super::geometry::OcrLineBox { text: "Should Recruit@".into(), x: 1060, y: 199, w: 158, h: 29 },
+        super::geometry::OcrLineBox { text: "TAKE ITEM".into(), x: 732, y: 881, w: 81, h: 12 },
+        super::geometry::OcrLineBox { text: "REMATCH".into(), x: 875, y: 881, w: 74, h: 12 },
+    ]
+}
+
 // -- AC1/AC2 (Part C): the gold frame's dark|light step ---------------------
 //
 // `pub(super)` and at module level for the same reason [`pc_lines`] is: the
@@ -1263,6 +1296,7 @@ pub(super) fn labelled_fixture_cells() -> Vec<LabelledCell> {
 mod tests {
     use super::*;
     use crate::mercenary::geometry::{detect, reference_lines, OcrLineBox};
+    use crate::mercenary::icons::read_tier;
     use crate::mercenary::seed;
     use image::Rgba;
 
@@ -1506,6 +1540,94 @@ mod tests {
             "the measured row pitch is 0.79 px under g.row_pitch · scale, not {}",
             fit.residual_row_pitch,
         );
+    }
+
+    #[test]
+    fn the_placed_pc_fit_uses_seeded_ocr_centres_for_every_measured_row() {
+        let g = MercGeometry::default();
+        let layout = crate::mercenary::geometry::placed_layout(
+            &pc_lines(),
+            [724, 554, 500, 430],
+            &g,
+            0.90,
+            g.row_pitch * 0.90,
+        )
+        .expect("the PC placed panel");
+        let img = fixture("merc-recruit-pc-1080p.png");
+        let out = refine(
+            &img,
+            Frame::cropped(PC_ORIGIN, PC_SCREEN),
+            layout,
+            &g,
+        );
+        let fit = out
+            .fit
+            .as_ref()
+            .expect("the placed PC panel's frame is found");
+
+        assert!(fit.slot_span >= 2, "the fit needs a two-slot lever arm");
+        assert_eq!(fit.row_dy.len(), 5, "the five occupied PC rows report residuals");
+        assert!(
+            fit.row_dy.iter().all(|dy| dy.abs() <= 1),
+            "every measured row must stay within one pixel: {:?}",
+            fit.row_dy,
+        );
+
+        let texts = out
+            .layout
+            .rows
+            .iter()
+            .map(|row| row.text.clone())
+            .collect::<Vec<_>>();
+        let capture = crate::mercenary::read::build_capture(
+            &img,
+            Frame::cropped(PC_ORIGIN, PC_SCREEN),
+            &out.layout,
+            &texts,
+            0,
+            &g,
+            &vocab(),
+            &crate::mercenary::icons::TemplateStore::new(),
+        );
+        assert_eq!(capture.rows_on_screen, 6, "the live fallback pitch still sees all six rows");
+    }
+
+    #[test]
+    fn the_soryn_crop_reads_all_fifteen_badges_after_the_placed_fit() {
+        let g = MercGeometry::default();
+        let layout = crate::mercenary::geometry::placed_layout(
+            &soryn_lines(),
+            [724, 554, 500, 430],
+            &g,
+            SORYN_SCALE,
+            g.row_pitch * SORYN_SCALE,
+        )
+        .expect("the Soryn placed panel");
+        let frame = Frame::cropped(SORYN_ORIGIN, SORYN_SCREEN);
+        let img = fixture("merc-recruit-pc-1080p-soryn-grid.png");
+        let out = refine(&img, frame, layout, &g);
+        assert!(out.fit.is_some(), "the Soryn grid must fit the gold frames");
+
+        let expected: [(usize, usize, u8); 15] = [
+            (0, 0, 2), (0, 1, 3),
+            (1, 0, 2), (1, 1, 1),
+            (2, 0, 2), (2, 1, 3), (2, 2, 3), (2, 3, 2), (2, 4, 1),
+            (3, 0, 2), (3, 1, 3), (3, 2, 3), (3, 3, 3),
+            (4, 0, 3), (4, 1, 3),
+        ];
+        let read = expected
+            .iter()
+            .map(|&(row, slot, _)| {
+                let rect = out.layout.rows[row].cells[slot];
+                (row, slot, read_tier(&img, frame.local(rect), &g))
+            })
+            .collect::<Vec<_>>();
+        let expected_read = expected
+            .iter()
+            .map(|&(row, slot, tier)| (row, slot, Some(tier)))
+            .collect::<Vec<_>>();
+
+        assert_eq!(read, expected_read);
     }
 
     /// The fixture's own precondition, DERIVED from its pixels instead of

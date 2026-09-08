@@ -3209,6 +3209,11 @@ fn detect_tick(
     };
     let known_panel = session.panel.or_else(|| placement.map(|(panel, _)| panel));
 
+    // A held fit's pitch is the frame's horizontal slot pitch, reused as the
+    // vertical proxy because it is the only frame-verified length the session
+    // holds: the slot pitch it holds is `REF_PITCH · scale` in screen px, and
+    // 48.67 in reference space is closer to the fixture's 48.4 vertical row
+    // pitch than 49.3 is. POE-216 resolves this axis crossing.
     let fitted_pitch = session
         .fitted
         .map(|fit| fit.pitch)

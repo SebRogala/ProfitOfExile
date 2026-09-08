@@ -189,7 +189,8 @@ tolerance is read for the current session and remembered through
 the single geometry notice are logged at the merc detect seam.
 
 The live placed layout enumerates row centres from the placed panel, the fitted
-row pitch and the fitted cell size: the first is `panel.y + pitch + cell/2`,
+row pitch and the fitted cell size (**the centre-source sentence is superseded
+by the POE-273 amendment below**): the first is `panel.y + pitch + cell/2`,
 and the last is the smaller of `panel.bottom - 3*pitch - cell/2` and
 `button_y - pitch`. The interval is rounded to a count and capped by
 `MercGeometry::max_rows`; every geometry band is then read by pass 2. A text
@@ -230,3 +231,43 @@ screen area, an accepted approximately 2× OCR saving; the 4,504 ms figure is
 the full-screen baseline quoted in the README/module documentation, not an
 order-of-magnitude crop claim. The crop timing line is emitted once after the
 whole crop tick, and row-mismatch logging is change-gated.
+
+## Amendment: POE-273 — OCR-seeded placed rows and vertical-pitch drift (2026-09-08)
+
+The PC replay measured the placed-row defect. At UI scale `0.9009`, the live
+fallback used the old `49.3 * scale = 44.42` px pitch and produced centres
+`618.2, 662.7, 707.1, 751.5, 795.9, 840.3`; the frame fit found only two
+same-column cells and declined with `NoLeverArm { span: 0 }`. The OCR lines in
+that replay were centred at `616.5, 659.5, 703.5, 746.5, 790.5, 833.5`, with
+43.0–43.7 px gaps. `cellfit::REF_PITCH = 48.67` is the horizontal slot-pitch
+constant measured from the support frames; `MercGeometry::row_pitch = 49.3`
+is the vertical OCR reference. The committed reference fixture measures a
+48.4 vertical row pitch and a 48.67 horizontal slot pitch, so 49.3 is 1.8 %
+high; the PC's 47.8–48.6 reference px agree with that fixture, not with 49.3.
+POE-270 was the first code to PLACE rows with the known-high constant instead
+of only dividing by it, and the drift — about 1 px per row, 44.42 used
+against the 43.0–43.7 measured — accumulated beyond the fit's ±3 px vertical
+search. The two constants are different axes; correcting
+them is POE-216.
+
+The accepted rule is now: geometry determines the row COUNT, including the
+footer/button bound and `max_rows`; a pass-1 skill-name line can neither add nor
+remove a row. For each geometry row, matched non-anchor name lines whose x is
+in the skill-name band and whose centre is within `0.45 * pitch` replace the
+geometry centre with their mean. A row with no matched line keeps its geometry
+centre and remains an unread row if its name is not read.
+
+The pitch used for both the geometry count and the matching band is a held
+`session.fitted.pitch` when the session holds one, else
+`MercGeometry::row_pitch * scale` (49.3 by default; an explicit `rowPitch`
+override remains the OCR fallback). The held pitch is the frame's horizontal
+slot pitch, used as the vertical proxy because it is the only frame-verified
+length the session holds: the value it holds is `REF_PITCH · scale` in screen
+px, and 48.67 in reference space is closer to the fixture's 48.4 vertical row
+pitch than 49.3 is. POE-216 resolves this axis crossing. `cellfit::REF_PITCH`
+remains the horizontal frame-fit unit, and `cellfit::refine` remains the only
+writer of frame-fit x, cell size and scale, so OCR centres seed the y
+registration without replacing the frame verification.
+
+The row-mismatch message remains change-gated: a correct read produces no line,
+and an unchanged mismatch is not re-emitted on each detect tick.
