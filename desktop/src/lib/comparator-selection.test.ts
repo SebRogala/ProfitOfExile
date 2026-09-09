@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { defaultSelectedGem, type SelectableGem } from './comparator-selection';
+import { defaultSelectedGem, type PriceableLookup, type SelectableGem } from './comparator-selection';
 import type { SellabilityLabel } from './api';
 
 /**
@@ -9,6 +9,11 @@ import type { SellabilityLabel } from './api';
  */
 function gem(name: string, transPrice: number, sellabilityLabel: SellabilityLabel = ''): SelectableGem {
 	return { name, transPrice, sellabilityLabel };
+}
+
+/** A trade lookup reduced to what the rule reads: a chaos floor and how many listings stood behind it. */
+function lookup(priceFloor: number, listingCount = 1): PriceableLookup {
+	return { priceFloor, listings: Array.from({ length: listingCount }, () => ({})) };
 }
 
 describe('defaultSelectedGem', () => {
@@ -32,16 +37,44 @@ describe('defaultSelectedGem', () => {
 		expect(defaultSelectedGem(results, null)).toBe('Dearest');
 	});
 
-	it('keeps the current selection instead of re-deciding it', () => {
-		// The user's pick outranks the default: this runs on every poll, so
-		// re-deciding would drag the selection back off whatever they clicked.
+	it("keeps the player's pick instead of re-deciding it", () => {
+		// The pick outranks the default: this runs on every poll, so re-deciding
+		// would drag the selection back off whatever they clicked.
 		const results = [gem('Cheap', 12), gem('Dear', 340)];
 
 		expect(defaultSelectedGem(results, 'Cheap')).toBe('Cheap');
 	});
 
+	it('drops a pick that is no longer among the results and decides afresh', () => {
+		// A new run's gems replace the old ones while the last run's pick is
+		// still remembered; keeping a name no row carries would select nothing
+		// the player can see.
+		const results = [gem('Cheap', 12), gem('Dear', 340)];
+
+		expect(defaultSelectedGem(results, 'Gone')).toBe('Dear');
+	});
+
 	it('clears the selection when the results go empty', () => {
 		expect(defaultSelectedGem([], 'Dear')).toBeNull();
+	});
+
+	it('ranks a gem by its trade floor over its ninja price once its lookup has listings', () => {
+		// The 2026-09-09 overlay: ninja priced Splitting Steel at 359c and the
+		// lookup found it selling from 14c, while Blink Arrow's floor stood at
+		// 300c. Ninja decided the pick and kept it on the 14c gem after the
+		// lookup landed.
+		const results = [gem('Splitting Steel', 359), gem('Blink Arrow', 347)];
+		const lookups = { 'Splitting Steel': lookup(14), 'Blink Arrow': lookup(300) };
+
+		expect(defaultSelectedGem(results, null, lookups)).toBe('Blink Arrow');
+	});
+
+	it('keeps the ninja price for a gem whose lookup returned no listings', () => {
+		// An empty lookup carries a floor of 0 — the absence of a price, not a
+		// price of zero. Reading it as 0c would demote the dearest gem to last.
+		const results = [gem('Dear', 359), gem('Other', 100)];
+
+		expect(defaultSelectedGem(results, null, { Dear: lookup(0, 0) })).toBe('Dear');
 	});
 
 	it('keeps the first gem when two share the top price', () => {

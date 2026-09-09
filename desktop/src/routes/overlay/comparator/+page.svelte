@@ -50,6 +50,8 @@
 
 	let results = $state<CompareGem[]>([]);
 	let selectedGem = $state<string | null>(null);
+	/** The row the player clicked, if any. Only this outranks the default pick. */
+	let userPick = $state<string | null>(null);
 
 	// Trade data + loading/error state — received from main Comparator, not fetched separately
 	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
@@ -64,7 +66,14 @@
 		// that one won every time: it assigns inside the poll callback, before this
 		// effect flushes. So the most-expensive rule this file documents was never
 		// the one that ran.
-		selectedGem = defaultSelectedGem(results, selectedGem);
+		//
+		// Only the player's click goes back in as `current`. Gems arrive one per
+		// detection, a second or two apart, and handing the previous default back
+		// kept the FIRST detected gem selected for the whole run (2026-09-09: a
+		// 29c gem stayed picked while the 42c one landed beside it).
+		// Reading `tradeData` here is what re-decides the pick as lookups land.
+		if (userPick && !results.some((g) => g.name === userPick)) userPick = null;
+		selectedGem = defaultSelectedGem(results, userPick, tradeData);
 		// Tell the mouse hook whether we have content — when empty, clicks pass through to game.
 		invoke('set_overlay_has_content', { label: 'comparator', hasContent: results.length > 0 })
 			.catch(e => console.warn('[overlay] set_overlay_has_content failed:', e));
@@ -220,6 +229,7 @@
 	function handleClear() {
 		results = [];
 		selectedGem = null;
+		userPick = null;
 		tradeData = {};
 		// Tell the Comparator to clear too.
 		getCurrentWebviewWindow().emit('overlay-clear', {})
@@ -261,7 +271,8 @@
 				const idx = parseInt(rawIndex, 10);
 				if (isNaN(idx) || idx >= results.length) return;
 				if (action === 'pick') {
-					selectedGem = results[idx].name;
+					userPick = results[idx].name;
+					selectedGem = userPick;
 					handlePick();
 				} else {
 					requestTradeRefresh(results[idx]);

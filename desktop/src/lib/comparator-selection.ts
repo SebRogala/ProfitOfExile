@@ -4,6 +4,12 @@ import type { CompareGem } from './api';
 export type SelectableGem = Pick<CompareGem, 'name' | 'transPrice' | 'sellabilityLabel'>;
 
 /**
+ * The part of a trade lookup the rule reads: the chaos floor and whether any
+ * listing stood behind it. `TradeLookupResult` satisfies it as-is.
+ */
+export type PriceableLookup = { priceFloor: number; listings: ReadonlyArray<unknown> };
+
+/**
  * How much of its ninja price an UNLIKELY gem keeps when the default is
  * decided. A rival has to clear that share of the dearer gem's price to take
  * the pick.
@@ -16,11 +22,25 @@ function pickWeight(gem: SelectableGem): number {
 }
 
 /**
+ * The chaos price the rule ranks a gem by: the live trade floor once a lookup
+ * has come back with listings, else the ninja price. Ninja lags and averages;
+ * the floor is what the gem sells for now (owner, 2026-09-09: a 359c ninja
+ * price over a 14c floor kept the wrong gem picked after its lookup landed). A
+ * lookup with no listings prices nothing and leaves the ninja price standing.
+ */
+export function pickPrice(gem: SelectableGem, lookup?: PriceableLookup | null): number {
+	if (lookup && lookup.listings.length > 0 && lookup.priceFloor > 0) return lookup.priceFloor;
+	return gem.transPrice;
+}
+
+/**
  * The comparator overlay's default pick.
  *
- * Most expensive by ninja price, except that a gem the server labels UNLIKELY
- * keeps only half its price here. The dearer gem still wins unless a rival
- * clears that half.
+ * Most expensive by chaos price — the trade floor where a lookup in `lookups`
+ * has listings, the ninja price otherwise (`pickPrice`) — except that a gem the
+ * server labels UNLIKELY keeps only half its price here. The dearer gem still
+ * wins unless a rival clears that half. Lookups land one gem at a time, so the
+ * caller re-runs this as they do and the pick moves with them.
  *
  * The label, not the score, is what the rule reads. The server derives the
  * label from the sellability score at fixed boundaries (UNLIKELY is below 20)
@@ -40,20 +60,25 @@ function pickWeight(gem: SelectableGem): number {
  * A gem's `recommendation` is deliberately not consulted — the overlay used to
  * run that as a second, disagreeing rule.
  *
- * An existing selection is kept. This is the *default*, so it only decides what
- * is selected when nothing is, and the user's pick outranks it.
+ * `current` is the player's own pick, never the previous default: it outranks
+ * the rule while it is still among the results and is dropped once it is not.
+ * The caller must not hand the last default back as `current` — gems arrive
+ * one detection at a time, a second or two apart, and a default that kept
+ * itself froze on the first gem for the whole run (2026-09-09: a 29c gem stayed
+ * picked while a 42c one landed beside it).
  */
 export function defaultSelectedGem(
 	results: readonly SelectableGem[],
 	current: string | null,
+	lookups: Readonly<Record<string, PriceableLookup | null | undefined>> = {},
 ): string | null {
 	if (results.length === 0) return null;
-	if (current) return current;
+	if (current && results.some((gem) => gem.name === current)) return current;
 
 	let best = results[0];
-	let bestScore = best.transPrice * pickWeight(best);
+	let bestScore = pickPrice(best, lookups[best.name]) * pickWeight(best);
 	for (const gem of results) {
-		const score = gem.transPrice * pickWeight(gem);
+		const score = pickPrice(gem, lookups[gem.name]) * pickWeight(gem);
 		if (score > bestScore) {
 			best = gem;
 			bestScore = score;
