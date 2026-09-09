@@ -112,6 +112,49 @@ pub fn hop_distances(open: &[SlotMask; 13], start: Slot) -> [Option<usize>; 13] 
     dist
 }
 
+/// The three walks a door can shorten, measured on one board: Entrance →
+/// Apex, Entrance → the wanted rooms, the wanted rooms → the Apex.
+///
+/// One measure, two readers. [`super::rules`] ranks door sets by it — RA,
+/// *"faster arrival"*, below R2 — and [`super::convenience`] ranks the corridor
+/// to spend a spare key on by the same three walks in the same order. Keeping
+/// the measure here, in the graph helpers, is what lets the faint mark and the
+/// bright one agree on what "shorter" means.
+///
+/// The two sums run over the wanted rooms the respective end reaches, so a room
+/// no open path leads to is left out rather than counted as infinite. That is
+/// sound for both readers only because each compares options that reach the
+/// same wanted rooms — [`super::rules::DoorKey::connects_value`] ranks a set
+/// that reaches more of them before this key is read, and the convenience door
+/// changes no reachability at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Walks {
+    /// Entrance → Apex; `None` while no open path reaches the Apex.
+    pub apex: Option<usize>,
+    /// Σ Entrance → wanted room, over the wanted rooms the Entrance reaches.
+    pub targets: usize,
+    /// Σ wanted room → Apex, over the wanted rooms the Apex reaches.
+    pub targets_apex: usize,
+}
+
+impl Walks {
+    pub fn measure(open: &[SlotMask; 13], wanted: &[Slot]) -> Walks {
+        let from_entrance = hop_distances(open, Slot::ENTRANCE);
+        let from_apex = hop_distances(open, Slot::APEX);
+        Walks {
+            apex: from_entrance[Slot::APEX.index()],
+            targets: wanted
+                .iter()
+                .filter_map(|slot| from_entrance[slot.index()])
+                .sum(),
+            targets_apex: wanted
+                .iter()
+                .filter_map(|slot| from_apex[slot.index()])
+                .sum(),
+        }
+    }
+}
+
 /// The fewest **closed** doors that must be blasted to reach each slot from
 /// the seed set, walking open doors for free (RE's `minClosedDoorsToReach`).
 ///

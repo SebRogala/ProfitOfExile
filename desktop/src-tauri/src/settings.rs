@@ -975,6 +975,7 @@ mod tests {
             overlay_hook_stop: Mutex::new(None),
             focus_poller_stop: Mutex::new(None),
             debug_mode: Mutex::new(false),
+            gem_band_dump: AtomicBool::new(false),
             trade_stale_warn_secs: Mutex::new(DEFAULT_TRADE_STALE_WARN_SECS),
             trade_stale_critical_secs: Mutex::new(DEFAULT_TRADE_STALE_CRITICAL_SECS),
             trade_auto_refresh_secs: Mutex::new(DEFAULT_TRADE_AUTO_REFRESH_SECS),
