@@ -168,6 +168,14 @@ a null-slice fallback origin is remembered the same way after a successful read.
 The old sweep cadence, coarse candidate pass, geometry cap and session plate
 memory are retired.
 
+## Amendment: incursion arms buy no placed-miss fallback (2026-09-09)
+
+The placed-miss fallback is spent under the Manual arm (Re-arm) only. Under
+AlvaStart and TempleArea the first tick's miss is the sheet not being open
+yet, and the sweep it bought ran 30–34 s per incursion on the debug build with
+no tick in between (app.log 2026-09-08/09). The null-slice fallback is
+unchanged. `temple/run.rs`, `cold_sweep_reason`.
+
 That release buys one retry only; a second withheld sweep keeps the key spent
 until the `(temple_epoch, temple_rearm)` key changes.
 

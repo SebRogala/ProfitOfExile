@@ -66,9 +66,10 @@
 //! no placed Entrance origin, the first such tick per `(temple_epoch,
 //! temple_rearm)` key gets one cold-start sweep. If that sweep finds an anchor
 //! whose proposed slice is withheld, it buys exactly one retry; a second
-//! withheld result keeps the key spent until the key changes. When a placed
-//! board was announced by any `ArmSource::Trigger(_)`, the miss gets one
-//! explicit fallback sweep for that key. A sweep that finds another origin logs
+//! withheld result keeps the key spent until the key changes. A placed board
+//! gets one explicit fallback sweep per key only under the Manual arm (Re-arm):
+//! a miss under AlvaStart or TempleArea is the sheet not being open yet, not a
+//! wrong placement — see [`cold_sweep_reason`]. A sweep that finds another origin logs
 //! the contradiction, uses that origin for this read, and the successful read
 //! remembers it through the SSOT effects seam. There is no per-tick sweep
 //! cadence, moving-origin budget, or session plate memory. The per-key budget is
@@ -1780,7 +1781,7 @@ fn hint_from_slice(
 enum ColdSweepReason {
     /// No screen scale or placement exists yet.
     NullSlice,
-    /// A trigger announced this board and its placed recheck fell below the floor.
+    /// Re-arm announced this board and its placed recheck fell below the floor.
     PlacedMiss,
 }
 
@@ -1788,10 +1789,22 @@ enum ColdSweepReason {
 ///
 /// A null or unplaced slice has no origin to verify, so it gets one cold-start
 /// attempt per key regardless of the arm source. A placed slice gets one
-/// fallback per key only when a trigger arm announced it; a panel or startup
-/// source is not an incursion trigger. The caller records the returned reason
-/// before invoking the sweep, which makes a miss consume the same one-shot
-/// budget as a successful sweep.
+/// fallback per key only under the Manual arm (Re-arm). The caller records the
+/// returned reason before invoking the sweep, which makes a miss consume the
+/// same one-shot budget as a successful sweep.
+///
+/// # Why AlvaStart and TempleArea buy no sweep (owner decision, 2026-09-09)
+///
+/// The first tick after Alva's start line runs before the player has opened
+/// the sheet, so its placed recheck misses. Until 2026-09-09 that miss spent
+/// the fallback: the pyramid sweep ran on a frame grabbed before the sheet
+/// opened, no tick ran while it did, and the sheet was read only after it
+/// returned. app.log 2026-09-09, debug build: armed 02:41:47, `sweep found no
+/// layout panel` 02:42:18, `layout panel found` 02:42:19 — three incursions
+/// that session, 30–34 s each. The placed origin is trusted instead: the game
+/// draws the sheet in one place, so a miss under an incursion arm means "not
+/// open yet", and the 650 ms recheck sees the sheet when it opens. Re-arm
+/// keeps the sweep as the explicit "look again" for a placement that is wrong.
 fn cold_sweep_reason(
     screen_present: bool,
     placed_origin: Option<(i32, i32)>,
@@ -1807,8 +1820,10 @@ fn cold_sweep_reason(
     if !screen_present || placed_origin.is_none() {
         return (null_sweep_key != Some(key)).then_some(ColdSweepReason::NullSlice);
     }
-    (matches!(source, Some(trigger::ArmSource::Trigger(_)))
-        && fallback_sweep_key != Some(key))
+    (matches!(
+        source,
+        Some(trigger::ArmSource::Trigger(trigger::ArmReason::Manual))
+    ) && fallback_sweep_key != Some(key))
     .then_some(ColdSweepReason::PlacedMiss)
 }
 
@@ -2558,8 +2573,8 @@ fn tick(
     }
 
     // A null/unplaced slice gets one cold start per key, plus one retry when a
-    // found anchor is withheld. A placed miss gets one fallback only while a
-    // trigger arm identifies the current board.
+    // found anchor is withheld. A placed miss gets one fallback only under the
+    // Manual arm — see `cold_sweep_reason`.
     let reason = cold_sweep_reason(
         screen_present,
         cheap_hint.as_ref().map(|hint| hint.origin),
@@ -2701,8 +2716,8 @@ fn tick(
 /// The miss line is emitted for the one fallback attempt. A null or unplaced
 /// slice gets this path once per `(temple_epoch, temple_rearm)` key, plus one
 /// retry when a found anchor is withheld; a second withheld result keeps the
-/// key spent. A placed miss gets it only for a trigger-announced board that
-/// qualified for the fallback. [`ErrorLog`] does not cap it because this is not
+/// key spent. A placed miss gets it only under the Manual arm
+/// ([`cold_sweep_reason`]). [`ErrorLog`] does not cap it because this is not
 /// an error path and the caller already owns the bounded rule.
 ///
 /// # Blocking
@@ -4439,37 +4454,33 @@ mod tests {
     }
 
     #[test]
-    fn a_below_floor_placed_miss_spends_one_fallback_per_trigger_key() {
+    fn a_below_floor_placed_miss_spends_one_fallback_under_re_arm_only() {
         let key = BOARD;
         let cheap = saw_nothing();
         let placed = Some((960, 713));
-
-        for reason in [
-            trigger::ArmReason::AlvaStart,
-            trigger::ArmReason::TempleArea,
-            trigger::ArmReason::Manual,
-        ] {
-            let source = Some(trigger::ArmSource::Trigger(reason));
-            assert_eq!(
-                cold_sweep_reason(true, placed, &cheap, source, key, None, None),
-                Some(ColdSweepReason::PlacedMiss),
-                "{reason:?} qualifies a placed miss",
-            );
-            assert_eq!(
-                cold_sweep_reason(true, placed, &cheap, source, key, Some(key), None),
-                None,
-                "{reason:?} spends only once per key",
-            );
-        }
+        let manual = Some(trigger::ArmSource::Trigger(trigger::ArmReason::Manual));
 
         assert_eq!(
-            cold_sweep_reason(true, placed, &cheap, Some(trigger::ArmSource::Trigger(
-                trigger::ArmReason::AlvaStart,
-            )), NEXT_BOARD, Some(key), None),
+            cold_sweep_reason(true, placed, &cheap, manual, key, None, None),
             Some(ColdSweepReason::PlacedMiss),
+            "Re-arm qualifies a placed miss",
+        );
+        assert_eq!(
+            cold_sweep_reason(true, placed, &cheap, manual, key, Some(key), None),
+            None,
+            "Re-arm spends only once per key",
+        );
+        assert_eq!(
+            cold_sweep_reason(true, placed, &cheap, manual, NEXT_BOARD, Some(key), None),
+            Some(ColdSweepReason::PlacedMiss),
+            "a new key has its own fallback",
         );
 
+        // An incursion arm's first miss is the sheet not being open yet, and a
+        // sweep there blocks the loop for its whole duration (2026-09-09).
         for source in [
+            Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaStart)),
+            Some(trigger::ArmSource::Trigger(trigger::ArmReason::TempleArea)),
             Some(trigger::ArmSource::PanelOnScreen),
             Some(trigger::ArmSource::StartupProbe),
             None,
@@ -4487,9 +4498,7 @@ mod tests {
             ncc: anchor::NCC_FLOOR,
         });
         assert_eq!(
-            cold_sweep_reason(true, placed, &anchored, Some(trigger::ArmSource::Trigger(
-                trigger::ArmReason::AlvaStart,
-            )), key, None, None),
+            cold_sweep_reason(true, placed, &anchored, manual, key, None, None),
             None,
             "an anchored recheck does not buy a fallback",
         );
