@@ -184,12 +184,16 @@ Scans the gem tooltip region to detect transfigured gem names for the comparator
 
 **Stop triggers**:
 - 3 gems detected (auto-stop)
-- 45s timeout
+- 2.5 min timeout (was 45 s until 2026-09-09; it expired under a player still hovering the results)
 - ZoneChanged (left area)
 - Manual "Stop Scanning"
 - Next start trigger (bumps generation counter → old scan exits)
 
 **Key behavior**: Aborts immediately if gem name list is empty (server unreachable). Uses `AtomicU64` generation counter for clean cancellation — no thread cleanup needed.
+
+**Alternating upscale kernels**: even ticks read the band from the Lanczos3 2× image, odd ticks from the bilinear 2× image (`preprocess_for_ocr_fast`). Measured 2026-09-09 on the app's own band dumps: one header ("Split Arrow of Splitting", hovered in the font socket) returned no lines from Windows OCR after Lanczos3 2× on every one of 51 ticks, while the same crop read at 1×, 3× and bilinear 2× — the kernel, not the capture. Taking turns keeps one OCR per tick (a second pass on every empty tick would double the idle cost of the whole scan) at the price of one extra tick of latency for a header only one kernel can read; the `Gem OCR candidates (lanczos|bilinear)` line names the kernel that read. Dev Tools → "Gem band dump" (session-only, off at start; deliberately not tied to debug mode, which the owner runs permanently) keeps the raw band crop of the last 40 ticks under `%APPDATA%\profitofexile\lab-debug\gem-band-NN.png`, which is how that was measured.
+
+**Log breadcrumbs**: `Gem OCR candidates (lanczos|bilinear)` when the band reads text after two empty ticks (then every 8th while it keeps reading), `Gem OCR rejected` once per distinct rejection, `Gem OCR: … read as X again` once per re-read of a gem the scan already holds, and the stop/timeout line carries how many ticks read text. A scan that logs none of the first three read nothing off the band (added 2026-09-09 after a third gem went undetected with no trace).
 
 ### Font Panel OCR
 

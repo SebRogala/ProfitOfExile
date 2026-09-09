@@ -313,31 +313,40 @@ fn scale_value(value: i32, scale: f32) -> i32 {
     (value as f32 * scale).round() as i32
 }
 
-/// The gem name region for a client rect: the top-left corner of the client,
-/// as wide as the screen up to the right-docked inventory's left edge, one name
-/// line tall — see [`crate::INVENTORY_PANEL_W_REF`] for the rule and its
-/// provenance. Never taller than the name line, by the owner's ruling.
+/// The gem name region for a client rect: the client's full-width top band, one
+/// name line tall — see [`crate::INVENTORY_PANEL_W_REF`] for the rule and its
+/// provenance. Never taller than the name line, by the owner's ruling; full
+/// width because the tooltip follows the hovered item across the inventory's
+/// left edge.
 fn gem_region(client: [i32; 4], scale: f32) -> [i32; 4] {
     [
         client[0],
         client[1],
-        (client[2] - scale_value(crate::INVENTORY_PANEL_W_REF, scale)).max(0),
+        client[2].max(0),
         scale_value(crate::GEM_NAME_BAND_H_REF, scale).max(0),
+    ]
+}
+
+/// The font panel region for a client rect: `FONT_PANEL_W_REF · scale` wide,
+/// centred in the space left of the right-docked inventory (whose width is
+/// [`crate::INVENTORY_PANEL_W_REF`] · scale), `FONT_PANEL_TOP_REF
+/// · scale` below the client's top and `FONT_PANEL_H_REF · scale` tall — see
+/// [`crate::FONT_PANEL_W_REF`] for the rule and its provenance. The centring
+/// halves in integer px, so an odd gap lands the region one px left of centre.
+fn font_region(client: [i32; 4], scale: f32) -> [i32; 4] {
+    let space_w = client[2] - scale_value(crate::INVENTORY_PANEL_W_REF, scale);
+    let w = scale_value(crate::FONT_PANEL_W_REF, scale).max(0);
+    [
+        client[0] + (space_w - w) / 2,
+        client[1] + scale_value(crate::FONT_PANEL_TOP_REF, scale),
+        w,
+        scale_value(crate::FONT_PANEL_H_REF, scale).max(0),
     ]
 }
 
 /// The client an unmeasured screen is assumed to have: fullscreen 1080p, the
 /// same assumption [`crate::ASSUMED_UI_SCALE`] makes.
 const ASSUMED_1080P_CLIENT: [i32; 4] = [0, 0, 1920, 1080];
-
-fn scale_region(reference: [i32; 4], scale: f32, client: [i32; 4]) -> [i32; 4] {
-    [
-        client[0] + scale_value(reference[0], scale),
-        client[1] + scale_value(reference[1], scale),
-        scale_value(reference[2], scale).max(0),
-        scale_value(reference[3], scale).max(0),
-    ]
-}
 
 /// Derive all capture-relative placements from the current screen slice.
 /// Seeds are scaled reference geometry; a remembered anchor replaces only the
@@ -356,31 +365,14 @@ pub fn placements_for(screen: Option<&ScreenSlice>) -> Placements {
             merc: None,
             lab: LabPlacements {
                 gem: gem_region(ASSUMED_1080P_CLIENT, crate::ASSUMED_UI_SCALE),
-                font: [
-                    crate::SHIPPED_FONT_PANEL_1080P.x,
-                    crate::SHIPPED_FONT_PANEL_1080P.y,
-                    crate::SHIPPED_FONT_PANEL_1080P.w as i32,
-                    crate::SHIPPED_FONT_PANEL_1080P.h as i32,
-                ],
+                font: font_region(ASSUMED_1080P_CLIENT, crate::ASSUMED_UI_SCALE),
             },
         };
     };
 
     let scale = valid_scale(Some(screen));
     let client = screen.client;
-    let lab = LabPlacements {
-        gem: gem_region(client, scale),
-        font: scale_region(
-            [
-                crate::FONT_PANEL_REF.x,
-                crate::FONT_PANEL_REF.y,
-                crate::FONT_PANEL_REF.w as i32,
-                crate::FONT_PANEL_REF.h as i32,
-            ],
-            scale,
-            client,
-        ),
-    };
+    let lab = LabPlacements { gem: gem_region(client, scale), font: font_region(client, scale) };
     let temple_seed = (
         client[0] + client[2] / 2,
         client[1] + (TEMPLE_ENTRANCE_Y_REF * scale).round() as i32,
@@ -2661,7 +2653,7 @@ mod tests {
         let screen = out.screen.expect("the composed snapshot carries the measurement");
         assert_eq!(screen.ui_scale, 0.9);
         assert_eq!(screen.source, ScreenScaleSource::MercFrame);
-        assert_eq!(out.placements.lab.gem, [0, 0, 1262, 40]);
+        assert_eq!(out.placements.lab.gem, [0, 0, 1920, 40]);
         assert_eq!(
             out.placements.temple.expect("a measured screen has a temple placement").entrance_origin,
             (960, 713),
@@ -2674,8 +2666,11 @@ mod tests {
 
         assert_eq!(placements.temple, None);
         assert_eq!(placements.merc, None);
-        assert_eq!(placements.lab.gem, [0, 0, 1262, 40]);
-        assert_eq!(placements.lab.font, [460, 270, 530, 350]);
+        assert_eq!(placements.lab.gem, [0, 0, 1920, 40]);
+        // The font rule at 1080p: round(740 · 0.9) = 666 wide, centred in the
+        // 1262 px left of the inventory → x = (1262 − 666) / 2 = 298; the top at
+        // round(244 · 0.9 = 219.6) = 220, round(757 · 0.9 = 681.3) = 681 tall.
+        assert_eq!(placements.lab.font, [298, 220, 666, 681]);
     }
 
     #[test]
@@ -2687,9 +2682,11 @@ mod tests {
             (960, 792),
         );
         assert_eq!(placements.merc.expect("the reference screen has a merc placement").panel, [698, 615, 555, 477]);
-        // 1920 − 731 · 1.0 wide, 44 · 1.0 tall: the rule at the reference scale.
-        assert_eq!(placements.lab.gem, [0, 0, 1189, 44]);
-        assert_eq!(placements.lab.font, [511, 300, 589, 389]);
+        // The full 1920 client width, 44 · 1.0 tall: the rule at the reference scale.
+        assert_eq!(placements.lab.gem, [0, 0, 1920, 44]);
+        // 740 wide centred in the 1189 px left of the inventory: (1189 − 740) / 2
+        // = 224 in integer px (224.5 exact); top 244, 757 tall.
+        assert_eq!(placements.lab.font, [224, 244, 740, 757]);
     }
 
     #[test]
@@ -2697,23 +2694,23 @@ mod tests {
         let screen = ScreenSlice { ui_scale: 0.0, ..reference_screen() };
 
         // The invalid scale falls back to 0.90 while the client stays the
-        // reference screen's 1920 wide: 1920 − round(731 · 0.9) = 1262, 40 tall.
-        assert_eq!(placements(&screen).lab.gem, [0, 0, 1262, 40]);
+        // reference screen's 1920 wide: round(44 · 0.9) = 40 tall.
+        assert_eq!(placements(&screen).lab.gem, [0, 0, 1920, 40]);
     }
 
     #[test]
     fn nan_ui_scale_keeps_the_1080p_lab_gem_rect() {
         let screen = ScreenSlice { ui_scale: f32::NAN, ..reference_screen() };
 
-        assert_eq!(placements(&screen).lab.gem, [0, 0, 1262, 40]);
+        assert_eq!(placements(&screen).lab.gem, [0, 0, 1920, 40]);
     }
 
     #[test]
     fn a_fractional_ui_scale_rounds_the_lab_gem_rect() {
         let screen = ScreenSlice { ui_scale: 1.2, ..reference_screen() };
 
-        // 1920 − round(731 · 1.2 = 877.2) = 1043 wide, round(44 · 1.2 = 52.8) = 53 tall.
-        assert_eq!(placements(&screen).lab.gem, [0, 0, 1043, 53]);
+        // The full 1920 wide, round(44 · 1.2 = 52.8) = 53 tall.
+        assert_eq!(placements(&screen).lab.gem, [0, 0, 1920, 53]);
     }
 
     #[test]
@@ -2732,8 +2729,8 @@ mod tests {
             (960, 713),
         );
         assert_eq!(placements.merc.expect("the measured screen has a merc placement").panel, [724, 554, 500, 429]);
-        assert_eq!(placements.lab.gem, [0, 0, 1262, 40]);
-        assert_eq!(placements.lab.font, [460, 270, 530, 350]);
+        assert_eq!(placements.lab.gem, [0, 0, 1920, 40]);
+        assert_eq!(placements.lab.font, [298, 220, 666, 681]);
     }
 
     #[test]
@@ -2753,8 +2750,12 @@ mod tests {
         );
         assert_eq!(placements.merc.expect("the client has a merc placement").panel, [684, 594, 500, 429]);
         // The gem region starts at the client origin and spans the client's
-        // width up to the inventory: 1600 − 658 = 942, one 40 px name line tall.
-        assert_eq!(placements.lab.gem, [120, 40, 942, 40]);
+        // full 1600 width, one 40 px name line tall.
+        assert_eq!(placements.lab.gem, [120, 40, 1600, 40]);
+        // The font region is centred in the 1600 − 658 = 942 px left of the
+        // inventory and offset by the client origin: 120 + (942 − 666) / 2 = 258,
+        // 40 + 220 = 260.
+        assert_eq!(placements.lab.font, [258, 260, 666, 681]);
     }
 
     #[test]
@@ -2777,7 +2778,7 @@ mod tests {
             (111, 222),
         );
         assert_eq!(placements.merc.expect("the remembered merc anchor is located").panel, [120, 220, 500, 429]);
-        assert_eq!(placements.lab.gem, [0, 0, 1262, 40]);
+        assert_eq!(placements.lab.gem, [0, 0, 1920, 40]);
     }
 
     #[test]
@@ -2943,7 +2944,8 @@ mod tests {
         assert_eq!(json["screen"]["anchors"], serde_json::Value::Null);
         assert_eq!(json["placements"]["temple"]["entranceOrigin"], serde_json::json!([960, 792]));
         assert_eq!(json["placements"]["merc"]["panel"], serde_json::json!([698, 615, 555, 477]));
-        assert_eq!(json["placements"]["lab"]["gem"], serde_json::json!([0, 0, 1189, 44]));
+        assert_eq!(json["placements"]["lab"]["gem"], serde_json::json!([0, 0, 1920, 44]));
+        assert_eq!(json["placements"]["lab"]["font"], serde_json::json!([224, 244, 740, 757]));
     }
 
     /// The four source strings, exactly. They are read by a TS union

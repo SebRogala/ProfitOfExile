@@ -286,3 +286,46 @@ measured off one 1920×1080 screenshot at ui_scale 0.90 (inventory frame at
 the game. An unmeasured screen gets the same rule at 1080p, `[0, 0, 1262, 40]`.
 The POE-233 per-user override deleted by POE-268 is not restored; the rule
 replaces it.
+
+## Amendment: the font panel region is a fixed rule, centred left of the inventory (2026-09-09)
+
+The Divine Font panel is the second lab region to leave its scaled literal
+behind. The shipped `[460, 270, 530, 350]` (and its reference-px derivation
+`FONT_PANEL_REF`) started 150 px right of the option icons, began below the
+first option's line and stopped 90 px above "Crafts Remaining" on the owner's
+1920×1080 screenshot of 2026-09-09. The region is now a rule in the same terms
+as the gem rule: the panel opens centred in the space left of the right-docked
+inventory (panel, CRAFT button and "Crafts Remaining" box all centre at ≈630 px,
+the space's centre at 631) and top-anchored, so `lab.font` is `[client.x +
+(space − FONT_PANEL_W_REF · ui_scale) / 2, client.y + FONT_PANEL_TOP_REF ·
+ui_scale, FONT_PANEL_W_REF · ui_scale, FONT_PANEL_H_REF · ui_scale]` with
+`space = client.w − INVENTORY_PANEL_W_REF · ui_scale`. It is the panel's
+text-bearing interior from under the title bar's rule to under the "Crafts
+Remaining" box, wheel and CRAFT button included, because `font_parser` reads
+both texts from one crop and is keyword-anchored. The three reference px (740,
+244, 757) are PROVISIONAL: width and top measured off that one screenshot at
+ui_scale 0.90 (body interior ≈300–965 px, top 220 px); the height is that
+four-option panel's 587 (bottom 748 px) plus room for the two further options
+the panel can list — the chrome's top stays put and the list grows downward
+(owner, 2026-09-09: six options at most) — two rows at the measured 57-px pitch
+each allowed to wrap; the six-option height itself is unmeasured, and a
+six-option panel in the OCR Regions preview corrects it. The centring itself is inferred from a 16:9
+screen where it equals a fixed left offset; the 1920×1200 laptop's preview
+discriminates (centred x ≈ 224 vs ≈ 331 at ui_scale 1.0). An unmeasured screen
+gets the rule at 1080p, `[298, 220, 666, 681]`; no lab region has a shipped
+literal any more.
+
+## Amendment: the gem band spans the full client width (2026-09-09)
+
+The gem tooltip band no longer stops at the inventory's left edge: `lab.gem` is
+`[client.x, client.y, client.w, GEM_NAME_BAND_H_REF · ui_scale]`. The
+2026-09-08 amendment's right bound assumed the name prints left of the
+inventory; the tooltip in fact follows the hovered item horizontally, so a gem
+hovered in the inventory prints its name across that edge. Evidence (owner's
+app.log, 2026-09-09 01:01): the band read `EXPLOSIVE CONCOCTION OF DESTRUCTIC`
+and, three times over 30 s, `POISONOUS CONCOCTION O` — the same cut on every
+read, so the band's edge and not OCR noise — and the third gem was never
+detected. The inventory frame's top 40 px carry ornament only. Owner decision
+2026-09-09. `INVENTORY_PANEL_W_REF` stays: the font rule centres the Divine Font
+panel in the space left of that edge. An unmeasured screen gets `[0, 0, 1920,
+40]`.

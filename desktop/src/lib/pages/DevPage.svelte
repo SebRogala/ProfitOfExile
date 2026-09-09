@@ -1,6 +1,25 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { store } from '$lib/stores/status.svelte';
+
+	// Session-only Rust flag (AppState::gem_band_dump); read on mount so the
+	// box shows what Rust holds, not a default over a running dump.
+	let bandDump = $state(false);
+	let bandDumpError = $state('');
+	onMount(() => {
+		invoke<boolean>('get_gem_band_dump')
+			.then((on) => { bandDump = on; })
+			.catch((e: any) => { bandDumpError = `Error: ${e}`; });
+	});
+	async function setBandDump() {
+		bandDumpError = '';
+		try {
+			await invoke('set_gem_band_dump', { on: bandDump });
+		} catch (e: any) {
+			bandDumpError = `Error: ${e}`;
+		}
+	}
 
 	let testResult = $state('');
 	let sending = $state(false);
@@ -138,6 +157,18 @@
 					<div class="log-line">{line}</div>
 				{/each}
 			</div>
+		{/if}
+	</section>
+
+	<section class="test">
+		<h2>Gem Band Dump</h2>
+		<p class="hint">While a gem scan runs, writes the raw gem-tooltip band crop of the last 40 ticks to %APPDATA%\profitofexile\lab-debug\gem-band-NN.png — the exact image the OCR was handed. Off at every start.</p>
+		<label class="toggle">
+			<input type="checkbox" bind:checked={bandDump} onchange={setBandDump} />
+			Write band crops
+		</label>
+		{#if bandDumpError}
+			<p class="result error">{bandDumpError}</p>
 		{/if}
 	</section>
 

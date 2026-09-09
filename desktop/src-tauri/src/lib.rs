@@ -41,15 +41,24 @@ pub struct OcrRectView {
 
 /// The gem name tooltip region is a FIXED rect, not an anchor — there is
 /// nothing on screen to anchor it to (owner ruling, 2026-09-08). The hovered
-/// gem's name prints anchored to the TOP border of the screen, so the region
-/// runs from the screen's left edge to the opened inventory's left edge and is
-/// exactly one name line tall — never taller: below the name sit the tag and
-/// level lines, which are not read.
+/// gem's name prints anchored to the TOP border of the screen, so the region is
+/// the client's FULL-WIDTH top band, exactly one name line tall — never taller:
+/// below the name sit the tag and level lines, which are not read.
 ///
-/// The inventory is right-docked, so its left edge is `client_w -
-/// INVENTORY_PANEL_W_REF · ui_scale`; the band is `GEM_NAME_BAND_H_REF ·
-/// ui_scale` tall. Both numbers are in REFERENCE px — the 1920x1200 unit
-/// [`ssot::ScreenSlice::ui_scale`] measures, where 1080p is 0.90.
+/// Full width, not "up to the inventory" (owner, 2026-09-09): the tooltip
+/// follows the hovered item horizontally, so a gem hovered in the inventory
+/// prints its name across the inventory's left edge. The band that stopped at
+/// that edge read `EXPLOSIVE CONCOCTION OF DESTRUCTIC` and, three times over
+/// 30 s, `POISONOUS CONCOCTION O` (app.log 2026-09-09 01:01) — the same cut on
+/// every read, so the band's edge and not OCR noise — and the third gem was
+/// never detected. The inventory frame's top 40 px carry ornament only; its
+/// title prints below the band.
+///
+/// `GEM_NAME_BAND_H_REF · ui_scale` is the band's height. `INVENTORY_PANEL_W_REF
+/// · ui_scale` is the right-docked inventory's width, which the font rule uses
+/// to centre the Divine Font panel in the space left of it. Both numbers are in
+/// REFERENCE px — the 1920x1200 unit [`ssot::ScreenSlice::ui_scale`] measures,
+/// where 1080p is 0.90.
 ///
 /// **PROVISIONAL, measured off ONE screenshot** (the owner's, 2026-09-08,
 /// 1920x1080 at ui_scale 0.90, taken 1:1): the inventory frame's left edge at
@@ -60,13 +69,46 @@ pub const INVENTORY_PANEL_W_REF: i32 = 731;
 /// See [`INVENTORY_PANEL_W_REF`].
 pub const GEM_NAME_BAND_H_REF: i32 = 44;
 
-/// The font panel rect (craft options + "Crafts Remaining") in REFERENCE px.
-/// **PROVISIONAL, from one shipped-geometry derivation**: the shipped 1080p
-/// literal [`SHIPPED_FONT_PANEL_1080P`] divided by 0.90 and rounded,
-/// `{460, 270, 530, 350} / 0.90 = {511.1, 300, 588.9, 388.9}`; scaling back by
-/// 0.90 reproduces the literal. `ui_scale` is tied to HEIGHT, so scaling `x`/`w`
-/// by it assumes a 16:9 or 16:10 layout; a non-16:9 monitor is UNVERIFIED.
-pub const FONT_PANEL_REF: CaptureRegion = CaptureRegion { x: 511, y: 300, w: 589, h: 389 };
+/// The font panel region is a FIXED rule too, not an anchor and not a scaled
+/// literal: the Divine Font panel opens CENTRED in the space left of the
+/// right-docked inventory (its centre, the CRAFT button's and the "Crafts
+/// Remaining" box's all sit at ≈630 px on a 1920 client whose inventory starts
+/// at ≈1262 → (1920 − 658) / 2 = 631), top-anchored under the title bar. The
+/// region is the panel's text-bearing interior column: `FONT_PANEL_W_REF ·
+/// ui_scale` wide, centred on that space, from `FONT_PANEL_TOP_REF · ui_scale`
+/// below the client's top edge (just under the title bar's rule) and
+/// `FONT_PANEL_H_REF · ui_scale` tall (down past the "Crafts Remaining" box).
+/// It must hold BOTH texts the parser reads — the option lines under the title
+/// and the "Crafts Remaining: N" box under the CRAFT button — so the wheel and
+/// the button between them are inside it; `font_parser` is keyword-anchored and
+/// reads past them.
+///
+/// The centring is INFERRED from one 16:9 screenshot, where it is
+/// indistinguishable from a fixed left offset; a 16:10 client is the
+/// discriminator (centred: x ≈ 224 at ui_scale 1.0; a fixed offset: x ≈ 331),
+/// and the OCR Regions preview on the 1920x1200 laptop settles it.
+///
+/// **PROVISIONAL, measured off ONE screenshot** (the owner's, 2026-09-09,
+/// 1920x1080 at ui_scale 0.90, taken 1:1): the panel frame at ≈290 and ≈970 px,
+/// the body interior ≈300–965 → 666 px → 740 reference px; the title bar's
+/// rule at ≈214 px, the first option line's top at 240 → the region's top at
+/// 220 px → 244 reference px; that panel listed FOUR options (rows at 240, 301,
+/// 353, 404 — a 51.5 px pitch, the first row wrapped to two lines), the option
+/// lines end at ≈417 and the "Crafts Remaining" box spans ≈694–740, so the
+/// bottom that panel needs is 748 px → 528 px tall → 587 reference px. The
+/// panel lists up to SIX options and grows DOWNWARD — the chrome's top stays
+/// put, the list expands (owner, 2026-09-09) — so the top holds and the height
+/// must cover the longest list. The six-option layout is UNMEASURED: the height
+/// budgets two more rows at the measured pitch (57 reference px each), each
+/// allowed to wrap like the first (28 more), 587 + 2 · 85 = 757 — 681 px at
+/// 1080p, bottom at ≈901, still above the flask bar. A six-option panel in the
+/// preview is what corrects it. Settings → OCR Regions → Preview shows the
+/// result on the game; correct these three numbers there, not the rule.
+pub const FONT_PANEL_W_REF: i32 = 740;
+/// See [`FONT_PANEL_W_REF`].
+pub const FONT_PANEL_TOP_REF: i32 = 244;
+/// See [`FONT_PANEL_W_REF`].
+pub const FONT_PANEL_H_REF: i32 = 757;
 
 /// What the placement layer assumes when NOTHING has measured a screen: that
 /// the game is running at 1080p. It is the `ui_scale` a 1920x1080 screen
@@ -75,17 +117,11 @@ pub const FONT_PANEL_REF: CaptureRegion = CaptureRegion { x: 511, y: 300, w: 589
 /// This is deliberately NOT the README's fail-closed rule for
 /// [`ssot::ScreenSlice`] readers, and the difference is worth being explicit
 /// about: a widget that fails closed simply is not drawn, while an OCR loop that
-/// fails closed stops reading gems at all. Assuming 1080p keeps EXACTLY the
-/// pre-POE-233 behaviour for an unmeasured screen — the same rect the app has
-/// always cropped — and the scan loops say so once per session in the app log
+/// fails closed stops reading gems at all. Assuming 1080p gives an unmeasured
+/// screen the lab rules evaluated at 1080p (neither lab region has a shipped
+/// literal any more), and the scan loops say so once per session in the app log
 /// instead of the assumption being silent.
 pub const ASSUMED_UI_SCALE: f32 = 0.90;
-
-/// The font panel rect this app shipped with, a fixed 1080p literal: the value
-/// the placement layer returns for an unmeasured screen. (The gem region has no
-/// shipped literal any more; an unmeasured screen gets the rule at 1080p.)
-pub const SHIPPED_FONT_PANEL_1080P: CaptureRegion =
-    CaptureRegion { x: 460, y: 270, w: 530, h: 350 };
 
 /// The one line a scan loop logs when the rect it asked for came back smaller
 /// than it asked for, `None` when the crop is the requested size.
@@ -124,6 +160,34 @@ fn ocr_rect_view(
 
 fn capture_region(rect: [i32; 4]) -> CaptureRegion {
     CaptureRegion { x: rect[0], y: rect[1], w: rect[2].max(0) as u32, h: rect[3].max(0) as u32 }
+}
+
+/// How many gem-band ticks [`dump_gem_band`] keeps.
+const GEM_BAND_RING: u32 = 40;
+
+/// Debug instrument behind Dev Tools → "Gem band dump" (`AppState::gem_band_dump`):
+/// the raw gem band crop the OCR was handed, kept as a ring of the last
+/// [`GEM_BAND_RING`] ticks under `<app_data>/lab-debug/`
+/// (`gem-band-NN.png`, NN = tick mod ring size; the file's mtime dates it).
+///
+/// 2026-09-09: a socketed gem's tooltip sat inside the band for 30 ticks and
+/// the band read nothing, while the same header read cleanly from screenshots
+/// and from a GDI grab of the same screen — so the open question is what the
+/// APP's capture held on those ticks, and only the crop itself answers it. A
+/// write failure is logged once per process; the loop never stops for it.
+fn dump_gem_band(app: &AppHandle, band: &image::DynamicImage, tick: u32) {
+    static FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let Ok(dir) = app.path().app_data_dir() else { return };
+    let dir = dir.join("lab-debug");
+    let path = dir.join(format!("gem-band-{:02}.png", tick % GEM_BAND_RING));
+    let result = std::fs::create_dir_all(&dir).map_err(|e| e.to_string()).and_then(|_| {
+        band.save(&path).map_err(|e| e.to_string())
+    });
+    if let Err(e) = result {
+        if !FAILED.swap(true, Ordering::SeqCst) {
+            app_log(app, format!("lab-debug: could not write {}: {e}", path.display()));
+        }
+    }
 }
 
 fn temple_rects_from_rois(
@@ -285,6 +349,11 @@ pub struct AppState {
     pub overlay_hook_stop: Mutex<Option<std::sync::mpsc::Sender<()>>>,
     pub focus_poller_stop: Mutex<Option<std::sync::mpsc::Sender<()>>>,
     pub debug_mode: Mutex<bool>,
+    /// Dev Tools → "Gem band dump": whether the lab gem scan writes its band
+    /// crops ([`dump_gem_band`]). Session-only and off at start — an
+    /// instrument, not a setting, and deliberately not tied to `debug_mode`,
+    /// which the owner runs permanently (2026-09-09).
+    pub gem_band_dump: std::sync::atomic::AtomicBool,
     /// Trade staleness thresholds (seconds) — configurable from settings.
     pub trade_stale_warn_secs: Mutex<u32>,
     pub trade_stale_critical_secs: Mutex<u32>,
@@ -1658,6 +1727,20 @@ fn clickthrough_belt_passes(h: windows::Win32::Foundation::HWND) -> bool {
     true
 }
 
+/// Dev Tools → "Gem band dump" (see `AppState::gem_band_dump`).
+#[tauri::command]
+fn set_gem_band_dump(app: AppHandle, on: bool) {
+    app.state::<AppState>().gem_band_dump.store(on, Ordering::SeqCst);
+    app_log(&app, format!("lab-debug: gem band dump {}", if on { "on" } else { "off" }));
+}
+
+/// The current "Gem band dump" flag, so the Dev Tools page shows the state
+/// Rust holds when it mounts rather than an unchecked box over a running dump.
+#[tauri::command]
+fn get_gem_band_dump(app: AppHandle) -> bool {
+    app.state::<AppState>().gem_band_dump.load(Ordering::SeqCst)
+}
+
 /// Write `on` into the debug-mode flag.
 ///
 /// The state half of the [`set_debug_mode`] command, split out because it is
@@ -2632,7 +2715,11 @@ fn spawn_font_scan(app: &AppHandle) {
 fn lab_scan_loop(app: AppHandle, lab_generation: u64) {
     let state = app.state::<AppState>();
     const SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
-    const GEM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+    // 2.5 min (owner, 2026-09-09; was 45 s): reading the options, crafting and
+    // hovering three results took longer than 45 s, the scan expired under a
+    // player still hovering, and the manual restart was killed by the CONFIRM
+    // event seconds later. CONFIRM, ZoneChanged and 3/3 still end a scan early.
+    const GEM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(150);
     const IDLE_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
     const MAX_GEMS: u32 = 3;
     const MAX_REJECT_LOGS: usize = 12;
@@ -2647,6 +2734,12 @@ fn lab_scan_loop(app: AppHandle, lab_generation: u64) {
     let mut gems_found = 0u32;
     let mut logged_gem_rejects = std::collections::HashSet::<String>::new();
     let mut gem_rejects_suppressed = false;
+    let mut logged_gem_repeats = std::collections::HashSet::<String>::new();
+    // Ticks since the band last read text; starts "long ago" so the first
+    // read of a scan logs.
+    let mut gem_ticks_since_text = u32::MAX;
+    let mut gem_ticks_read = 0u32;
+    let mut gem_ticks_with_text = 0u32;
     let mut logged_gem_assumed_1080p = false;
     let mut logged_gem_short_crop = false;
 
@@ -2665,7 +2758,10 @@ fn lab_scan_loop(app: AppHandle, lab_generation: u64) {
         let previous_gem_generation = gem_generation_seen;
         if gem_generation != gem_generation_seen {
             if previous_gem_generation != 0 {
-                app_log(&app, "Gem scan stopped (new scan or manual stop)".to_string());
+                app_log(&app, format!(
+                    "Gem scan stopped (new scan or manual stop; {} gems found, the band read text on {} of {} ticks)",
+                    gems_found, gem_ticks_with_text, gem_ticks_read,
+                ));
                 report_ocr_engine(&app);
             }
             gem_generation_seen = gem_generation;
@@ -2678,6 +2774,10 @@ fn lab_scan_loop(app: AppHandle, lab_generation: u64) {
             gems_found = 0;
             logged_gem_rejects.clear();
             gem_rejects_suppressed = false;
+            logged_gem_repeats.clear();
+            gem_ticks_since_text = u32::MAX;
+            gem_ticks_read = 0;
+            gem_ticks_with_text = 0;
             logged_gem_assumed_1080p = false;
             logged_gem_short_crop = false;
 
@@ -2737,7 +2837,10 @@ fn lab_scan_loop(app: AppHandle, lab_generation: u64) {
             && gem_started_at
                 .is_some_and(|started_at| started_at.elapsed() >= GEM_TIMEOUT)
         {
-            app_log(&app, format!("Gem scan timed out after 45s ({} gems found)", gems_found));
+            app_log(&app, format!(
+                "Gem scan timed out after {}s ({} gems found; the band read text on {} of {} ticks)",
+                GEM_TIMEOUT.as_secs(), gems_found, gem_ticks_with_text, gem_ticks_read,
+            ));
             gem_finished = true;
             gem_active = false;
             let mut lab_state = state.lab_state.lock().unwrap_or_else(|e| e.into_inner());
@@ -2901,13 +3004,49 @@ fn lab_scan_loop(app: AppHandle, lab_generation: u64) {
                     app_log(&app, line);
                 }
             }
-            let processed = capture::preprocess_for_ocr(&cropped);
+            if state.gem_band_dump.load(Ordering::SeqCst) {
+                dump_gem_band(&app, &cropped, gem_loop_count);
+            }
+            // The two upscale kernels alternate tick by tick: Lanczos3 on even
+            // ticks, bilinear on odd. Measured 2026-09-09 on the app's own band
+            // dumps: "Split Arrow of Splitting" hovered in the font socket sat
+            // in the band for 51 ticks and the Lanczos3 2× image returned NO
+            // lines from Windows OCR, while the same crop read at 1×, at 3× and
+            // with Triangle 2× — the kernel's ringing on that header, not the
+            // capture. A second pass on every empty tick would run twice per
+            // tick for the whole scan (the band is empty until the player gets
+            // from CRAFT to a hover), so the kernels take turns instead: one
+            // OCR per tick, and a hovered header is read by whichever kernel
+            // can within two ticks (owner, 2026-09-09).
+            let bilinear_tick = gem_loop_count % 2 == 1;
+            let processed = if bilinear_tick {
+                capture::preprocess_for_ocr_fast(&cropped)
+            } else {
+                capture::preprocess_for_ocr(&cropped)
+            };
             match ocr::recognize_text(&processed) {
                 Ok(lines) => {
                     let candidates = ocr::extract_gem_candidates(&lines);
-                    if !candidates.is_empty() && gem_loop_count % 8 == 1 {
-                        app_log(&app, format!("Gem OCR candidates: {:?}", candidates));
+                    gem_ticks_read += 1;
+                    let band_has_text = !candidates.is_empty();
+                    if band_has_text {
+                        gem_ticks_with_text += 1;
                     }
+                    // Logged when the band reads text after at least two empty
+                    // ticks — both kernels' turns, so a header only one kernel
+                    // reads does not log on every other tick — then every 8th
+                    // tick while it keeps reading. A hover shorter than eight
+                    // ticks still leaves one line, so a scan with none of these
+                    // lines read NOTHING off the band (2026-09-09: a third gem
+                    // went undetected with no trace of what the band saw).
+                    if band_has_text && (gem_ticks_since_text >= 2 || gem_loop_count % 8 == 1) {
+                        app_log(&app, format!(
+                            "Gem OCR candidates ({}): {:?}",
+                            if bilinear_tick { "bilinear" } else { "lanczos" },
+                            candidates
+                        ));
+                    }
+                    gem_ticks_since_text = if band_has_text { 0 } else { gem_ticks_since_text.saturating_add(1) };
                     if let Some(matcher) = gem_matcher.as_ref() {
                         let mut best: Option<gem_matcher::GemMatch> = None;
                         for candidate in &candidates {
@@ -2935,9 +3074,10 @@ fn lab_scan_loop(app: AppHandle, lab_generation: u64) {
                         }
 
                         if let Some(gem_match) = best {
-                            if state.gem_scan_generation.load(Ordering::SeqCst) == gem_generation
-                                && seen_gems.insert(gem_match.name.clone())
-                            {
+                            let scan_live =
+                                state.gem_scan_generation.load(Ordering::SeqCst) == gem_generation;
+                            if scan_live && !seen_gems.contains(&gem_match.name) {
+                                seen_gems.insert(gem_match.name.clone());
                                 gems_found += 1;
                                 app_log(&app, format!(
                                     "Gem detected: {} (score: {:.2}) [{}/{}] from OCR {:?}",
@@ -2969,6 +3109,16 @@ fn lab_scan_loop(app: AppHandle, lab_generation: u64) {
                                         emit_status(&app);
                                     }
                                 }
+                            } else if scan_live && logged_gem_repeats.insert(gem_match.name.clone()) {
+                                // A re-read of a gem this scan already holds was
+                                // invisible: a third gem whose text resolves to a
+                                // detected name (a duplicate, or a base name that
+                                // jaro-winkler lands on its transfigured sibling)
+                                // left the log silent. Once per name per scan.
+                                app_log(&app, format!(
+                                    "Gem OCR: {:?} read as {} again — already detected this scan",
+                                    gem_match.ocr_raw, gem_match.name,
+                                ));
                             }
                         }
                     }
@@ -3955,6 +4105,7 @@ pub fn run() {
         overlay_hook_stop: Mutex::new(None),
         focus_poller_stop: Mutex::new(None),
         debug_mode: Mutex::new(false),
+        gem_band_dump: std::sync::atomic::AtomicBool::new(false),
         trade_stale_warn_secs: Mutex::new(settings::DEFAULT_TRADE_STALE_WARN_SECS),
         trade_stale_critical_secs: Mutex::new(settings::DEFAULT_TRADE_STALE_CRITICAL_SECS),
         trade_auto_refresh_secs: Mutex::new(settings::DEFAULT_TRADE_AUTO_REFRESH_SECS),
@@ -4062,6 +4213,8 @@ pub fn run() {
             temple::commands::temple_rearm,
             temple::commands::temple_debug_capture,
             set_debug_mode,
+            set_gem_band_dump,
+            get_gem_band_dump,
             set_devtools,
             set_comparator_data,
             set_overlay_has_content,
@@ -4840,8 +4993,8 @@ mod tests {
         let rects = assemble_ocr_rects(&placements, Some(&screen), None);
         let gem_view = rects.iter().find(|rect| rect.key == "lab.gem").unwrap();
         let font_view = rects.iter().find(|rect| rect.key == "lab.font").unwrap();
-        assert_eq!(gem_view.rect, Some([0, 0, 1262, 40]));
-        assert_eq!(font_view.rect, Some([460, 270, 530, 350]));
+        assert_eq!(gem_view.rect, Some([0, 0, 1920, 40]));
+        assert_eq!(font_view.rect, Some([298, 220, 666, 681]));
         assert_eq!(gem_view.source, "seed");
         assert_eq!(font_view.source, "seed");
     }
