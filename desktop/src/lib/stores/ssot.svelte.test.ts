@@ -1156,6 +1156,33 @@ describe('temple slice', () => {
 			expect(offer?.builtTier).toBe(2);
 		});
 
+		it('normalises a sample offer without line facts to null', () => {
+			const sample = readSlice();
+			const incoming = {
+				...sample,
+				panel: {
+					...sample.panel!,
+					offers: [
+						{
+							index: 0,
+							architectName: 'Guatelitzi',
+							kind: 'upgrade',
+							printedTarget: "Sadist's Den",
+							displayName: 'Torment Cells',
+							builtTier: 2,
+							grade: 'C',
+							lineTop: "Sadist's Den",
+							rect: null
+						}
+					]
+				}
+			} as unknown as TempleSlice;
+			mod.applySnapshot({ league, temple: incoming });
+			const offer = mod.ssot.temple.panel?.offers[0];
+			expect(offer?.line).toBeNull();
+			expect(offer?.builtTier).toBe(2);
+		});
+
 		it('keeps the payload\'s own value for a field it does carry', () => {
 			// The filling above must not reach a field that IS present, or a
 			// board would be blanked by the very code meant to type it honestly.

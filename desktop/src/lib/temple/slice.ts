@@ -93,6 +93,15 @@ export type SlotId =
 	| 'E1'
 	| 'E2';
 
+/** Item slots named by a temple architect's mod family. */
+export type ItemSlotId =
+	| 'ring'
+	| 'amulet'
+	| 'body_armour'
+	| 'gloves'
+	| 'boots'
+	| 'weapon';
+
 /** `"C1-C2"` — a corridor, endpoints in `SlotId` order, joined by a hyphen. */
 export type EdgeId = string;
 
@@ -340,6 +349,18 @@ export interface OfferView {
 	 *
 	 *  Optional on the wire and normalised to `null` by `normaliseTemple`. */
 	recipe?: RecipeView | null;
+	/** Drop facts for the line this offer builds, or null when it did not resolve.
+	 *  Optional on the wire and normalised to `null` by `normaliseTemple`. */
+	line?: LineView | null;
+}
+
+/** Drop facts shared by every tier of one room line (POE-277). */
+export interface LineView {
+	modArchitect: string | null;
+	modHint: string | null;
+	modSlots: ItemSlotId[];
+	quantityPct: [number, number, number] | null;
+	rarityPct: [number, number, number] | null;
 }
 
 /** One line's vial upgrade: base unique + vial → upgraded unique (POE-260). */

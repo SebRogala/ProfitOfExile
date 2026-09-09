@@ -528,7 +528,11 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 							// `recipe === null` to decide whether it prints an
 							// upgrade line at all, and `undefined` there is
 							// falsy by accident rather than by contract.
-							recipe: offer.recipe ?? null
+							recipe: offer.recipe ?? null,
+							// POE-277's line facts, same rule again: `serde(default)`
+							// on the Rust side, and the ladder row tests `line ===
+							// null` to decide whether it draws at all.
+							line: offer.line ?? null
 						}))
 					},
 		advice: incoming.advice ?? null,
