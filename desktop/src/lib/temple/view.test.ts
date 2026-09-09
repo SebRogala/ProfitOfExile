@@ -751,6 +751,82 @@ describe('offerBoxes', () => {
 		expect(boxes[0].builds).toBe('Torment Cells (tier 2)');
 	});
 
+	it('carries the line ladders and built tier on the offer box', () => {
+		const boxes = offerBoxes(
+			slice([offer({
+				line: {
+					modArchitect: null,
+					modHint: null,
+					modSlots: [],
+					quantityPct: [2, 4, 6],
+					rarityPct: [4, 8, 12]
+				},
+				builtTier: 2
+			})])
+		);
+
+		expect(boxes[0].ladder).toEqual({
+			quant: [2, 4, 6],
+			rarity: [4, 8, 12],
+			tier: 2
+		});
+	});
+
+	it('leaves the ladder null when line facts are absent', () => {
+		const boxes = offerBoxes(slice([offer({ line: null })]));
+
+		expect(boxes[0].ladder).toBeNull();
+	});
+
+	it('leaves the ladder null when both line ladders are absent', () => {
+		const boxes = offerBoxes(
+			slice([offer({
+				line: {
+					modArchitect: null,
+					modHint: null,
+					modSlots: [],
+					quantityPct: null,
+					rarityPct: null
+				}
+			})])
+		);
+
+		expect(boxes[0].ladder).toBeNull();
+	});
+
+	it('keeps the ladder when exactly one line ladder exists', () => {
+		const boxes = offerBoxes(
+			slice([offer({
+				line: {
+					modArchitect: null,
+					modHint: null,
+					modSlots: [],
+					quantityPct: [2, 4, 6],
+					rarityPct: null
+				}
+			})])
+		);
+
+		expect(boxes[0].ladder).toEqual({ quant: [2, 4, 6], rarity: null, tier: 2 });
+	});
+
+	it('leaves the ladder null when the built tier is absent', () => {
+		const boxes = offerBoxes(
+			slice([offer({
+				builtTier: null,
+				line: {
+					modArchitect: null,
+					modHint: null,
+					modSlots: [],
+					quantityPct: [2, 4, 6],
+					rarityPct: null
+				}
+			})])
+		);
+
+		expect(boxes[0].ladder).toBeNull();
+	});
+
 	it('marks the advisor\'s block as the pick, and only that one', () => {
 		// The cyan frame is the whole pointer (owner: no arrows anywhere), so
 		// exactly one box may carry it — a second would point at two blocks and

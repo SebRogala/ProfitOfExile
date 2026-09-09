@@ -35,6 +35,7 @@ import type {
 	DriverView,
 	EdgeId,
 	ExitLabelView,
+	ItemSlotId,
 	LayoutView,
 	MarketView,
 	OfferView,
@@ -504,6 +505,14 @@ export function chosenOffer(slice: TempleSlice): OfferView | null {
 export interface OfferBox {
 	/** The block this box is about, so a surface can point at it. */
 	offer: OfferView;
+	/** The three-tier area bonus ladder for this line, or null when absent. */
+	ladder: {
+		quant: [number, number, number] | null;
+		rarity: [number, number, number] | null;
+		tier: number;
+	} | null;
+	/** The architect mod line, when the box has one. */
+	mod: OfferMod | null;
 	/** `"Guatelitzi · upgrade"` — which architect, and which kill. */
 	headline: string;
 	/** `"Locus of Corruption (tier 3)"`, or the honest refusal when the printed
@@ -611,6 +620,16 @@ export interface OfferBox {
 	 *  prices nothing off a stale snapshot, so the rows go and the box gets
 	 *  shorter. See [`offerBoxSignature`]. */
 	stale: boolean;
+}
+
+/** An architect mod line projected for an offer box. */
+export interface OfferMod {
+	name: string;
+	hint: string | null;
+	slots: ItemSlotId[];
+	price: string;
+	perRun: string | null;
+	marks: BoxMark[];
 }
 
 /** How complete the sum behind a box's number is — `RoomValueView.priced`. */
@@ -1152,6 +1171,22 @@ export function offerBoxSignature(box: OfferBox, compact: boolean): string {
 	].join(' ');
 }
 
+function offerLadder(offer: OfferView): OfferBox['ladder'] {
+	const line = offer.line ?? null;
+	if (
+		line === null ||
+		offer.builtTier === null ||
+		(line.quantityPct === null && line.rarityPct === null)
+	) {
+		return null;
+	}
+	return {
+		quant: line.quantityPct,
+		rarity: line.rarityPct,
+		tier: offer.builtTier
+	};
+}
+
 /**
  * One box per architect block on the panel, in the panel's own order.
  *
@@ -1196,6 +1231,8 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 		const drivers = rows.slice(0, FULL_DRIVER_ROWS);
 		return {
 			offer,
+			ladder: offerLadder(offer),
+			mod: null,
 			headline: offerHeadline(offer),
 			builds: offerBuilds(offer),
 			rating,

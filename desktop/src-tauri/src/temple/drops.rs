@@ -162,15 +162,12 @@ use super::strategy::Tier;
 
 /// The room's own page on poedb.tw (`https://poedb.tw/us/<Room_Name>`), read
 /// 2026-09-06 for all 75 tiered rooms.
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub const POEDB: &str = "poedb.tw room page, 2026-09-06";
 /// Vertolka's room sheet, read 2026-09-06 — the architect mod-group names and
 /// the item hints.
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub const VERTOLKA_SHEET: &str = "Vertolka's sheet, 2026-09-06";
 /// Vertolka's 2026-09-06 message, quoted on epic POE-124. Everything sourced
 /// here is a [`Basis::Guess`]; he offered the numbers as his own estimates.
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub const VERTOLKA_MSG: &str = "Vertolka, 2026-09-06 message (POE-124)";
 /// [`TierDrops::vials_per_run`], which has TWO parents and neither on its own:
 /// Vertolka's per-run anchor and poedb's per-line ratio. A guess, because the
@@ -200,7 +197,6 @@ pub const VIAL_RATE_ANCHOR_RAW: u32 = 1689;
 /// shared room line's `2/4/6%`. Same stat, same scope, and `increased`
 /// modifiers of one stat add, so [`TierDrops::quantity_pct`] holds their sum
 /// (22 / 44 / 66) and this source names both halves.
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub const FACTORY_QUANTITY: &str =
     "poedb.tw Factory room page, 2026-09-06: the architect's 20/40/60% plus the room's 2/4/6% \
      increased Quantity of Items found in this Area, summed";
@@ -213,7 +209,6 @@ pub const FACTORY_QUANTITY: &str =
 /// from these, and POE-260 shows the player which parts of it are somebody's
 /// estimate rather than the game's own data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub enum Basis {
     /// Read off a page that states the number — the game's data.
     Measured {
@@ -237,7 +232,6 @@ impl Basis {
     }
 
     /// Whether this number is somebody's estimate rather than the game's data.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn is_guess(self) -> bool {
         matches!(self, Basis::Guess { .. })
     }
@@ -245,7 +239,6 @@ impl Basis {
 
 /// A number that knows where it came from. There is no other kind here.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub struct Estimate {
     value: f64,
     basis: Basis,
@@ -253,7 +246,6 @@ pub struct Estimate {
 
 impl Estimate {
     /// A number a source states outright.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub const fn measured(value: f64, source: &'static str) -> Estimate {
         Estimate {
             value,
@@ -262,7 +254,6 @@ impl Estimate {
     }
 
     /// A number somebody estimated.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub const fn guess(value: f64, source: &'static str) -> Estimate {
         Estimate {
             value,
@@ -271,7 +262,6 @@ impl Estimate {
     }
 
     /// The number itself. Units are the field's, not this type's.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn value(self) -> f64 {
         self.value
     }
@@ -283,7 +273,6 @@ impl Estimate {
     }
 
     /// Shorthand for [`Basis::is_guess`].
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn is_guess(self) -> bool {
         self.basis.is_guess()
     }
@@ -304,6 +293,31 @@ fn any_guess(estimates: &[Option<Estimate>]) -> bool {
 
 // -------------------------------------------------------------- temple mod --
 
+/// An item slot an architect's mod family can roll on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Slot {
+    Ring,
+    Amulet,
+    BodyArmour,
+    Gloves,
+    Boots,
+    Weapon,
+}
+
+impl Slot {
+    /// The stable wire spelling used by the temple offer view.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Slot::Ring => "ring",
+            Slot::Amulet => "amulet",
+            Slot::BodyArmour => "body_armour",
+            Slot::Gloves => "gloves",
+            Slot::Boots => "boots",
+            Slot::Weapon => "weapon",
+        }
+    }
+}
+
 /// The architect's signature rare — items that roll a mod group only this room
 /// can produce.
 ///
@@ -311,10 +325,11 @@ fn any_guess(estimates: &[Option<Estimate>]) -> bool {
 /// the base. That is why [`TempleMod::base_price_chaos`] exists at all, and why
 /// it is the one price in this file.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub struct TempleMod {
     architect: &'static str,
     item_hint: &'static str,
+    /// Item slots this mod family can roll on, from the source named on the row.
+    slots: &'static [Slot],
     source: &'static str,
     per_run: Option<Estimate>,
     base_price_chaos: Option<Estimate>,
@@ -324,27 +339,28 @@ impl TempleMod {
     /// The architect whose name the mod group is known by — "Puhuarte",
     /// "Guatelitzi". Spelled as the game spells the boss on the room's poedb
     /// page, which is also how [`VERTOLKA_SHEET`] writes it.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn architect(self) -> &'static str {
         self.architect
     }
 
     /// What the mod lands on, in Vertolka's words — "temple gloves", "jewellery
     /// with mana modifiers". Prose for the overlay, never a join key.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn item_hint(self) -> &'static str {
         self.item_hint
     }
 
+    /// What item slots this mod family can roll on, from the row's named source.
+    pub fn slots(self) -> &'static [Slot] {
+        self.slots
+    }
+
     /// Expected items per finished-temple run, where anyone has said. Only
     /// Crucible of Flame has a number, and it is a guess.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn per_run(self) -> Option<Estimate> {
         self.per_run
     }
 
     /// What one such item is worth in chaos when poe.ninja cannot price it.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn base_price_chaos(self) -> Option<Estimate> {
         self.base_price_chaos
     }
@@ -372,7 +388,6 @@ impl TempleMod {
 /// Every field is `Option`: `None` means nobody has stated a number, which is a
 /// different claim from zero and must stay distinguishable from it.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub struct TierDrops {
     uniques_per_run: Option<Estimate>,
     vial_chance_raw: Option<u32>,
@@ -385,7 +400,6 @@ pub struct TierDrops {
 impl TierDrops {
     /// A tier that drops nothing anybody has quantified — the explicit "none"
     /// for the thirteen lines with no chest, no vial and no area bonus.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub const NONE: TierDrops = TierDrops {
         uniques_per_run: None,
         vial_chance_raw: None,
@@ -442,13 +456,11 @@ impl TierDrops {
     }
 
     /// `increased Quantity of Items found in this Area`, in percent.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn quantity_pct(self) -> Option<Estimate> {
         self.quantity_pct
     }
 
     /// `increased Rarity of Items found in this Area`, in percent.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn rarity_pct(self) -> Option<Estimate> {
         self.rarity_pct
     }
@@ -489,7 +501,6 @@ impl TierDrops {
 
 /// One room line's drops, tier 1 first.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub struct LineDrops {
     key: &'static str,
     unique: Option<&'static str>,
@@ -509,7 +520,6 @@ impl LineDrops {
     /// The unique the tier-3 chest drops, as **poe.ninja spells it** — the join
     /// key POE-255/257 price against. `None` for the eighteen lines with no
     /// unique of their own.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn unique(self) -> Option<&'static str> {
         self.unique
     }
@@ -517,13 +527,11 @@ impl LineDrops {
     /// The vial this line's architect rolls for, as **poe.ninja spells it**.
     /// Not necessarily the vial that upgrades [`LineDrops::unique`] — see the
     /// module docs.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn vial(self) -> Option<&'static str> {
         self.vial
     }
 
     /// The architect's signature rare, where the room produces one.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn temple_mod(self) -> Option<TempleMod> {
         self.temple_mod
     }
@@ -545,7 +553,6 @@ impl LineDrops {
 
     /// This line's drops at `tier`, or `None` for [`Tier::T0`] — tier 0 is
     /// filler and belongs to no line.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn tier(&self, tier: Tier) -> Option<&TierDrops> {
         match tier.get() {
             1..=3 => Some(&self.tiers[tier.get() as usize - 1]),
@@ -554,7 +561,6 @@ impl LineDrops {
     }
 
     /// All three tiers, tier 1 first.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn tiers(&self) -> &[TierDrops; 3] {
         &self.tiers
     }
@@ -578,7 +584,6 @@ impl LineDrops {
 }
 
 /// The drops row for a line key, or `None` if the key is not one of the 25.
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub fn for_key(key: &str) -> Option<&'static LineDrops> {
     DROPS.iter().find(|d| d.key == key)
 }
@@ -588,14 +593,12 @@ impl RoomLine {
     ///
     /// Total by construction: [`DROPS`] is keyed 1:1 on [`LINES`], which
     /// `every_line_has_a_drops_row_in_the_same_order` pins.
-    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn drops(self) -> &'static LineDrops {
         for_key(self.key()).expect("DROPS covers every key in LINES")
     }
 }
 
 /// The 25 lines' drops, in [`LINES`] order.
-#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "apex_of_ascension",
@@ -661,6 +664,9 @@ pub const DROPS: [LineDrops; 25] = [
         temple_mod: Some(TempleMod {
             architect: "Xopec",
             item_hint: "jewellery with mana modifiers",
+            // UNVERIFIED: the slot table could not confirm the item classes;
+            // these slots are supported only by Vertolka's row hint.
+            slots: &[Slot::Ring, Slot::Amulet],
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -712,6 +718,9 @@ pub const DROPS: [LineDrops; 25] = [
         temple_mod: Some(TempleMod {
             architect: "Puhuarte",
             item_hint: "temple gloves",
+            // UNVERIFIED: the slot table could not confirm the item classes;
+            // this slot is supported only by Vertolka's row hint.
+            slots: &[Slot::Gloves],
             source: VERTOLKA_SHEET,
             per_run: Some(Estimate::guess(2.0, VERTOLKA_MSG)),
             base_price_chaos: Some(Estimate::guess(30.0, VERTOLKA_MSG)),
@@ -754,6 +763,9 @@ pub const DROPS: [LineDrops; 25] = [
             // items + 30% movespeed boots". Dropping the boots would lose a
             // whole item class from the hint (VERTOLKA_SHEET).
             item_hint: "items with trap and mine modifiers, + 30% movespeed boots",
+            // UNVERIFIED: the slot table could not confirm the item classes;
+            // this slot is supported only by Vertolka's row hint.
+            slots: &[Slot::Boots],
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -966,6 +978,9 @@ pub const DROPS: [LineDrops; 25] = [
         temple_mod: Some(TempleMod {
             architect: "Citaqualotl",
             item_hint: "items with minion modifiers",
+            // UNVERIFIED: the slot table could not confirm an item class, and
+            // Vertolka's row hint names modifiers rather than a slot.
+            slots: &[],
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -1067,6 +1082,9 @@ pub const DROPS: [LineDrops; 25] = [
         temple_mod: Some(TempleMod {
             architect: "Guatelitzi",
             item_hint: "items with life and energy-shield modifiers",
+            // UNVERIFIED: the slot table could not confirm an item class, and
+            // Vertolka's row hint names modifiers rather than a slot.
+            slots: &[],
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -1118,6 +1136,9 @@ pub const DROPS: [LineDrops; 25] = [
         temple_mod: Some(TempleMod {
             architect: "Topotante",
             item_hint: "weapons with elemental offence modifiers, gloves with physical-to-elemental conversion",
+            // UNVERIFIED: the slot table could not confirm the item classes;
+            // these slots are supported only by Vertolka's row hint.
+            slots: &[Slot::Weapon, Slot::Gloves],
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -1206,6 +1227,9 @@ pub const DROPS: [LineDrops; 25] = [
             // so the hint has to carry the correction with the claim
             // (VERTOLKA_SHEET).
             item_hint: "weapons with attack- and cast-speed, physical offence or spell-trigger modifiers, body armour with chaos resistance, note: caster mod dont drop - legacy - wiki dont update this change",
+            // UNVERIFIED: the slot table could not confirm the item classes;
+            // these slots are supported only by Vertolka's row hint.
+            slots: &[Slot::Weapon, Slot::BodyArmour],
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -1377,6 +1401,53 @@ mod tests {
     ];
 
     // ------------------------------------------------------------ shape --
+
+    #[test]
+    fn every_slot_has_a_unique_snake_case_wire_name() {
+        // Fails if a variant is added without a row here
+        let slots = [
+            (Slot::Ring, "ring"),
+            (Slot::Amulet, "amulet"),
+            (Slot::BodyArmour, "body_armour"),
+            (Slot::Gloves, "gloves"),
+            (Slot::Boots, "boots"),
+            (Slot::Weapon, "weapon"),
+        ];
+
+        for (slot, expected) in slots {
+            let actual = slot.as_str();
+            assert_eq!(actual, expected, "{slot:?} wire name");
+        }
+    }
+
+    // Fails if a slot is swapped, or if a temple-mod row is added or removed.
+    #[test]
+    fn temple_mod_rows_carry_their_architect_and_slot_table() {
+        const EXPECTED: [(&str, &str, &[Slot]); 7] = [
+            ("conduit_of_lightning", "Xopec", &[Slot::Ring, Slot::Amulet]),
+            ("crucible_of_flame", "Puhuarte", &[Slot::Gloves]),
+            ("defense_research_lab", "Matatl", &[Slot::Boots]),
+            ("hybridisation_chamber", "Citaqualotl", &[]),
+            ("sanctum_of_immortality", "Guatelitzi", &[]),
+            ("storm_of_corruption", "Topotante", &[Slot::Weapon, Slot::Gloves]),
+            ("toxic_grove", "Tacati", &[Slot::Weapon, Slot::BodyArmour]),
+        ];
+
+        let actual_keys: Vec<&str> = DROPS
+            .iter()
+            .filter_map(|row| row.temple_mod().map(|_| row.key()))
+            .collect();
+        let expected_keys: Vec<&str> = EXPECTED.iter().map(|(key, _, _)| *key).collect();
+        assert_eq!(actual_keys, expected_keys, "temple mod rows changed");
+
+        for (key, architect, slots) in EXPECTED {
+            let temple_mod = drops_for(key)
+                .temple_mod()
+                .unwrap_or_else(|| panic!("{key} must carry a temple mod"));
+            assert_eq!(temple_mod.architect(), architect, "{key} architect");
+            assert_eq!(temple_mod.slots(), slots, "{key} slots");
+        }
+    }
 
     // DROPS is keyed 1:1 on LINES and in the same order, which is what makes
     // RoomLine::drops total rather than a lookup that can miss. Fails if a row
@@ -1854,6 +1925,7 @@ mod tests {
             temple_mod: Some(TempleMod {
                 architect: "Puhuarte",
                 item_hint: "temple gloves",
+                slots: &[Slot::Gloves],
                 source: VERTOLKA_SHEET,
                 per_run: Some(Estimate::guess(2.0, VERTOLKA_MSG)),
                 base_price_chaos: None,
