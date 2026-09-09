@@ -304,5 +304,13 @@ the same way. A fallback whose proposed slice is withheld releases the null key
 for the next tick. No sweep cadence, moving-origin budget or session plate
 memory is retained.
 
+## Amendment: incursion arms buy no placed-miss fallback (2026-09-09)
+
+The placed-miss fallback above is spent under the Manual arm (Re-arm) only.
+Under AlvaStart and TempleArea the first tick's miss is the sheet not being
+open yet, not a wrong placement, and the sweep it bought ran 30–34 s per
+incursion on the debug build with no tick in between (app.log 2026-09-08/09).
+The null-slice fallback is unchanged. `temple/run.rs`, `cold_sweep_reason`.
+
 That release buys one retry only; a second withheld sweep keeps the key spent
 until the `(temple_epoch, temple_rearm)` key changes.
