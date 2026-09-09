@@ -366,7 +366,57 @@ pub fn case_8_lightning_workshop() -> Case {
     }
 }
 
-/// The seven WALKED boards, in order.
+// --- Case 9 — 2026-09-09, 10 left, in Corruption Chamber I (C1) ------------
+// The Apex is already in the room's own cluster (C1-B1-A0), and the Entrance
+// cluster (E1, E0, D1, D0, C0) touches it on two corridors: Banquet Hall (C0)
+// and Strongbox Chamber (D1). Either connects the same value and merges the
+// same two clusters; the app opened toward Banquet Hall for being one row
+// higher. Sebastian: *"both are open, and the middle is faster to arrive"* —
+// through D1 the Entrance is five hops from the Apex and three from the
+// Chamber, through C0 seven and five. RA.
+pub fn case_9_corruption_chamber_arrival() -> Case {
+    Case {
+        name: "9 CorruptionChamber-arrival",
+        state: board(
+            &[
+                (B0, "toxic_grove", 1),
+                // Halls, Banquet Hall, Cellar — tier-0 fillers, no line at all.
+                (B1, "", 0),
+                (C0, "", 0),
+                // The room he is standing in.
+                (C1, "corruption", 1),
+                (C2, "defense_research_lab", 2),
+                (D0, "museum_of_artefacts", 1),
+                (D1, "court_of_sealed_death", 1),
+                (D2, "", 0),
+                (D3, "chamber_of_iron", 1),
+                (E0, "throne_of_atziri", 1),
+                (E2, "hall_of_champions", 1),
+            ],
+            &[
+                (A0, B1),
+                (B1, C1),
+                (C0, D0),
+                (C2, D3),
+                (D0, D1),
+                (D1, E0),
+                (D2, E2),
+                (E0, E1),
+            ],
+            C1,
+            10,
+        ),
+        offers: vec![
+            offer("Hayoxi", Upgrade, "Catalyst of Corruption"),
+            offer("Paquate", Change, "Explosives Room"),
+        ],
+        keys: 1,
+        decision: "open C1-D1 (Strongbox Chamber: both corridors join the same two clusters, \
+                   and the middle one arrives faster — Entrance → Apex 5 hops, not 7)",
+    }
+}
+
+/// The eight WALKED boards, in order.
 ///
 /// [`case_7_armourers_workshop`] is deliberately not among them: it records
 /// what the app got wrong rather than what Sebastian decided, and the suites
@@ -380,6 +430,7 @@ pub fn retrospective() -> Vec<Case> {
         case_5_poison_garden(),
         case_6_cloister(),
         case_8_lightning_workshop(),
+        case_9_corruption_chamber_arrival(),
     ]
 }
 

@@ -911,7 +911,7 @@ mod tests {
         StrategyProfile::locus_doryani_rush()
     }
 
-    /// The eight walked boards: the seven Sebastian decided, plus the one the
+    /// The nine walked boards: the eight Sebastian decided, plus the one the
     /// app got wrong, which is a real board and therefore a real regression
     /// surface for the production profile.
     fn all_walked_boards() -> Vec<cases::Case> {
@@ -1229,6 +1229,98 @@ mod tests {
             "{}: and the overlay must print the reaching level, not adjacency: {:?}",
             case.name,
             top.reasons
+        );
+    }
+
+    // RA. Both corridors into the Entrance cluster connect the same value and
+    // merge the same two clusters; before RA the row gradient took Banquet
+    // Hall (C0, row C) over Strongbox Chamber (D1, row D), the corridor that
+    // leaves the Entrance seven hops from the Apex instead of five.
+    #[test]
+    fn case_nine_corruption_chamber_opens_the_corridor_that_arrives_faster() {
+        let case = cases::case_9_corruption_chamber_arrival();
+        let advice = advise_case(&case);
+        assert_eq!(
+            top_doors(&advice, C1),
+            vec![D1],
+            "{}: Sebastian's move was {}",
+            case.name,
+            case.decision
+        );
+        // The corridor the app took, ranked below on the same kill: the walk
+        // it leaves is the longer one, and nothing above RA separates the two.
+        let banquet = advice
+            .recommendations
+            .iter()
+            .position(|r| {
+                opened_toward(&r.option.doors, C1) == vec![C0]
+                    && r.option.architect.as_ref().map(|a| a.line.key()) == Some("corruption")
+            })
+            .expect("the C0 corridor is enumerated on the upgrade kill");
+        assert!(banquet > 0, "{}: Banquet Hall must rank below the middle", case.name);
+    }
+
+    // What the page prints beside each of the two corridors: the walk it
+    // buys, so the player can see WHY the middle one is the pick.
+    #[test]
+    fn case_nine_corruption_chamber_prints_the_walk_each_corridor_buys() {
+        let case = cases::case_9_corruption_chamber_arrival();
+        let advice = advise_case(&case);
+        let arrival = |far: Slot| {
+            advice
+                .recommendations
+                .iter()
+                .find(|r| {
+                    opened_toward(&r.option.doors, C1) == vec![far]
+                        && r.option.architect.as_ref().map(|a| a.line.key()) == Some("corruption")
+                })
+                .expect("both corridors are enumerated on the upgrade kill")
+                .reasons
+                .iter()
+                .find_map(|r| match r {
+                    Reason::FasterArrival {
+                        apex,
+                        targets,
+                        rooms,
+                    } => Some((*apex, *targets, *rooms)),
+                    _ => None,
+                })
+        };
+        assert_eq!(
+            arrival(D1),
+            Some((Some(5), 3, 1)),
+            "{}: Strongbox Chamber — Entrance → Apex 5 hops, Entrance → the Chamber 3",
+            case.name
+        );
+        assert_eq!(
+            arrival(C0),
+            Some((Some(7), 5, 1)),
+            "{}: Banquet Hall — Entrance → Apex 7 hops, Entrance → the Chamber 5",
+            case.name
+        );
+    }
+
+    // At the production rollouts, for the reason case 8's pair carries.
+    #[test]
+    fn case_nine_corruption_chamber_arrives_faster_at_the_production_rollouts() {
+        use crate::temple::slice::{ROLLOUTS as PROD_ROLLOUTS, SEED as PROD_SEED};
+
+        let case = cases::case_9_corruption_chamber_arrival();
+        let advice = advise(
+            &case.state,
+            &case.offers,
+            case.keys,
+            &rush(),
+            &TempleConfig::default(),
+            PROD_ROLLOUTS,
+            PROD_SEED,
+        );
+        assert_eq!(
+            top_doors(&advice, C1),
+            vec![D1],
+            "{}: Sebastian's move was {}",
+            case.name,
+            case.decision
         );
     }
 
@@ -2974,10 +3066,10 @@ mod tests {
     // that was false. So pin the whole set each board produces.
     #[test]
     fn each_walked_board_is_explained_by_exactly_the_rules_that_decided_it() {
-        let expected: [&[&str]; 7] = [
+        let expected: [&[&str]; 8] = [
             // 1 Tombs — a free kill, and a door decided by the scarcity chain.
             // `Ru` is on the corridor into E2's Sanctum, not on the pick.
-            &["Rd", "R2", "R1Gradient", "Rs", "Ru"],
+            &["Rd", "R2", "FasterArrival", "R1Gradient", "Rs", "Ru"],
             // 2 Corruption Chamber — RV on both sides of the line, and the
             // rollout separating the two kills.
             &[
@@ -2986,16 +3078,17 @@ mod tests {
                 "RvMerge",
                 "Rd",
                 "R2",
+                "FasterArrival",
                 "R1Gradient",
                 "Rs",
                 "AdvancesTarget",
                 "R1Apex",
             ],
             // 3 Chasm late — the Apex, free at last.
-            &["R1Apex", "Rd", "R2", "R1Gradient", "Rs"],
+            &["R1Apex", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs"],
             // 4 Chasm merge — one door changes anything, and it is RV that
             // makes it worth a key.
-            &["RvMerge", "Rd", "R2", "R1Gradient", "Rs"],
+            &["RvMerge", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs"],
             // 5 Poison Garden — the Sanctum kill makes every corridor
             // degree-priced, so the doors ARE enumerated and each is declined
             // by RU (the top pick still opens nothing); the Cultivar kill
@@ -3013,6 +3106,7 @@ mod tests {
             &[
                 "ExpectedValue",
                 "NoUsableDoor",
+                "FasterArrival",
                 "R1Gradient",
                 "R2",
                 "R4",
@@ -3022,7 +3116,7 @@ mod tests {
                 "RuDeclined",
             ],
             // 6 Cloister — the blind board, decided by R1 and R2 alone.
-            &["Rd", "R2", "R1Gradient", "Rs"],
+            &["Rd", "R2", "FasterArrival", "R1Gradient", "Rs"],
             // 8 Lightning Workshop — R1-apex fires on both corridors (reaching
             // on B0, adjacent on B1) and the rest of the door chain ranks them.
             // On the kill: RC, because C2's Sanctum is adjacent and connected
@@ -3031,7 +3125,27 @@ mod tests {
             // holds three open corridors against two picks, so C1 is not a live
             // target it could lose. No `ExpectedValue`: neither kill is vetoed
             // and the rollout cannot separate them, so the band covers both.
-            &["R1Apex", "Rd", "R2", "R1Gradient", "Rs", "Rc", "R4"],
+            &["R1Apex", "Rd", "R2", "FasterArrival", "R1Gradient", "Rs", "Rc", "R4"],
+            // 9 Corruption Chamber arrival — RV on the corruption upgrade
+            // (the kill builds the target room in this very slot, and either
+            // corridor into the Entrance cluster connects it, ∞ → 1 hop), so
+            // RvMerge on both; R1Apex on the B0 corridor, which is
+            // Apex-adjacent even though the Apex is already in the room's own
+            // cluster; the door chain on every keyed set, RA included; the
+            // rollout separates the A++ upgrade from the change to junk past
+            // the band, so the change's options carry ExpectedValue.
+            &[
+                "ExpectedValue",
+                "Rv",
+                "RvMerge",
+                "R1Apex",
+                "Rd",
+                "R2",
+                "FasterArrival",
+                "R1Gradient",
+                "Rs",
+                "AdvancesTarget",
+            ],
         ];
 
         for (case, want) in cases::retrospective().into_iter().zip(expected) {
@@ -3110,6 +3224,8 @@ mod tests {
                 ("6 Cloister-blind", vec![C1]),
                 // "open B0-C1 (B0 already reaches the Apex)"
                 ("8 LightningWorkshop", vec![B0]),
+                // "open C1-D1 (the middle one arrives faster)"
+                ("9 CorruptionChamber-arrival", vec![D1]),
                 // Board 7 records a MISS on the kill; its door was never in
                 // dispute.
                 ("7 ArmourersWorkshop-PC", vec![B1]),
@@ -3255,6 +3371,7 @@ mod tests {
                 ("5 PoisonGarden", Vec::new()),
                 ("6 Cloister-blind", vec![C1]),
                 ("8 LightningWorkshop", vec![B0]),
+                ("9 CorruptionChamber-arrival", vec![D1]),
                 ("7 ArmourersWorkshop-PC", vec![B1]),
             ],
         );
@@ -3306,6 +3423,7 @@ mod tests {
                 ("5 PoisonGarden", Some((Change, "upgrade".to_string(), 2))),
                 ("6 Cloister-blind", Some((Change, "hall_of_champions".to_string(), 1))),
                 ("8 LightningWorkshop", Some((Upgrade, "conduit_of_lightning".to_string(), 2))),
+                ("9 CorruptionChamber-arrival", Some((Upgrade, "corruption".to_string(), 2))),
                 ("7 ArmourersWorkshop-PC", Some((Change, "upgrade".to_string(), 2))),
             ],
         );

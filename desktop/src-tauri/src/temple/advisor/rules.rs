@@ -28,8 +28,9 @@
 //!
 //! # The chain
 //!
-//! `RV > RU > R1-apex-reaches > R1-apex-adjacent > RD > R2 > R1-gradient > RS`,
-//! and generic cluster-merging ranked below R2 while no cluster holds value.
+//! `RV > RU > R1-apex-reaches > R1-apex-adjacent > RD > R2 > RA > R1-gradient >
+//! RS`, and generic cluster-merging ranked below R2 while no cluster holds
+//! value.
 //!
 //! That order is not a description of [`DoorKey`] — it IS [`DoorKey`], read off
 //! its field order by the derived lexicographic `Ord`. Reordering the fields
@@ -50,6 +51,22 @@
 //!   two; live board 4 took a lone singleton over a 5+5 merge, which R2
 //!   explains and a gradient above R2 could contradict. Below R2 is the only
 //!   placement consistent with every measured board.
+//! - **RA — *"faster arrival"* — sits between R2 and R1-gradient.** Measured
+//!   on the Corruption Chamber board (2026-09-09,
+//!   [`super::cases::case_9_corruption_chamber_arrival`]): standing in C1 with
+//!   the Apex already in your own cluster, both C0 and D1 lie in the Entrance
+//!   cluster, so RV and R2 tie and the row gradient took Banquet Hall (row C)
+//!   over Strongbox Chamber (row D) — the corridor that leaves the Entrance
+//!   seven hops from the Apex instead of five. Sebastian's call: *"both are
+//!   open, and the middle is faster to arrive"* — when two doors connect the
+//!   same thing, the one that arrives faster wins. Below R2 because his
+//!   condition was a TIE on the doors: RA must never change which value a
+//!   door connects or how much it merges. Above the gradient because the
+//!   gradient is the rule it corrects — the far end's row is a proxy for
+//!   "closer to the Apex", and once the walk itself is measurable the proxy
+//!   yields to it. The walk is [`super::state::Walks`], the same three walks
+//!   in the same order the convenience door ranks by, so the faint mark and
+//!   the bright one agree on what "shorter" means.
 //! - **Generic cluster-merging is not a separate rule.** It is R2 scoring
 //!   badly: [`DoorScore::r2`] sums the sizes of the components each door joins
 //!   and prefers the smaller total, so "attach a singleton" (5+1) outranks
@@ -77,6 +94,7 @@ use crate::temple::strategy::{Line, StrategyProfile, Tier};
 use super::rollout::Valuation;
 use super::state::{
     bits, component, lattice_degree, mask_holds, mask_of, neighbour_masks, BoardState, SlotMask,
+    Walks,
 };
 
 /// EV gap below which two options are treated as indistinguishable and the
@@ -178,6 +196,13 @@ pub enum Reason {
     R1Apex { reaches_apex: bool },
     /// R2 — merges the smallest components available.
     R2 { joined: usize },
+    /// RA — the walk the set leaves behind: Entrance → Apex, and Entrance →
+    /// the wanted rooms summed. `None` Apex means no open path reaches it.
+    FasterArrival {
+        apex: Option<usize>,
+        targets: usize,
+        rooms: usize,
+    },
     /// R1 gradient — connects toward the top of the board.
     R1Gradient { row: u8 },
     /// RS — connects the scarcer slot, the one with fewer lattice neighbours.
@@ -245,6 +270,21 @@ impl Reason {
                  only B0/B1 can ever open the Apex"
                 .to_string(),
             Reason::R2 { joined } => format!("R2: merges the smallest clusters ({joined} rooms)"),
+            Reason::FasterArrival {
+                apex,
+                targets,
+                rooms,
+            } => {
+                let mut line =
+                    format!("RA: faster arrival — Entrance → Apex {} hops", describe_hops(*apex));
+                if *rooms > 0 {
+                    line.push_str(&format!(
+                        ", → {rooms} wanted room{} {targets} hops",
+                        if *rooms == 1 { "" } else { "s" }
+                    ));
+                }
+                line
+            }
             Reason::R1Gradient { row } => {
                 format!("R1: connects upward, to row {}", (b'A' + row) as char)
             }
@@ -638,10 +678,43 @@ pub struct DoorKey {
     /// R2: negated total size of the components each door joins, so smaller
     /// merges rank higher and a generic 5+5 merge falls below a 5+1 attach.
     pub r2: i32,
+    /// RA: the walk the set leaves behind, shorter first — see [`WalkKey`].
+    ///
+    /// Read after the kill and the set, like RU: a kill that builds a wanted
+    /// room in this very slot counts it. Sits below R2 so it can only order
+    /// sets that connect the same value and merge the same clusters, and above
+    /// the gradient because the gradient is the proxy it replaces — see the
+    /// module header.
+    pub walk: WalkKey,
     /// R1 gradient: negated best (lowest) row index the set reaches.
     pub r1_gradient: i32,
     /// RS: negated smallest lattice degree among the set's **far** ends.
     pub rs: i32,
+}
+
+/// RA, *"faster arrival"*, as a key: [`Walks`] negated, so the shorter walk
+/// ranks higher and the derived `Ord` reads the three walks in the module
+/// header's order — Entrance → Apex, Entrance → the wanted rooms, the wanted
+/// rooms → the Apex. An Apex no open path reaches ranks below every reachable
+/// one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WalkKey {
+    /// Negated Entrance → Apex hops; `i32::MIN` while no open path reaches it.
+    pub apex: i32,
+    /// Negated Σ Entrance → wanted rooms.
+    pub targets: i32,
+    /// Negated Σ wanted rooms → Apex.
+    pub targets_apex: i32,
+}
+
+impl WalkKey {
+    fn of(walks: &Walks) -> WalkKey {
+        WalkKey {
+            apex: walks.apex.map_or(i32::MIN, |hops| -(hops as i32)),
+            targets: -(walks.targets as i32),
+            targets_apex: -(walks.targets_apex as i32),
+        }
+    }
 }
 
 /// The architect half. Greater is better.
@@ -735,10 +808,21 @@ pub fn evaluate_rules(
             reaches_apex: r1_apex_reaches > 0,
         });
     }
+    // -- RA ---------------------------------------------------------------
+    // The board AFTER the kill and the set, the reading RU takes below: a kill
+    // that builds a wanted room in this very slot counts it.
+    let after = applied(board, position, architect, doors);
+    let wanted = wanted_rooms(&after, valuation);
+    let walks = Walks::measure(&after.adjacency(), &wanted);
     if !doors.is_empty() {
         reasons.push(Reason::Rd);
         reasons.push(Reason::R2 {
             joined: r2_total as usize,
+        });
+        reasons.push(Reason::FasterArrival {
+            apex: walks.apex,
+            targets: walks.targets,
+            rooms: wanted.len(),
         });
         reasons.push(Reason::R1Gradient { row: best_row });
         reasons.push(Reason::Rs { degree: scarcest });
@@ -747,7 +831,6 @@ pub fn evaluate_rules(
     }
 
     // -- RU ---------------------------------------------------------------
-    let after = applied(board, position, architect, doors);
     let ru = ru_violation(board, &after, doors);
     if let Some(reason) = &ru {
         reasons.push(reason.clone());
@@ -765,6 +848,7 @@ pub fn evaluate_rules(
             r1_apex_adjacent,
             opens: doors.len() as u8,
             r2: -r2_total,
+            walk: WalkKey::of(&walks),
             r1_gradient: if doors.is_empty() {
                 0
             } else {
@@ -800,14 +884,31 @@ fn newly_connected_targets(
         return 0;
     }
     bits(gained)
-        .filter(|i| {
-            let (line, tier) = &board.rooms[*i];
-            *tier != Tier::T0
-                && line
-                    .as_ref()
-                    .is_some_and(|line| valuation.is_target(valuation.tag(line)))
-        })
+        .filter(|i| is_wanted(board, *i, valuation))
         .count() as u8
+}
+
+/// The rooms worth walking to: every built room of a line the profile targets.
+///
+/// Read off whichever board the caller hands over — [`evaluate_rules`] and
+/// [`super::convenience::convenience_door`] both pass the board AFTER the
+/// kill, so a kill that builds a wanted room in this very slot counts it. The
+/// set is the profile's ([`Valuation::is_target`]), never this file's.
+pub fn wanted_rooms(board: &BoardState, valuation: &Valuation) -> Vec<Slot> {
+    Slot::ALL
+        .iter()
+        .copied()
+        .filter(|slot| is_wanted(board, slot.index(), valuation))
+        .collect()
+}
+
+/// Whether the slot holds a built room of a target line.
+fn is_wanted(board: &BoardState, index: usize, valuation: &Valuation) -> bool {
+    let (line, tier) = &board.rooms[index];
+    *tier != Tier::T0
+        && line
+            .as_ref()
+            .is_some_and(|line| valuation.is_target(valuation.tag(line)))
 }
 
 /// Why this option opens nothing — three different facts, and the overlay must
@@ -1376,6 +1477,11 @@ mod tests {
             r1_apex_adjacent: 0,
             opens: 1,
             r2: -4,
+            walk: WalkKey {
+                apex: -4,
+                targets: -3,
+                targets_apex: -1,
+            },
             r1_gradient: -2,
             rs: -3,
         };
@@ -1386,6 +1492,11 @@ mod tests {
             r1_apex_adjacent: 0,
             opens: 0,
             r2: -99,
+            walk: WalkKey {
+                apex: i32::MIN,
+                targets: -9,
+                targets_apex: -9,
+            },
             r1_gradient: -9,
             rs: -9,
         };
@@ -1398,6 +1509,44 @@ mod tests {
         assert!(base > diluting, "RU vetoes an Apex door that dilutes a shrine");
         let nothing = DoorKey { opens: 0, r2: 0, r1_gradient: 0, rs: 0, ..base };
         assert!(base > nothing, "RD: opening something beats opening nothing");
+        let arrives_faster = DoorKey {
+            walk: WalkKey {
+                apex: -3,
+                ..base.walk
+            },
+            r1_gradient: -9,
+            rs: -9,
+            ..base
+        };
+        assert!(
+            arrives_faster > base,
+            "RA: the shorter Entrance → Apex walk beats the higher row and the scarcer slot"
+        );
+        let bigger_merge = DoorKey {
+            r2: -9,
+            walk: WalkKey {
+                apex: -1,
+                targets: 0,
+                targets_apex: 0,
+            },
+            ..base
+        };
+        assert!(
+            base > bigger_merge,
+            "RA never overrides R2: the smaller merge wins whatever walk it leaves"
+        );
+        let apex_unreachable = DoorKey {
+            walk: WalkKey {
+                apex: i32::MIN,
+                targets: 0,
+                targets_apex: 0,
+            },
+            ..base
+        };
+        assert!(
+            base > apex_unreachable,
+            "RA: an Apex some open path reaches beats one none does, whatever the sums"
+        );
         let both_keys = DoorKey { opens: 2, r2: -20, ..base };
         assert!(both_keys > base, "keys are use-it-or-lose-it");
         // The redundancy filter can drop the pair that would have spent both
@@ -1501,6 +1650,78 @@ mod tests {
              before the row gradient is ever read: {:?} against {:?}",
             adjacent.door,
             neither.door
+        );
+    }
+
+    // RA. The Corruption Chamber board (2026-09-09, `cases::case_9`): the Apex
+    // is already in C1's own cluster and both C0 and D1 sit in the Entrance
+    // cluster, so the two corridors connect the same value and merge the same
+    // two clusters. Through Banquet Hall (C0) the Entrance is seven hops from
+    // the Apex, through Strongbox Chamber (D1) five — and the row gradient,
+    // left to decide, takes C0 for being one row higher.
+    #[test]
+    fn with_the_merge_tied_the_corridor_that_arrives_faster_outranks_the_higher_row() {
+        let state = board(
+            &[(C1, "corruption", 1)],
+            &[(A0, B1), (B1, C1), (C0, D0), (D0, D1), (D1, E0), (E0, E1)],
+        );
+        let middle = verdict(&state, C1, None, &[(C1, D1)]);
+        let side = verdict(&state, C1, None, &[(C0, C1)]);
+        assert_eq!(
+            (middle.door.connects_value, middle.door.r2),
+            (side.door.connects_value, side.door.r2),
+            "precondition: both corridors connect the same value and merge the same clusters"
+        );
+        assert!(
+            side.door.r1_gradient > middle.door.r1_gradient,
+            "precondition: the row gradient alone prefers Banquet Hall: {:?} against {:?}",
+            side.door,
+            middle.door
+        );
+        assert!(
+            middle.door > side.door,
+            "RA: the corridor that arrives faster wins before the row is read: {:?} against {:?}",
+            middle.door,
+            side.door
+        );
+    }
+
+    // The same two corridors, and what the overlay prints for each: the walk
+    // the set leaves behind, measured on the board AFTER it — Entrance → Apex,
+    // then Entrance → the one wanted room, the Chamber itself.
+    #[test]
+    fn a_keyed_set_prints_the_walk_it_leaves_from_the_entrance() {
+        let state = board(
+            &[(C1, "corruption", 1)],
+            &[(A0, B1), (B1, C1), (C0, D0), (D0, D1), (D1, E0), (E0, E1)],
+        );
+        let arrival = |doors: &[(Slot, Slot)]| {
+            verdict(&state, C1, None, doors)
+                .reasons
+                .into_iter()
+                .find_map(|r| match r {
+                    Reason::FasterArrival {
+                        apex,
+                        targets,
+                        rooms,
+                    } => Some((apex, targets, rooms)),
+                    _ => None,
+                })
+        };
+        assert_eq!(
+            arrival(&[(C1, D1)]),
+            Some((Some(5), 3, 1)),
+            "through Strongbox Chamber: E1, E0, D1, C1, B1, A0"
+        );
+        assert_eq!(
+            arrival(&[(C0, C1)]),
+            Some((Some(7), 5, 1)),
+            "through Banquet Hall: E1, E0, D1, D0, C0, C1, B1, A0"
+        );
+        assert_eq!(
+            arrival(&[]),
+            None,
+            "an empty set opens no walk, and prints its own reason instead"
         );
     }
 

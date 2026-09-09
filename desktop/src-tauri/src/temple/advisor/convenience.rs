@@ -27,12 +27,15 @@
 //!    the board — *"let's make life easier to others (or potentially to
 //!    ourselves)"*.
 //!
-//! Walks 2 and 3 are SUMS over the wanted rooms, so a corridor that brings two
-//! rooms one hop closer outranks one that brings one room one hop closer, and
-//! a room the Entrance cannot reach is left out of both sums. That is sound
-//! only because every candidate here changes no reachability: the set of
-//! reachable rooms is the same before and after, so the two sums are over the
-//! same rooms.
+//! Walks 1–3 are [`super::state::Walks`], the measure the chain's own RA
+//! (*"faster arrival"*, [`super::rules::DoorKey::walk`]) ranks door sets by,
+//! so the faint mark and the bright one agree on what "shorter" means. Walks
+//! 2 and 3 are SUMS over the wanted rooms, so a corridor that brings two rooms
+//! one hop closer outranks one that brings one room one hop closer, and a room
+//! the Entrance cannot reach is left out of both sums. That is sound only
+//! because every candidate here changes no reachability: the set of reachable
+//! rooms is the same before and after, so the two sums are over the same
+//! rooms.
 //!
 //! # What it is NOT
 //!
@@ -48,11 +51,9 @@
 use std::collections::BTreeSet;
 
 use crate::temple::lattice::{Edge, Slot};
-use crate::temple::strategy::Tier;
-
 use super::rollout::Valuation;
 use super::rules::{self, ArchitectChoice};
-use super::state::{component, hop_distances, mask_holds, BoardState, SlotMask};
+use super::state::{component, hop_distances, mask_holds, BoardState, Walks};
 
 /// The convenience door, and the walk it shortens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,35 +134,6 @@ fn plural(n: usize) -> &'static str {
     }
 }
 
-/// The three walks, measured on one board.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Walks {
-    /// Entrance → Apex; `None` while no open path reaches the Apex.
-    apex: Option<usize>,
-    /// Σ Entrance → wanted room, over the wanted rooms the Entrance reaches.
-    targets: usize,
-    /// Σ wanted room → Apex, over the wanted rooms the Apex reaches.
-    targets_apex: usize,
-}
-
-impl Walks {
-    fn measure(open: &[SlotMask; 13], wanted: &[Slot]) -> Walks {
-        let from_entrance = hop_distances(open, Slot::ENTRANCE);
-        let from_apex = hop_distances(open, Slot::APEX);
-        Walks {
-            apex: from_entrance[Slot::APEX.index()],
-            targets: wanted
-                .iter()
-                .filter_map(|slot| from_entrance[slot.index()])
-                .sum(),
-            targets_apex: wanted
-                .iter()
-                .filter_map(|slot| from_apex[slot.index()])
-                .sum(),
-        }
-    }
-}
-
 /// The ranking key, greater is better — the module header's four walks, in
 /// that order, read off the field order by the derived `Ord`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -194,17 +166,7 @@ pub fn convenience_door(
     let after_kill = rules::applied(board, position, architect, &BTreeSet::new());
     let open = after_kill.adjacency();
     let mine = component(&open, position);
-    let wanted: Vec<Slot> = Slot::ALL
-        .iter()
-        .copied()
-        .filter(|slot| {
-            let (line, tier) = &after_kill.rooms[slot.index()];
-            *tier != Tier::T0
-                && line
-                    .as_ref()
-                    .is_some_and(|line| valuation.is_target(valuation.tag(line)))
-        })
-        .collect();
+    let wanted = rules::wanted_rooms(&after_kill, valuation);
     let before = Walks::measure(&open, &wanted);
     let from_position = hop_distances(&open, position);
 
@@ -275,7 +237,7 @@ mod tests {
     use super::super::fixtures::{board, JUNK};
     use super::super::rules::ArchitectChoice;
     use crate::temple::rooms::OfferKind;
-    use crate::temple::strategy::Line;
+    use crate::temple::strategy::{Line, Tier};
 
     fn rush() -> Valuation {
         Valuation::for_profile(&StrategyProfile::locus_doryani_rush())
