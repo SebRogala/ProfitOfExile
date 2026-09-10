@@ -15,7 +15,10 @@ use std::collections::{HashMap, HashSet};
 use image::{DynamicImage, GenericImageView, RgbaImage};
 use serde::Serialize;
 
-use super::geometry::{inner_rect, occupied, stddev, Frame, MercLayout, MercLayoutRow};
+use super::geometry::{
+    inner_rect, name_crop_left, occupied, stddev, Frame, MercLayout, MercLayoutRow,
+    NAME_CROP_LEAD, NAME_CROP_PAD,
+};
 use super::icons::{cell_candidates, read_tier, CellSig, TemplateStore};
 use super::vocab::{classify_resolution, MercVocab};
 use super::{
@@ -757,9 +760,9 @@ pub fn pass2_row_budget(rows: usize, g: &MercGeometry) -> usize {
 /// `g` remains the fallback for a layout with no cells at all (`max_slots` 0
 /// through an override).
 fn name_band(row: &MercLayoutRow, layout: &MercLayout, g: &MercGeometry) -> [i32; 4] {
-    let pad = (4.0 * layout.scale).round() as i32;
+    let pad = (NAME_CROP_PAD * layout.scale).round() as i32;
     let name_rect = row.name_rect;
-    let x = name_rect[0] - pad;
+    let x = name_crop_left(name_rect[0], layout.scale);
     let cells_x0 = row
         .cells
         .first()
@@ -1201,7 +1204,8 @@ mod tests {
         let band = name_band(&layout.rows[0], &layout, &g);
 
         let pad = (4.0 * layout.scale).round() as i32;
-        assert_eq!(band[0], 100 - pad, "the band pads left of the name text");
+        let lead = (NAME_CROP_LEAD * layout.scale).round() as i32;
+        assert_eq!(band[0], 100 - pad - lead, "the band pads AND leads left of the name text");
         assert_eq!(
             band[0] + band[2],
             fitted - pad,

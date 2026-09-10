@@ -5087,17 +5087,19 @@ mod tests {
 
         // At scale 1, the default vertical pitch is 49.3 and the cell is 44:
         // row 0's cell top is round(615 + 49.3 + 22 - 22) = 664; each later
-        // band advances by 49.3 before integer rounding. The x band is the
-        // name column at 720 through the last slot at 1247.
+        // band advances by 49.3 before integer rounding. The x band starts at
+        // the pass-2 name crop's left edge — the name column at 720 less the
+        // 4 px pad and 8 px lead (`geometry::name_crop_left`) — through the
+        // last slot at 1247.
         assert_eq!(
             view.rows,
             vec![
-                [720, 664, 527, 44],
-                [720, 714, 527, 44],
-                [720, 763, 527, 44],
-                [720, 812, 527, 44],
-                [720, 862, 527, 44],
-                [720, 911, 527, 44],
+                [708, 664, 539, 44],
+                [708, 714, 539, 44],
+                [708, 763, 539, 44],
+                [708, 812, 539, 44],
+                [708, 862, 539, 44],
+                [708, 911, 539, 44],
             ],
         );
     }
