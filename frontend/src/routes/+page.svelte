@@ -94,14 +94,20 @@
 			name: 'Temple of Atzoatl',
 			status: 'beta',
 			tagline: "Alva's incursions: which architect to kill and which door to open.",
-			trigger: "Alva's start line (\"Time to go\"), from Client.txt; any other Alva line or a zone change stands it down.",
+			trigger: "Alva's start line (\"Time to go\"), from Client.txt; any other Alva line or a zone change stands it down. The read needs the sheet on screen, so you open it yourself: inside the incursion, press the league button (V by default) — the game pauses while it is open, so it costs you nothing.",
 			reads: 'The temple sheet — the 13 rooms and both architect offers — once per board.',
 			gives: [
 				'The ranked recommendation with its reasons, and the gambles with their measured risk.',
 				'Room values in chaos, fed by the market (Default) or by your own numbers (Custom).',
 			],
-			// TODO screenshots: static/module-temple-overlay.png (the overlay over the temple sheet), static/module-temple-page.png (the Temple page).
-			screenshots: [],
+			// TODO screenshot: static/module-temple-page.png (the Temple page).
+			screenshots: [
+				{
+					src: '/module-temple-overlay.png',
+					alt: 'Two offer boxes over the temple sheet, each with the room, its chaos value, the upgrade it pays for and the temple mod it grants',
+					caption: 'Offer boxes over the temple sheet — both architects, priced',
+				},
+			],
 		},
 		{
 			id: 'mercenaries',
