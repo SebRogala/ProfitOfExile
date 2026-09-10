@@ -278,7 +278,7 @@
 		})
 	);
 
-	/** One cell of the item row — art and a price, and for the third one a
+	/** One cell of the item row — art and a price, and for a drop or the third one a
 	 *  caption. The two sources it unifies say the same thing in different
 	 *  shapes: a dropped item is an `OfferDriver`, the upgrade is an
 	 *  `OfferRecipeItem`, and the row draws them identically. */
@@ -291,7 +291,7 @@
 		 *  number. Read off the view's own `priced` on both sources; matching
 		 *  the refusal STRING here would break the day `view.ts` rewords it. */
 		priced: boolean;
-		/** `upgraded` under the third cell's price, else null. */
+		/** `upgraded` under the third cell's price, or a rare drop's rate, else null. */
 		caption: string | null;
 	}
 
@@ -317,7 +317,7 @@
 			kind: driver.kind,
 			price: driver.price,
 			priced: driver.priced,
-			caption: null
+			caption: driver.caption
 		};
 	}
 
@@ -464,7 +464,7 @@
 	     line the box drew for its own sake. Each one is a PRESENCE over fields
 	     `offerBoxSignature` already carries, so nothing new re-measures. -->
 	{@const hasCells = cells.some((cell) => cell !== null)}
-	{@const hasItems = sale !== null || hasCells || box.fold !== null || box.note !== null}
+	{@const hasItems = sale !== null || hasCells || box.content !== null || box.fold !== null || box.note !== null}
 	{@const hasBonus = box.ladder !== null || box.bonus !== null}
 	{@const amount = bonusAmount(box)}
 	<div
@@ -533,7 +533,22 @@
 				</div>
 			{/if}
 
-			{#if hasCells}
+			{#if box.content !== null}
+				<!-- A content line has no recipe chain: its vial, when present, is
+				     the left fact and the line's prose is the right fact. The
+				     drops-nothing note yields to it; the instrumental and own-number
+				     wordings still print under the row (299 px worst case, inside
+				     the budget). -->
+				<div
+					class="items"
+					class:aftersale={sale !== null}
+					class:captioned={cells.some((cell) => cell !== null && cell.caption !== null)}
+				>
+					{#if cells[1] !== null}{@render itemCell(cells[1])}{/if}
+					<span class="content-spacer"></span>
+					<span class="content-cell"><span class="content">{box.content}</span></span>
+				</div>
+			{:else if hasCells}
 				<!-- ONE flex row that reads as the recipe it is (owner, after the
 				     in-game look): `A + B ……→…… C`. The two drops pack LEFT with a
 				     muted `+` between them, a flexible spacer carries the muted
@@ -541,7 +556,11 @@
 				     edge. The spacer is what makes the arrow mean something — it
 				     is the only gap on the row wide enough to read as a step from
 				     one thing to another. -->
-				<div class="items" class:aftersale={sale !== null} class:captioned={cells[2] !== null}>
+				<div
+					class="items"
+					class:aftersale={sale !== null}
+					class:captioned={cells.some((cell) => cell !== null && cell.caption !== null)}
+				>
 					{#if cells[0] !== null}{@render itemCell(cells[0])}{/if}
 					{#if cells[0] !== null && cells[1] !== null}<span class="join">+</span>{/if}
 					{#if cells[1] !== null}{@render itemCell(cells[1])}{/if}
@@ -894,6 +913,43 @@
 		margin-top: 6px;
 	}
 
+	/* A content line gets the same item-row budget: its vial, if any, stays on
+	   the left and the line prose takes the right. The content cell replaces the
+	   drops-nothing `.note`, so the fact is not duplicated or left out on
+	   fallback; an instrumental or override box still prints its own wording
+	   under this row. */
+	.content-spacer {
+		flex: 1 1 auto;
+		min-width: 0;
+		height: 39px;
+	}
+
+	.content-cell {
+		display: flex;
+		flex: 0 1 auto;
+		align-items: center;
+		min-width: 0;
+		max-width: 100%;
+		height: 39px;
+	}
+
+	.content {
+		flex: 0 1 auto;
+		align-self: center;
+		min-width: 0;
+		max-width: 100%;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+		text-align: right;
+		font-size: 13px;
+		font-weight: 500;
+		line-height: 15px;
+		color: var(--color-lab-text);
+	}
+
 	/* The stretch between what the room drops and what those two become. It
 	   holds the arrow at its own centre, and being the only `flex: 1` on the
 	   row it is also what pins the upgrade to the right edge. */
@@ -1198,11 +1254,16 @@
 
 	/* The one line the rows cannot say — an instrumental line's worth, the
 	   player's own number, or a line that drops nothing at all.
+	   Content lines say what they drop nothing for in the item row's right-hand
+	   `.content` cell, so the drops-nothing wording is never printed under one;
+	   the instrumental and own-number wordings are, and the tallest box that
+	   makes is 299 px, inside the 311 the sum below budgets.
 	   `margin-top: 5`, and the ONE row here with no fixed height: its longest
 	   wording wraps to two lines at 272 px, and clipping it would drop the only
 	   sentence on a box that has no rows to read instead. It is not in
-	   `FULL_BOX_MAX_CSS` for the reason it can afford not to be — every state
-	   that prints it has no item row and no fold. */
+	   `FULL_BOX_MAX_CSS` for the reason it can afford not to be — on a chest
+	   box every state that prints it has no item row and no fold, and the
+	   content boxes that print it stop at the 299 above. */
 	.note {
 		margin: 5px 0 0;
 		font-size: 11px;

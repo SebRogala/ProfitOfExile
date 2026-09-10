@@ -513,6 +513,8 @@ export interface OfferBox {
 	/** The kind and tier the resolved block builds, or the honest refusal when
 	 *  the printed target did not resolve. */
 	builds: string;
+	/** The line's content prose for a content box, or null for a chest box. */
+	content: string | null;
 	/** Whether this is the block the top recommendation chose — the cyan frame,
 	 *  which is the whole of the pointer. */
 	pick: boolean;
@@ -669,6 +671,8 @@ export interface OfferDriver {
 	priced: boolean;
 	/** `"×0.25"`, or null where the term has no count (the sale). */
 	perRun: string | null;
+	/** `"4.8% / run"` for a rare unique/vial drop, or null otherwise. */
+	caption: string | null;
 	marks: DriverMark[];
 }
 
@@ -861,6 +865,12 @@ function offerDriverTerms(value: RoomValueView, state: OfferValueState): DriverT
 					price: driverPrice(shown, ladder, saleDelta),
 					priced: shown !== null,
 					perRun: driver.count === null || sale ? null : `×${formatCount(driver.count)}`,
+					caption:
+						(kind === 'unique' || kind === 'vial') &&
+						driver.count !== null &&
+						driver.count < 0.05
+							? `${(driver.count * 100).toFixed(1)}% / run`
+							: null,
 					marks: driverMarks(driver)
 				},
 				shown,
@@ -960,20 +970,28 @@ function offerBonusLine(value: RoomValueView): OfferBonus | null {
 /**
  * The one line the rows cannot say, or null.
  *
- * Three different facts share the slot because no box can carry two of them: a
- * room valued at its letter has no rows at all, a room the player priced has
- * one row that is their own number, and a room with no drops has an empty list
- * that would otherwise read as a missing read.
+ * On a content line the content cell says what the room drops nothing for, so
+ * the empty-drop wording yields to it; the instrumental and own-number wordings
+ * are about the VALUE — where the number came from — and still print under the
+ * content row (POE-277 WI-6). Three different facts share the slot because no
+ * box can carry two of them: a room valued at its letter has no rows at all, a
+ * room the player priced has one row that is their own number, and a room with
+ * no drops has an empty list that would otherwise read as a missing read.
  */
-function offerNote(state: OfferValueState, rows: OfferDriver[]): string | null {
+function offerNote(state: OfferValueState, rows: OfferDriver[], content: string | null): string | null {
+	// Override wording stays authoritative even when a content line carries the
+	// player's own value.
+	if (state === 'override') return 'your own number for this room';
 	// One wording for BOTH instrumental lines. Temple Nexus is worth the tiers
 	// it lifts and Shrine of Unmaking the rooms it clears, and telling them
 	// apart here would mean hard-coding two room names in a file that words
-	// what the slice says rather than knowing which line is which.
+	// what the slice says rather than knowing which line is which. Both are
+	// content lines, and the wording stays: the content cell says what the
+	// room does, this line says why the number is a rung and not a sum.
 	if (state === 'instrumental') {
 		return 'valued at its letter — its worth is what it does, not what it drops';
 	}
-	if (state === 'override') return 'your own number for this room';
+	if (content !== null) return null;
 	if (rows.length === 0 && state !== 'fallback') {
 		return 'this line drops no unique and no vial';
 	}
@@ -1094,6 +1112,9 @@ function offerStripPrices(terms: DriverTerm[]): string | null {
  * cell is a value over a word. Their numbers are not here and must not be —
  * `+2/4/6%` becoming `+22/44/66%` is text, and text moves nothing.
  *
+ * `content` is present when the content cell draws, and each `dropPair` caption
+ * presence is present because the rare-caption threshold is a row-height change.
+ *
  * `mod.slots.length` is present and is the one COUNT here that is not a row
  * count: the `Appears on:` chips wrap once the row passes 272 px — five
  * (Xopec) always, and four or even three when BODY ARMOUR is among them
@@ -1115,11 +1136,13 @@ export function offerBoxSignature(box: OfferBox, compact: boolean): string {
 		box.fold ? 'fold' : '-',
 		box.bonus ? 'bonus' : '-',
 		box.note ? 'note' : '-',
+		box.content !== null ? 'content' : '-',
 		box.recipe ? 'recipe' : '-',
 		box.ladder ? 'ladder' : '-',
 		box.ladder?.quant ? 'q' : '-',
 		box.ladder?.rarity ? 'r' : '-',
 		box.dropPair.map((driver) => driver?.kind ?? '-').join('/'),
+		box.dropPair.map((driver) => (driver?.caption ? 'caption' : '-')).join('/'),
 		box.mod ? 1 : 0,
 		box.mod?.slots.length ?? 0,
 		box.ageLine ? 'age' : '-'
@@ -1228,6 +1251,7 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 		// whose printed target did not resolve: there is no room, so there is
 		// nothing to price and nothing to explain.
 		const value = offer.value ?? null;
+		const content = offer.line?.kind === 'content' ? offer.line.content : null;
 		// The five-state classification, made ONCE — see [`offerState`] for why
 		// nothing below may re-read `value.priced` instead.
 		const state = value === null ? null : offerState(value.priced);
@@ -1246,6 +1270,7 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 			mod,
 			headline: offerBoxHeadline(offer),
 			builds: offerBoxBuilds(offer),
+			content,
 			pick,
 			// Only on the pick: the note says the kill on the frame was the only
 			// one there was, and a note on the block the advisor did NOT choose
@@ -1265,7 +1290,7 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 			driverCount: terms.length,
 			fold: value === null ? null : offerFold(value, terms),
 			bonus: value === null ? null : offerBonusLine(value),
-			note: state === null ? null : offerNote(state, allRows),
+			note: state === null ? null : offerNote(state, allRows, content),
 			recipe: offerRecipe(offer.recipe ?? null),
 			stripPrices: offerStripPrices(terms),
 			// Off the MARKET view and not off the value's own `asOf`, which is

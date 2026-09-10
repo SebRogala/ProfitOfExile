@@ -785,6 +785,8 @@ describe('offerBoxes', () => {
 		const boxes = offerBoxes(
 			slice([offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: null,
 					modHint: null,
 					modSlots: [],
@@ -815,6 +817,8 @@ describe('offerBoxes', () => {
 		const boxes = offerBoxes(
 			slice([offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: null,
 					modHint: null,
 					modSlots: [],
@@ -832,6 +836,8 @@ describe('offerBoxes', () => {
 		const boxes = offerBoxes(
 			slice([offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: null,
 					modHint: null,
 					modSlots: [],
@@ -855,6 +861,8 @@ describe('offerBoxes', () => {
 		const boxes = offerBoxes(
 			slice([offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: null,
 					modHint: null,
 					modSlots: [],
@@ -874,6 +882,8 @@ describe('offerBoxes', () => {
 			slice([offer({
 				builtTier: null,
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: null,
 					modHint: null,
 					modSlots: [],
@@ -885,6 +895,73 @@ describe('offerBoxes', () => {
 		);
 
 		expect(boxes[0].ladder).toBeNull();
+	});
+
+	it('names what a content line gives instead of a chest unique', () => {
+		// The 19 lines with no tier-3 chest are worth their USE, and WI-6 puts
+		// that use in the item row where the `A + B → C` recipe sits on a chest
+		// box. The prose is the wire's — `view.ts` words none of it.
+		const boxes = offerBoxes(
+			slice([offer({
+				line: {
+					kind: 'content',
+					content: 'Queen Atziri',
+					modArchitect: null,
+					modHint: null,
+					modSlots: [],
+					modWorth: null,
+					quantityPct: null,
+					rarityPct: null
+				}
+			})])
+		);
+
+		expect(boxes[0].content).toBe('Queen Atziri');
+	});
+
+	it('decides the content cell on the line KIND, not on the content field', () => {
+		// `kind` is the discriminator because it is the one Rust DERIVES — from
+		// `unique.is_some()` — while `content` is prose that a payload could
+		// carry for any reason. A box reading the string instead would draw a
+		// content cell over the chest row the same line's unique still fills.
+		const boxes = offerBoxes(
+			slice([offer({
+				line: {
+					kind: 'chest',
+					content: 'Double-corrupt an item',
+					modArchitect: null,
+					modHint: null,
+					modSlots: [],
+					modWorth: null,
+					quantityPct: null,
+					rarityPct: null
+				}
+			})])
+		);
+
+		expect(boxes[0].content).toBeNull();
+	});
+
+	it('invents no wording for a content line the wire left blank', () => {
+		// The strings are UNCONFIRMED draft prose, so a line can reach the box
+		// with none. A placeholder here would be the box making a claim about
+		// the room that nobody made.
+		const boxes = offerBoxes(
+			slice([offer({
+				line: {
+					kind: 'content',
+					content: null,
+					modArchitect: null,
+					modHint: null,
+					modSlots: [],
+					modWorth: null,
+					quantityPct: null,
+					rarityPct: null
+				}
+			})])
+		);
+
+		expect(boxes[0].content).toBeNull();
 	});
 
 	it('marks the advisor\'s block as the pick, and only that one', () => {
@@ -1149,6 +1226,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const box = only(
 			offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: ['gloves'],
@@ -1182,6 +1261,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const box = only(
 			offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: ['gloves'],
@@ -1204,6 +1285,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const box = only(
 			offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: 'Matatl',
 					modHint: 'temple boots',
 					modSlots: ['boots'],
@@ -1227,6 +1310,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const box = only(
 			offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: ['gloves'],
@@ -1245,6 +1330,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const box = only(
 			offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: null,
 					modHint: null,
 					modSlots: [],
@@ -1270,6 +1357,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const box = only(
 			offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: ['gloves'],
@@ -1291,6 +1380,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const box = only(
 			offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: ['gloves'],
@@ -1317,6 +1408,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const noPrice = only(
 			offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: [],
@@ -1330,6 +1423,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const priced = only(
 			offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: [],
@@ -1343,6 +1438,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const fallback = only(
 			offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: [],
@@ -1387,6 +1484,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const box = only(
 			offer({
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: [],
@@ -1485,6 +1584,103 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		);
 
 		expect(box.drivers[0].perRun).toBe('×0.17');
+	});
+
+	it('captions a drop the player will rarely see with its chance per run', () => {
+		// Defense Research Lab's own rate on the committed capture, 0.1 x
+		// 804/1689. `×0.05` is a count a player reads as "some fraction"; the
+		// same number as 4.8% of runs is the sentence they can act on, which is
+		// the whole reason the caption exists.
+		const box = only(
+			offer({
+				value: value({
+					drivers: [
+						vialTerm({
+							name: 'Vial of Dominance',
+							count: 0.1 * (804 / 1689),
+							unitPrice: 41,
+							chaos: 1.95
+						})
+					]
+				})
+			})
+		);
+
+		expect(box.drivers[0].caption).toBe('4.8% / run');
+	});
+
+	it('keeps the rarest rate in the table off a zero the player would read as never', () => {
+		// Locus of Corruption and Throne of Atziri, 0.1 x 20/1689 — the two
+		// smallest rates POE-262 derives. One decimal place is what stands
+		// between `0.1% / run` and a caption saying the drop cannot happen.
+		const box = only(
+			offer({
+				value: value({
+					drivers: [
+						vialTerm({
+							name: 'Vial of Sacrifice',
+							count: 0.1 * (20 / 1689),
+							unitPrice: 428,
+							chaos: 0.51
+						})
+					]
+				})
+			})
+		);
+
+		expect(box.drivers[0].caption).toBe('0.1% / run');
+	});
+
+	it('captions a rare unique on the same rule as a rare vial', () => {
+		// The threshold is stated over BOTH drop kinds. Nothing in the table
+		// trips the unique half today — Vertolka's 0.25 is every chest line's
+		// rate — so this is the assertion that the rule does not quietly become
+		// a vial-only one the day a unique rate is derived like a vial's is.
+		const box = only(
+			offer({ value: value({ drivers: [uniqueTerm({ count: 0.1 * (804 / 1689) })] }) })
+		);
+
+		expect(box.drivers[0].caption).toBe('4.8% / run');
+	});
+
+	it('captions nothing at exactly the five-percent line', () => {
+		// The threshold is `< 0.05`, not `<= 0.05`: a drop the player sees on
+		// one run in twenty is not one the box has to explain, and a caption
+		// there costs the row 12 px it did not need to spend.
+		const box = only(offer({ value: value({ drivers: [vialTerm({ count: 0.05 })] }) }));
+
+		expect(box.drivers[0].caption).toBeNull();
+	});
+
+	it('leaves an ordinary count uncaptioned', () => {
+		// Vertolka's quarter — the rate on all six chest lines. The owner took
+		// `×0.25` off the ordinary cells on purpose, and a caption spelling the
+		// same count as `25.0% / run` would put it straight back.
+		const box = only(offer({ value: value({ drivers: [uniqueTerm()] }) }));
+
+		expect(box.drivers[0].perRun).toBe('×0.25');
+		expect(box.drivers[0].caption).toBeNull();
+	});
+
+	it('captions nothing where the wire carried no count at all', () => {
+		// A row with no count has no chance to state. Reading the missing count
+		// as a zero would caption it `0.0% / run`, which is a claim about the
+		// room rather than an admission that nothing counted it.
+		const box = only(offer({ value: value({ drivers: [uniqueTerm({ count: null })] }) }));
+
+		expect(box.drivers[0].perRun).toBeNull();
+		expect(box.drivers[0].caption).toBeNull();
+	});
+
+	it('never captions the sale row, whatever count the wire hung on it', () => {
+		// A sale is chaos the room pays out when it is taken, not an item that
+		// falls out of it some fraction of the time, so there is no "per run"
+		// for it to be. This fixture gives it a count under the threshold so the
+		// row is excluded by its KIND and not by having nothing to divide.
+		const box = only(offer({ value: value({ drivers: [saleTerm({ count: 0.01 })] }) }));
+
+		expect(box.drivers[0].kind).toBe('sale');
+		expect(box.drivers[0].caption).toBeNull();
 	});
 
 	it('prints the sale row as the delta above the floor, in the gain form', () => {
@@ -1642,6 +1838,81 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 
 		expect(box.drivers).toEqual([]);
 		expect(box.note).toBe('this line drops no unique and no vial');
+	});
+
+	it('keeps the instrumental wording under a content row', () => {
+		// Temple Nexus is an instrumental line AND a content line, and the two
+		// say different things: the cell names what the room DOES, the note says
+		// why the number is a rung and not a sum. Only the drops-nothing wording
+		// yields to the cell (next test); this one stays.
+		const box = only(
+			offer({
+				line: {
+					kind: 'content',
+					content: 'Upgrade a room',
+					modArchitect: null,
+					modHint: null,
+					modSlots: [],
+					modWorth: null,
+					quantityPct: null,
+					rarityPct: null
+				},
+				grade: 'B+',
+				value: value({ priced: 'instrumental', total: 105.75, drivers: [] })
+			})
+		);
+
+		expect(box.content).toBe('Upgrade a room');
+		expect(box.note).toBe('valued at its letter — its worth is what it does, not what it drops');
+	});
+
+	it('yields the empty-drop wording to the content cell', () => {
+		// `this line drops no unique and no vial` is the negative of what the
+		// content cell states positively, and every content line is a line with
+		// no chest unique — so on this box the note would print under the cell
+		// on all nineteen of them.
+		const box = only(
+			offer({
+				line: {
+					kind: 'content',
+					content: 'Armour drops',
+					modArchitect: null,
+					modHint: null,
+					modSlots: [],
+					modWorth: null,
+					quantityPct: null,
+					rarityPct: null
+				},
+				value: value({ drivers: [quantityTerm()] })
+			})
+		);
+
+		expect(box.drivers).toEqual([]);
+		expect(box.note).toBeNull();
+	});
+
+	it('keeps the player\'s own-number wording on a content line', () => {
+		// The one wording the content cell does NOT say: where the number came
+		// from. A player who typed 500 c for Locus of Corruption is owed that
+		// note whatever the row beside it draws, so the override branch stays
+		// ahead of the content one.
+		const box = only(
+			offer({
+				line: {
+					kind: 'content',
+					content: 'Double-corrupt an item',
+					modArchitect: null,
+					modHint: null,
+					modSlots: [],
+					modWorth: null,
+					quantityPct: null,
+					rarityPct: null
+				},
+				value: value({ priced: 'override', total: 500, drivers: [] })
+			})
+		);
+
+		expect(box.note).toBe('your own number for this room');
 	});
 
 	it('sums the two area bonuses into one line and names both percentages', () => {
@@ -1822,8 +2093,9 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 	});
 
 	it('draws no recipe line for a line no vial upgrades', () => {
-		// Locus of Corruption: it drops Shadowstitch, which nothing transforms.
-		// An invented recipe there would name two items the room never drops.
+		// A line whose unique is nobody's recipe base: the box prints no recipe
+		// row rather than inventing one, which would name two items the room
+		// never drops.
 		expect(only(offer({ value: value({ drivers: [uniqueTerm()] }) })).recipe).toBeNull();
 	});
 
@@ -1950,6 +2222,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 			offer({
 				builtTier: null,
 				line: {
+					kind: 'chest',
+					content: null,
 					modArchitect: null,
 					modHint: null,
 					modSlots: [],
@@ -2107,6 +2381,44 @@ describe('offerBoxSignature', () => {
 		const paired = box({ dropPair: [one.drivers[0], vial] });
 
 		expect(offerBoxSignature(paired, false)).not.toBe(offerBoxSignature(one, false));
+	});
+
+	it('changes when the content cell appears in place of the recipe row', () => {
+		// A content box draws prose where a chest box draws `A + B → C`, and the
+		// two are not the same height. A signature blind to it would leave the
+		// pair measured for the box the offer used to be.
+		expect(offerBoxSignature(box({ content: 'Queen Atziri' }), false)).not.toBe(
+			offerBoxSignature(box({ content: null }), false)
+		);
+	});
+
+	it('changes when a drop cell gains its rare-chance caption', () => {
+		// The caption takes the item row from 57 px to 69, and the rate it keys
+		// on is not fixed: the vials-per-run knob scales every derived rate, so
+		// a player moving it can carry a cell across the 5% line without
+		// touching the board.
+		const one = box({});
+		const captioned = box({
+			dropPair: [{ ...one.drivers[0], caption: '4.8% / run' }, null]
+		});
+
+		expect(offerBoxSignature(captioned, false)).not.toBe(offerBoxSignature(one, false));
+	});
+
+	it('ignores what the caption SAYS once a cell has one', () => {
+		// The same rule the market-age line is held to: `4.8% / run` and
+		// `1.2% / run` are one line of the same 12 px either way, so a signature
+		// keyed on the text would re-measure the pair — and hide the stack for a
+		// frame — every time a price move nudged a rate.
+		const one = box({});
+		const captioned = box({
+			dropPair: [{ ...one.drivers[0], caption: '4.8% / run' }, null]
+		});
+		const otherText = box({
+			dropPair: [{ ...one.drivers[0], caption: '1.2% / run' }, null]
+		});
+
+		expect(offerBoxSignature(otherText, false)).toBe(offerBoxSignature(captioned, false));
 	});
 
 	it('changes when the form does', () => {

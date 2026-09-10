@@ -560,11 +560,10 @@ impl Valued {
     ///
     /// `None` is the ordinary answer and covers three different facts, all of
     /// which the surface renders the same way — by printing no recipe line:
-    /// the line drops no unique of its own (eighteen of the twenty-five), its
-    /// unique is not the BASE of any recipe (Locus of Corruption drops
-    /// Shadowstitch and rolls an amulet vial that upgrades somebody else's
-    /// item), or the payload carried no recipe table at all, which is what a
-    /// read that has never reached the server looks like.
+    /// the line drops no unique of its own (nineteen of the twenty-five), its
+    /// unique is not the BASE of any recipe, or the payload carried no recipe
+    /// table at all, which is what a read that has never reached the server
+    /// looks like.
     pub fn recipe(&self, key: &str) -> Option<&RecipeValue> {
         self.recipes.get(key)
     }
@@ -1345,27 +1344,28 @@ mod tests {
 
     #[test]
     fn a_term_with_no_price_contributes_nothing_and_is_still_listed() {
-        // Locus of Corruption drops Shadowstitch, which poe.ninja publishes no
-        // line for, so POE-255 serves no price for it at all.
+        // Remove a chest unique from the committed market fixture so the
+        // valuation sees a real drop term with no price, without changing the
+        // drops table or relying on Locus's altar output.
+        let mut market = allflame();
+        assert!(
+            market.items.remove("Story of the Vaal").is_some(),
+            "the capture prices Story of the Vaal"
+        );
         let value = value_of(
-            &Valued::compute(&allflame(), &Knobs::default()),
-            "corruption",
+            &Valued::compute(&market, &Knobs::default()),
+            "crucible_of_flame",
             3,
         );
 
         let unique = driver(&value, DriverKind::UniqueDrop);
-        assert_eq!(unique.name, "Shadowstitch");
+        assert_eq!(unique.name, "Story of the Vaal");
         assert_eq!(unique.unit_price, None);
         assert_eq!(unique.chaos, None);
         assert_eq!(value.priced, Priced::Partial);
-        // The unpriced unique adds NOTHING, and since POE-262 that is visible
-        // as a subtraction rather than as a zero: Locus's drops are its vial
-        // term alone — 0.1 x 20/1689 x Vial of Sacrifice at 428 c — so a
-        // priceless term quietly contributing would show up here as a bigger
-        // number, not as an unchanged 0.
-        let vial_alone = 0.1 * 20.0 / 1689.0 * 428.0;
-        assert!(close(value.drops, vial_alone), "drops were {}", value.drops);
-        assert!(close(value.drops, 0.506_808_762_581), "{}", value.drops);
+        // The unpriced unique adds NOTHING: the remaining vial and manual mod
+        // terms are 0.1 x Vial of Fate at 1 c + 2 x gloves at 30 c.
+        assert!(close(value.drops, 60.1), "drops were {}", value.drops);
     }
 
     /// Vertolka's "small chance" is a number now, on both lines that carry it.
@@ -1476,9 +1476,14 @@ mod tests {
             fraction.unit_price.expect("a tier-3 total"),
             846.506_808_762_581
         ));
+        // The vial is Locus's one drop term (WI-6: no chest unique), and the
+        // count it carries is TIER 3's 20/1689 — a recomputed tier 1 would
+        // say 7/1689.
+        let vial = driver(&t1, DriverKind::VialDrop);
         assert!(
-            t1.drivers.iter().any(|d| d.kind == DriverKind::UniqueDrop),
-            "the tier-3 drivers are carried down, not recomputed"
+            close(vial.count.expect("a vial rate"), 0.1 * 20.0 / 1689.0),
+            "the tier-3 drivers are carried down, not recomputed: {:?}",
+            vial.count
         );
     }
 
@@ -2970,12 +2975,13 @@ mod tests {
     }
 
     #[test]
-    fn a_line_whose_own_unique_no_vial_upgrades_has_no_recipe() {
+    fn a_line_whose_vial_upgrades_somebody_elses_unique_has_no_recipe() {
         // Locus of Corruption is the case that proves the lookup is by BASE.
-        // It drops Shadowstitch, which no recipe transforms, while the vial its
-        // architect rolls for — Vial of Sacrifice — IS a recipe vial, of
-        // Sacrificial Heart. A lookup keyed on the vial would hand this line
-        // somebody else's upgrade and print two items it never drops.
+        // It has no chest unique: the altar makes Shadowstitch from the
+        // Sacrificial Garb the player brings. The vial its architect rolls for —
+        // Vial of Sacrifice — IS a recipe vial, of Sacrificial Heart. A lookup
+        // keyed on the vial would hand this line somebody else's upgrade and
+        // print two items it never drops.
         let valued = Valued::compute(&allflame(), &Knobs::default());
 
         assert_eq!(valued.recipe("corruption"), None);
@@ -2983,7 +2989,7 @@ mod tests {
 
     #[test]
     fn a_line_that_drops_no_unique_has_no_recipe() {
-        // Eighteen of the twenty-five, and Chamber of Iron is one: no chest
+        // Nineteen of the twenty-five, and Chamber of Iron is one: no chest
         // unique, so there is nothing for a vial to transform.
         let valued = Valued::compute(&allflame(), &Knobs::default());
 
