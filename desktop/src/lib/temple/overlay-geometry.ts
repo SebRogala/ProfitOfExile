@@ -283,28 +283,31 @@ export const DIAGONAL_BUDGET_CSS = 316;
  * the full form is a `height` or a `line-height` with a stated margin, which is
  * what makes a box's geometry a function of its SHAPE — for the worst case
  * this new wording can produce: a `market` or `partial` box on the advisor's
- * pick, so a 2 px frame, with the value row, three 39 px driver rows, a ladder,
- * a recipe, a temple mod block and the age line.
+ * pick, so a 2 px frame, with the two-line header, a sale row and paired
+ * unique/vial row, a ladder, a recipe, a temple mod block with five glyphs and
+ * the warning age line.
  *
- *     border 2x2 4 + padding 2x2 4 + headline 18 + builds 15
- *     + value (2 + 24) 26 + drivers (2 + 3x39 + 2x1) 121
- *     + ladder (1 + 17) 18 + recipe (2 + 11, 1 + 26) 40
- *     + mod (2 + 11, 16, 1 + 18) 48 + age (2 + 13) 15 = 309
+ *     border 2x2 4 + padding 2x2 4 + header (24 + 15) 39
+ *     + drivers (2 + 2x39 + 1x1) 81 + ladder (1 + 23) 24
+ *     + recipe (2 + 11, 1 + 39) 53
+ *     + mod (2 + 20, 1 + 26) 49 + age (2 + 13) 15 = 269
  *
- * The 316 px diagonal budget therefore has 7 px of spare height. A mod driver
- * is removed from the three drop rows before the component receives the box,
- * so `fold` cannot add a fourth row in this form. `note` is not in the sum:
- * instrumental and overridden rooms have no drop rows, so their explanatory
- * line replaces the ladder/row shape rather than extending this maximum.
+ * The 316 px diagonal budget therefore has 47 px of spare height. The fresh
+ * form loses the 15 px age row; this constant describes the WARN form, where
+ * the market note is present. A mod driver is removed from the drop rows
+ * before the component receives the box, so `fold` cannot add a fourth row in
+ * this form. `note` is not in the sum: instrumental and overridden rooms have
+ * no drop rows, so their explanatory line replaces the ladder/row shape rather
+ * than extending this maximum.
  *
  * Not measured from the DOM because this app has no DOM harness for a
  * `.svelte` file; `overlay-geometry.test.ts` restates the row table beside the
  * constant so a row added to the component without a number here fails.
  */
-export const FULL_BOX_MAX_CSS = 309;
+export const FULL_BOX_MAX_CSS = 269;
 
 /** What two FULL boxes and the gap between them need, CSS px —
- * `309 * 2 + STACK_GAP_CSS` = 626 for the current 309 px full form. This is
+ * `269 * 2 + STACK_GAP_CSS` = 546 for the current 269 px full form. This is
  * the clearance [`offersCompact`] demands before it lets the pair render full.
  * It uses the WORST case rather than the design's typical one, because the box
  * that gets clamped for want of it is the LOWER one, and a clamped box lands

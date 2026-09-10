@@ -348,7 +348,7 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   `STACK_STAGGER_CSS` (175 px, measured off the owner's redrawn screenshot)
   right of the column and the lower one on it. A box carries
   the room the kill BUILDS and its kind and tier, its value rows, the tier
-  ladder, the temple mod and the market line. The advisor's pick wears a 2 px
+  ladder, the temple mod and the warning-only market age line. The advisor's pick wears a 2 px
   cyan frame — the same cyan as the room widget's kill glyph — and that frame
   IS the pointer; the other box is faint.
   They live with the SHEET and go when it closes. They REPLACE `temple.advice`,
@@ -1270,7 +1270,7 @@ touching the named path.
   from the blocks they mirror — box
   `i` level with block `i` in the panel's own order, each carrying the room the
   kill BUILDS and its kind and tier, its value rows, the tier ladder, the temple
-  mod and the market line. The distance is the design and not a defect: the
+  mod and the warning-only market age line. The distance is the design and not a defect: the
   owner asked for the left margin, and the CYAN FRAME on the advisor's pick is
   the whole pointer — there is no arrow and no line. The other box must be
   faint. Check on BOTH machines (1920×1080 laptop and the desktop): a block rect
@@ -1291,48 +1291,62 @@ touching the named path.
   a change to `offerStackPlacement`.
 - **The offer box explains the number, in each of its five states** (POE-260,
   POE-277): the box is room-led and shows only facts that belong to the read.
-  The header is the room name (or printed target if it does not resolve), the
-  next line is `change · tier 1`, and there is no scale, rating or reason line.
+  Its two-line header puts the room name at 16 px on line 1, the 24 px value
+  at the top right, and `kind · tier N` on line 2 with the completeness chip or
+  `per run` at the right. There is no scale, rating or reason line.
 
   1. **Priced.** Open a panel on a board with a chest-unique line — Crucible of
      Flame, Toxic Grove, Sanctum of Immortality, Hybridisation Chamber, Conduit
-     of Lightning or Defense Research Lab. The value row shows the chaos figure
-     with `per run`. Up to three 39 px drop rows show price, per-run count and
-     marks; unique and vial names are NOT printed — the icon is the identity and
-     `alt` stays on the `<img>` as the accessibility attribute and reaches nobody
-     on a click-through window; the `?` fallback carries none; sale keeps its text.
-     The ladder
-     reads `+2/4/6% quant · +4/8/12% rarity` at 14 px in lab yellow, with the
-     current tier lit and the other two values dimmed. The per-line vial counts
-     remain the POE-262 check: `×0.1` on Crucible, Conduit and Sanctum, `×0.06`
-     on Hybridisation Chamber, `×0.048` on Defense Research Lab, and `×0.012`
-     on Toxic Grove; the unique and gloves still read `×0.25` and `×2`. Where
-     supplied — those six lines, and NOT Locus of Corruption — the 26 px
-     `UPGRADE RECIPE` row has three icons with prices. A `?` icon means the
+     of Lightning or Defense Research Lab. The sale row is full width above one
+     39 px two-column row for the unique and vial; a missing partner leaves one
+     cell. Each cell shows its icon and price. Per-row provenance letters
+     are gone: one `G` sits beside the header value when any term is guessed,
+     alongside `F` where the grade fallback applies. Unique and vial names are
+     NOT printed — the icon is the identity and `alt` stays on the `<img>` as
+     the accessibility attribute; the `?` fallback carries none; sale keeps its
+     text. The fold path remains in the view code but is unreachable while the
+     four row kinds contain at most one sale, unique, vial and mod term.
+     The ladder reads `+2/4/6% quant` in the left column and
+     `+4/8/12% rarity` in the right at 15 px, with 3 px top/bottom padding,
+     the current tier lit and the other two values dimmed; an unscaled chaos
+     amount trails the rarity column. Per-run counts remain in the view data but
+     are not rendered in the box. Where
+     supplied — those six lines, and NOT Locus of Corruption — the full-width
+     `UPGRADE RECIPE` row has three 39 px icons with prices beside them; beside
+     the icons keeps the chain at a fixed 39 px height. A `?` icon means the
      server's `/api/icon/temple/<name>` did not answer for that poe.ninja name;
      check one by hand before assuming the row is wrong. The row prices are the
-     ITEM's, not the term's: `Story of the Vaal 68c ×0.25` is right and `17c`
-     is the bug. The optional `temple mod` block follows with its name, hint
-     attribute, price, count, marks and 18 px equipment-slot silhouettes. The
-     slot rows are Vertolka's item_hint reading, UNVERIFIED against the wiki
-     (drops.rs comments) — Citaqualotl and Guatelitzi draw no icons until
-     confirmed. The market line remains last.
+     ITEM's, not the term's: `Story of the Vaal 68c` is right and `17c`
+     is the bug. The optional mod block is `Temple mod: <name>` on line 1,
+     with `(30c)` only for the sole priced case, Crucible of Flame/Puhuarte's
+     Vertolka 30c guess; no price cell for `no price`;
+     no per-run count is rendered beside a priced term. Its second line is
+     `Appears on:` followed by 26 px glyphs, absent for an empty slot list. The
+     slot table is verified from poewiki's modifier tables, with every weapon
+     class folded into `Weapon`; Xopec's five glyphs are the width worst case
+     and fit: ~70 px label + 4 + 5×26 + 4×4 = 220 px of 276. The market age
+     line is present only for unavailable/stale prices;
+     fresh prices omit it.
 
   2. **Partial.** An item with no market price keeps its 39 px icon row and
      prints `no price`, never `0c` and never a missing row. The value row
-     carries the `floor · N unpriced` chip in place of `per run`; the
-     remaining ladder, recipe, mod and market lines follow the same fixed slots
-     when present.
+     carries the `floor · N unpriced` chip in place of `per run`; the chip still
+     counts an unpriced temple mod even though its price cell is hidden. The
+     remaining ladder, recipe, mod and warning-age lines follow their fixed
+     slots when present.
 
   3. **Fallback.** Start the app with no network (or point its server URL at
      nothing) and open a panel. With no usable market, the value row reads
-     `grade <letter>` with an `F` mark, item and recipe prices are em dashes,
-     and the market line reads `prices unavailable — base values`. If the
+     `grade <letter>` with an `F` mark — and a `G` beside it where the rung is
+     a live inference (`valuation.rs`'s `summed <= 0` branch) rather than the
+     cold preset's base value — item and recipe prices are em dashes,
+     and the warning age line reads `prices unavailable — base values`. If the
      line carries tier facts, the ladder still explains them; otherwise the
      bonus label is used. No chaos figure or market-backed recommendation is
      invented. Flip DEBUG/PROD on a priced board: the Reader row must switch to
      `prices unavailable — base values`, while the standing boxes keep their
-     own value and market-age line until the next read.
+     own value and warning age line until the next read. Fresh boxes have no
+     age line at all.
 
   4. **Stale.** Leave the app against a server whose temple recompute has
      stopped for over two hours, or watch a live board cross that boundary. A
@@ -1340,44 +1354,49 @@ touching the named path.
      on the clock keeps its chaos figure and reads
      `prices stale (<N> h)` without the `— base values` suffix; that suffix
      means the numbers were already valued from the cold branch. The yellow
-     dotted mark follows the value slot. Staleness changes the market line, not
-     the box's row order. The clock-aged line must change without a republish;
+     dotted mark follows the value slot. Staleness adds the warning age row;
+     fresh prices have no age row. The clock-aged line must change without a republish;
      `prices 1 h old` becoming `prices stale (2 h)` is the smoke check.
 
   5. **Compact.** Run windowed at roughly 720 px tall, or find a board whose
      first block sits low. When the pair cannot fit, both boxes collapse
-     together. The header/value stay available, the lower explanation becomes
-     the strip and the market-only foot line; one full box beside one compact
-     box is the regression. The compact strip excludes the temple mod's price;
-     the value's chip and marks still count it, so on Crucible of Flame the
-     strip is short of its largest term by design.
+     together. The two-line header stays available, the lower explanation
+     becomes the strip, and a warning-only market foot line follows it; a fresh
+     compact box ends at the strip. One full box beside one compact box is the
+     regression. The compact strip excludes the temple mod's price; the value's
+     single `G`/`F` marks and chip still account for it, so on Crucible of Flame
+     the strip is short of its largest term by design.
 
   **Measured heights.** The pick's 2 px frame contributes 4 px and its vertical
-  padding contributes 4 px. Header/builds are 18 + 15 px, and the value row is
-  2 + 24 = 26 px. Three drop rows are 2 + 3×39 + 2×1 = 121 px. The ladder
-  or bonus is 1 + 17 = 18 px; the recipe is (2 + 11) + (1 + 26) = 40 px;
-  the mod block is (2 + 11) + 16 + (1 + 18) = 48 px; the market line is
-  2 + 13 = 15 px.
+  padding contributes 4 px. The two-line header is 24 + 15 = 39 px. The sale
+  row and paired unique/vial row are `2 + 2×39 + 1×1 = 81` px. The ladder is
+  `1 + 23 = 24` px: 17 px of text with 3 px padding above and below. The
+  recipe is `(2 + 11) + (1 + 39) = 53` px. The mod block is
+  `(2 + 20) + (1 + 26) = 49` px when its `Appears on:` glyph line exists; the
+  warning age line is `2 + 13 = 15` px.
 
-  - Priced full with three rows, ladder, recipe and mod:
-    4 + 4 + 18 + 15 + 26 + 121 + 18 + 40 + 48 + 15 = **309 px**.
-  - Partial uses the same 309 px maximum when those optional blocks are
-    present; omitted blocks remove only their own fixed slot.
-  - Fallback with grade + ladder and no drop, recipe or mod rows is
-    4 + 4 + 18 + 15 + 26 + 18 + 15 = **100 px**; each present optional block
-    adds the same fixed height, up to the 309 px maximum.
-  - Compact's maximum is
-    4 + 4 + 18 + 15 + 26 + (2 + 24) + (2 + 13) = **108 px**.
+  - Priced or partial full WARN form with sale, paired drops, ladder, recipe,
+    verified five-glyph mod and age line:
+    `4 + 4 + 39 + 81 + 24 + 53 + 49 + 15 = **269 px**`.
+  - A fresh full form loses the age row: **254 px**. Omitted optional blocks
+    remove only their own fixed slot.
+  - Fallback with grade + ladder and warning age, with no drop, recipe or mod,
+    is `4 + 4 + 39 + 24 + 15 = **86 px**`.
+  - Compact's maximum WARN form is
+    `4 + 4 + 39 + (2 + 24) + (2 + 13) = **88 px**`; a fresh compact box is
+    **73 px** because it ends at the strip.
 
-  `FULL_BOX_MAX_CSS` is 309 px versus `DIAGONAL_BUDGET_CSS` at 316 px,
-  leaving 7 px. The geometry budget and placement rule remain unchanged.
+  `FULL_BOX_MAX_CSS` is 269 px versus `DIAGONAL_BUDGET_CSS` at 316 px,
+  leaving 47 px. The two-box full clearance is
+  `FULL_PAIR_CSS = 269×2 + 8 = 546 px`. The constant describes the WARN
+  form, where the age line is present, and the overlay-geometry test asserts
+  `FULL_BOX_MAX_CSS ≤ DIAGONAL_BUDGET_CSS`.
 
 
   **And the blink must be gone.** Watch either box for three unbroken minutes on
-  a live board. It must NOT flicker as the age line rolls from `prices 12 min
-  old` to `13 min old` — that was POE-258's accepted defect and POE-260's fixed
-  box width is what ends it. A flicker on the minute means something text-shaped
-  is back in `offerBoxSignature`.
+  a live board. Fresh prices have no age row; crossing the warning boundary
+  adds the row once, and later text changes must not remeasure it. A flicker on
+  the minute means something text-shaped is back in `offerBoxSignature`.
 
   **Owner judgement, not arithmetic**: whether the box is still readable at arm's
   length over a game with the larger icons and optional temple-mod block, and
@@ -1396,14 +1415,13 @@ touching the named path.
   vial price moves the first two and not the third. Factory's tier-3 cell must
   not move at any of the three — it names no vial. `NaN` or a negative value must be refused in place with the
   field marked, and the table must stay on screen. Then set it back to `0.1`.
-- **The same knob on the offer box, where the vial line itself is visible**
+- **The same knob keeps the offer data current even though the box omits counts**
   (POE-262): with the value above set, open a live board on a tier-3 Glittering
-  Halls offer. The `Vial of Transcendence` row's per-run cell reads `×0.17` at
-  `0.1` and `×0.33` at `0.2` — two significant digits, not the raw
-  `×0.16666666666666666` — and its chaos figure doubles with it while the
-  `+…% rarity` line below does not move. At `0` the row must still be LISTED,
-  reading no chaos, rather than vanishing: a missing row would say the room
-  rolls for no vial at all.
+  Halls offer. The `Vial of Transcendence` row's per-run value remains in the
+  view data and the value table, while the rendered offer box shows only its
+  icon and chaos figure. At `0` the row must still be LISTED, reading no chaos,
+  rather than vanishing: a missing row would say the room rolls for no vial at
+  all.
 - **The value table sorts, and a re-sort moves nothing else** (POE-263): on a
   profile that has never set the sort (or after clearing the
   `templeValueTableSort` pref), the Temple page's table must OPEN with Locus of

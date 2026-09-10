@@ -293,14 +293,17 @@ fn any_guess(estimates: &[Option<Estimate>]) -> bool {
 
 // -------------------------------------------------------------- temple mod --
 
-/// An item slot an architect's mod family can roll on.
+/// An item class an architect's mod family can roll on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Slot {
-    Ring,
-    Amulet,
+    Helmet,
     BodyArmour,
     Gloves,
     Boots,
+    Amulet,
+    Ring,
+    Belt,
+    Shield,
     Weapon,
 }
 
@@ -308,11 +311,14 @@ impl Slot {
     /// The stable wire spelling used by the temple offer view.
     pub fn as_str(self) -> &'static str {
         match self {
-            Slot::Ring => "ring",
-            Slot::Amulet => "amulet",
+            Slot::Helmet => "helmet",
             Slot::BodyArmour => "body_armour",
             Slot::Gloves => "gloves",
             Slot::Boots => "boots",
+            Slot::Amulet => "amulet",
+            Slot::Ring => "ring",
+            Slot::Belt => "belt",
+            Slot::Shield => "shield",
             Slot::Weapon => "weapon",
         }
     }
@@ -328,7 +334,7 @@ impl Slot {
 pub struct TempleMod {
     architect: &'static str,
     item_hint: &'static str,
-    /// Item slots this mod family can roll on, from the source named on the row.
+    /// Item classes this mod family can roll on, from the source named on the row.
     slots: &'static [Slot],
     source: &'static str,
     per_run: Option<Estimate>,
@@ -349,7 +355,7 @@ impl TempleMod {
         self.item_hint
     }
 
-    /// What item slots this mod family can roll on, from the row's named source.
+    /// What item classes this mod family can roll on, from the wiki tables.
     pub fn slots(self) -> &'static [Slot] {
         self.slots
     }
@@ -664,9 +670,10 @@ pub const DROPS: [LineDrops; 25] = [
         temple_mod: Some(TempleMod {
             architect: "Xopec",
             item_hint: "jewellery with mana modifiers",
-            // UNVERIFIED: the slot table could not confirm the item classes;
-            // these slots are supported only by Vertolka's row hint.
-            slots: &[Slot::Ring, Slot::Amulet],
+            // Source: poewiki modifier tables ("Xopec's" and "of Xopec"),
+            // union of the Classes column, owner-pasted 2026-09-10; every
+            // weapon class folds into Weapon.
+            slots: &[Slot::Helmet, Slot::Gloves, Slot::Boots, Slot::Amulet, Slot::Ring],
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -718,9 +725,10 @@ pub const DROPS: [LineDrops; 25] = [
         temple_mod: Some(TempleMod {
             architect: "Puhuarte",
             item_hint: "temple gloves",
-            // UNVERIFIED: the slot table could not confirm the item classes;
-            // this slot is supported only by Vertolka's row hint.
-            slots: &[Slot::Gloves],
+            // Source: poewiki modifier tables ("Puhuarte's" and "of Puhuarte"),
+            // union of the Classes column, owner-pasted 2026-09-10; every
+            // weapon class folds into Weapon.
+            slots: &[Slot::Helmet, Slot::Gloves, Slot::Amulet],
             source: VERTOLKA_SHEET,
             per_run: Some(Estimate::guess(2.0, VERTOLKA_MSG)),
             base_price_chaos: Some(Estimate::guess(30.0, VERTOLKA_MSG)),
@@ -763,9 +771,10 @@ pub const DROPS: [LineDrops; 25] = [
             // items + 30% movespeed boots". Dropping the boots would lose a
             // whole item class from the hint (VERTOLKA_SHEET).
             item_hint: "items with trap and mine modifiers, + 30% movespeed boots",
-            // UNVERIFIED: the slot table could not confirm the item classes;
-            // this slot is supported only by Vertolka's row hint.
-            slots: &[Slot::Boots],
+            // Source: poewiki modifier tables ("Matatl's" and "of Matatl"),
+            // union of the Classes column, owner-pasted 2026-09-10; every
+            // weapon class folds into Weapon.
+            slots: &[Slot::Boots, Slot::Weapon],
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -978,9 +987,10 @@ pub const DROPS: [LineDrops; 25] = [
         temple_mod: Some(TempleMod {
             architect: "Citaqualotl",
             item_hint: "items with minion modifiers",
-            // UNVERIFIED: the slot table could not confirm an item class, and
-            // Vertolka's row hint names modifiers rather than a slot.
-            slots: &[],
+            // Source: poewiki modifier tables ("Citaqualotl's" and "of
+            // Citaqualotl"), union of the Classes column, owner-pasted
+            // 2026-09-10; every weapon class folds into Weapon.
+            slots: &[Slot::Weapon],
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -1082,9 +1092,10 @@ pub const DROPS: [LineDrops; 25] = [
         temple_mod: Some(TempleMod {
             architect: "Guatelitzi",
             item_hint: "items with life and energy-shield modifiers",
-            // UNVERIFIED: the slot table could not confirm an item class, and
-            // Vertolka's row hint names modifiers rather than a slot.
-            slots: &[],
+            // Source: poewiki modifier tables ("Guatelitzi's" and "of
+            // Guatelitzi"), union of the Classes column, owner-pasted
+            // 2026-09-10; every weapon class folds into Weapon.
+            slots: &[Slot::BodyArmour, Slot::Amulet, Slot::Ring, Slot::Belt],
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -1136,9 +1147,10 @@ pub const DROPS: [LineDrops; 25] = [
         temple_mod: Some(TempleMod {
             architect: "Topotante",
             item_hint: "weapons with elemental offence modifiers, gloves with physical-to-elemental conversion",
-            // UNVERIFIED: the slot table could not confirm the item classes;
-            // these slots are supported only by Vertolka's row hint.
-            slots: &[Slot::Weapon, Slot::Gloves],
+            // Source: poewiki modifier tables ("Topotante's" and "of
+            // Topotante"), union of the Classes column, owner-pasted
+            // 2026-09-10; every weapon class folds into Weapon.
+            slots: &[Slot::Gloves, Slot::Shield, Slot::Weapon],
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -1227,9 +1239,10 @@ pub const DROPS: [LineDrops; 25] = [
             // so the hint has to carry the correction with the claim
             // (VERTOLKA_SHEET).
             item_hint: "weapons with attack- and cast-speed, physical offence or spell-trigger modifiers, body armour with chaos resistance, note: caster mod dont drop - legacy - wiki dont update this change",
-            // UNVERIFIED: the slot table could not confirm the item classes;
-            // these slots are supported only by Vertolka's row hint.
-            slots: &[Slot::Weapon, Slot::BodyArmour],
+            // Source: poewiki modifier tables ("Tacati's" and "of Tacati"),
+            // union of the Classes column, owner-pasted 2026-09-10; every
+            // weapon class folds into Weapon.
+            slots: &[Slot::BodyArmour, Slot::Shield, Slot::Weapon],
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -1406,11 +1419,14 @@ mod tests {
     fn every_slot_has_a_unique_snake_case_wire_name() {
         // Fails if a variant is added without a row here
         let slots = [
-            (Slot::Ring, "ring"),
-            (Slot::Amulet, "amulet"),
+            (Slot::Helmet, "helmet"),
             (Slot::BodyArmour, "body_armour"),
             (Slot::Gloves, "gloves"),
             (Slot::Boots, "boots"),
+            (Slot::Amulet, "amulet"),
+            (Slot::Ring, "ring"),
+            (Slot::Belt, "belt"),
+            (Slot::Shield, "shield"),
             (Slot::Weapon, "weapon"),
         ];
 
@@ -1424,13 +1440,29 @@ mod tests {
     #[test]
     fn temple_mod_rows_carry_their_architect_and_slot_table() {
         const EXPECTED: [(&str, &str, &[Slot]); 7] = [
-            ("conduit_of_lightning", "Xopec", &[Slot::Ring, Slot::Amulet]),
-            ("crucible_of_flame", "Puhuarte", &[Slot::Gloves]),
-            ("defense_research_lab", "Matatl", &[Slot::Boots]),
-            ("hybridisation_chamber", "Citaqualotl", &[]),
-            ("sanctum_of_immortality", "Guatelitzi", &[]),
-            ("storm_of_corruption", "Topotante", &[Slot::Weapon, Slot::Gloves]),
-            ("toxic_grove", "Tacati", &[Slot::Weapon, Slot::BodyArmour]),
+            (
+                "conduit_of_lightning",
+                "Xopec",
+                &[Slot::Helmet, Slot::Gloves, Slot::Boots, Slot::Amulet, Slot::Ring],
+            ),
+            ("crucible_of_flame", "Puhuarte", &[Slot::Helmet, Slot::Gloves, Slot::Amulet]),
+            ("defense_research_lab", "Matatl", &[Slot::Boots, Slot::Weapon]),
+            ("hybridisation_chamber", "Citaqualotl", &[Slot::Weapon]),
+            (
+                "sanctum_of_immortality",
+                "Guatelitzi",
+                &[Slot::BodyArmour, Slot::Amulet, Slot::Ring, Slot::Belt],
+            ),
+            (
+                "storm_of_corruption",
+                "Topotante",
+                &[Slot::Gloves, Slot::Shield, Slot::Weapon],
+            ),
+            (
+                "toxic_grove",
+                "Tacati",
+                &[Slot::BodyArmour, Slot::Shield, Slot::Weapon],
+            ),
         ];
 
         let actual_keys: Vec<&str> = DROPS
@@ -1447,6 +1479,52 @@ mod tests {
             assert_eq!(temple_mod.architect(), architect, "{key} architect");
             assert_eq!(temple_mod.slots(), slots, "{key} slots");
         }
+    }
+
+    // The overlay draws the "Appears on:" glyphs straight off this array, so
+    // the array's order IS the reading order: armour top-to-bottom, then
+    // jewellery, then shield, then weapon. The wiki's Classes column is in a
+    // different order, and a row transcribed from it lands here. Fails on a
+    // row written in column order, and on a slot listed twice.
+    #[test]
+    fn every_temple_mod_lists_its_slots_in_display_order() {
+        const DISPLAY_ORDER: [Slot; 9] = [
+            Slot::Helmet,
+            Slot::BodyArmour,
+            Slot::Gloves,
+            Slot::Boots,
+            Slot::Amulet,
+            Slot::Ring,
+            Slot::Belt,
+            Slot::Shield,
+            Slot::Weapon,
+        ];
+        let rank = |slot: Slot| {
+            DISPLAY_ORDER
+                .iter()
+                .position(|candidate| *candidate == slot)
+                .expect("DISPLAY_ORDER names every variant")
+        };
+
+        let mut checked = 0;
+        for row in DROPS.iter() {
+            let Some(temple_mod) = row.temple_mod() else {
+                continue;
+            };
+            let ranks: Vec<usize> = temple_mod.slots().iter().map(|slot| rank(*slot)).collect();
+            let mut ascending = ranks.clone();
+            ascending.sort_unstable();
+            ascending.dedup();
+            assert_eq!(
+                ranks,
+                ascending,
+                "{} lists {:?}, not display order",
+                row.key(),
+                temple_mod.slots()
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 7, "the temple-mod rows moved out from under this");
     }
 
     // DROPS is keyed 1:1 on LINES and in the same order, which is what makes
@@ -1925,7 +2003,7 @@ mod tests {
             temple_mod: Some(TempleMod {
                 architect: "Puhuarte",
                 item_hint: "temple gloves",
-                slots: &[Slot::Gloves],
+                slots: &[Slot::Helmet, Slot::Gloves, Slot::Amulet],
                 source: VERTOLKA_SHEET,
                 per_run: Some(Estimate::guess(2.0, VERTOLKA_MSG)),
                 base_price_chaos: None,

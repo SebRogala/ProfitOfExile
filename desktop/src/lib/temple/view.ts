@@ -528,11 +528,13 @@ export interface OfferBox {
 	/** What the prices behind this box's numbers are — `marketNote()`'s one
 	 *  line (POE-258).
 	 *
-	 *  On EVERY box, including a live one: the box's whole job is to make a
-	 *  comparison readable at arm's length over a game, and "these two numbers
-	 *  came from the grade ladder, not from the market" is the difference
-	 *  between a ranking the player can trust and one they cannot. */
+	 *  Retained on every box as the page's and the tests' answer, but no longer
+	 *  DRAWN: since POE-277 the box repeats this line only when it warns
+	 *  (`ageLine`), because a fresh live read printing its own age was a row of
+	 *  noise on every board. */
 	market: string;
+	/** The market note only when it warns; fresh prices omit this row. */
+	ageLine: string | null;
 
 	// ------------------------------------------- what the number is (POE-260)
 
@@ -561,13 +563,14 @@ export interface OfferBox {
 	/** `"floor · 2 unpriced"` on a partial sum, else null. It replaces
 	 *  `per run` in the value row, so the row's height does not move. */
 	chip: string | null;
-	/** The marks beside the value: `F` where the ladder priced the room, `G`
-	 *  where the number rests on an estimate and there is no driver row to
-	 *  carry that mark instead. */
+	/** The single box-level provenance marks beside the value: `F` for the grade
+	 *  fallback and `G` when any value term is guessed. */
 	marks: BoxMark[];
 	/** The dropped items and the sale, in display order, at most
 	 *  [`FULL_DRIVER_ROWS`]. */
 	drivers: OfferDriver[];
+	/** The unique/vial cells in their fixed two-column order; null means absent. */
+	dropPair: [OfferDriver | null, OfferDriver | null];
 	/** How many rows there were before the cap — what the collapse rule reads
 	 *  (`offersCompact` in `overlay-geometry.ts`). */
 	driverCount: number;
@@ -608,6 +611,7 @@ export interface OfferLadder {
 export interface OfferMod {
 	name: string;
 	hint: string | null;
+	/** Item classes this mod family can roll on; empty when the sheet names none. */
 	slots: ItemSlotId[];
 	price: string;
 	perRun: string | null;
@@ -841,6 +845,14 @@ function offerDriverTerms(value: RoomValueView, state: OfferValueState): DriverT
 		});
 }
 
+/** The full form's fixed drop columns: unique on the left, vial on the right. */
+export function offerDropPair(drivers: OfferDriver[]): [OfferDriver | null, OfferDriver | null] {
+	return [
+		drivers.find((driver) => driver.kind === 'unique') ?? null,
+		drivers.find((driver) => driver.kind === 'vial') ?? null
+	];
+}
+
 /**
  * Whether this box's rows are the TIER-3 room's terms, copied unscaled — and
  * the one rule that follows from it (epic lock L2).
@@ -973,8 +985,8 @@ function offerChip(state: OfferValueState, rows: OfferDriver[]): string | null {
 }
 
 /** The marks beside the value itself. `rows` is every term, for the same
- *  reason [`offerChip`]'s is: the roll-up below is about whether ANY row
- *  carries the mark, and a folded row carries it just as well as a drawn one. */
+ *  reason [`offerChip`]'s is: a folded term still makes the whole number
+ *  guessed. Per-row marks remain in the view data but are not rendered. */
 function offerBoxMarks(
 	value: RoomValueView,
 	state: OfferValueState,
@@ -982,10 +994,7 @@ function offerBoxMarks(
 ): BoxMark[] {
 	const marks: BoxMark[] = [];
 	if (state === 'fallback') marks.push('F');
-	// `G` rolls up to the box only when there is no row to carry it. With rows
-	// on screen the estimate is attributable — this count, that price — and a
-	// second mark saying the same thing at box level is noise.
-	if (value.guessed && rows.length === 0) marks.push('G');
+	if (value.guessed || rows.some((row) => row.marks.includes('G'))) marks.push('G');
 	return marks;
 }
 
@@ -1069,8 +1078,10 @@ export function offerBoxSignature(box: OfferBox, compact: boolean): string {
 		box.ladder ? 'ladder' : '-',
 		box.ladder?.quant ? 'q' : '-',
 		box.ladder?.rarity ? 'r' : '-',
+		box.dropPair.map((driver) => driver?.kind ?? '-').join('/'),
 		box.mod ? 1 : 0,
-		box.mod?.slots.length ?? 0
+		box.mod?.slots.length ?? 0,
+		box.ageLine ? 'age' : '-'
 	].join(' ');
 }
 
@@ -1152,6 +1163,7 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 	// the same market by construction (Rust values a read once), so a per-box
 	// answer would be the same string twice with room to drift.
 	const market = marketNote(slice.market, now);
+	const ageLine = offerAgeLine(slice.market, now, market);
 	return panel.offers.map((offer) => {
 		const pick = chosenIndex !== null && chosenIndex === offer.index;
 		// POE-260. Every number below comes from THIS object — the same
@@ -1184,6 +1196,7 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 			// would be saying that about the wrong box.
 			forced: pick ? forcedKillNote(advice) : null,
 			market,
+			ageLine,
 			// The ladder's boxes carry no chaos number, and neither does an
 			// unresolved offer — `valueText` says which of the two it is.
 			value: value === null || state === 'fallback' ? null : value.total,
@@ -1192,6 +1205,7 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 			chip: state === null ? null : offerChip(state, allRows),
 			marks: value === null || state === null ? [] : offerBoxMarks(value, state, allRows),
 			drivers,
+			dropPair: offerDropPair(drivers),
 			driverCount: terms.length,
 			fold: value === null ? null : offerFold(value, terms),
 			bonus: value === null ? null : offerBonusLine(value),
@@ -1496,4 +1510,12 @@ export function marketNote(market: MarketView, now: number = Date.now()): string
 	}
 	if (market.unavailable) return 'prices unavailable — base values';
 	return `prices ${marketAge(market.asOf, now)} old`;
+}
+
+/** The full and compact forms repeat the market note only when it warns. */
+function offerAgeLine(market: MarketView, now: number, note: string): string | null {
+	const warning =
+		marketStale(market, now) ||
+		note.startsWith('prices unavailable');
+	return warning ? note : null;
 }

@@ -93,13 +93,16 @@ export type SlotId =
 	| 'E1'
 	| 'E2';
 
-/** Item slots named by a temple architect's mod family. */
+/** Item classes a temple architect's mod family can roll on. */
 export type ItemSlotId =
-	| 'ring'
-	| 'amulet'
+	| 'helmet'
 	| 'body_armour'
 	| 'gloves'
 	| 'boots'
+	| 'amulet'
+	| 'ring'
+	| 'belt'
+	| 'shield'
 	| 'weapon';
 
 /** `"C1-C2"` — a corridor, endpoints in `SlotId` order, joined by a hyphen. */
@@ -358,6 +361,7 @@ export interface OfferView {
 export interface LineView {
 	modArchitect: string | null;
 	modHint: string | null;
+	/** Item classes this mod family can roll on, in the verified table order. */
 	modSlots: ItemSlotId[];
 	quantityPct: [number, number, number] | null;
 	rarityPct: [number, number, number] | null;

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import offerBoxesSource from './TempleOfferBoxes.svelte?raw';
 import {
 	COL_PITCH,
 	EDGE_STATE_LABEL,
@@ -952,6 +953,7 @@ describe('offerBoxes', () => {
 			'prices 12 min old',
 			'prices 12 min old'
 		]);
+		expect(boxes.map((box) => box.ageLine)).toEqual([null, null]);
 	});
 
 	it('says on the box when the ranking is running on base values', () => {
@@ -964,6 +966,7 @@ describe('offerBoxes', () => {
 		const boxes = offerBoxes(cold, NOW);
 
 		expect(boxes[0].market).toBe('prices unavailable — base values');
+		expect(boxes[0].ageLine).toBe('prices unavailable — base values');
 	});
 
 	it("prices its line off the READ's market and never off the latest poll", () => {
@@ -1009,6 +1012,7 @@ describe('offerBoxes', () => {
 
 		expect(boxes[0].market).toBe('prices stale (3 h)');
 		expect(boxes[0].stale).toBe(true);
+		expect(boxes[0].ageLine).toBe('prices stale (3 h)');
 	});
 });
 
@@ -1228,6 +1232,63 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		});
 	});
 
+	it('gives the mod cell a price its drawer can tell apart from having none', () => {
+		const noPrice = only(
+			offer({
+				line: {
+					modArchitect: 'Puhuarte',
+					modHint: 'temple gloves',
+					modSlots: [],
+					quantityPct: null,
+					rarityPct: null
+				},
+				value: value({ priced: 'partial', drivers: [modTerm({ unitPrice: null, chaos: null })] })
+			})
+		);
+		const priced = only(
+			offer({
+				line: {
+					modArchitect: 'Puhuarte',
+					modHint: 'temple gloves',
+					modSlots: [],
+					quantityPct: null,
+					rarityPct: null
+				},
+				value: value({ drivers: [modTerm()] })
+			})
+		);
+		const fallback = only(
+			offer({
+				line: {
+					modArchitect: 'Puhuarte',
+					modHint: 'temple gloves',
+					modSlots: [],
+					quantityPct: null,
+					rarityPct: null
+				},
+				value: value({ priced: 'fallback', drivers: [] })
+			})
+		);
+
+		expect(noPrice.mod?.price).toBe('no price');
+		expect(priced.mod?.price).toBe('30c');
+		expect(fallback.mod?.price).toBe('—');
+	});
+
+	it('draws the mod price cell only when a real number sits in it', () => {
+		// The two stand-ins above are the box's answer to "what does this rare
+		// go for", and neither is a number: `no price` means the sheet named
+		// none and `—` means the ladder priced the room. Printing either in the
+		// parenthesis beside the architect's name would read as a quote.
+		//
+		// Read off the source because this app has no DOM harness for a
+		// `.svelte` file — the same seam `overlay-geometry.test.ts` uses.
+		const modBlock = offerBoxesSource.slice(offerBoxesSource.indexOf('{#if box.mod}'));
+
+		expect(modBlock).toContain("{#if box.mod.price !== 'no price' && box.mod.price !== '—'}");
+		expect(modBlock.match(/\{box\.mod\.price\}/g)).toHaveLength(1);
+	});
+
 	it('excludes the mod row from visible driver counts', () => {
 		const box = only(
 			offer({ value: value({ drivers: [saleTerm(), uniqueTerm(), vialTerm(), modTerm()] }) })
@@ -1258,11 +1319,11 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.chip).toBe('floor · 1 unpriced');
 	});
 
-	it('keeps a mod estimate on its row instead of the box', () => {
+	it('rolls a mod estimate up to the box while retaining its row data', () => {
 		const box = only(offer({ value: value({ guessed: true, drivers: [modTerm()] }) }));
 
 		expect(box.mod?.marks).toEqual(['G']);
-		expect(box.marks).toEqual([]);
+		expect(box.marks).toEqual(['G']);
 	});
 
 	it('does not call a mod-only line an empty unique and vial drop', () => {
@@ -1283,6 +1344,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 			['unique', 'Story of the Vaal'],
 			['vial', 'Vial of Fate']
 		]);
+		expect(box.dropPair.map((driver) => driver?.kind ?? null)).toEqual(['unique', 'vial']);
 	});
 
 	it('prints the ITEM price and its count on a drop row, not the term it contributed', () => {
@@ -1295,6 +1357,25 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.drivers[0].price).toBe('68c');
 		expect(box.drivers[0].perRun).toBe('×0.25');
 		expect(box.drivers[0].iconName).toBe('Story of the Vaal');
+		expect(box.dropPair.map((driver) => driver?.kind ?? null)).toEqual(['unique', null]);
+	});
+
+	it('puts a vial-only drop in the vial cell and leaves the unique cell empty', () => {
+		const box = only(offer({ value: value({ drivers: [vialTerm()] }) }));
+
+		expect(box.drivers.map((driver) => driver.kind)).toEqual(['vial']);
+		expect(box.dropPair.map((driver) => driver?.kind ?? null)).toEqual([null, 'vial']);
+	});
+
+	it('never lifts a sale into a drop cell', () => {
+		// The full form draws the sale on its own full-width row above the
+		// two-column drop cell, because a sale is chaos the room pays out and a
+		// drop is an item that falls out of it. A sale in a drop cell would sit
+		// under a unique's 39 px icon column with no icon to put there.
+		const box = only(offer({ value: value({ drivers: [saleTerm()] }) }));
+
+		expect(box.drivers.map((driver) => driver.kind)).toEqual(['sale']);
+		expect(box.dropPair).toEqual([null, null]);
 	});
 
 	// The count on the row beside it is no longer a number anybody typed:
@@ -1431,7 +1512,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.drivers[0].price).toBe('no price');
 	});
 
-	it('shows the LETTER and an F mark where the ladder priced the room', () => {
+	it('shows the LETTER with F and G marks where the ladder priced the room', () => {
 		// Epic lock L4: no market, no chaos number. The grade is the answer and
 		// the box says so rather than printing a rung as if it were a price.
 		const box = only(
@@ -1443,7 +1524,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 
 		expect(box.valueText).toBe('grade A++');
 		expect(box.value).toBeNull();
-		expect(box.marks).toEqual(['F']);
+		expect(box.marks).toEqual(['F', 'G']);
 	});
 
 	it('words an instrumental line as what it DOES, never as a missing price', () => {
@@ -1691,18 +1772,44 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.drivers[1].marks).toEqual(['L', 'G']);
 	});
 
-	it('rolls the guess up to the box only when there is no row to carry it', () => {
-		// With rows on screen the estimate is attributable — this count, that
-		// price — and a box-level mark saying the same thing again is noise. An
-		// instrumental line has no rows at all, so its `G` has nowhere else to
-		// go.
-		const withRows = only(offer({ value: value({ guessed: true, drivers: [uniqueTerm()] }) }));
+	it('rolls any guessed term up to the single box value mark', () => {
+		// The value mark is the one provenance signal on the compact header. It
+		// remains true whether the guessed term has a visible row or is folded.
+		const withRows = only(offer({ value: value({ guessed: false, drivers: [uniqueTerm()] }) }));
 		const without = only(
 			offer({ value: value({ priced: 'instrumental', guessed: true, drivers: [] }) })
 		);
 
-		expect(withRows.marks).toEqual([]);
+		expect(withRows.marks).toEqual(['G']);
 		expect(without.marks).toEqual(['G']);
+	});
+
+	it('does not mark the box when no value term is guessed', () => {
+		const box = only(
+			offer({
+				value: value({
+					guessed: false,
+					drivers: [uniqueTerm({ guessed: false }), vialTerm({ guessed: false })]
+				})
+			})
+		);
+
+		expect(box.marks).toEqual([]);
+	});
+
+	it('keeps the fallback F mark when its terms are not guessed', () => {
+		const box = only(
+			offer({
+				grade: 'A',
+				value: value({
+					priced: 'fallback',
+					guessed: false,
+					drivers: [uniqueTerm({ guessed: false, unitPrice: null, chaos: null })]
+				})
+			})
+		);
+
+		expect(box.marks).toEqual(['F']);
 	});
 
 	it('reports the market\'s own staleness, not the value\'s withheld age', () => {
@@ -1874,6 +1981,14 @@ describe('offerBoxSignature', () => {
 		expect(offerBoxSignature(two, false)).not.toBe(offerBoxSignature(one, false));
 	});
 
+	it('changes when the unique/vial row changes from one cell to two', () => {
+		const one = box({});
+		const vial = { ...one.drivers[0], kind: 'vial' as const };
+		const paired = box({ dropPair: [one.drivers[0], vial] });
+
+		expect(offerBoxSignature(paired, false)).not.toBe(offerBoxSignature(one, false));
+	});
+
 	it('changes when the form does', () => {
 		expect(offerBoxSignature(box({}), true)).not.toBe(offerBoxSignature(box({}), false));
 	});
@@ -1891,6 +2006,15 @@ describe('offerBoxSignature', () => {
 		});
 
 		expect(offerBoxSignature(withOne, false)).not.toBe(offerBoxSignature(without, false));
+	});
+
+	it('keys on the warning age row being there, not on its wording', () => {
+		const fresh = box({ ageLine: null });
+		const warning = box({ ageLine: 'prices stale (2 h)' });
+		const otherWarning = box({ ageLine: 'prices stale (3 h)' });
+
+		expect(offerBoxSignature(warning, false)).not.toBe(offerBoxSignature(fresh, false));
+		expect(offerBoxSignature(otherWarning, false)).toBe(offerBoxSignature(warning, false));
 	});
 
 	it('changes when the ladder shape changes', () => {
