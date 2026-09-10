@@ -97,11 +97,12 @@
 
 	let recalibrating = $state(false);
 
-	// Drops the one remembered screen scale and re-arms both modules that
-	// measure it, so the next capture of either re-measures. Rust owns the whole
-	// sequence — see `ssot::geometry_recalibrate` — so this only asks and then
-	// re-reads the snapshot, rather than waiting up to a poll interval for the
-	// eager nudge.
+	// Drops the one remembered screen scale, re-arms both modules that measure
+	// it, and then MEASURES a base from a fresh grab (POE-278) — resolution,
+	// display, origin, client rect, and a `uiScale` derived from the height. Rust
+	// owns the whole sequence — see `ssot::geometry_recalibrate` — so this only
+	// asks and then re-reads the snapshot, rather than waiting up to a poll
+	// interval for the eager nudge.
 	async function recalibrateGeometry() {
 		recalibrating = true;
 		try {
@@ -1257,7 +1258,9 @@
 
 			<p class="setting-note">
 				Remembered once measured; verified on use; re-measured only when the screen or
-				game-client geometry changes, verification fails, or you press Recalibrate.
+				game-client geometry changes, verification fails, or you press Recalibrate —
+				which measures a base from the screen itself, without needing either module
+				running. Merc and Temple refine the scale from the game's art when they next run.
 			</p>
 		</section>
 

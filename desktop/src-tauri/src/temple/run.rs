@@ -1766,6 +1766,7 @@ fn hint_from_slice(
     Option<CheapHint>,
     Option<crate::ssot::ScreenScaleSource>,
     bool,
+    Option<[i32; 2]>,
 ) {
     let screen = {
         let state = app.state::<AppState>();
@@ -1773,7 +1774,15 @@ fn hint_from_slice(
         *slot
     };
     let hint = cheap_hint_from_screen(screen.as_ref(), capture, monitor_id, client);
-    (hint, screen.map(|s| s.source), screen.is_some())
+    // The ANCHORED origin, which is a different question from the hint's
+    // origin: `ssot::placements` answers the latter with a SEED for any
+    // non-null slice, so the hint alone cannot tell "a plate was found here"
+    // from "arithmetic put the centre here". `cold_sweep_reason` needs the
+    // first — see the note on its `placed_origin`.
+    let anchored = screen
+        .and_then(|screen| screen.anchors)
+        .and_then(|anchors| anchors.temple_entrance);
+    (hint, screen.map(|s| s.source), screen.is_some(), anchored)
 }
 
 /// Why one explicit cold fallback is allowed for a failed placed recheck.
@@ -1792,6 +1801,23 @@ enum ColdSweepReason {
 /// fallback per key only under the Manual arm (Re-arm). The caller records the
 /// returned reason before invoking the sweep, which makes a miss consume the
 /// same one-shot budget as a successful sweep.
+///
+/// # `placed_origin` is the ANCHORED origin, never the hint's (POE-278)
+///
+/// "Placed" here means a plate was FOUND at this origin — `anchors.temple_entrance`
+/// — and not merely that arithmetic proposed one. The two used to coincide by
+/// accident: the only way to reach this with a non-null slice was for a module
+/// to have measured the screen, and Recalibrate emptied the slot, so a press
+/// reliably produced the `NullSlice` arm.
+///
+/// Recalibrate now leaves a capture-derived slice standing, and
+/// `ssot::placements` answers `entrance_origin` with a SEED for any non-null
+/// slice. Feeding that seed in here would read "a screen exists" as "the
+/// placement has been verified" and drop the press straight into the
+/// `PlacedMiss` arm, which fires only under a Manual arm — so a player who
+/// pressed the button because their placement was wrong would get NO sweep on
+/// an `AlvaStart` or `TempleArea` arm, which is the one case the button exists
+/// to fix.
 ///
 /// # Why AlvaStart and TempleArea buy no sweep (owner decision, 2026-09-09)
 ///
@@ -2546,7 +2572,7 @@ fn tick(
     // placements owns the Entrance origin and the scale crosses units through
     // anchor::scale_for_ui_scale. The value is local to this tick; no prior
     // read can supply an origin.
-    let (cheap_hint, hint_source, screen_present) =
+    let (cheap_hint, hint_source, screen_present, anchored_origin) =
         hint_from_slice(app, capture, monitor_id, client);
     let hint = cheap_hint.map(|hint| hint.calibration);
     if let Some(line) = hint_line(&mut session.hint_said, hint, hint_source) {
@@ -2575,9 +2601,13 @@ fn tick(
     // A null/unplaced slice gets one cold start per key, plus one retry when a
     // found anchor is withheld. A placed miss gets one fallback only under the
     // Manual arm — see `cold_sweep_reason`.
+    //
+    // The ANCHORED origin, not the hint's: the hint carries a seed on any
+    // non-null slice, and passing that would read every screen that merely
+    // EXISTS as one whose placement has been verified (POE-278).
     let reason = cold_sweep_reason(
         screen_present,
-        cheap_hint.as_ref().map(|hint| hint.origin),
+        anchored_origin.map(|[x, y]| (x, y)),
         &cheap,
         source,
         key,
@@ -4613,35 +4643,61 @@ mod tests {
         assert_eq!(next_released_key, Some(NEXT_BOARD));
     }
 
-    /// Recalibrate empties the slice and changes the key the null-slice budget
-    /// belongs to, so the next Temple tick sweeps and can publish a fresh
-    /// corroborated measurement. This restores the deleted end-to-end decision
-    /// seam without reintroducing the retired cadence gate.
+    /// Recalibrate re-arms the key the null-slice budget belongs to, so the next
+    /// Temple tick sweeps and can publish a fresh corroborated measurement. This
+    /// restores the deleted end-to-end decision seam without reintroducing the
+    /// retired cadence gate.
+    ///
+    /// The state it builds is the one the command actually LEAVES since POE-278:
+    /// a capture-derived slice standing, `screen_present == true`, a seeded
+    /// Entrance origin in the hint — and NO anchor. Before POE-278 this test
+    /// built `cheap_hint_from_screen(None, ..)` and passed `screen_present =
+    /// false`, which the command can no longer produce; it stayed green while
+    /// the press had stopped granting the sweep at all.
     #[test]
     fn recalibrate_leaves_the_temple_sweeping_and_republishing() {
         let capture = (1920, 1080);
         let client = [0, 0, capture.0 as i32, capture.1 as i32];
-        let hint = cheap_hint_from_screen(None, capture, 7, client);
-        assert!(hint.is_none(), "Recalibrate leaves the temple without a placed hint");
+        let measured = crate::ssot::screen_from_geometry(
+            capture.0,
+            capture.1,
+            7,
+            LIVE_CAPTURE_ORIGIN,
+            client,
+            1_700_000_000_001,
+        );
+        assert_eq!(measured.anchors, None, "the press leaves no anchor to verify");
+        let hint = cheap_hint_from_screen(Some(&measured), capture, 7, client);
+        assert!(
+            hint.is_some(),
+            "the press leaves a SEEDED hint standing — the state that used to be null",
+        );
 
         let cheap = saw_nothing();
-        let placed_origin = hint.as_ref().map(|hint| hint.origin);
+        // What `cold_sweep_reason` is handed: the ANCHORED origin, which the
+        // press left empty. Handing it the hint's seeded origin instead is the
+        // POE-278 regression, and flips every assertion below to `None`.
+        let placed_origin = measured
+            .anchors
+            .and_then(|anchors| anchors.temple_entrance)
+            .map(|[x, y]| (x, y));
+        assert_eq!(placed_origin, None);
 
         let before = (4, 0);
         assert_eq!(
-            cold_sweep_reason(false, placed_origin, &cheap, None, before, None, None),
+            cold_sweep_reason(true, placed_origin, &cheap, None, before, None, None),
             Some(ColdSweepReason::NullSlice),
             "an unspent null-slice key permits the cold-start sweep",
         );
         assert_eq!(
-            cold_sweep_reason(false, placed_origin, &cheap, None, before, None, Some(before)),
+            cold_sweep_reason(true, placed_origin, &cheap, None, before, None, Some(before)),
             None,
             "the null-slice fallback key is spent after its attempt",
         );
         let after_recalibrate = (4, 1);
         assert_eq!(
             cold_sweep_reason(
-                false,
+                true,
                 placed_origin,
                 &cheap,
                 None,
@@ -4653,20 +4709,39 @@ mod tests {
             "Recalibrate's rearm creates a fresh fallback key",
         );
 
+        // The sweep runs against the slice the press LEFT, not an empty one, and
+        // its anchor converts to the same 0.90 the height implies at 1080p —
+        // i.e. inside `OCR_DRIFT_BAND`. It must still be published: a cue that
+        // read the art has to be able to overwrite the derivation, or pressing
+        // Recalibrate would make `temple-anchor` unreachable on this machine.
         let swept = screen_from_anchor(
             LIVE_CAPTURE_SCALE,
-            None,
+            // The hint the tick derives FROM the standing slice — which since
+            // POE-278 exists after a press, so the anchor is corroborated
+            // against `hint_disagreement_line` rather than the capture height.
+            hint.as_ref().map(|hint| hint.calibration),
             capture,
             7,
             LIVE_CAPTURE_ORIGIN,
             client,
             1_700_000_000_002,
         )
-        .expect("the corroborated anchor fits the empty slice's capture geometry");
-        let mut slot = None;
+        .expect("the corroborated anchor fits the standing slice's capture geometry");
+        assert!(
+            (swept.ui_scale - measured.ui_scale).abs() <= 0.01,
+            "the anchor agrees with the derived value to within the drift band, which is \
+             what makes the publish below a real test of the override",
+        );
+        let mut slot = Some(measured);
         let record = crate::ssot::record_screen(&mut slot, swept);
         assert!(record.accepted && record.changed, "the corroborated sweep is published");
-        let published = slot.expect("the published sweep fills the empty slice");
+        let published = slot.expect("the published sweep replaces the derived slice");
+        assert_eq!(
+            published.source,
+            crate::ssot::ScreenScaleSource::TempleAnchor,
+            "the verifying cue takes the slice back from the derivation",
+        );
+        assert!(published.verified_this_session);
         assert_eq!((published.width, published.height), capture);
         assert_eq!(published.ui_scale, swept.ui_scale);
         assert_eq!(published.source, swept.source);
