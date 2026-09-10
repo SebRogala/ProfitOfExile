@@ -399,12 +399,22 @@ impl ScreenScaleSetting {
     /// - `Remembered` — stored unchanged, which is what lets a session that
     ///   loaded a value and never measured write back what it loaded instead of
     ///   nulling it on the first unrelated save.
+    /// - `Capture` — stored (POE-278). It is derived rather than measured off
+    ///   the art, which is why it verifies nothing and yields to every real cue
+    ///   — but "derived" is not "unreliable": the dimensions, display, origin
+    ///   and client it carries are read off a real grab, and the scale is
+    ///   arithmetic that will reproduce identically on the next grab of the
+    ///   same screen. Refusing it would mean a Recalibrate press bought the
+    ///   user one session, and a machine running neither module would be back
+    ///   to the hard 1080p assumption on every restart — the state POE-278 was
+    ///   filed for. It reads back as `Remembered`, like everything else stored.
     pub fn from_slice(slice: &crate::ssot::ScreenSlice) -> Option<Self> {
         match slice.source {
             crate::ssot::ScreenScaleSource::MercOcr => None,
             crate::ssot::ScreenScaleSource::MercFrame
             | crate::ssot::ScreenScaleSource::TempleAnchor
-            | crate::ssot::ScreenScaleSource::Remembered => Some(Self {
+            | crate::ssot::ScreenScaleSource::Remembered
+            | crate::ssot::ScreenScaleSource::Capture => Some(Self {
                 width: slice.width,
                 height: slice.height,
                 ui_scale: slice.ui_scale,
@@ -1347,6 +1357,24 @@ mod tests {
         );
     }
 
+    /// The Recalibrate press has to outlive the session it was made in. A
+    /// machine running neither module has no other way to reach the file at
+    /// all, so refusing this would mean the button bought one session and the
+    /// hard 1080p assumption came back on the next launch (POE-278).
+    #[test]
+    fn a_capture_derived_screen_scale_is_persisted() {
+        let state = test_app_state();
+        *state.screen.lock().unwrap() =
+            Some(measured_screen(crate::ssot::ScreenScaleSource::Capture));
+
+        let stored = from_state(&state)
+            .screen_scale
+            .expect("a Recalibrate press must survive a restart");
+
+        assert_eq!((stored.width, stored.height), (1920, 1080));
+        assert_eq!(stored.ui_scale, 0.9);
+    }
+
     /// A session that loaded a scale and never measured one writes back what
     /// it loaded. Without this the first save from any command nulls the field
     /// (the whole file is rewritten from `from_state`) and the remembered
@@ -1365,6 +1393,34 @@ mod tests {
         assert_eq!((stored.width, stored.height), (1920, 1080));
         assert_eq!(stored.ui_scale, 0.9);
         assert_eq!(stored.measured_at_ms, 1_724_000_000_000);
+    }
+
+    /// The full cycle the `Capture` doc claims: stored by `from_slice`, read
+    /// back by `apply_to_state` under the `Remembered` label — never as
+    /// `Capture`, because a load is not a measurement whatever produced the
+    /// numbers. Without the round trip, a change that special-cased `Capture`
+    /// on the load side would pass every other test in this file.
+    #[test]
+    fn a_capture_derived_screen_scale_reloads_as_remembered() {
+        let state = test_app_state();
+        *state.screen.lock().unwrap() =
+            Some(measured_screen(crate::ssot::ScreenScaleSource::Capture));
+        let saved = from_state(&state);
+
+        let reloaded = test_app_state();
+        let _ = apply_to_state(&saved, &reloaded);
+
+        let slice = reloaded
+            .screen
+            .lock()
+            .unwrap()
+            .expect("the stored press comes back at startup");
+        assert_eq!(slice.source, crate::ssot::ScreenScaleSource::Remembered);
+        assert_eq!(slice.ui_scale, 0.9);
+        assert!(
+            !slice.verified_this_session,
+            "a load is not a verification, whatever measured the numbers",
+        );
     }
 
     /// A save triggered by some OTHER command must not lose the remembered

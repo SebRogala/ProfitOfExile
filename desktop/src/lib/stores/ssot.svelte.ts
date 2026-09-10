@@ -73,7 +73,12 @@ const POOLS = ['skill', 'transfigured'] as const;
  * Nothing here does that arithmetic — the webview reads the slice Rust settled
  * on.
  */
-export type ScreenScaleSource = 'merc-frame' | 'merc-ocr' | 'temple-anchor' | 'remembered';
+export type ScreenScaleSource =
+	| 'merc-frame'
+	| 'merc-ocr'
+	| 'temple-anchor'
+	| 'remembered'
+	| 'capture';
 
 /** Capture-relative module origins learned after the screen seed. */
 export interface Anchors {

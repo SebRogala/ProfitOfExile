@@ -34,7 +34,8 @@ const SOURCE_LABELS: Record<string, string> = {
 	'merc-frame': 'merc support grid',
 	'merc-ocr': 'merc OCR line pitch',
 	'temple-anchor': 'temple Entrance plate',
-	remembered: 'remembered from a previous run'
+	remembered: 'remembered from a previous run',
+	capture: "derived from this screen's resolution"
 };
 
 /** The five rows the Settings "Screen geometry" card prints. */
@@ -85,6 +86,14 @@ function placementText(placements: Placements | null): ScreenGeometryView['place
 	};
 }
 
+/** The `verified` row: whether a cue looked at the game's art, and — when none
+ *  did — which of the two unverified states this is. */
+function verifiedText(screen: ScreenSlice): string {
+	if (screen.verifiedThisSession) return 'Yes';
+	if (screen.source === 'capture') return "No — derived from this screen's resolution";
+	return 'No — trusted from last session';
+}
+
 /**
  * What to print for `screen`, with `now` as the clock the relative age is
  * measured against (passed in so the caller owns the tick and the function stays
@@ -120,7 +129,14 @@ export function screenGeometryView(
 		// the row is never a bare "No" the reader has to interpret as a fault:
 		// a trusted-from-last-session scale is the normal state of a launch that
 		// has not opened a recruit window yet, not a broken one.
-		verified: screen.verifiedThisSession ? 'Yes' : 'No — trusted from last session',
+		//
+		// `capture` needs its own wording rather than that one (POE-278): a
+		// Recalibrate press measured THIS run's screen and then derived the
+		// scale from its height, so "trusted from last session" would be false
+		// on both halves — it was taken now, and no previous session is
+		// involved. What it shares with the other unverified sources is only
+		// that no cue looked at the game's art.
+		verified: verifiedText(screen),
 		unmeasured: false,
 		placements: placementText(placements)
 	};

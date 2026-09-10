@@ -144,6 +144,8 @@ gap implicit.
 
 ### 5. Lifecycle: exactly three re-measures
 
+**Amended by POE-278 below: Recalibrate now MEASURES, and is a fourth writer.**
+
 A measurement is remembered and TRUSTED at start — `settings::apply_to_state`
 loads it back as `remembered`, and no module runs a blind sweep to re-derive it.
 It is VERIFIED by the consuming module on first use, and `verifiedThisSession`
@@ -199,13 +201,15 @@ and the read runs at up to 1 Hz.
   over the shared one does not, provided it carries its provenance and its
   accuracy.
 - **`source` is a label, not a rank.** `merc-frame` / `merc-ocr` /
-  `temple-anchor` / `remembered` say what LOOKED. `ssot::accepts` reads the
+  `temple-anchor` / `remembered` / `capture` (POE-278) say what LOOKED. `ssot::accepts` reads the
   label to refuse a band-limited cue that only re-states the standing value —
   unless it comes off a DIFFERENT display, which no drift band can explain
   (POE-237). There is no precedence table to consult and none to add.
 - **A machine can end up with no measurement at all, and that is correct.** The
   slice stays `null`, every consumer says "not measured yet", and nothing
-  substitutes 1.0.
+  substitutes 1.0. **Amended by POE-278**: correct for a consumer that fails
+  closed, damaging for the lab OCR loop, which crops a real rect rather than
+  declining to draw — see the amendment.
 - **The temple's anchor chain is a hint → table → sweep ladder, and the
   exhaustive sweep is unreachable from the loop.** `anchor_for_loop` tries the
   slice-derived hint, then the `MEASURED_SCALES` table, then the pyramid sweep
@@ -314,3 +318,50 @@ The null-slice fallback is unchanged. `temple/run.rs`, `cold_sweep_reason`.
 
 That release buys one retry only; a second withheld sweep keeps the key spent
 until the `(temple_epoch, temple_rearm)` key changes.
+
+## Amendment: Recalibrate measures a capture-derived base (POE-278, 2026-09-10)
+
+Sections 5 and the consequences above are amended on three points.
+
+**"Nothing else re-measures" gains a fourth writer, and it is the button
+itself.** Recalibrate is no longer only an emptying: after the clear, the
+re-arms and the forget-write, it grabs the screen and publishes what that grab
+states — dimensions, display, origin, client rect — with `ui_scale` DERIVED as
+`height / 1200` under the new `capture` source (`ssot::screen_from_geometry`).
+The forget half and its ordering are unchanged.
+
+**Why the button had to grow this.** Both existing writers are module-owned
+(`mercenary::run`, `temple::run`), so a player who runs neither module never had
+a measured screen at all — and the consequence "a machine can end up with no
+measurement at all, and that is correct" was doing real damage rather than
+failing closed: the lab's documented 1080p assumption is not a `null` a consumer
+refuses, it is a rect the OCR loop actually crops. On a 3840x2160 screen that is
+the top-left quarter of the gem band, and the button whose purpose is "the
+numbers are still wrong" cleared an already-empty slot and promised a re-measure
+by modules that were switched off. That consequence now reads: a machine can end
+up with no measurement until something looks — and a grab is something that can
+look without a module, a panel, or the game being in any particular state.
+
+**`source` is still a label and not a rank, but `capture` appears on both sides
+of `ssot::accepts`.** Incoming, it never replaces anything (like `remembered`).
+STANDING, it is replaced by any cue on the art — including the two band-limited
+ones, band or no band. That override is not tidiness: the derivation assumes the
+game's UI scales with screen height and nothing else, which holds because PoE
+exposes no UI-scale control (its graphics options carry a render-resolution
+ratio and an upscale mode, neither of which changes the UI's size in the frame —
+owner-confirmed 2026-09-10), but it cannot see a non-linearity in the game's own
+scaling at a resolution nobody has measured. Only a cue on the art can. At 1080p
+a temple anchor converts to exactly the 0.90 the height implies, so without the
+override a press would pin the slice to an unverified label and lock out the one
+correction that matters.
+
+**`cold_sweep_reason`'s `placed_origin` now means ANCHORED, not seeded.** The
+two coincided by accident while the only route to a non-null slice was a module
+measurement: `ssot::placements` answers `entrance_origin` with a SEED for any
+non-null slice, so a standing capture-derived base read as "the placement has
+been verified" and dropped the press into the `PlacedMiss` arm, which fires
+under the Manual arm only. A player who pressed Recalibrate because their
+placement was wrong would then get no sweep on an AlvaStart or TempleArea arm.
+The predicate is fed `anchors.temple_entrance` instead. Windowed play remains
+out of scope and is unchanged by this: the derivation reads the monitor height,
+while a windowed client scales its UI to the window (POE-267/POE-272).

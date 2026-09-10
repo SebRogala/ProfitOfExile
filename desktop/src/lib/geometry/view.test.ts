@@ -123,6 +123,25 @@ describe('screenGeometryView', () => {
 		expect(view.verified).toBe('No — trusted from last session');
 	});
 
+	it('names the capture derivation rather than a previous run for a Recalibrate press', () => {
+		// A press measured THIS run's screen and derived the scale from its
+		// height, so 'trusted from last session' would be false on both halves.
+		// What it shares with the other unverified sources is only that no cue
+		// looked at the game's art.
+		const view = screenGeometryView(
+			{ ...referenceScreen, source: 'capture', verifiedThisSession: false },
+			NOW
+		);
+
+		expect(view.verified).toBe("No — derived from this screen's resolution");
+	});
+
+	it('reads the capture source in words', () => {
+		const view = screenGeometryView({ ...referenceScreen, source: 'capture' }, NOW);
+
+		expect(view.source).toBe("derived from this screen's resolution");
+	});
+
 	it('reports how long ago the measurement was taken, against the clock passed in', () => {
 		const view = screenGeometryView(referenceScreen, NOW);
 

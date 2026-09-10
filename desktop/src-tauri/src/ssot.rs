@@ -123,6 +123,61 @@ pub enum ScreenScaleSource {
     TempleAnchor,
     /// Loaded from settings at startup, not measured this run (WI-B2).
     Remembered,
+    /// Derived from the capture's own geometry — `height /
+    /// [`UI_SCALE_REFERENCE_HEIGHT`]` — with no cue on the game's art at all
+    /// (POE-278). The Settings **Recalibrate** press is its one writer.
+    ///
+    /// It exists because the two cues that came before it are both owned by a
+    /// MODULE: nothing measured a screen until a recruit window or a temple
+    /// panel was opened, so a player who runs neither module had the lab rects
+    /// cut from `crate::ASSUMED_UI_SCALE` and a hard 1080p client forever —
+    /// on a 3840x2160 screen that is the top-left QUARTER of the gem band.
+    ///
+    /// **What is measured and what is derived is not the same half.** The
+    /// dimensions, the monitor id, the origin and the client rectangle are read
+    /// straight off `crate::capture::Capture` and are as true as any other
+    /// writer's. Only `ui_scale` is derived, and it is exact for as long as one
+    /// assumption holds: that the game's UI scales with screen height and
+    /// nothing else. PoE has no UI-scale control — the graphics options carry a
+    /// render-resolution ratio and an upscale mode (NIS/FSR), which change how
+    /// the frame is drawn and not how big the UI is in it (owner-confirmed,
+    /// 2026-09-10) — so there is no user multiplier for this to be missing.
+    /// What it cannot see is a NON-LINEARITY in the game's own scaling at a
+    /// resolution nobody has measured; that is what makes it derived rather
+    /// than measured, and why it verifies nothing ([`verifies_the_screen`])
+    /// and yields to every real cue ([`accepts`]).
+    Capture,
+}
+
+/// The screen height [`ScreenSlice::ui_scale`] calls 1.0 — the height of the
+/// merc reference fixture, and the denominator every derived scale divides by.
+///
+/// This is the unit note's own number, stated as a constant because POE-278
+/// gave it an arithmetic USER: [`ui_scale_for_height`] is what a Recalibrate
+/// press turns a capture into. `temple::run` deliberately restates it instead
+/// of importing it (see the const there) — that file does not read this slice
+/// and does not want a dependency on it.
+pub const UI_SCALE_REFERENCE_HEIGHT: f32 = 1200.0;
+
+/// The `ui_scale` a screen of this height implies, under the one assumption
+/// [`ScreenScaleSource::Capture`] documents: the game's UI scales with screen
+/// HEIGHT and nothing else.
+///
+/// `crate::ASSUMED_UI_SCALE` is this function evaluated at 1080 and frozen —
+/// which is precisely the bug POE-278 fixes, because a constant cannot notice
+/// that the screen is 2160 tall.
+///
+/// A zero height answers `0.0` — the height is the NUMERATOR and the constant
+/// denominator is never zero, so this needs no guard and cannot produce a
+/// `NaN`. [`valid_scale`] refuses the `0.0` at the consuming end, which is
+/// where a screen that measured nothing is supposed to be caught. Stated
+/// because the obvious defence here (an `if height == 0` early return) is dead
+/// code that reads like it is load-bearing.
+///
+/// Pure so the one piece of arithmetic in the derivation is testable without a
+/// screen.
+pub fn ui_scale_for_height(height: u32) -> f32 {
+    height as f32 / UI_SCALE_REFERENCE_HEIGHT
 }
 
 /// The screen the game is drawn on and the game-UI scale measured on it
@@ -150,8 +205,11 @@ pub enum ScreenScaleSource {
 /// player shuts the window. This slice outlives the capture.
 ///
 /// **Writers.** Two detect ticks write here through [`publish_screen`] — the
-/// merc one and, since POE-234 WI-2, the temple's — and the startup load of a
-/// persisted value comes in under [`ScreenScaleSource::Remembered`] (WI-B2).
+/// merc one and, since POE-234 WI-2, the temple's — plus, since POE-278, the
+/// Settings **Recalibrate** command ([`geometry_recalibrate`]), which publishes
+/// a capture-derived base under [`ScreenScaleSource::Capture`] and is the one
+/// writer that needs no module running. The startup load of a persisted value
+/// comes in under [`ScreenScaleSource::Remembered`] (WI-B2).
 /// The temple gates its own OFFER before this rule ever sees it
 /// (`temple::run::screen_from_anchor`): an anchor has to be corroborated by the
 /// standing measurement, or by the capture's height when there is none, so what
@@ -789,6 +847,21 @@ pub fn verifies_the_screen(source: ScreenScaleSource) -> bool {
 /// - **`Remembered`** — never over anything. It is the startup seed: it fills
 ///   an empty slot and has nothing to say about a screen that has since been
 ///   measured.
+/// - **A standing `Capture` value** — replaced by ANY cue on the art, including
+///   the two band-limited ones. Stated as its own rule because it is the term
+///   that keeps the derivation from being a one-way door: see the note in the
+///   `MercOcr | TempleAnchor` arm below.
+/// - **`Capture` as the incoming value** — never over anything, and for a
+///   sharper reason than `Remembered`'s (POE-278). It is DERIVED from the capture's height, so on a
+///   screen where the game's scaling is linear it agrees with a `MercFrame` fit
+///   by construction and has nothing to add; and on a screen where it does NOT
+///   agree, the disagreement means the derivation's assumption is wrong THERE
+///   and the cue that looked at the art is the one to keep. Either way the
+///   answer is the same, which is why it gets `Remembered`'s flat refusal
+///   rather than the band the two estimating cues share: a band would let
+///   exactly the readings that prove it wrong overwrite the ones that are
+///   right. Its writer ([`geometry_recalibrate`]) empties the slot first, so
+///   the refusal never blocks the press that asked for it.
 ///
 /// An empty slot takes anything — there is nothing to protect.
 ///
@@ -806,9 +879,22 @@ pub(crate) fn accepts(current: Option<&ScreenSlice>, next: &ScreenSlice) -> bool
     };
     match next.source {
         ScreenScaleSource::MercFrame => true,
-        ScreenScaleSource::Remembered => false,
+        ScreenScaleSource::Remembered | ScreenScaleSource::Capture => false,
         ScreenScaleSource::MercOcr | ScreenScaleSource::TempleAnchor => {
-            different_monitor(current.monitor_id, next.monitor_id)
+            // A cue that looked at the game's art ALWAYS replaces a derived
+            // value, band or no band (POE-278). This term is what stops the
+            // derivation from becoming a trap: `Capture` cannot see a
+            // non-linearity in the game's own scaling, and the only cues that
+            // CAN see one are these — so holding them off because they agree
+            // with the arithmetic to within the band would lock out the one
+            // correction that matters, and on a screen where the arithmetic is
+            // right it would still pin the slice to an unverified label for the
+            // rest of the session. At 1080p a temple anchor converts to exactly
+            // the 0.90 the height implies, so without this the press would make
+            // `temple-anchor` unreachable on the machine the button was pressed
+            // on.
+            current.source == ScreenScaleSource::Capture
+                || different_monitor(current.monitor_id, next.monitor_id)
                 || current.width != next.width
                 || current.height != next.height
                 || current.client != next.client
@@ -1084,6 +1170,57 @@ where
     changed
 }
 
+/// The slice a screen grab implies on its own, with no cue on the game's art
+/// (POE-278) — the value [`geometry_recalibrate`] publishes.
+///
+/// Everything but the scale is carried straight off the capture; the scale is
+/// [`ui_scale_for_height`]. `anchors` is `None` because a grab has located no
+/// module panel, and on the one path that publishes this the standing anchors
+/// are already gone — [`geometry_recalibrate`] empties the whole slot before it
+/// measures, which is the forgetting half of the press doing exactly what it
+/// says. A remembered Entrance origin is re-found by the temple's own recheck;
+/// carrying one across a Recalibrate would defeat the button.
+///
+/// `measured_at_ms` is a parameter rather than a clock read, so the assembly is
+/// testable without one — the same reason `record_screen` takes its slot.
+pub fn screen_from_geometry(
+    width: u32,
+    height: u32,
+    monitor_id: u32,
+    origin: (i32, i32),
+    client: [i32; 4],
+    measured_at_ms: u64,
+) -> ScreenSlice {
+    let source = ScreenScaleSource::Capture;
+    ScreenSlice {
+        width,
+        height,
+        ui_scale: ui_scale_for_height(height),
+        source,
+        measured_at_ms,
+        // Not a verification and it must not claim to be one: nothing here
+        // looked at a pixel of the game's UI.
+        verified_this_session: verifies_the_screen(source),
+        monitor_id,
+        origin,
+        client,
+        anchors: None,
+    }
+}
+
+/// [`screen_from_geometry`] applied to a grab, stamped now. The adapter is
+/// separate so the arithmetic above never needs a `DynamicImage` to be tested.
+pub fn screen_from_capture(capture: &crate::capture::Capture) -> ScreenSlice {
+    screen_from_geometry(
+        capture.image.width(),
+        capture.image.height(),
+        capture.monitor_id,
+        capture.origin,
+        capture.client,
+        crate::mercenary::run::now_ms(),
+    )
+}
+
 /// Forget every remembered geometry measurement and force a fresh one
 /// (POE-227) — the Settings **Recalibrate** button.
 ///
@@ -1092,6 +1229,30 @@ where
 /// capture's dimensions change or the consuming module's own verification
 /// fails. This is what a user presses when neither fired and the numbers are
 /// still wrong.
+///
+/// # It MEASURES, it does not only forget (POE-278)
+///
+/// Forgetting was the whole of this command until POE-278, and on the machine
+/// that needed it most it did nothing a user could see: both writers of the
+/// screen slot are owned by a MODULE (`mercenary::run`, `temple::run`), so a
+/// player running neither had an empty slot, pressed a button that emptied it
+/// again, and kept the `crate::ASSUMED_UI_SCALE` 1080p rects — which on a
+/// 3840x2160 screen cut the gem band at a quarter of the size, and which the
+/// log line then promised would be "re-measured" by modules that were switched
+/// off. A grab of the screen is the one measurement that needs no module and no
+/// panel on screen, so this takes one.
+///
+/// What it establishes is the base every other placement is arithmetic on: the
+/// dimensions, the display, the origin, the client rectangle, and a `ui_scale`
+/// derived from the height ([`screen_from_geometry`]). Merc and temple still
+/// refine the scale from the art whenever they next run, and
+/// [`ScreenScaleSource::Capture`]'s [`accepts`] rule guarantees this value
+/// yields to them rather than the other way round.
+///
+/// A capture that fails is not a failed press: the forget half has already
+/// happened and is worth keeping (it is what un-sticks a wrong remembered
+/// value), so the command logs what went wrong and leaves the slot empty for a
+/// module to fill, exactly as it behaved before.
 ///
 /// There is ONE remembered geometry to go (POE-234 WI-2, which retired the
 /// temple's separate `temple_calibration` store): the shared screen scale, in
@@ -1152,13 +1313,64 @@ pub fn geometry_recalibrate(app: AppHandle) {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
     crate::settings::persist_forgetting_screen_scale(&app);
+
+    // The measuring half. Ordered AFTER the forget for the same reason the
+    // re-arms come before the write: what this publishes must land on an empty
+    // slot, and `persist_forgetting_screen_scale` is what empties the FILE the
+    // `persist_settings` below then rewrites.
+    let grab = match crate::capture::capture_screen(&app) {
+        Ok(grab) => grab,
+        Err(e) => {
+            crate::app_log(
+                &app,
+                format!(
+                    "Recalibrate: dropped the remembered screen scale, but could not grab the \
+                     screen to measure a new one ({e}) — the next capture of either module \
+                     re-measures"
+                ),
+            );
+            emit_ssot(&app);
+            return;
+        }
+    };
+    let measured = screen_from_capture(&grab);
+    // The record is READ, not discarded, and that is load-bearing here in a way
+    // it is not on a detect tick. The window between the clear above and this
+    // publish is no longer microseconds: it holds a whole-file settings write
+    // AND a full-monitor grab. A merc or temple tick landing inside it fills
+    // the slot with a cue that looked at real pixels, and `accepts` then gives
+    // this derived value its flat refusal — correctly. Logging "measured" and
+    // spending a persist on a refusal would report the base as established when
+    // what actually stands is the other measurement, and in the `MercOcr` case
+    // — which `from_slice` refuses to store — would leave the FILE empty while
+    // claiming success, i.e. the exact POE-278 state on the next restart.
+    let record = publish_screen(&app, measured);
+    if !record.accepted {
+        crate::app_log(
+            &app,
+            format!(
+                "Recalibrate: dropped the remembered screen scale, and a module measured this \
+                 screen before the grab finished — its ui scale {:.3} stands instead of the \
+                 {:.3} derived from the screen height",
+                record.standing_ui_scale, measured.ui_scale
+            ),
+        );
+        return;
+    }
+    // The press is the write: `should_remember_screen` is the DETECT TICK's
+    // trigger and deliberately does not name this cue, while
+    // `settings::ScreenScaleSetting::from_slice` — the normative answer to what
+    // may be stored — does. Without this the base would have to be re-derived
+    // by a second press after every restart.
+    crate::persist_settings(&app);
     crate::app_log(
         &app,
-        "Recalibrate: dropped the remembered screen scale — the next capture of \
-         either module re-measures"
-            .to_string(),
+        format!(
+            "Recalibrate: measured {}x{} on monitor {} — ui scale {:.3} derived from the \
+             screen height; merc and temple refine it from the game's art when they next run",
+            measured.width, measured.height, measured.monitor_id, measured.ui_scale
+        ),
     );
-    emit_ssot(&app);
 }
 
 /// The [`ScreenScaleSource`] label a merc-side [`crate::mercenary::ScaleSource`]
@@ -2673,6 +2885,197 @@ mod tests {
         assert_eq!(placements.lab.font, [298, 220, 666, 681]);
     }
 
+    // ------------------------------------ capture-derived base (POE-278) --
+
+    /// The unit's definition, at the height it was defined on. `ASSUMED_UI_SCALE`
+    /// is documented as "this function evaluated at 1080 and frozen", and this
+    /// is what holds the two to that claim — a changed denominator breaks it.
+    #[test]
+    fn the_derived_scale_at_1080p_is_the_constant_it_replaced() {
+        assert_eq!(ui_scale_for_height(1080), crate::ASSUMED_UI_SCALE);
+    }
+
+    /// The screen POE-278 was filed on. The frozen constant answers 0.90 here
+    /// whatever the screen is; the rule answers what 2160 px of height implies.
+    #[test]
+    fn the_derived_scale_on_a_4k_screen_is_twice_the_1080p_one() {
+        assert_eq!(ui_scale_for_height(2160), 1.8);
+    }
+
+    /// A screen that measured nothing derives `0.0`, which `valid_scale` is what
+    /// refuses. Locked because the alternative — deriving some non-zero
+    /// stand-in here — would put an unmeasured screen past the one check that
+    /// exists to catch it.
+    #[test]
+    fn a_zero_height_derives_a_zero_scale() {
+        assert_eq!(ui_scale_for_height(0), 0.0);
+    }
+
+    /// The whole point of the change, stated as the rect a 4K player gets. The
+    /// pre-POE-278 answer was `[0, 0, 1920, 40]` — the top-left QUARTER of this
+    /// band — because the lab fell back to a hard 1080p client and a frozen
+    /// scale whatever the screen was.
+    #[test]
+    fn a_4k_capture_places_the_gem_band_across_the_whole_screen() {
+        let screen = screen_from_geometry(3840, 2160, 77, (0, 0), [0, 0, 3840, 2160], 1_700_000_000_000);
+
+        let placements = placements(&screen);
+
+        // The client's full 3840 width, round(44 · 1.8 = 79.2) = 79 tall.
+        assert_eq!(placements.lab.gem, [0, 0, 3840, 79]);
+        // 740 · 1.8 = 1332 wide, centred in the 3840 − round(731 · 1.8) = 2524
+        // px left of the inventory → x = (2524 − 1332) / 2 = 596; top
+        // round(244 · 1.8 = 439.2) = 439, round(757 · 1.8 = 1362.6) = 1363 tall.
+        assert_eq!(placements.lab.font, [596, 439, 1332, 1363]);
+    }
+
+    /// The derived slice carries the display it was grabbed off, so the lazy
+    /// prune and the overlay placement have the same identity to work with that
+    /// a module-measured slice would have given them.
+    #[test]
+    fn a_derived_slice_carries_the_captures_display_and_client() {
+        let screen = screen_from_geometry(3840, 2160, 77, (-1920, 120), [0, 0, 3840, 2160], 42);
+
+        assert_eq!(screen.width, 3840);
+        assert_eq!(screen.height, 2160);
+        assert_eq!(screen.monitor_id, 77);
+        assert_eq!(screen.origin, (-1920, 120));
+        assert_eq!(screen.client, [0, 0, 3840, 2160]);
+        assert_eq!(screen.measured_at_ms, 42);
+        assert_eq!(screen.source, ScreenScaleSource::Capture);
+    }
+
+    /// Derived is not verified: nothing here looked at a pixel of the game's UI,
+    /// and the Settings card's confidence row reads this flag.
+    #[test]
+    fn a_derived_slice_claims_no_verification() {
+        let screen = screen_from_geometry(3840, 2160, 77, (0, 0), [0, 0, 3840, 2160], 42);
+
+        assert!(!screen.verified_this_session);
+    }
+
+    /// A grab has located no panel, so it must not invent an anchor — a seeded
+    /// origin presented as a remembered one would place the temple on arithmetic
+    /// while claiming a plate had been found.
+    #[test]
+    fn a_derived_slice_remembers_no_module_anchors() {
+        let screen = screen_from_geometry(1920, 1080, 77, (0, 0), [0, 0, 1920, 1080], 42);
+
+        assert_eq!(screen.anchors, None);
+    }
+
+    /// The press has to land, and it lands on the slot its own first step
+    /// emptied.
+    #[test]
+    fn a_derived_measurement_fills_an_empty_slot() {
+        let mut slot = None;
+
+        let record = record_screen(&mut slot, screen_from_geometry(3840, 2160, 77, (0, 0), [0, 0, 3840, 2160], 42));
+
+        assert!(record.accepted);
+        assert_eq!(slot.expect("the press measured the screen").ui_scale, 1.8);
+    }
+
+    /// The yield rule. A gold-frame fit that disagrees with the derivation is
+    /// the case where the derivation's assumption is wrong on this screen, so
+    /// the cue that read the art must survive the arithmetic — a band-limited
+    /// rule would let exactly this reading through, because the disagreement is
+    /// what makes it exceed the band.
+    #[test]
+    fn a_derived_measurement_never_displaces_a_measured_one() {
+        let standing = ScreenSlice {
+            width: 3840,
+            height: 2160,
+            ui_scale: 1.5,
+            client: [0, 0, 3840, 2160],
+            ..reference_screen()
+        };
+        let mut slot = Some(standing);
+
+        let record = record_screen(
+            &mut slot,
+            screen_from_geometry(3840, 2160, REFERENCE_MONITOR, (0, 0), [0, 0, 3840, 2160], 99),
+        );
+
+        assert!(!record.accepted);
+        let survivor = slot.expect("the gold-frame fit stands");
+        assert_eq!(survivor.ui_scale, 1.5);
+        assert_eq!(survivor.source, ScreenScaleSource::MercFrame);
+    }
+
+    /// The refusal is a property of the CUE, not of the numbers: a derivation
+    /// for a different display must not take the slice either, because the
+    /// prune (`drop_if_mismatched`) is what owns "the game moved screens" and
+    /// it empties the slot first. Without this, the monitor term alone would
+    /// let a derived value overturn a gold-frame fit.
+    #[test]
+    fn a_derived_measurement_is_refused_even_from_a_different_display() {
+        let standing = ScreenSlice {
+            width: 1920,
+            height: 1080,
+            ui_scale: 0.9,
+            client: [0, 0, 1920, 1080],
+            ..reference_screen()
+        };
+        let mut slot = Some(standing);
+
+        let record = record_screen(
+            &mut slot,
+            screen_from_geometry(3840, 2160, REFERENCE_MONITOR + 1, (1920, 0), [0, 0, 3840, 2160], 99),
+        );
+
+        assert!(!record.accepted);
+        let survivor = slot.expect("the gold-frame fit stands");
+        assert_eq!(survivor.monitor_id, REFERENCE_MONITOR);
+        assert_eq!(survivor.ui_scale, 0.9);
+    }
+
+    /// The override that keeps the derivation from being a one-way door. At
+    /// 1080p a temple anchor converts to exactly the 0.90 the height implies —
+    /// inside [`OCR_DRIFT_BAND`] — so without the `Capture` term in [`accepts`]
+    /// a Recalibrate press would make `temple-anchor` unreachable on that
+    /// machine, and no cue could ever correct a derivation that was wrong.
+    #[test]
+    fn a_verifying_cue_takes_the_slice_back_from_a_derived_value_inside_the_band() {
+        let derived = screen_from_geometry(1920, 1080, REFERENCE_MONITOR, (0, 0), [0, 0, 1920, 1080], 42);
+        let mut slot = Some(derived);
+        let anchored = ScreenSlice {
+            width: 1920,
+            height: 1080,
+            ui_scale: derived.ui_scale,
+            source: ScreenScaleSource::TempleAnchor,
+            client: [0, 0, 1920, 1080],
+            measured_at_ms: 99,
+            ..reference_screen()
+        };
+
+        let record = record_screen(&mut slot, anchored);
+
+        assert!(record.accepted, "an agreeing anchor still replaces arithmetic");
+        let published = slot.expect("the anchor stands");
+        assert_eq!(published.source, ScreenScaleSource::TempleAnchor);
+        assert!(published.verified_this_session);
+    }
+
+    /// The same override must NOT fire against a value that already came off a
+    /// cue: two cues that agree inside the band are POE-240's non-news, and
+    /// letting them trade the slice back and forth spends a settings write and
+    /// wakes every overlay poll for as long as both panels are open.
+    #[test]
+    fn an_agreeing_cue_still_does_not_displace_another_cue_inside_the_band() {
+        let mut slot = Some(reference_screen());
+        let agreeing = ScreenSlice {
+            source: ScreenScaleSource::TempleAnchor,
+            measured_at_ms: reference_screen().measured_at_ms + 5_000,
+            ..reference_screen()
+        };
+
+        let record = record_screen(&mut slot, agreeing);
+
+        assert!(!record.accepted);
+        assert_eq!(slot.expect("the frame fit stands").source, ScreenScaleSource::MercFrame);
+    }
+
     #[test]
     fn reference_screen_placements_scale_from_the_client_origin() {
         let placements = placements(&reference_screen());
@@ -2948,7 +3351,7 @@ mod tests {
         assert_eq!(json["placements"]["lab"]["font"], serde_json::json!([224, 244, 740, 757]));
     }
 
-    /// The four source strings, exactly. They are read by a TS union
+    /// The five source strings, exactly. They are read by a TS union
     /// (`stores/ssot.svelte.ts`), rendered by `geometry/view.ts` and used by the
     /// WI-B2 settings round-trip, so a rename here is a silent break on all
     /// three — and `kebab-case` is the one `rename_all` that produces them, so
@@ -2967,6 +3370,7 @@ mod tests {
         assert_eq!(wire(ScreenScaleSource::MercOcr), "merc-ocr");
         assert_eq!(wire(ScreenScaleSource::TempleAnchor), "temple-anchor");
         assert_eq!(wire(ScreenScaleSource::Remembered), "remembered");
+        assert_eq!(wire(ScreenScaleSource::Capture), "capture");
     }
 
     /// The first measurement always publishes — there is nothing behind it, so
