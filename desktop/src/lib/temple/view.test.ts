@@ -49,7 +49,7 @@ import {
 	offerChaos,
 	type OfferBox
 } from './view';
-import { templeSliceDefault, type AdviceView, type DriverView, type LayoutView, type MarketView, type OfferView, type RankedView, type RoomValueView, type SlotId, type SlotView, type TempleStatus } from './slice';
+import { templeSliceDefault, type AdviceView, type DriverView, type ItemSlotId, type LayoutView, type MarketView, type ModWorth, type OfferView, type RankedView, type RoomValueView, type SlotId, type SlotView, type TempleStatus } from './slice';
 
 /** A fixed clock, so every age below is the difference the test states. */
 const NOW = 1_788_665_199_649;
@@ -788,6 +788,7 @@ describe('offerBoxes', () => {
 					modArchitect: null,
 					modHint: null,
 					modSlots: [],
+					modWorth: null,
 					quantityPct: [2, 4, 6],
 					rarityPct: [4, 8, 12]
 				},
@@ -817,6 +818,7 @@ describe('offerBoxes', () => {
 					modArchitect: null,
 					modHint: null,
 					modSlots: [],
+					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				}
@@ -833,6 +835,7 @@ describe('offerBoxes', () => {
 					modArchitect: null,
 					modHint: null,
 					modSlots: [],
+					modWorth: null,
 					quantityPct: [2, 4, 6],
 					rarityPct: null
 				}
@@ -855,6 +858,7 @@ describe('offerBoxes', () => {
 					modArchitect: null,
 					modHint: null,
 					modSlots: [],
+					modWorth: null,
 					quantityPct: [2, 4, 22.5],
 					rarityPct: null
 				}
@@ -873,6 +877,7 @@ describe('offerBoxes', () => {
 					modArchitect: null,
 					modHint: null,
 					modSlots: [],
+					modWorth: null,
 					quantityPct: [2, 4, 6],
 					rarityPct: null
 				}
@@ -1147,6 +1152,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: ['gloves'],
+					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				},
@@ -1160,8 +1166,79 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 			slots: ['gloves'],
 			price: '30c',
 			perRun: '×2',
+			// POE-277 v5: the wire's verdict on the mod family, and `neutral`
+			// here because this fixture's line states none — which is the
+			// guard's answer for "nobody said", not a middling grade.
+			worth: 'neutral',
 			marks: ['G']
 		});
+	});
+
+	it('carries the wire\'s good verdict onto the mod block', () => {
+		// Vertolka's 2026-09-10 call on Puhuarte, which is what turns the mod
+		// NAME green on the box (POE-277 v5). Rust decides it from the mod
+		// family; nothing on this side re-derives it from the price, and this
+		// is the assertion that the wire's word reaches the box at all.
+		const box = only(
+			offer({
+				line: {
+					modArchitect: 'Puhuarte',
+					modHint: 'temple gloves',
+					modSlots: ['gloves'],
+					modWorth: 'good',
+					quantityPct: null,
+					rarityPct: null
+				},
+				value: value({ drivers: [modTerm()] })
+			})
+		);
+
+		expect(box.mod?.worth).toBe('good');
+	});
+
+	it('carries the wire\'s junk verdict onto the mod block', () => {
+		// The other end of the same message — Matatl, red — and its own test
+		// rather than a second assertion above: a guard narrowed to the good
+		// arm alone would pass that one and drop this verdict to `neutral`,
+		// which reads on screen as a family nobody has graded.
+		const box = only(
+			offer({
+				line: {
+					modArchitect: 'Matatl',
+					modHint: 'temple boots',
+					modSlots: ['boots'],
+					modWorth: 'junk',
+					quantityPct: null,
+					rarityPct: null
+				},
+				value: value({ drivers: [modTerm()] })
+			})
+		);
+
+		expect(box.mod?.worth).toBe('junk');
+	});
+
+	it('reads a verdict this file has not been taught as no verdict at all', () => {
+		// Same rule as `offerState`'s: the wire spelling is a plain string and
+		// `serde(default)` lets an older payload omit it, so a word this file
+		// does not know must land on the one answer that claims nothing.
+		// Without the guard the raw string reaches the markup's class list and
+		// colours the name off a verdict nobody chose.
+		const box = only(
+			offer({
+				line: {
+					modArchitect: 'Puhuarte',
+					modHint: 'temple gloves',
+					modSlots: ['gloves'],
+					modWorth: 'chase' as unknown as ModWorth,
+					quantityPct: null,
+					rarityPct: null
+				},
+				value: value({ drivers: [modTerm()] })
+			})
+		);
+
+		expect(box.mod?.worth).toBe('neutral');
 	});
 
 	it('leaves the mod block absent when the line has no mod', () => {
@@ -1171,6 +1248,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 					modArchitect: null,
 					modHint: null,
 					modSlots: [],
+					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				},
@@ -1195,6 +1273,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: ['gloves'],
+					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				},
@@ -1215,6 +1294,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: ['gloves'],
+					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				},
@@ -1228,6 +1308,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 			slots: ['gloves'],
 			price: '—',
 			perRun: null,
+			worth: 'neutral',
 			marks: []
 		});
 	});
@@ -1239,6 +1320,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: [],
+					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				},
@@ -1251,6 +1333,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: [],
+					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				},
@@ -1263,6 +1346,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: [],
+					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				},
@@ -1306,6 +1390,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 					modArchitect: 'Puhuarte',
 					modHint: 'temple gloves',
 					modSlots: [],
+					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				},
@@ -1730,7 +1815,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.recipe?.base).toEqual({
 			name: 'Story of the Vaal',
 			iconName: 'Story of the Vaal',
-			price: '5c'
+			price: '5c',
+			priced: true
 		});
 		expect(box.recipe?.upgraded.price).toBe('39c');
 	});
@@ -1797,6 +1883,27 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.marks).toEqual([]);
 	});
 
+	it('prints the header\'s estimate word off that mark and nothing else', () => {
+		// POE-277 v5 retired the boxed `G` and spent it on a word: the second
+		// header line reads `per run · est.` or `floor · 1 unpriced · est.`.
+		// The CONDITION is the two tests above — `marks` is still where a
+		// guessed term rolls up to — so what is left to pin is that the word
+		// hangs off that array rather than off a second reading of
+		// `value.guessed`, which would let the letter and the word disagree
+		// about the same box. Both links are asserted because the word on
+		// screen is wrong if either moves.
+		//
+		// Read off the source because this app has no DOM harness for a
+		// `.svelte` file — the same seam the mod-price cell above uses.
+		const headSub = offerBoxesSource.slice(
+			offerBoxesSource.indexOf('<div class="head-sub">'),
+			offerBoxesSource.indexOf('<div class="rule">')
+		);
+
+		expect(headSub).toContain('{#if guessed(box)}<span class="est">· est.</span>{/if}');
+		expect(offerBoxesSource).toContain('return box.marks.includes(\'G\');');
+	});
+
 	it('keeps the fallback F mark when its terms are not guessed', () => {
 		const box = only(
 			offer({
@@ -1846,6 +1953,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 					modArchitect: null,
 					modHint: null,
 					modSlots: [],
+					modWorth: null,
 					quantityPct: null,
 					rarityPct: null
 				},
@@ -1937,6 +2045,18 @@ describe('offerBoxSignature', () => {
 		...over
 	});
 
+	/** A mod block to vary the slot list on, so the chip tests differ in the
+	 *  one field they are about. */
+	const MOD = {
+		name: 'Puhuarte',
+		hint: 'temple gloves',
+		slots: [] as ItemSlotId[],
+		price: '30c',
+		perRun: '×2',
+		worth: 'neutral' as ModWorth,
+		marks: []
+	};
+
 	it('does not change when only the rendered TEXT changes', () => {
 		// The POE-258 regression this replaces: the market-age line was in the
 		// measurement signature, so `prices 12 min old` becoming `prices 13 min
@@ -1993,15 +2113,50 @@ describe('offerBoxSignature', () => {
 		expect(offerBoxSignature(box({}), true)).not.toBe(offerBoxSignature(box({}), false));
 	});
 
+	it('does not change when the advisor moves its pick to the other block', () => {
+		// `pick` left the string with POE-277's v5: the frame is 2 px on BOTH
+		// boxes now and faint is a muted frame with dimmer text, never an
+		// `opacity`, so the pick buys no height. A field that decides nothing
+		// about the geometry only re-measures the pair — and a re-measure hides
+		// the stack for a frame — for a change the eye already has. This is the
+		// assertion that keeps it out.
+		expect(offerBoxSignature(box({ pick: true }), false)).toBe(
+			offerBoxSignature(box({ pick: false }), false)
+		);
+	});
+
+	it('changes when a fifth slot chip wraps the list to a second row', () => {
+		// The threshold the component's own `.slots` rule states: the chips are
+		// a 4 px-gapped wrap row inside the 300 px box, and they wrap once the
+		// row passes 272 px — five (Xopec) always, and four or even three when
+		// BODY ARMOUR is among them (Guatelitzi, Tacati). Two rows is the worst
+		// case at any count, which the budget carries, and `slots.length` is in
+		// the string as the cheap proxy for that shape: it is not the wrap rule,
+		// but nothing changes the wrap without changing it. 19 px of box against
+		// 37. A signature blind to the count would leave the pair measured for a
+		// box one chip row shorter than the one on screen.
+		const threeChips = box({ mod: { ...MOD, slots: ['helmet', 'gloves', 'amulet'] } });
+		const fiveChips = box({
+			mod: { ...MOD, slots: ['helmet', 'gloves', 'boots', 'amulet', 'ring'] }
+		});
+
+		expect(offerBoxSignature(fiveChips, false)).not.toBe(offerBoxSignature(threeChips, false));
+	});
+
 	it('changes when a row appears that was not there', () => {
 		// Every optional row is in the signature because every one of them is
 		// height. The recipe is the tallest of them at 39 px.
 		const without = box({ recipe: null });
 		const withOne = box({
 			recipe: {
-				base: { name: 'Story of the Vaal', iconName: 'Story of the Vaal', price: '5c' },
-				vial: { name: 'Vial of Fate', iconName: 'Vial of Fate', price: '1c' },
-				upgraded: { name: 'Fate of the Vaal', iconName: 'Fate of the Vaal', price: '39c' }
+				base: { name: 'Story of the Vaal', iconName: 'Story of the Vaal', price: '5c', priced: true },
+				vial: { name: 'Vial of Fate', iconName: 'Vial of Fate', price: '1c', priced: true },
+				upgraded: {
+					name: 'Fate of the Vaal',
+					iconName: 'Fate of the Vaal',
+					price: '39c',
+					priced: true
+				}
 			}
 		});
 
@@ -2072,6 +2227,7 @@ describe('offerBoxSignature', () => {
 				slots: [],
 				price: '30c',
 				perRun: '×2',
+				worth: 'neutral',
 				marks: ['G']
 			}
 		});
@@ -2082,6 +2238,7 @@ describe('offerBoxSignature', () => {
 				slots: ['gloves'],
 				price: '30c',
 				perRun: '×2',
+				worth: 'neutral',
 				marks: ['G']
 			}
 		});
@@ -2092,6 +2249,7 @@ describe('offerBoxSignature', () => {
 				slots: ['ring', 'gloves', 'boots'],
 				price: '30c',
 				perRun: '×2',
+				worth: 'neutral',
 				marks: ['G']
 			}
 		});

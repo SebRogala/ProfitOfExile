@@ -1290,63 +1290,97 @@ touching the named path.
   If it does not, the fix is a product decision about where the column sits, not
   a change to `offerStackPlacement`.
 - **The offer box explains the number, in each of its five states** (POE-260,
-  POE-277): the box is room-led and shows only facts that belong to the read.
-  Its two-line header puts the room name at 16 px on line 1, the 24 px value
-  at the top right, and `kind · tier N` on line 2 with the completeness chip or
-  `per run` at the right. There is no scale, rating or reason line.
+  POE-277, restyled to v5 on 2026-09-10): the box is room-led and shows only
+  facts that belong to the read. It is five SECTIONS with a 1 px hairline
+  between each pair that is present — header, items, room bonuses, temple mod,
+  market warning — on a `rgb(13 15 20 / 96%)` ground with a 2 px frame on BOTH
+  boxes (cyan on the pick, muted otherwise) and no `opacity` anywhere: faint is
+  a muted frame and dimmer text, never a transparency. Its two-line header puts
+  the room name at 15 px on line 1 with the value at the top right as ONE token
+  (`39c` — unit at the same size, no space, no boxed letters), and `kind ·
+  tier N` on line 2 with the completeness chip or `per run` at the right, and a
+  muted ` · est.` after either where any term was guessed. There is no scale,
+  rating or reason line.
 
   1. **Priced.** Open a panel on a board with a chest-unique line — Crucible of
      Flame, Toxic Grove, Sanctum of Immortality, Hybridisation Chamber, Conduit
-     of Lightning or Defense Research Lab. The sale row is full width above one
-     39 px two-column row for the unique and vial; a missing partner leaves one
-     cell. Each cell shows its icon and price. Per-row provenance letters
-     are gone: one `G` sits beside the header value when any term is guessed,
-     alongside `F` where the grade fallback applies. Unique and vial names are
-     NOT printed — the icon is the identity and `alt` stays on the `<img>` as
-     the accessibility attribute; the `?` fallback carries none; sale keeps its
-     text. The fold path remains in the view code but is unreachable while the
-     four row kinds contain at most one sale, unique, vial and mod term.
-     The ladder reads `+2/4/6% quant` in the left column and
-     `+4/8/12% rarity` in the right at 15 px, with 3 px top/bottom padding,
-     the current tier lit and the other two values dimmed; an unscaled chaos
-     amount trails the rarity column. Per-run counts remain in the view data but
-     are not rendered in the box. Where
-     supplied — those six lines, and NOT Locus of Corruption — the full-width
-     `UPGRADE RECIPE` row has three 39 px icons with prices beside them; beside
-     the icons keeps the chain at a fixed 39 px height. A `?` icon means the
-     server's `/api/icon/temple/<name>` did not answer for that poe.ninja name;
-     check one by hand before assuming the row is wrong. The row prices are the
-     ITEM's, not the term's: `Story of the Vaal 68c` is right and `17c`
-     is the bug. The optional mod block is `Temple mod: <name>` on line 1,
-     with `(30c)` only for the sole priced case, Crucible of Flame/Puhuarte's
-     Vertolka 30c guess; no price cell for `no price`;
-     no per-run count is rendered beside a priced term. Its second line is
-     `Appears on:` followed by 26 px glyphs, absent for an empty slot list. The
+     of Lightning or Defense Research Lab. The sale row is 18 px of TEXT with
+     no icon and no placeholder glyph. Under it, ONE item row reading
+     `A + B ……→…… C`: the unique and the vial packed LEFT on 8 px gaps with a
+     muted `+` between them, then a flexible spacer carrying a muted `→` at its
+     own centre, then the recipe's upgraded result on the row's RIGHT edge.
+     Each cell is 39 px of art with its price centred UNDER it, and the upgrade
+     carries a muted `upgraded` caption under its price. Absent cells are
+     omitted rather than reserved: no `+` without both drops, and no spacer and
+     no arrow without the upgrade, so a line no vial upgrades is `A + B` packed
+     left and nothing else. The `base → vial →
+     upgraded` recipe ROW is gone (Vertolka, 12:19 — it redrew the row's own two
+     icons at half size underneath themselves) and its sentence moved into this
+     row's own layout (Vertolka, 13:16); so are the per-row
+     provenance letters and the per-run counts, both of which stay in the view data.
+     Unique and vial names are NOT printed — the icon is the identity and `alt`
+     stays on the `<img>` as the accessibility attribute; the `?` fallback
+     carries none; sale keeps its text. The fold path remains in the view code
+     but is unreachable while the four row kinds contain at most one sale,
+     unique, vial and mod term.
+     Room bonuses are a 31 px row: the `Room bonuses` label INLINE at the left,
+     then `+2/4/6%` over `quant` and `+4/8/12%` over `rarity`, each centred in
+     an equal share of what is left of the row — rungs at 15 px, one step above
+     the ramp's figure size and the owner's own ask, with the room's own tier
+     lit and the other two at .42 — and the unscaled chaos the two rates are
+     worth at the row's far right.
+     **The ladders never shrink and the amount is what gives way.** A rung the
+     row cannot fit would be clipped mid-figure, so the cells are fixed-width
+     and the chaos amount is DROPPED instead — the box already carries what the
+     rates are worth inside the value at the top right, and the ladders it does
+     not repeat anywhere. The rule is the RUNG WIDTH and not a measured width
+     (a box that read its own `offsetWidth` would re-measure on every read):
+     the amount goes when any rung passes the width the stated ladders reach —
+     two digits at tier 1 or 2, three at tier 3. On the shipped table that is
+     **Factory alone** (`+22/44/66%`, its quantity stat printed twice and
+     summed), so check that room to see the amount absent and every other
+     priced room to see it present.
+     A `?` icon means the server's `/api/icon/temple/<name>` did not answer for
+     that poe.ninja name; check one by hand before assuming the row is wrong.
+     The cell prices are the ITEM's, not the term's: `Story of the Vaal 68c` is
+     right and `17c` is the bug. The mod section is `Temple mod: <name>` with
+     `(30c)` only for the sole priced case, Crucible of Flame/Puhuarte's
+     Vertolka 30c guess; no price cell for `no price`. **The mod NAME carries
+     the verdict as a colour** — green for Puhuarte, red for Matatl, the box's
+     own text colour for the other five (`LineView.modWorth`, from
+     `drops.rs`'s `Worth`; Vertolka, 2026-09-10: *"make Puhuarte green and
+     Matatl red"*). Under it, `Appears on:` followed by one word CHIP per item
+     class — uppercase slot names in muted 1 px boxes, NOT the nine grey
+     silhouettes, which the owner rejected as *"defenetely NOT intuitive"*. The
      slot table is verified from poewiki's modifier tables, with every weapon
-     class folded into `Weapon`; Xopec's five glyphs are the width worst case
-     and fit: ~70 px label + 4 + 5×26 + 4×4 = 220 px of 276. The market age
-     line is present only for unavailable/stale prices;
-     fresh prices omit it.
+     class folded into `Weapon`; the chips wrap once the row passes 272 px — five (Xopec) always, and four or even
+     three when BODY ARMOUR is among them (Guatelitzi, Tacati); two rows is the
+     worst case at any count, which the budget carries and is the one row here with two heights. The
+     market age line is present only for unavailable/stale prices; fresh prices
+     omit it and its hairline with it.
 
-  2. **Partial.** An item with no market price keeps its 39 px icon row and
-     prints `no price`, never `0c` and never a missing row. The value row
-     carries the `floor · N unpriced` chip in place of `per run`; the chip still
-     counts an unpriced temple mod even though its price cell is hidden. The
-     remaining ladder, recipe, mod and warning-age lines follow their fixed
-     slots when present.
+  2. **Partial.** An item with no market price keeps its 39 px icon cell and
+     prints `no price` at 11 px muted under it, never `0c` and never a missing
+     cell. The header's second line carries the `floor · N unpriced` chip in
+     place of `per run`; the chip still counts an unpriced temple mod even
+     though its price cell is hidden. The remaining bonus, mod, chip and
+     warning-age rows follow their fixed slots when present.
 
   3. **Fallback.** Start the app with no network (or point its server URL at
-     nothing) and open a panel. With no usable market, the value row reads
-     `grade <letter>` with an `F` mark — and a `G` beside it where the rung is
-     a live inference (`valuation.rs`'s `summed <= 0` branch) rather than the
-     cold preset's base value — item and recipe prices are em dashes,
-     and the warning age line reads `prices unavailable — base values`. If the
-     line carries tier facts, the ladder still explains them; otherwise the
-     bonus label is used. No chaos figure or market-backed recommendation is
-     invented. Flip DEBUG/PROD on a priced board: the Reader row must switch to
-     `prices unavailable — base values`, while the standing boxes keep their
-     own value and warning age line until the next read. Fresh boxes have no
-     age line at all.
+     nothing) and open a panel. With no usable market, the value reads
+     `grade <letter>` at 17 px — and there is NO `F` beside it, because the word
+     already says what the letter said; a ` · est.` on line two is the only
+     provenance mark left, and it fires where the rung is a live inference
+     (`valuation.rs`'s `summed <= 0` branch) rather than the cold preset's base
+     value. **There is no item row at all**: the read has no drop terms, and the
+     upgrade cell rides on the drops rather than standing alone as a lone em
+     dash captioned `upgraded`. The warning age line reads `prices unavailable —
+     base values`. If the line carries tier facts, the ladder still explains
+     them; otherwise the bonus label is used, full width. No chaos figure or
+     market-backed recommendation is invented. Flip DEBUG/PROD on a priced
+     board: the Reader row must switch to `prices unavailable — base values`,
+     while the standing boxes keep their own value and warning age line until
+     the next read. Fresh boxes have no age line at all.
 
   4. **Stale.** Leave the app against a server whose temple recompute has
      stopped for over two hours, or watch a live board cross that boundary. A
@@ -1354,49 +1388,63 @@ touching the named path.
      on the clock keeps its chaos figure and reads
      `prices stale (<N> h)` without the `— base values` suffix; that suffix
      means the numbers were already valued from the cold branch. The yellow
-     dotted mark follows the value slot. Staleness adds the warning age row;
-     fresh prices have no age row. The clock-aged line must change without a republish;
-     `prices 1 h old` becoming `prices stale (2 h)` is the smoke check.
+     dotted mark follows the value token. Staleness adds the warning age row and
+     the hairline above it; fresh prices have neither. The clock-aged line must
+     change without a republish; `prices 1 h old` becoming `prices stale (2 h)`
+     is the smoke check.
 
   5. **Compact.** Run windowed at roughly 720 px tall, or find a board whose
      first block sits low. When the pair cannot fit, both boxes collapse
-     together. The two-line header stays available, the lower explanation
-     becomes the strip, and a warning-only market foot line follows it; a fresh
-     compact box ends at the strip. One full box beside one compact box is the
-     regression. The compact strip excludes the temple mod's price; the value's
-     single `G`/`F` marks and chip still account for it, so on Crucible of Flame
-     the strip is short of its largest term by design.
+     together. The two-line header and its hairline stay, the lower explanation
+     becomes a strip of 26 px icons (up from a 20 px that was neither 39 nor 26
+     and shimmered for it), and a warning-only market foot line follows it
+     behind its own rule; a fresh compact box ends at the strip. One full box
+     beside one compact box is the regression. The compact strip excludes the
+     temple mod's price; the value's chip and its ` · est.` still account for
+     it, so on Crucible of Flame the strip is short of its largest term by
+     design. **The v5 box is taller, so the pair collapses sooner** — the
+     clearance is now `FULL_PAIR_CSS` 630 where it was 546.
 
-  **Measured heights.** The pick's 2 px frame contributes 4 px and its vertical
-  padding contributes 4 px. The two-line header is 24 + 15 = 39 px. The sale
-  row and paired unique/vial row are `2 + 2×39 + 1×1 = 81` px. The ladder is
-  `1 + 23 = 24` px: 17 px of text with 3 px padding above and below. The
-  recipe is `(2 + 11) + (1 + 39) = 53` px. The mod block is
-  `(2 + 20) + (1 + 26) = 49` px when its `Appears on:` glyph line exists; the
-  warning age line is `2 + 13 = 15` px.
+  **Measured heights.** Every row is a fixed `height` (or `line-height`) plus a
+  stated `margin-top`; the component's stylesheet names both on each rule and
+  `overlay-geometry.test.ts` restates the table. The frame contributes
+  `2 × 2 = 4` and the padding `2 × 10 = 20`. The two-line header is
+  `26 + 15 = 41`. Each section hairline is
+  `6 + 1 + 6 = 13`, and there are at most four (under the header, and between
+  each pair of present sections). The sale row is 18. The item row is
+  `39 + 3 + 15 = 57`, or 69 with the `upgraded` caption, plus 5 under a sale
+  row. The room-bonus row is `18 + 13 = 31`. The mod group is
+  `18 + 5 + 14 = 37` with one chip row and `18 + 5 + (14 + 4 + 14) = 55` with
+  two. The market line is 13.
 
-  - Priced or partial full WARN form with sale, paired drops, ladder, recipe,
-    verified five-glyph mod and age line:
-    `4 + 4 + 39 + 81 + 24 + 53 + 49 + 15 = **269 px**`.
-  - A fresh full form loses the age row: **254 px**. Omitted optional blocks
-    remove only their own fixed slot.
-  - Fallback with grade + ladder and warning age, with no drop, recipe or mod,
-    is `4 + 4 + 39 + 24 + 15 = **86 px**`.
-  - Compact's maximum WARN form is
-    `4 + 4 + 39 + (2 + 24) + (2 + 13) = **88 px**`; a fresh compact box is
-    **73 px** because it ends at the strip.
+  - The tallest the wording can build — sale, an item row carrying the upgrade,
+    the bonus row, a mod with its chips on two rows, the market warning, and
+    the four hairlines those five sections put between themselves:
+    `4 + 20 + 41 + 52 + 18 + 77 + 31 + 55 + 13 = **311 px**`.
+  - A priced full box on the pick with no sale row, one chip row and no
+    warning is **241 px**. Omitted sections remove their own rows AND the
+    hairline that would have preceded them.
+  - Fallback with the grade, the bonus row, a two-row mod block and the
+    warning age, with no item row, is **203 px**.
+  - Compact is `4 + 20 + 41 + 13 + 26 = **104 px**` fresh and **130 px** with
+    the warning line behind its own rule.
 
-  `FULL_BOX_MAX_CSS` is 269 px versus `DIAGONAL_BUDGET_CSS` at 316 px,
-  leaving 47 px. The two-box full clearance is
-  `FULL_PAIR_CSS = 269×2 + 8 = 546 px`. The constant describes the WARN
+  `FULL_BOX_MAX_CSS` is 311 px versus `DIAGONAL_BUDGET_CSS` at 316 px,
+  leaving **8 px** where v4's 269 px box left 47. The two-box full clearance is
+  `FULL_PAIR_CSS = 311×2 + 8 = 630 px`. The constant describes the WARN
   form, where the age line is present, and the overlay-geometry test asserts
-  `FULL_BOX_MAX_CSS ≤ DIAGONAL_BUDGET_CSS`.
+  `FULL_BOX_MAX_CSS ≤ DIAGONAL_BUDGET_CSS`. **A row added to this box now costs
+  content**, not headroom — which is the trade the restyle made deliberately:
+  the slack went on air, the price under every icon, word chips and the hairlines.
 
 
   **And the blink must be gone.** Watch either box for three unbroken minutes on
   a live board. Fresh prices have no age row; crossing the warning boundary
   adds the row once, and later text changes must not remeasure it. A flicker on
-  the minute means something text-shaped is back in `offerBoxSignature`.
+  the minute means something text-shaped is back in `offerBoxSignature`. ONE
+  field left it with v5: `pick` (both frames are 2 px, so the pick buys no
+  height). `mod.slots.length` stays, because the chips wrap and two chip rows
+  are 18 px more than one.
 
   **Owner judgement, not arithmetic**: whether the box is still readable at arm's
   length over a game with the larger icons and optional temple-mod block, and

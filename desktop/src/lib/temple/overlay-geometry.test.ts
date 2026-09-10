@@ -586,10 +586,12 @@ describe('offerStackPlacement', () => {
 	});
 
 	/**
-	 * `TempleOfferBoxes.svelte`'s full form, row by row, in CSS px — each entry
-	 * is that rule's own `height`/`line-height` plus its stated `margin-top`,
-	 * for the priced form on the pick (2 px frame): three drop rows, ladder,
-	 * recipe, temple mod block and market age line.
+	 * `TempleOfferBoxes.svelte`'s full form, section by section, in CSS px —
+	 * each entry is that rule's own `height`/`line-height` plus its stated
+	 * `margin-top`, for the tallest box POE-277's v5 wording can build: a sale
+	 * row above an item row carrying the upgrade, the room-bonus row, the
+	 * temple mod with slot chips wrapped to two rows, the market warning line,
+	 * and the four hairlines those five sections put between themselves.
 	 *
 	 * What it guards is `FULL_BOX_MAX_CSS` against this table. It cannot see a
 	 * row ADDED to the component — nothing here reads the stylesheet — so a new
@@ -599,22 +601,33 @@ describe('offerStackPlacement', () => {
 	 */
 	const FULL_BOX_ROWS = {
 		border: 2 * 2,
-		padding: 2 * 2,
-		header: 24 + 15,
-		drivers: 2 + 2 * 39 + 1 * 1,
-		ladder: 1 + 23,
-		recipe: 2 + 11 + 1 + 39,
-		mod: 2 + 20 + 1 + 26,
-		age: 2 + 13
+		padding: 10 * 2,
+		header: 26 + 15,
+		// Five sections, so four hairlines: under the header, and between each
+		// pair of present sections. Each is 6 + 1 + 6.
+		rules: 4 * (6 + 1 + 6),
+		sale: 18,
+		// The item row carrying the upgrade, so a caption (39 art + 3 + 15
+		// price + 12 caption), with its 5 px margin under the sale row.
+		items: 8 + (39 + 3 + 15 + 12),
+		// The label inline, both ladders as a value over its word, the amount.
+		bonuses: 18 + 13,
+		// Mod line, then slot chips wrapped to two 14 px rows.
+		mod: 18 + 5 + (14 + 4 + 14),
+		age: 13
 	};
 	const WORST_FULL_BOX = Object.values(FULL_BOX_ROWS).reduce((sum, row) => sum + row, 0);
 
 	it('budgets the pair against the tallest box the wording can build, not the design\'s typical one', () => {
-		// The redesigned full WARN form is 269 px, leaving 47 px inside the 316 px
-		// diagonal budget. A fresh form omits the 15 px age row.
-		expect(WORST_FULL_BOX).toBe(269);
+		// POE-277's v5 full WARN form is 311 px, leaving 5 px inside the 316 px
+		// diagonal budget where v4's 269 px box left 47. The restyle spent that
+		// slack on air, a price under every icon, a word under every ladder,
+		// word chips for the slot list and four section hairlines, so a row
+		// added to the component now has to come out of content rather than out
+		// of headroom.
+		expect(WORST_FULL_BOX).toBe(311);
 		expect(FULL_BOX_MAX_CSS).toBe(WORST_FULL_BOX);
-		expect(FULL_PAIR_CSS).toBe(546);
+		expect(FULL_PAIR_CSS).toBe(630);
 		expect(FULL_BOX_MAX_CSS).toBeLessThanOrEqual(DIAGONAL_BUDGET_CSS);
 	});
 
@@ -711,7 +724,7 @@ describe('offersCompact', () => {
 
 	it('keeps the full form where the host has room for two of them', () => {
 		// 1080 - 133 is 947, and two full boxes plus the stack gap need
-		// FULL_PAIR_CSS = 269 * 2 + 8 = 546.
+		// FULL_PAIR_CSS = 311 * 2 + 8 = 630.
 		expect(offersCompact({ driverCounts: THREE, blocks: HIGH, panel: COMMITTED_PANEL, host: HOST })).toBe(
 			false
 		);

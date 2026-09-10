@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 import hostSource from './WidgetHost.svelte?raw';
 import { TEMPLE_WINDOW_LABEL } from '../manager';
+import { FULL_BOX_MAX_CSS } from '../../temple/overlay-geometry';
 import {
 	WIDGETS,
 	anchoredWidgetsFor,
@@ -124,6 +125,22 @@ describe('the temple module', () => {
 			['temple.door', 190],
 			['temple.waiting', null]
 		]);
+	});
+
+	// The one shipped number on the anchored row that is not free to be
+	// approximate. `temple.offers` is placed per read, so its `x`/`y` are never
+	// applied and its `w` is the box's actual width — but `h` is what the
+	// registry's own "every default is a real rectangle" invariant makes it,
+	// and the rectangle it has to describe is the box the component draws. A
+	// widget whose stored height is shorter than the drawn box is a rect the
+	// module clears read regions against while the box overhangs it, which is
+	// how art lands on a crop the reader reads back as game pixels (ADR-019).
+	// The two numbers were re-derived together for POE-277's v5 (269 → 297);
+	// nothing but this test made them move together.
+	it('ships the offer boxes at the tallest a full box can be', () => {
+		const offers = WIDGETS.find((widget) => widget.id === 'temple.offers');
+
+		expect(offers?.defaults.h).toBe(FULL_BOX_MAX_CSS);
 	});
 
 	// `ships the advice widget clear of the board` was deleted with POE-244 and

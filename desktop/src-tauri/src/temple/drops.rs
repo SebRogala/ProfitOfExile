@@ -22,7 +22,7 @@
 //! [`LineDrops::has_guess`] answers "is anything in this room's value guessed?"
 //! so the overlay (POE-260) can mark it.
 //!
-//! Three sources, and only three:
+//! Three sources for the NUMBERS, and only three:
 //!
 //! - [`POEDB`] — the room's own page on poedb.tw, read 2026-09-06. This is the
 //!   game's data: the quantity / rarity / pack-size lines, the vial-chance stat
@@ -35,6 +35,10 @@
 //!   divided by 4 + price of vial divided by 10" (hence 0.25 and 0.1 per run at
 //!   tier 3) and "Crucible of Flames is giving on average 2 temple gloves per
 //!   run and their base price is usually around 30c".
+//!
+//! [`TempleMod::worth`] is the one field here that is a VERDICT rather than a
+//! number, and it has its own source — Vertolka's 2026-09-10 Discord message.
+//! See [`Worth`].
 //!
 //! # Uniques drop at tier 3 only
 //!
@@ -324,6 +328,37 @@ impl Slot {
     }
 }
 
+/// Whether a mod family is one to chase, one to ignore, or neither.
+///
+/// A VERDICT on the family itself and not on this read's prices — which is why
+/// it lives beside the name here rather than being derived from
+/// [`TempleMod::base_price_chaos`]. Only one mod in the table has a price at
+/// all, so a price-derived rule would grade one row and shrug at six.
+///
+/// Source: Vertolka's verdict on the mod family itself, 2026-09-10 Discord:
+/// *"make Puhuarte green and Matatl red"*. Everything he did not name is
+/// [`Worth::Neutral`] — the absence of a verdict, not a middling one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Worth {
+    /// Worth chasing.
+    Good,
+    /// Junk.
+    Junk,
+    /// Nobody has graded this family.
+    Neutral,
+}
+
+impl Worth {
+    /// The stable wire spelling used by the temple offer view.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Worth::Good => "good",
+            Worth::Junk => "junk",
+            Worth::Neutral => "neutral",
+        }
+    }
+}
+
 /// The architect's signature rare — items that roll a mod group only this room
 /// can produce.
 ///
@@ -336,6 +371,8 @@ pub struct TempleMod {
     item_hint: &'static str,
     /// Item classes this mod family can roll on, from the source named on the row.
     slots: &'static [Slot],
+    /// Vertolka's verdict on the mod family itself (2026-09-10, see [`Worth`]).
+    worth: Worth,
     source: &'static str,
     per_run: Option<Estimate>,
     base_price_chaos: Option<Estimate>,
@@ -358,6 +395,12 @@ impl TempleMod {
     /// What item classes this mod family can roll on, from the wiki tables.
     pub fn slots(self) -> &'static [Slot] {
         self.slots
+    }
+
+    /// Vertolka's verdict on the mod family itself — what colours the offer
+    /// box's mod name (POE-277). See [`Worth`] for the source and the rule.
+    pub fn worth(self) -> Worth {
+        self.worth
     }
 
     /// Expected items per finished-temple run, where anyone has said. Only
@@ -674,6 +717,7 @@ pub const DROPS: [LineDrops; 25] = [
             // union of the Classes column, owner-pasted 2026-09-10; every
             // weapon class folds into Weapon.
             slots: &[Slot::Helmet, Slot::Gloves, Slot::Boots, Slot::Amulet, Slot::Ring],
+            worth: Worth::Neutral,
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -729,6 +773,7 @@ pub const DROPS: [LineDrops; 25] = [
             // union of the Classes column, owner-pasted 2026-09-10; every
             // weapon class folds into Weapon.
             slots: &[Slot::Helmet, Slot::Gloves, Slot::Amulet],
+            worth: Worth::Good,
             source: VERTOLKA_SHEET,
             per_run: Some(Estimate::guess(2.0, VERTOLKA_MSG)),
             base_price_chaos: Some(Estimate::guess(30.0, VERTOLKA_MSG)),
@@ -775,6 +820,7 @@ pub const DROPS: [LineDrops; 25] = [
             // union of the Classes column, owner-pasted 2026-09-10; every
             // weapon class folds into Weapon.
             slots: &[Slot::Boots, Slot::Weapon],
+            worth: Worth::Junk,
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -991,6 +1037,7 @@ pub const DROPS: [LineDrops; 25] = [
             // Citaqualotl"), union of the Classes column, owner-pasted
             // 2026-09-10; every weapon class folds into Weapon.
             slots: &[Slot::Weapon],
+            worth: Worth::Neutral,
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -1096,6 +1143,7 @@ pub const DROPS: [LineDrops; 25] = [
             // Guatelitzi"), union of the Classes column, owner-pasted
             // 2026-09-10; every weapon class folds into Weapon.
             slots: &[Slot::BodyArmour, Slot::Amulet, Slot::Ring, Slot::Belt],
+            worth: Worth::Neutral,
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -1151,6 +1199,7 @@ pub const DROPS: [LineDrops; 25] = [
             // Topotante"), union of the Classes column, owner-pasted
             // 2026-09-10; every weapon class folds into Weapon.
             slots: &[Slot::Gloves, Slot::Shield, Slot::Weapon],
+            worth: Worth::Neutral,
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -1243,6 +1292,7 @@ pub const DROPS: [LineDrops; 25] = [
             // union of the Classes column, owner-pasted 2026-09-10; every
             // weapon class folds into Weapon.
             slots: &[Slot::BodyArmour, Slot::Shield, Slot::Weapon],
+            worth: Worth::Neutral,
             source: VERTOLKA_SHEET,
             per_run: None,
             base_price_chaos: None,
@@ -1436,32 +1486,65 @@ mod tests {
         }
     }
 
-    // Fails if a slot is swapped, or if a temple-mod row is added or removed.
     #[test]
-    fn temple_mod_rows_carry_their_architect_and_slot_table() {
-        const EXPECTED: [(&str, &str, &[Slot]); 7] = [
+    fn every_worth_has_its_own_wire_spelling() {
+        // These three strings are the whole contract with the overlay:
+        // `LineView.mod_worth` carries one of them and `view.ts`'s `modWorth`
+        // guard recognises `good` and `junk` by spelling, dropping anything
+        // else to `neutral`. So a retyped or swapped arm here does not fail
+        // anywhere downstream — it reaches the box as a mod nobody graded, or
+        // as the opposite verdict, in a colour.
+        let worths = [(Worth::Good, "good"), (Worth::Junk, "junk"), (Worth::Neutral, "neutral")];
+
+        for (worth, expected) in worths {
+            assert_eq!(worth.as_str(), expected, "{worth:?} wire name");
+        }
+    }
+
+    // Fails if a slot is swapped, if a verdict moves to another family, or if a
+    // temple-mod row is added or removed.
+    //
+    // The `worth` column joined this table rather than getting a test of its
+    // own because it is the same fact as the other two — the row — and it is
+    // Vertolka's 2026-09-10 message in full: *"make Puhuarte green and Matatl
+    // red"*, and the five families he did not name are `Neutral`. The five
+    // matter as much as the two: `Neutral` is the absence of a verdict, so a
+    // family that quietly acquired one would colour a mod name on the overlay
+    // off nobody's word.
+    #[test]
+    fn temple_mod_rows_carry_their_architect_slot_table_and_worth() {
+        const EXPECTED: [(&str, &str, &[Slot], Worth); 7] = [
             (
                 "conduit_of_lightning",
                 "Xopec",
                 &[Slot::Helmet, Slot::Gloves, Slot::Boots, Slot::Amulet, Slot::Ring],
+                Worth::Neutral,
             ),
-            ("crucible_of_flame", "Puhuarte", &[Slot::Helmet, Slot::Gloves, Slot::Amulet]),
-            ("defense_research_lab", "Matatl", &[Slot::Boots, Slot::Weapon]),
-            ("hybridisation_chamber", "Citaqualotl", &[Slot::Weapon]),
+            (
+                "crucible_of_flame",
+                "Puhuarte",
+                &[Slot::Helmet, Slot::Gloves, Slot::Amulet],
+                Worth::Good,
+            ),
+            ("defense_research_lab", "Matatl", &[Slot::Boots, Slot::Weapon], Worth::Junk),
+            ("hybridisation_chamber", "Citaqualotl", &[Slot::Weapon], Worth::Neutral),
             (
                 "sanctum_of_immortality",
                 "Guatelitzi",
                 &[Slot::BodyArmour, Slot::Amulet, Slot::Ring, Slot::Belt],
+                Worth::Neutral,
             ),
             (
                 "storm_of_corruption",
                 "Topotante",
                 &[Slot::Gloves, Slot::Shield, Slot::Weapon],
+                Worth::Neutral,
             ),
             (
                 "toxic_grove",
                 "Tacati",
                 &[Slot::BodyArmour, Slot::Shield, Slot::Weapon],
+                Worth::Neutral,
             ),
         ];
 
@@ -1469,15 +1552,16 @@ mod tests {
             .iter()
             .filter_map(|row| row.temple_mod().map(|_| row.key()))
             .collect();
-        let expected_keys: Vec<&str> = EXPECTED.iter().map(|(key, _, _)| *key).collect();
+        let expected_keys: Vec<&str> = EXPECTED.iter().map(|(key, _, _, _)| *key).collect();
         assert_eq!(actual_keys, expected_keys, "temple mod rows changed");
 
-        for (key, architect, slots) in EXPECTED {
+        for (key, architect, slots, worth) in EXPECTED {
             let temple_mod = drops_for(key)
                 .temple_mod()
                 .unwrap_or_else(|| panic!("{key} must carry a temple mod"));
             assert_eq!(temple_mod.architect(), architect, "{key} architect");
             assert_eq!(temple_mod.slots(), slots, "{key} slots");
+            assert_eq!(temple_mod.worth(), worth, "{key} worth");
         }
     }
 
@@ -2004,6 +2088,7 @@ mod tests {
                 architect: "Puhuarte",
                 item_hint: "temple gloves",
                 slots: &[Slot::Helmet, Slot::Gloves, Slot::Amulet],
+                worth: Worth::Good,
                 source: VERTOLKA_SHEET,
                 per_run: Some(Estimate::guess(2.0, VERTOLKA_MSG)),
                 base_price_chaos: None,

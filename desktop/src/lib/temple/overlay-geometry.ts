@@ -277,37 +277,47 @@ export function offerStackPlacement(input: {
 export const DIAGONAL_BUDGET_CSS = 316;
 
 /**
- * The tallest a FULL offer box can actually be, CSS px (POE-277).
+ * The tallest a FULL offer box can actually be, CSS px (POE-277, v5).
  *
  * Summed from `TempleOfferBoxes.svelte`'s own fixed row heights — every row in
  * the full form is a `height` or a `line-height` with a stated margin, which is
  * what makes a box's geometry a function of its SHAPE — for the worst case
- * this new wording can produce: a `market` or `partial` box on the advisor's
- * pick, so a 2 px frame, with the two-line header, a sale row and paired
- * unique/vial row, a ladder, a recipe, a temple mod block with five glyphs and
- * the warning age line.
+ * this wording can produce: a box with a sale row, an item row carrying the
+ * upgrade (so the `upgraded` caption), the room-bonus row, the temple mod with
+ * slot chips wrapped to two rows, the market warning line, and the four
+ * section hairlines those five sections put between themselves.
  *
- *     border 2x2 4 + padding 2x2 4 + header (24 + 15) 39
- *     + drivers (2 + 2x39 + 1x1) 81 + ladder (1 + 23) 24
- *     + recipe (2 + 11, 1 + 39) 53
- *     + mod (2 + 20, 1 + 26) 49 + age (2 + 13) 15 = 269
+ *     border 2x2 4 + padding 2x10 20 + header (26 + 15) 41
+ *     + 4 rules x (6 + 1 + 6) 52
+ *     + sale 18 + items (8 + 69) 77
+ *     + room bonuses (18 + 13) 31
+ *     + mod (18 + 5 + 14 + 4 + 14) 55
+ *     + market line 13 = 308
  *
- * The 316 px diagonal budget therefore has 47 px of spare height. The fresh
- * form loses the 15 px age row; this constant describes the WARN form, where
- * the market note is present. A mod driver is removed from the drop rows
- * before the component receives the box, so `fold` cannot add a fourth row in
- * this form. `note` is not in the sum: instrumental and overridden rooms have
- * no drop rows, so their explanatory line replaces the ladder/row shape rather
- * than extending this maximum.
+ * The 316 px diagonal budget therefore has 8 px of spare height, where v4's
+ * 269 px box had 47: the restyle bought air, a price under every icon, a word
+ * under every ladder, slot chips and four hairlines with the rest. A row added
+ * here is now a decision about what the box DROPS.
+ *
+ * Three rows are deliberately outside the sum:
+ *
+ * - `fold` (13 + 3) is unreachable — `view.ts`'s `ROW_KINDS` has four entries
+ *   and the mod is removed from the drop rows before the component sees the
+ *   box, so `driverCount` cannot pass `FULL_DRIVER_ROWS`;
+ * - `note` (a wrapping 15 px line) fires only for `instrumental`, `override`
+ *   and a line that drops nothing, and every one of those has no item row —
+ *   it REPLACES the shape it would otherwise extend;
+ * - a one-row slot-chip line, because two rows is the worst case and both
+ *   heights are already a shape `offerBoxSignature` re-enters on.
  *
  * Not measured from the DOM because this app has no DOM harness for a
  * `.svelte` file; `overlay-geometry.test.ts` restates the row table beside the
  * constant so a row added to the component without a number here fails.
  */
-export const FULL_BOX_MAX_CSS = 269;
+export const FULL_BOX_MAX_CSS = 311;
 
 /** What two FULL boxes and the gap between them need, CSS px —
- * `269 * 2 + STACK_GAP_CSS` = 546 for the current 269 px full form. This is
+ * `308 * 2 + STACK_GAP_CSS` = 624 for the current 308 px full form. This is
  * the clearance [`offersCompact`] demands before it lets the pair render full.
  * It uses the WORST case rather than the design's typical one, because the box
  * that gets clamped for want of it is the LOWER one, and a clamped box lands

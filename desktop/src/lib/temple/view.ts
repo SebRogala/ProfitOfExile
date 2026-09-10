@@ -38,6 +38,7 @@ import type {
 	ItemSlotId,
 	LayoutView,
 	MarketView,
+	ModWorth,
 	OfferView,
 	RankedView,
 	RecipeItemView,
@@ -563,8 +564,14 @@ export interface OfferBox {
 	/** `"floor · 2 unpriced"` on a partial sum, else null. It replaces
 	 *  `per run` in the value row, so the row's height does not move. */
 	chip: string | null;
-	/** The single box-level provenance marks beside the value: `F` for the grade
-	 *  fallback and `G` when any value term is guessed. */
+	/** The single box-level provenance marks: `F` for the grade fallback and
+	 *  `G` when any value term is guessed.
+	 *
+	 *  Kept as DATA and no longer drawn as letters. POE-277's v5 retired both
+	 *  boxed glyphs from the overlay: `F` said twice what `grade C` already
+	 *  said in words, and `G` became the muted ` · est.` on the header's second
+	 *  line — so the box reads this array for that one word and prints nothing
+	 *  else from it. The page and the tests still read both letters. */
 	marks: BoxMark[];
 	/** The dropped items and the sale, in display order, at most
 	 *  [`FULL_DRIVER_ROWS`]. */
@@ -584,7 +591,13 @@ export interface OfferBox {
 	 *  all. Null when the rows say it themselves. */
 	note: string | null;
 	/** The vial upgrade for this line's unique, or null. Most lines have none;
-	 *  Locus of Corruption is the case that proves it. */
+	 *  Locus of Corruption is the case that proves it.
+	 *
+	 *  Since POE-277's v5 the overlay draws only its `upgraded` member, as the
+	 *  third cell of the one item row — the `base → vial → upgraded` chain was
+	 *  redrawing the row's own two icons at half size underneath themselves.
+	 *  The whole object stays here: the Temple page and the tests read all
+	 *  three members, and the cell needs the row it is the result OF. */
 	recipe: OfferRecipe | null;
 	/** The compact form's price strip — `"68 · 41 · 30c"` — or null with no
 	 *  priced driver to put in it. */
@@ -615,6 +628,11 @@ export interface OfferMod {
 	slots: ItemSlotId[];
 	price: string;
 	perRun: string | null;
+	/** Vertolka's verdict on the family, and the only grade left on the box:
+	 *  since POE-277's v5 the mod NAME carries it as a colour — green for
+	 *  `good`, red for `junk`, the box's own text colour for `neutral`. Always
+	 *  a verdict and never null, because `neutral` already IS "nobody said". */
+	worth: ModWorth;
 	marks: DriverMark[];
 }
 
@@ -670,6 +688,12 @@ export interface OfferRecipeItem {
 	iconName: string;
 	/** `"68c"` or `"—"`. */
 	price: string;
+	/** False when [`price`](Self.price) is a refusal rather than a number —
+	 *  the same field, and the same meaning, `OfferDriver.priced` carries.
+	 *  Here so the overlay's item row can style a refusal without matching the
+	 *  refusal STRING: a surface that tests for `'—'` breaks the day the
+	 *  wording changes, and the wording is this file's to change. */
+	priced: boolean;
 }
 
 /** Base unique + vial → upgraded unique, priced. */
@@ -1003,7 +1027,8 @@ function recipeItem(item: RecipeItemView): OfferRecipeItem {
 	return {
 		name: item.name,
 		iconName: item.name,
-		price: item.chaos === null ? '—' : `${offerChaos(item.chaos)}c`
+		price: item.chaos === null ? '—' : `${offerChaos(item.chaos)}c`,
+		priced: item.chaos !== null
 	};
 }
 
@@ -1057,8 +1082,25 @@ function offerStripPrices(terms: DriverTerm[]): string | null {
  * `state` has already described — so putting it here would only add a second
  * spelling of a change already covered.
  *
- * `pick` is present because the frame is 2 px on the pick and 1 px otherwise,
- * which is 2 px of box. `compact` is present because it is the whole form.
+ * `pick` LEFT this string with POE-277's v5 restyle: the frame is 2 px on both
+ * boxes now — faint is a muted frame and a muted text colour, never an
+ * `opacity` — so the pick buys no height, and a field that decides nothing
+ * about the geometry only re-measures the pair for a change the eye already
+ * has. `compact` is present because it is the whole form.
+ *
+ * `ladder.quant` and `ladder.rarity` are each present as a PRESENCE and not as
+ * a value, and what they buy is the bonus cells' two-line shape: a line that
+ * states one rate draws one cell where a line stating both draws two, and a
+ * cell is a value over a word. Their numbers are not here and must not be —
+ * `+2/4/6%` becoming `+22/44/66%` is text, and text moves nothing.
+ *
+ * `mod.slots.length` is present and is the one COUNT here that is not a row
+ * count: the `Appears on:` chips wrap once the row passes 272 px — five
+ * (Xopec) always, and four or even three when BODY ARMOUR is among them
+ * (Guatelitzi, Tacati). Two rows is the worst case at any count, which the
+ * budget carries, and the COUNT is in this string as the cheap proxy for that
+ * shape: it is not the wrap rule, but nothing changes the wrap without
+ * changing it.
  *
  * Here rather than in the component because a `.svelte` file has no unit-test
  * harness in this app: the one thing that must be provable about this string is
@@ -1067,7 +1109,6 @@ function offerStripPrices(terms: DriverTerm[]): string | null {
 export function offerBoxSignature(box: OfferBox, compact: boolean): string {
 	return [
 		box.offer.index,
-		box.pick ? 'pick' : '-',
 		compact ? 'compact' : 'full',
 		box.state ?? 'none',
 		box.drivers.length,
@@ -1121,6 +1162,20 @@ function offerLadder(offer: OfferView): OfferBox['ladder'] {
 	};
 }
 
+/**
+ * The wire's mod verdict as this file's union, guarded rather than cast.
+ *
+ * Same rule as [`offerState`]: `LineView.modWorth` is a plain string on the
+ * wire and `serde(default)` lets an older payload omit it entirely, so a
+ * spelling this file has not been taught would otherwise reach the markup's
+ * class list and colour a mod name off a word nobody chose. `neutral` is the
+ * fallback because it is the one answer that claims nothing — which is exactly
+ * what an unrecognised verdict is.
+ */
+function modWorth(worth: string | null): ModWorth {
+	return worth === 'good' || worth === 'junk' ? worth : 'neutral';
+}
+
 function offerMod(
 	line: NonNullable<OfferView['line']> | null,
 	terms: DriverTerm[],
@@ -1135,6 +1190,7 @@ function offerMod(
 		slots: line?.modSlots ?? [],
 		price: term?.row.price ?? (state === 'fallback' ? '—' : 'no price'),
 		perRun: term?.row.perRun ?? null,
+		worth: modWorth(line?.modWorth ?? null),
 		marks: term?.row.marks ?? []
 	};
 }
