@@ -1062,81 +1062,66 @@
 			</div>
 		</section>
 
-		<!-- General -->
+		<!-- Overlays -->
 		<section>
-			<h2>General</h2>
+			<h2>Overlay Positions</h2>
 
-			{#if import.meta.env.DEV}
-			<div class="setting-row">
-				<span class="setting-label">Server URL</span>
-				{#if editingServerUrl}
-					<div class="setting-edit">
-						<input
-							type="text"
-							class="setting-input"
-							bind:value={editServerUrlValue}
-							onkeydown={(e) => { if (e.key === 'Enter') saveServerUrl(); if (e.key === 'Escape') cancelEditServerUrl(); }}
-						/>
-						<Button variant="save" onclick={saveServerUrl}>Save</Button>
-						<Button onclick={cancelEditServerUrl}>Cancel</Button>
+			{#each overlayGroupRows as group (group.id)}
+				<h3 class="group-heading">{group.heading}</h3>
+
+				{#each group.windows as cfg (cfg.name)}
+					<div class="setting-row">
+						<span class="setting-label">{cfg.label}</span>
+						{#if positionOverlays[cfg.name]}
+							<span class="setting-value">Drag overlay to position...</span>
+							<Button variant="save" onclick={() => savePositionOverlay(cfg.name)}>Save</Button>
+							<Button onclick={() => cancelPositionOverlay(cfg.name)}>Cancel</Button>
+						{:else}
+							{@const s = overlaySettings[cfg.name]}
+							<span class="setting-value mono">{s ? `(${s.x}, ${s.y}) ${s.width}\u00d7${s.height}` : 'Not set'}</span>
+							<Button onclick={() => showPositionOverlay(cfg.name)} disabled={!configureAllowed}>Configure</Button>
+						{/if}
 					</div>
-				{:else}
-					<span class="setting-value">{store.status?.server_url ?? '...'}</span>
-					<Button onclick={startEditServerUrl}>Edit</Button>
-				{/if}
-			</div>
-			{/if}
+				{/each}
 
-			<div class="setting-row">
-				<span class="setting-label">League</span>
-				{#if ssot.resolving && ssot.unreachable}
-					<span class="setting-value muted">Server unreachable — still retrying</span>
-					<Button onclick={refreshLeague}>Refresh</Button>
-				{:else if ssot.resolving}
-					<span class="setting-value muted">Resolving…</span>
-					<Button onclick={refreshLeague} disabled>Refresh</Button>
-				{:else if ssot.league == null}
-					<span class="setting-value muted">Not detected — server may be unreachable</span>
-					<Button onclick={refreshLeague}>Refresh</Button>
-				{:else}
-					<span class="setting-value">{ssot.league}</span>
-					<Button onclick={refreshLeague}>Refresh</Button>
-				{/if}
-			</div>
-
-		</section>
-
-		<!-- Game Integration -->
-		<section>
-			<h2>Game Integration</h2>
-
-			{#if store.status && !store.status.client_txt_exists}
-				<div class="warning-banner">
-					Client.txt not found at the configured path. Lab detection, OCR, and compass will not work. Use Browse to locate your Path of Exile Client.txt file.
-				</div>
-			{/if}
-
-			<div class="setting-row">
-				<span class="setting-label">Client.txt Path</span>
-				{#if editingClientTxt}
-					<div class="setting-edit">
-						<input
-							type="text"
-							class="setting-input"
-							bind:value={editClientTxtValue}
-							onkeydown={(e) => { if (e.key === 'Enter') saveClientTxt(); if (e.key === 'Escape') cancelEditClientTxt(); }}
-						/>
-						<Button variant="save" onclick={saveClientTxt}>Save</Button>
-						<Button onclick={cancelEditClientTxt}>Cancel</Button>
+				{#each group.widgets as row (row.spec.id)}
+					{@const widget = row.spec}
+					<div class="setting-row">
+						<span class="setting-label">{widget.label}</span>
+						<span class="widget-show">
+							Show
+							<Toggle
+								checked={widgetGeometries[widget.id]?.visible ?? true}
+								label={widget.label}
+								onchange={(next) => setWidgetVisible(widget, next)}
+							/>
+						</span>
+						<!-- A game-anchored widget has no stored rectangle, so the
+						     geometry column would print "Not set" forever and the
+						     Configure button does not arrange it. The row is here
+						     for the Show checkbox alone, which is the user's only
+						     switch for that surface. -->
+						<span class="setting-value mono">
+							{row.placeable
+								? widgetGeometryText(widgetGeometries[widget.id])
+								: 'placed by the game'}
+						</span>
 					</div>
-				{:else}
-					<span class="setting-value path" class:path-missing={!store.status?.client_txt_exists}>{store.status?.client_txt_path ?? '...'}</span>
-					<Button onclick={browseClientTxt}>Browse</Button>
-					<Button onclick={startEditClientTxt}>Edit</Button>
-					<Button onclick={() => invoke('reset_client_txt_path').catch(e => console.error(e))} title="Auto-detect GGG or Steam install">Reset</Button>
-				{/if}
-			</div>
+				{/each}
 
+				{#if group.configureModule}
+					{@const module = group.configureModule}
+					<div class="setting-row">
+						<span class="setting-label"></span>
+						<span class="setting-value">
+							{widgetConfiguring === module ? 'Save or Cancel in the overlay' : ''}
+						</span>
+						<Button onclick={() => configureWidgets(module)} disabled={!configureAllowed}>
+							{widgetConfiguring === module ? 'Configuring\u2026' : 'Configure widgets'}
+						</Button>
+					</div>
+				{/if}
+			{/each}
 		</section>
 
 		<!-- OCR Regions -->
@@ -1264,68 +1249,6 @@
 			</p>
 		</section>
 
-		<!-- Overlays -->
-		<section>
-			<h2>Overlay Positions</h2>
-
-			{#each overlayGroupRows as group (group.id)}
-				<h3 class="group-heading">{group.heading}</h3>
-
-				{#each group.windows as cfg (cfg.name)}
-					<div class="setting-row">
-						<span class="setting-label">{cfg.label}</span>
-						{#if positionOverlays[cfg.name]}
-							<span class="setting-value">Drag overlay to position...</span>
-							<Button variant="save" onclick={() => savePositionOverlay(cfg.name)}>Save</Button>
-							<Button onclick={() => cancelPositionOverlay(cfg.name)}>Cancel</Button>
-						{:else}
-							{@const s = overlaySettings[cfg.name]}
-							<span class="setting-value mono">{s ? `(${s.x}, ${s.y}) ${s.width}\u00d7${s.height}` : 'Not set'}</span>
-							<Button onclick={() => showPositionOverlay(cfg.name)} disabled={!configureAllowed}>Configure</Button>
-						{/if}
-					</div>
-				{/each}
-
-				{#each group.widgets as row (row.spec.id)}
-					{@const widget = row.spec}
-					<div class="setting-row">
-						<span class="setting-label">{widget.label}</span>
-						<span class="widget-show">
-							Show
-							<Toggle
-								checked={widgetGeometries[widget.id]?.visible ?? true}
-								label={widget.label}
-								onchange={(next) => setWidgetVisible(widget, next)}
-							/>
-						</span>
-						<!-- A game-anchored widget has no stored rectangle, so the
-						     geometry column would print "Not set" forever and the
-						     Configure button does not arrange it. The row is here
-						     for the Show checkbox alone, which is the user's only
-						     switch for that surface. -->
-						<span class="setting-value mono">
-							{row.placeable
-								? widgetGeometryText(widgetGeometries[widget.id])
-								: 'placed by the game'}
-						</span>
-					</div>
-				{/each}
-
-				{#if group.configureModule}
-					{@const module = group.configureModule}
-					<div class="setting-row">
-						<span class="setting-label"></span>
-						<span class="setting-value">
-							{widgetConfiguring === module ? 'Save or Cancel in the overlay' : ''}
-						</span>
-						<Button onclick={() => configureWidgets(module)} disabled={!configureAllowed}>
-							{widgetConfiguring === module ? 'Configuring\u2026' : 'Configure widgets'}
-						</Button>
-					</div>
-				{/if}
-			{/each}
-		</section>
-
 		<!-- Timer Appearance -->
 		<section>
 			<h2>Timer Appearance</h2>
@@ -1424,20 +1347,81 @@
 			{/if}
 		</section>
 
-		<!-- Danger Zone -->
-		<section class="danger-section">
-			<h2>Danger Zone</h2>
+		<!-- General -->
+		<section>
+			<h2>General</h2>
+
+			{#if import.meta.env.DEV}
 			<div class="setting-row">
-				<span class="setting-label">Reset All Settings</span>
-				<span class="setting-value">Deletes settings file and re-detects everything</span>
-				<Button variant="danger" onclick={() => {
-					if (confirm('Reset all settings to defaults? This will clear all overlay positions, Client.txt path, and trade settings. The app will re-detect your PoE installation.')) {
-						invoke('reset_all_settings').then(() => {
-							alert('Settings reset. The app will now use fresh defaults.');
-						}).catch(e => console.error('Reset failed:', e));
-					}
-				}}>Reset Everything</Button>
+				<span class="setting-label">Server URL</span>
+				{#if editingServerUrl}
+					<div class="setting-edit">
+						<input
+							type="text"
+							class="setting-input"
+							bind:value={editServerUrlValue}
+							onkeydown={(e) => { if (e.key === 'Enter') saveServerUrl(); if (e.key === 'Escape') cancelEditServerUrl(); }}
+						/>
+						<Button variant="save" onclick={saveServerUrl}>Save</Button>
+						<Button onclick={cancelEditServerUrl}>Cancel</Button>
+					</div>
+				{:else}
+					<span class="setting-value">{store.status?.server_url ?? '...'}</span>
+					<Button onclick={startEditServerUrl}>Edit</Button>
+				{/if}
 			</div>
+			{/if}
+
+			<div class="setting-row">
+				<span class="setting-label">League</span>
+				{#if ssot.resolving && ssot.unreachable}
+					<span class="setting-value muted">Server unreachable — still retrying</span>
+					<Button onclick={refreshLeague}>Refresh</Button>
+				{:else if ssot.resolving}
+					<span class="setting-value muted">Resolving…</span>
+					<Button onclick={refreshLeague} disabled>Refresh</Button>
+				{:else if ssot.league == null}
+					<span class="setting-value muted">Not detected — server may be unreachable</span>
+					<Button onclick={refreshLeague}>Refresh</Button>
+				{:else}
+					<span class="setting-value">{ssot.league}</span>
+					<Button onclick={refreshLeague}>Refresh</Button>
+				{/if}
+			</div>
+
+		</section>
+
+		<!-- Game Integration -->
+		<section>
+			<h2>Game Integration</h2>
+
+			{#if store.status && !store.status.client_txt_exists}
+				<div class="warning-banner">
+					Client.txt not found at the configured path. Lab detection, OCR, and compass will not work. Use Browse to locate your Path of Exile Client.txt file.
+				</div>
+			{/if}
+
+			<div class="setting-row">
+				<span class="setting-label">Client.txt Path</span>
+				{#if editingClientTxt}
+					<div class="setting-edit">
+						<input
+							type="text"
+							class="setting-input"
+							bind:value={editClientTxtValue}
+							onkeydown={(e) => { if (e.key === 'Enter') saveClientTxt(); if (e.key === 'Escape') cancelEditClientTxt(); }}
+						/>
+						<Button variant="save" onclick={saveClientTxt}>Save</Button>
+						<Button onclick={cancelEditClientTxt}>Cancel</Button>
+					</div>
+				{:else}
+					<span class="setting-value path" class:path-missing={!store.status?.client_txt_exists}>{store.status?.client_txt_path ?? '...'}</span>
+					<Button onclick={browseClientTxt}>Browse</Button>
+					<Button onclick={startEditClientTxt}>Edit</Button>
+					<Button onclick={() => invoke('reset_client_txt_path').catch(e => console.error(e))} title="Auto-detect GGG or Steam install">Reset</Button>
+				{/if}
+			</div>
+
 		</section>
 
 		<!-- Logs -->
@@ -1455,11 +1439,26 @@
 			</section>
 		{/if}
 
+		<!-- Danger Zone -->
+		<section class="danger-section">
+			<h2>Danger Zone</h2>
+			<div class="setting-row">
+				<span class="setting-label">Reset All Settings</span>
+				<span class="setting-value">Deletes settings file and re-detects everything</span>
+				<Button variant="danger" onclick={() => {
+					if (confirm('Reset all settings to defaults? This will clear all overlay positions, Client.txt path, and trade settings. The app will re-detect your PoE installation.')) {
+						invoke('reset_all_settings').then(() => {
+							alert('Settings reset. The app will now use fresh defaults.');
+						}).catch(e => console.error('Reset failed:', e));
+					}
+				}}>Reset Everything</Button>
+			</div>
+		</section>
 </div>
 
 <style>
 	.settings-page {
-		max-width: 520px;
+		max-width: 960px;
 		margin: 0 auto;
 	}
 
