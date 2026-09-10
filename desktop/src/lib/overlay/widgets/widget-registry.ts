@@ -140,9 +140,9 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		// rolls over a minute, and a box placed from a width it no longer has
 		// can land on a read region (ADR-019).
 		//
-		// 300 (up from POE-249's 260) is what the driver rows need: a 26 px
-		// icon, an item name that does not ellipsise at four words, its price
-		// and its count. The margin holds up to 532 px on the committed
+		// 300 (up from POE-249's 260) is what the driver rows need: a 39 px
+		// icon, its price, count and marks. Drop rows carry no name since POE-277;
+		// the ladder is the widest line. The margin holds up to 532 px on the committed
 		// 1920×1080 frame, so this is nowhere near a limit. The position is
 		// never used — `overlay-geometry.ts`'s `offerStackPlacement` decides it
 		// per read, in the sheet's left margin — but the registry's own
@@ -152,7 +152,7 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		// (`DIAGONAL_BUDGET_CSS`) is a fact about the BOARD, not about this
 		// box, and a default that stated it would be a rectangle the widget
 		// can exceed.
-		defaults: { x: 40, y: 115, w: 300, h: 358 },
+		defaults: { x: 40, y: 115, w: 300, h: 309 },
 		resizable: false,
 		anchored: true
 	},

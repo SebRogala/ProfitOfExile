@@ -13,13 +13,13 @@
  * # What it words for the overlay, since POE-249
  *
  * `offerBoxes()` is the overlay's advice surface: ONE box per architect block
- * on the panel, in the panel's own order, each carrying what the kill builds,
- * Vertolka's rating for the line it builds into, and the advisor's first reason
- * for that block. `killCallout()`, `KillCallout` and `killTitle()` are GONE
+ * on the panel, in the panel's own order, carrying the resolved room and kind,
+ * the line's bonus ladder and temple mod, the value explanation and the
+ * advisor's pointer. `killCallout()`, `KillCallout` and `killTitle()` are GONE
  * with it — they said one thing about one block and left the block the player
- * is choosing against unnamed. What survives from them is used by the boxes and
- * by the room widget: `chosenOffer`, `leadReason`, `forcedKillNote`,
- * `offerHeadline` and `offerBuilds`, none of them reworded.
+ * is choosing against unnamed. The Temple page keeps its own `offerHeadline`
+ * and `offerBuilds`; boxes use `offerBoxHeadline` and `offerBoxBuilds` because
+ * their header answers a different question.
  *
  * # The geometry is a transcription, not a design
  *
@@ -468,11 +468,6 @@ export function forcedKillNote(advice: AdviceView | null): string | null {
 	return advice?.forcedKill === true ? 'only architect read' : null;
 }
 
-/** The first reason, for surfaces with one line to spare. The page shows all. */
-export function leadReason(ranked: RankedView): string | null {
-	return ranked.reasons[0] ?? null;
-}
-
 /**
  * The architect block the top recommendation is about, or null.
  *
@@ -497,6 +492,9 @@ export function chosenOffer(slice: TempleSlice): OfferView | null {
  * Vertolka's rating line, the advisor's first reason. The advisor's pick gets a
  * cyan frame — that frame IS the pointer; no arrows anywhere."*
  *
+ * POE-277 replaced the rating and reason lines with the tier ladder and the
+ * temple-mod block, and led the header with the room.
+ *
  * This replaces the single kill callout, which said one thing about ONE block
  * and left the other block — the one the player is choosing against — unnamed
  * on the overlay. Two boxes state both offers and mark which one the advisor
@@ -506,28 +504,14 @@ export interface OfferBox {
 	/** The block this box is about, so a surface can point at it. */
 	offer: OfferView;
 	/** The three-tier area bonus ladder for this line, or null when absent. */
-	ladder: {
-		quant: [number, number, number] | null;
-		rarity: [number, number, number] | null;
-		tier: number;
-	} | null;
+	ladder: OfferLadder | null;
 	/** The architect mod line, when the box has one. */
 	mod: OfferMod | null;
-	/** `"Guatelitzi · upgrade"` — which architect, and which kill. */
+	/** The resolved room, or the printed target when resolution failed. */
 	headline: string;
-	/** `"Locus of Corruption (tier 3)"`, or the honest refusal when the printed
-	 *  target did not resolve. */
+	/** The kind and tier the resolved block builds, or the honest refusal when
+	 *  the printed target did not resolve. */
 	builds: string;
-	/** `"Vertolka A++"`, with ` · T3 <room>` appended when the kill lands below
-	 *  tier 3. Null when the offer carried no grade — there is no line, so there
-	 *  is nothing graded, and a blank rating is better than an invented one. */
-	rating: string | null;
-	/** The advisor's first reason for the ranked entry that names THIS block, or
-	 *  null when the ranking named no entry for it — EXCEPT on a `kill either`
-	 *  board, where the top recommendation names no architect and its own lead
-	 *  reason (the door instruction, which is still valid whichever block the
-	 *  player kills) goes on every box. See [`offerReason`]. */
-	reason: string | null;
 	/** Whether this is the block the top recommendation chose — the cyan frame,
 	 *  which is the whole of the pointer. */
 	pick: boolean;
@@ -581,15 +565,6 @@ export interface OfferBox {
 	 *  where the number rests on an estimate and there is no driver row to
 	 *  carry that mark instead. */
 	marks: BoxMark[];
-	/** `"tier 1 = 80% of tier 3 · the rows below are tier 3's"`, or null on a
-	 *  tier-3 kill and on a row the player overrode.
-	 *
-	 *  The one line that keeps the driver rows honest on a scaled row: epic
-	 *  lock L2 prices tier 1 as a fraction of the LINE, so the rows under it
-	 *  are the tier-3 room's terms copied unscaled and they do NOT add up to
-	 *  the number above them. Without this line the box would look like a sum
-	 *  that does not sum. */
-	scaleNote: string | null;
 	/** The dropped items and the sale, in display order, at most
 	 *  [`FULL_DRIVER_ROWS`]. */
 	drivers: OfferDriver[];
@@ -611,8 +586,6 @@ export interface OfferBox {
 	/** The compact form's price strip — `"68 · 41 · 30c"` — or null with no
 	 *  priced driver to put in it. */
 	stripPrices: string | null;
-	/** The compact form's one foot line: the rating and the price age. */
-	foot: string;
 	/** Whether the market read behind the number is past its staleness
 	 *  threshold. All this FLAG draws is the value's dotted underline and the
 	 *  age line's colour; the box's shape on a stale board is decided by
@@ -622,6 +595,15 @@ export interface OfferBox {
 	stale: boolean;
 }
 
+/** The three-tier bonus ladder and the text pieces the box prints. */
+export interface OfferLadder {
+	quant: [number, number, number] | null;
+	rarity: [number, number, number] | null;
+	quantText: [string, string, string] | null;
+	rarityText: [string, string, string] | null;
+	tier: number;
+}
+
 /** An architect mod line projected for an offer box. */
 export interface OfferMod {
 	name: string;
@@ -629,7 +611,7 @@ export interface OfferMod {
 	slots: ItemSlotId[];
 	price: string;
 	perRun: string | null;
-	marks: BoxMark[];
+	marks: DriverMark[];
 }
 
 /** How complete the sum behind a box's number is — `RoomValueView.priced`. */
@@ -701,59 +683,6 @@ export interface OfferRecipe {
  * admits at 1920×1080, and a box that grows a row grows past plate C0.
  */
 export const FULL_DRIVER_ROWS = 3;
-
-/**
- * The rating line, or null when this offer has no line to rate.
- *
- * The grade is the LINE's — Vertolka ranks the 25 families by what their
- * tier-3 room is worth — so a kill that lands below tier 3 prints the tier-3
- * room's name beside the letter. Without it the box would credit the room in
- * hand with a rating it was never given.
- *
- * At tier 3 the suffix is dropped: `builds` already names that exact room, and
- * repeating it is noise on a box read at arm's length over a game.
- */
-function offerRating(offer: OfferView): string | null {
-	if (offer.grade === null) return null;
-	const rating = `Vertolka ${offer.grade}`;
-	if (offer.builtTier !== 3 && offer.lineTop !== null) return `${rating} · T3 ${offer.lineTop}`;
-	return rating;
-}
-
-/**
- * The reason the ranking gave for the entry that names THIS block, or null.
- *
- * Recommendations first, then gambles, because a block can appear on both
- * sides and the recommended reading is the one the box is drawn to carry. A
- * block the ranking named nowhere gets NO line rather than a borrowed one: the
- * advisor ranks moves, not architects, and attributing one block's argument to
- * the other is the failure this lookup exists to avoid.
- *
- * # `kill either` is the one board where every box gets the same line
- *
- * When the top recommendation carries no `architectIndex` the ranking is saying
- * the kill does not matter — and its lead reason is then the DOOR instruction
- * (`R3: … open D3-C2`), which is computed, still valid, and about neither
- * block. Looking it up by index would leave every box with nothing under its
- * rating while the only instruction on the board went unsaid; on a read where
- * neither offer resolved that is a pair of boxes carrying "does not resolve to
- * a known room" and no advice at all.
- *
- * The attribution is unambiguous precisely because no architect is named: the
- * advisor says either kill is fine, so the same line on both boxes is what it
- * said rather than a borrowed one. That is why this branch is keyed on the TOP
- * recommendation naming no architect and not on a per-box miss — a board that
- * named some OTHER index has an opinion about which block to kill, and a box it
- * did not name still gets silence.
- */
-function offerReason(advice: AdviceView, index: number): string | null {
-	const top = topRecommendation(advice);
-	if (top !== null && (top.architectIndex ?? null) === null) return leadReason(top);
-	const ranked = [...advice.recommendations, ...advice.gambles].find(
-		(entry) => entry.architectIndex === index
-	);
-	return ranked ? leadReason(ranked) : null;
-}
 
 // ------------------------------------------- the value, in the box (POE-260) --
 
@@ -900,15 +829,7 @@ function offerDriverTerms(value: RoomValueView, state: OfferValueState): DriverT
 				row: {
 					kind,
 					name: sale ? (scaled ? SCALED_SALE_ROW_NAME : SALE_ROW_NAME) : driver.name,
-					// No icon for the sale row — its glyph is drawn instead —
-					// and none for a MOD row either. A mod's `name` is the
-					// prose hint `drops.rs` prices the architect's signature
-					// rare by (`temple gloves`), not a poe.ninja item, so
-					// `/api/icon/temple/temple%20gloves` is a request that cannot
-					// succeed: every one of those rows would fetch a 404 and
-					// then draw the unresolved glyph anyway. Drawing it
-					// straight away is the same picture without the request.
-					iconName: sale || kind === 'mod' ? null : driver.name,
+					iconName: sale ? null : driver.name,
 					price: driverPrice(shown, ladder, saleDelta),
 					priced: shown !== null,
 					perRun: driver.count === null || sale ? null : `×${formatCount(driver.count)}`,
@@ -946,8 +867,8 @@ function offerDriverTerms(value: RoomValueView, state: OfferValueState): DriverT
  * is where this is decided.
  *
  * What still shows is everything that is true at every tier: how many items
- * folded, and what the two bonus percentages are. `offerScaleNote` is the line
- * that says out loud why the rows do not add up.
+ * folded, and what the two bonus percentages are. The box's ladder facts carry
+ * the explanation of the tiered percentages; no scale-note sentence is needed.
  */
 function rowsAreTier3(value: RoomValueView): boolean {
 	return value.scaledFromTier3 !== null;
@@ -1068,21 +989,6 @@ function offerBoxMarks(
 	return marks;
 }
 
-/**
- * `"tier 1 = 80% of tier 3 · the rows below are tier 3's"`, or null.
- *
- * The rows on a scaled box do NOT add up to the number above them, by design
- * (epic lock L2), and this is the line that says so. Without it the box is a
- * sum that does not sum, which is worse than no explanation at all.
- */
-function offerScaleNote(offer: OfferView, value: RoomValueView): string | null {
-	if (!rowsAreTier3(value)) return null;
-	const fraction = value.drivers.find((driver) => driver.kind === 'tier_fraction');
-	if (fraction?.count == null) return null;
-	const pct = Math.round(fraction.count * 100);
-	return `tier ${offer.builtTier ?? '?'} = ${pct}% of tier 3 · the rows below are tier 3's`;
-}
-
 /** One recipe member, with the em dash for a price this read does not have. */
 function recipeItem(item: RecipeItemView): OfferRecipeItem {
 	return {
@@ -1113,11 +1019,6 @@ function offerStripPrices(terms: DriverTerm[]): string | null {
 	const priced = terms.filter((term) => term.shown !== null);
 	if (priced.length === 0) return null;
 	return `${priced.map((term) => offerChaos(term.shown as number)).join(' · ')}c`;
-}
-
-/** The compact form's foot: the rating and the price age, or the age alone. */
-function offerFoot(rating: string | null, market: string): string {
-	return rating === null ? market : `${rating} · ${market}`;
 }
 
 /**
@@ -1165,10 +1066,16 @@ export function offerBoxSignature(box: OfferBox, compact: boolean): string {
 		box.bonus ? 'bonus' : '-',
 		box.note ? 'note' : '-',
 		box.recipe ? 'recipe' : '-',
-		box.scaleNote ? 'scale' : '-',
-		box.rating ? 'rating' : '-',
-		box.reason ? 'reason' : '-'
+		box.ladder ? 'ladder' : '-',
+		box.ladder?.quant ? 'q' : '-',
+		box.ladder?.rarity ? 'r' : '-',
+		box.mod ? 1 : 0,
+		box.mod?.slots.length ?? 0
 	].join(' ');
+}
+
+function formatPercentage(value: number): string {
+	return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 function offerLadder(offer: OfferView): OfferBox['ladder'] {
@@ -1180,10 +1087,44 @@ function offerLadder(offer: OfferView): OfferBox['ladder'] {
 	) {
 		return null;
 	}
+	const quantText = line.quantityPct === null
+		? null
+		: [
+				formatPercentage(line.quantityPct[0]),
+				formatPercentage(line.quantityPct[1]),
+				formatPercentage(line.quantityPct[2])
+			] as [string, string, string];
+	const rarityText = line.rarityPct === null
+		? null
+		: [
+				formatPercentage(line.rarityPct[0]),
+				formatPercentage(line.rarityPct[1]),
+				formatPercentage(line.rarityPct[2])
+			] as [string, string, string];
 	return {
 		quant: line.quantityPct,
 		rarity: line.rarityPct,
+		quantText,
+		rarityText,
 		tier: offer.builtTier
+	};
+}
+
+function offerMod(
+	line: NonNullable<OfferView['line']> | null,
+	terms: DriverTerm[],
+	state: OfferValueState | null
+): OfferMod | null {
+	const term = terms.find((candidate) => candidate.row.kind === 'mod');
+	const named = line?.modArchitect ?? term?.row.name ?? null;
+	if (named === null) return null;
+	return {
+		name: named,
+		hint: line?.modHint ?? null,
+		slots: line?.modSlots ?? [],
+		price: term?.row.price ?? (state === 'fallback' ? '—' : 'no price'),
+		perRun: term?.row.perRun ?? null,
+		marks: term?.row.marks ?? []
 	};
 }
 
@@ -1193,11 +1134,11 @@ function offerLadder(offer: OfferView): OfferBox['ladder'] {
  * **Panel order, not "upgrade first".** `PanelView.offers` is reading order
  * top-to-bottom, and a real board can print two `change` offers
  * (`panel.rs`'s own fixture does), so box `i` mirrors `offers[i]` and each box
- * says its own kind in its headline. The stack's geometry follows the same
+ * says its own kind in its builds line. The stack's geometry follows the same
  * rule: `offerStackPlacement` puts box `i` level with block `i`.
  *
  * Empty when there is no advice or no panel. The boxes carry the advisor's PICK
- * and its reason, so a panel read with no ranking behind it yet — the gap
+ * and forced-kill state, so a panel read with no ranking behind it yet — the gap
  * between a sighting and a completed read in a new cycle — has nothing to draw
  * and draws nothing, rather than showing two unmarked boxes the player could
  * read as "the advisor has no preference".
@@ -1213,7 +1154,6 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 	const market = marketNote(slice.market, now);
 	return panel.offers.map((offer) => {
 		const pick = chosenIndex !== null && chosenIndex === offer.index;
-		const rating = offerRating(offer);
 		// POE-260. Every number below comes from THIS object — the same
 		// `Valued` row the advisor ranked the board on (POE-257 D6) — and
 		// nothing here recomputes one. A box with no value at all is an offer
@@ -1223,20 +1163,21 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 		// The five-state classification, made ONCE — see [`offerState`] for why
 		// nothing below may re-read `value.priced` instead.
 		const state = value === null ? null : offerState(value.priced);
-		const terms = value === null || state === null ? [] : offerDriverTerms(value, state);
-		// EVERY term, and the three the full form draws. The chip and the box
-		// marks read the first: they describe the number, which is the whole
-		// sum, and a fact hidden by the fold is still a fact about it.
+		const allTerms = value === null || state === null ? [] : offerDriverTerms(value, state);
+		const mod = offerMod(offer.line ?? null, allTerms, state);
+		const terms = allTerms.filter((term) => term.row.kind !== 'mod');
+		// EVERY term, and the three the full form draws. The chip and box marks
+		// read the first: they describe the number, which is the whole sum, and a
+		// fact hidden by the fold is still a fact about it.
+		const allRows = allTerms.map((term) => term.row);
 		const rows = terms.map((term) => term.row);
 		const drivers = rows.slice(0, FULL_DRIVER_ROWS);
 		return {
 			offer,
 			ladder: offerLadder(offer),
-			mod: null,
-			headline: offerHeadline(offer),
-			builds: offerBuilds(offer),
-			rating,
-			reason: offerReason(advice, offer.index),
+			mod,
+			headline: offerBoxHeadline(offer),
+			builds: offerBoxBuilds(offer),
 			pick,
 			// Only on the pick: the note says the kill on the frame was the only
 			// one there was, and a note on the block the advisor did NOT choose
@@ -1248,17 +1189,15 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 			value: value === null || state === 'fallback' ? null : value.total,
 			valueText: value === null || state === null ? null : offerValueText(offer, value, state),
 			state,
-			chip: state === null ? null : offerChip(state, rows),
-			marks: value === null || state === null ? [] : offerBoxMarks(value, state, rows),
-			scaleNote: value === null ? null : offerScaleNote(offer, value),
+			chip: state === null ? null : offerChip(state, allRows),
+			marks: value === null || state === null ? [] : offerBoxMarks(value, state, allRows),
 			drivers,
 			driverCount: terms.length,
 			fold: value === null ? null : offerFold(value, terms),
 			bonus: value === null ? null : offerBonusLine(value),
-			note: state === null ? null : offerNote(state, rows),
+			note: state === null ? null : offerNote(state, allRows),
 			recipe: offerRecipe(offer.recipe ?? null),
 			stripPrices: offerStripPrices(terms),
-			foot: offerFoot(rating, market),
 			// Off the MARKET view and not off the value's own `asOf`, which is
 			// null on a stale read by construction: the whole point of the flag
 			// is that there IS a read and it is too old, so the field that
@@ -1382,6 +1321,17 @@ export function offerBuilds(offer: OfferView): string {
 	return offer.builtTier === null
 		? offer.displayName
 		: `${offer.displayName} (tier ${offer.builtTier})`;
+}
+
+/** The offer box's header: the resolved room, or the printed target on failure. */
+export function offerBoxHeadline(offer: OfferView): string {
+	return offer.displayName ?? offer.printedTarget;
+}
+
+/** The offer box's second line: the kind and tier the resolved block builds. */
+export function offerBoxBuilds(offer: OfferView): string {
+	if (offer.displayName === null) return 'does not resolve to a known room';
+	return offer.builtTier === null ? offer.kind : `${offer.kind} · tier ${offer.builtTier}`;
 }
 
 /** The offer's own header: which architect, and which of the two kills it is. */

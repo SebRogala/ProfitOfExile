@@ -1494,3 +1494,4 @@ mod tests {
         assert_eq!(match_plate_name("Hall of Lorks", Some(Tier::T2)), Match::Unknown);
     }
 }
+

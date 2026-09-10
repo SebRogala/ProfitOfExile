@@ -268,46 +268,47 @@ export function offerStackPlacement(input: {
  * taller than this still draws every line it has, and `offerStackPlacement`
  * gives up the diagonal for it (slides it back onto the column) rather than
  * dropping content. So it is not what [`offersCompact`] budgets against —
- * [`FULL_BOX_MAX_CSS`] is — and the two are kept apart because the design's
- * priced form happens to be exactly 316 px, which is how they were conflated
- * in the first place.
+ * [`FULL_BOX_MAX_CSS`] is — and the two are kept apart because they answer
+ * different questions. POE-277 additionally holds FULL_BOX_MAX_CSS AT OR UNDER
+ * this budget as a design requirement — `overlay-geometry.test.ts` asserts it
+ * — so a row added to the component is a decision about what the box drops,
+ * not a number to raise here.
  */
 export const DIAGONAL_BUDGET_CSS = 316;
 
 /**
- * The tallest a FULL offer box can actually be, CSS px (POE-260).
+ * The tallest a FULL offer box can actually be, CSS px (POE-277).
  *
  * Summed from `TempleOfferBoxes.svelte`'s own fixed row heights — every row in
  * the full form is a `height` or a `line-height` with a stated margin, which is
- * what makes a box's geometry a function of its SHAPE — for the worst case the
- * wording can produce: a `market` or `partial` box on the advisor's pick, so a
- * 2 px frame, with the value row, a scale note, three driver rows, a fold line,
- * a bonus line, a recipe, a rating, a reason and the age line.
+ * what makes a box's geometry a function of its SHAPE — for the worst case
+ * this new wording can produce: a `market` or `partial` box on the advisor's
+ * pick, so a 2 px frame, with the value row, three 39 px driver rows, a ladder,
+ * a recipe, a temple mod block and the age line.
  *
- *     border 2x2 4 + padding 2x8 16 + headline 20 + builds 17
- *     + value (8 + 28) 36 + scale (6 + 15) 21 + drivers (8 + 3x26 + 2x6) 98
- *     + fold (6 + 15) 21 + bonus (6 + 15) 21 + recipe (8 + 13, 2 + 24) 47
- *     + rating (8 + 14) 22 + reason (2 + 14) 16 + age (6 + 13) 19 = 358
+ *     border 2x2 4 + padding 2x2 4 + headline 18 + builds 15
+ *     + value (2 + 24) 26 + drivers (2 + 3x39 + 2x1) 121
+ *     + ladder (1 + 17) 18 + recipe (2 + 11, 1 + 26) 40
+ *     + mod (2 + 11, 16, 1 + 18) 48 + age (2 + 13) 15 = 309
  *
- * The design's 316 is that same box WITHOUT the scale note and the fold, which
- * are the two rows a tier-1 or tier-2 kill on a four-term room adds — a shape
- * the wording produces on ordinary boards, so it is the one the pair has to be
- * budgeted for. `note` is not in the sum and cannot be: `valuation.rs` gives an
- * instrumental and an overridden room exactly ONE driver, of a kind that is not
- * a row, so the line that says "valued at its letter" is only ever on a box
- * with no rows, no fold and no bonus.
+ * The 316 px diagonal budget therefore has 7 px of spare height. A mod driver
+ * is removed from the three drop rows before the component receives the box,
+ * so `fold` cannot add a fourth row in this form. `note` is not in the sum:
+ * instrumental and overridden rooms have no drop rows, so their explanatory
+ * line replaces the ladder/row shape rather than extending this maximum.
  *
  * Not measured from the DOM because this app has no DOM harness for a
  * `.svelte` file; `overlay-geometry.test.ts` restates the row table beside the
  * constant so a row added to the component without a number here fails.
  */
-export const FULL_BOX_MAX_CSS = 358;
+export const FULL_BOX_MAX_CSS = 309;
 
-/** What two FULL boxes and the gap between them need, CSS px — the clearance
- *  [`offersCompact`] demands before it lets the pair render full. Off the
- *  WORST case rather than the design's typical one, because the box that gets
- *  clamped for want of it is the LOWER one, and a clamped box lands on the box
- *  above it and is then moved or dropped entirely. */
+/** What two FULL boxes and the gap between them need, CSS px —
+ * `309 * 2 + STACK_GAP_CSS` = 626 for the current 309 px full form. This is
+ * the clearance [`offersCompact`] demands before it lets the pair render full.
+ * It uses the WORST case rather than the design's typical one, because the box
+ * that gets clamped for want of it is the LOWER one, and a clamped box lands
+ * on the box above it and is then moved or dropped entirely. */
 export const FULL_PAIR_CSS = FULL_BOX_MAX_CSS * 2 + STACK_GAP_CSS;
 
 /**

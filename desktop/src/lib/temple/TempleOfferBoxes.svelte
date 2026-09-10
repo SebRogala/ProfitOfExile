@@ -8,6 +8,9 @@
 	 * with everything the decision needs: the room the kill builds and its tier,
 	 * Vertolka's rating line, the advisor's first reason. The advisor's pick
 	 * gets a cyan frame — that frame IS the pointer; no arrows anywhere."*
+	 * POE-277 (2026-09-09) replaced the rating and reason lines with the
+	 * area-bonus ladder and the temple-mod block, led the header with the room,
+	 * and dropped the unique/vial names from the rows.
 	 *
 	 * What it replaces is the single kill callout (POE-244), which named ONE
 	 * block and said one reason about it. The player is choosing BETWEEN two
@@ -15,15 +18,14 @@
 	 * all — so the comparison happened in the game's own panel, in text, which
 	 * is the reading the overlay exists to spare.
 	 *
-	 * # What POE-260 added, and why it is worth the height
+	 * # What the box carries
 	 *
-	 * A grade letter and a reason say which block the advisor took. They do not
-	 * say *what the room is worth*, and the number POE-257 computes is the whole
-	 * of the ranking. So the box now leads with that number in chaos and then
-	 * shows what makes it up: the items the room drops, as ICONS with prices,
-	 * the quantity / rarity bonus, and the vial upgrade for the line's unique
-	 * where there is one. Everything on screen comes from `OfferView.value` —
-	 * the same `Valued` row the advisor ranked on (POE-257 D6) — so no box can
+	 * The number POE-257 computes is the whole of the ranking. The box leads with
+	 * the resolved room and tier, then shows that value in chaos and what makes it
+	 * up: the items the room drops, as ICONS with prices, the quantity / rarity
+	 * bonus ladder, the vial upgrade for the line's unique where there is one,
+	 * and the temple mod at the end. Everything on screen comes from the offer
+	 * view — the same `Valued` row the advisor ranked on (POE-257 D6) — so no box can
 	 * justify a number the recommendation did not use.
 	 *
 	 * The honesty rules are the design's and are not negotiable in markup: an
@@ -85,6 +87,7 @@
 	 * box. See the comments there; that is where the reasoning lives.
 	 */
 	import ItemIcon from '$lib/components/ItemIcon.svelte';
+	import SlotIcon from '$lib/components/SlotIcon.svelte';
 	import { getIconUrl } from '$lib/icons';
 	import { offersCompact, offerStackPlacement } from './overlay-geometry';
 	import { offerBoxSignature } from './view';
@@ -231,7 +234,7 @@
 
 {#snippet icon(name: string | null, kind: string, size: number)}
 	<!-- The frame is an OUTLINE and not a border, so the art keeps its own box:
-	     26 px is exactly one third of the 78 px source, and an integer downscale
+	     39 px is exactly one half of the 78 px source, and an integer downscale
 	     is what stops the icons shimmering against the game's own inventory
 	     art. The colours are the GAME's item-frame colours (unique brown, rare
 	     yellow) rather than this app's palette, because they are what the player
@@ -310,8 +313,8 @@
 		{#if compact}
 			<!-- Icons and prices, one row. What the eye uses at arm's length —
 			     who, what it builds, what it is worth and what pays for it —
-			     with the per-driver counts, the bonus, the recipe and the lead
-			     reason dropped. -->
+			     with the per-driver counts, the ladder, the recipe and the temple mod
+			     dropped. -->
 			{#if box.drivers.length > 0}
 				<div class="strip">
 					{#each box.drivers as driver (driver.name)}
@@ -320,20 +323,16 @@
 					{#if box.stripPrices}<span class="prices">{box.stripPrices}</span>{/if}
 				</div>
 			{/if}
-			<div class="foot">{box.foot}</div>
+			<div class="foot">{box.market}</div>
 		{:else}
-			{#if box.scaleNote}
-				<!-- Epic lock L2 in one line: the rows below are the TIER-3
-				     room's terms and do not add up to the number above them. -->
-				<p class="scale">{box.scaleNote}</p>
-			{/if}
-
 			{#if box.drivers.length > 0}
 				<div class="drivers">
 					{#each box.drivers as driver (driver.name)}
-						<div class="row">
-							{@render icon(driver.iconName, driver.kind, 26)}
-							<span class="nm">{driver.name}</span>
+						<div class="row" class:unnamed={driver.kind === 'unique' || driver.kind === 'vial'}>
+							{@render icon(driver.iconName, driver.kind, 39)}
+							{#if driver.kind === 'sale'}
+								<span class="nm">{driver.name}</span>
+							{/if}
 							<span class="pr" class:none={!driver.priced} class:gain={isGain(driver)}>
 								{driver.price}
 							</span>
@@ -350,10 +349,34 @@
 
 			{#if box.fold}<div class="note">{box.fold}</div>{/if}
 
-			{#if box.bonus}
+			{#if box.ladder || box.bonus}
 				<div class="bonus">
-					<span>{box.bonus.label}</span>
-					{#if box.bonus.amount}<span class="amt">{box.bonus.amount}</span>{/if}
+					{#if box.ladder}
+						<span class="ladder-values">
+							{#if box.ladder.quantText}
+								<span class:lit={box.ladder.tier === 1}>+{box.ladder.quantText[0]}</span>/<span
+									class:lit={box.ladder.tier === 2}>{box.ladder.quantText[1]}</span>/<span
+									class:lit={box.ladder.tier === 3}>{box.ladder.quantText[2]}%</span>
+							{:else}
+								<span class="dim">—</span>
+							{/if}
+						</span>
+						<span>quant</span>
+						<span class="separator">·</span>
+						<span class="ladder-values">
+							{#if box.ladder.rarityText}
+								<span class:lit={box.ladder.tier === 1}>+{box.ladder.rarityText[0]}</span>/<span
+									class:lit={box.ladder.tier === 2}>{box.ladder.rarityText[1]}</span>/<span
+									class:lit={box.ladder.tier === 3}>{box.ladder.rarityText[2]}%</span>
+							{:else}
+								<span class="dim">—</span>
+							{/if}
+						</span>
+						<span>rarity</span>
+					{:else}
+						<span>{box.bonus?.label}</span>
+					{/if}
+					{#if box.bonus?.amount}<span class="amt">{box.bonus.amount}</span>{/if}
 				</div>
 			{/if}
 
@@ -364,17 +387,31 @@
 				<div class="rec">
 					{#each recipeSteps(box) as step, step_i (step.name)}
 						{#if step_i > 0}{@render arrow()}{/if}
-						{@render icon(step.name, step_i === 1 ? 'vial' : 'unique', 20)}
+						{@render icon(step.name, step_i === 1 ? 'vial' : 'unique', 26)}
 						<span class="rp" class:none={step.price === '—'}>{step.price}</span>
 					{/each}
 				</div>
 			{/if}
 
-			{#if box.rating}
-				<p class="rating">{box.rating}</p>
-			{/if}
-			{#if box.reason}
-				<p class="reason">{box.reason}</p>
+			{#if box.mod}
+				<div class="lab mod-label">temple mod</div>
+				<div class="mod-row">
+					<span class="mod-name" title={box.mod.hint ?? undefined}>{box.mod.name}</span>
+					<span class="pr" class:none={box.mod.price === '—'}>{box.mod.price}</span>
+					<span class="ct">{box.mod.perRun ?? ''}</span>
+					<span class="marks">
+						{#each box.mod.marks as letter (letter)}
+							{@render mark(letter)}
+						{/each}
+					</span>
+				</div>
+				{#if box.mod.slots.length > 0}
+					<div class="slots">
+						{#each box.mod.slots as slot (slot)}
+							<SlotIcon {slot} size={18} />
+						{/each}
+					</div>
+				{/if}
 			{/if}
 			<p class="age" class:warn={box.stale}>{box.market}</p>
 		{/if}
@@ -395,7 +432,7 @@
 		box-sizing: border-box;
 		display: flex;
 		flex-direction: column;
-		padding: 8px 10px;
+		padding: 2px 10px;
 		background: rgb(15 17 23 / 88%);
 		border: 1px solid var(--color-lab-text-muted);
 		border-radius: 6px;
@@ -412,14 +449,18 @@
 		opacity: 1;
 	}
 
-	/* The one line the player is meant to SEE — which architect, and which kill.
+	/* The one line the player is meant to SEE — the room the kill builds.
 	   Read at arm's length over a game, so bigger than anything the old advice
 	   panel printed. */
 	.headline {
 		margin: 0;
+		height: 18px;
 		font-size: 16px;
 		font-weight: 700;
-		line-height: 20px;
+		line-height: 18px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	.pick .headline {
@@ -440,8 +481,12 @@
 	   name the panel printed (`offerBuilds`). */
 	.builds {
 		margin: 0;
+		height: 15px;
 		font-size: 13px;
-		line-height: 17px;
+		line-height: 15px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	/* --------------------------------------------------- what it is worth -- */
@@ -454,14 +499,14 @@
 		display: flex;
 		align-items: baseline;
 		gap: 3px;
-		margin-top: 8px;
-		height: 28px;
+		margin-top: 2px;
+		height: 24px;
 	}
 
 	.value .num {
 		font-size: 24px;
 		font-weight: 700;
-		line-height: 28px;
+		line-height: 24px;
 		font-variant-numeric: tabular-nums;
 		letter-spacing: -0.02em;
 	}
@@ -475,7 +520,7 @@
 	.value .unit {
 		font-size: 14px;
 		font-weight: 600;
-		line-height: 28px;
+		line-height: 24px;
 		color: var(--color-lab-text-secondary);
 	}
 
@@ -500,7 +545,7 @@
 	.value .per {
 		margin-left: auto;
 		font-size: 10px;
-		line-height: 28px;
+		line-height: 24px;
 		color: var(--color-lab-text-muted);
 	}
 
@@ -522,21 +567,28 @@
 	.drivers {
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
-		margin-top: 8px;
+		gap: 1px;
+		margin-top: 2px;
 	}
 
+	/* Every drop row reserves the icon's full 39 px, including the sale glyph.
+	   Text is allowed to ellipsise inside that fixed-height row; it must never
+	   grow the box or move the ladder below it. */
 	.row {
 		display: grid;
-		grid-template-columns: 26px minmax(0, 1fr) auto auto auto;
+		grid-template-columns: 39px minmax(0, 1fr) auto auto auto;
 		align-items: center;
-		gap: 8px;
-		height: 26px;
+		gap: 6px;
+		height: 39px;
+	}
+
+	.row.unnamed {
+		grid-template-columns: 39px auto auto auto minmax(0, 1fr);
 	}
 
 	.row .nm {
 		font-size: 12px;
-		line-height: 16px;
+		line-height: 15px;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -545,7 +597,7 @@
 	.row .pr {
 		font-size: 12px;
 		font-weight: 600;
-		line-height: 16px;
+		line-height: 15px;
 		font-variant-numeric: tabular-nums;
 	}
 
@@ -565,6 +617,7 @@
 
 	.row .ct {
 		font-size: 11px;
+		line-height: 15px;
 		color: var(--color-lab-text-muted);
 		font-variant-numeric: tabular-nums;
 	}
@@ -604,7 +657,7 @@
 		justify-content: center;
 		border-radius: 2px;
 		/* An OUTLINE rather than a border so the art keeps its own box and the
-		   26 px downscale stays an exact third of the 78 px source. */
+		   39 px downscale stays an exact half of the 78 px source. */
 		outline: 1px solid #4b4f5a;
 	}
 
@@ -630,23 +683,15 @@
 
 	/* -------------------------------------------------- the other lines -- */
 
-	.scale {
-		margin: 6px 0 0;
-		height: 15px;
-		font-size: 11px;
-		line-height: 15px;
-		color: var(--color-lab-text-muted);
-	}
-
 	.bonus {
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		margin-top: 6px;
-		height: 15px;
-		font-size: 11px;
-		line-height: 15px;
-		color: var(--color-lab-text-secondary);
+		gap: 5px;
+		margin-top: 1px;
+		height: 17px;
+		font-size: 14px;
+		line-height: 17px;
+		color: var(--color-lab-yellow);
 	}
 
 	.bonus .amt {
@@ -655,8 +700,29 @@
 		font-variant-numeric: tabular-nums;
 	}
 
+	.ladder-values {
+		white-space: nowrap;
+	}
+
+	.ladder-values > span {
+		opacity: 0.55;
+	}
+
+	.ladder-values > span.lit {
+		opacity: 1;
+		font-weight: 600;
+	}
+
+	.ladder-values > span.dim {
+		opacity: 0.55;
+	}
+
+	.separator {
+		color: var(--color-lab-yellow);
+	}
+
 	.note {
-		margin-top: 6px;
+		margin-top: 2px;
 		height: 15px;
 		font-size: 11px;
 		line-height: 15px;
@@ -664,11 +730,11 @@
 	}
 
 	.lab {
-		margin-top: 8px;
-		height: 13px;
+		margin-top: 2px;
+		height: 11px;
 		font-size: 10px;
 		font-weight: 700;
-		line-height: 13px;
+		line-height: 11px;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
 		color: var(--color-lab-text-muted);
@@ -678,8 +744,8 @@
 		display: flex;
 		align-items: center;
 		gap: 5px;
-		margin-top: 2px;
-		height: 24px;
+		margin-top: 1px;
+		height: 26px;
 	}
 
 	.rec .rp {
@@ -698,23 +764,53 @@
 		color: var(--color-lab-text-muted);
 	}
 
-	.rating {
-		margin: 8px 0 0;
-		font-size: 11px;
-		line-height: 14px;
-		color: var(--color-lab-text-secondary);
+	.mod-label {
+		margin-top: 2px;
 	}
 
-	/* One line, ellipsised. The Temple page shows every reason; this box has
-	   room for the first. */
-	.reason {
-		margin: 2px 0 0;
-		font-size: 11px;
-		line-height: 14px;
-		color: var(--color-lab-text-secondary);
+	.mod-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto auto auto;
+		align-items: center;
+		gap: 6px;
+		height: 16px;
+	}
+
+	.mod-name {
+		min-width: 0;
+		font-size: 13px;
+		font-weight: 600;
+		line-height: 16px;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+
+	.mod-row .pr {
+		font-size: 12px;
+		font-weight: 600;
+		line-height: 15px;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.mod-row .pr.none {
+		font-weight: 400;
+		color: var(--color-lab-text-muted);
+	}
+
+	.mod-row .ct {
+		font-size: 11px;
+		line-height: 15px;
+		color: var(--color-lab-text-muted);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.slots {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		margin-top: 1px;
+		height: 18px;
 	}
 
 	/* Where the numbers above came from (POE-258). Faintest line in the box and
@@ -722,7 +818,7 @@
 	   it, and it is always present, so anything louder would compete with the
 	   headline on every board. */
 	.age {
-		margin: 6px 0 0;
+		margin: 2px 0 0;
 		font-size: 10px;
 		line-height: 13px;
 		color: var(--color-lab-text-muted);
@@ -735,7 +831,7 @@
 	/* ------------------------------------------------------- the compact -- */
 
 	.box.compact .value {
-		margin-top: 6px;
+		margin-top: 2px;
 		height: 24px;
 	}
 
@@ -753,7 +849,7 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		margin-top: 6px;
+		margin-top: 2px;
 		height: 24px;
 	}
 
@@ -764,10 +860,9 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	/* The compact form's whole footer: who graded the line, and how old the
-	   prices are. Two facts the full form gives two rows. */
+	/* The compact form's footer repeats the full form's market line. */
 	.foot {
-		margin-top: 6px;
+		margin-top: 2px;
 		font-size: 10px;
 		line-height: 13px;
 		color: var(--color-lab-text-muted);

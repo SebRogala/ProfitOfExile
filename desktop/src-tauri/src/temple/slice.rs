@@ -1536,7 +1536,8 @@ where
     F: Fn(drops::TierDrops) -> Option<drops::Estimate>,
 {
     let values = tiers.map(select);
-    // A single tier without a number sinks the whole ladder; no DROPS row is mixed today, so nothing exercises this.
+    // A single tier without a number sinks the whole ladder; no DROPS row is
+    // mixed today, so nothing exercises this.
     if values.iter().any(|value| value.is_none()) {
         return None;
     }
