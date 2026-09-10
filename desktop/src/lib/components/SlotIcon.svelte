@@ -5,20 +5,12 @@
 	 * frame with no request in flight. The monochrome `currentColor` lets the
 	 * caller's colour apply, and the keyed record makes a new slot a typecheck
 	 * failure.
+	 *
+	 * The English names are `slice.ts`'s `SLOT_NAMES` and not a copy: POE-277
+	 * gave the offer box word CHIPS for the same nine classes, and two surfaces
+	 * spelling one class differently is a thing one shared record cannot do.
 	 */
-	import type { ItemSlotId } from '$lib/temple/slice';
-
-	const SLOT_NAMES: Record<ItemSlotId, string> = {
-		helmet: 'helmet',
-		body_armour: 'body armour',
-		gloves: 'gloves',
-		boots: 'boots',
-		amulet: 'amulet',
-		ring: 'ring',
-		belt: 'belt',
-		shield: 'shield',
-		weapon: 'weapon'
-	};
+	import { SLOT_NAMES, type ItemSlotId } from '$lib/temple/slice';
 
 	const SLOT_PATHS: Record<ItemSlotId, string> = {
 		helmet: 'M4 11.2c.2-4.5 3.5-8.2 8-8.2s7.8 3.7 8 8.2l-1.3 1.4H5.3L4 11.2Zm1.4 3.2h13.2l-1.4 6.2H7.2l-1.8-6.2Z',
