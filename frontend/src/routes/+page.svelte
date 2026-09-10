@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { PITCH, modules } from '$lib/site-content';
+
 	let currentFeature = $state(0);
 	/** The lightbox image: a `static/` path, or null when closed. */
 	let zoomedImg = $state<string | null>(null);
@@ -39,123 +41,30 @@
 		},
 	];
 
-	interface Screenshot {
-		/** Path under `static/`. */
-		src: string;
-		alt: string;
-		caption: string;
-	}
-
-	interface Module {
-		/** Anchor: the entry renders as `#module-<id>`. */
-		id: string;
-		name: string;
-		/** 'beta' modules are hidden until the device is promoted (POE-203); the section's footnote says how. */
-		status: 'available' | 'beta';
-		tagline: string;
-		/** What arms it — a Client.txt event, a button, or nothing. */
-		trigger: string;
-		/** The screen region it reads, or "nothing". This line is what the Transparency section points at. */
-		reads: string;
-		/** What the player gets, one line each. */
-		gives: string[];
-		/** Anything the player must set up by hand for this module alone. */
-		setup?: string;
-		screenshots: Screenshot[];
-	}
-
 	/**
-	 * The Modules section, one entry per module. Adding a module is adding an
-	 * entry here plus its screenshots in `static/`; the rest of the page is
-	 * module-agnostic and should not need touching.
+	 * Structured data for search engines and AI crawlers. `featureList` is built
+	 * from `modules`, so a new module reaches the crawlers with its entry — and
+	 * this is where the module names belong: the meta description has ~155
+	 * characters to work with, this has no such budget.
 	 */
-	const modules: Module[] = [
-		{
-			id: 'lab',
-			name: 'Lab Farming',
-			status: 'available',
-			tagline: 'Divine Font farming in the Labyrinth: which gem to take, and at what price.',
-			trigger: "Entering the 3rd Aspirant's Trial, from Client.txt.",
-			reads: 'The gem tooltip while you hover Font options, and the Font craft panel.',
-			gives: [
-				'Comparator overlay: the gems on offer with live trade prices, seller concentration and outliers, plus pick buttons.',
-				'Path strip and compass overlays: your route through the lab with room contents and navigation cues.',
-				'Font craft tracking: remaining uses and jackpots, with each session sent to the server to feed the dashboard.',
-			],
-			screenshots: [
-				{
-					src: '/overlay-comparator.webp',
-					alt: 'Comparator overlay below the Divine Font panel: the three gems on offer, each with its trade price, a verdict badge, the weekly range and a pick button',
-					caption: 'Comparator overlay — the three Font gems, priced and ranked',
-				},
-				{
-					src: '/overlay-lab-path-compass.webp',
-					alt: 'Path strip across the bottom of the lab showing the route and each room’s contents, with the compass at the right pointing to the northeast exit',
-					caption: 'Path strip and compass — the route, what each room holds, and the exit to take',
-				},
-			],
-		},
-		{
-			id: 'temple',
-			name: 'Temple of Atzoatl',
-			status: 'beta',
-			tagline: "Alva's incursions: which architect to kill and which door to open.",
-			trigger: "Alva's start line (\"Time to go\"), from Client.txt; any other Alva line or a zone change stands it down. The read needs the sheet on screen, so you open it yourself: inside the incursion, press the league button (V by default) — the game pauses while it is open, so it costs you nothing.",
-			reads: 'The temple sheet — the 13 rooms and both architect offers — once per board.',
-			gives: [
-				'The ranked recommendation with its reasons, and the gambles with their measured risk.',
-				'Room values in chaos, fed by the market (Default) or by your own numbers (Custom).',
-			],
-			// TODO screenshot: static/module-temple-page.png (the Temple page).
-			screenshots: [
-				{
-					src: '/module-temple-overlay.webp',
-					alt: 'Two offer boxes over the temple sheet, each with the room, its chaos value, the upgrade it pays for and the temple mod it grants',
-					caption: 'Offer boxes over the temple sheet — both architects, priced',
-				},
-			],
-		},
-		{
-			id: 'mercenaries',
-			name: 'Mercenaries',
-			status: 'beta',
-			tagline: 'Is this recruit worth the wager?',
-			trigger: "The recruit's voice line, from Client.txt — or Scan now on the page.",
-			reads: 'The recruit window, row by row.',
-			gives: [
-				'A verdict per community guide ruleset, with per-row glyphs on an overlay strip that clears four seconds after the window closes.',
-				'What the same mercenary is going for on trade (opt-in, with a searches-spent counter), plus links to the trade searches and a warrant price check.',
-				'Gem icons it learns from the recruit window are pooled through the server as 24×24 signatures of the icon itself, so every device recognises them.',
-			],
-			// TODO screenshot: static/module-merc-page.png (the Mercenaries page).
-			screenshots: [
-				{
-					src: '/module-merc-overlay.webp',
-					alt: 'Verdict strip beside the recruit window: the mercenary’s name and level, a SKIP verdict, one row per skill with a glyph per gem, and a status line saying how many rows were read',
-					caption: 'Verdict strip beside the recruit window — the call, then a glyph per skill row',
-				},
-			],
-		},
-		{
-			id: 'exchange',
-			name: 'Currency Exchange',
-			status: 'beta',
-			tagline: 'Arbitrage flips on the in-game Currency Exchange, ranked.',
-			trigger: "None — the server ranks plays from GGG's public currency-exchange feed.",
-			reads: 'Nothing on your screen.',
-			gives: [
-				'Each play as a five-step route — spend, buy, sell, convert, get — worded as orders the exchange will actually take.',
-				'The worthwhile size derived for you: a scanner, not a calculator. Investment and ROI, net beside raw.',
-			],
-			screenshots: [
-				{
-					src: '/module-exchange-page.webp',
-					alt: 'Ranked plays table: per row the mode, what you spend, the buy, sell and convert steps, what you get back, and investment beside ROI, expected ROI and ROI percent',
-					caption: 'Currency Exchange page — plays ranked, each one spend → buy → sell → convert → get',
-				},
-			],
-		},
-	];
+	const structuredData = {
+		'@context': 'https://schema.org',
+		'@type': 'SoftwareApplication',
+		name: 'ProfitOfExile',
+		url: 'https://profitofexile.top/',
+		description: PITCH,
+		applicationCategory: 'GameApplication',
+		applicationSubCategory: 'Game companion overlay',
+		operatingSystem: 'Windows 10, Windows 11',
+		softwareRequirements: 'Path of Exile 1',
+		screenshot: 'https://profitofexile.top/og-card.jpg',
+		isAccessibleForFree: true,
+		offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+		featureList: modules.map(
+			(m) => `${m.name}${m.status === 'beta' ? ' (beta)' : ''}: ${m.tagline}`,
+		),
+		sameAs: ['https://github.com/SebRogala/ProfitOfExile', 'https://discord.gg/QX53hrv5GP'],
+	};
 
 	/**
 	 * The OCR-pack walkthrough and Transparency are collapsed by default. The
@@ -201,7 +110,27 @@
 
 <svelte:head>
 	<title>ProfitOfExile — Companion Overlays for Wraeclast</title>
-	<meta name="description" content="Companion app for Path of Exile 1: reads the game's log and screen, checks the market, and shows the verdict in in-game overlays — Labyrinth, Temple of Atzoatl, Mercenaries and the Currency Exchange." />
+	<!-- 151 characters: Google shows about 155 and writes its own snippet from the
+	     body when the tag runs long or reads like a list. -->
+	<meta name="description" content={PITCH} />
+	<!-- Link previews (Discord, Twitter, Slack). Absolute URLs: scrapers fetch
+	     these without a page context, so a relative path resolves to nothing.
+	     og-card.jpg is the 1200x630 crop the format wants — swap the file, keep
+	     the name and the size. -->
+	<meta property="og:type" content="website" />
+	<meta property="og:site_name" content="ProfitOfExile" />
+	<meta property="og:url" content="https://profitofexile.top/" />
+	<meta property="og:title" content="ProfitOfExile — Companion Overlays for Wraeclast" />
+	<meta property="og:description" content={PITCH} />
+	<meta property="og:image" content="https://profitofexile.top/og-card.jpg" />
+	<meta property="og:image:width" content="1200" />
+	<meta property="og:image:height" content="630" />
+	<meta property="og:image:alt" content="Two priced offer boxes from the app over the Temple of Atzoatl sheet in Path of Exile" />
+	<meta name="twitter:card" content="summary_large_image" />
+	<!-- A literal <script> tag inside <svelte:head> is compiled as component
+	     code, so the JSON-LD goes in as markup. The content is our own strings;
+	     `<` is escaped anyway so no value can close the tag early. -->
+	{@html `<script type="application/ld+json">${JSON.stringify(structuredData).replace(/</g, '\\u003c')}</script>`}
 	<link rel="preconnect" href="https://fonts.googleapis.com" />
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
 	<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300&display=swap" rel="stylesheet" />
@@ -702,6 +631,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 		   `--fs` rather than a root font-size: `rem` is app-global and would
 		   drag the dashboard along with the landing page. */
 		--content: 1100px;
+		/* Only the centred intro paragraphs; body copy fills its shell. */
 		--measure: 92ch;
 		--fs: 1.2rem;
 		min-height: 100vh;
@@ -998,19 +928,6 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 		margin: -24px auto 40px;
 	}
 
-	/* Prose keeps a readable measure inside the wide shells; the screenshots,
-	   the step grid and the tables are what the extra width is for. */
-	.module-tagline,
-	.module-facts,
-	.module-gives,
-	.module-setup,
-	.step-content p,
-	.transparency-block p,
-	.transparency-item p,
-	.transparency-never li,
-	.transparency-position li {
-		max-width: var(--measure);
-	}
 
 	.module-list {
 		display: flex;
