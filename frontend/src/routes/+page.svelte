@@ -82,11 +82,17 @@
 				'Path strip and compass overlays: your route through the lab with room contents and navigation cues.',
 				'Font craft tracking: remaining uses and jackpots, with each session sent to the server to feed the dashboard.',
 			],
-			setup: 'Its two OCR regions are placed by hand once — Settings → OCR Regions: the gem tooltip (top of screen) and the Font craft panel (centre).',
 			screenshots: [
-				{ src: '/setup-gem-region.png', alt: 'Gem tooltip OCR region', caption: 'Gem tooltip region' },
-				{ src: '/setup-font-region.png', alt: 'Font panel OCR region', caption: 'Font panel region' },
-				{ src: '/overlay-labmap.png', alt: 'Lab map path strip overlay', caption: 'Path strip overlay — lab progress with room contents' },
+				{
+					src: '/overlay-comparator.webp',
+					alt: 'Comparator overlay below the Divine Font panel: the three gems on offer, each with its trade price, a verdict badge, the weekly range and a pick button',
+					caption: 'Comparator overlay — the three Font gems, priced and ranked',
+				},
+				{
+					src: '/overlay-lab-path-compass.webp',
+					alt: 'Path strip across the bottom of the lab showing the route and each room’s contents, with the compass at the right pointing to the northeast exit',
+					caption: 'Path strip and compass — the route, what each room holds, and the exit to take',
+				},
 			],
 		},
 		{
@@ -103,7 +109,7 @@
 			// TODO screenshot: static/module-temple-page.png (the Temple page).
 			screenshots: [
 				{
-					src: '/module-temple-overlay.png',
+					src: '/module-temple-overlay.webp',
 					alt: 'Two offer boxes over the temple sheet, each with the room, its chaos value, the upgrade it pays for and the temple mod it grants',
 					caption: 'Offer boxes over the temple sheet — both architects, priced',
 				},
@@ -121,8 +127,14 @@
 				'What the same mercenary is going for on trade (opt-in, with a searches-spent counter), plus links to the trade searches and a warrant price check.',
 				'Gem icons it learns from the recruit window are pooled through the server as 24×24 signatures of the icon itself, so every device recognises them.',
 			],
-			// TODO screenshots: static/module-merc-overlay.png (the verdict strip over the recruit window), static/module-merc-page.png (the Mercenaries page).
-			screenshots: [],
+			// TODO screenshot: static/module-merc-page.png (the Mercenaries page).
+			screenshots: [
+				{
+					src: '/module-merc-overlay.webp',
+					alt: 'Verdict strip beside the recruit window: the mercenary’s name and level, a SKIP verdict, one row per skill with a glyph per gem, and a status line saying how many rows were read',
+					caption: 'Verdict strip beside the recruit window — the call, then a glyph per skill row',
+				},
+			],
 		},
 		{
 			id: 'exchange',
@@ -135,8 +147,13 @@
 				'Each play as a five-step route — spend, buy, sell, convert, get — worded as orders the exchange will actually take.',
 				'The worthwhile size derived for you: a scanner, not a calculator. Investment and ROI, net beside raw.',
 			],
-			// TODO screenshot: static/module-exchange-page.png (the Currency Exchange page).
-			screenshots: [],
+			screenshots: [
+				{
+					src: '/module-exchange-page.webp',
+					alt: 'Ranked plays table: per row the mode, what you spend, the buy, sell and convert steps, what you get back, and investment beside ROI, expected ROI and ROI percent',
+					caption: 'Currency Exchange page — plays ranked, each one spend → buy → sell → convert → get',
+				},
+			],
 		},
 	];
 
@@ -351,6 +368,20 @@
 			The web dashboard shows real-time gem profitability, font EV analysis, and market overview — updated every 30 minutes from poe.ninja data.
 		</p>
 		<a href="/lab" class="cta-secondary">Open Dashboard</a>
+		<div class="step-images">
+			<figure class="step-figure">
+				<button class="step-img-button" type="button" onclick={() => zoomImage('/dashboard-rankings.webp')} aria-label="Enlarge the Rankings tab">
+					<img src="/dashboard-rankings.webp" alt="Rankings tab: gems for the selected variant with tier, price, ROI, stability and market signals, listing counts and a 12-hour sparkline" class="step-img" loading="lazy" />
+				</button>
+				<figcaption>Rankings — every gem for the variant, with price, ROI, market signals and its 12-hour trend <span class="click-hint">(click to enlarge)</span></figcaption>
+			</figure>
+			<figure class="step-figure">
+				<button class="step-img-button" type="button" onclick={() => zoomImage('/dashboard-font-ev.webp')} aria-label="Enlarge the Font EV tab">
+					<img src="/dashboard-font-ev.webp" alt="Font EV tab: chaos per font for red, green and blue against each quality variant, each cell with safe, premium and jackpot odds, over a pool overview by price tier" class="step-img" loading="lazy" />
+				</button>
+				<figcaption>Font EV — chaos per font by colour and quality, with the safe, premium and jackpot odds behind it <span class="click-hint">(click to enlarge)</span></figcaption>
+			</figure>
+		</div>
 	</section>
 
 	{#if zoomedImg}
@@ -667,6 +698,12 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 
 	/* === Page === */
 	.page {
+		/* One knob per axis, so the page scales from three numbers.
+		   `--fs` rather than a root font-size: `rem` is app-global and would
+		   drag the dashboard along with the landing page. */
+		--content: 1100px;
+		--measure: 92ch;
+		--fs: 1.2rem;
 		min-height: 100vh;
 		background: #0a0a12;
 		color: #c8c8d0;
@@ -710,7 +747,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 		z-index: 2;
 		text-align: center;
 		padding: 120px 24px 60px;
-		max-width: 720px;
+		max-width: 880px;
 		margin: 0 auto;
 	}
 
@@ -725,7 +762,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 
 	.tagline {
 		font-family: 'Cinzel', serif;
-		font-size: 0.9rem;
+		font-size: calc(0.9 * var(--fs));
 		font-weight: 400;
 		letter-spacing: 0.35em;
 		text-transform: uppercase;
@@ -761,11 +798,11 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.subtitle {
-		font-size: 1.3rem;
+		font-size: calc(1.3 * var(--fs));
 		line-height: 1.7;
 		color: #b0b0be;
 		font-weight: 300;
-		max-width: 560px;
+		max-width: 660px;
 		margin: 0 auto 40px;
 		opacity: 0;
 		animation: fadeUp 0.8s ease 0.3s forwards;
@@ -788,7 +825,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 		color: #0a0a12;
 		font-family: 'Cinzel', serif;
 		font-weight: 700;
-		font-size: 1.05rem;
+		font-size: calc(1.05 * var(--fs));
 		padding: 14px 28px;
 		text-decoration: none;
 		letter-spacing: 0.05em;
@@ -808,7 +845,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 		color: #d4b87a;
 		font-family: 'Cinzel', serif;
 		font-weight: 700;
-		font-size: 1.05rem;
+		font-size: calc(1.05 * var(--fs));
 		padding: 14px 28px;
 		text-decoration: none;
 		letter-spacing: 0.05em;
@@ -829,7 +866,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 
 	.platform-note {
 		margin-top: 20px;
-		font-size: 0.9rem;
+		font-size: calc(0.9 * var(--fs));
 		color: #7a7a8a;
 		opacity: 0;
 		animation: fadeUp 0.8s ease 0.6s forwards;
@@ -862,14 +899,14 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	.features {
 		position: relative;
 		z-index: 2;
-		max-width: 900px;
+		max-width: var(--content);
 		margin: 0 auto;
 		padding: 60px 24px 80px;
 	}
 
 	.section-heading {
 		font-family: 'Cinzel', serif;
-		font-size: 1.7rem;
+		font-size: calc(1.7 * var(--fs));
 		font-weight: 700;
 		color: #e0e0e0;
 		text-align: center;
@@ -927,7 +964,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 
 	.feature-title {
 		font-family: 'Cinzel', serif;
-		font-size: 1.05rem;
+		font-size: calc(1.05 * var(--fs));
 		font-weight: 700;
 		color: #e0e0e0;
 		margin-bottom: 10px;
@@ -935,7 +972,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.feature-desc {
-		font-size: 1rem;
+		font-size: calc(1 * var(--fs));
 		line-height: 1.6;
 		color: #a0a0b0;
 		font-weight: 300;
@@ -945,20 +982,34 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	.modules {
 		position: relative;
 		z-index: 2;
-		max-width: 760px;
+		max-width: var(--content);
 		margin: 0 auto;
 		padding: 60px 24px 80px;
 		border-top: 1px solid rgba(201, 170, 113, 0.08);
 	}
 
 	.modules-intro {
-		font-size: 1.05rem;
+		font-size: calc(1.05 * var(--fs));
 		line-height: 1.6;
 		color: #a0a0b0;
 		font-weight: 300;
 		text-align: center;
-		max-width: 640px;
+		max-width: var(--measure);
 		margin: -24px auto 40px;
+	}
+
+	/* Prose keeps a readable measure inside the wide shells; the screenshots,
+	   the step grid and the tables are what the extra width is for. */
+	.module-tagline,
+	.module-facts,
+	.module-gives,
+	.module-setup,
+	.step-content p,
+	.transparency-block p,
+	.transparency-item p,
+	.transparency-never li,
+	.transparency-position li {
+		max-width: var(--measure);
 	}
 
 	.module-list {
@@ -983,14 +1034,14 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 
 	.module-name {
 		font-family: 'Cinzel', serif;
-		font-size: 1.25rem;
+		font-size: calc(1.25 * var(--fs));
 		font-weight: 700;
 		color: #e0e0e0;
 		letter-spacing: 0.03em;
 	}
 
 	.module-status {
-		font-size: 0.7rem;
+		font-size: calc(0.7 * var(--fs));
 		letter-spacing: 0.1em;
 		text-transform: uppercase;
 		padding: 2px 8px;
@@ -1005,7 +1056,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.module-tagline {
-		font-size: 1.05rem;
+		font-size: calc(1.05 * var(--fs));
 		line-height: 1.6;
 		color: #a0a0b0;
 		font-weight: 300;
@@ -1017,13 +1068,13 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 		grid-template-columns: max-content 1fr;
 		gap: 6px 16px;
 		margin: 0 0 16px;
-		font-size: 0.95rem;
+		font-size: calc(0.95 * var(--fs));
 		line-height: 1.5;
 	}
 
 	.module-facts dt {
 		color: #c9aa71;
-		font-size: 0.75rem;
+		font-size: calc(0.75 * var(--fs));
 		letter-spacing: 0.1em;
 		text-transform: uppercase;
 		padding-top: 3px;
@@ -1047,7 +1098,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	.module-gives li {
 		position: relative;
 		padding-left: 18px;
-		font-size: 1rem;
+		font-size: calc(1 * var(--fs));
 		line-height: 1.6;
 		color: #a0a0b0;
 		font-weight: 300;
@@ -1058,13 +1109,16 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 		position: absolute;
 		left: 0;
 		top: 0;
-		font-size: 0.55rem;
-		line-height: 1.6rem;
+		font-size: calc(0.55 * var(--fs));
+		/* The marker's line box has to match the li's first line, or its baseline
+		   — and with it the diamond — rides above the text. `1.6rem` was fixed
+		   while the line it sits on scales with --fs. */
+		line-height: calc(1.6 * var(--fs));
 		color: rgba(201, 170, 113, 0.5);
 	}
 
 	.module-setup {
-		font-size: 0.95rem;
+		font-size: calc(0.95 * var(--fs));
 		line-height: 1.6;
 		color: #a0a0b0;
 		font-weight: 300;
@@ -1078,7 +1132,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	.modules-beta-note {
 		margin-top: 32px;
 		text-align: center;
-		font-size: 0.9rem;
+		font-size: calc(0.9 * var(--fs));
 		line-height: 1.6;
 		color: #7a7a8a;
 	}
@@ -1093,7 +1147,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	.setup {
 		position: relative;
 		z-index: 2;
-		max-width: 640px;
+		max-width: var(--content);
 		margin: 0 auto;
 		padding: 40px 24px 80px;
 	}
@@ -1112,7 +1166,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 
 	.step-num {
 		font-family: 'Cinzel', serif;
-		font-size: 1.8rem;
+		font-size: calc(1.8 * var(--fs));
 		font-weight: 900;
 		color: rgba(201, 170, 113, 0.3);
 		line-height: 1;
@@ -1123,7 +1177,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 
 	.step-content h3 {
 		font-family: 'Cinzel', serif;
-		font-size: 1.1rem;
+		font-size: calc(1.1 * var(--fs));
 		font-weight: 700;
 		color: #e0e0e0;
 		margin-bottom: 6px;
@@ -1131,7 +1185,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.step-content p {
-		font-size: 1.05rem;
+		font-size: calc(1.05 * var(--fs));
 		line-height: 1.6;
 		color: #a0a0b0;
 		font-weight: 300;
@@ -1185,15 +1239,15 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.step-figure figcaption {
-		font-size: 0.8rem;
-		color: #5a5a6a;
+		font-size: calc(0.9 * var(--fs));
+		color: #8a8a9a;
 		margin-top: 6px;
 		font-style: italic;
 	}
 
 	.click-hint {
-		color: #4a4a5a;
-		font-size: 0.75rem;
+		color: #6a6a7a;
+		font-size: calc(0.8 * var(--fs));
 	}
 
 	.step-content a {
@@ -1240,12 +1294,12 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.step-num-text {
-		font-size: 1rem;
+		font-size: calc(1 * var(--fs));
 		padding-top: 8px;
 	}
 
 	.ocr-pack-intro {
-		font-size: 1.05rem;
+		font-size: calc(1.05 * var(--fs));
 		line-height: 1.6;
 		color: #a0a0b0;
 		font-weight: 300;
@@ -1265,7 +1319,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 		border: 1px solid rgba(201, 170, 113, 0.15);
 		border-radius: 4px;
 		font-family: monospace;
-		font-size: 0.85rem;
+		font-size: calc(0.85 * var(--fs));
 		line-height: 1.5;
 		color: #d4b87a;
 		overflow-x: auto;
@@ -1284,23 +1338,32 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 		text-align: center;
 		padding: 60px 24px 80px;
 		border-top: 1px solid rgba(201, 170, 113, 0.08);
-		max-width: 640px;
+		/* Matches the Modules section: the dashboard shots are ~1490 px wide and
+		   unreadable in the 640 px column this section used before they existed. */
+		max-width: var(--content);
 		margin: 0 auto;
 	}
 
+	/* The screenshots sit under the CTA, so they need more air than the 16 px
+	   `.step-images` gives them inside a module. */
+	.dashboard-link .step-images {
+		margin-top: 36px;
+	}
+
 	.dashboard-desc {
-		font-size: 1.1rem;
+		font-size: calc(1.1 * var(--fs));
 		line-height: 1.7;
 		color: #a0a0b0;
 		font-weight: 300;
-		margin-bottom: 28px;
+		max-width: var(--measure);
+		margin: 0 auto 28px;
 	}
 
 	/* === Credits === */
 	.credits {
 		position: relative;
 		z-index: 2;
-		max-width: 640px;
+		max-width: 820px;
 		margin: 0 auto;
 		padding: 60px 24px 60px;
 		border-top: 1px solid rgba(201, 170, 113, 0.08);
@@ -1325,7 +1388,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 		color: #d4b87a;
 		text-decoration: none;
 		font-family: 'Cinzel', serif;
-		font-size: 1rem;
+		font-size: calc(1 * var(--fs));
 		font-weight: 700;
 		letter-spacing: 0.03em;
 		border-bottom: 1px solid rgba(201, 170, 113, 0.2);
@@ -1337,13 +1400,13 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.credit-desc {
-		font-size: 0.95rem;
+		font-size: calc(0.95 * var(--fs));
 		color: #8a8a9a;
 		font-weight: 300;
 	}
 
 	.credits-note {
-		font-size: 0.9rem;
+		font-size: calc(0.9 * var(--fs));
 		color: #7a7a8a;
 		line-height: 1.6;
 		font-style: italic;
@@ -1358,13 +1421,13 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.footer-content {
-		max-width: 640px;
+		max-width: 820px;
 		margin: 0 auto;
 		text-align: center;
 	}
 
 	.footer-text {
-		font-size: 0.95rem;
+		font-size: calc(0.95 * var(--fs));
 		color: #8a8a9a;
 		margin-bottom: 16px;
 	}
@@ -1379,7 +1442,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	.footer-links a {
 		color: #9a9aaa;
 		text-decoration: none;
-		font-size: 0.95rem;
+		font-size: calc(0.95 * var(--fs));
 		font-family: 'Cinzel', serif;
 		letter-spacing: 0.05em;
 		transition: color 0.2s;
@@ -1390,7 +1453,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.footer-disclaimer {
-		font-size: 0.75rem;
+		font-size: calc(0.75 * var(--fs));
 		color: #4a4a5a;
 		font-style: italic;
 	}
@@ -1410,19 +1473,20 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	.transparency {
 		position: relative;
 		z-index: 2;
-		max-width: 760px;
+		max-width: var(--content);
 		margin: 0 auto;
 		padding: 60px 24px 80px;
 		border-top: 1px solid rgba(201, 170, 113, 0.08);
 	}
 
 	.transparency-intro {
-		font-size: 1.15rem;
+		font-size: calc(1.15 * var(--fs));
 		line-height: 1.7;
 		color: #b0b0be;
 		font-weight: 300;
 		text-align: center;
-		margin-bottom: 48px;
+		max-width: var(--measure);
+		margin: 0 auto 48px;
 	}
 
 	.transparency-block {
@@ -1431,7 +1495,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 
 	.transparency-subheading {
 		font-family: 'Cinzel', serif;
-		font-size: 1.15rem;
+		font-size: calc(1.15 * var(--fs));
 		font-weight: 700;
 		color: #d4b87a;
 		letter-spacing: 0.04em;
@@ -1439,7 +1503,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.transparency-block p {
-		font-size: 1.05rem;
+		font-size: calc(1.05 * var(--fs));
 		line-height: 1.7;
 		color: #a0a0b0;
 		font-weight: 300;
@@ -1478,7 +1542,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 
 	.transparency-label {
 		font-family: 'Cinzel', serif;
-		font-size: 0.95rem;
+		font-size: calc(0.95 * var(--fs));
 		font-weight: 700;
 		color: #e0e0e0;
 		letter-spacing: 0.02em;
@@ -1487,7 +1551,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.transparency-item p {
-		font-size: 1rem;
+		font-size: calc(1 * var(--fs));
 		margin-bottom: 0;
 	}
 
@@ -1500,7 +1564,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.transparency-never li {
-		font-size: 1.05rem;
+		font-size: calc(1.05 * var(--fs));
 		line-height: 1.6;
 		color: #a0a0b0;
 		font-weight: 300;
@@ -1528,12 +1592,12 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	.transparency-table {
 		width: 100%;
 		border-collapse: collapse;
-		font-size: 0.95rem;
+		font-size: calc(0.95 * var(--fs));
 	}
 
 	.transparency-table th {
 		font-family: 'Cinzel', serif;
-		font-size: 0.85rem;
+		font-size: calc(0.85 * var(--fs));
 		font-weight: 700;
 		color: #c9aa71;
 		letter-spacing: 0.06em;
@@ -1589,7 +1653,7 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.transparency-position li {
-		font-size: 1.05rem;
+		font-size: calc(1.05 * var(--fs));
 		line-height: 1.6;
 		color: #a0a0b0;
 		font-weight: 300;
