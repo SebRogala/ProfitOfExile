@@ -16,8 +16,7 @@ use image::{DynamicImage, GenericImageView, RgbaImage};
 use serde::Serialize;
 
 use super::geometry::{
-    inner_rect, name_crop_left, occupied, stddev, Frame, MercLayout, MercLayoutRow,
-    NAME_CROP_LEAD, NAME_CROP_PAD,
+    inner_rect, name_crop_left, occupied, stddev, Frame, MercLayout, MercLayoutRow, NAME_CROP_PAD,
 };
 use super::icons::{cell_candidates, read_tier, CellSig, TemplateStore};
 use super::vocab::{classify_resolution, MercVocab};
@@ -775,7 +774,7 @@ fn name_band(row: &MercLayoutRow, layout: &MercLayout, g: &MercGeometry) -> [i32
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mercenary::geometry::{detect, OcrLineBox};
+    use crate::mercenary::geometry::{detect, OcrLineBox, NAME_CROP_LEAD};
     use image::{Rgba, RgbaImage};
 
     fn vocab() -> MercVocab {
