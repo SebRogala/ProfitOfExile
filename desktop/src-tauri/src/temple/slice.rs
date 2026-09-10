@@ -621,8 +621,8 @@ pub struct LineView {
     pub mod_architect: Option<String>,
     /// What the mod lands on in Vertolka's words. Prose, never a join key.
     pub mod_hint: Option<String>,
-    /// Item slots the mod family rolls on, `Slot::as_str` spellings. Empty
-    /// both when the line has no mod and when nobody has confirmed the slots.
+    /// Item classes the mod family rolls on, `Slot::as_str` spellings from the
+    /// verified poewiki tables. Empty when the line has no mod.
     pub mod_slots: Vec<String>,
     /// Area quantity bonus at tiers 1, 2, 3 — poedb's `2/4/6 %` ladder.
     /// `null` when any tier has no stated number (a ladder is a ladder or it
@@ -3577,7 +3577,7 @@ mod tests {
 
         assert_eq!(line.mod_architect.as_deref(), Some("Puhuarte"));
         assert_eq!(line.mod_hint.as_deref(), Some("temple gloves"));
-        assert_eq!(line.mod_slots, vec!["gloves"]);
+        assert_eq!(line.mod_slots, vec!["helmet", "gloves", "amulet"]);
     }
 
     #[test]

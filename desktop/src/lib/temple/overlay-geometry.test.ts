@@ -600,23 +600,21 @@ describe('offerStackPlacement', () => {
 	const FULL_BOX_ROWS = {
 		border: 2 * 2,
 		padding: 2 * 2,
-		headline: 18,
-		builds: 15,
-		value: 2 + 24,
-		drivers: 2 + 3 * 39 + 2 * 1,
-		ladder: 1 + 17,
-		recipe: 2 + 11 + 1 + 26,
-		mod: 2 + 11 + 16 + 1 + 18,
+		header: 24 + 15,
+		drivers: 2 + 2 * 39 + 1 * 1,
+		ladder: 1 + 23,
+		recipe: 2 + 11 + 1 + 39,
+		mod: 2 + 20 + 1 + 26,
 		age: 2 + 13
 	};
 	const WORST_FULL_BOX = Object.values(FULL_BOX_ROWS).reduce((sum, row) => sum + row, 0);
 
 	it('budgets the pair against the tallest box the wording can build, not the design\'s typical one', () => {
-		// The redesigned full form is 309 px, leaving 7 px inside the 316 px
-		// diagonal budget. The component has no scale, fold, rating or reason row.
-		expect(WORST_FULL_BOX).toBe(309);
+		// The redesigned full WARN form is 269 px, leaving 47 px inside the 316 px
+		// diagonal budget. A fresh form omits the 15 px age row.
+		expect(WORST_FULL_BOX).toBe(269);
 		expect(FULL_BOX_MAX_CSS).toBe(WORST_FULL_BOX);
-		expect(FULL_PAIR_CSS).toBe(626);
+		expect(FULL_PAIR_CSS).toBe(546);
 		expect(FULL_BOX_MAX_CSS).toBeLessThanOrEqual(DIAGONAL_BUDGET_CSS);
 	});
 
@@ -713,7 +711,7 @@ describe('offersCompact', () => {
 
 	it('keeps the full form where the host has room for two of them', () => {
 		// 1080 - 133 is 947, and two full boxes plus the stack gap need
-		// FULL_PAIR_CSS = 309 * 2 + 8 = 626.
+		// FULL_PAIR_CSS = 269 * 2 + 8 = 546.
 		expect(offersCompact({ driverCounts: THREE, blocks: HIGH, panel: COMMITTED_PANEL, host: HOST })).toBe(
 			false
 		);

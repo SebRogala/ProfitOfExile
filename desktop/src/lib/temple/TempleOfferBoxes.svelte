@@ -274,6 +274,15 @@
 	</span>
 {/snippet}
 
+{#snippet driverRow(driver: OfferDriver)}
+	<div class="row" class:unnamed={driver.kind === 'unique' || driver.kind === 'vial'}>
+		{@render icon(driver.iconName, driver.kind, 39)}
+		{#if driver.kind === 'sale'}<span class="nm">{driver.name}</span>{/if}
+		<span class="pr" class:none={!driver.priced} class:gain={isGain(driver)}>{driver.price}</span>
+		<span class="ct">{driver.perRun ?? ''}</span>
+	</div>
+{/snippet}
+
 {#each boxes as box, i (signature + "|" + box.offer.index)}
 	<div
 		class="box"
@@ -287,28 +296,29 @@
 		bind:offsetWidth={widths[i]}
 		bind:offsetHeight={heights[i]}
 	>
-		<p class="headline">
-			{box.headline}{#if box.forced}<span class="forced">({box.forced})</span>{/if}
-		</p>
-		<p class="builds">{box.builds}</p>
-
-		{#if box.valueText !== null}
-			<!-- The headline number, and the one row whose height never moves:
-			     the chip takes the same slot `per run` does, so a partial sum
-			     cannot shift everything under it. -->
-			<div class="value" class:ladder={box.value === null} class:stale={box.stale}>
-				<span class="num">{box.valueText}</span>
-				{#if box.value !== null}<span class="unit">c</span>{/if}
-				{#each box.marks as letter (letter)}
-					{@render mark(letter)}
-				{/each}
-				{#if box.chip}
-					<span class="chip">{box.chip}</span>
-				{:else if !compact && box.value !== null}
-					<span class="per">per run</span>
-				{/if}
-			</div>
-		{/if}
+		<!-- Two fixed header lines: the value belongs to the room line, while
+		     the kind/tier and completeness chip share the second line. -->
+		<div class="headline">
+			<span class="room">{box.headline}</span>
+			{#if box.forced}<span class="forced">({box.forced})</span>{/if}
+			{#if box.valueText !== null}
+				<span class="value" class:ladder={box.value === null} class:stale={box.stale}>
+					<span class="num">{box.valueText}</span>
+					{#if box.value !== null}<span class="unit">c</span>{/if}
+					{#each box.marks as letter (letter)}
+						{@render mark(letter)}
+					{/each}
+				</span>
+			{/if}
+		</div>
+		<div class="builds">
+			<span>{box.builds}</span>
+			{#if box.chip}
+				<span class="chip">{box.chip}</span>
+			{:else if box.valueText !== null && box.value !== null}
+				<span class="per">per run</span>
+			{/if}
+		</div>
 
 		{#if compact}
 			<!-- Icons and prices, one row. What the eye uses at arm's length —
@@ -323,27 +333,23 @@
 					{#if box.stripPrices}<span class="prices">{box.stripPrices}</span>{/if}
 				</div>
 			{/if}
-			<div class="foot">{box.market}</div>
+			{#if box.ageLine}<div class="foot">{box.ageLine}</div>{/if}
 		{:else}
 			{#if box.drivers.length > 0}
 				<div class="drivers">
 					{#each box.drivers as driver (driver.name)}
-						<div class="row" class:unnamed={driver.kind === 'unique' || driver.kind === 'vial'}>
-							{@render icon(driver.iconName, driver.kind, 39)}
-							{#if driver.kind === 'sale'}
-								<span class="nm">{driver.name}</span>
-							{/if}
-							<span class="pr" class:none={!driver.priced} class:gain={isGain(driver)}>
-								{driver.price}
-							</span>
-							<span class="ct">{driver.perRun ?? ''}</span>
-							<span class="marks">
-								{#each driver.marks as letter (letter)}
-									{@render mark(letter)}
-								{/each}
-							</span>
-						</div>
+						{#if driver.kind === 'sale'}{@render driverRow(driver)}{/if}
 					{/each}
+					{#if box.dropPair[0] !== null || box.dropPair[1] !== null}
+						<div
+							class="drop-pair"
+							class:single={box.dropPair[0] === null || box.dropPair[1] === null}
+						>
+							{#each box.dropPair as driver}
+								{#if driver !== null}{@render driverRow(driver)}{/if}
+							{/each}
+						</div>
+					{/if}
 				</div>
 			{/if}
 
@@ -352,31 +358,37 @@
 			{#if box.ladder || box.bonus}
 				<div class="bonus">
 					{#if box.ladder}
-						<span class="ladder-values">
-							{#if box.ladder.quantText}
-								<span class:lit={box.ladder.tier === 1}>+{box.ladder.quantText[0]}</span>/<span
-									class:lit={box.ladder.tier === 2}>{box.ladder.quantText[1]}</span>/<span
-									class:lit={box.ladder.tier === 3}>{box.ladder.quantText[2]}%</span>
-							{:else}
-								<span class="dim">—</span>
-							{/if}
-						</span>
-						<span>quant</span>
-						<span class="separator">·</span>
-						<span class="ladder-values">
-							{#if box.ladder.rarityText}
-								<span class:lit={box.ladder.tier === 1}>+{box.ladder.rarityText[0]}</span>/<span
-									class:lit={box.ladder.tier === 2}>{box.ladder.rarityText[1]}</span>/<span
-									class:lit={box.ladder.tier === 3}>{box.ladder.rarityText[2]}%</span>
-							{:else}
-								<span class="dim">—</span>
-							{/if}
-						</span>
-						<span>rarity</span>
+						<div class="ladder-grid">
+							<div class="ladder-cell">
+								<span class="ladder-values">
+									{#if box.ladder.quantText}
+										<span class:lit={box.ladder.tier === 1}>+{box.ladder.quantText[0]}</span>/<span
+											class:lit={box.ladder.tier === 2}>{box.ladder.quantText[1]}</span>/<span
+											class:lit={box.ladder.tier === 3}>{box.ladder.quantText[2]}%</span>
+									{:else}
+										<span class="dim">—</span>
+									{/if}
+								</span>
+								<span>quant</span>
+							</div>
+							<div class="ladder-cell">
+								<span class="ladder-values">
+									{#if box.ladder.rarityText}
+										<span class:lit={box.ladder.tier === 1}>+{box.ladder.rarityText[0]}</span>/<span
+											class:lit={box.ladder.tier === 2}>{box.ladder.rarityText[1]}</span>/<span
+											class:lit={box.ladder.tier === 3}>{box.ladder.rarityText[2]}%</span>
+									{:else}
+										<span class="dim">—</span>
+									{/if}
+								</span>
+								<span>rarity</span>
+								{#if box.bonus?.amount}<span class="amt">{box.bonus.amount}</span>{/if}
+							</div>
+						</div>
 					{:else}
 						<span>{box.bonus?.label}</span>
+						{#if box.bonus?.amount}<span class="amt">{box.bonus.amount}</span>{/if}
 					{/if}
-					{#if box.bonus?.amount}<span class="amt">{box.bonus.amount}</span>{/if}
 				</div>
 			{/if}
 
@@ -386,34 +398,37 @@
 				<div class="lab">upgrade recipe</div>
 				<div class="rec">
 					{#each recipeSteps(box) as step, step_i (step.name)}
-						{#if step_i > 0}{@render arrow()}{/if}
-						{@render icon(step.name, step_i === 1 ? 'vial' : 'unique', 26)}
-						<span class="rp" class:none={step.price === '—'}>{step.price}</span>
+						<div class="rec-step">
+							{#if step_i > 0}{@render arrow()}{/if}
+							{@render icon(step.name, step_i === 1 ? 'vial' : 'unique', 39)}
+							<span class="rp" class:none={step.price === '—'}>{step.price}</span>
+						</div>
 					{/each}
 				</div>
 			{/if}
 
 			{#if box.mod}
-				<div class="lab mod-label">temple mod</div>
-				<div class="mod-row">
-					<span class="mod-name" title={box.mod.hint ?? undefined}>{box.mod.name}</span>
-					<span class="pr" class:none={box.mod.price === '—'}>{box.mod.price}</span>
-					<span class="ct">{box.mod.perRun ?? ''}</span>
-					<span class="marks">
-						{#each box.mod.marks as letter (letter)}
-							{@render mark(letter)}
-						{/each}
+				<div class="mod-row" title={box.mod.hint ?? undefined}>
+					<span class="mod-line">
+						<span class="mod-prefix">Temple mod:</span>
+						<span class="mod-name">{box.mod.name}</span>
+						{#if box.mod.price !== 'no price' && box.mod.price !== '—'}
+							<span class="mod-meta">
+								({box.mod.price})
+							</span>
+						{/if}
 					</span>
 				</div>
 				{#if box.mod.slots.length > 0}
-					<div class="slots">
+					<div class="appears-on">
+						<span class="lab appears-label">Appears on:</span>
 						{#each box.mod.slots as slot (slot)}
-							<SlotIcon {slot} size={18} />
+							<SlotIcon {slot} />
 						{/each}
 					</div>
 				{/if}
 			{/if}
-			<p class="age" class:warn={box.stale}>{box.market}</p>
+			{#if box.ageLine}<p class="age" class:warn={box.stale}>{box.ageLine}</p>{/if}
 		{/if}
 	</div>
 {/each}
@@ -449,21 +464,25 @@
 		opacity: 1;
 	}
 
-	/* The one line the player is meant to SEE — the room the kill builds.
-	   Read at arm's length over a game, so bigger than anything the old advice
-	   panel printed. */
 	.headline {
+		display: flex;
+		align-items: baseline;
 		margin: 0;
-		height: 18px;
-		font-size: 16px;
-		font-weight: 700;
-		line-height: 18px;
+		height: 24px;
+		line-height: 24px;
 		white-space: nowrap;
 		overflow: hidden;
-		text-overflow: ellipsis;
 	}
 
-	.pick .headline {
+	.room {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		font-size: 16px;
+		font-weight: 700;
+	}
+
+	.pick .room {
 		color: var(--color-lab-cyan);
 	}
 
@@ -477,14 +496,19 @@
 		color: var(--color-lab-yellow);
 	}
 
-	/* What the kill actually builds — the resolved room and its tier, never the
-	   name the panel printed (`offerBuilds`). */
 	.builds {
+		display: flex;
+		align-items: center;
 		margin: 0;
 		height: 15px;
 		font-size: 13px;
 		line-height: 15px;
 		white-space: nowrap;
+		overflow: hidden;
+	}
+
+	.builds > span:first-child {
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
@@ -496,10 +520,11 @@
 	   is the point, and proportional digits make two three-figure numbers look
 	   like different lengths. */
 	.value {
-		display: flex;
+		display: inline-flex;
 		align-items: baseline;
 		gap: 3px;
-		margin-top: 2px;
+		margin-left: auto;
+		flex: 0 0 auto;
 		height: 24px;
 	}
 
@@ -542,16 +567,15 @@
 		border-bottom: 1px dotted var(--color-lab-yellow);
 	}
 
-	.value .per {
+	.builds .per {
 		margin-left: auto;
 		font-size: 10px;
-		line-height: 24px;
+		line-height: 15px;
 		color: var(--color-lab-text-muted);
 	}
 
-	/* Occupies the same slot as `per run`, so a partial sum does not move a
-	   single row under it. */
-	.value .chip {
+	/* Occupies the same right-hand slot as the run mode. */
+	.builds .chip {
 		margin-left: auto;
 		align-self: center;
 		padding: 0 5px;
@@ -576,14 +600,25 @@
 	   grow the box or move the ladder below it. */
 	.row {
 		display: grid;
-		grid-template-columns: 39px minmax(0, 1fr) auto auto auto;
+		grid-template-columns: 39px minmax(0, 1fr) auto auto;
 		align-items: center;
 		gap: 6px;
 		height: 39px;
 	}
 
 	.row.unnamed {
-		grid-template-columns: 39px auto auto auto minmax(0, 1fr);
+		grid-template-columns: 39px auto auto minmax(0, 1fr);
+	}
+
+	.drop-pair {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 6px;
+		height: 39px;
+	}
+
+	.drop-pair.single {
+		grid-template-columns: 1fr;
 	}
 
 	.row .nm {
@@ -622,15 +657,8 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	.marks {
-		display: flex;
-		gap: 3px;
-	}
-
-	/* One shape, four letters, two colours — the colour says WHY and the letter
-	   says WHICH, so nothing here is carried by hue alone (ADR-018's rule about
-	   flags, and the same reason `values.ts` letters its table). Yellow: nobody
-	   measured it. Muted: measured, but thin. */
+	/* The value mark says whether the box is fallback or guessed; row data keeps
+	   its per-term provenance for the page and tests. */
 	.mark {
 		display: inline-flex;
 		align-items: center;
@@ -686,12 +714,31 @@
 	.bonus {
 		display: flex;
 		align-items: center;
+		box-sizing: border-box;
 		gap: 5px;
 		margin-top: 1px;
-		height: 17px;
-		font-size: 14px;
+		height: 23px;
+		padding: 3px 0;
+		font-size: 15px;
 		line-height: 17px;
 		color: var(--color-lab-yellow);
+	}
+
+	.ladder-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		height: 17px;
+	}
+
+	.ladder-cell {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		min-width: 0;
+		white-space: nowrap;
 	}
 
 	.bonus .amt {
@@ -717,10 +764,6 @@
 		opacity: 0.55;
 	}
 
-	.separator {
-		color: var(--color-lab-yellow);
-	}
-
 	.note {
 		margin-top: 2px;
 		height: 15px;
@@ -743,9 +786,17 @@
 	.rec {
 		display: flex;
 		align-items: center;
-		gap: 5px;
+		justify-content: space-between;
 		margin-top: 1px;
-		height: 26px;
+		height: 39px;
+		width: 100%;
+	}
+
+	.rec-step {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		min-width: 0;
 	}
 
 	.rec .rp {
@@ -764,59 +815,61 @@
 		color: var(--color-lab-text-muted);
 	}
 
-	.mod-label {
-		margin-top: 2px;
-	}
-
 	.mod-row {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto auto auto;
-		align-items: center;
-		gap: 6px;
-		height: 16px;
+		margin-top: 2px;
+		height: 20px;
+		line-height: 20px;
+		min-width: 0;
 	}
 
-	.mod-name {
+	.mod-line {
+		display: block;
 		min-width: 0;
-		font-size: 13px;
-		font-weight: 600;
-		line-height: 16px;
-		white-space: nowrap;
 		overflow: hidden;
+		white-space: nowrap;
 		text-overflow: ellipsis;
 	}
 
-	.mod-row .pr {
+	.mod-prefix {
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		color: var(--color-lab-text-muted);
+	}
+
+	.mod-name {
+		margin-left: 5px;
+		font-size: 13px;
+		font-weight: 600;
+		line-height: 20px;
+	}
+
+	.mod-meta {
+		margin-left: 5px;
 		font-size: 12px;
 		font-weight: 600;
-		line-height: 15px;
+		line-height: 20px;
 		font-variant-numeric: tabular-nums;
 	}
 
-	.mod-row .pr.none {
-		font-weight: 400;
-		color: var(--color-lab-text-muted);
-	}
-
-	.mod-row .ct {
-		font-size: 11px;
-		line-height: 15px;
-		color: var(--color-lab-text-muted);
-		font-variant-numeric: tabular-nums;
-	}
-
-	.slots {
+	.appears-on {
 		display: flex;
 		align-items: center;
 		gap: 4px;
 		margin-top: 1px;
-		height: 18px;
+		height: 26px;
 	}
 
-	/* Where the numbers above came from (POE-258). Faintest line in the box and
-	   deliberately so: it qualifies the comparison rather than being part of
-	   it, and it is always present, so anything louder would compete with the
-	   headline on every board. */
+	.appears-label {
+		margin-top: 0;
+		height: 26px;
+		line-height: 26px;
+		letter-spacing: 0.08em;
+		text-transform: none;
+	}
+
+	/* Where the numbers above came from (POE-258). The age line is warning-only;
+	   fresh prices do not consume its 15px row. */
 	.age {
 		margin: 2px 0 0;
 		font-size: 10px;
@@ -829,21 +882,6 @@
 	}
 
 	/* ------------------------------------------------------- the compact -- */
-
-	.box.compact .value {
-		margin-top: 2px;
-		height: 24px;
-	}
-
-	.box.compact .value .num {
-		font-size: 22px;
-		line-height: 24px;
-	}
-
-	.box.compact .value .unit {
-		font-size: 13px;
-		line-height: 24px;
-	}
 
 	.strip {
 		display: flex;
@@ -860,7 +898,7 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	/* The compact form's footer repeats the full form's market line. */
+	/* The compact form's footer appears only for a market warning. */
 	.foot {
 		margin-top: 2px;
 		font-size: 10px;

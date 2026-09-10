@@ -21,6 +21,10 @@ every grab while it is taken, so this rule's premise does not hold for it.
 At that amendment the list was only the merc verdict strip; a later addition
 must amend this ADR.
 
+Amended 2026-09-10 by POE-277 — see [the amendment at the end](#amendment-the-offer-box-full-form-stays-under-the-diagonal-budget-2026-09-10):
+the offer box's full form is held at or under the diagonal budget as a design
+requirement.
+
 Scope: every overlay surface a module draws over a screen the same module OCRs
 or samples. Today that is the temple; the merc verdict strip and the lab
 overlays are the next candidates, and the rule is written for them rather than
@@ -257,3 +261,11 @@ the very cells its module matches. The merc verdict strip is the first and only
 member. Nothing else moves: the temple's placers, the stored-placement
 carve-out and the Debug-capture diff stay exactly as written, and a temple
 surface joins the list only by its own amendment to ADR-023.
+
+## Amendment: the offer box full form stays under the diagonal budget (2026-09-10)
+
+POE-277. The offer box's full form is held at or under the diagonal budget as
+a design requirement: `FULL_BOX_MAX_CSS ≤ DIAGONAL_BUDGET_CSS` (316 px on the
+committed 1920×1080 frame). `overlay-geometry.test.ts` asserts it. A row added
+to the box is a decision about what the box drops rather than a number to
+raise. Nothing else in this ADR moves.
