@@ -1,6 +1,6 @@
 [package]
 name = "profitofexile-desktop"
-version = "0.8.1-beta.4"
+version = "0.8.1-beta.5"
 edition = "2021"
 
 [[bin]]
