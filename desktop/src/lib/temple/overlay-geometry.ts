@@ -292,9 +292,9 @@ export const DIAGONAL_BUDGET_CSS = 316;
  *     + sale 18 + items (8 + 69) 77
  *     + room bonuses (18 + 13) 31
  *     + mod (18 + 5 + 14 + 4 + 14) 55
- *     + market line 13 = 308
+ *     + market line 13 = 311
  *
- * The 316 px diagonal budget therefore has 8 px of spare height, where v4's
+ * The 316 px diagonal budget therefore has 5 px of spare height, where v4's
  * 269 px box had 47: the restyle bought air, a price under every icon, a word
  * under every ladder, slot chips and four hairlines with the rest. A row added
  * here is now a decision about what the box DROPS.
@@ -317,7 +317,7 @@ export const DIAGONAL_BUDGET_CSS = 316;
 export const FULL_BOX_MAX_CSS = 311;
 
 /** What two FULL boxes and the gap between them need, CSS px —
- * `308 * 2 + STACK_GAP_CSS` = 624 for the current 308 px full form. This is
+ * `311 * 2 + STACK_GAP_CSS` = 630 for the current 311 px full form. This is
  * the clearance [`offersCompact`] demands before it lets the pair render full.
  * It uses the WORST case rather than the design's typical one, because the box
  * that gets clamped for want of it is the LOWER one, and a clamped box lands

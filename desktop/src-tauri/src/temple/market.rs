@@ -536,8 +536,9 @@ mod tests {
 
     #[test]
     fn an_item_the_feed_cannot_price_is_absent_rather_than_zero() {
-        // Shadowstitch is the one unique in drops.rs poe.ninja publishes no
-        // line for, so POE-255 never serves it at all.
+        // Shadowstitch is a name the capture carries no line for. It left
+        // drops.rs with POE-277 WI-6; it stays here because this test is about
+        // the fixture's own answer — absent, not zero — and not about the table.
         let market = allflame();
 
         assert!(market.price("Shadowstitch").is_none());

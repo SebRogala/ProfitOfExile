@@ -366,8 +366,8 @@ export interface OfferView {
 	 *  same read as `value` — base + vial → upgraded (POE-260).
 	 *
 	 *  Null far more often than not, and the box draws nothing for every one
-	 *  of the reasons: eighteen lines drop no unique, Locus of Corruption's
-	 *  Shadowstitch is nobody's recipe base, and a payload that has never
+	 *  of the reasons: nineteen lines drop no unique, a line's unique may be
+	 *  the base of no recipe, and a payload that has never
 	 *  reached the server carries no recipe table to look in.
 	 *
 	 *  On the OFFER rather than inside `RoomValueView`, because it is a fact
@@ -382,8 +382,15 @@ export interface OfferView {
 	line?: LineView | null;
 }
 
+/** The two box shapes a line can draw. */
+export type LineKind = 'chest' | 'content';
+
 /** Drop facts shared by every tier of one room line (POE-277). */
 export interface LineView {
+	/** The line's box shape. Rust defaults old payloads to `'chest'`. */
+	kind: LineKind;
+	/** Draft prose for a content line, or null for a chest line. */
+	content: string | null;
 	modArchitect: string | null;
 	modHint: string | null;
 	/** Item classes this mod family can roll on, in the verified table order. */

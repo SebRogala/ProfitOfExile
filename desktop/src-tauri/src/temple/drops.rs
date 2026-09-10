@@ -113,7 +113,7 @@
 //!
 //! The vial a line rolls for is NOT always the vial that upgrades that line's
 //! own unique. It is on the six chest lines; it is not on Locus of Corruption
-//! (drops Shadowstitch, rolls the amulet vial), Glittering Halls or Throne of
+//! (has no chest unique, rolls the amulet vial), Glittering Halls or Throne of
 //! Atziri. The upgrade recipe itself — base unique + vial -> upgraded unique —
 //! is **not stored here**: POE-255 owns it on the server, in `internal/temple`,
 //! as the single normative home for item-level recipe facts.
@@ -553,10 +553,40 @@ impl TierDrops {
 pub struct LineDrops {
     key: &'static str,
     unique: Option<&'static str>,
+    /// WI-6 draft wording (orchestrator, 2026-09-10) for the tier-3 room's use;
+    /// UNCONFIRMED — the owner / Vertolka are to confirm each string. Prose for
+    /// the box, never a join key.
+    content: Option<&'static str>,
     vial: Option<&'static str>,
     temple_mod: Option<TempleMod>,
     note: Option<&'static str>,
     tiers: [TierDrops; 3],
+}
+
+/// Whether a line draws as a chest or as content prose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LineKind {
+    /// A line whose room has a tier-3 chest unique.
+    Chest,
+    /// A line whose room is described by content prose instead.
+    Content,
+}
+
+impl Default for LineKind {
+    fn default() -> Self {
+        Self::Chest
+    }
+}
+
+impl LineKind {
+    /// The wire spelling used by the slice and its TypeScript mirror.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Chest => "chest",
+            Self::Content => "content",
+        }
+    }
 }
 
 impl LineDrops {
@@ -567,10 +597,26 @@ impl LineDrops {
     }
 
     /// The unique the tier-3 chest drops, as **poe.ninja spells it** — the join
-    /// key POE-255/257 price against. `None` for the eighteen lines with no
+    /// key POE-255/257 price against. `None` for the nineteen lines with no
     /// unique of their own.
     pub fn unique(self) -> Option<&'static str> {
         self.unique
+    }
+
+    /// The draft prose for a content line, or `None` for a chest line.
+    pub fn content(self) -> Option<&'static str> {
+        self.content
+    }
+
+    /// How this line is drawn. A unique-bearing row is a chest; the other rows
+    /// carry content prose instead. The kind is derived so those facts cannot
+    /// disagree.
+    pub fn kind(self) -> LineKind {
+        if self.unique.is_some() {
+            LineKind::Chest
+        } else {
+            LineKind::Content
+        }
     }
 
     /// The vial this line's architect rolls for, as **poe.ninja spells it**.
@@ -652,6 +698,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "apex_of_ascension",
         unique: None,
+        content: Some("Sacrifice a unique, get a random one"),
         vial: None,
         temple_mod: None,
         note: None,
@@ -664,6 +711,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "atlas_of_worlds",
         unique: None,
+        content: Some("Map drops"),
         vial: None,
         temple_mod: None,
         note: None,
@@ -676,6 +724,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "chamber_of_iron",
         unique: None,
+        content: Some("Armour drops"),
         vial: None,
         temple_mod: None,
         note: Some("sometimes can drop temple mod item + fracture/veiled items"),
@@ -709,6 +758,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "conduit_of_lightning",
         unique: Some("Dance of the Offered"),
+        content: None,
         vial: Some("Vial of the Ritual"),
         temple_mod: Some(TempleMod {
             architect: "Xopec",
@@ -753,6 +803,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "court_of_sealed_death",
         unique: None,
+        content: Some("Arcanist & Diviner strongboxes"),
         vial: None,
         temple_mod: None,
         note: Some("In T3 Arcanist and Diviner Stronboxes are quite common"),
@@ -765,6 +816,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "crucible_of_flame",
         unique: Some("Story of the Vaal"),
+        content: None,
         vial: Some("Vial of Fate"),
         temple_mod: Some(TempleMod {
             architect: "Puhuarte",
@@ -809,6 +861,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "defense_research_lab",
         unique: Some("Architect's Hand"),
+        content: None,
         vial: Some("Vial of Dominance"),
         temple_mod: Some(TempleMod {
             architect: "Matatl",
@@ -856,6 +909,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "gem",
         unique: None,
+        content: Some("Double-corrupt a gem"),
         vial: None,
         temple_mod: None,
         note: None,
@@ -868,6 +922,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "factory",
         unique: None,
+        content: Some("Extra item quantity"),
         vial: None,
         temple_mod: None,
         note: None,
@@ -901,6 +956,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "glittering_halls",
         unique: None,
+        content: Some("Jewellery drops"),
         vial: Some("Vial of Transcendence"),
         temple_mod: None,
         note: Some("sometimes can drop fractured item"),
@@ -934,6 +990,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "hall_of_champions",
         unique: None,
+        content: Some("Weapon drops"),
         vial: None,
         temple_mod: None,
         note: None,
@@ -967,6 +1024,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "hall_of_legends",
         unique: None,
+        content: Some("Legion encounter"),
         vial: None,
         temple_mod: None,
         note: Some("there are much better ways how to farm legion"),
@@ -979,6 +1037,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "hall_of_war",
         unique: None,
+        content: Some("Rare monster packs"),
         vial: None,
         temple_mod: None,
         note: None,
@@ -1012,6 +1071,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "house_of_the_others",
         unique: None,
+        content: Some("Breach encounter"),
         vial: None,
         temple_mod: None,
         note: None,
@@ -1029,6 +1089,7 @@ pub const DROPS: [LineDrops; 25] = [
         // the same page names Chains as the input (poedb.tw Vial of Consequence
         // page, 2026-09-06). Legacy is the upgrade, and belongs to POE-255.
         unique: Some("Coward's Chains"),
+        content: None,
         vial: Some("Vial of Consequence"),
         temple_mod: Some(TempleMod {
             architect: "Citaqualotl",
@@ -1072,12 +1133,13 @@ pub const DROPS: [LineDrops; 25] = [
     },
     LineDrops {
         key: "corruption",
-        // The one unique in this table no other source backs: poedb.tw Locus of
-        // Corruption page, `Unique /1` tab, 2026-09-06, which lists Shadowstitch
-        // (Sacrificial Garb). Vertolka's sheet lists no unique here — its column
-        // is chest uniques and this room has no chest — and poe.ninja publishes
-        // no line for it, which is why it sits in the fixture's `[absent]`.
-        unique: Some("Shadowstitch"),
+        // Locus of Corruption's altar MAKES Shadowstitch from the Sacrificial
+        // Garb the player brings; it is not a drop. The earlier reading of the
+        // poedb.tw `Unique /1` tab (2026-09-06) was the source of that mistake.
+        // Vertolka's sheet correctly has no chest unique here: this room has no
+        // chest. The altar still rolls Vial of Sacrifice.
+        unique: None,
+        content: Some("Double-corrupt an item"),
         vial: Some("Vial of Sacrifice"),
         temple_mod: None,
         note: None,
@@ -1111,6 +1173,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "museum_of_artefacts",
         unique: None,
+        content: Some("Extra item drops"),
         vial: None,
         temple_mod: None,
         note: Some("nothing worth much"),
@@ -1123,6 +1186,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "sadists_den",
         unique: None,
+        content: Some("Extra monsters (dangerous)"),
         vial: None,
         temple_mod: None,
         note: None,
@@ -1135,6 +1199,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "sanctum_of_immortality",
         unique: Some("Mask of the Spirit Drinker"),
+        content: None,
         vial: Some("Vial of Summoning"),
         temple_mod: Some(TempleMod {
             architect: "Guatelitzi",
@@ -1179,6 +1244,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "explosive",
         unique: None,
+        content: Some("Destroy rooms / explosives"),
         vial: None,
         temple_mod: None,
         note: Some("usually you should't need it"),
@@ -1191,6 +1257,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "storm_of_corruption",
         unique: None,
+        content: Some("Corrupting tempest"),
         vial: None,
         temple_mod: Some(TempleMod {
             architect: "Topotante",
@@ -1214,6 +1281,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "upgrade",
         unique: None,
+        content: Some("Upgrade a room"),
         vial: None,
         temple_mod: None,
         note: None,
@@ -1247,6 +1315,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "throne_of_atziri",
         unique: None,
+        content: Some("Queen Atziri"),
         vial: Some("Vial of the Ghost"),
         temple_mod: None,
         note: None,
@@ -1280,6 +1349,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "toxic_grove",
         unique: Some("Apep's Slumber"),
+        content: None,
         vial: Some("Vial of Awakening"),
         temple_mod: Some(TempleMod {
             architect: "Tacati",
@@ -1328,6 +1398,7 @@ pub const DROPS: [LineDrops; 25] = [
     LineDrops {
         key: "wealth_of_the_vaal",
         unique: None,
+        content: Some("Currency drops"),
         vial: None,
         temple_mod: None,
         note: Some("couple of currency usually max. 10c value - maybe worth in Early League)"),
@@ -1679,10 +1750,71 @@ mod tests {
             }
         }
 
-        // Shadowstitch is the one name the table needs that poe.ninja did not
-        // publish on 2026-09-06. Pinned so that a second unpriceable name
-        // cannot be waved through by adding it to the fixture.
-        assert_eq!(absent, vec!["Shadowstitch"]);
+        // No name in the table is unpublished now. Pinned so that an
+        // unpriceable name cannot be waved through by adding it to the fixture.
+        assert!(absent.is_empty(), "the drops table has an unpriceable name: {absent:?}");
+    }
+
+    #[test]
+    fn content_lines_are_exactly_the_non_chest_lines() {
+        const CONTENT_LINES: [&str; 19] = [
+            "apex_of_ascension",
+            "atlas_of_worlds",
+            "chamber_of_iron",
+            "court_of_sealed_death",
+            "gem",
+            "factory",
+            "glittering_halls",
+            "hall_of_champions",
+            "hall_of_legends",
+            "hall_of_war",
+            "house_of_the_others",
+            "corruption",
+            "museum_of_artefacts",
+            "sadists_den",
+            "explosive",
+            "storm_of_corruption",
+            "upgrade",
+            "throne_of_atziri",
+            "wealth_of_the_vaal",
+        ];
+
+        let content: Vec<&str> = DROPS
+            .iter()
+            .filter(|row| row.content().is_some())
+            .map(|row| row.key())
+            .collect();
+        assert_eq!(content.len(), 19);
+        assert_eq!(content, CONTENT_LINES);
+
+        for row in DROPS.iter() {
+            assert_eq!(
+                row.content().is_some(),
+                row.unique().is_none(),
+                "{} kind fields disagree",
+                row.key()
+            );
+        }
+    }
+
+    /// The kind is DERIVED rather than stored, and this is what that buys: the
+    /// two facts cannot drift apart the way a second column would let them.
+    /// A row with a chest unique draws the `A + B -> C` recipe and a row
+    /// without draws prose, so a kind that disagreed with `unique` would draw
+    /// the wrong one of those on the box.
+    #[test]
+    fn every_rows_kind_is_chest_exactly_when_the_line_drops_a_unique() {
+        for row in DROPS.iter() {
+            let expected = match row.unique() {
+                Some(_) => LineKind::Chest,
+                None => LineKind::Content,
+            };
+            assert_eq!(row.kind(), expected, "{} kind does not follow its unique", row.key());
+        }
+
+        // The six, stated so the loop above cannot pass vacuously on a table
+        // that had drifted to one kind throughout.
+        assert_eq!(DROPS.iter().filter(|row| row.kind() == LineKind::Chest).count(), 6);
     }
 
     // ----------------------------------------------------------- rates --
@@ -1861,18 +1993,18 @@ mod tests {
     }
 
     // The two rushed lines. Doryani's Institute drops nothing this table
-    // prices; Locus of Corruption names a unique nobody has rated — Vertolka's
-    // 0.25 is stated for the six chest lines and Locus is not one of them —
-    // while its VIAL rate is derived from poedb's own 7/13/20, which is his
-    // "small chance" as a number. Fails if the 0.25 is applied to Locus by
-    // pattern rather than because his sheet states it.
+    // prices; Locus of Corruption has no chest unique — its altar makes
+    // Shadowstitch from the Sacrificial Garb the player brings — while its VIAL
+    // rate is derived from poedb's own 7/13/20, which is his "small chance" as
+    // a number. Fails if the 0.25 is applied to Locus by pattern rather than
+    // because his sheet states it.
     #[test]
     fn the_rushed_lines_name_no_unique_rate_and_derive_the_smallest_vial_rate() {
         let doryani = drops_for("gem");
         assert!(doryani.is_empty(), "Doryani's Institute is not empty");
 
         let locus = drops_for("corruption");
-        assert_eq!(locus.unique(), Some("Shadowstitch"));
+        assert_eq!(locus.unique(), None);
         assert_eq!(locus.vial(), Some("Vial of Sacrifice"));
         assert_eq!(locus.temple_mod(), None);
         for (index, drops) in locus.tiers().iter().enumerate() {
@@ -2083,6 +2215,7 @@ mod tests {
         let mod_guessed_only = LineDrops {
             key: "not_a_real_line",
             unique: None,
+            content: None,
             vial: None,
             temple_mod: Some(TempleMod {
                 architect: "Puhuarte",

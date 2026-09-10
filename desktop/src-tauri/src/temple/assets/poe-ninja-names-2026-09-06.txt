@@ -32,5 +32,4 @@ Mask of the Spirit Drinker
 Apep's Slumber
 
 [absent]
-# Present in the game and on poedb, but not published by poe.ninja on 2026-09-06:
-Shadowstitch
+# No name in drops.rs is unpublished now.

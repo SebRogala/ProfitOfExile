@@ -91,22 +91,19 @@ Nine vials, eleven recipes: Vial of Transcendence upgrades any of Tempered
 Flesh / Mind / Spirit, so it appears three times.
 
 - **The vial a room rolls for is not always the vial that upgrades that room's
-  own unique.** It is on the six chest lines; it is not on Locus of Corruption
-  (drops Shadowstitch, rolls Vial of Sacrifice), Glittering Halls (rolls Vial of
-  Transcendence, drops no unique) or Throne of Atziri (rolls Vial of the Ghost,
-  drops no unique). Source: poedb room pages plus Vertolka's sheet, both read
+  own unique.** It is on the six chest lines; Locus of Corruption has no chest
+  unique: its altar corrupts the Sacrificial Garb the player brings into
+  Shadowstitch, and rolls Vial of Sacrifice. Glittering Halls rolls Vial of
+  Transcendence and drops no unique; Throne of Atziri rolls Vial of the Ghost
+  and drops no unique. Source: poedb room pages plus Vertolka's sheet, both read
   2026-09-06, which agree independently on all nine room → vial pairs
   (`desktop/src-tauri/src/temple/drops.rs`).
-- **poe.ninja prices neither Shadowstitch nor any temple-mod item.**
-  Shadowstitch is the one unique in the drop table with no line in the live
-  item-overview feed (checked for league Allflame, 2026-09-06), so the server
-  never serves a price for it and Locus of Corruption's unique term contributes
-  nothing. The architects' signature drops are mod-rolled RARES, which poe.ninja
-  does not publish at all; the one number the code has for them is Vertolka's
-  stated guess for Crucible of Flame, verbatim: *"Crucible of Flames is giving
-  on average 2 temple gloves per run and their base price is usually around
-  30c"* (2026-09-06) — **a guess**, carried as `TempleMod::base_price_chaos`
-  and the only manual price in the table.
+- **poe.ninja prices no temple-mod item.** The architects' signature drops are
+  mod-rolled RARES, which poe.ninja does not publish at all; the one number the
+  code has for them is Vertolka's stated guess for Crucible of Flame, verbatim:
+  *"Crucible of Flames is giving on average 2 temple gloves per run and their
+  base price is usually around 30c"* (2026-09-06) — **a guess**, carried as
+  `TempleMod::base_price_chaos` and the only manual price in the table.
 
 ### Temple room bonuses per tier (poedb, 2026-09-06)
 
