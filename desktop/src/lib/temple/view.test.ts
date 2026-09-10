@@ -20,7 +20,6 @@ import {
 	latticePoints,
 	latticeViewBox,
 	forcedKillNote,
-	leadReason,
 	leaveMapBanner,
 	markerFallbackNotice,
 	modeLabel,
@@ -541,11 +540,6 @@ describe('risk and ranking wording', () => {
 		expect(forcedKillNote(stale)).toBeNull();
 	});
 
-	it('leads with the first reason, and reports none rather than an empty string', () => {
-		expect(leadReason(ranked())).toBe('R1: connects toward the top');
-		expect(leadReason(ranked({ reasons: [] }))).toBeNull();
-	});
-
 	it('picks the best recommendation and the best gamble, or null', () => {
 		const best = ranked({ headline: 'best' });
 		const worse = ranked({ headline: 'worse' });
@@ -736,10 +730,18 @@ describe('offerBoxes', () => {
 				offer({ index: 1, architectName: 'Atmohua', kind: 'change' })
 			])
 		);
-		expect(boxes.map((box) => box.headline)).toEqual([
-			'Guatelitzi · change',
-			'Atmohua · change'
-		]);
+		expect(boxes.map((box) => box.headline)).toEqual(['Torment Cells', 'Torment Cells']);
+		expect(boxes.map((box) => box.builds)).toEqual(['change · tier 2', 'change · tier 2']);
+	});
+
+	it('keeps architect names out of the box headers', () => {
+		const box = offerBoxes(
+			slice([offer({ architectName: 'Puhuarte', displayName: 'Torment Cells' })])
+		)[0];
+
+		expect(box.headline).not.toContain('Puhuarte');
+		expect(box.builds).not.toContain('Puhuarte');
+		expect(box.headline).toBe('Torment Cells');
 	});
 
 	it('names the room each kill BUILDS, not the one its block printed', () => {
@@ -748,7 +750,34 @@ describe('offerBoxes', () => {
 		const boxes = offerBoxes(
 			slice([offer({ printedTarget: "Sadist's Den", displayName: 'Torment Cells', builtTier: 2 })])
 		);
-		expect(boxes[0].builds).toBe('Torment Cells (tier 2)');
+		expect(boxes[0].headline).toBe('Torment Cells');
+		expect(boxes[0].builds).toBe('upgrade · tier 2');
+	});
+
+	it('builds lines carry the kind and tier', () => {
+		const boxes = offerBoxes(
+			slice([
+				offer({ index: 0, kind: 'change', builtTier: 1 }),
+				offer({ index: 1, kind: 'upgrade', builtTier: 3 })
+			])
+		);
+
+		expect(boxes.map((box) => box.builds)).toEqual(['change · tier 1', 'upgrade · tier 3']);
+	});
+
+	it('uses the printed target and refusal sentence for an unresolved offer', () => {
+		const box = offerBoxes(
+			slice([offer({ printedTarget: "Sadist's Den", displayName: null, builtTier: null })])
+		)[0];
+
+		expect(box.headline).toBe("Sadist's Den");
+		expect(box.builds).toBe('does not resolve to a known room');
+	});
+
+	it('leaves the kind alone when the resolved tier is absent', () => {
+		const box = offerBoxes(slice([offer({ kind: 'change', builtTier: null })]))[0];
+
+		expect(box.builds).toBe('change');
 	});
 
 	it('carries the line ladders and built tier on the offer box', () => {
@@ -768,6 +797,8 @@ describe('offerBoxes', () => {
 		expect(boxes[0].ladder).toEqual({
 			quant: [2, 4, 6],
 			rarity: [4, 8, 12],
+			quantText: ['2', '4', '6'],
+			rarityText: ['4', '8', '12'],
 			tier: 2
 		});
 	});
@@ -807,7 +838,30 @@ describe('offerBoxes', () => {
 			})])
 		);
 
-		expect(boxes[0].ladder).toEqual({ quant: [2, 4, 6], rarity: null, tier: 2 });
+		expect(boxes[0].ladder).toEqual({
+			quant: [2, 4, 6],
+			rarity: null,
+			quantText: ['2', '4', '6'],
+			rarityText: null,
+			tier: 2
+		});
+	});
+
+	it('keeps one decimal place in ladder text', () => {
+		const boxes = offerBoxes(
+			slice([offer({
+				line: {
+					modArchitect: null,
+					modHint: null,
+					modSlots: [],
+					quantityPct: [2, 4, 22.5],
+					rarityPct: null
+				}
+			})])
+		);
+
+		expect(boxes[0].ladder?.quant).toEqual([2, 4, 22.5]);
+		expect(boxes[0].ladder?.quantText).toEqual(['2', '4', '22.5']);
 	});
 
 	it('leaves the ladder null when the built tier is absent', () => {
@@ -848,106 +902,6 @@ describe('offerBoxes', () => {
 			})
 		);
 		expect(boxes.map((box) => box.pick)).toEqual([false, false]);
-	});
-
-	it('gives each box the reason of the ranked entry that names ITS block', () => {
-		// The lookup is by index, over recommendations and then gambles — so a
-		// board whose recommendation is about block 1 and whose gamble is about
-		// block 0 puts each reason on its own box. A positional read of the two
-		// lists would swap them, which is the failure this arrangement exists to
-		// catch.
-		const boxes = offerBoxes(
-			slice([offer({ index: 0 }), offer({ index: 1 })], {
-				recommendations: [ranked({ architectIndex: 1, reasons: ['R1: connects toward the top'] })],
-				gambles: [ranked({ architectIndex: 0, risk: 0.31, reasons: ['RV: above the risk threshold'] })]
-			})
-		);
-		expect(boxes.map((box) => box.reason)).toEqual([
-			'RV: above the risk threshold',
-			'R1: connects toward the top'
-		]);
-	});
-
-	it('leaves the reason off a block the ranking named nowhere', () => {
-		// The advisor ranks MOVES, not architects: a ranking whose only entry is
-		// about block 1 says nothing about block 0, and a borrowed reason would
-		// attribute block 1's argument to it. This is an UNNAMED block and not
-		// the `kill either` shape — that one names no index at all and is the
-		// case below.
-		const boxes = offerBoxes(
-			slice([offer({ index: 0 }), offer({ index: 1 })], {
-				recommendations: [ranked({ architectIndex: 1, reasons: ['R1: connects toward the top'] })]
-			})
-		);
-		expect(boxes[0].reason).toBeNull();
-	});
-
-	it('puts the top recommendation\'s own reason on every box when the ranking names no architect', () => {
-		// `kill either` names no index, so its lead reason is the DOOR
-		// instruction — computed, still valid, and about neither block. Looked
-		// up by index it would be dropped, and on a board where neither offer
-		// resolved that leaves two boxes saying "does not resolve to a known
-		// room" and nothing else while the one instruction there is goes
-		// unsaid. The attribution is unambiguous precisely because no architect
-		// is named: the advisor said either kill is fine.
-		const boxes = offerBoxes(
-			slice([offer({ index: 0 }), offer({ index: 1 })], {
-				recommendations: [
-					ranked({
-						headline: 'kill either',
-						architectIndex: null,
-						reasons: ['R3: the doors are the whole board — open D3-C2']
-					})
-				]
-			})
-		);
-		expect(boxes.map((box) => box.reason)).toEqual([
-			'R3: the doors are the whole board — open D3-C2',
-			'R3: the doors are the whole board — open D3-C2'
-		]);
-	});
-
-	it('prints the line\'s grade with the tier-3 room it was given for', () => {
-		// The grade is the LINE's. A kill landing on tier 2 carries the family's
-		// letter, so the box names the room that letter is about — without it
-		// the rating reads as a rating of `Torment Cells`.
-		const boxes = offerBoxes(
-			slice([
-				offer({
-					displayName: 'Torment Cells',
-					builtTier: 2,
-					grade: 'C',
-					lineTop: "Sadist's Den"
-				})
-			])
-		);
-		expect(boxes[0].rating).toBe("Vertolka C · T3 Sadist's Den");
-	});
-
-	it('drops the tier-3 name when the kill lands on it', () => {
-		// `builds` already names that exact room, and repeating it is noise on a
-		// box read at arm's length over a game.
-		const boxes = offerBoxes(
-			slice([
-				offer({
-					displayName: 'Locus of Corruption',
-					builtTier: 3,
-					grade: 'A++',
-					lineTop: 'Locus of Corruption'
-				})
-			])
-		);
-		expect(boxes[0].rating).toBe('Vertolka A++');
-	});
-
-	it('prints no rating for an offer that resolved to no line', () => {
-		// No line, nothing graded. A blank rating line is better than a letter
-		// invented for a room the app could not name.
-		const boxes = offerBoxes(
-			slice([offer({ displayName: null, builtTier: null, grade: null, lineTop: null })])
-		);
-		expect(boxes[0].rating).toBeNull();
-		expect(boxes[0].builds).toBe('does not resolve to a known room');
 	});
 
 	it('marks a forced kill on the pick alone', () => {
@@ -1182,6 +1136,141 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 	const only = (offer: OfferView, market?: MarketView) =>
 		offerBoxes(slice([offer], market), NOW)[0];
 
+	it('projects the temple mod identity and priced marks', () => {
+		const box = only(
+			offer({
+				line: {
+					modArchitect: 'Puhuarte',
+					modHint: 'temple gloves',
+					modSlots: ['gloves'],
+					quantityPct: null,
+					rarityPct: null
+				},
+				value: value({ drivers: [modTerm()] })
+			})
+		);
+
+		expect(box.mod).toEqual({
+			name: 'Puhuarte',
+			hint: 'temple gloves',
+			slots: ['gloves'],
+			price: '30c',
+			perRun: '×2',
+			marks: ['G']
+		});
+	});
+
+	it('leaves the mod block absent when the line has no mod', () => {
+		const box = only(
+			offer({
+				line: {
+					modArchitect: null,
+					modHint: null,
+					modSlots: [],
+					quantityPct: null,
+					rarityPct: null
+				},
+				value: value({ drivers: [uniqueTerm()] })
+			})
+		);
+
+		expect(box.mod).toBeNull();
+	});
+
+	it('falls back to the driver name when the line is absent', () => {
+		const box = only(offer({ line: null, value: value({ drivers: [modTerm()] }) }));
+
+		expect(box.mod?.name).toBe('temple gloves');
+		expect(box.mod?.slots).toEqual([]);
+	});
+
+	it('prints no price for an unpriced mod term', () => {
+		const box = only(
+			offer({
+				line: {
+					modArchitect: 'Puhuarte',
+					modHint: 'temple gloves',
+					modSlots: ['gloves'],
+					quantityPct: null,
+					rarityPct: null
+				},
+				value: value({
+					priced: 'partial',
+					drivers: [modTerm({ unitPrice: null, chaos: null })]
+				})
+			})
+		);
+
+		expect(box.mod?.price).toBe('no price');
+	});
+
+	it('keeps a named mod block on a fallback read without a mod term', () => {
+		const box = only(
+			offer({
+				line: {
+					modArchitect: 'Puhuarte',
+					modHint: 'temple gloves',
+					modSlots: ['gloves'],
+					quantityPct: null,
+					rarityPct: null
+				},
+				value: value({ priced: 'fallback', drivers: [] })
+			})
+		);
+
+		expect(box.mod).toEqual({
+			name: 'Puhuarte',
+			hint: 'temple gloves',
+			slots: ['gloves'],
+			price: '—',
+			perRun: null,
+			marks: []
+		});
+	});
+
+	it('excludes the mod row from visible driver counts', () => {
+		const box = only(
+			offer({ value: value({ drivers: [saleTerm(), uniqueTerm(), vialTerm(), modTerm()] }) })
+		);
+
+		expect(box.drivers.map((driver) => driver.kind)).toEqual(['sale', 'unique', 'vial']);
+		expect(box.driverCount).toBe(3);
+		expect(box.fold).toBeNull();
+	});
+
+	it('counts an unpriced mod in the completeness chip', () => {
+		const box = only(
+			offer({
+				line: {
+					modArchitect: 'Puhuarte',
+					modHint: 'temple gloves',
+					modSlots: [],
+					quantityPct: null,
+					rarityPct: null
+				},
+				value: value({
+					priced: 'partial',
+					drivers: [uniqueTerm(), modTerm({ unitPrice: null, chaos: null })]
+				})
+			})
+		);
+
+		expect(box.chip).toBe('floor · 1 unpriced');
+	});
+
+	it('keeps a mod estimate on its row instead of the box', () => {
+		const box = only(offer({ value: value({ guessed: true, drivers: [modTerm()] }) }));
+
+		expect(box.mod?.marks).toEqual(['G']);
+		expect(box.marks).toEqual([]);
+	});
+
+	it('does not call a mod-only line an empty unique and vial drop', () => {
+		const box = only(offer({ value: value({ drivers: [modTerm()] }) }));
+
+		expect(box.note).toBeNull();
+	});
+
 	it('lists the sale first and then what the room drops, in the wire order', () => {
 		// `valuation.rs` pushes sale, unique, vial, mod, and the box draws that
 		// order: the sale is money the room pays out now and the drops are what
@@ -1342,19 +1431,6 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.drivers[0].price).toBe('no price');
 	});
 
-	it('gives a temple-mod row no icon, because its name is a hint and not an item', () => {
-		// `drops.rs` prices the architect's signature rare off a prose hint
-		// (`temple gloves`), which is not a poe.ninja name — so
-		// `/api/icon/temple/temple%20gloves` is a request that cannot succeed. The
-		// row draws the unresolved glyph either way; naming the item there only
-		// buys a guaranteed 404 per row.
-		const box = only(offer({ value: value({ drivers: [modTerm()] }) }));
-
-		expect(box.drivers[0].kind).toBe('mod');
-		expect(box.drivers[0].name).toBe('temple gloves');
-		expect(box.drivers[0].iconName).toBeNull();
-	});
-
 	it('shows the LETTER and an F mark where the ladder priced the room', () => {
 		// Epic lock L4: no market, no chaos number. The grade is the answer and
 		// the box says so rather than printing a rung as if it were a price.
@@ -1448,24 +1524,6 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.valueText).toBe('677');
 	});
 
-	it('says on a scaled box that the rows under it are the tier-3 room\'s', () => {
-		// Without this line the box is a sum that does not sum, which is worse
-		// than no explanation: the rows are the LINE's terms and the number is a
-		// fraction of the line.
-		const box = only(
-			offer({
-				builtTier: 1,
-				value: value({ total: 676.8, scaledFromTier3: 846, drivers: [uniqueTerm(), fractionTerm()] })
-			})
-		);
-
-		expect(box.scaleNote).toBe('tier 1 = 80% of tier 3 · the rows below are tier 3\'s');
-	});
-
-	it('leaves the scale line off a row that was not scaled, whose rows DO add up', () => {
-		expect(only(offer({ value: value({ drivers: [uniqueTerm()] }) })).scaleNote).toBeNull();
-	});
-
 	it('draws three driver rows and folds the rest into one line', () => {
 		// The height is designed against the 316 px the panel's own diagonal
 		// admits, so a fourth row cannot grow the box — it folds, with the chaos
@@ -1473,14 +1531,14 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		const box = only(
 			offer({
 				value: value({
-					drivers: [saleTerm({ chaos: 186 }), uniqueTerm(), vialTerm(), modTerm()]
+					drivers: [saleTerm({ chaos: 186 }), uniqueTerm(), vialTerm(), uniqueTerm({ name: 'Fate of the Vaal' })]
 				})
 			})
 		);
 
 		expect(box.drivers).toHaveLength(3);
 		expect(box.driverCount).toBe(4);
-		expect(box.fold).toBe('+1 more item · 60c');
+		expect(box.fold).toBe('+1 more item · 17c');
 	});
 
 	it('withholds the folded chaos on a scaled row, where it would be tier 3\'s', () => {
@@ -1493,7 +1551,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 				value: value({
 					total: 676.8,
 					scaledFromTier3: 846,
-					drivers: [saleTerm({ chaos: 186 }), uniqueTerm(), vialTerm(), modTerm(), fractionTerm()]
+					drivers: [saleTerm({ chaos: 186 }), uniqueTerm(), vialTerm(), uniqueTerm({ name: 'Fate of the Vaal' }), fractionTerm()]
 				})
 			})
 		);
@@ -1673,22 +1731,57 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.drivers).toEqual([]);
 	});
 
-	it('gives the compact strip its prices and one foot line', () => {
+	it('keeps the bonus line when no tier ladder is available', () => {
+		const box = only(
+			offer({
+				builtTier: null,
+				line: {
+					modArchitect: null,
+					modHint: null,
+					modSlots: [],
+					quantityPct: null,
+					rarityPct: null
+				},
+				value: value({ drivers: [quantityTerm()] })
+			})
+		);
+
+		expect(box.ladder).toBeNull();
+		expect(box.bonus).toEqual({ label: '+6% quant', amount: '+3c' });
+	});
+
+	it('omits retired explanation fields from a scaled offer box', () => {
+		const box = only(
+			offer({
+				builtTier: 1,
+				value: value({
+					scaledFromTier3: 846,
+					drivers: [uniqueTerm(), fractionTerm()]
+				})
+			})
+		);
+
+		expect(box).not.toHaveProperty('scaleNote');
+		expect(box).not.toHaveProperty('rating');
+		expect(box).not.toHaveProperty('reason');
+		expect(box).not.toHaveProperty('foot');
+	});
+
+	it('gives the compact strip its prices', () => {
 		// The compact form drops the counts, the bonus, the recipe and the
-		// reason, and merges the rating and the age into one line. Only the
-		// PRICED rows reach the strip: a bare `no price` in a run of numerals
+		// mod block. Only the PRICED rows reach the strip: a bare `no price` in a
+		// run of numerals
 		// reads as one of them.
 		const box = only(
 			offer({
 				value: value({
 					priced: 'partial',
-					drivers: [uniqueTerm(), vialTerm(), modTerm({ unitPrice: null, chaos: null })]
+					drivers: [uniqueTerm(), vialTerm(), modTerm()]
 				})
 			})
 		);
 
 		expect(box.stripPrices).toBe('68 · 41c');
-		expect(box.foot).toBe('Vertolka C · T3 Sadist\'s Den · prices 12 min old');
 	});
 
 	it('leaves the strip empty where nothing priced', () => {
@@ -1744,8 +1837,8 @@ describe('offerBoxSignature', () => {
 		// as long as a board was up. The box is fixed-width now, so nothing a
 		// string says can move it — and this is the assertion that keeps a
 		// future field from being added back in.
-		const first = box({ market: 'prices 12 min old', reason: 'R1: connects toward the top' });
-		const second = box({ market: 'prices 13 min old', reason: 'R4: below the risk threshold' });
+		const first = box({ market: 'prices 12 min old', headline: 'Torment Cells' });
+		const second = box({ market: 'prices 13 min old', headline: 'Locus of Corruption' });
 
 		expect(offerBoxSignature(second, false)).toBe(offerBoxSignature(first, false));
 	});
@@ -1798,6 +1891,90 @@ describe('offerBoxSignature', () => {
 		});
 
 		expect(offerBoxSignature(withOne, false)).not.toBe(offerBoxSignature(without, false));
+	});
+
+	it('changes when the ladder shape changes', () => {
+		const quant = {
+			quant: [2, 4, 6] as [number, number, number],
+			rarity: null,
+			quantText: ['2', '4', '6'] as [string, string, string],
+			rarityText: null,
+			tier: 2
+		};
+		const withQuant = box({ ladder: quant });
+		const emptyLadder = box({
+			ladder: {
+				quant: null,
+				rarity: null,
+				quantText: null,
+				rarityText: null,
+				tier: 2
+			}
+		});
+		const withRarity = box({
+			ladder: {
+				...quant,
+				rarity: [4, 8, 12] as [number, number, number],
+				rarityText: ['4', '8', '12'] as [string, string, string]
+			}
+		});
+
+		expect(offerBoxSignature(emptyLadder, false)).not.toBe(offerBoxSignature(box({ ladder: null }), false));
+		expect(offerBoxSignature(withQuant, false)).not.toBe(offerBoxSignature(box({ ladder: null }), false));
+		expect(offerBoxSignature(withQuant, false)).not.toBe(offerBoxSignature(emptyLadder, false));
+		expect(offerBoxSignature(withRarity, false)).not.toBe(offerBoxSignature(withQuant, false));
+	});
+
+	it('ignores ladder text changes', () => {
+		const quant = {
+			quant: [2, 4, 6] as [number, number, number],
+			rarity: null,
+			quantText: ['2', '4', '6'] as [string, string, string],
+			rarityText: null,
+			tier: 2
+		};
+		const withQuant = box({ ladder: quant });
+		const withDifferentText = box({ ladder: { ...quant, quantText: ['20', '40', '60'] as [string, string, string] } });
+
+		expect(offerBoxSignature(withDifferentText, false)).toBe(offerBoxSignature(withQuant, false));
+	});
+
+	it('changes for a mod block and its slot count', () => {
+		const withoutMod = box({ mod: null });
+		const emptyMod = box({
+			mod: {
+				name: 'Puhuarte',
+				hint: 'temple gloves',
+				slots: [],
+				price: '30c',
+				perRun: '×2',
+				marks: ['G']
+			}
+		});
+		const oneSlot = box({
+			mod: {
+				name: 'Puhuarte',
+				hint: 'temple gloves',
+				slots: ['gloves'],
+				price: '30c',
+				perRun: '×2',
+				marks: ['G']
+			}
+		});
+		const threeSlots = box({
+			mod: {
+				name: 'Puhuarte',
+				hint: 'temple gloves',
+				slots: ['ring', 'gloves', 'boots'],
+				price: '30c',
+				perRun: '×2',
+				marks: ['G']
+			}
+		});
+
+		expect(offerBoxSignature(emptyMod, false)).not.toBe(offerBoxSignature(withoutMod, false));
+		expect(offerBoxSignature(oneSlot, false)).not.toBe(offerBoxSignature(withoutMod, false));
+		expect(offerBoxSignature(threeSlots, false)).not.toBe(offerBoxSignature(oneSlot, false));
 	});
 });
 

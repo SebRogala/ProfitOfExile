@@ -347,10 +347,10 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   first block top-right and the second bottom-left, so the top box sits
   `STACK_STAGGER_CSS` (175 px, measured off the owner's redrawn screenshot)
   right of the column and the lower one on it. A box carries
-  the architect and the kind, the room that kill BUILDS and its tier, Vertolka's
-  grade for the line it builds into, and the advisor's first reason for THAT
-  block. The advisor's pick wears a 2 px cyan frame — the same cyan as the room
-  widget's kill glyph — and that frame IS the pointer; the other box is faint.
+  the room the kill BUILDS and its kind and tier, its value rows, the tier
+  ladder, the temple mod and the market line. The advisor's pick wears a 2 px
+  cyan frame — the same cyan as the room widget's kill glyph — and that frame
+  IS the pointer; the other box is faint.
   They live with the SHEET and go when it closes. They REPLACE `temple.advice`,
   POE-244's single kill callout, which named one block and left the block the
   player was choosing against off the overlay entirely; `temple.door` — the ROOM
@@ -1266,11 +1266,11 @@ touching the named path.
   (POE-249, replacing POE-244's kill-callout item): open a temple layout panel
   with two architect blocks. TWO boxes must appear in the SCREEN's left margin —
   at one x for the column, no further right than `boardLeft − 16 − the widest
-  box`, which is 280 on a 1920×1080 frame at the full 260 px and further right
-  when the text wraps short; about 900 px from the blocks they mirror — box
-  `i` level with block `i` in the panel's own order, each carrying the
-  architect and kind, what that kill BUILDS with its tier, Vertolka's grade for
-  the line, and one reason. The distance is the design and not a defect: the
+  box`, which is 240 on a 1920×1080 frame at the registry's 300 px; about 900 px
+  from the blocks they mirror — box
+  `i` level with block `i` in the panel's own order, each carrying the room the
+  kill BUILDS and its kind and tier, its value rows, the tier ladder, the temple
+  mod and the market line. The distance is the design and not a defect: the
   owner asked for the left margin, and the CYAN FRAME on the advisor's pick is
   the whole pointer — there is no arrow and no line. The other box must be
   faint. Check on BOTH machines (1920×1080 laptop and the desktop): a block rect
@@ -1280,8 +1280,8 @@ touching the named path.
   a read with no block rect at all puts the first box at the panel crop's top,
   which is correct; a one-of-two read (cover the lower block) must put
   `(only architect read)` on the PICK's headline and nowhere else; and a
-  `kill either` board — the advisor names no architect — must give BOTH boxes
-  the same lead reason (the door instruction) and NEITHER a cyan frame. A box
+  `kill either` board — the advisor names no architect — must give NEITHER box
+  a cyan frame. A box
   that cannot be placed clear of a read region is not drawn at all while the
   other still is (ADR-019); two boxes at the same strength is the regression,
   because the overlay then reads as two instructions.
@@ -1289,103 +1289,89 @@ touching the named path.
   block it points at actually reads as the pointer at a glance, over the game.
   If it does not, the fix is a product decision about where the column sits, not
   a change to `offerStackPlacement`.
-- **The offer box explains the number, in each of its five states** (POE-260):
-  the box now leads with what the room is WORTH in chaos and shows what makes
-  that number up, so what this item checks is that every state says something
-  true and none of them invents a number. One read per state; the state is
-  visible on the Temple page's value table (`values.ts`'s letter) if a box is
-  ambiguous.
+- **The offer box explains the number, in each of its five states** (POE-260,
+  POE-277): the box is room-led and shows only facts that belong to the read.
+  The header is the room name (or printed target if it does not resolve), the
+  next line is `change · tier 1`, and there is no scale, rating or reason line.
 
   1. **Priced.** Open a panel on a board with a chest-unique line — Crucible of
      Flame, Toxic Grove, Sanctum of Immortality, Hybridisation Chamber, Conduit
-     of Lightning or Defense Research Lab. The box must show a chaos figure with
-     `per run` beside it, up to three ICON rows under it, each with the item's
-     own price and its per-run count (`×0.25` for the unique, `×2` for the
-     gloves, and a per-LINE vial count since POE-262, printed to two
-     significant digits — `×0.1` on Crucible, Conduit and Sanctum, `×0.06` on
-     Hybridisation Chamber, `×0.048` on Defense Research Lab, `×0.012` on
-     Toxic Grove), the
-     `+6% quant · +12% rarity` line, and — on those six lines, and NOT on Locus
-     of Corruption — an `UPGRADE RECIPE` row of three icons with prices. Icons
-     that render as a `?` mean the server's `/api/icon/gems/<name>` did not answer
-     for that poe.ninja name; check one by hand before assuming the row is wrong.
-     The row prices are the ITEM's, not the term's: `Story of the Vaal 68c
-     ×0.25` is right and `17c` is the bug.
-  2. **Partial.** A board where the feed carries no line for one of the items —
-     the vials are the usual case. The unpriced row must keep its icon and read
-     `no price`, never `0c` and never be missing, and the headline number must
-     carry a `floor · N unpriced` chip in place of `per run`.
-  3. **Fallback.** Force it by starting the app with no network (or point the
-     server URL at nothing) and opening a panel. Both boxes must show
-     `grade <letter>` with an `F` mark instead of a chaos figure, every row price
-     must be an em dash `—`, and the age line must read
-     `prices unavailable — base values`. A chaos number on a board with no market
-     is the failure this state exists to make impossible.
+     of Lightning or Defense Research Lab. The value row shows the chaos figure
+     with `per run`. Up to three 39 px drop rows show price, per-run count and
+     marks; unique and vial names are NOT printed — the icon is the identity and
+     `alt` stays on the `<img>` as the accessibility attribute and reaches nobody
+     on a click-through window; the `?` fallback carries none; sale keeps its text.
+     The ladder
+     reads `+2/4/6% quant · +4/8/12% rarity` at 14 px in lab yellow, with the
+     current tier lit and the other two values dimmed. The per-line vial counts
+     remain the POE-262 check: `×0.1` on Crucible, Conduit and Sanctum, `×0.06`
+     on Hybridisation Chamber, `×0.048` on Defense Research Lab, and `×0.012`
+     on Toxic Grove; the unique and gloves still read `×0.25` and `×2`. Where
+     supplied — those six lines, and NOT Locus of Corruption — the 26 px
+     `UPGRADE RECIPE` row has three icons with prices. A `?` icon means the
+     server's `/api/icon/temple/<name>` did not answer for that poe.ninja name;
+     check one by hand before assuming the row is wrong. The row prices are the
+     ITEM's, not the term's: `Story of the Vaal 68c ×0.25` is right and `17c`
+     is the bug. The optional `temple mod` block follows with its name, hint
+     attribute, price, count, marks and 18 px equipment-slot silhouettes. The
+     slot rows are Vertolka's item_hint reading, UNVERIFIED against the wiki
+     (drops.rs comments) — Citaqualotl and Guatelitzi draw no icons until
+     confirmed. The market line remains last.
 
-     **Then the other half, which is the POE-258 correction**: with a PRICED
-     board still on screen, flip the DEBUG/PROD toggle. The Temple page's Reader
-     row must go to `prices unavailable — base values` within the click — that
-     row reads `pollMarket`, the latest poll — while the standing board's boxes
-     keep their chaos figures AND keep their own `prices N min old` line, because
-     those numbers really were priced against that read. A box that flips to
-     `prices unavailable` over chaos figures it is still showing, or a Reader row
-     that stays priced after the switch, means the two `MarketView` fields have
-     been crossed again. Re-read (or take the next incursion) and both must land
-     on base values together.
-  4. **Stale.** Hardest to force deliberately — leave the app running against a
-     server whose temple recompute has stopped for over two hours, or check it
-     opportunistically. What to expect is the FALLBACK box with one extra line,
-     not the priced box with a warning on it: ADR-022's rule 3 turns the whole
-     valuation on `MarketInput::prices_anything()`, a stale read is not live, so
-     every room comes back with the single cold-ladder driver. So the box must
-     read `grade <letter>` with an `F` mark and no chaos figure, carry NO driver
-     rows and no quant/rarity line, show an em dash for each recipe price — and
-     the age line, in yellow, must read `prices stale (<N> h) — base values`,
-     which is the one thing that tells this state from state 3. The dotted
-     yellow underline sits on whatever the value slot carries, which here is the
-     grade.
+  2. **Partial.** An item with no market price keeps its 39 px icon row and
+     prints `no price`, never `0c` and never a missing row. The value row
+     carries the `floor · N unpriced` chip in place of `per run`; the
+     remaining ladder, recipe, mod and market lines follow the same fixed slots
+     when present.
 
-     **The line goes stale on the CLOCK, not on a republish** (POE-258's M1
-     correction): `view.ts::marketStale` judges the read's own `asOf` against
-     the published `staleAfterMs`, so a board left on screen crosses two hours
-     by itself. Watch one over the line if you can: the age line must flip from
-     `prices 1 h old` to `prices stale (2 h)` with nothing having been
-     republished behind it, and the box's dotted yellow underline must appear on
-     the same tick. A line that stays `prices 2 h old` means the wording is back
-     on the wire's `stale` flag.
+  3. **Fallback.** Start the app with no network (or point its server URL at
+     nothing) and open a panel. With no usable market, the value row reads
+     `grade <letter>` with an `F` mark, item and recipe prices are em dashes,
+     and the market line reads `prices unavailable — base values`. If the
+     line carries tier facts, the ladder still explains them; otherwise the
+     bonus label is used. No chaos figure or market-backed recommendation is
+     invented. Flip DEBUG/PROD on a priced board: the Reader row must switch to
+     `prices unavailable — base values`, while the standing boxes keep their
+     own value and market-age line until the next read.
 
-     **And that clock-aged line carries NO `— base values` suffix**, which is
-     the one wording difference between this case and the paragraph above. The
-     suffix is a claim about the NUMBERS, not about the age: it says they came
-     off the cold grade ladder. A board the clock aged after the fact is still
-     showing real prices that have merely gone old, so `prices stale (2 h)` is
-     the whole truth about it and `— base values` would be false — the numbers
-     become base values at the NEXT read, which is the read that will actually
-     take the cold branch. So the two forms to tell apart on screen:
-     `grade <letter>` + `F` + `prices stale (N h) — base values` is the read that
-     was already too old when it was valued; chaos figures + driver rows +
-     `prices stale (N h)` is the read that has aged under the player. A suffix
-     over chaos figures, or a missing suffix over an `F` box, is the regression.
+  4. **Stale.** Leave the app against a server whose temple recompute has
+     stopped for over two hours, or watch a live board cross that boundary. A
+     cold read keeps the fallback wording above. A live-priced read that ages
+     on the clock keeps its chaos figure and reads
+     `prices stale (<N> h)` without the `— base values` suffix; that suffix
+     means the numbers were already valued from the cold branch. The yellow
+     dotted mark follows the value slot. Staleness changes the market line, not
+     the box's row order. The clock-aged line must change without a republish;
+     `prices 1 h old` becoming `prices stale (2 h)` is the smoke check.
 
-     **The box gets SHORTER when the board goes stale** — about 197 px against
-     the priced form's 316 — because the cold ladder wiped its terms. That is
-     the expected form and not a regression; the regression is a chaos figure,
-     a driver row or a `per run` surviving into it, which would be the box
-     justifying its number with prices the ranking refused to use.
+  5. **Compact.** Run windowed at roughly 720 px tall, or find a board whose
+     first block sits low. When the pair cannot fit, both boxes collapse
+     together. The header/value stay available, the lower explanation becomes
+     the strip and the market-only foot line; one full box beside one compact
+     box is the regression. The compact strip excludes the temple mod's price;
+     the value's chip and marks still count it, so on Crucible of Flame the
+     strip is short of its largest term by design.
 
-     **316 and 358 are two different budgets and neither is wrong.** 316 is
-     `DIAGONAL_BUDGET_CSS` — what the panel's own diagonal has room for once the
-     column is staggered — and it happens to equal the design's typical priced
-     box, which is how the two got conflated. 358 is `FULL_BOX_MAX_CSS`, the
-     tallest a full box can actually be: the same box plus the scale note and
-     the fold, the two rows a tier-1 or tier-2 kill on a four-term room adds.
-     `offersCompact` budgets the PAIR against 358, never against 316.
-  5. **Compact.** Force it by making the room below the first architect block
-     too small for the pair — run the game WINDOWED at roughly 720 px tall, or
-     find a board whose first block sits low. BOTH boxes must collapse together
-     to the icons-and-prices strip with one foot line; one full box beside one
-     compact box is the regression, because the two then read as two different
-     kinds of answer.
+  **Measured heights.** The pick's 2 px frame contributes 4 px and its vertical
+  padding contributes 4 px. Header/builds are 18 + 15 px, and the value row is
+  2 + 24 = 26 px. Three drop rows are 2 + 3×39 + 2×1 = 121 px. The ladder
+  or bonus is 1 + 17 = 18 px; the recipe is (2 + 11) + (1 + 26) = 40 px;
+  the mod block is (2 + 11) + 16 + (1 + 18) = 48 px; the market line is
+  2 + 13 = 15 px.
+
+  - Priced full with three rows, ladder, recipe and mod:
+    4 + 4 + 18 + 15 + 26 + 121 + 18 + 40 + 48 + 15 = **309 px**.
+  - Partial uses the same 309 px maximum when those optional blocks are
+    present; omitted blocks remove only their own fixed slot.
+  - Fallback with grade + ladder and no drop, recipe or mod rows is
+    4 + 4 + 18 + 15 + 26 + 18 + 15 = **100 px**; each present optional block
+    adds the same fixed height, up to the 309 px maximum.
+  - Compact's maximum is
+    4 + 4 + 18 + 15 + 26 + (2 + 24) + (2 + 13) = **108 px**.
+
+  `FULL_BOX_MAX_CSS` is 309 px versus `DIAGONAL_BUDGET_CSS` at 316 px,
+  leaving 7 px. The geometry budget and placement rule remain unchanged.
+
 
   **And the blink must be gone.** Watch either box for three unbroken minutes on
   a live board. It must NOT flicker as the age line rolls from `prices 12 min
@@ -1394,9 +1380,10 @@ touching the named path.
   is back in `offerBoxSignature`.
 
   **Owner judgement, not arithmetic**: whether the box is still readable at arm's
-  length over a game now that it carries icons and four more lines, and whether
-  the pick's cyan frame still wins the eye against them. If it does not, the fix
-  is a product decision about what the box drops, not a change to the geometry.
+  length over a game with the larger icons and optional temple-mod block, and
+  whether the pick's cyan frame still wins the eye against them. If it does
+  not, the fix is a product decision about what the box drops, not a change to
+  the geometry.
 - **The vials-per-run knob moves the Temple page's totals** (POE-262): on the
   Temple page pick **Custom** and find Glittering Halls' row in the value table.
   The table prints CELL TOTALS and no per-driver rows, so this is where the knob

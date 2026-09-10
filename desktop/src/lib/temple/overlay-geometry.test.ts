@@ -537,8 +537,9 @@ describe('offerStackPlacement', () => {
 	];
 	/** One v3 box at the DIAGONAL's budget: the registry's width, and the
 	 *  height the staggered strip has room for. Not `FULL_BOX_MAX_CSS`, which
-	 *  is the tallest a box can BE — a box that tall gives up the diagonal
-	 *  instead, which is the case the second test below is about. */
+	 *  is the tallest a box can BE — since POE-277 a box that tall is refused at
+	 *  review; the second test below is the placer's behaviour if one ever ships.
+	 */
 	const V3_BOX = { w: 300, h: DIAGONAL_BUDGET_CSS };
 
 	it('seats a full-height v3 box on the diagonal, clear of all 42 read regions', () => {
@@ -587,39 +588,36 @@ describe('offerStackPlacement', () => {
 	/**
 	 * `TempleOfferBoxes.svelte`'s full form, row by row, in CSS px — each entry
 	 * is that rule's own `height`/`line-height` plus its stated `margin-top`,
-	 * for the WORST shape the wording can build: a `market` or `partial` box on
-	 * the pick (2 px frame) that is also a scaled row (`scale`) on a four-term
-	 * room (`fold`).
+	 * for the priced form on the pick (2 px frame): three drop rows, ladder,
+	 * recipe, temple mod block and market age line.
 	 *
 	 * What it guards is `FULL_BOX_MAX_CSS` against this table. It cannot see a
 	 * row ADDED to the component — nothing here reads the stylesheet — so a new
-	 * row has to land in both places or the budget is quietly short.
+	 * row has to land in both places or the budget is quietly short. It also rests
+	 * on `terms` filtering the four-entry `ROW_KINDS`, so `offerFold` is null
+	 * today, and on `offerNote` firing only when there are zero rows.
 	 */
 	const FULL_BOX_ROWS = {
 		border: 2 * 2,
-		padding: 2 * 8,
-		headline: 20,
-		builds: 17,
-		value: 8 + 28,
-		scale: 6 + 15,
-		drivers: 8 + 3 * 26 + 2 * 6,
-		fold: 6 + 15,
-		bonus: 6 + 15,
-		recipe: 8 + 13 + 2 + 24,
-		rating: 8 + 14,
-		reason: 2 + 14,
-		age: 6 + 13
+		padding: 2 * 2,
+		headline: 18,
+		builds: 15,
+		value: 2 + 24,
+		drivers: 2 + 3 * 39 + 2 * 1,
+		ladder: 1 + 17,
+		recipe: 2 + 11 + 1 + 26,
+		mod: 2 + 11 + 16 + 1 + 18,
+		age: 2 + 13
 	};
 	const WORST_FULL_BOX = Object.values(FULL_BOX_ROWS).reduce((sum, row) => sum + row, 0);
 
 	it('budgets the pair against the tallest box the wording can build, not the design\'s typical one', () => {
-		// 358, not the 316 of the design's priced artboard: that artboard has
-		// neither the scale note a tier-1 kill adds nor the fold a fourth term
-		// adds, and both are ordinary boards. A constant sized on the typical
-		// box is a pair that fits on paper and clamps on screen.
-		expect(WORST_FULL_BOX).toBe(358);
+		// The redesigned full form is 309 px, leaving 7 px inside the 316 px
+		// diagonal budget. The component has no scale, fold, rating or reason row.
+		expect(WORST_FULL_BOX).toBe(309);
 		expect(FULL_BOX_MAX_CSS).toBe(WORST_FULL_BOX);
-		expect(FULL_BOX_MAX_CSS).toBeGreaterThan(DIAGONAL_BUDGET_CSS);
+		expect(FULL_PAIR_CSS).toBe(626);
+		expect(FULL_BOX_MAX_CSS).toBeLessThanOrEqual(DIAGONAL_BUDGET_CSS);
 	});
 
 	it('seats two worst-case boxes without clamping at exactly the clearance the compact rule allows', () => {
@@ -658,7 +656,7 @@ describe('offerStackPlacement', () => {
 
 	it('draws BOTH compact boxes on a host too short for the full pair', () => {
 		// The design's own promise: the box is never dropped, it collapses.
-		// The compact form is 136 px, so the pair needs 280 of the 300 this
+		// The compact form is 108 px, so the pair needs 224 of the 300 this
 		// host leaves under the block — and both must come back placed. A
 		// collapse rule that fired but a form that did not shrink puts the
 		// lower box past the host's bottom edge, where the clamp walks it onto
@@ -670,7 +668,7 @@ describe('offerStackPlacement', () => {
 			{ x: 1140, y: 300, w: 280, h: 43 },
 			{ x: 1140, y: 340, w: 280, h: 43 }
 		];
-		const compactBox = { w: 300, h: 136 };
+		const compactBox = { w: 300, h: 108 };
 
 		expect(
 			offersCompact({ driverCounts: [3, 3], blocks, panel: COMMITTED_PANEL, host: shortHost })
@@ -685,7 +683,7 @@ describe('offerStackPlacement', () => {
 			})
 		).toEqual([
 			{ x: 240, y: 300, ...compactBox },
-			{ x: 240, y: 300 + 136 + STACK_GAP_CSS, ...compactBox }
+			{ x: 240, y: 300 + 108 + STACK_GAP_CSS, ...compactBox }
 		]);
 	});
 
@@ -714,14 +712,15 @@ describe('offersCompact', () => {
 	const THREE = [3, 3];
 
 	it('keeps the full form where the host has room for two of them', () => {
-		// 1080 - 133 is 947, and two full boxes plus the stack gap need 640.
+		// 1080 - 133 is 947, and two full boxes plus the stack gap need
+		// FULL_PAIR_CSS = 309 * 2 + 8 = 626.
 		expect(offersCompact({ driverCounts: THREE, blocks: HIGH, panel: COMMITTED_PANEL, host: HOST })).toBe(
 			false
 		);
 	});
 
 	it('collapses when what is left of the host under the first block cannot seat the pair', () => {
-		// The boundary itself: a first block at y 441 leaves exactly 639 px,
+		// The boundary itself: a first block at y 455 leaves exactly 625 px,
 		// one short of the pair. The rule is about what is BELOW the block,
 		// because the stack starts level with it and grows downward — a test on
 		// the host's height alone would pass on a screen with no room at all.
