@@ -774,6 +774,23 @@ pub(super) fn column_tolerance(g: &MercGeometry, scale: f32) -> i32 {
 /// does not own.
 const PANEL_MARGIN_CELLS: f32 = 0.5;
 
+/// Pad the pass-2 name crop keeps on every side, in reference px, so no glyph
+/// sits flush against a crop edge.
+pub const NAME_CROP_PAD: f32 = 4.0;
+/// Extra lead the same crop takes on the LEFT only, in reference px. Observed
+/// 2026-09-10 at the PC (scale ≈ 0.9): the first glyph starts ~3 px right of
+/// the name column x, so the pad alone left ~7 px before it; the skill icon's
+/// right edge is ~17 px left of the column, so 8 more px still clear it.
+pub const NAME_CROP_LEAD: f32 = 8.0;
+
+/// The name crop's left edge for a name rect starting at `name_x`: pad plus
+/// lead, each scaled and rounded on its own. One derivation for the pass-2
+/// crop (`read::name_band`) and the preview band, so the debug overlay's row
+/// box starts where the OCR actually reads.
+pub fn name_crop_left(name_x: i32, scale: f32) -> i32 {
+    name_x - (NAME_CROP_PAD * scale).round() as i32 - (NAME_CROP_LEAD * scale).round() as i32
+}
+
 /// How far below the last row's cells the panel rect reaches, in row pitches.
 ///
 /// The recruit window's footer — TAKE ITEM and REMATCH — sits under the last
@@ -914,12 +931,13 @@ fn placed_row_geometry(
                 |cell| (cell[1] + cell[3]).max(name_rect[1] + name_rect[3]),
             );
 
+            let band_x = name_crop_left(name_rect[0], scale);
             PlacedRowGeometry {
                 centre_y: centre,
                 skill_icon: skill_icon_rect(column_x0, centre, cell_size),
                 name_rect,
                 cells,
-                band: [name_rect[0], top, right - name_rect[0], bottom - top],
+                band: [band_x, top, right - band_x, bottom - top],
             }
         })
         .collect()
