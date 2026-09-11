@@ -369,3 +369,17 @@ implementation is pending in POE-278 WI-B; ADR-025's Status says when it ships.
 Temple is unchanged: the 2026-09-09 amendment above already spends the
 placed-miss fallback under the Manual arm only, and ADR-025 records it as the
 temple half of clause 4. The contract is shared; the code is not.
+
+## Amendment: the temple null-slice sweep has a cadence and runs off the loop (POE-275, 2026-09-11)
+
+The POE-269 amendment's null-slice fallback ("a null or unplaced slice uses the
+same key") and the 2026-09-09 amendment's "the null-slice fallback is
+unchanged" no longer describe current temple behaviour. Since POE-275 WI-2 a
+null or unplaced slice sweeps every 3 consecutive clean misses, up to 10 per
+`(temple_epoch, temple_rearm)` key, never on the first miss and never over a
+live panel; a second found-but-withheld result ends the key's null sweeps; and
+every sweep runs off the loop thread while the placed recheck keeps running.
+The placed-miss fallback (Manual arm only, once per key) is unchanged, and so
+is merc. See [ADR-025](025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md)'s
+2026-09-11 amendment and [Temple Lifecycle](../TEMPLE-LIFECYCLE.md), "Cadences
+and budgets".
