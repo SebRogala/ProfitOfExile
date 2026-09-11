@@ -43,7 +43,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tokio::sync::watch;
 
-use super::icons::{SeedInstall, TemplateStore, SHIFT_MAX};
+use super::icons::{SeedInstall, TemplateStore};
 use super::{icons::CellSig, MercGeometry, Thresholds};
 use crate::AppState;
 use tauri::Manager as _;
@@ -153,12 +153,13 @@ pub fn installable(entries: &[SeedEntry], blocked: &SeedBlocklist) -> Vec<SeedEn
 ///
 /// The panel is captured at whatever scale the game is running (0.974 on
 /// Sebastian's 1920×1200, 1.0 on the reference fixture), and the alignment
-/// window — the inner crop minus [`SHIFT_MAX`] px per side — is 33 px at the
-/// first and 34 px at the second. The art fills a FIXED FRACTION of the cell
-/// on screen, so the number that is scale-invariant is `art px / window px`,
-/// not `art px`. The ±3 px alignment search cannot stand in for getting this
-/// right: it slides the probe, it does not resample it, so a fraction error
-/// shows up as a resampling mismatch the search has no lever on.
+/// window — the inner crop minus [`SHIFT_MAX`](super::icons::SHIFT_MAX) px per
+/// side — is 33 px at the first and 34 px at the second. The art fills a FIXED
+/// FRACTION of the cell on screen, so the number that is scale-invariant is
+/// `art px / window px`, not `art px`. The ±3 px alignment search cannot stand
+/// in for getting this right: it slides the probe, it does not resample it, so
+/// a fraction error shows up as a resampling mismatch the search has no lever
+/// on.
 ///
 /// A struct rather than three loose constants because the calibration sweep
 /// varies them together and the shipped values are one measured point in that
@@ -179,7 +180,8 @@ pub struct SeedArt {
 ///
 /// The art is rendered LARGER than the window and cropped by it, because the
 /// recruit cell shows the gem art bled out to its frame while the alignment
-/// window has already given up [`SHIFT_MAX`] px per side to the shift search.
+/// window has already given up [`SHIFT_MAX`](super::icons::SHIFT_MAX) px per
+/// side to the shift search.
 ///
 /// Measured by [`tests::sweep_the_calibration_against_the_corpus`] over
 /// 13 fractions × 11 × 13 offsets × 5 backgrounds, scored through the real
@@ -224,7 +226,7 @@ pub const SEED_ART_FRAC: f32 = 1.125;
 /// | `-2, -2` — this | `(0, 0)` | 0 of 17 | 0.918 |
 ///
 /// A 6 px systematic error cannot show up as a best shift of `-6`: the search
-/// is ±[`SHIFT_MAX`], so it shows up as every cell PINNED at the `dx = -3`
+/// is ±[`SHIFT_MAX`](super::icons::SHIFT_MAX), so it shows up as every cell PINNED at the `dx = -3`
 /// edge with its whole jitter budget already spent. Counting pins rather than
 /// reading medians is what makes the old value visibly wrong instead of
 /// merely off.
@@ -300,15 +302,17 @@ pub fn cell_px(g: &MercGeometry, scale: f32) -> i32 {
     (g.cell_size * scale).round().max(1.0) as i32
 }
 
-/// The alignment window's side length at this scale: the inner crop minus
-/// [`SHIFT_MAX`] px per side. 34 at scale 1.0, 33 at 0.974.
+/// The alignment window's side length at this scale: the cell minus
+/// [`super::icons::window_offset`] per side — the inner crop minus
+/// [`SHIFT_MAX`](super::icons::SHIFT_MAX) px per side up to a 48 px cell. 34 at
+/// scale 1.0, 33 at 0.974, 61 at 1.8.
 ///
 /// This is the number the seed signatures are MEMOISED on (WI-B): two scales
 /// that round to the same window need one derivation, and a window that
 /// changes needs a new one however small the scale step was.
 pub fn window_px(g: &MercGeometry, scale: f32) -> i32 {
-    let inset = g.cell_inset.round() as i32;
-    cell_px(g, scale) - 2 * inset - 2 * SHIFT_MAX
+    let cell = cell_px(g, scale);
+    cell - 2 * super::icons::window_offset(cell, g)
 }
 
 /// Render one gem art into a synthetic support cell.
@@ -326,7 +330,6 @@ pub fn window_px(g: &MercGeometry, scale: f32) -> i32 {
 /// 51 files the map names.
 pub fn render_cell(art: &RgbaImage, g: &MercGeometry, scale: f32, p: &SeedArt) -> DynamicImage {
     let outer = cell_px(g, scale).max(1) as u32;
-    let inset = g.cell_inset.round() as i32;
     let window = window_px(g, scale).max(1);
 
     let art_px = (p.frac * window as f32).round().max(1.0) as u32;
@@ -343,7 +346,7 @@ pub fn render_cell(art: &RgbaImage, g: &MercGeometry, scale: f32, p: &SeedArt) -
         image::Rgba([p.bg[0], p.bg[1], p.bg[2], 255]),
     );
     // The window's own origin inside the cell, then the art's offset from it.
-    let win0 = inset + SHIFT_MAX;
+    let win0 = super::icons::window_offset(outer as i32, g);
     let x = win0 as i64 + (p.offset_frac[0] * window as f32).round() as i64;
     let y = win0 as i64 + (p.offset_frac[1] * window as f32).round() as i64;
     // `overlay`, not `replace`: it blends source-over, which is what makes the
@@ -1297,7 +1300,9 @@ pub fn rederive_for_window(app: &AppHandle, geometry: &MercGeometry, scale: f32)
 mod tests {
     use super::*;
     use crate::mercenary::geometry::outer_rect_for_inner;
-    use crate::mercenary::icons::{cell_candidates, CellCandidates, TemplateStore, SIG_DIM};
+    use crate::mercenary::icons::{
+        cell_candidates, CellCandidates, TemplateStore, SHIFT_MAX, SIG_DIM,
+    };
     use crate::mercenary::vocab::{MercRole, MercVocab};
     use crate::mercenary::Thresholds;
 
@@ -2087,6 +2092,17 @@ mod tests {
         assert_eq!(window_px(&g, 1.0), 34);
         assert_eq!(cell_px(&g, 0.974), 43);
         assert_eq!(window_px(&g, 0.974), 33);
+    }
+
+    /// At 3840×2160 a seed is framed the way the matcher frames the live cell:
+    /// 9 px into the 79 px cell, a 61 px window. The inner crop less the shift
+    /// margin would be 69, and the art fractions would then size a seed for a
+    /// window the live cell is never cut at.
+    #[test]
+    fn the_4k_seed_window_is_the_live_cells() {
+        let g = MercGeometry::default();
+        assert_eq!(cell_px(&g, 1.8), 79);
+        assert_eq!(window_px(&g, 1.8), 61);
     }
 
     /// The fraction form is the whole reason both scales work: the art has to

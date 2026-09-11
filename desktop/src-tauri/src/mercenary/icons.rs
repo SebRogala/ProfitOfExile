@@ -314,8 +314,9 @@ impl CellSig {
 /// it.
 ///
 /// Takes the cell's OUTER rect (what [`super::geometry::detect_reason`] emits), reads
-/// its inner region and then gives up [`SHIFT_MAX`] px per side of that — the
-/// alignment window. What is left of the cell frame after the inset is outside
+/// its inner region and then gives up the margin [`window_offset`] leaves —
+/// [`SHIFT_MAX`] px per side up to a 48 px cell, proportionally more above it —
+/// the alignment window. What is left of the cell frame after the inset is outside
 /// the disc mask, so the frame — identical on every cell — never reaches the
 /// correlation.
 ///
@@ -336,10 +337,36 @@ pub fn normalize_cell(img: &DynamicImage, rect: [i32; 4], g: &MercGeometry) -> O
 /// Warned once per process when the geometry leaves no alignment room.
 static NARROW_WINDOW: std::sync::Once = std::sync::Once::new();
 
+/// How far the UNSHIFTED signature window sits inside a `side`-px cell's outer
+/// edge — THE framing rule, which [`shift_window`] cuts live cells with and
+/// `seed::render_cell` places seed art by.
+///
+/// At the reference cell ([`MercGeometry::cell_size`], 44) the window is the
+/// inner crop minus [`SHIFT_MAX`] per side: `cell_inset + SHIFT_MAX` = 5 px
+/// in, a 34 px window over the art. A signature correlates across screens only
+/// when every screen frames the art that way, so a LARGER cell keeps the
+/// fraction rather than the px: 9 px in at the 79 px cell of a 3840×2160
+/// screen. Cut 5 px in there, the window spans 69 of 79 px and the art comes
+/// out ~12 % smaller than in a sample cut at 1080p. Measured on a 4K capture
+/// (`tests/fixtures/merc-recruit-4k.png`) at its fitted rects, against a store
+/// learned from the reference and PC fixtures' labelled cells: the same art
+/// scored 0.66-0.92 cut 5 px in, and 0.95-0.995 cut this way.
+///
+/// A SMALLER cell keeps the 5 px, because the window must leave [`SHIFT_MAX`]
+/// px of alignment room inside the inset. The proportional term rounds to 5 up
+/// to a 48 px cell, so the cells the committed fixtures and corpus were cut
+/// from — 1080p's 40, 1200p's 43-44 — are cut exactly where they were.
+pub fn window_offset(side: i32, g: &MercGeometry) -> i32 {
+    let floor = g.cell_inset.round() as i32 + SHIFT_MAX;
+    let proportional = (side as f32 * floor as f32 / g.cell_size).round() as i32;
+    floor.max(proportional)
+}
+
 /// The UNSHIFTED signature window of a cell, and whether shifting it is safe.
 ///
-/// The window is the inner crop shrunk by [`SHIFT_MAX`] screen px per side —
-/// 33×33 at the live scale 0.974, 34×34 on the 1:1 reference fixture. The
+/// The window sits [`window_offset`] px inside the cell — the inner crop
+/// shrunk by [`SHIFT_MAX`] screen px per side up to a 48 px cell, which is
+/// 33×33 at the live scale 0.974 and 34×34 on the 1:1 reference fixture. The
 /// margin it gives up is what the matcher slides over, so the alignment room
 /// is bought here rather than by growing the rect (which would pull the
 /// neighbouring cell's art in at the extremes).
@@ -351,7 +378,8 @@ static NARROW_WINDOW: std::sync::Once = std::sync::Once::new();
 /// otherwise say it on every cell of every tick.
 fn shift_window(rect: [i32; 4], g: &MercGeometry) -> ([i32; 4], bool) {
     let [ix, iy, iw, ih] = inner_rect(rect, g);
-    let (ww, wh) = (iw - 2 * SHIFT_MAX, ih - 2 * SHIFT_MAX);
+    let margin = window_offset(rect[2].min(rect[3]), g) - g.cell_inset.round() as i32;
+    let (ww, wh) = (iw - 2 * margin, ih - 2 * margin);
     if ww < SIG_DIM as i32 || wh < SIG_DIM as i32 {
         NARROW_WINDOW.call_once(|| {
             log::warn!(
@@ -361,7 +389,7 @@ fn shift_window(rect: [i32; 4], g: &MercGeometry) -> ([i32; 4], bool) {
         });
         return ([ix, iy, iw, ih], false);
     }
-    ([ix + SHIFT_MAX, iy + SHIFT_MAX, ww, wh], true)
+    ([ix + margin, iy + margin, ww, wh], true)
 }
 
 /// One shifted window of a cell, resized to a signature.
@@ -3215,6 +3243,126 @@ mod tests {
 
         assert_eq!(m.state, ReadState::Unknown);
         assert_eq!(m.score, 0.0);
+    }
+
+    // -- the window's framing rule --------------------------------------------
+
+    /// Up to a 48 px cell the window sits the reference 5 px in — the cells the
+    /// committed fixtures and corpus were cut from (1080p's 40, 1200p's 43-44)
+    /// — and a smaller cell keeps the 5 px too, where the reference fraction
+    /// (3 px at 30) would leave the ±3 px search 1 px of room inside the inset.
+    #[test]
+    fn a_cell_up_to_48_px_is_cut_the_reference_5_px_in() {
+        let g = MercGeometry::default();
+
+        assert_eq!([30, 40, 44, 48].map(|side| window_offset(side, &g)), [5, 5, 5, 5]);
+    }
+
+    /// Past 48 px the window keeps the reference cell's FRACTION, 5/44 per side:
+    /// 9 px into the 79 px cell of a 3840×2160 screen.
+    #[test]
+    fn a_cell_over_48_px_is_cut_at_the_reference_fraction() {
+        let g = MercGeometry::default();
+
+        assert_eq!([49, 53, 79].map(|side| window_offset(side, &g)), [6, 6, 9]);
+    }
+
+    // -- the 4K fixture: a 1080p/1200p store read at 3840×2160 ----------------
+
+    /// The 4K panel's cells whose art a labelled fixture cell also carries,
+    /// paired by eye: `(row, slot, that labelled cell's family)`.
+    const K4_SAME_ART: [(usize, usize, &str); 11] = [
+        (0, 0, "Area of Effect"),
+        (0, 1, "Spell Cascade"),
+        (1, 0, "Trap and Mine Damage"),
+        (1, 1, "Second Wind"),
+        (2, 1, "Lightning Penetration"),
+        (2, 3, "Area of Effect"),
+        (2, 4, "Trap and Mine Damage"),
+        (3, 0, "Added Lightning"),
+        (3, 2, "Area of Effect"),
+        (3, 4, "Trap and Mine Damage"),
+        (4, 1, "More Duration"),
+    ];
+
+    /// The 4K panel's cells whose art no labelled fixture cell carries.
+    const K4_OTHER_ART: [(usize, usize); 7] =
+        [(2, 0), (2, 2), (3, 1), (3, 3), (4, 0), (5, 0), (5, 1)];
+
+    /// Every labelled cell of the reference (1920×1200) and PC (1920×1080)
+    /// fixtures, learned into one store — samples cut from 44 and 40 px cells.
+    fn labelled_store() -> TemplateStore {
+        let g = MercGeometry::default();
+        let mut store = TemplateStore::new();
+        for c in crate::mercenary::cellfit::labelled_fixture_cells() {
+            let sig = normalize_cell(&c.cell, c.outer, &g)
+                .unwrap_or_else(|| panic!("{}: the labelled cell normalizes", c.at));
+            let outcome = store.learn(c.family, 2, sig, None, REGISTRATION, &g.thresholds);
+            assert!(
+                matches!(outcome, LearnOutcome::Stored | LearnOutcome::AlreadyKnown),
+                "{}: {outcome:?}",
+                c.at,
+            );
+        }
+        store
+    }
+
+    /// Each listed 4K cell matched against `store` at the fitted registration.
+    fn k4_matches(
+        store: &TemplateStore,
+        cells: impl IntoIterator<Item = (usize, usize)>,
+    ) -> Vec<(usize, usize, IconMatch)> {
+        let g = MercGeometry::default();
+        let (img, frame, layout) = crate::mercenary::cellfit::k4_placed();
+        let refined = crate::mercenary::cellfit::refine(&img, frame, layout, &g);
+        assert!(refined.fit.is_some(), "precondition: the 4K frame fit lands");
+        cells
+            .into_iter()
+            .map(|(r, s)| {
+                let rect = frame.local(refined.layout.rows[r].cells[s]);
+                let cands = cell_candidates(&img, rect, &g)
+                    .unwrap_or_else(|| panic!("4K r{r} s{s} is an occupied cell"));
+                (r, s, store.match_family(&cands, &g.thresholds))
+            })
+            .collect()
+    }
+
+    /// A store learned at 1080p and 1200p reads the same art at 3840×2160.
+    /// Cut 5 px into the 79 px cell the window framed the art ~12 % smaller
+    /// than the samples, and Spell Cascade, Second Wind, Lightning
+    /// Penetration, Added Lightning and two of the Trap and Mine Damage cells
+    /// stayed under `icon_match` even on the fitted rects.
+    #[test]
+    fn a_4k_cell_matches_the_family_its_art_was_learned_under_at_1080p_and_1200p() {
+        let store = labelled_store();
+
+        let read: Vec<(usize, usize, Option<String>, ReadState)> =
+            k4_matches(&store, K4_SAME_ART.iter().map(|&(r, s, _)| (r, s)))
+                .into_iter()
+                .map(|(r, s, m)| (r, s, m.family, m.state))
+                .collect();
+
+        let expected: Vec<(usize, usize, Option<String>, ReadState)> = K4_SAME_ART
+            .iter()
+            .map(|&(r, s, family)| (r, s, Some(family.to_string()), ReadState::Matched))
+            .collect();
+        assert_eq!(read, expected);
+    }
+
+    /// The negative half: the same store must not claim the 4K cells whose art
+    /// it never learned, so the wider 4K window has not made unrelated art
+    /// correlate.
+    #[test]
+    fn a_4k_cell_whose_art_was_never_learned_is_not_matched() {
+        let store = labelled_store();
+
+        let matched: Vec<(usize, usize, Option<String>, f32)> = k4_matches(&store, K4_OTHER_ART)
+            .into_iter()
+            .filter(|(_, _, m)| m.state == ReadState::Matched)
+            .map(|(r, s, m)| (r, s, m.family, m.score))
+            .collect();
+
+        assert!(matched.is_empty(), "never-learned art must not match: {matched:?}");
     }
 
     /// Two tiers of ONE family are not competition: the lead rule measures
