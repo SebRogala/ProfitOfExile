@@ -10,6 +10,7 @@ import {
 	builtOnStaleMonitor,
 	chooseMonitor,
 	gameMonitorAfterBuild,
+	monitorNoticeAction,
 	type GameMonitorInfo,
 	type PositionedMonitor
 } from './monitor-choice';
@@ -139,5 +140,75 @@ describe('gameMonitorAfterBuild', () => {
 
 	it('answers nothing when neither source has a display', () => {
 		expect(gameMonitorAfterBuild(null, undefined)).toBeNull();
+	});
+});
+
+const NOTICE: GameMonitorInfo = {
+	id: 22,
+	x: 1920,
+	y: 0,
+	width: 1920,
+	height: 1080
+};
+
+function noticeInput(overrides: Partial<Parameters<typeof monitorNoticeAction>[0]> = {}) {
+	return {
+		notice: NOTICE,
+		builtId: 1,
+		builtAt: { x: 0, y: 0 },
+		built: true,
+		configLive: false,
+		wanted: true,
+		...overrides
+	};
+}
+
+describe('monitorNoticeAction', () => {
+	it('ignores a notice for the display the window already knows', () => {
+		expect(monitorNoticeAction(noticeInput({ builtId: NOTICE.id }))).toBe('known');
+	});
+
+	it('records a notice while the window is not settled', () => {
+		expect(monitorNoticeAction(noticeInput({ built: false }))).toBe('record');
+	});
+
+	it('learns the display id when the built corner matches', () => {
+		expect(monitorNoticeAction(noticeInput({ builtAt: { x: NOTICE.x, y: NOTICE.y } }))).toBe('learn-id');
+	});
+
+	it('matches the whole built corner, not the x alone', () => {
+		expect(monitorNoticeAction(noticeInput({ builtAt: { x: NOTICE.x, y: -1080 } }))).toBe('rebuild');
+	});
+
+	it('defers a rebuild during a widget-config session', () => {
+		expect(monitorNoticeAction(noticeInput({ configLive: true }))).toBe('defer');
+	});
+
+	it('leaves an unwanted window to the desired-state driver', () => {
+		expect(monitorNoticeAction(noticeInput({ wanted: false }))).toBe('unwanted');
+	});
+
+	it('rebuilds a wanted window on a different display', () => {
+		expect(monitorNoticeAction(noticeInput())).toBe('rebuild');
+	});
+
+	it('id match wins over an unsettled window', () => {
+		expect(monitorNoticeAction(noticeInput({ builtId: NOTICE.id, built: false }))).toBe('known');
+	});
+
+	it('unsettled state wins over a matching corner', () => {
+		expect(monitorNoticeAction(noticeInput({ built: false, builtAt: { x: NOTICE.x, y: NOTICE.y } }))).toBe('record');
+	});
+
+	it('corner match wins over a live config session', () => {
+		expect(monitorNoticeAction(noticeInput({ builtAt: { x: NOTICE.x, y: NOTICE.y }, configLive: true }))).toBe('learn-id');
+	});
+
+	it('config mode wins over an unwanted window', () => {
+		expect(monitorNoticeAction(noticeInput({ configLive: true, wanted: false }))).toBe('defer');
+	});
+
+	it('a missing built corner never learns an id', () => {
+		expect(monitorNoticeAction(noticeInput({ builtAt: null }))).toBe('rebuild');
 	});
 });
