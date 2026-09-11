@@ -247,6 +247,24 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		resizable: 'width'
 	},
 	{
+		id: 'lab.compass',
+		module: 'lab',
+		label: 'Lab Compass',
+		// The former compass window's shipped rectangle.
+		defaults: { x: 100, y: 100, w: 300, h: 280 },
+		resizable: true,
+		fill: true
+	},
+	{
+		id: 'lab.pathstrip',
+		module: 'lab',
+		label: 'Lab Map',
+		// The former path-strip window's shipped rectangle.
+		defaults: { x: 100, y: 300, w: 450, h: 180 },
+		resizable: true,
+		fill: true
+	},
+	{
 		id: 'lab.timer',
 		module: 'lab',
 		label: 'Lab Timer',

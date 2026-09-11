@@ -1782,16 +1782,6 @@ fn set_debug_mode(app: AppHandle, on: bool) {
                 log::warn!("Failed to force-show overlay: {}", e);
             }
         }
-        if let Some(win) = app.get_webview_window("compass") {
-            if let Err(e) = win.show() {
-                log::warn!("Failed to force-show compass: {}", e);
-            }
-        }
-        if let Some(win) = app.get_webview_window("pathstrip") {
-            if let Err(e) = win.show() {
-                log::warn!("Failed to force-show pathstrip: {}", e);
-            }
-        }
         if let Some(win) = app.get_webview_window("lab") {
             if let Err(e) = win.show() {
                 log::warn!("Failed to force-show lab: {}", e);
@@ -2003,11 +1993,7 @@ fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) -
 /// content per WIDGET, in CSS, and never calls this command.
 /// The merc strip became a widget in a monitor-sized window (POE-232), and the
 /// lab timer joined the lab widget window (POE-231), for the same reason.
-const RESIZABLE_OVERLAY_LABELS: [&str; 3] = [
-    "comparator",
-    "compass",
-    "pathstrip",
-];
+const RESIZABLE_OVERLAY_LABELS: [&str; 1] = ["comparator"];
 
 /// Whether `fit_overlay_height` may touch this window.
 fn is_resizable_overlay_label(label: &str) -> bool {
@@ -3507,7 +3493,7 @@ enum FocusState {
 /// `Some(true)` show, `Some(false)` hide, `None` leave it exactly as it is.
 ///
 /// `gate_met` is that overlay's own condition — game focus for the
-/// comparator/temple/merc group, focus AND `in_lab` for the three lab windows.
+/// comparator/temple/merc/lab group.
 /// The two suppressors are why this is a function rather than an `if` in the
 /// loop: both make a HIDE wrong while leaving a SHOW right, and both are
 /// invisible when they are missing.
@@ -3679,14 +3665,12 @@ fn spawn_focus_poller(app: AppHandle) {
                     emit_status(&app);
 
                     // Hide/show overlay windows based on game focus.
-                    // Comparator + Temple + Lab: show whenever game is focused (used everywhere).
-                    // Compass + Pathstrip: only show when game is focused AND in lab.
+                    // Comparator + Temple + Merc + Lab: show whenever game is focused.
                     // Skip hide in debug mode.
                     let debug = *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner());
-                    let in_lab = state.in_lab.load(Ordering::SeqCst);
 
-                    // Game focus only. The temple is here rather than in the lab
-                    // list because its board is read from the Atlas/map UI, which
+                    // Game focus only. The temple is here, and not gated on the lab
+                    // lifecycle, because its board is read from the Atlas/map UI, which
                     // has nothing to do with the labyrinth lifecycle; its route
                     // still gates on the module's own status, so a shown window
                     // with no board on screen draws nothing. The merc verdict
@@ -3702,11 +3686,6 @@ fn spawn_focus_poller(app: AppHandle) {
                     // photographing our own window instead of the game.
                     for overlay_name in &["comparator", "temple", "mercenary", "lab"] {
                         apply_overlay_focus(&app, overlay_name, is_focused, debug);
-                    }
-
-                    // Lab overlays: game focus + in_lab
-                    for overlay_name in &["compass", "pathstrip"] {
-                        apply_overlay_focus(&app, overlay_name, is_focused && in_lab, debug);
                     }
                 }
             }
@@ -3755,17 +3734,6 @@ fn spawn_log_watcher(app: AppHandle) {
                 app_log(&app, format!("Catchup: replaying {} events from Client.txt history", replay_events.len()));
                 let state = app.state::<AppState>();
                 state.in_lab.store(was_in_lab, std::sync::atomic::Ordering::SeqCst);
-                // Show/hide overlays based on reconstructed state
-                for name in &["compass", "pathstrip"] {
-                    if let Some(win) = app.get_webview_window(name) {
-                        let action = if was_in_lab { win.show() } else { win.hide() };
-                        if let Err(e) = action {
-                            log::warn!("catchup: failed to show/hide {}: {}", name, e);
-                        }
-                    } else {
-                        app_log(&app, format!("Catchup: overlay '{}' not yet created, skipping show/hide", name));
-                    }
-                }
                 // Emit all replay events to frontend so overlays reconstruct navigation
                 for event in &replay_events {
                     if let Err(e) = app.emit("lab-nav", event) {
@@ -3874,12 +3842,6 @@ fn spawn_log_watcher(app: AppHandle) {
                                 lab_navigation::NavEvent::PlazaEntered => {
                                     state.in_lab.store(true, Ordering::SeqCst);
                                     app_log(&app, "Lab nav: Plaza entered".to_string());
-                                    // Show lab overlays on lab entry
-                                    for name in &["compass", "pathstrip"] {
-                                        if let Some(win) = app.get_webview_window(name) {
-                                            let _ = win.show();
-                                        }
-                                    }
                                 }
                                 lab_navigation::NavEvent::LabStarted => {
                                     app_log(&app, "Lab nav: Izaro started".to_string());
@@ -3901,18 +3863,9 @@ fn spawn_log_watcher(app: AppHandle) {
                                     if was_live {
                                         app_log(&app, "Font scan stopped (lab exited)".to_string());
                                     }
-                                    // Emit event BEFORE hiding overlays — kept in this order. The compass and
-                                    // path strip reset their state on LabExited (visited rooms, timers,
-                                    // `hidden`); hiding a window does not stop its listener, so the order is
-                                    // preserved rather than required.
+                                    // Emit the navigation event so frontend state resets on LabExited.
                                     if let Err(e) = app.emit("lab-nav", &nav_event) {
                                         log::warn!("emit lab-nav (LabExited) failed: {}", e);
-                                    }
-                                    // Hide lab overlays after event delivery
-                                    for name in &["compass", "pathstrip"] {
-                                        if let Some(win) = app.get_webview_window(name) {
-                                            let _ = win.hide();
-                                        }
                                     }
                                     nav_emitted = true;
                                 }
@@ -4450,40 +4403,6 @@ pub fn run() {
                     let existing = settings::load(app);
                     let mut s = settings::from_state(&state);
                     persist_overlay_settings(&existing, &mut s);
-                    // Capture live overlay positions/sizes (user may have resized since last save)
-                    for (label, setter) in [
-                        ("compass", "compass_overlay" as &str),
-                        ("pathstrip", "pathstrip_overlay"),
-                    ] {
-                        if let Some(win) = app.get_webview_window(label) {
-                            match (win.outer_position(), win.outer_size()) {
-                                (Ok(pos), Ok(size)) => {
-                                    let overlay = settings::OverlaySettings {
-                                        x: pos.x,
-                                        y: pos.y,
-                                        width: size.width,
-                                        height: size.height,
-                                        enabled: match setter {
-                                            "compass_overlay" => s.compass_overlay.as_ref().map_or(false, |o| o.enabled),
-                                            "pathstrip_overlay" => s.pathstrip_overlay.as_ref().map_or(false, |o| o.enabled),
-                                            "timer_overlay" => s.timer_overlay.as_ref().map_or(false, |o| o.enabled),
-                                            _ => false,
-                                        },
-                                    };
-                                    match setter {
-                                        "compass_overlay" => s.compass_overlay = Some(overlay),
-                                        "pathstrip_overlay" => s.pathstrip_overlay = Some(overlay),
-                                        "timer_overlay" => s.timer_overlay = Some(overlay),
-                                        _ => {}
-                                    }
-                                }
-                                (pos, size) => {
-                                    log::warn!("on-close: failed to capture {} overlay: pos={:?} size={:?}",
-                                        label, pos.err(), size.err());
-                                }
-                            }
-                        }
-                    }
                     s.window = Some(win_settings); // AFTER persist_overlay, so it's not overwritten
                     settings::save(app, &s);
 

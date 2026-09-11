@@ -101,14 +101,14 @@
 	 * `set_overlay_clickthrough` AWAITS its own setup and returns the failure
 	 * now, so there is something real to report: a transparent, always-on-top
 	 * window that is not click-through swallows the player's clicks with nothing
-	 * on screen to explain it. The THREE separate lab overlays only REPORT it — they are
-	 * small, user-positioned rectangles, and destroying the one the user just
-	 * switched on would read as a toggle that does nothing. The two
+	 * on screen to explain it. The separate comparator overlay only REPORTS it — it is a
+	 * small, user-positioned rectangle, and destroying it just after the user
+	 * switched it on would read as a toggle that does nothing. The two
 	 * module-coupled windows (temple, merc) destroy and retry instead, because
 	 * one of them is the size of the monitor and a click on the other stops the
 	 * capture loop; that path is `module-lifecycle.ts`.
 	 *
-	 * So their call is attached rather than awaited. The command spends ~1 s
+	 * So its call is attached rather than awaited. The command spends ~1 s
 	 * waiting for the WebView2 HWND (guide, runtime-earned observations), and
 	 * the "hide if the game is not focused" step that follows every creation
 	 * must not sit on screen for that second on a window nobody is looking at.
@@ -131,14 +131,7 @@
 	let comparatorActive = $state(false);
 	let comparatorWin = $state<any>(null);
 
-	// Compass overlay state
-	let compassActive = $state(false);
-	let compassWin = $state<any>(null);
-
-	// Path strip overlay state
-	let pathstripActive = $state(false);
 	let pathstripHasData = $state(false);
-	let pathstripWin = $state<any>(null);
 
 	// Lab overlays category toggle
 	let labOverlaysActive = $state(true);
@@ -228,165 +221,6 @@
 		}
 	}
 
-	async function createCompassOverlay(physX: number, physY: number, w = 300, h = 280) {
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
-
-		await destroyCompassWindow();
-
-		// Constructor takes logical pixels; w/h are physical — convert for initial size.
-		// tauri://created sets exact physical size via PhysicalSize.
-		const sf = await getCurrentWebviewWindow().scaleFactor().catch((e: any) => { console.warn('[overlay] scaleFactor failed, using 1:', e); return 1; });
-		const win = new WebviewWindow('compass', {
-			url: '/overlay/compass',
-			transparent: true,
-			decorations: false,
-			alwaysOnTop: true,
-			resizable: true,
-			shadow: false,
-			skipTaskbar: true,
-			width: Math.round(w / sf),
-			height: Math.round(h / sf),
-		});
-
-		win.once('tauri://created', async () => {
-			await win.setPosition(new PhysicalPosition(physX, physY));
-			await win.setSize(new PhysicalSize(w, h));
-			// Reported, not awaited — see `logClickthroughFailure`.
-			void invoke('set_overlay_clickthrough', { label: 'compass' })
-				.catch(e => logClickthroughFailure('compass', e));
-			compassWin = win;
-			compassActive = true;
-
-			// Hide immediately if game is not focused
-			try {
-				const status = await invoke<any>('get_status');
-				if (!status?.game_focused) {
-					await win.hide();
-				}
-			} catch (e) {
-				console.warn('[overlay] compass initial focus check failed:', e);
-			}
-		});
-		win.once('tauri://error', (e: any) => {
-			console.error('[overlay] compass creation failed:', e);
-		});
-	}
-
-	// Destroy the compass window — retries up to 5 times for async cleanup.
-	async function destroyCompassWindow() {
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		for (let i = 0; i < 5; i++) {
-			const existing = await WebviewWindow.getByLabel('compass');
-			if (!existing) break;
-			try { await existing.close(); } catch (_) {}
-			try { await existing.destroy(); } catch (_) {}
-			await new Promise(r => setTimeout(r, 100));
-		}
-		compassWin = null;
-	}
-
-	async function toggleCompassOverlay() {
-		if (compassActive) {
-			await destroyCompassWindow();
-			compassActive = false;
-			const settings = await invoke<any>('get_compass_overlay_settings').catch(() => null);
-			await invoke('set_compass_overlay_settings', {
-				x: settings?.x ?? 100, y: settings?.y ?? 100,
-				w: settings?.width ?? 300, h: settings?.height ?? 280,
-				enabled: false,
-			}).catch(e => console.warn('[overlay] compass settings operation failed:', e));
-
-		} else {
-			const settings = await invoke<any>('get_compass_overlay_settings').catch(() => null);
-			await createCompassOverlay(settings?.x ?? 100, settings?.y ?? 100, settings?.width ?? 300, settings?.height ?? 280);
-			await invoke('set_compass_overlay_settings', {
-				x: settings?.x ?? 100, y: settings?.y ?? 100,
-				w: settings?.width ?? 300, h: settings?.height ?? 280,
-				enabled: true,
-			}).catch(e => console.warn('[overlay] compass settings operation failed:', e));
-		}
-	}
-
-	// --- Path strip overlay ---
-
-	async function createPathstripOverlay(physX: number, physY: number, w = 450, h = 180) {
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
-
-		await destroyPathstripWindow();
-
-		// Constructor takes logical pixels; w/h are physical — convert for initial size.
-		// tauri://created sets exact physical size via PhysicalSize.
-		const sf = await getCurrentWebviewWindow().scaleFactor().catch((e: any) => { console.warn('[overlay] scaleFactor failed, using 1:', e); return 1; });
-		const win = new WebviewWindow('pathstrip', {
-			url: '/overlay/pathstrip',
-			transparent: true,
-			decorations: false,
-			alwaysOnTop: true,
-			resizable: true,
-			shadow: false,
-			skipTaskbar: true,
-			width: Math.round(w / sf),
-			height: Math.round(h / sf),
-		});
-
-		win.once('tauri://created', async () => {
-			await win.setPosition(new PhysicalPosition(physX, physY));
-			await win.setSize(new PhysicalSize(w, h));
-			// Reported, not awaited — see `logClickthroughFailure`.
-			void invoke('set_overlay_clickthrough', { label: 'pathstrip' })
-				.catch(e => logClickthroughFailure('pathstrip', e));
-			pathstripWin = win;
-			pathstripActive = true;
-
-			try {
-				const status = await invoke<any>('get_status');
-				if (!status?.game_focused) {
-					await win.hide();
-				}
-			} catch (e) {
-				console.warn('[overlay] pathstrip initial focus check failed:', e);
-			}
-		});
-		win.once('tauri://error', (e: any) => {
-			console.error('[overlay] pathstrip creation failed:', e);
-		});
-	}
-
-	async function destroyPathstripWindow() {
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		for (let i = 0; i < 5; i++) {
-			const existing = await WebviewWindow.getByLabel('pathstrip');
-			if (!existing) break;
-			try { await existing.close(); } catch (_) {}
-			try { await existing.destroy(); } catch (_) {}
-			await new Promise(r => setTimeout(r, 100));
-		}
-		pathstripWin = null;
-	}
-
-	async function togglePathstripOverlay() {
-		if (pathstripActive) {
-			await destroyPathstripWindow();
-			pathstripActive = false;
-			const settings = await invoke<any>('get_pathstrip_overlay_settings').catch(() => null);
-			await invoke('set_pathstrip_overlay_settings', {
-				x: settings?.x ?? 100, y: settings?.y ?? 300,
-				w: settings?.width ?? 450, h: settings?.height ?? 180,
-				enabled: false,
-			}).catch(e => console.warn('[overlay] pathstrip settings operation failed:', e));
-		} else {
-			const settings = await invoke<any>('get_pathstrip_overlay_settings').catch(() => null);
-			await createPathstripOverlay(settings?.x ?? 100, settings?.y ?? 300, settings?.width ?? 450, settings?.height ?? 180);
-			await invoke('set_pathstrip_overlay_settings', {
-				x: settings?.x ?? 100, y: settings?.y ?? 300,
-				w: settings?.width ?? 450, h: settings?.height ?? 180,
-				enabled: true,
-			}).catch(e => console.warn('[overlay] pathstrip settings operation failed:', e));
-		}
-	}
-
 	/**
 	 * Whether anything currently wants the temple overlay window — the module
 	 * flag, or a live widget-config session, both under the feature grant.
@@ -445,6 +279,8 @@
 		label: LAB_WINDOW_LABEL, moduleId: LAB_WINDOW_LABEL, wanted: labOverlayWanted,
 		configLive: () => widgetConfigLive(widgetConfigSessions, LAB_WINDOW_LABEL), debug: () => false
 	});
+	const LAB_COMPASS_SPEC = WIDGETS.find((spec) => spec.id === 'lab.compass')!;
+	const LAB_PATHSTRIP_SPEC = WIDGETS.find((spec) => spec.id === 'lab.pathstrip')!;
 	const LAB_TIMER_SPEC = WIDGETS.find((spec) => spec.id === 'lab.timer')!;
 	/** Every monitor-sized widget window this layout builds. */
 	const WIDGET_WINDOWS: WidgetWindow[] = [templeWindow, mercenaryWindow, labWindow];
@@ -855,38 +691,11 @@
 		labOverlaysLoaded = true;
 		await invoke('set_lab_overlays_enabled', { enabled: next }).catch(e => console.warn('[overlay] set_lab_overlays_enabled failed:', e));
 		if (next) {
-			// Enable all — respect each overlay's individual enabled state
+			// Enable all — respect the comparator's own enabled state
 			if (!comparatorActive) await toggleComparatorOverlay();
-			if (!compassActive) await toggleCompassOverlay();
-			if (!pathstripActive) await togglePathstripOverlay();
 		} else {
 			// Disable all
 			if (comparatorActive) await toggleComparatorOverlay();
-			if (compassActive) await toggleCompassOverlay();
-			if (pathstripActive) await togglePathstripOverlay();
-		}
-	}
-
-	// Save current overlay positions/sizes to Rust settings.
-	// Called on LabExited (captures user's resize during lab run).
-	async function saveOverlayPositions() {
-		if (compassWin) {
-			try {
-				const pos = await compassWin.outerPosition();
-				const size = await compassWin.outerSize();
-				await invoke('set_compass_overlay_settings', {
-					x: pos.x, y: pos.y, w: size.width, h: size.height, enabled: true,
-				});
-			} catch (e) { console.warn('[overlay] failed to save compass position:', e); }
-		}
-		if (pathstripWin) {
-			try {
-				const pos = await pathstripWin.outerPosition();
-				const size = await pathstripWin.outerSize();
-				await invoke('set_pathstrip_overlay_settings', {
-					x: pos.x, y: pos.y, w: size.width, h: size.height, enabled: true,
-				});
-			} catch (e) { console.warn('[overlay] failed to save pathstrip position:', e); }
 		}
 	}
 
@@ -950,20 +759,6 @@
 						.catch(e => console.warn('[overlay] comparator move failed:', e));
 				}
 			}
-			if (compassActive) {
-				const compassSettings = await invoke<any>('get_compass_overlay_settings').catch(() => null);
-				if (compassSettings) {
-					await invoke('move_overlay', { label: 'compass', x: compassSettings.x, y: compassSettings.y, w: compassSettings.width ?? 300, h: compassSettings.height ?? 280 })
-						.catch(e => console.warn('[overlay] compass move failed:', e));
-				}
-			}
-			if (pathstripActive) {
-				const pathstripSettings = await invoke<any>('get_pathstrip_overlay_settings').catch(() => null);
-				if (pathstripSettings) {
-					await invoke('move_overlay', { label: 'pathstrip', x: pathstripSettings.x, y: pathstripSettings.y, w: pathstripSettings.width ?? 700, h: pathstripSettings.height ?? 80 })
-						.catch(e => console.warn('[overlay] pathstrip move failed:', e));
-				}
-			}
 		});
 		configOverlayCleanup = unlisten;
 	});
@@ -984,40 +779,12 @@
 		})
 		.catch(e => console.warn('[overlay] comparator settings operation failed:', e));
 
-	// Restore enabled overlays on startup — created but HIDDEN.
-	// 'Enabled' = user wants the overlay (persistent preference).
-	// 'Visible' = currently showing (transient, driven by lab events).
-	// PlazaEntered → show, LabExited → hide. Toggle button changes 'enabled'.
-	invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_compass_overlay_settings')
-		.then(async (settings) => {
-			if (settings?.enabled) {
-				await createCompassOverlay(settings.x, settings.y, settings.width ?? 300, settings.height ?? 280);
-				// Start hidden — will show on PlazaEntered
-				if (compassWin) await compassWin.hide().catch(() => {});
-			}
-		})
-		.catch(e => console.warn('[overlay] compass restore failed:', e));
-
-	invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_pathstrip_overlay_settings')
-		.then(async (settings) => {
-			if (settings?.enabled) {
-				pathstripActive = true;
-				const hasData = await checkPathstripData();
-				if (hasData) {
-					await createPathstripOverlay(settings!.x, settings!.y, settings!.width ?? 450, settings!.height ?? 180);
-					// Start hidden — will show on PlazaEntered
-					if (pathstripWin) await pathstripWin.hide().catch(() => {});
-				}
-			}
-		})
-		.catch(e => console.warn('[overlay] pathstrip restore failed:', e));
-
 	// Restore lab overlays category toggle state
 	invoke<boolean>('get_lab_overlays_enabled')
 		.then((enabled) => { labOverlaysActive = enabled; labOverlaysLoaded = true; })
 		.catch(e => console.warn('[overlay] get_lab_overlays_enabled failed:', e));
 
-	// Check if lab layout is available on the server.
+	// Check if lab layout is available for the sidebar's nodata indicator.
 	async function checkPathstripData(): Promise<boolean> {
 		try {
 			const status = await invoke<any>('get_status');
@@ -1045,39 +812,6 @@
 		}
 	})();
 
-	// Show/hide overlays based on lab events.
-	// Overlays are created on startup (hidden). PlazaEntered shows them, LabExited hides them.
-	listen('lab-nav', async (event: any) => {
-		if (event.payload?.type === 'PlazaEntered') {
-			// Show existing overlay windows (or create if not yet created)
-			const compassSettings = await invoke<any>('get_compass_overlay_settings').catch(() => null);
-			if (compassSettings?.enabled) {
-				if (compassWin) {
-					await compassWin.show().catch(() => {});
-				} else {
-					await createCompassOverlay(compassSettings.x, compassSettings.y, compassSettings.width ?? 300, compassSettings.height ?? 280);
-				}
-			}
-			const pathstripSettings = await invoke<any>('get_pathstrip_overlay_settings').catch(() => null);
-			if (pathstripSettings?.enabled) {
-				if (pathstripWin) {
-					await pathstripWin.show().catch(() => {});
-				} else if (pathstripHasData) {
-					await createPathstripOverlay(pathstripSettings.x, pathstripSettings.y, pathstripSettings.width ?? 450, pathstripSettings.height ?? 180);
-				}
-			}
-		}
-		if (event.payload?.type === 'LabExited') {
-			// Persist current overlay positions/sizes before hiding
-			await saveOverlayPositions();
-			if (compassWin) {
-				await compassWin.hide().catch(() => {});
-			}
-			if (pathstripWin) {
-				await pathstripWin.hide().catch(() => {});
-			}
-		}
-	});
 </script>
 
 <div class="app-shell">
@@ -1085,8 +819,8 @@
 	<div class="app-body">
 		<Sidebar open={sidebarOpen} currentPath={viewToPath(visibleView)} onToggle={toggleSidebar}
 			comparatorActive={comparatorActive} gameFocused={store.status?.game_focused ?? false} onToggleComparator={toggleComparatorOverlay}
-			compassActive={compassActive} onToggleCompass={toggleCompassOverlay}
-			pathstripActive={pathstripActive} pathstripHasData={pathstripHasData} onTogglePathstrip={togglePathstripOverlay}
+			compassActive={labOverlaysActive && (widgetPlacements.rows['lab.compass']?.visible ?? true)} onToggleCompass={() => setWidgetVisible(LAB_COMPASS_SPEC, !(widgetPlacements.rows['lab.compass']?.visible ?? true))}
+			pathstripActive={labOverlaysActive && (widgetPlacements.rows['lab.pathstrip']?.visible ?? true)} pathstripHasData={pathstripHasData} onTogglePathstrip={() => setWidgetVisible(LAB_PATHSTRIP_SPEC, !(widgetPlacements.rows['lab.pathstrip']?.visible ?? true))}
 			timerActive={labOverlaysActive && (widgetPlacements.rows['lab.timer']?.visible ?? true)}
 			onToggleTimer={() => setWidgetVisible(LAB_TIMER_SPEC, !(widgetPlacements.rows['lab.timer']?.visible ?? true))}
 			labOverlaysActive={labOverlaysActive} onToggleLabOverlays={toggleLabOverlays} />

@@ -508,14 +508,12 @@
 
 	const OVERLAY_CONFIGS: Record<string, OverlayConfig> = {
 		comparator: { label: 'overlay-comparator-pos', syncParam: 'comparator', getCommand: 'get_comparator_overlay_settings', setCommand: 'set_comparator_overlay_settings', defaultW: 630, defaultH: 250 },
-		compass: { label: 'overlay-compass-pos', syncParam: 'compass', getCommand: 'get_compass_overlay_settings', setCommand: 'set_compass_overlay_settings', defaultW: 300, defaultH: 280 },
-		pathstrip: { label: 'overlay-pathstrip-pos', syncParam: 'pathstrip', getCommand: 'get_pathstrip_overlay_settings', setCommand: 'set_pathstrip_overlay_settings', defaultW: 450, defaultH: 180 },
 	};
 
 	/**
 	 * The Overlay Positions groups, in display order (POE-226).
 	 *
-	 * Lab / Merc / Temple, with the three remaining per-window rows unchanged
+	 * Lab / Merc / Temple, with the comparator as the only remaining per-window row
 	 * under Lab and the Merc/Temple WIDGETS under their groups. A group whose feature
 	 * this device lacks is left out entirely rather than disabled — a control
 	 * that places an overlay the user can never open is a dead row (POE-203) —
@@ -699,10 +697,10 @@
 
 	// Per-overlay state
 	let overlaySettings = $state<Record<string, { x: number; y: number; width: number; height: number } | null>>({
-		comparator: null, compass: null, pathstrip: null,
+		comparator: null,
 	});
 	let positionOverlays = $state<Record<string, any>>({
-		comparator: null, compass: null, pathstrip: null,
+		comparator: null,
 	});
 
 	// --- Timer appearance ---
@@ -781,7 +779,7 @@
 		const win = new WebviewWindow(cfg.label, {
 			url: `/overlay?sync=${cfg.syncParam}`,
 			transparent: true, decorations: false, alwaysOnTop: true,
-			resizable: ['compass', 'pathstrip'].includes(name), shadow: false, skipTaskbar: true,
+			resizable: false, shadow: false, skipTaskbar: true,
 			width: Math.round(physW / sf), height: Math.round(physH / sf),
 		});
 		win.once('tauri://created', async () => {

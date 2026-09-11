@@ -58,8 +58,8 @@ window's own page:
   `scaleFactor()`; the conversion and the change test are in
   `desktop/src/lib/overlay/hot-rects.ts`). A click inside one is consumed and
   re-emitted to that window as `overlay-click {label, x, y}`; everything else
-  reaches the game. Declaring nothing — which is what compass, path-strip,
-  the Lab timer widget and the mercenary widget do — makes a window display-only. Listen with
+  reaches the game. Declaring nothing — which is what the Lab compass, Lab map,
+  Lab timer and mercenary widget do — makes a window display-only. Listen with
   `getCurrentWebviewWindow().listen('overlay-click', …)`; a bare `listen()` from
   `@tauri-apps/api/event` registers for the `Any` target and a labelled
   `emit_to` does not match it (tauri 2.10.3 `manager/mod.rs:602-628`).
@@ -136,9 +136,12 @@ those transitions so a fast off→on→off cannot strand a transparent
 always-on-top window. The flag is not quite the whole desired state for a
 window with WIDGETS: a live config session is ORed into it so the user can
 arrange positions with the module off (the ordering contract below), which is
-the one thing that raises such a window without any module work running. They
-still appear in the Rust focus poller's game-focus show/hide list and in
-`set_debug_mode`'s force-show branch. Persisted geometry is independent of the
+the one thing that raises such a window without any module work running. The
+temple, merc, comparator, and lab windows follow the Rust focus poller's
+game-focus show/hide behavior, and appear in `set_debug_mode`'s force-show
+branch. The lab widget window is governed by `lab_overlays_enabled`; its
+compass, map, and timer widgets own their visibility and in-lab draw rules.
+Persisted geometry is independent of the
 coupling: the merc widget's placement is a `Settings.widgets` row like the
 temple's, and neither monitor-sized window has a persisted rect of its own
 (below).
@@ -221,12 +224,12 @@ are in `routes/(app)/+layout.svelte`:
   size of the game monitor, so one that never became click-through swallows
   every click on the screen, and a click on the merc window also takes focus,
   drops `game_in_foreground` and stops the capture loop.
-- The three separate LAB overlays (comparator, compass, path strip) REPORT and
-  keep the window: they are small, user-positioned rectangles the user just
-  switched on, and destroying one would read as a toggle that does nothing.
+- The separate comparator overlay REPORTS and keeps the window: it is a small,
+  user-positioned rectangle the user just switched on, and destroying it would
+  read as a toggle that does nothing.
   Note the split is by OWNER: both module-coupled windows are monitor-sized
   widget hosts, coupled to a module flag, and a click on the merc one stops the
-  capture loop. Their call is deliberately not
+  capture loop. The comparator's call is deliberately not
   awaited before the "hide if the game is not focused" step either — that hide
   must not wait a second on a window the user is not looking at — so the
   failure arrives on the promise's `catch`, in the app log as well as the
@@ -246,7 +249,8 @@ that did.
 A module may instead open ONE fullscreen, click-through window over the game's
 monitor and place small panels — WIDGETS — inside it. The temple and mercenary
 are module-coupled widget windows (POE-225, POE-232); the `lab` window now hosts
-the timer widget, while the comparator, compass and path strip remain separate.
+the timer, compass and path-strip widgets; the comparator is still a separate
+window (POE-231 moves it in last).
 
 - The window is the GAME monitor (POE-237). `routes/(app)/+layout.svelte` asks
   Rust's `get_game_monitor` — which the focus poller answers from the PoE
@@ -318,9 +322,10 @@ the timer widget, while the comparator, compass and path strip remain separate.
   its id and origin) — so a user-placed widget and a game-anchored one need no
   conversion between them beyond the window's own scale factor.
 - The `lab` widget window follows GAME FOCUS only, like the comparator; its
-  widgets own their visibility and in-lab rules, so the timer can stay hidden
-  outside a lab without hiding the window that will host the comparator.
-- **The shipped widget list.** Five: three temple widgets, the Lab timer and the Merc verdict:
+  widgets own their visibility and in-lab rules, so they can stay hidden outside
+  a lab without hiding the window that hosts them.
+- **The shipped widget list.** Seven: three temple widgets, the Lab compass, Lab map,
+  Lab timer and the Merc verdict:
   `temple.offers` — the OFFER BOXES (POE-249), `anchored`, one box per architect
   block on the side panel in the panel's OWN order (box `i` mirrors `offers[i]`,
   so "upper = the upgrade" is the common case and not a rule), stacked in the
@@ -352,6 +357,10 @@ the timer widget, while the comparator, compass and path strip remain separate.
   `mercenary.verdict` — the MERC VERDICT widget, user-placed and persisted in
   `Settings.widgets`, with its height following content and its width offered
   by `resizable: 'width'`.
+  `lab.compass` — the LAB COMPASS widget, user-placed and persisted in
+  `Settings.widgets`, filling its shipped 300×280 box until it is resized;
+  `lab.pathstrip` — the LAB MAP widget, user-placed and persisted in
+  `Settings.widgets`, filling its shipped 450×180 box until it is resized;
   `lab.timer` — the LAB TIMER widget, user-placed and persisted in
   `Settings.widgets`, filling its shipped 160×50 box until it is resized; the
   digits scale with that box.
@@ -746,7 +755,8 @@ flows above are untouched.
 
 - Shared main-window status is event-driven through `status.svelte.ts`.
 - The comparator overlay polls Rust-held comparator data every 500 ms.
-- Compass/path-strip settings and layout paths include polling/reconciliation.
+- Lab compass and map widgets poll their compass settings or layout path and
+  reconcile navigation from lab-nav events and catch-up replay.
 - Game focus is determined in Rust by a `GetForegroundWindow` poller; Client.txt
   focus events are not the authority.
 - Client.txt uses filesystem notifications with a five-second polling fallback.
@@ -928,7 +938,8 @@ touching the named path.
   layout's reset narrowed the comparator table from 582 px to 560): with the
   comparator overlay open on a gem, check that the table is as wide as its saved
   window and that no column is clipped. `routes/overlay/+layout.svelte` is loaded
-  by EVERY overlay window, and the three separate lab windows that predate the widget engine are laid
+  by EVERY overlay window, and the two windows that predate the widget engine
+  (the comparator and the `/overlay` config-and-preview window) are laid
   out under the default `content-box` — a box-model declaration added there
   reflows all of them silently, with no gate that can see it. Anything the widget
   host needs belongs in `WidgetHost.svelte`, which is where `border-box` now is.
@@ -1976,8 +1987,8 @@ points rather than cloning every step blindly:
 - creation, exact physical sizing, startup restoration, toggle, and position
   saving in the app layout;
 - settings-page maps and sidebar/category controls when user-configurable;
-- Rust focus/lab catch-up show-hide lists only for overlays that follow those
-  lifecycles;
+- the widget's own content state catch-up for any in-lab visibility rule; the
+  Rust focus poller handles only the window's game-focus lifecycle;
 - an `/overlay/...` route and state catch-up/reconciliation appropriate to that
   overlay type;
 - `set_overlay_clickthrough(label)` — for every overlay, so the hook can repair

@@ -45,6 +45,8 @@ describe('every declared widget', () => {
 			'temple.door',
 			'temple.waiting',
 			'mercenary.verdict',
+			'lab.compass',
+			'lab.pathstrip',
 			'lab.timer'
 		]);
 	});
@@ -101,11 +103,15 @@ describe('the merc module', () => {
 });
 
 describe('the lab module', () => {
-	it('declares the timer widget with a filled resizable shipped box', () => {
-		const timer = widgetsFor('lab').find((widget) => widget.id === 'lab.timer');
-		expect(timer).toMatchObject({
-			label: 'Lab Timer',
-			defaults: { x: 100, y: 500, w: 160, h: 50 },
+	it.each([
+		['lab.compass', 'Lab Compass', { x: 100, y: 100, w: 300, h: 280 }],
+		['lab.pathstrip', 'Lab Map', { x: 100, y: 300, w: 450, h: 180 }],
+		['lab.timer', 'Lab Timer', { x: 100, y: 500, w: 160, h: 50 }]
+	] as const)('%s is a filled resizable widget with its shipped box', (id, label, defaults) => {
+		expect(widgetsFor('lab').find((widget) => widget.id === id)).toMatchObject({
+			id,
+			label,
+			defaults,
 			resizable: true,
 			fill: true
 		});

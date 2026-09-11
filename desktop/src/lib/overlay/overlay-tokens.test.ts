@@ -174,7 +174,7 @@ describe('the overlay palette', () => {
 		const covered = Object.keys(overlayPages);
 		expect(covered).toContain('/src/routes/overlay/temple/+page.svelte');
 		expect(covered).toContain('/src/routes/overlay/mercenary/+page.svelte');
-		expect(covered.length).toBeGreaterThanOrEqual(6);
+		expect(covered.length).toBeGreaterThanOrEqual(5);
 	});
 
 	it('covers the widget host, which draws inside every module overlay', () => {
