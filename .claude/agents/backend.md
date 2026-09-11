@@ -44,24 +44,24 @@ verification and report unavailable database dependencies.
 - Float sums (analysis code accumulating floats from a Go map): copy the entries to a slice, sort it
   by a unique key, then add (not `+=` over the map: random order and non-associative addition give
   identical data last-bit-different sums that flip cached rankings and change detection).
-- JSON collections (marshalling a map or slice to JSONB, HTTP/Mercure, or a cache): initialise with
-  `make(map[K]V)`/`make([]T, 0)` (nil marshals to `null`: clients get `null` not `[]`, a cached
-  empty answer reads as never-stored, a NOT NULL JSONB column lets the `null` scalar through).
+- JSON collections (a map or slice sent over HTTP/Mercure, into JSONB, or into a JSON cache): emit
+  `[]`/`{}` via `make(...)` or a normalizer (`nonNilSparkline`, `nonNil`); nil marshals to `null`,
+  which clients read as absent, a cache as never-stored, and NOT NULL JSONB accepts as a scalar.
 
 ## Connections and advisory locks
 
 - Pool budget (new goroutines or long-lived pgxpool holders): give fixed sets a test-pinned share
-  (`trade_submit_pool_share_test.go`) of `db.DefaultMaxConns` (6; pgbouncer exhaustion hangs 120 s)
-  minus the fence; raise `cmd/server/main.go`'s `>= 3` floor if a lock holder also uses the pool.
-- Advisory locks (any code taking one): fence via `league.AcquireProcessLock` (health polls
-  `CheckHeld`); a read-then-insert cap takes `pg_advisory_xact_lock` in the writing tx (not a pooled
-  session lock: unlock/`CheckHeld` hit other conns, idle reaping frees it, tx pooling zombies it).
+  (`trade_submit_pool_share_test.go`) of `db.DefaultMaxConns` (6) minus the fence; `POE_DB_MAX_CONNS`
+  can cut the pool to `cmd/server/main.go`'s `>= 3` floor, so raise that floor when a holder nests.
+- Advisory locks (any code taking one): fence via `league.AcquireProcessLock` (session-mode pooling
+  only; health polls `CheckHeld`); cap read-then-insert with `pg_advisory_xact_lock` in the writing tx
+  (not a pooled session lock: unlock hits another conn, idle reaping frees it, tx pooling zombies it).
 
 ## Hypertable migrations
 
-- Hypertable index (any migration creating one): build it `WITH (timescaledb.transaction_per_chunk)`
-  alone in its up.sql, like migration `20260804100000` (not `CONCURRENTLY`, rejected on hypertables;
-  a second statement, even `SET`, makes the file an implicit transaction, which refuses it).
+- Hypertable index (a migration indexing an existing hypertable): build it `WITH
+  (timescaledb.transaction_per_chunk)` alone in its up.sql, like `20260804100000` (not `CONCURRENTLY`,
+  rejected on hypertables; a second statement, even `SET`, wraps the file in a refusing transaction).
 - Compressed hypertables (migrations changing a CHECK or deleting rows): `DROP CONSTRAINT IF EXISTS`
   (prod may lack it), then add it `NOT VALID` (no ACCESS EXCLUSIVE full scan; new writes still
   checked); keep non-segmentby-keyed `DELETE`s out of down.sql (each decompresses every chunk).
@@ -72,8 +72,8 @@ verification and report unavailable database dependencies.
 ## Device identity
 
 - Device attribution (a handler storing or scoping submitted data by device): key rows by
-  `dev.Fingerprint` from `middleware.DeviceFromContext(r.Context())`, 401 on nil before any DB
-  access, as `lab_runs.go` does (not a body or query `device_id`, which any client can forge).
-- Sensitive routes (any route restricted to operators or trusted callers): gate on a header secret
-  compared with `crypto/subtle`, 404 on mismatch, as `mountPprof` does with `POE_PPROF_TOKEN` (not
-  `X-Device-ID`: any client mints a fingerprint and `DeviceMiddleware` auto-registers it).
+  `dev.Fingerprint` from `middleware.DeviceFromContext(r.Context())`, 401 on nil before the handler's
+  own DB work, as `lab_runs.go` does (not a body or query `device_id`, which any client can forge).
+- Sensitive routes (operator or trusted-caller actions): ship them as container CLIs (the server
+  mounts no admin HTTP); an HTTP route gates on a header secret compared with `crypto/subtle`, 404 on
+  mismatch, like `mountPprof` (not `X-Device-ID`: any client mints one and gets auto-registered).
