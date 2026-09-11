@@ -146,6 +146,12 @@ describe('a widget row geometry line', () => {
 		);
 	});
 
+	it('prints a width-only row as wide rather than content-sized', () => {
+		expect(widgetGeometryText({ x: 40, y: 40, width: 300, height: 0, visible: true })).toBe(
+			'(40, 40) 300 wide'
+		);
+	});
+
 	it('prints the placement of a hidden widget rather than hiding the line too', () => {
 		// The Show checkbox on the same row already says it is hidden; blanking
 		// the geometry as well would lose where it comes back to.
