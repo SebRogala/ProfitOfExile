@@ -71,3 +71,49 @@ geometry; the second is the number of published rows whose skill OCR resolved.
 The strip prints both whenever the counters differ. A placed geometry seed is
 trimmed at the last occupied skill icon when the button line is absent, so
 phantom trailing rows do not reach the verdict engine.
+
+## Capture contract (ADR-025)
+
+Owner acceptance criteria, POE-278 (2026-09-10). The contract is stated once,
+for merc and temple, in
+[ADR-025](../../../../docs/adr/025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md);
+this is the merc mapping.
+
+One placed-crop read (`run::detect_tick`: pass 1, `read::pass2_texts`,
+`read::build_capture`) locates and reads the panel. While it is incomplete, at
+most two more rounds re-read only what the kept read leaves unknown: a row
+whose skill is not confident, a support cell that is not `Matched` or
+`Confirmed` (`read::confident`), and a header field `read::header_complete`
+does not accept — name missing or not name-shaped, class, level; never the
+wager. **Pending POE-278 WI-C** (the read plan in `mercenary/read.rs`, the
+round count in `mercenary/run.rs`); today every 2 s re-detect re-reads every
+row and cell.
+
+Once `read::capture_complete` holds, the detect drops to `LIVENESS_INTERVAL`
+(10 s) — shipped. **Pending POE-278 WI-C**: the same stop once the rounds are
+spent, and a liveness detect that re-reads nothing (is the window still there,
+is it a REMATCH); today it still runs `read::pass2_texts` and
+`read::build_capture` on the crop. The hover
+tick is not a read round: it is the player's per-cell correction under
+`HoverBudget` and keeps running over a complete or round-spent capture.
+
+The full-screen locate (`geometry::detect_reason`) runs only on a cold start
+with no placement, or on a Scan now / Recalibrate whose placed read missed,
+once per key; only the second may replace the remembered panel
+(`ssot::remember_anchor`, after a successful read). The placement is
+`run::merc_placement`, seed or remembered, and it is missing only with no
+screen slice — a placed miss with no remembered anchor is still a placed miss,
+not a cold start (ADR-025, "Merc clause 4, as specified"). The voice-line
+probe, the live re-detect and a `ColumnMoved` placed layout trust the
+placement. A Recalibrate counts as manual from the press until the merc loop
+acts on it (`consume_refit` runs on the next tick that produces a layout);
+until then every placed miss, a voice-probe miss included, is a manual miss and
+may locate once per `FallbackKey`. **Pending POE-278 WI-B**
+(`run::locate_decision`, asked from `run::detect_tick`). A new capture, a
+panel `read::panel_replaced` judges a REMATCH, or a Scan now or Recalibrate
+starts round 1 again with a fresh budget — **pending POE-278 WI-C**.
+
+Accepted costs: a read still incomplete after three rounds waits for a hover,
+or a Scan now or Recalibrate; a wrong placement waits for Scan now or
+Recalibrate. Open residual: `geometry::placed_panel_contradicted` compares origins only, so a Scan now
+taken while a tooltip hides the top rows can still remember an occluded locate.
