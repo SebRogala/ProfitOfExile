@@ -168,11 +168,11 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		// The shipped POSITION is the last resort — the module offers the host a
 		// game-anchored default that clears every read region, and this applies
 		// only when there is no board to anchor to (see `WidgetHost`'s
-		// `defaultsFor`). The width is also the wrap ceiling for the two text
-		// lines the widget still has: the room's name, and `doorWarning`'s one
-		// line. The kill is a GLYPH inside the shape since POE-248, not a line
-		// under it, so the box is fuller than these numbers were sized for and
-		// the height is now slack rather than a fit.
+		// `defaultsFor`). The width is also the wrap ceiling for the three text
+		// lines the widget can have: the room's name, `doorWarning`'s line, and
+		// the `reading…` line (POE-276). The kill is a GLYPH inside the shape
+		// since POE-248, not a line under it, so the box is fuller than these
+		// numbers were sized for and the height is now slack rather than a fit.
 		defaults: { x: 40, y: 300, w: 190, h: 215 },
 		resizable: true
 	},
