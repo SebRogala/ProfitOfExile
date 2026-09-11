@@ -12,7 +12,7 @@
  * What lives here is the conversion and the change test — the two parts that
  * can be wrong quietly, and neither route in this app has a unit-test harness.
  * The `bind:this`, the animation frame and the `invoke` are glue and stay in
- * the route, the way `content-height.ts` splits the merc strip's resize loop.
+ * the route.
  */
 
 /** A window-relative rectangle in physical pixels, as Rust's `HotRect`. */

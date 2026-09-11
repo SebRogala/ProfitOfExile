@@ -13,7 +13,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import hostSource from './WidgetHost.svelte?raw';
-import { TEMPLE_WINDOW_LABEL } from '../manager';
+import { MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
 import { FULL_BOX_MAX_CSS } from '../../temple/overlay-geometry';
 import {
 	WIDGETS,
@@ -39,11 +39,12 @@ describe('every declared widget', () => {
 	// Settings draws the rows in (`widgetsFor` preserves it, `overlayGroups`
 	// puts the placeable ones first), so reordering it reorders a screen the
 	// user reads.
-	it('ships exactly the three temple widgets, in registry order, without the board', () => {
+	it('ships the temple widgets followed by the merc widget, without the board', () => {
 		expect(WIDGETS.map((widget) => widget.id)).toEqual([
 			'temple.offers',
 			'temple.door',
-			'temple.waiting'
+			'temple.waiting',
+			'mercenary.verdict'
 		]);
 	});
 
@@ -78,6 +79,20 @@ describe('every declared widget', () => {
 			expect(widget.label.trim()).not.toBe('');
 		}
 	);
+});
+
+describe('the merc module', () => {
+	it('declares its verdict under its window label', () => {
+		expect(widgetsFor(MERCENARY_WINDOW_LABEL).map((widget) => widget.id)).toEqual([
+			'mercenary.verdict'
+		]);
+	});
+
+	it('offers width-only resizing on the verdict widget', () => {
+		expect(
+			widgetsFor(MERCENARY_WINDOW_LABEL).map((widget) => [widget.id, widget.resizable])
+		).toEqual([['mercenary.verdict', 'width']]);
+	});
 });
 
 describe('the temple module', () => {

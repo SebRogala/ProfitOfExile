@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Merc verdict overlay (POE-199) — a DISPLAY-ONLY overlay window.
+	 * Merc verdict overlay (POE-199) — a DISPLAY-ONLY widget.
 	 *
 	 * It draws in two parts, and the split is the 2026-08-25 smoke fix. The
 	 * STATUS line draws for every running status, capture or not ("I have no
@@ -18,28 +18,19 @@
 	 * window is bound by, and where each is satisfied:
 	 *
 	 * 1. **Capabilities** — the `mercenary` label is in
-	 *    `src-tauri/capabilities/default.json`'s `windows` list (with
-	 *    `overlay-mercenary-pos`, the position-config window). Without them the
-	 *    Tauri APIs the owning layout calls are simply unavailable.
-	 * 2. **Physical persistence / 3. logical construction** — both live in the
-	 *    owning window (`routes/(app)/+layout.svelte`), which converts the
-	 *    persisted physical geometry with Tauri's `scaleFactor()` for the
-	 *    constructor and then applies exact `PhysicalPosition`/`PhysicalSize`.
-	 *    Nothing in this file touches geometry, and `window.devicePixelRatio`
-	 *    appears nowhere.
-	 * 4. **Move instead of recreate** — repositioning goes through Rust's
-	 *    `move_overlay` from the Settings position flow; this window never
-	 *    destroys or recreates itself.
-	 * 5. **Settings survival** — the position IS persisted (`mercenary_overlay`
-	 *    in `settings.rs`, copied by `persist_overlay_settings` and covered by
-	 *    `test_overlay_settings_survive_persist_cycle`). Unlike the temple
-	 *    overlay, this strip is placed by the user and must come back where they
-	 *    left it.
-	 * 6. **Error visibility** — this file has exactly ONE failure path, the
-	 *    content-height resize below, and it logs through
-	 *    `app_log_from_frontend` like every other overlay path. Everything else
-	 *    that CAN fail (build, position, click-through, teardown) belongs to the
-	 *    owning window and logs there.
+	 *    `src-tauri/capabilities/default.json`'s `windows` list.
+	 * 2. **Physical persistence / 3. logical construction** — the WINDOW is the
+	 *    game monitor, built by `lib/overlay/widget-window.ts` (logical
+	 *    constructor, exact physical position/size in `tauri://created`); the
+	 *    widget's placement is converted by `WidgetHost.svelte` /
+	 *    `widget-geometry.ts`. Nothing in this file touches geometry except the
+	 *    side measurement below, which is CSS against CSS.
+	 * 4. **Move instead of recreate** — the widget moves by changing its
+	 *    in-window CSS position; the monitor-sized window never moves for it.
+	 * 5. **Settings survival** — the widget placement IS persisted in
+	 *    `Settings.widgets`, owned by the widget host and its Rust commands.
+	 * 6. **Error visibility** — window setup belongs to the owning widget window
+	 *    and logs there; this file invokes no fallible overlay commands.
 	 *
 	 * **Click-through is not a detail here, it is the feature working.** The
 	 * capture loop gates on `AppState.game_in_foreground` — the RAW foreground
@@ -50,7 +41,7 @@
 	 * must never take focus: a focused own-window makes the raw flag false and
 	 * the capture loop stops reading the screen, so an interactive verdict strip
 	 * would switch off the thing producing the verdict. Hence
-	 * `set_overlay_clickthrough` in the layout with no hot rects ever declared,
+	 * `set_overlay_clickthrough` in `lib/overlay/widget-window.ts` with no hot rects ever declared,
 	 * and `pointer-events: none` below — the two halves of one promise.
 	 *
 	 * `onMount` is not reliable in an overlay window and cross-window JS state is
@@ -63,21 +54,13 @@
 	 *
 	 * The strip has NO persisted height (owner decision, 2026-08-25). It draws a
 	 * status line, a header, a line per guide and a line per row, so its height
-	 * is a function of what the read found; and a shipped number is additionally
-	 * wrong on every display that scales, because a height budget is reasoned in
-	 * CSS pixels and Tauri applies physical ones. So the panel measures itself
-	 * and Rust resizes the window to fit — `fit_overlay_height`, which converts
-	 * with the WINDOW's own scale factor, clamps to the monitor work area so the
-	 * strip can never grow over the taskbar, and re-applies the position because
-	 * the WebView2 transparency resize workaround has been observed to disturb
-	 * it. Width and position are never touched by this path; they stay whatever
-	 * the user set in Settings → Overlay Positions — the PANEL shrink-wraps to
-	 * its content inside that width (see `.panel`), the window does not.
+	 * is a function of what the read found. The widget host sizes its height to
+	 * the content; its `resizable: 'width'` placement makes width the only
+	 * setting. The monitor-sized window itself is not fitted or moved.
 	 *
-	 * This cannot oscillate. The panel's height is content-driven and its width
-	 * comes from the fixed-inset root, so a height change never re-wraps text
-	 * and never feeds back into the measurement. The guard against a resize
-	 * storm is `overlayHeightRequest`, not that argument.
+	 * The panel's height is therefore content-driven inside the widget box. Its
+	 * wrapper fills the widget box's width, so a configured width lets the panel
+	 * hug the appropriate screen edge while the widget host owns the box.
 	 *
 	 * The verdict itself is computed HERE, from the same pure engine the page
 	 * uses (`evaluateCapture`), against the same enabled-guide set (Rust's
@@ -87,11 +70,9 @@
 	 * what makes the page and this strip agree (POE-199 L5).
 	 */
 	import { untrack } from 'svelte';
-	import { invoke } from '@tauri-apps/api/core';
-	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { ssot } from '$lib/stores/ssot.svelte';
 	import { MERCENARY_WINDOW_LABEL } from '$lib/overlay/manager';
-	import { overlayHeightRequest } from '$lib/overlay/content-height';
+	import WidgetHost from '$lib/overlay/widgets/WidgetHost.svelte';
 	import { MERC_SOURCES } from '$lib/mercenaries/rulesets';
 	import { enabledSources } from '$lib/mercenaries/merc-prefs';
 	import { evaluateCapture } from '$lib/mercenaries/verdict';
@@ -174,106 +155,30 @@
 
 	// --- Which edge the panel hugs ---
 	//
-	// The panel shrink-wraps inside a window the user sized, so the slack is on
-	// one side; it should face the screen's middle, where the game is. The
-	// side is `stripSide`'s (tested); this route only fetches the two inputs
-	// the slice cannot carry — the window's own position and size, in the
-	// physical pixels the screen slice is measured in.
-	//
-	// Re-measured on EVERY poll rather than on a move event: Settings moves this
-	// window with `move_overlay` without recreating it, and the guide records
-	// window events as unreliable in overlay windows. Two IPC calls every three
-	// seconds is the price of never being stuck on the wrong edge.
+	// The panel's wrapper is the widget box, so measure it against the monitor
+	// window rather than asking the window for its own position and size. While
+	// the widget is content-sized (no width stored) the box shrink-wraps the
+	// panel, so there is no slack and the side does not matter. Once the user
+	// sets a width in config mode, the left/right edges from `resizable: 'width'`
+	// restore the slack and the side decides which edge the panel hugs.
 	let side = $state<StripSide>('left');
-	let sideFailureReported = false;
+	let wrapperEl = $state<HTMLElement | null>(null);
 	$effect(() => {
 		void merc;
-		const screen = ssot.screen;
-		const win = getCurrentWindow();
-		Promise.all([win.outerPosition(), win.outerSize()])
-			.then(([pos, size]) => {
-				side = stripSide({ x: pos.x, width: size.width }, screen);
-			})
-			.catch((e) => {
-				// Guard 6, once: the panel stays on the left, which is what it
-				// always did, and the log says why it never moves.
-				if (sideFailureReported) return;
-				sideFailureReported = true;
-				logMerc(`own position unreadable, the panel stays left-aligned: ${e}`);
-			});
-	});
-
-	// --- Height follows content (see the header) ---
-
-	let panelEl = $state<HTMLElement | null>(null);
-	/** The last CSS height this window ASKED Rust for. See `overlayHeightRequest`. */
-	let lastSentHeight: number | null = null;
-	/** Whether a measurement is already queued for the next frame. */
-	let framePending = false;
-
-	function logMerc(msg: string): void {
-		console.warn(`[overlay] merc strip: ${msg}`);
-		invoke('app_log_from_frontend', { msg: `[merc-overlay] ${msg}` })
-			.catch(e => console.error('[overlay] merc strip: app log unreachable:', e));
-	}
-
-	/**
-	 * Measure and, if it moved, ask Rust to refit. Runs at most once per frame.
-	 *
-	 * Measured inside the animation frame rather than from the observer entry so
-	 * a burst of mutations in one tick produces ONE reading of the settled
-	 * layout instead of one call per mutation.
-	 */
-	function refit(): void {
-		framePending = false;
-		if (panelEl === null) return;
-		const request = overlayHeightRequest(panelEl.getBoundingClientRect().height, lastSentHeight);
-		if (request === null) return;
-		lastSentHeight = request;
-		invoke<number>('fit_overlay_height', {
-			label: MERCENARY_WINDOW_LABEL,
-			contentHeight: request
-		}).then(applied => {
-			// The command answers with the height it actually applied, back in
-			// CSS pixels. A smaller one means the monitor work area would not fit
-			// the strip, so the last rows ARE clipped — the player is looking at
-			// a partial verdict and nothing else on screen would say so. Reported
-			// once, not per frame: `overlayHeightRequest` only lets a genuinely
-			// changed height get this far.
-			if (applied < request - 1) {
-				logMerc(
-					`content wants ${Math.round(request)} css px, work area allows ${Math.round(applied)} — the last rows are clipped`
-				);
-			}
-		}).catch(e => {
-			// Guard 6. A strip stuck at its constructor seed is a clipped verdict,
-			// which looks like a bad OCR read rather than a window that failed to
-			// resize — so this must not be silent. The failed height is cleared so
-			// the next observation retries rather than being deduped away.
-			lastSentHeight = null;
-			logMerc(`fit_overlay_height(${request}) failed: ${e}`);
-		});
-	}
-
-	$effect(() => {
-		const el = panelEl;
-		if (el === null) return;
-		const observer = new ResizeObserver(() => {
-			if (framePending) return;
-			framePending = true;
-			requestAnimationFrame(refit);
-		});
-		observer.observe(el);
-		return () => {
-			observer.disconnect();
-			framePending = false;
-		};
+		const rect = wrapperEl?.getBoundingClientRect();
+		if (!rect) return;
+		side = stripSide(
+			{ x: rect.left, width: rect.width },
+			{ origin: [0, 0], width: window.innerWidth }
+		);
 	});
 </script>
 
-<div class="overlay-root side-{side}">
-	{#if shown}
-		<div class="panel" bind:this={panelEl}>
+<WidgetHost module={MERCENARY_WINDOW_LABEL}>
+	{#snippet content(spec, configMode)}
+		{#if spec.id === 'mercenary.verdict' && shown}
+			<div class="overlay-root side-{side}" bind:this={wrapperEl}>
+			<div class="panel">
 			{#if showsVerdict && capture}
 				{@const header = overlayHeader(capture)}
 				<div class="header">
@@ -340,9 +245,13 @@
 					<span>{status}</span>
 				</p>
 			{/if}
-		</div>
-	{/if}
-</div>
+			</div>
+			</div>
+		{:else if configMode}
+			<p class="placeholder">{spec.label}</p>
+		{/if}
+	{/snippet}
+</WidgetHost>
 
 <style>
 	/* Click-through is installed in Rust (`set_overlay_clickthrough`; this window
@@ -351,8 +260,7 @@
 	   reaching this window would take focus, and a focused own-window stops the
 	   capture loop that produces the verdict. */
 	.overlay-root {
-		position: fixed;
-		inset: 0;
+		width: 100%;
 		pointer-events: none;
 		background: transparent;
 	}
@@ -361,12 +269,10 @@
 	   without it the strip fell to WebView2's default serif (seen on every
 	   screenshot before the 2026-09-07 redesign). The stack is `app.css`'s.
 
-	   Width follows content too, INSIDE the window: the panel shrink-wraps to
-	   its widest line and the rest of the window stays transparent, so the
-	   width set in Settings → Overlay Positions is a cap, not the drawn width
-	   (owner: "that big gap to the right", 2026-09-07). The window itself is
-	   never resized on this axis — see "Height follows content" above — and a
-	   name longer than the cap wraps rather than pushing the panel past it. */
+	   Width follows content too, INSIDE the widget box: the panel shrink-wraps to
+	   its widest line and the rest of the box stays transparent, while a width
+	   set in config mode restores the slack for the side decision. A name longer
+	   than the width wraps rather than pushing the panel past it. */
 	.panel {
 		display: flex;
 		flex-direction: column;
@@ -605,6 +511,12 @@
 		gap: 6px;
 		font-size: 11px;
 		color: var(--color-lab-text-secondary);
+	}
+
+	.placeholder {
+		padding: 4px 8px;
+		font-size: 11px;
+		color: var(--color-lab-text-muted);
 	}
 
 	.dot {

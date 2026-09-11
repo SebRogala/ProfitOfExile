@@ -27,8 +27,8 @@ four seconds longer**:
 | `idle` — waiting | shown for **4 s** after going idle, then cleared | `waiting for a mercenary · Scan now on the page` |
 | `off`, `unavailable` | never shown | — |
 
-"Cleared" means the panel is not rendered at all — the transparent window stays
-where Settings placed it, but nothing is drawn, so the overlay disappears.
+"Cleared" means the panel is not rendered at all — the widget stays where
+Settings placed it, but nothing is drawn, so the overlay disappears.
 
 Rules that follow from the table:
 
