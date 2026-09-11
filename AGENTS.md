@@ -1,8 +1,8 @@
 # ProfitOfExile agent guidance
 
-This is the shared entry point for coding agents. Keep it short and
-tool-neutral; detailed project knowledge belongs in maintained documentation or
-specialized agent profiles.
+This is the shared entry point for coding agents. Keep it tool-neutral and hold
+it to links, working rules, and cross-cutting invariants; detailed project
+knowledge belongs in maintained documentation or specialized agent profiles.
 
 ## Start here
 
@@ -60,6 +60,13 @@ and the documentation index before acting on them.
   private endpoints, production identifiers, database connection strings,
   `.env` contents, device fingerprints, pairing capabilities, or backup
   locations. Local ignored files may contain secrets.
+- When a change edits a file that has a same-named copy across `frontend/src/lib/` ↔ `desktop/src/lib/`
+  or `frontend/src/routes/lab/components/` ↔ `desktop/src/routes/(app)/components/`, make each edit to
+  code both copies share in that copy too, in the same change: the copies are hand-maintained, so a
+  one-sided fix ships the bug.
+- When a code comment cross-references another function, file, or a replaced implementation, name
+  the symbol (`mirrors BuildCompareResults in collective.go`), not a line (`collective.go:311` rots
+  on the next edit). Keep the why and its evidence; drop "was X" notes about deleted code.
 
 ## Modeling rules
 
