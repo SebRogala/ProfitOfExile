@@ -1117,6 +1117,27 @@ describe('temple slice', () => {
 			expect(mod.ssot.temple.waitingForPanel).toBe(false);
 		});
 
+		it('carries a retry round\'s readRetry through to the rune', () => {
+			// The normaliser rebuilds the slice key by key, so a key it drops or
+			// pins never reaches `doorWidget` — and a retry round's `reading…`
+			// line would come back under the verdict (POE-276).
+			mod.applySnapshot({
+				league,
+				temple: { ...readSlice(), status: 'reading', readRetry: true },
+			});
+			expect(mod.ssot.temple.readRetry).toBe(true);
+		});
+
+		it('defaults a missing readRetry to false, never undefined', () => {
+			// A build before POE-276 sends no flag, and every `reading` it
+			// published was not a retry.
+			mod.applySnapshot({
+				league,
+				temple: { status: 'reading' } as unknown as TempleSlice,
+			});
+			expect(mod.ssot.temple.readRetry).toBe(false);
+		});
+
 		it('defaults an offer\'s missing grade and lineTop to null, never undefined', () => {
 			// The same rule one level deeper (POE-249). Both fields are
 			// `serde(default)` in Rust, so a payload from a build before them

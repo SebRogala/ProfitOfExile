@@ -799,6 +799,26 @@ export interface TempleSlice {
 	 * The notice's own gate is `overlayShowsWaiting`, not this field alone.
 	 */
 	waitingForPanel: boolean;
+	/**
+	 * Whether the read in flight is a RETRY ROUND of the board already read
+	 * and on screen (POE-276, owner 2026-09-11) — one of the partial rounds an
+	 * unclean board is owed (`RETRIES` in `temple/run.rs`).
+	 *
+	 * Rust decides it once per read, in the publish that writes `reading`
+	 * (`run::read_is_retry`, the gate's own same-board rule), so it is set
+	 * only for a retry: a first read, a Re-arm, a settings change and a new
+	 * board (another epoch, or a sheet walked or moved) all carry false.
+	 * `doorWidget` reads it to draw no `reading…` line under a verdict the
+	 * round is only refining.
+	 *
+	 * Meaningful ONLY beside `status === 'reading'`, and not an invariant of
+	 * the slice: two direct status writes in `run.rs` — the loop-start `idle`
+	 * publish and `unavailable` — do not reset it, so a flag left by a loop
+	 * that died mid-retry can stand beside another status until the next
+	 * `reading` publish rewrites it. Every reader gates on the status first,
+	 * as `doorWidget` does.
+	 */
+	readRetry: boolean;
 	layout: LayoutView | null;
 	panel: PanelView | null;
 	/** Null whenever there is no decision to make — no board, or no current
@@ -866,6 +886,7 @@ export function templeSliceDefault(): TempleSlice {
 	return {
 		status: 'idle',
 		waitingForPanel: false,
+		readRetry: false,
 		layout: null,
 		panel: null,
 		advice: null,

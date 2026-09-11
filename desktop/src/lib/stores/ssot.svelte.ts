@@ -480,6 +480,9 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 		// A build before POE-249 sends no flag at all, and `undefined` here
 		// would read as "not waiting" by accident rather than by contract.
 		waitingForPanel: incoming.waitingForPanel ?? false,
+		// POE-276's retry flag, same rule: a build before it sends none, and
+		// every `reading` such a build published was not a retry by contract.
+		readRetry: incoming.readRetry ?? false,
 		// The nested layout is normalised too, and only for the two POE-244
 		// fields, because only those two are consumed as a GUARANTEE the way
 		// `unknownRooms.length` is: `neverCoverRects` iterates `rois` and
