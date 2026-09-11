@@ -55,6 +55,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-022: Room values are chaos-denominated and market-fed; presets are Default and Custom](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md)
 - [ADR-023: A window excluded from the grab may cover what its module reads](adr/023-a-window-excluded-from-the-grab-may-cover-what-its-module-reads.md) — amends ADR-019
 - [ADR-024: Module OCR positions are placed from the screen slice, not located](adr/024-module-ocr-positions-are-placed-from-the-screen-slice-not-located.md) — Accepted; Temple placement shipped in POE-269, remaining epic tasks pending
+- [ADR-025: A capture reads once, re-reads only the unknown, then stops; only a manual scan moves its geometry](adr/025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md) — Accepted; Temple shipped; Merc clause 1 and clause 3's liveness cadence shipped, clauses 2, 4, 5 and the rest of 3 pending in POE-278
 
 Superseded:
 

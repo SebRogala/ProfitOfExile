@@ -188,7 +188,8 @@ settles the scale and writes the screen slice; it does not locate the panel.
 
 The fallback key is `(merc_refit, trigger_generation)`. A missing or unplaced
 screen slice, or a placed crop whose Wager/Recruit/button anchors are absent
-while the voice gate is active, spends one full-screen locate for that key. A
+while the voice gate is active, spends one full-screen locate for that key
+(**the placed-crop half is superseded by the POE-278 amendment below**). A
 successful merc read has no post-read withheld measurement to repay: the only
 `accepted == false` result at this seam is `MercOcr` drift refusal, so it does
 not release another locate. A located panel beyond the named half-cell origin
@@ -223,7 +224,8 @@ Supersession pointers:
 The merc seed's x is centre-anchored. Two machine fixtures measure the x
 anchor; the y top anchor remains provisional from one machine. The placed path
 now rejects a pass-1 name-column median that moves beyond the half-cell band,
-then spends the keyed full-screen fallback. Chrome-less fallback detects pass
+then spends the keyed full-screen fallback (**the fallback half is superseded
+by the POE-278 amendment below**). Chrome-less fallback detects pass
 the known session/placement panel to the anchor rescue.
 
 The icon sensor samples one pitch above and below the enumerated rows, publishes
@@ -337,3 +339,33 @@ detected. The inventory frame's top 40 px carry ornament only. Owner decision
 2026-09-09. `INVENTORY_PANEL_W_REF` stays: the font rule centres the Divine Font
 panel in the space left of that edge. An unmeasured screen gets `[0, 0, 1920,
 40]`.
+
+## Amendment: POE-278 — merc placed misses buy no locate outside a manual scan (2026-09-11)
+
+The capture contract — one full read, at most two rounds on the unknown only,
+then liveness only; a live capture's geometry moved only by a manual scan — is
+stated once in
+[ADR-025](025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md).
+Its clause 4 governs every full-frame locate this ADR describes — Decision 3's
+one fallback locate and each amendment's.
+
+For merc, two sentences above become Manual-only (Scan now, Recalibrate):
+
+- the POE-270 amendment's "a placed crop whose Wager/Recruit/button anchors are
+  absent while the voice gate is active, spends one full-screen locate for that
+  key" — the missing or unplaced screen slice in the same sentence is ADR-025's
+  cold start and stands;
+- the POE-270 fix round's "rejects a pass-1 name-column median that moves
+  beyond the half-cell band, then spends the keyed full-screen fallback" — the
+  rejection stands as a placed miss; outside a manual scan it re-locates
+  nothing.
+
+It follows that the POE-270 amendment's remembered located panel
+(`ssot::remember_anchor` after a successful read) comes only from a manual
+scan's locate. Incident and evidence: ADR-025 Context (app.log 2026-09-10,
+17:25:58, a tooltip-occluded fallback remembered two row pitches low). Merc's
+implementation is pending in POE-278 WI-B; ADR-025's Status says when it ships.
+
+Temple is unchanged: the 2026-09-09 amendment above already spends the
+placed-miss fallback under the Manual arm only, and ADR-025 records it as the
+temple half of clause 4. The contract is shared; the code is not.
