@@ -33,18 +33,18 @@ describe('the Overlay Positions groups', () => {
 		]);
 	});
 
-	it('keeps the three remaining lab window rows under Lab, in their existing order', () => {
+	it('keeps the comparator window row under Lab', () => {
 		const lab = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Lab');
 		expect(lab?.windows).toEqual([
-			{ name: 'comparator', label: 'Gems Compare' },
-			{ name: 'compass', label: 'Lab Compass' },
-			{ name: 'pathstrip', label: 'Lab Map' }
+			{ name: 'comparator', label: 'Gems Compare' }
 		]);
 	});
 
-	it('lists the Lab timer widget under the Lab window', () => {
+	it('lists the Lab widgets under the Lab window', () => {
 		const lab = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Lab');
 		expect(lab?.widgets.map((row) => [row.spec.id, row.placeable])).toEqual([
+			['lab.compass', true],
+			['lab.pathstrip', true],
 			['lab.timer', true]
 		]);
 		expect(lab?.configureModule).toBe(LAB_WINDOW_LABEL);

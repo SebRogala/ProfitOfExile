@@ -23,6 +23,8 @@
 		resetTimer as timerReset_fn,
 	} from '$lib/compass/timer';
 
+	let { configMode, label }: { configMode: boolean; label: string } = $props();
+
 	// --- State ---
 	let navState = $state(createNavState());
 	let pendingLayoutReset = $state(false);
@@ -80,7 +82,7 @@
 	let contentNames = $derived(currentRoom ? getRoomContents(navState, currentRoom.id) : []);
 	let hidden = $state(false);
 	let layoutLoaded = $state(false);
-	let showOverlay = $derived(layoutLoaded && !hidden);
+	const drawing = $derived(layoutLoaded && !hidden && navState.inLab);
 
 	// --- Event handling ---
 
@@ -246,7 +248,10 @@
 </script>
 
 <div class="compass-container">
-	{#if showOverlay}
+	{#if drawing}
+		<!-- The window no longer hides with the lab, so `drawing` is true only while
+		     `navState.inLab` is true (set by PlazaEntered, cleared by LabExited, and
+		     rebuilt by catch-up replay); `hidden` remains the in-lab rule for Izaro fights. -->
 		<div class="compass-content">
 			<CompassOverlay
 				{mode}
@@ -265,16 +270,16 @@
 		{#if exitText && mode === 'minimap'}
 			<div class="exit-text">{exitText}</div>
 		{/if}
+	{:else if configMode}
+		<p class="placeholder">{label}</p>
 	{/if}
 </div>
 
 <style>
 	.compass-container {
-		position: fixed;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
+		position: relative;
+		width: 100%;
+		height: 100%;
 		pointer-events: none;
 		display: flex;
 		flex-direction: column;
@@ -312,6 +317,12 @@
 	.shrine-medium { font-size: 40px; }
 	.shrine-large { font-size: 56px; }
 
+	.placeholder {
+		padding: 4px 8px;
+		font-size: 11px;
+		color: var(--color-lab-text-muted);
+	}
+
 	.exit-text {
 		color: #e5e7eb;
 		font-size: 13px;
@@ -327,3 +338,4 @@
 		border-radius: 3px;
 	}
 </style>
+

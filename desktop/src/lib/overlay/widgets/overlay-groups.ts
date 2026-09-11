@@ -14,9 +14,9 @@
  * feature (a control that places an overlay the user can never open), and a
  * geometry line that says "Not set" for a widget that is in fact placed.
  *
- * The three remaining window rows are carried through unchanged, names included:
- * they key `OVERLAY_CONFIGS` and the per-row state records in the page, and
- * their Configure flow (`overlay-config-start` / `reclaimMouse`) is untouched
+ * The comparator window row is carried through unchanged, name included:
+ * it keys `OVERLAY_CONFIGS` and the per-row state records in the page, and
+ * its Configure flow (`overlay-config-start` / `reclaimMouse`) is untouched
  * by this file. All this adds is which heading each one sits under.
  */
 import { LAB_WINDOW_LABEL, MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
@@ -37,8 +37,8 @@ export interface OverlayGroupGrants {
 	temple: boolean;
 }
 
-/** One of the three remaining overlays Settings places by dragging a config COPY of the
- *  real window. Its `name` keys `OVERLAY_CONFIGS` and the page's per-row state. */
+/** A window row: the comparator overlay Settings places by dragging a config COPY of the
+ *  real window. */
 export interface OverlayWindowRow {
 	name: string;
 	label: string;
@@ -97,8 +97,8 @@ interface GroupSpec {
 /**
  * The three groups, in display order.
  *
- * Lab is the lab window's timer widget plus the three remaining lab windows,
- * unchanged and ungated. Merc is the verdict
+ * Lab is the lab window's compass, map and timer widgets plus the one remaining
+ * lab window, unchanged and ungated. Merc is the verdict
  * widget: its row belongs to the merc MODULE, and a device without the `merc`
  * feature never sees that module (POE-203), so the whole group is left out
  * rather than disabled — the same reason the flat list used to drop that one
@@ -113,9 +113,7 @@ const GROUPS: readonly GroupSpec[] = [
 		grant: null,
 		module: LAB_WINDOW_LABEL,
 		windows: [
-			{ name: 'comparator', label: 'Gems Compare' },
-			{ name: 'compass', label: 'Lab Compass' },
-			{ name: 'pathstrip', label: 'Lab Map' }
+			{ name: 'comparator', label: 'Gems Compare' }
 		]
 	},
 	{

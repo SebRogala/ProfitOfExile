@@ -11,6 +11,8 @@
 	} from '$lib/compass/navigation';
 	import { fetchLabLayout } from '$lib/compass/layout-loader';
 
+	let { configMode, label }: { configMode: boolean; label: string } = $props();
+
 	// Everything this window can report goes through the app log. console is
 	// unreachable in a release webview with no devtools, so a console.warn here
 	// is a message that is never read by anyone — and a path strip that has
@@ -24,6 +26,7 @@
 	let currentRoomId = $state<string | null>(null);
 	let visitedRoomIds = $state<string[]>([]);
 	let hidden = $state(false);
+	const drawing = $derived(!!navState.layout && !hidden && navState.inLab);
 
 	function applyLayoutReset() {
 		navState = createNavState();
@@ -178,7 +181,10 @@
 </script>
 
 <div class="strip-container">
-	{#if navState.layout && !hidden}
+	{#if drawing}
+		<!-- The window no longer hides with the lab, so `drawing` is true only while
+		     `navState.inLab` is true (set by PlazaEntered, cleared by LabExited, and
+		     rebuilt by catch-up replay); `hidden` remains the in-lab rule for Izaro fights. -->
 		<LabGraph
 			{navState}
 			width={900}
@@ -191,17 +197,22 @@
 			{currentRoomId}
 			{visitedRoomIds}
 		/>
+	{:else if configMode}
+		<p class="placeholder">{label}</p>
 	{/if}
 </div>
 
 <style>
 	.strip-container {
-		position: fixed;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
+		position: relative;
+		width: 100%;
+		height: 100%;
 		pointer-events: none;
-		background: transparent;
+	}
+
+	.placeholder {
+		padding: 4px 8px;
+		font-size: 11px;
+		color: var(--color-lab-text-muted);
 	}
 </style>
