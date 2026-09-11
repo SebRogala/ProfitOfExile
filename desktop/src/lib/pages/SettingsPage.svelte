@@ -510,14 +510,13 @@
 		comparator: { label: 'overlay-comparator-pos', syncParam: 'comparator', getCommand: 'get_comparator_overlay_settings', setCommand: 'set_comparator_overlay_settings', defaultW: 630, defaultH: 250 },
 		compass: { label: 'overlay-compass-pos', syncParam: 'compass', getCommand: 'get_compass_overlay_settings', setCommand: 'set_compass_overlay_settings', defaultW: 300, defaultH: 280 },
 		pathstrip: { label: 'overlay-pathstrip-pos', syncParam: 'pathstrip', getCommand: 'get_pathstrip_overlay_settings', setCommand: 'set_pathstrip_overlay_settings', defaultW: 450, defaultH: 180 },
-		timer: { label: 'overlay-timer-pos', syncParam: 'timer', getCommand: 'get_timer_overlay_settings', setCommand: 'set_timer_overlay_settings', defaultW: 160, defaultH: 50 },
 	};
 
 	/**
 	 * The Overlay Positions groups, in display order (POE-226).
 	 *
-	 * Lab / Merc / Temple, with the five per-window rows unchanged under the
-	 * first two and the temple's WIDGETS under the third. A group whose feature
+	 * Lab / Merc / Temple, with the three remaining per-window rows unchanged
+	 * under Lab and the Merc/Temple WIDGETS under their groups. A group whose feature
 	 * this device lacks is left out entirely rather than disabled — a control
 	 * that places an overlay the user can never open is a dead row (POE-203) —
 	 * and which groups those are is decided in `$lib/overlay/widgets/overlay-groups`.
@@ -700,10 +699,10 @@
 
 	// Per-overlay state
 	let overlaySettings = $state<Record<string, { x: number; y: number; width: number; height: number } | null>>({
-		comparator: null, compass: null, pathstrip: null, timer: null,
+		comparator: null, compass: null, pathstrip: null,
 	});
 	let positionOverlays = $state<Record<string, any>>({
-		comparator: null, compass: null, pathstrip: null, timer: null,
+		comparator: null, compass: null, pathstrip: null,
 	});
 
 	// --- Timer appearance ---
@@ -782,7 +781,7 @@
 		const win = new WebviewWindow(cfg.label, {
 			url: `/overlay?sync=${cfg.syncParam}`,
 			transparent: true, decorations: false, alwaysOnTop: true,
-			resizable: ['compass', 'pathstrip', 'timer'].includes(name), shadow: false, skipTaskbar: true,
+			resizable: ['compass', 'pathstrip'].includes(name), shadow: false, skipTaskbar: true,
 			width: Math.round(physW / sf), height: Math.round(physH / sf),
 		});
 		win.once('tauri://created', async () => {

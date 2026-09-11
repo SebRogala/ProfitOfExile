@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { canStartConfigure, overlayGroups, widgetGeometryText } from './overlay-groups';
 import { anchoredWidgetsFor, placeableWidgetsFor, type WidgetSpec } from './widget-registry';
-import { MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
+import { LAB_WINDOW_LABEL, MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
 
 const ALL_GRANTS = { merc: true, temple: true };
 const NO_GRANTS = { merc: false, temple: false };
@@ -33,14 +33,21 @@ describe('the Overlay Positions groups', () => {
 		]);
 	});
 
-	it('keeps the four lab window rows under Lab, in their existing order', () => {
+	it('keeps the three remaining lab window rows under Lab, in their existing order', () => {
 		const lab = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Lab');
 		expect(lab?.windows).toEqual([
 			{ name: 'comparator', label: 'Gems Compare' },
 			{ name: 'compass', label: 'Lab Compass' },
-			{ name: 'pathstrip', label: 'Lab Map' },
-			{ name: 'timer', label: 'Lab Timer' }
+			{ name: 'pathstrip', label: 'Lab Map' }
 		]);
+	});
+
+	it('lists the Lab timer widget under the Lab window', () => {
+		const lab = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Lab');
+		expect(lab?.widgets.map((row) => [row.spec.id, row.placeable])).toEqual([
+			['lab.timer', true]
+		]);
+		expect(lab?.configureModule).toBe(LAB_WINDOW_LABEL);
 	});
 
 	it('lists the Merc widget row and Configure button without a window row', () => {
@@ -131,7 +138,7 @@ describe('the Overlay Positions groups', () => {
 		expect(
 			overlayGroups(ALL_GRANTS).map((group) => [group.heading, group.configureModule])
 		).toEqual([
-			['Lab', null],
+			['Lab', LAB_WINDOW_LABEL],
 			['Merc', MERCENARY_WINDOW_LABEL],
 			['Temple', TEMPLE_WINDOW_LABEL]
 		]);

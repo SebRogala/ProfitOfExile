@@ -17,6 +17,8 @@
 		resetTimer as timerReset_fn,
 	} from '$lib/compass/timer';
 
+	let { configMode, label }: { configMode: boolean; label: string } = $props();
+
 	// --- Navigation state (needed to know when we're in the lab and which room) ---
 	// Display only: run measurement and submission live in $lib/run-recorder.ts,
 	// which runs in the main window regardless of this overlay's toggle.
@@ -43,6 +45,7 @@
 	let bgOpacity = $state(0.75);
 	let textStroke = $state(true);
 	let bgStyle = $derived(`rgba(13, 13, 21, ${bgOpacity})`);
+	const drawing = $derived(!hidden && navState.inLab);
 
 	function startTimer() { timer = timerStart_fn(timer, (e) => { elapsed = e; }); }
 	function stopTimer() { timer = timerStop_fn(timer); }
@@ -181,28 +184,23 @@
 	});
 </script>
 
-<div class="timer-container" style:background={!hidden ? bgStyle : 'transparent'}>
-	{#if !hidden}
+<div class="timer-container" style:background={drawing ? bgStyle : 'transparent'}>
+	{#if drawing}
+		<!-- The window no longer hides with the lab, so `drawing` is true only while
+		     navState.inLab is true (set by PlazaEntered, cleared by LabExited, and
+		     rebuilt by catch-up replay); hidden remains the in-lab rule for Izaro fights. -->
 		<svg viewBox="0 0 236 60" class="timer-svg" preserveAspectRatio="xMidYMid meet">
 			<text x="118" y="52" text-anchor="middle" class="timer-text" class:stroked={textStroke}>{timerText}</text>
 		</svg>
+	{:else if configMode}
+		<p class="placeholder">{label}</p>
 	{/if}
 </div>
 
 <style>
-	:global(html), :global(body) {
-		margin: 0;
-		padding: 0;
-		background: transparent !important;
-		overflow: hidden;
-	}
-
 	.timer-container {
-		position: fixed;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
+		width: 100%;
+		height: 100%;
 		pointer-events: none;
 		border-radius: 4px;
 	}
@@ -224,5 +222,11 @@
 		stroke: rgba(0, 0, 0, 0.85);
 		stroke-width: 2px;
 		paint-order: stroke fill;
+	}
+
+	.placeholder {
+		padding: 4px 8px;
+		font-size: 11px;
+		color: var(--color-lab-text-muted);
 	}
 </style>

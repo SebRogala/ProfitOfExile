@@ -39,12 +39,13 @@ describe('every declared widget', () => {
 	// Settings draws the rows in (`widgetsFor` preserves it, `overlayGroups`
 	// puts the placeable ones first), so reordering it reorders a screen the
 	// user reads.
-	it('ships the temple widgets followed by the merc widget, without the board', () => {
+	it('ships the temple widgets followed by the Merc and Lab widgets, without the board', () => {
 		expect(WIDGETS.map((widget) => widget.id)).toEqual([
 			'temple.offers',
 			'temple.door',
 			'temple.waiting',
-			'mercenary.verdict'
+			'mercenary.verdict',
+			'lab.timer'
 		]);
 	});
 
@@ -96,6 +97,18 @@ describe('the merc module', () => {
 		expect(
 			widgetsFor(MERCENARY_WINDOW_LABEL).map((widget) => [widget.id, widget.resizable])
 		).toEqual([['mercenary.verdict', 'width']]);
+	});
+});
+
+describe('the lab module', () => {
+	it('declares the timer widget with a filled resizable shipped box', () => {
+		const timer = widgetsFor('lab').find((widget) => widget.id === 'lab.timer');
+		expect(timer).toMatchObject({
+			label: 'Lab Timer',
+			defaults: { x: 100, y: 500, w: 160, h: 50 },
+			resizable: true,
+			fill: true
+		});
 	});
 });
 

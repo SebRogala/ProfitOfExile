@@ -14,12 +14,12 @@
  * feature (a control that places an overlay the user can never open), and a
  * geometry line that says "Not set" for a widget that is in fact placed.
  *
- * The four remaining window rows are carried through unchanged, names included:
+ * The three remaining window rows are carried through unchanged, names included:
  * they key `OVERLAY_CONFIGS` and the per-row state records in the page, and
  * their Configure flow (`overlay-config-start` / `reclaimMouse`) is untouched
  * by this file. All this adds is which heading each one sits under.
  */
-import { MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
+import { LAB_WINDOW_LABEL, MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
 import type { WidgetGeometry } from './widget-geometry';
 import { anchoredWidgetsFor, placeableWidgetsFor, type WidgetSpec } from './widget-registry';
 
@@ -37,7 +37,7 @@ export interface OverlayGroupGrants {
 	temple: boolean;
 }
 
-/** One of the four remaining overlays Settings places by dragging a config COPY of the
+/** One of the three remaining overlays Settings places by dragging a config COPY of the
  *  real window. Its `name` keys `OVERLAY_CONFIGS` and the page's per-row state. */
 export interface OverlayWindowRow {
 	name: string;
@@ -97,7 +97,8 @@ interface GroupSpec {
 /**
  * The three groups, in display order.
  *
- * Lab is the four lab overlays, unchanged and ungated. Merc is the verdict
+ * Lab is the lab window's timer widget plus the three remaining lab windows,
+ * unchanged and ungated. Merc is the verdict
  * widget: its row belongs to the merc MODULE, and a device without the `merc`
  * feature never sees that module (POE-203), so the whole group is left out
  * rather than disabled — the same reason the flat list used to drop that one
@@ -110,12 +111,11 @@ const GROUPS: readonly GroupSpec[] = [
 		id: 'lab',
 		heading: 'Lab',
 		grant: null,
-		module: null,
+		module: LAB_WINDOW_LABEL,
 		windows: [
 			{ name: 'comparator', label: 'Gems Compare' },
 			{ name: 'compass', label: 'Lab Compass' },
-			{ name: 'pathstrip', label: 'Lab Map' },
-			{ name: 'timer', label: 'Lab Timer' }
+			{ name: 'pathstrip', label: 'Lab Map' }
 		]
 	},
 	{
@@ -218,7 +218,7 @@ export function canStartConfigure(open: OpenConfigFlows): boolean {
  * host actually applies as a size, or the row describes a widget the player is
  * not looking at.
  *
- * The numbers are PHYSICAL pixels, like the four window rows above them —
+ * The numbers are PHYSICAL pixels, like the three window rows above them —
  * `WidgetGeometry` is what Rust persists, and no conversion happens on the way
  * to this string.
  */
