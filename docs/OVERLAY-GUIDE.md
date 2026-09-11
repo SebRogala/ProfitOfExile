@@ -1136,6 +1136,16 @@ touching the named path.
      loop that has spent it stands down. Before POE-246 this logged `capture loop
      started` and `capture stood down` in the same second (17:28:31, same laptop)
      and the owner saw the overlay "blink and disappear".
+     **Amended 2026-09-11 (POE-275):** "up to one sweep on one nothing has" no
+     longer holds. On a screen with no slice, or whose seed misses the sheet, the
+     probe tick is a first miss, and a sweep starts only on the third consecutive
+     one, so the probe buys none: the loop stands down unswept and no board
+     appears. Re-arm is the way in — its grace covers the three misses (~2 s) and
+     one sweep off the loop, and `app.log` then shows one
+     `Temple: cold sweep (NullSlice, attempt 1 of 10) … confirmed on the current
+     frame; … build` line before `Temple: layout panel found …`. A seeded screen
+     whose seed is right still reads the sheet on the probe tick, about a second
+     in, with no sweep line.
   3. **A closed panel still stands the loop down, on the second tick after the
      close (POE-275).** Close the
      panel and stay in the map with Alva quiet. `Temple: capture stood down`
@@ -1184,6 +1194,25 @@ touching the named path.
      must NOT show the exhaustive sweep's minutes. Before POE-234 the loop never
      swept at all on the reporting laptop (`detect_cheap` peaked at 0.66 against
      the 0.70 floor) and the only way to a board was the Debug button.
+     **Amended 2026-09-11 (POE-275):** the sweep no longer starts on the first
+     miss and no longer runs inside the tick. Arm the loop with Re-arm or Alva's
+     start line — switching the module on over an already-open panel is the
+     start-up-probe residual and stands down unswept on an empty slice. On a
+     fresh install the loop then misses three times (~2 s at 650 ms), sweeps off
+     the loop while the 650 ms recheck keeps running, and reads on the next tick
+     once that tick's capture confirms the swept origin: expect ~2 s plus one
+     sweep (~5 s release) plus one tick, and ONE line before
+     `Temple: layout panel found …`:
+     `Temple: cold sweep (NullSlice, attempt 1 of 10) at W×H — N ms, found at
+     (x,y) scale s — confirmed on the current frame; release build` (`debug
+     build` on a dev build, where the sweep is ~30 s). If the panel is opened
+     late, earlier lines ending `found no layout panel` are the cadence working:
+     one sweep per three misses after the last one ended, at most 10 per key.
+     After a **Recalibrate** the slice is no longer empty (POE-278 leaves a
+     capture-derived base with a seeded Entrance origin), so on a client whose
+     seed is right the placed recheck anchors by itself: `layout panel found`
+     with no cold-sweep line is a pass there, and that landed recheck ends the
+     key's null sweeps.
   2. **A remembered scale is used, and said once.** Restart with the panel closed,
      then open it. `app.log` must carry ONE
      `Temple: anchoring on the remembered screen scale (…, ui_scale …) — temple
@@ -1603,6 +1632,15 @@ touching the named path.
   spends its one fallback. If that sweep lands elsewhere, check the exact
   contradiction and geometry-notice lines and the fallback read before using
   `temple_debug_capture`; the normal placed path has no moving-origin budget.
+  **Amended 2026-09-11 (POE-275):** the second cause no longer reads that way. A
+  placed miss sweeps only under Re-arm, once per key (since 05a51a8), and this
+  item runs without Re-arm; a null or unplaced slice sweeps off the loop on its
+  third consecutive clean miss, then every three misses after the previous
+  sweep ended, at most 10 per key, and a landed recheck ends that key's null
+  sweeps. So between the two opens there is normally no
+  `Temple: cold sweep …` line at all. If one appears and says `found at (x,y) …
+  confirmed on the current frame`, check it and any contradiction and
+  geometry-notice lines before using `temple_debug_capture`.
   **Why the temple and not a map** (WI-1): map-side, the close COMPLETES the
   cycle — `capture stood down — the sheet was read and closed` — and the loop
   stops capturing, so a reopen is not sighted at all and there is no line to
@@ -1689,6 +1727,17 @@ touching the named path.
   exact contradiction line `temple: placed origin (x,y) contradicted by sweep
   (x',y')` and the named geometry notice; the origin is remembered after the
   successful read. A panel-not-open miss has the existing no-panel path.
+  **Amended 2026-09-11 (POE-275):** an Alva-announced miss buys no sweep (since
+  05a51a8); only a Re-arm miss does, once per key, off the loop, and it writes
+  ONE `Temple: cold sweep (PlacedMiss) at W×H — N ms, …; release build` line
+  when it ends. To exercise the contradiction line, press Re-arm with the
+  placement wrong; the sweep's find is read only after the next capture confirms
+  it, and the contradiction and geometry-notice lines follow that line. On a
+  screen whose Entrance origin is only SEEDED (never anchored — e.g. after a
+  Recalibrate) the misses before the panel opens are null-slice misses, so
+  `Temple: cold sweep (NullSlice, attempt k of 10) … found no layout panel` or
+  `… cancelled by recheck` lines BEFORE the sheet opens are expected; once the
+  placed recheck anchors, that key logs no further cold sweep.
 - **Nothing is drawn over what the module reads** (POE-244, widened in POE-249)
   — the check the
   static gates cannot reach, because the failure is the app reading its own
