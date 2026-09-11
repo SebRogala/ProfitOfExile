@@ -31,6 +31,61 @@ export interface GameMonitorInfo {
 	height: number;
 }
 
+export type MonitorNoticeAction = 'known' | 'record' | 'learn-id' | 'defer' | 'unwanted' | 'rebuild';
+
+/**
+ * What one `game-monitor-changed` notice means for a widget window (POE-237,
+ * POE-245). `widget-window.ts`'s `onGameMonitorChanged` performs the side
+ * effect for each answer; the order below is the old listener's.
+ *
+ * TWO notices do not rebuild: one naming the display the window is already ON
+ * (only the id was unknown), and one that arrives while the user is arranging
+ * widgets — the window a rebuild would destroy is the surface that session is
+ * running on. `docs/OVERLAY-GUIDE.md` states both with the rest of the rebuild
+ * rule.
+ *
+ * - `'record'` — no settled window, so there is nothing to rebuild HERE — but
+ *   `built()` is also false while a create is IN FLIGHT, and this notice is the
+ *   only one Rust will send (`remember_game_monitor` emits on a CHANGE, and the
+ *   change is now recorded). Dropping it is what stranded the overlay on the
+ *   display the game had left until the module was toggled (POE-245).
+ * - `'learn-id'` — already the right canvas: the window was BUILT on the
+ *   display this notice names, and only the id was unknown (a build made
+ *   before anything had seen the game window records `0`). Learning the id is
+ *   the whole change; rebuilding would take a correct overlay off screen for a
+ *   destroy/create to put it back where it already was.
+ * - `'defer'` — a rebuild is a destroy, and this window is the surface the user
+ *   is dragging widgets on: taking it down mid-session drops them into a window
+ *   that no longer exists and leaves Settings on `Configuring…` waiting for a
+ *   host that was destroyed.
+ * - `'unwanted'` — same guard as `reconcileMonitor` (POE-245): a notice can land
+ *   in the gap between the user switching the module off and the driver
+ *   finishing the teardown, and the unconditional off/on would put the window
+ *   straight back up.
+ */
+export function monitorNoticeAction(input: {
+	notice: GameMonitorInfo;
+	/** The id the window was built on (`0` = not built on a known display). */
+	builtId: number;
+	/** The corner the window was built at, or null when none is up. */
+	builtAt: { x: number; y: number } | null;
+	/** The driver's settled marker. */
+	built: boolean;
+	configLive: boolean;
+	wanted: boolean;
+}): MonitorNoticeAction {
+	if (input.notice.id === input.builtId) return 'known';
+	if (!input.built) return 'record';
+	if (
+		input.builtAt &&
+		input.builtAt.x === input.notice.x &&
+		input.builtAt.y === input.notice.y
+	) return 'learn-id';
+	if (input.configLive) return 'defer';
+	if (!input.wanted) return 'unwanted';
+	return 'rebuild';
+}
+
 /*
  * No scale factor here, deliberately: the caller has a TAURI monitor by the
  * time it needs one — the one this rule matched — and it is THAT `scaleFactor`
@@ -86,7 +141,7 @@ export function chooseMonitor<M extends PositionedMonitor>(
 /**
  * Whether the window was built on a display the game has since left (POE-245).
  *
- * The gap this closes: `createTempleOverlay` asks Rust which display the game
+ * The gap this closes: `widget-window.ts`'s `create` asks Rust which display the game
  * is on, and the answer can change while the window is still being built — the
  * create awaits `set_overlay_clickthrough`, which alone sleeps ~1 s waiting for
  * the WebView2 HWND. Rust DOES send a `game-monitor-changed` in that window,

@@ -302,7 +302,7 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   the only thing holding the window up, its end tears the window down and the
   next build asks `get_game_monitor` afresh.
   **The question is asked a SECOND time, once the build has settled** (POE-245,
-  `reconcileTempleMonitor` over `monitor-choice.ts`'s `gameMonitorAfterBuild`
+  `widget-window.ts`'s `reconcileMonitor` over `monitor-choice.ts`'s `gameMonitorAfterBuild`
   and `builtOnStaleMonitor`). The first ask happens before the constructor and
   the answer can move while the window is still being built —
   `set_overlay_clickthrough` alone spends ~1 s waiting for the WebView2 HWND.
@@ -329,6 +329,7 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   because the next notice still rebuilds, and here there is no next notice.
   Nothing is being dragged that early, and a session opening across the rebuild
   waits it out inside `WIDGET_WINDOW_WAIT_MS`.
+  The build/rebuild/notice orchestration lives in `overlay/widget-window.ts` (`createWidgetWindow`), one instance per monitor-sized window, and the notice decision is `monitor-choice.ts`'s `monitorNoticeAction`.
 - The widgets are declared in
   `desktop/src/lib/overlay/widgets/widget-registry.ts`, keyed
   `"<module>.<widget>"`, with shipped defaults in CSS pixels; their placements
