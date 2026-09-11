@@ -40,7 +40,9 @@
 	 *   persisted, and it stays up for as long as there is a move to make
 	 *   (`overlayShowsDoors`, POE-248) — through the whole incursion and past
 	 *   the capture standing down, which is when the panel and its own diamond
-	 *   are long gone.
+	 *   are long gone. Since POE-276 it also says `reading…` while a read is in
+	 *   progress (`doorWidget`): alone in its frame on the first read of an
+	 *   incursion, under the previous room on a re-read.
 	 *
 	 * `temple.board` — the lattice redrawn over the game — is gone. The board is
 	 * already on screen behind this window, and the copy cost space that has to
@@ -53,7 +55,11 @@
 	 * is for seeing. Retired here in POE-244:
 	 *
 	 * - the reader's status lines (`reading…`, `between rooms — layout only`) —
-	 *   an overlay that says it is thinking is an overlay in the way;
+	 *   an overlay that says it is thinking is an overlay in the way. POE-276
+	 *   (owner, 2026-09-08) reverses this for the DOOR WIDGET ONLY: without a
+	 *   `reading…` there, the seconds between the sheet opening and the verdict
+	 *   looked the same as a read that had broken. It is one muted line on the
+	 *   widget, not the old status lines, and no other surface here says it;
 	 * - the top GAMBLE and its risk %, which is a second option to weigh, and
 	 *   weighing is what the page is for;
 	 * - the unread-plate badge and the marker-fallback notice in full;
@@ -89,7 +95,7 @@
 	 * at all is Rust's: the focus poller shows and hides the `temple` window with
 	 * the game. What is left here is the one thing Rust cannot answer — whether
 	 * there is anything worth drawing — and that is `overlayShowsBoard` /
-	 * `overlayShowsDoors` / `overlayShowsWaiting`. Those gates live INSIDE the
+	 * `doorWidget` / `overlayShowsWaiting`. Those gates live INSIDE the
 	 * snippets and not around `WidgetHost`: a host that is not mounted has no
 	 * `widget-config` listener, so a window flipped into config mode while there
 	 * is no board would be genuinely interactive with no Save and no Cancel on
@@ -115,11 +121,11 @@
 	import {
 		chosenOffer,
 		doorWarning,
+		doorWidget,
 		faintDoor,
 		leaveMapBanner,
 		offerBoxes,
 		overlayShowsBoard,
-		overlayShowsDoors,
 		overlayShowsWaiting,
 		recommendedExit,
 		suggestedDoors
@@ -166,10 +172,12 @@
 	 *  so the leave-the-map banner inside this same snippet survives a read that
 	 *  produced a map verdict and no ranking, which is what it is gated on. */
 	const offersVisible = $derived(overlayShowsBoard(temple.status));
-	/** The room widget's gate, and deliberately not a status one (POE-248):
-	 *  there is a move to make and a room to draw it on. The offer boxes live
-	 *  with the PANEL, this lives with the INCURSION. */
-	const doorVisible = $derived(overlayShowsDoors(temple));
+	/** The room widget's gate and content, null for nothing to draw. Its
+	 *  DIAMOND is deliberately not a status rule (POE-248): there is a move to
+	 *  make and a room to draw it on — the offer boxes live with the PANEL, this
+	 *  lives with the INCURSION. Its `reading…` line is the one status rule on
+	 *  it (POE-276), and `doorWidget` keeps the two apart. */
+	const door = $derived(doorWidget(temple));
 	/** The notice's gate (POE-249): Rust heard a start phrase and there is no
 	 *  board on screen yet. Both halves are `view.ts`'s — Alva can speak over an
 	 *  open sheet, and a notice that blinks over a board the player is reading
@@ -265,7 +273,10 @@
 	 * already is — and clear of every read region, which a fixed number in the
 	 * registry cannot promise on a screen it has never seen. Null falls back to
 	 * that fixed number, which is the right answer when there is no board to
-	 * anchor to.
+	 * anchor to — including the first read of an app run, when `temple.layout`
+	 * is still null: the `reading…` line (POE-276) draws there and the widget
+	 * moves beside the game's diamond when the read lands (accepted by the
+	 * owner, 2026-09-11).
 	 *
 	 * A widget the user HAS placed never reaches this: `placementFor` consults a
 	 * default only when there is no stored row. The consequence for one that has
@@ -346,9 +357,10 @@
 	onAction={(action) => handleAction(action)}
 >
 	{#snippet content(spec, configMode)}
-		{#if spec.id === 'temple.door' && doorVisible && temple.layout?.diamond}
+		{#if spec.id === 'temple.door' && door}
 			<TempleDoorDiamond
-				diamond={temple.layout.diamond}
+				diamond={door.diamond}
+				reading={door.reading}
 				layout={temple.layout}
 				{suggested}
 				{secondary}
@@ -358,7 +370,7 @@
 				{offers}
 				warning={doorWarning(temple.layout)}
 			/>
-			{#if debugProbe}
+			{#if debugProbe && door.diamond}
 				<button class="probe" data-hot data-action="hot-probe">hot-rect probe</button>
 			{/if}
 		{:else if spec.id === 'temple.waiting' && waitingVisible}

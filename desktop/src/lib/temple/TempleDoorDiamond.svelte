@@ -49,6 +49,17 @@
 	 *
 	 * The one line that stayed is `warning` — see its prop.
 	 *
+	 * # The `reading…` line (POE-276)
+	 *
+	 * While a read is in progress the widget says so, in the merc strip's
+	 * status-line language: muted 11 px text and a beating dot, at the FOOT.
+	 * On the first read of an incursion there is no room yet, so the frame
+	 * carries the line alone (`diamond` null); on a re-read the previous room
+	 * stays drawn and the line sits under it until the new result replaces
+	 * both. POE-244 retired the reader's status lines from this overlay; this
+	 * one is the owner's later ask and is the door widget's only — see
+	 * `doorWidget()` in `view.ts`, which decides both halves.
+	 *
 	 * # Every coordinate here is Rust's
 	 *
 	 * `overlay-geometry.ts`'s `diamondGeometry` maps `layout.diamond` — the
@@ -71,6 +82,7 @@
 
 	let {
 		diamond,
+		reading,
 		layout,
 		suggested,
 		secondary,
@@ -81,8 +93,12 @@
 		warning
 	}: {
 		/** The room's shape, its seals and the two icon spots, as Rust
-		 *  published them. */
-		diamond: DiamondView;
+		 *  published them — or null when there is no room to draw yet (the
+		 *  first read of an incursion), and the frame then carries `reading`
+		 *  alone. With both null the widget draws nothing. */
+		diamond: DiamondView | null;
+		/** The in-progress line, or null — `doorWidget()`'s `reading`. */
+		reading: string | null;
 		/** The board the seal states are read off — `edgeState`'s input. */
 		layout: LayoutView | null;
 		/** The corridors the top recommendation wants opened. */
@@ -115,9 +131,11 @@
 		warning: string | null;
 	} = $props();
 
-	const geometry = $derived(diamondGeometry(diamond, layout, suggested, secondary, exit));
-	const drawn = $derived(geometry.seals.filter(sealVisible));
-	const glyphs = $derived(killGlyphs(diamond, offer, offers));
+	const geometry = $derived(
+		diamond ? diamondGeometry(diamond, layout, suggested, secondary, exit) : null
+	);
+	const drawn = $derived(geometry ? geometry.seals.filter(sealVisible) : []);
+	const glyphs = $derived(diamond ? killGlyphs(diamond, offer, offers) : []);
 
 	/**
 	 * The two kill marks, in the room's own units, centred on the origin.
@@ -149,82 +167,96 @@
 	};
 </script>
 
-<div class="door panel">
-	{#if room}
-		<p class="room">{room}</p>
-	{/if}
-	<!-- The positioning context for the exit label, and nothing else. The label
-	     is pinned INSIDE the shape's own box so it moves with the seal at any
-	     widget size and costs the widget no height — see `ExitLabelPlacement`,
-	     which is the whole of why it cannot leave the footprint. -->
-	<div class="stage">
-		{#if exit && geometry.exitLabel}
-			{@const at = geometry.exitLabel}
-			<!-- ONE label, and only ever on the solid purple seal: `exitLabel` is
-			     null unless the door Rust named is a seal this shape classified
-			     `suggested`. -->
-			<p
-				class="exit"
-				class:from-right={at.side === 'right'}
-				style="{at.side}:{at.inset}%;top:{at.top}%;max-width:{at.width}%"
-			>
-				{exit.name}
+{#if geometry || reading}
+	<div class="door panel">
+		{#if geometry}
+			{#if room}
+				<p class="room">{room}</p>
+			{/if}
+			<!-- The positioning context for the exit label, and nothing else. The label
+			     is pinned INSIDE the shape's own box so it moves with the seal at any
+			     widget size and costs the widget no height — see `ExitLabelPlacement`,
+			     which is the whole of why it cannot leave the footprint. -->
+			<div class="stage">
+				{#if exit && geometry.exitLabel}
+					{@const at = geometry.exitLabel}
+					<!-- ONE label, and only ever on the solid purple seal: `exitLabel` is
+					     null unless the door Rust named is a seal this shape classified
+					     `suggested`. -->
+					<p
+						class="exit"
+						class:from-right={at.side === 'right'}
+						style="{at.side}:{at.inset}%;top:{at.top}%;max-width:{at.width}%"
+					>
+						{exit.name}
+					</p>
+				{/if}
+				<svg
+					class="shape"
+					viewBox={geometry.viewBox}
+					style="aspect-ratio:{geometry.aspectRatio}"
+					role="img"
+					aria-label="the room's doors"
+				>
+					<polygon
+						class="outline"
+						points={geometry.outline}
+						vector-effect="non-scaling-stroke"
+					/>
+					{#each drawn as seal (seal.edge)}
+						<circle
+							class="seal {seal.state} {seal.kind}"
+							cx={seal.x}
+							cy={seal.y}
+							r={seal.radius}
+							vector-effect="non-scaling-stroke"
+						>
+							<title>{seal.edge} — {EDGE_STATE_LABEL[seal.state]}</title>
+						</circle>
+					{/each}
+					{#each glyphs as mark, i (i)}
+						<!-- Drawn twice: a dark stroke underneath so the cyan reads over the
+						     game's own gold and dark-red panel art, then the glyph itself.
+						     Both are non-scaling, so the widget can be dragged to any size
+						     and the mark keeps the weight it was designed at. The whole
+						     group fades for the block nobody chose, so the halo fades with
+						     it and the faint mark keeps its own separation from the art. -->
+						<g
+							class="glyph"
+							class:faint={!mark.chosen}
+							transform="translate({mark.position.x} {mark.position.y})"
+						>
+							<path class="kill-shadow" d={GLYPH[mark.kind]} vector-effect="non-scaling-stroke" />
+							<path class="kill" d={GLYPH[mark.kind]} vector-effect="non-scaling-stroke">
+								<title
+									>{mark.chosen
+										? `kill the ${mark.kind} architect`
+										: `the ${mark.kind} block, not chosen`}</title
+								>
+							</path>
+						</g>
+					{/each}
+				</svg>
+			</div>
+			{#if warning}
+				<!-- Never dropped to make the widget smaller: it is the one line that
+				     says the shape above it may be wrong, and it is on the only surface
+				     still up once the player is inside the room. -->
+				<p class="warn">{warning}</p>
+			{/if}
+		{/if}
+		{#if reading}
+			<!-- The merc strip's pulse line, and LAST in the column on purpose:
+			     everything above it is laid out before it, so the room name, the
+			     shape and the warning keep their place and size whether it is here
+			     or not. -->
+			<p class="status">
+				<span class="dot"></span>
+				<span>{reading}</span>
 			</p>
 		{/if}
-		<svg
-			class="shape"
-			viewBox={geometry.viewBox}
-			style="aspect-ratio:{geometry.aspectRatio}"
-			role="img"
-			aria-label="the room's doors"
-		>
-			<polygon
-				class="outline"
-				points={geometry.outline}
-				vector-effect="non-scaling-stroke"
-			/>
-			{#each drawn as seal (seal.edge)}
-				<circle
-					class="seal {seal.state} {seal.kind}"
-					cx={seal.x}
-					cy={seal.y}
-					r={seal.radius}
-					vector-effect="non-scaling-stroke"
-				>
-					<title>{seal.edge} — {EDGE_STATE_LABEL[seal.state]}</title>
-				</circle>
-			{/each}
-			{#each glyphs as mark, i (i)}
-				<!-- Drawn twice: a dark stroke underneath so the cyan reads over the
-				     game's own gold and dark-red panel art, then the glyph itself.
-				     Both are non-scaling, so the widget can be dragged to any size
-				     and the mark keeps the weight it was designed at. The whole
-				     group fades for the block nobody chose, so the halo fades with
-				     it and the faint mark keeps its own separation from the art. -->
-				<g
-					class="glyph"
-					class:faint={!mark.chosen}
-					transform="translate({mark.position.x} {mark.position.y})"
-				>
-					<path class="kill-shadow" d={GLYPH[mark.kind]} vector-effect="non-scaling-stroke" />
-					<path class="kill" d={GLYPH[mark.kind]} vector-effect="non-scaling-stroke">
-						<title
-							>{mark.chosen
-								? `kill the ${mark.kind} architect`
-								: `the ${mark.kind} block, not chosen`}</title
-						>
-					</path>
-				</g>
-			{/each}
-		</svg>
 	</div>
-	{#if warning}
-		<!-- Never dropped to make the widget smaller: it is the one line that
-		     says the shape above it may be wrong, and it is on the only surface
-		     still up once the player is inside the room. -->
-		<p class="warn">{warning}</p>
-	{/if}
-</div>
+{/if}
 
 <style>
 	.panel {
@@ -293,7 +325,7 @@
 		text-shadow:
 			0 0 3px rgb(4 6 10 / 90%),
 			0 0 3px rgb(4 6 10 / 90%);
-		/* It lies OVER the shape, unlike the two flow lines, so a drag started
+		/* It lies OVER the shape, unlike the flow lines, so a drag started
 		   on the name still has to reach the widget frame. */
 		pointer-events: none;
 	}
@@ -385,5 +417,45 @@
 		line-height: 1.3;
 		color: var(--color-lab-yellow);
 		text-align: center;
+	}
+
+	/* The `reading…` line (POE-276) — the merc strip's `.status` / `.dot`,
+	   restated: 11px in the secondary text colour, a 6 px green dot that beats
+	   while something is looking. Muted, because it is a pulse and not an
+	   instruction; the dot is what says "alive".
+
+	   In flow at the foot of the column, so it cannot move or resize the shape
+	   above it: the stage's size is the widget width times the shape's aspect
+	   ratio and nothing else. What it does add, while it is drawn, is one line
+	   to the bottom of the box. That is only while the status is `reading`, and
+	   `run::full_read` publishes `reading` after the grab its read works from and
+	   replaces it with the result before the loop sleeps for the next grab — so
+	   the longer box is not in a frame the module reads (ADR-019), given the
+	   result reaches this window within the 650 ms sleep. */
+	.status {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 11px;
+		color: var(--color-lab-text-secondary);
+	}
+
+	.dot {
+		width: 6px;
+		height: 6px;
+		flex: 0 0 auto;
+		border-radius: 50%;
+		background: var(--color-lab-green);
+		animation: beat 1.6s ease-in-out infinite;
+	}
+
+	@keyframes beat {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.35;
+		}
 	}
 </style>
