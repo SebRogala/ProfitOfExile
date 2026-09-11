@@ -1238,6 +1238,9 @@ pub fn next_status(prev: TempleStatus, outcome: TickOutcome) -> StatusUpdate {
 pub fn apply_status(slice: &mut TempleSlice, outcome: TickOutcome) {
     let update = next_status(slice.status, outcome);
     slice.status = update.status;
+    // No outcome is a retry round in flight; [`apply_anchored`] sets it after
+    // this for the one that can be (POE-276).
+    slice.read_retry = false;
     if update.clear_error {
         slice.last_error = None;
     }
@@ -3246,6 +3249,32 @@ fn kept_for<T>(
     kept.filter(|_| state.same_board(key, frame))
 }
 
+/// Whether the read the gate just let through is a RETRY ROUND (POE-276, owner
+/// 2026-09-11): a re-read of the board this loop already read and published,
+/// in the same place, under the same key.
+///
+/// [`LoopState::same_board`], the rule [`kept_for`] and [`LoopState::note_read`]
+/// already share, asked once more. [`full_read`] is entered only on a
+/// [`GateAnswer::Read`], and the gate answers `Read` for the SAME board only
+/// while it is unclean and owed a round — so on that path this is true exactly
+/// for a retry. A first read, a Re-arm or a settings change (the rearm count
+/// moved), an Alva line or a zone change (the epoch moved) and a walked or
+/// dragged sheet (the frame moved) are all false.
+pub fn read_is_retry(state: &LoopState, key: (u64, u64), frame: &slice::BoardFrame) -> bool {
+    state.same_board(key, frame)
+}
+
+/// The `Anchored` publish: `reading`, carrying whether the read is a retry
+/// round ([`TempleSlice::read_retry`], POE-276).
+///
+/// [`apply_status`] clears the flag for every outcome, this one included, and
+/// the flag is then set only beside the `Reading` it describes — an
+/// `Unavailable` slice, which no tick moves, never carries it.
+pub fn apply_anchored(slice: &mut TempleSlice, retry: bool) {
+    apply_status(slice, TickOutcome::Anchored);
+    slice.read_retry = retry && slice.status == TempleStatus::Reading;
+}
+
 /// The expensive half of one tick: the side panel, the 13 plates, the door
 /// diamond, the advisor, and one publish.
 ///
@@ -3306,7 +3335,12 @@ fn full_read(
     fallback_origin: Option<(i32, i32)>,
 ) {
     let mut stages = ReadStages::default();
-    publish(app, |slice| apply_status(slice, TickOutcome::Anchored));
+    // BEFORE `note_read` below, and that order is the flag: `note_read` records
+    // this read as the board, after which `same_board` is true for every read.
+    // Not covered by a test — the only seam that would cover it needs an
+    // `AppHandle`.
+    let retry = read_is_retry(&session.state, key, &frame);
+    publish(app, |slice| apply_anchored(slice, retry));
     // Before any crop, so a read that fails halfway still leaves the geometry it
     // was working from in the log.
     if let Some(line) = rois_line(&mut session.rois_said, layout.origin, layout.scale) {
@@ -4064,6 +4098,127 @@ mod tests {
         let kept = slice::fixture_read(slice::fixture_layout(Some(lattice::Slot::B0), &[], &[]));
 
         assert_eq!(kept_for(Some(kept), &state, BOARD, &walked_frame()), None);
+    }
+
+    // ------------------------------------------------ the retry flag (POE-276) --
+
+    /// What the `Anchored` publish at the top of `full_read` leaves on a slice
+    /// that was showing `before`, for a read of `(key, frame)` the gate let
+    /// through — the two pure halves of that one line, composed as it composes
+    /// them.
+    fn anchored(
+        state: &LoopState,
+        key: (u64, u64),
+        frame: &slice::BoardFrame,
+        before: TempleStatus,
+    ) -> TempleSlice {
+        let mut slice = TempleSlice { status: before, ..TempleSlice::default() };
+        apply_anchored(&mut slice, read_is_retry(state, key, frame));
+        slice
+    }
+
+    /// A retry round of an unclean board publishes `reading` AS a retry, which
+    /// is what keeps the room widget's `reading…` line down under the verdict
+    /// the round is refining (owner, 2026-09-11). Fails if the flag is never
+    /// set, which brings the line back ~650 ms after every unclean verdict.
+    #[test]
+    fn a_retry_round_publishes_reading_as_a_retry() {
+        let mut state = LoopState::default();
+        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
+        assert!(state.wants_read(BOARD, &same_frame()), "precondition: a round is owed");
+
+        let slice = anchored(&state, BOARD, &same_frame(), TempleStatus::Read);
+
+        assert_eq!(slice.status, TempleStatus::Reading);
+        assert!(slice.read_retry);
+    }
+
+    /// The first read of a loop is not a retry — there is no verdict on screen
+    /// for it to refine, and its line is the whole point of POE-276. Fails if
+    /// every `Anchored` is flagged.
+    #[test]
+    fn a_first_read_publishes_reading_without_the_retry_flag() {
+        let slice = anchored(&LoopState::default(), BOARD, &same_frame(), TempleStatus::Idle);
+
+        assert!(!slice.read_retry);
+    }
+
+    /// A read under a new EPOCH — an Alva line or a zone change, including a
+    /// START heard with the sheet still open — is a new board, even over the
+    /// same pixels and straight after the last verdict. Fails if the flag is
+    /// keyed on the frame alone.
+    #[test]
+    fn a_read_under_a_new_epoch_is_not_a_retry() {
+        let mut state = LoopState::default();
+        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
+
+        let slice = anchored(&state, NEXT_BOARD, &same_frame(), TempleStatus::Read);
+
+        assert!(!slice.read_retry);
+    }
+
+    /// A Re-arm (or a settings change, which bumps the same count) forces a
+    /// read the player asked for, and it shows its line (owner, 2026-09-11).
+    /// Fails if the rearm half of the key is ignored.
+    #[test]
+    fn a_rearm_forced_read_is_not_a_retry() {
+        let mut state = LoopState::default();
+        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
+
+        let slice = anchored(&state, (BOARD.0, BOARD.1 + 1), &same_frame(), TempleStatus::Read);
+
+        assert!(!slice.read_retry);
+    }
+
+    /// The sheet the player walked to the next room with is a new board under
+    /// the same key. Fails if the flag is keyed on the key alone.
+    #[test]
+    fn a_read_of_a_walked_sheet_is_not_a_retry() {
+        let mut state = LoopState::default();
+        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
+
+        let slice = anchored(&state, BOARD, &walked_frame(), TempleStatus::Read);
+
+        assert!(!slice.read_retry);
+    }
+
+    /// Every loop event ends a retry in flight — the round failed, the sheet
+    /// went, the loop stood down or stopped, or the next `Anchored` arrived and
+    /// will say for itself. Fails if `apply_status` leaves a standing `true`
+    /// for the next first read to inherit.
+    #[test]
+    fn every_status_outcome_ends_a_retry_in_flight() {
+        for outcome in [
+            TickOutcome::Failed,
+            TickOutcome::NoPanel,
+            TickOutcome::Anchored,
+            TickOutcome::Reshown(TempleStatus::Read),
+            TickOutcome::Disarmed,
+            TickOutcome::Armed,
+            TickOutcome::Stopping,
+        ] {
+            let mut slice = TempleSlice {
+                status: TempleStatus::Reading,
+                read_retry: true,
+                ..TempleSlice::default()
+            };
+
+            apply_status(&mut slice, outcome);
+
+            assert!(!slice.read_retry, "{outcome:?}");
+        }
+    }
+
+    /// The flag describes a `reading` status and nothing else. Fails if
+    /// `apply_anchored` sets it over a slice no tick can move — an
+    /// `Unavailable` one would then carry a retry it is not running.
+    #[test]
+    fn an_unavailable_slice_never_carries_the_retry_flag() {
+        let mut slice = TempleSlice { status: TempleStatus::Unavailable, ..TempleSlice::default() };
+
+        apply_anchored(&mut slice, true);
+
+        assert!(!slice.read_retry);
     }
 
     /// The status a reopen re-shows is the one that board's own projection

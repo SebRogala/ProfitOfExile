@@ -171,7 +171,8 @@ export interface DoorWidgetView {
 	/** The room's shape, or null when there is no move or no room to draw it
 	 *  on (`overlayShowsDoors`) — the first read of an incursion has neither. */
 	diamond: DiamondView | null;
-	/** The muted `reading…` line, or null when no read is in progress. */
+	/** The muted `reading…` line, or null when no read is in progress or the
+	 *  read is a retry round (`readRetry`). */
 	reading: string | null;
 }
 
@@ -197,18 +198,22 @@ export interface DoorWidgetView {
  * for the length of the read. The line is the hand-off from the waiting
  * notice, which `overlayShowsWaiting` takes down on the same status.
  *
- * A retry round (`RETRIES` in `temple/run.rs`, at most two, and only while a
- * region is unclean) is a read too: the line comes back under the room it has
- * just drawn for the length of that partial round, about 650 ms after the
- * verdict. The webview cannot tell a retry from the next room's read, and does
- * not need to — a retry can change the verdict.
+ * A RETRY ROUND draws no line (owner, 2026-09-11, reversing WI-1's acceptance
+ * of the line coming back under the room it had just drawn). A retry is one
+ * of the partial rounds an unclean board is owed (`RETRIES` in
+ * `temple/run.rs`), and Rust flags it in the same publish as its `reading`
+ * (`slice.readRetry`, decided by the gate's own same-board rule): the verdict
+ * it refines is already on the widget, so the widget stays exactly as it is —
+ * the room, or nothing when round 1 settled no room. A first read, a Re-arm, a
+ * settings change and a new board (another epoch, a walked or moved sheet)
+ * are not retries and show the line as above.
  *
  * Every non-reading case is exactly `overlayShowsDoors`: null wherever it
  * answers false, the diamond with no line wherever it answers true.
  */
 export function doorWidget(slice: TempleSlice): DoorWidgetView | null {
 	const diamond = overlayShowsDoors(slice) ? (slice.layout?.diamond ?? null) : null;
-	const reading = slice.status === 'reading' ? DOOR_READING_LINE : null;
+	const reading = slice.status === 'reading' && !slice.readRetry ? DOOR_READING_LINE : null;
 	if (diamond === null && reading === null) return null;
 	return { diamond, reading };
 }

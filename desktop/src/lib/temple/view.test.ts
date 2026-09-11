@@ -688,7 +688,7 @@ describe('doorWidget', () => {
 		// Rust publishes `reading` from the anchoring tick, before any advice or
 		// layout exists. Without this the widget drew nothing for the seconds
 		// the read takes, which looked the same as a broken read (POE-276).
-		const firstRead = { ...templeSliceDefault(), status: 'reading' as const };
+		const firstRead = { ...templeSliceDefault(), status: 'reading' as const, readRetry: false };
 		expect(doorWidget(firstRead)).toEqual({ diamond: null, reading: 'reading…' });
 	});
 
@@ -703,9 +703,30 @@ describe('doorWidget', () => {
 	it('keeps the previous room under the reading line on a re-read', () => {
 		// The next room's read: the slice still carries the last advice and
 		// layout while `reading` is published, and the widget is the only
-		// surface left in the room, so it must not blank for the read.
-		const reRead = inRoom({ status: 'reading' });
+		// surface left in the room, so it must not blank for the read. A new
+		// board, not a retry of this one — Rust flags only the latter.
+		const reRead = inRoom({ status: 'reading', readRetry: false });
 		expect(doorWidget(reRead)).toEqual({ diamond: room, reading: 'reading…' });
+	});
+
+	it('keeps the room without a reading line through a retry round', () => {
+		// A partial round of the board just read (POE-276, owner 2026-09-11):
+		// the verdict it refines is already on the widget, so the line that
+		// WI-1 let come back ~650 ms after it stays down.
+		const retry = inRoom({ status: 'reading', readRetry: true });
+		expect(doorWidget(retry)).toEqual({ diamond: room, reading: null });
+	});
+
+	it('draws nothing through a retry of a read that settled no room', () => {
+		// Round 1 landed `no_current_room`: no advice, no diamond, and the
+		// retry is not a first read to announce — the widget stays empty.
+		const retry = inRoom({
+			status: 'reading',
+			readRetry: true,
+			advice: null,
+			layout: layout({ diamond: null })
+		});
+		expect(doorWidget(retry)).toBeNull();
 	});
 
 	it('draws the room without the reading line once the read lands', () => {
