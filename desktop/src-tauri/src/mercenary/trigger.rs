@@ -34,9 +34,11 @@
 //! 3. Still nothing → **stand down**. No burst, no scanning: the player was
 //!    walking past. One log line says so.
 //! 4. Chrome found → the probe hands its own frame to the placed detect in the
-//!    SAME iteration; only a crop failure spends the one full-screen fallback,
-//!    and the pre-existing live behaviour takes over unchanged (re-detect 2 s,
-//!    hover 400 ms, retire after two misses).
+//!    SAME iteration; a crop failure there is a miss, not a full-screen locate
+//!    (that is for a cold start, Scan now and Recalibrate —
+//!    `run::locate_decision`), and on a capture the pre-existing live
+//!    behaviour takes over unchanged (re-detect 2 s, hover 400 ms, retire
+//!    after two misses).
 //! 5. A voice line arriving while a capture is HELD ([`capture_held`]) is
 //!    ignored outright. The window is on screen and being read; re-arming can
 //!    only make the loop re-detect a panel the cursor is over — which is how
@@ -624,8 +626,10 @@ pub struct BurstGate {
     /// long as a mercenary kept talking. See [`Self::hear`].
     looks: u32,
     /// Monotonic identity of the current voice/manual arm. The merc fallback
-    /// budget keys on this plus `merc_refit`, so a fresh gate gets one locate
-    /// even when its probe count returns to zero.
+    /// budget keys on this plus `merc_refit`, so a fresh gate opens a fresh
+    /// one-locate budget even when its probe count returns to zero — spent
+    /// only by a cold start or a Scan now / Recalibrate crop miss
+    /// (`run::locate_decision`).
     generation: u64,
 }
 
@@ -978,8 +982,8 @@ pub fn disarm_probe(app: &AppHandle) {
 /// **It bypasses the voice probe gate** (POE-204 WI-C). The gate exists to
 /// decide whether a voice line is worth a look; a person pressing this button
 /// has already decided. The request is served as one placed-crop detect, with
-/// the same one-shot full fallback as the live path, the first moment the game
-/// is in front — see [`MANUAL_ARM_GRACE_MS`].
+/// one full-screen locate if that crop read misses (`run::locate_decision`),
+/// the first moment the game is in front — see [`MANUAL_ARM_GRACE_MS`].
 ///
 /// **Over a HELD capture it does exactly one thing: a re-detect off the
 /// cadence** — cropped to the panel when one is known, which `run::detect_tick`

@@ -803,7 +803,9 @@ pub enum Look {
 /// The precedence is what keeps the probe cheap. Read top to bottom:
 ///
 /// - **Scan now first.** A person asked for a detect; it reads the placed crop
-///   directly and escalates only if crop verification fails.
+///   and escalates to the full-screen locate only if that read misses — one of
+///   the two manual looks that may re-locate a placed panel
+///   ([`locate_decision`]).
 /// - **A live capture next, on its own cadence.** [`detect_step`] owns that
 ///   cadence and its hold, and a gate armed over a live window (which
 ///   `trigger::capture_held` makes rare, not impossible — a line can land in
@@ -841,18 +843,6 @@ pub fn burst_satisfied(outcome: Option<DetectOutcome>) -> bool {
         outcome,
         Some(DetectOutcome::Captured) | Some(DetectOutcome::Refreshed)
     )
-}
-
-fn fallback_allowed(gate: trigger::GateStep) -> bool {
-    matches!(gate, trigger::GateStep::Probe | trigger::GateStep::FullDetect)
-}
-
-fn full_fallback_needed(
-    placement: Option<([i32; 4], f32)>,
-    force_full: bool,
-    allow: bool,
-) -> bool {
-    placement.is_none() || (allow && force_full)
 }
 
 /// How many times a cell that ALREADY reads as `Matched` may be re-OCR'd by the
@@ -1743,15 +1733,19 @@ struct Retained {
     at: Instant,
 }
 
-/// Identity of one merc fallback opportunity. `merc_refit` handles a manual
-/// geometry reset; the trigger generation handles a fresh voice/manual arm.
+/// Identity of one full-screen locate opportunity ([`locate_decision`]). A
+/// Recalibrate (`merc_refit`) or a fresh voice line / Scan now arm (the trigger
+/// generation) opens a new one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FallbackKey {
     refit: u64,
     gate: u64,
 }
 
-/// One full-screen locate per key.
+/// One full-screen locate per key — the spend behind [`locate_decision`], which
+/// decides WHETHER a tick may locate at all; this says only whether its key
+/// still can. A cold start and a manual tick's placed miss draw on the same
+/// one.
 ///
 /// A successful merc read has no genuinely withheld SSOT measurement to repay:
 /// the only `accepted == false` path is `MercOcr` drift refusal, which is an
@@ -1775,20 +1769,152 @@ impl FallbackBudget {
             false
         }
     }
+}
 
-    fn decide(&mut self, key: FallbackKey) -> FallbackDecision {
-        if self.take(key) {
-            FallbackDecision::Locate
-        } else {
-            FallbackDecision::Miss
+/// What this tick's placed-crop read made of the frame — the half of
+/// [`locate_decision`]'s input the OCR supplies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlacedRead {
+    /// The placed layout read.
+    Hit,
+    /// No layout, for any reason but the one below.
+    Missed,
+    /// No layout because the name column sits outside the placed column's
+    /// tolerance ([`geometry::PanelAnchor::ColumnMoved`]). Kept apart from
+    /// [`Self::Missed`] because it is the one miss that SAYS the placement may
+    /// be wrong. A tooltip over the top rows produces it too: on app.log
+    /// 2026-09-10 17:25:58 it was the only miss that could buy a live re-detect
+    /// a locate, and that locate moved the anchor. So on its own it moves
+    /// nothing.
+    ColumnMoved,
+}
+
+impl PlacedRead {
+    fn of(layout: &Result<geometry::MercLayout, geometry::DetectMiss>) -> Self {
+        match layout {
+            Ok(_) => PlacedRead::Hit,
+            Err(geometry::DetectMiss {
+                stage:
+                    geometry::DetectStage::NoAnchor {
+                        panel: geometry::PanelAnchor::ColumnMoved { .. },
+                        ..
+                    },
+                ..
+            }) => PlacedRead::ColumnMoved,
+            Err(_) => PlacedRead::Missed,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FallbackDecision {
-    Locate,
-    Miss,
+/// Why a tick runs the full-screen locate — the only two doors to it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum LocateReason {
+    /// No SSOT placement: no rect to crop, and none for the locate to
+    /// contradict, so it has no origin to remember.
+    ColdStart,
+    /// A manual tick whose placed read missed. Carries the placement the locate
+    /// is weighed against — the ONLY reason that does, which is what makes it
+    /// the only one [`fallback_panel`] can turn into a remembered origin.
+    ManualMiss { placed: ([i32; 4], f32) },
+}
+
+/// What a detect tick does about the full-screen locate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum LocateDecision {
+    /// Run it, for this reason. The key's budget is spent.
+    Locate(LocateReason),
+    /// No placement, and this key's cold start is spent: a counted miss that
+    /// costs no OCR.
+    ColdStartSpent,
+    /// Keep the placed read's own result: a hit is a hit, a miss is a miss.
+    TrustPlacement,
+    /// Keep the placed read's own result — a column contradiction on a tick no
+    /// person asked for. The caller says so, once per key
+    /// ([`column_trusted_line`]).
+    TrustPlacementOverColumn,
+}
+
+/// Whether this detect tick may run the full-screen locate (POE-278). The whole
+/// rule, one table:
+///
+/// | placement | placed read           | manual | locate                |
+/// |-----------|-----------------------|--------|-----------------------|
+/// | none      | —                     | either | cold start, once/key  |
+/// | placed    | hit                   | either | never                 |
+/// | placed    | miss or column moved  | yes    | once per key          |
+/// | placed    | miss or column moved  | no     | never                 |
+///
+/// `placed` is the SSOT placement with what the crop read against it, `None` on
+/// a cold start. `manual` is [`manual_tick`]: Scan now, or a Recalibrate this
+/// session has not acted on yet.
+///
+/// Every tick no person asked for — a voice-line probe, a live re-detect —
+/// trusts the placement and proceeds on the placed read, so its miss goes
+/// through the ordinary occlusion handling and [`miss`]. Before POE-278 a
+/// probe miss and a live [`PlacedRead::ColumnMoved`] each bought the locate,
+/// and on app.log 2026-09-10 the second moved a live capture's anchor: a
+/// tooltip over rows 0–1 of a six-row panel, a locate that found four rows two
+/// pitches lower, and "6 rows on screen, 4 read" on every read after until a
+/// manual Recalibrate. The temple runs the same rule
+/// (`temple::run::cold_sweep_reason`: a placed miss sweeps under Re-arm only).
+///
+/// The accepted trade-off: a placement that really is wrong stays wrong until
+/// the player presses Scan now or Recalibrate — which is what the column line
+/// tells them to do.
+fn locate_decision(
+    placed: Option<(([i32; 4], f32), PlacedRead)>,
+    manual: bool,
+    budget: &mut FallbackBudget,
+    key: FallbackKey,
+) -> LocateDecision {
+    let Some((placement, read)) = placed else {
+        return if budget.take(key) {
+            LocateDecision::Locate(LocateReason::ColdStart)
+        } else {
+            LocateDecision::ColdStartSpent
+        };
+    };
+    match (read, manual) {
+        (PlacedRead::Hit, _) => LocateDecision::TrustPlacement,
+        (_, true) => {
+            if budget.take(key) {
+                LocateDecision::Locate(LocateReason::ManualMiss { placed: placement })
+            } else {
+                LocateDecision::TrustPlacement
+            }
+        }
+        (PlacedRead::ColumnMoved, false) => LocateDecision::TrustPlacementOverColumn,
+        (PlacedRead::Missed, false) => LocateDecision::TrustPlacement,
+    }
+}
+
+/// Whether a person asked for this tick: it serves a Scan now
+/// (`GateStep::FullDetect`), or the Recalibrate counter differs from the value
+/// the locate decision last treated as acted on. A voice-line probe is not a
+/// person asking, whatever it found.
+///
+/// A PEEK at the counter, not a spend: `Session::refit_located` moves only once
+/// a layout exists, so a pending press stays manual across the misses before
+/// it.
+fn manual_tick(gate: trigger::GateStep, refit_seen: u64, refit_now: u64) -> bool {
+    gate == trigger::GateStep::FullDetect || refit_requested(refit_seen, refit_now)
+}
+
+/// Said when a tick trusts the placement over a column contradiction
+/// ([`LocateDecision::TrustPlacementOverColumn`]).
+const MERC_COLUMN_TRUSTED_LINE: &str = "Merc: placed panel column disagrees with the read — \
+     trusting the placement; Scan now or Recalibrate re-locates (POE-271)";
+
+/// The column line, once per key. Not debug-gated, because it is the one trace
+/// of a placement the loop is choosing to trust over the read, and it names
+/// what the player can do about it; the key is the rate limit, so a live
+/// capture under one arm says it once however many ticks disagree.
+fn column_trusted_line(said: &mut Option<FallbackKey>, key: FallbackKey) -> Option<&'static str> {
+    if *said == Some(key) {
+        return None;
+    }
+    *said = Some(key);
+    Some(MERC_COLUMN_TRUSTED_LINE)
 }
 
 /// Everything the loop carries between ticks.
@@ -1831,8 +1957,12 @@ struct Session {
     /// knows the pitch. See [`super::geometry::header_guard_bounds`] and
     /// [`publishable_header`]. Cleared with `panel` on retire.
     header_guard: Option<[i32; 4]>,
-    /// One placed/full fallback budget per `(merc_refit, trigger generation)`.
+    /// The one full-screen locate per `(merc_refit, trigger generation)` —
+    /// spent only where [`locate_decision`] allows it.
     fallback: FallbackBudget,
+    /// The key [`MERC_COLUMN_TRUSTED_LINE`] was last said under. See
+    /// [`column_trusted_line`].
+    column_trusted_said: Option<FallbackKey>,
     /// The first crop detect's timing is emitted once per session.
     crop_detect_logged: bool,
     /// The open run of detects the panel was covered for. See [`OcclusionRun`].
@@ -1869,6 +1999,10 @@ struct Session {
     /// does not re-fire on the first tick of this one, which has nothing held
     /// to drop anyway. See [`refit_requested`].
     refit_seen: u64,
+    /// The `merc_refit` value the locate decision last treated as acted on —
+    /// kept apart from [`Self::refit_seen`], which [`consume_refit`] must read
+    /// at the fit (ssot bump-before-write).
+    refit_located: u64,
     /// Armed when the tick's registration differs from the last one's, and
     /// consumed by the next [`merge_sigs`] — normally the same tick's, but a
     /// tick that returns early between the fit and the merge (a cancel) leaves
@@ -2376,6 +2510,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         panel: None,
         header_guard: None,
         fallback: FallbackBudget::default(),
+        column_trusted_said: None,
         crop_detect_logged: false,
         occlusion: OcclusionRun::default(),
         header_logged: None,
@@ -2387,6 +2522,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         // Seeded, not zeroed: a press that happened while no loop was running
         // has nothing to undo — this session holds no registration yet.
         refit_seen: refit_counter(&app),
+        refit_located: refit_counter(&app),
         geometry_changed: false,
         revision: 0,
     };
@@ -2619,19 +2755,21 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             ),
         );
 
-        // The probe, and the frame it hands on whether it saw the chrome or
-        // spent its one keyed full fallback. A hit runs the normal crop detect
-        // in THIS iteration; a miss uses the same grab for the fallback rather
-        // than paying for a second screen capture.
+        // The probe, and the frame and lines it hands on whether it saw the
+        // chrome or not. The detect below reads the placed layout off those
+        // same lines in THIS iteration — a hit captures, a miss is a miss — so
+        // on a placed screen a voice line costs one grab and one crop OCR
+        // whatever the probe saw; only a pending Recalibrate makes its miss a
+        // manual one ([`locate_decision`]). With no placement the probe OCRs
+        // nothing and hands the frame to the cold-start locate.
         let mut probed: Option<crate::capture::Capture> = None;
-        let mut probe_missed = false;
         let mut probed_lines: Option<Vec<geometry::OcrLineBox>> = None;
         // When the probe's GRAB started, on the iterations a hit hands that
         // grab to the detect below. See the timing comment there.
         let mut probe_started: Option<Instant> = None;
         if look == Look::Probe {
             let started = Instant::now();
-            let (tick, image, lines, crop_missed) = probe_tick(&app, &mut session);
+            let (tick, image, lines) = probe_tick(&app, &mut session);
             trigger::note_probe(&app, now);
             // Reported for the same reason a detect is, and it is always a
             // no-op: a placed-crop OCR carries `full_frame: false`, which is precisely
@@ -2641,7 +2779,6 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             session.state.note_tick_duration(tick.full_frame, Duration::ZERO);
             probed = image;
             probed_lines = lines;
-            probe_missed = crop_missed;
             probe_started = probed.is_some().then_some(started);
         }
 
@@ -2653,8 +2790,9 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         //
         // On the PROBE-HIT path the clock starts before the probe's grab, not
         // here: the detect then runs on that grab and reuses its translated
-        // lines. That reading feeds the backoff for the whole crop tick; a
-        // crop miss is the path that escalates to full-screen OCR.
+        // lines. That reading feeds the backoff for the whole crop tick; only
+        // a cold start or a manual tick's crop miss escalates to full-screen
+        // OCR ([`locate_decision`]).
         if look == Look::Detect || probed.is_some() {
             let started = probe_started.unwrap_or_else(Instant::now);
             let tick = detect_tick(
@@ -2665,8 +2803,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
                 probed,
                 probed_lines,
                 probe_started,
-                fallback_allowed(gate),
-                probe_missed,
+                gate,
             );
             let took = started.elapsed();
             last_detect = Instant::now();
@@ -2846,12 +2983,21 @@ fn grow_rect(held: Option<[i32; 4]>, fresh: Option<[i32; 4]>) -> Option<[i32; 4]
 const MERC_GEOMETRY_NOTICE_LINE: &str =
     "Merc: geometry notice pending — placed panel contradicted by detect (POE-271)";
 
+/// Where a locate moves the live capture's panel: the located rect, the origin
+/// to remember and the contradiction line — or none of them, when the locate
+/// found no layout or agrees with the placement inside the half-cell band.
+///
+/// A [`LocateReason::ColdStart`] answers nothing BY ITS TYPE: it carries no
+/// placement, so there is nothing to contradict. This is the only producer of
+/// the origin [`publish_then_remember`] hands `ssot::remember_anchor`, and
+/// [`locate_decision`] yields [`LocateReason::ManualMiss`] only on a manual
+/// tick, so the anchor moves on Scan now or Recalibrate and nothing else.
 fn fallback_panel(
-    placement: Option<([i32; 4], f32)>,
+    reason: LocateReason,
     layout: &Result<geometry::MercLayout, geometry::DetectMiss>,
     g: &MercGeometry,
 ) -> (Option<[i32; 4]>, Option<[i32; 2]>, Option<String>) {
-    let Some((placed, scale)) = placement else {
+    let LocateReason::ManualMiss { placed: (placed, scale) } = reason else {
         return (None, None, None);
     };
     let Ok(found) = layout else {
@@ -2977,15 +3123,15 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
 /// SSOT-placed crop. A null slice skips probe OCR and hands the frame to the one
 /// full detect allowed by the fallback budget; this prevents a cold-start probe
 /// plus detect from becoming two full-screen OCRs.
+///
+/// A placed probe hands its frame AND its lines on whatever it saw: the detect
+/// reads the placed layout off those lines, so a hit costs no second OCR, and a
+/// miss escalates to the full-screen locate only while a Recalibrate is pending
+/// ([`locate_decision`]); otherwise it costs nothing beyond the probe.
 fn probe_tick(
     app: &AppHandle,
     session: &mut Session,
-) -> (
-    DetectTick,
-    Option<crate::capture::Capture>,
-    Option<Vec<geometry::OcrLineBox>>,
-    bool,
-) {
+) -> (DetectTick, Option<crate::capture::Capture>, Option<Vec<geometry::OcrLineBox>>) {
     let tick = DetectTick::probe();
 
     let started = Instant::now();
@@ -2993,7 +3139,7 @@ fn probe_tick(
         Ok(grab) => grab,
         Err(e) => {
             fail(app, session, format!("Merc: screen capture failed — {e}"));
-            return (tick, None, None, false);
+            return (tick, None, None);
         }
     };
     let img = &grab.image;
@@ -3012,7 +3158,7 @@ fn probe_tick(
                     .to_string(),
             );
         }
-        return (tick, Some(grab), None, false);
+        return (tick, Some(grab), None);
     };
     let crop = geometry::placed_panel_crop(panel, scale, screen);
     let cropped = img.crop_imm(crop[0] as u32, crop[1] as u32, crop[2] as u32, crop[3] as u32);
@@ -3026,7 +3172,7 @@ fn probe_tick(
         Ok(lines) => frame.to_screen(lines),
         Err(e) => {
             fail(app, session, format!("Merc: OCR failed — {e}"));
-            return (tick, None, None, false);
+            return (tick, None, None);
         }
     };
     let hit = geometry::probe_hit(&lines, &session.geometry);
@@ -3042,7 +3188,7 @@ fn probe_tick(
             ),
         );
     }
-    (tick, Some(grab), Some(lines), !hit)
+    (tick, Some(grab), Some(lines))
 }
 
 /// The screen slice a detect tick publishes for `screen` at `scale`.
@@ -3126,6 +3272,11 @@ fn screen_refusal_log(
 /// that matters — what makes the detect read the SAME pixels the probe accepted
 /// on. Re-grabbing would leave a window that closed in the millisecond between
 /// them looking like a probe that lied.
+///
+/// `gate` is the step this tick was served for — a Scan now
+/// (`GateStep::FullDetect`) is one half of what makes a tick manual
+/// ([`manual_tick`]), and so of whether a placed miss may buy the full-screen
+/// locate ([`locate_decision`]).
 fn detect_tick(
     app: &AppHandle,
     session: &mut Session,
@@ -3134,8 +3285,7 @@ fn detect_tick(
     grabbed: Option<crate::capture::Capture>,
     probed_lines: Option<Vec<geometry::OcrLineBox>>,
     tick_started: Option<Instant>,
-    allow_fallback: bool,
-    probe_missed: bool,
+    gate: trigger::GateStep,
 ) -> DetectTick {
     let started = tick_started.unwrap_or_else(Instant::now);
     let grab = match grabbed {
@@ -3169,43 +3319,15 @@ fn detect_tick(
     let crop = placement.map(|(panel, scale)| geometry::placed_panel_crop(panel, scale, screen));
     let mut full_frame = crop.is_none();
     let key = fallback_key(app);
-    let mut used_fallback = false;
-    let force_full_fallback = probe_missed && crop.is_some() && allow_fallback;
-    if full_fallback_needed(placement, force_full_fallback, allow_fallback) {
-        match session.fallback.decide(key) {
-            FallbackDecision::Locate => {}
-            FallbackDecision::Miss => {
-                return detect_report(Some(miss(app, session, false)), full_frame);
-            }
-        }
-        used_fallback = true;
-        full_frame = true;
-    }
+    // Off the key's own counter read, so the verdict and the budget it may
+    // spend are about the same Recalibrate.
+    let manual = manual_tick(gate, session.refit_located, key.refit);
 
-    let cropped = if force_full_fallback {
-        None
-    } else {
-        crop.map(|r| img.crop_imm(r[0] as u32, r[1] as u32, r[2] as u32, r[3] as u32))
-    };
+    let cropped = crop.map(|r| img.crop_imm(r[0] as u32, r[1] as u32, r[2] as u32, r[3] as u32));
     let mut view: &image::DynamicImage = cropped.as_ref().unwrap_or(&img);
-    let mut frame = match (crop, force_full_fallback) {
-        (_, true) | (None, false) => geometry::Frame::full(screen),
-        (Some(r), false) => geometry::Frame::cropped((r[0], r[1]), screen),
-    };
-
-    // TRANSLATED THE INSTANT IT COMES BACK. Windows OCR reports boxes in the
-    // pixels it was handed, and every rule below this line — the known-panel
-    // anchor, the column-x test, the cell rects the hover tick hit-tests the
-    // real cursor against — is screen-absolute. See `geometry::Frame`.
-    let mut lines = match probed_lines {
-        Some(lines) if !force_full_fallback => lines,
-        _ => match crate::ocr::recognize_lines(view) {
-            Ok(lines) => frame.to_screen(lines),
-            Err(e) => {
-                fail(app, session, format!("Merc: OCR failed — {e}"));
-                return detect_report(Some(miss(app, session, true)), full_frame);
-            }
-        },
+    let mut frame = match crop {
+        Some(r) => geometry::Frame::cropped((r[0], r[1]), screen),
+        None => geometry::Frame::full(screen),
     };
     let known_panel = session.panel.or_else(|| placement.map(|(panel, _)| panel));
 
@@ -3218,62 +3340,87 @@ fn detect_tick(
         .fitted
         .map(|fit| fit.pitch)
         .unwrap_or_else(|| placement.map_or(session.geometry.row_pitch, |(_, scale)| session.geometry.row_pitch * scale));
-    let mut layout = if force_full_fallback {
-        geometry::detect_reason(&lines, &session.geometry, &session.vocab, known_panel)
-    } else {
-        match placement {
-            Some((panel, scale)) => geometry::placed_layout(
+    // THE PLACED READ, on the crop: the probe's own lines when a probe took
+    // them this iteration, so a probed tick pays no second OCR whatever the
+    // probe saw. `None` on a cold start, which has no rect to crop and reads
+    // nothing before the locate below.
+    //
+    // TRANSLATED THE INSTANT IT COMES BACK. Windows OCR reports boxes in the
+    // pixels it was handed, and every rule below this line — the known-panel
+    // anchor, the column-x test, the cell rects the hover tick hit-tests the
+    // real cursor against — is screen-absolute. See `geometry::Frame`.
+    let placed_read = match placement {
+        None => None,
+        Some((panel, scale)) => {
+            let lines = match probed_lines {
+                Some(lines) => lines,
+                None => match crate::ocr::recognize_lines(view) {
+                    Ok(lines) => frame.to_screen(lines),
+                    Err(e) => {
+                        fail(app, session, format!("Merc: OCR failed — {e}"));
+                        return detect_report(Some(miss(app, session, true)), full_frame);
+                    }
+                },
+            };
+            let layout = geometry::placed_layout(
                 &lines,
                 panel,
                 &session.geometry,
                 session.fitted.map_or(scale, |fit| fit.scale),
                 fitted_pitch,
-            ),
-            None => geometry::detect_reason(&lines, &session.geometry, &session.vocab, known_panel),
+            );
+            Some(((panel, scale), lines, layout))
         }
     };
+
+    // Whether the full-screen locate runs is [`locate_decision`]'s call, the
+    // whole rule in one place. When it does, it re-reads the SAME grab, so it
+    // is one more OCR rather than a second screen capture.
+    let decision = locate_decision(
+        placed_read.as_ref().map(|(placed, _, layout)| (*placed, PlacedRead::of(layout))),
+        manual,
+        &mut session.fallback,
+        key,
+    );
+    let (located_by, lines, layout) = match (decision, placed_read) {
+        (LocateDecision::Locate(reason), _) => {
+            full_frame = true;
+            view = &img;
+            frame = geometry::Frame::full(screen);
+            let lines = match crate::ocr::recognize_lines(view) {
+                Ok(lines) => frame.to_screen(lines),
+                Err(e) => {
+                    fail(app, session, format!("Merc: OCR failed — {e}"));
+                    return detect_report(Some(miss(app, session, true)), full_frame);
+                }
+            };
+            let layout =
+                geometry::detect_reason(&lines, &session.geometry, &session.vocab, known_panel);
+            (Some(reason), lines, layout)
+        }
+        (LocateDecision::TrustPlacementOverColumn, Some((_, lines, layout))) => {
+            if let Some(line) = column_trusted_line(&mut session.column_trusted_said, key) {
+                crate::app_log(app, line.to_string());
+            }
+            (None, lines, layout)
+        }
+        (LocateDecision::TrustPlacement, Some((_, lines, layout))) => (None, lines, layout),
+        // No placement and no locate: this key's cold start is spent, and a
+        // counted miss costs no OCR. (`locate_decision` answers the two trust
+        // arms only for a placed read, so `(_, None)` is this same case.)
+        (LocateDecision::ColdStartSpent, _) | (_, None) => {
+            return detect_report(Some(miss(app, session, false)), full_frame);
+        }
+    };
+    let used_fallback = located_by.is_some();
+
+    // Only a manual locate can move the panel or remember an origin: see
+    // [`fallback_panel`], which answers nothing for a cold start.
     let mut located_panel = None;
     let mut remember_origin = None;
-
-    // The crop is the normal path. A gate-approved miss buys exactly one full
-    // locate for this fallback key; the same frame is reused, so this is one
-    // additional OCR rather than a second screen grab.
-    // A placed column contradiction is different from an ordinary miss: it is
-    // evidence that the SSOT placement is wrong, so it also buys the one
-    // corrective locate on the live cadence.
-    let placed_column_moved = matches!(
-        &layout,
-        Err(geometry::DetectMiss {
-            stage: geometry::DetectStage::NoAnchor {
-                panel: geometry::PanelAnchor::ColumnMoved { .. },
-                ..
-            },
-            ..
-        })
-    );
-    if layout.is_err()
-        && crop.is_some()
-        && !force_full_fallback
-        && (allow_fallback || placed_column_moved)
-        && session.fallback.take(key)
-    {
-        used_fallback = true;
-        full_frame = true;
-        view = &img;
-        frame = geometry::Frame::full(screen);
-        lines = match crate::ocr::recognize_lines(view) {
-            Ok(lines) => frame.to_screen(lines),
-            Err(e) => {
-                fail(app, session, format!("Merc: OCR failed — {e}"));
-                return detect_report(Some(miss(app, session, true)), full_frame);
-            }
-        };
-        layout = geometry::detect_reason(&lines, &session.geometry, &session.vocab, known_panel);
-    }
-
-    if used_fallback {
+    if let Some(reason) = located_by {
         let (located_from_fallback, fallback_origin, contradiction) =
-            fallback_panel(placement, &layout, &session.geometry);
+            fallback_panel(reason, &layout, &session.geometry);
         located_panel = located_from_fallback;
         remember_origin = fallback_origin;
         if let Some(line) = contradiction {
@@ -3362,7 +3509,10 @@ fn detect_tick(
     // nothing held, `next_fitted_scale` adopts this tick's fit outright and a
     // tick whose fit declines leaves the layout on the OCR cue it was built
     // with (`geometry::MercLayout` reads `ScaleSource::Ocr` until something
-    // registers it).
+    // registers it). The locate decision above only PEEKED at its own counter
+    // read ([`manual_tick`]), which `refit_located` records just below; this
+    // re-reads the counter AT THE FIT, which is what ssot's bump-before-write
+    // ordering relies on.
     match consume_refit(session, refit_counter(app)) {
         Refit::NotRequested => {}
         Refit::Dropped(held) => crate::app_log(
@@ -3380,6 +3530,7 @@ fn detect_tick(
                 .to_string(),
         ),
     }
+    session.refit_located = key.refit;
 
     // The AUTOMATIC arm, and what `s_ocr` above is the other half of: the same
     // read is what keeps a HELD registration honest. The session
@@ -3609,7 +3760,7 @@ fn detect_tick(
             ),
         );
     }
-    if crop.is_some() && !force_full_fallback && !session.crop_detect_logged {
+    if crop.is_some() && !used_fallback && !session.crop_detect_logged {
         session.crop_detect_logged = true;
         crate::app_log(
             app,
@@ -3730,10 +3881,11 @@ fn detect_tick(
     // here — this is the one place that can tell whether its row survived.
     session.pending_confirm =
         drop_pending_off_capture(session.pending_confirm.take(), &result.capture);
-    // The placed rect is the geometry source for the normal path. A full
-    // fallback uses the located panel for this read, and a cold-start full
-    // detect derives one from its rows until the SSOT placement is available
-    // on the next tick.
+    // The placed rect is the geometry source for every tick that trusts the
+    // placement, so none of them moves a live capture's panel. Only a manual
+    // locate that lands elsewhere uses the located panel for this read
+    // ([`fallback_panel`]), and a cold-start full detect derives one from its
+    // rows until the SSOT placement is available on the next tick.
     let current_panel = located_panel
         .or_else(|| placement.map(|(panel, _)| panel))
         .or_else(|| geometry::panel_bounds(&layout, &session.geometry));
@@ -4530,44 +4682,218 @@ mod tests {
         assert!(!budget.take(key));
     }
 
-    #[test]
-    fn a_spent_fallback_budget_takes_the_miss_path() {
-        let key = FallbackKey { refit: 4, gate: 9 };
-        let mut budget = FallbackBudget::default();
+    /// The placement of the 2026-09-10 incident:
+    /// `merc: placed panel [725,552,498,428] contradicted by detect …`.
+    const INCIDENT_PLACEMENT: ([i32; 4], f32) = ([725, 552, 498, 428], 1.0);
+    const LOCATE_KEY: FallbackKey = FallbackKey { refit: 4, gate: 9 };
 
-        assert_eq!(budget.decide(key), FallbackDecision::Locate);
+    /// A live re-detect with no Recalibrate pending: nothing armed, and the
+    /// locate decision last treated the counter it reads now as acted on.
+    fn unasked() -> bool {
+        manual_tick(trigger::GateStep::Resting, 4, 4)
+    }
 
-        let mut state = LoopState::default();
-        assert_eq!(state.on_detect(true), DetectOutcome::Captured);
-        assert_eq!(budget.decide(key), FallbackDecision::Miss);
-        assert_eq!(state.on_detect(false), DetectOutcome::Missed);
-        assert!(state.live, "the spent fallback is a counted miss, not a no-op");
-        assert_eq!(state.on_detect(false), DetectOutcome::Retired);
+    /// A tick served for Scan now, with no Recalibrate pending.
+    fn scan_now() -> bool {
+        manual_tick(trigger::GateStep::FullDetect, 4, 4)
     }
 
     #[test]
-    fn a_crop_miss_gets_one_full_locate_only_while_the_gate_owes_a_look() {
-        assert!(!fallback_allowed(trigger::GateStep::Resting));
-        assert!(fallback_allowed(trigger::GateStep::Probe));
-        assert!(fallback_allowed(trigger::GateStep::FullDetect));
-
-        let key = FallbackKey { refit: 4, gate: 9 };
+    fn a_cold_start_locates_without_a_manual_ask() {
         let mut budget = FallbackBudget::default();
-        assert!(budget.take(key), "the gate-approved crop miss buys one locate");
-        assert!(!budget.take(key), "the same key cannot buy a second locate");
+
+        assert_eq!(
+            locate_decision(None, unasked(), &mut budget, LOCATE_KEY),
+            LocateDecision::Locate(LocateReason::ColdStart),
+        );
     }
 
     #[test]
-    fn a_null_slice_gets_one_cold_start_locate_per_key() {
-        let placement: Option<([i32; 4], f32)> = None;
-        let key = FallbackKey { refit: 4, gate: 9 };
+    fn a_spent_cold_start_is_a_miss_without_a_locate() {
         let mut budget = FallbackBudget::default();
+        locate_decision(None, unasked(), &mut budget, LOCATE_KEY);
 
-        assert!(full_fallback_needed(placement, false, true));
-        assert!(full_fallback_needed(placement, false, false));
-        assert!(!full_fallback_needed(Some(([100, 200, 300, 400], 1.0)), false, true));
-        assert!(budget.take(key));
-        assert!(!budget.take(key), "the cold-start key cannot buy a second locate");
+        assert_eq!(
+            locate_decision(None, unasked(), &mut budget, LOCATE_KEY),
+            LocateDecision::ColdStartSpent,
+        );
+    }
+
+    #[test]
+    fn scan_now_with_a_crop_miss_locates_against_the_placement() {
+        let mut budget = FallbackBudget::default();
+        let placed = Some((INCIDENT_PLACEMENT, PlacedRead::Missed));
+
+        assert_eq!(
+            locate_decision(placed, scan_now(), &mut budget, LOCATE_KEY),
+            LocateDecision::Locate(LocateReason::ManualMiss { placed: INCIDENT_PLACEMENT }),
+        );
+    }
+
+    #[test]
+    fn a_pending_recalibrate_with_a_crop_miss_locates_against_the_placement() {
+        let mut budget = FallbackBudget::default();
+        let placed = Some((INCIDENT_PLACEMENT, PlacedRead::Missed));
+        let recalibrate_pending = manual_tick(trigger::GateStep::Resting, 3, 4);
+
+        assert_eq!(
+            locate_decision(placed, recalibrate_pending, &mut budget, LOCATE_KEY),
+            LocateDecision::Locate(LocateReason::ManualMiss { placed: INCIDENT_PLACEMENT }),
+        );
+    }
+
+    #[test]
+    fn a_voice_probe_tick_is_not_manual() {
+        assert!(!manual_tick(trigger::GateStep::Probe, 4, 4));
+    }
+
+    #[test]
+    fn a_voice_probe_miss_trusts_the_placement() {
+        let mut budget = FallbackBudget::default();
+        let placed = Some((INCIDENT_PLACEMENT, PlacedRead::Missed));
+        let voice_probe = manual_tick(trigger::GateStep::Probe, 4, 4);
+
+        assert_eq!(
+            locate_decision(placed, voice_probe, &mut budget, LOCATE_KEY),
+            LocateDecision::TrustPlacement,
+        );
+    }
+
+    /// The 2026-09-10 17:25:58 shape: a live capture, a tooltip over rows 0–1,
+    /// and a crop read whose name column disagreed with the placement. Before
+    /// POE-278 this bought the locate that moved the anchor two pitches down.
+    #[test]
+    fn a_live_redetect_whose_column_moved_trusts_the_placement() {
+        let mut budget = FallbackBudget::default();
+        let placed = Some((INCIDENT_PLACEMENT, PlacedRead::ColumnMoved));
+
+        assert_eq!(
+            locate_decision(placed, unasked(), &mut budget, LOCATE_KEY),
+            LocateDecision::TrustPlacementOverColumn,
+        );
+    }
+
+    #[test]
+    fn a_trusted_column_contradiction_leaves_the_key_for_a_manual_locate() {
+        let mut budget = FallbackBudget::default();
+        let moved = Some((INCIDENT_PLACEMENT, PlacedRead::ColumnMoved));
+        locate_decision(moved, unasked(), &mut budget, LOCATE_KEY);
+
+        assert_eq!(
+            locate_decision(moved, scan_now(), &mut budget, LOCATE_KEY),
+            LocateDecision::Locate(LocateReason::ManualMiss { placed: INCIDENT_PLACEMENT }),
+        );
+    }
+
+    #[test]
+    fn a_manual_tick_whose_placed_read_hit_does_not_locate() {
+        let mut budget = FallbackBudget::default();
+        let placed = Some((INCIDENT_PLACEMENT, PlacedRead::Hit));
+        let scan_now_and_recalibrate = manual_tick(trigger::GateStep::FullDetect, 3, 4);
+
+        assert_eq!(
+            locate_decision(placed, scan_now_and_recalibrate, &mut budget, LOCATE_KEY),
+            LocateDecision::TrustPlacement,
+        );
+    }
+
+    #[test]
+    fn a_manual_miss_locates_once_per_key() {
+        let mut budget = FallbackBudget::default();
+        let placed = Some((INCIDENT_PLACEMENT, PlacedRead::Missed));
+        locate_decision(placed, scan_now(), &mut budget, LOCATE_KEY);
+
+        assert_eq!(
+            locate_decision(placed, scan_now(), &mut budget, LOCATE_KEY),
+            LocateDecision::TrustPlacement,
+            "the key's one locate is spent; the tick keeps its own placed miss",
+        );
+    }
+
+    /// The anchor's only door, end to end: whatever a tick no person asked for
+    /// reads, it cannot produce an origin for `ssot::remember_anchor` — and a
+    /// manual miss against the same located panel does, so the negatives are
+    /// not passing because nothing ever produces one.
+    #[test]
+    fn only_a_manual_tick_can_remember_an_origin() {
+        let g = MercGeometry::default();
+        let layout = detected_layout();
+        let located = geometry::panel_bounds(&layout, &g).expect("the located layout has a panel");
+        // 100 px off the located panel — far outside the half-cell band.
+        let placement = ([located[0] - 100, located[1], located[2], located[3]], 1.0);
+        let found = Ok(layout);
+        let origin_for = |placed: Option<(([i32; 4], f32), PlacedRead)>, manual: bool| {
+            let mut budget = FallbackBudget::default();
+            match locate_decision(placed, manual, &mut budget, LOCATE_KEY) {
+                LocateDecision::Locate(reason) => fallback_panel(reason, &found, &g).1,
+                _ => None,
+            }
+        };
+
+        for read in [PlacedRead::Hit, PlacedRead::Missed, PlacedRead::ColumnMoved] {
+            assert_eq!(origin_for(Some((placement, read)), false), None, "{read:?}, unasked");
+        }
+        assert_eq!(origin_for(None, false), None, "a cold start");
+        assert_eq!(origin_for(None, true), None, "a cold start under a manual ask");
+        assert_eq!(
+            origin_for(Some((placement, PlacedRead::Missed)), true),
+            Some([located[0], located[1]]),
+            "a manual miss",
+        );
+    }
+
+    #[test]
+    fn a_column_contradiction_reads_as_column_moved() {
+        let layout = Err(geometry::DetectMiss {
+            candidates: 6,
+            column_x0: Some(743.0),
+            stage: geometry::DetectStage::NoAnchor {
+                rows: 6,
+                panel: geometry::PanelAnchor::ColumnMoved {
+                    column_x: 743,
+                    expected_x: 643,
+                    tolerance: 19,
+                },
+            },
+        });
+
+        assert_eq!(PlacedRead::of(&layout), PlacedRead::ColumnMoved);
+    }
+
+    #[test]
+    fn a_placed_read_with_no_chrome_reads_as_a_plain_miss() {
+        let layout = Err(geometry::DetectMiss {
+            candidates: 0,
+            column_x0: Some(725.0),
+            stage: geometry::DetectStage::NoAnchor {
+                rows: 6,
+                panel: geometry::PanelAnchor::NoChrome,
+            },
+        });
+
+        assert_eq!(PlacedRead::of(&layout), PlacedRead::Missed);
+    }
+
+    #[test]
+    fn a_placed_layout_reads_as_a_hit() {
+        assert_eq!(PlacedRead::of(&Ok(detected_layout())), PlacedRead::Hit);
+    }
+
+    #[test]
+    fn the_column_line_is_said_once_per_key() {
+        let mut said = None;
+
+        assert_eq!(column_trusted_line(&mut said, LOCATE_KEY), Some(MERC_COLUMN_TRUSTED_LINE));
+        assert_eq!(column_trusted_line(&mut said, LOCATE_KEY), None, "…not once per tick");
+    }
+
+    #[test]
+    fn a_new_key_says_the_column_line_again() {
+        let mut said = None;
+        column_trusted_line(&mut said, LOCATE_KEY);
+        let next_arm = FallbackKey { refit: 4, gate: 10 };
+
+        assert_eq!(column_trusted_line(&mut said, next_arm), Some(MERC_COLUMN_TRUSTED_LINE));
     }
 
     #[test]
@@ -4600,7 +4926,9 @@ mod tests {
         let found = Ok(layout.clone());
         let expected = "merc: placed panel [-22,29,568,289] contradicted by detect [78,29,568,289]";
 
-        let (panel, origin, line) = fallback_panel(Some((placed, 1.0)), &found, &g);
+        let manual = LocateReason::ManualMiss { placed: (placed, 1.0) };
+
+        let (panel, origin, line) = fallback_panel(manual, &found, &g);
         assert_eq!(panel, Some(located));
         assert_eq!(origin, Some([located[0], located[1]]));
         assert_eq!(line.as_deref(), Some(expected));
@@ -4610,7 +4938,7 @@ mod tests {
             column_x0: None,
             stage: geometry::DetectStage::TooFewCandidates { needed: 1 },
         });
-        let (_, no_origin, no_line) = fallback_panel(Some((placed, 1.0)), &failed, &g);
+        let (_, no_origin, no_line) = fallback_panel(manual, &failed, &g);
         assert_eq!(no_origin, None);
         assert_eq!(no_line, None);
     }
@@ -7503,6 +7831,7 @@ mod tests {
             panel: None,
             header_guard: None,
             fallback: FallbackBudget::default(),
+            column_trusted_said: None,
             crop_detect_logged: false,
             occlusion: OcclusionRun::default(),
             header_logged: None,
@@ -7512,6 +7841,7 @@ mod tests {
             fitted: None,
             scale_source: ScaleSource::Ocr,
             refit_seen: 0,
+            refit_located: 0,
             geometry_changed: false,
             revision: 0,
         }
