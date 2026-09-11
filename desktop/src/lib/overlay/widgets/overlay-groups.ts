@@ -202,12 +202,15 @@ export function canStartConfigure(open: OpenConfigFlows): boolean {
 /**
  * The geometry line for one widget row.
  *
- * Four answers, because a widget has an unset, width-only (`W wide`),
- * content-sized, or fully-sized state. NO ROW is "Not set" — the widget is
- * wherever the registry ships it. A row with a ZERO size is placed but
+ * Five answers, because a widget has an unset, width-only (`W wide`),
+ * content-sized, fill-default-sized, or fully-sized state. NO ROW is "Not set" —
+ * the widget is wherever the registry ships it. A row with a ZERO size is placed but
  * CONTENT-SIZED, which is what Save writes for a widget the user moved but
  * never resized (`sizeToPersist`); printing that as `0×0` would read as a
- * widget collapsed to nothing. Anything else prints the stored rectangle.
+ * widget collapsed to nothing. Anything else prints the stored rectangle. A
+ * `fill` widget's row without a size the host applies — any row of a
+ * non-resizable one — prints `default size`, because `placementFor` draws it
+ * at the shipped `w × h`.
  *
  * The sized tests mirror `placementFor`'s for the spec that writes each shape:
  * both dimensions for a `resizable: true` widget, a width with a zero height
@@ -219,9 +222,12 @@ export function canStartConfigure(open: OpenConfigFlows): boolean {
  * `WidgetGeometry` is what Rust persists, and no conversion happens on the way
  * to this string.
  */
-export function widgetGeometryText(geometry: WidgetGeometry | undefined): string {
+export function widgetGeometryText(geometry: WidgetGeometry | undefined, spec?: WidgetSpec): string {
 	if (!geometry) return 'Not set';
 	const at = `(${geometry.x}, ${geometry.y})`;
+	if (spec?.fill && !(spec.resizable === true && geometry.width > 0 && geometry.height > 0)) {
+		return `${at} default size`;
+	}
 	if (geometry.width > 0 && geometry.height === 0) {
 		return `${at} ${geometry.width} wide`;
 	}

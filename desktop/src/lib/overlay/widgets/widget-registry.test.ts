@@ -61,6 +61,10 @@ describe('every declared widget', () => {
 		expect(new Set(WIDGETS.map((widget) => widget.id)).size).toBe(WIDGETS.length);
 	});
 
+	it('does not combine fill with width-only resizing', () => {
+		expect(WIDGETS.some((widget) => widget.fill && widget.resizable === 'width')).toBe(false);
+	});
+
 	it.each(WIDGETS.map((widget) => [widget.id, widget] as const))(
 		'%s ships a placement with a real position and size',
 		(_id, widget) => {

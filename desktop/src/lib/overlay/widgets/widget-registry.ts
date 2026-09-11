@@ -63,6 +63,14 @@ export interface WidgetSpec {
 	 */
 	resizable: boolean | 'width';
 	/**
+	 * Whether the content fills the widget box, as a former window's page did.
+	 * The box has an explicit size: with `resizable: true`, the shipped
+	 * `defaults.w × defaults.h` until the user resizes it and the stored size
+	 * after; with `resizable: false`, always the shipped size. Not meaningful
+	 * with `resizable: 'width'`.
+	 */
+	fill?: boolean;
+	/**
 	 * Placed against the GAME rather than by the user, and therefore by the
 	 * module's own geometry: no Configure placement, no persisted rectangle, and
 	 * no config-mode frame. It keeps a Show row in Settings (`overlay-groups.ts`

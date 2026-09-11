@@ -9,11 +9,20 @@
  */
 import { describe, expect, it } from 'vitest';
 import { canStartConfigure, overlayGroups, widgetGeometryText } from './overlay-groups';
-import { anchoredWidgetsFor, placeableWidgetsFor } from './widget-registry';
+import { anchoredWidgetsFor, placeableWidgetsFor, type WidgetSpec } from './widget-registry';
 import { MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
 
 const ALL_GRANTS = { merc: true, temple: true };
 const NO_GRANTS = { merc: false, temple: false };
+const FILL: WidgetSpec = {
+	id: 'test.fill',
+	module: 'test',
+	label: 'Fill',
+	defaults: { x: 40, y: 40, w: 400, h: 200 },
+	resizable: true,
+	fill: true
+};
+const FILL_FIXED: WidgetSpec = { ...FILL, id: 'test.fill-fixed', resizable: false };
 
 describe('the Overlay Positions groups', () => {
 	it('lists Lab, Merc and Temple in that order for a fully granted device', () => {
@@ -147,6 +156,27 @@ describe('a widget row geometry line', () => {
 		expect(widgetGeometryText({ x: 40, y: 40, width: 0, height: 0, visible: true })).toBe(
 			'(40, 40) content-sized'
 		);
+	});
+
+	it('calls a zero-size fill row its shipped size', () => {
+		expect(
+			widgetGeometryText({ x: 40, y: 40, width: 0, height: 0, visible: true }, FILL)
+		).toBe('(40, 40) default size');
+	});
+
+	it('keeps a zero-size non-fill row content-sized when the spec is passed', () => {
+		expect(
+			widgetGeometryText(
+				{ x: 40, y: 40, width: 0, height: 0, visible: true },
+				{ ...FILL, fill: false }
+			)
+		).toBe('(40, 40) content-sized');
+	});
+
+	it('calls a stored-size non-resizable fill row its shipped size', () => {
+		expect(
+			widgetGeometryText({ x: 40, y: 40, width: 300, height: 200, visible: true }, FILL_FIXED)
+		).toBe('(40, 40) default size');
 	});
 
 	it('calls a row with only a height content-sized, matching what the host applies', () => {
