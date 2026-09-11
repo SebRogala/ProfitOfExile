@@ -165,8 +165,8 @@ Nine residuals the rules above produce, all ACCEPTED with their answer named (PO
 decisions 1, 3 and 4 of the plan review; the WI-1 rows re-derived 2026-09-07, the failing-capture
 residual added by WI-1's fix round the same day, and the retries-owed residual by the delivery
 audit that found the list short of it, also 2026-09-07; the one-anchor-miss residual replaced
-2026-09-11 by POE-275's two-miss rule). **Ten since 2026-09-11**: POE-275 WI-2 adds the
-start-up-probe residual, the last bullet:
+2026-09-11 by POE-275's two-miss rule). **Eleven since 2026-09-11**: POE-275 adds the
+start-up-probe residual (WI-2) and the null-sweep-cap residual (batch audit), the last two bullets:
 
 - **A START with no incursion run** keeps the arm and the notice up until the zone changes, Alva
   speaks again, or the player opens the sheet and closes it — which under WI-1 is a third exit
@@ -261,6 +261,16 @@ start-up-probe residual, the last bullet:
   alike. The answer is **Re-arm**: its 60 s grace covers the three misses and the sweep. A screen
   whose seed (or remembered anchor) is right is not affected — its probe tick is a placed recheck
   at that origin, which sees the open sheet and reads it.
+- **A sheet opened after a key's null sweeps are spent is not found until Re-arm** (POE-275
+  batch audit, 2026-09-11). On a screen with no slice, or a seed that misses the sheet, only a
+  sweep can find it, and `NULL_SWEEP_CAP` = 10 sweeps per `(temple_epoch, temple_rearm)` key are
+  spent at about one per 7 s — three misses (~2 s at 650 ms) plus one sweep — so about 70 s after
+  the start line on the 5.3 s release-container figure, and about 5 min on the PC's debug build
+  (~30 s per sweep). The start → portal wait is unbounded (the mining below: over two minutes in 9
+  of 342, one 22 min), so a player who opens the sheet after that sees no board. Accepted as the
+  bound on what a never-placeable screen costs one incursion; the answer is **Re-arm**, which
+  starts a fresh key with a whole cap. A screen whose seed is right is not affected: its placed
+  recheck sees the sheet whenever it opens.
 
 ## Alva's lines, as measured (Client.txt)
 
