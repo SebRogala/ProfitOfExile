@@ -1209,7 +1209,7 @@ touching the named path.
      once that tick's capture confirms the swept origin: expect ~2 s plus one
      sweep (~5 s release) plus one tick, and ONE line before
      `Temple: layout panel found …`:
-     `Temple: cold sweep (NullSlice, attempt 1 of 10) at W×H — N ms, found at
+     `Temple: cold sweep (NullSlice, attempt 1 of 10) at WxH — N ms, found at
      (x,y) scale s — confirmed on the current frame; release build` (`debug
      build` on a dev build, where the sweep is ~30 s). If the panel is opened
      late, earlier lines ending `found no layout panel` are the cadence working:
@@ -1735,7 +1735,7 @@ touching the named path.
   successful read. A panel-not-open miss has the existing no-panel path.
   **Amended 2026-09-11 (POE-275):** an Alva-announced miss buys no sweep (since
   05a51a8); only a Re-arm miss does, once per key, off the loop, and it writes
-  ONE `Temple: cold sweep (PlacedMiss) at W×H — N ms, …; release build` line
+  ONE `Temple: cold sweep (PlacedMiss) at WxH — N ms, …; release build` line
   when it ends. To exercise the contradiction line, press Re-arm with the
   placement wrong; the sweep's find is read only after the next capture confirms
   it, and the contradiction and geometry-notice lines follow that line. On a

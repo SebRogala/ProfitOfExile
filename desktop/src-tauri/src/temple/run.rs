@@ -311,7 +311,11 @@ const NULL_SWEEP_EVERY: u8 = 3;
 ///
 /// Ten bounds what an unplaceable screen costs one incursion: ten sweeps
 /// (53 s of one core in the release container) spread over at least
-/// 10 × 3 ticks of recheck between them. Provisional — see [`NULL_SWEEP_EVERY`].
+/// 10 × 3 ticks of recheck between them. The cost of that bound: a sheet opened
+/// after the cap is spent — about 70 s after the start line on the release
+/// figure, about 5 min on the PC's debug build, while the portal wait is
+/// unbounded — is not found until Re-arm starts a fresh key
+/// (docs/TEMPLE-LIFECYCLE.md's residual). Provisional — see [`NULL_SWEEP_EVERY`].
 const NULL_SWEEP_CAP: u8 = 10;
 
 /// Spawn the capture loop. Called through `MODULES` — see `modules.rs`.
