@@ -589,11 +589,9 @@ export type StripSide = 'left' | 'right';
  * AWAY from the panel, so the panel sits against the outer edge and the empty
  * remainder of the window faces the screen centre where the game is.
  *
- * Decided by the WINDOW'S CENTRE against the SCREEN'S centre, in the physical
- * pixels both are measured in — Tauri's `outerPosition`/`outerSize` for the
- * window, the SSOT screen slice for the display the game is on, with its
- * origin subtracted so a second monitor to the right of the primary does not
- * read as "far right" of the primary. Left when there is no screen measured
+ * Decided by the BOX's centre against the SCREEN's centre, in one unit for both
+ * — since POE-232 the caller passes the widget box's CSS rect and the window's
+ * CSS width (the window is the monitor, origin 0). Left when there is no screen measured
  * yet: the panel used to be left-aligned always, and a strip that jumped edges
  * when a measurement arrived would be worse than one that starts where it
  * always has. (Owner, 2026-09-07: "that big gap to the right … auto-detect

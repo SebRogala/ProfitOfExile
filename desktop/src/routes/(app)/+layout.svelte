@@ -22,7 +22,7 @@
 		TEMPLE_WINDOW_LABEL
 	} from '$lib/overlay/manager';
 	import { clickthroughReport } from '$lib/overlay/clickthrough-report';
-	import { moduleOverlayDriver, moduleOverlayWanted } from '$lib/overlay/module-lifecycle';
+	import { moduleOverlayWanted } from '$lib/overlay/module-lifecycle';
 	import { createWidgetWindow, type WidgetWindow } from '$lib/overlay/widget-window';
 	import { type GameMonitorInfo } from '$lib/overlay/monitor-choice';
 	import {
@@ -32,7 +32,6 @@
 		widgetConfigStart,
 		type WidgetConfigSessions
 	} from '$lib/overlay/widgets/widget-config-session';
-	import { MERC_OVERLAY_DEFAULTS, physicalGeometry } from '$lib/overlay/overlay-defaults';
 	import LabPage from '$lib/pages/LabPage.svelte';
 	import SettingsPage from '$lib/pages/SettingsPage.svelte';
 	import MercenariesPage from '$lib/pages/MercenariesPage.svelte';
@@ -491,8 +490,27 @@
 		configLive: () => widgetConfigLive(widgetConfigSessions, TEMPLE_WINDOW_LABEL),
 		debug: () => debugMode
 	});
-	/** Every monitor-sized widget window this layout builds. The later work items append to it. */
-	const WIDGET_WINDOWS: WidgetWindow[] = [templeWindow];
+
+	function mercOverlayWanted(): boolean {
+		return moduleOverlayWanted(
+			ssot.modules[MERCENARY_MODULE_ID],
+			widgetConfigLive(widgetConfigSessions, MERCENARY_WINDOW_LABEL),
+			mercGranted
+		);
+	}
+
+	// Grab exclusion is Rust-side and BY LABEL (`capture.rs` `EXCLUDED_WHILE_GRABBING`),
+	// so this window must keep the `mercenary` label.
+	const mercenaryWindow = createWidgetWindow({
+		label: MERCENARY_WINDOW_LABEL,
+		moduleId: MERCENARY_MODULE_ID,
+		wanted: mercOverlayWanted,
+		configLive: () => widgetConfigLive(widgetConfigSessions, MERCENARY_WINDOW_LABEL),
+		// The merc route has no debug surface; the window was never built with `?debug`.
+		debug: () => false
+	});
+	/** Every monitor-sized widget window this layout builds. */
+	const WIDGET_WINDOWS: WidgetWindow[] = [templeWindow, mercenaryWindow];
 
 	// Window-scoped, because Rust sends this with `emit_to("main")`.
 	getCurrentWebviewWindow()
@@ -538,6 +556,13 @@
 		templeWindow.driver.setDesired(templeOverlayWanted());
 	});
 
+	$effect(() => {
+		const enabled = ssot.modules[MERCENARY_MODULE_ID];
+		const configuring = widgetConfigLive(widgetConfigSessions, MERCENARY_WINDOW_LABEL);
+		if (enabled === undefined && !configuring && !mercenaryWindow.driver.built()) return;
+		mercenaryWindow.driver.setDesired(mercOverlayWanted());
+	});
+
 	// --- Widget config mode (POE-226) ---
 	//
 	// Settings cannot open config mode itself: the three steps have to happen in
@@ -558,8 +583,8 @@
 	// silent when they are wrong.
 
 	/**
-	 * The overlay window behind each module that has widgets. The temple is the
-	 * only one until the lab windows and the merc strip migrate (POE-225 D1).
+	 * The overlay window behind each module that has widgets. Temple and Merc
+	 * both use the monitor-sized widget engine (POE-225 D1, POE-232).
 	 *
 	 * Keyed by the WINDOW LABEL, because that is what a `WidgetSpec.module` is
 	 * and therefore what Settings sends — the distinction `manager.ts` keeps
@@ -878,244 +903,6 @@
 		if (module) void endWidgetConfig(module);
 	}).catch(e => console.warn('[widget-config] listen for end failed:', e));
 
-	// --- Merc verdict overlay (POE-199) ---
-	//
-	// The temple overlay's sibling: display-only, coupled to the `mercenary`
-	// MODULE flag rather than to an overlay toggle, and driven by the same
-	// lifecycle. It differs in ONE thing — its geometry is persisted
-	// (`mercenary_overlay` in Rust settings), because the strip is placed by the
-	// user in Settings → Overlay Positions and has to come back where they left
-	// it. That is guide guard 5, and it is met: `persist_overlay_settings` copies
-	// the field and `test_overlay_settings_survive_persist_cycle` covers it.
-	//
-	// The window is NEVER interactive. The capture loop reads the screen only
-	// while the game is the RAW foreground window (`game_in_foreground`), while
-	// this window is shown and hidden on the HELD `game_focused` — two reads
-	// that are deliberately never unified (see the focus poller in `lib.rs`). A
-	// click landing here would take focus, drop the raw flag, and stop the loop
-	// that produces the verdict on screen. Hence it declares no hot rects: it
-	// registers with the mouse hook (so WebView2 cannot strip its
-	// WS_EX_TRANSPARENT unrepaired) and claims not one pixel of the click.
-	// The shipped placement lives in `$lib/overlay/overlay-defaults` because the
-	// Settings position flow builds a config window from the SAME numbers and
-	// persists whatever it is saved at. Two copies meant a Save from Settings
-	// could write the older size back over the newer default forever.
-	//
-	// They are CSS pixels; everything below this line is physical. See
-	// `physicalGeometry`.
-
-	/**
-	 * Guard 6's channel — see `widget-window.ts`'s `log`.
-	 *
-	 * This prefix is the ONLY one a line carries: the driver deliberately does
-	 * not add the window label on top of it (`[merc-overlay] mercenary: …` says
-	 * the same word twice), and the label has to live here rather than there
-	 * because the lines below — a failed `scaleFactor`, a half-built window —
-	 * are this file's, not the driver's, and would otherwise be unattributable
-	 * in a log with two overlays failing.
-	 */
-	function logMerc(msg: string): void {
-		console.warn(`[overlay] merc: ${msg}`);
-		invoke('app_log_from_frontend', { msg: `[merc-overlay] ${msg}` })
-			.catch(e => console.error('[overlay] merc: app log unreachable:', e));
-	}
-
-	/**
-	 * The persisted geometry, or the shipped placement when nothing is stored.
-	 *
-	 * PHYSICAL pixels either way, which is what the two units in play make
-	 * non-obvious: persisted settings are already physical and are returned
-	 * untouched, while the shipped defaults are reasoned in CSS pixels (a height
-	 * budget is a sum of font sizes) and are converted here. Shipping the CSS
-	 * figure as a physical one made the strip a third short of its own budget on
-	 * a 150 %-scaled display — the machines where the clipping mattered most.
-	 *
-	 * The fields mix per-field, deliberately: a user who has saved a position
-	 * but whose height Rust never stored gets their x/y and the scaled default
-	 * height, rather than one wholesale choice between the two sources.
-	 */
-	async function mercOverlayGeometry(): Promise<{ x: number; y: number; w: number; h: number }> {
-		const settings = await invoke<any>('get_mercenary_overlay_settings').catch(e => {
-			logMerc(`settings load failed, using the default placement: ${e}`);
-			return null;
-		});
-		const sf = await getCurrentWebviewWindow()
-			.scaleFactor()
-			.catch((e: any) => {
-				logMerc(`scaleFactor failed while sizing the default placement, using 1: ${e}`);
-				return 1;
-			});
-		const shipped = physicalGeometry(MERC_OVERLAY_DEFAULTS, sf);
-		return {
-			x: settings?.x ?? shipped.x,
-			y: settings?.y ?? shipped.y,
-			w: settings?.width ?? shipped.w,
-			h: settings?.height ?? shipped.h,
-		};
-	}
-
-	/**
-	 * Build the window at its persisted geometry. Resolves true only once it is
-	 * positioned, sized and click-through — a half-built one is torn down.
-	 */
-	async function createMercenaryOverlay(): Promise<boolean> {
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
-
-		await destroyMercenaryWindow();
-
-		const geometry = await mercOverlayGeometry();
-		// Constructor dimensions are LOGICAL; the persisted ones are physical.
-		const sf = await getCurrentWebviewWindow()
-			.scaleFactor()
-			.catch((e: any) => {
-				logMerc(`scaleFactor failed, using 1: ${e}`);
-				return 1;
-			});
-		const win = new WebviewWindow(MERCENARY_WINDOW_LABEL, {
-			url: `/overlay/${MERCENARY_WINDOW_LABEL}`,
-			transparent: true,
-			decorations: false,
-			alwaysOnTop: true,
-			// Nothing drags or resizes this window directly — it is click-through,
-			// so a resize edge would never receive the mouse. The size is changed
-			// through the Settings position overlay, which applies it with
-			// `move_overlay` (guide guard 4: move, never recreate).
-			resizable: false,
-			shadow: false,
-			skipTaskbar: true,
-			// NOT `contentProtected`. Held permanently, the exclude-from-capture
-			// affinity also removed the strip from the player's own screenshots
-			// (smoke test 2026-09-07). Rust holds it for the duration of each
-			// grab instead — `capture.rs`, `EXCLUDED_WHILE_GRABBING`.
-			// Built without stealing the foreground. Tauri focuses a new window
-			// by default, and this one has teeth: activation makes the game stop
-			// being the foreground window, which drops `game_in_foreground` and
-			// stops the capture loop — the same failure the click-through note
-			// below describes, on the creation path rather than on a click.
-			focus: false,
-			width: Math.round(geometry.w / sf),
-			height: Math.round(geometry.h / sf),
-		});
-
-		return await new Promise<boolean>((resolve) => {
-			let settled = false;
-			const finish = (ok: boolean) => {
-				if (settled) return;
-				settled = true;
-				resolve(ok);
-			};
-
-			win.once('tauri://created', async () => {
-				try {
-					await win.setPosition(new PhysicalPosition(geometry.x, geometry.y));
-					await win.setSize(new PhysicalSize(geometry.w, geometry.h));
-					// Display-only: it declares no hot rects, like
-					// compass/pathstrip/timer and the temple. Do NOT copy the
-					// comparator's right-edge zone — a focused own-window stops
-					// the capture loop.
-					//
-					// AWAITED, and it is the gate this creation turns on. The
-					// command spends ~1 s waiting for the WebView2 HWND and then
-					// reports whether the window is actually click-through; it
-					// used to return before doing any of that, so the catch below
-					// could not observe a failure. For this overlay a window that
-					// stays interactive has teeth beyond a stray click: a click
-					// landing on it takes focus, drops `game_in_foreground`, and
-					// stops the capture loop producing the verdict. So a failed
-					// setup destroys it and reports the creation failed, which is
-					// what `module-lifecycle.ts`'s bounded retry acts on.
-					// `focus: false` on the constructor covers the other half:
-					// the window does not ACTIVATE itself on creation.
-					await invoke('set_overlay_clickthrough', {
-						label: MERCENARY_WINDOW_LABEL,
-					});
-				} catch (e) {
-					// Transparent, always-on-top and NOT click-through eats clicks
-					// over the game with nothing visible to explain why. Half-built
-					// is worse than absent.
-					logMerc(`setup failed, destroying the half-built window: ${e}`);
-					await destroyMercenaryWindow();
-					finish(false);
-					return;
-				}
-				// Soft step: the focus poller only acts on transitions, so a window
-				// built while PoE is not in the foreground would sit on the desktop
-				// until the next alt-tab. Failing this leaves a visible window, not
-				// a broken one — logged, not fatal.
-				try {
-					const status = await invoke<any>('get_status');
-					if (!status?.game_focused) await win.hide();
-				} catch (e) {
-					logMerc(`initial focus check failed, window left visible: ${e}`);
-				}
-				finish(true);
-			}).catch(e => {
-				logMerc(`could not listen for tauri://created: ${e}`);
-				finish(false);
-			});
-
-			win.once('tauri://error', (e: any) => {
-				logMerc(`creation failed: ${JSON.stringify(e?.payload ?? e)}`);
-				finish(false);
-			}).catch(e => {
-				logMerc(`could not listen for tauri://error: ${e}`);
-				finish(false);
-			});
-		});
-	}
-
-	/**
-	 * Tear the window down. Returns whether the label is gone afterwards.
-	 *
-	 * It reads NO geometry on the way out. **`mercenary_overlay` in settings is
-	 * the only writer of this overlay's geometry**, and the Settings position
-	 * flow already writes it — Save persists the config window's rect and Cancel
-	 * restores the pre-configure one, both BEFORE `reclaimMouse()` emits the
-	 * move — so there is no live placement that settings do not already hold.
-	 * A save here would be worse than redundant: this function is also the
-	 * pre-create sweep and the half-built rollback, so a creation that timed out
-	 * and retried would persist the constructor's own placement over the
-	 * position the user chose.
-	 */
-	async function destroyMercenaryWindow(): Promise<boolean> {
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		for (let i = 0; i < 5; i++) {
-			const win = await WebviewWindow.getByLabel(MERCENARY_WINDOW_LABEL).catch(e => {
-				logMerc(`lookup during destroy failed: ${e}`);
-				return null;
-			});
-			if (!win) return true;
-			// Both are attempted: `close` is the polite path and `destroy` the one
-			// that actually frees the label. Tauri's cleanup is async, hence the
-			// re-check rather than a single call.
-			try { await win.close(); } catch (e) { logMerc(`close attempt ${i + 1} failed: ${e}`); }
-			try { await win.destroy(); } catch (e) { logMerc(`destroy attempt ${i + 1} failed: ${e}`); }
-			await new Promise(r => setTimeout(r, 100));
-		}
-		logMerc('window still present after 5 close/destroy rounds — giving the label up');
-		return false;
-	}
-
-	const mercenaryOverlay = moduleOverlayDriver(
-		{ label: MERCENARY_WINDOW_LABEL, moduleId: MERCENARY_MODULE_ID },
-		{ create: createMercenaryOverlay, destroy: destroyMercenaryWindow, log: logMerc }
-	);
-
-	$effect(() => {
-		const enabled = ssot.modules[MERCENARY_MODULE_ID];
-		if (enabled === undefined) return;
-		// The feature gate is ANDed in rather than short-circuiting the effect:
-		// a device that loses the grant with the module flag still set must have
-		// the window taken down, not left standing (POE-203).
-		//
-		// This takes the WINDOW down, not the module: the Rust merc module keeps
-		// running (and scanning) on its own flag, because the gate is hiding and
-		// not securing. Pushing the revocation into Rust is recorded as a
-		// follow-up on POE-203, not done here.
-		mercenaryOverlay.setDesired(enabled && mercGranted);
-	});
-
 	// --- Lab overlays category toggle ---
 
 	async function toggleLabOverlays() {
@@ -1249,15 +1036,6 @@
 					await invoke('move_overlay', { label: 'timer', x: timerSettings.x, y: timerSettings.y, w: timerSettings.width ?? 160, h: timerSettings.height ?? 50 })
 						.catch(e => console.warn('[overlay] timer move failed:', e));
 				}
-			}
-			// The merc strip is here for the same reason as the four above: the
-			// config window's Cancel restores the pre-configure geometry into
-			// settings, and the live window has to be moved back onto it —
-			// with `move_overlay`, never a destroy/recreate (guard 4).
-			if (mercenaryOverlay.built()) {
-				const mercSettings = await mercOverlayGeometry();
-				await invoke('move_overlay', { label: MERCENARY_WINDOW_LABEL, x: mercSettings.x, y: mercSettings.y, w: mercSettings.w, h: mercSettings.h })
-					.catch(e => logMerc(`move after config failed: ${e}`));
 			}
 		});
 		configOverlayCleanup = unlisten;

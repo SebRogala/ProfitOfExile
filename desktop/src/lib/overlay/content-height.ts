@@ -1,6 +1,9 @@
 /**
  * Deciding when a content-driven overlay should ask to be resized.
  *
+ * No caller since POE-232 (retained for the cleanup WI); it served the merc
+ * strip's former window refit:
+ *
  * The merc verdict strip has no persisted height (POE-199, owner decision
  * 2026-08-25): a shipped number is wrong on every machine that scales its
  * display, and wrong again whenever the strip draws a different number of rows.

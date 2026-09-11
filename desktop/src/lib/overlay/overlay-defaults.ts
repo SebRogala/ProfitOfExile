@@ -1,27 +1,16 @@
 /**
  * Shipped overlay geometry, in ONE place, in CSS pixels.
  *
- * Two windows read the merc strip's default placement — the owning layout
- * (`routes/(app)/+layout.svelte`), which builds the real overlay, and the
- * Settings position flow (`lib/pages/SettingsPage.svelte`), which builds the
- * draggable config window and PERSISTS whatever it is saved at. When the two
- * disagreed, the config window opened at the older size and a Save wrote that
- * size back over the newer default forever. Found in review, 2026-08-25: the
- * layout had been raised to fit the POE-199 status strip and `OVERLAY_CONFIGS`
- * still carried the pre-strip height.
+ * The merc widget registry reads this placement and the widget host persists
+ * the user's result in `Settings.widgets`. Keeping the numbers here gives the
+ * widget one source for its shipped position and width.
  *
- * So the numbers live here and neither consumer may spell one out. There is a
- * test for that (`overlay-defaults.test.ts`) which reads both sources.
+ * # Height is not a setting for the merc widget
  *
- * # Height is not here for the merc strip
- *
- * `h` below is a CONSTRUCTOR seed, not a setting. The merc verdict overlay
- * sizes itself to its own rendered content (`lib/overlay/content-height.ts` and
- * Rust's `fit_overlay_height`), because a shipped height is wrong on every
- * machine whose display scales and wrong again whenever the strip draws a
- * different number of rows. The seed only decides what the window looks like
- * for the frame between creation and first paint, after which the content
- * replaces it. Do not reason a height budget into it and do not persist it.
+ * `h` below is a first-frame and config seed, not a setting. The widget host
+ * sizes the merc verdict to its rendered content, because a shipped height is
+ * wrong whenever the widget draws a different number of rows. Do not reason a
+ * height budget into it and do not persist it.
  *
  * # The unit, and why there is a conversion
  *
@@ -48,13 +37,13 @@ export interface OverlayDefaultGeometry {
 /**
  * The merc verdict strip (POE-199).
  *
- * `x`, `y` and `w` are real defaults: the user places and widens the strip in
+ * `x`, `y` and `w` are real defaults: the user places and widens the widget in
  * Settings → Overlay Positions and the result is persisted in
- * `mercenary_overlay`. These apply only until they have.
+ * `Settings.widgets`. These apply only until they have.
  *
- * `h` is the constructor seed described above — one status line's worth, so a
- * window that somehow never gets a content measurement is a thin strip rather
- * than a large empty box over the game. It is replaced on first paint.
+ * `h` is the first-frame/config seed described above — one status line's worth,
+ * so a widget that somehow never gets a content measurement is a thin strip
+ * rather than a large empty box over the game.
  */
 export const MERC_OVERLAY_DEFAULTS: OverlayDefaultGeometry = {
 	x: 40,

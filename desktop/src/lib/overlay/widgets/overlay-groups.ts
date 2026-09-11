@@ -14,12 +14,12 @@
  * feature (a control that places an overlay the user can never open), and a
  * geometry line that says "Not set" for a widget that is in fact placed.
  *
- * The five window rows are carried through unchanged, names included: they key
- * `OVERLAY_CONFIGS` and the per-row state records in the page, and their
- * Configure flow (`overlay-config-start` / `reclaimMouse`) is untouched by this
- * file. All this adds is which heading each one sits under.
+ * The four remaining window rows are carried through unchanged, names included:
+ * they key `OVERLAY_CONFIGS` and the per-row state records in the page, and
+ * their Configure flow (`overlay-config-start` / `reclaimMouse`) is untouched
+ * by this file. All this adds is which heading each one sits under.
  */
-import { TEMPLE_WINDOW_LABEL } from '../manager';
+import { MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
 import type { WidgetGeometry } from './widget-geometry';
 import { anchoredWidgetsFor, placeableWidgetsFor, type WidgetSpec } from './widget-registry';
 
@@ -37,7 +37,7 @@ export interface OverlayGroupGrants {
 	temple: boolean;
 }
 
-/** One of the five overlays Settings places by dragging a config COPY of the
+/** One of the four remaining overlays Settings places by dragging a config COPY of the
  *  real window. Its `name` keys `OVERLAY_CONFIGS` and the page's per-row state. */
 export interface OverlayWindowRow {
 	name: string;
@@ -98,7 +98,7 @@ interface GroupSpec {
  * The three groups, in display order.
  *
  * Lab is the four lab overlays, unchanged and ungated. Merc is the verdict
- * strip: its row belongs to the merc MODULE, and a device without the `merc`
+ * widget: its row belongs to the merc MODULE, and a device without the `merc`
  * feature never sees that module (POE-203), so the whole group is left out
  * rather than disabled — the same reason the flat list used to drop that one
  * row. Temple has no window row at all: its overlay is the monitor and has no
@@ -122,8 +122,8 @@ const GROUPS: readonly GroupSpec[] = [
 		id: 'merc',
 		heading: 'Merc',
 		grant: 'merc',
-		module: null,
-		windows: [{ name: 'mercenary', label: 'Merc Verdict' }]
+		module: MERCENARY_WINDOW_LABEL,
+		windows: []
 	},
 	{
 		id: 'temple',
@@ -215,7 +215,7 @@ export function canStartConfigure(open: OpenConfigFlows): boolean {
  * host actually applies as a size, or the row describes a widget the player is
  * not looking at.
  *
- * The numbers are PHYSICAL pixels, like the five window rows above them —
+ * The numbers are PHYSICAL pixels, like the four window rows above them —
  * `WidgetGeometry` is what Rust persists, and no conversion happens on the way
  * to this string.
  */

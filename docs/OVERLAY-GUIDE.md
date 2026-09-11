@@ -59,7 +59,7 @@ window's own page:
   `desktop/src/lib/overlay/hot-rects.ts`). A click inside one is consumed and
   re-emitted to that window as `overlay-click {label, x, y}`; everything else
   reaches the game. Declaring nothing — which is what compass, path-strip,
-  timer and the merc strip do — makes a window display-only. Listen with
+  timer and the mercenary widget do — makes a window display-only. Listen with
   `getCurrentWebviewWindow().listen('overlay-click', …)`; a bare `listen()` from
   `@tauri-apps/api/event` registers for the `Any` target and a labelled
   `emit_to` does not match it (tauri 2.10.3 `manager/mod.rs:602-628`).
@@ -139,10 +139,11 @@ arrange positions with the module off (the ordering contract below), which is
 the one thing that raises such a window without any module work running. They
 still appear in the Rust focus poller's game-focus show/hide list and in
 `set_debug_mode`'s force-show branch. Persisted geometry is independent of the
-coupling: the merc strip has `mercenary_overlay`, and the temple window has
-none because it IS the game monitor (below).
+coupling: the merc widget's placement is a `Settings.widgets` row like the
+temple's, and neither monitor-sized window has a persisted rect of its own
+(below).
 
-The merc strip's **on-screen lifecycle** (owner decision, 2026-09-01) is: shown
+The merc widget's **on-screen lifecycle** (owner decision, 2026-09-01) is: shown
 for as long as a recruit window is being worked — `scanning` (the burst after
 a voice line or Scan now), `live` (reading), `done` (read paused) — and for
 `LINGER_MS` (4 s) after the module goes `idle`, whether that idle is "window
@@ -151,40 +152,13 @@ and the whole overlay disappears. The gate is `overlayShown` in
 `desktop/src/lib/mercenaries/overlay-view.ts`; the route owns only the clock.
 The full contract is in `desktop/src/lib/mercenaries/README.md`.
 
-The merc strip's **height follows content; width and position are persisted**
-(owner decision, 2026-08-25). Its route observes its own panel with a
-`ResizeObserver` and calls the Rust `fit_overlay_height` command, which converts
-the measured CSS height with the WINDOW's own `scale_factor()`, clamps it to the
-monitor work area so the strip can never grow over the taskbar, and re-applies
-the position along with the size — a resize can disturb position, so the guard
-belongs on every call and not just on startup. Width and position are never
-touched by that path. `mercenary_overlay.height` is still written (Settings
-saves the whole rect) and is then ignored by the real window, which refits on
-first paint; the constructor seed in `desktop/src/lib/overlay/overlay-defaults.ts`
-only decides what that first frame looks like. A shipped height was wrong twice
-over: it clipped the last row, and it was reasoned in CSS pixels while being
-applied as physical ones, so it clipped worse the more the display scaled.
-Settings → Overlay Positions configures the merc row for **position and width
-only**; its config window is given the live overlay's height when one is running
-and the seed when the module is off, and that height is LOCKED with
-`setSizeConstraints` (width stays draggable — Tauri's `resizable` flag has no
-per-axis form, and the guide detail line ellipsises, so width is a real
-setting).
+The merc widget is `resizable: 'width'` (owner decision, 2026-08-25): the host
+sizes its height to content, while config mode offers left/right edges only.
+The widget's width and position are persisted in `Settings.widgets`; its height
+is not a setting and no separate config window locks it. The monitor-sized
+window remains the canvas against which the widget is placed.
 
-`fit_overlay_height` re-asserts click-through after every resize —
-`set_ignore_cursor_events(true)` plus `set_noactivate` on Windows, both
-idempotent. This is not belt-and-braces: WebView2 strips `WS_EX_TRANSPARENT`
-when it creates or updates child windows, and the only thing that repairs it is
-the `WH_MOUSE_LL` hook. The hook now repairs every REGISTERED window, the merc
-strip included — before the registry it tracked one HWND, the comparator's, and
-the strip was simply unprotected. The re-assert stays anyway, because the repair
-is driven by mouse events over the window: a resize that rebuilt WebView2's
-children would otherwise leave the strip opaque to the mouse until the cursor
-happened to cross it. While it is opaque, clicks stop reaching the game, and a
-click landing on the strip takes focus, drops `game_in_foreground` and stops the
-capture loop.
-
-For the merc overlay, click-through is a correctness requirement, not a
+For the merc widget, click-through is a correctness requirement, not a
 preference. The capture loop reads the screen only while the game is the RAW
 foreground window (`AppState.game_in_foreground`), while overlay visibility
 follows `game_focused`, which is HELD over our own windows. The two reads are
@@ -243,16 +217,16 @@ are in `routes/(app)/+layout.svelte`:
 
 - The two MODULE-COUPLED windows (temple, merc) destroy the half-built window
   and report the creation failed, which `module-lifecycle.ts` retries with its
-  bounded budget. Half-built is worse than absent here — the temple window is
-  the size of the monitor, so one that never became click-through swallows
-  every click on the screen, and a click on the merc strip also takes focus,
+  bounded budget. Half-built is worse than absent here — both windows are the
+  size of the game monitor, so one that never became click-through swallows
+  every click on the screen, and a click on the merc window also takes focus,
   drops `game_in_foreground` and stops the capture loop.
 - The four LAB overlays (comparator, compass, path strip, timer) REPORT and
   keep the window: they are small, user-positioned rectangles the user just
   switched on, and destroying one would read as a toggle that does nothing.
-  Note the split is by OWNER, not by size — the merc strip is small too and is
-  in the group above, because it is coupled to a module flag and a click on it
-  stops the capture loop. Their call is deliberately not
+  Note the split is by OWNER: both module-coupled windows are monitor-sized
+  widget hosts, coupled to a module flag, and a click on the merc one stops the
+  capture loop. Their call is deliberately not
   awaited before the "hide if the game is not focused" step either — that hide
   must not wait a second on a window the user is not looking at — so the
   failure arrives on the promise's `catch`, in the app log as well as the
@@ -267,8 +241,9 @@ that did.
 ## Widget overlays
 
 A module may instead open ONE fullscreen, click-through window over the game's
-monitor and place small panels — WIDGETS — inside it. The temple is the first
-(POE-225); the lab windows and the merc strip are not migrated.
+monitor and place small panels — WIDGETS — inside it. The temple and mercenary
+are module-coupled widget windows (POE-225, POE-232); the lab windows are not
+migrated.
 
 - The window is the GAME monitor (POE-237). `routes/(app)/+layout.svelte` asks
   Rust's `get_game_monitor` — which the focus poller answers from the PoE
@@ -339,7 +314,7 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   is built on it, `capture::capture_screen` grabs it, and `ssot.screen` carries
   its id and origin) — so a user-placed widget and a game-anchored one need no
   conversion between them beyond the window's own scale factor.
-- **The shipped widget list.** Three, all the temple's:
+- **The shipped widget list.** Four: three temple widgets and the Merc verdict:
   `temple.offers` — the OFFER BOXES (POE-249), `anchored`, one box per architect
   block on the side panel in the panel's OWN order (box `i` mirrors `offers[i]`,
   so "upper = the upgrade" is the common case and not a rule), stacked in the
@@ -368,6 +343,9 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   (830, 16) 260×40 on a 1920-wide host, which is measured clear of the panel's
   OCR crop rather than eye-level. It is the only surface that exists before
   anything has been read, and it is gone the moment there is a board.
+  `mercenary.verdict` — the MERC VERDICT widget, user-placed and persisted in
+  `Settings.widgets`, with its height following content and its width offered
+  by `resizable: 'width'`.
   **Faint is the alternative** is one rule across the temple's widgets: the
   conditional door, the unchosen kill and the offer box the advisor did not pick
   are all drawn and all dimmed, so everything at full strength is a thing to do
@@ -388,7 +366,7 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   WIDGET only**: without it the seconds between the sheet opening and the
   verdict looked the same as a broken read. While the status is `reading` the
   widget draws one muted line with a beating dot at the foot of its column —
-  the merc strip's status-line style — alone in its frame on an incursion's
+  the merc widget's status-line style — alone in its frame on an incursion's
   first read (no advice, no room yet), and under the previous room on a
   re-read, which stays drawn until the new result replaces it
   (`view.ts::doorWidget`). A reopen that answers `Reshown` never passes
@@ -938,23 +916,22 @@ touching the named path.
   layout's reset narrowed the comparator table from 582 px to 560): with the
   comparator overlay open on a gem, check that the table is as wide as its saved
   window and that no column is clipped. `routes/overlay/+layout.svelte` is loaded
-  by EVERY overlay window, and the five that predate the widget engine are laid
+  by EVERY overlay window, and the four lab windows that predate the widget engine are laid
   out under the default `content-box` — a box-model declaration added there
   reflows all of them silently, with no gate that can see it. Anything the widget
   host needs belongs in `WidgetHost.svelte`, which is where `border-box` now is.
-- **Merc strip, after a row-count change** (the content-driven resize path): let
-  the strip redraw at a different height — open a recruit window with a
-  different number of rows — then, with the read still running, sweep the mouse
-  across the strip and left-click on it. The click must reach the game and the
-  module status must stay `live`/`scanning`. A click that selects something in
-  our window instead, or a status that drops to `idle`, means the resize lost
-  `WS_EX_TRANSPARENT` and the re-assert in `fit_overlay_height` is not working.
-  A retire no longer serves as the redraw here: it leaves the strip on screen
-  for only the 4 s linger, and `idle` throughout it.
-- **Merc strip, first paint**: starting the module must not flash a large empty
-  panel. The constructor seed is one line tall and the content replaces it. The
-  waiting line shows for 4 s after the start and then the strip clears; a strip
-  still showing "waiting for a mercenary" a minute later means the idle linger
+- **Merc widget, after a row-count change**: let the widget redraw at a
+  different height — open a recruit window with a different number of rows —
+  then confirm the verdict and status remain visible, with no clipped last row.
+  Enter widget config and set a width, then repeat with a different row count:
+  the panel must stay within the widget box and hug the edge selected by its
+  side logic. A retire leaves the widget on screen for only the 4 s linger, and
+  `idle` throughout it.
+- **Merc widget, first paint**: starting the module must not flash a large empty
+  panel. The host draws the content-sized widget only when `overlayShown` says
+  it is shown. The waiting line shows for 4 s after the start and then the
+  widget clears; a widget still showing "waiting for a mercenary" a minute
+  later means the idle linger
   (`overlayShown` / `lingerAdvance`) is not being advanced by the route.
 - **Merc header, across re-detects** (added after the 2026-08-25 smoke, where
   the header blinked between the mercenary's name and its class every two
@@ -964,7 +941,7 @@ touching the named path.
   header that changes back and forth means the sticky merge (`read.rs`'s
   `merge_header`, applied in `run.rs`'s detect tick) is not being applied to the
   published capture.
-- **Merc strip, the done state**: with a recruit window open, hover every cell
+- **Merc widget, the done state**: with a recruit window open, hover every cell
   the strip marks `?` or `✕` until the status line reads `done · N rows · all
   icons read`. From then on the log says `capture complete — OCR paused` once,
   the strip must stay on screen with its verdict, and closing the window must
@@ -1061,7 +1038,7 @@ touching the named path.
 - **Two overlapping overlays, which one takes the click** (POE-239): raise two
   registered overlay windows whose hot rects overlap — the temple widget window
   is the whole game monitor, so any other overlay drawing a hot rect over it
-  qualifies (the comparator, the merc strip). `app.log` must carry one `overlay
+  qualifies (the comparator, the merc widget). `app.log` must carry one `overlay
   hot rects overlap:` line per pair per registration. Click inside the overlap:
   the window shown MOST RECENTLY must take it. Bring the older one back — toggle
   it off and on, or let it go from empty to drawing — and the same click must
@@ -1791,23 +1768,23 @@ touching the named path.
   `avoidRects` cannot protect the second one —
   once the user places the widget it goes where they put it — so a difference
   that only appears after a drag is the user's placement and not a defect.
-- **The merc strip is OUT of the reader's grab and IN the player's screenshot**
-  (ADR-023, 2026-09-07): park the strip over the recruit rows (Settings →
-  Overlay Positions), open a recruit window, and with the strip up press
+- **The merc widget is OUT of the reader's grab and IN the player's screenshot**
+  (ADR-023, 2026-09-07): park the widget over the recruit rows (Settings →
+  Overlay Positions), open a recruit window, and with the widget up press
   **Debug capture** on the Mercenaries page. In the dump's `screen.png` the
-  strip's rectangle (`mercenary_overlay` in `settings.json`) must show game
-  pixels only — not the strip, and not a black box. `app.log` must carry
+  widget's rectangle (`Settings.widgets["mercenary.verdict"]`) must show game
+  pixels only — not the widget, and not a black box. `app.log` must carry
   `capture: overlay 'mercenary' is excluded from each grab while it is taken`
-  once for the session and never `… — the merc strip is IN every grab`. Then
-  take an ordinary screenshot with the strip up: the strip must be in it. A
-  pass on the PC is dump `merc-debug/1788782245765`. Triage: strip in the dump
+  once for the session and never `… — the merc widget is IN every grab`. Then
+  take an ordinary screenshot with the widget up: the widget must be in it. A
+  pass on the PC is dump `merc-debug/1788782245765`. Triage: widget in the dump
   and no `capture:` line at all — the guard never ran, the window was not
-  built or the module was off when the grab happened; strip in the dump and
+  built or the module was off when the grab happened; widget in the dump and
   the IN-every-grab line — the OS refused the affinity (older than Windows 10
   2004, or a window style the call rejects) and the fix is in `capture.rs`,
   not in placement; a black box — the grab path blanks instead of omitting,
   which is not xcap's GDI path and means the read is polluted regardless;
-  strip missing from screenshots — the clear half is failing, look at the
+  widget missing from screenshots — the clear half is failing, look at the
   guard's `Drop`.
 - **The room widget says `reading…` while a read runs** (POE-276): open a
   sheet — the door widget must show a muted `reading…` with a beating dot,

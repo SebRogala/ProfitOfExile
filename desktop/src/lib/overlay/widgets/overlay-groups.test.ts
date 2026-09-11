@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { canStartConfigure, overlayGroups, widgetGeometryText } from './overlay-groups';
 import { anchoredWidgetsFor, placeableWidgetsFor } from './widget-registry';
-import { TEMPLE_WINDOW_LABEL } from '../manager';
+import { MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
 
 const ALL_GRANTS = { merc: true, temple: true };
 const NO_GRANTS = { merc: false, temple: false };
@@ -34,13 +34,25 @@ describe('the Overlay Positions groups', () => {
 		]);
 	});
 
-	it('drops the whole Merc group, verdict row included, without the merc feature', () => {
+	it('lists the Merc widget row and Configure button without a window row', () => {
+		const merc = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Merc');
+		expect(merc?.windows).toEqual([]);
+		expect(merc?.widgets.map((row) => [row.spec.id, row.placeable])).toEqual([
+			['mercenary.verdict', true]
+		]);
+		expect(merc?.configureModule).toBe(MERCENARY_WINDOW_LABEL);
+	});
+
+	it('drops the whole Merc group, widget row included, without the merc feature', () => {
 		const groups = overlayGroups({ merc: false, temple: true });
 		expect(groups.map((group) => group.heading)).toEqual(['Lab', 'Temple']);
-		// The row itself, not just the heading: the flat list this replaced left
-		// the row out entirely, and a heading-only gate would put it back under Lab.
+		// The widget row itself, not just the heading: a heading-only gate would
+		// leave a control that opens a window the device cannot use.
 		expect(groups.flatMap((group) => group.windows.map((row) => row.name))).not.toContain(
 			'mercenary'
+		);
+		expect(groups.flatMap((group) => group.widgets.map((row) => row.spec.id))).not.toContain(
+			'mercenary.verdict'
 		);
 	});
 
@@ -106,12 +118,12 @@ describe('the Overlay Positions groups', () => {
 		}
 	});
 
-	it('offers Configure widgets for the temple module only', () => {
+	it('offers Configure widgets for each placeable widget module', () => {
 		expect(
 			overlayGroups(ALL_GRANTS).map((group) => [group.heading, group.configureModule])
 		).toEqual([
 			['Lab', null],
-			['Merc', null],
+			['Merc', MERCENARY_WINDOW_LABEL],
 			['Temple', TEMPLE_WINDOW_LABEL]
 		]);
 	});

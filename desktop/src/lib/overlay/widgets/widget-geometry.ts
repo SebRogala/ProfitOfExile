@@ -20,7 +20,7 @@
  *
  * Physical → CSS is [`cssRect`]; CSS → physical is `physicalGeometry` from
  * `../overlay-defaults.ts`, reused rather than re-spelled so the rounding rule
- * is the same one the merc strip's constructor seed goes through.
+ * is the one every shipped default goes through.
  *
  * CSS values are deliberately NOT rounded on the way in. A widget stored at 61
  * physical px on a 150 % display is 40.667 CSS px; rounding that to 41 and

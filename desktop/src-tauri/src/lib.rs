@@ -2001,12 +2001,13 @@ fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) -
 /// primary monitor with widgets placed inside it, so a content-driven refit
 /// would shrink the canvas the widgets are positioned against; it sizes to
 /// content per WIDGET, in CSS, and never calls this command.
-const RESIZABLE_OVERLAY_LABELS: [&str; 5] = [
+/// The merc strip became a widget in a monitor-sized window (POE-232), for the
+/// same reason.
+const RESIZABLE_OVERLAY_LABELS: [&str; 4] = [
     "comparator",
     "compass",
     "pathstrip",
     "timer",
-    "mercenary",
 ];
 
 /// Whether `fit_overlay_height` may touch this window.
@@ -4789,8 +4790,8 @@ mod tests {
     }
 
     #[test]
-    fn the_merc_strip_is_a_window_the_fit_command_may_resize() {
-        assert!(is_resizable_overlay_label("mercenary"));
+    fn the_merc_widget_window_is_not_a_resizable_overlay() {
+        assert!(!is_resizable_overlay_label("mercenary"));
     }
 
     /// The app's own window is not an overlay, and a webview asking to resize

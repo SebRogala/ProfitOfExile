@@ -10,7 +10,7 @@
 	import { ssot, fetchSsot } from '$lib/stores/ssot.svelte';
 	import { nav } from '$lib/stores/navigation.svelte';
 	import { screenGeometryView } from '$lib/geometry/view';
-	import { MERC_OVERLAY_DEFAULTS, physicalGeometry } from '$lib/overlay/overlay-defaults';
+	import { physicalGeometry } from '$lib/overlay/overlay-defaults';
 	import { chooseMonitor, type GameMonitorInfo } from '$lib/overlay/monitor-choice';
 	import { clickthroughReport } from '$lib/overlay/clickthrough-report';
 	import {
@@ -25,7 +25,6 @@
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import { getVersion } from '@tauri-apps/api/app';
-
 	type OcrRectView = {
 		key: string;
 		label: string;
@@ -503,20 +502,6 @@
 		setCommand: string;     // Rust set settings command
 		defaultW: number;
 		defaultH: number;
-		/**
-		 * Whether `defaultW`/`defaultH` are CSS pixels needing a scale-factor
-		 * conversion before they reach Tauri, or physical pixels already.
-		 *
-		 * Omitted means physical — the long-standing behaviour of every row
-		 * here. Only the merc row declares `'css'`, because its numbers are a
-		 * reasoned height budget (a sum of font sizes and padding) and are
-		 * shared with the layout that builds the real window. The other four
-		 * rows' numbers predate this field and their provenance is not
-		 * recorded; they are almost certainly physical figures read off
-		 * Sebastian's own display, so converting them would move four windows
-		 * on the strength of a guess. Left alone pending a measurement.
-		 */
-		defaultUnit?: 'css';
 	}
 
 	const OVERLAY_CONFIGS: Record<string, OverlayConfig> = {
@@ -524,25 +509,6 @@
 		compass: { label: 'overlay-compass-pos', syncParam: 'compass', getCommand: 'get_compass_overlay_settings', setCommand: 'set_compass_overlay_settings', defaultW: 300, defaultH: 280 },
 		pathstrip: { label: 'overlay-pathstrip-pos', syncParam: 'pathstrip', getCommand: 'get_pathstrip_overlay_settings', setCommand: 'set_pathstrip_overlay_settings', defaultW: 450, defaultH: 180 },
 		timer: { label: 'overlay-timer-pos', syncParam: 'timer', getCommand: 'get_timer_overlay_settings', setCommand: 'set_timer_overlay_settings', defaultW: 160, defaultH: 50 },
-		// The merc verdict strip (POE-199). It is module-coupled, not toggled
-		// here — this row only places it. Configuring while the Merc OCR module
-		// is off works and is the normal case: the config window is the one you
-		// drag, and the real window picks the geometry up when it is next built.
-		//
-		// POSITION AND WIDTH ONLY — HEIGHT FOLLOWS CONTENT. The strip sizes its
-		// own height to whatever it is drawing (Rust's `fit_overlay_height`), so
-		// a height saved from here is written to `mercenary_overlay.height` and
-		// then ignored by the real window, which refits on its first paint. The
-		// config window is still given a height so it can be seen and dragged:
-		// the LIVE height of the running overlay when there is one — which IS
-		// the current content height, read through `outerSize()` below — and the
-		// constructor seed when the module is off and there is no window to read.
-		//
-		// Its height is LOCKED rather than dropping it from the resizable list,
-		// because width is a real setting the user needs (the guide detail line
-		// ellipsises) and Tauri's `resizable` flag has no per-axis form. See
-		// `lockConfigHeight` below.
-		mercenary: { label: 'overlay-mercenary-pos', syncParam: 'mercenary', getCommand: 'get_mercenary_overlay_settings', setCommand: 'set_mercenary_overlay_settings', defaultW: MERC_OVERLAY_DEFAULTS.w, defaultH: MERC_OVERLAY_DEFAULTS.h, defaultUnit: 'css' },
 	};
 
 	/**
@@ -853,10 +819,10 @@
 
 	// Per-overlay state
 	let overlaySettings = $state<Record<string, { x: number; y: number; width: number; height: number } | null>>({
-		comparator: null, compass: null, pathstrip: null, timer: null, mercenary: null,
+		comparator: null, compass: null, pathstrip: null, timer: null,
 	});
 	let positionOverlays = $state<Record<string, any>>({
-		comparator: null, compass: null, pathstrip: null, timer: null, mercenary: null,
+		comparator: null, compass: null, pathstrip: null, timer: null,
 	});
 
 	// --- Timer appearance ---
@@ -908,18 +874,11 @@
 		// matches exactly. This prevents the sync loop from resizing the real overlay.
 		const live = await invoke<any>(cfg.getCommand).catch(() => null);
 		const realWin = await WebviewWindow.getByLabel(cfg.syncParam);
-		// Read up front: a CSS-unit default has to be converted before it can be
-		// used as a physical size, and the same factor converts physical →
-		// logical for the constructor further down.
+		// Read up front: the same factor converts physical → logical for the
+		// constructor further down.
 		const mainWin = getCurrentWebviewWindow();
 		const sf = await mainWin.scaleFactor().catch((e: any) => { console.warn('[settings] scaleFactor failed, using 1:', e); return 1; });
-		// A saved geometry is already physical. A shipped default is physical
-		// too UNLESS the row says otherwise — see `defaultUnit`. Getting this
-		// wrong is invisible at 100 % scaling and clips the window by a third at
-		// 150 %, which is why the unit is declared rather than assumed.
-		const shipped = cfg.defaultUnit === 'css'
-			? physicalGeometry({ x: 0, y: 0, w: cfg.defaultW, h: cfg.defaultH }, sf)
-			: { x: 0, y: 0, w: cfg.defaultW, h: cfg.defaultH };
+		const shipped = { x: 0, y: 0, w: cfg.defaultW, h: cfg.defaultH };
 		let physX = live?.x ?? 100, physY = live?.y ?? 100;
 		let physW = shipped.w, physH = shipped.h;
 		if (realWin) {
@@ -942,40 +901,15 @@
 		const win = new WebviewWindow(cfg.label, {
 			url: `/overlay?sync=${cfg.syncParam}`,
 			transparent: true, decorations: false, alwaysOnTop: true,
-			resizable: ['compass', 'pathstrip', 'timer', 'mercenary'].includes(name), shadow: false, skipTaskbar: true,
+			resizable: ['compass', 'pathstrip', 'timer'].includes(name), shadow: false, skipTaskbar: true,
 			width: Math.round(physW / sf), height: Math.round(physH / sf),
 		});
 		win.once('tauri://created', async () => {
 			await win.setPosition(new PhysicalPosition(physX, physY));
 			await win.setSize(new PhysicalSize(physW, physH));
-			await lockConfigHeight(name, win, physH / sf);
 			positionOverlays[name] = win;
 		});
 		win.once('tauri://error', (e: any) => console.error(`${name} position overlay failed:`, e));
-	}
-
-	/**
-	 * Pin a config window's height when the real overlay owns that axis.
-	 *
-	 * Only the merc strip does: it sizes itself to its content, so a height
-	 * dragged here would look like a setting and then be silently discarded on
-	 * the overlay's first paint. Width still has to be draggable — the guide
-	 * detail line ellipsises, so a user with long guide names genuinely needs a
-	 * wider strip — and Tauri's `resizable` flag is per-window, not per-axis.
-	 * Constraints are the only way to keep one axis and lose the other.
-	 *
-	 * Constraints are LOGICAL pixels, unlike everything else on this path.
-	 *
-	 * A failure here is cosmetic (the height becomes draggable again and the
-	 * drag is ignored later), so it is logged rather than aborting the window.
-	 */
-	async function lockConfigHeight(name: string, win: any, logicalH: number) {
-		if (name !== 'mercenary') return;
-		try {
-			await win.setSizeConstraints({ minHeight: logicalH, maxHeight: logicalH });
-		} catch (e) {
-			console.warn(`[settings] could not lock the ${name} config window height:`, e);
-		}
 	}
 
 	async function savePositionOverlay(name: string) {

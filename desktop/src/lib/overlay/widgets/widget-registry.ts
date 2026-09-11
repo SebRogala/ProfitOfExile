@@ -28,6 +28,7 @@
  * there — no new window, no new Rust field, no new command.
  */
 import type { OverlayDefaultGeometry } from '../overlay-defaults';
+import { MERC_OVERLAY_DEFAULTS } from '../overlay-defaults';
 
 /** One widget a module's overlay draws. */
 export interface WidgetSpec {
@@ -87,7 +88,8 @@ export interface WidgetSpec {
 /**
  * Every widget every module declares.
  *
- * The temple's three are POE-244's rebuild plus POE-249's notice. Each answers
+ * The temple's three are POE-244's rebuild plus POE-249's notice, and the Merc
+ * verdict is POE-232's widget migration. Each answers
  * a different question the player has at a different moment of one incursion
  * cycle, which is why they are three widgets and not three lines in one box:
  *
@@ -224,6 +226,16 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		// this widget exists for.
 		defaults: { x: 830, y: 16, w: 260, h: 40 },
 		resizable: false
+	},
+	{
+		id: 'mercenary.verdict',
+		module: 'mercenary',
+		label: 'Merc Verdict',
+		// The strip's shipped placement lives in `../overlay-defaults.ts`, one
+		// home; `h` is only the first frame and the config seed — the height
+		// follows content; the width is the owner's setting, 2026-08-25.
+		defaults: MERC_OVERLAY_DEFAULTS,
+		resizable: 'width'
 	}
 ];
 
