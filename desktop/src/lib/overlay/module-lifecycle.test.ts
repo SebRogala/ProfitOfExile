@@ -168,7 +168,7 @@ describe('the module-coupled overlay lifecycle', () => {
 
 	describe('a destroy that fails', () => {
 		it('records the window as gone instead of queueing the destroy again', () => {
-			// `destroyTempleWindow` already retries five times internally, so a
+			// `widget-window.ts`'s `destroy` already retries five times internally, so a
 			// reported failure is the end of what this scheduler can usefully
 			// ask for — and holding `actual` true would repeat that sweep for
 			// as long as the module stays off.
@@ -191,7 +191,7 @@ describe('a creation that never settles', () => {
 	}
 
 	it('frees the machine to act on the next flag change', async () => {
-		// The whole point of the deadline. `createTempleOverlay` resolves from
+		// The whole point of the deadline. `widget-window.ts`'s `create` resolves from
 		// `tauri://created` / `tauri://error`; with neither delivered the
 		// awaited promise never returns, `pending` stays `'create'`, and every
 		// later flag change is answered with `'none'` — the module reads as off

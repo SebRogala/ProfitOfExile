@@ -337,7 +337,7 @@ export function moduleOverlayDriver(
 						: await effects.destroy();
 				// CONSUMER DEPENDENCY (POE-245): every hop from the create
 				// promise resolving to this line is a microtask, and
-				// `(app)/+layout.svelte`'s `reconcileTempleMonitor` is scheduled
+				// `overlay/widget-window.ts`'s `reconcileMonitor` is scheduled
 				// with `setTimeout(…, 0)` precisely so it lands AFTER it — the
 				// rebuild it may ask for is `setDesired(false)/setDesired(true)`,
 				// which this file ignores while `pending` is still `'create'`.
