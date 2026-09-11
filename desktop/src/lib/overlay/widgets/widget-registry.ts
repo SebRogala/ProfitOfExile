@@ -96,8 +96,9 @@ export interface WidgetSpec {
 /**
  * Every widget every module declares.
  *
- * The temple's three are POE-244's rebuild plus POE-249's notice, and the Merc
- * verdict is POE-232's widget migration. Each answers
+ * The temple's three are POE-244's rebuild plus POE-249's notice, the Merc
+ * verdict is POE-232's widget migration, and the Lab timer is POE-231's first
+ * lab-window widget. Each answers
  * a different question the player has at a different moment of one incursion
  * cycle, which is why they are three widgets and not three lines in one box:
  *
@@ -244,6 +245,16 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		// follows content; the width is the owner's setting, 2026-08-25.
 		defaults: MERC_OVERLAY_DEFAULTS,
 		resizable: 'width'
+	},
+	{
+		id: 'lab.timer',
+		module: 'lab',
+		label: 'Lab Timer',
+		defaults: { x: 100, y: 500, w: 160, h: 50 },
+		// The digits scale with the box, as they scaled with the window. `fill`
+		// draws an unresized box at the shipped 160 × 50, the old default window.
+		resizable: true,
+		fill: true
 	}
 ];
 

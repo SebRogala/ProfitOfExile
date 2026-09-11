@@ -16,6 +16,7 @@
 		TEMPLE_FEATURE
 	} from '$lib/stores/entitlements.svelte';
 	import {
+		LAB_WINDOW_LABEL,
 		MERCENARY_MODULE_ID,
 		MERCENARY_WINDOW_LABEL,
 		TEMPLE_MODULE_ID,
@@ -24,6 +25,8 @@
 	import { clickthroughReport } from '$lib/overlay/clickthrough-report';
 	import { moduleOverlayWanted } from '$lib/overlay/module-lifecycle';
 	import { createWidgetWindow, type WidgetWindow } from '$lib/overlay/widget-window';
+	import { WIDGETS } from '$lib/overlay/widgets/widget-registry';
+	import { setWidgetVisible, widgetPlacements } from '$lib/overlay/widgets/widget-placements.svelte';
 	import { type GameMonitorInfo } from '$lib/overlay/monitor-choice';
 	import {
 		widgetConfigEnd,
@@ -98,7 +101,7 @@
 	 * `set_overlay_clickthrough` AWAITS its own setup and returns the failure
 	 * now, so there is something real to report: a transparent, always-on-top
 	 * window that is not click-through swallows the player's clicks with nothing
-	 * on screen to explain it. The FOUR lab overlays only REPORT it — they are
+	 * on screen to explain it. The THREE separate lab overlays only REPORT it — they are
 	 * small, user-positioned rectangles, and destroying the one the user just
 	 * switched on would read as a toggle that does nothing. The two
 	 * module-coupled windows (temple, merc) destroy and retry instead, because
@@ -137,12 +140,11 @@
 	let pathstripHasData = $state(false);
 	let pathstripWin = $state<any>(null);
 
-	// Timer overlay state
-	let timerActive = $state(false);
-	let timerWin = $state<any>(null);
-
 	// Lab overlays category toggle
 	let labOverlaysActive = $state(true);
+	/** Whether `get_lab_overlays_enabled` has answered — until it has, the lab window's desired state is unknown, the same
+	 *  not-yet-known the module flags have before the first poll. */
+	let labOverlaysLoaded = $state(false);
 
 	async function createComparatorOverlay(physX: number, physY: number) {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
@@ -385,85 +387,6 @@
 		}
 	}
 
-	// --- Timer overlay ---
-
-	async function createTimerOverlay(physX: number, physY: number, w = 160, h = 50) {
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
-
-		await destroyTimerWindow();
-
-		// Constructor takes logical pixels; w/h are physical — convert for initial size.
-		// tauri://created sets exact physical size via PhysicalSize.
-		const sf = await getCurrentWebviewWindow().scaleFactor().catch((e: any) => { console.warn('[overlay] scaleFactor failed, using 1:', e); return 1; });
-		const win = new WebviewWindow('timer', {
-			url: '/overlay/timer',
-			transparent: true,
-			decorations: false,
-			alwaysOnTop: true,
-			resizable: true,
-			shadow: false,
-			skipTaskbar: true,
-			width: Math.round(w / sf),
-			height: Math.round(h / sf),
-		});
-
-		win.once('tauri://created', async () => {
-			await win.setPosition(new PhysicalPosition(physX, physY));
-			await win.setSize(new PhysicalSize(w, h));
-			// Reported, not awaited — see `logClickthroughFailure`.
-			void invoke('set_overlay_clickthrough', { label: 'timer' })
-				.catch(e => logClickthroughFailure('timer', e));
-			timerWin = win;
-			timerActive = true;
-
-			try {
-				const status = await invoke<any>('get_status');
-				if (!status?.game_focused) {
-					await win.hide();
-				}
-			} catch (e) {
-				console.warn('[overlay] timer initial focus check failed:', e);
-			}
-		});
-		win.once('tauri://error', (e: any) => {
-			console.error('[overlay] timer creation failed:', e);
-		});
-	}
-
-	async function destroyTimerWindow() {
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		for (let i = 0; i < 5; i++) {
-			const existing = await WebviewWindow.getByLabel('timer');
-			if (!existing) break;
-			try { await existing.close(); } catch (_) {}
-			try { await existing.destroy(); } catch (_) {}
-			await new Promise(r => setTimeout(r, 100));
-		}
-		timerWin = null;
-	}
-
-	async function toggleTimerOverlay() {
-		if (timerActive) {
-			await destroyTimerWindow();
-			timerActive = false;
-			const settings = await invoke<any>('get_timer_overlay_settings').catch(() => null);
-			await invoke('set_timer_overlay_settings', {
-				x: settings?.x ?? 100, y: settings?.y ?? 500,
-				w: settings?.width ?? 160, h: settings?.height ?? 50,
-				enabled: false,
-			}).catch(e => console.warn('[overlay] timer settings operation failed:', e));
-		} else {
-			const settings = await invoke<any>('get_timer_overlay_settings').catch(() => null);
-			await createTimerOverlay(settings?.x ?? 100, settings?.y ?? 500, settings?.width ?? 160, settings?.height ?? 50);
-			await invoke('set_timer_overlay_settings', {
-				x: settings?.x ?? 100, y: settings?.y ?? 500,
-				w: settings?.width ?? 160, h: settings?.height ?? 50,
-				enabled: true,
-			}).catch(e => console.warn('[overlay] timer settings operation failed:', e));
-		}
-	}
-
 	/**
 	 * Whether anything currently wants the temple overlay window — the module
 	 * flag, or a live widget-config session, both under the feature grant.
@@ -509,8 +432,22 @@
 		// The merc route has no debug surface; the window was never built with `?debug`.
 		debug: () => false
 	});
+
+	function labOverlayWanted(): boolean {
+		return moduleOverlayWanted(
+			labOverlaysLoaded ? labOverlaysActive : undefined,
+			widgetConfigLive(widgetConfigSessions, LAB_WINDOW_LABEL),
+			true
+		);
+	}
+
+	const labWindow = createWidgetWindow({
+		label: LAB_WINDOW_LABEL, moduleId: LAB_WINDOW_LABEL, wanted: labOverlayWanted,
+		configLive: () => widgetConfigLive(widgetConfigSessions, LAB_WINDOW_LABEL), debug: () => false
+	});
+	const LAB_TIMER_SPEC = WIDGETS.find((spec) => spec.id === 'lab.timer')!;
 	/** Every monitor-sized widget window this layout builds. */
-	const WIDGET_WINDOWS: WidgetWindow[] = [templeWindow, mercenaryWindow];
+	const WIDGET_WINDOWS: WidgetWindow[] = [templeWindow, mercenaryWindow, labWindow];
 
 	// Window-scoped, because Rust sends this with `emit_to("main")`.
 	getCurrentWebviewWindow()
@@ -561,6 +498,13 @@
 		const configuring = widgetConfigLive(widgetConfigSessions, MERCENARY_WINDOW_LABEL);
 		if (enabled === undefined && !configuring && !mercenaryWindow.driver.built()) return;
 		mercenaryWindow.driver.setDesired(mercOverlayWanted());
+	});
+
+	$effect(() => {
+		const enabled = labOverlaysActive;
+		const configuring = widgetConfigLive(widgetConfigSessions, LAB_WINDOW_LABEL);
+		if (!labOverlaysLoaded && !configuring && !labWindow.driver.built()) return;
+		labWindow.driver.setDesired(labOverlayWanted());
 	});
 
 	// --- Widget config mode (POE-226) ---
@@ -908,19 +852,18 @@
 	async function toggleLabOverlays() {
 		const next = !labOverlaysActive;
 		labOverlaysActive = next;
+		labOverlaysLoaded = true;
 		await invoke('set_lab_overlays_enabled', { enabled: next }).catch(e => console.warn('[overlay] set_lab_overlays_enabled failed:', e));
 		if (next) {
 			// Enable all — respect each overlay's individual enabled state
 			if (!comparatorActive) await toggleComparatorOverlay();
 			if (!compassActive) await toggleCompassOverlay();
 			if (!pathstripActive) await togglePathstripOverlay();
-			if (!timerActive) await toggleTimerOverlay();
 		} else {
 			// Disable all
 			if (comparatorActive) await toggleComparatorOverlay();
 			if (compassActive) await toggleCompassOverlay();
 			if (pathstripActive) await togglePathstripOverlay();
-			if (timerActive) await toggleTimerOverlay();
 		}
 	}
 
@@ -944,15 +887,6 @@
 					x: pos.x, y: pos.y, w: size.width, h: size.height, enabled: true,
 				});
 			} catch (e) { console.warn('[overlay] failed to save pathstrip position:', e); }
-		}
-		if (timerWin) {
-			try {
-				const pos = await timerWin.outerPosition();
-				const size = await timerWin.outerSize();
-				await invoke('set_timer_overlay_settings', {
-					x: pos.x, y: pos.y, w: size.width, h: size.height, enabled: true,
-				});
-			} catch (e) { console.warn('[overlay] failed to save timer position:', e); }
 		}
 	}
 
@@ -1030,13 +964,6 @@
 						.catch(e => console.warn('[overlay] pathstrip move failed:', e));
 				}
 			}
-			if (timerActive) {
-				const timerSettings = await invoke<any>('get_timer_overlay_settings').catch(() => null);
-				if (timerSettings) {
-					await invoke('move_overlay', { label: 'timer', x: timerSettings.x, y: timerSettings.y, w: timerSettings.width ?? 160, h: timerSettings.height ?? 50 })
-						.catch(e => console.warn('[overlay] timer move failed:', e));
-				}
-			}
 		});
 		configOverlayCleanup = unlisten;
 	});
@@ -1085,19 +1012,9 @@
 		})
 		.catch(e => console.warn('[overlay] pathstrip restore failed:', e));
 
-	// Restore timer overlay on startup (hidden, shown on PlazaEntered)
-	invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_timer_overlay_settings')
-		.then(async (settings) => {
-			if (settings?.enabled) {
-				await createTimerOverlay(settings.x, settings.y, settings.width ?? 160, settings.height ?? 50);
-				if (timerWin) await timerWin.hide().catch(() => {});
-			}
-		})
-		.catch(e => console.warn('[overlay] timer restore failed:', e));
-
 	// Restore lab overlays category toggle state
 	invoke<boolean>('get_lab_overlays_enabled')
-		.then((enabled) => { labOverlaysActive = enabled; })
+		.then((enabled) => { labOverlaysActive = enabled; labOverlaysLoaded = true; })
 		.catch(e => console.warn('[overlay] get_lab_overlays_enabled failed:', e));
 
 	// Check if lab layout is available on the server.
@@ -1149,14 +1066,6 @@
 					await createPathstripOverlay(pathstripSettings.x, pathstripSettings.y, pathstripSettings.width ?? 450, pathstripSettings.height ?? 180);
 				}
 			}
-			const timerSettings = await invoke<any>('get_timer_overlay_settings').catch(() => null);
-			if (timerSettings?.enabled) {
-				if (timerWin) {
-					await timerWin.show().catch(() => {});
-				} else {
-					await createTimerOverlay(timerSettings.x, timerSettings.y, timerSettings.width ?? 160, timerSettings.height ?? 50);
-				}
-			}
 		}
 		if (event.payload?.type === 'LabExited') {
 			// Persist current overlay positions/sizes before hiding
@@ -1166,9 +1075,6 @@
 			}
 			if (pathstripWin) {
 				await pathstripWin.hide().catch(() => {});
-			}
-			if (timerWin) {
-				await timerWin.hide().catch(() => {});
 			}
 		}
 	});
@@ -1181,7 +1087,8 @@
 			comparatorActive={comparatorActive} gameFocused={store.status?.game_focused ?? false} onToggleComparator={toggleComparatorOverlay}
 			compassActive={compassActive} onToggleCompass={toggleCompassOverlay}
 			pathstripActive={pathstripActive} pathstripHasData={pathstripHasData} onTogglePathstrip={togglePathstripOverlay}
-			timerActive={timerActive} onToggleTimer={toggleTimerOverlay}
+			timerActive={labOverlaysActive && (widgetPlacements.rows['lab.timer']?.visible ?? true)}
+			onToggleTimer={() => setWidgetVisible(LAB_TIMER_SPEC, !(widgetPlacements.rows['lab.timer']?.visible ?? true))}
 			labOverlaysActive={labOverlaysActive} onToggleLabOverlays={toggleLabOverlays} />
 		<main class="content">
 			<div class="route-render-placeholder" aria-hidden="true">

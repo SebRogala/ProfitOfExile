@@ -10,7 +10,7 @@ OCR lifecycle. The proposed Rust-owned navigation contract is specified in
 tracker item `POE-88` (LabCompass fidelity restoration and overlay SSOT).
 
 Switchable background modules are a separate mechanism with its own recipe: see
-the module doc of `desktop/src-tauri/src/modules.rs`. The four overlay `enabled`
+the module doc of `desktop/src-tauri/src/modules.rs`. The three overlay `enabled`
 flags and `lab_overlays_enabled` documented here are NOT modules.
 
 ## Non-negotiable regression guards
@@ -59,7 +59,7 @@ window's own page:
   `desktop/src/lib/overlay/hot-rects.ts`). A click inside one is consumed and
   re-emitted to that window as `overlay-click {label, x, y}`; everything else
   reaches the game. Declaring nothing — which is what compass, path-strip,
-  timer and the mercenary widget do — makes a window display-only. Listen with
+  the Lab timer widget and the mercenary widget do — makes a window display-only. Listen with
   `getCurrentWebviewWindow().listen('overlay-click', …)`; a bare `listen()` from
   `@tauri-apps/api/event` registers for the `Any` target and a labelled
   `emit_to` does not match it (tauri 2.10.3 `manager/mod.rs:602-628`).
@@ -221,7 +221,7 @@ are in `routes/(app)/+layout.svelte`:
   size of the game monitor, so one that never became click-through swallows
   every click on the screen, and a click on the merc window also takes focus,
   drops `game_in_foreground` and stops the capture loop.
-- The four LAB overlays (comparator, compass, path strip, timer) REPORT and
+- The three separate LAB overlays (comparator, compass, path strip) REPORT and
   keep the window: they are small, user-positioned rectangles the user just
   switched on, and destroying one would read as a toggle that does nothing.
   Note the split is by OWNER: both module-coupled windows are monitor-sized
@@ -231,6 +231,9 @@ are in `routes/(app)/+layout.svelte`:
   must not wait a second on a window the user is not looking at — so the
   failure arrives on the promise's `catch`, in the app log as well as the
   console.
+- The `lab` window is a monitor-sized widget host governed by
+  `lab_overlays_enabled`; its creation awaits click-through and destroys a
+  half-built window on failure, like the temple window.
 
 The window is still INTERACTIVE for that ~1 s, which no amount of reporting
 closes: `focus: false` on the constructor stops the window activating itself,
@@ -242,8 +245,8 @@ that did.
 
 A module may instead open ONE fullscreen, click-through window over the game's
 monitor and place small panels — WIDGETS — inside it. The temple and mercenary
-are module-coupled widget windows (POE-225, POE-232); the lab windows are not
-migrated.
+are module-coupled widget windows (POE-225, POE-232); the `lab` window now hosts
+the timer widget, while the comparator, compass and path strip remain separate.
 
 - The window is the GAME monitor (POE-237). `routes/(app)/+layout.svelte` asks
   Rust's `get_game_monitor` — which the focus poller answers from the PoE
@@ -314,7 +317,10 @@ migrated.
   is built on it, `capture::capture_screen` grabs it, and `ssot.screen` carries
   its id and origin) — so a user-placed widget and a game-anchored one need no
   conversion between them beyond the window's own scale factor.
-- **The shipped widget list.** Four: three temple widgets and the Merc verdict:
+- The `lab` widget window follows GAME FOCUS only, like the comparator; its
+  widgets own their visibility and in-lab rules, so the timer can stay hidden
+  outside a lab without hiding the window that will host the comparator.
+- **The shipped widget list.** Five: three temple widgets, the Lab timer and the Merc verdict:
   `temple.offers` — the OFFER BOXES (POE-249), `anchored`, one box per architect
   block on the side panel in the panel's OWN order (box `i` mirrors `offers[i]`,
   so "upper = the upgrade" is the common case and not a rule), stacked in the
@@ -346,6 +352,9 @@ migrated.
   `mercenary.verdict` — the MERC VERDICT widget, user-placed and persisted in
   `Settings.widgets`, with its height following content and its width offered
   by `resizable: 'width'`.
+  `lab.timer` — the LAB TIMER widget, user-placed and persisted in
+  `Settings.widgets`, filling its shipped 160×50 box until it is resized; the
+  digits scale with that box.
   **Faint is the alternative** is one rule across the temple's widgets: the
   conditional door, the unchosen kill and the offer box the advisor did not pick
   are all drawn and all dimmed, so everything at full strength is a thing to do
@@ -919,7 +928,7 @@ touching the named path.
   layout's reset narrowed the comparator table from 582 px to 560): with the
   comparator overlay open on a gem, check that the table is as wide as its saved
   window and that no column is clipped. `routes/overlay/+layout.svelte` is loaded
-  by EVERY overlay window, and the four lab windows that predate the widget engine are laid
+  by EVERY overlay window, and the three separate lab windows that predate the widget engine are laid
   out under the default `content-box` — a box-model declaration added there
   reflows all of them silently, with no gate that can see it. Anything the widget
   host needs belongs in `WidgetHost.svelte`, which is where `border-box` now is.

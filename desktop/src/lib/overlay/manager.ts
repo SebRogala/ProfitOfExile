@@ -1,5 +1,6 @@
 /**
- * The window LABELS and MODULE IDS of the two module-coupled overlays.
+ * The window LABELS and MODULE IDS of the two module-coupled overlays, plus
+ * the lab widget window label.
  *
  * This file used to be a window manager as well — `showOverlay`,
  * `destroyOverlay`, `hideAllOverlays`, an `initFocusListener` and four more.
@@ -19,13 +20,22 @@
  * leaves the Tauri APIs unavailable to that window, which fails as a window
  * that renders but cannot talk to Rust rather than as a build error.
  *
- * The four lab overlays are created in `routes/(app)/+layout.svelte` from their
- * persisted settings; this window is created by the same file but from the
- * `temple` MODULE flag instead. The WINDOW persists no geometry of its own — it
+ * The three separate lab overlays and the lab widget window are created in
+ * `routes/(app)/+layout.svelte` from their persisted settings and master flag;
+ * this window is created by the same file but from the `temple` MODULE flag
+ * instead. The WINDOW persists no geometry of its own — it
  * is the GAME monitor (POE-225 D8, moved off the primary in POE-237) — while
  * the widgets inside it are persisted per widget in `Settings.widgets`.
  */
 export const TEMPLE_WINDOW_LABEL = 'temple';
+
+/**
+ * The lab widget window label.
+ *
+ * Lab overlays are not an ADR-014 module: there is no Rust module flag or
+ * module id for this window. `lab_overlays_enabled` governs the window.
+ */
+export const LAB_WINDOW_LABEL = 'lab';
 
 /**
  * The temple MODULE's registry id — a different thing that happens to spell the

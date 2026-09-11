@@ -1792,9 +1792,9 @@ fn set_debug_mode(app: AppHandle, on: bool) {
                 log::warn!("Failed to force-show pathstrip: {}", e);
             }
         }
-        if let Some(win) = app.get_webview_window("timer") {
+        if let Some(win) = app.get_webview_window("lab") {
             if let Err(e) = win.show() {
-                log::warn!("Failed to force-show timer: {}", e);
+                log::warn!("Failed to force-show lab: {}", e);
             }
         }
         // The temple overlay belongs here for the same reason the others do:
@@ -2001,13 +2001,12 @@ fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) -
 /// primary monitor with widgets placed inside it, so a content-driven refit
 /// would shrink the canvas the widgets are positioned against; it sizes to
 /// content per WIDGET, in CSS, and never calls this command.
-/// The merc strip became a widget in a monitor-sized window (POE-232), for the
-/// same reason.
-const RESIZABLE_OVERLAY_LABELS: [&str; 4] = [
+/// The merc strip became a widget in a monitor-sized window (POE-232), and the
+/// lab timer joined the lab widget window (POE-231), for the same reason.
+const RESIZABLE_OVERLAY_LABELS: [&str; 3] = [
     "comparator",
     "compass",
     "pathstrip",
-    "timer",
 ];
 
 /// Whether `fit_overlay_height` may touch this window.
@@ -3680,7 +3679,7 @@ fn spawn_focus_poller(app: AppHandle) {
                     emit_status(&app);
 
                     // Hide/show overlay windows based on game focus.
-                    // Comparator + Temple: show whenever game is focused (used everywhere).
+                    // Comparator + Temple + Lab: show whenever game is focused (used everywhere).
                     // Compass + Pathstrip: only show when game is focused AND in lab.
                     // Skip hide in debug mode.
                     let debug = *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner());
@@ -3701,12 +3700,12 @@ fn spawn_focus_poller(app: AppHandle) {
                     // stops an overlay click from blanking every overlay, and
                     // NOT holding it is what stops the capture loop from
                     // photographing our own window instead of the game.
-                    for overlay_name in &["comparator", "temple", "mercenary"] {
+                    for overlay_name in &["comparator", "temple", "mercenary", "lab"] {
                         apply_overlay_focus(&app, overlay_name, is_focused, debug);
                     }
 
                     // Lab overlays: game focus + in_lab
-                    for overlay_name in &["compass", "pathstrip", "timer"] {
+                    for overlay_name in &["compass", "pathstrip"] {
                         apply_overlay_focus(&app, overlay_name, is_focused && in_lab, debug);
                     }
                 }
@@ -3757,7 +3756,7 @@ fn spawn_log_watcher(app: AppHandle) {
                 let state = app.state::<AppState>();
                 state.in_lab.store(was_in_lab, std::sync::atomic::Ordering::SeqCst);
                 // Show/hide overlays based on reconstructed state
-                for name in &["compass", "pathstrip", "timer"] {
+                for name in &["compass", "pathstrip"] {
                     if let Some(win) = app.get_webview_window(name) {
                         let action = if was_in_lab { win.show() } else { win.hide() };
                         if let Err(e) = action {
@@ -3876,7 +3875,7 @@ fn spawn_log_watcher(app: AppHandle) {
                                     state.in_lab.store(true, Ordering::SeqCst);
                                     app_log(&app, "Lab nav: Plaza entered".to_string());
                                     // Show lab overlays on lab entry
-                                    for name in &["compass", "pathstrip", "timer"] {
+                                    for name in &["compass", "pathstrip"] {
                                         if let Some(win) = app.get_webview_window(name) {
                                             let _ = win.show();
                                         }
@@ -3902,13 +3901,15 @@ fn spawn_log_watcher(app: AppHandle) {
                                     if was_live {
                                         app_log(&app, "Font scan stopped (lab exited)".to_string());
                                     }
-                                    // Emit event BEFORE hiding overlays — timer needs
-                                    // LabExited to submit the run before being hidden.
+                                    // Emit event BEFORE hiding overlays — kept in this order. The compass and
+                                    // path strip reset their state on LabExited (visited rooms, timers,
+                                    // `hidden`); hiding a window does not stop its listener, so the order is
+                                    // preserved rather than required.
                                     if let Err(e) = app.emit("lab-nav", &nav_event) {
                                         log::warn!("emit lab-nav (LabExited) failed: {}", e);
                                     }
                                     // Hide lab overlays after event delivery
-                                    for name in &["compass", "pathstrip", "timer"] {
+                                    for name in &["compass", "pathstrip"] {
                                         if let Some(win) = app.get_webview_window(name) {
                                             let _ = win.hide();
                                         }
@@ -4453,7 +4454,6 @@ pub fn run() {
                     for (label, setter) in [
                         ("compass", "compass_overlay" as &str),
                         ("pathstrip", "pathstrip_overlay"),
-                        ("timer", "timer_overlay"),
                     ] {
                         if let Some(win) = app.get_webview_window(label) {
                             match (win.outer_position(), win.outer_size()) {
@@ -4808,6 +4808,11 @@ mod tests {
     #[test]
     fn the_temple_widget_window_is_not_a_resizable_overlay() {
         assert!(!is_resizable_overlay_label("temple"));
+    }
+
+    #[test]
+    fn the_lab_widget_window_is_not_a_resizable_overlay() {
+        assert!(!is_resizable_overlay_label("lab"));
     }
 
     /// The position config windows are dragged and sized by the USER — a
