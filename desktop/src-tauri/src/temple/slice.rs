@@ -1073,6 +1073,38 @@ pub struct TempleSlice {
     /// defaults it the same way (`normaliseTemple`).
     #[serde(default)]
     pub waiting_for_panel: bool,
+    /// Whether the read in flight is a RETRY ROUND of the board this loop has
+    /// already read and published (POE-276, owner 2026-09-11) — one of the
+    /// `super::run::RETRIES` partial rounds an unclean board is owed.
+    ///
+    /// Set only for a retry: the `Anchored` publish at the top of
+    /// `super::run::full_read` sets it from `super::run::read_is_retry`
+    /// (`LoopState::same_board`), so a first read, a Re-arm and a new board —
+    /// another epoch, another rearm count, another frame — all publish it
+    /// false. It is reset to false by `super::run::apply_status` for every
+    /// other outcome, [`project`] when the round lands, [`force_off`], and the
+    /// default. [`clear_advice`] leaves it: a retry whose advice was cleared
+    /// draws nothing, which is what an ended incursion should show. A stale
+    /// `true` must not survive into the next first read, where it would hide
+    /// the one line that says a read is running — and the next first read's
+    /// own `Anchored` publish rewrites it.
+    ///
+    /// **Meaningful only beside [`TempleStatus::Reading`]**, and not an
+    /// invariant of the slice: two direct status writes in `super::run` — the
+    /// loop-start `Idle` publish and `super::run::unavailable` — do not reset
+    /// it, so a flag left by a loop that died mid-retry can stand beside a
+    /// status that is not `reading` until the next `Anchored` rewrites it.
+    /// Every reader therefore gates on the status first, as
+    /// `view.ts::doorWidget` does.
+    ///
+    /// The webview reads it for one thing: `view.ts::doorWidget` draws no
+    /// `reading…` line on a retry, because the verdict that round is refining
+    /// is already on the room widget.
+    ///
+    /// `serde(default)` so a payload from a build before the field decodes as
+    /// "not a retry", which is what every such build's `reading` meant.
+    #[serde(default)]
+    pub read_retry: bool,
     pub layout: Option<LayoutView>,
     pub panel: Option<PanelView>,
     /// `None` whenever there is no decision to make — no board, or no current
@@ -1768,6 +1800,8 @@ pub fn project(read: &ReadResult<'_>, calibration: Option<AnchorCalibration>) ->
         // A completed read is the proof the sheet was found: the wait is over
         // whether or not anything else noticed it end.
         waiting_for_panel: false,
+        // The round has landed: nothing is being read, retry or not.
+        read_retry: false,
         layout: Some(layout_view(read)),
         panel: Some(panel_view(read)),
         advice: read.advice.map(|advice| {
@@ -1940,6 +1974,8 @@ pub fn end_cycle(slice: &mut TempleSlice) {
 /// page reads the slice, never `ssot.modules`).
 pub fn force_off(slice: &mut TempleSlice) {
     slice.status = TempleStatus::Off;
+    // Nothing is being read under an "off" badge, retry or not (POE-276).
+    slice.read_retry = false;
     // A notice that says the module is looking for the sheet, over a module
     // that is switched off, is the same lie the advice would be.
     end_cycle(slice);
@@ -5062,6 +5098,55 @@ mod tests {
         assert!(!s.waiting_for_panel);
     }
 
+    /// A retry round that lands is no longer a retry in flight (POE-276).
+    ///
+    /// `project` replaces the whole slice, so what this pins is the value it
+    /// lands on. Fails if the projection carries the flag: the next FIRST read
+    /// publishes `Anchored` over this slice, and a `readRetry` still standing
+    /// would hide the one line that says a read is running.
+    #[test]
+    fn a_landed_read_is_not_a_retry_in_flight() {
+        let layout = layout(Some(Slot::E1), &[], &[]);
+        let rooms = board_rooms(&[(Slot::E1, "Chamber of Iron")]);
+        let panel = panel("Chamber of Iron", Some(6), Vec::new());
+
+        let s = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
+
+        assert!(!s.read_retry);
+    }
+
+    /// A switched-off module reads nothing, retry or not. Fails if `force_off`
+    /// leaves the flag standing for the module's next start to inherit.
+    #[test]
+    fn forcing_a_disabled_slice_off_ends_a_retry_in_flight() {
+        let mut s = TempleSlice {
+            status: TempleStatus::Reading,
+            read_retry: true,
+            ..TempleSlice::default()
+        };
+
+        force_off(&mut s);
+
+        assert!(!s.read_retry);
+    }
+
+    /// The move going does not turn a retry round into a first read: the round
+    /// still draws no line, and with the advice gone the room widget draws
+    /// nothing — row 4's "hide every overlay" (owner, 2026-09-11). Fails if
+    /// `clear_advice` resets the flag.
+    #[test]
+    fn clearing_the_advice_leaves_a_retry_in_flight_silent() {
+        let mut s = TempleSlice {
+            status: TempleStatus::Reading,
+            read_retry: true,
+            ..TempleSlice::default()
+        };
+
+        clear_advice(&mut s);
+
+        assert!(s.read_retry);
+    }
+
     /// A read that lost a text region says so on the SLICE, as a notice and not
     /// as an error.
     ///
@@ -5515,7 +5600,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"status":"idle","waitingForPanel":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":true},"preset":"default","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"vialsPerRun":0.1,"dropsWeight":1.0,"comboPremium":0.0,"rooms":{}},"market":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
+            r#"{"status":"idle","waitingForPanel":false,"readRetry":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":true},"preset":"default","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"vialsPerRun":0.1,"dropsWeight":1.0,"comboPremium":0.0,"rooms":{}},"market":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
         );
     }
 
@@ -5535,6 +5620,9 @@ mod tests {
             // pin is a check on the wire SHAPE, and a `false` would pin only
             // the field's presence while the mirror's boolean has two branches.
             waiting_for_panel: true,
+            // `true` for the same reason — and a `read` status beside it is not
+            // a state Rust publishes; the pin is about the wire, not the rules.
+            read_retry: true,
             layout: Some(LayoutView {
                 slots: vec![SlotView {
                     slot: "A0".to_string(),
@@ -5814,7 +5902,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]},"recipe":{"base":{"name":"Story of the Vaal","chaos":5.0},"vial":{"name":"Vial of Fate","chaos":1.0},"upgraded":{"name":"Fate of the Vaal","chaos":null}},"line":{"kind":"content","content":"Extra monsters (dangerous)","modArchitect":null,"modHint":null,"modSlots":[],"modWorth":null,"quantityPct":null,"rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"vialsPerRun":0.1,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]},"recipe":{"base":{"name":"Story of the Vaal","chaos":5.0},"vial":{"name":"Vial of Fate","chaos":1.0},"upgraded":{"name":"Fate of the Vaal","chaos":null}},"line":{"kind":"content","content":"Extra monsters (dangerous)","modArchitect":null,"modHint":null,"modSlots":[],"modWorth":null,"quantityPct":null,"rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"vialsPerRun":0.1,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///

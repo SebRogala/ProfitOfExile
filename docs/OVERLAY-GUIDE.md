@@ -400,12 +400,18 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   lands. **Accepted by the owner (2026-09-11).** A placed widget draws the
   line where the user put it, and later reads of an unplaced one place
   correctly, because the last layout stays on the slice.
-  A retry round (`RETRIES` in `temple/run.rs`, at most two, and only while a
-  region is unclean) is a read too: the line comes back under the room it has
-  just drawn for the length of that partial round, about 650 ms after the
-  verdict, and the frame's bottom edge grows and shrinks with it. The webview
-  cannot tell a retry from the next room's read, and does not need to — a
-  retry can change the verdict.
+  **A retry round draws no line** (owner, 2026-09-11 — reversing the WI-1
+  acceptance that let the line come back under the room ~650 ms after the
+  verdict). A retry is one of the at most `RETRIES` partial rounds an unclean
+  board is owed (`temple/run.rs`), and Rust flags it on the slice in the same
+  publish as its `reading` (`readRetry`, decided by `run::read_is_retry` — the
+  gate's own `LoopState::same_board`); `doorWidget` then leaves the widget as
+  the verdict drew it. The webview cannot tell a retry from the next room's
+  read from the status sequence alone, which is why the flag is Rust's. A
+  first read, a Re-arm, a settings change and a new board — another epoch, or
+  a sheet walked or moved — are not retries and show the line. A retry inside
+  the temple run after the sheet was closed and reopened in the same room is
+  still a round of the same board, and draws no line either.
   **Retired again in POE-248**, after the first live session: the callout's
   ARROW (owner: no arrows anywhere — placement points, and the room widget's
   glyph is what survives the panel closing), the room widget's two text lines
@@ -1728,6 +1734,9 @@ touching the named path.
   sheet — the door widget must show a muted `reading…` with a beating dot,
   then the room. Walk to the next room and open the sheet: the old room must
   stay drawn with the line under it, and its name and shape must not move.
+  Then a board that needs a retry round (open the sheet with a plate covered,
+  as in the unreadable-region item above; the read line says `round 2 of 3`)
+  shows the verdict without the line coming back (owner, 2026-09-11).
 - **The room widget survives the incursion, and the stand-down** (POE-244,
   POE-246's arming, rewritten in POE-248): with the panel open and a room read,
   note the outline, the green open and red closed seals, the purple suggested
