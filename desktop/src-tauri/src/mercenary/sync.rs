@@ -49,6 +49,11 @@ use crate::AppState;
 /// 1728 bytes. Version 1 was 576 bytes of luma over the whole inner crop with
 /// no disc and no alignment; it is not decoded anywhere any more.
 ///
+/// Past a 48 px cell the window keeps the reference cell's framing instead of
+/// the fixed 3 px ([`super::icons::window_offset`], 2026-09-11) — without a
+/// version bump, because the bytes it produces are the same format and at
+/// every cell size up to 48 px the same bytes.
+///
 /// Changing ANY of those numbers is version 3, not a tweak to version 2:
 /// signatures from two versions do not correlate, so a shared pool that mixed
 /// them would poison every device's matcher at once.

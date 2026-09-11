@@ -1554,7 +1554,8 @@ pub fn inner_rect(rect: [i32; 4], g: &MercGeometry) -> [i32; 4] {
 /// on every machine: the laptop cuts 39 inside 43 and the PC 36 inside 40.
 ///
 /// The alignment window the matcher then gets from that cell is
-/// `window = inner − 2 · SHIFT_MAX` (`icons::shift_window`), so an
+/// `window = inner − 2 · SHIFT_MAX` up to a 48 px outer cell, and the
+/// reference cell's framing past it (`icons::window_offset`), so an
 /// inner side under `SIG_DIM + 2 · SHIFT_MAX` leaves no window at all and the
 /// matcher falls back to a single unaligned signature.
 #[allow(dead_code)] // Only the corpus readers reach this; comes off with its first production caller.

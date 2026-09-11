@@ -38,7 +38,10 @@ const (
 	// It also means the window is not a fixed 33x33 — that is only what a 39x39
 	// inner crop at the live 0.974 scale comes to. The window is always derived
 	// from the crop's own size, never written as a literal, because a fixture
-	// captured at another scale would then silently be cropped wrong.
+	// captured at another scale would then silently be cropped wrong. This
+	// mirrors the rule up to a 48 px outer cell only: past it icons.rs keeps
+	// the reference cell's framing instead (`window_offset`), which the
+	// golden's 43 px cell never reaches.
 	shiftMax = 3
 )
 
