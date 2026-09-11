@@ -1273,7 +1273,11 @@ pub fn screen_from_capture(capture: &crate::capture::Capture) -> ScreenSlice {
 ///   retry; a second withheld sweep keeps it spent until the
 ///   `(temple_epoch, temple_rearm)` key changes. A successful fallback read
 ///   remembers the discovered origin through this module. There is no second
-///   temple plate-memory store to clear;
+///   temple plate-memory store to clear. **Amended 2026-09-11 (POE-275
+///   WI-2):** the null-slice fallback is no longer one per key — it sweeps
+///   every `NULL_SWEEP_EVERY` consecutive clean misses up to `NULL_SWEEP_CAP`
+///   per key, off the loop thread (`temple::run::cold_sweep_reason`,
+///   `docs/TEMPLE-LIFECYCLE.md` "Cadences and budgets");
 /// - the merc session HOLDS the frame registration it settled on and carries it
 ///   across every tick that cannot see the frame (`mercenary::run`'s
 ///   `next_fitted_scale` keeps it, `cellfit::apply_held` re-applies it). The

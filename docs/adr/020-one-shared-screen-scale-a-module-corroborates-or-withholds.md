@@ -365,3 +365,17 @@ placement was wrong would then get no sweep on an AlvaStart or TempleArea arm.
 The predicate is fed `anchors.temple_entrance` instead. Windowed play remains
 out of scope and is unchanged by this: the derivation reads the monitor height,
 while a windowed client scales its UI to the window (POE-267/POE-272).
+
+## Amendment: the null-slice sweep has a cadence and runs off the loop (POE-275, 2026-09-11)
+
+The POE-269 amendment's "a null or unplaced slice gets one pyramid fallback per
+`(temple_epoch, temple_rearm)` key" and the 2026-09-09 amendment's "the
+null-slice fallback is unchanged" no longer describe current behaviour for the
+temple. Since POE-275 WI-2 a null or unplaced slice sweeps every 3 consecutive
+clean misses, up to 10 per key, never on the first miss and never over a live
+panel; a second found-but-withheld result ends the key's null sweeps; and every
+sweep — the placed-miss one included — runs off the loop thread while the
+placed recheck keeps running. The placed-miss rule (Manual arm only, once per
+key) is unchanged. See [ADR-025](025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md)'s
+2026-09-11 amendment and [Temple Lifecycle](../TEMPLE-LIFECYCLE.md), "Cadences
+and budgets".

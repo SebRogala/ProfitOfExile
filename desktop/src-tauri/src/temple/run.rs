@@ -70,16 +70,21 @@
 //! both the panel-presence test and the only steady-state anchor work.
 //!
 //! A score below [`anchor::NCC_FLOOR`] is a miss. When the slice is null or has
-//! no placed Entrance origin, the first such tick per `(temple_epoch,
-//! temple_rearm)` key gets one cold-start sweep. If that sweep finds an anchor
-//! whose proposed slice is withheld, it buys exactly one retry; a second
-//! withheld result keeps the key spent until the key changes. A placed board
-//! gets one explicit fallback sweep per key only under the Manual arm (Re-arm):
-//! a miss under AlvaStart or TempleArea is the sheet not being open yet, not a
-//! wrong placement — see [`cold_sweep_reason`]. A sweep that finds another origin logs
-//! the contradiction, uses that origin for this read, and the successful read
-//! remembers it through the SSOT effects seam. There is no per-tick sweep
-//! cadence, moving-origin budget, or session plate memory. The per-key budget is
+//! no anchored Entrance origin, the loop counts its consecutive clean misses and
+//! starts a cold sweep on every [`NULL_SWEEP_EVERY`]-th of them, up to
+//! [`NULL_SWEEP_CAP`] sweeps per `(temple_epoch, temple_rearm)` key (POE-275
+//! WI-2, owner 2026-09-11). Until then the FIRST such miss per key spent the one
+//! sweep — before the sheet could be open — and a sweep that found nothing left
+//! the key spent, so the player needed Re-arm or Recalibrate. If a sweep finds an
+//! anchor whose proposed slice is withheld, the cadence goes on once; a second
+//! withheld result ends that key's null sweeps until the key changes. A placed
+//! board gets one explicit fallback sweep per key only under the Manual arm
+//! (Re-arm): a miss under AlvaStart or TempleArea is the sheet not being open
+//! yet, not a wrong placement — see [`cold_sweep_reason`]. No sweep starts over a
+//! live panel. A sweep that finds another origin logs the contradiction, uses
+//! that origin for this read, and the successful read remembers it through the
+//! SSOT effects seam. The null-slice cadence is the only sweep cadence; there is
+//! no moving-origin budget or session plate memory. The per-key budget is
 //! sufficient because the shared slice is corroborated across modules (ADR-020),
 //! while the placed origin is verified on every tick by the recheck.
 //!
@@ -95,14 +100,27 @@
 //! placed recheck that anchors in a session. A successful read logs [`read_timings_line`];
 //! these timings are measurements, not gates.
 //!
-//! # The cold fallback (POE-234, POE-269)
+//! # The cold fallback (POE-234, POE-269, POE-275)
 //!
 //! [`cold_sweep`] uses [`anchor::anchor_for_loop`]'s coarse-to-fine pyramid
 //! only on the explicit fallback paths above. A null or unplaced screen slice
-//! can spend it once per `(temple_epoch, temple_rearm)` key, plus one retry when
-//! a found anchor is withheld; a second withheld result holds the key until it
-//! changes. A placed miss under any trigger arm can spend it once per the same
-//! key. The sweep polls cancellation between its coarse correlations.
+//! spends it every [`NULL_SWEEP_EVERY`] consecutive clean misses, up to
+//! [`NULL_SWEEP_CAP`] times per `(temple_epoch, temple_rearm)` key; a second
+//! found-but-withheld result ends that key's null sweeps until it changes. A
+//! placed miss spends it once per the same key under the Manual arm (Re-arm)
+//! only, since 2026-09-09 — until then any trigger arm could.
+//!
+//! Since 2026-09-11 (POE-275 WI-2, owner) the sweep runs on a thread of its own
+//! over its own frame ([`SweepSlot`]), one at a time, and the loop goes on
+//! ticking at [`DETECT_INTERVAL`] while it searches. Until then it ran inside the
+//! tick and no tick ran for its whole duration: 5.3 s in the release container,
+//! ~30 s on the PC's debug build (app.log 2026-09-08/09). A placed recheck that
+//! anchors mid-sweep cancels it and its origin wins; a key change, a stand-down
+//! and the module stopping cancel it too. A sweep that FOUND the panel is read
+//! only after a later capture confirms its origin ([`confirm_swept`]), because
+//! the sheet can close during a multi-second search. Every sweep writes one
+//! [`sweep_line`] when it ends — the measurement the two numbers above are to be
+//! corrected from.
 //!
 //! # The exhaustive sweep is not reachable from here
 //!
@@ -140,6 +158,8 @@
 //! This module reads the screen. It never moves the cursor and never sends
 //! input — injecting input into the PoE client is against GGG's ToS.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use image::DynamicImage;
@@ -262,6 +282,37 @@ const MAX_DISTINCT_ERRORS: usize = 12;
 /// overlays and stands the capture down one [`DETECT_INTERVAL`] tick (650 ms)
 /// later than it did at one.
 const RETIRE_AFTER: u8 = 2;
+/// Consecutive clean misses on a null or unplaced screen slice that start the
+/// next cold sweep (POE-275 WI-2, owner 2026-09-11) — [`cold_sweep_reason`].
+///
+/// Three: about 2 s of recheck at [`DETECT_INTERVAL`]. The count restarts when a
+/// sweep STARTS and does not move while one is in flight, so the next sweep
+/// needs three misses after the last one ended rather than following it
+/// back-to-back (a 5.3 s sweep spans eight ticks). A held miss, a retire and a
+/// failed grab do not count; a sighting starts the count again.
+///
+/// A placed recheck that anchors on a screen with no ANCHORED origin — the seed
+/// was right — ENDS the key's null sweeps ([`SweepBudget::on_recheck`]): a sweep
+/// under that key could only find what the recheck found, and without the end
+/// the cadence would restart after every close in the same key.
+///
+/// Why not one, which was the rule until 2026-09-11: the first miss after
+/// Alva's start line is the sheet not being open yet, and on a null slice the
+/// sweep it spent was the key's only one — with no hint `anchor::detect_cheap`
+/// then answers `Nothing` for the rest of the key, and the player needed
+/// Re-arm or Recalibrate (the owner's friend hit exactly this on a first run).
+///
+/// Provisional, like [`NULL_SWEEP_CAP`]: both are to be corrected from the
+/// per-sweep [`sweep_line`] in `app.log`.
+const NULL_SWEEP_EVERY: u8 = 3;
+/// Null-slice cold sweeps one `(temple_epoch, temple_rearm)` key may start
+/// (POE-275 WI-2). A key change — Re-arm, a new epoch — resets it together with
+/// the [`NULL_SWEEP_EVERY`] count.
+///
+/// Ten bounds what an unplaceable screen costs one incursion: ten sweeps
+/// (53 s of one core in the release container) spread over at least
+/// 10 × 3 ticks of recheck between them. Provisional — see [`NULL_SWEEP_EVERY`].
+const NULL_SWEEP_CAP: u8 = 10;
 
 /// Spawn the capture loop. Called through `MODULES` — see `modules.rs`.
 pub fn spawn(app: AppHandle, cancel: watch::Receiver<bool>) -> ModuleJoin {
@@ -1862,19 +1913,127 @@ fn hint_from_slice(
 /// Why one explicit cold fallback is allowed for a failed placed recheck.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColdSweepReason {
-    /// No screen scale or placement exists yet.
+    /// No screen scale or anchored placement exists yet.
     NullSlice,
     /// Re-arm announced this board and its placed recheck fell below the floor.
     PlacedMiss,
 }
 
-/// Decide whether this miss may spend the one cold fallback allowed for it.
+/// A cold sweep [`cold_sweep_reason`] has just started: why, and — for a null
+/// slice — which of the key's [`NULL_SWEEP_CAP`] attempts it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SweepStart {
+    reason: ColdSweepReason,
+    /// `Some(k)`, 1-based, for [`ColdSweepReason::NullSlice`]; `None` for the
+    /// placed miss, whose budget is one per key and needs no count.
+    attempt: Option<u8>,
+}
+
+/// Every per-key cold-sweep budget the loop keeps (POE-269, POE-275 WI-2).
 ///
-/// A null or unplaced slice has no origin to verify, so it gets one cold-start
-/// attempt per key regardless of the arm source. A placed slice gets one
-/// fallback per key only under the Manual arm (Re-arm). The caller records the
-/// returned reason before invoking the sweep, which makes a miss consume the
-/// same one-shot budget as a successful sweep.
+/// One `Copy` value so [`cold_sweep_reason`] can decide AND record a start in
+/// one call the tests reach without an `AppHandle`: a sweep is charged when it
+/// STARTS, whatever it later finds, so a start and its charge cannot drift
+/// apart.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct SweepBudget {
+    /// The board key for which the one placed-miss cold fallback was attempted.
+    fallback_sweep_key: Option<(u64, u64)>,
+    /// The key the two null-slice counters below belong to. A different key
+    /// resets both ([`Self::null_miss`]).
+    null_key: Option<(u64, u64)>,
+    /// Consecutive clean misses on a null slice since the last sweep started, a
+    /// sighting, or the key began — toward [`NULL_SWEEP_EVERY`].
+    null_misses: u8,
+    /// Null-slice sweeps started under `null_key` — toward [`NULL_SWEEP_CAP`].
+    null_started: u8,
+    /// The key whose null sweeps POE-269's withheld rule has ENDED
+    /// ([`null_sweep_key_after_publish`]): a second found-but-withheld sweep, or
+    /// one that filled the slice. Nothing but a key change reopens it.
+    null_ended: Option<(u64, u64)>,
+    /// The null-slice key that already spent its one withheld-anchor retry.
+    null_sweep_released: Option<(u64, u64)>,
+}
+
+impl SweepBudget {
+    /// One clean miss on a null or unplaced slice, with no sweep in flight:
+    /// `Some(k)` when it starts the key's `k`-th null sweep, `None` otherwise.
+    ///
+    /// The count restarts at the start it answers, so the next sweep needs
+    /// [`NULL_SWEEP_EVERY`] misses after this one — and since the caller asks
+    /// only while nothing is in flight, after this one ENDS.
+    fn null_miss(&mut self, key: (u64, u64)) -> Option<u8> {
+        if self.null_key != Some(key) {
+            self.null_key = Some(key);
+            self.null_misses = 0;
+            self.null_started = 0;
+        }
+        if self.null_ended == Some(key) || self.null_started >= NULL_SWEEP_CAP {
+            return None;
+        }
+        self.null_misses = self.null_misses.saturating_add(1);
+        if self.null_misses < NULL_SWEEP_EVERY {
+            return None;
+        }
+        self.null_misses = 0;
+        self.null_started += 1;
+        Some(self.null_started)
+    }
+
+    /// A tick that anchored: the misses are no longer consecutive.
+    fn on_sighting(&mut self) {
+        self.null_misses = 0;
+    }
+
+    /// A found null-slice sweep of `key` has been confirmed and gone to
+    /// [`publish_anchor_scale`], which answered `screen_filled` — POE-269's
+    /// withheld rule, [`null_sweep_key_after_publish`].
+    fn after_null_publish(&mut self, key: (u64, u64), screen_filled: bool) {
+        (self.null_ended, self.null_sweep_released) =
+            null_sweep_key_after_publish(key, self.null_sweep_released, screen_filled);
+    }
+
+    /// A placed recheck anchored under `key`. On a screen with no ANCHORED
+    /// origin (`anchored` false) that ends the key's null sweeps (POE-275 WI-2
+    /// fix round); on an anchored screen the null path is not in play and
+    /// nothing changes. The seed it rechecked is where
+    /// the sheet is, so a sweep under this key could only find what the recheck
+    /// found — the same reasoning as the filled-slice rule in
+    /// [`null_sweep_key_after_publish`]. Without it the cadence restarted after
+    /// every close in the same key: up to [`NULL_SWEEP_CAP`] sheet-less sweeps
+    /// across a Temple of Atzoatl run.
+    fn on_recheck(&mut self, key: (u64, u64), anchored: bool) {
+        if !anchored {
+            self.null_ended = Some(key);
+        }
+    }
+}
+
+/// Decide whether this tick's miss starts a cold sweep, and charge the budget
+/// for it when it does (POE-275 WI-2 — the start is what is charged, so a sweep
+/// that finds nothing costs the same as one that finds the panel).
+///
+/// Only on [`DetectOutcome::Missed`] — the loop searching with nothing live —
+/// and only while no sweep is in flight (`in_flight`): one sweep at a time.
+/// **No sweep starts over a live panel.** A [`DetectOutcome::HeldMiss`] is a
+/// tooltip or a misread over a sheet the recheck just verified, and the retire
+/// after it is the sheet closing; neither is a reason to search the screen, and
+/// neither counts toward [`NULL_SWEEP_EVERY`]. A failed grab
+/// ([`DetectOutcome::Blind`]) never reaches here and would be refused if it
+/// did.
+///
+/// A null or unplaced slice has no origin to verify, so any arm source may
+/// sweep it — the start-up probe included, whose one tick is a first miss and
+/// therefore buys none: a module switched on with the sheet already open stands
+/// down unswept when there is no screen slice, or a seed that misses the sheet,
+/// and Re-arm is the answer (docs/TEMPLE-LIFECYCLE.md's residual) — a right
+/// seed is rechecked on the probe tick and reads the sheet. It sweeps on every
+/// [`NULL_SWEEP_EVERY`]-th consecutive clean miss, up to [`NULL_SWEEP_CAP`] per
+/// key, unless POE-269's withheld rule has ended the key
+/// ([`SweepBudget::null_ended`]). Until 2026-09-11 it swept on the first miss,
+/// once per key.
+///
+/// A placed slice gets one fallback per key, only under the Manual arm (Re-arm).
 ///
 /// # `placed_origin` is the ANCHORED origin, never the hint's (POE-278)
 ///
@@ -1905,26 +2064,35 @@ enum ColdSweepReason {
 /// draws the sheet in one place, so a miss under an incursion arm means "not
 /// open yet", and the 650 ms recheck sees the sheet when it opens. Re-arm
 /// keeps the sweep as the explicit "look again" for a placement that is wrong.
+/// The rule stands now that the sweep no longer blocks the loop (owner,
+/// 2026-09-11: *"keep that, no placed-miss sweep under AlvaStart/TempleArea"*).
 fn cold_sweep_reason(
     screen_present: bool,
     placed_origin: Option<(i32, i32)>,
-    cheap: &anchor::CheapDetect,
+    outcome: DetectOutcome,
+    in_flight: bool,
     source: Option<trigger::ArmSource>,
     key: (u64, u64),
-    fallback_sweep_key: Option<(u64, u64)>,
-    null_sweep_key: Option<(u64, u64)>,
-) -> Option<ColdSweepReason> {
-    if cheap.ncc() >= anchor::NCC_FLOOR {
+    budget: &mut SweepBudget,
+) -> Option<SweepStart> {
+    if outcome != DetectOutcome::Missed || in_flight {
         return None;
     }
     if !screen_present || placed_origin.is_none() {
-        return (null_sweep_key != Some(key)).then_some(ColdSweepReason::NullSlice);
+        return budget.null_miss(key).map(|attempt| SweepStart {
+            reason: ColdSweepReason::NullSlice,
+            attempt: Some(attempt),
+        });
     }
-    (matches!(
+    let manual = matches!(
         source,
         Some(trigger::ArmSource::Trigger(trigger::ArmReason::Manual))
-    ) && fallback_sweep_key != Some(key))
-    .then_some(ColdSweepReason::PlacedMiss)
+    );
+    if !manual || budget.fallback_sweep_key == Some(key) {
+        return None;
+    }
+    budget.fallback_sweep_key = Some(key);
+    Some(SweepStart { reason: ColdSweepReason::PlacedMiss, attempt: None })
 }
 
 /// The origin a successful fallback should remember, or `None` when the sweep
@@ -1962,22 +2130,32 @@ fn placed_origin_contradiction_line(
     })
 }
 
-/// Release a null-slice fallback key for one retry when a sweep found an anchor
-/// but its proposed screen slice was withheld. `released_key` records the key
-/// that already used that retry, so a second withheld sweep keeps its one-shot
-/// budget spent until the `(temple_epoch, temple_rearm)` key changes. A sweep
-/// that found no panel or filled the slice keeps the key spent.
+/// What a FOUND null-slice sweep of `key` leaves of that key's null sweeps, once
+/// its anchor has gone to [`publish_anchor_scale`]: `(ended, released)`, the
+/// new [`SweepBudget::null_ended`] and [`SweepBudget::null_sweep_released`].
+///
+/// POE-269's rule, kept by POE-275 WI-2 on top of the [`NULL_SWEEP_EVERY`]
+/// cadence. A found anchor whose proposed screen slice was withheld releases the
+/// key for one retry — `ended` stays `None` and the cadence goes on — and
+/// `released_key` records that the retry is used, so a second withheld result
+/// ENDS the key's null sweeps until the `(temple_epoch, temple_rearm)` key
+/// changes. A found anchor that filled the slice ends them too, as it always
+/// did: until 2026-09-11 every null sweep spent its key and only this release
+/// gave it back.
+///
+/// Asked only for a sweep that found the panel and was confirmed on a later
+/// capture ([`Sighting::Swept`]); a sweep that found nothing is the cadence's
+/// business alone. Until 2026-09-11 it was asked on every sighting with two
+/// flags saying whether this was one.
 fn null_sweep_key_after_publish(
-    key: Option<(u64, u64)>,
+    key: (u64, u64),
     released_key: Option<(u64, u64)>,
-    attempted: bool,
-    sweep_found: bool,
     screen_filled: bool,
 ) -> (Option<(u64, u64)>, Option<(u64, u64)>) {
-    if attempted && sweep_found && !screen_filled && released_key != key {
-        (None, key)
+    if !screen_filled && released_key != Some(key) {
+        (None, Some(key))
     } else {
-        (key, released_key)
+        (Some(key), released_key)
     }
 }
 
@@ -1993,6 +2171,379 @@ fn remember_fallback_anchor(
     if let Some((x, y)) = fallback_origin {
         remember([x, y]);
     }
+}
+
+// ------------------------------------------------ the sweep, off the loop --
+
+/// Why a running sweep was let go before its answer was used (POE-275 WI-2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SweepCancel {
+    /// A placed recheck anchored while it searched; the recheck's origin wins.
+    Recheck,
+    /// `(temple_epoch, temple_rearm)` moved: a sweep belongs to the key it
+    /// started under.
+    KeyChange,
+    /// The arm gate shut.
+    StandDown,
+    /// The module is stopping.
+    Stop,
+}
+
+impl SweepCancel {
+    /// The words [`sweep_line`] prints after `cancelled by`.
+    fn label(self) -> &'static str {
+        match self {
+            SweepCancel::Recheck => "recheck",
+            SweepCancel::KeyChange => "key change",
+            SweepCancel::StandDown => "stand-down",
+            SweepCancel::Stop => "stop",
+        }
+    }
+}
+
+/// What became of a sweep that FOUND the panel, judged on the capture after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FoundFate {
+    /// A recheck at the swept origin and scale anchored on the current capture,
+    /// and the tick reads there.
+    Confirmed,
+    /// It did not — the sheet closed, or the capture changed size, while the
+    /// sweep searched. Discarded; the tick is a miss.
+    Unconfirmed,
+    /// The placed recheck anchored on the same tick. Its origin wins and this
+    /// result is discarded, as a late one would be.
+    Superseded,
+}
+
+impl FoundFate {
+    /// The words [`sweep_line`] prints after the swept origin.
+    fn label(self) -> &'static str {
+        match self {
+            FoundFate::Confirmed => "confirmed on the current frame",
+            FoundFate::Unconfirmed => "not on the current frame, discarded",
+            FoundFate::Superseded => "discarded, the placed recheck landed",
+        }
+    }
+}
+
+/// How one sweep ended — the outcome half of [`sweep_line`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum SweepEnd {
+    /// It found the panel at `origin` and `scale`, and `fate` is what the
+    /// capture after it made of that.
+    Found { origin: (i32, i32), scale: f32, fate: FoundFate },
+    /// It searched the whole capture and found no layout panel.
+    NoPanel,
+    /// The loop let it go before using its answer.
+    Cancelled(SweepCancel),
+    /// Its thread ended without sending a result, which only a panic does.
+    Lost,
+}
+
+/// Everything [`sweep_line`] prints about one sweep.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SweepReport {
+    start: SweepStart,
+    /// The size of the frame it searched.
+    capture: (u32, u32),
+    /// Measured on the sweep's own thread for a sweep that answered; from its
+    /// launch to the moment the loop let it go for one that had not.
+    took: Duration,
+    end: SweepEnd,
+}
+
+/// What the sweep thread hands back: its anchor, if any, whether its stop
+/// check had fired when the search returned, and how long the search took on
+/// that thread.
+struct SweepResult {
+    found: Option<anchor::Anchor>,
+    /// The search's own stop check, read after it returned.
+    /// [`anchor::anchor_for_loop`] answers a stopped search with the same error
+    /// as a miss, so without this a module stop would be logged as `found no
+    /// layout panel`. [`SweepSlot::settle`] reports it as
+    /// [`SweepCancel::Stop`], found or not.
+    stopped: bool,
+    took: Duration,
+}
+
+/// The one sweep in flight.
+struct SweepFlight {
+    start: SweepStart,
+    /// The `(temple_epoch, temple_rearm)` key it started under.
+    key: (u64, u64),
+    /// The size of the frame it searches — the only capture size its origin
+    /// means anything on ([`confirm_swept`]).
+    capture: (u32, u32),
+    launched: Instant,
+    /// Set by the loop to cancel it. The search's stop closure reads it,
+    /// together with the module's own `cancel`, between the pyramid's coarse
+    /// correlations.
+    stop: Arc<AtomicBool>,
+    done: mpsc::Receiver<SweepResult>,
+}
+
+impl SweepFlight {
+    fn report(&self, took: Duration, end: SweepEnd) -> SweepReport {
+        SweepReport { start: self.start, capture: self.capture, took, end }
+    }
+
+    /// Set the stop flag and report the cancel, measured to now.
+    fn cancelled(self, by: SweepCancel) -> SweepReport {
+        self.stop.store(true, Ordering::SeqCst);
+        // Its own duration when it had already answered: the answer is
+        // discarded either way, and the measurement is still the sweep's.
+        let took = match self.done.try_recv() {
+            Ok(result) => result.took,
+            Err(_) => self.launched.elapsed(),
+        };
+        self.report(took, SweepEnd::Cancelled(by))
+    }
+}
+
+/// What this tick's placed recheck and the sweep slot, together, say it saw.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Sighting {
+    /// The placed recheck anchored.
+    Recheck(anchor::Anchor),
+    /// A sweep found the panel and a recheck at its origin anchored on THIS
+    /// tick's capture. The anchor is that recheck's, not the sweep's.
+    Swept { anchor: anchor::Anchor, reason: ColdSweepReason },
+    /// Neither: the tick is a miss.
+    Nothing,
+}
+
+/// The cold sweep's one slot (POE-275 WI-2, owner 2026-09-11): at most one
+/// sweep in flight, on a thread of its own, while the loop goes on ticking.
+///
+/// # Why the sweep may leave the loop's thread
+///
+/// The loop is a thread rather than a task because screen capture and
+/// `Windows.Media.Ocr` are apartment-threaded (module doc).
+/// [`anchor::anchor_for_loop`] is neither: it is image work over the frame it
+/// is handed — a grayscale pyramid, template correlations, and the template
+/// decoded once behind a `OnceLock` — with no capture, OCR or COM/WinRT call on
+/// its path. So the sweep thread takes the frame by value and needs no
+/// apartment.
+///
+/// # The loop never waits on it
+///
+/// Every method here returns at once. The loop polls the result once a tick
+/// ([`Self::settle`]) and never joins the thread — not on a cancel and not on
+/// module stop: a cancelled sweep stops at its next stop check, and any result
+/// it still sends goes to a receiver that has been dropped. The checks are the
+/// pyramid's, between its coarse correlations (see [`anchor::anchor_for_loop`]);
+/// the stages before the pyramid — building the scene, the hint-scale search
+/// and the three-scale table search — check nothing and run to completion, so a
+/// cancel lands after them.
+#[derive(Default)]
+struct SweepSlot {
+    flight: Option<SweepFlight>,
+}
+
+impl SweepSlot {
+    fn in_flight(&self) -> bool {
+        self.flight.is_some()
+    }
+
+    /// Run `search` on a thread of its own, handing it the per-sweep stop check.
+    ///
+    /// `search` is the whole sweep, injected so the tests control when it
+    /// blocks and what it answers; the loop's is [`cold_sweep`]'s, which adds
+    /// the module's `cancel` to the check. It answers `(found, stopped)`:
+    /// `stopped` is its stop check read after it returned — see
+    /// [`SweepResult::stopped`]. One flight at a time: the caller asks
+    /// [`cold_sweep_reason`], which refuses while [`Self::in_flight`].
+    fn launch<F>(
+        &mut self,
+        start: SweepStart,
+        key: (u64, u64),
+        capture: (u32, u32),
+        search: F,
+    ) -> std::io::Result<()>
+    where
+        F: FnOnce(&dyn Fn() -> bool) -> (Option<anchor::Anchor>, bool) + Send + 'static,
+    {
+        debug_assert!(self.flight.is_none(), "one sweep in flight at most");
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        let (sent, done) = mpsc::channel();
+        std::thread::Builder::new().name("temple-sweep".to_string()).spawn(move || {
+            let searching = Instant::now();
+            let (found, stopped) = search(&|| flag.load(Ordering::SeqCst));
+            // A failed send is a sweep the loop has let go of — the discard, not
+            // an error.
+            let _ = sent.send(SweepResult { found, stopped, took: searching.elapsed() });
+        })?;
+        self.flight = Some(SweepFlight {
+            start,
+            key,
+            capture,
+            launched: Instant::now(),
+            stop,
+            done,
+        });
+        Ok(())
+    }
+
+    /// Cancel the sweep in flight, if there is one, and report it.
+    fn cancel(&mut self, by: SweepCancel) -> Option<SweepReport> {
+        self.flight.take().map(|flight| flight.cancelled(by))
+    }
+
+    /// Cancel the sweep in flight when `key` is no longer the key it started
+    /// under — its answer would be about a board the loop is no longer reading.
+    fn keep_only(&mut self, key: (u64, u64)) -> Option<SweepReport> {
+        match &self.flight {
+            Some(flight) if flight.key != key => self.cancel(SweepCancel::KeyChange),
+            _ => None,
+        }
+    }
+
+    /// Fold this tick's placed recheck together with what the sweep in flight
+    /// has produced, and report the sweep if this is where it ends.
+    ///
+    /// The recheck wins everything it takes part in: a sweep still searching is
+    /// cancelled, and one that answered on this very tick is discarded. A sweep
+    /// that FOUND the panel with no recheck beside it is handed to `confirm`
+    /// with the capture size it searched, and only what `confirm` finds on THIS
+    /// tick's frame is ever read — the loop passes [`confirm_swept`]. A sweep
+    /// still searching with no recheck leaves the tick a miss and stays in
+    /// flight.
+    fn settle(
+        &mut self,
+        cheap: &anchor::CheapDetect,
+        confirm: impl FnOnce(&anchor::Anchor, (u32, u32)) -> Option<anchor::Anchor>,
+    ) -> (Sighting, Option<SweepReport>) {
+        let recheck = match cheap {
+            anchor::CheapDetect::Anchored(found) => Some(*found),
+            anchor::CheapDetect::Nothing { .. } => None,
+        };
+        let seen = recheck.map_or(Sighting::Nothing, Sighting::Recheck);
+        let Some(flight) = self.flight.take() else {
+            return (seen, None);
+        };
+        let result = match flight.done.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => {
+                if recheck.is_some() {
+                    return (seen, Some(flight.cancelled(SweepCancel::Recheck)));
+                }
+                self.flight = Some(flight);
+                return (seen, None);
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                let took = flight.launched.elapsed();
+                return (seen, Some(flight.report(took, SweepEnd::Lost)));
+            }
+        };
+        // A search whose stop fired is a stopped search whatever it returned: a
+        // miss from it is not evidence of an empty screen, and a find is not
+        // used.
+        if result.stopped {
+            let end = SweepEnd::Cancelled(SweepCancel::Stop);
+            return (seen, Some(flight.report(result.took, end)));
+        }
+        let Some(swept) = result.found else {
+            return (seen, Some(flight.report(result.took, SweepEnd::NoPanel)));
+        };
+        let (sighting, fate) = match recheck {
+            Some(found) => (Sighting::Recheck(found), FoundFate::Superseded),
+            None => match confirm(&swept, flight.capture) {
+                Some(anchor) => (
+                    Sighting::Swept { anchor, reason: flight.start.reason },
+                    FoundFate::Confirmed,
+                ),
+                None => (Sighting::Nothing, FoundFate::Unconfirmed),
+            },
+        };
+        let end = SweepEnd::Found { origin: swept.origin, scale: swept.scale, fate };
+        (sighting, Some(flight.report(result.took, end)))
+    }
+}
+
+/// Re-find a swept anchor on a LATER capture: one windowed recheck at the swept
+/// origin and scale, which is the cheap tick's own presence test
+/// ([`anchor::detect_cheap`]). `None` when the sheet is no longer there.
+///
+/// The sweep searched a frame grabbed up to a whole sweep ago, and the sheet
+/// can close in that time, so nothing is read at its origin until this frame
+/// agrees (POE-275 WI-2). `capture` is the size of the frame the sweep
+/// searched: a capture of another size is another screen, where the swept
+/// origin means nothing, and `detect_cheap` refuses a hint whose size differs
+/// from the image. The anchor returned is this frame's, re-centred inside the
+/// recheck window, so the read is placed from the pixels it will crop.
+fn confirm_swept(
+    img: &DynamicImage,
+    swept: &anchor::Anchor,
+    capture: (u32, u32),
+) -> Option<anchor::Anchor> {
+    let hint = CheapHint {
+        calibration: anchor::AnchorCalibration {
+            screen_w: capture.0,
+            screen_h: capture.1,
+            scale: swept.scale,
+        },
+        origin: swept.origin,
+    };
+    match anchor::detect_cheap(img, Some(&hint)) {
+        anchor::CheapDetect::Anchored(found) => Some(found),
+        anchor::CheapDetect::Nothing { .. } => None,
+    }
+}
+
+/// The build word [`sweep_line`] carries, from the caller's
+/// `cfg!(debug_assertions)`: the same sweep is 5.3 s on a release build and
+/// ~30 s on the PC's debug one, so a duration without it cannot be compared.
+fn build_profile(debug_assertions: bool) -> &'static str {
+    if debug_assertions {
+        "debug"
+    } else {
+        "release"
+    }
+}
+
+/// The one `app.log` line every cold sweep writes when it ends (POE-275 WI-2):
+/// why it ran, which null-slice attempt of [`NULL_SWEEP_CAP`] it was, the
+/// capture it searched, how long it took, how it ended, and the build.
+///
+/// A MEASUREMENT, never a switch — it is what [`NULL_SWEEP_EVERY`] and
+/// [`NULL_SWEEP_CAP`] are to be corrected from, and the release-build duration
+/// on the PC has never been recorded. It replaces the
+/// `Temple: sweep found no layout panel at WxH — waiting for the panel` line,
+/// whose case is the `found no layout panel` outcome here.
+///
+/// Not routed through [`ErrorLog`]: a sweep that finds nothing is not an error —
+/// a screen with no layout panel on it is the state the loop lives in — and
+/// [`cold_sweep_reason`]'s budget already bounds the lines: [`NULL_SWEEP_CAP`]
+/// null sweeps plus one placed sweep per key.
+fn sweep_line(report: &SweepReport, profile: &str) -> String {
+    let attempt = match report.start.attempt {
+        Some(k) => format!(", attempt {k} of {NULL_SWEEP_CAP}"),
+        None => String::new(),
+    };
+    let end = match report.end {
+        SweepEnd::Found { origin, scale, fate } => format!(
+            "found at ({},{}) scale {scale:.3} — {}",
+            origin.0,
+            origin.1,
+            fate.label()
+        ),
+        SweepEnd::NoPanel => "found no layout panel".to_string(),
+        SweepEnd::Cancelled(by) => format!("cancelled by {}", by.label()),
+        SweepEnd::Lost => "ended without a result".to_string(),
+    };
+    format!(
+        "Temple: cold sweep ({:?}{attempt}) at {}x{} — {} ms, {end}; {profile} build",
+        report.start.reason,
+        report.capture.0,
+        report.capture.1,
+        ms(report.took),
+    )
+}
+
+/// Write [`sweep_line`] for a sweep that just ended.
+fn log_sweep(app: &AppHandle, report: &SweepReport) {
+    crate::app_log(app, sweep_line(report, build_profile(cfg!(debug_assertions))));
 }
 
 /// The line to log when the loop takes its hint from a scale ANOTHER module
@@ -2346,15 +2897,12 @@ struct Session {
     /// [`kept_for`] the moment the board moves — two reads of two different
     /// boards must never reach [`slice::merge_reads`].
     kept: Option<slice::KeptRead>,
-    /// The board key for which the one placed-miss cold fallback was attempted.
-    fallback_sweep_key: Option<(u64, u64)>,
-    /// The `(temple_epoch, temple_rearm)` key for which the one null/unplaced
-    /// cold-start sweep was attempted. A key is released for one retry when its
-    /// sweep found an anchor but `screen_from_anchor` withheld the slice.
-    null_sweep_key: Option<(u64, u64)>,
-    /// The null-slice key that already spent its one retry after a found anchor
-    /// was withheld. It prevents that key from paying the cold sweep every tick.
-    null_sweep_released: Option<(u64, u64)>,
+    /// What each board key may still spend on cold sweeps — the placed-miss
+    /// fallback, the null-slice cadence and cap, and POE-269's withheld rule.
+    /// See [`SweepBudget`]; [`cold_sweep_reason`] charges it.
+    sweep_budget: SweepBudget,
+    /// The one sweep in flight, off this thread (POE-275 WI-2) — [`SweepSlot`].
+    sweeps: SweepSlot,
     /// Whether the first successful placed-origin recheck has been measured and
     /// logged.
     placed_recheck_said: bool,
@@ -2417,9 +2965,8 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         gate: slice::RearmGate::default(),
         errors: ErrorLog::default(),
         kept: None,
-        fallback_sweep_key: None,
-        null_sweep_key: None,
-        null_sweep_released: None,
+        sweep_budget: SweepBudget::default(),
+        sweeps: SweepSlot::default(),
         placed_recheck_said: false,
         gate_said: None,
         source_said: None,
@@ -2488,6 +3035,16 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             if let Some(line) = gate_line(&mut session.source_said, source, stood_down) {
                 crate::app_log(&app, line);
             }
+            // A shut gate cancels a sweep still searching (POE-275 WI-2): the
+            // loop stops looking, so nothing would read its answer. AFTER the
+            // stand-down line, so `app.log` names the cause first. Focused only:
+            // an alt-tab is not a stand-down, and a sweep that finishes while the
+            // game is behind is confirmed on the first capture after it.
+            if !armed {
+                if let Some(report) = session.sweeps.cancel(SweepCancel::StandDown) {
+                    log_sweep(&app, &report);
+                }
+            }
         }
 
         let step = loop_step(
@@ -2522,6 +3079,14 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         if !nap(&cancel, step.nap()) {
             break;
         }
+    }
+
+    // A sweep still searching is let go, never joined (POE-275 WI-2): its stop
+    // check reads the module's `cancel` as well as its own flag, so its thread
+    // ends at its next stop check whatever this loop does — after the
+    // hint/table stage, then between the pyramid's coarse correlations.
+    if let Some(report) = session.sweeps.cancel(SweepCancel::Stop) {
+        log_sweep(&app, &report);
     }
 
     // A retired panel must not be left claiming a board is on screen.
@@ -2589,7 +3154,10 @@ fn fail(app: &AppHandle, session: &mut Session, msg: String) {
 /// is not evidence about what the cheap half costs, and a promoted tick that
 /// READ writes [`read_timings_line`] of its own. A tick that resolved an anchor
 /// and then re-showed an already-read board is a promoted tick by that measure:
-/// it paid for the placed-origin check or its explicit fallback either way.
+/// it paid for the placed-origin check, or for confirming a swept origin, either
+/// way. A cold sweep is not part of any tick since 2026-09-11 (POE-275 WI-2):
+/// it runs on its own thread ([`SweepSlot`]), and a tick only starts one,
+/// polls it, or confirms what it found.
 fn tick(
     app: &AppHandle,
     session: &mut Session,
@@ -2608,12 +3176,21 @@ fn tick(
     // then skipped, or stand the loop down on a board the user had just asked to
     // be re-read.
     //
-    // What ONE reading cannot do is stay current: this tick takes seconds (a
-    // cold sweep is 5.3 s), and a START line or a Re-arm inside it arms a fresh
-    // cycle. `trigger::complete_cycle` therefore re-reads the pair and refuses a
-    // stand-down whose key has moved on — see `miss`.
+    // What ONE reading cannot do is stay current: a START line or a Re-arm that
+    // lands while this tick runs arms a fresh cycle. Since 2026-09-11 (POE-275
+    // WI-2) the cold sweep that made a tick last 5.3 s — ~30 s on the PC's debug
+    // build — runs off this thread, but a tick still spans its grab and its
+    // detect before it reaches `miss`: the grab measured 225 ms on the laptop's
+    // debug build and the detect 1042 ms on the PC's (docs/TEMPLE-LIFECYCLE.md,
+    // "Cadences and budgets"). `trigger::complete_cycle` therefore re-reads the pair and
+    // refuses a stand-down whose key has moved on — see `miss`.
     let key = board_key(app);
     let rearm = key.1;
+    // A sweep belongs to the key it started under (POE-275 WI-2): after a Re-arm
+    // or a new epoch its answer is about a board the loop is no longer reading.
+    if let Some(report) = session.sweeps.keep_only(key) {
+        log_sweep(app, &report);
+    }
     let grab = match crate::capture::capture_screen(app) {
         Ok(grab) => grab,
         Err(e) => {
@@ -2672,37 +3249,63 @@ fn tick(
         );
     }
 
-    // A null/unplaced slice gets one cold start per key, plus one retry when a
-    // found anchor is withheld. A placed miss gets one fallback only under the
-    // Manual arm — see `cold_sweep_reason`.
+    // The recheck and the sweep in flight, folded (POE-275 WI-2): a recheck
+    // that anchored wins and cancels the sweep; a sweep that FOUND the panel is
+    // used only as re-found on THIS frame (`confirm_swept`), which is always a
+    // later capture than the one it searched.
     //
-    // The ANCHORED origin, not the hint's: the hint carries a seed on any
-    // non-null slice, and passing that would read every screen that merely
-    // EXISTS as one whose placement has been verified (POE-278).
-    let reason = cold_sweep_reason(
-        screen_present,
-        anchored_origin.map(|[x, y]| (x, y)),
-        &cheap,
-        source,
-        key,
-        session.fallback_sweep_key,
-        session.null_sweep_key,
-    );
-    let null_sweep_attempted = matches!(reason, Some(ColdSweepReason::NullSlice));
-    let mut sweep_ran = false;
-    let mut swept = None;
-    if let Some(reason) = reason {
-        match reason {
-            ColdSweepReason::NullSlice => session.null_sweep_key = Some(key),
-            ColdSweepReason::PlacedMiss => session.fallback_sweep_key = Some(key),
-        }
-        sweep_ran = true;
-        swept = cold_sweep(app, &img, hint.as_ref(), cancel);
+    // The confirmation is a windowed NCC of its own, so its cost is booked to
+    // the `anchor` stage — the stage a slow-tick line reads it from.
+    let mut confirming = Duration::ZERO;
+    let (sighting, ended) = session.sweeps.settle(&cheap, |swept, searched| {
+        let started = Instant::now();
+        let confirmed = confirm_swept(&img, swept, searched);
+        confirming = started.elapsed();
+        confirmed
+    });
+    session.tick_stages.anchor = confirming;
+    if let Some(report) = ended {
+        log_sweep(app, &report);
     }
-    let null_sweep_found = null_sweep_attempted && swept.is_some();
+
+    let (found, swept_by) = match sighting {
+        Sighting::Recheck(found) => {
+            // The seed was right: a screen with no anchored origin whose placed
+            // recheck anchored has nothing left for a null sweep to find in this
+            // key (`SweepBudget::on_recheck`).
+            session.sweep_budget.on_recheck(key, anchored_origin.is_some());
+            (found, None)
+        }
+        Sighting::Swept { anchor, reason } => (anchor, Some(reason)),
+        Sighting::Nothing => {
+            let outcome = miss(app, session, false, key);
+            // A miss may START a sweep, never wait for one: the loop keeps
+            // ticking while it searches. A null/unplaced slice sweeps every
+            // `NULL_SWEEP_EVERY` misses up to `NULL_SWEEP_CAP` per key; a placed
+            // miss once per key under the Manual arm only — see
+            // `cold_sweep_reason`.
+            //
+            // The ANCHORED origin, not the hint's: the hint carries a seed on any
+            // non-null slice, and passing that would read every screen that
+            // merely EXISTS as one whose placement has been verified (POE-278).
+            let start = cold_sweep_reason(
+                screen_present,
+                anchored_origin.map(|[x, y]| (x, y)),
+                outcome,
+                session.sweeps.in_flight(),
+                source,
+                key,
+                &mut session.sweep_budget,
+            );
+            if let Some(start) = start {
+                cold_sweep(app, &mut session.sweeps, img, hint, cancel, start, key);
+            }
+            return false;
+        }
+    };
 
     let placed_origin = cheap_hint.as_ref().map(|hint| hint.origin);
-    let fallback_origin = swept.as_ref().and_then(|found| {
+    let fallback_origin = swept_by.and_then(|_| {
         let fallback_origin = placed_origin_contradiction(placed_origin, found.origin)?;
         if let Some(line) = placed_origin_contradiction_line(placed_origin, found.origin) {
             crate::app_log(app, line);
@@ -2712,15 +3315,8 @@ fn tick(
     });
 
     let anchoring = Instant::now();
-    let found = match (swept, cheap) {
-        (Some(found), _) | (None, anchor::CheapDetect::Anchored(found)) => found,
-        (None, anchor::CheapDetect::Nothing { .. }) => {
-            miss(app, session, false, key);
-            return sweep_ran;
-        }
-    };
     let layout = reader::read_layout_at(&img, found);
-    session.tick_stages.anchor = anchoring.elapsed();
+    session.tick_stages.anchor += anchoring.elapsed();
 
     // The sighting the arm gate reads (POE-246, WI-1): every anchored tick sets
     // `live`, so the gate stays open for as long as the sheet is in front of the
@@ -2732,6 +3328,7 @@ fn tick(
     // on the read would stand the module down after the READ rather than after
     // the sheet closed.
     let detected = session.state.on_detect(true);
+    session.sweep_budget.on_sighting();
     // The temple's WRITE of the shared slice (POE-234 WI-2). Here rather than in
     // `full_read`, so all three anchor paths — the cheap tick's verified hint,
     // the cold sweep, and the promoted read — publish, including the ticks whose
@@ -2739,13 +3336,9 @@ fn tick(
     // that affordable on a 650 ms loop.
     let screen_filled =
         publish_anchor_scale(app, session, &layout, hint, capture, monitor_id, origin, client);
-    (session.null_sweep_key, session.null_sweep_released) = null_sweep_key_after_publish(
-        session.null_sweep_key,
-        session.null_sweep_released,
-        null_sweep_attempted,
-        null_sweep_found,
-        screen_filled,
-    );
+    if swept_by == Some(ColdSweepReason::NullSlice) {
+        session.sweep_budget.after_null_publish(key, screen_filled);
+    }
 
     // The OCR gate (POE-249, docs/TEMPLE-LIFECYCLE.md rows 2-3). Everything
     // above this line runs on every sighting; the OCR below it runs once per
@@ -2810,52 +3403,53 @@ fn tick(
     true
 }
 
-/// One cold-start sweep of this capture, logged either way.
+/// Start one cold sweep of this capture on a thread of its own, and return at
+/// once — [`SweepSlot::launch`] over [`anchor::anchor_for_loop`].
 ///
-/// `None` on a miss AND on a cancelled sweep — both mean "no anchor came out of
-/// this", which is what the caller needs. They are logged differently because
-/// they mean different things to a user reading `app.log`, and neither is an
-/// error: a screen with no layout panel on it is the state the loop lives in.
+/// `start` is what [`cold_sweep_reason`] has already charged: a null or
+/// unplaced slice gets this path every [`NULL_SWEEP_EVERY`] consecutive clean
+/// misses, up to [`NULL_SWEEP_CAP`] per `(temple_epoch, temple_rearm)` key; a
+/// placed miss once per key under the Manual arm only. Nothing is logged here:
+/// the sweep's one line is written when it ends, found or not ([`sweep_line`]).
+/// A thread that cannot be spawned says so and leaves the slot empty; the start
+/// is charged already, so a failing spawn cannot be retried on every tick.
 ///
-/// The miss line is emitted for the one fallback attempt. A null or unplaced
-/// slice gets this path once per `(temple_epoch, temple_rearm)` key, plus one
-/// retry when a found anchor is withheld; a second withheld result keeps the
-/// key spent. A placed miss gets it only under the Manual arm
-/// ([`cold_sweep_reason`]). [`ErrorLog`] does not cap it because this is not
-/// an error path and the caller already owns the bounded rule.
+/// # Off the loop (POE-275 WI-2, owner 2026-09-11)
 ///
-/// # Blocking
-///
-/// This is the loop's longest single call: 5.3 s on a 1920x1080 capture in the
-/// Linux container (release). `cancel` is polled inside it, between coarse
-/// correlations, so a module switched off mid-sweep stops within roughly a
-/// twenty-third of it rather than after all of it — see
-/// [`anchor::anchor_for_loop`].
+/// The sweep is 5.3 s on a 1920x1080 capture in the Linux container (release)
+/// and ~30 s on the PC's debug build (app.log 2026-09-08/09). Until 2026-09-11
+/// this was the loop's longest single call, the tick waited for it, and no
+/// placed recheck ran while it searched. It now takes the frame by VALUE — the
+/// tick that starts it is a miss and has no further use for it — and the loop
+/// goes on ticking at [`DETECT_INTERVAL`]. The search's stop check reads the
+/// slot's per-sweep flag and the module's `cancel` together. It is polled only
+/// inside the pyramid — building the scene, the hint-scale search and the
+/// three-scale table search run to completion first — so a cancel of either
+/// kind lands after that stage, then between the pyramid's coarse correlations
+/// (see [`anchor::anchor_for_loop`]).
 fn cold_sweep(
     app: &AppHandle,
-    img: &DynamicImage,
-    hint: Option<&anchor::AnchorCalibration>,
+    sweeps: &mut SweepSlot,
+    img: DynamicImage,
+    hint: Option<anchor::AnchorCalibration>,
     cancel: &watch::Receiver<bool>,
-) -> Option<anchor::Anchor> {
+    start: SweepStart,
+    key: (u64, u64),
+) {
+    let capture = (img.width(), img.height());
+    let module_stop = cancel.clone();
     // The placed recheck searched a small window. This explicit fallback searches
     // the whole capture with the pyramid path, trying the placed scale first.
-    let found = anchor::anchor_for_loop(img, hint, &|| *cancel.borrow());
-    if *cancel.borrow() {
-        return None;
-    }
-    match found {
-        Ok(found) => Some(found),
-        Err(_) => {
-            crate::app_log(
-                app,
-                format!(
-                    "Temple: sweep found no layout panel at {}x{} — waiting for the panel",
-                    img.width(),
-                    img.height()
-                ),
-            );
-            None
-        }
+    let launched = sweeps.launch(start, key, capture, move |stop| {
+        let halt = || stop() || *module_stop.borrow();
+        let found = anchor::anchor_for_loop(&img, hint.as_ref(), &halt).ok();
+        (found, halt())
+    });
+    if let Err(e) = launched {
+        crate::app_log(
+            app,
+            format!("Temple: cold sweep ({:?}) could not start — {e}", start.reason),
+        );
     }
 }
 
@@ -2928,15 +3522,22 @@ fn cold_sweep(
 /// of Atzoatl run is not ended by one of its rooms' sheets closing.
 ///
 /// The `key` is passed on to `trigger::complete_cycle` and is the fourth guard.
-/// This tick's key was read at the top of [`tick`], which on a cold sweep is
-/// 5.3 s ago, so a START line or a Re-arm in between has already armed a FRESH
-/// cycle by the time this runs — and disarming that on the strength of the old
-/// key would leave the next board unread until Re-arm.
+/// This tick's key was read at the top of [`tick`], before its grab and its
+/// detect — over a second on a debug build (1042 ms of cheap detect measured on
+/// the PC's) — so a START line or a Re-arm in between may already have armed a
+/// FRESH cycle by the time this runs, and disarming that on the strength of the
+/// old key would leave the next board unread until Re-arm. Until 2026-09-11 the
+/// gap also held the cold sweep, 5.3 s in the release container; the sweep runs
+/// off the loop since then (POE-275 WI-2), and the guard stays for the gap
+/// that is left.
 ///
 /// The stand-down is not logged here. [`gate_line`] owns that line and prints it
 /// on the next iteration, which is what keeps it one line per stand-down however
 /// the gate came to be shut.
-fn miss(app: &AppHandle, session: &mut Session, errored: bool, key: (u64, u64)) {
+///
+/// Returns what the panel state machine answered, which [`tick`] hands to
+/// [`cold_sweep_reason`]: only a [`DetectOutcome::Missed`] may start a sweep.
+fn miss(app: &AppHandle, session: &mut Session, errored: bool, key: (u64, u64)) -> DetectOutcome {
     if errored {
         // A tick that could not LOOK, and the whole of what it does: spend the
         // start-up probe and leave the panel state where the last tick that
@@ -2945,8 +3546,7 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool, key: (u64, u64)) 
         // nothing about the sheet, completes no cycle and takes no overlay
         // down; and [`fail`] has already published both the status and the
         // message, so publishing here would say the same thing twice.
-        session.state.on_blind_tick();
-        return;
+        return session.state.on_blind_tick();
     }
     let outcome = session.state.on_detect(false);
     if outcome == DetectOutcome::Retired {
@@ -2961,6 +3561,7 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool, key: (u64, u64)) 
     if let Some(status) = miss_publish(outcome) {
         publish(app, |slice| apply_status(slice, status));
     }
+    outcome
 }
 
 /// The text crops this module OCRs, named, in the order they are read.
@@ -4850,55 +5451,701 @@ mod tests {
         anchor::CheapDetect::Nothing { best_ncc: 0.2 }
     }
 
+    /// Every source the arm gate can name, for the tests that must hold under
+    /// all of them.
+    const ALL_SOURCES: [Option<trigger::ArmSource>; 6] = [
+        Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaStart)),
+        Some(trigger::ArmSource::Trigger(trigger::ArmReason::TempleArea)),
+        Some(trigger::ArmSource::Trigger(trigger::ArmReason::Manual)),
+        Some(trigger::ArmSource::PanelOnScreen),
+        Some(trigger::ArmSource::StartupProbe),
+        None,
+    ];
+    const ALVA: Option<trigger::ArmSource> =
+        Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaStart));
+    const MANUAL: Option<trigger::ArmSource> =
+        Some(trigger::ArmSource::Trigger(trigger::ArmReason::Manual));
+
+    /// One clean miss with nothing live on a NULL slice, under `key`, with
+    /// nothing in flight — the only tick that counts toward a null sweep.
+    fn null_miss(budget: &mut SweepBudget, key: (u64, u64)) -> Option<SweepStart> {
+        cold_sweep_reason(false, None, DetectOutcome::Missed, false, ALVA, key, budget)
+    }
+
+    /// The null-slice start the cadence answers for the `k`-th sweep of a key.
+    fn null_start(k: u8) -> Option<SweepStart> {
+        Some(SweepStart { reason: ColdSweepReason::NullSlice, attempt: Some(k) })
+    }
+
+    /// Three misses: the ticks that start one null sweep from a count of zero.
+    fn spend_one_null_sweep(budget: &mut SweepBudget, key: (u64, u64)) -> Option<SweepStart> {
+        null_miss(budget, key);
+        null_miss(budget, key);
+        null_miss(budget, key)
+    }
+
+    /// The placed path, unchanged by POE-275 (owner: *"keep that"*): Re-arm
+    /// buys one sweep per key, and no other source buys one. It runs off the
+    /// loop like any sweep, and like any sweep it starts only on a miss with
+    /// nothing live and nothing in flight.
+    ///
+    /// Fails if an incursion arm buys the sweep again (the 2026-09-09 30–34 s
+    /// wait), if Re-arm's budget is not per key, or if a held miss or a sweep
+    /// already in flight is let through.
     #[test]
     fn a_below_floor_placed_miss_spends_one_fallback_under_re_arm_only() {
-        let key = BOARD;
-        let cheap = saw_nothing();
         let placed = Some((960, 713));
-        let manual = Some(trigger::ArmSource::Trigger(trigger::ArmReason::Manual));
+        let placed_miss = Some(SweepStart { reason: ColdSweepReason::PlacedMiss, attempt: None });
+        let mut budget = SweepBudget::default();
+        let missed = DetectOutcome::Missed;
 
         assert_eq!(
-            cold_sweep_reason(true, placed, &cheap, manual, key, None, None),
-            Some(ColdSweepReason::PlacedMiss),
+            cold_sweep_reason(true, placed, missed, false, MANUAL, BOARD, &mut budget),
+            placed_miss,
             "Re-arm qualifies a placed miss",
         );
         assert_eq!(
-            cold_sweep_reason(true, placed, &cheap, manual, key, Some(key), None),
+            cold_sweep_reason(true, placed, missed, false, MANUAL, BOARD, &mut budget),
             None,
             "Re-arm spends only once per key",
         );
         assert_eq!(
-            cold_sweep_reason(true, placed, &cheap, manual, NEXT_BOARD, Some(key), None),
-            Some(ColdSweepReason::PlacedMiss),
+            cold_sweep_reason(true, placed, missed, false, MANUAL, NEXT_BOARD, &mut budget),
+            placed_miss,
             "a new key has its own fallback",
         );
 
-        // An incursion arm's first miss is the sheet not being open yet, and a
-        // sweep there blocks the loop for its whole duration (2026-09-09).
-        for source in [
-            Some(trigger::ArmSource::Trigger(trigger::ArmReason::AlvaStart)),
-            Some(trigger::ArmSource::Trigger(trigger::ArmReason::TempleArea)),
-            Some(trigger::ArmSource::PanelOnScreen),
-            Some(trigger::ArmSource::StartupProbe),
-            None,
-        ] {
+        // An incursion arm's first miss is the sheet not being open yet
+        // (2026-09-09), and the rest are not Re-arm's "look again".
+        for source in ALL_SOURCES.into_iter().filter(|source| *source != MANUAL) {
+            let mut budget = SweepBudget::default();
             assert_eq!(
-                cold_sweep_reason(true, placed, &cheap, source, key, None, None),
+                cold_sweep_reason(true, placed, missed, false, source, BOARD, &mut budget),
                 None,
                 "{source:?} does not qualify a placed fallback",
             );
         }
 
-        let anchored = anchor::CheapDetect::Anchored(anchor::Anchor {
-            origin: (960, 713),
-            scale: 1.0,
-            ncc: anchor::NCC_FLOOR,
-        });
+        let mut budget = SweepBudget::default();
         assert_eq!(
-            cold_sweep_reason(true, placed, &anchored, manual, key, None, None),
+            cold_sweep_reason(
+                true,
+                placed,
+                DetectOutcome::HeldMiss,
+                false,
+                MANUAL,
+                BOARD,
+                &mut budget,
+            ),
             None,
-            "an anchored recheck does not buy a fallback",
+            "a held miss is a live panel, not a wrong placement",
         );
+        assert_eq!(
+            cold_sweep_reason(true, placed, missed, true, MANUAL, BOARD, &mut budget),
+            None,
+            "one sweep in flight at most",
+        );
+        assert_eq!(
+            cold_sweep_reason(true, placed, missed, false, MANUAL, BOARD, &mut budget),
+            placed_miss,
+            "neither refusal spent Re-arm's one sweep",
+        );
+    }
+
+    /// The fix (owner, 2026-09-11): on a null slice the first miss after an arm
+    /// is the sheet not being open yet, so misses one and two start nothing and
+    /// the third starts exactly one sweep — under every arm source, the
+    /// start-up probe's single tick included.
+    ///
+    /// Fails if the sweep is spent on the first miss again (the friend's first
+    /// run), if `NULL_SWEEP_EVERY` moves, or if the null path is gated on the arm.
+    #[test]
+    fn a_null_slice_starts_its_first_sweep_on_the_third_consecutive_miss_under_every_arm() {
+        for source in ALL_SOURCES {
+            let mut budget = SweepBudget::default();
+            let missed = DetectOutcome::Missed;
+            let mut miss =
+                || cold_sweep_reason(false, None, missed, false, source, BOARD, &mut budget);
+
+            assert_eq!(miss(), None, "{source:?}: miss 1");
+            assert_eq!(miss(), None, "{source:?}: miss 2");
+            assert_eq!(miss(), null_start(1), "{source:?}: miss 3");
+        }
+    }
+
+    /// A screen with a seeded but never-ANCHORED origin is a null slice for this
+    /// rule too (POE-278: a seed is not a placement), and it waits the same
+    /// three misses.
+    ///
+    /// Fails if `screen_present` alone is read as placed — the miss would go to
+    /// the placed arm, which buys nothing under AlvaStart.
+    #[test]
+    fn an_unanchored_screen_waits_the_same_three_misses() {
+        let mut budget = SweepBudget::default();
+        let mut miss = || {
+            cold_sweep_reason(true, None, DetectOutcome::Missed, false, ALVA, BOARD, &mut budget)
+        };
+
+        assert_eq!((miss(), miss(), miss()), (None, None, null_start(1)));
+    }
+
+    /// The next null sweep needs `NULL_SWEEP_EVERY` misses after the previous
+    /// one ENDED: the count restarts when a sweep starts, and misses that land
+    /// while it is still in flight do not advance it.
+    ///
+    /// Fails if the count is not reset at the start (the first miss after the
+    /// sweep would start the next one) or if in-flight misses count (a 5.3 s
+    /// sweep spans eight ticks, so the loop would sweep back-to-back).
+    #[test]
+    fn the_next_null_sweep_needs_three_misses_after_the_last_one_ended() {
+        let mut budget = SweepBudget::default();
+        assert_eq!(spend_one_null_sweep(&mut budget, BOARD), null_start(1), "precondition");
+        let missed = DetectOutcome::Missed;
+        for _ in 0..8 {
+            assert_eq!(
+                cold_sweep_reason(false, None, missed, true, ALVA, BOARD, &mut budget),
+                None,
+                "a miss during the sweep",
+            );
+        }
+
+        assert_eq!(null_miss(&mut budget, BOARD), None, "miss 1 after it ended");
+        assert_eq!(null_miss(&mut budget, BOARD), None, "miss 2 after it ended");
+        assert_eq!(null_miss(&mut budget, BOARD), null_start(2), "miss 3 after it ended");
+    }
+
+    /// `NULL_SWEEP_CAP` sweeps per key, and not one more however long the loop
+    /// goes on missing.
+    ///
+    /// Fails if the cap is dropped (an unplaceable screen sweeps for the whole
+    /// portal wait, which has been measured at 22 min) or is off by one either
+    /// way — the tenth must start.
+    #[test]
+    fn no_null_sweep_starts_past_the_cap() {
+        let mut budget = SweepBudget::default();
+        for k in 1..=NULL_SWEEP_CAP {
+            assert_eq!(spend_one_null_sweep(&mut budget, BOARD), null_start(k), "sweep {k}");
+        }
+
+        for miss in 0..3 * u32::from(NULL_SWEEP_EVERY) {
+            assert_eq!(null_miss(&mut budget, BOARD), None, "miss {miss} past the cap");
+        }
+    }
+
+    /// A key change — Re-arm, a new epoch — gives the new key a whole count and
+    /// a whole cap.
+    ///
+    /// Fails if either is carried across: two misses left over under the old
+    /// key would start the new key's sweep on its FIRST miss, and a spent cap
+    /// would leave the new key unable to sweep at all, which is the bug the
+    /// owner's friend hit, one key later.
+    #[test]
+    fn a_key_change_resets_the_null_count_and_cap() {
+        let mut budget = SweepBudget::default();
+        for _ in 0..NULL_SWEEP_CAP {
+            spend_one_null_sweep(&mut budget, BOARD);
+        }
+        null_miss(&mut budget, BOARD);
+        null_miss(&mut budget, BOARD);
+
+        assert_eq!(null_miss(&mut budget, NEXT_BOARD), None, "miss 1 under the new key");
+        assert_eq!(null_miss(&mut budget, NEXT_BOARD), None, "miss 2 under the new key");
+        assert_eq!(null_miss(&mut budget, NEXT_BOARD), null_start(1), "miss 3 under the new key");
+    }
+
+    /// Only the loop searching with nothing live counts. A held miss is a live
+    /// panel (a tooltip, a misread), a retire is the sheet closing, a sighting is
+    /// the sheet, and a blind tick saw nothing at all: none starts a sweep and
+    /// none advances the count.
+    ///
+    /// Arranged two misses in, so an outcome that advanced the count would start
+    /// the sweep itself. Fails if the start is widened to "any tick that did not
+    /// anchor", or if the count is advanced before the outcome is checked.
+    #[test]
+    fn only_a_miss_with_nothing_live_counts_toward_a_null_sweep() {
+        for outcome in [
+            DetectOutcome::HeldMiss,
+            DetectOutcome::Retired,
+            DetectOutcome::Blind,
+            DetectOutcome::Found,
+            DetectOutcome::Held,
+        ] {
+            let mut budget = SweepBudget::default();
+            null_miss(&mut budget, BOARD);
+            null_miss(&mut budget, BOARD);
+
+            assert_eq!(
+                cold_sweep_reason(false, None, outcome, false, ALVA, BOARD, &mut budget),
+                None,
+                "{outcome:?} starts nothing",
+            );
+            assert_eq!(
+                null_miss(&mut budget, BOARD),
+                null_start(1),
+                "{outcome:?} left the count at two",
+            );
+        }
+    }
+
+    /// The misses have to be CONSECUTIVE: a sighting between them starts the
+    /// count again.
+    ///
+    /// Fails if `on_sighting` leaves the count standing — two misses either side
+    /// of a sheet the loop was reading would start a sweep on the first miss
+    /// after it.
+    #[test]
+    fn a_sighting_starts_the_null_count_again() {
+        let mut budget = SweepBudget::default();
+        null_miss(&mut budget, BOARD);
+        null_miss(&mut budget, BOARD);
+
+        budget.on_sighting();
+
+        assert_eq!(null_miss(&mut budget, BOARD), None, "miss 1 after the sighting");
+        assert_eq!(null_miss(&mut budget, BOARD), None, "miss 2 after the sighting");
+        assert_eq!(null_miss(&mut budget, BOARD), null_start(1), "miss 3 after the sighting");
+    }
+
+    // ------------------------------------------- the sweep, off the loop --
+
+    /// How long a test waits on a sweep thread before failing, so a broken
+    /// cancel fails the test rather than hanging it.
+    const PATIENCE: Duration = Duration::from_secs(5);
+
+    fn placed_start() -> SweepStart {
+        SweepStart { reason: ColdSweepReason::PlacedMiss, attempt: None }
+    }
+
+    /// An anchor at `origin`, as a sweep or a recheck reports one.
+    fn anchor_at(origin: (i32, i32)) -> anchor::Anchor {
+        anchor::Anchor { origin, scale: 1.0, ncc: 0.95 }
+    }
+
+    /// Launch a sweep that searches until its stop check fires — the pyramid
+    /// polls it between coarse correlations — says whether it saw the stop,
+    /// then waits for the test's word and answers `late`.
+    ///
+    /// Returns the receiver that hears whether the stop fired, and the sender
+    /// that lets the sweep answer; dropping the sender lets the thread end.
+    fn searching_sweep(
+        slot: &mut SweepSlot,
+        key: (u64, u64),
+        late: Option<anchor::Anchor>,
+    ) -> (mpsc::Receiver<bool>, mpsc::Sender<()>) {
+        let (saw_stop, heard) = mpsc::channel();
+        let (answer, answered) = mpsc::channel::<()>();
+        slot.launch(placed_start(), key, (1920, 1080), move |stop| {
+            let give_up = Instant::now() + PATIENCE;
+            while !stop() && Instant::now() < give_up {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let _ = saw_stop.send(stop());
+            let _ = answered.recv_timeout(PATIENCE);
+            (late, stop())
+        })
+        .expect("the sweep thread starts");
+        (heard, answer)
+    }
+
+    /// Settle ticks with no recheck until the sweep in flight has answered.
+    fn settle_when_answered(
+        slot: &mut SweepSlot,
+        confirm: impl Fn(&anchor::Anchor, (u32, u32)) -> Option<anchor::Anchor>,
+    ) -> (Sighting, Option<SweepReport>) {
+        let give_up = Instant::now() + PATIENCE;
+        loop {
+            let settled = slot.settle(&saw_nothing(), &confirm);
+            if settled.1.is_some() || Instant::now() >= give_up {
+                return settled;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// Requirement 4c (POE-275): a placed recheck that anchors while a sweep
+    /// is searching cancels it, and the tick uses the RECHECK's origin.
+    ///
+    /// A real thread whose search blocks until its stop check fires, so what is
+    /// pinned is the contract across the thread: the flag the loop sets is the
+    /// one the search reads. Fails if the recheck does not win, if the sweep is
+    /// not reported cancelled by it, or if the stop never reaches the search —
+    /// the sweep would then run its full 5.3 s (~30 s debug) for nothing.
+    #[test]
+    fn a_recheck_landing_mid_sweep_wins_and_cancels_the_sweep() {
+        let mut slot = SweepSlot::default();
+        let (heard, _answer) = searching_sweep(&mut slot, BOARD, Some(anchor_at((745, 561))));
+        let recheck = anchor_at((960, 713));
+
+        let (sighting, ended) = slot.settle(&anchor::CheapDetect::Anchored(recheck), |_, _| {
+            panic!("a landed recheck confirms no sweep")
+        });
+
+        assert_eq!(sighting, Sighting::Recheck(recheck));
+        assert_eq!(ended.map(|report| report.end), Some(SweepEnd::Cancelled(SweepCancel::Recheck)));
+        assert_eq!(heard.recv_timeout(PATIENCE), Ok(true), "the search saw its stop check fire");
+    }
+
+    /// …and the sweep's LATE answer, sent after the recheck landed, is never
+    /// used: the tick after it is a plain miss with nothing to report.
+    ///
+    /// Fails if a cancelled flight is kept in the slot — the late origin would
+    /// be confirmed and read over the recheck's.
+    #[test]
+    fn a_sweep_answer_arriving_after_the_recheck_landed_is_discarded() {
+        let mut slot = SweepSlot::default();
+        let (heard, answer) = searching_sweep(&mut slot, BOARD, Some(anchor_at((745, 561))));
+        slot.settle(&anchor::CheapDetect::Anchored(anchor_at((960, 713))), |_, _| None);
+        heard.recv_timeout(PATIENCE).expect("precondition: the search saw its stop");
+        answer.send(()).expect("precondition: the sweep is still there to answer");
+        // Time for the late answer to be sent where a kept flight would read it.
+        std::thread::sleep(Duration::from_millis(100));
+
+        let (sighting, ended) = slot.settle(&saw_nothing(), |swept, _| Some(*swept));
+
+        assert_eq!((sighting, ended), (Sighting::Nothing, None));
+    }
+
+    /// A sweep still searching leaves the tick a miss and stays in flight: the
+    /// loop goes on ticking, and the recheck goes on running, while it
+    /// searches.
+    ///
+    /// Fails if a tick with no recheck cancels the sweep or waits for it.
+    #[test]
+    fn a_sweep_still_searching_leaves_the_tick_a_miss_and_stays_in_flight() {
+        let mut slot = SweepSlot::default();
+        let (_heard, _answer) = searching_sweep(&mut slot, BOARD, None);
+
+        let (sighting, ended) = slot.settle(&saw_nothing(), |_, _| None);
+
+        assert_eq!((sighting, ended), (Sighting::Nothing, None));
+        assert!(slot.in_flight());
+    }
+
+    /// A sweep belongs to the key it started under: a Re-arm or a new epoch
+    /// cancels it, and the stop reaches the search.
+    ///
+    /// Fails if the key is not compared (a sweep of the last board would be
+    /// read into the next) or compared the wrong way round (every tick would
+    /// cancel the sweep it started).
+    #[test]
+    fn a_key_change_cancels_a_running_sweep() {
+        let mut slot = SweepSlot::default();
+        let (heard, _answer) = searching_sweep(&mut slot, BOARD, None);
+        assert_eq!(slot.keep_only(BOARD), None, "precondition: its own key keeps it");
+
+        let ended = slot.keep_only(NEXT_BOARD);
+
+        assert_eq!(
+            ended.map(|report| report.end),
+            Some(SweepEnd::Cancelled(SweepCancel::KeyChange)),
+        );
+        assert_eq!(heard.recv_timeout(PATIENCE), Ok(true), "the search saw its stop check fire");
+    }
+
+    /// A stand-down cancels the sweep: nothing is looking any more, so nothing
+    /// would read its answer. Fails if the cancel does not reach the search.
+    #[test]
+    fn a_stand_down_cancels_a_running_sweep() {
+        let mut slot = SweepSlot::default();
+        let (heard, _answer) = searching_sweep(&mut slot, BOARD, None);
+
+        let ended = slot.cancel(SweepCancel::StandDown);
+
+        assert_eq!(
+            ended.map(|report| report.end),
+            Some(SweepEnd::Cancelled(SweepCancel::StandDown)),
+        );
+        assert_eq!(heard.recv_timeout(PATIENCE), Ok(true), "the search saw its stop check fire");
+    }
+
+    /// A sweep that FOUND the panel is not read when the capture after it does
+    /// not confirm the origin — the sheet closed while it searched. The tick is
+    /// a miss, and the line says the find was discarded.
+    ///
+    /// Fails if the swept origin is read without asking the current frame.
+    #[test]
+    fn a_found_sweep_the_current_frame_does_not_confirm_is_not_read() {
+        let mut slot = SweepSlot::default();
+        let swept = anchor_at((745, 561));
+        slot.launch(placed_start(), BOARD, (1920, 1080), move |_| (Some(swept), false))
+            .expect("the sweep thread starts");
+
+        let (sighting, ended) = settle_when_answered(&mut slot, |_, _| None);
+
+        assert_eq!(sighting, Sighting::Nothing);
+        assert_eq!(
+            ended.map(|report| report.end),
+            Some(SweepEnd::Found { origin: (745, 561), scale: 1.0, fate: FoundFate::Unconfirmed }),
+        );
+    }
+
+    /// A confirmed sweep is read at the origin the CURRENT frame re-found, and
+    /// the confirmation was asked about the capture size the sweep searched.
+    ///
+    /// Fails if the tick reads the sweep's own origin (a frame a whole sweep
+    /// old) rather than the confirmation's, or asks about the wrong capture.
+    #[test]
+    fn a_confirmed_sweep_is_read_at_the_origin_the_current_frame_confirms() {
+        let mut slot = SweepSlot::default();
+        let swept = anchor_at((745, 561));
+        slot.launch(placed_start(), BOARD, (2560, 1440), move |_| (Some(swept), false))
+            .expect("the sweep thread starts");
+        let asked = std::cell::Cell::new(None);
+        let refound = anchor_at((746, 563));
+
+        let (sighting, _) = settle_when_answered(&mut slot, |origin, capture| {
+            asked.set(Some((origin.origin, capture)));
+            Some(refound)
+        });
+
+        assert_eq!(
+            sighting,
+            Sighting::Swept { anchor: refound, reason: ColdSweepReason::PlacedMiss },
+        );
+        assert_eq!(asked.get(), Some(((745, 561), (2560, 1440))));
+    }
+
+    /// A search that returns because its stop fired — the module stopping,
+    /// which the slot's own flag does not see — is reported as stopped, not as
+    /// a screen with no panel on it. `anchor_for_loop` answers both with the
+    /// same error; `stopped` is what tells them apart.
+    ///
+    /// Fails if `settle` reads a stopped search's `None` as `found no layout
+    /// panel`.
+    #[test]
+    fn a_search_that_returns_after_its_stop_fired_is_reported_as_stopped() {
+        let mut slot = SweepSlot::default();
+        slot.launch(placed_start(), BOARD, (1920, 1080), |_| (None, true))
+            .expect("the sweep thread starts");
+
+        let (sighting, ended) = settle_when_answered(&mut slot, |_, _| None);
+
+        assert_eq!(
+            (sighting, ended.map(|report| report.end)),
+            (Sighting::Nothing, Some(SweepEnd::Cancelled(SweepCancel::Stop))),
+        );
+    }
+
+    /// An anchored recheck with nothing in flight is the tick's sighting and
+    /// buys no sweep: nothing is reported and nothing starts searching.
+    ///
+    /// Fails if a recheck sighting is folded as anything but itself.
+    #[test]
+    fn an_anchored_recheck_buys_no_sweep() {
+        let mut slot = SweepSlot::default();
+        let found = anchor_at((960, 713));
+
+        let settled = slot.settle(&anchor::CheapDetect::Anchored(found), |_, _| {
+            panic!("nothing is in flight to confirm")
+        });
+
+        assert_eq!(settled, (Sighting::Recheck(found), None));
+        assert!(!slot.in_flight());
+    }
+
+    /// A sweep that searched the whole capture and found no layout panel ends
+    /// its flight with the no-panel line, so the slot is free for the next
+    /// sweep the cadence starts.
+    ///
+    /// Fails if the flight is put back after a no-panel answer — the slot would
+    /// stay full and no sweep could ever start again in the session.
+    #[test]
+    fn a_sweep_that_found_nothing_ends_the_flight() {
+        let mut slot = SweepSlot::default();
+        slot.launch(placed_start(), BOARD, (1920, 1080), |_| (None, false))
+            .expect("the sweep thread starts");
+
+        let (_, ended) = settle_when_answered(&mut slot, |_, _| None);
+
+        assert_eq!(ended.map(|report| report.end), Some(SweepEnd::NoPanel));
+        assert!(!slot.in_flight());
+    }
+
+    /// A sweep that answered FOUND on the very tick the placed recheck landed
+    /// loses to the recheck: the tick reads the recheck's origin and the line
+    /// says the find was superseded.
+    ///
+    /// Fails if a confirmed sweep beats the recheck it arrived beside.
+    #[test]
+    fn a_found_answer_on_the_recheck_tick_is_superseded() {
+        let mut slot = SweepSlot::default();
+        let swept = anchor_at((745, 561));
+        let (returning, returned) = mpsc::channel();
+        slot.launch(placed_start(), BOARD, (1920, 1080), move |_| {
+            let _ = returning.send(());
+            (Some(swept), false)
+        })
+        .expect("the sweep thread starts");
+        returned.recv_timeout(PATIENCE).expect("precondition: the sweep is answering");
+        // Time for the answer to land in the channel the tick polls.
+        std::thread::sleep(Duration::from_millis(100));
+        let recheck = anchor_at((960, 713));
+
+        let (sighting, ended) =
+            slot.settle(&anchor::CheapDetect::Anchored(recheck), |swept, _| Some(*swept));
+
+        assert_eq!(sighting, Sighting::Recheck(recheck));
+        assert_eq!(
+            ended.map(|report| report.end),
+            Some(SweepEnd::Found { origin: (745, 561), scale: 1.0, fate: FoundFate::Superseded }),
+        );
+    }
+
+    /// A sweep thread that dies without answering ends the flight and says so,
+    /// rather than holding the one slot for the rest of the key.
+    ///
+    /// Fails if a disconnected channel is read as "still searching".
+    #[test]
+    fn a_sweep_thread_that_dies_ends_the_flight_and_says_so() {
+        let mut slot = SweepSlot::default();
+        slot.launch(placed_start(), BOARD, (1920, 1080), |_| panic!("the sweep thread dies"))
+            .expect("the sweep thread starts");
+
+        let (sighting, ended) = settle_when_answered(&mut slot, |_, _| None);
+
+        assert_eq!(
+            (sighting, ended.map(|report| report.end)),
+            (Sighting::Nothing, Some(SweepEnd::Lost)),
+        );
+        assert!(!slot.in_flight());
+    }
+
+    /// The confirmation on real pixels: the committed 1920x1080 frame still
+    /// shows the sheet at the recorded anchor, so a sweep that found it there is
+    /// confirmed, at an origin inside the recheck window.
+    ///
+    /// Fails if the confirmation asks anything but the one windowed recheck at
+    /// the swept origin and scale.
+    #[test]
+    fn a_swept_origin_is_confirmed_on_a_frame_that_still_shows_the_sheet() {
+        let img = live_capture();
+        let swept =
+            anchor::Anchor { origin: LIVE_CAPTURE_ORIGIN, scale: LIVE_CAPTURE_SCALE, ncc: 0.99 };
+
+        let confirmed =
+            confirm_swept(&img, &swept, (1920, 1080)).expect("the sheet is on this frame");
+
+        assert!(
+            confirmed.origin.0.abs_diff(LIVE_CAPTURE_ORIGIN.0) <= 3
+                && confirmed.origin.1.abs_diff(LIVE_CAPTURE_ORIGIN.1) <= 3,
+            "confirmed at {:?}",
+            confirmed.origin,
+        );
+        assert!(confirmed.ncc >= anchor::NCC_FLOOR);
+    }
+
+    /// A frame where the swept origin shows no Entrance plate — the sheet
+    /// closed, or never was where the sweep saw it — confirms nothing.
+    ///
+    /// Fails if the confirmation trusts the swept anchor instead of the frame.
+    #[test]
+    fn a_swept_origin_is_not_confirmed_where_the_frame_shows_no_sheet() {
+        let img = live_capture();
+        let swept = anchor::Anchor { origin: (300, 300), scale: LIVE_CAPTURE_SCALE, ncc: 0.99 };
+
+        assert_eq!(confirm_swept(&img, &swept, (1920, 1080)), None);
+    }
+
+    /// A swept origin from a capture of another size is another screen's
+    /// origin, and is not confirmed even where this frame does show the sheet.
+    ///
+    /// Fails if the confirmation takes the size from the current frame instead
+    /// of from the capture the sweep searched.
+    #[test]
+    fn a_swept_origin_from_another_capture_size_is_not_confirmed() {
+        let img = live_capture();
+        let swept =
+            anchor::Anchor { origin: LIVE_CAPTURE_ORIGIN, scale: LIVE_CAPTURE_SCALE, ncc: 0.99 };
+
+        assert_eq!(confirm_swept(&img, &swept, (2560, 1440)), None);
+    }
+
+    // --------------------------------------------- the one line per sweep --
+
+    /// The line carries every field the measurement needs, in one fixed shape:
+    /// the reason, the attempt of the cap, the capture, the duration, the
+    /// outcome and the build.
+    ///
+    /// Fails if a field is dropped or crossed with another — each is a number a
+    /// reader of `app.log` corrects `NULL_SWEEP_EVERY` or `NULL_SWEEP_CAP` from.
+    #[test]
+    fn the_sweep_line_carries_reason_attempt_capture_duration_outcome_and_build() {
+        let report = SweepReport {
+            start: null_start(3).expect("a null start"),
+            capture: (1920, 1080),
+            took: Duration::from_millis(5312),
+            end: SweepEnd::Found { origin: (960, 713), scale: 1.0, fate: FoundFate::Confirmed },
+        };
+
+        assert_eq!(
+            sweep_line(&report, "release"),
+            "Temple: cold sweep (NullSlice, attempt 3 of 10) at 1920x1080 — 5312 ms, found at \
+             (960,713) scale 1.000 — confirmed on the current frame; release build",
+        );
+    }
+
+    /// The placed sweep has no cap to count against, so its line names no
+    /// attempt; and a sweep that found nothing says so in the words the retired
+    /// `sweep found no layout panel` line used.
+    ///
+    /// Fails if the placed line invents an attempt, or the no-panel outcome is
+    /// worded as a find.
+    #[test]
+    fn a_placed_sweep_that_found_nothing_names_no_attempt() {
+        let report = SweepReport {
+            start: placed_start(),
+            capture: (2560, 1440),
+            took: Duration::from_millis(30_112),
+            end: SweepEnd::NoPanel,
+        };
+
+        assert_eq!(
+            sweep_line(&report, "debug"),
+            "Temple: cold sweep (PlacedMiss) at 2560x1440 — 30112 ms, found no layout panel; \
+             debug build",
+        );
+    }
+
+    /// Every way a sweep ends that is not a confirmed find is named apart, so a
+    /// log can tell a recheck that won from a sheet that closed.
+    ///
+    /// Fails if two endings share words.
+    #[test]
+    fn the_sweep_line_names_every_other_ending_apart() {
+        let endings = [
+            (SweepEnd::Cancelled(SweepCancel::Recheck), "cancelled by recheck;"),
+            (SweepEnd::Cancelled(SweepCancel::KeyChange), "cancelled by key change;"),
+            (SweepEnd::Cancelled(SweepCancel::StandDown), "cancelled by stand-down;"),
+            (SweepEnd::Cancelled(SweepCancel::Stop), "cancelled by stop;"),
+            (SweepEnd::Lost, "ended without a result;"),
+            (
+                SweepEnd::Found { origin: (1, 2), scale: 1.0, fate: FoundFate::Unconfirmed },
+                "not on the current frame, discarded;",
+            ),
+            (
+                SweepEnd::Found { origin: (1, 2), scale: 1.0, fate: FoundFate::Superseded },
+                "discarded, the placed recheck landed;",
+            ),
+        ];
+
+        for (end, words) in endings {
+            let report = SweepReport {
+                start: placed_start(),
+                capture: (1920, 1080),
+                took: Duration::from_millis(1),
+                end,
+            };
+            let line = sweep_line(&report, "release");
+            assert!(line.contains(words), "{end:?}: {line}");
+        }
+    }
+
+    /// The build word is `debug` exactly when debug assertions are on — which
+    /// is what `log_sweep` hands it — because the same sweep is 5.3 s on one
+    /// and ~30 s on the other. Fails if the two words are swapped.
+    #[test]
+    fn the_build_word_follows_debug_assertions() {
+        assert_eq!((build_profile(true), build_profile(false)), ("debug", "release"));
     }
 
     #[test]
@@ -4952,27 +6199,17 @@ mod tests {
         );
     }
 
+    /// POE-269's withheld rule, kept on top of the cadence (POE-275 WI-2): a
+    /// found null sweep whose slice was withheld leaves the key's null sweeps
+    /// going once; a second one ENDS them — for that key only.
+    ///
+    /// Fails if a withheld result ends the key at once (the one retry is gone),
+    /// if the second one does not end it (an anchor the screen never
+    /// corroborates is swept for up to the whole cap), or if the release is
+    /// remembered across keys (the next key's first withheld result would end
+    /// it).
     #[test]
-    fn a_null_screen_slice_spends_one_cold_start_fallback_per_key() {
-        let cheap = anchor::CheapDetect::Nothing { best_ncc: f32::NEG_INFINITY };
-
-        assert_eq!(
-            cold_sweep_reason(false, None, &cheap, None, BOARD, None, None),
-            Some(ColdSweepReason::NullSlice),
-        );
-        assert_eq!(
-            cold_sweep_reason(false, None, &cheap, None, BOARD, None, Some(BOARD)),
-            None,
-        );
-        assert_eq!(
-            cold_sweep_reason(false, None, &cheap, None, NEXT_BOARD, None, Some(BOARD)),
-            Some(ColdSweepReason::NullSlice),
-        );
-    }
-
-    #[test]
-    fn a_withheld_null_sweep_releases_its_key_for_the_next_tick() {
-        let cheap = saw_nothing();
+    fn a_second_withheld_null_sweep_ends_that_keys_null_sweeps() {
         let withheld = screen_from_anchor(
             1.25,
             None,
@@ -4983,35 +6220,85 @@ mod tests {
             1_700_000_000_002,
         );
         assert!(withheld.is_err(), "the height check withholds this anchor");
+        let mut budget = SweepBudget::default();
+        spend_one_null_sweep(&mut budget, BOARD);
 
-        let (null_sweep_key, released_key) =
-            null_sweep_key_after_publish(Some(BOARD), None, true, true, false);
-        assert_eq!(null_sweep_key, None);
-        assert_eq!(released_key, Some(BOARD));
+        budget.after_null_publish(BOARD, false);
         assert_eq!(
-            cold_sweep_reason(false, None, &cheap, None, BOARD, None, null_sweep_key),
-            Some(ColdSweepReason::NullSlice),
-            "a withheld slice leaves the next tick eligible to sweep",
+            spend_one_null_sweep(&mut budget, BOARD),
+            null_start(2),
+            "the first withheld result leaves the cadence going",
         );
 
-        let (second_key, released_key) =
-            null_sweep_key_after_publish(Some(BOARD), released_key, true, true, false);
-        assert_eq!(second_key, Some(BOARD), "a second withheld sweep does not release the key");
-        assert_eq!(released_key, Some(BOARD));
-        assert_eq!(
-            cold_sweep_reason(false, None, &cheap, None, BOARD, None, second_key),
-            None,
-            "the second withheld sweep does not buy another retry",
-        );
+        budget.after_null_publish(BOARD, false);
+        for miss in 0..3 * u32::from(NULL_SWEEP_EVERY) {
+            assert_eq!(null_miss(&mut budget, BOARD), None, "miss {miss} after the second");
+        }
 
-        let (next_key, next_released_key) =
-            null_sweep_key_after_publish(Some(NEXT_BOARD), released_key, true, true, false);
-        assert_eq!(next_key, None, "a new board key gets its own withheld-sweep retry");
-        assert_eq!(next_released_key, Some(NEXT_BOARD));
+        spend_one_null_sweep(&mut budget, NEXT_BOARD);
+        budget.after_null_publish(NEXT_BOARD, false);
+        assert_eq!(
+            spend_one_null_sweep(&mut budget, NEXT_BOARD),
+            null_start(2),
+            "a new key has its own one withheld retry",
+        );
+    }
+
+    /// A found null sweep that FILLED the slice ends the key's null sweeps, as
+    /// every null sweep did until 2026-09-11: the slice is no longer null, and
+    /// the successful read remembers the origin that makes it placed.
+    ///
+    /// Fails if `screen_filled` is ignored — the filled key would be released
+    /// like a withheld one and go on sweeping on the cadence.
+    #[test]
+    fn a_null_sweep_that_filled_the_slice_ends_that_keys_null_sweeps() {
+        let mut budget = SweepBudget::default();
+        spend_one_null_sweep(&mut budget, BOARD);
+
+        budget.after_null_publish(BOARD, true);
+
+        for miss in 0..3 * u32::from(NULL_SWEEP_EVERY) {
+            assert_eq!(null_miss(&mut budget, BOARD), None, "miss {miss} after the fill");
+        }
+    }
+
+    /// A placed recheck that anchored on a screen with no anchored origin ends
+    /// the key's null sweeps (fix round): the seed was right, so a sweep under
+    /// this key could only find what the recheck found. A new key sweeps again.
+    ///
+    /// Fails if the end is dropped or does not reach the cadence — after the
+    /// sheet closes under a TempleArea arm the cadence would restart in the same
+    /// key, up to the whole cap of sheet-less sweeps across the run — or if the
+    /// end outlives its key.
+    #[test]
+    fn a_recheck_sighting_on_an_unanchored_screen_ends_that_keys_null_sweeps() {
+        let mut budget = SweepBudget::default();
+
+        budget.on_recheck(BOARD, false);
+
+        for miss in 0..3 * u32::from(NULL_SWEEP_EVERY) {
+            assert_eq!(null_miss(&mut budget, BOARD), None, "miss {miss} after the recheck");
+        }
+        assert_eq!(spend_one_null_sweep(&mut budget, NEXT_BOARD), null_start(1), "a new key");
+    }
+
+    /// On a screen whose origin IS anchored the recheck is the ordinary placed
+    /// path and ends nothing — the flag is what the rule keys on.
+    ///
+    /// Fails if `on_recheck` ignores `anchored`.
+    #[test]
+    fn a_recheck_sighting_on_an_anchored_screen_ends_nothing() {
+        let mut budget = SweepBudget::default();
+
+        budget.on_recheck(BOARD, true);
+
+        assert_eq!(spend_one_null_sweep(&mut budget, BOARD), null_start(1));
     }
 
     /// Recalibrate re-arms the key the null-slice budget belongs to, so the next
-    /// Temple tick sweeps and can publish a fresh corroborated measurement. This
+    /// Temple tick sweeps and can publish a fresh corroborated measurement.
+    /// **Amended 2026-09-11 (POE-275 WI-2):** not the next tick — the third
+    /// consecutive clean miss after the press starts the sweep, on the cadence. This
     /// restores the deleted end-to-end decision seam without reintroducing the
     /// retired cadence gate.
     ///
@@ -5040,7 +6327,6 @@ mod tests {
             "the press leaves a SEEDED hint standing — the state that used to be null",
         );
 
-        let cheap = saw_nothing();
         // What `cold_sweep_reason` is handed: the ANCHORED origin, which the
         // press left empty. Handing it the hint's seeded origin instead is the
         // POE-278 regression, and flips every assertion below to `None`.
@@ -5050,30 +6336,28 @@ mod tests {
             .map(|[x, y]| (x, y));
         assert_eq!(placed_origin, None);
 
+        // Since POE-275 WI-2 the null slice sweeps on the cadence, up to the cap
+        // per key, rather than once per key on the first miss.
+        let mut budget = SweepBudget::default();
+        let mut miss = |key| {
+            let missed = DetectOutcome::Missed;
+            cold_sweep_reason(true, placed_origin, missed, false, None, key, &mut budget)
+        };
         let before = (4, 0);
         assert_eq!(
-            cold_sweep_reason(true, placed_origin, &cheap, None, before, None, None),
-            Some(ColdSweepReason::NullSlice),
-            "an unspent null-slice key permits the cold-start sweep",
+            (miss(before), miss(before), miss(before)),
+            (None, None, null_start(1)),
+            "the null-slice cadence permits the cold-start sweep",
         );
-        assert_eq!(
-            cold_sweep_reason(true, placed_origin, &cheap, None, before, None, Some(before)),
-            None,
-            "the null-slice fallback key is spent after its attempt",
-        );
+        for _ in 0..3 * u32::from(NULL_SWEEP_EVERY) * u32::from(NULL_SWEEP_CAP) {
+            miss(before);
+        }
+        assert_eq!(miss(before), None, "the key's null-slice cap is spent");
         let after_recalibrate = (4, 1);
         assert_eq!(
-            cold_sweep_reason(
-                true,
-                placed_origin,
-                &cheap,
-                None,
-                after_recalibrate,
-                None,
-                Some(before),
-            ),
-            Some(ColdSweepReason::NullSlice),
-            "Recalibrate's rearm creates a fresh fallback key",
+            (miss(after_recalibrate), miss(after_recalibrate), miss(after_recalibrate)),
+            (None, None, null_start(1)),
+            "Recalibrate's rearm creates a fresh key with a whole cap",
         );
 
         // The sweep runs against the slice the press LEFT, not an empty one, and

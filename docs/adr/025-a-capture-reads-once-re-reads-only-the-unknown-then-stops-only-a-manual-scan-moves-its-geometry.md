@@ -190,3 +190,30 @@ writing the liveness detect still runs `read::pass2_texts` and
   2026-09-09 amendment.
 - ADR-024 carries the matching amendment, "POE-278 — merc placed misses buy no
   locate outside a manual scan".
+
+## Amended 2026-09-11 (POE-275)
+
+**Temple clause 4(a) is amended; merc's is unchanged.** For the temple, the
+full-frame locate on a cold start with no placement — `ColdSweepReason::NullSlice`,
+no screen slice or no ANCHORED Entrance origin — no longer runs "once per key"
+on the first miss. Owner, 2026-09-11 (POE-275 WI-2): the first miss after the
+start line is the sheet not being open yet, and a sweep spent there left the
+rest of the key with no hint, so the player needed Re-arm or Recalibrate. The
+temple's 4(a) now reads: not on the first miss; on every `NULL_SWEEP_EVERY` = 3
+consecutive clean misses, up to `NULL_SWEEP_CAP` = 10 sweeps per
+`(temple_epoch, temple_rearm)` key (both provisional); never over a live panel;
+and off the loop thread, with the 650 ms placed recheck running while it
+searches and cancelling it when it anchors. The found-but-withheld release
+(`null_sweep_key_after_publish`) rides on top: a second withheld result ends
+that key's null sweeps. A found origin is read only after a later capture
+confirms it. Homes: `run::cold_sweep_reason` and `run::SweepBudget` (when),
+`run::SweepSlot` and `run::confirm_swept` (off the loop), `run::sweep_line`
+(one measured line per sweep); normative write-up in
+[Temple Lifecycle](../TEMPLE-LIFECYCLE.md), "Cadences and budgets".
+
+Merc's clause 4(a) — one full-screen locate per key when there is no screen
+slice — is unchanged. Clause 4(b) and "only (b) may REPLACE a standing
+placement" are untouched for both modules: a null-slice sweep still runs only
+when no anchored origin stands, so it cannot replace one, and the temple's
+placed-miss sweep is still `ColdSweepReason::PlacedMiss` under
+`ArmReason::Manual`, once per key.

@@ -588,6 +588,11 @@ impl ArmState {
     /// arm the sheet closed under, and standing it down would leave the NEXT
     /// board unread until the player pressed Re-arm.
     ///
+    /// **Amended 2026-09-11 (POE-275 WI-2):** the cold sweep runs off the loop
+    /// thread since then, so the 5.3 s above is no longer inside a tick. The
+    /// guard stays for the window that is left: the tick's grab and its detect,
+    /// which are what run between the key read and a miss.
+    ///
     /// So the caller says whether the key it observed is still the current one,
     /// and a stale observation moves nothing — [`Transition::Ignored`], the same
     /// word a line that changed nothing gets. A bool rather than the key itself
