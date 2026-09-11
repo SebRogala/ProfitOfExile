@@ -1079,7 +1079,8 @@ touching the named path.
   nothing), the status returns to `idle`, and opening the layout panel reads the
   board as before. Close the sheet and the loop stands down on that tick with
   `Temple: capture stood down — the sheet was read and closed` (2026-09-07,
-  WI-1): reopening it shows no offer boxes until **Re-arm**, which is the
+  WI-1; since 2026-09-11, POE-275, on the SECOND tick after the close — the
+  first is a held miss that changes nothing): reopening it shows no offer boxes until **Re-arm**, which is the
   accepted cost and not a defect to report. Let Alva say anything else instead —
   `Good job.` at the end of the run — and the stand-down says
   `— Alva's line` on the next iteration, not two minutes later. Walk into the
@@ -1106,7 +1107,9 @@ touching the named path.
   after POE-242. Since 2026-09-07 (WI-1) the retention is ONE detect tick
   (`LoopState::live`) rather than a 120 s tail, so an area change carries at most
   650 ms of capture into the next zone and that tick is the one that finds the
-  sheet gone.
+  sheet gone. Since 2026-09-11 (POE-275) it is TWO ticks: `live` survives one
+  held miss, so an area change carries at most two captures (1.3 s) and the
+  second is the one that retires the sheet.
 
   1. **The panel outlives Client.txt.** Press **Re-arm**, open the layout panel
      and leave it open for more than a minute — past `MANUAL_ARM_GRACE_MS`, which
@@ -1126,7 +1129,8 @@ touching the named path.
      loop that has spent it stands down. Before POE-246 this logged `capture loop
      started` and `capture stood down` in the same second (17:28:31, same laptop)
      and the owner saw the overlay "blink and disappear".
-  3. **A closed panel still stands the loop down, on the next tick.** Close the
+  3. **A closed panel still stands the loop down, on the second tick after the
+     close (POE-275).** Close the
      panel and stay in the map with Alva quiet. `Temple: capture stood down`
      must arrive within a tick or two — since WI-1 there is no tail to wait out,
      and the cause on the line says which rule fired: `— the sheet was read and
@@ -1615,6 +1619,15 @@ touching the named path.
   agreeing with the screen, so a `layout panel gone` that lands a tick late is
   `RETIRE_AFTER` back at 2. A room widget that goes with the boxes is the POE-248
   regression and is checked in its own item below.
+  **Amended 2026-09-11 (POE-275, owner): within TWO ticks.** `RETIRE_AFTER` is 2
+  and the first clean miss over a live sheet publishes nothing (`run::miss_publish`),
+  so the offer boxes and the banner must be gone within two cheap ticks — 1.3 s
+  at the cadence — and `Temple: layout panel gone` lands on that second tick,
+  followed by the stand-down line on the next iteration; the room widget stays
+  through all of it. The paragraph above is the history of one. Two failures
+  now: boxes gone on the FIRST tick after the close is the held miss publishing
+  `NoPanel` again (or `RETIRE_AFTER` back at 1); boxes still up after the second
+  is the retire not publishing.
 - **An unreadable region costs at most two more rounds, and those re-read only
   it** (POE-249; partial rounds added 2026-09-07 by WI-2): open the
   sheet and keep it open for the whole check — the retries run while the sheet is
