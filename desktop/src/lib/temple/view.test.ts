@@ -33,6 +33,7 @@ import {
 	plateGlyph,
 	convenienceDoor,
 	convenienceNote,
+	doorWidget,
 	faintDoor,
 	recommendedExit,
 	secondDoor,
@@ -664,6 +665,90 @@ describe('overlayShowsDoors', () => {
 		// no shape to hang a door on.
 		expect(overlayShowsDoors(showing({ layout: layout({ diamond: null }) }))).toBe(false);
 		expect(overlayShowsDoors(showing({ layout: null }))).toBe(false);
+	});
+});
+
+describe('doorWidget', () => {
+	/** The room the previous read of this incursion settled. */
+	const room = diamond();
+
+	/** A slice with a move ranked and a room read — what the previous read of
+	 *  this incursion left on the slice. */
+	function inRoom(over: Partial<ReturnType<typeof templeSliceDefault>> = {}) {
+		return {
+			...templeSliceDefault(),
+			status: 'read' as const,
+			layout: layout({ current: 'C1', diamond: room }),
+			advice: advice({ recommendations: [ranked()] }),
+			...over
+		};
+	}
+
+	it('draws the reading line alone on the first read of an incursion', () => {
+		// Rust publishes `reading` from the anchoring tick, before any advice or
+		// layout exists. Without this the widget drew nothing for the seconds
+		// the read takes, which looked the same as a broken read (POE-276).
+		const firstRead = { ...templeSliceDefault(), status: 'reading' as const };
+		expect(doorWidget(firstRead)).toEqual({ diamond: null, reading: 'reading…' });
+	});
+
+	it('draws no room left over from the last incursion on a first read', () => {
+		// The advice is cleared when an incursion ends, but the Temple page keeps
+		// the last LAYOUT standing — so its diamond is still on the slice when
+		// the next incursion's first read starts. It is the wrong room.
+		const firstRead = inRoom({ status: 'reading', advice: null });
+		expect(doorWidget(firstRead)).toEqual({ diamond: null, reading: 'reading…' });
+	});
+
+	it('keeps the previous room under the reading line on a re-read', () => {
+		// The next room's read: the slice still carries the last advice and
+		// layout while `reading` is published, and the widget is the only
+		// surface left in the room, so it must not blank for the read.
+		const reRead = inRoom({ status: 'reading' });
+		expect(doorWidget(reRead)).toEqual({ diamond: room, reading: 'reading…' });
+	});
+
+	it('draws the room without the reading line once the read lands', () => {
+		expect(doorWidget(inRoom({ status: 'read' }))).toEqual({ diamond: room, reading: null });
+	});
+
+	it('draws nothing while idle, before anything was read', () => {
+		expect(doorWidget(templeSliceDefault())).toBeNull();
+	});
+
+	it('draws nothing while waiting for the panel — the notice has that moment', () => {
+		// Alva's start line with the sheet not up yet: `TempleWaitingNotice`
+		// speaks, and the door widget hands off from it only at `reading`.
+		const waiting = { ...templeSliceDefault(), status: 'idle' as const, waitingForPanel: true };
+		expect(doorWidget(waiting)).toBeNull();
+	});
+
+	it('draws nothing for a read that landed between rooms', () => {
+		// `no_current_room` publishes a layout with no diamond and no advice.
+		const between = inRoom({
+			status: 'no_current_room',
+			advice: null,
+			layout: layout({ diamond: null })
+		});
+		expect(doorWidget(between)).toBeNull();
+	});
+
+	it('draws no reading line on any status but reading while a move stands', () => {
+		// The constraint the line was added under: outside `reading` the widget
+		// is what it was before POE-276 — the room, on every status (POE-248),
+		// and no line. `error` included: a failed re-read replaces `reading`,
+		// and the move from the read before it still stands.
+		for (const status of ALL_STATUSES.filter((s) => s !== 'reading')) {
+			expect(doorWidget(inRoom({ status })), status).toEqual({ diamond: room, reading: null });
+		}
+	});
+
+	it('draws nothing on any status but reading once the advice is cleared', () => {
+		// A zone change, the next Alva line, the module off, a failed first read:
+		// no move stands, and no read is in progress to say anything about.
+		for (const status of ALL_STATUSES.filter((s) => s !== 'reading')) {
+			expect(doorWidget(inRoom({ status, advice: null })), status).toBeNull();
+		}
 	});
 });
 

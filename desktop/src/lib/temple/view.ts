@@ -32,6 +32,7 @@
  */
 import type {
 	AdviceView,
+	DiamondView,
 	DriverView,
 	EdgeId,
 	ExitLabelView,
@@ -150,9 +151,66 @@ export function overlayShowsWaiting(slice: TempleSlice): boolean {
  * The diamond is tested with it because there is nothing to draw a door on
  * without one, and a read between rooms (`no_current_room`) publishes advice-
  * less layout in the other direction.
+ *
+ * **It gates the DIAMOND, not the whole widget, since POE-276.** The widget
+ * also draws a `reading…` line while a read is in progress, which is a status
+ * rule and deliberately a separate one: `doorWidget()` below composes the two,
+ * and this function still answers only "is there a move and a room to draw it
+ * on".
  */
 export function overlayShowsDoors(slice: TempleSlice): boolean {
 	return slice.advice !== null && (slice.layout?.diamond ?? null) !== null;
+}
+
+/** The door widget's in-progress line (POE-276). Short on purpose: it is a
+ *  pulse to glance at, the way the merc strip's status line is, not a report. */
+const DOOR_READING_LINE = 'reading…';
+
+/** What the door widget draws — `doorWidget()`'s answer. */
+export interface DoorWidgetView {
+	/** The room's shape, or null when there is no move or no room to draw it
+	 *  on (`overlayShowsDoors`) — the first read of an incursion has neither. */
+	diamond: DiamondView | null;
+	/** The muted `reading…` line, or null when no read is in progress. */
+	reading: string | null;
+}
+
+/**
+ * What the door widget draws, or null for nothing at all (POE-276).
+ *
+ * Two independent halves, because they answer two different questions:
+ *
+ * - the DIAMOND is `overlayShowsDoors` — the advice, which lives with the
+ *   INCURSION (POE-248) — and nothing about it changes here;
+ * - the LINE is the status alone: `reading` is what Rust publishes from the
+ *   tick that anchors a board until that read's own projection replaces it
+ *   (`temple::run::next_status`, `TickOutcome::Anchored`). A reopen of an
+ *   already-read board answers `Reshown` and never passes through `reading`,
+ *   so it draws no line.
+ *
+ * So the first read of an incursion is the line alone, in the widget's frame
+ * — there is no advice and no room yet, and without it the player cannot tell
+ * a working read from a broken one for the seconds before the verdict. A
+ * RE-READ (the next room) is the previous diamond WITH the line: the slice
+ * still carries the last advice and layout while `reading` is published, and
+ * blanking them would take the only surface left in the room off the screen
+ * for the length of the read. The line is the hand-off from the waiting
+ * notice, which `overlayShowsWaiting` takes down on the same status.
+ *
+ * A retry round (`RETRIES` in `temple/run.rs`, at most two, and only while a
+ * region is unclean) is a read too: the line comes back under the room it has
+ * just drawn for the length of that partial round, about 650 ms after the
+ * verdict. The webview cannot tell a retry from the next room's read, and does
+ * not need to — a retry can change the verdict.
+ *
+ * Every non-reading case is exactly `overlayShowsDoors`: null wherever it
+ * answers false, the diamond with no line wherever it answers true.
+ */
+export function doorWidget(slice: TempleSlice): DoorWidgetView | null {
+	const diamond = overlayShowsDoors(slice) ? (slice.layout?.diamond ?? null) : null;
+	const reading = slice.status === 'reading' ? DOOR_READING_LINE : null;
+	if (diamond === null && reading === null) return null;
+	return { diamond, reading };
 }
 
 // ---------------------------------------------------------- the geometry --

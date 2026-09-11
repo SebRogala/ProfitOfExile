@@ -383,6 +383,29 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   than a reading. **Withheld since 2026-09-07** (owner): the wire never says
   `leaveMap` while `R5_WITHHELD` in `temple/slice.rs` holds, so neither banner
   renders; the surfaces stay for the day it is lifted.
+  **POE-276 (owner, 2026-09-08) brings one `reading…` back, on the DOOR
+  WIDGET only**: without it the seconds between the sheet opening and the
+  verdict looked the same as a broken read. While the status is `reading` the
+  widget draws one muted line with a beating dot at the foot of its column —
+  the merc strip's status-line style — alone in its frame on an incursion's
+  first read (no advice, no room yet), and under the previous room on a
+  re-read, which stays drawn until the new result replaces it
+  (`view.ts::doorWidget`). A reopen that answers `Reshown` never passes
+  through `reading` and draws no line. Every other surface here still says
+  nothing about the reader's state.
+  On the first read of an app run an UNPLACED door widget has no board to
+  anchor its default to — `temple.layout` is null until that read publishes,
+  so `doorDefaults` returns null — and the line draws at the registry's shipped
+  position; the widget then moves beside the game's diamond when the read
+  lands. **Accepted by the owner (2026-09-11).** A placed widget draws the
+  line where the user put it, and later reads of an unplaced one place
+  correctly, because the last layout stays on the slice.
+  A retry round (`RETRIES` in `temple/run.rs`, at most two, and only while a
+  region is unclean) is a read too: the line comes back under the room it has
+  just drawn for the length of that partial round, about 650 ms after the
+  verdict, and the frame's bottom edge grows and shrinks with it. The webview
+  cannot tell a retry from the next room's read, and does not need to — a
+  retry can change the verdict.
   **Retired again in POE-248**, after the first live session: the callout's
   ARROW (owner: no arrows anywhere — placement points, and the room widget's
   glyph is what survives the panel closing), the room widget's two text lines
@@ -1688,6 +1711,10 @@ touching the named path.
   which is not xcap's GDI path and means the read is polluted regardless;
   strip missing from screenshots — the clear half is failing, look at the
   guard's `Drop`.
+- **The room widget says `reading…` while a read runs** (POE-276): open a
+  sheet — the door widget must show a muted `reading…` with a beating dot,
+  then the room. Walk to the next room and open the sheet: the old room must
+  stay drawn with the line under it, and its name and shape must not move.
 - **The room widget survives the incursion, and the stand-down** (POE-244,
   POE-246's arming, rewritten in POE-248): with the panel open and a room read,
   note the outline, the green open and red closed seals, the purple suggested
