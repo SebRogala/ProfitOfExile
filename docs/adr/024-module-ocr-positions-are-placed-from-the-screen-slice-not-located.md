@@ -162,7 +162,8 @@ current `ScreenSlice` placements and runs one windowed NCC at the placed
 Entrance origin on each detect tick. A below-floor placed miss gets one pyramid
 fallback per `(temple_epoch, temple_rearm)` key for any `ArmSource::Trigger(_)`
 arm; a null or unplaced slice uses the same key and releases it when a fallback
-leaves the slice unfilled. A fallback origin outside the placed tolerance is
+leaves the slice unfilled (**the null-slice half is amended by the POE-275
+amendment below**). A fallback origin outside the placed tolerance is
 logged, noticed, read successfully and remembered through `ssot::remember_anchor`;
 a null-slice fallback origin is remembered the same way after a successful read.
 The old sweep cadence, coarse candidate pass, geometry cap and session plate
@@ -174,7 +175,8 @@ The placed-miss fallback is spent under the Manual arm (Re-arm) only. Under
 AlvaStart and TempleArea the first tick's miss is the sheet not being open
 yet, and the sweep it bought ran 30–34 s per incursion on the debug build with
 no tick in between (app.log 2026-09-08/09). The null-slice fallback is
-unchanged. `temple/run.rs`, `cold_sweep_reason`.
+unchanged (**amended by the POE-275 amendment below**). `temple/run.rs`,
+`cold_sweep_reason`.
 
 That release buys one retry only; a second withheld sweep keeps the key spent
 until the `(temple_epoch, temple_rearm)` key changes.

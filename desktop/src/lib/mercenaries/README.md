@@ -109,7 +109,9 @@ identity and read state from the kept read — so a confident read is never
 replaced by a later round. A kept capture that no longer lines up with the
 layout (`read::lines_up`: its panel rect differs, a kept row is missing, or a
 kept cell's size differs or its origin leaves the half-cell band) reads `Full`
-and spends a round, so a jittery geometry cannot read forever. An unresolved
+and spends a round, so a jittery geometry cannot read forever. That round is
+ADR-025 clause 2's merc exception: it cannot map the kept read cell for cell,
+so it can replace a confident read. An unresolved
 header field is folded from pass 1 with `read::merge_header`'s rules and a
 resolved one is kept verbatim (`read::fold_unresolved_header`). The round count
 is `run::LoopState::rounds` (`note_round`, `rounds_left`, `refill_rounds`),
@@ -163,5 +165,14 @@ Accepted costs: a read still incomplete after three rounds waits for a hover,
 or a Scan now or Recalibrate; a wrong placement waits for Scan now or
 Recalibrate; a real trailing cell that is not confident and reads dark for one
 frame is dropped, as a full read drops it, and is walked again as unseen on a
-later partial round. Open residual: `geometry::placed_panel_contradicted` compares origins only, so a Scan now
+later partial round; the `refills_budget(.., templates_moved)` wiring in
+`run::detect_tick` is pinned only at the pure-function level
+(`run::refills_budget`'s tests), because `detect_tick` is an AppHandle-bound
+seam no test drives; and a cold start reads in full twice — its panel is
+derived from the located rows, the next tick's placement is the first seed,
+which cannot be predicted on the cold-start tick, so `read::lines_up` refuses
+the kept read and round 2 is `Full` too; a manual relocation on a tick that
+also moves the screen scale publishes this tick's seed size
+(`run::relocated_panel`), so the next tick's seed differs and round 2 is
+`Full` as well. Open residual: `geometry::placed_panel_contradicted` compares origins only, so a Scan now
 taken while a tooltip hides the top rows can still remember an occluded locate.
