@@ -23,7 +23,7 @@ the table below (`cdd67ba` partial rounds, POE-249 WI-2, 2026-09-07; `54e7ccd`
 POE-269 keyed fallback; `05a51a8` Manual-only placed-miss sweep, 2026-09-09;
 `332e40b` "placed" means anchored, POE-278).
 
-Merc: clause 1 shipped; clause 3 in part — the complete → `LIVENESS_INTERVAL` cadence is shipped, the round-spent stop and a liveness detect that re-reads nothing are pending (see "Merc clause 3, as shipped"); clause 4 pending in POE-278 WI-B, clauses 2, 5 and the rest of 3 in WI-C.
+Merc: clause 1 shipped; clause 4 shipped (`POE-278 WI-B`, `f78786e`); clauses 2, 3 and 5 shipped (`POE-278 WI-C`).
 
 ## Context
 
@@ -124,10 +124,10 @@ POE-278).
 | Clause | Temple (shipped) | Merc |
 |---|---|---|
 | 1 one full read | row 2; `run::LoopState::gate` → `GateAnswer::Read`, `run::full_read` | shipped: `run::detect_tick` — placed crop (`geometry::placed_panel_crop`, `geometry::placed_layout`), then `read::pass2_texts` and `read::build_capture` |
-| 2 two partial rounds | row 2 (WI-2) and "Where each rule lives"; `slice::plan_read` / `retry_plan` → `ReadPlan`, `slice::merge_reads` over `KeptRead`, `slice::unclean`, `run::RETRIES`, `run::kept_for` | WI-C: a merc read plan in `mercenary/read.rs`, the round count in `mercenary/run.rs` |
-| 3 then stop | row 2 ("After round 3 all OCR stops"); `DETECT_INTERVAL` 650 ms, `GateAnswer::Reshow` | in part — shipped: `read::capture_complete` → `LoopState::detect_interval` returns `LIVENESS_INTERVAL`; WI-C: the round-spent stop, and a liveness detect that re-reads nothing |
-| 4 geometry moves only on a manual scan | row 3, residual "Placed-origin verification", "Owner decisions" 2026-09-09; `run::cold_sweep_reason` → `ColdSweepReason::{NullSlice, PlacedMiss}`, `run::cold_sweep`, `placed_origin_contradiction`, `remember_fallback_anchor` → `ssot::remember_anchor` | WI-B: `run::locate_decision` (`LocateReason::{ColdStart, ManualMiss}`, `PlacedRead`), asked from `run::detect_tick`; `run::manual_tick` / `refit_requested`; `MERC_COLUMN_TRUSTED_LINE` |
-| 5 fresh budget | row 3 (board identity); `run::board_key`, `slice::BoardFrame`, `LoopState::note_read`; Re-arm bumps `temple_rearm` | WI-C: the round count reset in `mercenary/run.rs`, on a new capture or `read::panel_replaced` |
+| 2 two partial rounds | row 2 (WI-2) and "Where each rule lives"; `slice::plan_read` / `retry_plan` → `ReadPlan`, `slice::merge_reads` over `KeptRead`, `slice::unclean`, `run::RETRIES`, `run::kept_for` | shipped (`POE-278 WI-C`): `read::plan_read` → `ReadPlan` / `RowPlan` from the kept capture, `read::pass2_planned`, `read::build_planned` (copies confident cells), `read::fold_unresolved_header`, `read::lines_up`; `run::RETRIES`, `run::LoopState::rounds`, `run::round_plan` |
+| 3 then stop | row 2 ("After round 3 all OCR stops"); `DETECT_INTERVAL` 650 ms, `GateAnswer::Reshow` | shipped (`POE-278 WI-C`): `read::capture_complete` or `LoopState::rounds_spent` → `LoopState::detect_interval` returns `LIVENESS_INTERVAL`; `ReadPlan::Nothing` → `read::carry_capture` re-reads nothing, and `run::replaced_on_sight` checks a REMATCH on pass 1 |
+| 4 geometry moves only on a manual scan | row 3, residual "Placed-origin verification", "Owner decisions" 2026-09-09; `run::cold_sweep_reason` → `ColdSweepReason::{NullSlice, PlacedMiss}`, `run::cold_sweep`, `placed_origin_contradiction`, `remember_fallback_anchor` → `ssot::remember_anchor` | shipped (`POE-278 WI-B`, `f78786e`): `run::locate_decision` (`LocateReason::{ColdStart, ManualMiss}`, `PlacedRead`), asked from `run::detect_tick`; `run::manual_tick` / `refit_requested`; `MERC_COLUMN_TRUSTED_LINE` |
+| 5 fresh budget | row 3 (board identity); `run::board_key`, `slice::BoardFrame`, `LoopState::note_read`; Re-arm bumps `temple_rearm` | shipped (`POE-278 WI-C`): `LoopState::refill_rounds` — from `run::round_plan` on a new capture or one `read::panel_replaced` dropped, `LoopState::resume` on Scan now, `run::refills_budget` on a Recalibrate `consume_refit` acted on |
 
 Row numbers and section names are those of [Temple Lifecycle](../TEMPLE-LIFECYCLE.md).
 
@@ -152,12 +152,13 @@ remembers nothing, because `LocateReason::ColdStart` carries no placement and
 `run::fallback_panel` yields no origin for it; only
 `LocateReason::ManualMiss { placed }` can become a remembered origin.
 
-Merc clause 3, as shipped: the cadence is the shipped part; the round-spent
-stop and a liveness detect that re-reads nothing are WI-C's. At the time of
-writing the liveness detect still runs `read::pass2_texts` and
-`read::build_capture` on the crop every `LIVENESS_INTERVAL`, and
-`LoopState::note_complete` puts a capture that stops being complete back on
-`REDETECT_INTERVAL`.
+Merc clause 3, history: until `POE-278 WI-C` only the cadence was shipped —
+the liveness detect still ran `read::pass2_texts` and `read::build_capture` on
+the crop every `LIVENESS_INTERVAL`, and a capture that never became complete
+re-read every row and cell at `REDETECT_INTERVAL` with no round cap. Since
+`POE-278 WI-C` the liveness detect re-reads nothing (`ReadPlan::Nothing`), and
+a capture whose rounds are spent stays on `LIVENESS_INTERVAL` while it is
+incomplete.
 
 ## Consequences
 

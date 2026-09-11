@@ -67,7 +67,11 @@ use crate::AppState;
 use super::cellfit::{self, FitSource, FittedScale};
 use super::geometry::{self, OcrLineBox};
 use super::icons::{CellSig, LearnOutcome, LoadedStore, Origin, Rekeyed, TemplateStore};
-use super::read::{build_capture, capture_complete, fold_header, same_panel_positive, pass2_texts};
+use super::read::{
+    build_planned, capture_complete, carry_capture, fold_header, fold_unresolved_header,
+    header_fields_text, panel_replaced, pass2_planned, pass2_texts, plan_read, same_panel_positive,
+    unresolved_header_fields, ReadPlan,
+};
 // The row identity lives with the reader that produces it (POE-207): the crop
 // cache is built in `read.rs` and consumed here, and both have to spell the key
 // the same way. Re-exported so `run::row_key` keeps naming it.
@@ -99,14 +103,19 @@ const DETECT_INTERVAL: Duration = Duration::from_millis(1000);
 const DETECT_INTERVAL_SLOW: Duration = Duration::from_millis(3000);
 /// Re-detect cadence while a window IS captured.
 const REDETECT_INTERVAL: Duration = Duration::from_millis(2000);
-/// Detect cadence while a captured window is fully read (2026-08-25).
+/// Detect cadence while a captured window has nothing left to re-read
+/// (2026-08-25; POE-278).
 ///
 /// A complete capture ([`super::read::capture_complete`]) has nothing left for
-/// another pass to improve, so the only question left is whether the window is
-/// still on screen — and that is worth one detect every ten seconds, not one
-/// every two. The cost of the slower answer is bounded and stated: a window
-/// that closes is noticed up to `2 × this` late (two misses retire it), which
-/// delays the strip's "recruit window gone" marker and nothing else.
+/// another pass to improve, and a capture whose [`RETRIES`] rounds are spent
+/// gets no more reads (ADR-025 clause 3), so the only question left is whether
+/// the window is still on screen — and that is worth one detect every ten
+/// seconds, not one every two. That detect is the placed-crop pass 1 and
+/// nothing more ([`ReadPlan::Nothing`]): it proves the window is there,
+/// notices a REMATCH, and folds a header field still unread; pass 2 and the
+/// icon walk do not run. The cost of the slower answer is bounded and stated:
+/// a window that closes is noticed up to `2 × this` late (two misses retire
+/// it), which delays the strip's "recruit window gone" marker and nothing else.
 const LIVENESS_INTERVAL: Duration = Duration::from_millis(10_000);
 /// Hover-confirm cadence while a window is captured.
 const HOVER_INTERVAL: Duration = Duration::from_millis(400);
@@ -353,7 +362,28 @@ pub struct LoopState {
     /// capture on screen, so it is cleared when that capture retires and when
     /// Scan now asks for another look ([`Self::resume`]).
     pub complete: bool,
+    /// Reading rounds the live capture's budget has had (POE-278, ADR-025
+    /// clauses 2, 3 and 5): `0` until its first read, and after every refill.
+    ///
+    /// The merc twin of the temple's `BoardRead::retries_left`. A round is a
+    /// detect tick whose [`ReadPlan`] reads something ([`ReadPlan::reads`]) —
+    /// round 1 is the full read, rounds 2 and 3 re-read only what the kept
+    /// capture leaves unknown. [`Self::note_round`] counts one;
+    /// [`Self::refill_rounds`] starts the budget over.
+    pub rounds: u8,
 }
+
+/// Extra reading rounds an INCOMPLETE capture is worth, on top of the first
+/// (ADR-025 clause 2) — three reads in all.
+///
+/// Owner-decided on POE-278 and shared with the temple (`temple::run::RETRIES`),
+/// by contract rather than by code. The reads a later round recovers are the
+/// ones a redraw fixes: a row read under a fading tooltip, a cell whose art was
+/// still drawing. Past three the cause is the read itself, and the hover — the
+/// player naming the cell — is the answer, not another 2 s of OCR. What each
+/// later round reads is [`super::read::plan_read`]'s answer, so this bounds the
+/// ROUNDS, not the calls.
+pub const RETRIES: u8 = 2;
 
 impl LoopState {
     /// How long to wait before the next detect tick.
@@ -362,12 +392,13 @@ impl LoopState {
     /// the backoff: the backoff exists to stop a slow machine spending all its
     /// time hunting for a window, and a live window has already been found.
     ///
-    /// A live capture that is COMPLETE drops to the liveness cadence — the
-    /// re-read has nothing left to improve, and the 2026-08-25 smoke showed
-    /// what the pointless re-reads cost: the header blinked between two OCR
+    /// A live capture with nothing left to re-read — COMPLETE, or with its
+    /// [`RETRIES`] rounds spent — drops to the liveness cadence, whose detect
+    /// re-reads nothing ([`LIVENESS_INTERVAL`]). The 2026-08-25 smoke showed
+    /// what pointless re-reads cost: the header blinked between two OCR
     /// readings of the same unchanged pixels every two seconds.
     pub fn detect_interval(&self) -> Duration {
-        if self.live && self.complete {
+        if self.live && self.paused() {
             LIVENESS_INTERVAL
         } else if self.live {
             REDETECT_INTERVAL
@@ -397,8 +428,10 @@ impl LoopState {
                 self.misses = 0;
                 // The completeness belonged to the capture that just went
                 // away. Carrying it would leave the next window being hunted
-                // at the liveness cadence.
+                // at the liveness cadence. So did the round budget: the next
+                // window's first read is its round 1.
                 self.complete = false;
+                self.rounds = 0;
                 DetectOutcome::Retired
             } else {
                 DetectOutcome::Missed
@@ -430,6 +463,10 @@ impl LoopState {
     /// person pressing the button — which is the whole of what "scan a window
     /// that is already open" can mean.
     ///
+    /// A paused read is one [`Self::paused`] names — complete, or with its
+    /// [`RETRIES`] rounds spent (POE-278) — the two the liveness cadence runs
+    /// for. Both go back to [`REDETECT_INTERVAL`] here, so both are resumed.
+    ///
     /// The miss counter is cleared WHEN THIS RESUMES SOMETHING, because that is
     /// the moment the cadence changes and [`RETIRE_AFTER`] counts ticks, not
     /// time. MEASURED 2026-08-26 (app.log 09:41:52 → 09:41:57), on the shape
@@ -445,13 +482,61 @@ impl LoopState {
     /// they were counted at the cadence still running, two of them mean the
     /// window closed, and zeroing them on each press would let a player leaning
     /// on the button hold a closed window's capture on screen indefinitely.
+    ///
+    /// The ROUND BUDGET starts over on every call, paused or not (POE-278,
+    /// ADR-025 clause 5): Scan now over an incomplete capture — rounds left or
+    /// rounds spent — buys a fresh full read too. Here rather than on the
+    /// detect's own path so a Scan now whose tick misses still owes the next
+    /// hit its round 1.
     pub fn resume(&mut self) -> bool {
-        let was = self.complete;
+        let was = self.paused();
         self.complete = false;
+        self.refill_rounds();
         if was {
             self.misses = 0;
         }
         was
+    }
+
+    /// Whether the read is PAUSED: complete, or out of rounds while
+    /// incomplete. The one predicate behind both [`Self::detect_interval`]'s
+    /// liveness cadence and [`Self::resume`]'s miss clear, so what the cadence
+    /// treats as paused and what a Scan now treats as resumed cannot drift
+    /// apart.
+    pub fn paused(&self) -> bool {
+        self.complete || self.rounds_spent()
+    }
+
+    /// Reading rounds the budget still allows, the next one included: `RETRIES
+    /// + 1` before round 1, `0` once the budget is spent.
+    pub fn rounds_left(&self) -> u8 {
+        (RETRIES + 1).saturating_sub(self.rounds)
+    }
+
+    /// The budget is spent: no round is left to re-read an incomplete capture,
+    /// and the detect runs at [`LIVENESS_INTERVAL`] reading nothing.
+    pub fn rounds_spent(&self) -> bool {
+        self.rounds_left() == 0
+    }
+
+    /// Whether the next read is round 1 of its budget — which reads everything,
+    /// whatever capture is kept ([`round_plan`]).
+    pub fn owes_full_read(&self) -> bool {
+        self.rounds == 0
+    }
+
+    /// Start the budget over: the next read is round 1. The refill triggers
+    /// are ADR-025 clause 5's plus one of merc's own — see [`round_plan`]'s
+    /// callers and [`refills_budget`].
+    pub fn refill_rounds(&mut self) {
+        self.rounds = 0;
+    }
+
+    /// Count one reading round. `true` on the round that SPENDS the budget, so
+    /// the caller says so once rather than on every liveness tick after it.
+    pub fn note_round(&mut self) -> bool {
+        self.rounds = self.rounds.saturating_add(1);
+        self.rounds == RETRIES + 1
     }
 
     /// Record how long a DETECT took — not the hover confirm that shares the
@@ -1139,12 +1224,21 @@ pub type SigCache = HashMap<(String, u8), (CellSig, Option<image::RgbaImage>, Sc
 /// and gets NO entry when it has none — a confirm then reports `NoCrop` and
 /// learns nothing, which is the honest outcome. Every other cell takes the
 /// fresh crop, so a moved or rescaled window re-caches normally.
+///
+/// `carried` are the cells the read COPIED from the kept capture rather than
+/// matching (POE-278, [`super::read::ReadResult::carried`]): no fresh crop was
+/// cut for them, so each keeps the entry it already had instead of being
+/// dropped with the cells the read no longer sees. A `Matched` copied cell is
+/// still hover-confirmable ([`HoverBudget`] gives it five reads), and that
+/// confirm learns from this crop. A carried key with no previous entry stays
+/// absent — `NoCrop`, as for any cell with nothing cached.
 pub fn merge_sigs(
     mut previous: SigCache,
     fresh: SigCache,
     hovered: Option<(String, u8)>,
+    carried: &HashSet<(String, u8)>,
 ) -> SigCache {
-    let mut out = SigCache::with_capacity(fresh.len());
+    let mut out = SigCache::with_capacity(fresh.len() + carried.len());
     for (key, sig) in fresh {
         if hovered.as_ref() == Some(&key) {
             if let Some(cold) = previous.remove(&key) {
@@ -1153,6 +1247,11 @@ pub fn merge_sigs(
             continue;
         }
         out.insert(key, sig);
+    }
+    for key in carried {
+        if let Some(kept) = previous.remove(key) {
+            out.insert(key.clone(), kept);
+        }
     }
     out
 }
@@ -1283,6 +1382,128 @@ fn consume_refit(session: &mut Session, current: u64) -> Refit {
     }
 }
 
+/// Whether this tick's layout path starts the read budget over (POE-278).
+///
+/// Two of the refill triggers are decided here, on the tick that produced a
+/// layout:
+///
+/// - a Recalibrate the session ACTED on — [`consume_refit`] answered
+///   [`Refit::Dropped`] or [`Refit::NothingHeld`]. The press asks for the
+///   panel to be measured afresh, and a fresh measurement is a fresh read;
+/// - the template store's generation moved (`templates_moved`,
+///   [`generation_changed`]) — merc's own trigger, not ADR-025's. A forget or
+///   reset disowned confirmations and a landed sync corpus changed what every
+///   cell matches against; a `Confirmed` cell COPIED across that change would
+///   carry the disowned confirmation onto the page, so this one is about
+///   correctness, not freshness.
+///
+/// The others are decided elsewhere: a new capture and a replaced panel leave
+/// no kept capture ([`round_plan`]), and Scan now refills in
+/// [`LoopState::resume`].
+fn refills_budget(refit: &Refit, templates_moved: bool) -> bool {
+    templates_moved || matches!(refit, Refit::Dropped(_) | Refit::NothingHeld)
+}
+
+/// The plan for the round this tick runs, with the budget bookkeeping that
+/// decides it (POE-278, ADR-025 clauses 2, 3 and 5).
+///
+/// `refill` is [`refills_budget`]'s answer; a missing kept capture — a first
+/// look, a retire, a panel replaced on this tick — refills too. Round 1 of a
+/// budget is handed NO kept capture, which is what makes it a full read
+/// whatever the loop holds: that is the point of a refill.
+///
+/// A round spent on a geometry mismatch ([`plan_read`]'s `Full` for a kept
+/// capture that no longer lines up) refills nothing, so a jittery geometry
+/// spends the budget like any other round.
+fn round_plan(
+    state: &mut LoopState,
+    kept: Option<&MercCapture>,
+    refill: bool,
+    panel: Option<[i32; 4]>,
+    layout: &geometry::MercLayout,
+    g: &MercGeometry,
+) -> ReadPlan {
+    if refill || kept.is_none() {
+        state.refill_rounds();
+    }
+    let kept = kept.filter(|_| !state.owes_full_read());
+    plan_read(kept, state.rounds_left(), panel, layout, g)
+}
+
+/// Whether this frame's PASS-1 view is a different recruit window than the
+/// kept capture — the REMATCH check a round that re-reads nothing still makes
+/// (POE-278).
+///
+/// The kept capture against the skill names pass 1 put on the layout's rows
+/// and the pass-1 header, which is the shape [`first_look`] builds, through
+/// [`panel_replaced`] with its evidence thresholds unchanged. It runs BEFORE
+/// the plan, because a partial or empty round builds its capture mostly out of
+/// the kept one, and comparing the kept capture with that would compare it
+/// with itself: a rematch at the same level would go unseen for the rest of
+/// the window.
+fn replaced_on_sight(
+    kept: Option<&MercCapture>,
+    layout: &geometry::MercLayout,
+    screen: [u32; 2],
+    g: &MercGeometry,
+    vocab: &MercVocab,
+) -> bool {
+    kept.is_some_and(|kept| panel_replaced(kept, &first_look(layout, screen, 0, g, vocab)))
+}
+
+/// The one line a reading round writes (POE-278), the temple read line's merc
+/// twin: which round of the budget this was, what the plan read, what the two
+/// OCR-bearing stages cost, and whether the capture is complete or how many
+/// rounds it still has. A round that reads nothing writes no line.
+///
+/// `round` and `rounds_left` are [`LoopState`]'s AFTER [`LoopState::note_round`]
+/// counted this round.
+fn round_line(
+    round: u8,
+    plan: &ReadPlan,
+    pass2_ms: u128,
+    icons_ms: u128,
+    complete: bool,
+    rounds_left: u8,
+) -> String {
+    let verdict = if complete {
+        "complete".to_string()
+    } else {
+        format!("incomplete, {rounds_left} rounds left")
+    };
+    format!(
+        "Merc: read round {round} of {} — {} — pass 2 {pass2_ms} ms, icons {icons_ms} ms; \
+         {verdict}",
+        RETRIES + 1,
+        plan.describe(),
+    )
+}
+
+/// Said once, on the round that spends the budget over a capture still
+/// incomplete: what is still unread, that OCR is paused at the liveness
+/// cadence, and that a hover can still resolve a cell (ADR-025's accepted
+/// cost — the rounds are not extended to buy the rest back).
+fn rounds_spent_line(capture: &MercCapture) -> String {
+    let rows = capture
+        .rows
+        .iter()
+        .filter(|row| !super::read::confident(row.skill.state))
+        .count();
+    let cells = capture
+        .rows
+        .iter()
+        .flat_map(|row| row.supports.iter())
+        .filter(|cell| !super::read::confident(cell.state))
+        .count();
+    format!(
+        "Merc: {} reading rounds spent — still unread: {rows} rows, {cells} cells, header {} — \
+         OCR paused (liveness every {} s); hovering a cell can still resolve it",
+        RETRIES + 1,
+        header_fields_text(&unresolved_header_fields(&capture.header)),
+        LIVENESS_INTERVAL.as_secs(),
+    )
+}
+
 /// Whether the layout this tick hands downstream is registered DIFFERENTLY from
 /// the one the last tick handed down.
 ///
@@ -1325,6 +1546,27 @@ pub fn hovered_for_sigs(
         None
     } else {
         hovered
+    }
+}
+
+/// Which copied cells [`merge_sigs`] may carry a cached crop for on this tick
+/// (POE-278).
+///
+/// Normally every one the read copied ([`super::read::ReadResult::carried`]).
+/// But on the tick the session's REGISTRATION changes, every cached crop was
+/// cut at the old rects, and a copied cell cut no fresh one — carrying the old
+/// crop would let a confirm teach the store the registration that just
+/// changed, the thing [`hovered_for_sigs`] exists to stop. So that tick
+/// carries none: the copied cells report `Learned::NoCrop` and learn nothing,
+/// which is the honest outcome.
+pub fn carried_for_sigs(
+    geometry_changed: bool,
+    carried: HashSet<(String, u8)>,
+) -> HashSet<(String, u8)> {
+    if geometry_changed {
+        HashSet::new()
+    } else {
+        carried
     }
 }
 
@@ -2565,9 +2807,10 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             }
         }
         let gate = trigger::step(&app, now);
-        // Scan now over a fully-read window means the player believes something
-        // changed on screen that the paused loop would not have looked for —
-        // they recruited, or rematched. Resuming here rather than in the detect
+        // Scan now over a paused window — fully read, or out of reading rounds
+        // (POE-278) — means the player believes something changed on screen
+        // that the paused loop would not have looked for: they recruited, or
+        // rematched, or want the unread cells tried again. Resuming here rather than in the detect
         // keeps the pause a property of the STATE machine, which is where its
         // cadence is decided.
         //
@@ -2579,7 +2822,8 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         if gate == trigger::GateStep::FullDetect && session.state.resume() {
             crate::app_log(
                 &app,
-                "Merc: Scan now over a completed capture — OCR resumed".to_string(),
+                "Merc: Scan now over a paused capture (complete or rounds spent) — OCR resumed"
+                    .to_string(),
             );
         }
         if !session.state.live {
@@ -2613,12 +2857,11 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         // `search::tick`, which does nothing at all until the query has
         // actually moved.
         //
-        // Gated on COMPLETE, not merely on an open session: `LoopState::resume`
-        // puts a fully-read capture back on the working cadence when a new
-        // burst arms over it, and the re-read that follows passes through
-        // half-filled rows. A query built from one of those describes a
-        // mercenary nobody has, and it would cost one of three searches to
-        // learn that.
+        // Gated on COMPLETE, not merely on an open session: a Scan now over a
+        // paused capture (`LoopState::resume`) puts it back on the working
+        // cadence, and the read that follows passes through half-filled rows.
+        // A query built from one of those describes a mercenary nobody has,
+        // and it would cost one of three searches to learn that.
         if session.state.complete {
             if let (Some(capture), Some(trade)) =
                 (session.current.as_ref(), session.trade.as_mut())
@@ -3513,7 +3756,8 @@ fn detect_tick(
     // read ([`manual_tick`]), which `refit_located` records just below; this
     // re-reads the counter AT THE FIT, which is what ssot's bump-before-write
     // ordering relies on.
-    match consume_refit(session, refit_counter(app)) {
+    let refit = consume_refit(session, refit_counter(app));
+    match &refit {
         Refit::NotRequested => {}
         Refit::Dropped(held) => crate::app_log(
             app,
@@ -3688,8 +3932,10 @@ fn detect_tick(
         }
     }
 
-    // Pass 2 is up to `max_rows` more OCR calls. A stop signal that arrived
-    // during pass 1 stops here, leaving the state exactly as it was.
+    // What follows is this round's read: pass 2 — at most `max_rows` more OCR
+    // calls, and only for the rows the plan below reads — and the icon walk.
+    // A stop signal that arrived during pass 1 stops here, leaving the state
+    // exactly as it was.
     if *cancel.borrow() {
         return detect_report(None, full_frame);
     }
@@ -3700,7 +3946,8 @@ fn detect_tick(
     // the slice would blank its icons for the length of every tick. The
     // header is pass 1's, unguarded — it is replaced by the folded one below
     // on this same tick. See [`MercCapture::partial`].
-    if session.current.is_none() {
+    let first_look_tick = session.current.is_none();
+    if first_look_tick {
         let look = first_look(&layout, screen, now_ms(), &session.geometry, &session.vocab);
         publish(app, |slice| {
             slice.status = MercStatus::Live;
@@ -3709,34 +3956,127 @@ fn detect_tick(
             slice.last_error = None;
         });
     }
-    let stage = Instant::now();
-    let texts = pass2_texts(view, frame, &layout, &session.geometry);
-    let pass2_ms = stage.elapsed().as_millis();
-    // BEFORE the store is read (POE-208 L10). The seeds are rendered art, so
-    // they are only valid at the window they were resampled for, and this frame
-    // reports the window the panel is actually at. Costs nothing on every tick
-    // but the first at a given window — see `seed::window_plan`.
-    let stage = Instant::now();
-    seed::rederive_for_window(app, &session.geometry, layout.scale);
-    let seeds_ms = stage.elapsed().as_millis();
-    let stage = Instant::now();
-    let mut result = {
-        let state = app.state::<AppState>();
-        let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
-        build_capture(
-            view,
-            frame,
-            &layout,
-            &texts,
-            now_ms(),
-            &session.geometry,
-            &session.vocab,
-            &store,
-        )
+    // Before ANY use of this frame's header — the fold below, and the
+    // completeness check that opens a trade session with it. The cursor was
+    // read before the grab, so it says where it was WHILE the frame was taken;
+    // the rect the withholding keys on is chosen inside
+    // [`publishable_header_for`], never here. The header is pass 1's whatever
+    // this round reads, so it is decided before the round.
+    let (published_header, header_guard) = publishable_header_for(
+        &layout,
+        &session.geometry,
+        session.header_guard,
+        cursor,
+        layout.header.clone(),
+    );
+    // A forget/reset while this capture was live means the user disowned a
+    // confirmation; re-applying it here is exactly what the un-poison button
+    // was pressed to stop. Before the plan (POE-278): the same change starts
+    // the read budget over ([`refills_budget`]), so a kept `Confirmed` cell is
+    // read afresh rather than copied onto this round's capture.
+    let templates_moved =
+        generation_changed(&mut session.template_generation, template_generation(app));
+    if templates_moved {
+        session.confirmed.clear();
+        session.hover_budget.clear();
+        // Including the claim that has not been corroborated yet: the un-poison
+        // button disowns a read, and a half-made one is still a read.
+        session.pending_confirm = None;
+        // The retained slot holds the same disowned confirmations one retire
+        // back. Leaving it would let the un-poison button be undone by the next
+        // re-detect.
+        session.retained = None;
+    }
+
+    // IDENTITY FIRST, on this frame's own pass-1 view and BEFORE the plan
+    // (POE-278): a round that re-reads nothing builds its capture out of the
+    // kept one, and a REMATCH at the same level would never be seen by
+    // comparing the kept capture with itself. See [`replaced_on_sight`].
+    let replaced_on_sight = replaced_on_sight(
+        session.current.as_ref(),
+        &layout,
+        screen,
+        &session.geometry,
+        &session.vocab,
+    );
+    if replaced_on_sight {
+        crate::app_log(app, "Merc: recruit window replaced — reading it fresh".to_string());
+        drop_replaced_window(session);
+    }
+
+    // The placed rect is the geometry source for every tick that trusts the
+    // placement, so none of them moves a live capture's panel. Only a manual
+    // locate that lands elsewhere uses the located panel for this read
+    // ([`fallback_panel`]), and a cold-start full detect derives one from its
+    // rows until the SSOT placement is available on the next tick. Decided
+    // before the plan, which weighs the kept capture's panel against it.
+    let current_panel = located_panel
+        .or_else(|| placement.map(|(panel, _)| panel))
+        .or_else(|| geometry::panel_bounds(&layout, &session.geometry));
+
+    // WHAT THIS ROUND READS (POE-278, ADR-025): the full read on round 1, then
+    // at most `RETRIES` rounds that re-read only what the kept capture leaves
+    // unknown, then nothing. See [`round_plan`] and `read::plan_read`.
+    let plan = round_plan(
+        &mut session.state,
+        session.current.as_ref(),
+        refills_budget(&refit, templates_moved),
+        current_panel,
+        &layout,
+        &session.geometry,
+    );
+    let mut pass2_ms = 0;
+    let mut seeds_ms = 0;
+    // `from_kept`: this round's capture was built out of the kept one — a
+    // partial round, or one that read nothing.
+    let (mut result, icons_ms, from_kept) = match (&plan, session.current.as_ref()) {
+        (ReadPlan::Nothing, Some(kept)) => {
+            let stage = Instant::now();
+            let result = carry_capture(view, frame, &layout, kept, now_ms(), &session.geometry);
+            (result, stage.elapsed().as_millis(), true)
+        }
+        // `plan_read` answers `Nothing` only for a kept capture, and the loop
+        // held that same capture; were that ever not so, this reads in full.
+        (plan, kept) => {
+            let planned = match plan {
+                ReadPlan::Partial { rows, .. } => kept.map(|kept| (rows.as_slice(), kept)),
+                ReadPlan::Full | ReadPlan::Nothing => None,
+            };
+            let stage = Instant::now();
+            let texts = match planned {
+                Some((rows, _)) => pass2_planned(view, frame, &layout, &session.geometry, rows),
+                None => pass2_texts(view, frame, &layout, &session.geometry),
+            };
+            pass2_ms = stage.elapsed().as_millis();
+            // BEFORE the store is read (POE-208 L10). The seeds are rendered
+            // art, so they are only valid at the window they were resampled
+            // for, and this frame reports the window the panel is actually at.
+            // Costs nothing on every tick but the first at a given window — see
+            // `seed::window_plan`.
+            let stage = Instant::now();
+            seed::rederive_for_window(app, &session.geometry, layout.scale);
+            seeds_ms = stage.elapsed().as_millis();
+            let stage = Instant::now();
+            let result = {
+                let state = app.state::<AppState>();
+                let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+                build_planned(
+                    view,
+                    frame,
+                    &layout,
+                    &texts,
+                    now_ms(),
+                    &session.geometry,
+                    &session.vocab,
+                    &store,
+                    planned,
+                )
+            };
+            (result, stage.elapsed().as_millis(), planned.is_some())
+        }
     };
     result.capture.rows_on_screen = result.rows_on_screen;
     result.capture.rows_read = result.rows_read;
-    let icons_ms = stage.elapsed().as_millis();
     let row_mismatch = row_mismatch_line(result.rows_on_screen, result.rows_read);
     if session.row_mismatch_logged.as_deref() != row_mismatch.as_deref() {
         if let Some(line) = row_mismatch.as_deref() {
@@ -3767,65 +4107,43 @@ fn detect_tick(
             format!("Merc: detect on the crop frame took {} ms", started.elapsed().as_millis()),
         );
     }
-    // Before ANY use of this frame's header — the fold below, and the
-    // completeness check that opens a trade session with it. The cursor was
-    // read before the grab, so it says where it was WHILE the frame was taken;
-    // the rect the withholding keys on is chosen inside
-    // [`publishable_header_for`], never here.
-    let (published, header_guard) = publishable_header_for(
-        &layout,
-        &session.geometry,
-        session.header_guard,
-        cursor,
-        std::mem::take(&mut result.capture.header),
-    );
-    result.capture.header = published;
-    // A forget/reset while this capture was live means the user disowned a
-    // confirmation; re-applying it here is exactly what the un-poison button
-    // was pressed to stop.
-    if generation_changed(&mut session.template_generation, template_generation(app)) {
-        session.confirmed.clear();
-        session.hover_budget.clear();
-        // Including the claim that has not been corroborated yet: the un-poison
-        // button disowns a read, and a half-made one is still a read.
-        session.pending_confirm = None;
-        // The retained slot holds the same disowned confirmations one retire
-        // back. Leaving it would let the un-poison button be undone by the next
-        // re-detect.
-        session.retained = None;
-    }
+    result.capture.header = published_header;
 
-    // Nothing live means this is the first look at a panel since the last
-    // retire — the moment the retained slot exists for. Before the header fold,
-    // because `apply_confirmed` below reads what this restores.
-    if session.current.is_none() {
-        if let Some(line) = restore_retained(session, &result.capture).log_line() {
-            crate::app_log(app, line);
+    let replaced_after_read = if from_kept {
+        // Built out of the kept capture: the identity question was asked of
+        // pass 1 above, and the header only fills what the kept one leaves
+        // unresolved — a resolved field is not re-litigated by a round that
+        // read nothing new about it.
+        if let Some(kept) = session.current.as_ref() {
+            result.capture.header = fold_unresolved_header(&kept.header, &result.capture.header);
         }
-    }
+        false
+    } else {
+        // Nothing live means this is the first look at a panel since the last
+        // retire — the moment the retained slot exists for. Before the header
+        // fold, because `apply_confirmed` below reads what this restores.
+        if first_look_tick {
+            if let Some(line) = restore_retained(session, &result.capture).log_line() {
+                crate::app_log(app, line);
+            }
+        }
 
-    // IDENTITY FIRST, then everything the loop remembered. The header merge and
-    // the remembered confirmations are both statements about ONE recruit
-    // window, and a REMATCH swaps the mercenary behind a panel that looks the
-    // same — with the liveness pause the loop can take ~20 s to notice a window
-    // that closed, so "a capture exists" is not evidence it is the same one.
-    // A different panel therefore drops the lot rather than merging into it.
-    let (header, replaced) = fold_header(session.current.as_ref(), &result.capture);
-    result.capture.header = header;
-    if replaced {
-        crate::app_log(app, "Merc: recruit window replaced — reading it fresh".to_string());
-        session.current = None;
-        session.confirmed.clear();
-        session.hover_budget.clear();
-        session.sigs.clear();
-        // A REMATCH swaps the mercenary behind a panel that looks the same, so
-        // a claim made on the old one must not be corroborated by a read of the
-        // new one that happens to land on a row keying the same way.
-        session.pending_confirm = None;
-        // The placed rect remains the SSOT geometry. A replacement clears the
-        // live occlusion rect below only through the next published capture;
-        // it does not make OCR rows a second placement source.
-    }
+        // IDENTITY FIRST, then everything the loop remembered. The header
+        // merge and the remembered confirmations are both statements about ONE
+        // recruit window, and a REMATCH swaps the mercenary behind a panel that
+        // looks the same — with the liveness pause the loop can take ~20 s to
+        // notice a window that closed, so "a capture exists" is not evidence it
+        // is the same one. A different panel therefore drops the lot rather
+        // than merging into it. A full read asks again with its pass-2 names.
+        let (header, replaced) = fold_header(session.current.as_ref(), &result.capture);
+        result.capture.header = header;
+        if replaced {
+            crate::app_log(app, "Merc: recruit window replaced — reading it fresh".to_string());
+            drop_replaced_window(session);
+        }
+        replaced
+    };
+    let replaced = replaced_on_sight || replaced_after_read;
     // AFTER the identity check: a confirmation belongs to the window it was
     // made on, and re-applying the old window's cells to a new mercenary's rows
     // is the same inheritance bug one layer down.
@@ -3859,36 +4177,32 @@ fn detect_tick(
         sync::spawn_repull(app);
     }
     // THE ONE PLACE A CROP IS STAMPED WITH ITS REGISTRATION (POE-215 D3).
-    // `read::build_capture` cuts the crops but is not told which cue registered
+    // `read::build_planned` cuts the crops but is not told which cue registered
     // the layout it was handed; this line is where the two meet, and after it
     // every copy of the crop — the cache, a `PendingConfirm`, the template that
-    // is finally learned — carries the source of the tick it was cut on.
+    // is finally learned — carries the source of the tick it was cut on. A
+    // copied cell cut nothing, and its cached crop keeps the source it had.
     let cut_at = layout.scale_source;
     let fresh: SigCache = result
         .sigs
         .into_iter()
         .map(|(key, (sig, raw))| (key, (sig, raw, cut_at)))
         .collect();
+    // One read of the flag for both halves: on a re-registering tick neither
+    // the hovered cell's cold crop nor a copied cell's cached crop is of the
+    // registration the layout now has. See [`carried_for_sigs`].
+    let geometry_changed = std::mem::take(&mut session.geometry_changed);
+    let carried = carried_for_sigs(geometry_changed, result.carried);
     session.sigs = merge_sigs(
         std::mem::take(&mut session.sigs),
         fresh,
-        hovered_for_sigs(
-            std::mem::take(&mut session.geometry_changed),
-            hovered_key(&result.capture, cursor),
-        ),
+        hovered_for_sigs(geometry_changed, hovered_key(&result.capture, cursor)),
+        &carried,
     );
     // The capture the pending claim was made against is being replaced right
     // here — this is the one place that can tell whether its row survived.
     session.pending_confirm =
         drop_pending_off_capture(session.pending_confirm.take(), &result.capture);
-    // The placed rect is the geometry source for every tick that trusts the
-    // placement, so none of them moves a live capture's panel. Only a manual
-    // locate that lands elsewhere uses the located panel for this read
-    // ([`fallback_panel`]), and a cold-start full detect derives one from its
-    // rows until the SSOT placement is available on the next tick.
-    let current_panel = located_panel
-        .or_else(|| placement.map(|(panel, _)| panel))
-        .or_else(|| geometry::panel_bounds(&layout, &session.geometry));
     session.panel = current_panel;
     // Publish the same settled panel rect the next detect will use. The
     // preview reads this capture field; it must not infer a rect from rows.
@@ -3934,14 +4248,42 @@ fn detect_tick(
         // would cost one of three searches.
         //
         // `get_or_insert_with`, never a fresh session: `note_complete` is a
-        // rising edge, but `LoopState::resume` drops `complete` whenever a new
-        // voice line or a Scan now arms over a finished window, so one capture
-        // crosses this edge as often as the player triggers a re-read. A new
-        // session per edge would hand that capture a new 3-search budget each
-        // time, which is unbounded searching dressed up as a ceiling. ONE
-        // session per capture: opened here, cleared only by the retire in
-        // [`miss`].
+        // rising edge, but `LoopState::resume` drops `complete` whenever a Scan
+        // now arms over a finished window (a voice line cannot reach it:
+        // `trigger::capture_held`), so one capture crosses this edge as often
+        // as the player triggers a re-read. A new session per edge would hand
+        // that capture a new 3-search budget each time, which is unbounded
+        // searching dressed up as a ceiling. ONE session per capture: opened
+        // here, cleared only by the retire in [`miss`].
+        //
+        // A capture whose rounds ran out incomplete opens none here. If a hover
+        // completes it later, the next liveness tick's carried capture is
+        // complete and crosses this edge then.
         session.trade.get_or_insert_with(MercTradeSession::new);
+    }
+    // THE ROUND, counted after the read so the line says what happened. A
+    // panel the full read found REPLACED is the new window's round 1; a round
+    // that read nothing is not a round and writes no line (ADR-025 clause 3).
+    // `!from_kept` is the full read the match above falls back to.
+    if plan.reads() || !from_kept {
+        if replaced_after_read {
+            session.state.refill_rounds();
+        }
+        let spent = session.state.note_round();
+        crate::app_log(
+            app,
+            round_line(
+                session.state.rounds,
+                &plan,
+                pass2_ms,
+                icons_ms,
+                complete,
+                session.state.rounds_left(),
+            ),
+        );
+        if spent && !complete {
+            crate::app_log(app, rounds_spent_line(&result.capture));
+        }
     }
     publish_then_remember(
         || {
@@ -3959,6 +4301,24 @@ fn detect_tick(
         },
     );
     detect_report(Some(outcome), full_frame)
+}
+
+/// Drop everything the loop remembered about a recruit window a REMATCH
+/// replaced — the pass-1 check before the plan ([`replaced_on_sight`]) and a
+/// full read's header fold both land here. The kept capture goes with it, so
+/// the round that follows is the new window's round 1 ([`round_plan`]).
+fn drop_replaced_window(session: &mut Session) {
+    session.current = None;
+    session.confirmed.clear();
+    session.hover_budget.clear();
+    session.sigs.clear();
+    // A REMATCH swaps the mercenary behind a panel that looks the same, so a
+    // claim made on the old one must not be corroborated by a read of the new
+    // one that happens to land on a row keying the same way.
+    session.pending_confirm = None;
+    // The placed rect remains the SSOT geometry. A replacement clears the live
+    // occlusion rect only through the next published capture; it does not make
+    // OCR rows a second placement source.
 }
 
 /// The rows as pass 1 read them, before the icon pass — the capture the first
@@ -6232,7 +6592,7 @@ mod tests {
         let previous = cache(&[(("skill.a", 0), 1), (("skill.a", 1), 2)]);
         let fresh = cache(&[(("skill.a", 0), 9), (("skill.a", 1), 9)]);
 
-        let merged = merge_sigs(previous, fresh, Some(sig_key("skill.a", 0)));
+        let merged = merge_sigs(previous, fresh, Some(sig_key("skill.a", 0)), &HashSet::new());
 
         assert_eq!(
             merged[&sig_key("skill.a", 0)].0,
@@ -6258,7 +6618,7 @@ mod tests {
             cache_cut_at(&[(("skill.a", 0), 1), (("skill.a", 1), 2)], ScaleSource::Ocr);
         let fresh = cache_cut_at(&[(("skill.a", 0), 9), (("skill.a", 1), 9)], ScaleSource::Frame);
 
-        let merged = merge_sigs(previous, fresh, Some(hovered.clone()));
+        let merged = merge_sigs(previous, fresh, Some(hovered.clone()), &HashSet::new());
 
         assert_eq!(
             merged[&hovered].2,
@@ -6554,6 +6914,7 @@ mod tests {
             cache(&[(("skill.a", 0), 1)]),
             cache(&[(("skill.a", 0), 9)]),
             hovered_for_sigs(true, Some(hovered.clone())),
+            &HashSet::new(),
         );
 
         assert_eq!(
@@ -6573,6 +6934,7 @@ mod tests {
             cache(&[(("skill.a", 0), 1)]),
             cache(&[(("skill.a", 0), 9)]),
             hovered_for_sigs(false, Some(hovered.clone())),
+            &HashSet::new(),
         );
 
         assert_eq!(merged[&hovered].0, sig(1));
@@ -6592,7 +6954,7 @@ mod tests {
         // After: `skill.a`'s line was not read, so `skill.b` is now position 0.
         let fresh = cache(&[(("skill.b", 0), 9)]);
 
-        let merged = merge_sigs(previous, fresh, Some(sig_key("skill.b", 0)));
+        let merged = merge_sigs(previous, fresh, Some(sig_key("skill.b", 0)), &HashSet::new());
 
         assert_eq!(
             merged[&sig_key("skill.b", 0)].0,
@@ -6612,6 +6974,7 @@ mod tests {
             SigCache::new(),
             cache(&[(("skill.a", 0), 9)]),
             Some(sig_key("skill.a", 0)),
+            &HashSet::new(),
         );
 
         assert!(merged.is_empty());
@@ -6625,6 +6988,7 @@ mod tests {
             cache(&[(("skill.a", 0), 1)]),
             cache(&[(("skill.a", 0), 9)]),
             None,
+            &HashSet::new(),
         );
 
         assert_eq!(merged[&sig_key("skill.a", 0)].0, sig(9));
@@ -6638,6 +7002,7 @@ mod tests {
             cache(&[(("skill.a", 0), 1), (("skill.z", 3), 2)]),
             cache(&[(("skill.a", 0), 9)]),
             None,
+            &HashSet::new(),
         );
 
         assert_eq!(merged.len(), 1);
@@ -8345,6 +8710,357 @@ mod tests {
         assert!(
             !lines.iter().any(|l| l.contains("thresholds overridden")),
             "{lines:?}",
+        );
+    }
+
+    // -- the read budget (POE-278, ADR-025 clauses 2, 3 and 5) --------------
+
+    /// A live capture that has had `rounds` reading rounds of its budget.
+    fn read_rounds(rounds: u8) -> LoopState {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+        for _ in 0..rounds {
+            st.note_round();
+        }
+        st
+    }
+
+    #[test]
+    fn the_third_round_spends_the_budget_and_says_so_once() {
+        let mut st = read_rounds(0);
+
+        let said: Vec<bool> = (0..4).map(|_| st.note_round()).collect();
+
+        assert_eq!(said, vec![false, false, true, false]);
+        assert!(st.rounds_spent());
+    }
+
+    #[test]
+    fn round_one_leaves_two_rounds_for_what_it_left_unknown() {
+        let st = read_rounds(1);
+
+        assert_eq!(st.rounds_left(), RETRIES);
+        assert!(!st.rounds_spent());
+    }
+
+    /// Criterion 3's other stop: a capture that stayed incomplete through its
+    /// three rounds is only checked for presence.
+    #[test]
+    fn a_capture_whose_rounds_are_spent_drops_to_the_liveness_cadence() {
+        let st = read_rounds(RETRIES + 1);
+        assert!(!st.complete, "arrange: the capture is still incomplete");
+
+        assert_eq!(st.detect_interval(), LIVENESS_INTERVAL);
+    }
+
+    #[test]
+    fn a_capture_with_rounds_left_keeps_the_working_cadence() {
+        assert_eq!(read_rounds(RETRIES).detect_interval(), REDETECT_INTERVAL);
+    }
+
+    /// The budget belongs to the capture: the next window is read from round 1.
+    #[test]
+    fn a_retire_starts_the_next_windows_budget_over() {
+        let mut st = read_rounds(RETRIES + 1);
+
+        for _ in 0..RETIRE_AFTER {
+            st.on_detect(false);
+        }
+
+        assert!(st.owes_full_read());
+    }
+
+    /// Scan now over an incomplete capture with rounds left resumes no pause —
+    /// and still buys a fresh read.
+    #[test]
+    fn scan_now_refills_the_budget_of_a_capture_it_did_not_resume() {
+        let mut st = read_rounds(1);
+
+        assert!(!st.resume(), "arrange: nothing was complete, so nothing resumed");
+
+        assert!(st.owes_full_read());
+    }
+
+    /// A capture out of rounds is paused as much as a complete one: Scan now
+    /// resumes it, and says so.
+    #[test]
+    fn scan_now_over_a_capture_out_of_rounds_resumes_it() {
+        let mut st = read_rounds(RETRIES + 1);
+
+        assert!(st.resume());
+    }
+
+    /// The 2026-08-26 sequence (app.log 09:41:52 → 09:41:57) on the pause
+    /// POE-278 added: one miss at the liveness cadence, Scan now, and the first
+    /// miss at the working cadence. The liveness miss is not part of the
+    /// evidence that a window seen 2 s ago has closed.
+    #[test]
+    fn a_scan_now_over_a_capture_out_of_rounds_clears_the_liveness_miss() {
+        let mut st = read_rounds(RETRIES + 1);
+        assert_eq!(st.on_detect(false), DetectOutcome::Missed, "arrange: one liveness miss");
+
+        st.resume();
+
+        assert_eq!(
+            st.on_detect(false),
+            DetectOutcome::Missed,
+            "the first miss after the resume is the first miss, not the second",
+        );
+        assert!(st.live);
+    }
+
+    #[test]
+    fn a_recalibrate_that_dropped_a_registration_refills_the_budget() {
+        let dropped = Refit::Dropped(reg(0.8985, 40, FitSource::Grid));
+
+        assert!(refills_budget(&dropped, false));
+    }
+
+    #[test]
+    fn a_recalibrate_with_nothing_held_still_refills_the_budget() {
+        assert!(refills_budget(&Refit::NothingHeld, false));
+    }
+
+    #[test]
+    fn a_template_generation_change_refills_the_budget() {
+        assert!(refills_budget(&Refit::NotRequested, true));
+    }
+
+    #[test]
+    fn a_tick_with_no_trigger_keeps_the_budget() {
+        assert!(!refills_budget(&Refit::NotRequested, false));
+    }
+
+    // -- which round a tick runs --------------------------------------------
+
+    /// The loop's settled panel rect the kept captures below were read at.
+    const KEPT_PANEL: [i32; 4] = [80, 20, 520, 260];
+
+    /// A kept capture of [`detected_layout`]: each row named by its own
+    /// pass-1 text, one Pierce read in `state` at each row's slot 0 at the
+    /// layout's own rect, a full header, and [`KEPT_PANEL`].
+    fn kept_capture(layout: &geometry::MercLayout, state: ReadState) -> MercCapture {
+        let v = vocab();
+        let rows = layout
+            .rows
+            .iter()
+            .map(|lr| {
+                let read = v.match_skill(&lr.text, &thresholds());
+                MercRow {
+                    index: lr.index,
+                    skill: MercSkillRead {
+                        raw: lr.text.clone(),
+                        ids: read.ids,
+                        name: read.name,
+                        score: read.score,
+                        state: read.state,
+                    },
+                    supports: vec![MercSupportRead {
+                        family: Some("Pierce".into()),
+                        tier: Some(3),
+                        state,
+                        ..cell(0, lr.cells[0])
+                    }],
+                }
+            })
+            .collect();
+        MercCapture { panel: Some(KEPT_PANEL), header: named_header(), ..capture_with(rows) }
+    }
+
+    fn plan_for(st: &mut LoopState, kept: Option<&MercCapture>, refill: bool) -> ReadPlan {
+        let layout = detected_layout();
+        round_plan(st, kept, refill, Some(KEPT_PANEL), &layout, &MercGeometry::default())
+    }
+
+    #[test]
+    fn a_first_look_is_round_one_and_reads_everything() {
+        let mut st = read_rounds(0);
+
+        assert_eq!(plan_for(&mut st, None, false), ReadPlan::Full);
+    }
+
+    #[test]
+    fn a_later_round_re_reads_only_what_the_kept_capture_left_unknown() {
+        let kept = kept_capture(&detected_layout(), ReadState::Unknown);
+        let mut st = read_rounds(1);
+
+        assert!(matches!(plan_for(&mut st, Some(&kept), false), ReadPlan::Partial { .. }));
+    }
+
+    /// A refill makes the next round round 1, and round 1 reads everything
+    /// whatever the loop is holding.
+    #[test]
+    fn a_refilled_budget_reads_everything_it_holds() {
+        let kept = kept_capture(&detected_layout(), ReadState::Unknown);
+        let mut st = read_rounds(1);
+
+        assert_eq!(plan_for(&mut st, Some(&kept), true), ReadPlan::Full);
+    }
+
+    /// A geometry that no longer lines up reads in full, and each of those
+    /// reads is a round: after round 3 the loop stops reading however much the
+    /// geometry jitters.
+    #[test]
+    fn a_geometry_mismatch_reads_in_full_and_spends_the_budget() {
+        let mut kept = kept_capture(&detected_layout(), ReadState::Unknown);
+        kept.panel = Some([KEPT_PANEL[0] + 200, KEPT_PANEL[1], KEPT_PANEL[2], KEPT_PANEL[3]]);
+        let mut st = read_rounds(1);
+
+        let plans: Vec<ReadPlan> = (0..3)
+            .map(|_| {
+                let plan = plan_for(&mut st, Some(&kept), false);
+                if plan.reads() {
+                    st.note_round();
+                }
+                plan
+            })
+            .collect();
+
+        assert_eq!(plans, vec![ReadPlan::Full, ReadPlan::Full, ReadPlan::Nothing]);
+    }
+
+    /// The trade session opens on the complete edge (POE-202). A capture whose
+    /// rounds ran out incomplete and that a hover then completed still crosses
+    /// that edge, on the liveness tick that carries it.
+    #[test]
+    fn a_hover_that_completes_a_spent_capture_crosses_the_complete_edge() {
+        let layout = detected_layout();
+        let kept = kept_capture(&layout, ReadState::Confirmed);
+        let mut st = read_rounds(RETRIES + 1);
+        assert_eq!(plan_for(&mut st, Some(&kept), false), ReadPlan::Nothing, "arrange");
+        let img = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            900,
+            300,
+            image::Rgba([12, 12, 14, 255]),
+        ));
+
+        let mut carried = carry_capture(
+            &img,
+            geometry::Frame::full([900, 300]),
+            &layout,
+            &kept,
+            0,
+            &MercGeometry::default(),
+        )
+        .capture;
+        carried.header = fold_unresolved_header(&kept.header, &carried.header);
+
+        assert!(st.note_complete(capture_complete(&carried)));
+    }
+
+    /// A panel dropped on a liveness tick — the pass-1 REMATCH check over a
+    /// capture whose rounds were spent — leaves no kept capture, and the new
+    /// window gets the whole budget.
+    #[test]
+    fn a_dropped_capture_starts_a_spent_budget_over() {
+        let mut st = read_rounds(RETRIES + 1);
+
+        plan_for(&mut st, None, false);
+
+        assert_eq!(st.rounds_left(), RETRIES + 1);
+    }
+
+    /// The tick the registration changes, a copied cell's cached crop was cut
+    /// at the old rects: it is not carried, and the cell learns nothing.
+    #[test]
+    fn a_copied_cells_crop_is_not_carried_across_a_registration_change() {
+        let carried: HashSet<(String, u8)> = [sig_key("skill.a", 0)].into_iter().collect();
+
+        let merged = merge_sigs(
+            cache(&[(("skill.a", 0), 1)]),
+            SigCache::new(),
+            None,
+            &carried_for_sigs(true, carried),
+        );
+
+        assert!(merged.is_empty(), "kept: {:?}", merged.keys().collect::<Vec<_>>());
+    }
+
+    // -- a REMATCH on a tick that reads nothing -----------------------------
+
+    /// The same level, a new skill list: the rematch `panel_replaced` catches
+    /// by the skill sets, on a kept capture complete enough to read nothing.
+    #[test]
+    fn a_rematch_is_seen_on_a_tick_that_reads_nothing() {
+        let layout = detected_layout();
+        let kept = kept_capture(&layout, ReadState::Matched);
+        let g = MercGeometry::default();
+        assert_eq!(
+            plan_read(Some(&kept), RETRIES, Some(KEPT_PANEL), &layout, &g),
+            ReadPlan::Nothing,
+            "arrange: the kept capture is complete",
+        );
+        let mut rematched = layout.clone();
+        rematched.rows[0].text = "Frostbolt".into();
+        rematched.rows[1].text = "Flame Dash".into();
+        rematched.header.level = kept.header.level;
+
+        assert!(replaced_on_sight(Some(&kept), &rematched, [2560, 1440], &g, &vocab()));
+    }
+
+    #[test]
+    fn the_same_window_on_a_tick_that_reads_nothing_is_not_replaced() {
+        let layout = detected_layout();
+        let kept = kept_capture(&layout, ReadState::Matched);
+
+        assert!(!replaced_on_sight(
+            Some(&kept),
+            &layout,
+            [2560, 1440],
+            &MercGeometry::default(),
+            &vocab(),
+        ));
+    }
+
+    // -- the crops of copied cells ------------------------------------------
+
+    #[test]
+    fn a_copied_cells_crop_rides_through_the_merge() {
+        let previous = cache(&[(("skill.a", 0), 1), (("skill.a", 1), 2)]);
+        let fresh = cache(&[(("skill.a", 1), 9)]);
+        let carried: HashSet<(String, u8)> = [sig_key("skill.a", 0)].into_iter().collect();
+
+        let merged = merge_sigs(previous, fresh, None, &carried_for_sigs(false, carried));
+
+        assert_eq!(merged[&sig_key("skill.a", 0)].0, sig(1));
+    }
+
+    // -- what a round says in the log ---------------------------------------
+
+    #[test]
+    fn the_round_line_names_the_round_what_it_re_read_and_what_is_left() {
+        let plan = ReadPlan::Partial {
+            rows: vec![super::super::read::RowPlan::Read, super::super::read::RowPlan::Cells],
+            cells: 2,
+            header: vec![super::super::read::HeaderField::Class],
+        };
+
+        assert_eq!(
+            round_line(2, &plan, 120, 40, false, 1),
+            "Merc: read round 2 of 3 — re-read 1 rows, 2 cells, header class — pass 2 120 ms, \
+             icons 40 ms; incomplete, 1 rounds left",
+        );
+    }
+
+    #[test]
+    fn a_round_that_completes_the_capture_says_complete() {
+        assert_eq!(
+            round_line(1, &ReadPlan::Full, 900, 300, true, RETRIES),
+            "Merc: read round 1 of 3 — full — pass 2 900 ms, icons 300 ms; complete",
+        );
+    }
+
+    #[test]
+    fn the_spent_line_names_what_is_still_unread() {
+        let mut capture = kept_capture(&detected_layout(), ReadState::Matched);
+        capture.rows[0].skill.state = ReadState::LowConfidence;
+        capture.rows[1].supports[0].state = ReadState::Ambiguous;
+        capture.header.class = None;
+
+        assert_eq!(
+            rounds_spent_line(&capture),
+            "Merc: 3 reading rounds spent — still unread: 1 rows, 1 cells, header class — OCR \
+             paused (liveness every 10 s); hovering a cell can still resolve it",
         );
     }
 }

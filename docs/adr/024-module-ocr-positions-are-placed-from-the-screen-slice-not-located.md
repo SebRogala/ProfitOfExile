@@ -364,7 +364,7 @@ It follows that the POE-270 amendment's remembered located panel
 (`ssot::remember_anchor` after a successful read) comes only from a manual
 scan's locate. Incident and evidence: ADR-025 Context (app.log 2026-09-10,
 17:25:58, a tooltip-occluded fallback remembered two row pitches low). Merc's
-implementation is pending in POE-278 WI-B; ADR-025's Status says when it ships.
+implementation shipped in POE-278 WI-B (`f78786e`); ADR-025's Status records it.
 
 Temple is unchanged: the 2026-09-09 amendment above already spends the
 placed-miss fallback under the Manual arm only, and ADR-025 records it as the
