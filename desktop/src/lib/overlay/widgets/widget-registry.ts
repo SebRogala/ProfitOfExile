@@ -55,8 +55,12 @@ export interface WidgetSpec {
 	 * A widget that is not resizable is always sized to its own content; a
 	 * resizable one is sized to content until the user has dragged an edge, and
 	 * to the persisted size afterwards.
+	 *
+	 * `'width'` offers left/right edges only; its placed height always follows
+	 * content, its config-mode frame keeps the height measured when the session
+	 * opened, and Save writes `height: 0`.
 	 */
-	resizable: boolean;
+	resizable: boolean | 'width';
 	/**
 	 * Placed against the GAME rather than by the user, and therefore by the
 	 * module's own geometry: no Configure placement, no persisted rectangle, and

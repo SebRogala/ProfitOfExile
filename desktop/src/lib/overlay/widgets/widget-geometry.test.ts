@@ -38,6 +38,7 @@ const RESIZABLE: WidgetSpec = {
 	resizable: true
 };
 
+const WIDTH_ONLY: WidgetSpec = { ...RESIZABLE, id: 'test.width-only', resizable: 'width' };
 const FIXED: WidgetSpec = { ...RESIZABLE, id: 'test.fixed', resizable: false };
 
 describe('physical pixels to CSS pixels', () => {
@@ -214,6 +215,24 @@ describe('rebasing a placement onto a different monitor', () => {
 		});
 	});
 
+	it('floors a width-only widget width while leaving its height at zero', () => {
+		const widthOnly = { ...ON_4K, width: 30, height: 0 };
+
+		expect(rebase(widthOnly, { width: 1920, height: 1080 }, 1)).toMatchObject({
+			width: MIN_WIDGET_SIDE_CSS,
+			height: 0
+		});
+	});
+
+	it('leaves a height-only widget height unfloored', () => {
+		const heightOnly = { ...ON_4K, width: 0, height: 30 };
+
+		expect(rebase(heightOnly, { width: 1920, height: 1080 }, 1)).toMatchObject({
+			width: 0,
+			height: 15
+		});
+	});
+
 	// Halving a 30 px widget gives 15, which is under the grab zone: `edgeAt`
 	// answers `null` for a box that small, so the widget could never be resized
 	// back and config mode is the only way to recover one. The floor is the same
@@ -337,6 +356,22 @@ describe('whether a widget offers a resize edge at all', () => {
 	it('still reads the interior of a resizable widget as a move', () => {
 		expect(edgeFor(RESIZABLE, rect, 200, 100)).toBeNull();
 	});
+
+	it('reads only the left and right edges of a width-only widget', () => {
+		expect(edgeFor(WIDTH_ONLY, rect, 3, 100)).toBe('West');
+		expect(edgeFor(WIDTH_ONLY, rect, 397, 100)).toBe('East');
+	});
+
+	it.each([
+		['North', 200, 2],
+		['South', 200, 198],
+		['NorthWest', 2, 2],
+		['NorthEast', 398, 2],
+		['SouthWest', 2, 198],
+		['SouthEast', 398, 198]
+	] as const)('treats a width-only %s press as a move', (_edge, ox, oy) => {
+		expect(edgeFor(WIDTH_ONLY, rect, ox, oy)).toBeNull();
+	});
 });
 
 describe('dragging a widget', () => {
@@ -413,6 +448,32 @@ describe('resizing a widget', () => {
 });
 
 describe('deciding where a widget goes', () => {
+	it('leaves an unsized width-only widget content-sized under its width ceiling', () => {
+		expect(placementFor(WIDTH_ONLY, undefined, 1.5, HOST)).toMatchObject({
+			width: null,
+			height: null,
+			maxWidth: WIDTH_ONLY.defaults.w
+		});
+	});
+
+	it('applies a stored width-only width without applying a height', () => {
+		expect(
+			placementFor(WIDTH_ONLY, { x: 375, y: 60, width: 600, height: 0, visible: true }, 1.5, HOST)
+		).toMatchObject({ width: 400, height: null, maxWidth: null });
+	});
+
+	it('ignores a stored height on a sized width-only row', () => {
+		expect(
+			placementFor(WIDTH_ONLY, { x: 375, y: 60, width: 600, height: 300, visible: true }, 1.5, HOST)
+		).toMatchObject({ width: 400, height: null, maxWidth: null });
+	});
+
+	it('clamps a sized width-only row with its default height', () => {
+		expect(
+			placementFor(WIDTH_ONLY, { x: 1900, y: 1000, width: 800, height: 300, visible: true }, 1, HOST)
+		).toMatchObject({ x: 1120, y: HOST.height - WIDTH_ONLY.defaults.h, height: null });
+	});
+
 	it('uses the shipped CSS default, content-sized, when nothing is stored', () => {
 		expect(placementFor(RESIZABLE, undefined, 1.5, HOST)).toMatchObject({
 			x: 250,
@@ -663,6 +724,18 @@ describe('the rectangle config mode opens a widget at', () => {
 		).toMatchObject({ w: 400, h: 200 });
 	});
 
+	it('seeds a width-only row at its stored width and its measured height', () => {
+		expect(
+			seedRect(
+				WIDTH_ONLY,
+				{ x: 900, y: 600, width: 300, height: 0, visible: true },
+				{ x: 900, y: 600, w: 312, h: 96 },
+				1,
+				HOST
+			)
+		).toEqual({ x: 900, y: 600, w: 300, h: 96 });
+	});
+
 	// The widget IS rendered and drawing nothing — the temple's board outside a
 	// temple. `??` accepts a zero, so the box has to be rejected on its area:
 	// a frame opened at 0 × 0 has no interior to drag and no edge to pull.
@@ -736,6 +809,36 @@ describe('whether a pointer move counts as a resize', () => {
 
 describe('the size Save writes', () => {
 	const RECT = { x: 250, y: 40, w: 460, h: 250 };
+
+	it('keeps a moved width-only widget width and clears its height', () => {
+		expect(
+			sizeToPersist(WIDTH_ONLY, RECT, false, {
+				x: 0,
+				y: 0,
+				width: 600,
+				height: 0,
+				visible: true
+			})
+		).toEqual({ x: 250, y: 40, w: 460, h: 0 });
+	});
+
+	it('keeps a resized width-only widget width and clears its height', () => {
+		expect(sizeToPersist(WIDTH_ONLY, RECT, true, undefined)).toEqual({
+			x: 250,
+			y: 40,
+			w: 460,
+			h: 0
+		});
+	});
+
+	it('writes zero size for a width-only widget that was never sized', () => {
+		expect(sizeToPersist(WIDTH_ONLY, RECT, false, undefined)).toEqual({
+			x: 250,
+			y: 40,
+			w: 0,
+			h: 0
+		});
+	});
 
 	// The contract from `widget-registry.ts`: a widget is content-sized until the
 	// user drags an edge. Persisting the measured size on every Save would pin
