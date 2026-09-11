@@ -25,6 +25,11 @@ Amended 2026-09-10 by POE-277 — see [the amendment at the end](#amendment-the-
 the offer box's full form is held at or under the diagonal budget as a design
 requirement.
 
+Amended 2026-09-11 by POE-276 — see [the amendment at the end](#amendment-the-door-widgets-reading-line-is-drawn-between-grabs-2026-09-11):
+the door widget's `reading…` line grows its box one line past the rectangle
+`doorDefaultPlacement` clears, and is allowed because it is drawn between
+grabs. The same amendment dates the Context's "no unit-test harness" bullet.
+
 Scope: every overlay surface a module draws over a screen the same module OCRs
 or samples. Today that is the temple; the merc verdict strip and the lab
 overlays are the next candidates, and the rule is written for them rather than
@@ -269,3 +274,38 @@ a design requirement: `FULL_BOX_MAX_CSS ≤ DIAGONAL_BUDGET_CSS` (316 px on the
 committed 1920×1080 frame). `overlay-geometry.test.ts` asserts it. A row added
 to the box is a decision about what the box drops rather than a number to
 raise. Nothing else in this ADR moves.
+
+## Amendment: the door widget's reading line is drawn between grabs (2026-09-11)
+
+POE-276. The temple door widget draws a muted `reading…` line at its foot while
+a read runs: only while the slice status is `reading`, and not on a retry round
+(`readRetry`). The widget is content-sized and top-anchored, so the line grows
+the drawn box by one line below its shipped 190×215 rectangle, which is the
+box `doorDefaultPlacement` clears the never-cover set with. The line is allowed
+on timing, not on placement:
+
+- **The read's grab precedes the `Anchored` publish.** `tick` grabs the screen
+  and hands that image to `run::full_read`, whose first act is the publish that
+  sets `reading`; the read takes no second grab. The frame it works from was
+  taken before the line could be drawn.
+- **The next grab is at least `DETECT_INTERVAL` (650 ms) after the result
+  publish.** `full_read` publishes before it returns — the result, or `failed`
+  through `fail` when the OCR engine errors — the loop stamps `last_detect` when
+  `tick` returns, and the next detect waits for
+  `last_detect.elapsed() >= DETECT_INTERVAL`.
+- **The result reaches the window inside that interval.** `publish` emits the
+  `ssot-changed` nudge when the slice changed, and the nudge reached the temple
+  overlay window +13 to +44 ms after the publish on every read measured
+  (2026-09-06, `ssot.rs`'s module note).
+
+So the line is in no frame the module reads. The residual risk is the nudge:
+if one does not arrive, the overlay's 3 s `get_ssot` poll is the backstop, and
+the line could still be up at the next grab. That is a gap in the argument, not
+a measured failure.
+
+The Context's second bullet has also moved half-way. A `.svelte` file can now
+be rendered to markup in a test — `TempleDoorDiamond.test.ts` renders the door
+widget with `svelte/server`'s `render()` — but that is a string, with no DOM and
+no layout, so nothing in it knows where a box lands or how tall it is. Position
+arithmetic stays in the pure modules and the decision stands. Nothing else in
+this ADR moves.

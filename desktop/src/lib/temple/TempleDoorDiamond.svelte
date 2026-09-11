@@ -307,7 +307,8 @@
 	   190x215 rectangle is what `doorDefaultPlacement` clears the module's own
 	   read regions with, so a label that added a line under the shape would
 	   grow the drawn box past the rectangle that clearance was computed for
-	   (ADR-019). Pinned instead, at the seal's own height and running INWARD
+	   (ADR-019; the one line that does, `.status` below, is allowed by its
+	   2026-09-11 amendment). Pinned instead, at the seal's own height and running INWARD
 	   across the room — `inset` + `max-width` is the whole stage, so the text
 	   wraps rather than ever leaving the widget.
 
