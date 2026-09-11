@@ -58,8 +58,12 @@ pub const REF_PITCH: f32 = 48.67;
 /// fixture (the outer cell rect the detect emits is 44 — see
 /// [`super::MercGeometry::cell_size`] — because the rect includes the pixel the
 /// line ends on). Paired with [`REF_PITCH`] this is the whole unit: a fit's
-/// scale is `pitch / REF_PITCH`, and its dark square is
-/// `round(REF_DARK_SIDE · pitch / REF_PITCH)` — 43 at 1.0, 39 at the PC's 0.90.
+/// scale is `pitch / REF_PITCH`, and its dark square STARTS at
+/// `round(REF_DARK_SIDE · pitch / REF_PITCH)` — 43 at 1.0, 39 at the PC's 0.90,
+/// both the square measured. At 3840×2160 the unit says 77-78 over the
+/// 87.67-87.75 px pitch the frame measures, and the square is 76 — which is
+/// why [`refine`] searches the pitch a second time at the square the first
+/// pass found.
 pub const REF_DARK_SIDE: i32 = 43;
 
 /// The ring score a cell must reach to be counted as a located frame.
@@ -273,32 +277,50 @@ pub fn refine(
     // The whole search in one memo: 90 % of the `(x, y, W)` keys repeat across
     // the X0 grid, because two X0 half a pixel apart round to the same integer
     // cell x at most slots. 373k nominal ring evaluations collapse to 38k
-    // distinct ones, and the whole call — integral image included — measures
-    // 9 ms on the reference fixture in a release build (115 ms in a debug one).
+    // distinct ones, and the whole call — integral image included — measured
+    // 9 ms on the reference fixture in a release build (115 ms in a debug one)
+    // with one pass. The second pass below shares the memo and still costs:
+    // re-measured 2026-09-11 in the dev container's release build, one pass →
+    // two, the reference 11 → 17 ms, the PC 10 → 15, the 4K fixture 19 → 35.
     // The detect tick's own budget is 50 ms and it already spent an OCR.
     let mut memo: HashMap<(i32, i32, i32), f32> = HashMap::new();
 
     let n_p = ((p_hi - p_lo) / P_STEP) as usize + 1;
     let n_x = (2.0 * X_SPAN / X_STEP) as usize + 1;
-    let mut best: Option<GridPoint> = None;
-    for pi in 0..n_p {
-        let pitch = p_lo + pi as f32 * P_STEP;
-        let w = dark_side_for(pitch);
-        if w < 8 {
-            continue;
-        }
-        for xi in 0..n_x {
-            let x0 = x_pred - X_SPAN + xi as f32 * X_STEP;
-            let point = score_grid(&band, frame, &centres, slots, x0, pitch, w, &mut memo);
-            if point.cells_used > 0 && best.as_ref().is_none_or(|held| point.beats(held, s_ocr)) {
-                best = Some(point);
+    let search = |side: &dyn Fn(f32) -> i32, memo: &mut HashMap<(i32, i32, i32), f32>| {
+        let mut best: Option<GridPoint> = None;
+        for pi in 0..n_p {
+            let pitch = p_lo + pi as f32 * P_STEP;
+            let w = side(pitch);
+            if w < 8 {
+                continue;
+            }
+            for xi in 0..n_x {
+                let x0 = x_pred - X_SPAN + xi as f32 * X_STEP;
+                let point = score_grid(&band, frame, &centres, slots, x0, pitch, w, memo);
+                if point.cells_used > 0 && best.as_ref().is_none_or(|held| point.beats(held, s_ocr))
+                {
+                    best = Some(point);
+                }
             }
         }
-    }
+        best
+    };
 
-    let Some(best) = best else {
+    // Pass 1 ties the dark square to the pitch through the reference unit
+    // ([`dark_side_for`]); pass 2 holds the square pass 1 settled on and
+    // searches the pitch again. The two differ where the game's frame does not
+    // scale with its pitch: at 3840×2160 the square is 76 px on an 87.7 px
+    // pitch where the unit says 77-78, so pass 1's best is the 76 px square at
+    // a pitch that forces it — one that lines up slots 0-1 and no further, a
+    // `NoLeverArm` decline — and only pass 2 reaches the far slots
+    // (`tests/fixtures/merc-recruit-4k.png`).
+    // Pass 2's grid holds pass 1's winning point, so its best is never worse
+    // and the `unwrap_or` is never taken.
+    let Some(coupled) = search(&dark_side_for, &mut memo) else {
         return declined(layout, FitDecline::TooFewCells);
     };
+    let best = search(&|_| coupled.dark_side, &mut memo).unwrap_or(coupled);
     let accepted = accepted_cells(
         &band,
         frame,
@@ -345,8 +367,9 @@ pub fn refine(
     Refined { layout, fit: Some(fit), declined: None }
 }
 
-/// The dark square's side at a pitch — the frame signature's one free
-/// parameter, tied to the pitch by the reference unit rather than searched.
+/// The dark square's side at a pitch, tied to it by the reference unit — the
+/// square [`refine`]'s first pass searches with. Its second pass holds the
+/// square the first found and frees the pitch.
 fn dark_side_for(pitch: f32) -> i32 {
     (REF_DARK_SIDE as f32 * pitch / REF_PITCH).round() as i32
 }
@@ -1003,6 +1026,59 @@ pub(super) fn soryn_lines() -> Vec<super::geometry::OcrLineBox> {
     ]
 }
 
+/// The origin `tests/fixtures/merc-recruit-4k.png` was cropped at, and the
+/// screen it came off: a 3840×2160 capture from a second player's machine
+/// (merc debug dump `1789083366021`, 2026-09-11), cut lossless out of the
+/// dump's `screen.png` around the support grid. The red outlines at its left
+/// edge — one round each skill name — are in the capture as taken; the
+/// nearest runs 4 px left of slot 0's frame.
+#[cfg(test)]
+pub(super) const K4_ORIGIN: (i32, i32) = (1880, 1170);
+/// See [`K4_ORIGIN`].
+#[cfg(test)]
+pub(super) const K4_SCREEN: [u32; 2] = [3840, 2160];
+/// The UI scale the dump's loop ran at: 2160 / 1200.
+#[cfg(test)]
+pub(super) const K4_SCALE: f32 = 1.8;
+/// The panel rect the dump's loop placed, in SCREEN px.
+#[cfg(test)]
+pub(super) const K4_PANEL: [i32; 4] = [1448, 1107, 999, 859];
+
+/// The 4K panel's OCR lines as the dump's `report.json` recorded them: the
+/// wager anchor, the six skill names and the footer buttons.
+#[cfg(test)]
+pub(super) fn k4_lines() -> Vec<super::geometry::OcrLineBox> {
+    use super::geometry::OcrLineBox as L;
+    vec![
+        L { text: "Wager: 8,091".into(), x: 1412, y: 418, w: 212, h: 36 },
+        L { text: "Should Recruit@".into(), x: 2116, y: 399, w: 318, h: 56 },
+        L { text: "CONDUCTIVITY".into(), x: 1485, y: 1221, w: 189, h: 22 },
+        L { text: "VAAL LIGHTNING TRAP".into(), x: 1484, y: 1308, w: 290, h: 22 },
+        L { text: "LIGHTNING SPIRE TRAP".into(), x: 1487, y: 1395, w: 292, h: 22 },
+        L { text: "LIGHTNING WARP TRAP".into(), x: 1487, y: 1482, w: 298, h: 22 },
+        L { text: "FLAME DASH".into(), x: 1487, y: 1569, w: 156, h: 22 },
+        L { text: "SMOKE MINE".into(), x: 1485, y: 1656, w: 167, h: 22 },
+        L { text: "TAKE ITEM".into(), x: 1684, y: 1761, w: 161, h: 23 },
+        L { text: "REMATCH".into(), x: 1970, y: 1761, w: 149, h: 23 },
+    ]
+}
+
+/// The 4K panel placed the way the dump's loop placed it, with the fixture and
+/// frame it is read through.
+#[cfg(test)]
+pub(super) fn k4_placed() -> (DynamicImage, Frame, MercLayout) {
+    let g = MercGeometry::default();
+    let layout = super::geometry::placed_layout(
+        &k4_lines(),
+        K4_PANEL,
+        &g,
+        K4_SCALE,
+        g.row_pitch * K4_SCALE,
+    )
+    .expect("the 4K placed panel");
+    (fixture("merc-recruit-4k.png"), Frame::cropped(K4_ORIGIN, K4_SCREEN), layout)
+}
+
 // -- AC1/AC2 (Part C): the gold frame's dark|light step ---------------------
 //
 // `pub(super)` and at module level for the same reason [`pc_lines`] is: the
@@ -1628,6 +1704,72 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(read, expected_read);
+    }
+
+    // -- (3) the 4K fixture ---------------------------------------------------
+
+    /// The 4K panel's frame columns on its fullest row, MEASURED in SCREEN px:
+    /// each cell's own ring maximum at [`K4_SIDE`], no grid assumed.
+    const K4_FRAME_COLUMNS: [i32; 5] = [1912, 1999, 2087, 2175, 2263];
+    /// The dark square's side at 3840×2160, measured.
+    const K4_SIDE: i32 = 76;
+
+    /// The replay starts where the live loop started: the placed rects are the
+    /// ones the dump's `report.json` cut its cells at, 4 px right of the frame.
+    #[test]
+    fn the_4k_placed_layout_cuts_the_dumps_cell_rects() {
+        let (_, _, layout) = k4_placed();
+
+        let row0: Vec<[i32; 4]> = layout.rows[0].cells.iter().take(2).copied().collect();
+
+        assert_eq!(row0, vec![[1916, 1193, 79, 79], [2004, 1193, 79, 79]]);
+    }
+
+    /// Why the fit searches twice, on the fixture's own pixels: at every
+    /// measured column of the fullest row the ring peaks on a 76 px square,
+    /// and the reference unit ties the 87.75 px pitch those columns measure
+    /// to 78.
+    #[test]
+    fn the_4k_frames_square_is_under_the_one_the_reference_unit_gives_its_pitch() {
+        let img = fixture("merc-recruit-4k.png");
+        let top = 1454 - K4_ORIGIN.1;
+
+        let sides: Vec<i32> = K4_FRAME_COLUMNS
+            .iter()
+            .map(|&column| {
+                let x = column - K4_ORIGIN.0;
+                (72..=80)
+                    .max_by(|&a, &b| {
+                        best_score_at(&img, x, top, a).total_cmp(&best_score_at(&img, x, top, b))
+                    })
+                    .expect("a non-empty side range")
+            })
+            .collect();
+
+        assert_eq!(sides, vec![K4_SIDE; 5], "the square each frame column measures");
+        assert_eq!(dark_side_for(87.75), 78, "the square the unit gives the measured pitch");
+    }
+
+    /// The fit on a 4K panel. With the square tied to the pitch the best grid
+    /// point lined up slots 0-1 only and the fit declined on the lever arm,
+    /// leaving every cell cut at the OCR guess.
+    #[test]
+    fn the_4k_panel_fit_lands_on_the_measured_frame() {
+        let g = MercGeometry::default();
+        let (img, frame, layout) = k4_placed();
+
+        let out = refine(&img, frame, layout, &g);
+
+        assert_eq!(out.declined, None, "the fit must land on the 4K frame");
+        let fit = out.fit.expect("the 4K panel's frame is found");
+        assert_eq!(fit.dark_side, K4_SIDE);
+        assert!((fit.pitch - 87.75).abs() <= 0.3, "the measured pitch is 87.75, not {}", fit.pitch);
+        let row3: Vec<i32> = out.layout.rows[3].cells.iter().take(5).map(|c| c[0]).collect();
+        assert!(
+            row3.iter().zip(K4_FRAME_COLUMNS).all(|(&x, measured)| (x - measured).abs() <= 1),
+            "the fullest row's cells must sit within a px of the frame columns \
+             {K4_FRAME_COLUMNS:?}, not {row3:?}",
+        );
     }
 
     /// The fixture's own precondition, DERIVED from its pixels instead of
