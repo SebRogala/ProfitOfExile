@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -10,7 +9,6 @@
 	import { ssot, fetchSsot } from '$lib/stores/ssot.svelte';
 	import { nav } from '$lib/stores/navigation.svelte';
 	import { screenGeometryView } from '$lib/geometry/view';
-	import { physicalGeometry } from '$lib/overlay/overlay-defaults';
 	import { chooseMonitor, type GameMonitorInfo } from '$lib/overlay/monitor-choice';
 	import { clickthroughReport } from '$lib/overlay/clickthrough-report';
 	import {
@@ -18,8 +16,12 @@
 		overlayGroups,
 		widgetGeometryText
 	} from '$lib/overlay/widgets/overlay-groups';
-	import type { WidgetGeometry } from '$lib/overlay/widgets/widget-geometry';
-	import type { WidgetSpec } from '$lib/overlay/widgets/widget-registry';
+	import {
+		loadWidgetGeometries,
+		resolveWidgetScaleFactor,
+		setWidgetVisible,
+		widgetPlacements
+	} from '$lib/overlay/widgets/widget-placements.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
@@ -535,63 +537,10 @@
 			.filter((module): module is string => module !== null)
 	);
 
-	/** The persisted widget placements, by widget id. A widget with no entry has
-	 *  never been placed and draws where the registry ships it. */
-	let widgetGeometries = $state<Record<string, WidgetGeometry>>({});
-
 	/** The module whose widgets are being arranged in its own overlay window
 	 *  right now, or null. Set when Configure is pressed, cleared by the host's
 	 *  `widget-config-end`. */
 	let widgetConfiguring = $state<string | null>(null);
-
-	/**
-	 * The scale factor of the monitor the widget overlay lives on.
-	 *
-	 * The overlay's display, not this window's: a widget overlay is built on the
-	 * GAME's monitor (`routes/(app)/+layout.svelte`, POE-237), so that is the
-	 * display a widget's physical coordinates are measured against. Reading this
-	 * window's factor instead would be wrong by the ratio between the two
-	 * whenever the main window sits on a second display with different scaling —
-	 * and silently, since it agrees on a single-monitor machine.
-	 *
-	 * The CHOICE is `chooseMonitor`'s, shared with the layout rather than
-	 * re-spelled, because the two answers have to be the same display: the
-	 * layout sizes the canvas from it and this converts the shipped CSS defaults
-	 * into coordinates inside that canvas. The primary is the fallback on every
-	 * failing path, exactly as the layout falls back.
-	 *
-	 * Zero until it answers, and the Show toggle declines while it is: creating a
-	 * placement row means converting the registry's CSS defaults to the physical
-	 * pixels Rust stores, and doing that at zero would write the widget to the
-	 * origin.
-	 *
-	 * RE-RESOLVED on `game-monitor-changed`, not read once at mount: the answer
-	 * is a property of whichever display the game is on, and the player moving
-	 * PoE to a screen with different scaling changes it. Holding the mount-time
-	 * factor would place every widget Show creates from then on by the old
-	 * display's ratio, into a canvas the layout has already rebuilt on the new
-	 * one.
-	 */
-	let widgetScaleFactor = $state(0);
-
-	async function resolveWidgetScaleFactor(): Promise<void> {
-		const { availableMonitors, currentMonitor, primaryMonitor } = await import(
-			'@tauri-apps/api/window'
-		);
-		const primary =
-			(await primaryMonitor().catch(() => null)) ?? (await currentMonitor().catch(() => null));
-		const game = await invoke<GameMonitorInfo | null>('get_game_monitor').catch((e: any) => {
-			console.warn('[settings] get_game_monitor failed, using the primary monitor:', e);
-			return null;
-		});
-		const listed = await availableMonitors().catch((e: any) => {
-			console.warn('[settings] availableMonitors failed, using the primary monitor:', e);
-			return [];
-		});
-		const monitor = chooseMonitor(game, listed, primary);
-		if (monitor && monitor.scaleFactor > 0) widgetScaleFactor = monitor.scaleFactor;
-		else console.warn('[settings] no monitor scale factor — Show cannot place a widget yet');
-	}
 
 	$effect(() => {
 		resolveWidgetScaleFactor().catch((e: any) =>
@@ -616,78 +565,10 @@
 		};
 	});
 
-	/**
-	 * Re-read one or more modules' placements.
-	 *
-	 * Per module rather than wholesale, because `widget-config-end` names one:
-	 * the ids of the module being refreshed are dropped and replaced with what
-	 * Rust answers, and every other module's rows are left as they were. The
-	 * `"<module>."` prefix is the same rule Rust's `widgets_for_module` uses, and
-	 * `widget-registry.test.ts` pins that an id's halves agree with its module.
-	 *
-	 * The previous map is read through `untrack`: this runs from an effect, and a
-	 * tracked read of the state it writes would re-run itself forever.
-	 */
-	async function loadWidgetGeometries(modules: string[]): Promise<void> {
-		for (const module of modules) {
-			try {
-				const rows = await invoke<{ id: string; geometry: WidgetGeometry }[]>(
-					'get_widget_geometries',
-					{ module }
-				);
-				const next: Record<string, WidgetGeometry> = {};
-				for (const [id, geometry] of Object.entries(untrack(() => widgetGeometries))) {
-					if (!id.startsWith(`${module}.`)) next[id] = geometry;
-				}
-				for (const row of rows) next[row.id] = row.geometry;
-				widgetGeometries = next;
-			} catch (e) {
-				// The rows fall back to "Not set", which is what a widget with no
-				// placement genuinely shows — hence the log: otherwise a dead IPC
-				// reads as a user who never configured anything.
-				console.warn(`[settings] could not read the ${module} widget placements:`, e);
-			}
-		}
-	}
-
 	$effect(() => {
 		const modules = widgetModules;
 		if (modules.length > 0) loadWidgetGeometries(modules);
 	});
-
-	/**
-	 * Show or hide one widget, preserving everything else about its placement.
-	 *
-	 * A widget with no stored row gets one written from the registry's shipped
-	 * defaults, converted to physical pixels — and with a ZERO size, because that
-	 * is what the host reads back as "let the content decide" (`placementFor`).
-	 * Writing a measured size here would pin a widget the user never resized.
-	 *
-	 * The rune is updated first so the checkbox does not lag the click, and a
-	 * rejected write is undone by re-reading rather than by guessing what Rust
-	 * kept.
-	 */
-	async function setWidgetVisible(spec: WidgetSpec, visible: boolean): Promise<void> {
-		const current = widgetGeometries[spec.id];
-		let geometry: WidgetGeometry;
-		if (current) {
-			geometry = { ...current, visible };
-		} else {
-			if (widgetScaleFactor === 0) {
-				console.warn(`[settings] no scale factor yet — not placing ${spec.id}`);
-				return;
-			}
-			const at = physicalGeometry(spec.defaults, widgetScaleFactor);
-			geometry = { x: at.x, y: at.y, width: 0, height: 0, visible };
-		}
-		widgetGeometries = { ...widgetGeometries, [spec.id]: geometry };
-		try {
-			await invoke('set_widget_geometry', { id: spec.id, geometry });
-		} catch (e) {
-			console.warn(`[settings] could not save the ${spec.id} visibility:`, e);
-			await loadWidgetGeometries([spec.module]);
-		}
-	}
 
 	/**
 	 * Ask the layout to open config mode on a module's overlay window.
@@ -1025,7 +906,7 @@
 						<span class="widget-show">
 							Show
 							<Toggle
-								checked={widgetGeometries[widget.id]?.visible ?? true}
+								checked={widgetPlacements.rows[widget.id]?.visible ?? true}
 								label={widget.label}
 								onchange={(next) => setWidgetVisible(widget, next)}
 							/>
@@ -1037,7 +918,7 @@
 						     switch for that surface. -->
 						<span class="setting-value mono">
 							{row.placeable
-								? widgetGeometryText(widgetGeometries[widget.id])
+								? widgetGeometryText(widgetPlacements.rows[widget.id], widget)
 								: 'placed by the game'}
 						</span>
 					</div>

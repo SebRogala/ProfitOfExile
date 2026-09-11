@@ -528,6 +528,9 @@ migrated.
   back as "let the content decide" while applying the registry's shipped width
   as a `max-width`. Persisting the measured size on every Save would pin every
   widget in the module the first time any one of them was moved.
+- A `fill` widget is the explicit-size exception for a former window's page:
+  until a resizable one is resized it uses `defaults.w × defaults.h` with no
+  ceiling, and a non-resizable one always uses that shipped size.
 - A widget with `resizable: 'width'` offers only left/right resize edges. Save
   writes its width with `height: 0`, and the placed box keeps that width while
   its height remains content-driven.

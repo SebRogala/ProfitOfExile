@@ -22,6 +22,7 @@ import {
 	resized,
 	seedRect,
 	sizeToPersist,
+	visibilityRow,
 	widgetGeometry
 } from './widget-geometry';
 import type { WidgetSpec } from './widget-registry';
@@ -40,6 +41,8 @@ const RESIZABLE: WidgetSpec = {
 
 const WIDTH_ONLY: WidgetSpec = { ...RESIZABLE, id: 'test.width-only', resizable: 'width' };
 const FIXED: WidgetSpec = { ...RESIZABLE, id: 'test.fixed', resizable: false };
+const FILL_RESIZABLE: WidgetSpec = { ...RESIZABLE, id: 'test.fill', fill: true };
+const FILL_FIXED: WidgetSpec = { ...FIXED, id: 'test.fill-fixed', fill: true };
 
 describe('physical pixels to CSS pixels', () => {
 	it('leaves an unscaled display alone', () => {
@@ -139,6 +142,38 @@ describe('CSS pixels to a persistable geometry', () => {
 			host_width: 0,
 			host_height: 0
 		});
+	});
+});
+
+describe('the placement row Show writes', () => {
+	it('flips only visibility on an existing row', () => {
+		const current = {
+			x: 375,
+			y: 60,
+			width: 600,
+			height: 300,
+			visible: true,
+			host_width: 2880,
+			host_height: 1620
+		};
+		expect(visibilityRow(RESIZABLE, current, 0, false)).toEqual({
+			...current,
+			visible: false
+		});
+	});
+
+	it('uses the shipped physical position and zero size for a never-placed widget', () => {
+		expect(visibilityRow(RESIZABLE, undefined, 1.5, false)).toEqual({
+			x: 375,
+			y: 60,
+			width: 0,
+			height: 0,
+			visible: false
+		});
+	});
+
+	it('returns no row before a scale factor is available', () => {
+		expect(visibilityRow(RESIZABLE, undefined, 0, false)).toBeNull();
 	});
 });
 
@@ -448,6 +483,51 @@ describe('resizing a widget', () => {
 });
 
 describe('deciding where a widget goes', () => {
+	it('gives an unsized fill widget its shipped box without a ceiling', () => {
+		expect(placementFor(FILL_RESIZABLE, undefined, 1.5, HOST)).toEqual({
+			x: 250,
+			y: 40,
+			width: 400,
+			height: 200,
+			maxWidth: null
+		});
+	});
+
+	it('keeps an unsized stored fill widget at its shipped box', () => {
+		expect(
+			placementFor(FILL_RESIZABLE, { x: 375, y: 60, width: 0, height: 0, visible: true }, 1.5, HOST)
+		).toEqual({
+			x: 250,
+			y: 40,
+			width: 400,
+			height: 200,
+			maxWidth: null
+		});
+	});
+
+	it('uses a resized fill widget size instead of its shipped box', () => {
+		expect(
+			placementFor(FILL_RESIZABLE, { x: 375, y: 60, width: 900, height: 450, visible: true }, 1.5, HOST)
+		).toEqual({
+			x: 250,
+			y: 40,
+			width: 600,
+			height: 300,
+			maxWidth: null
+		});
+	});
+
+	it('keeps a non-resizable fill widget at its shipped size despite a stored size', () => {
+		expect(
+			placementFor(FILL_FIXED, { x: 375, y: 60, width: 600, height: 300, visible: true }, 1.5, HOST)
+		).toEqual({
+			x: 250,
+			y: 40,
+			width: 400,
+			height: 200,
+			maxWidth: null
+		});
+	});
 	it('leaves an unsized width-only widget content-sized under its width ceiling', () => {
 		expect(placementFor(WIDTH_ONLY, undefined, 1.5, HOST)).toMatchObject({
 			width: null,

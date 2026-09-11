@@ -440,6 +440,20 @@ export function sizeToPersist(
 	return spec.resizable === 'width' ? { x: rect.x, y: rect.y, w: rect.w, h: 0 } : rect;
 }
 
+/** The row Show writes: the stored row with `visible` flipped, or — for a widget never placed — the registry's shipped
+ *  position in physical px with a ZERO size (content-sized). Null when there is no row and no scale factor yet. */
+export function visibilityRow(
+	spec: WidgetSpec,
+	current: WidgetGeometry | undefined,
+	scaleFactor: number,
+	visible: boolean
+): WidgetGeometry | null {
+	if (current) return { ...current, visible };
+	if (scaleFactor === 0) return null;
+	const at = physicalGeometry(spec.defaults, scaleFactor);
+	return { x: at.x, y: at.y, width: 0, height: 0, visible };
+}
+
 /**
  * A drag reducer: where the widget sits after the pointer has moved
  * `(dx, dy)` CSS px from where the drag started.
@@ -489,7 +503,7 @@ export function resized(
 }
 
 /** Where the host puts one widget. `width`/`height` of `null` mean "let the
- *  content decide", which is what an unconfigured widget always does. */
+ *  content decide" for a content-sized widget. */
 export interface WidgetPlacement {
 	x: number;
 	y: number;
@@ -510,18 +524,21 @@ export interface WidgetPlacement {
 /**
  * Where one widget goes, or `null` when it must not be rendered at all.
  *
- * The three cases, in the order they are decided:
+ * The cases, in the order they are decided:
  *
  * 1. A stored placement with `visible: false` — the user's Show checkbox is
  *    off. Nothing is rendered, so nothing can claim a click either.
- * 2. No stored placement — the shipped CSS default, sized to content. A widget
+ * 2. No stored placement — the shipped CSS default, sized to content unless it
+ *    is a `fill` widget, whose box uses the shipped width and height. A widget
  *    nobody has configured must render at whatever the registry ships TODAY,
  *    which is why nothing seeds the stored map with the defaults.
  * 3. A stored placement — the persisted physical rectangle in CSS px. The SIZE
  *    is only applied for a resizable widget that actually has one: a
  *    non-resizable widget's stored width and height are whatever its content
  *    measured when the user last saved, and pinning the box to that would clip
- *    it the moment the content grew a line.
+ *    it the moment the content grew a line. A `fill` widget is the exception:
+ *    without a size it applies — and always when it is not resizable — its box
+ *    is the shipped `defaults.w × defaults.h`.
  *
  * A fourth `null`, before case 3 can be decided: the window's scale factor has
  * not resolved, so the stored physical rectangle cannot be converted
@@ -541,6 +558,15 @@ export function placementFor(
 	// registry ships, as a CEILING rather than a size (see `maxWidth`).
 	const ceiling = spec.resizable ? spec.defaults.w : null;
 	if (!geometry) {
+		if (spec.fill) {
+			return {
+				x: spec.defaults.x,
+				y: spec.defaults.y,
+				width: spec.defaults.w,
+				height: spec.defaults.h,
+				maxWidth: null
+			};
+		}
 		return {
 			x: spec.defaults.x,
 			y: spec.defaults.y,
@@ -567,6 +593,8 @@ export function placementFor(
 	if (!rect) return null;
 	const widthOnly = spec.resizable === 'width';
 	const sized = widthOnly ? based.width > 0 : spec.resizable && based.width > 0 && based.height > 0;
+	const fillSized = spec.fill && spec.resizable === true && based.width > 0 && based.height > 0;
+	const fillUnsized = spec.fill && !fillSized;
 	// Clamped against the window it is about to be drawn in, not against the one
 	// it was saved on: a stored placement outlives the monitor it was made on, and
 	// a widget whose origin is past the new bottom-right renders entirely
@@ -578,15 +606,15 @@ export function placementFor(
 	const extent: WidgetRect = {
 		x: rect.x,
 		y: rect.y,
-		w: sized ? rect.w : spec.defaults.w,
-		h: widthOnly ? spec.defaults.h : sized ? rect.h : spec.defaults.h
+		w: fillUnsized ? spec.defaults.w : sized ? rect.w : spec.defaults.w,
+		h: fillUnsized ? spec.defaults.h : widthOnly ? spec.defaults.h : sized ? rect.h : spec.defaults.h
 	};
 	const placed = host.width > 0 && host.height > 0 ? clampToHost(extent, host) : extent;
 	return {
 		x: placed.x,
 		y: placed.y,
-		width: sized ? rect.w : null,
-		height: widthOnly && sized ? null : sized ? rect.h : null,
-		maxWidth: sized ? null : ceiling
+		width: fillUnsized ? spec.defaults.w : sized ? rect.w : null,
+		height: fillUnsized ? spec.defaults.h : widthOnly && sized ? null : sized ? rect.h : null,
+		maxWidth: fillUnsized || sized ? null : ceiling
 	};
 }
