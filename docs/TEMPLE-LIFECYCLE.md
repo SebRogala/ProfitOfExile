@@ -28,7 +28,9 @@ Related: [Overlay Guide](OVERLAY-GUIDE.md) (windows, click-through, smoke items)
 (the module contract; the POE-246 amendment note), [ADR-019](adr/019-nothing-a-module-draws-may-cover-what-that-module-reads.md),
 [ADR-020](adr/020-one-shared-screen-scale-a-module-corroborates-or-withholds.md),
 [ADR-022](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md)
-(what a room is worth, added 2026-09-06 by POE-257: `cd5627c`, `f722d49`).
+(what a room is worth, added 2026-09-06 by POE-257: `cd5627c`, `f722d49`),
+[ADR-025](adr/025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md)
+(the capture contract rows 2–3 implement, shared with merc; POE-278).
 
 ## The one sentence
 
@@ -344,6 +346,7 @@ Facts that shape the rules (PC mining):
 | board IDENTITY — is what I am looking at the thing I already read | `temple/slice.rs` (`BoardFrame`: the anchor origin and scale in a banded form plus `layout_signature`, the semantic half) and the `(temple_epoch, temple_rearm)` key |
 | the retry merge | `temple/slice.rs` (`KeptRead`, `merge_reads`, `unclean`) and `temple/run.rs` (`kept_for`) |
 | what a retry ROUND re-reads — 1 full + up to 2 partial | `temple/slice.rs` (`ReadPlan`, `plan_read`, and the one `retry_plan` predicate set `unclean` is the bool view of) decides; `temple/run.rs` (`full_read` asks it before any OCR, off the reading `kept_for` allows; `panel_text` takes the region names, `read_timings_line` prints the round) and `temple/panel.rs` (`read_slots`, which still reports all 13 slots) execute it. `merge_reads` is what a skipped region rides out on — WI-2 |
+| the capture contract rows 2–3 and the Manual-only sweep implement — read once, re-read only the unclean, stop; a placed miss sweeps only under Re-arm | stated once, for temple and merc, in [ADR-025](adr/025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md) (POE-278); the temple homes are the rows above and `run::cold_sweep_reason` |
 | the re-arm counter (all that is left of the old read gate) | `temple/slice.rs` (`RearmGate`) |
 | what INVALIDATES a board vs what FORCES a read | `AppState.temple_epoch` invalidates a board already read; `AppState.temple_rearm` forces one read with nothing sighted (`lib.rs`, both fields carry the invariant) |
 | which overlay shows on which status / context | `desktop/src/lib/temple/view.ts` — `overlayShowsBoard(status)` for the sheet-bound surfaces, `overlayShowsDoors(slice)` for the room widget, which since POE-248 reads the ADVICE and not the status, and `overlayShowsWaiting(slice)` for the notice, which reads `waitingForPanel` AND the absence of a board |
