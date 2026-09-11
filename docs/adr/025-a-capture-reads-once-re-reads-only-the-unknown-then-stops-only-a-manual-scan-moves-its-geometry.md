@@ -1,3 +1,7 @@
+---
+uid: fd420ce4-f287-4c52-a598-23bd20dea0d7
+---
+
 # ADR-025: A Capture Reads Once, Re-reads Only the Unknown, Then Stops; Only a Manual Scan Moves Its Geometry
 
 **The rule in full**: a module capture is read in full once; while that read
