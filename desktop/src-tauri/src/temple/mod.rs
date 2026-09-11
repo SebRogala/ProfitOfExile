@@ -85,6 +85,11 @@
 //!   panel input alone ([`run::LoopState::on_blind_tick`]), and a completion is
 //!   refused when the board key has moved on since the tick that observed it
 //!   (`ArmState::complete_cycle`'s `key_current`).
+//! - 2026-09-11 (POE-275, owner): the sheet retires on the SECOND consecutive
+//!   clean miss (`run::RETIRE_AFTER` = 2), so the panel input above is two
+//!   ticks. The first is a held miss ([`run::DetectOutcome::HeldMiss`]) that
+//!   publishes nothing ([`run::miss_publish`]): it neither hides the sheet-bound
+//!   overlays nor ends the cycle.
 //!
 //! - [`trigger`] (POE-242) — what puts an incursion in scope, and so whether
 //!   [`run`]'s loop may capture at all: a pure state machine over the Client.txt

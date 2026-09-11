@@ -154,6 +154,20 @@ tick is not evidence about the subject — so a capture failing on every tick ho
 the branch open until one succeeds. Stated in docs/TEMPLE-LIFECYCLE.md's
 residuals, where the trade is recorded.)
 
+### Amended 2026-09-11 (POE-275, owner): the retention is two detect ticks
+
+The section above is superseded on one number and left standing: `LoopState::live`
+is now lost on the SECOND consecutive tick that finds the sheet gone, not the
+first (`temple::run::RETIRE_AFTER` = 2). Owner: *"one missed probe is easy to get
+(a misread, a tooltip over the plate) and must neither hide the sheet-bound
+overlays nor end the cycle; two consecutive misses do both."* The first miss is a
+held miss that keeps `live`, so the retention is **two detect ticks (1.3 s at
+650 ms)** and a zone change carries at most two captures into the next zone, the
+second being the one that finds no panel and retires it. The rule this ADR states
+is unchanged — the absence of the subject is still observed, not timed; it is now
+observed twice. docs/TEMPLE-LIFECYCLE.md (row 3, "Owner decisions") is normative
+for the temple's side.
+
 ### Why it is a candidate for this ADR rather than a temple detail
 
 The temple is the first module whose work is gated on a signal at all, but the

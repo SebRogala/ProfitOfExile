@@ -38,14 +38,21 @@
 //! Client.txt shuts it on a non-START Alva line or a zone change
 //! ([`super::trigger::apply_line`]). The fourth way is this loop's own, and it
 //! is the owner's rule that there are no tails any more: once a board has been
-//! READ, the first clean miss after it — the sheet closing — completes the cycle
-//! and the loop stops capturing entirely ([`cycle_complete`],
+//! READ, the retire after it — the sheet closing — completes the cycle and the
+//! loop stops capturing entirely ([`cycle_complete`],
 //! [`super::trigger::ArmState::complete_cycle`]). A sheet closed BEFORE any read
 //! completed does not complete anything: the loop keeps probing, because the
 //! sheet it was armed for has not been read yet.
 //!
-//! The offer boxes were already coming down on that miss ([`miss`] publishes
-//! [`TickOutcome::NoPanel`]) and the room diamond already survives it (POE-248),
+//! The retire is the SECOND consecutive clean miss since 2026-09-11 (POE-275,
+//! owner — [`RETIRE_AFTER`]); from WI-1 until then it was the first. The miss
+//! before it is a held miss ([`DetectOutcome::HeldMiss`]): it publishes
+//! nothing ([`miss_publish`]), keeps [`LoopState::live`] and with it the gate,
+//! and completes nothing — one miss is a misread or a tooltip over the plate,
+//! not a close.
+//!
+//! The offer boxes come down on the retiring miss ([`miss_publish`] answers
+//! [`TickOutcome::NoPanel`] there) and the room diamond survives it (POE-248),
 //! so what the completion adds is the capture stopping. Accepted cost, owner
 //! 2026-09-07: reopening the sheet later in the same incursion shows no boxes
 //! until Re-arm, because nothing is looking any more.
@@ -200,6 +207,9 @@ const UNFOCUSED_NAP: Duration = Duration::from_millis(1000);
 const MAX_DISTINCT_ERRORS: usize = 12;
 /// Consecutive failed anchors that retire a live panel.
 ///
+/// **Two since 2026-09-11** (POE-275, owner) — the last section below; the
+/// sections before it are the history of one, left standing.
+///
 /// **One, since POE-249** (docs/TEMPLE-LIFECYCLE.md row 3: hide every
 /// sheet-bound overlay on the first miss). Two was the number when a retire
 /// re-armed the read gate — a panel briefly lost mid-fade cost a full 28-call
@@ -232,7 +242,26 @@ const MAX_DISTINCT_ERRORS: usize = 12;
 /// after every sheet they really did close, which is the thing POE-249 measured
 /// and shortened.
 ///
-const RETIRE_AFTER: u8 = 1;
+/// # Two, since 2026-09-11 (POE-275, owner)
+///
+/// *"RETIRE_AFTER goes from 1 to 2 - one missed probe is easy to get (a
+/// misread, a tooltip over the plate) and must neither hide the sheet-bound
+/// overlays nor end the cycle; two consecutive misses do both."* It reverses the
+/// POE-249 rule and the WI-1 residual above.
+///
+/// The constant alone did not deliver it, because [`miss`] published
+/// [`TickOutcome::NoPanel`] on every clean miss. The first miss over a live
+/// panel is now [`DetectOutcome::HeldMiss`], which publishes nothing
+/// ([`miss_publish`]): the status the last sighting wrote stays on the slice,
+/// and [`LoopState::live`] — with it the arm gate — stays true. The second
+/// consecutive miss retires the panel, takes the sheet-bound overlays down and,
+/// over a board already read, completes the cycle. A sighting between the two
+/// resets the count; a failed grab does not touch it.
+///
+/// What the second miss costs: a sheet the player really did close hides its
+/// overlays and stands the capture down one [`DETECT_INTERVAL`] tick (650 ms)
+/// later than it did at one.
+const RETIRE_AFTER: u8 = 2;
 
 /// Spawn the capture loop. Called through `MODULES` — see `modules.rs`.
 pub fn spawn(app: AppHandle, cancel: watch::Receiver<bool>) -> ModuleJoin {
@@ -243,31 +272,35 @@ pub fn spawn(app: AppHandle, cancel: watch::Receiver<bool>) -> ModuleJoin {
 // Pure pieces
 // ---------------------------------------------------------------------------
 
-/// The loop's panel state machine: what cadence to run at, and when a panel
-/// that has stopped anchoring has been missing long enough to retire.
+/// The loop's panel state machine: when a panel that has stopped anchoring has
+/// been missing long enough to retire.
 ///
-/// Separated from the loop so both rules — retire after [`RETIRE_AFTER`]
-/// misses, back off after a slow tick — are testable without a screen or a
-/// clock. Same shape as
+/// Separated from the loop so the rule — retire after [`RETIRE_AFTER`] misses —
+/// is testable without a screen or a clock. Same shape as
 /// `mercenary::run::LoopState`, deliberately: the two loops solve the same
 /// cadence problem and a second shape would be a second thing to reason about.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct LoopState {
-    /// A layout panel is on screen — the loop's LAST detect tick found one.
+    /// A layout panel is on screen — the loop's LAST detect tick found one, or
+    /// (since 2026-09-11, POE-275) missed it once after a tick that did: a held
+    /// miss ([`DetectOutcome::HeldMiss`]) leaves this set, and only the retire
+    /// after [`RETIRE_AFTER`] consecutive clean misses clears it.
     ///
     /// Since WI-1 (2026-09-07) this is also the arm gate's whole view of the
     /// screen ([`trigger::arm_source`]'s `panel_live`): a sheet the player is
     /// holding open keeps the loop armed whatever Client.txt says, and the tick
-    /// that finds it gone is the one that takes the gate with it. The 120 s
+    /// that retires it is the one that takes the gate with it. The 120 s
     /// `panel_seen_ms` clock POE-246 measured this with is retired — see the
     /// module doc.
     pub live: bool,
     /// Consecutive failed anchors since the last successful one.
     ///
-    /// Only ever `0` at [`RETIRE_AFTER`] `= 1`: [`Self::on_detect`] increments
-    /// and immediately retires on the same tick. The field and its branch are
-    /// kept as the seam a `RETIRE_AFTER > 1` would need, so do not read the
-    /// counter as a live threshold — the threshold is the constant.
+    /// A live count again since 2026-09-11 (POE-275): at [`RETIRE_AFTER`]
+    /// `= 2` a first clean miss over a live panel leaves it at `1`
+    /// ([`DetectOutcome::HeldMiss`]) and the second retires the panel and zeroes
+    /// it. A sighting zeroes it; a failed grab ([`Self::on_blind_tick`]) leaves
+    /// it alone. From POE-249 until then it was only ever `0`, the constant
+    /// being `1`.
     pub misses: u8,
     /// Whether the one detect a starting loop runs before it may stand down has
     /// been spent (POE-246 — see `trigger`'s start-up probe note).
@@ -421,8 +454,14 @@ pub enum DetectOutcome {
     Found,
     /// A panel that was already live anchored again.
     Held,
-    /// Nothing anchored, and nothing was live (or not enough misses yet).
+    /// Nothing anchored, and nothing was live — the loop searching.
     Missed,
+    /// Nothing anchored over a LIVE panel that has not yet missed
+    /// [`RETIRE_AFTER`] times in a row (POE-275, owner 2026-09-11). The panel
+    /// stays live and [`miss`] publishes nothing ([`miss_publish`]), so the
+    /// sheet-bound overlays and the arm gate hold, and [`cycle_complete`] does
+    /// not fire.
+    HeldMiss,
     /// The live panel just retired after [`RETIRE_AFTER`] misses.
     Retired,
     /// The tick could not LOOK — the screen grab failed, so this tick is not
@@ -461,7 +500,7 @@ impl LoopState {
                 self.misses = 0;
                 DetectOutcome::Retired
             } else {
-                DetectOutcome::Missed
+                DetectOutcome::HeldMiss
             }
         }
     }
@@ -474,11 +513,13 @@ impl LoopState {
     /// that could see the screen left them, so a transient capture failure
     /// cannot retire a panel that is in front of the player. Since WI-1 `live`
     /// is the whole panel branch of the arm gate
-    /// ([`trigger::arm_source`]), and [`RETIRE_AFTER`] is 1 — so folding this
-    /// tick through [`Self::on_detect`] with `seen = false` would stand the
-    /// capture down on ONE failed grab whenever the panel is the only thing
-    /// holding the gate (a hideout read, a Re-arm whose grace has run out under
-    /// an open sheet), recoverable only by Re-arm.
+    /// ([`trigger::arm_source`]), so folding this tick through
+    /// [`Self::on_detect`] with `seen = false` would count a failed grab toward
+    /// [`RETIRE_AFTER`]. At `1` (until 2026-09-11) that stood the capture down on
+    /// ONE failed grab whenever the panel is the only thing holding the gate (a
+    /// hideout read, a Re-arm whose grace has run out under an open sheet),
+    /// recoverable only by Re-arm; at `2` two failed grabs, or one beside a real
+    /// miss, would do the same.
     ///
     /// The probe IS spent, and that is the one thing this tick does prove: it
     /// ran. A machine whose capture never succeeds must not hold the gate open
@@ -823,10 +864,12 @@ pub fn read_timings_line(
 /// screen.
 ///
 /// [`DetectOutcome::Retired`] and not `Missed`: `Retired` is the transition —
-/// the sheet was live on the previous tick and is not now — while `Missed` is
-/// the loop's resting state over an empty screen, and completing a cycle on that
-/// would stand the loop down on the very tick that armed it, before the player
-/// ever opened the sheet.
+/// the sheet was live and has now missed [`RETIRE_AFTER`] ticks in a row — while
+/// `Missed` is the loop's resting state over an empty screen, and completing a
+/// cycle on that would stand the loop down on the very tick that armed it, before
+/// the player ever opened the sheet. Nor [`DetectOutcome::HeldMiss`]: one miss
+/// over a live sheet is not a close (owner, 2026-09-11, POE-275), and this rule
+/// needed no change for that beyond the constant.
 ///
 /// `read_in_hand` is the guard the owner kept: a sheet closed BEFORE any read
 /// completed does not end anything, because the incursion this arm was bought
@@ -859,6 +902,34 @@ pub fn read_timings_line(
 /// between this call and the lock — see `trigger::complete_cycle`.
 pub fn cycle_complete(outcome: DetectOutcome, read_in_hand: bool, looked: bool) -> bool {
     looked && matches!(outcome, DetectOutcome::Retired) && read_in_hand
+}
+
+/// What a CLEAN miss publishes, by what the panel state machine answered —
+/// `None` is "publish nothing" (POE-275, owner 2026-09-11).
+///
+/// [`TickOutcome::NoPanel`] for [`DetectOutcome::Missed`], the loop searching
+/// with nothing live, and for [`DetectOutcome::Retired`], the sheet gone —
+/// `panel_not_visible` is not in the webview's `OVERLAY_VISIBLE_STATUSES`, so
+/// that publish is what takes the sheet-bound overlays down. Nothing for
+/// [`DetectOutcome::HeldMiss`]: one miss over a live sheet must not hide them,
+/// so the status the last sighting wrote stays on the slice. A failed tick's
+/// `error` and its message stand through a held miss the same way, for that
+/// one tick; the sighting or the retire after it clears them.
+///
+/// The other three are not a clean miss's answer and publish nothing here: a
+/// sighting publishes through [`tick`]'s own path, and a failed grab
+/// ([`DetectOutcome::Blind`]) has already published through [`fail`].
+///
+/// A pure function for the reason [`cycle_complete`] is one: [`miss`] needs an
+/// `AppHandle` and is not reachable from a unit test.
+pub fn miss_publish(outcome: DetectOutcome) -> Option<TickOutcome> {
+    match outcome {
+        DetectOutcome::Missed | DetectOutcome::Retired => Some(TickOutcome::NoPanel),
+        DetectOutcome::HeldMiss
+        | DetectOutcome::Found
+        | DetectOutcome::Held
+        | DetectOutcome::Blind => None,
+    }
 }
 
 // ------------------------------------------------------ the loop's step --
@@ -2369,10 +2440,10 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         // loop publishes nothing at all while the game is not in front (see
         // `TempleStatus::Idle`), and an unfocused iteration does the same thing
         // either way. There is no panel clock for the wait to outlast since WI-1
-        // (2026-09-07): `LoopState::live` is a bool the LAST tick wrote, so an
+        // (2026-09-07): `LoopState::live` is a bool the ticks write, so an
         // alt-tab of any length — a second or an hour — leaves the gate open for
-        // exactly one tick on the way back, and that tick is the one that finds
-        // the sheet gone.
+        // `RETIRE_AFTER` ticks on the way back (two since 2026-09-11, POE-275),
+        // and the last of them is the one that retires the sheet.
         let focused = game_focused(&app);
         // One read of the arm for both answers: the SOURCE that keeps the gate
         // open, and the word for it if it is shut. Two reads could disagree —
@@ -2650,7 +2721,7 @@ fn tick(
 
     // The sighting the arm gate reads (POE-246, WI-1): every anchored tick sets
     // `live`, so the gate stays open for as long as the sheet is in front of the
-    // player and shuts on the tick that finds it gone.
+    // player and shuts on the tick that retires it (`RETIRE_AFTER` misses).
     //
     // BEFORE the OCR gate below, and that order is load-bearing (POE-249): a
     // sighting that re-shows an already-read board is still a sighting, and it
@@ -2828,11 +2899,15 @@ fn cold_sweep(
 /// because the live session that reported the bug stood the loop down
 /// mid-incursion with the player still in the room the widget described.
 ///
-/// What this function does end is [`LoopState::live`], which since POE-249 is on
-/// the FIRST clean miss ([`RETIRE_AFTER`]). It also publishes
-/// [`TickOutcome::NoPanel`] on every clean miss, retired or not, which is what
-/// takes the sheet-bound overlays down — that has always been on the first miss
-/// and is what `RETIRE_AFTER` now agrees with. It does NOT invalidate the board:
+/// What this function does end is [`LoopState::live`], on the retire after
+/// [`RETIRE_AFTER`] consecutive clean misses — the second since 2026-09-11
+/// (POE-275, owner), the first from POE-249 until then. The sheet-bound overlays
+/// come down on that same miss: [`miss_publish`] answers
+/// [`TickOutcome::NoPanel`] for the retire and for a miss with nothing live, and
+/// nothing for the held miss before a retire, so the status the last sighting
+/// wrote stays on the slice through one miss. Until 2026-09-11 every clean miss
+/// published `NoPanel`, which is why the constant alone did not move the hide.
+/// It does NOT invalidate the board:
 /// a sheet reopened inside the same incursion re-shows it ([`LoopState::board`],
 /// docs/TEMPLE-LIFECYCLE.md row 3) — while the loop is still armed to see the
 /// reopen, which is what the paragraph below changed.
@@ -2880,7 +2955,9 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool, key: (u64, u64)) 
     if cycle_complete(outcome, session.state.has_read(key), !errored) {
         trigger::complete_cycle(app, key);
     }
-    publish(app, |slice| apply_status(slice, TickOutcome::NoPanel));
+    if let Some(status) = miss_publish(outcome) {
+        publish(app, |slice| apply_status(slice, status));
+    }
 }
 
 /// The text crops this module OCRs, named, in the order they are read.
@@ -3559,21 +3636,47 @@ mod tests {
     /// assertions are all on differences from it.
     const SEEN: u64 = 1_756_800_000_000;
 
-    /// A panel retires on its FIRST missed anchor (POE-249,
-    /// docs/TEMPLE-LIFECYCLE.md row 3).
+    /// One missed anchor over a live panel is a HELD miss, and the panel stays
+    /// live (owner, 2026-09-11, POE-275: *"one missed probe is easy to get (a
+    /// misread, a tooltip over the plate)"*).
     ///
-    /// `miss` already published `panel_not_visible` on this tick whatever
-    /// `RETIRE_AFTER` said, so a second miss only kept `live` — and the arm
-    /// gate's view of the panel — disagreeing with the status the player could
-    /// see. Fails if `RETIRE_AFTER` is put back to two, or applied off by one in
-    /// the other direction (a live panel that never retires holds the arm gate
-    /// open for the rest of the session).
+    /// Fails if `RETIRE_AFTER` is put back to one: the first miss would answer
+    /// `Retired` and clear `live`.
     #[test]
-    fn a_live_panel_retires_on_its_first_missed_anchor() {
+    fn a_live_panel_holds_through_its_first_missed_anchor() {
         let mut state = LoopState { live: true, ..LoopState::default() };
 
+        assert_eq!(state.on_detect(false), DetectOutcome::HeldMiss);
+        assert!(state.live, "a held miss leaves the panel live");
+    }
+
+    /// The SECOND consecutive missed anchor retires it — the outcome
+    /// `cycle_complete` keys on and the `layout panel gone` line.
+    ///
+    /// Fails if `RETIRE_AFTER` is raised past two, or if the count is not
+    /// carried from the first miss to the second: either way the second miss
+    /// answers `HeldMiss` and a closed sheet never retires.
+    #[test]
+    fn a_live_panel_retires_on_its_second_consecutive_missed_anchor() {
+        let mut state = LoopState { live: true, ..LoopState::default() };
+        assert_eq!(state.on_detect(false), DetectOutcome::HeldMiss, "precondition");
+
         assert_eq!(state.on_detect(false), DetectOutcome::Retired);
-        assert!(!state.live);
+    }
+
+    /// Two misses count only when they are CONSECUTIVE: a sighting between them
+    /// starts the count again, so the next miss is held rather than retiring.
+    ///
+    /// Fails if a sighting does not zero `misses` — a sheet that flickers once
+    /// per incursion would then retire on its second flicker, however far apart
+    /// the two were.
+    #[test]
+    fn a_sighting_between_two_misses_starts_the_count_again() {
+        let mut state = LoopState { live: true, ..LoopState::default() };
+        assert_eq!(state.on_detect(false), DetectOutcome::HeldMiss, "precondition");
+        assert_eq!(state.on_detect(true), DetectOutcome::Held, "precondition");
+
+        assert_eq!(state.on_detect(false), DetectOutcome::HeldMiss);
     }
 
     /// A sighting after a retire is `Found` again, which is the `layout panel
@@ -3583,9 +3686,52 @@ mod tests {
     #[test]
     fn a_sighting_after_a_retire_is_found_again() {
         let mut state = LoopState { live: true, ..LoopState::default() };
+        state.on_detect(false);
         assert_eq!(state.on_detect(false), DetectOutcome::Retired, "precondition");
 
         assert_eq!(state.on_detect(true), DetectOutcome::Found);
+    }
+
+    // ----------------------------------------------- what a miss publishes --
+
+    /// The held miss publishes nothing, so the status the last sighting wrote
+    /// stays on the slice and the sheet-bound overlays with it (POE-275).
+    ///
+    /// Composed over the state machine, as `miss` composes it. Fails if the
+    /// held miss is answered with `NoPanel` — `panel_not_visible` is not an
+    /// overlay-visible status, so the offer boxes would come down on one
+    /// misread — or if `RETIRE_AFTER` is put back to one.
+    #[test]
+    fn a_held_miss_publishes_nothing() {
+        let mut state = LoopState { live: true, ..LoopState::default() };
+
+        assert_eq!(miss_publish(state.on_detect(false)), None);
+    }
+
+    /// The retiring miss publishes `NoPanel`, which is what takes the
+    /// sheet-bound overlays down on the second consecutive miss.
+    ///
+    /// Fails if the retire publishes nothing: a closed sheet's offer boxes
+    /// would stand over the game until the next sighting or stand-down.
+    #[test]
+    fn the_retiring_miss_publishes_no_panel() {
+        let mut state = LoopState { live: true, ..LoopState::default() };
+        state.on_detect(false);
+
+        assert_eq!(miss_publish(state.on_detect(false)), Some(TickOutcome::NoPanel));
+    }
+
+    /// A miss with nothing live is the loop searching, and it still says so:
+    /// `panel_not_visible`, with a stale error cleared (`next_status`).
+    ///
+    /// Fails if the held-miss rule is widened to every miss that retires
+    /// nothing — a one-off capture error would then sit on the page, with its
+    /// `error` status, for as long as the sheet stays shut.
+    #[test]
+    fn a_miss_with_nothing_live_publishes_no_panel() {
+        let mut state = LoopState::default();
+
+        assert_eq!(miss_publish(state.on_detect(false)), Some(TickOutcome::NoPanel));
     }
 
     // ------------------------------------------------------- the OCR gate --
@@ -3988,19 +4134,45 @@ mod tests {
         assert!(state.live);
     }
 
-    /// A clean miss over a live panel is the sheet closing, and `live` goes with
-    /// it on that tick ([`RETIRE_AFTER`] = 1).
+    /// Two consecutive clean misses over a live panel are the sheet closing, and
+    /// `live` goes with them on the second ([`RETIRE_AFTER`] = 2 since
+    /// 2026-09-11).
     ///
-    /// Fails if a miss leaves `live` set: the gate would then stay open on a
+    /// Fails if the retire leaves `live` set: the gate would then stay open on a
     /// panel that is gone for the rest of the session, which is the
     /// free-running capture POE-242 removed.
     #[test]
-    fn a_tick_that_found_nothing_takes_the_live_panel_with_it() {
+    fn the_second_tick_that_found_nothing_takes_the_live_panel_with_it() {
+        let mut state = LoopState { live: true, ..LoopState::default() };
+
+        state.on_detect(false);
+        state.on_detect(false);
+
+        assert!(!state.live);
+    }
+
+    /// The held miss keeps the panel holding the arm gate: with nothing in
+    /// Client.txt, the gate is still open on `PanelOnScreen` after one miss
+    /// (POE-275 — one miss must not end anything).
+    ///
+    /// Fails if the held miss clears `live`: a hideout read, or a Re-arm whose
+    /// grace has run out under an open sheet, would stand the capture down on
+    /// one misread.
+    #[test]
+    fn a_held_miss_keeps_the_panel_holding_the_arm_gate() {
         let mut state = LoopState { live: true, ..LoopState::default() };
 
         state.on_detect(false);
 
-        assert!(!state.live);
+        assert_eq!(
+            trigger::arm_source(
+                trigger::ArmState::default(),
+                state.live,
+                state.probe_pending(),
+                SEEN,
+            ),
+            Some(trigger::ArmSource::PanelOnScreen),
+        );
     }
 
     /// The start-up probe is a debt one tick settles, whatever that tick found.
@@ -4044,9 +4216,11 @@ mod tests {
     /// whose sixty seconds have run out under an open sheet.
     ///
     /// Fails if the errored tick is folded through `on_detect(false)` like a
-    /// clean miss. At [`RETIRE_AFTER`] `= 1` that retires on the spot, so ONE
-    /// transient capture failure would stand the capture down with the sheet in
-    /// front of the player, recoverable only by Re-arm.
+    /// clean miss: the outcome is then not `Blind`. At [`RETIRE_AFTER`] `= 1`
+    /// (until 2026-09-11) that fold retired on the spot, so ONE transient capture
+    /// failure stood the capture down with the sheet in front of the player,
+    /// recoverable only by Re-arm; at `2` it counts toward the retire, which the
+    /// next test pins.
     #[test]
     fn a_failed_grab_does_not_stand_the_capture_down() {
         let mut state = LoopState { live: true, ..LoopState::default() };
@@ -4064,6 +4238,24 @@ mod tests {
             ),
             Some(trigger::ArmSource::PanelOnScreen),
         );
+    }
+
+    /// A failed grab between two clean misses is invisible to the count: the
+    /// second miss retires exactly as if the failed tick had not run (POE-275,
+    /// the count `RETIRE_AFTER` = 2 made live).
+    ///
+    /// Fails if `on_blind_tick` zeroes `misses` (the second miss would be held
+    /// again, and a capture failing every other tick would keep a closed sheet
+    /// live), and fails if it counts as a miss (the failed tick would retire the
+    /// panel itself and the second clean miss would answer `Missed`).
+    #[test]
+    fn a_failed_grab_between_two_misses_leaves_the_count_where_it_was() {
+        let mut state = LoopState { live: true, ..LoopState::default() };
+        assert_eq!(state.on_detect(false), DetectOutcome::HeldMiss, "precondition");
+
+        state.on_blind_tick();
+
+        assert_eq!(state.on_detect(false), DetectOutcome::Retired);
     }
 
     /// The 17:28:31 case end to end, over the two pure pieces the loop composes:
@@ -4118,7 +4310,7 @@ mod tests {
     /// so this incursion's cycle is over and the loop stops capturing.
     ///
     /// Fails if the retire is not consulted at all — the loop would then stand
-    /// down on the tick after the read rather than on the tick after the sheet
+    /// down on the tick after the read rather than on the retire after the sheet
     /// closed, taking the offer boxes off a sheet still in front of the player.
     #[test]
     fn a_retire_over_a_board_already_read_completes_the_cycle() {
@@ -4150,25 +4342,45 @@ mod tests {
         assert!(!cycle_complete(DetectOutcome::Retired, true, false));
     }
 
-    /// Only the RETIRE completes it: the other three outcomes are not a sheet
+    /// Only the RETIRE completes it: the other four outcomes are not a sheet
     /// leaving the screen.
     ///
     /// `Missed` is the one that matters — it is what every tick over an empty
     /// screen answers, so a rule that took it would end the cycle on the tick
     /// after a read no matter what the sheet was doing. `Blind` is the fix
     /// round's: a failed grab reaches this rule through the same call and must
-    /// not end anything. Fails if the match is widened to "anything that is not
-    /// a sighting".
+    /// not end anything. `HeldMiss` is POE-275's: one miss over a live sheet
+    /// must not end the cycle (owner, 2026-09-11). Fails if the match is widened
+    /// to "anything that is not a sighting".
     #[test]
     fn no_other_detect_outcome_completes_the_cycle() {
         for outcome in [
             DetectOutcome::Found,
             DetectOutcome::Held,
             DetectOutcome::Missed,
+            DetectOutcome::HeldMiss,
             DetectOutcome::Blind,
         ] {
             assert!(!cycle_complete(outcome, true, true), "{outcome:?}");
         }
+    }
+
+    /// The cycle of a board already read ends on the SECOND consecutive miss
+    /// after it, composed over the state machine as `miss` composes it
+    /// (POE-275: two consecutive misses end the cycle, one does not).
+    ///
+    /// Fails if `RETIRE_AFTER` is put back to one (the first miss completes it)
+    /// or raised past two (the second does not).
+    #[test]
+    fn a_read_board_completes_its_cycle_on_the_second_consecutive_miss() {
+        let mut state = LoopState { live: true, ..LoopState::default() };
+        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
+
+        let first = state.on_detect(false);
+        assert!(!cycle_complete(first, state.has_read(BOARD), true), "one miss: {first:?}");
+
+        let second = state.on_detect(false);
+        assert!(cycle_complete(second, state.has_read(BOARD), true), "two misses: {second:?}");
     }
 
     /// The read half is keyed on the CURRENT key, which is what makes Re-arm the

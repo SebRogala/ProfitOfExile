@@ -77,8 +77,10 @@
 //!   Atzoatl.` arms with NO deadline, and the next `You have entered` line —
 //!   whatever it names — is what ends it;
 //! - the **panel on screen** is not in Client.txt at all: while the capture
-//!   loop's last detect tick found the layout panel the gate stays open
-//!   ([`arm_source`]'s `panel_live`, `super::run::LoopState::live`), whatever
+//!   loop holds the layout panel live — from a sighting until `RETIRE_AFTER`
+//!   consecutive clean misses retire it (two since 2026-09-11, POE-275) — the
+//!   gate stays open ([`arm_source`]'s `panel_live`,
+//!   `super::run::LoopState::live`), whatever
 //!   Client.txt says. That is what lets a Re-arm read finish and retry while the
 //!   player holds the sheet open past the grace;
 //! - **Re-arm** arms for [`MANUAL_ARM_GRACE_MS`], the one deadline left in this
@@ -100,9 +102,11 @@
 //! stop encounter, we hide the diamond overlay."*
 //!
 //! What replaces them is a CYCLE rather than a clock: the START arm holds
-//! indefinitely, the loop reads the board once, and the first clean miss after
-//! that read completes the cycle and stands the capture down
-//! (`super::run::cycle_complete`). A sheet closed BEFORE a read completed does
+//! indefinitely, the loop reads the board once, and the retire after that read
+//! completes the cycle and stands the capture down
+//! (`super::run::cycle_complete`). The retire is the second consecutive clean
+//! miss since 2026-09-11 (POE-275, owner — `super::run::RETIRE_AFTER`); from
+//! WI-1 until then it was the first. A sheet closed BEFORE a read completed does
 //! not complete anything — the loop keeps probing, which is the case the tails
 //! were really covering.
 //!
@@ -129,7 +133,9 @@
 //! hold the gate open with nothing on screen. `anchor::NCC_FLOOR` is what that
 //! rests on, and it is the same floor the read itself is believed on. What WI-1
 //! changed is the clock behind it: `panel_live` is one tick (650 ms at
-//! `super::run::DETECT_INTERVAL`), not two minutes.
+//! `super::run::DETECT_INTERVAL`), not two minutes. Two ticks since 2026-09-11
+//! (POE-275): `panel_live` survives one held miss and goes on the second
+//! consecutive one.
 //!
 //! # The start-up probe
 //!
@@ -141,9 +147,10 @@
 //! anchors, the panel is live and the gate stays open on it; it finds nothing,
 //! the next iteration stands down.
 //!
-//! ONE tick per loop start, spent by `super::run::LoopState::on_detect`
-//! whatever the tick found — **including a tick that could not look at all**,
-//! because `super::run::miss` folds a failed screen grab through the same call.
+//! ONE tick per loop start, spent whatever the tick found — by
+//! `super::run::LoopState::on_detect` on a tick that looked and by
+//! `super::run::LoopState::on_blind_tick` on a tick whose grab failed,
+//! **including a tick that could not look at all**.
 //! That is deliberate: the alternative is a loop that keeps the gate open for
 //! the whole session on a machine whose capture never succeeds, which is the
 //! free-running capture with an error message on it. The cost is that a single
@@ -346,9 +353,9 @@ impl StandDown {
 pub enum ArmSource {
     /// Client.txt put an incursion in scope.
     Trigger(ArmReason),
-    /// The loop's LAST detect tick found the layout panel
-    /// (`super::run::LoopState::live`). One tick, not a tail — see the module
-    /// doc's "There are no tails any more".
+    /// The loop's LAST detect tick found the layout panel, or missed it once
+    /// after one that did (`super::run::LoopState::live`, POE-275). Two ticks,
+    /// not a tail — see the module doc's "There are no tails any more".
     PanelOnScreen,
     /// The one tick a starting loop runs before it may stand down.
     StartupProbe,
@@ -518,7 +525,8 @@ impl TempleArm {
 /// POE-246's 120 s panel clock outliving the screen it was measured on; the
 /// clock is now one detect tick, so a zone change can carry at most 650 ms of
 /// capture into the next zone — and the tick that carries it is the one that
-/// finds the panel gone.
+/// finds the panel gone. Two ticks since 2026-09-11 (POE-275): a zone change
+/// can carry two captures, the first a held miss and the second the retire.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ArmState {
     /// What has armed the loop.
@@ -608,11 +616,13 @@ impl ArmState {
 /// Client.txt comes first because a live incursion is what the module exists to
 /// follow and `armed by Alva's start line` is the line the smoke item reads. The
 /// panel comes second, and is what is left of POE-246 after WI-1 retired its
-/// tail: `panel_live` is `super::run::LoopState::live`, which is true exactly
-/// while the loop's LAST detect tick found the sheet. A player holding the sheet
-/// open therefore keeps the gate open whatever Client.txt says, which is what
-/// lets a Re-arm read finish and retry past the sixty-second grace; a sheet that
-/// closes takes it with them on the next tick. The probe comes last because it
+/// tail: `panel_live` is `super::run::LoopState::live`, which is true from a
+/// sighting until the loop retires the sheet — `super::run::RETIRE_AFTER`
+/// consecutive clean misses, two since 2026-09-11 (POE-275). A player holding
+/// the sheet open therefore keeps the gate open whatever Client.txt says, which
+/// is what lets a Re-arm read finish and retry past the sixty-second grace; a
+/// sheet that closes takes it with them on the second tick after. The probe
+/// comes last because it
 /// is not evidence at all — it is the one look a starting loop owes itself
 /// before it may believe an empty screen.
 ///
@@ -1826,6 +1836,7 @@ mod tests {
     /// The tick that carries it is the tick that finds the new zone empty, so
     /// the gate is shut 650 ms later. Fails if the area line stops disarming, in
     /// which case the map carries the whole arm rather than one tick of it.
+    /// (two ticks since 2026-09-11, POE-275: `live` survives one held miss)
     #[test]
     fn an_area_change_leaves_only_a_live_panel_holding_the_gate() {
         let mut state = ArmState::default();
@@ -1841,7 +1852,7 @@ mod tests {
         assert_eq!(
             arm_source(state, true, false, NOW + 5_000),
             Some(ArmSource::PanelOnScreen),
-            "and a sheet the last tick saw buys exactly one more tick",
+            "and a sheet still live holds the gate until the retire",
         );
     }
 
