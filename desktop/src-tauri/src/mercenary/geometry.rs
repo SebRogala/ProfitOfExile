@@ -497,8 +497,9 @@ pub enum PanelAnchor {
     /// A rect, but no rows to place in it.
     NoRows,
     /// The placed crop contains name lines, but their median x is outside the
-    /// half-cell tolerance of the placed column. The caller must spend the
-    /// full-screen fallback rather than publish the shifted geometry.
+    /// half-cell tolerance of the placed column. Nothing is published from the
+    /// shifted geometry; only a manual tick (Scan now, Recalibrate) spends the
+    /// full-screen locate on it (`run::locate_decision`).
     ColumnMoved { column_x: i32, expected_x: i32, tolerance: i32 },
     /// A placed rect supplied the rows, but no wager, verdict or button line
     /// corroborated that the recruit window is open.
@@ -2157,7 +2158,7 @@ mod tests {
         ];
         let scale = 43.0 / g.row_pitch;
         let miss = placed_layout(&lines, [624, 554, 500, 429], &g, scale, 43.0)
-            .expect_err("a crop shifted by 100 px must spend the fallback");
+            .expect_err("a crop shifted by 100 px must not read as a layout");
 
         assert_eq!(
             miss.stage,
@@ -2178,7 +2179,7 @@ mod tests {
         let lines = crate::mercenary::cellfit::pc_lines();
         let scale = 43.0 / g.row_pitch;
         let miss = placed_layout(&lines, [824, 554, 500, 430], &g, scale, 43.0)
-            .expect_err("a crop shifted right by 100 px must spend the fallback");
+            .expect_err("a crop shifted right by 100 px must not read as a layout");
 
         assert_eq!(
             miss.stage,
