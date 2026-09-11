@@ -300,7 +300,8 @@ rectangle. A live client read and its refresh rule remain POE-272 work, and the
 POE-269 is implemented. The Temple detect loop derives its `CheapHint` from the
 current `ScreenSlice` placements and verifies the placed Entrance origin with
 one windowed NCC per detect tick. A null or unplaced slice gets one pyramid
-fallback per `(temple_epoch, temple_rearm)` key, and a below-floor placed miss
+fallback per `(temple_epoch, temple_rearm)` key (**the null-slice half is
+amended by the POE-275 amendment below**), and a below-floor placed miss
 gets one fallback per the same key for any `ArmSource::Trigger(_)` arm. A
 fallback origin outside the placed tolerance is logged and noticed, then
 remembered after a successful read; a null-slice fallback origin is remembered
@@ -314,7 +315,8 @@ The placed-miss fallback above is spent under the Manual arm (Re-arm) only.
 Under AlvaStart and TempleArea the first tick's miss is the sheet not being
 open yet, not a wrong placement, and the sweep it bought ran 30–34 s per
 incursion on the debug build with no tick in between (app.log 2026-09-08/09).
-The null-slice fallback is unchanged. `temple/run.rs`, `cold_sweep_reason`.
+The null-slice fallback is unchanged (**amended by the POE-275 amendment
+below**). `temple/run.rs`, `cold_sweep_reason`.
 
 That release buys one retry only; a second withheld sweep keeps the key spent
 until the `(temple_epoch, temple_rearm)` key changes.

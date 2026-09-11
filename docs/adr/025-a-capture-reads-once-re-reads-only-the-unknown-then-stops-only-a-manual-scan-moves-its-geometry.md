@@ -9,8 +9,8 @@ is incomplete it buys at most `RETRIES` = 2 more rounds, each re-reading only
 what the kept read still leaves unknown; after that, or once the read is
 complete, only the presence/liveness check runs. A live capture's geometry is
 not moved by a later detect: the full-frame locate runs only on a cold start
-with no placement or on a manual scan whose placed read missed, once per key,
-and only
+with no placement or on a manual scan whose placed read missed, once per key
+(**temple (a) is amended by the POE-275 amendment below**), and only
 the manual scan may replace a standing placement. The contract is shared by the
 temple and merc modules; the code is not (POE-278).
 
@@ -23,7 +23,7 @@ the table below (`cdd67ba` partial rounds, POE-249 WI-2, 2026-09-07; `54e7ccd`
 POE-269 keyed fallback; `05a51a8` Manual-only placed-miss sweep, 2026-09-09;
 `332e40b` "placed" means anchored, POE-278).
 
-Merc: clause 1 shipped; clause 4 shipped (`POE-278 WI-B`, `f78786e`); clauses 2, 3 and 5 shipped (`POE-278 WI-C`).
+Merc: clause 1 shipped; clause 4 shipped (`POE-278 WI-B`, `f78786e`); clauses 2, 3 and 5 shipped (`POE-278 WI-C`, `072c98c`).
 
 ## Context
 
@@ -88,7 +88,10 @@ was built without them.
    confident — `read::confident`); a header field not resolved — name missing or
    not name-shaped (`geometry::is_name_shaped`), class missing, level missing,
    which are `read::header_complete`'s fields. The wager is excluded there and
-   here.
+   here. Merc exception: a kept capture that no longer lines up with this
+   tick's layout (`read::lines_up` — panel rect, row index, cell size or
+   half-cell origin band) cannot be mapped cell for cell, so that round reads
+   Full and counts as a round; such a round can replace a confident read.
 
 3. **Then stop.** Once the read is complete, or the rounds are spent,
    re-reading stops and only the presence/liveness check continues. Temple: the
@@ -102,7 +105,8 @@ was built without them.
 4. **A live capture's geometry is not moved by a later detect.** The full-frame
    locate — temple: the pyramid sweep; merc: the full-screen
    `geometry::detect_reason` path — runs only
-   (a) on a cold start with no placement, once per key, or
+   (a) on a cold start with no placement, once per key (**temple (a) is
+   amended by the POE-275 amendment below**), or
    (b) on a MANUAL scan whose placed read missed, once per key.
    Only (b) may REPLACE a standing placement (`ssot::remember_anchor`, after a
    successful read). Manual means temple Re-arm, and merc Scan now and
@@ -123,15 +127,16 @@ POE-278).
 
 | Clause | Temple (shipped) | Merc |
 |---|---|---|
-| 1 one full read | row 2; `run::LoopState::gate` → `GateAnswer::Read`, `run::full_read` | shipped: `run::detect_tick` — placed crop (`geometry::placed_panel_crop`, `geometry::placed_layout`), then `read::pass2_texts` and `read::build_capture` |
-| 2 two partial rounds | row 2 (WI-2) and "Where each rule lives"; `slice::plan_read` / `retry_plan` → `ReadPlan`, `slice::merge_reads` over `KeptRead`, `slice::unclean`, `run::RETRIES`, `run::kept_for` | shipped (`POE-278 WI-C`): `read::plan_read` → `ReadPlan` / `RowPlan` from the kept capture, `read::pass2_planned`, `read::build_planned` (copies confident cells), `read::fold_unresolved_header`, `read::lines_up`; `run::RETRIES`, `run::LoopState::rounds`, `run::round_plan` |
-| 3 then stop | row 2 ("After round 3 all OCR stops"); `DETECT_INTERVAL` 650 ms, `GateAnswer::Reshow` | shipped (`POE-278 WI-C`): `read::capture_complete` or `LoopState::rounds_spent` → `LoopState::detect_interval` returns `LIVENESS_INTERVAL`; `ReadPlan::Nothing` → `read::carry_capture` re-reads nothing, and `run::replaced_on_sight` checks a REMATCH on pass 1 |
-| 4 geometry moves only on a manual scan | row 3, residual "Placed-origin verification", "Owner decisions" 2026-09-09; `run::cold_sweep_reason` → `ColdSweepReason::{NullSlice, PlacedMiss}`, `run::cold_sweep`, `placed_origin_contradiction`, `remember_fallback_anchor` → `ssot::remember_anchor` | shipped (`POE-278 WI-B`, `f78786e`): `run::locate_decision` (`LocateReason::{ColdStart, ManualMiss}`, `PlacedRead`), asked from `run::detect_tick`; `run::manual_tick` / `refit_requested`; `MERC_COLUMN_TRUSTED_LINE` |
-| 5 fresh budget | row 3 (board identity); `run::board_key`, `slice::BoardFrame`, `LoopState::note_read`; Re-arm bumps `temple_rearm` | shipped (`POE-278 WI-C`): `LoopState::refill_rounds` — from `run::round_plan` on a new capture or one `read::panel_replaced` dropped, `LoopState::resume` on Scan now, `run::refills_budget` on a Recalibrate `consume_refit` acted on |
+| 1 one full read | row 2; `run::LoopState::gate` → `GateAnswer::Read`, `run::full_read` | shipped: `run::detect_tick` — placed crop (`geometry::placed_panel_crop`, `geometry::placed_layout`), then `read::pass2_texts` and `read::build_planned` with no plan (`read::build_capture` is now the debug/test wrapper) |
+| 2 two partial rounds | row 2 (WI-2) and "Where each rule lives"; `slice::plan_read` / `retry_plan` → `ReadPlan`, `slice::merge_reads` over `KeptRead`, `slice::unclean`, `run::RETRIES`, `run::kept_for` | shipped (`POE-278 WI-C`, `072c98c`): `read::plan_read` → `ReadPlan` / `RowPlan` from the kept capture, `read::pass2_planned`, `read::build_planned` (copies confident cells), `read::fold_unresolved_header`, `read::lines_up`; `run::RETRIES`, `run::LoopState::rounds`, `run::round_plan` |
+| 3 then stop | row 2 ("After round 3 all OCR stops"); `DETECT_INTERVAL` 650 ms, `GateAnswer::Reshow` | shipped (`POE-278 WI-C`, `072c98c`): `read::capture_complete` or `LoopState::rounds_spent` → `LoopState::detect_interval` returns `LIVENESS_INTERVAL`; `ReadPlan::Nothing` → `read::carry_capture` re-reads nothing, and `run::replaced_on_sight` checks a REMATCH on pass 1 |
+| 4 geometry moves only on a manual scan | row 3, residual "Placed-origin verification", "Owner decisions" 2026-09-09; `run::cold_sweep_reason` → `ColdSweepReason::{NullSlice, PlacedMiss}`, `run::cold_sweep`, `placed_origin_contradiction`, `remember_fallback_anchor` → `ssot::remember_anchor` | shipped (`POE-278 WI-B`, `f78786e`): `run::locate_decision` (`LocateReason::{ColdStart, ManualMiss}`, `PlacedRead`), asked from `run::detect_tick`; `run::manual_tick` / `refit_requested` — a voice-probe miss while a Recalibrate is pending is a manual miss; `MERC_COLUMN_TRUSTED_LINE` |
+| 5 fresh budget | row 3 (board identity); `run::board_key`, `slice::BoardFrame`, `LoopState::note_read`; Re-arm bumps `temple_rearm` | shipped (`POE-278 WI-C`, `072c98c`): `LoopState::refill_rounds` — from `run::round_plan` on a new capture or one `read::panel_replaced` dropped, `LoopState::resume` on Scan now, `run::refills_budget` on a Recalibrate `consume_refit` acted on; and, merc-specific (not in clause 5), `run::refills_budget` on a template-store generation change (`run::generation_changed`) |
 
 Row numbers and section names are those of [Temple Lifecycle](../TEMPLE-LIFECYCLE.md).
 
-Temple clause 4, as shipped: (a) is `ColdSweepReason::NullSlice` — no screen
+Temple clause 4, as shipped (**temple (a) is amended by the POE-275 amendment
+below**): (a) is `ColdSweepReason::NullSlice` — no screen
 slice, or no ANCHORED Entrance origin (`332e40b`: a seed is not a placement) —
 for any arm source, once per `(temple_epoch, temple_rearm)` key, with one
 release when the sweep found an anchor whose slice was withheld
@@ -152,7 +157,7 @@ remembers nothing, because `LocateReason::ColdStart` carries no placement and
 `run::fallback_panel` yields no origin for it; only
 `LocateReason::ManualMiss { placed }` can become a remembered origin.
 
-Merc clause 3, history: until `POE-278 WI-C` only the cadence was shipped —
+Merc clause 3, history: until `POE-278 WI-C` (`072c98c`) only the cadence was shipped —
 the liveness detect still ran `read::pass2_texts` and `read::build_capture` on
 the crop every `LIVENESS_INTERVAL`, and a capture that never became complete
 re-read every row and cell at `REDETECT_INTERVAL` with no round cap. Since
@@ -206,7 +211,10 @@ consecutive clean misses, up to `NULL_SWEEP_CAP` = 10 sweeps per
 and off the loop thread, with the 650 ms placed recheck running while it
 searches and cancelling it when it anchors. The found-but-withheld release
 (`null_sweep_key_after_publish`) rides on top: a second withheld result ends
-that key's null sweeps. A found origin is read only after a later capture
+that key's null sweeps. A found anchor that filled the slice
+(`null_sweep_key_after_publish`), or a placed recheck that anchors on a screen
+with no anchored origin (`SweepBudget::on_recheck`), ends the key's null sweeps
+too. A found origin is read only after a later capture
 confirms it. Homes: `run::cold_sweep_reason` and `run::SweepBudget` (when),
 `run::SweepSlot` and `run::confirm_swept` (off the loop), `run::sweep_line`
 (one measured line per sweep); normative write-up in

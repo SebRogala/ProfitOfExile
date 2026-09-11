@@ -3226,9 +3226,10 @@ fn grow_rect(held: Option<[i32; 4]>, fresh: Option<[i32; 4]>) -> Option<[i32; 4]
 const MERC_GEOMETRY_NOTICE_LINE: &str =
     "Merc: geometry notice pending — placed panel contradicted by detect (POE-271)";
 
-/// Where a locate moves the live capture's panel: the located rect, the origin
-/// to remember and the contradiction line — or none of them, when the locate
-/// found no layout or agrees with the placement inside the half-cell band.
+/// Where a locate moves the live capture's panel: the rect it settles on
+/// ([`relocated_panel`]), the origin to remember and the contradiction line —
+/// or none of them, when the locate found no layout or agrees with the
+/// placement inside the half-cell band.
 ///
 /// A [`LocateReason::ColdStart`] answers nothing BY ITS TYPE: it carries no
 /// placement, so there is nothing to contradict. This is the only producer of
@@ -3253,13 +3254,23 @@ fn fallback_panel(
         return (None, None, None);
     }
     (
-        Some(located),
+        Some(relocated_panel(located, placed)),
         Some([located[0], located[1]]),
         Some(format!(
             "merc: placed panel [{},{},{},{}] contradicted by detect [{},{},{},{}]",
             placed[0], placed[1], placed[2], placed[3], located[0], located[1], located[2], located[3]
         )),
     )
+}
+
+/// The panel rect a manual relocation settles on: the located origin — the one
+/// [`publish_then_remember`] hands `ssot::remember_anchor` — at the
+/// placement's size, because `ssot::placements_for` keeps the seed size under a
+/// remembered merc anchor. That is the rect the NEXT tick's placement will be,
+/// so its `read::lines_up` weighs the kept capture against the same panel and
+/// round 2 re-reads only the unknown instead of reading in full a second time.
+fn relocated_panel(located: [i32; 4], placed: [i32; 4]) -> [i32; 4] {
+    [located[0], located[1], placed[2], placed[3]]
 }
 
 /// Publish a successful fallback read before remembering its located origin.
@@ -4006,10 +4017,11 @@ fn detect_tick(
 
     // The placed rect is the geometry source for every tick that trusts the
     // placement, so none of them moves a live capture's panel. Only a manual
-    // locate that lands elsewhere uses the located panel for this read
-    // ([`fallback_panel`]), and a cold-start full detect derives one from its
-    // rows until the SSOT placement is available on the next tick. Decided
-    // before the plan, which weighs the kept capture's panel against it.
+    // locate that lands elsewhere uses the located origin, at the placement's
+    // size, for this read ([`fallback_panel`]), and a cold-start full detect
+    // derives one from its rows until the SSOT placement is available on the
+    // next tick. Decided before the plan, which weighs the kept capture's panel
+    // against it.
     let current_panel = located_panel
         .or_else(|| placement.map(|(panel, _)| panel))
         .or_else(|| geometry::panel_bounds(&layout, &session.geometry));
@@ -5301,6 +5313,39 @@ mod tests {
         let (_, no_origin, no_line) = fallback_panel(manual, &failed, &g);
         assert_eq!(no_origin, None);
         assert_eq!(no_line, None);
+    }
+
+    /// A manual relocation cost two full reads when its tick published the
+    /// located rect: the next tick's placement is the remembered origin at the
+    /// seed's size, so `read::lines_up` saw a different panel and round 2 read
+    /// in full again. The rect it publishes is the one `ssot::placements_for`
+    /// derives once the origin it hands `remember_anchor` is remembered.
+    #[test]
+    fn a_manual_relocation_publishes_the_panel_its_remembered_origin_places() {
+        let g = MercGeometry::default();
+        let layout = detected_layout();
+        let located = geometry::panel_bounds(&layout, &g).expect("the located layout has a panel");
+        let grabbed_on = (1, (0, 0), [0, 0, 1920, 1200]);
+        let mut screen = published_screen([1920, 1200], 1.0, ScaleSource::Frame, 0, grabbed_on);
+        let merc_panel = |screen: &crate::ssot::ScreenSlice| {
+            crate::ssot::placements_for(Some(screen)).merc.expect("a measured screen").panel
+        };
+        let placed = merc_panel(&screen);
+        assert_ne!(
+            [located[2], located[3]],
+            [placed[2], placed[3]],
+            "the fixture's located panel must differ in size from the seed, or the size is unseen",
+        );
+
+        let (panel, origin, _) =
+            fallback_panel(LocateReason::ManualMiss { placed: (placed, 1.0) }, &Ok(layout), &g);
+        screen.anchors = Some(crate::ssot::Anchors { temple_entrance: None, merc_panel: origin });
+
+        assert_eq!(
+            panel,
+            Some(merc_panel(&screen)),
+            "the next tick's placement is the panel this tick publishes"
+        );
     }
 
     #[test]

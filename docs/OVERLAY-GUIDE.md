@@ -996,11 +996,13 @@ touching the named path.
   with it. Retire lands at the 15 s cap rounded UP to the next detect tick, plus
   one more tick for the second miss — **so check which cadence you are in
   first**, because it dominates the number. A window still being read
-  re-detects every 2 s, so it retires ≈20 s after the close; a window the strip
-  already calls `done` is on the 10 s liveness cadence, so it retires ≈40 s
-  after the close (up to 10 s to notice, misses at +20 s and +30 s). Time it
-  from the close and compare against the cadence you are actually in — a `done`
-  window still on screen at 60 s, or a live one past ~25 s, means
+  re-detects every 2 s while it has reading rounds left (a round-spent
+  incomplete capture is on the 10 s cadence), so it retires ≈20 s after the
+  close; a window the strip already calls `done`, or a round-spent one, is on
+  the 10 s liveness cadence, so it retires ≈40 s after the close (up to 10 s to
+  notice, misses at +20 s and +30 s). Time it from the close and compare against
+  the cadence you are actually in — a `done` or round-spent window still on
+  screen at 60 s, or one with reading rounds left past ~25 s, means
   `OcclusionRun` is clearing its run on a counted miss and each cap is
   restarting the clock. If the capture does retire — the window really
   closed, or the cap fired — the next detect of the SAME panel must log
@@ -1019,6 +1021,27 @@ touching the named path.
   the inverse check matters too: a tick that merely read the panel badly must
   NOT log `recruit window replaced`, because that log line means the session's
   hover confirmations were just thrown away.
+- **Merc capture contract** (POE-278, ADR-025): open a recruit window with some
+  support icons the module does not know yet (cells the strip marks `?`) and
+  keep it open. `app.log` must say `Merc: read round 1 of 3 — full — …`, then
+  at most two more `Merc: read round N of 3 — re-read R rows, C cells, header
+  … — …` lines whose R and C count only the rows and cells the earlier rounds
+  left unknown, then either `Merc: capture complete — OCR paused (liveness
+  every 10 s)` or ONE `Merc: 3 reading rounds spent — still unread: …` line.
+  From then on the detect is on the 10 s cadence and no `read round` line comes
+  while the window stays open; round lines that keep coming every 2 s over an
+  unchanged window mean the budget is not being spent (`run::round_plan`).
+  **A tooltip moves nothing**: on a live capture, hover a gem so its tooltip
+  covers rows 0–1, then move off. No full-screen locate runs and no `merc:
+  placed panel … contradicted by detect …` line appears; the capture holds
+  (`Merc: panel occluded (cursor over it) — holding the capture`), and the rows
+  are back when the tooltip goes. A contradiction line here is the 2026-09-10
+  incident (ADR-025, Context). A column contradiction on a tick nobody asked
+  for — a voice-line probe or a live re-detect — logs `MERC_COLUMN_TRUSTED_LINE`
+  (`Merc: placed panel column disagrees with the read — trusting the
+  placement; Scan now or Recalibrate re-locates (POE-271)`) once per key, not
+  once per tick. **Scan now re-reads from round 1**: press it over the same
+  window and the next round line is `Merc: read round 1 of 3 — full` again.
 - **Game fullscreen on the secondary monitor** (POE-237, item 10 of the POE-223
   smoke list): put PoE fullscreen on a display that is NOT the Windows primary,
   alt-tab into it once so the focus poller resolves it (`app.log` says `game is
