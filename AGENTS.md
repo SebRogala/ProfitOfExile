@@ -64,9 +64,9 @@ and the documentation index before acting on them.
   or `frontend/src/routes/lab/components/` ↔ `desktop/src/routes/(app)/components/`, make each edit to
   code both copies share in that copy too, in the same change: the copies are hand-maintained, so a
   one-sided fix ships the bug.
-- When a code comment cross-references another function, file, or a replaced implementation, name
-  the symbol (`mirrors BuildCompareResults in collective.go`), not a line (`collective.go:311` rots
-  on the next edit). Keep the why and its evidence; drop "was X" notes about deleted code.
+- When a code comment cross-references another function or file, name the symbol (`mirrors
+  BuildCompareResults in collective.go`), not a line (`collective.go:311` rots on the next edit).
+  Keep the why and its evidence, including a past behaviour that explains a current constraint.
 
 ## Modeling rules
 

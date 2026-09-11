@@ -13,15 +13,16 @@ tests. Read nearby production code and tests first.
 - Name one behavior per test. Include negative and boundary cases.
 - Use table-driven tests where several inputs exercise the same contract.
 - When adding a branch-gating field (presence bool, mode enum) to a struct `*_test.go` builds by
-  composite literal, set it explicitly in every existing literal or retire the test whose name no
-  longer fits its branch (Go zero-fills omitted fields; those tests switch branch and still pass).
+  composite literal, audit every literal: set the field wherever the test's branch depends on it, and
+  rename or retire a test that now runs another branch (Go zero-fills omitted fields; it still passes).
 - Keep deterministic market data in unit tests; do not call live APIs.
 - Use `httptest` for HTTP behavior and assert response content as well as status.
 - Put local helpers in `*_test.go`, call `t.Helper()`, and match existing mock style.
-- When you add or edit an integration test, name the file `*_integration_test.go` AND start it with
-  the exact line `//go:build integration` (`scripts/integration-test.sh` fails on a mismatch).
-- Verify integration tests with `make test-integration` (throwaway real PostgreSQL; fails on any
-  `--- SKIP`); a plain `go test` with `DATABASE_URL` unset skips every helper and proves nothing.
+- When you add or edit an integration test, name the file `*_integration_test.go` AND put the exact
+  whole line `//go:build integration` in its build-constraint header (the script checks both match).
+- Verify integration tests with `make test-integration` (recreates a real PostgreSQL test database;
+  fails on any `--- SKIP`): plain `go test` never compiles tagged files, and `-tags integration`
+  without `DATABASE_URL` skips them, so neither proves anything.
 - List each new `league`-column table in `internal/db/migrations/migrations_integration_test.go`:
   key columns in the `relations` map of `TestScopedRelationsHaveLeagueIdentityAndPrimaryKeys`, name
   in `leagueRegistryRelations` (not `scopedRelations`: it holds only pre-league-migration tables).

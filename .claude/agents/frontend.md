@@ -24,6 +24,6 @@ The strategy-tree editor, inventory simulation, breakpoint visualization, and
 generic decision tree are historical product vision, not current frontend
 surfaces. Confirm current routes and API contracts in code.
 
-For every change under `frontend/`, run `npm run check` (svelte-check, CI's "Svelte check" step in
+For a frontend source, config, or dependency change, run `npm run check` (CI's "Svelte check" step in
 `.github/workflows/quality.yml`) as well as the production build `npm run build`: `vite build`
 compiles without typechecking, so an undefined identifier builds green and fails at runtime in prod.
