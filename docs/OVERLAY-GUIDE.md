@@ -550,6 +550,11 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   back as "let the content decide" while applying the registry's shipped width
   as a `max-width`. Persisting the measured size on every Save would pin every
   widget in the module the first time any one of them was moved.
+- A widget with `resizable: 'width'` offers only left/right resize edges. Save
+  writes its width with `height: 0`, and the placed box keeps that width while
+  its height remains content-driven.
+  In config mode, its frame keeps the height measured when the session opened;
+  the width-only guarantee applies to the placed box and to what Save writes.
 - **A stored placement is REBASED first and clamped second** (POE-239). Every
   placement carries the host size it was made against (`host_width` /
   `host_height`, physical px, written on every Save), and `rebase()` scales the
@@ -566,8 +571,9 @@ monitor and place small panels — WIDGETS — inside it. The temple is the firs
   of it through the rebase (converted with the window's scale factor, the same
   floor a live resize stops at), because a frame shrunk under its own grab zone
   has no interior to drag and no edge to pull, and config mode is the only way
-  back; a content-sized `0 × 0` is not a size and stays `0 × 0`. A row with `0`
-  for either host field is UNKNOWN — every row
+  back; a width-only row floors its width only; a content-sized `0 × 0` is
+  not a size and stays `0 × 0`. A row with `0` for either host field is
+  UNKNOWN — every row
   written before the field existed, and every row Settings' Show checkbox
   writes from a window that does not know the overlay's size — and is never
   rebased, so those behave exactly as they always did.

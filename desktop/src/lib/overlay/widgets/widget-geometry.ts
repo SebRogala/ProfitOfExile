@@ -253,15 +253,17 @@ export function rebase(
 	const rx = physicalHost.width / fromWidth;
 	const ry = physicalHost.height / fromHeight;
 	// Zero is the content-sizing contract, not a small rectangle, so only a
-	// widget that actually carries a size is floored.
-	const sized = geometry.width > 0 && geometry.height > 0;
-	const floor = sized ? Math.round(MIN_WIDGET_SIDE_CSS * scaleFactor) : 0;
+	// widget axis that actually carries a size is floored.
+	const floor = Math.round(MIN_WIDGET_SIDE_CSS * scaleFactor);
 	return {
 		...geometry,
 		x: Math.round(geometry.x * rx),
 		y: Math.round(geometry.y * ry),
-		width: Math.max(floor, Math.round(geometry.width * rx)),
-		height: Math.max(floor, Math.round(geometry.height * ry)),
+		width: Math.max(geometry.width > 0 ? floor : 0, Math.round(geometry.width * rx)),
+		height: Math.max(
+			geometry.width > 0 && geometry.height > 0 ? floor : 0,
+			Math.round(geometry.height * ry)
+		),
 		host_width: physicalHost.width,
 		host_height: physicalHost.height
 	};
@@ -324,7 +326,8 @@ export function edgeFor(
 	offsetY: number
 ): ResizeEdge | null {
 	if (!spec.resizable) return null;
-	return edgeAt(rect, offsetX, offsetY);
+	const edge = edgeAt(rect, offsetX, offsetY);
+	return spec.resizable === 'width' && edge !== 'East' && edge !== 'West' ? null : edge;
 }
 
 /** The CSS cursor for each edge; the interior is a move. */
@@ -428,9 +431,13 @@ export function sizeToPersist(
 	resizedInSession: boolean,
 	stored: WidgetGeometry | undefined
 ): WidgetRect {
-	const hadSize = !!stored && stored.width > 0 && stored.height > 0;
+	const hadSize =
+		spec.resizable === 'width'
+			? !!stored && stored.width > 0
+			: !!stored && stored.width > 0 && stored.height > 0;
 	const keep = spec.resizable && (resizedInSession || hadSize);
-	return keep ? rect : { x: rect.x, y: rect.y, w: 0, h: 0 };
+	if (!keep) return { x: rect.x, y: rect.y, w: 0, h: 0 };
+	return spec.resizable === 'width' ? { x: rect.x, y: rect.y, w: rect.w, h: 0 } : rect;
 }
 
 /**
@@ -558,7 +565,8 @@ export function placementFor(
 	const based = rebase(geometry, hostInPhysicalPx(host, scaleFactor), scaleFactor);
 	const rect = cssRect(based, scaleFactor);
 	if (!rect) return null;
-	const sized = spec.resizable && based.width > 0 && based.height > 0;
+	const widthOnly = spec.resizable === 'width';
+	const sized = widthOnly ? based.width > 0 : spec.resizable && based.width > 0 && based.height > 0;
 	// Clamped against the window it is about to be drawn in, not against the one
 	// it was saved on: a stored placement outlives the monitor it was made on, and
 	// a widget whose origin is past the new bottom-right renders entirely
@@ -571,14 +579,14 @@ export function placementFor(
 		x: rect.x,
 		y: rect.y,
 		w: sized ? rect.w : spec.defaults.w,
-		h: sized ? rect.h : spec.defaults.h
+		h: widthOnly ? spec.defaults.h : sized ? rect.h : spec.defaults.h
 	};
 	const placed = host.width > 0 && host.height > 0 ? clampToHost(extent, host) : extent;
 	return {
 		x: placed.x,
 		y: placed.y,
 		width: sized ? rect.w : null,
-		height: sized ? rect.h : null,
+		height: widthOnly && sized ? null : sized ? rect.h : null,
 		maxWidth: sized ? null : ceiling
 	};
 }

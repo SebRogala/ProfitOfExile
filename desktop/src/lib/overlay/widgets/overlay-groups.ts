@@ -202,16 +202,18 @@ export function canStartConfigure(open: OpenConfigFlows): boolean {
 /**
  * The geometry line for one widget row.
  *
- * Three answers, because a widget has three states and two of them used to be
- * spelled the same way. NO ROW is "Not set" — the widget is wherever the
- * registry ships it. A row with a ZERO size is placed but CONTENT-SIZED, which
- * is what Save writes for a widget the user moved but never resized
- * (`sizeToPersist`); printing that as `0×0` would read as a widget collapsed to
- * nothing. Anything else prints the stored rectangle.
+ * Four answers, because a widget has an unset, width-only (`W wide`),
+ * content-sized, or fully-sized state. NO ROW is "Not set" — the widget is
+ * wherever the registry ships it. A row with a ZERO size is placed but
+ * CONTENT-SIZED, which is what Save writes for a widget the user moved but
+ * never resized (`sizeToPersist`); printing that as `0×0` would read as a
+ * widget collapsed to nothing. Anything else prints the stored rectangle.
  *
- * The "both dimensions" test is `placementFor`'s, deliberately: whatever this
- * line calls sized has to be what the host actually applies as a size, or the
- * row describes a widget the player is not looking at.
+ * The sized tests mirror `placementFor`'s for the spec that writes each shape:
+ * both dimensions for a `resizable: true` widget, a width with a zero height
+ * for `resizable: 'width'` — whatever this line calls sized has to be what the
+ * host actually applies as a size, or the row describes a widget the player is
+ * not looking at.
  *
  * The numbers are PHYSICAL pixels, like the five window rows above them —
  * `WidgetGeometry` is what Rust persists, and no conversion happens on the way
@@ -220,6 +222,9 @@ export function canStartConfigure(open: OpenConfigFlows): boolean {
 export function widgetGeometryText(geometry: WidgetGeometry | undefined): string {
 	if (!geometry) return 'Not set';
 	const at = `(${geometry.x}, ${geometry.y})`;
+	if (geometry.width > 0 && geometry.height === 0) {
+		return `${at} ${geometry.width} wide`;
+	}
 	if (geometry.width > 0 && geometry.height > 0) {
 		return `${at} ${geometry.width}×${geometry.height}`;
 	}
