@@ -1,8 +1,10 @@
 //! Turning a detected layout into a capture (POE-165 D2 pass 2, D4).
 //!
-//! [`build_capture`] is the ONE place a `MercLayout` plus a screen image
-//! becomes a [`MercCapture`]: the capture loop and the debug command both go
-//! through it, so a dump can never disagree with what the page was shown.
+//! [`build_planned`] is the ONE place a `MercLayout` plus a screen image
+//! becomes a [`MercCapture`]: the debug command goes through its full-read form
+//! [`build_capture`], and the capture loop through the same function with the
+//! round's [`ReadPlan`] (POE-278), so a dump can never disagree with what the
+//! page was shown. [`carry_capture`] is the round that reads nothing.
 //!
 //! It is pure — image in, capture out, no OCR call, no clock, no lock — which
 //! is what makes the cell walk (occupancy → signature → badge → vocabulary)
@@ -16,7 +18,8 @@ use image::{DynamicImage, GenericImageView, RgbaImage};
 use serde::Serialize;
 
 use super::geometry::{
-    inner_rect, name_crop_left, occupied, stddev, Frame, MercLayout, MercLayoutRow, NAME_CROP_PAD,
+    column_tolerance, inner_rect, name_crop_left, occupied, stddev, Frame, MercLayout,
+    MercLayoutRow, NAME_CROP_PAD,
 };
 use super::icons::{cell_candidates, read_tier, CellSig, TemplateStore};
 use super::vocab::{classify_resolution, MercVocab};
@@ -69,6 +72,13 @@ pub struct ReadResult {
     /// are talking about — the second, code-verified mislabel path behind the
     /// 21 poisoned templates of 2026-08-26.
     pub sigs: HashMap<(String, u8), (CellSig, Option<RgbaImage>)>,
+    /// The `(row key, slot)` of every cell this read COPIED from the kept
+    /// capture instead of matching it (POE-278). A copied cell cut no crop, so
+    /// it has nothing in [`Self::sigs`]; its entry in the loop's crop cache is
+    /// the one an earlier read cut, and `run::merge_sigs` carries it across
+    /// this read rather than dropping it. Filtered by the same trailing-row trim
+    /// and the same collision rule as [`Self::sigs`].
+    pub carried: HashSet<(String, u8)>,
 }
 
 /// The key a confirmation — and the pre-hover crop it learns from — is
@@ -103,7 +113,8 @@ pub fn row_key(skill: &MercSkillRead) -> String {
     }
 }
 
-/// Read a detected layout into a capture.
+/// Read a detected layout into a capture — the FULL read: pass-2 text for every
+/// row, the icon walk for every row. [`build_planned`] with no plan.
 ///
 /// `row_texts` is per row, in layout order: the pass-2 text where the re-OCR
 /// produced one, the pass-1 text otherwise (see [`pass2_texts`]). Passing the
@@ -122,31 +133,106 @@ pub fn build_capture(
     vocab: &MercVocab,
     store: &TemplateStore,
 ) -> ReadResult {
+    build_planned(img, frame, layout, row_texts, captured_at_ms, g, vocab, store, None)
+}
+
+/// Read a detected layout into a capture, re-reading only what `planned` asks
+/// for (POE-278, ADR-025 clause 2).
+///
+/// `planned` is the round's per-layout-row [`RowPlan`] (see [`plan_read`])
+/// and the KEPT capture it was decided from; `None` is the full read
+/// [`build_capture`] names. Per layout row, matched to the kept row by `index`:
+///
+/// - [`RowPlan::Read`] — the row's `row_texts` entry through the vocabulary
+///   and the whole icon walk, exactly as a full read. A kept row, or a missing
+///   one, is never consulted: its skill can resolve to another `row_key`, and
+///   the crop cache and the confirmations key on it.
+/// - [`RowPlan::Cells`] and [`RowPlan::Unseen`] — the kept skill verbatim (its
+///   `row_texts` entry is ignored) and the occupancy walk, which is pixels
+///   only. A slot whose kept cell is confident is COPIED — no
+///   `cell_candidates`, no badge read, no `match_family` — and every other
+///   occupied slot is matched: an unknown kept cell, or a slot past the row's
+///   last kept cell, which no read has seen yet. The two differ only in what
+///   the plan expects to find ([`plan_read`]).
+///
+/// An empty slot stops the WALK, not the row. A panel's cells are a prefix, so
+/// a CONFIDENT kept cell at or past that slot proves the dark read is this
+/// frame's — a tooltip's shadow, a redraw — and the kept cells up to and
+/// including the last confident one ride verbatim: one frame must not remove
+/// cells an earlier round read, confirmed ones included, or the next round
+/// would plan over the truncated row. Kept cells past the last confident one
+/// were verified by nothing, and this frame says the slot is empty, so they
+/// are dropped as a full read would drop them — an occlusion phantom must not
+/// outlive its tooltip.
+///
+/// A copied cell takes its `rect` from THIS layout where it has that slot (the
+/// kept rect otherwise): the geometry is the layout's, the identity and read
+/// state are the kept read's. It lands in [`ReadResult::carried`], not in
+/// [`ReadResult::sigs`]. A row the plan wants walked but the kept capture does
+/// not have is read.
+///
+/// The skill-icon sensor and the collision rule run over every layout row
+/// whatever the plan says: they are pixel reads and key arithmetic, not OCR.
+/// The trailing-row trim does too, but never removes a row taken from the kept
+/// read — that row was on screen when it was read, and a dark icon on this
+/// frame is not evidence it left.
+#[allow(clippy::too_many_arguments)]
+pub fn build_planned(
+    img: &DynamicImage,
+    frame: Frame,
+    layout: &MercLayout,
+    row_texts: &[String],
+    captured_at_ms: u64,
+    g: &MercGeometry,
+    vocab: &MercVocab,
+    store: &TemplateStore,
+    planned: Option<(&[RowPlan], &MercCapture)>,
+) -> ReadResult {
     let mut cells_debug = Vec::new();
     let mut sigs = HashMap::new();
+    let mut carried = HashSet::new();
     // Every row's key, in layout order — the collision count at the end needs
     // the keys of rows that cached nothing too, because a row with no occupied
     // cell still claims its key.
     let mut row_keys: Vec<String> = Vec::with_capacity(layout.rows.len());
     let mut rows = Vec::with_capacity(layout.rows.len());
-    let mut row_icons = Vec::with_capacity(layout.rows.len());
+    let (row_icons, rows_on_screen) = icon_sensor(img, frame, layout, g);
+    // One past the last row taken from the kept read — the trim's floor.
+    let mut kept_len = 0;
 
     for (i, row) in layout.rows.iter().enumerate() {
-        let raw = row_texts.get(i).cloned().unwrap_or_else(|| row.text.clone());
-        let name_read = vocab.match_skill(&raw, &g.thresholds);
-        let skill = MercSkillRead {
-            raw,
-            ids: name_read.ids,
-            name: name_read.name,
-            score: name_read.score,
-            state: name_read.state,
+        // What this round does with the row, and the kept row it copies from.
+        // `None` is a read: no plan, a `Read` row, or no kept row to copy.
+        let kept = planned.and_then(|(plan, kept)| {
+            let action = plan.get(i).copied().unwrap_or(RowPlan::Read);
+            if action == RowPlan::Read {
+                return None;
+            }
+            kept.rows.iter().find(|k| k.index == row.index).map(|k| (action, k))
+        });
+        let skill = match kept {
+            Some((_, known)) => known.skill.clone(),
+            None => {
+                let raw = row_texts.get(i).cloned().unwrap_or_else(|| row.text.clone());
+                let name_read = vocab.match_skill(&raw, &g.thresholds);
+                MercSkillRead {
+                    raw,
+                    ids: name_read.ids,
+                    name: name_read.name,
+                    score: name_read.score,
+                    state: name_read.state,
+                }
+            }
         };
         // The identity the crop cache and the hover-confirm SHARE. Computed
         // once per row, from the skill the row just resolved to.
         let key = row_key(&skill);
         row_keys.push(key.clone());
 
-        row_icons.push(occupied(img, frame.local(row.skill_icon), g));
+        let kept_row = kept.map(|(_, known)| known);
+        if kept_row.is_some() {
+            kept_len = i + 1;
+        }
 
         let mut supports = Vec::new();
         for (slot, rect) in row.cells.iter().enumerate() {
@@ -171,7 +257,56 @@ pub fn build_capture(
                     icon_runner_up: 0.0,
                     state: ReadState::Unknown,
                 });
+                // The walk stops here. A panel's cells are a prefix, so a
+                // CONFIDENT kept cell at or past this slot proves the empty read
+                // is this frame's (a tooltip's shadow, a redraw): the kept cells
+                // up to it ride verbatim. Past the last confident one nothing
+                // verified them and this frame says the slot is empty — they
+                // go, as a full read would drop them (an occlusion phantom must
+                // not outlive its tooltip).
+                if let Some(known) = kept_row {
+                    let last_confident = known
+                        .supports
+                        .iter()
+                        .filter(|cell| cell.slot as usize >= slot && confident(cell.state))
+                        .map(|cell| cell.slot)
+                        .max();
+                    let rest = known.supports.iter().filter(|cell| {
+                        cell.slot as usize >= slot && last_confident.is_some_and(|l| cell.slot <= l)
+                    });
+                    for cell in rest {
+                        supports.push(MercSupportRead {
+                            rect: row.cells.get(cell.slot as usize).copied().unwrap_or(cell.rect),
+                            ..cell.clone()
+                        });
+                        carried.insert((key.clone(), cell.slot));
+                    }
+                }
                 break;
+            }
+
+            // A cell the kept read is confident about is COPIED, never matched
+            // again: a confident read is not replaced by a later round
+            // (ADR-025 clause 2). Occupied is all this round asks of it.
+            if let Some(known) = kept_row.and_then(|k| confident_cell(k, slot as u8)) {
+                supports.push(MercSupportRead {
+                    rect: *rect,
+                    ..known.clone()
+                });
+                cells_debug.push(CellDebug {
+                    row: row.index,
+                    slot: slot as u8,
+                    rect: *rect,
+                    stddev: sd,
+                    occupied: true,
+                    tier: known.tier,
+                    family: known.family.clone(),
+                    icon_score: known.score,
+                    icon_runner_up: 0.0,
+                    state: known.state,
+                });
+                carried.insert((key.clone(), slot as u8));
+                continue;
             }
 
             // Built ONCE per occupied cell and matched against every template
@@ -232,16 +367,19 @@ pub fn build_capture(
     // fewer rows than the seed allows. Keep every row when no icon is visible
     // (that preserves an OCR-only read and its honest unknown rows), but once
     // the icon sensor sees a row, do not publish trailing geometry whose icon
-    // cell is dark. `row_icons` is computed above, alongside support-cell
-    // occupancy, so this trim cannot turn an occupied support into "nothing".
+    // cell is dark. `row_icons` is the same gate as support-cell occupancy
+    // ([`icon_sensor`]), so this trim cannot turn an occupied support into
+    // "nothing". A row a partial round took from the kept read stays: it was
+    // on screen when it was read (`kept_len`).
     if let Some(last_occupied) = row_icons.iter().rposition(|&occupied| occupied) {
-        let retained_len = last_occupied + 1;
+        let retained_len = (last_occupied + 1).max(kept_len);
         if retained_len < rows.len() {
             let removed_keys = row_keys[retained_len..]
                 .iter()
                 .cloned()
                 .collect::<HashSet<_>>();
             sigs.retain(|(key, _): &(String, u8), _| !removed_keys.contains(key));
+            carried.retain(|(key, _)| !removed_keys.contains(key));
             rows.truncate(retained_len);
             row_keys.truncate(retained_len);
             let last_index = rows.last().map_or(0, |row| row.index);
@@ -249,6 +387,168 @@ pub fn build_capture(
         }
     }
 
+    let rows_read = rows
+        .iter()
+        .filter(|row| row.skill.state != ReadState::Unknown)
+        .count();
+
+    // COLLIDING ROWS CACHE NOTHING. `row_key` is a resolved skill id or a
+    // lowercased raw OCR line, and neither is unique across the rows of one
+    // panel: a fuzzy match can land on the same skill twice, and two unread
+    // rows can OCR to the same text. Those rows share one cache key, so the
+    // later one's crop silently overwrites the earlier one's and a confirm on
+    // the earlier row would learn the LATER row's art under the tooltip's
+    // family. The two-read hover guard cannot see it — it corroborates the
+    // tooltip, and both reads of the wrong crop agree.
+    //
+    // Dropping the crops of every colliding row leaves those cells reporting
+    // `NoCrop`: the confirmation still names them, nothing is learned. The next
+    // read that reads the skill lines apart caches them again for a cell it
+    // MATCHES; a cell it copies (POE-278) cut no crop and stays `NoCrop` for
+    // the rest of the capture.
+    //
+    // A carried crop is a crop too: a copied row that collides carries none.
+    let counts = key_counts(&row_keys);
+    sigs.retain(|(key, _): &(String, u8), _| counts.get(key.as_str()) == Some(&1));
+    carried.retain(|(key, _)| counts.get(key.as_str()) == Some(&1));
+
+    ReadResult {
+        capture: MercCapture {
+            captured_at_ms,
+            live: true,
+            scale: layout.scale,
+            // The SCREEN, not the image: a cropped detect frame is smaller
+            // than the desktop, and `run::hover_region` clamps the tooltip
+            // crop to this — clamping it to the panel would cut every tooltip
+            // that opens outside the grid.
+            screen: frame.screen(),
+            panel: None,
+            header: layout.header.clone(),
+            rows,
+            rows_on_screen,
+            rows_read,
+            partial: false,
+        },
+        cells: cells_debug,
+        rows_on_screen,
+        rows_read,
+        sigs,
+        carried,
+    }
+}
+
+/// The round that reads nothing (POE-278, [`ReadPlan::Nothing`]): the kept
+/// capture carried onto this frame.
+///
+/// Every kept row verbatim, in the kept order — a layout row the kept capture
+/// lacks is not added, because nothing here reads it — with each cell's `rect`
+/// taken from this layout's row of the same `index` where it has that slot.
+/// The skill-icon sensor still runs over every layout row: it is the pixel
+/// counter `rows_on_screen`, not a read. `rows_read` counts the carried rows.
+/// The header is this layout's pass-1 header, for the caller to fold; every
+/// carried cell is in [`ReadResult::carried`] unless its row key collides.
+pub fn carry_capture(
+    img: &DynamicImage,
+    frame: Frame,
+    layout: &MercLayout,
+    kept: &MercCapture,
+    captured_at_ms: u64,
+    g: &MercGeometry,
+) -> ReadResult {
+    let (_, rows_on_screen) = icon_sensor(img, frame, layout, g);
+    let rows: Vec<MercRow> = kept
+        .rows
+        .iter()
+        .map(|known| MercRow {
+            index: known.index,
+            skill: known.skill.clone(),
+            supports: match layout.rows.iter().find(|row| row.index == known.index) {
+                Some(row) => copied_cells(known, row),
+                None => known.supports.clone(),
+            },
+        })
+        .collect();
+    let rows_read = rows
+        .iter()
+        .filter(|row| row.skill.state != ReadState::Unknown)
+        .count();
+    let row_keys: Vec<String> = rows.iter().map(|row| row_key(&row.skill)).collect();
+    let counts = key_counts(&row_keys);
+    let carried = rows
+        .iter()
+        .zip(&row_keys)
+        .filter(|(_, key)| counts.get(key.as_str()) == Some(&1))
+        .flat_map(|(row, key)| row.supports.iter().map(move |cell| (key.clone(), cell.slot)))
+        .collect();
+    ReadResult {
+        capture: MercCapture {
+            captured_at_ms,
+            live: true,
+            scale: layout.scale,
+            screen: frame.screen(),
+            panel: None,
+            header: layout.header.clone(),
+            rows,
+            rows_on_screen,
+            rows_read,
+            partial: false,
+        },
+        cells: Vec::new(),
+        rows_on_screen,
+        rows_read,
+        sigs: HashMap::new(),
+        carried,
+    }
+}
+
+/// A kept row's cells at `row`'s rects: identity and read state from the kept
+/// read, geometry from this layout. A slot this layout row does not have keeps
+/// its kept rect.
+fn copied_cells(known: &MercRow, row: &MercLayoutRow) -> Vec<MercSupportRead> {
+    known
+        .supports
+        .iter()
+        .map(|cell| MercSupportRead {
+            rect: row.cells.get(cell.slot as usize).copied().unwrap_or(cell.rect),
+            ..cell.clone()
+        })
+        .collect()
+}
+
+/// The kept cell at `slot`, when the kept read is confident about it.
+fn confident_cell(known: &MercRow, slot: u8) -> Option<&MercSupportRead> {
+    known
+        .supports
+        .iter()
+        .find(|cell| cell.slot == slot && confident(cell.state))
+}
+
+/// How many rows claim each row key — the collision count both builders share.
+fn key_counts(row_keys: &[String]) -> HashMap<&str, usize> {
+    let mut counts: HashMap<&str, usize> = HashMap::with_capacity(row_keys.len());
+    for key in row_keys {
+        *counts.entry(key.as_str()).or_insert(0) += 1;
+    }
+    counts
+}
+
+/// The skill-icon sensor over every layout row, and the `rows_on_screen` count
+/// it makes: the occupied icons plus one probe a pitch above the first row and
+/// one a pitch below the last.
+///
+/// Pixel reads only, so every round runs it whatever its plan (POE-278). The
+/// per-row half is also what [`build_planned`]'s trailing-row trim keys on.
+fn icon_sensor(
+    img: &DynamicImage,
+    frame: Frame,
+    layout: &MercLayout,
+    g: &MercGeometry,
+) -> (Vec<bool>, usize) {
+    let row_icons: Vec<bool> = layout
+        .rows
+        .iter()
+        .map(|row| occupied(img, frame.local(row.skill_icon), g))
+        .collect();
     // The icon sensor also samples one pitch outside the enumerated geometry.
     // Those probes are counters only: there is no row geometry to publish for
     // them, but they catch a panel that extends just beyond the seed.
@@ -272,56 +572,226 @@ pub fn build_capture(
             }
         }
     }
-    let rows_read = rows
-        .iter()
-        .filter(|row| row.skill.state != ReadState::Unknown)
-        .count();
-
-    // COLLIDING ROWS CACHE NOTHING. `row_key` is a resolved skill id or a
-    // lowercased raw OCR line, and neither is unique across the rows of one
-    // panel: a fuzzy match can land on the same skill twice, and two unread
-    // rows can OCR to the same text. Those rows share one cache key, so the
-    // later one's crop silently overwrites the earlier one's and a confirm on
-    // the earlier row would learn the LATER row's art under the tooltip's
-    // family. The two-read hover guard cannot see it — it corroborates the
-    // tooltip, and both reads of the wrong crop agree.
-    //
-    // Dropping the crops of every colliding row leaves those cells reporting
-    // `NoCrop`: the confirmation still names them, nothing is learned, and the
-    // player can un-collide the panel by nothing at all — the next detect that
-    // reads the skill lines apart caches them again.
-    let mut counts: HashMap<&str, usize> = HashMap::with_capacity(row_keys.len());
-    for key in &row_keys {
-        *counts.entry(key.as_str()).or_insert(0) += 1;
-    }
-    sigs.retain(|(key, _): &(String, u8), _| counts.get(key.as_str()) == Some(&1));
-
-    ReadResult {
-        capture: MercCapture {
-            captured_at_ms,
-            live: true,
-            scale: layout.scale,
-            // The SCREEN, not the image: a cropped detect frame is smaller
-            // than the desktop, and `run::hover_region` clamps the tooltip
-            // crop to this — clamping it to the panel would cut every tooltip
-            // that opens outside the grid.
-            screen: frame.screen(),
-            panel: None,
-            header: layout.header.clone(),
-            rows,
-            rows_on_screen,
-            rows_read,
-            partial: false,
-        },
-        cells: cells_debug,
-        rows_on_screen,
-        rows_read,
-        sigs,
-    }
+    (row_icons, rows_on_screen)
 }
 
 fn shifted_y(rect: [i32; 4], delta: i32) -> [i32; 4] {
     [rect[0], rect[1] + delta, rect[2], rect[3]]
+}
+
+// ---------------------------------------------------------------------------
+// The read plan (POE-278, ADR-025 clauses 2 and 3)
+// ---------------------------------------------------------------------------
+
+/// What one round does with one layout row. See [`build_planned`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowPlan {
+    /// Pass 2 for the name band and the full icon walk.
+    Read,
+    /// The kept skill verbatim and the occupancy walk: the kept read's
+    /// confident cells copied, its unknown cells matched. The row has kept
+    /// cells that are not confident.
+    Cells,
+    /// The kept skill verbatim and the occupancy walk, as [`Self::Cells`] —
+    /// every kept cell is confident and copied, so the walk can only match a
+    /// slot past the row's last kept cell that reads occupied: a slot no read
+    /// has seen (its art was still drawing on round 1). Pixels only unless one
+    /// turns up.
+    Unseen,
+}
+
+impl RowPlan {
+    /// Whether the round re-OCRs this row's name band (pass 2). Only a
+    /// [`Self::Read`] row does: the other two keep the kept skill.
+    pub fn reads_name(self) -> bool {
+        self == RowPlan::Read
+    }
+}
+
+/// A header field [`header_complete`] reads — the wager is not one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeaderField {
+    /// Missing, or not name-shaped ([`super::geometry::is_name_shaped`]).
+    Name,
+    Class,
+    Level,
+}
+
+impl HeaderField {
+    pub fn label(self) -> &'static str {
+        match self {
+            HeaderField::Name => "name",
+            HeaderField::Class => "class",
+            HeaderField::Level => "level",
+        }
+    }
+}
+
+/// What one reading round of a live capture OCRs, decided from the KEPT
+/// capture before any of the round's OCR is paid for (POE-278).
+///
+/// The owner's rule, ADR-025: one full read; while that read is incomplete, at
+/// most `run::RETRIES` more rounds, each re-reading only what the kept read
+/// leaves unknown; then only the presence check. Pass 1 on the placed crop is
+/// that presence check and runs on every detect tick whatever the plan says —
+/// which is also why the header, which pass 1 reads, is folded on every round
+/// including [`Self::Nothing`] (see [`fold_unresolved_header`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadPlan {
+    /// Pass 2 for every row, the icon walk for every row: round 1, and a kept
+    /// capture that no longer lines up with the layout ([`plan_read`]).
+    Full,
+    /// Re-read only what the kept capture leaves unknown.
+    Partial {
+        /// One entry per layout row, in layout order.
+        rows: Vec<RowPlan>,
+        /// The kept cells that are not confident in the [`RowPlan::Cells`]
+        /// rows — the cells this round is for.
+        cells: usize,
+        /// The kept header's unresolved fields, folded from pass 1.
+        header: Vec<HeaderField>,
+    },
+    /// Nothing to re-read: the kept capture is complete, or the rounds are
+    /// spent. The kept capture is carried ([`carry_capture`]).
+    Nothing,
+}
+
+impl ReadPlan {
+    /// Whether this round reads anything — every plan but [`Self::Nothing`],
+    /// and the rounds `run::LoopState` counts.
+    pub fn reads(&self) -> bool {
+        *self != ReadPlan::Nothing
+    }
+
+    /// What the round did, for the read line: `full`, `nothing`, or
+    /// `re-read R rows, C cells, header <fields>`.
+    pub fn describe(&self) -> String {
+        match self {
+            ReadPlan::Full => "full".to_string(),
+            ReadPlan::Nothing => "nothing".to_string(),
+            ReadPlan::Partial { rows, cells, header } => format!(
+                "re-read {} rows, {cells} cells, header {}",
+                rows.iter().filter(|row| row.reads_name()).count(),
+                header_fields_text(header),
+            ),
+        }
+    }
+}
+
+/// `name/class`, or `none` — the header half of the read lines.
+pub fn header_fields_text(fields: &[HeaderField]) -> String {
+    if fields.is_empty() {
+        return "none".to_string();
+    }
+    fields.iter().map(|field| field.label()).collect::<Vec<_>>().join("/")
+}
+
+/// The plan for the round about to run.
+///
+/// `kept` is the capture the loop holds, and `None` both for a first look and
+/// for round 1 of a refilled budget — round 1 reads everything, whatever is
+/// kept. `rounds_left` is how many rounds the budget still allows, this one
+/// included; `panel` and `layout` are this tick's.
+///
+/// In order:
+///
+/// 1. no kept capture → [`ReadPlan::Full`];
+/// 2. the kept capture complete, or no rounds left → [`ReadPlan::Nothing`] —
+///    before the geometry test, so a jittery geometry cannot buy reads forever;
+/// 3. the kept capture does not [line up](lines_up) with this layout →
+///    [`ReadPlan::Full`], which the caller counts as a round like any other;
+/// 4. otherwise [`ReadPlan::Partial`], per layout row, against the kept row of
+///    the same `index`: no kept row, or a skill that is not [`confident`] →
+///    [`RowPlan::Read`]; a confident skill with a cell that is not →
+///    [`RowPlan::Cells`]; everything confident → [`RowPlan::Unseen`], which
+///    still walks for a slot past the last kept cell (a slot never seen is
+///    unknown too).
+pub fn plan_read(
+    kept: Option<&MercCapture>,
+    rounds_left: u8,
+    panel: Option<[i32; 4]>,
+    layout: &MercLayout,
+    g: &MercGeometry,
+) -> ReadPlan {
+    let Some(kept) = kept else {
+        return ReadPlan::Full;
+    };
+    if rounds_left == 0 || capture_complete(kept) {
+        return ReadPlan::Nothing;
+    }
+    if !lines_up(kept, panel, layout, g) {
+        return ReadPlan::Full;
+    }
+    let mut cells = 0;
+    let rows = layout
+        .rows
+        .iter()
+        .map(|row| {
+            let Some(known) = kept.rows.iter().find(|k| k.index == row.index) else {
+                return RowPlan::Read;
+            };
+            if !confident(known.skill.state) {
+                return RowPlan::Read;
+            }
+            let unread = known.supports.iter().filter(|cell| !confident(cell.state)).count();
+            if unread == 0 {
+                RowPlan::Unseen
+            } else {
+                cells += unread;
+                RowPlan::Cells
+            }
+        })
+        .collect();
+    ReadPlan::Partial {
+        rows,
+        cells,
+        header: unresolved_header_fields(&kept.header),
+    }
+}
+
+/// Whether the kept capture is a read of THIS layout's geometry, so its rows
+/// and cells may be matched to the layout's by `index` and `slot`.
+///
+/// All three, exactly:
+///
+/// - the kept `panel` equals this tick's panel rect — both are the loop's
+///   settled rect (the SSOT placement on a placed tick), not a per-tick
+///   measurement, so any difference is a moved placement;
+/// - every kept row's `index` is a layout row's;
+/// - every kept cell has a layout cell at the same `(index, slot)` of the same
+///   width and height, whose origin lies inside the half-cell band
+///   (`geometry::column_tolerance`, the band a placed panel's column and origin
+///   are held to) on both axes. The size test is what catches an adopted cell
+///   size; the band absorbs the per-tick jitter of the OCR-seeded row centres
+///   and the frame fit, which is far less than the half cell that would put a
+///   cell on its neighbour.
+///
+/// A layout row the kept capture has no row for does not break the match — it
+/// is an unknown row, and [`plan_read`] reads it.
+fn lines_up(
+    kept: &MercCapture,
+    panel: Option<[i32; 4]>,
+    layout: &MercLayout,
+    g: &MercGeometry,
+) -> bool {
+    if kept.panel != panel {
+        return false;
+    }
+    let tolerance = column_tolerance(g, layout.scale);
+    kept.rows.iter().all(|known| {
+        let Some(row) = layout.rows.iter().find(|row| row.index == known.index) else {
+            return false;
+        };
+        known.supports.iter().all(|cell| match row.cells.get(cell.slot as usize) {
+            Some(rect) => {
+                rect[2] == cell.rect[2]
+                    && rect[3] == cell.rect[3]
+                    && (rect[0] - cell.rect[0]).abs() <= tolerance
+                    && (rect[1] - cell.rect[1]).abs() <= tolerance
+            }
+            None => false,
+        })
+    })
 }
 
 /// `(family, tier)` → the vocabulary link(s) it names (D4's resolution table).
@@ -425,6 +895,31 @@ pub fn merge_header(prev: &super::MercHeader, next: &super::MercHeader) -> super
         // (see [`fold_header`]), so first-wins cannot outlive its window.
         level: prev.level.or(next.level),
         wager: prev.wager.or(next.wager),
+    }
+}
+
+/// The header a round that did not read the panel afresh publishes (POE-278):
+/// a field the kept header has RESOLVED stays verbatim, and an unresolved one
+/// ([`unresolved_header_fields`]) is folded from this frame's pass-1 header by
+/// [`merge_header`]'s rules. The wager follows [`merge_header`].
+///
+/// [`merge_header`] alone would let a strictly better read replace a resolved
+/// field; a partial round, and a liveness tick, read nothing to replace it
+/// with. Pass 1 is the presence check and runs on every detect tick anyway, so
+/// the fold costs no OCR and goes on for as long as a field is unresolved —
+/// round-spent liveness ticks included.
+pub fn fold_unresolved_header(
+    kept: &super::MercHeader,
+    pass1: &super::MercHeader,
+) -> super::MercHeader {
+    let merged = merge_header(kept, pass1);
+    let open = unresolved_header_fields(kept);
+    let open_field = |field| open.contains(&field);
+    super::MercHeader {
+        name: if open_field(HeaderField::Name) { merged.name } else { kept.name.clone() },
+        class: if open_field(HeaderField::Class) { merged.class } else { kept.class.clone() },
+        level: if open_field(HeaderField::Level) { merged.level } else { kept.level },
+        wager: merged.wager,
     }
 }
 
@@ -631,11 +1126,13 @@ fn alnum_len(text: &str) -> usize {
 /// stops at the first unoccupied slot, so a cell that IS in the list is a cell
 /// that is on screen).
 ///
-/// This is what lets the DETECT stop: at complete there is no better read
-/// available from another full-screen pass, so the 2 s re-detect is pure heat
-/// over the game and only the liveness check (is the window still there?) has
-/// anything left to find out. The hover tick keeps running — a tooltip can
-/// still contradict a confident wrong match, which no re-detect ever would.
+/// This is what stops the re-reading (ADR-025 clause 3): a complete kept
+/// capture plans [`ReadPlan::Nothing`], and the loop drops to the liveness
+/// cadence, where the detect OCRs the placed crop to know the window is still
+/// there (and to notice a REMATCH) and re-reads nothing. The other stop is the
+/// round budget running out ([`plan_read`]). The hover tick keeps running — a
+/// tooltip can still contradict a confident wrong match, which no re-detect
+/// ever would.
 pub fn capture_complete(capture: &MercCapture) -> bool {
     header_complete(&capture.header)
         && capture.rows.iter().all(|row| {
@@ -658,12 +1155,23 @@ pub fn capture_complete(capture: &MercCapture) -> bool {
 /// test is not complete, so the loop keeps reading until a clean frame gives it
 /// one.
 pub fn header_complete(header: &super::MercHeader) -> bool {
-    header
-        .name
-        .as_deref()
-        .is_some_and(super::geometry::is_name_shaped)
-        && header.class.is_some()
-        && header.level.is_some()
+    unresolved_header_fields(header).is_empty()
+}
+
+/// The fields [`header_complete`] does not accept, in print order: a name that
+/// is missing or not name-shaped, a missing class, a missing level.
+pub fn unresolved_header_fields(header: &super::MercHeader) -> Vec<HeaderField> {
+    let mut open = Vec::new();
+    if !header.name.as_deref().is_some_and(super::geometry::is_name_shaped) {
+        open.push(HeaderField::Name);
+    }
+    if header.class.is_none() {
+        open.push(HeaderField::Class);
+    }
+    if header.level.is_none() {
+        open.push(HeaderField::Level);
+    }
+    open
 }
 
 /// The two states a hover cannot improve. The same pair the verdict engine
@@ -689,7 +1197,10 @@ pub fn crop_rgba(img: &DynamicImage, rect: [i32; 4], g: &MercGeometry) -> Option
     )
 }
 
-/// Pass 2 (D2): re-OCR each row's name band on its own.
+/// Pass 2 (D2): re-OCR each row's name band on its own — every row, the full
+/// read's form. The capture loop runs it on round 1 of a capture only; a later
+/// round re-OCRs just the rows its plan reads ([`pass2_planned`]), and a round
+/// that reads nothing runs no pass 2 at all (POE-278).
 ///
 /// The placed-crop pass 1 reads the name at native size; a 44 px-tall band goes
 /// through `preprocess_for_ocr`, which upscales it 2× and stretches its
@@ -711,6 +1222,30 @@ pub fn pass2_texts(
     layout: &MercLayout,
     g: &MercGeometry,
 ) -> Vec<String> {
+    pass2_for(img, frame, layout, g, &[])
+}
+
+/// Pass 2 for the rows a partial round reads ([`RowPlan::reads_name`]) and
+/// no others; every other row keeps its pass-1 text, which
+/// [`build_planned`] does not read for a row it copies. A layout row past the
+/// end of `rows` is read, as in [`pass2_texts`].
+pub fn pass2_planned(
+    img: &DynamicImage,
+    frame: Frame,
+    layout: &MercLayout,
+    g: &MercGeometry,
+    rows: &[RowPlan],
+) -> Vec<String> {
+    pass2_for(img, frame, layout, g, rows)
+}
+
+fn pass2_for(
+    img: &DynamicImage,
+    frame: Frame,
+    layout: &MercLayout,
+    g: &MercGeometry,
+    rows: &[RowPlan],
+) -> Vec<String> {
     let (iw, ih) = img.dimensions();
     let budget = pass2_row_budget(layout.rows.len(), g);
     layout
@@ -718,7 +1253,7 @@ pub fn pass2_texts(
         .iter()
         .enumerate()
         .map(|(i, row)| {
-            if i >= budget {
+            if i >= budget || !rows.get(i).map_or(true, |plan| plan.reads_name()) {
                 return row.text.clone();
             }
             let [x, y, w, h] = frame.local(name_band(row, layout, g));
@@ -1876,5 +2411,614 @@ mod tests {
         let next = panel(&["Cyclone", "Enfeeble"], header(None, None, Some(83)));
 
         assert!(!same_panel_positive(&retired, &next));
+    }
+
+    // -- the read plan (POE-278) --------------------------------------------
+
+    /// The loop's settled panel rect the kept captures below were read at.
+    const PANEL: [i32; 4] = [80, 20, 520, 260];
+
+    fn full_header() -> MercHeader {
+        header(Some("Arith, the Quickshot"), Some("Fallen Reverend"), Some(83))
+    }
+
+    /// The kept capture a round is planned from: one row per entry of `cells`,
+    /// matched to the layout row at the same position and named by that row's
+    /// own pass-1 text, carrying a Pierce read per state at slots 0.. at the
+    /// layout's own rects, under `header_of` and [`PANEL`].
+    fn kept_of(layout: &MercLayout, cells: &[&[ReadState]], header_of: MercHeader) -> MercCapture {
+        let g = MercGeometry::default();
+        let v = vocab();
+        let rows = layout
+            .rows
+            .iter()
+            .zip(cells)
+            .map(|(row, states)| {
+                let read = v.match_skill(&row.text, &g.thresholds);
+                MercRow {
+                    index: row.index,
+                    skill: MercSkillRead {
+                        raw: row.text.clone(),
+                        ids: read.ids,
+                        name: read.name,
+                        score: read.score,
+                        state: read.state,
+                    },
+                    supports: states
+                        .iter()
+                        .enumerate()
+                        .map(|(slot, state)| MercSupportRead {
+                            slot: slot as u8,
+                            rect: row.cells[slot],
+                            ..read_at(*state)
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
+        MercCapture { panel: Some(PANEL), ..capture_of(rows, header_of) }
+    }
+
+    fn partial_rows(plan: &ReadPlan) -> &[RowPlan] {
+        match plan {
+            ReadPlan::Partial { rows, .. } => rows,
+            other => panic!("expected a partial round, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_first_look_plans_the_full_read() {
+        let layout = layout_of();
+
+        assert_eq!(
+            plan_read(None, 3, Some(PANEL), &layout, &MercGeometry::default()),
+            ReadPlan::Full,
+        );
+    }
+
+    /// Criterion 3: once fully read, nothing more is read.
+    #[test]
+    fn a_complete_kept_capture_plans_nothing() {
+        let layout = layout_of();
+        let kept =
+            kept_of(&layout, &[&[ReadState::Matched], &[ReadState::Confirmed]], full_header());
+        assert!(capture_complete(&kept), "arrange: the kept capture is complete");
+
+        assert_eq!(
+            plan_read(Some(&kept), 2, Some(PANEL), &layout, &MercGeometry::default()),
+            ReadPlan::Nothing,
+        );
+    }
+
+    /// After three rounds an incomplete capture stays incomplete (ADR-025's
+    /// accepted cost): the hover, or a Scan now, is the answer.
+    #[test]
+    fn no_rounds_left_plans_nothing_over_an_incomplete_capture() {
+        let layout = layout_of();
+        let kept = kept_of(&layout, &[&[ReadState::Unknown], &[]], full_header());
+
+        assert_eq!(
+            plan_read(Some(&kept), 0, Some(PANEL), &layout, &MercGeometry::default()),
+            ReadPlan::Nothing,
+        );
+    }
+
+    /// The order that bounds a jittery geometry: with no rounds left, a kept
+    /// capture that no longer lines up still buys nothing.
+    #[test]
+    fn no_rounds_left_plans_nothing_even_when_the_geometry_moved() {
+        let layout = layout_of();
+        let kept = kept_of(&layout, &[&[ReadState::Unknown], &[]], full_header());
+        let moved = [PANEL[0] + 200, PANEL[1], PANEL[2], PANEL[3]];
+
+        assert_eq!(
+            plan_read(Some(&kept), 0, Some(moved), &layout, &MercGeometry::default()),
+            ReadPlan::Nothing,
+        );
+    }
+
+    /// Criterion 2 for a cell: its row's walk re-matches it, the fully read row
+    /// is walked only for a slot no read has seen — no pass 2 anywhere.
+    #[test]
+    fn an_unknown_cell_plans_its_rows_cell_walk() {
+        let layout = layout_of();
+        let kept = kept_of(
+            &layout,
+            &[&[ReadState::Matched, ReadState::Unknown], &[ReadState::Matched]],
+            full_header(),
+        );
+
+        let plan = plan_read(Some(&kept), 2, Some(PANEL), &layout, &MercGeometry::default());
+
+        assert_eq!(
+            plan,
+            ReadPlan::Partial {
+                rows: vec![RowPlan::Cells, RowPlan::Unseen],
+                cells: 1,
+                header: Vec::new(),
+            },
+        );
+    }
+
+    /// An unread skill re-reads its whole row: the key its cells are cached and
+    /// confirmed under can change when the skill resolves.
+    #[test]
+    fn an_unknown_skill_plans_its_whole_row() {
+        let layout = layout_of();
+        let mut kept =
+            kept_of(&layout, &[&[ReadState::Matched], &[ReadState::Matched]], full_header());
+        kept.rows[0].skill.state = ReadState::LowConfidence;
+
+        let plan = plan_read(Some(&kept), 2, Some(PANEL), &layout, &MercGeometry::default());
+
+        assert_eq!(partial_rows(&plan), &[RowPlan::Read, RowPlan::Unseen]);
+    }
+
+    #[test]
+    fn a_layout_row_the_kept_capture_lacks_is_read() {
+        let layout = layout_of();
+        let kept =
+            kept_of(&layout, &[&[ReadState::Matched]], header(Some("Arith"), None, Some(83)));
+
+        let plan = plan_read(Some(&kept), 2, Some(PANEL), &layout, &MercGeometry::default());
+
+        assert_eq!(partial_rows(&plan), &[RowPlan::Unseen, RowPlan::Read]);
+    }
+
+    /// A header field is unknown too, and folding it costs no OCR — but it is
+    /// what keeps the capture incomplete, so the round is for it alone.
+    #[test]
+    fn an_unresolved_header_field_is_a_rounds_only_work() {
+        let layout = layout_of();
+        let kept = kept_of(
+            &layout,
+            &[&[ReadState::Matched], &[ReadState::Matched]],
+            header(Some("Arith, the Quickshot"), None, None),
+        );
+
+        let plan = plan_read(Some(&kept), 2, Some(PANEL), &layout, &MercGeometry::default());
+
+        assert_eq!(
+            plan,
+            ReadPlan::Partial {
+                rows: vec![RowPlan::Unseen, RowPlan::Unseen],
+                cells: 0,
+                header: vec![HeaderField::Class, HeaderField::Level],
+            },
+        );
+    }
+
+    #[test]
+    fn a_kept_capture_that_no_longer_lines_up_plans_the_full_read() {
+        let layout = layout_of();
+        let kept = kept_of(&layout, &[&[ReadState::Unknown], &[]], full_header());
+        let moved = [PANEL[0] + 200, PANEL[1], PANEL[2], PANEL[3]];
+
+        assert_eq!(
+            plan_read(Some(&kept), 2, Some(moved), &layout, &MercGeometry::default()),
+            ReadPlan::Full,
+        );
+    }
+
+    // -- when the kept capture lines up -------------------------------------
+
+    fn shifted(kept: &mut MercCapture, dx: i32, dy: i32) {
+        for cell in kept.rows.iter_mut().flat_map(|row| row.supports.iter_mut()) {
+            cell.rect[0] += dx;
+            cell.rect[1] += dy;
+        }
+    }
+
+    fn lined_up_kept(layout: &MercLayout) -> MercCapture {
+        kept_of(
+            layout,
+            &[&[ReadState::Matched, ReadState::Unknown], &[ReadState::Matched]],
+            full_header(),
+        )
+    }
+
+    #[test]
+    fn a_kept_capture_at_this_layouts_own_rects_lines_up() {
+        let layout = layout_of();
+
+        assert!(lines_up(&lined_up_kept(&layout), Some(PANEL), &layout, &MercGeometry::default()));
+    }
+
+    /// The per-tick jitter of the OCR-seeded row centres and the frame fit is
+    /// inside the half-cell band, edge included.
+    #[test]
+    fn a_cell_moved_by_the_whole_half_cell_band_still_lines_up() {
+        let g = MercGeometry::default();
+        let layout = layout_of();
+        let band = column_tolerance(&g, layout.scale);
+        let mut kept = lined_up_kept(&layout);
+        shifted(&mut kept, band, -band);
+
+        assert!(lines_up(&kept, Some(PANEL), &layout, &g));
+    }
+
+    #[test]
+    fn a_cell_moved_past_the_band_across_does_not_line_up() {
+        let g = MercGeometry::default();
+        let layout = layout_of();
+        let mut kept = lined_up_kept(&layout);
+        shifted(&mut kept, column_tolerance(&g, layout.scale) + 1, 0);
+
+        assert!(!lines_up(&kept, Some(PANEL), &layout, &g));
+    }
+
+    #[test]
+    fn a_cell_moved_past_the_band_down_does_not_line_up() {
+        let g = MercGeometry::default();
+        let layout = layout_of();
+        let mut kept = lined_up_kept(&layout);
+        shifted(&mut kept, 0, column_tolerance(&g, layout.scale) + 1);
+
+        assert!(!lines_up(&kept, Some(PANEL), &layout, &g));
+    }
+
+    /// An adopted cell size re-registers every crop: the kept cells are not
+    /// this layout's cells any more, however close their origins.
+    #[test]
+    fn a_cell_of_another_size_does_not_line_up() {
+        let layout = layout_of();
+        let mut kept = lined_up_kept(&layout);
+        kept.rows[0].supports[0].rect[2] += 1;
+
+        assert!(!lines_up(&kept, Some(PANEL), &layout, &MercGeometry::default()));
+    }
+
+    #[test]
+    fn a_kept_row_the_layout_no_longer_has_does_not_line_up() {
+        let layout = layout_of();
+        let mut kept = lined_up_kept(&layout);
+        kept.rows[1].index = 7;
+
+        assert!(!lines_up(&kept, Some(PANEL), &layout, &MercGeometry::default()));
+    }
+
+    #[test]
+    fn a_kept_cell_past_the_layout_rows_last_slot_does_not_line_up() {
+        let layout = layout_of();
+        let mut kept = lined_up_kept(&layout);
+        kept.rows[0].supports[1].slot = layout.rows[0].cells.len() as u8;
+
+        assert!(!lines_up(&kept, Some(PANEL), &layout, &MercGeometry::default()));
+    }
+
+    #[test]
+    fn a_moved_panel_does_not_line_up() {
+        let layout = layout_of();
+        let moved = [PANEL[0], PANEL[1] + 1, PANEL[2], PANEL[3]];
+
+        assert!(!lines_up(&lined_up_kept(&layout), Some(moved), &layout, &MercGeometry::default()));
+    }
+
+    // -- the header a round that read nothing new publishes -----------------
+
+    /// `merge_header` alone would take the longer read; a resolved name is not
+    /// re-litigated by a round that re-reads nothing.
+    #[test]
+    fn a_resolved_name_stays_verbatim_over_a_longer_pass_one_read() {
+        let kept = header(Some("Fennik, of Unshak"), Some("Fallen Reverend"), Some(83));
+        let pass1 = header(Some("Fennik, of Unshakeable Faith"), None, None);
+
+        let folded = fold_unresolved_header(&kept, &pass1);
+
+        assert_eq!(folded.name.as_deref(), Some("Fennik, of Unshak"));
+    }
+
+    #[test]
+    fn a_resolved_class_stays_verbatim_over_a_longer_pass_one_read() {
+        let kept = header(Some("Arith"), Some("Fallen Rev"), Some(83));
+        let pass1 = header(None, Some("Fallen Reverend"), None);
+
+        let folded = fold_unresolved_header(&kept, &pass1);
+
+        assert_eq!(folded.class.as_deref(), Some("Fallen Rev"));
+    }
+
+    #[test]
+    fn an_unresolved_class_is_folded_from_pass_one() {
+        let kept = header(Some("Arith"), None, Some(83));
+
+        let folded = fold_unresolved_header(&kept, &header(None, Some("Fallen Reverend"), None));
+
+        assert_eq!(folded.class.as_deref(), Some("Fallen Reverend"));
+    }
+
+    #[test]
+    fn an_unresolved_level_is_folded_from_pass_one() {
+        let kept = header(Some("Arith"), Some("Fallen Reverend"), None);
+
+        let folded = fold_unresolved_header(&kept, &header(None, None, Some(83)));
+
+        assert_eq!(folded.level, Some(83));
+    }
+
+    /// A name that is `Some` but not name-shaped is unresolved, and folds.
+    #[test]
+    fn an_unshaped_name_is_folded_from_pass_one() {
+        let kept = header(Some("Lvl 83"), Some("Fallen Reverend"), Some(83));
+
+        let pass1 = header(Some("Arith, the Quickshot"), None, None);
+
+        let folded = fold_unresolved_header(&kept, &pass1);
+
+        assert_eq!(folded.name.as_deref(), Some("Arith, the Quickshot"));
+    }
+
+    // -- a planned build ----------------------------------------------------
+
+    /// Row 0's slots 0 and 1 painted: occupied, and a FRESH match against the
+    /// empty store reads them `Unknown` with no family — so a `Pierce` cell in
+    /// the result can only have been copied.
+    fn two_painted_cells(layout: &MercLayout) -> DynamicImage {
+        let mut raw = RgbaImage::from_pixel(900, 300, Rgba([12, 12, 14, 255]));
+        fill_noise(&mut raw, layout.rows[0].cells[0]);
+        fill_noise(&mut raw, layout.rows[0].cells[1]);
+        DynamicImage::ImageRgba8(raw)
+    }
+
+    fn planned_read(
+        img: &DynamicImage,
+        layout: &MercLayout,
+        texts: &[String],
+        rows: &[RowPlan],
+        kept: &MercCapture,
+    ) -> ReadResult {
+        build_planned(
+            img,
+            whole(img),
+            layout,
+            texts,
+            0,
+            &MercGeometry::default(),
+            &vocab(),
+            &TemplateStore::new(),
+            Some((rows, kept)),
+        )
+    }
+
+    #[test]
+    fn a_confident_kept_cell_is_copied_rather_than_matched() {
+        let layout = layout_of();
+        let img = two_painted_cells(&layout);
+        let kept = kept_of(
+            &layout,
+            &[&[ReadState::Matched, ReadState::Unknown], &[]],
+            full_header(),
+        );
+
+        let out = planned_read(&img, &layout, &[], &[RowPlan::Cells, RowPlan::Unseen], &kept);
+
+        let cells = &out.capture.rows[0].supports;
+        assert_eq!(
+            cells[1].state,
+            ReadState::Unknown,
+            "arrange: a fresh match of a painted cell against the empty store reads Unknown",
+        );
+        assert_eq!(cells[0].state, ReadState::Matched, "the confident kept cell was re-matched");
+        assert_eq!(cells[0].family.as_deref(), Some("Pierce"));
+    }
+
+    #[test]
+    fn a_copied_cell_carries_its_cached_crop_instead_of_cutting_one() {
+        let layout = layout_of();
+        let img = two_painted_cells(&layout);
+        let kept = kept_of(
+            &layout,
+            &[&[ReadState::Matched, ReadState::Unknown], &[]],
+            full_header(),
+        );
+        let key = row_key(&kept.rows[0].skill);
+
+        let out = planned_read(&img, &layout, &[], &[RowPlan::Cells, RowPlan::Unseen], &kept);
+
+        assert!(out.carried.contains(&(key.clone(), 0)), "carried: {:?}", out.carried);
+        assert!(!out.sigs.contains_key(&(key.clone(), 0)), "a copied cell cut a crop");
+        assert!(out.sigs.contains_key(&(key, 1)), "the matched cell cut its crop");
+    }
+
+    /// The kept skill verbatim: pass 2 did not run for the row, and whatever
+    /// text the caller holds for it is not a read of it.
+    #[test]
+    fn a_row_whose_cells_are_walked_keeps_its_kept_skill() {
+        let layout = layout_of();
+        let img = flat_screen(900, 300);
+        let kept = kept_of(&layout, &[&[ReadState::Unknown], &[]], full_header());
+        let texts = ["Frostbolt".to_string(), "Conductivity".to_string()];
+
+        let out = planned_read(&img, &layout, &texts, &[RowPlan::Cells, RowPlan::Unseen], &kept);
+
+        assert_eq!(out.capture.rows[0].skill.name.as_deref(), Some("Ice Shot"));
+    }
+
+    /// The key-change rule: a row re-read for its skill copies none of its
+    /// kept cells, confident or not.
+    #[test]
+    fn a_re_read_row_copies_nothing_from_its_kept_row() {
+        let layout = layout_of();
+        let img = two_painted_cells(&layout);
+        let mut kept = kept_of(
+            &layout,
+            &[&[ReadState::Matched, ReadState::Matched], &[]],
+            full_header(),
+        );
+        kept.rows[0].skill.state = ReadState::LowConfidence;
+
+        let out = planned_read(&img, &layout, &[], &[RowPlan::Read, RowPlan::Unseen], &kept);
+
+        assert_eq!(out.capture.rows[0].supports[0].state, ReadState::Unknown);
+        assert_eq!(out.capture.rows[0].supports[0].family, None);
+        assert!(out.carried.is_empty(), "carried: {:?}", out.carried);
+    }
+
+    /// Geometry is the layout's: the hover tick hit-tests these rects.
+    #[test]
+    fn a_copied_rows_cells_take_this_layouts_rects() {
+        let layout = layout_of();
+        let img = flat_screen(900, 300);
+        let mut kept =
+            kept_of(&layout, &[&[ReadState::Unknown], &[ReadState::Matched]], full_header());
+        shifted(&mut kept, 3, -2);
+
+        let out = planned_read(&img, &layout, &[], &[RowPlan::Cells, RowPlan::Unseen], &kept);
+
+        assert_eq!(out.capture.rows[1].supports[0].rect, layout.rows[1].cells[0]);
+    }
+
+    /// The collision rule reaches a carried crop too: two rows claiming one
+    /// key would hand one row's cached art to the other's confirm.
+    #[test]
+    fn copied_rows_that_share_a_row_key_carry_no_crop() {
+        let layout = layout_of();
+        let img = flat_screen(900, 300);
+        let mut kept =
+            kept_of(&layout, &[&[ReadState::Matched], &[ReadState::Matched]], full_header());
+        kept.rows[1].skill = kept.rows[0].skill.clone();
+
+        let out = planned_read(&img, &layout, &[], &[RowPlan::Unseen, RowPlan::Unseen], &kept);
+
+        assert_eq!(out.capture.rows[1].supports.len(), 1, "arrange: both rows kept their cell");
+        assert!(out.carried.is_empty(), "carried: {:?}", out.carried);
+    }
+
+    /// An empty slot stops the walk, not the row: slot 1 reading dark on this
+    /// frame must not take the confident slot 2 (or slot 1's kept read) away.
+    #[test]
+    fn a_slot_that_reads_empty_keeps_the_kept_cells_after_it() {
+        let layout = layout_of();
+        let mut raw = RgbaImage::from_pixel(900, 300, Rgba([12, 12, 14, 255]));
+        fill_noise(&mut raw, layout.rows[0].cells[0]);
+        fill_noise(&mut raw, layout.rows[0].cells[2]);
+        let img = DynamicImage::ImageRgba8(raw);
+        let kept = kept_of(
+            &layout,
+            &[&[ReadState::Matched, ReadState::Unknown, ReadState::Matched], &[]],
+            full_header(),
+        );
+
+        let out = planned_read(&img, &layout, &[], &[RowPlan::Cells, RowPlan::Unseen], &kept);
+
+        let slots: Vec<(u8, ReadState)> = out.capture.rows[0]
+            .supports
+            .iter()
+            .map(|cell| (cell.slot, cell.state))
+            .collect();
+        assert_eq!(
+            slots,
+            vec![(0, ReadState::Matched), (1, ReadState::Unknown), (2, ReadState::Matched)],
+        );
+    }
+
+    /// Nothing confident at or past the dark slot vouches for the kept slot-1
+    /// read, so the empty frame stands — a tooltip's phantom does not ride on.
+    #[test]
+    fn an_unverified_kept_cell_on_a_slot_that_reads_empty_is_dropped() {
+        let layout = layout_of();
+        let mut raw = RgbaImage::from_pixel(900, 300, Rgba([12, 12, 14, 255]));
+        fill_noise(&mut raw, layout.rows[0].cells[0]);
+        let img = DynamicImage::ImageRgba8(raw);
+        let kept =
+            kept_of(&layout, &[&[ReadState::Matched, ReadState::Unknown], &[]], full_header());
+
+        let out = planned_read(&img, &layout, &[], &[RowPlan::Cells, RowPlan::Unseen], &kept);
+
+        let slots: Vec<u8> = out.capture.rows[0].supports.iter().map(|cell| cell.slot).collect();
+        assert_eq!(slots, vec![0]);
+    }
+
+    /// A row taken from the kept read was on screen when it was read; a dark
+    /// skill icon on this frame does not trim it away.
+    #[test]
+    fn a_kept_row_behind_a_dark_icon_is_not_trimmed() {
+        let layout = layout_of();
+        let mut raw = RgbaImage::from_pixel(900, 300, Rgba([12, 12, 14, 255]));
+        fill_noise(&mut raw, layout.rows[0].skill_icon);
+        let img = DynamicImage::ImageRgba8(raw);
+        let kept = kept_of(&layout, &[&[ReadState::Unknown], &[ReadState::Matched]], full_header());
+
+        let out = planned_read(&img, &layout, &[], &[RowPlan::Cells, RowPlan::Unseen], &kept);
+
+        assert_eq!(out.capture.rows.len(), 2);
+    }
+
+    /// A slot past a row's last kept cell has never been seen — round 1 can read
+    /// it empty while its art is still drawing — so a partial round matches it
+    /// when it turns up, and still copies the confident cell before it.
+    #[test]
+    fn a_slot_past_the_last_kept_cell_that_reads_occupied_is_matched() {
+        let layout = layout_of();
+        let img = two_painted_cells(&layout);
+        let kept = kept_of(&layout, &[&[ReadState::Matched], &[]], full_header());
+        let key = row_key(&kept.rows[0].skill);
+
+        let out = planned_read(&img, &layout, &[], &[RowPlan::Unseen, RowPlan::Unseen], &kept);
+
+        let cells = &out.capture.rows[0].supports;
+        assert_eq!(cells.len(), 2, "the newly occupied slot 1 was not walked");
+        assert_eq!(cells[0].family.as_deref(), Some("Pierce"), "slot 0 was not copied");
+        assert!(out.sigs.contains_key(&(key, 1)), "slot 1 was not matched (no crop cut)");
+    }
+
+    #[test]
+    fn only_a_read_row_re_ocrs_its_name() {
+        assert!(RowPlan::Read.reads_name());
+        assert!(!RowPlan::Cells.reads_name());
+        assert!(!RowPlan::Unseen.reads_name());
+    }
+
+    // -- the round that reads nothing ---------------------------------------
+
+    #[test]
+    fn a_round_that_reads_nothing_carries_every_kept_row_at_this_layouts_rects() {
+        let layout = layout_of();
+        let img = flat_screen(900, 300);
+        let mut kept =
+            kept_of(&layout, &[&[ReadState::Matched], &[ReadState::Confirmed]], full_header());
+        shifted(&mut kept, 3, -2);
+
+        let out = carry_capture(&img, whole(&img), &layout, &kept, 0, &MercGeometry::default());
+
+        let states: Vec<ReadState> = out
+            .capture
+            .rows
+            .iter()
+            .flat_map(|row| row.supports.iter().map(|cell| cell.state))
+            .collect();
+        assert_eq!(states, vec![ReadState::Matched, ReadState::Confirmed]);
+        assert_eq!(out.capture.rows[0].supports[0].rect, layout.rows[0].cells[0]);
+        assert_eq!(out.capture.rows[1].supports[0].rect, layout.rows[1].cells[0]);
+    }
+
+    #[test]
+    fn a_round_that_reads_nothing_carries_every_kept_cells_crop() {
+        let layout = layout_of();
+        let img = flat_screen(900, 300);
+        let kept =
+            kept_of(&layout, &[&[ReadState::Matched], &[ReadState::Confirmed]], full_header());
+        let keys: HashSet<(String, u8)> =
+            kept.rows.iter().map(|row| (row_key(&row.skill), 0)).collect();
+
+        let out = carry_capture(&img, whole(&img), &layout, &kept, 0, &MercGeometry::default());
+
+        assert_eq!(out.carried, keys);
+        assert!(out.sigs.is_empty());
+    }
+
+    /// The sensor is pixels, not a read, so it counts THIS frame's icons.
+    #[test]
+    fn a_round_that_reads_nothing_still_counts_this_frames_icons() {
+        let layout = layout_of();
+        let mut raw = RgbaImage::from_pixel(900, 300, Rgba([12, 12, 14, 255]));
+        fill_noise(&mut raw, layout.rows[0].skill_icon);
+        let img = DynamicImage::ImageRgba8(raw);
+        let mut kept = kept_of(&layout, &[&[ReadState::Matched], &[]], full_header());
+        kept.rows_on_screen = 5;
+
+        let out = carry_capture(&img, whole(&img), &layout, &kept, 0, &MercGeometry::default());
+
+        assert_eq!(out.rows_on_screen, 1);
     }
 }
