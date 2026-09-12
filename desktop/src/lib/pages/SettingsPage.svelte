@@ -164,26 +164,6 @@
 		}
 	}
 
-	// Save/Cancel from overlay buttons (overlay-save/overlay-cancel events).
-	// Works for comparator and position overlays; OCR previews are read-only.
-	$effect(() => {
-		if (!anyPositionOverlayOpen) return;
-		const unlistenSave = listen('overlay-save', () => {
-			for (const name of Object.keys(positionOverlays)) {
-				if (positionOverlays[name]) { savePositionOverlay(name); return; }
-			}
-		});
-		const unlistenCancel = listen('overlay-cancel', () => {
-			for (const name of Object.keys(positionOverlays)) {
-				if (positionOverlays[name]) { cancelPositionOverlay(name); return; }
-			}
-		});
-		return () => {
-			unlistenSave.then(u => u());
-			unlistenCancel.then(u => u());
-		};
-	});
-
 	let ocrRects = $state<OcrRectView[]>([]);
 	let ocrRectsLoaded = $state(false);
 	let previewWin = $state<any>(null);
@@ -244,14 +224,6 @@
 
 	function cancelEditClientTxt() {
 		editingClientTxt = false;
-	}
-
-	/** Notify layout that a config overlay is opening/closing. */
-	function notifyConfigStart() {
-		getCurrentWebviewWindow().emit('overlay-config-start', {}).catch(() => {});
-	}
-	function notifyConfigEnd() {
-		getCurrentWebviewWindow().emit('overlay-config-end', {}).catch(() => {});
 	}
 
 	async function resolveOverlayMonitor(context: string): Promise<OverlayMonitorPlacement | null> {
@@ -332,13 +304,6 @@
 			void destroyPreviewOverlay();
 		};
 	});
-
-	/** After closing a config overlay, emit the vestigial toggle-reset event;
-	 *  the remaining position-config flow is pending its later retirement WI. */
-	async function reclaimMouse() {
-		await getCurrentWebviewWindow().emit('overlay-toggle-reset', {}).catch(() => {});
-		notifyConfigEnd();
-	}
 
 	function findOcrRect(key: string): OcrRectView | undefined {
 		return ocrRects.find((row) => row.key === key);
@@ -493,19 +458,6 @@
 		tradeStalenessError = '';
 		editingTradeStaleness = false;
 	}
-
-	// --- Generic overlay position config ---
-	// DRY: one set of functions for all overlay position configurations.
-	interface OverlayConfig {
-		label: string;          // window label for position overlay
-		syncParam: string;      // URL param
-		getCommand: string;     // Rust get settings command
-		setCommand: string;     // Rust set settings command
-		defaultW: number;
-		defaultH: number;
-	}
-
-	const OVERLAY_CONFIGS: Record<string, OverlayConfig> = {};
 
 	/**
 	 * The Overlay Positions groups, in display order (POE-226).
@@ -691,10 +643,6 @@
 		};
 	});
 
-	// Per-overlay state
-	let overlaySettings = $state<Record<string, { x: number; y: number; width: number; height: number } | null>>({});
-	let positionOverlays = $state<Record<string, any>>({});
-
 	// --- Timer appearance ---
 	let timerBgOpacity = $state(75);
 	let timerTextStroke = $state(true);
@@ -713,13 +661,8 @@
 			.catch((e: any) => console.warn('[settings] save timer appearance failed:', e));
 	}
 
-	// Load all overlay settings on init
+	// Load timer appearance on init
 	$effect(() => {
-		for (const [name, cfg] of Object.entries(OVERLAY_CONFIGS)) {
-			invoke<any>(cfg.getCommand).then((s) => {
-				if (s) overlaySettings[name] = s;
-			}).catch((e) => console.warn(`[settings] failed to load ${name} overlay settings:`, e));
-		}
 		invoke<any>('get_timer_appearance').then((a) => {
 			if (a) {
 				timerBgOpacity = Math.round(a.bg_opacity * 100);
@@ -730,104 +673,9 @@
 		}).catch((e: any) => console.warn('[settings] load timer appearance failed:', e));
 	});
 
-	async function showPositionOverlay(name: string) {
-		const cfg = OVERLAY_CONFIGS[name];
-		if (!cfg) return;
-		notifyConfigStart();
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
-		if (positionOverlays[name]) {
-			try { await positionOverlays[name].destroy(); } catch (_) {}
-			positionOverlays[name] = null;
-		}
-		// Read live overlay position/size (physical pixels) so the config window
-		// matches exactly. This prevents the sync loop from resizing the real overlay.
-		const live = await invoke<any>(cfg.getCommand).catch(() => null);
-		const realWin = await WebviewWindow.getByLabel(cfg.syncParam);
-		// Read up front: the same factor converts physical → logical for the
-		// constructor further down.
-		const mainWin = getCurrentWebviewWindow();
-		const sf = await mainWin.scaleFactor().catch((e: any) => { console.warn('[settings] scaleFactor failed, using 1:', e); return 1; });
-		const shipped = { x: 0, y: 0, w: cfg.defaultW, h: cfg.defaultH };
-		let physX = live?.x ?? 100, physY = live?.y ?? 100;
-		let physW = shipped.w, physH = shipped.h;
-		if (realWin) {
-			try {
-				const pos = await realWin.outerPosition();
-				const size = await realWin.outerSize();
-				physX = pos.x; physY = pos.y;
-				physW = size.width; physH = size.height;
-			} catch (e) {
-				console.warn(`[settings] failed to read live ${name} overlay position/size, using saved:`, e);
-			}
-		} else if (live) {
-			physW = live.width ?? shipped.w;
-			physH = live.height ?? shipped.h;
-		}
-		// Save pre-configure state (physical pixels) so cancel restores it
-		overlaySettings[name] = { x: physX, y: physY, width: physW, height: physH };
-		// Constructor takes logical pixels; convert physical → logical.
-		// setSize(PhysicalSize) in tauri://created will set the exact physical size.
-		const win = new WebviewWindow(cfg.label, {
-			url: `/overlay?sync=${cfg.syncParam}`,
-			transparent: true, decorations: false, alwaysOnTop: true,
-			resizable: false, shadow: false, skipTaskbar: true,
-			width: Math.round(physW / sf), height: Math.round(physH / sf),
-		});
-		win.once('tauri://created', async () => {
-			await win.setPosition(new PhysicalPosition(physX, physY));
-			await win.setSize(new PhysicalSize(physW, physH));
-			positionOverlays[name] = win;
-		});
-		win.once('tauri://error', (e: any) => console.error(`${name} position overlay failed:`, e));
-	}
-
-	async function savePositionOverlay(name: string) {
-		const cfg = OVERLAY_CONFIGS[name];
-		const win = positionOverlays[name];
-		if (!cfg || !win) return;
-		try {
-			const ref = win.window ?? win;
-			const pos = await ref.outerPosition();
-			const size = await ref.outerSize();
-			await invoke(cfg.setCommand, { x: pos.x, y: pos.y, w: size.width, h: size.height, enabled: true });
-			overlaySettings[name] = { x: pos.x, y: pos.y, width: size.width, height: size.height };
-		} catch (e) {
-			console.error(`Save ${name} position failed:`, e);
-			return;
-		}
-		try { await win.destroy(); } catch (_) {}
-		positionOverlays[name] = null;
-		await reclaimMouse();
-	}
-
-	async function cancelPositionOverlay(name: string) {
-		const cfg = OVERLAY_CONFIGS[name];
-		const win = positionOverlays[name];
-		if (!win) return;
-		try { await win.destroy(); } catch (_) {}
-		positionOverlays[name] = null;
-		// Persist pre-configure state so overlay-toggle-reset (from reclaimMouse)
-		// restores the overlay to its exact pre-configure size.
-		const pre = overlaySettings[name];
-		if (pre && cfg) {
-			await invoke(cfg.setCommand, {
-				x: pre.x, y: pre.y, w: pre.width, h: pre.height, enabled: true,
-			}).catch((e: any) => console.warn(`[settings] failed to restore ${name} pre-configure position:`, e));
-		}
-		await reclaimMouse();
-	}
-
-	// Convenience: check if any position overlay is open (for overlay-save/cancel guard)
-	let anyPositionOverlayOpen = $derived(
-		Object.values(positionOverlays).some(w => w !== null)
-	);
-
-	/** Whether either Configure button in Overlay Positions may be pressed. The
-	 *  three flows are mutually exclusive — see `canStartConfigure`. */
+	/** Whether a Configure widgets button may be pressed. */
 	let configureAllowed = $derived(
 		canStartConfigure({
-			position: anyPositionOverlayOpen,
 			widgets: widgetConfiguring !== null
 		})
 	);
@@ -872,21 +720,6 @@
 
 			{#each overlayGroupRows as group (group.id)}
 				<h3 class="group-heading">{group.heading}</h3>
-
-				{#each group.windows as cfg (cfg.name)}
-					<div class="setting-row">
-						<span class="setting-label">{cfg.label}</span>
-						{#if positionOverlays[cfg.name]}
-							<span class="setting-value">Drag overlay to position...</span>
-							<Button variant="save" onclick={() => savePositionOverlay(cfg.name)}>Save</Button>
-							<Button onclick={() => cancelPositionOverlay(cfg.name)}>Cancel</Button>
-						{:else}
-							{@const s = overlaySettings[cfg.name]}
-							<span class="setting-value mono">{s ? `(${s.x}, ${s.y}) ${s.width}\u00d7${s.height}` : 'Not set'}</span>
-							<Button onclick={() => showPositionOverlay(cfg.name)} disabled={!configureAllowed}>Configure</Button>
-						{/if}
-					</div>
-				{/each}
 
 				{#each group.widgets as row (row.spec.id)}
 					{@const widget = row.spec}

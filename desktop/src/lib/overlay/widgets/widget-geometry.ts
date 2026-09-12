@@ -7,7 +7,7 @@
  * overlay window has no test harness in this app and a widget placed a hundred
  * pixels off, or one that comes back at the wrong size on a scaled display,
  * looks exactly like a widget that was never configured. Same split as
- * `../content-height.ts` and `../hot-rects.ts`.
+ * `../hot-rects.ts`.
  *
  * # Two units, and which side of the boundary each one is on
  *
@@ -100,9 +100,8 @@ export type ResizeEdge =
 /**
  * How wide the grab zone along a widget's border is, in CSS px.
  *
- * The same 10 the position-config window uses (`routes/overlay/+page.svelte`),
- * and shrunk the same way for a small widget: a zone wider than an eighth of
- * the box leaves no interior to drag from, so a small widget could only ever be
+ * The zone is shrunk for a small widget: a zone wider than an eighth of the
+ * box leaves no interior to drag from, so a small widget could only ever be
  * resized.
  */
 export const BASE_EDGE = 10;
@@ -110,9 +109,8 @@ export const BASE_EDGE = 10;
 /**
  * The smallest a widget may be resized to, in CSS px.
  *
- * One line of text plus its padding — `MIN_OVERLAY_HEIGHT_CSS` in Rust, for the
- * same reason: a box dragged to zero cannot be grabbed again, and config mode
- * has no other way back.
+ * One line of text plus its padding: a box dragged to zero cannot be grabbed
+ * again, and config mode has no other way back.
  */
 export const MIN_WIDGET_SIDE_CSS = 24;
 

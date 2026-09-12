@@ -50,9 +50,10 @@ export interface WidgetWindow {
 //    for the constructor, which takes LOGICAL pixels, and the exact
 //    `PhysicalPosition`/`PhysicalSize` are applied in `tauri://created`.
 //    `window.devicePixelRatio` is not used.
-//  4. move, not recreate — this window is never repositioned WITHIN a
-//    display, so there is no destroy/recreate cycle to avoid there. It is
-//    built and torn down on the module flag's transitions, on the bounded
+//  4. label reuse — Tauri frees a window label asynchronously, so
+//    module-lifecycle serialises destroy/create and retries with backoff. This
+//    window is never repositioned WITHIN a display. It is built and torn down
+//    on the module flag's transitions, on the bounded
 //    creation retry, and — POE-237 — when the game moves to another
 //    monitor, which is a genuinely different canvas rather than a move:
 //    the size, the scale factor and every widget's coordinate space change
@@ -496,8 +497,8 @@ export function createWidgetWindow(options: WidgetWindowOptions): WidgetWindow {
 	 * brings a different size, a different scale factor and a different physical
 	 * coordinate space for every widget inside it — none of which a
 	 * `setPosition` would fix, and all of which the constructor path already
-	 * gets right. Guard 4's "move, not recreate" is about repositioning a window
-	 * on ONE display; this is a different canvas.
+	 * gets right. Guard 4's label-reuse rule covers the destroy/create race;
+	 * this is a different canvas.
 	 *
 	 * Through the driver's own off/on, which is the same path a module toggle
 	 * takes (and the one a `?debug` rebuild uses): the driver serialises the

@@ -618,23 +618,6 @@
 	// meant the Runs tab silently collected nothing.
 	startRunRecorder();
 
-	// The config overlay destroy can leave Win32 mouse capture stuck; the
-	// widget-config flow owns its own focus-safe exit.
-	let configOverlayCleanup: (() => void) | null = null;
-	listen('overlay-config-start', async () => {
-		if (configOverlayCleanup) return; // already listening
-		const unlisten = await listen('overlay-toggle-reset', async () => {
-			// Nothing emits this today; the pair is retired with the rest of the
-			// position-config flow in a later WI.
-		});
-		configOverlayCleanup = unlisten;
-	});
-	listen('overlay-config-end', () => {
-		if (configOverlayCleanup) {
-			configOverlayCleanup();
-			configOverlayCleanup = null;
-		}
-	});
 	// Focus-based overlay show/hide handled by Rust focus poller (GetForegroundWindow)
 
 	// Restore lab overlays category toggle state

@@ -618,6 +618,7 @@ pub const DEFAULT_TRADE_STALE_WARN_SECS: u32 = 120;
 pub const DEFAULT_TRADE_STALE_CRITICAL_SECS: u32 = 600;
 pub const DEFAULT_TRADE_AUTO_REFRESH_SECS: u32 = 900;
 
+/// These per-window settings are legacy and unread since POE-231/POE-232.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverlaySettings {
     pub x: i32,
@@ -943,7 +944,7 @@ fn forget_screen_scale(existing: &Settings, target: &mut Settings) {
 }
 
 /// Copy overlay/window settings from existing file into the new settings struct.
-/// These fields are managed by their own save commands, not by AppState.
+/// These fields are not owned by AppState and must survive unrelated saves.
 pub fn persist_overlay_settings(existing: &Settings, target: &mut Settings) {
     target.window = existing.window.clone();
     target.comparator_overlay = existing.comparator_overlay.clone();
