@@ -5,24 +5,15 @@
 	import { listen } from '@tauri-apps/api/event';
 	import type { CompareGem } from '$lib/api';
 	import { defaultSelectedGem } from '$lib/comparator-selection';
-	import { hotRectsEqual, physicalHotRect, type HotRect } from '$lib/overlay/hot-rects';
 	import type { TradeLookupResult, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
 	import { isSource } from '$lib/tradeApi';
-	import GemIcon from '../../(app)/components/GemIcon.svelte';
+	import GemIcon from '../../routes/(app)/components/GemIcon.svelte';
+
+	let { configMode, label }: { configMode: boolean; label: string } = $props();
 
 	// Staleness thresholds — read from polled Rust status, with sensible defaults
 	let tradeStaleWarnSecs = $state(120);
 	let tradeStaleCriticalSecs = $state(600);
-
-	// Cache the monitor scale factor from Tauri (more reliable than window.devicePixelRatio
-	// which can be wrong in transparent overlay WebViews on high-DPI displays).
-	let cachedScaleFactor = $state(0);
-	getCurrentWebviewWindow().scaleFactor()
-		.then(sf => { cachedScaleFactor = sf; })
-		.catch(e => {
-			console.warn('[overlay] scaleFactor() failed, using devicePixelRatio fallback:', e);
-			cachedScaleFactor = window.devicePixelRatio || 1;
-		});
 
 	const SIGNAL_COLORS: Record<string, string> = {
 		STABLE: '#5eead4', UNCERTAIN: '#9ca3af', HERD: '#eab308',
@@ -59,6 +50,7 @@
 	let tradeError = $state<Record<string, boolean>>({});
 	let overlayDivineRate = $state(0);
 	let overlayLabMode = $state('normal');
+	const drawing = $derived(results.length > 0);
 
 	$effect(() => {
 		// The only place the default pick is decided. The poll below used to run a
@@ -74,9 +66,6 @@
 		// Reading `tradeData` here is what re-decides the pick as lookups land.
 		if (userPick && !results.some((g) => g.name === userPick)) userPick = null;
 		selectedGem = defaultSelectedGem(results, userPick, tradeData);
-		// Tell the mouse hook whether we have content — when empty, clicks pass through to game.
-		invoke('set_overlay_has_content', { label: 'comparator', hasContent: results.length > 0 })
-			.catch(e => console.warn('[overlay] set_overlay_has_content failed:', e));
 	});
 
 	function tradeCacheAge(trade: TradeLookupResult): string {
@@ -148,66 +137,6 @@
 		};
 	});
 
-	// The rectangles the mouse hook claims clicks in — this window's buttons and
-	// nothing else. The right-edge "interactive width" this replaces was a band
-	// measured from the window edge (48 physical px, 140 while the queue row
-	// showed), so it also ate the gap beside the buttons and, with the queue row
-	// up, a strip across the bottom of the table. Measuring the elements is both
-	// narrower and self-maintaining.
-	let sideEl = $state<HTMLDivElement | null>(null);
-	let queueEl = $state<HTMLDivElement | null>(null);
-	let sentHotRects: HotRect[] | null = null;
-	let hotRectFrame = 0;
-
-	function sendHotRects() {
-		hotRectFrame = 0;
-		const rects: HotRect[] = [];
-		// Declaration order is the hook's tie-break, so the buttons the player
-		// aims at most come first.
-		for (const el of [sideEl, queueEl]) {
-			if (!el) continue;
-			const r = physicalHotRect(el.getBoundingClientRect(), cachedScaleFactor);
-			if (r) rects.push(r);
-		}
-		if (sentHotRects && hotRectsEqual(sentHotRects, rects)) return;
-		sentHotRects = rects;
-		invoke('set_overlay_hot_rects', { label: 'comparator', rects })
-			.catch(e => console.warn('[overlay] set_overlay_hot_rects failed:', e));
-	}
-
-	// One measurement per frame at most: layout is settled by then, and a burst
-	// of reactive changes collapses into a single IPC call.
-	function scheduleHotRects() {
-		if (hotRectFrame) return;
-		hotRectFrame = requestAnimationFrame(sendHotRects);
-	}
-
-	$effect(() => {
-		// Everything that can move the buttons: the column mounting, the queue
-		// row coming and going, a row per gem, and the scale factor resolving
-		// (until it does, the conversion declines and nothing is claimed).
-		void sideEl;
-		void queueEl;
-		void tradeQueue;
-		void results.length;
-		void cachedScaleFactor;
-		scheduleHotRects();
-	});
-
-	$effect(() => {
-		// A resize moves `.side` (fixed to the right edge) and `.queue-row`
-		// (fixed to the bottom) without changing any of the state above.
-		const onResize = () => scheduleHotRects();
-		window.addEventListener('resize', onResize);
-		return () => {
-			window.removeEventListener('resize', onResize);
-			if (hotRectFrame) {
-				cancelAnimationFrame(hotRectFrame);
-				hotRectFrame = 0;
-			}
-		};
-	});
-
 	// Trade refresh — request the Comparator to do the lookup via event.
 	// Comparator handles it → updates tradeData → pushes to Rust → we pick it up on next poll.
 	function requestTradeRefresh(gem: CompareGem) {
@@ -236,55 +165,26 @@
 			.catch(e => console.error('[overlay] emit overlay-clear failed:', e));
 	}
 
-	// Handle clicks forwarded from the mouse hook (overlay is fully click-through).
-	// The hook sends overlay-relative {x, y} in physical pixels. We convert to
-	// logical pixels and use elementFromPoint to find the target button — no
-	// fragile coordinate math, works regardless of DPI/layout.
-	$effect(() => {
-		let cancelled = false;
-
-		// Targeted at this window, not broadcast: Rust emits with `emit_to(label)`
-		// now that every overlay is hooked, and a bare `listen` registers for the
-		// `Any` target, which a labelled emit deliberately does not match.
-		const unlistenPromise = getCurrentWebviewWindow().listen<{ label: string; x: number; y: number }>('overlay-click', (event) => {
-			if (cancelled || results.length === 0 || cachedScaleFactor === 0) return;
-			const lx = event.payload.x / cachedScaleFactor;
-			const ly = event.payload.y / cachedScaleFactor;
-
-			const el = document.elementFromPoint(lx, ly);
-			if (!el) {
-				console.warn(`[overlay] elementFromPoint(${lx}, ${ly}) returned null — DPI or layout mismatch?`);
-				return;
+	/** Handle actions forwarded by the shared widget host. */
+	export function handleAction(action: string, target: HTMLElement | null): void {
+		if (action === 'clear') {
+			handleClear();
+		} else if (action === 'cancel') {
+			invoke('trade_cancel').catch(e => console.error('trade_cancel failed:', e));
+		} else if (action === 'pick' || action === 'refresh') {
+			const rawIndex = target?.dataset.index;
+			if (rawIndex == null) return; // no index on this button
+			const idx = parseInt(rawIndex, 10);
+			if (isNaN(idx) || idx >= results.length) return;
+			if (action === 'pick') {
+				userPick = results[idx].name;
+				selectedGem = userPick;
+				handlePick();
+			} else {
+				requestTradeRefresh(results[idx]);
 			}
-
-			const btn = el.closest('[data-action]') as HTMLElement | null;
-			if (!btn) return; // clicked on non-interactive area (gap between buttons)
-
-			const action = btn.dataset.action;
-			if (action === 'clear') {
-				handleClear();
-			} else if (action === 'cancel') {
-				invoke('trade_cancel').catch(e => console.error('trade_cancel failed:', e));
-			} else if (action === 'pick' || action === 'refresh') {
-				const rawIndex = btn.dataset.index;
-				if (rawIndex == null) return; // no index on this button
-				const idx = parseInt(rawIndex, 10);
-				if (isNaN(idx) || idx >= results.length) return;
-				if (action === 'pick') {
-					userPick = results[idx].name;
-					selectedGem = userPick;
-					handlePick();
-				} else {
-					requestTradeRefresh(results[idx]);
-				}
-			}
-		});
-
-		return () => {
-			cancelled = true;
-			unlistenPromise.then(unlisten => unlisten());
-		};
-	});
+		}
+	}
 
 	// Poll Rust for comparator data (cross-window events unreliable, onMount doesn't fire in overlay)
 	let lastJson = '';
@@ -332,7 +232,7 @@
 </script>
 
 <div class="surface">
-	{#if results.length > 0}
+	{#if drawing}
 		<div class="layout">
 			<div class="table">
 				{#each results as gem (gem.name)}
@@ -386,7 +286,8 @@
 					</div>
 				{/each}
 				</div>
-			<div class="side" bind:this={sideEl}>
+			<!-- Declaration order is the hook's tie-break: the buttons the player aims at most come first; side before queue row. -->
+			<div class="side" data-hot>
 				{#each results as gem, i (gem.name)}
 					<div class="side-row">
 						<button class="act-btn pick-btn" class:active={selectedGem === gem.name} data-action="pick" data-index={i} title="Pick">&#x2713;</button>
@@ -401,7 +302,7 @@
 			</div>
 		</div>
 		{#if tradeQueue}
-			<div class="queue-row" bind:this={queueEl}>
+			<div class="queue-row" data-hot>
 				<span class="queue-status">
 					{Math.min(tradeQueue.position, tradeQueue.total)}/{tradeQueue.total}
 					{#if tradeQueue.status === 'waiting' && tradeQueue.waitSecs > 0}{Math.ceil(tradeQueue.waitSecs)}s{/if}
@@ -409,24 +310,17 @@
 				<button class="clear-act queue-cancel" data-action="cancel">&times;</button>
 			</div>
 		{/if}
+	{:else if configMode}
+		<p class="placeholder">{label}</p>
 	{/if}
 </div>
 
 <style>
-	:global(html), :global(body) {
-		margin: 0;
-		padding: 0;
-		background: transparent !important;
-		overflow: hidden;
-		user-select: none;
-		-webkit-user-select: none;
-	}
-
 	.surface {
 		background: transparent;
-		position: fixed;
-		bottom: 30px;
-		left: 0;
+		position: relative;
+		width: 100%;
+		height: 100%;
 	}
 
 	.layout {
@@ -436,6 +330,11 @@
 	}
 
 	.table {
+		/* Keep the former bottom-up table offset here, not on `.surface` or
+		   `.layout`: the side and queue claims resolve against the whole widget root. */
+		position: absolute;
+		bottom: 30px;
+		left: 0;
 		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 		background: rgba(15, 17, 23, 0.92);
 		border: 1px solid rgba(42, 45, 55, 0.8);
@@ -630,8 +529,8 @@
 		font-size: 9px;
 	}
 
-	/* --- Side buttons (clicks come from mouse hook via overlay-click events) ---
-	   pointer-events: auto is needed so elementFromPoint can find the buttons.
+	/* --- Side buttons (clicks come from the mouse hook via the host) ---
+	   pointer-events: auto lets the host's elementFromPoint find the buttons.
 	   OS-level click-through is handled by WS_EX_TRANSPARENT, not CSS. */
 	.side {
 		display: flex;
@@ -639,7 +538,7 @@
 		align-items: center;
 		justify-content: flex-end;
 		pointer-events: auto;
-		position: fixed;
+		position: absolute;
 		right: 0;
 		top: 1px;
 		bottom: 0;
@@ -724,7 +623,7 @@
 		align-items: center;
 		gap: 4px;
 		pointer-events: auto;
-		position: fixed;
+		position: absolute;
 		bottom: 0;
 		right: 48px;
 	}
@@ -746,5 +645,11 @@
 	.queue-cancel:hover {
 		color: #ef4444;
 		border-color: rgba(239, 68, 68, 0.4);
+	}
+
+	.placeholder {
+		padding: 4px 8px;
+		font-size: 11px;
+		color: var(--color-lab-text-muted);
 	}
 </style>

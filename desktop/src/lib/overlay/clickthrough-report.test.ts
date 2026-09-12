@@ -21,9 +21,9 @@ describe('reporting a failed click-through setup', () => {
 	});
 
 	it('names the window and the reason in the line it logs', () => {
-		const report = clickthroughReport('comparator', 'WS_EX_TRANSPARENT did not read back');
+		const report = clickthroughReport('lab', 'WS_EX_TRANSPARENT did not read back');
 
-		expect(report.message).toContain('[comparator-overlay]');
+		expect(report.message).toContain('[lab-overlay]');
 		expect(report.message).toContain('WS_EX_TRANSPARENT did not read back');
 	});
 

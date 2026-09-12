@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "Default permissions for the desktop app",
-  "windows": ["main", "overlay", "overlay-preview", "comparator", "overlay-comparator-pos", "temple", "mercenary", "overlay-mercenary-pos", "lab"],
+  "windows": ["main", "overlay", "overlay-preview", "temple", "mercenary", "overlay-mercenary-pos", "lab"],
   "permissions": [
     "core:default",
     "shell:allow-open",

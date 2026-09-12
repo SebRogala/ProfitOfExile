@@ -333,8 +333,8 @@
 		};
 	});
 
-	/** After closing a config overlay, emit toggle-reset so the layout
-	 *  moves the comparator to its saved position and re-establishes focus. */
+	/** After closing a config overlay, emit the vestigial toggle-reset event;
+	 *  the remaining position-config flow is pending its later retirement WI. */
 	async function reclaimMouse() {
 		await getCurrentWebviewWindow().emit('overlay-toggle-reset', {}).catch(() => {});
 		notifyConfigEnd();
@@ -443,7 +443,6 @@
 		}
 	}
 
-	// --- Comparator Overlay Position (red frame for positioning) ---
 	// --- Trade Staleness Settings ---
 	let tradeStaleWarnSecs = $state(store.status?.trade_stale_warn_secs ?? 120);
 	let tradeStaleCriticalSecs = $state(store.status?.trade_stale_critical_secs ?? 600);
@@ -498,23 +497,20 @@
 	// --- Generic overlay position config ---
 	// DRY: one set of functions for all overlay position configurations.
 	interface OverlayConfig {
-		label: string;          // window label for position overlay (e.g., 'overlay-comparator-pos')
-		syncParam: string;      // URL param (e.g., 'comparator')
+		label: string;          // window label for position overlay
+		syncParam: string;      // URL param
 		getCommand: string;     // Rust get settings command
 		setCommand: string;     // Rust set settings command
 		defaultW: number;
 		defaultH: number;
 	}
 
-	const OVERLAY_CONFIGS: Record<string, OverlayConfig> = {
-		comparator: { label: 'overlay-comparator-pos', syncParam: 'comparator', getCommand: 'get_comparator_overlay_settings', setCommand: 'set_comparator_overlay_settings', defaultW: 630, defaultH: 250 },
-	};
+	const OVERLAY_CONFIGS: Record<string, OverlayConfig> = {};
 
 	/**
 	 * The Overlay Positions groups, in display order (POE-226).
 	 *
-	 * Lab / Merc / Temple, with the comparator as the only remaining per-window row
-	 * under Lab and the Merc/Temple WIDGETS under their groups. A group whose feature
+	 * Lab / Merc / Temple, with widget rows under each group. A group whose feature
 	 * this device lacks is left out entirely rather than disabled — a control
 	 * that places an overlay the user can never open is a dead row (POE-203) —
 	 * and which groups those are is decided in `$lib/overlay/widgets/overlay-groups`.
@@ -696,12 +692,8 @@
 	});
 
 	// Per-overlay state
-	let overlaySettings = $state<Record<string, { x: number; y: number; width: number; height: number } | null>>({
-		comparator: null,
-	});
-	let positionOverlays = $state<Record<string, any>>({
-		comparator: null,
-	});
+	let overlaySettings = $state<Record<string, { x: number; y: number; width: number; height: number } | null>>({});
+	let positionOverlays = $state<Record<string, any>>({});
 
 	// --- Timer appearance ---
 	let timerBgOpacity = $state(75);

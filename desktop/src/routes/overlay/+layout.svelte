@@ -30,12 +30,9 @@
 	   `border-box` — its boxes are sized in the same pixels their placement is
 	   persisted in — but it is the ONE surface that does, and it declares it for
 	   itself (`lib/overlay/widgets/WidgetHost.svelte`). This layout is shared by
-	   every overlay window, and the two that predate the widget engine (the
-	   comparator and the `/overlay` config-and-preview window) were laid out
-	   under the default `content-box`: resetting globally silently reflowed
-	   them, taking the comparator's `.table` (`width: 560px` + 10 px of padding +
-	   a 1 px border) from 582 px to 560. A reset that changes windows the change
-	   was not about does not belong in the shared layout. */
+	   every overlay window. The `/overlay` config-and-preview window predates the
+	   widget engine and is laid out under the default `content-box`. Keep its
+	   box model local; this shared layout must not reflow it. */
 	:global(*) {
 		margin: 0;
 		padding: 0;

@@ -14,10 +14,7 @@
  * feature (a control that places an overlay the user can never open), and a
  * geometry line that says "Not set" for a widget that is in fact placed.
  *
- * The comparator window row is carried through unchanged, name included:
- * it keys `OVERLAY_CONFIGS` and the per-row state records in the page, and
- * its Configure flow (`overlay-config-start` / `reclaimMouse`) is untouched
- * by this file. All this adds is which heading each one sits under.
+ * The Lab comparator is a widget row alongside the other Lab widgets.
  */
 import { LAB_WINDOW_LABEL, MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
 import type { WidgetGeometry } from './widget-geometry';
@@ -37,8 +34,7 @@ export interface OverlayGroupGrants {
 	temple: boolean;
 }
 
-/** A window row: the comparator overlay Settings places by dragging a config COPY of the
- *  real window. */
+/** No group declares a window row today; this type goes with the legacy position-config flow. */
 export interface OverlayWindowRow {
 	name: string;
 	label: string;
@@ -112,9 +108,7 @@ const GROUPS: readonly GroupSpec[] = [
 		heading: 'Lab',
 		grant: null,
 		module: LAB_WINDOW_LABEL,
-		windows: [
-			{ name: 'comparator', label: 'Gems Compare' }
-		]
+		windows: []
 	},
 	{
 		id: 'merc',

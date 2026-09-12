@@ -72,9 +72,8 @@ export interface WidgetWindow {
 //    down what it half-built rather than leaving it standing.
 //
 // Visibility with the game is NOT decided here. The Rust focus poller shows
-// and hides the window on the game-focus transition, exactly as it
-// does the comparator; the route decides only whether it has a board worth
-// drawing.
+// and hides the window on the game-focus transition; the route decides only
+// whether it has a board worth drawing.
 
 
 export function createWidgetWindow(options: WidgetWindowOptions): WidgetWindow {

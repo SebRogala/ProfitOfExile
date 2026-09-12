@@ -455,11 +455,10 @@ pub fn register_in(windows: &mut Vec<HookedWindow>, label: &str, hwnd: isize) {
 ///   — and it is not a candidate for [`hit_test`] either way.
 /// - `true` → `true` is NOT a show, and that is what makes the rule usable.
 ///   The two senders disagree about how often they speak: the widget host sends
-///   only when emptiness flips (`overlay/widgets/use-hot-rects.ts`), while the
-///   comparator re-asserts `true` from a `$effect` on every data change
-///   (`routes/overlay/comparator/+page.svelte`). Stamping every `true` would
-///   hand the comparator a fresh top-of-stack claim on each price tick — a
-///   window nothing happened to would out-rank one the user had just opened.
+///   only when emptiness flips (`overlay/widgets/use-hot-rects.ts`). Stamping
+///   every `true` would hand a widget a fresh top-of-stack claim on each price
+///   tick — a window nothing happened to would out-rank one the user had just
+///   opened.
 ///
 /// Separate from the Windows wrapper for the same reason [`register_in`] is:
 /// the priority rule is testable off Windows, and the wrapper supplies only the
@@ -488,11 +487,11 @@ pub fn set_has_content_in(windows: &mut Vec<HookedWindow>, label: &str, has_cont
 ///
 /// **The rects are WINDOW-relative, so both sides are translated into SCREEN
 /// coordinates before they are compared**, by each window's own cached rect.
-/// The two windows that declare rects today never share an origin — the widget
-/// host is monitor-sized at (0, 0) and the comparator is a 630 × 250 box
-/// wherever the user put it — so comparing the raw declarations reported
-/// collisions the screen does not have, which is worse than silence in a log
-/// whose whole job is to name a real one.
+/// Every declaring window is currently a monitor-sized host on the game's
+/// monitor, so that translation is a no-op today. It stays because the
+/// comparison is only meaningful in screen space: while one declaring window
+/// was a small, user-placed box, comparing the raw window-relative
+/// declarations reported collisions the screen did not have.
 ///
 /// A pair whose geometry is not both known is SKIPPED and reports nothing: a
 /// page usually declares its rects during the ~1 s before its HWND is known,
