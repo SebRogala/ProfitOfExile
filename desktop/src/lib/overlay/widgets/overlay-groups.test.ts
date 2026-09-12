@@ -33,16 +33,15 @@ describe('the Overlay Positions groups', () => {
 		]);
 	});
 
-	it('keeps the comparator window row under Lab', () => {
+	it('has no window row under Lab now the comparator is a widget', () => {
 		const lab = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Lab');
-		expect(lab?.windows).toEqual([
-			{ name: 'comparator', label: 'Gems Compare' }
-		]);
+		expect(lab?.windows).toEqual([]);
 	});
 
 	it('lists the Lab widgets under the Lab window', () => {
 		const lab = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Lab');
 		expect(lab?.widgets.map((row) => [row.spec.id, row.placeable])).toEqual([
+			['lab.comparator', true],
 			['lab.compass', true],
 			['lab.pathstrip', true],
 			['lab.timer', true]

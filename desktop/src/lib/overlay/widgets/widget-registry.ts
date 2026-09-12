@@ -247,6 +247,14 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		resizable: 'width'
 	},
 	{
+		id: 'lab.comparator',
+		module: 'lab',
+		label: 'Gems Compare',
+		defaults: { x: 100, y: 100, w: 630, h: 250 },
+		resizable: false,
+		fill: true
+	},
+	{
 		id: 'lab.compass',
 		module: 'lab',
 		label: 'Lab Compass',

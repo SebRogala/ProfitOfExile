@@ -84,12 +84,12 @@ window, which destroys the preview. `overlay-preview` is excluded from every
 screen grab while the grab is taken, so its frame and label cannot become OCR
 input.
 
-The comparator is the interactive one today: its page declares the button
-column (and the trade-queue row while that shows) and maps the emitted
-coordinates with `elementFromPoint` + `data-action`. Buttons must be inside a
-declared rect and expose that `data-action` metadata; they no longer have to
-align with the window's right edge, because the claim is the element's own
-rectangle rather than a band measured from the edge.
+The Lab comparator widget is the interactive Lab surface: it marks the button
+column (and the trade-queue row while that shows) with `[data-hot]`, and the
+shared widget host maps forwarded coordinates with `elementFromPoint` +
+`data-action`. Buttons must be inside a declared rect and expose that
+`data-action` metadata; the host claims each marked element rather than a band
+measured from a window edge.
 
 The hook pairs button-up with button-down: it consumes a release only when it
 consumed the matching press, so a drag that started on the game keeps its
@@ -99,23 +99,23 @@ the acceptance)**: the hook cannot see z-order, so it uses the two show signals
 Rust does receive — the window's registration, and the EDGE from empty to
 drawing in `set_overlay_has_content(label, true)` — and the later of the two
 wins. Only the false→true edge counts, never a repeat of `true`: the widget
-host sends the flag when emptiness flips, but the comparator re-asserts it from
-a `$effect` on every data change, so a repeat would hand the comparator a fresh
-top-of-stack claim on every price tick and let it out-rank a window the user had
-just opened. Registration order is the tiebreak and one
+host sends the flag when emptiness flips. The Lab comparator widget has no
+per-tick re-assert, so a price tick does not restamp its shown sequence or let it
+out-rank a window the user had just opened. Registration order is the tiebreak and one
 monotonic counter cannot produce a tie, so it is there only to keep the answer
 total. The rule this replaces was first-registered-wins, which handed a shared
 click to the window built FIRST, i.e. the one most likely to be underneath.
 `set_overlay_hot_rects` logs one line per pair per registration when a window's
 rects land on another registered window's, so a click going to the window the
 user did not mean is something the log already named. Hot rects are
-window-relative and the two windows that declare them never share an origin
-(monitor-sized widget host at 0,0; a small comparator wherever the user put it),
-so both sides are translated by their window's cached rect and compared in
-SCREEN space. A pair is skipped, silently and without being marked reported,
-while either window's rect is unknown — a page declares its rects during the
-~1 s before its HWND resolves, and the next declaration after it does names the
-pair. The command routes the returned lines through `app_log`, not `log::warn!`:
+window-relative. Every declaring window is currently a monitor-sized host on
+the game's monitor, so the translation is a no-op today. It stays because the
+comparison is only meaningful in screen space: while one declaring window was a
+small, user-placed box, comparing the raw window-relative declarations reported
+collisions the screen did not have. A pair is skipped, silently and without being marked
+reported, while either window's rect is unknown — a page declares its rects
+during the ~1 s before its HWND resolves, and the next declaration after it does
+name the pair. The command routes the returned lines through `app_log`, not `log::warn!`:
 `env_logger` is initialised with no filter and `RUST_LOG` is unset, so anything
 below Error never reaches `app.log`.
 
@@ -137,7 +137,7 @@ always-on-top window. The flag is not quite the whole desired state for a
 window with WIDGETS: a live config session is ORed into it so the user can
 arrange positions with the module off (the ordering contract below), which is
 the one thing that raises such a window without any module work running. The
-temple, merc, comparator, and lab windows follow the Rust focus poller's
+temple, merc, and lab windows follow the Rust focus poller's
 game-focus show/hide behavior, and appear in `set_debug_mode`'s force-show
 branch. The lab widget window is governed by `lab_overlays_enabled`; its
 compass, map, and timer widgets own their visibility and in-lab draw rules.
@@ -215,7 +215,7 @@ values — a raw handle half a second old can name someone else's window. A
 destroyed overlay leaves the hook's registry through the `Destroyed` arm of
 `on_window_event`, which also tears the hook down when it was the last one.
 
-What the caller does with the failure differs by overlay type, and both answers
+What the caller does with the failure differs by overlay type. The two answers
 are in `routes/(app)/+layout.svelte`:
 
 - The two MODULE-COUPLED windows (temple, merc) destroy the half-built window
@@ -224,16 +224,6 @@ are in `routes/(app)/+layout.svelte`:
   size of the game monitor, so one that never became click-through swallows
   every click on the screen, and a click on the merc window also takes focus,
   drops `game_in_foreground` and stops the capture loop.
-- The separate comparator overlay REPORTS and keeps the window: it is a small,
-  user-positioned rectangle the user just switched on, and destroying it would
-  read as a toggle that does nothing.
-  Note the split is by OWNER: both module-coupled windows are monitor-sized
-  widget hosts, coupled to a module flag, and a click on the merc one stops the
-  capture loop. The comparator's call is deliberately not
-  awaited before the "hide if the game is not focused" step either — that hide
-  must not wait a second on a window the user is not looking at — so the
-  failure arrives on the promise's `catch`, in the app log as well as the
-  console.
 - The `lab` window is a monitor-sized widget host governed by
   `lab_overlays_enabled`; its creation awaits click-through and destroys a
   half-built window on failure, like the temple window.
@@ -249,8 +239,7 @@ that did.
 A module may instead open ONE fullscreen, click-through window over the game's
 monitor and place small panels — WIDGETS — inside it. The temple and mercenary
 are module-coupled widget windows (POE-225, POE-232); the `lab` window now hosts
-the timer, compass and path-strip widgets; the comparator is still a separate
-window (POE-231 moves it in last).
+the timer, compass, path-strip and comparator widgets.
 
 - The window is the GAME monitor (POE-237). `routes/(app)/+layout.svelte` asks
   Rust's `get_game_monitor` — which the focus poller answers from the PoE
@@ -321,11 +310,11 @@ window (POE-231 moves it in last).
   is built on it, `capture::capture_screen` grabs it, and `ssot.screen` carries
   its id and origin) — so a user-placed widget and a game-anchored one need no
   conversion between them beyond the window's own scale factor.
-- The `lab` widget window follows GAME FOCUS only, like the comparator; its
+- The `lab` widget window follows GAME FOCUS only; its
   widgets own their visibility and in-lab rules, so they can stay hidden outside
   a lab without hiding the window that hosts them.
-- **The shipped widget list.** Seven: three temple widgets, the Lab compass, Lab map,
-  Lab timer and the Merc verdict:
+- **The shipped widget list.** Eight: three temple widgets, the Lab comparator,
+  Lab compass, Lab map, Lab timer and the Merc verdict:
   `temple.offers` — the OFFER BOXES (POE-249), `anchored`, one box per architect
   block on the side panel in the panel's OWN order (box `i` mirrors `offers[i]`,
   so "upper = the upgrade" is the common case and not a rule), stacked in the
@@ -357,6 +346,8 @@ window (POE-231 moves it in last).
   `mercenary.verdict` — the MERC VERDICT widget, user-placed and persisted in
   `Settings.widgets`, with its height following content and its width offered
   by `resizable: 'width'`.
+  `lab.comparator` — the LAB COMPARATOR widget, user-placed and persisted in
+  `Settings.widgets`, filling its shipped 630×250 box.
   `lab.compass` — the LAB COMPASS widget, user-placed and persisted in
   `Settings.widgets`, filling its shipped 300×280 box until it is resized;
   `lab.pathstrip` — the LAB MAP widget, user-placed and persisted in
@@ -754,7 +745,7 @@ flows above are untouched.
 ## Current data and lifecycle behavior
 
 - Shared main-window status is event-driven through `status.svelte.ts`.
-- The comparator overlay polls Rust-held comparator data every 500 ms.
+- The Lab comparator widget polls Rust-held comparator data every 500 ms.
 - Lab compass and map widgets poll their compass settings or layout path and
   reconcile navigation from lab-nav events and catch-up replay.
 - Game focus is determined in Rust by a `GetForegroundWindow` poller; Client.txt
@@ -933,16 +924,13 @@ touching the named path.
   with it. Check the last part by clicking the game through where the widgets
   were: a click that does not reach the game means the abandon restored the
   outside and left the window interactive, which is the POE-227 N1 regression.
-- **Comparator width, after an overlay-wide CSS change** (added after the
-  POE-225 batch, where a `box-sizing: border-box` added to the shared overlay
-  layout's reset narrowed the comparator table from 582 px to 560): with the
-  comparator overlay open on a gem, check that the table is as wide as its saved
-  window and that no column is clipped. `routes/overlay/+layout.svelte` is loaded
-  by EVERY overlay window, and the two windows that predate the widget engine
-  (the comparator and the `/overlay` config-and-preview window) are laid
-  out under the default `content-box` — a box-model declaration added there
-  reflows all of them silently, with no gate that can see it. Anything the widget
-  host needs belongs in `WidgetHost.svelte`, which is where `border-box` now is.
+- **Lab comparator width, after widget migration:** with the Lab comparator
+  widget open on a gem, the widget box is 630 × 250 and its `.table` has a
+  560 px `border-box` outer width (the prior standalone `content-box` width was
+  582 px after its 10 px padding and 1 px border). Check that no column is
+  clipped inside the new box. `WidgetHost.svelte` owns the `border-box` reset;
+  the shared overlay layout no longer changes this widget or the `/overlay`
+  config-and-preview window.
 - **Merc widget, after a row-count change**: let the widget redraw at a
   different height — open a recruit window with a different number of rows —
   then confirm the verdict and status remain visible, with no clipped last row.
@@ -1061,20 +1049,20 @@ touching the named path.
 - **Two overlapping overlays, which one takes the click** (POE-239): raise two
   registered overlay windows whose hot rects overlap — the temple widget window
   is the whole game monitor, so any other overlay drawing a hot rect over it
-  qualifies (the comparator, the merc widget). `app.log` must carry one `overlay
+  qualifies (the Lab comparator widget, the merc widget). `app.log` must carry one `overlay
   hot rects overlap:` line per pair per registration. Click inside the overlap:
   the window shown MOST RECENTLY must take it. Bring the older one back — toggle
   it off and on, or let it go from empty to drawing — and the same click must
   switch to it. The inverse matters as much: with both up and neither
-  re-shown, let the comparator take a price tick (it re-asserts
-  `set_overlay_has_content(label, true)` with no emptiness flip) and the click
-  must NOT move to it, because only the false→true EDGE restamps `shown_seq`.
+  re-shown, let the Lab comparator widget take a price tick with no emptiness
+  flip and the click must NOT move to it, because only the false→true EDGE
+  restamps `shown_seq`.
 - **Hook re-install after a silent removal** (POE-238, item 9 of the POE-223
-  smoke list): with the comparator open on a gem, make Windows drop the
+  smoke list): with the Lab comparator widget open on a gem, make Windows drop the
   `WH_MOUSE_LL` hook — hold a debugger pause of at least 1 s on the app, or
   unplug and replug the mouse — then move the cursor. `app.log` must show
   exactly ONE `overlay hook re-installed (#1 consecutive, silent for N ms)`
-  line, and the comparator's buttons must work afterwards. `silent for` is the
+  line, and the comparator widget's buttons must work afterwards. `silent for` is the
   age of the newest callback stamp, so it includes time nobody touched the
   mouse and is process uptime while the hook has never fired — it is not a
   measure of how long the hook was gone. A line that KEEPS coming back (about

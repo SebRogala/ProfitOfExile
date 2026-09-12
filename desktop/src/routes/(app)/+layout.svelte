@@ -22,7 +22,6 @@
 		TEMPLE_MODULE_ID,
 		TEMPLE_WINDOW_LABEL
 	} from '$lib/overlay/manager';
-	import { clickthroughReport } from '$lib/overlay/clickthrough-report';
 	import { moduleOverlayWanted } from '$lib/overlay/module-lifecycle';
 	import { createWidgetWindow, type WidgetWindow } from '$lib/overlay/widget-window';
 	import { WIDGETS } from '$lib/overlay/widgets/widget-registry';
@@ -94,43 +93,6 @@
 		invoke('set_sidebar_open', { open: next }).catch(e => console.error('set_sidebar_open failed:', e));
 	}
 
-	/**
-	 * A click-through setup that did not land, reported in the app log as well
-	 * as the console (guide guard 6 — a shipped build has no devtools).
-	 *
-	 * `set_overlay_clickthrough` AWAITS its own setup and returns the failure
-	 * now, so there is something real to report: a transparent, always-on-top
-	 * window that is not click-through swallows the player's clicks with nothing
-	 * on screen to explain it. The separate comparator overlay only REPORTS it — it is a
-	 * small, user-positioned rectangle, and destroying it just after the user
-	 * switched it on would read as a toggle that does nothing. The two
-	 * module-coupled windows (temple, merc) destroy and retry instead, because
-	 * one of them is the size of the monitor and a click on the other stops the
-	 * capture loop; that path is `module-lifecycle.ts`.
-	 *
-	 * So its call is attached rather than awaited. The command spends ~1 s
-	 * waiting for the WebView2 HWND (guide, runtime-earned observations), and
-	 * the "hide if the game is not focused" step that follows every creation
-	 * must not sit on screen for that second on a window nobody is looking at.
-	 * Nothing downstream reads the result, so the `catch` observes it just as
-	 * well as an `await` would.
-	 *
-	 * Not every failure is a warning: a window destroyed inside that 1 s wait is
-	 * what an ordinary toggle-off looks like and has nothing left to eat a
-	 * click. `clickthroughReport` is that decision, out where it can be tested.
-	 */
-	function logClickthroughFailure(label: string, e: unknown): void {
-		const report = clickthroughReport(label, e);
-		if (report.level === 'error') console.error(`[overlay] ${report.message}`);
-		else console.info(`[overlay] ${report.message}`);
-		invoke('app_log_from_frontend', { msg: report.message })
-			.catch(err => console.error('[overlay] app log unreachable:', err));
-	}
-
-	// Comparator overlay state
-	let comparatorActive = $state(false);
-	let comparatorWin = $state<any>(null);
-
 	let pathstripHasData = $state(false);
 
 	// Lab overlays category toggle
@@ -138,88 +100,6 @@
 	/** Whether `get_lab_overlays_enabled` has answered — until it has, the lab window's desired state is unknown, the same
 	 *  not-yet-known the module flags have before the first poll. */
 	let labOverlaysLoaded = $state(false);
-
-	async function createComparatorOverlay(physX: number, physY: number) {
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const { PhysicalPosition } = await import('@tauri-apps/api/dpi');
-
-		await destroyComparatorWindow();
-
-		const win = new WebviewWindow('comparator', {
-			url: '/overlay/comparator',
-			transparent: true,
-			decorations: false,
-			alwaysOnTop: true,
-			resizable: false,
-			shadow: false,
-			skipTaskbar: true,
-			width: 630,
-			height: 250,
-		});
-
-		win.once('tauri://created', async () => {
-			await win.setPosition(new PhysicalPosition(physX, physY));
-			// Reported, not awaited — see `logClickthroughFailure`.
-			void invoke('set_overlay_clickthrough', { label: 'comparator' })
-				.catch(e => logClickthroughFailure('comparator', e));
-			comparatorWin = win;
-			comparatorActive = true;
-
-			// Hide immediately if game is not focused — the focus poller
-			// only handles transitions, so a window created while PoE is
-			// not in the foreground would otherwise stay visible.
-			try {
-				const status = await invoke<any>('get_status');
-				if (!status?.game_focused) {
-					await win.hide();
-				}
-			} catch (e) {
-				console.warn('[overlay] initial focus check failed:', e);
-			}
-		});
-		win.once('tauri://error', (e: any) => {
-			console.error('[overlay] comparator creation failed:', e);
-		});
-	}
-
-	// Destroy the comparator window — retries up to 5 times for async cleanup.
-	async function destroyComparatorWindow() {
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		for (let i = 0; i < 5; i++) {
-			const existing = await WebviewWindow.getByLabel('comparator');
-			if (!existing) break;
-			try { await existing.close(); } catch (_) {}
-			try { await existing.destroy(); } catch (_) {}
-			await new Promise(r => setTimeout(r, 100));
-		}
-		comparatorWin = null;
-	}
-
-	async function toggleComparatorOverlay() {
-		if (comparatorActive) {
-			await destroyComparatorWindow();
-			comparatorActive = false;
-			// Save disabled state
-			const settings = await invoke<any>('get_comparator_overlay_settings').catch(e => { console.warn('[overlay] settings load failed:', e); return null; });
-			await invoke('set_comparator_overlay_settings', {
-				x: settings?.x ?? 100, y: settings?.y ?? 100,
-				w: settings?.width ?? 600, h: settings?.height ?? 250,
-				enabled: false,
-			}).catch(e => console.warn('[overlay] settings operation failed:', e));
-		} else {
-			const settings = await invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_comparator_overlay_settings').catch(e => { console.warn('[overlay] settings load failed:', e); return null; });
-			await createComparatorOverlay(
-				settings?.x ?? 100,
-				settings?.y ?? 100,
-			);
-			// Save enabled state
-			await invoke('set_comparator_overlay_settings', {
-				x: settings?.x ?? 100, y: settings?.y ?? 100,
-				w: settings?.width ?? 600, h: settings?.height ?? 250,
-				enabled: true,
-			}).catch(e => console.warn('[overlay] settings operation failed:', e));
-		}
-	}
 
 	/**
 	 * Whether anything currently wants the temple overlay window — the module
@@ -279,6 +159,7 @@
 		label: LAB_WINDOW_LABEL, moduleId: LAB_WINDOW_LABEL, wanted: labOverlayWanted,
 		configLive: () => widgetConfigLive(widgetConfigSessions, LAB_WINDOW_LABEL), debug: () => false
 	});
+	const LAB_COMPARATOR_SPEC = WIDGETS.find((spec) => spec.id === 'lab.comparator')!;
 	const LAB_COMPASS_SPEC = WIDGETS.find((spec) => spec.id === 'lab.compass')!;
 	const LAB_PATHSTRIP_SPEC = WIDGETS.find((spec) => spec.id === 'lab.pathstrip')!;
 	const LAB_TIMER_SPEC = WIDGETS.find((spec) => spec.id === 'lab.timer')!;
@@ -690,13 +571,6 @@
 		labOverlaysActive = next;
 		labOverlaysLoaded = true;
 		await invoke('set_lab_overlays_enabled', { enabled: next }).catch(e => console.warn('[overlay] set_lab_overlays_enabled failed:', e));
-		if (next) {
-			// Enable all — respect the comparator's own enabled state
-			if (!comparatorActive) await toggleComparatorOverlay();
-		} else {
-			// Disable all
-			if (comparatorActive) await toggleComparatorOverlay();
-		}
 	}
 
 	// Ctrl+Shift+F12 toggles debug mode (devtools + force-show overlays)
@@ -744,21 +618,14 @@
 	// meant the Runs tab silently collected nothing.
 	startRunRecorder();
 
-	// Reposition comparator overlay when settings page closes a config overlay.
-	// The config overlay destroy can leave Win32 mouse capture stuck; this move resets focus.
-	// Only active while a config overlay is open (overlay-config-start/end events).
+	// The config overlay destroy can leave Win32 mouse capture stuck; the
+	// widget-config flow owns its own focus-safe exit.
 	let configOverlayCleanup: (() => void) | null = null;
 	listen('overlay-config-start', async () => {
 		if (configOverlayCleanup) return; // already listening
 		const unlisten = await listen('overlay-toggle-reset', async () => {
-			if (comparatorActive) {
-				// Move existing overlay to saved position — no destroy/recreate needed.
-				const settings = await invoke<any>('get_comparator_overlay_settings').catch(() => null);
-				if (settings) {
-					await invoke('move_overlay', { label: 'comparator', x: settings.x, y: settings.y, w: settings.width ?? 630, h: settings.height ?? 250 })
-						.catch(e => console.warn('[overlay] comparator move failed:', e));
-				}
-			}
+			// Nothing emits this today; the pair is retired with the rest of the
+			// position-config flow in a later WI.
 		});
 		configOverlayCleanup = unlisten;
 	});
@@ -769,15 +636,6 @@
 		}
 	});
 	// Focus-based overlay show/hide handled by Rust focus poller (GetForegroundWindow)
-
-	// Auto-restore comparator overlay if it was enabled in previous session
-	invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_comparator_overlay_settings')
-		.then((settings) => {
-			if (settings?.enabled) {
-				createComparatorOverlay(settings.x, settings.y);
-			}
-		})
-		.catch(e => console.warn('[overlay] comparator settings operation failed:', e));
 
 	// Restore lab overlays category toggle state
 	invoke<boolean>('get_lab_overlays_enabled')
@@ -818,7 +676,7 @@
 	<TopBar status={store.status} />
 	<div class="app-body">
 		<Sidebar open={sidebarOpen} currentPath={viewToPath(visibleView)} onToggle={toggleSidebar}
-			comparatorActive={comparatorActive} gameFocused={store.status?.game_focused ?? false} onToggleComparator={toggleComparatorOverlay}
+			comparatorActive={labOverlaysActive && (widgetPlacements.rows['lab.comparator']?.visible ?? true)} gameFocused={store.status?.game_focused ?? false} onToggleComparator={() => setWidgetVisible(LAB_COMPARATOR_SPEC, !(widgetPlacements.rows['lab.comparator']?.visible ?? true))}
 			compassActive={labOverlaysActive && (widgetPlacements.rows['lab.compass']?.visible ?? true)} onToggleCompass={() => setWidgetVisible(LAB_COMPASS_SPEC, !(widgetPlacements.rows['lab.compass']?.visible ?? true))}
 			pathstripActive={labOverlaysActive && (widgetPlacements.rows['lab.pathstrip']?.visible ?? true)} pathstripHasData={pathstripHasData} onTogglePathstrip={() => setWidgetVisible(LAB_PATHSTRIP_SPEC, !(widgetPlacements.rows['lab.pathstrip']?.visible ?? true))}
 			timerActive={labOverlaysActive && (widgetPlacements.rows['lab.timer']?.visible ?? true)}

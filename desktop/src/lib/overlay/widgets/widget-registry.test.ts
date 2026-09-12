@@ -45,6 +45,7 @@ describe('every declared widget', () => {
 			'temple.door',
 			'temple.waiting',
 			'mercenary.verdict',
+			'lab.comparator',
 			'lab.compass',
 			'lab.pathstrip',
 			'lab.timer'
@@ -103,6 +104,16 @@ describe('the merc module', () => {
 });
 
 describe('the lab module', () => {
+	it('declares the comparator as a fixed-size filled widget', () => {
+		expect(widgetsFor('lab').find((widget) => widget.id === 'lab.comparator')).toMatchObject({
+			id: 'lab.comparator',
+			label: 'Gems Compare',
+			defaults: { x: 100, y: 100, w: 630, h: 250 },
+			resizable: false,
+			fill: true
+		});
+	});
+
 	it.each([
 		['lab.compass', 'Lab Compass', { x: 100, y: 100, w: 300, h: 280 }],
 		['lab.pathstrip', 'Lab Map', { x: 100, y: 300, w: 450, h: 180 }],

@@ -1777,11 +1777,6 @@ fn set_debug_mode(app: AppHandle, on: bool) {
     write_debug_mode(&state.debug_mode, on);
     if on {
         // Turning debug ON — show all overlays
-        if let Some(win) = app.get_webview_window("comparator") {
-            if let Err(e) = win.show() {
-                log::warn!("Failed to force-show overlay: {}", e);
-            }
-        }
         if let Some(win) = app.get_webview_window("lab") {
             if let Err(e) = win.show() {
                 log::warn!("Failed to force-show lab: {}", e);
@@ -1828,8 +1823,8 @@ fn set_comparator_data(payload: serde_json::Value, app: AppHandle) {
 
 /// Tell the hook whether `label` is drawing anything.
 ///
-/// Per window, not process-wide: an empty comparator must pass its clicks
-/// through while the merc strip beside it is still claiming its own.
+/// Per window, not process-wide: an empty Lab comparator widget must pass its
+/// clicks through while the merc strip is still claiming its own.
 #[tauri::command]
 fn set_overlay_has_content(label: String, has_content: bool) {
     #[cfg(windows)]
@@ -1980,7 +1975,8 @@ fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) -
     Ok(())
 }
 
-/// The overlay windows `fit_overlay_height` will act on.
+/// The overlay windows `fit_overlay_height` will act on; the list is empty
+/// while all current overlay content sizes itself inside its owning window.
 ///
 /// An allowlist rather than "any label the app knows", because this command
 /// resizes a window on a caller's say-so and the caller is a webview. `main` is
@@ -1993,7 +1989,7 @@ fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) -
 /// content per WIDGET, in CSS, and never calls this command.
 /// The merc strip became a widget in a monitor-sized window (POE-232), and the
 /// lab timer joined the lab widget window (POE-231), for the same reason.
-const RESIZABLE_OVERLAY_LABELS: [&str; 1] = ["comparator"];
+const RESIZABLE_OVERLAY_LABELS: [&str; 0] = [];
 
 /// Whether `fit_overlay_height` may touch this window.
 fn is_resizable_overlay_label(label: &str) -> bool {
@@ -3493,7 +3489,7 @@ enum FocusState {
 /// `Some(true)` show, `Some(false)` hide, `None` leave it exactly as it is.
 ///
 /// `gate_met` is that overlay's own condition — game focus for the
-/// comparator/temple/merc/lab group.
+/// temple/merc/lab group.
 /// The two suppressors are why this is a function rather than an `if` in the
 /// loop: both make a HIDE wrong while leaving a SHOW right, and both are
 /// invisible when they are missing.
@@ -3684,7 +3680,7 @@ fn spawn_focus_poller(app: AppHandle) {
                     // stops an overlay click from blanking every overlay, and
                     // NOT holding it is what stops the capture loop from
                     // photographing our own window instead of the game.
-                    for overlay_name in &["comparator", "temple", "mercenary", "lab"] {
+                    for overlay_name in &["temple", "mercenary", "lab"] {
                         apply_overlay_focus(&app, overlay_name, is_focused, debug);
                     }
                 }

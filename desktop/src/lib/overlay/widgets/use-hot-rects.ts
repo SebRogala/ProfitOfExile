@@ -5,11 +5,11 @@
  * A widget overlay is click-through at the OS level, so a button inside it
  * receives no clicks at all unless the window has told the Windows mouse hook
  * which rectangles to consume — `set_overlay_hot_rects`, documented in
- * `docs/OVERLAY-GUIDE.md` and converted by `../hot-rects.ts`. The comparator
- * does this by hand for its two fixed elements; a widget host cannot, because
- * it does not know what its widgets draw. So the contract is a DOM one: any
- * element inside the host that carries `data-hot` is claimed, and any element
- * that also carries `data-action` is routed by the host's `overlay-click`
+ * `docs/OVERLAY-GUIDE.md` and converted by `../hot-rects.ts`. The Lab comparator
+ * marks its two fixed elements with `data-hot`; a widget host cannot otherwise
+ * know what its widgets draw. So the contract is a DOM one: any element inside
+ * the host that carries `data-hot` is claimed, and any element that also carries
+ * `data-action` is routed by the host's `overlay-click`
  * handler through `elementFromPoint`.
  *
  * Withdrawal matters as much as declaration. A rect left behind for a button
@@ -24,8 +24,7 @@
  * - a `ResizeObserver` on the host — the window changed size or scale.
  * - a `MutationObserver` on the subtree. This is the one that matters for a
  *   host: the host element is the whole monitor and never resizes, so a button
- *   appearing inside it is invisible to the `ResizeObserver`. The comparator
- *   does not need one because it declares two elements it holds references to.
+ *   appearing inside it is invisible to the `ResizeObserver`.
  *
  * All three funnel into one `requestAnimationFrame`, so a burst of reactive
  * changes costs at most one measurement per frame, and [`nextHotRectCalls`]

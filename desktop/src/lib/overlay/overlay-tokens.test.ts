@@ -46,12 +46,11 @@ const overlayPages = import.meta.glob('/src/routes/overlay/**/+page.svelte', {
 /**
  * Every component an overlay route draws WITH.
  *
- * Two directories: `lib/temple/` (`TempleLattice.svelte`, shared with the page)
- * and `lib/overlay/widgets/` (`WidgetHost.svelte` and anything the widget
- * engine grows — it renders in EVERY module's overlay window, so its palette
- * has to resolve out here for all of them). They are listed by directory rather
- * than globbed app-wide because most `$lib` components never enter an overlay
- * window and would fail this check for tokens only `app.css` declares —
+ * Three directories: `lib/temple/` (`TempleLattice.svelte`, shared with the page),
+ * `lib/overlay/widgets/` (`WidgetHost.svelte` and anything the widget engine
+ * grows), and `lib/compass/` (the Lab widgets). They are listed by directory
+ * rather than globbed app-wide because most `$lib` components never enter an
+ * overlay window and would fail this check for tokens only `app.css` declares —
  * correctly, since they are never drawn out here.
  */
 const overlayComponents = {
@@ -61,6 +60,11 @@ const overlayComponents = {
 		eager: true
 	}) as Record<string, string>),
 	...(import.meta.glob('/src/lib/overlay/widgets/*.svelte', {
+		query: '?raw',
+		import: 'default',
+		eager: true
+	}) as Record<string, string>),
+	...(import.meta.glob('/src/lib/compass/*.svelte', {
 		query: '?raw',
 		import: 'default',
 		eager: true
@@ -174,7 +178,7 @@ describe('the overlay palette', () => {
 		const covered = Object.keys(overlayPages);
 		expect(covered).toContain('/src/routes/overlay/temple/+page.svelte');
 		expect(covered).toContain('/src/routes/overlay/mercenary/+page.svelte');
-		expect(covered.length).toBeGreaterThanOrEqual(5);
+		expect(covered.length).toBeGreaterThanOrEqual(4);
 	});
 
 	it('covers the widget host, which draws inside every module overlay', () => {
