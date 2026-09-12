@@ -17,7 +17,8 @@ flags and `lab_overlays_enabled` documented here are NOT modules.
 
 1. **Capabilities:** every overlay label must appear in
    `desktop/src-tauri/capabilities/default.json`. Missing labels make Tauri APIs
-   unavailable to that window.
+   unavailable to that window. The bare `overlay` label in that list is a legacy
+   entry: nothing builds a window under it (checked 2026-09-12).
 2. **Physical persistence:** `outerPosition()` and `outerSize()` produce physical
    coordinates. Widget placements persist physical, window-relative geometry;
    OCR previews apply exact `PhysicalPosition`/`PhysicalSize` after construction.
@@ -239,6 +240,20 @@ A module may instead open ONE fullscreen, click-through window over the game's
 monitor and place small panels — WIDGETS — inside it. The temple and mercenary
 are module-coupled widget windows (POE-225, POE-232); the `lab` window now hosts
 the timer, compass, path-strip and comparator widgets.
+
+- **What owns each window, and what a widget's own switch does.** The temple's
+  and the merc's windows follow their MODULE flag; the `lab` window follows the
+  `lab_overlays_enabled` setting (POE-231) — no module, no capture loop, no
+  feature grant. Both kinds OR in a live widget-config session, so Settings can
+  arrange widgets with the module or the switch off. The switch governs the
+  WINDOW only: each widget keeps its own `visible` flag. That is a CHANGE from
+  the four per-window lab overlays it replaced, where flipping the category
+  force-flipped all four. One consequence to know: the sidebar's per-widget rows
+  read `lab_overlays_enabled && visible`, so a click while the switch is off
+  writes the widget's flag with nothing on screen to show it — gating those rows
+  on the switch is the open alternative (owner's call, 2026-09-12). Two shipped
+  defaults also coincide, `lab.comparator` and `lab.compass` both starting at
+  (100, 100), so a fresh profile draws them stacked until one is dragged.
 
 - The window is the GAME monitor (POE-237). `routes/(app)/+layout.svelte` asks
   Rust's `get_game_monitor` — which the focus poller answers from the PoE
@@ -1977,6 +1992,7 @@ touching the named path.
 - **Game moved to another monitor**: move the game to another monitor and verify all three widget windows rebuild on the game's monitor.
 - **Debug mode force-show**: turn on debug mode and verify it force-shows all three widget windows.
 - **The two `border-box` pixel changes**: the merc glyph cells lost 2 px of outer size (24 → 22 px) — check the ✓/?/✕ boxes still align with the rows and no cell clips its glyph; the comparator's table went 582 → 560 px, which is the existing **Lab comparator width, after widget migration** item above.
+- **A widget placed low**: drag the mercenary widget near the bottom of the screen and let a tall verdict draw. A content-sized box is clamped by its SHIPPED height, not by what it renders, so report anything running past the screen edge or under the taskbar — the window-level clamp `fit_overlay_height` used to apply is gone.
 
 ## Adding an overlay
 
