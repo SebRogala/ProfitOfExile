@@ -1,11 +1,9 @@
 /**
  * What Settings → Overlay Positions actually lists (POE-226).
  *
- * The section used to be one flat list of five rows, one per overlay WINDOW.
- * It is now three groups — Lab, Merc, Temple — because the windows stopped
- * being the only unit: the temple's overlay is a single fullscreen canvas with
- * WIDGETS inside it (POE-225), so its rows are widgets and it is arranged with
- * one in-window config session rather than five per-window ones.
+ * It is three groups — Lab, Merc, Temple — because each overlay is a single
+ * fullscreen canvas with WIDGETS inside it (POE-225), and it is arranged with
+ * one in-window config session.
  *
  * The derivation lives here rather than in `SettingsPage.svelte` for the reason
  * every other decision in this feature does: a `.svelte` file has no unit-test
@@ -34,12 +32,6 @@ export interface OverlayGroupGrants {
 	temple: boolean;
 }
 
-/** No group declares a window row today; this type goes with the legacy position-config flow. */
-export interface OverlayWindowRow {
-	name: string;
-	label: string;
-}
-
 /** One widget row under a heading. */
 export interface OverlayWidgetRow {
 	spec: WidgetSpec;
@@ -61,8 +53,6 @@ export interface OverlayGroup {
 	id: string;
 	/** The heading text. */
 	heading: string;
-	/** The per-window rows, each keeping its own Configure flow. */
-	windows: OverlayWindowRow[];
 	/** The widgets this group's module draws inside its fullscreen window —
 	 *  the placeable ones first, then the anchored ones, each row saying which
 	 *  it is. */
@@ -87,42 +77,36 @@ interface GroupSpec {
 	grant: keyof OverlayGroupGrants | null;
 	/** The module whose widgets this group lists, or `null` for a window-only group. */
 	module: string | null;
-	windows: OverlayWindowRow[];
 }
 
 /**
  * The three groups, in display order.
  *
- * Lab is the lab window's compass, map and timer widgets plus the one remaining
- * lab window, unchanged and ungated. Merc is the verdict
- * widget: its row belongs to the merc MODULE, and a device without the `merc`
- * feature never sees that module (POE-203), so the whole group is left out
- * rather than disabled — the same reason the flat list used to drop that one
- * row. Temple has no window row at all: its overlay is the monitor and has no
- * persisted rect of its own (POE-225 D8), so everything under that heading is a
- * widget.
+ * Lab is the lab window's compass, map, timer and comparator widgets, unchanged
+ * and ungated. Merc is the verdict widget: its row belongs to the merc MODULE,
+ * and a device without the `merc` feature never sees that module (POE-203), so
+ * the whole group is left out rather than disabled. Temple's overlay is the
+ * monitor and has no persisted rect of its own (POE-225 D8), so everything under
+ * that heading is a widget.
  */
 const GROUPS: readonly GroupSpec[] = [
 	{
 		id: 'lab',
 		heading: 'Lab',
 		grant: null,
-		module: LAB_WINDOW_LABEL,
-		windows: []
+		module: LAB_WINDOW_LABEL
 	},
 	{
 		id: 'merc',
 		heading: 'Merc',
 		grant: 'merc',
-		module: MERCENARY_WINDOW_LABEL,
-		windows: []
+		module: MERCENARY_WINDOW_LABEL
 	},
 	{
 		id: 'temple',
 		heading: 'Temple',
 		grant: 'temple',
-		module: TEMPLE_WINDOW_LABEL,
-		windows: []
+		module: TEMPLE_WINDOW_LABEL
 	}
 ];
 
@@ -142,7 +126,6 @@ export function overlayGroups(grants: OverlayGroupGrants): OverlayGroup[] {
 		return {
 			id: group.id,
 			heading: group.heading,
-			windows: group.windows,
 			widgets: [
 				...placeable.map((spec) => ({ spec, placeable: true })),
 				...anchored.map((spec) => ({ spec, placeable: false }))
@@ -161,8 +144,6 @@ export function overlayGroups(grants: OverlayGroupGrants): OverlayGroup[] {
  * right now, as `SettingsPage.svelte` reads them.
  */
 export interface OpenConfigFlows {
-	/** A per-window position COPY is on screen (`anyPositionOverlayOpen`). */
-	position: boolean;
 	/** A module's in-window widget config session is running
 	 *  (`widgetConfiguring`). */
 	widgets: boolean;
@@ -171,24 +152,15 @@ export interface OpenConfigFlows {
 /**
  * Whether Overlay Positions may START another Configure flow.
  *
- * The two flows are mutually exclusive, and the reason is the same for the
- * pair: each one makes a DIFFERENT window interactive over the game, and each
- * ends only through its own Save/Cancel. A second one started on top leaves two
- * click-eating rectangles over the game, and whichever bar the user reaches
- * stands down only one of them — the other is left interactive with its
- * controls behind the first. The page's `overlay-save`/`overlay-cancel` handler
- * cannot untangle them either: it dispatches to the FIRST open flow it finds.
- *
- * So the answer is one boolean for both buttons rather than a rule per control.
- * The row whose own flow is open does not need it — that row draws Save/Cancel
- * instead of Configure — and this is what disables all the others.
+ * A second session started on top would leave two widget windows interactive
+ * over the game, so one boolean disables all the other Configure buttons.
  *
  * A pure function rather than an inline `disabled={…}` because `.svelte` has no
- * unit-test harness in this app, and a missing term here fails as a second
- * window over the game that no gate can see.
+ * unit-test harness in this app. Settings reads this seam for the Configure
+ * `disabled` state, and the two tests pin its polarity.
  */
 export function canStartConfigure(open: OpenConfigFlows): boolean {
-	return !open.position && !open.widgets;
+	return !open.widgets;
 }
 
 /**
@@ -210,9 +182,8 @@ export function canStartConfigure(open: OpenConfigFlows): boolean {
  * host actually applies as a size, or the row describes a widget the player is
  * not looking at.
  *
- * The numbers are PHYSICAL pixels, like the three window rows above them —
- * `WidgetGeometry` is what Rust persists, and no conversion happens on the way
- * to this string.
+ * The numbers are PHYSICAL pixels, like `WidgetGeometry` itself, and no
+ * conversion happens on the way to this string.
  */
 export function widgetGeometryText(geometry: WidgetGeometry | undefined, spec?: WidgetSpec): string {
 	if (!geometry) return 'Not set';

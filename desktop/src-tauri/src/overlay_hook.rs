@@ -1078,10 +1078,9 @@ mod win {
 
     /// Whether `label` is currently being arranged by the user.
     ///
-    /// Read by every path that would otherwise re-assert click-through
-    /// (`set_overlay_clickthrough`'s delayed setup, `fit_overlay_height`'s
-    /// post-resize re-arm): those calls are correct for a hooked window and
-    /// wrong for one the user is dragging widgets in — they would leave it
+    /// Read by the path that would otherwise re-assert click-through
+    /// (`set_overlay_clickthrough`'s delayed setup): that call is correct for a
+    /// hooked window and wrong for one the user is dragging widgets in — it would leave it
     /// `set_ignore_cursor_events(true)` while `config_mode` still tells the
     /// hook to keep its hands off, i.e. neither interactive nor hooked.
     ///
@@ -1380,9 +1379,8 @@ pub use win::{
 /// Whether `label` is currently being arranged by the user — always false where
 /// there is no hook to leave alone.
 ///
-/// Compiled off Windows so the callers that must not stomp config mode
-/// (`set_overlay_clickthrough`, `fit_overlay_height`) read the same guard on
-/// every platform instead of duplicating a `cfg` around each call site.
+/// Compiled off Windows so `set_overlay_clickthrough` reads the same guard on
+/// every platform instead of duplicating a `cfg` around its call site.
 #[cfg(not(windows))]
 pub fn config_mode(_label: &str) -> bool {
     false

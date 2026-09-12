@@ -667,7 +667,7 @@ fn build_status(state: &AppState) -> AppStatus {
 }
 
 /// Save current settings to disk. Call after any persistent state change.
-/// Preserves window and overlay positions from the existing file (only updated by their own save paths).
+/// Preserves window and legacy overlay settings from the existing file.
 fn persist_settings(app: &AppHandle) {
     let state = app.state::<AppState>();
     let existing = settings::load(app);
@@ -681,8 +681,8 @@ fn persist_settings(app: &AppHandle) {
     // one. `preserve_screen_scale` states the rest of the rule, including why a
     // `MercFrame` measurement at different dimensions still overwrites.
     settings::preserve_screen_scale(&existing, &mut s);
-    // Preserve fields that are saved separately (not via AppState):
-    // window position (saved on close), overlay positions (saved via set_*_overlay_settings).
+    // Preserve fields that are not owned by AppState:
+    // the window position and legacy overlay settings.
     // This is DRY — from_state handles AppState fields, persist_overlay_settings handles the rest.
     persist_overlay_settings(&existing, &mut s);
     settings::save(app, &s);
@@ -1864,10 +1864,8 @@ fn set_overlay_hot_rects(label: String, rects: Vec<overlay_hook::HotRect>, app: 
 /// event) nor intercepts its clicks. Off restores click-through, re-asserts
 /// `WS_EX_NOACTIVATE`, and hands the window back to the hook.
 ///
-/// No caller yet: the widget host (WI-B, POE-225) and Settings → Configure
-/// (WI-C, POE-226) are the ones that will invoke it. It ships with WI-A because
-/// the flag it sets is what `set_overlay_clickthrough` and `fit_overlay_height`
-/// now consult before re-arming click-through.
+/// The flag it sets is what `set_overlay_clickthrough` consults before
+/// re-arming click-through.
 #[tauri::command]
 fn set_overlay_config_mode(label: String, on: bool, app: AppHandle) -> Result<(), String> {
     let window = app
@@ -1958,301 +1956,6 @@ fn request_trade_refresh(gem: String, variant: String, app: AppHandle) {
     if let Err(e) = app.emit("overlay-trade-refresh", serde_json::json!({ "name": gem, "variant": variant })) {
         log::warn!("emit overlay-trade-refresh failed: {}", e);
     }
-}
-
-#[tauri::command]
-fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) -> Result<(), String> {
-    let window = app.get_webview_window(&label)
-        .ok_or_else(|| format!("Window '{}' not found", label))?;
-    window.set_position(tauri::PhysicalPosition::new(x, y))
-        .map_err(|e| format!("set_position failed: {}", e))?;
-    window.set_size(tauri::PhysicalSize::new(w, h))
-        .map_err(|e| format!("set_size failed: {}", e))?;
-    // Invalidate the cached rect so the mouse hook picks up the new position.
-    // Any registered label, not just the comparator: every overlay is hooked now.
-    #[cfg(windows)]
-    overlay_hook::invalidate_label(&label);
-    Ok(())
-}
-
-/// The overlay windows `fit_overlay_height` will act on; the list is empty
-/// while all current overlay content sizes itself inside its owning window.
-///
-/// An allowlist rather than "any label the app knows", because this command
-/// resizes a window on a caller's say-so and the caller is a webview. `main` is
-/// the app itself and the `overlay-*-pos` config windows are dragged and sized
-/// by the user — a content-driven refit would fight both.
-///
-/// `temple` was here and is not any more (POE-225). That window is now the
-/// primary monitor with widgets placed inside it, so a content-driven refit
-/// would shrink the canvas the widgets are positioned against; it sizes to
-/// content per WIDGET, in CSS, and never calls this command.
-/// The merc strip became a widget in a monitor-sized window (POE-232), and the
-/// lab timer joined the lab widget window (POE-231), for the same reason.
-const RESIZABLE_OVERLAY_LABELS: [&str; 0] = [];
-
-/// Whether `fit_overlay_height` may touch this window.
-fn is_resizable_overlay_label(label: &str) -> bool {
-    RESIZABLE_OVERLAY_LABELS.contains(&label)
-}
-
-/// The floor a content-driven resize may never go under, in CSS pixels.
-///
-/// One line of text plus the panel's padding. A content height of 0 is what an
-/// overlay reports for exactly one frame while its route is mounting, and
-/// applying it would collapse the window before the first paint could restore
-/// it.
-const MIN_OVERLAY_HEIGHT_CSS: f64 = 24.0;
-
-/// The floor in PHYSICAL pixels, for a display at `scale`.
-///
-/// The floor is reasoned in CSS pixels — it is a line of text — but everything
-/// it is compared against here is physical, and on a 150 % display 24 physical
-/// pixels is two thirds of a line. Same class of unit error as the shipped
-/// height this command replaced, so it gets the same conversion.
-fn min_overlay_height(scale: f64) -> u32 {
-    let scale = if scale > 0.0 { scale } else { 1.0 };
-    (MIN_OVERLAY_HEIGHT_CSS * scale).round() as u32
-}
-
-/// The tallest an overlay at `window_top` may be without leaving the work area.
-///
-/// Pure, so the one rule that can silently ruin a screen — a panel that grows
-/// off the bottom of the monitor and takes the taskbar with it — is testable
-/// without a window.
-///
-/// `work_area_bottom` is exclusive (position + size, the Win32 convention Tauri
-/// hands back). A window already sitting below the work area gets `floor`
-/// rather than 0: a zero-height window is invisible and indistinguishable from
-/// a crashed overlay, and the user's own placement is not ours to correct here.
-///
-/// `floor` is a parameter rather than the constant so the caller can pass the
-/// scaled one — see [`min_overlay_height`].
-fn clamp_overlay_height(requested: u32, window_top: i32, work_area_bottom: i32, floor: u32) -> u32 {
-    let room = work_area_bottom.saturating_sub(window_top);
-    let room = if room < 0 { 0 } else { room as u32 };
-    requested.min(room).max(floor)
-}
-
-/// Resize an overlay to fit its own rendered content, keeping x, y and width.
-///
-/// The height of the merc verdict strip is not a setting — it is however tall
-/// the strip's content happens to be, which varies with the row count, the
-/// guide count and whether a status line is the only thing drawn. A persisted
-/// height was wrong on two axes at once: it clipped the last glyph row (the one
-/// the player still has to hover) and it was reasoned in CSS pixels while being
-/// applied as physical ones, so it clipped worse the more the display scaled.
-///
-/// `content_height` is LOGICAL (CSS) pixels, straight from the webview's own
-/// `ResizeObserver`. The conversion to physical happens here rather than in the
-/// route because the window's `scale_factor()` is the authority and asking it
-/// on this side means the two numbers cannot be read a frame apart.
-///
-/// Position is re-applied along with the size, not because it changed but
-/// because it can: the WebView2 transparency resize workaround has been
-/// observed to disturb position (see `docs/OVERLAY-GUIDE.md`), and this command
-/// runs on every content change rather than once at startup.
-///
-/// Returns the height actually applied, converted BACK to CSS pixels, so the
-/// caller can compare it against what it asked for and report a strip the work
-/// area would not fit. Same unit in and out, deliberately: a physical number
-/// returned to a caller that thinks in CSS is the unit bug this command exists
-/// to stop, reintroduced on the way out.
-#[tauri::command]
-fn fit_overlay_height(label: String, content_height: f64, app: AppHandle) -> Result<f64, String> {
-    if !is_resizable_overlay_label(&label) {
-        return Err(format!("'{}' is not a resizable overlay", label));
-    }
-    let window = app
-        .get_webview_window(&label)
-        .ok_or_else(|| format!("Window '{}' not found", label))?;
-
-    let scale = window
-        .scale_factor()
-        .map_err(|e| format!("scale_factor failed: {}", e))?;
-    let position = window
-        .outer_position()
-        .map_err(|e| format!("outer_position failed: {}", e))?;
-    let size = window
-        .outer_size()
-        .map_err(|e| format!("outer_size failed: {}", e))?;
-
-    let requested = (content_height.max(0.0) * scale).ceil() as u32;
-    let floor = min_overlay_height(scale);
-
-    // A monitor we cannot read is not a reason to refuse the resize — it is a
-    // reason not to clamp. Refusing would leave the strip at whatever height it
-    // was built with, which is the bug this command exists to fix; growing
-    // unclamped on a display we know nothing about is the smaller failure and
-    // it is logged.
-    let bottom = match window.current_monitor() {
-        Ok(Some(monitor)) => {
-            let area = monitor.work_area();
-            Some(area.position.y + area.size.height as i32)
-        }
-        Ok(None) => {
-            log::warn!("fit_overlay_height({label}): no current monitor, growing unclamped");
-            None
-        }
-        Err(e) => {
-            log::warn!("fit_overlay_height({label}): current_monitor failed ({e}), growing unclamped");
-            None
-        }
-    };
-    let height = match bottom {
-        Some(bottom) => clamp_overlay_height(requested, position.y, bottom, floor),
-        None => requested.max(floor),
-    };
-
-    let applied_css = height as f64 / scale;
-    if height == size.height {
-        return Ok(applied_css);
-    }
-
-    window
-        .set_size(tauri::PhysicalSize::new(size.width, height))
-        .map_err(|e| format!("set_size failed: {}", e))?;
-    window
-        .set_position(tauri::PhysicalPosition::new(position.x, position.y))
-        .map_err(|e| format!("set_position failed: {}", e))?;
-
-    // MEASURED, and the reason this is not just a resize: WebView2 strips
-    // WS_EX_TRANSPARENT when it creates or updates child windows (stated at
-    // `overlay_hook`'s module comment, and re-applied per mouse event by the
-    // hook's re-apply loop). The hook is the ONLY thing that repairs it, and it
-    // repairs the windows in its registry — which is now every overlay that
-    // called `set_overlay_clickthrough`, this one included. The re-assert stays
-    // anyway: the repair is driven by mouse events over the window, so a resize
-    // that rebuilt WebView2's children would otherwise leave this window opaque
-    // to the mouse until the cursor happened to cross it — clicks stop reaching
-    // the game, and a click landing here takes focus, drops
-    // `game_in_foreground` and stops the capture loop producing the verdict on
-    // screen.
-    //
-    // Both calls are idempotent, so re-asserting after every resize costs a
-    // couple of Win32 calls on a path that only runs when the content actually
-    // changed height.
-    //
-    // Skipped entirely while the user is arranging this window's widgets: the
-    // window is deliberately `set_ignore_cursor_events(false)` then and the
-    // hook is deliberately leaving it alone, so a content-driven resize
-    // re-asserting click-through would make it neither interactive nor hooked
-    // until config mode is closed.
-    if overlay_hook::config_mode(&label) {
-        log::info!("fit_overlay_height({label}): in widget-configuration mode — click-through left off");
-        return Ok(applied_css);
-    }
-    if let Err(e) = window.set_ignore_cursor_events(true) {
-        log::warn!("fit_overlay_height({label}): re-arming click-through failed: {e}");
-    }
-    #[cfg(windows)]
-    {
-        use windows::Win32::Foundation::HWND;
-        match window.hwnd() {
-            Ok(hwnd) => unsafe {
-                overlay_hook::set_noactivate(HWND(hwnd.0 as *mut _));
-            },
-            Err(e) => {
-                log::warn!("fit_overlay_height({label}): HWND unavailable, WS_EX_NOACTIVATE not re-applied: {e}");
-            }
-        }
-    }
-
-    Ok(applied_css)
-}
-
-#[tauri::command]
-fn comparator_moved(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
-    let mut s = settings::load(&app);
-    s.comparator_overlay = Some(settings::OverlaySettings {
-        x, y, width: w, height: h, enabled: true,
-    });
-    settings::save(&app, &s);
-    // Invalidate cached rect so the mouse hook picks up the new position
-    #[cfg(windows)]
-    overlay_hook::invalidate_label("comparator");
-    // Emit via Rust — guaranteed to reach all windows
-    if let Err(e) = app.emit("comparator-moved", serde_json::json!({ "x": x, "y": y, "w": w, "h": h })) {
-        log::warn!("emit comparator-moved failed: {}", e);
-    }
-}
-
-#[tauri::command]
-fn get_comparator_overlay_settings(app: AppHandle) -> Option<settings::OverlaySettings> {
-    settings::load(&app).comparator_overlay
-}
-
-#[tauri::command]
-fn set_comparator_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, app: AppHandle) {
-    let mut s = settings::load(&app);
-    s.comparator_overlay = Some(settings::OverlaySettings {
-        x, y, width: w, height: h, enabled,
-    });
-    settings::save(&app, &s);
-}
-
-#[tauri::command]
-fn get_compass_overlay_settings(app: AppHandle) -> Option<settings::OverlaySettings> {
-    settings::load(&app).compass_overlay
-}
-
-#[tauri::command]
-fn set_compass_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, app: AppHandle) {
-    let mut s = settings::load(&app);
-    s.compass_overlay = Some(settings::OverlaySettings {
-        x, y, width: w, height: h, enabled,
-    });
-    settings::save(&app, &s);
-}
-
-#[tauri::command]
-fn get_pathstrip_overlay_settings(app: AppHandle) -> Option<settings::OverlaySettings> {
-    settings::load(&app).pathstrip_overlay
-}
-
-#[tauri::command]
-fn set_pathstrip_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, app: AppHandle) {
-    let mut s = settings::load(&app);
-    s.pathstrip_overlay = Some(settings::OverlaySettings {
-        x, y, width: w, height: h, enabled,
-    });
-    settings::save(&app, &s);
-}
-
-#[tauri::command]
-fn get_timer_overlay_settings(app: AppHandle) -> Option<settings::OverlaySettings> {
-    settings::load(&app).timer_overlay
-}
-
-#[tauri::command]
-fn set_timer_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, app: AppHandle) {
-    let mut s = settings::load(&app);
-    s.timer_overlay = Some(settings::OverlaySettings {
-        x, y, width: w, height: h, enabled,
-    });
-    settings::save(&app, &s);
-}
-
-/// The merc verdict overlay's persisted geometry (POE-199).
-///
-/// Pattern A, unlike the temple overlay next to it: the strip is placed by the
-/// user (Settings → Overlay Positions) and has to come back where they left it,
-/// so it carries an `OverlaySettings` like the comparator. `enabled` is NOT the
-/// switch — the `mercenary` MODULE flag creates and destroys this window — and
-/// is written `true` alongside the geometry only so the shape stays the one
-/// `persist_overlay_settings` and the settings page already speak.
-#[tauri::command]
-fn get_mercenary_overlay_settings(app: AppHandle) -> Option<settings::OverlaySettings> {
-    settings::load(&app).mercenary_overlay
-}
-
-#[tauri::command]
-fn set_mercenary_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, app: AppHandle) {
-    let mut s = settings::load(&app);
-    s.mercenary_overlay = Some(settings::OverlaySettings {
-        x, y, width: w, height: h, enabled,
-    });
-    settings::save(&app, &s);
 }
 
 /// Every stored placement for one module's widgets (POE-225).
@@ -4175,19 +3878,6 @@ pub fn run() {
             get_comparator_data,
             set_overlay_clickthrough,
             request_trade_refresh,
-            move_overlay,
-            fit_overlay_height,
-            comparator_moved,
-            get_comparator_overlay_settings,
-            set_comparator_overlay_settings,
-            get_compass_overlay_settings,
-            set_compass_overlay_settings,
-            get_pathstrip_overlay_settings,
-            set_pathstrip_overlay_settings,
-            get_timer_overlay_settings,
-            set_timer_overlay_settings,
-            get_mercenary_overlay_settings,
-            set_mercenary_overlay_settings,
             get_widget_geometries,
             set_widget_geometry,
             get_timer_appearance,
@@ -4302,7 +3992,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             // The mouse hook hit-tests clicks against a cached window rect and
             // derives overlay-relative coordinates from it. Anything that moves
-            // the overlay without going through `move_overlay` — a DPI or
+            // the overlay outside this event path — a DPI or
             // resolution change, a monitor switch, the game toggling
             // fullscreen — would otherwise leave that rect stale for the rest
             // of the session, shifting both the interactive zone and every
@@ -4415,9 +4105,8 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        body_excerpt, clamp_overlay_height, clickthrough_outcome, crop_shortfall,
-        assemble_ocr_rects, dictionary_reject_reason, is_resizable_overlay_label,
-        min_overlay_height, ocr_warning_field, overlay_focus_action,
+        body_excerpt, clickthrough_outcome, crop_shortfall, assemble_ocr_rects,
+        dictionary_reject_reason, ocr_warning_field, overlay_focus_action,
         retry_after_delay, temple_rects_from_rois, write_debug_mode, write_server_url, CaptureRegion,
         ClickthroughSetup,
         CLICKTHROUGH_WINDOW_GONE,
@@ -4641,105 +4330,6 @@ mod tests {
         let cached = crate::ocr::language_warning();
         assert!(cached.is_some(), "recording must leave a warning cached");
         assert_eq!(ocr_warning_field(), cached);
-    }
-
-    /// The floor used by the clamp tests: the CSS floor at 100 % scaling.
-    const FLOOR: u32 = 24;
-
-    #[test]
-    fn a_height_that_fits_the_work_area_is_applied_unchanged() {
-        assert_eq!(clamp_overlay_height(240, 300, 1400, FLOOR), 240);
-    }
-
-    #[test]
-    fn a_height_that_would_run_off_the_bottom_is_cut_to_the_work_area() {
-        assert_eq!(clamp_overlay_height(400, 1200, 1400, FLOOR), 200);
-    }
-
-    /// The taskbar is outside the work area, and this is the assertion that
-    /// says the strip may never grow over it.
-    #[test]
-    fn the_work_area_bottom_is_the_limit_not_the_screen_bottom() {
-        // 1440-px screen, 40-px taskbar: the work area ends at 1400.
-        assert_eq!(clamp_overlay_height(1_000, 700, 1400, FLOOR), 700);
-    }
-
-    /// One frame while the route mounts reports a content height of 0. Applying
-    /// it would collapse the window to nothing, which is indistinguishable from
-    /// a crashed overlay.
-    #[test]
-    fn a_zero_content_height_falls_back_to_the_floor() {
-        assert_eq!(clamp_overlay_height(0, 300, 1400, FLOOR), FLOOR);
-    }
-
-    #[test]
-    fn a_window_already_below_the_work_area_still_gets_the_floor() {
-        assert_eq!(clamp_overlay_height(240, 1500, 1400, FLOOR), FLOOR);
-    }
-
-    /// A monitor whose work area starts at a negative y — a second display
-    /// placed above the primary one. Saturating rather than wrapping is what
-    /// keeps the subtraction from producing a huge unsigned height.
-    #[test]
-    fn a_monitor_above_the_primary_one_measures_its_room_the_same_way() {
-        assert_eq!(clamp_overlay_height(400, -900, -700, FLOOR), 200);
-    }
-
-    #[test]
-    fn the_floor_is_one_line_of_text_on_an_unscaled_display() {
-        assert_eq!(min_overlay_height(1.0), 24);
-    }
-
-    /// The floor is a line of TEXT, so it scales with the display like every
-    /// other CSS measurement. Leaving it physical made it two thirds of a line
-    /// at 150 % — the same unit error the shipped height had.
-    #[test]
-    fn the_floor_scales_with_the_display() {
-        assert_eq!(min_overlay_height(1.5), 36);
-        assert_eq!(min_overlay_height(2.0), 48);
-    }
-
-    #[test]
-    fn a_nonsensical_scale_factor_leaves_the_floor_unscaled() {
-        assert_eq!(min_overlay_height(0.0), 24);
-    }
-
-    #[test]
-    fn the_merc_widget_window_is_not_a_resizable_overlay() {
-        assert!(!is_resizable_overlay_label("mercenary"));
-    }
-
-    /// The app's own window is not an overlay, and a webview asking to resize
-    /// it is the reason this is an allowlist rather than a lookup.
-    #[test]
-    fn the_main_window_is_not_a_resizable_overlay() {
-        assert!(!is_resizable_overlay_label("main"));
-    }
-
-    /// POE-225: the temple window is the whole primary monitor and its widgets
-    /// size themselves in CSS. A refit of the WINDOW would shrink the canvas
-    /// the widgets' persisted physical coordinates are measured against, so the
-    /// label was removed from the allowlist and must stay off it.
-    #[test]
-    fn the_temple_widget_window_is_not_a_resizable_overlay() {
-        assert!(!is_resizable_overlay_label("temple"));
-    }
-
-    #[test]
-    fn the_lab_widget_window_is_not_a_resizable_overlay() {
-        assert!(!is_resizable_overlay_label("lab"));
-    }
-
-    /// The position config windows are dragged and sized by the USER — a
-    /// content-driven refit would fight them.
-    #[test]
-    fn a_position_config_window_is_not_a_resizable_overlay() {
-        assert!(!is_resizable_overlay_label("overlay-mercenary-pos"));
-    }
-
-    #[test]
-    fn an_unknown_label_is_not_a_resizable_overlay() {
-        assert!(!is_resizable_overlay_label("nonsense"));
     }
 
     #[test]

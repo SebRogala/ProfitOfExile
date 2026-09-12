@@ -33,11 +33,6 @@ describe('the Overlay Positions groups', () => {
 		]);
 	});
 
-	it('has no window row under Lab now the comparator is a widget', () => {
-		const lab = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Lab');
-		expect(lab?.windows).toEqual([]);
-	});
-
 	it('lists the Lab widgets under the Lab window', () => {
 		const lab = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Lab');
 		expect(lab?.widgets.map((row) => [row.spec.id, row.placeable])).toEqual([
@@ -49,9 +44,8 @@ describe('the Overlay Positions groups', () => {
 		expect(lab?.configureModule).toBe(LAB_WINDOW_LABEL);
 	});
 
-	it('lists the Merc widget row and Configure button without a window row', () => {
+	it('lists the Merc widget row and Configure button', () => {
 		const merc = overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Merc');
-		expect(merc?.windows).toEqual([]);
 		expect(merc?.widgets.map((row) => [row.spec.id, row.placeable])).toEqual([
 			['mercenary.verdict', true]
 		]);
@@ -61,11 +55,6 @@ describe('the Overlay Positions groups', () => {
 	it('drops the whole Merc group, widget row included, without the merc feature', () => {
 		const groups = overlayGroups({ merc: false, temple: true });
 		expect(groups.map((group) => group.heading)).toEqual(['Lab', 'Temple']);
-		// The widget row itself, not just the heading: a heading-only gate would
-		// leave a control that opens a window the device cannot use.
-		expect(groups.flatMap((group) => group.windows.map((row) => row.name))).not.toContain(
-			'mercenary'
-		);
 		expect(groups.flatMap((group) => group.widgets.map((row) => row.spec.id))).not.toContain(
 			'mercenary.verdict'
 		);
@@ -117,19 +106,11 @@ describe('the Overlay Positions groups', () => {
 		expect(temple?.widgets.filter((row) => row.placeable).length).toBeGreaterThan(0);
 	});
 
-	it('gives the Temple group no window row of its own', () => {
-		// Its overlay IS the monitor and has no persisted rect (POE-225 D8), so a
-		// window row there would open a config copy of a fullscreen window.
-		expect(overlayGroups(ALL_GRANTS).find((group) => group.heading === 'Temple')?.windows).toEqual(
-			[]
-		);
-	});
-
 	it('gives every group it returns something to draw', () => {
 		// There is no empty-group filter, so this is the table's own invariant: a
-		// heading with no rows under it reads as a feature that failed to load.
+		// heading with no widget rows reads as a feature that failed to load.
 		for (const group of overlayGroups(ALL_GRANTS)) {
-			expect(group.windows.length + group.widgets.length).toBeGreaterThan(0);
+			expect(group.widgets.length).toBeGreaterThan(0);
 		}
 	});
 
@@ -209,20 +190,11 @@ describe('a widget row geometry line', () => {
 	});
 });
 
-describe('whether another Configure flow may be started', () => {
-	const IDLE = { position: false, widgets: false };
+describe('whether another widget Configure session may be started', () => {
+	const IDLE = { widgets: false };
 
-	it('allows one when no configuration window is up', () => {
+	it('allows one when no widget config session is up', () => {
 		expect(canStartConfigure(IDLE)).toBe(true);
-	});
-
-	// Each of the two below is a window that is interactive over the game and
-	// ends only through its OWN Save/Cancel. Starting a second flow leaves the
-	// first one click-eating behind it, and the page's overlay-save handler
-	// dispatches to whichever it finds first — so the second bar the user
-	// reaches stands down the wrong window.
-	it('refuses one while a per-window position copy is on screen', () => {
-		expect(canStartConfigure({ ...IDLE, position: true })).toBe(false);
 	});
 
 	it('refuses one while a widget config session is running', () => {

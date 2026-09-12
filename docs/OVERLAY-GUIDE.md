@@ -15,21 +15,22 @@ flags and `lab_overlays_enabled` documented here are NOT modules.
 
 ## Non-negotiable regression guards
 
-1. **Capabilities:** every overlay and configuration-window label must appear in
+1. **Capabilities:** every overlay label must appear in
    `desktop/src-tauri/capabilities/default.json`. Missing labels make Tauri APIs
    unavailable to that window.
-2. **Physical persistence:** `outerPosition()` and `outerSize()` produce the
-   physical coordinates persisted in settings. Restore existing windows with the
-   Rust `move_overlay` command, which applies `PhysicalPosition` and
-   `PhysicalSize`.
+2. **Physical persistence:** `outerPosition()` and `outerSize()` produce physical
+   coordinates. Widget placements persist physical, window-relative geometry;
+   OCR previews apply exact `PhysicalPosition`/`PhysicalSize` after construction.
 3. **Logical construction:** `WebviewWindow` constructor dimensions are logical.
    Convert persisted physical width/height with Tauri `scaleFactor()` for initial
    construction, then apply exact `PhysicalPosition`/`PhysicalSize` in
    `tauri://created`. Do not use `window.devicePixelRatio` for overlay geometry.
-4. **Move instead of recreate:** reposition a live overlay with `move_overlay`.
-   Avoid destroy/recreate cycles for position updates; Tauri label cleanup is
-   asynchronous and has produced “already exists” failures.
-5. **Settings survival:** overlay settings are not rebuilt from `AppState`.
+4. **Label reuse is asynchronous:** Tauri frees a window label asynchronously,
+   and recreating one too soon has produced "already exists" failures. A driver
+   that destroys and rebuilds a window must serialise the two and retry with
+   backoff (`module-lifecycle.ts`'s `MAX_CREATE_ATTEMPTS`,
+   `widget-window.ts`'s close/destroy rounds).
+5. **Settings survival:** legacy overlay settings are not rebuilt from `AppState`.
    `persist_overlay_settings` must copy every persisted overlay field, and
    `test_overlay_settings_survive_persist_cycle` must cover additions. WIDGET
    placements are the exception and must stay out of that function:
@@ -125,9 +126,6 @@ clicks natively — the hook has nothing to award, not a lower priority to
 assign. Do not invert that skip into "config mode wins": consuming the click
 would re-emit it as an `overlay-click`, which is the one thing the window being
 arranged is not listening for.
-
-The capture/configuration overlay is deliberately interactive and has different
-drag, resize, save, and cancel behavior. Treat it as a third type.
 
 Temple (`temple`) and merc verdict (`mercenary`) are overlays COUPLED TO A
 MODULE FLAG rather than to an overlay setting: the module toggle creates and
@@ -250,13 +248,12 @@ the timer, compass, path-strip and comparator widgets.
   POE-237. It constructs at the monitor's logical size and applies the exact
   `PhysicalPosition`/`PhysicalSize` in `tauri://created` — guard 3, with that
   monitor's own scale factor. It has no persisted rect, is not resizable, and is
-  NOT in `RESIZABLE_OVERLAY_LABELS`: `fit_overlay_height` would shrink the canvas
-  every widget's persisted coordinate is measured against. When the game moves to
+  NOT independently resizable: each widget sizes itself inside the canvas
+  against which its persisted coordinate is measured. When the game moves to
   another display Rust emits `game-monitor-changed` to the main window and the
   layout REBUILDS the window there through the driver's own off/on **(merged, not
-  yet run on Windows — smoke item 10 is the acceptance)** — guard 4's
-  "move, not recreate" is about repositioning within one display, and a different
-  display is a different canvas: different size, different scale factor,
+  yet run on Windows — smoke item 10 is the acceptance)** — a different display
+  is a different canvas: different size, different scale factor,
   different coordinate space for every widget in it. Two cases do NOT rebuild.
   A notice naming the display the window was already BUILT on only teaches it
   the id, so the layout records the id and stops. The recorded id is the display
@@ -587,8 +584,8 @@ the timer, compass, path-strip and comparator widgets.
 
 ### Config-mode ordering contract
 
-Config mode is IN-WINDOW, not a `/overlay?sync=` copy, and the order the three
-steps happen in is what makes it recoverable. Settings asks for it — it emits
+Config mode is IN-WINDOW, and the order the three steps happen in is what makes
+it recoverable. Settings asks for it — it emits
 `widget-config-start {module}` and nothing else — and `routes/(app)/+layout.svelte`
 does the steps, because that is the file that owns every overlay window's
 creation. In this order:
@@ -739,8 +736,8 @@ first, in three steps, and only then restores and emits the end:
    succeeds, because step 2 has already put Rust where the host needs it.
 
 The same three steps run for a start that never got as far as a host, where the
-belt and the repeat are expected to find nothing. The five per-window config
-flows above are untouched.
+belt and the repeat are expected to find nothing. No per-window config flow
+remains; this path covers widget config sessions only.
 
 ## Current data and lifecycle behavior
 
@@ -1966,15 +1963,13 @@ touching the named path.
 
 ## Adding an overlay
 
-Start from the closest existing overlay type, then check applicable integration
-points rather than cloning every step blindly:
+Every new overlay surface is a widget in an existing module window. Add the
+widget to the registry and its module route, then check applicable integration
+points:
 
-- window and configuration labels in capabilities;
-- settings field/default, getter/setter commands, persistence copy, and survival
-  regression test when the overlay is configurable;
-- creation, exact physical sizing, startup restoration, toggle, and position
-  saving in the app layout;
-- settings-page maps and sidebar/category controls when user-configurable;
+- the module window label in capabilities;
+- nothing: the settings rows and Show/Configure controls are derived from
+  `widget-registry.ts` by `overlay-groups.ts`;
 - the widget's own content state catch-up for any in-lab visibility rule; the
   Rust focus poller handles only the window's game-focus lifecycle;
 - an `/overlay/...` route and state catch-up/reconciliation appropriate to that
