@@ -18,6 +18,9 @@ that rule's premise — the grab contains the app's own overlay — no longer ho
 for a window on the list. Today the list is `mercenary`, the merc verdict strip,
 and `overlay-preview`, the Settings-owned read-only OCR frame.
 
+Amended 2026-09-12 (POE-232) — see
+[the widget-placement amendment at the end](#amendment-the-mercenary-geometry-is-a-widget-placement-2026-09-12).
+
 ## Context
 
 The merc verdict strip is being redesigned to paint its read marks IN PLACE —
@@ -116,3 +119,10 @@ Windows has a primitive for the second: `SetWindowDisplayAffinity` with
 - **Cost accepted: two Win32 calls and one event-loop round-trip per grab**,
   bounded by the grab cadence, and a screenshot that lands inside a grab — the
   few milliseconds a copy takes, every 2–10 s — shows no strip.
+
+## Amendment: the mercenary geometry is a widget placement (2026-09-12)
+
+POE-232 changes only the geometry reference: the window keeps the `mercenary`
+label that `EXCLUDED_WHILE_GRABBING` is keyed on, and its geometry is now
+`Settings.widgets["mercenary.verdict"]` rather than the legacy
+`mercenary_overlay` row in `settings.json`. Nothing about this decision changes.

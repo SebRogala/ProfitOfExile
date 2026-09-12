@@ -88,6 +88,9 @@ strip: every line still comes from `overlay-view.ts`.
    temple is converging on; (b) is the smaller diff. Either way the window is
    built once and moved (guide guard 4), and its height follows content as
    today only in the fallback.
+   **Settled 2026-09-12 (POE-232):** choose (a). The merc verdict now lives as
+   the `mercenary.verdict` widget in the monitor-sized `mercenary` window under
+   ADR-021; option (b), moving the strip window by Rust, no longer exists.
 6. **POE-273 is a dependency of correctness, not of this design.** The marks
    cannot draw a row the capture does not have; a dropped row is a missing set
    of marks, which the panel's status line must count ("6 rows on screen, 5
