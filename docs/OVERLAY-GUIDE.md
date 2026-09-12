@@ -137,8 +137,9 @@ arrange positions with the module off (the ordering contract below), which is
 the one thing that raises such a window without any module work running. The
 temple, merc, and lab windows follow the Rust focus poller's
 game-focus show/hide behavior, and appear in `set_debug_mode`'s force-show
-branch. The lab widget window is governed by `lab_overlays_enabled`; its
-compass, map, and timer widgets own their visibility and in-lab draw rules.
+branch. The lab widget window is governed by `lab_overlays_enabled`; its compass, map
+and timer widgets own their in-lab visibility rules, while the comparator draws
+on gem results whether or not the player is in the lab.
 Persisted geometry is independent of the
 coupling: the merc widget's placement is a `Settings.widgets` row like the
 temple's, and neither monitor-sized window has a persisted rect of its own
@@ -247,10 +248,11 @@ the timer, compass, path-strip and comparator widgets.
   `currentMonitor()`) on every failing path, which is what shipped before
   POE-237. It constructs at the monitor's logical size and applies the exact
   `PhysicalPosition`/`PhysicalSize` in `tauri://created` — guard 3, with that
-  monitor's own scale factor. It has no persisted rect, is not resizable, and is
-  NOT independently resizable: each widget sizes itself inside the canvas
-  against which its persisted coordinate is measured. When the game moves to
-  another display Rust emits `game-monitor-changed` to the main window and the
+  monitor's own scale factor. It has no persisted rect and is not resizable: the
+  window IS the canvas every widget's persisted coordinate is measured against,
+  so resizing it to content would invalidate every placement inside it. Each
+  widget sizes itself in CSS instead. When the game moves to another display
+  Rust emits `game-monitor-changed` to the main window and the
   layout REBUILDS the window there through the driver's own off/on **(merged, not
   yet run on Windows — smoke item 10 is the acceptance)** — a different display
   is a different canvas: different size, different scale factor,
@@ -926,8 +928,9 @@ touching the named path.
   560 px `border-box` outer width (the prior standalone `content-box` width was
   582 px after its 10 px padding and 1 px border). Check that no column is
   clipped inside the new box. `WidgetHost.svelte` owns the `border-box` reset;
-  the shared overlay layout no longer changes this widget or the `/overlay`
-  config-and-preview window.
+  `routes/overlay/+layout.svelte` deliberately leaves `box-sizing` alone,
+  because the `/overlay` config-and-preview window that shares it predates the
+  widget engine and is laid out under `content-box`.
 - **Merc widget, after a row-count change**: let the widget redraw at a
   different height — open a recruit window with a different number of rows —
   then confirm the verdict and status remain visible, with no clipped last row.
@@ -950,14 +953,14 @@ touching the named path.
   `merge_header`, applied in `run.rs`'s detect tick) is not being applied to the
   published capture.
 - **Merc widget, the done state**: with a recruit window open, hover every cell
-  the strip marks `?` or `✕` until the status line reads `done · N rows · all
+  the widget marks `?` or `✕` until the status line reads `done · N rows · all
   icons read`. From then on the log says `capture complete — OCR paused` once,
-  the strip must stay on screen with its verdict, and closing the window must
-  still retire it (up to ~20 s later, two liveness checks): the strip then says
-  `recruit window gone — last read` for 4 s and clears entirely. A strip that
+  the widget must stay on screen with its verdict, and closing the window must
+  still retire it (up to ~20 s later, two liveness checks): the widget then says
+  `recruit window gone — last read` for 4 s and clears entirely. A widget that
   blanks at `done`, or a status that never reaches it on a fully-read window,
   means the on-screen status set (`live` + `done`) or `capture_complete`
-  disagrees with what the reader produced; a strip still up more than a few
+  disagrees with what the reader produced; a widget still up more than a few
   seconds after the log says `window gone` means the linger is not running out.
   **Hover still corrects a wrong read while `done`**: park the cursor on a cell
   the module matched WRONG and confirm the tooltip replaces it — the detect is
@@ -983,7 +986,7 @@ touching the named path.
   first**, because it dominates the number. A window still being read
   re-detects every 2 s while it has reading rounds left (a round-spent
   incomplete capture is on the 10 s cadence), so it retires ≈20 s after the
-  close; a window the strip already calls `done`, or a round-spent one, is on
+  close; a window whose widget already calls `done`, or a round-spent one, is on
   the 10 s liveness cadence, so it retires ≈40 s after the close (up to 10 s to
   notice, misses at +20 s and +30 s). Time it from the close and compare against
   the cadence you are actually in — a `done` or round-spent window still on
@@ -1007,7 +1010,7 @@ touching the named path.
   NOT log `recruit window replaced`, because that log line means the session's
   hover confirmations were just thrown away.
 - **Merc capture contract** (POE-278, ADR-025): open a recruit window with some
-  support icons the module does not know yet (cells the strip marks `?`) and
+  support icons the module does not know yet (cells the widget marks `?`) and
   keep it open. `app.log` must say `Merc: read round 1 of 3 — full — …`, then
   at most two more `Merc: read round N of 3 — re-read R rows, C cells, header
   … — …` lines whose R and C count only the rows and cells the earlier rounds
@@ -1032,8 +1035,9 @@ touching the named path.
   alt-tab into it once so the focus poller resolves it (`app.log` says `game is
   on monitor N at x,y`), then check all three consumers on THAT monitor: the
   temple widget window draws over the game rather than on the primary; a merc
-  recruit window is detected and the strip appears beside it; and the Settings
-  "Screen geometry" card reports the second display's own resolution. Then drag
+  recruit window is detected and the mercenary widget appears at its saved
+  placement; and the Settings "Screen geometry" card reports the second
+  display's own resolution. Then drag
   the game to the primary and alt-tab back: one more `game is on monitor` line,
   and the temple window must reappear on the primary within a second — a window
   left behind means the `game-monitor-changed` rebuild is not firing (it is
@@ -1046,7 +1050,8 @@ touching the named path.
 - **Two overlapping overlays, which one takes the click** (POE-239): raise two
   registered overlay windows whose hot rects overlap — the temple widget window
   is the whole game monitor, so any other overlay drawing a hot rect over it
-  qualifies (the Lab comparator widget, the merc widget). `app.log` must carry one `overlay
+  qualifies (the Lab comparator widget is the one that does). `app.log` must
+  carry one `overlay
   hot rects overlap:` line per pair per registration. Click inside the overlap:
   the window shown MOST RECENTLY must take it. Bring the older one back — toggle
   it off and on, or let it go from empty to drawing — and the same click must
@@ -1961,13 +1966,26 @@ touching the named path.
   saved it stops moving, and THAT is the check — drag it, Save, re-open the
   panel on a different board, and it must stay where it was put.
 
+### Windows smoke — the overlay-widget migration (POE-231/POE-232)
+
+- **Three widget windows, on the game's monitor** (POE-231/POE-232): bring up the `temple`, `lab` and `mercenary` widget windows and verify all three are on the game's monitor.
+- **Lab widgets, in and out of the lab**: enter and leave a lab; the compass, pathstrip and timer draw in the lab and nowhere outside it, while the comparator draws outside the lab.
+- **The Lab Overlays switch and each Show checkbox**: toggle the sidebar's **Lab Overlays** switch (`lab_overlays_enabled`), then each widget's **Show** checkbox in Settings → Overlay Positions; each must change only its own widget or window.
+- **Configure widgets, `lab` and `mercenary`**: configure widgets for `lab` and for `mercenary`, dragging and resizing where offered, then Save and Cancel; verify both sessions close cleanly.
+- **The comparator's clicks**: click the comparator's buttons, then click one pixel outside their hot rects; the buttons act and the game keeps focus outside them.
+- **Merc linger and width**: let the mercenary widget linger after idle and clear, and verify its configured width is respected.
+- **Game moved to another monitor**: move the game to another monitor and verify all three widget windows rebuild on the game's monitor.
+- **Debug mode force-show**: turn on debug mode and verify it force-shows all three widget windows.
+- **The two `border-box` pixel changes**: the merc glyph cells lost 2 px of outer size (24 → 22 px) — check the ✓/?/✕ boxes still align with the rows and no cell clips its glyph; the comparator's table went 582 → 560 px, which is the existing **Lab comparator width, after widget migration** item above.
+
 ## Adding an overlay
 
-Every new overlay surface is a widget in an existing module window. Add the
-widget to the registry and its module route, then check applicable integration
-points:
+A new overlay surface is normally a widget in an existing widget window; a new
+window of its own needs an owner — a MODULE flag, or a setting, as the `lab`
+window has. Add the widget to the registry and its module route, then check
+applicable integration points:
 
-- the module window label in capabilities;
+- the window label in capabilities;
 - nothing: the settings rows and Show/Configure controls are derived from
   `widget-registry.ts` by `overlay-groups.ts`;
 - the widget's own content state catch-up for any in-lab visibility rule; the

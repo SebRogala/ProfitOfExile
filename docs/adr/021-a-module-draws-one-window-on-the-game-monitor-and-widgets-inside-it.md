@@ -22,6 +22,9 @@ were both filed FROM one).
 Amended 2026-09-07 (POE-271) — see
 [the geometry-notice amendment at the end](#amendment-one-app-level-geometry-notice-window-2026-09-07).
 
+Amended 2026-09-12 (POE-231, POE-232) — see
+[the lab and merc widget amendment at the end](#amendment-the-lab-overlays-and-the-merc-strip-are-widgets-too-2026-09-12).
+
 Extends [ADR-014](014-desktop-features-are-modules-with-a-work-toggle-and-a-view-page.md):
 that ADR gave a module a work toggle and a view page; this one says what a
 module's third surface — the thing it draws over the game — is made of.
@@ -252,3 +255,54 @@ There are two notice flavours: informational `GeometryContradicted`, which
 offers a bug capture, and `SetupChanged`, which offers **Recalibrate** (POE-271).
 The notice implementation is pending POE-271; this amendment defines its window
 ownership and click contract.
+
+## Amendment: the lab overlays and the merc strip are widgets too (2026-09-12)
+
+POE-231 and POE-232 landed in commits
+`af802fecad7930723614f5d85a394a72c44f2759`,
+`c02f02632fe9b28cb9409f9eeceeba5295a1c90d`,
+`94c6fc23598232d4162f89426f985fdd63a005c4`,
+`d450a36291ac22ad9979380ac59abd67b035b627`,
+`c92e6f6f3c72a7050d07333305b41fb6b12042b1`,
+`d8351737153955e8b67eee270e9970cfa8459f15`,
+`28c53900b612283202d0a6560cf29fc4c4cd5756` and
+`8c14f9885ff34e9e50ed6ae7416ae7601d612aaf`. The old scope clause — “Scope,
+as taken (epic D1): the engine and the temple, its first consumer. The lab OCR
+windows and the merc verdict strip keep their own per-surface windows and
+migrate in follow-ups.” — is SUPERSEDED: the mercenary window is replaced by
+`mercenary.verdict`, and the lab OCR windows are replaced by
+`lab.comparator`, `lab.compass`, `lab.pathstrip` and `lab.timer` in one `lab`
+window. The per-window position-config flow is gone with those windows.
+
+The batch added one decision to this ADR's model: a widget window need not
+belong to an ADR-014 MODULE. The `lab` window is owned by the
+`lab_overlays_enabled` setting; it has no capture loop, no work toggle and no
+feature grant. Its desired state is that flag ORed with a live config session,
+so it can be configured without starting work. It follows GAME FOCUS ONLY; the
+in-lab rule lives in each widget's content, while the comparator is drawn
+outside the lab.
+
+The engine additions are `resizable: 'width'`, for a widget whose height follows
+content and whose width is a user setting — the merc strip's owner decision on
+2026-08-25 — and `fill`, for a former window page whose box is an explicit
+`w × h`: the shipped size until a resizable widget is resized, and always the
+shipped size for one that is not resizable. The code moved into
+`lib/overlay/widget-window.ts`'s `createWidgetWindow` (one instance per window;
+the layout keeps the desired-state
+effects and one `game-monitor-changed` listener), `monitor-choice.ts`'s
+`monitorNoticeAction`, and `widgets/widget-placements.svelte.ts`, the main
+window's one placement cache and visibility writer.
+
+The owner chose to RESET placements to shipped defaults on 2026-09-11. Legacy
+`*_overlay` settings rows remain in settings, unread, so a downgrade can still
+find them. A content-sized widget box is clamped by its SHIPPED extent, so a
+low strip can draw past the screen bottom where `fit_overlay_height` formerly
+clamped it to the work area. Content inside `WidgetHost` inherits its
+`border-box` reset, changing the merc glyph cells from 24 to 22 px outer and
+the comparator table from 582 to 560 px.
+
+**None of this has run on Windows.** Every consequence above is merged and
+reasoned from the code; the acceptance is `docs/OVERLAY-GUIDE.md`'s "Windows
+smoke — the overlay-widget migration (POE-231/POE-232)", which is a whole further list of never-run checks, beside the three individual items the
+Status names. The two pixel numbers are
+derived from the CSS box model, not measured in game.
