@@ -576,6 +576,17 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 		</details>
 	</section>
 
+	<!-- Contributions -->
+	<section class="credits">
+		<h2 class="section-heading">Contributions</h2>
+		<div class="credits-list">
+			<div class="credit">
+				<a href="https://www.youtube.com/@Vertolka_Exiled" target="_blank" rel="noopener">Vertolka</a>
+				<span class="credit-desc">Partner on the project: ideas, prototype testing, and always there to talk it through</span>
+			</div>
+		</div>
+	</section>
+
 	<!-- Credits -->
 	<section class="credits">
 		<h2 class="section-heading">Standing on the Shoulders of Giants</h2>
