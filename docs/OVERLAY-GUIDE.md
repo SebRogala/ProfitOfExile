@@ -556,7 +556,9 @@ the timer, compass, path-strip and comparator widgets.
   ceiling, and a non-resizable one always uses that shipped size.
 - A widget with `resizable: 'width'` offers only left/right resize edges. Save
   writes its width with `height: 0`, and the placed box keeps that width while
-  its height remains content-driven.
+  its height remains content-driven. Until a width is stored, the box takes the
+  shipped `defaults.w` as its width, not as a `max-width`, so content that hugs
+  one edge of the box (the merc strip's outer-side rule) has slack to do it.
   In config mode, its frame keeps the height measured when the session opened;
   the width-only guarantee applies to the placed box and to what Save writes.
 - **A stored placement is REBASED first and clamped second** (POE-239). Every

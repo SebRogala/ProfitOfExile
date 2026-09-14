@@ -354,6 +354,14 @@ export const EDGE_CURSORS: Record<ResizeEdge, string> = {
  * zero cannot be grabbed at all. Its fallbacks are, in order, what the widget
  * currently measures on screen and the shipped default.
  *
+ * A content-sized frame is never NARROWER than the shipped default width,
+ * because that width is the extent [`placementFor`] clamps the saved position
+ * with. A measurement is narrower whenever the widget sits near the right
+ * edge — an absolutely placed box shrinks to the space left of it — and a frame
+ * that narrow could be dropped where the live overlay then pulls it back left
+ * (observed 2026-09-14: the merc strip saved at x 1541 measured 378 px, drew at
+ * x 1460, 460 px wide).
+ *
  * A DEGENERATE measurement counts as no measurement. `measured` is absent when
  * the widget is not rendered at all, but a widget that IS rendered and drawing
  * nothing — the temple's, outside a temple — measures `0 × 0`, and taking that
@@ -375,8 +383,9 @@ export function seedRect(
 ): WidgetRect | null {
 	// `??` would accept a zero here, because zero is not nullish.
 	const box = measured && measured.w > 0 && measured.h > 0 ? measured : null;
+	const contentWidth = Math.max(box?.w ?? 0, spec.defaults.w);
 	if (!geometry) {
-		return clampToHost(box ?? { ...spec.defaults }, host);
+		return clampToHost(box ? { ...box, w: contentWidth } : { ...spec.defaults }, host);
 	}
 	// Rebase BEFORE the clamp, the same order `placementFor` uses: config mode
 	// must open a widget where it is being drawn, or a Save would write the
@@ -388,7 +397,7 @@ export function seedRect(
 		{
 			x: rect.x,
 			y: rect.y,
-			w: rect.w > 0 ? rect.w : (box?.w ?? spec.defaults.w),
+			w: rect.w > 0 ? rect.w : contentWidth,
 			h: rect.h > 0 ? rect.h : (box?.h ?? spec.defaults.h)
 		},
 		host
@@ -527,7 +536,8 @@ export interface WidgetPlacement {
  * 1. A stored placement with `visible: false` — the user's Show checkbox is
  *    off. Nothing is rendered, so nothing can claim a click either.
  * 2. No stored placement — the shipped CSS default, sized to content unless it
- *    is a `fill` widget, whose box uses the shipped width and height. A widget
+ *    is a `fill` widget, whose box uses the shipped width and height, or a
+ *    `resizable: 'width'` one, whose box uses the shipped width. A widget
  *    nobody has configured must render at whatever the registry ships TODAY,
  *    which is why nothing seeds the stored map with the defaults.
  * 3. A stored placement — the persisted physical rectangle in CSS px. The SIZE
@@ -536,7 +546,11 @@ export interface WidgetPlacement {
  *    measured when the user last saved, and pinning the box to that would clip
  *    it the moment the content grew a line. A `fill` widget is the exception:
  *    without a size it applies — and always when it is not resizable — its box
- *    is the shipped `defaults.w × defaults.h`.
+ *    is the shipped `defaults.w × defaults.h`. A `resizable: 'width'` widget
+ *    without a stored width takes the shipped width as a SIZE, not a ceiling:
+ *    its content hugs the box edge on the screen's outer side, and a box that
+ *    shrank to the content left no room to hug (observed 2026-09-14: the merc
+ *    strip, saved against the right edge, drew left-aligned 170 px short of it).
  *
  * A fourth `null`, before case 3 can be decided: the window's scale factor has
  * not resolved, so the stored physical rectangle cannot be converted
@@ -555,6 +569,7 @@ export function placementFor(
 	// A resizable widget the user has never resized still wraps at the width the
 	// registry ships, as a CEILING rather than a size (see `maxWidth`).
 	const ceiling = spec.resizable ? spec.defaults.w : null;
+	const widthOnly = spec.resizable === 'width';
 	if (!geometry) {
 		if (spec.fill) {
 			return {
@@ -568,9 +583,9 @@ export function placementFor(
 		return {
 			x: spec.defaults.x,
 			y: spec.defaults.y,
-			width: null,
+			width: widthOnly ? spec.defaults.w : null,
 			height: null,
-			maxWidth: ceiling
+			maxWidth: widthOnly ? null : ceiling
 		};
 	}
 	// REBASE FIRST, CLAMP SECOND (POE-239). A rectangle saved on a bigger
@@ -589,7 +604,6 @@ export function placementFor(
 	const based = rebase(geometry, hostInPhysicalPx(host, scaleFactor), scaleFactor);
 	const rect = cssRect(based, scaleFactor);
 	if (!rect) return null;
-	const widthOnly = spec.resizable === 'width';
 	const sized = widthOnly ? based.width > 0 : spec.resizable && based.width > 0 && based.height > 0;
 	const fillSized = spec.fill && spec.resizable === true && based.width > 0 && based.height > 0;
 	const fillUnsized = spec.fill && !fillSized;
@@ -611,8 +625,8 @@ export function placementFor(
 	return {
 		x: placed.x,
 		y: placed.y,
-		width: fillUnsized ? spec.defaults.w : sized ? rect.w : null,
+		width: fillUnsized || (widthOnly && !sized) ? spec.defaults.w : sized ? rect.w : null,
 		height: fillUnsized ? spec.defaults.h : widthOnly && sized ? null : sized ? rect.h : null,
-		maxWidth: fillUnsized || sized ? null : ceiling
+		maxWidth: fillUnsized || sized || widthOnly ? null : ceiling
 	};
 }
