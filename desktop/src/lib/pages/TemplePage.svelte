@@ -13,10 +13,13 @@
 	 * leave-the-map verdict come from the Rust advisor; `$lib/temple/view` words
 	 * them and this file lays them out.
 	 */
+	import BetaBadge from '$lib/components/BetaBadge.svelte';
+	import BetaGate from '$lib/components/BetaGate.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
 	import TempleLattice from '$lib/temple/TempleLattice.svelte';
 	import TempleValueTable from '$lib/temple/TempleValueTable.svelte';
+	import InfoTooltip from '../../routes/(app)/components/InfoTooltip.svelte';
 	import {
 		TEMPLE_STATUS_LABEL,
 		TEMPLE_STATUS_TONE,
@@ -625,26 +628,34 @@
 
 		<div class="setting">
 			<span class="setting-label">Map rules</span>
-			<label class="check">
-				<input
-					type="checkbox"
-					checked={temple.config.artefactsOfTheVaal}
-					onchange={(e) => setConfigFlag('artefactsOfTheVaal', e.currentTarget.checked)}
+			<!-- The (i) sits outside the <label>: a click on it would tick the box. -->
+			<div class="check">
+				<label class="check">
+					<input
+						type="checkbox"
+						checked={temple.config.artefactsOfTheVaal}
+						onchange={(e) => setConfigFlag('artefactsOfTheVaal', e.currentTarget.checked)}
+					/>
+					<span>Artefacts of the Vaal</span>
+				</label>
+				<InfoTooltip
+					text="<b>What this changes</b><br><br>Only the odds in the advisor's simulation of the rest of the temple: within one map, the next incursion never drops you into the spot you just ran, and a new map clears that. With four incursions per map the block covers 3 of 4 incursions instead of 2 of 3, so the same spot comes back a little less often. A small shift, not measured — tick it if your atlas has the passive."
 				/>
-				<span>Artefacts of the Vaal</span>
 				<span class="meta">Atlas passive — four incursions per map instead of three.</span>
-			</label>
-			<label class="check">
-				<input
-					type="checkbox"
-					checked={temple.config.scarabOfTimelines}
-					onchange={(e) => setConfigFlag('scarabOfTimelines', e.currentTarget.checked)}
-				/>
-				<span>Incursion Scarab of Timelines</span>
-				<span class="meta">
-					Requires finishing every incursion, so "leave this map" is never advised.
-				</span>
-			</label>
+			</div>
+			<BetaGate>
+				<label class="check">
+					<input
+						type="checkbox"
+						checked={temple.config.scarabOfTimelines}
+						onchange={(e) => setConfigFlag('scarabOfTimelines', e.currentTarget.checked)}
+					/>
+					<span>Incursion Scarab of Timelines <BetaBadge /></span>
+					<span class="meta">
+						Requires finishing every incursion, so "leave this map" is never advised.
+					</span>
+				</label>
+			</BetaGate>
 		</div>
 
 		<div class="setting">
@@ -687,29 +698,33 @@
 					the Doryani rush.
 				</span>
 			</label>
-			<label class="check">
-				<input
-					type="checkbox"
-					checked={temple.profile.rerollUntilFavourable}
-					onchange={(e) => setProfileField('rerollUntilFavourable', e.currentTarget.checked)}
-				/>
-				<span>Reroll until favourable <span class="badge tone-unknown">proposed</span></span>
-				<span class="meta">
-					Prefer a change over an upgrade while no favourable line exists. Marked proposed in the
-					strategy notes — not yet confirmed in play.
-				</span>
-			</label>
-			<label class="check">
-				<input
-					type="checkbox"
-					checked={temple.profile.r4KeepUpgradeTargets}
-					onchange={(e) => setProfileField('r4KeepUpgradeTargets', e.currentTarget.checked)}
-				/>
-				<span>R4 keep upgrade targets <span class="badge tone-unknown">experimental</span></span>
-				<span class="meta">
-					Keep a slot in the drop pool while an adjacent upgrade room can still hit it.
-				</span>
-			</label>
+			<BetaGate>
+				<label class="check">
+					<input
+						type="checkbox"
+						checked={temple.profile.rerollUntilFavourable}
+						onchange={(e) => setProfileField('rerollUntilFavourable', e.currentTarget.checked)}
+					/>
+					<span>Reroll until favourable <BetaBadge /></span>
+					<span class="meta">
+						Prefer a change over an upgrade while no favourable line exists. Marked proposed in the
+						strategy notes — not yet confirmed in play.
+					</span>
+				</label>
+			</BetaGate>
+			<BetaGate>
+				<label class="check">
+					<input
+						type="checkbox"
+						checked={temple.profile.r4KeepUpgradeTargets}
+						onchange={(e) => setProfileField('r4KeepUpgradeTargets', e.currentTarget.checked)}
+					/>
+					<span>R4 keep upgrade targets <BetaBadge /></span>
+					<span class="meta">
+						Keep a slot in the drop pool while an adjacent upgrade room can still hit it.
+					</span>
+				</label>
+			</BetaGate>
 		</div>
 	</section>
 </div>

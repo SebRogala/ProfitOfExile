@@ -3,8 +3,8 @@
  *
  * The server answers `GET /api/device/me` for the device identity POE-102
  * already attaches to every request: `{ role, channel, features[] }`, with
- * editor and admin devices getting `channel: "beta"` and the hidden feature
- * ids — `merc`, `exchange`, `temple`.
+ * beta, editor and admin devices getting `channel: "beta"` and the hidden
+ * feature ids — `merc`, `exchange`, `temple`, `beta`.
  *
  * **The device id is a precondition, not a detail.** `X-Device-ID` IS the
  * question; without it the server can only answer for an anonymous device, and
@@ -55,6 +55,10 @@ export const EXCHANGE_FEATURE = 'exchange';
 
 /** The feature id that reveals the Temple of Atzoatl module. */
 export const TEMPLE_FEATURE = 'temple';
+
+/** The feature id that reveals settings marked beta inside a visible module
+ *  (`components/BetaGate.svelte`). Roles beta, editor and admin carry it. */
+export const BETA_FEATURE = 'beta';
 
 /** A validated `/api/device/me` answer. */
 export interface Entitlements {

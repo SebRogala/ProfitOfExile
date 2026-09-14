@@ -58,7 +58,7 @@ pub const DEBUG_DIR: &str = "temple-debug";
 /// Set the two config flags — the Atlas passive and the scarab.
 ///
 /// Both change the *rules*, not the reading: `artefacts_of_the_vaal` changes
-/// how fast the temple budget is spent and `scarab_of_timelines` takes R5
+/// how many incursions share one map and `scarab_of_timelines` takes R5
 /// (leave the map) away. So the current board's advice is stale the moment
 /// either moves, and this re-arms.
 #[tauri::command]

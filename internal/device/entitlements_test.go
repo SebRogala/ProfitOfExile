@@ -13,16 +13,22 @@ func TestEntitlements(t *testing.T) {
 		wantFeatures []string
 	}{
 		{
+			name:         "beta gets beta channel and every hidden feature",
+			role:         "beta",
+			wantChannel:  "beta",
+			wantFeatures: []string{"merc", "exchange", "temple", "beta"},
+		},
+		{
 			name:         "editor gets beta channel and every hidden feature",
 			role:         "editor",
 			wantChannel:  "beta",
-			wantFeatures: []string{"merc", "exchange", "temple"},
+			wantFeatures: []string{"merc", "exchange", "temple", "beta"},
 		},
 		{
 			name:         "admin gets beta channel and every hidden feature",
 			role:         "admin",
 			wantChannel:  "beta",
-			wantFeatures: []string{"merc", "exchange", "temple"},
+			wantFeatures: []string{"merc", "exchange", "temple", "beta"},
 		},
 		{
 			name:         "user gets stable channel and no features",
