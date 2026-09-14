@@ -2327,11 +2327,13 @@ mod tests {
     #[test]
     fn maxing_a_sanctums_only_live_target_is_vetoed_however_the_rollout_prices_it() {
         let (state, offers) = board_eight();
+        let mut profile = rush();
+        profile.r4_keep_upgrade_targets = true;
         let advice = advise(
             &state,
             &offers,
             0,
-            &rush(),
+            &profile,
             &TempleConfig::default(),
             N,
             SEED,

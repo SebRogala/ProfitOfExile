@@ -896,7 +896,7 @@ export function templeSliceDefault(): TempleSlice {
 			apexScore: 2.0,
 			pathCost: 0.0,
 			rerollUntilFavourable: false,
-			r4KeepUpgradeTargets: true
+			r4KeepUpgradeTargets: false
 		},
 		preset: 'default',
 		custom: {

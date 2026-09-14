@@ -1177,6 +1177,14 @@ mod tests {
         StrategyProfile::locus_doryani_rush()
     }
 
+    /// The Rush with R4's carve-out on — it ships off, so a test of the carve-out
+    /// turns it on itself.
+    fn with_carve_out() -> StrategyProfile {
+        let mut profile = rush();
+        profile.r4_keep_upgrade_targets = true;
+        profile
+    }
+
     fn board(rooms: &[(Slot, &str, u8)], doors: &[(Slot, Slot)]) -> BoardState {
         let mut state = BoardState::empty();
         for (slot, key, tier) in rooms {
@@ -1944,8 +1952,23 @@ mod tests {
             &[(D1, "factory", 1), (C1, "upgrade", 2), (C2, "corruption", 1)],
             &[(C1, D1), (D1, E1)],
         );
-        let change = verdict(&state, D1, Some(&choice(OfferKind::Change, "museum_of_artefacts", 2)), &[]);
-        let upgrade = verdict(&state, D1, Some(&choice(OfferKind::Upgrade, "factory", 2)), &[]);
+        let profile = with_carve_out();
+        let change = verdict_with(
+            &state,
+            D1,
+            Some(&choice(OfferKind::Change, "museum_of_artefacts", 2)),
+            &[],
+            1,
+            &profile,
+        );
+        let upgrade = verdict_with(
+            &state,
+            D1,
+            Some(&choice(OfferKind::Upgrade, "factory", 2)),
+            &[],
+            1,
+            &profile,
+        );
         assert!(
             change.architect > upgrade.architect,
             "change {:?} should outrank upgrade {:?}",
@@ -2056,11 +2079,13 @@ mod tests {
             &[(D1, "factory", 1), (C1, "upgrade", 3), (C2, "corruption", 1)],
             &[(D1, E1)],
         );
-        let upgrade = verdict(
+        let upgrade = verdict_with(
             &state,
             D1,
             Some(&choice(OfferKind::Upgrade, "factory", 2)),
             &[],
+            1,
+            &with_carve_out(),
         );
         assert!(upgrade.architect.vetoed(), "{:?}", upgrade.reasons);
         assert!(upgrade
