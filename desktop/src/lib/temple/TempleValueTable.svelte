@@ -346,8 +346,9 @@
 		top: 0;
 		z-index: 1;
 		text-align: right;
+		font-size: 0.8rem;
 		font-weight: 600;
-		padding: 4px 6px;
+		padding: 8px 12px;
 		color: var(--color-lab-text-secondary);
 		background: var(--color-lab-surface);
 		border-bottom: 1px solid var(--color-lab-border);
@@ -383,8 +384,14 @@
 	}
 
 	td {
-		padding: 2px 6px;
+		padding: 5px 12px;
 		border-bottom: 1px solid var(--color-lab-border);
+	}
+
+	/* Every other row shaded so the eye can follow a room across to its tier
+	   columns. Positional, so the shading stays alternating after a re-sort. */
+	tbody tr:nth-child(even) {
+		background: rgba(255, 255, 255, 0.035);
 	}
 
 	td.room {
