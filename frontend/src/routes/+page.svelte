@@ -500,6 +500,7 @@
 			<h3 class="transparency-subheading">You Are in Control</h3>
 			<ul class="transparency-position">
 				<li>You can see when OCR is active (the scan indicator is visible on the overlay)</li>
+				<li>You can see exactly what gets read: Settings &rarr; OCR Regions &rarr; Preview outlines each region over the game</li>
 				<li>You can adjust or disable features in settings</li>
 				<li>The app is <a href="https://github.com/SebRogala/ProfitOfExile" target="_blank" rel="noopener">open source</a>
 					&mdash; you can inspect exactly what it does</li>
