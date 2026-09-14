@@ -19,14 +19,17 @@
 //!
 //! # Nothing runs until something asks
 //!
-//! The loop does NO screen work of its own (POE-198). A Client.txt voice line
-//! or the page's Scan now button arms the gate in [`super::trigger`]; only then
-//! does it look, and only while the game is the foreground window.
+//! The loop does NO screen work of its own (POE-198). A known Client.txt
+//! Inspect text — a multi-word click line, or a one-word grunt licensed by the
+//! same speaker's previous known multi-word mercenary line — or the page's Scan
+//! now button arms the gate in [`super::trigger`]; only then does it look, and
+//! only while the game is the foreground window.
 //!
-//! The two asks buy different looks (POE-204 WI-C). A voice line buys two
-//! [`probe_tick`]s — a placed-crop OCR at 500 ms and, if that saw no recruit
-//! chrome, one more at 1.5 s — and then the gate stands down, because a mercenary speaks on
-//! approach as often as on click and most lines are for a window nobody opened.
+//! The two asks buy different looks (POE-204 WI-C). A qualifying Inspect line
+//! buys two [`probe_tick`]s — a placed-crop OCR at 500 ms and, if that saw no
+//! recruit chrome, one more at 1.5 s — and then the gate stands down when no
+//! window was found. FirstApproach is the walk-up and does not arm this gate;
+//! Inspect is the click that opens the recruit window.
 //! Scan now arms one detect: the placed crop is read first and a crop failure
 //! escalates to the one full fallback. Either way, the first detected
 //! window disarms the gate and the live behaviour below takes over unchanged;

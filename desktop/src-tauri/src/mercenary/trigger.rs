@@ -1,5 +1,5 @@
 //! What starts a capture, and how hard it looks before giving up (POE-198,
-//! rewritten as a two-probe gate by POE-204 WI-C).
+//! rewritten as a two-probe gate by POE-204 WI-C and POE-280).
 //!
 //! Before this file the capture loop hunted for a recruit window once a second
 //! for as long as the module was on. That is a full-screen grab plus a
@@ -7,104 +7,133 @@
 //! of times an hour. The loop now runs OCR only when something has asked it to
 //! look, and the ask is an event:
 //!
-//! - a **Client.txt voice line** whose speaker is shaped like a mercenary's
-//!   (`<Name>, <joiner> <Epithet>`) and is not a known NPC, or
+//! - a **Client.txt Inspect text**: a known, normalized two-or-more-word
+//!   Inspect line, or a one-word Inspect grunt licensed by the same speaker's
+//!   previous known multi-word mercenary line, or
 //! - the page's **Scan now** button.
+//!
+//! # The trigger (POE-280, owner decision 2026-09-14)
+//!
+//! The owner measured the poedb.tw mercenary dialogue table on 2026-09-14:
+//! 2,602 source rows reduce to 1,058 unique normalized texts, with 89 tagged
+//! `inspect` and the rest `line`. `FirstApproach` is the walk-up and has no
+//! recruit window; `Inspect`/`InspectNotable` is the click and is followed by
+//! the window, then `BattleStart` and `JoinParty`. A re-open reads
+//! `PlayerRetreat` followed by `Inspect`.
+//!
+//! The Client.txt evidence matches that sequence. Thrassel's 05:15:54
+//! walk-up bought a probe for "no recruit window"; his 05:15:57 Inspect line
+//! was followed by a window at 05:15:59. Tharvik showed the same pattern at
+//! 05:27:29 and 05:27:31. The hired merc Ryxelle's fight line is a known
+//! `line`, so it must not buy probes.
+//!
+//! A normalized Inspect text with two or more words arms whatever the speaker
+//! is called. A one-word Inspect text arms only when that speaker's previous
+//! line was a known multi-word mercenary text, either tag. The grunt exception
+//! is measured: Sister Cassia says `Oh!` 161 times and Sonja says `Eh.`; NPCs
+//! also use these one-word texts, while the 12 mercenary cases had the same
+//! speaker's known multi-word line immediately before them.
+//!
+//! Text, not speaker shape, is the key. Plain-name mercenaries are real:
+//! `Epipi Rapono: Make a call.` on 2026-08-31 needed Scan now under the old
+//! rule. Unknown texts do not arm (owner decision 2026-09-14), so a GGG patch
+//! adding or rewording a line needs a later asset update.
 //!
 //! # The gate (Sebastian's design, 2026-08-26)
 //!
 //! POE-198 answered a voice line with a ten-second BURST: full-screen detects
 //! on the hunt cadence until one found a window or the clock ran out.
-//! MEASURED on app.log 2026-08-26 09:14-09:42, that is the wrong shape. A
-//! mercenary speaks on APPROACH as well as on click, and PoE's arenas are full
-//! of them — so most bursts are ten seconds of full-screen OCR for a window the
-//! player never opened, and the one thing the burst got right (the window IS
-//! open) it learned on its first tick.
+//! POE-204 measured on app.log 2026-08-26 09:14–09:42 why that was the wrong
+//! shape: most bursts were ten seconds of full-screen OCR for a window nobody
+//! opened, and the one thing the burst got right (the window IS open) it learned
+//! on its first tick. POE-198's trigger armed on approach as well as on click,
+//! so the burst paid for the wrong question. POE-280 (2026-09-14) narrows what
+//! arms the gate to Inspect text: FirstApproach is the walk-up, not the click.
+//! The cheapest question after a qualifying Inspect line is still "is the
+//! recruit window's chrome on screen?".
 //!
-//! Approaching a mercenary fires a voice line sometimes; clicking one fires it
-//! always. So the line is not evidence that a window is open — it is evidence
-//! that one might be about to be, and the cheapest question that separates the
-//! two is "is the recruit window's chrome on screen?".
-//!
-//! 1. Voice line (module on, speaker ∉ denylist) → **+500 ms** → ONE targeted
+//! 1. Known Inspect text (module on) → **+500 ms** → ONE targeted
 //!    probe: `run::probe_tick` OCRs the placed recruit crop, not the 39-line
 //!    full screen.
 //! 2. Nothing → ONE retry at **+1.5 s from the line**, or [`PROBE_GAP_MS`]
 //!    after the first probe actually ran when the game was not in front for it.
-//! 3. Still nothing → **stand down**. No burst, no scanning: the player was
-//!    walking past. One log line says so.
+//! 3. Still nothing → **stand down**. No burst, no scanning: the Inspect click
+//!    produced no visible recruit window. One log line says so.
 //! 4. Chrome found → the probe hands its own frame to the placed detect in the
 //!    SAME iteration; a crop failure there is a miss, not a full-screen locate
 //!    (that is for a cold start, Scan now and Recalibrate —
 //!    `run::locate_decision`), and on a capture the pre-existing live
 //!    behaviour takes over unchanged (re-detect 2 s, hover 400 ms, retire
 //!    after two misses).
-//! 5. A voice line arriving while a capture is HELD ([`capture_held`]) is
-//!    ignored outright. The window is on screen and being read; re-arming can
-//!    only make the loop re-detect a panel the cursor is over — which is how
-//!    09:41:56 turned a chattering mercenary into a phantom retire.
+//! 5. A qualifying Inspect line arriving while a capture is HELD
+//!    ([`capture_held`]) is ignored outright. The window is on screen and being
+//!    read; re-arming can only make the loop re-detect a panel the cursor is
+//!    over — the measured 09:41:56 phantom retire.
 //!
 //! **Scan now bypasses the voice gate**: it asks for one detect, which reads the
 //! placed crop first and escalates to the one full-screen fallback only when
 //! crop verification fails. It is the manual safety net for every window the
 //! gate stood down on.
 //!
-//! # Why a denylist and not a pattern
+//! # Why text and not a speaker pattern
 //!
-//! Merc names are generated (first name × epithet), so there is no list to
-//! match against. `<Name>, <joiner> <Epithet>` is the shape, but PoE's own NPCs
-//! use it too, so the positive pattern ALONE was measured to fail. The NPCs
-//! ship in `assets/npc-denylist.txt`, and `<app_data>/merc-npc-denylist.txt`
-//! extends them without a rebuild, the same shape as `merc-geometry.json`.
+//! Mercenary names are generated, plain-name mercenaries exist, and NPCs can
+//! speak the same one-word grunts. The measured corpus is therefore the
+//! positive key: every merc-shaped Client.txt line in the evidence either
+//! matched a poedb mercenary text or came from an NPC speaker, and none was left
+//! unmatched. A speaker name cannot distinguish FirstApproach, fight and
+//! Inspect lines.
 //!
-//! MEASURED on Sebastian's Client.txt, 2026-08-25, rescanned with this shape:
-//! joiners `the` ×94 and `of` ×1, 25 NPC speakers (`Varashta, the Winter
-//! Sekhema` alone accounts for 416 lines), and the 70 speakers left after the
-//! denylist are all generated mercenary names. NO NPC in that file uses a
-//! lowercase joiner other than `the`.
-//!
-//! The joiner is a variable rather than the literal `the` because `of` is real
-//! on both measured machines: `Swain, of Fractured Faith` is the one on the PC,
-//! and on the LAPTOP file the same day — a smaller, merc-heavier sample — the
-//! joiners ran `of` ×8 against `the` ×7 (`Fennik, of Unshakeable Faith`). A
-//! `, the ` rule silently drops every one of them. See [`is_dialogue_speaker`]
-//! for the lowercase requirement that keeps `Alva, Master Explorer` out, and
-//! for the trade-off it leaves behind.
+//! Asset and Client.txt text use the same normalization: lowercase, retain
+//! ASCII letters, digits and whitespace, collapse whitespace, and trim. That
+//! absorbs measured punctuation differences (`Eh.`/`Eh?`), emphasis braces,
+//! trailing spaces, and the one en dash. The corpus is embedded because a GGG
+//! patch adding or rewording a line requires a deliberate asset regeneration;
+//! unknown text does not arm. The asset texts are English; on a client running
+//! another language no line matches and nothing arms. Such a player is
+//! unautomated, not broken: Scan now covers every capture by hand.
 //!
 //! # The cost of being wrong
 //!
-//! A false trigger costs two placed-crop OCRs per line and is invisible (nothing is
-//! found, nothing is published) — an order less than the burst it replaced,
-//! which is what makes the shape affordable in an arena full of mercenaries. A
-//! missed trigger costs the capture entirely — which is what Scan now exists
-//! for. The bias is deliberate: the cheap failure is the one this file prefers.
+//! A false trigger costs two placed-crop OCRs per qualifying Inspect line and is
+//! invisible (nothing is found, nothing is published), an order cheaper than
+//! the ten-second full-screen burst it replaced. A missed trigger costs the
+//! capture entirely — which is what Scan now exists for. Among known texts, the
+//! bias is deliberate: the cheap failure is the one this file prefers. Unknown
+//! text is the owner's accepted exception (2026-09-14), a deliberate miss
+//! rather than a name-based guess.
 //!
-//! **Per LINE, not per mercenary.** A line over an armed gate RE-ARMS it with
-//! two fresh probes ([`BurstGate::hear`]), because the click line lands on top
-//! of the approach line and it is the click that opens a window. So a
-//! chattering mercenary does keep buying looks — capped by
+//! Text matching has one accepted false-trigger cost: local player chat has no
+//! sigil for [`speaker_of`] to reject, so a player who types a known multi-word
+//! Inspect sentence can buy two silent probes. The owner chose text over names
+//! on 2026-09-14.
+//!
+//! **Per Inspect line, not per mercenary.** Each qualifying Inspect line over
+//! an armed gate RE-ARMS it with two fresh probes ([`BurstGate::hear`]). A
+//! re-open is one measured example: `PlayerRetreat` is followed by another
+//! Inspect line, and that new click evidence buys a new look. So a mercenary
+//! saying multiple qualifying lines can keep buying looks — capped by
 //! [`LINE_STALE_MS`] from the FIRST line of the chain, which is ten seconds of
 //! placed-crop OCRs against the ten seconds of full-screen ones POE-198 paid for
 //! exactly the same chatter.
 //!
 //! # Pure vs glue
 //!
-//! Everything that decides — the speaker parse, the denylist, the line's clock,
-//! the gate state machine — is a plain function over plain data and is tested
-//! here on Linux. The `AppHandle` wrappers at the bottom only lock, log and
-//! publish.
+//! Everything that decides — the speaker parse, text normalization and lookup,
+//! bounded per-speaker history, the line's clock, and the gate state machine —
+//! is a plain function over plain data and is tested here on Linux. The
+//! `AppHandle` wrappers at the bottom only lock, log and publish.
 
-use std::collections::HashSet;
-use std::path::Path;
+use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
 use tauri::{AppHandle, Manager};
 
 use super::run::{now_ms, publish, status};
-use super::{MercStatus, DENYLIST_OVERRIDE_FILE, MODULE_ID};
+use super::{MercStatus, MODULE_ID};
 use crate::AppState;
 
-/// The 25 measured NPC speakers. See `assets/README.md` for provenance.
-const SHIPPED_DENYLIST: &str = include_str!("assets/npc-denylist.txt");
+/// The embedded poedb dialogue corpus. See `assets/README.md` for provenance.
+const SHIPPED_VOICE_LINES: &str = include_str!("assets/merc-voicelines.tsv");
 
 /// How long after the voice line the FIRST probe looks.
 ///
@@ -114,13 +143,13 @@ const SHIPPED_DENYLIST: &str = include_str!("assets/npc-denylist.txt");
 /// costs one placed-crop OCR rather than a capture.
 pub const PROBE_DELAY_MS: u64 = 500;
 
-/// How long after the voice line the RETRY probe looks.
+/// How long after the qualifying Inspect line the RETRY probe looks.
 ///
 /// One second after the first, which is the lag allowance: a frame that arrived
 /// mid-animation, a machine that took its time, a click a beat behind the line.
-/// There is no third — a window that is not on screen a second and a half after
-/// the mercenary spoke is a window the player did not open, and the whole point
-/// of the gate is that walking past a mercenary costs nothing.
+/// There is no third — if the window is still not on screen a second and a half
+/// after the Inspect click, the gate has spent its two placed-crop looks and
+/// gets nothing more; the point of the gate is to stop after those two looks.
 pub const PROBE_RETRY_MS: u64 = 1_500;
 
 /// The shortest gap the gate leaves between two probes of the same line.
@@ -139,12 +168,12 @@ pub const PROBE_RETRY_MS: u64 = 1_500;
 /// again — the lag allowance re-timed from the lag it was allowing for.
 pub const PROBE_GAP_MS: u64 = PROBE_RETRY_MS - PROBE_DELAY_MS;
 
-/// How long an unprobed voice line stays worth probing.
+/// How long an unprobed qualifying Inspect line stays worth probing.
 ///
 /// Both probes fire only while the game is the FOREGROUND window, so a line
-/// heard as the player alt-tabs never gets its look. This is the give-up: a
-/// voice line is evidence about the screen at the moment it was spoken, and ten
-/// seconds later it is evidence about nothing. Without it the gate would sit
+/// heard as the player alt-tabs never gets its look. This is the give-up: an
+/// Inspect line is evidence about the screen at the moment it was spoken, and
+/// ten seconds later it is evidence about nothing. Without it the gate would sit
 /// armed until the player came back — an hour later, if that is when they come
 /// back — and then probe for a window that closed with the alt-tab.
 ///
@@ -154,12 +183,12 @@ pub const PROBE_GAP_MS: u64 = PROBE_RETRY_MS - PROBE_DELAY_MS;
 /// full-screen OCR; they are now the shelf life of a right to two placed-crop looks.
 ///
 /// Measured from the FIRST line of an unbroken chain by the same speaker, not
-/// from the latest one. Every line re-arms both probes ([`BurstGate::hear`]),
-/// so a clock measured from the latest one would never run out while the
-/// mercenary kept talking — POE-198's re-armable expiry, back in the gate's
-/// clothes. The chain breaks when the gate goes back to resting (a stand-down,
-/// a capture, a disarm) or when a DIFFERENT speaker is heard, and the next line
-/// then starts its own ten seconds.
+/// from the latest one. Every qualifying Inspect line re-arms both probes
+/// ([`BurstGate::hear`]), so a clock measured from the latest one would never
+/// run out while the mercenary kept talking — POE-198's re-armable expiry,
+/// back in the gate's clothes. The chain breaks when the gate goes back to
+/// resting (a stand-down, a capture, or a disarm) or when a DIFFERENT speaker
+/// is heard, and the next line then starts its own ten seconds.
 pub const LINE_STALE_MS: u64 = 10_000;
 
 /// The furthest back a line's own timestamp may move the gate's clock.
@@ -193,9 +222,6 @@ pub const MAX_BACKDATE_MS: u64 = 10_000;
 /// a detect for the rest of the session.
 pub const MANUAL_ARM_GRACE_MS: u64 = 60_000;
 
-/// The separator that splits a dialogue speaker into its name and its title.
-const SPEAKER_SEPARATOR: &str = ", ";
-
 /// Sigils PoE puts in front of a PLAYER's name: whisper, guild, global, trade,
 /// party. A speaker starting with one of these is a person typing, whatever it
 /// says after — `<Guild>` included, which is why `<` is on the list.
@@ -222,156 +248,195 @@ pub fn speaker_of(line: &str) -> Option<&str> {
     Some(speaker)
 }
 
-/// Whether a speaker is shaped like a mercenary's or an NPC's: one whitespace-
-/// free name, `", "`, one all-lowercase joiner word, then a non-empty epithet
-/// (`^\S+, [a-z]+ ` plus the requirement that something follows).
-///
-/// MEASURED, and the reason this is no longer `", the "`. Two Client.txt files,
-/// both 2026-08-25: the LAPTOP one caught `Fennik, of Unshakeable Faith` with
-/// joiners running `of` ×8 against `the` ×7, and a rescan of the PC one caught
-/// `Swain, of Fractured Faith` (`the` ×94, `of` ×1). The epithet is a title,
-/// and PoE builds titles with more than one preposition, so a `, the ` rule
-/// silently drops every `of` mercenary — on the laptop file, most of them.
-///
-/// The name is `\S+` and the hyphen in `Al-Hezmin, the Hunter` is inside it:
-/// the constraint is NO WHITESPACE, not "letters only". A rule that required
-/// letters would have let that NPC past the denylist, which matches on the
-/// whole speaker string.
-///
-/// The joiner is required to be LOWERCASE because that is what separates a
-/// title from a two-part name: `Alva, Master Explorer` (the laptop file's only
-/// comma-carrying NPC) has a capitalised `Master` that is part of the NAME.
-/// Matching any word there would have armed on every one of her lines.
-///
-/// **A second cost, on a different axis:** `is_ascii_lowercase` is an ENGLISH
-/// rule. A client running in another language writes its joiner in that
-/// language, and where that word is non-ASCII (or is capitalised by that
-/// language's convention) no voice line on that machine will ever arm a burst.
-/// Such a player is not broken, only unautomated: **Scan now** covers every
-/// capture by hand, which is the same fallback a mercenary who says nothing
-/// gets. Widening to `char::is_lowercase` would admit non-ASCII joiners but
-/// still not a language that capitalises them, so it buys part of a fix for a
-/// case nobody has measured — left until someone runs a non-English client.
-///
-/// **The trade-off, stated:** the shape is wider than the 25 measured NPCs it
-/// is tuned against, all of which use `, the ` — no NPC with a lowercase joiner
-/// other than `the` was found in either file. An NPC introduced with one
-/// (`Someone, of Somewhere`) would match this shape and would have to be
-/// suppressed by name — [`NpcDenylist`], and the override file when a rebuild
-/// is not wanted. That is the cheap failure by design (see the module header):
-/// a false trigger costs one silent burst, a missed one costs the capture.
-///
-/// Shape only — it says nothing about whether the speaker is a mercenary. That
-/// is [`NpcDenylist`]'s job, because the names are generated and there is no
-/// positive list to match.
-pub fn is_dialogue_speaker(speaker: &str) -> bool {
-    let Some((name, title)) = speaker.split_once(SPEAKER_SEPARATOR) else {
-        return false;
-    };
-    if name.is_empty() || name.contains(char::is_whitespace) || name.starts_with(CHAT_SIGILS) {
-        return false;
-    }
-    let Some((joiner, epithet)) = title.split_once(' ') else {
-        return false;
-    };
-    !joiner.is_empty()
-        && joiner.chars().all(|c| c.is_ascii_lowercase())
-        && !epithet.trim().is_empty()
+/// The two tags in the embedded dialogue corpus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MercVoiceTag {
+    Inspect,
+    Line,
 }
 
-// ---------------------------------------------------------------------------
-// Pure — the NPC denylist
-// ---------------------------------------------------------------------------
-
-/// The speakers that are NOT mercenaries.
-///
-/// Case-insensitive and whitespace-trimmed, because the override file is hand
-/// written: a name typed with a trailing space or a lowercase article must
-/// still suppress the NPC it names, and a denylist entry that silently fails to
-/// match is exactly the OCR-every-Varashta-line waste this exists to stop.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct NpcDenylist {
-    names: HashSet<String>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KnownVoiceLine {
+    tag: MercVoiceTag,
+    words: usize,
 }
 
-#[allow(clippy::len_without_is_empty)]
-impl NpcDenylist {
-    /// The shipped list — the 25 measured NPCs, and nothing else.
+/// The normalized mercenary dialogue corpus embedded in the desktop binary.
+#[derive(Debug, Default, Clone)]
+pub struct MercVoiceLines {
+    entries: HashMap<String, KnownVoiceLine>,
+}
+
+impl MercVoiceLines {
+    /// Parse the shipped <tag>\t<text> asset.
     pub fn shipped() -> Self {
-        Self::parse(SHIPPED_DENYLIST)
+        Self::parse(SHIPPED_VOICE_LINES)
     }
 
-    /// Parse the one-name-per-line format: blanks and `#` comments dropped.
+    /// Parse rows, normalizing their text before using it as the lookup key.
     pub fn parse(raw: &str) -> Self {
-        let mut list = Self::default();
-        list.extend_from(raw);
-        list
-    }
-
-    /// Merge more names in. Returns how many were NEW — the number the log line
-    /// reports, so an override file that is being ignored (wrong name, wrong
-    /// directory) is distinguishable from one that is doing nothing.
-    pub fn extend_from(&mut self, raw: &str) -> usize {
-        let before = self.names.len();
-        for line in raw.lines() {
-            let name = line.trim();
-            if name.is_empty() || name.starts_with('#') {
+        let mut entries: HashMap<String, KnownVoiceLine> = HashMap::new();
+        for row in raw.lines() {
+            let Some((raw_tag, text)) = row.split_once('\t') else {
+                continue;
+            };
+            let tag = match raw_tag {
+                "inspect" => MercVoiceTag::Inspect,
+                "line" => MercVoiceTag::Line,
+                _ => continue,
+            };
+            let normalized = normalize_text(text);
+            if normalized.is_empty() {
                 continue;
             }
-            self.names.insert(name.to_lowercase());
-        }
-        self.names.len() - before
-    }
-
-    /// Whether this speaker is a known NPC.
-    pub fn contains(&self, speaker: &str) -> bool {
-        self.names.contains(&speaker.trim().to_lowercase())
-    }
-
-    pub fn len(&self) -> usize {
-        self.names.len()
-    }
-
-    /// The shipped list merged with `<app_data>/merc-npc-denylist.txt`.
-    ///
-    /// Returns the list, how many names the override added, and the reason the
-    /// override could not be read when there was one. A MISSING file is not a
-    /// reason — that is the normal case — but an unreadable one is: a user who
-    /// wrote the file and got no effect has to be able to see why.
-    pub fn load(dir: Option<&Path>) -> (Self, usize, Option<String>) {
-        let mut list = Self::shipped();
-        let Some(path) = dir.map(|d| d.join(DENYLIST_OVERRIDE_FILE)) else {
-            return (list, 0, None);
-        };
-        if !path.exists() {
-            return (list, 0, None);
-        }
-        match std::fs::read_to_string(&path) {
-            Ok(raw) => {
-                let added = list.extend_from(&raw);
-                (list, added, None)
+            let known = KnownVoiceLine { tag, words: word_count(&normalized) };
+            match entries.entry(normalized) {
+                Entry::Occupied(mut existing) => {
+                    if existing.get().tag == MercVoiceTag::Line && tag == MercVoiceTag::Inspect {
+                        existing.insert(known);
+                    }
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(known);
+                }
             }
-            Err(e) => (
-                list,
-                0,
-                Some(format!("{} could not be read: {}", path.display(), e)),
-            ),
         }
+        Self { entries }
+    }
+
+    /// Number of unique normalized texts in the corpus.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the test corpus has no entries.
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Number of unique normalized texts tagged inspect.
+    pub fn inspect_len(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|line| line.tag == MercVoiceTag::Inspect)
+            .count()
+    }
+
+    /// Resolve a raw or normalized text to its corpus tag.
+    #[cfg(test)]
+    pub fn tag(&self, text: &str) -> Option<MercVoiceTag> {
+        self.entries.get(&normalize_text(text)).map(|line| line.tag)
+    }
+
+    fn lookup(&self, normalized: &str) -> Option<KnownVoiceLine> {
+        self.entries.get(normalized).copied()
     }
 }
 
-/// The whole trigger decision for one Client.txt line: the speaker that should
-/// arm a burst, or `None`.
-///
-/// Module enablement is deliberately NOT checked here — it is the caller's
-/// cheap early-out and it needs a lock, whereas this is pure and runs on every
-/// line of the log.
-pub fn trigger_speaker<'a>(line: &'a str, denylist: &NpcDenylist) -> Option<&'a str> {
-    let speaker = speaker_of(line)?;
-    if !is_dialogue_speaker(speaker) || denylist.contains(speaker) {
-        return None;
+/// Text normalization shared by the asset loader and Client.txt decisions.
+pub fn normalize_text(text: &str) -> String {
+    let mut normalized = String::with_capacity(text.len());
+    let mut pending_space = false;
+    for character in text.chars() {
+        if character.is_ascii_alphanumeric() {
+            if pending_space && !normalized.is_empty() {
+                normalized.push(' ');
+            }
+            normalized.push(character.to_ascii_lowercase());
+            pending_space = false;
+        } else if character.is_whitespace() {
+            pending_space = !normalized.is_empty();
+        }
     }
-    Some(speaker)
+    normalized
+}
+
+fn word_count(normalized: &str) -> usize {
+    normalized.split_whitespace().count()
+}
+
+/// Maximum number of speaker keys retained by MercSpeakerHistory.
+pub const MAX_SPEAKER_HISTORY: usize = 256;
+
+/// Whether the previous accepted line for recently heard speakers licenses a
+/// one-word grunt.
+///
+/// Entries are least-recently-used by speaker. A bounded history is enough for
+/// the one-line grunt rule, while an NPC-heavy long session cannot grow this
+/// watcher-owned state without limit. Eviction only loses a possible grunt
+/// trigger; Scan now remains the explicit fallback. Every accepted line still
+/// does one hash lookup and, for an existing speaker, an O(256) deque search/remove
+/// to move that speaker to most-recently-used; existing speakers allocate no
+/// strings, and a new speaker allocates its two owned keys.
+#[derive(Debug, Default)]
+pub struct MercSpeakerHistory {
+    previous: HashMap<String, bool>,
+    order: VecDeque<String>,
+}
+
+impl MercSpeakerHistory {
+    /// Number of speaker keys currently retained.
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.previous.len()
+    }
+
+    fn previous_was_multiword_merc(&self, speaker: &str) -> bool {
+        self.previous.get(speaker).copied().unwrap_or(false)
+    }
+
+    fn remember(&mut self, speaker: &str, licenses_grunt: bool) {
+        if let Some(previous) = self.previous.get_mut(speaker) {
+            *previous = licenses_grunt;
+            let index = self
+                .order
+                .iter()
+                .position(|key| key == speaker)
+                .expect("speaker key was found");
+            let key = self.order.remove(index).expect("speaker key was found");
+            self.order.push_back(key);
+            return;
+        }
+        if self.previous.len() >= MAX_SPEAKER_HISTORY {
+            if let Some(oldest) = self.order.pop_front() {
+                self.previous.remove(&oldest);
+            }
+        }
+        self.order.push_back(speaker.to_owned());
+        self.previous.insert(speaker.to_owned(), licenses_grunt);
+    }
+}
+
+/// The pure trigger decision for one Client.txt line, including history update.
+///
+/// Every line accepted by speaker_of updates history, even when the module is
+/// disabled, a capture is held, or the line does not arm. The return value is
+/// the speaker that earned a probe gate, or None.
+pub fn trigger_line<'a>(
+    line: &'a str,
+    voice_lines: &MercVoiceLines,
+    history: &mut MercSpeakerHistory,
+) -> Option<&'a str> {
+    let speaker = speaker_of(line)?;
+    let text = dialogue_text(line)?;
+    let normalized = normalize_text(text);
+    let known = voice_lines.lookup(&normalized);
+    let arms = match known {
+        Some(line) if line.tag == MercVoiceTag::Inspect && line.words >= 2 => true,
+        Some(line) if line.tag == MercVoiceTag::Inspect && line.words == 1 => {
+            history.previous_was_multiword_merc(speaker)
+        }
+        _ => false,
+    };
+    let licenses_grunt = known.is_some_and(|line| line.words >= 2);
+    history.remember(speaker, licenses_grunt);
+    if arms { Some(speaker) } else { None }
+}
+
+fn dialogue_text(line: &str) -> Option<&str> {
+    let message = &line[line.find("] ")? + 2..];
+    message.split_once(": ").map(|(_, text)| text)
 }
 
 // ---------------------------------------------------------------------------
@@ -846,24 +911,28 @@ fn announce(app: &AppHandle, speaker: Option<String>) {
 
 /// The Client.txt seam: one line in, a probe gate maybe armed.
 ///
-/// Called for EVERY line the watcher reads, so the order of the checks is the
-/// cost order — two string searches before any lock, and the timestamp is
-/// parsed only for a line that has already passed both.
+/// Called for EVERY line the watcher reads. The pure decision updates the
+/// per-speaker history before module and capture state can reject the arm.
 ///
 /// **Rule 5 lives here.** A voice line over a HELD capture is dropped with one
 /// debug line and nothing else: no arm, no announcement, and — because the
 /// loop's `resume` is now driven by Scan now alone — no resumed read either.
-pub fn on_client_line(app: &AppHandle, line: &str, denylist: &NpcDenylist) {
-    let Some(speaker) = trigger_speaker(line, denylist) else {
+pub fn on_client_line(
+    app: &AppHandle,
+    line: &str,
+    voice_lines: &MercVoiceLines,
+    history: &mut MercSpeakerHistory,
+) {
+    let Some(speaker) = trigger_line(line, voice_lines, history) else {
         return;
     };
     if !module_enabled(app) {
         return;
     }
     if capture_held(status(app)) {
-        // Debug-gated, not silent-by-omission: a chattering mercenary standing
-        // beside an open window produces one of these per line, and an app log
-        // full of them would bury the lines that mean something.
+        // Debug-gated, not silent-by-omission: each qualifying Inspect line
+        // beside an open window produces one of these, and an app log full of
+        // them would bury the lines that mean something.
         if super::run::debug_mode(app) {
             crate::app_log(
                 app,
@@ -1049,176 +1118,332 @@ mod tests {
         assert_eq!(speaker_of(line), None);
     }
 
-    #[test]
-    fn is_dialogue_speaker_accepts_a_one_word_name_and_an_epithet() {
-        assert!(is_dialogue_speaker("Nytra, the Cyaxan Loner"));
+    const THRASSEL_APPROACH: &str = concat!(
+        "2026/09/14 05:15:54 215134062 cffb065b [INFO Client 38536] ",
+        "Thrassel, the Azadin Sadist: Your body is the canvas. My blade, the brush. ",
+    );
+    const THRASSEL_INSPECT: &str = concat!(
+        "2026/09/14 05:15:57 215137234 cffb065b [INFO Client 38536] ",
+        "Thrassel, the Azadin Sadist: My Azadi brethren ensured I never lacked for... ",
+        "raw material. Care to do the same?",
+    );
+    const THARVIK_APPROACH: &str = concat!(
+        "2026/09/14 05:27:29 215829171 cffb065b [INFO Client 38536] ",
+        "Tharvik, the Keitan Inquisitor: You stain the ground with your presence!",
+    );
+    const THARVIK_INSPECT: &str = concat!(
+        "2026/09/14 05:27:31 215830984 cffb065b [INFO Client 38536] ",
+        "Tharvik, the Keitan Inquisitor: Born of Keita. Baptised in Innocence. ",
+        "Made righteous by both.",
+    );
+    const EPIPI_INSPECT: &str = concat!(
+        "2026/08/31 15:28:54 1248915531 cffb065b [INFO Client 39456] ",
+        "Epipi Rapono: Make a call.",
+    );
+    const KREZIN_INSPECT: &str = concat!(
+        "2026/08/01 17:26:56 684137921 cffb065b [INFO Client 51688] ",
+        "Krezin, the Bloodstained: I eagerly await your decision. ",
+    );
+    const RYXELLE_LINE: &str = concat!(
+        "2026/09/14 05:08:58 214718453 cffb065b [INFO Client 38536] ",
+        "Ryxelle, the Ninth: You are nothing!",
+    );
+    const SISTER_CASSIA_GRUNT: &str = concat!(
+        "2026/01/31 21:48:37 221172203 cff945bb [INFO Client 23972] ",
+        "Sister Cassia: Oh!",
+    );
+    const SONJA_GRUNT: &str = concat!(
+        "2026/04/11 22:46:11 1614078937 cffb06dd [INFO Client 3192] ",
+        "Sonja, the Farmer: Eh.",
+    );
+    const KAI_LINE: &str = concat!(
+        "2026/07/25 00:36:23 18709515 cffb0658 [INFO Client 13808] ",
+        "Kai, the Slack-Jawed: Ni nah guak! Guoah eyai?",
+    );
+    const KAI_GRUNT: &str = concat!(
+        "2026/07/25 00:36:25 18711531 cffb0658 [INFO Client 13808] ",
+        "Kai, the Slack-Jawed: Eh?",
+    );
+
+    fn shipped_lines() -> MercVoiceLines {
+        MercVoiceLines::shipped()
     }
 
-    /// MEASURED on the laptop Client.txt (2026-08-25): this is the line that
-    /// showed the `, the ` rule never arming. `of` outnumbered `the` in that
-    /// file's dialogue speakers.
-    #[test]
-    fn is_dialogue_speaker_accepts_an_of_joiner() {
-        assert!(is_dialogue_speaker("Fennik, of Unshakeable Faith"));
+    fn fresh_history() -> MercSpeakerHistory {
+        MercSpeakerHistory::default()
     }
 
-    /// The one comma-carrying NPC in the same file. `Master` is part of her
-    /// NAME, not a joiner, and its capital is what says so — a rule that took
-    /// any word there would arm on every line Alva speaks.
-    #[test]
-    fn is_dialogue_speaker_rejects_a_capitalised_joiner() {
-        assert!(!is_dialogue_speaker("Alva, Master Explorer"));
-    }
-
-    #[test]
-    fn is_dialogue_speaker_rejects_a_joiner_with_nothing_after_it() {
-        assert!(!is_dialogue_speaker("Fennik, of"));
-    }
-
-    /// The name is `\S+`, not `[A-Za-z]+`. `Al-Hezmin, the Hunter` is a
-    /// denylisted NPC, and a shape that rejected the hyphen would never reach
-    /// the denylist to be suppressed by it — it would look like a name nobody
-    /// had ever listed.
-    #[test]
-    fn is_dialogue_speaker_accepts_a_hyphenated_name() {
-        assert!(is_dialogue_speaker("Al-Hezmin, the Hunter"));
-    }
-
-    #[test]
-    fn is_dialogue_speaker_rejects_a_multi_word_name() {
-        assert!(!is_dialogue_speaker("Some Guy, the Lout"));
-    }
-
-    #[test]
-    fn is_dialogue_speaker_rejects_a_speaker_with_no_article() {
-        assert!(!is_dialogue_speaker("Nytra the Lout"));
-    }
-
-    #[test]
-    fn is_dialogue_speaker_rejects_an_empty_epithet() {
-        assert!(!is_dialogue_speaker("Nytra, the "));
-    }
-
-    /// The fixture is embedded, so a truncated or unparsed file would leave an
-    /// empty list that suppresses nothing and re-arms on every NPC line. The
-    /// COUNT is not pinned — the list is meant to grow as more NPCs are met.
-    #[test]
-    fn the_shipped_denylist_parses_into_named_npcs() {
-        let list = NpcDenylist::shipped();
-
-        assert!(list.len() > 0, "the shipped fixture parsed into nothing");
-        assert!(list.contains("Varashta, the Winter Sekhema"));
-        assert!(list.contains("Tujen, the Haggler"));
-        assert!(list.contains("Al-Hezmin, the Hunter"));
-    }
-
-    #[test]
-    fn the_denylist_matches_an_npc_whatever_its_case_and_padding() {
-        assert!(NpcDenylist::shipped().contains("  varashta, THE Winter Sekhema "));
+    fn synthetic_line(speaker: &str, text: &str) -> String {
+        format!(
+            "2026/08/31 15:28:55 1248915531 cffb065b [INFO Client 39456] {speaker}: {text}"
+        )
     }
 
     #[test]
-    fn the_denylist_does_not_match_a_mercenary() {
-        assert!(!NpcDenylist::shipped().contains("Nytra, the Cyaxan Loner"));
-    }
+    fn the_shipped_asset_parses_inspect_texts() {
+        let lines = shipped_lines();
 
-    /// The shape admits the hyphen (see `is_dialogue_speaker_accepts_a_
-    /// hyphenated_name`); this is the other half — the denylist is what
-    /// actually stops the Hunter, so the two must agree on the same string.
-    #[test]
-    fn a_hyphenated_npc_name_is_suppressed_by_the_shipped_list() {
-        let line = "2026/08/25 19:04:31 105432578 cffb0716 [INFO Client 12345] Al-Hezmin, the Hunter: You will not escape.";
-        assert!(is_dialogue_speaker("Al-Hezmin, the Hunter"));
-        assert_eq!(trigger_speaker(line, &NpcDenylist::shipped()), None);
+        assert!(lines.inspect_len() > 0, "the embedded corpus parsed no Inspect texts");
+        assert_eq!(lines.tag("Make a call."), Some(MercVoiceTag::Inspect));
     }
 
     #[test]
-    fn parsing_skips_comments_and_blank_lines() {
-        let list = NpcDenylist::parse("# a comment\n\n  Vertolka, the Helper  \n");
-        assert_eq!(list.len(), 1);
-        assert!(list.contains("Vertolka, the Helper"));
+    fn the_shipped_asset_parses_line_texts() {
+        let lines = shipped_lines();
+
+        assert!(!lines.is_empty(), "the embedded corpus parsed into no texts");
+        assert_eq!(lines.tag("Your loss."), Some(MercVoiceTag::Line));
     }
 
     #[test]
-    fn extending_reports_only_the_names_that_were_new() {
-        let mut list = NpcDenylist::shipped();
-        let before = list.len();
+    fn every_shipped_asset_row_resolves_to_its_tag() {
+        let lines = shipped_lines();
 
-        let added = list.extend_from("Zana, the Originator\nVertolka, the Helper\n");
-
-        assert_eq!(added, 1);
-        assert_eq!(list.len(), before + 1);
-    }
-
-    #[test]
-    fn an_override_file_suppresses_a_speaker_the_shipped_list_never_heard_of() {
-        let dir = std::env::temp_dir().join(format!("merc-denylist-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        std::fs::write(dir.join(DENYLIST_OVERRIDE_FILE), "Vertolka, the Helper\n")
-            .expect("write override");
-
-        let (list, added, error) = NpcDenylist::load(Some(&dir));
-
-        assert_eq!((added, error), (1, None));
-        assert!(list.contains("Vertolka, the Helper"));
-        assert!(list.contains("Zana, the Originator"));
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn a_missing_override_file_is_not_an_error() {
-        let dir = std::env::temp_dir()
-            .join(format!("merc-denylist-absent-{}", std::process::id()));
-        let (list, added, error) = NpcDenylist::load(Some(&dir));
-
-        assert_eq!((added, error), (0, None));
-        assert_eq!(list, NpcDenylist::shipped());
-    }
-
-    #[test]
-    fn a_mercenary_voice_line_names_its_speaker() {
-        assert_eq!(
-            trigger_speaker(MERC_LINE, &NpcDenylist::shipped()),
-            Some("Nytra, the Cyaxan Loner")
-        );
-    }
-
-    /// Both measured `of` mercenaries, one per machine — the laptop's and the
-    /// PC's. Neither armed under the old `, the ` rule.
-    #[test]
-    fn a_mercenary_whose_title_uses_of_names_its_speaker() {
-        for name in ["Fennik, of Unshakeable Faith", "Swain, of Fractured Faith"] {
-            let line = format!(
-                "2026/08/25 19:04:31 105432578 cffb0716 [INFO Client 12345] {name}: I am ready."
-            );
+        for (row_number, row) in SHIPPED_VOICE_LINES.lines().enumerate() {
             assert_eq!(
-                trigger_speaker(&line, &NpcDenylist::shipped()),
-                Some(name),
-                "{name} must arm a burst"
+                row.matches('\t').count(),
+                1,
+                "asset row {row_number} must contain exactly one tab"
+            );
+            let (raw_tag, text) = row.split_once('\t').expect("asset row has a tab");
+            let expected = match raw_tag {
+                "inspect" => MercVoiceTag::Inspect,
+                "line" => MercVoiceTag::Line,
+                _ => panic!("asset row {row_number} has an unknown tag: {raw_tag}"),
+            };
+            assert_eq!(
+                lines.tag(text),
+                Some(expected),
+                "asset row {row_number} did not resolve: {text}"
             );
         }
     }
 
-    /// Alva is not on the denylist and does not need to be: the shape rejects
-    /// her, because her comma is followed by a capitalised name-part.
     #[test]
-    fn an_npc_whose_comma_carries_a_name_and_not_a_title_triggers_nothing() {
-        let line = "2026/08/25 19:04:31 105432578 cffb0716 [INFO Client 12345] Alva, Master Explorer: Another incursion awaits.";
-        assert_eq!(trigger_speaker(line, &NpcDenylist::shipped()), None);
+    fn normalization_matches_asset_and_client_variants() {
+        assert_eq!(
+            normalize_text(" I {eagerly} await your decision. \t"),
+            normalize_text("I eagerly await your decision."),
+        );
+        assert_eq!(normalize_text("Eh?"), normalize_text("Eh."));
+        assert_eq!(
+            normalize_text("Make your choice – and quickly."),
+            "make your choice and quickly",
+        );
     }
 
     #[test]
-    fn a_denylisted_npc_line_triggers_nothing() {
-        let line = "2026/08/24 22:51:12 105432578 cffb0716 [INFO Client 12345] Varashta, the Winter Sekhema: Come closer.";
-        assert_eq!(trigger_speaker(line, &NpcDenylist::shipped()), None);
+    fn a_walk_up_text_does_not_arm() {
+        let mut history = fresh_history();
+
+        assert_eq!(trigger_line(THRASSEL_APPROACH, &shipped_lines(), &mut history), None);
     }
 
     #[test]
-    fn a_player_quoting_a_mercenary_name_triggers_nothing() {
-        let line = "2026/08/24 22:51:12 105432578 cffb0716 [INFO Client 12345] Vertolka: Nytra, the Cyaxan Loner is cheap";
-        assert_eq!(trigger_speaker(line, &NpcDenylist::shipped()), None);
+    fn a_known_inspect_text_arms_for_a_titled_speaker() {
+        let mut history = fresh_history();
+
+        assert_eq!(
+            trigger_line(THRASSEL_INSPECT, &shipped_lines(), &mut history),
+            Some("Thrassel, the Azadin Sadist"),
+        );
     }
 
+    #[test]
+    fn a_known_line_text_does_not_arm() {
+        let mut history = fresh_history();
+
+        assert_eq!(trigger_line(RYXELLE_LINE, &shipped_lines(), &mut history), None);
+    }
+
+    #[test]
+    fn a_known_inspect_text_arms_for_a_plain_name_speaker() {
+        let mut history = fresh_history();
+
+        assert_eq!(
+            trigger_line(EPIPI_INSPECT, &shipped_lines(), &mut history),
+            Some("Epipi Rapono"),
+        );
+    }
+
+    #[test]
+    fn punctuation_and_emphasis_normalize_to_the_same_inspect_text() {
+        let mut history = fresh_history();
+
+        assert_eq!(
+            trigger_line(KREZIN_INSPECT, &shipped_lines(), &mut history),
+            Some("Krezin, the Bloodstained"),
+        );
+    }
+
+    #[test]
+    fn a_first_approach_line_does_not_arm() {
+        let mut history = fresh_history();
+
+        assert_eq!(trigger_line(THARVIK_APPROACH, &shipped_lines(), &mut history), None);
+    }
+
+    #[test]
+    fn a_known_inspect_text_arms_for_tharvik() {
+        let mut history = fresh_history();
+
+        assert_eq!(
+            trigger_line(THARVIK_INSPECT, &shipped_lines(), &mut history),
+            Some("Tharvik, the Keitan Inquisitor"),
+        );
+    }
+
+    #[test]
+    fn the_first_sister_cassia_grunt_does_not_arm() {
+        let mut history = fresh_history();
+
+        assert_eq!(trigger_line(SISTER_CASSIA_GRUNT, &shipped_lines(), &mut history), None);
+    }
+
+    #[test]
+    fn a_second_sister_cassia_grunt_still_does_not_arm() {
+        let mut history = fresh_history();
+
+        assert_eq!(trigger_line(SISTER_CASSIA_GRUNT, &shipped_lines(), &mut history), None);
+        assert_eq!(trigger_line(SISTER_CASSIA_GRUNT, &shipped_lines(), &mut history), None);
+    }
+
+    #[test]
+    fn a_sonja_grunt_without_a_previous_line_does_not_arm() {
+        let mut history = fresh_history();
+
+        assert_eq!(trigger_line(SONJA_GRUNT, &shipped_lines(), &mut history), None);
+    }
+
+    #[test]
+    fn a_grunt_arms_after_the_same_speakers_multiword_merc_line() {
+        let mut history = fresh_history();
+        let lines = shipped_lines();
+
+        trigger_line(KAI_LINE, &lines, &mut history);
+        assert_eq!(
+            trigger_line(KAI_GRUNT, &lines, &mut history),
+            Some("Kai, the Slack-Jawed"),
+        );
+    }
+
+    #[test]
+    fn another_speakers_grunt_does_not_clear_kai_license() {
+        let mut history = fresh_history();
+        let lines = shipped_lines();
+
+        assert_eq!(trigger_line(KAI_LINE, &lines, &mut history), None);
+        assert_eq!(trigger_line(SISTER_CASSIA_GRUNT, &lines, &mut history), None);
+        assert_eq!(
+            trigger_line(KAI_GRUNT, &lines, &mut history),
+            Some("Kai, the Slack-Jawed"),
+        );
+    }
+
+    #[test]
+    fn a_different_speakers_line_does_not_license_a_grunt() {
+        let mut history = fresh_history();
+        let lines = shipped_lines();
+
+        assert_eq!(
+            trigger_line(THARVIK_INSPECT, &lines, &mut history),
+            Some("Tharvik, the Keitan Inquisitor"),
+        );
+        let other_grunt = synthetic_line("Sister Cassia", "Eh?");
+        assert_eq!(trigger_line(&other_grunt, &lines, &mut history), None);
+    }
+
+    #[test]
+    fn an_unknown_line_replaces_a_same_speakers_grunt_license() {
+        let mut history = fresh_history();
+        let lines = shipped_lines();
+        let known_line = synthetic_line("Kai", "Make a call.");
+        let unknown_line = synthetic_line("Kai", "zzzzz never listed text.");
+        let grunt = synthetic_line("Kai", "Eh?");
+
+        assert_eq!(trigger_line(&known_line, &lines, &mut history), Some("Kai"));
+        assert_eq!(trigger_line(&unknown_line, &lines, &mut history), None);
+        assert_eq!(trigger_line(&grunt, &lines, &mut history), None);
+    }
+
+    #[test]
+    fn a_whisper_with_an_inspect_text_does_not_arm() {
+        let mut history = fresh_history();
+        let line = concat!(
+            "2026/08/31 15:28:55 1248915531 cffb065b [INFO Client 39456] ",
+            "@From <Guild> Name: Make a call.",
+        );
+
+        assert_eq!(trigger_line(line, &shipped_lines(), &mut history), None);
+        assert_eq!(history.len(), 0);
+    }
+
+    #[test]
+    fn a_quoted_inspect_text_does_not_arm() {
+        let mut history = fresh_history();
+        let line = concat!(
+            "2026/08/31 15:28:55 1248915531 cffb065b [INFO Client 39456] ",
+            "Vertolka: Epipi Rapono: Make a call.",
+        );
+
+        assert_eq!(trigger_line(line, &shipped_lines(), &mut history), None);
+    }
+
+    #[test]
+    fn speaker_history_never_exceeds_its_bound() {
+        let lines = shipped_lines();
+        let mut history = fresh_history();
+
+        for index in 0..=MAX_SPEAKER_HISTORY {
+            let speaker = format!("Speaker{index}");
+            let line = synthetic_line(&speaker, "Make a call.");
+            trigger_line(&line, &lines, &mut history);
+            assert!(history.len() <= MAX_SPEAKER_HISTORY);
+        }
+        assert_eq!(history.len(), MAX_SPEAKER_HISTORY);
+    }
+
+    #[test]
+    fn speaker_history_evicts_the_oldest_speaker() {
+        let lines = shipped_lines();
+        let mut history = fresh_history();
+
+        for index in 0..MAX_SPEAKER_HISTORY {
+            let speaker = format!("Speaker{index}");
+            let line = synthetic_line(&speaker, "Make a call.");
+            trigger_line(&line, &lines, &mut history);
+        }
+        let newest = synthetic_line("Newest", "Make a call.");
+        trigger_line(&newest, &lines, &mut history);
+        let evicted = synthetic_line("Speaker0", "Eh?");
+
+        assert_eq!(history.len(), MAX_SPEAKER_HISTORY);
+        assert_eq!(trigger_line(&evicted, &lines, &mut history), None);
+    }
+
+    #[test]
+    fn re_hearing_the_oldest_speaker_reorders_lru_eviction() {
+        let lines = shipped_lines();
+        let mut history = fresh_history();
+
+        for index in 0..MAX_SPEAKER_HISTORY {
+            let speaker = format!("Speaker{index}");
+            let line = synthetic_line(&speaker, "Make a call.");
+            trigger_line(&line, &lines, &mut history);
+        }
+        let reheard = synthetic_line("Speaker0", "Make a call.");
+        assert_eq!(trigger_line(&reheard, &lines, &mut history), Some("Speaker0"));
+        let newest = synthetic_line("Newest", "Make a call.");
+        assert_eq!(trigger_line(&newest, &lines, &mut history), Some("Newest"));
+
+        let retained_grunt = synthetic_line("Speaker0", "Eh?");
+        let evicted_grunt = synthetic_line("Speaker1", "Eh?");
+        assert_eq!(
+            trigger_line(&retained_grunt, &lines, &mut history),
+            Some("Speaker0")
+        );
+        assert_eq!(trigger_line(&evicted_grunt, &lines, &mut history), None);
+    }
     // -- the line's own clock ----------------------------------------------
 
     /// The gate's deadlines are 500 ms and 1.5 s. A watcher hop is up to 5 s

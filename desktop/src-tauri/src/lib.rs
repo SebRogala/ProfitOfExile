@@ -3452,23 +3452,21 @@ fn spawn_log_watcher(app: AppHandle) {
 
         emit_status(&app);
 
-        // The merc OCR trigger's NPC denylist (POE-198). Loaded once here
+        // The merc OCR trigger's dialogue corpus (POE-280). Loaded once here
         // because this task is the only Client.txt reader in the app — the
-        // trigger must not add a second tailer. An edited override file is
-        // picked up when the watcher restarts (app restart, or a Client.txt
-        // path change in Settings).
-        let merc_denylist = {
-            let dir = app.path().app_data_dir().ok();
-            let (list, added, error) = mercenary::trigger::NpcDenylist::load(dir.as_deref());
-            if let Some(error) = error {
-                app_log(&app, format!("Merc: NPC denylist override — {}", error));
-            }
-            app_log(
-                &app,
-                format!("Merc: NPC denylist {} names ({} from override)", list.len(), added),
-            );
-            list
-        };
+        // trigger must not add a second tailer. The history is also owned by
+        // this task, so every accepted speaker line is remembered before the
+        // module and capture gates are checked.
+        let merc_voice_lines = mercenary::trigger::MercVoiceLines::shipped();
+        app_log(
+            &app,
+            format!(
+                "Merc: loaded {} texts ({} inspect texts)",
+                merc_voice_lines.len(),
+                merc_voice_lines.inspect_len()
+            ),
+        );
+        let mut merc_line_history = mercenary::trigger::MercSpeakerHistory::default();
 
         let mut state_machine = lab_state::LabStateMachine::new();
         let mut detected_gems: Vec<String> = Vec::new();
@@ -3517,11 +3515,15 @@ fn spawn_log_watcher(app: AppHandle) {
                         }
                     }
 
-                    // --- Merc OCR trigger (POE-198) ---
-                    // A mercenary's voice line arms an OCR burst. Cheap by
-                    // construction: two string searches reject every other line
-                    // before anything is locked.
-                    mercenary::trigger::on_client_line(&app, &line, &merc_denylist);
+                    // --- Merc OCR trigger (POE-198 / POE-280) ---
+                    // Inspect text arms the OCR gate; the trigger owns the
+                    // per-speaker history even when no gate is armed.
+                    mercenary::trigger::on_client_line(
+                        &app,
+                        &line,
+                        &merc_voice_lines,
+                        &mut merc_line_history,
+                    );
 
                     // --- Temple capture trigger (POE-242) ---
                     // Alva's voice lines and the temple's own area line are what
