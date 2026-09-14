@@ -3403,7 +3403,7 @@ fn probe_tick(
     };
     let screen = [iw, ih];
     let grabbed_on = (grab.monitor_id, grab.origin, grab.client);
-    crate::ssot::drop_if_mismatched(app, (iw, ih), grabbed_on.0, grabbed_on.2);
+    crate::ssot::drop_if_mismatched(app, (iw, ih), grabbed_on.1, grabbed_on.2);
     let Some((panel, scale)) = merc_placement(app) else {
         if debug_mode(app) {
             crate::app_log(
@@ -3567,7 +3567,7 @@ fn detect_tick(
     // monitor, and only the OCR view is narrowed below — so this is the screen's
     // real size on every path. A scale remembered from another monitor is
     // dropped here, which is the first moment anything in the app can tell.
-    crate::ssot::drop_if_mismatched(app, (iw, ih), grabbed_on.0, grabbed_on.2);
+    crate::ssot::drop_if_mismatched(app, (iw, ih), grabbed_on.1, grabbed_on.2);
 
     let placement = merc_placement(app);
     let crop = placement.map(|(panel, scale)| geometry::placed_panel_crop(panel, scale, screen));

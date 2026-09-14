@@ -257,33 +257,31 @@ pub struct ScreenSlice {
     /// it and `to_slice` seeds it from [`verifies_the_screen`] — which answers
     /// `false` for a load, because a load is not a verification.
     pub verified_this_session: bool,
-    /// WHICH display this was measured on (POE-237) — `crate::capture::Capture`'s
-    /// `monitor_id`, carried straight through by the writer.
+    /// The Windows handle of the display this was measured on (POE-237) —
+    /// `crate::capture::Capture`'s `monitor_id`, carried straight through by the
+    /// writer. `0` when unknown (a settings file written before POE-237).
     ///
-    /// `0` means UNKNOWN: a settings file written before POE-237 loads as one,
-    /// and so does a handle that truncated to zero. It is never read as an
-    /// identity — [`different_monitor`] is the one rule that compares these,
-    /// and it declines to answer when either side is `0`.
-    ///
-    /// This is what closes the first of the two blind spots
-    /// [`screen_matches`] documented: a different monitor of the SAME
-    /// resolution used to be indistinguishable from the remembered one.
+    /// Carried for the log and the Settings card, NOT compared: the handle is
+    /// not stable for one display. One 1920x1080 screen at `(0, 0)` logged
+    /// 65622, 65641, 161748971 and 65622 again between 2026-09-10 and
+    /// 2026-09-14, and each change dropped a good scale, which left the temple
+    /// to search for its panel with no hint. [`origin`](Self::origin) is the
+    /// identity ([`different_display`]).
     pub monitor_id: u32,
     /// The measured display's top-left in virtual-desktop PHYSICAL px, so a
     /// consumer holding a rect measured inside a capture can place it on the
     /// desktop. `(0, 0)` for the primary monitor and for an unknown one.
     ///
-    /// Carried, not compared: a monitor rearranged in Windows display settings
-    /// keeps its identity and its capture geometry, so a moved origin is not a
-    /// new screen (see [`screen_changed`]).
+    /// WHICH display this was measured on: two displays of one desktop cannot
+    /// share a top-left, so this is what tells a second monitor of the same
+    /// resolution from the remembered one ([`different_display`]). Accepted
+    /// trade-off: rearranging displays in Windows moves the origin and drops the
+    /// scale once, and the next panel re-measures it. An unknown `(0, 0)` reads
+    /// as the primary display, so a scale stored before the origin was recorded
+    /// survives on the primary and is re-measured anywhere else.
     ///
-    /// NOTHING READS IT YET. Every rect in the app today is window- or
-    /// capture-relative, and the one screen-absolute consumer this exists for —
-    /// a game-anchored widget, which has to place a rect measured inside a
-    /// capture onto the virtual desktop — is not built. It is published now
-    /// because the only place the value is knowable is the capture that
-    /// produced the measurement (`crate::capture::Capture::origin`), and asking
-    /// again later is the POE-237 bug in miniature.
+    /// No rect is placed from it yet: every rect in the app today is window- or
+    /// capture-relative.
     pub origin: (i32, i32),
     /// The capture rectangle in capture-relative physical px: x, y, w, h.
     /// POE-268's capture path is fullscreen, so this is the whole capture,
@@ -727,15 +725,13 @@ const UI_SCALE_EPS: f32 = 0.01;
 /// The monitor id has to be one of them: a player who drags the game from one
 /// 1920x1080 display to another changes every rect's screen-absolute position
 /// and nothing else, so without this term the move would never reach a
-/// consumer. It is compared with a bare `!=`, NOT through
-/// [`different_monitor`]: unknown-to-known is real news for a reader even
-/// though it is not enough to overturn a standing measurement, which is the
-/// different question [`accepts`] asks.
+/// consumer. It is compared with a bare `!=` because this is an emit gate, not
+/// an identity: a new handle is news for the Settings card even on the same
+/// display, which is the different question [`different_display`] answers.
 ///
-/// `origin` is deliberately absent. Rearranging displays moves it without
-/// changing which screen the game is on, the dimensions it was measured at, or
-/// any rect cut from a capture of it — the window that DOES care is rebuilt
-/// from `game-monitor-changed`, not from this.
+/// `origin` is absent. A slice whose origin disagrees with the capture is
+/// dropped by [`drop_if_mismatched`] before anything re-publishes, and a
+/// publish into an empty slot is always a change.
 ///
 /// The client rectangle and remembered anchors are included: either changes
 /// the capture-relative geometry a consumer reads.
@@ -759,19 +755,17 @@ fn screen_changed(current: Option<&ScreenSlice>, next: &ScreenSlice) -> bool {
     }
 }
 
-/// Whether two monitor ids are known to describe DIFFERENT displays (POE-237).
+/// Whether two virtual-desktop origins describe DIFFERENT displays (POE-237).
 ///
-/// `0` is the unknown id, and an unknown answers `false` on either side —
-/// "not known to differ" rather than "the same". Both callers need that: a
-/// pre-POE-237 persisted slice loads with `0`, and a comparison that read it as
-/// a real id would prune every remembered scale on the first capture after the
-/// upgrade ([`screen_matches`]) and take every OCR reading over a landed frame
-/// fit ([`accepts`]).
+/// The origin and not the monitor handle, because the handle changes for one
+/// display between sessions (see [`ScreenSlice::monitor_id`]) while two
+/// displays of one desktop cannot share a top-left.
 ///
-/// One function rather than the same `!= 0 && != 0 && !=` at two call sites,
-/// because the two are one rule: the id is an identity or it is nothing.
-fn different_monitor(a: u32, b: u32) -> bool {
-    a != 0 && b != 0 && a != b
+/// One function rather than the same `!=` at three call sites
+/// ([`screen_matches`], [`accepts`], `same_screen_geometry`), because the three
+/// are one rule: what makes two screens the same display.
+fn different_display(a: (i32, i32), b: (i32, i32)) -> bool {
+    a != b
 }
 
 /// How far from the standing value a reading may sit and still be explained by
@@ -828,7 +822,7 @@ pub fn verifies_the_screen(source: ScreenScaleSource) -> bool {
 /// - **`MercFrame`** — always. It is the measurement everything else is a
 ///   stand-in for, and a fresh one is never worse than what it replaces.
 /// - **`MercOcr` and `TempleAnchor`** — only when saying something their own
-///   uncertainty cannot explain: a different DISPLAY ([`different_monitor`],
+///   uncertainty cannot explain: a different DISPLAY ([`different_display`],
 ///   POE-237), different dimensions, or a `ui_scale` further than
 ///   [`OCR_DRIFT_BAND`] from the standing value. Inside the band, on the same
 ///   screen, an OCR reading is that screen re-described 6-12 px worse, and
@@ -894,7 +888,7 @@ pub(crate) fn accepts(current: Option<&ScreenSlice>, next: &ScreenSlice) -> bool
             // `temple-anchor` unreachable on the machine the button was pressed
             // on.
             current.source == ScreenScaleSource::Capture
-                || different_monitor(current.monitor_id, next.monitor_id)
+                || different_display(current.origin, next.origin)
                 || current.width != next.width
                 || current.height != next.height
                 || current.client != next.client
@@ -941,7 +935,7 @@ pub struct ScreenRecord {
 fn same_screen_geometry(current: &ScreenSlice, next: &ScreenSlice) -> bool {
     current.width == next.width
         && current.height == next.height
-        && !different_monitor(current.monitor_id, next.monitor_id)
+        && !different_display(current.origin, next.origin)
         && current.client == next.client
         && (current.ui_scale - next.ui_scale).abs() < UI_SCALE_EPS
 }
@@ -1035,13 +1029,11 @@ pub fn should_remember_screen(changed: bool, source: ScreenScaleSource) -> bool 
 /// Whether a remembered measurement still describes the screen just captured
 /// (POE-227), now that a capture says which DISPLAY it came off (POE-237).
 ///
-/// Two terms, and the monitor id is the stronger one: two known ids that differ
-/// are a mismatch whatever the dimensions say ([`different_monitor`]), which is
-/// what finally catches the second 1920x1080 monitor a scale used to survive
-/// onto. When either id is unknown — a slice persisted before POE-237, a
-/// capture whose handle truncated to zero — the rule falls back to the
-/// dimensions alone, exactly as it behaved before, rather than pruning on a
-/// number that means "no opinion".
+/// Two terms, and the display is the stronger one: two origins that differ are
+/// a mismatch whatever the dimensions say ([`different_display`]), which is
+/// what catches the second 1920x1080 monitor a scale used to survive onto. The
+/// monitor handle is not consulted: it changes for one display between
+/// sessions, and pruning on it threw away a good scale at every change.
 ///
 /// Dimensions stay exact and `ui_scale` is still not consulted, because the
 /// whole point is that a scale measured on another monitor is unverifiable from
@@ -1063,13 +1055,13 @@ pub fn should_remember_screen(changed: bool, source: ScreenScaleSource) -> bool 
 pub fn screen_matches(
     current: &Option<ScreenSlice>,
     capture: (u32, u32),
-    monitor_id: u32,
+    origin: (i32, i32),
     client: [i32; 4],
 ) -> bool {
     match current {
         None => true,
         Some(current) => {
-            !different_monitor(current.monitor_id, monitor_id)
+            !different_display(current.origin, origin)
                 && current.width == capture.0
                 && current.height == capture.1
                 && current.client == client
@@ -1100,13 +1092,13 @@ pub fn screen_matches(
 pub fn drop_if_mismatched(
     app: &AppHandle,
     capture: (u32, u32),
-    monitor_id: u32,
+    origin: (i32, i32),
     client: [i32; 4],
 ) -> bool {
     let dropped = {
         let state = app.state::<AppState>();
         let mut current = state.screen.lock().unwrap_or_else(|e| e.into_inner());
-        if screen_matches(&current, capture, monitor_id, client) {
+        if screen_matches(&current, capture, origin, client) {
             None
         } else {
             current.take()
@@ -1118,8 +1110,15 @@ pub fn drop_if_mismatched(
     crate::app_log(
         app,
         format!(
-            "screen is now {}×{} on monitor {} — dropping the remembered scale (was {}×{} on monitor {})",
-            capture.0, capture.1, monitor_id, stale.width, stale.height, stale.monitor_id
+            "screen is now {}×{} at {},{} — dropping the remembered scale (was {}×{} at {},{})",
+            capture.0,
+            capture.1,
+            origin.0,
+            origin.1,
+            stale.width,
+            stale.height,
+            stale.origin.0,
+            stale.origin.1
         ),
     );
     emit_ssot(app);
@@ -2801,12 +2800,10 @@ mod tests {
             source: ScreenScaleSource::MercFrame,
             measured_at_ms: 1_700_000_000_000,
             verified_this_session: true,
-            // A REAL id, not the `0` sentinel: `different_monitor` declines to
-            // answer on a `0`, so a fixture carrying one would make every
-            // monitor comparison below vacuously true and the tests would pass
-            // with the term deleted.
+            // A REAL handle, not the `0` sentinel, so a test that reads it back
+            // can tell a carried handle from an unknown one.
             monitor_id: REFERENCE_MONITOR,
-            origin: (0, 0),
+            origin: REFERENCE_ORIGIN,
             client: [0, 0, 1920, 1200],
             anchors: None,
         }
@@ -2816,9 +2813,17 @@ mod tests {
     /// that means "the same monitor" passes.
     const REFERENCE_MONITOR: u32 = 65_537;
 
-    /// A second display, same id space. Only its DIFFERENCE from
+    /// A second handle, same id space. Only its DIFFERENCE from
     /// [`REFERENCE_MONITOR`] matters.
     const OTHER_MONITOR: u32 = 131_074;
+
+    /// Where [`reference_screen`]'s display sits on the virtual desktop: the
+    /// primary's top-left.
+    const REFERENCE_ORIGIN: (i32, i32) = (0, 0);
+
+    /// A second display of the same desktop, to the primary's right. Two
+    /// displays cannot share a top-left, so this is what "another display" is.
+    const OTHER_ORIGIN: (i32, i32) = (1920, 0);
 
     /// A measurement as the merc writer builds one: the flag is never a literal
     /// at a call site, it is [`verifies_the_screen`]'s answer for the cue. Used
@@ -3010,7 +3015,7 @@ mod tests {
     /// The refusal is a property of the CUE, not of the numbers: a derivation
     /// for a different display must not take the slice either, because the
     /// prune (`drop_if_mismatched`) is what owns "the game moved screens" and
-    /// it empties the slot first. Without this, the monitor term alone would
+    /// it empties the slot first. Without this, the display term alone would
     /// let a derived value overturn a gold-frame fit.
     #[test]
     fn a_derived_measurement_is_refused_even_from_a_different_display() {
@@ -3209,6 +3214,26 @@ mod tests {
         assert_eq!(slot.expect("the repeated measurement remains").anchors, anchors);
     }
 
+    /// Anchors are capture-relative to ONE display: carried onto another one,
+    /// they would place the temple and merc crops on arithmetic from the screen
+    /// the game left. Fails if `same_screen_geometry` stops comparing origins.
+    #[test]
+    fn a_display_change_drops_remembered_anchors_with_the_old_geometry() {
+        let current = ScreenSlice {
+            anchors: Some(Anchors {
+                temple_entrance: Some([111, 222]),
+                merc_panel: Some([120, 220]),
+            }),
+            ..reference_screen()
+        };
+        let mut slot = Some(current);
+        let next = ScreenSlice { origin: OTHER_ORIGIN, anchors: None, ..current };
+
+        record_screen(&mut slot, next);
+
+        assert_eq!(slot.expect("the other display's measurement is stored").anchors, None);
+    }
+
     #[test]
     fn a_client_change_drops_remembered_anchors_with_the_old_geometry() {
         let current = ScreenSlice {
@@ -3255,10 +3280,13 @@ mod tests {
         assert_eq!(slot.expect("the changed scale is stored").anchors, None);
     }
 
+    /// The handle is not the display: Windows hands one screen a new handle
+    /// between sessions, and a remeasure under it must keep the anchors the
+    /// module learned on that screen.
     #[test]
-    fn a_display_identity_upgrade_keeps_anchors_when_geometry_is_unchanged() {
+    fn a_new_monitor_handle_on_the_same_display_keeps_anchors() {
         let current = ScreenSlice {
-            monitor_id: 0,
+            monitor_id: OTHER_MONITOR,
             anchors: Some(Anchors {
                 temple_entrance: Some([111, 222]),
                 merc_panel: None,
@@ -3275,7 +3303,7 @@ mod tests {
         record_screen(&mut slot, next);
 
         assert_eq!(
-            slot.expect("the known display replaces the unknown identity").anchors,
+            slot.expect("the remeasure of the same display is stored").anchors,
             current.anchors,
         );
     }
@@ -3754,11 +3782,11 @@ mod tests {
         assert!(screen_changed(Some(&current), &next));
     }
 
-    /// The other side of that term, and the reason it is a bare `!=` rather
-    /// than [`different_monitor`]: a session that loaded a pre-POE-237 seed and
-    /// then measured the display it is really on has learned something every
-    /// reader wants, even though the unknown id was never enough to overturn
-    /// the measurement itself (see [`accepts`]).
+    /// The other side of that term, and the reason it is a bare `!=`: a session
+    /// that loaded a pre-POE-237 seed and then measured the display it is
+    /// really on has learned something the Settings card shows, even though a
+    /// handle is never enough to overturn the measurement itself (see
+    /// [`accepts`]).
     #[test]
     fn learning_which_display_a_screen_is_on_is_published() {
         let seeded = ScreenSlice { monitor_id: 0, ..reference_screen() };
@@ -3771,13 +3799,13 @@ mod tests {
     /// standing value describes a screen the game has left, so even a
     /// drift-grade reading of the one it is on now is the better answer. The
     /// scale here is deliberately INSIDE the band (0.005 of 0.01), so the test
-    /// fails the moment the monitor term is dropped from `accepts` and the band
+    /// fails the moment the display term is dropped from `accepts` and the band
     /// is allowed to hold the old display's number in place.
     #[test]
     fn an_ocr_measurement_from_another_display_replaces_a_frame_measurement() {
         let mut slot = Some(measured_by(ScreenScaleSource::MercFrame, 1.0));
         let elsewhere = ScreenSlice {
-            monitor_id: OTHER_MONITOR,
+            origin: OTHER_ORIGIN,
             ..measured_by(ScreenScaleSource::MercOcr, 1.0 - 0.005)
         };
 
@@ -3785,22 +3813,22 @@ mod tests {
 
         assert!(record.accepted);
         let standing = slot.expect("the new display's measurement is stored");
-        assert_eq!(standing.monitor_id, OTHER_MONITOR);
+        assert_eq!(standing.origin, OTHER_ORIGIN);
         assert_eq!(standing.ui_scale, 1.0 - 0.005);
     }
 
-    /// The upgrade path through `accepts`, which is where an unknown id must
-    /// NOT act like a different display: a session seeded from a pre-POE-237
-    /// file, then read by the drifting cue on the very screen it describes,
-    /// must keep the seeded number. Treating `0` as "differs" here would hand
-    /// every such session straight back to the POE-240 bug.
+    /// A new HANDLE is not another display: Windows renumbers one screen
+    /// between sessions (2026-09-10..14: 65622, 65641, 161748971, 65622 at
+    /// `(0, 0)`). A drifting cue read under the new handle on the same screen
+    /// must keep the frame fit, or every renumbering hands the session back to
+    /// the POE-240 bug. Fails if `accepts` compares handles again.
     #[test]
-    fn an_ocr_measurement_with_no_display_stays_inside_the_drift_band() {
-        let mut slot = Some(ScreenSlice {
-            monitor_id: 0,
-            ..measured_by(ScreenScaleSource::MercFrame, 1.0)
-        });
-        let drifted = measured_by(ScreenScaleSource::MercOcr, 1.0 - 0.005);
+    fn an_ocr_measurement_under_a_new_handle_stays_inside_the_drift_band() {
+        let mut slot = Some(measured_by(ScreenScaleSource::MercFrame, 1.0));
+        let drifted = ScreenSlice {
+            monitor_id: OTHER_MONITOR,
+            ..measured_by(ScreenScaleSource::MercOcr, 1.0 - 0.005)
+        };
 
         let record = record_screen(&mut slot, drifted);
 
@@ -3852,7 +3880,7 @@ mod tests {
     /// has never measured a screen.
     #[test]
     fn an_unmeasured_screen_matches_any_capture() {
-        assert!(screen_matches(&None, (1920, 1080), REFERENCE_MONITOR, [0, 0, 1920, 1080]));
+        assert!(screen_matches(&None, (1920, 1080), REFERENCE_ORIGIN, [0, 0, 1920, 1080]));
     }
 
     /// The keep case: the remembered measurement describes the screen just
@@ -3863,7 +3891,7 @@ mod tests {
         assert!(screen_matches(
             &Some(reference_screen()),
             (1920, 1200),
-            REFERENCE_MONITOR,
+            REFERENCE_ORIGIN,
             [0, 0, 1920, 1200],
         ));
     }
@@ -3873,7 +3901,7 @@ mod tests {
         assert!(!screen_matches(
             &Some(reference_screen()),
             (1920, 1200),
-            REFERENCE_MONITOR,
+            REFERENCE_ORIGIN,
             [20, 0, 1920, 1200],
         ));
     }
@@ -3887,7 +3915,7 @@ mod tests {
         assert!(!screen_matches(
             &Some(reference_screen()),
             (2560, 1200),
-            REFERENCE_MONITOR,
+            REFERENCE_ORIGIN,
             [0, 0, 2560, 1200],
         ));
     }
@@ -3901,7 +3929,7 @@ mod tests {
         assert!(!screen_matches(
             &Some(reference_screen()),
             (1920, 1080),
-            REFERENCE_MONITOR,
+            REFERENCE_ORIGIN,
             [0, 0, 1920, 1080],
         ));
     }
@@ -3918,7 +3946,7 @@ mod tests {
         assert!(screen_matches(
             &Some(drifted),
             (1920, 1200),
-            REFERENCE_MONITOR,
+            REFERENCE_ORIGIN,
             [0, 0, 1920, 1200],
         ));
     }
@@ -3926,54 +3954,16 @@ mod tests {
     /// The blind spot POE-237 closes, and the one POE-227 could not: two
     /// monitors of the SAME resolution. Dimensions alone call this a match and
     /// the game keeps running on a scale measured on the display it left; the
-    /// id is the only thing that can tell them apart. Fails the moment the
-    /// monitor term is dropped from the predicate.
+    /// origin is what tells them apart. Fails the moment the display term is
+    /// dropped from the predicate.
     #[test]
     fn a_measurement_from_a_different_monitor_of_the_same_size_is_dropped() {
         assert!(!screen_matches(
             &Some(reference_screen()),
             (1920, 1200),
-            OTHER_MONITOR,
+            OTHER_ORIGIN,
             [0, 0, 1920, 1200],
         ));
-    }
-
-    /// A capture that cannot say which display it came off must not prune a
-    /// good measurement. `0` is "no opinion", not "monitor zero" — reading it
-    /// as an id would drop the remembered scale on every tick of a session
-    /// whose handle truncated to zero.
-    #[test]
-    fn a_capture_with_no_display_keeps_a_measurement_of_the_same_size() {
-        assert!(screen_matches(&Some(reference_screen()), (1920, 1200), 0, [0, 0, 1920, 1200]));
-    }
-
-    /// The other half, and a separate behaviour: an unknown display disables
-    /// the monitor term ONLY. The dimensions still decide, so a capture that is
-    /// a different size prunes exactly as it did before POE-237.
-    #[test]
-    fn a_capture_with_no_display_still_prunes_on_a_size_that_disagrees() {
-        assert!(!screen_matches(&Some(reference_screen()), (1920, 1080), 0, [0, 0, 1920, 1080]));
-    }
-
-    /// The upgrade case: every scale persisted before POE-237 loads with
-    /// `monitor_id: 0`. It must survive a capture that DOES name a display, or
-    /// the first capture after the upgrade would throw every remembered
-    /// measurement away.
-    #[test]
-    fn a_scale_remembered_without_a_display_survives_a_capture_that_names_one() {
-        let upgraded = ScreenSlice { monitor_id: 0, ..reference_screen() };
-
-        assert!(screen_matches(&Some(upgraded), (1920, 1200), OTHER_MONITOR, [0, 0, 1920, 1200]));
-    }
-
-    /// The other half, and a separate behaviour: an unknown STORED display
-    /// disables the monitor term ONLY, so such a slice is still pruned on the
-    /// dimensions — exactly as it was before POE-237.
-    #[test]
-    fn a_scale_remembered_without_a_display_still_prunes_on_a_size_that_disagrees() {
-        let upgraded = ScreenSlice { monitor_id: 0, ..reference_screen() };
-
-        assert!(!screen_matches(&Some(upgraded), (1920, 1080), OTHER_MONITOR, [0, 0, 1920, 1080]));
     }
 
     /// `Frame` is the plain case: this tick measured the gold frame, so the

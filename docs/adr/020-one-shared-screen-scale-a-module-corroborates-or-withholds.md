@@ -381,3 +381,23 @@ placed recheck keeps running. The placed-miss rule (Manual arm only, once per
 key) is unchanged. See [ADR-025](025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md)'s
 2026-09-11 amendment and [Temple Lifecycle](../TEMPLE-LIFECYCLE.md), "Cadences
 and budgets".
+
+## Amendment: the display is its origin, not its monitor handle (2026-09-14)
+
+§4's "keyed by monitor id + CAPTURE size" no longer describes current
+behaviour. The monitor id is the Windows `HMONITOR` truncated to 32 bits, and it
+is not stable for one display: the PC's single 1920x1080 screen at `(0, 0)`
+logged 65622, 65641, 161748971 and 65622 again between 2026-09-10 and
+2026-09-14. Every change dropped a good remembered scale
+(`ssot::drop_if_mismatched`), and a temple arm on the null slice that followed
+searched with no hint (one sweep per key before POE-275; ~30 s each in a debug
+build). The slice is now keyed by **virtual-desktop origin + CAPTURE size +
+client rect**: `ssot::different_display` compares origins, and `screen_matches`,
+`accepts` and the anchor-keeping geometry check all go through it. The handle is
+still carried (the log and the Settings card show it) and still wakes the SSOT emit gate, but nothing compares it as an
+identity. Two displays of one desktop cannot share a top-left, so the POE-237
+case — a second monitor of the same resolution — is still caught. Accepted
+trade-off: rearranging displays in Windows moves the origin and drops the scale
+once, and the next panel re-measures it. An origin of `(0, 0)` is both the
+primary and the unknown value, so a scale stored before the origin was recorded
+survives on the primary display and is dropped anywhere else.

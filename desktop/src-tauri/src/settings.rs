@@ -310,13 +310,14 @@ pub struct ScreenScaleSetting {
     /// session's scale and have nothing able to notice the game had moved, and
     /// the lazy prune (`ssot::drop_if_mismatched`) can only compare what the
     /// file carried. `#[serde(default)]` fills `0` — UNKNOWN — for every file
-    /// written before this field existed, and an unknown id prunes on the
-    /// dimensions alone, which is what those files have always done.
+    /// written before this field existed. Carried, not compared: the display's
+    /// identity is `origin` (`ssot::different_display`, ADR-020 2026-09-14).
     #[serde(default)]
     pub monitor_id: u32,
     /// The measured display's top-left in virtual-desktop PHYSICAL px.
     /// `#[serde(default)]` fills `(0, 0)`, which is both the primary monitor
-    /// and the unknown value — the id, not this, is the identity.
+    /// and the unknown value. This is the identity (`ssot::different_display`),
+    /// so an unknown origin reads as the primary display.
     #[serde(default)]
     pub origin: (i32, i32),
     /// The capture rectangle in capture-relative physical px. POE-268 stores
@@ -1287,16 +1288,15 @@ mod tests {
         let loaded = reloaded.screen.lock().unwrap().expect("the load must fill the slice");
         assert_eq!(
             loaded.monitor_id, 65_537,
-            "a remembered scale that cannot say which display it came off cannot be pruned",
+            "the handle is carried through a restart for the log and the Settings card",
         );
         assert_eq!(loaded.origin, (-1920, 0));
     }
 
     /// Every settings.json written before POE-237 stored a scale with no
-    /// display. It must load as UNKNOWN — the `0` `ssot::different_monitor`
-    /// declines to answer on — rather than failing the file or defaulting to a
-    /// plausible id, which would prune every remembered scale on the first
-    /// capture after the upgrade.
+    /// display. It must load as UNKNOWN — handle `0`, origin `(0, 0)`, which
+    /// `ssot::different_display` reads as the primary display — rather than
+    /// failing the file, which would lose every remembered scale on upgrade.
     #[test]
     fn a_screen_scale_written_before_the_display_was_recorded_loads_as_unknown() {
         let parsed: Settings = serde_json::from_str(
@@ -1306,7 +1306,7 @@ mod tests {
 
         let stored = parsed.screen_scale.expect("the scale itself must load");
         assert_eq!((stored.width, stored.height), (1920, 1080), "the measurement is untouched");
-        assert_eq!(stored.monitor_id, 0, "0 is what the prune reads as 'no opinion'");
+        assert_eq!(stored.monitor_id, 0, "0 is the unknown handle");
         assert_eq!(stored.origin, (0, 0));
     }
 
