@@ -385,3 +385,12 @@ The placed-miss fallback (Manual arm only, once per key) is unchanged, and so
 is merc. See [ADR-025](025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md)'s
 2026-09-11 amendment and [Temple Lifecycle](../TEMPLE-LIFECYCLE.md), "Cadences
 and budgets".
+
+## Amendment: the screen key's display term is the origin (2026-09-14)
+
+§2's "monitor id plus the game's client rect" and §3's "monitor … change" now
+read as the display's virtual-desktop ORIGIN plus the client rect. The monitor
+id is a Windows handle that changes for one display between sessions, and each
+change dropped the slice and its remembered anchors. See
+[ADR-020](020-one-shared-screen-scale-a-module-corroborates-or-withholds.md)'s
+2026-09-14 amendment.

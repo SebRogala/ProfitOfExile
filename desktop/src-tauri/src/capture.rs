@@ -20,16 +20,16 @@ pub struct Capture {
     /// [`GameMonitor::id`] is in, because the focus poller reads its handle the
     /// same way.
     ///
-    /// `0` means UNKNOWN and is never compared as an identity: it is what a
-    /// pre-POE-237 persisted slice loads as, and — in theory — what a handle
-    /// whose low 32 bits are all zero would truncate to. Consumers treat it as
-    /// "no opinion" and fall back to comparing dimensions
-    /// (`ssot::different_monitor`).
+    /// `0` means UNKNOWN: it is what a pre-POE-237 persisted slice loads as.
+    /// It is carried for the log and the Settings card; it is NOT the screen's
+    /// identity, because Windows hands one display a new handle
+    /// between sessions — `origin` is (`ssot::different_display`).
     pub monitor_id: u32,
     /// The display's top-left corner in virtual-desktop PHYSICAL px, so a rect
     /// measured inside this image can be turned into a screen-absolute one.
-    /// `(0, 0)` for the primary monitor, and also the unknown value — the two
-    /// coincide, which is why `monitor_id` and not this is the identity.
+    /// `(0, 0)` for the primary monitor, and also the unknown value. This is
+    /// the screen's identity (`ssot::different_display`): two displays of one
+    /// desktop cannot share a top-left, and an unknown reads as the primary.
     ///
     /// This is xcap's `Monitor::x()`/`y()`, which reads Windows'
     /// `DEVMODEW.dmPosition`; [`GameMonitor::x`]/[`GameMonitor::y`] are the

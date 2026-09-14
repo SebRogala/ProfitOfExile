@@ -153,7 +153,7 @@ export interface ScreenSlice {
 	 * It is what the lifecycle's remaining blind spot — an in-game UI-scale
 	 * change with no verifying panel on screen — surfaces as, since neither the
 	 * dimensions nor the display Rust prunes on can see one. (The other blind
-	 * spot, a different monitor of the same resolution, is `monitorId`'s since
+	 * spot, a different monitor of the same resolution, is `origin`'s since
 	 * POE-237.) Never persisted: a restart always starts unverified.
 	 */
 	verifiedThisSession: boolean;
@@ -161,10 +161,10 @@ export interface ScreenSlice {
 	 * WHICH display it was measured on (POE-237) — Rust's `Capture.monitor_id`,
 	 * a Win32 `HMONITOR` truncated to 32 bits.
 	 *
-	 * `0` means UNKNOWN: a scale persisted before POE-237, or a handle that
-	 * truncated to zero. Never compare it as an identity without excluding `0`
-	 * first — Rust's `ssot::different_monitor` is the rule, and it declines to
-	 * answer on a zero.
+	 * `0` means UNKNOWN: a scale persisted before POE-237. Carried, not an
+	 * identity: Windows hands one display a new handle between sessions, so
+	 * Rust compares `origin` instead (`ssot::different_display`, ADR-020
+	 * 2026-09-14).
 	 *
 	 * NOT the id `availableMonitors()` reports; the two enumerations do not
 	 * share an id space, which is why `overlay/monitor-choice.ts` matches a
@@ -174,8 +174,8 @@ export interface ScreenSlice {
 	/**
 	 * That display's top-left in virtual-desktop PHYSICAL px, as `[x, y]`, so a
 	 * rect measured inside a capture can be placed on the desktop. `[0, 0]` for
-	 * the primary monitor and for an unknown one — which is why `monitorId`,
-	 * not this, is the identity.
+	 * the primary monitor and for an unknown one. This is the display's
+	 * identity (`ssot::different_display`); an unknown reads as the primary.
 	 */
 	origin: [number, number];
 	/** Capture rectangle in physical px; POE-268 uses the full capture, POE-272 adds the live client offset. */

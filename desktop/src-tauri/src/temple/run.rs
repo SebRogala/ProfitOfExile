@@ -1830,9 +1830,8 @@ pub fn settings_snapshot(app: &AppHandle) -> TempleSettings {
 ///   `ssot::geometry_recalibrate`);
 /// - the stored measurement is not of THIS capture. The rule is
 ///   `ssot::screen_matches`', reused rather than restated so the temple cannot
-///   grow its own opinion of what "the same screen" means — in particular the
-///   POE-237 one about `monitor_id == 0` being UNKNOWN and never compared as an
-///   identity. In the capture loop this branch is nearly unreachable, because
+///   grow its own opinion of what "the same screen" means — in particular that
+///   the display is its virtual-desktop origin, never its monitor handle. In the capture loop this branch is nearly unreachable, because
 ///   `ssot::drop_if_mismatched` runs first on the same pixels and empties the
 ///   slot; `super::commands::temple_debug_capture` is the caller that can be
 ///   handed an image file of any size;
@@ -1844,11 +1843,11 @@ pub fn settings_snapshot(app: &AppHandle) -> TempleSettings {
 pub fn hint_for_capture(
     screen: Option<&crate::ssot::ScreenSlice>,
     capture: (u32, u32),
-    monitor_id: u32,
+    origin: (i32, i32),
     client: [i32; 4],
 ) -> Option<anchor::AnchorCalibration> {
     let screen = screen?;
-    if !crate::ssot::screen_matches(&Some(*screen), capture, monitor_id, client) {
+    if !crate::ssot::screen_matches(&Some(*screen), capture, origin, client) {
         return None;
     }
     if !screen.ui_scale.is_finite() || screen.ui_scale <= 0.0 {
@@ -1870,11 +1869,11 @@ pub fn hint_for_capture(
 fn cheap_hint_from_screen(
     screen: Option<&crate::ssot::ScreenSlice>,
     capture: (u32, u32),
-    monitor_id: u32,
+    display_origin: (i32, i32),
     client: [i32; 4],
 ) -> Option<CheapHint> {
     let screen = screen?;
-    let calibration = hint_for_capture(Some(screen), capture, monitor_id, client)?;
+    let calibration = hint_for_capture(Some(screen), capture, display_origin, client)?;
     let origin = crate::ssot::placements(screen).temple?.entrance_origin;
     Some(CheapHint { calibration, origin })
 }
@@ -1889,7 +1888,7 @@ fn cheap_hint_from_screen(
 fn hint_from_slice(
     app: &AppHandle,
     capture: (u32, u32),
-    monitor_id: u32,
+    display_origin: (i32, i32),
     client: [i32; 4],
 ) -> (
     Option<CheapHint>,
@@ -1902,7 +1901,7 @@ fn hint_from_slice(
         let slot = state.screen.lock().unwrap_or_else(|e| e.into_inner());
         *slot
     };
-    let hint = cheap_hint_from_screen(screen.as_ref(), capture, monitor_id, client);
+    let hint = cheap_hint_from_screen(screen.as_ref(), capture, display_origin, client);
     // The ANCHORED origin, which is a different question from the hint's
     // origin: `ssot::placements` answers the latter with a SEED for any
     // non-null slice, so the hint alone cannot tell "a plate was found here"
@@ -3220,7 +3219,7 @@ fn tick(
     // on another monitor or at another resolution is dropped from the shared
     // slice on the first capture that disagrees with it. The placed hint below is
     // derived only after this prune.
-    crate::ssot::drop_if_mismatched(app, capture, monitor_id, client);
+    crate::ssot::drop_if_mismatched(app, capture, origin, client);
 
     let settings = settings_snapshot(app);
     // The screen slice is the sole source for both halves of the cheap hint:
@@ -3228,7 +3227,7 @@ fn tick(
     // anchor::scale_for_ui_scale. The value is local to this tick; no prior
     // read can supply an origin.
     let (cheap_hint, hint_source, screen_present, anchored_origin) =
-        hint_from_slice(app, capture, monitor_id, client);
+        hint_from_slice(app, capture, origin, client);
     let hint = cheap_hint.map(|hint| hint.calibration);
     if let Some(line) = hint_line(&mut session.hint_said, hint, hint_source) {
         crate::app_log(app, line);
@@ -6325,7 +6324,7 @@ mod tests {
             1_700_000_000_001,
         );
         assert_eq!(measured.anchors, None, "the press leaves no anchor to verify");
-        let hint = cheap_hint_from_screen(Some(&measured), capture, 7, client);
+        let hint = cheap_hint_from_screen(Some(&measured), capture, LIVE_CAPTURE_ORIGIN, client);
         assert!(
             hint.is_some(),
             "the press leaves a SEEDED hint standing — the state that used to be null",
@@ -7300,7 +7299,7 @@ mod tests {
         let hint = cheap_hint_from_screen(
             Some(&screen),
             (1920, 1080),
-            7,
+            (0, 0),
             [0, 0, 1920, 1080],
         )
         .expect("the reference slice supplies a placed temple origin");
@@ -7333,7 +7332,7 @@ mod tests {
     fn a_remembered_scale_for_this_screen_becomes_the_hint_the_table_measured() {
         let screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, 0.90, 7);
 
-        let hint = hint_for_capture(Some(&screen), (1920, 1080), 7, [0, 0, 1920, 1080])
+        let hint = hint_for_capture(Some(&screen), (1920, 1080), (0, 0), [0, 0, 1920, 1080])
             .expect("this screen has one");
 
         let measured = anchor::table_scale(1920, 1080).expect("1920x1080 is the measured row");
@@ -7353,33 +7352,7 @@ mod tests {
     fn a_scale_measured_on_another_display_is_not_a_hint() {
         let screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, 0.90, 7);
 
-        assert_eq!(hint_for_capture(Some(&screen), (1920, 1080), 9, [0, 0, 1920, 1080]), None);
-    }
-
-    /// `monitor_id == 0` is UNKNOWN, not an identity: a slice persisted before
-    /// POE-237 and a capture whose handle truncated to zero both carry it, and
-    /// comparing it as a real id would refuse every remembered scale on the
-    /// first capture after an upgrade. The dimensions decide instead.
-    ///
-    /// Fails if either side's unknown is read as "a display that differs".
-    #[test]
-    fn an_unknown_display_id_is_no_opinion_and_the_dimensions_decide() {
-        let no_id = remembered(ScreenScaleSource::Remembered, 1920, 1080, 0.90, 0);
-        let known = remembered(ScreenScaleSource::Remembered, 1920, 1080, 0.90, 7);
-
-        assert!(
-            hint_for_capture(Some(&no_id), (1920, 1080), 7, [0, 0, 1920, 1080]).is_some(),
-            "a pre-POE-237 stored scale still hints on a capture of its size",
-        );
-        assert!(
-            hint_for_capture(Some(&known), (1920, 1080), 0, [0, 0, 1920, 1080]).is_some(),
-            "a capture with no display id still gets the hint its size earns",
-        );
-        assert_eq!(
-            hint_for_capture(Some(&no_id), (2560, 1440), 7, [0, 0, 2560, 1440]),
-            None,
-            "…and an unknown id does not excuse a different resolution",
-        );
+        assert_eq!(hint_for_capture(Some(&screen), (1920, 1080), (1920, 0), [0, 0, 1920, 1080]), None);
     }
 
     /// A measurement of a different resolution is not a hint. The capture loop
@@ -7390,7 +7363,7 @@ mod tests {
     fn a_scale_measured_at_another_resolution_is_not_a_hint() {
         let screen = remembered(ScreenScaleSource::MercFrame, 2560, 1440, 1.20, 7);
 
-        assert_eq!(hint_for_capture(Some(&screen), (1920, 1080), 7, [0, 0, 1920, 1080]), None);
+        assert_eq!(hint_for_capture(Some(&screen), (1920, 1080), (0, 0), [0, 0, 1920, 1080]), None);
     }
 
     /// A `ui_scale` that cannot describe a screen produces no hint rather than a
@@ -7404,7 +7377,7 @@ mod tests {
             let screen = remembered(ScreenScaleSource::MercFrame, 1920, 1080, bad, 7);
 
             assert_eq!(
-                hint_for_capture(Some(&screen), (1920, 1080), 7, [0, 0, 1920, 1080]),
+                hint_for_capture(Some(&screen), (1920, 1080), (0, 0), [0, 0, 1920, 1080]),
                 None,
                 "ui_scale {bad} is not a screen",
             );

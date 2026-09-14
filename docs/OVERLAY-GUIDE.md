@@ -1257,7 +1257,7 @@ touching the named path.
      does not announce itself back).
   3. **A monitor change re-measures exactly once.** Move the game to another
      display. `app.log` must carry ONE
-     `screen is now W×H on monitor N — dropping the remembered scale (was …)` and
+     `screen is now W×H at X,Y — dropping the remembered scale (was …)` and
      then one fresh anchor — not a line per tick, which is what an un-keyed drop
      produces.
   4. **The card names the temple as the cue.** On a machine whose merc recruit

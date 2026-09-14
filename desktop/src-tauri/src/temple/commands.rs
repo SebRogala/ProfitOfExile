@@ -432,18 +432,18 @@ fn debug_capture_blocking(
     let started = std::time::Instant::now();
     // The display the pixels came off, so the hint below can be checked against
     // the screen the remembered scale was measured on (POE-237). An image FILE
-    // has no display: `0` is `crate::capture::Capture`'s unknown, and
-    // `ssot::screen_matches` falls back to the dimensions alone for it, which is
-    // the right rule for a dump somebody dragged in from another machine.
-    let (img, monitor_id, client, source) = match &image_path {
+    // has no display (`None`): the hint then takes the remembered slice's own
+    // origin, so the dimensions alone decide, which is the right rule for a dump
+    // somebody dragged in from another machine.
+    let (img, display_origin, client, source) = match &image_path {
         Some(path) => {
             let img = image::open(path).map_err(|e| abort(&app, format!("{path}: {e}")))?;
             let client = [0, 0, img.width() as i32, img.height() as i32];
-            (img, 0, client, path.clone())
+            (img, None, client, path.clone())
         }
         None => {
             let grab = crate::capture::capture_screen(&app).map_err(|e| abort(&app, e))?;
-            (grab.image, grab.monitor_id, grab.client, "screen".to_string())
+            (grab.image, Some(grab.origin), grab.client, "screen".to_string())
         }
     };
     // The report is built before the first write, so every write in this
@@ -479,7 +479,8 @@ fn debug_capture_blocking(
     let hint = {
         let state = app.state::<crate::AppState>();
         let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
-        super::run::hint_for_capture(screen.as_ref(), (img.width(), img.height()), monitor_id, client)
+        let origin = display_origin.or(screen.map(|s| s.origin)).unwrap_or((0, 0));
+        super::run::hint_for_capture(screen.as_ref(), (img.width(), img.height()), origin, client)
     };
     let started = std::time::Instant::now();
     let layout = reader::read_layout_with_hint(&img, hint.as_ref());
