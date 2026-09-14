@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { screenGeometryView } from './view';
+import { ocrRectsKey, screenGeometryView } from './view';
 import type { Placements, ScreenSlice } from '$lib/stores/ssot.svelte';
 
 /** The reference measurement — 1920x1200 at 1.0 IS the reference fixture. */
@@ -146,5 +146,33 @@ describe('screenGeometryView', () => {
 		const view = screenGeometryView(referenceScreen, NOW);
 
 		expect(view.measured).toBe('2 h ago');
+	});
+});
+
+describe('ocrRectsKey', () => {
+	// The bug: rows loaded while nothing was measured stayed "unlocated" after
+	// Recalibrate measured the screen.
+	it('changes when an unmeasured screen is measured', () => {
+		expect(ocrRectsKey(referenceScreen, placements)).not.toBe(ocrRectsKey(null, null));
+	});
+
+	it('changes when the scale changes', () => {
+		expect(ocrRectsKey({ ...referenceScreen, uiScale: 0.9 }, placements)).not.toBe(
+			ocrRectsKey(referenceScreen, placements)
+		);
+	});
+
+	it('changes when a module remembers an anchor', () => {
+		const anchored = { ...referenceScreen, anchors: { templeEntrance: [961, 714] as [number, number], mercPanel: null } };
+
+		expect(ocrRectsKey(anchored, placements)).not.toBe(ocrRectsKey(referenceScreen, placements));
+	});
+
+	// The store restamps a re-measured slice without moving any row; reloading on
+	// that would spend an IPC per merc tick while Settings is open.
+	it('stays the same when only the measurement time changes', () => {
+		expect(ocrRectsKey({ ...referenceScreen, measuredAtMs: 1_800_000_000_000 }, placements)).toBe(
+			ocrRectsKey(referenceScreen, placements)
+		);
 	});
 });

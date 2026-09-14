@@ -141,3 +141,20 @@ export function screenGeometryView(
 		placements: placementText(placements)
 	};
 }
+
+/**
+ * What the Settings OCR rows (`get_ocr_rects`) are projected from, as a string
+ * that changes only when a row can.
+ *
+ * The rows are Rust's projection of the placements plus the slice's scale,
+ * dimensions and anchors, so a page that loaded them once kept "unlocated" after
+ * a Recalibrate or a module measured the screen, until restart (2026-09-14). The
+ * store replaces both objects on every poll and a fresh measurement restamps
+ * `measuredAtMs`, so neither identity nor the whole slice is a usable trigger.
+ */
+export function ocrRectsKey(screen: ScreenSlice | null, placements: Placements | null): string {
+	return JSON.stringify([
+		placements,
+		screen && [screen.width, screen.height, screen.uiScale, screen.client, screen.anchors]
+	]);
+}

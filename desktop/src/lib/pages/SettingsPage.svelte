@@ -8,7 +8,8 @@
 	import { hasFeature, MERC_FEATURE, TEMPLE_FEATURE } from '$lib/stores/entitlements.svelte';
 	import { ssot, fetchSsot } from '$lib/stores/ssot.svelte';
 	import { nav } from '$lib/stores/navigation.svelte';
-	import { screenGeometryView } from '$lib/geometry/view';
+	import { untrack } from 'svelte';
+	import { ocrRectsKey, screenGeometryView } from '$lib/geometry/view';
 	import { chooseMonitor, type GameMonitorInfo } from '$lib/overlay/monitor-choice';
 	import { clickthroughReport } from '$lib/overlay/clickthrough-report';
 	import {
@@ -338,6 +339,15 @@
 	// preview action reads a fresh snapshot before opening.
 	$effect(() => {
 		if (nav.view !== 'settings' || ocrRectsLoaded) return;
+		void loadOcrRects();
+	});
+
+	// Reload when what the rows are projected from changes, so a Recalibrate or a
+	// module measuring the screen replaces "unlocated" without a restart.
+	const ocrKey = $derived(ocrRectsKey(ssot.screen, ssot.placements));
+	$effect(() => {
+		void ocrKey;
+		if (nav.view !== 'settings' || !untrack(() => ocrRectsLoaded)) return;
 		void loadOcrRects();
 	});
 
