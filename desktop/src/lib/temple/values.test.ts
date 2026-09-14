@@ -904,9 +904,13 @@ describe('parseTiersMode', () => {
 		expect(parseTiersMode('all')).toBe('all');
 	});
 
-	it('falls back to tier 3 alone on anything else', () => {
-		expect(parseTiersMode('tiers-1-2')).toBe(DEFAULT_TIERS_MODE);
-		expect(DEFAULT_TIERS_MODE).toBe('tier3');
+	it('reads a stored “tier3” as the collapsed table, not as the default', () => {
+		expect(parseTiersMode('tier3')).toBe('tier3');
+	});
+
+	it('falls back to all three tiers on anything else', () => {
+		expect(parseTiersMode('tiers-1-2')).toBe('all');
+		expect(parseTiersMode('')).toBe('all');
 	});
 });
 
