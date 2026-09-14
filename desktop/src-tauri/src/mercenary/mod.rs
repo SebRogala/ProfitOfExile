@@ -494,9 +494,6 @@ pub const GEOMETRY_SOURCE_DEFAULT: &str = "default";
 pub const GEOMETRY_SOURCE_FILE: &str = "file";
 /// The override file's name inside the app data directory.
 pub const GEOMETRY_OVERRIDE_FILE: &str = "merc-geometry.json";
-/// The NPC-denylist override file's name inside the app data directory
-/// (POE-198) — one speaker per line, merged over the shipped fixture.
-pub const DENYLIST_OVERRIDE_FILE: &str = "merc-npc-denylist.txt";
 /// This module's registry id.
 ///
 /// `modules.rs` still spells it as a literal on purpose: `manager.test.ts`
