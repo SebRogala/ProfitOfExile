@@ -451,7 +451,8 @@ impl StrategyProfile {
             mode_rule: ModeRule::LinesConnected(vec![Line::Corruption, Line::Gem]),
             path_cost: 0.0,
             reroll_until_favourable: false,
-            r4_keep_upgrade_targets: true,
+            // Off until the carve-out is confirmed (owner, 2026-09-14).
+            r4_keep_upgrade_targets: false,
         }
     }
 

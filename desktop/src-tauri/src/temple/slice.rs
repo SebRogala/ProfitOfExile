@@ -5600,7 +5600,7 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{"status":"idle","waitingForPanel":false,"readRetry":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":true},"preset":"default","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"vialsPerRun":0.1,"dropsWeight":1.0,"comboPremium":0.0,"rooms":{}},"market":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
+            r#"{"status":"idle","waitingForPanel":false,"readRetry":false,"layout":null,"panel":null,"advice":null,"mode":null,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":false},"preset":"default","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"vialsPerRun":0.1,"dropsWeight":1.0,"comboPremium":0.0,"rooms":{}},"market":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":null,"stale":false,"staleAfterMs":7200000,"unavailable":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"readNotice":null,"lastError":null}"#,
         );
     }
 
