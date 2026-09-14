@@ -156,11 +156,10 @@
 	// --- Which edge the panel hugs ---
 	//
 	// The panel's wrapper is the widget box, so measure it against the monitor
-	// window rather than asking the window for its own position and size. While
-	// the widget is content-sized (no width stored) the box shrink-wraps the
-	// panel, so there is no slack and the side does not matter. Once the user
-	// sets a width in config mode, the left/right edges from `resizable: 'width'`
-	// restore the slack and the side decides which edge the panel hugs.
+	// window rather than asking the window for its own position and size. The
+	// box always has a width — the stored one, or the shipped one until the user
+	// drags an edge (`placementFor`, `resizable: 'width'`) — so there is slack
+	// whenever the panel is narrower, and the side decides which edge it hugs.
 	let side = $state<StripSide>('left');
 	let wrapperEl = $state<HTMLElement | null>(null);
 	$effect(() => {

@@ -528,12 +528,20 @@ describe('deciding where a widget goes', () => {
 			maxWidth: null
 		});
 	});
-	it('leaves an unsized width-only widget content-sized under its width ceiling', () => {
+	// The box IS the width the content hugs an edge of; shrunk to the content
+	// there is no slack to hug with (2026-09-14, the merc strip on the right).
+	it('gives an unconfigured width-only widget its shipped width as a size', () => {
 		expect(placementFor(WIDTH_ONLY, undefined, 1.5, HOST)).toMatchObject({
-			width: null,
+			width: WIDTH_ONLY.defaults.w,
 			height: null,
-			maxWidth: WIDTH_ONLY.defaults.w
+			maxWidth: null
 		});
+	});
+
+	it('gives a stored width-only widget with no width its shipped width as a size', () => {
+		expect(
+			placementFor(WIDTH_ONLY, { x: 1460, y: 500, width: 0, height: 0, visible: true }, 1, HOST)
+		).toMatchObject({ x: 1460, width: WIDTH_ONLY.defaults.w, height: null, maxWidth: null });
 	});
 
 	it('applies a stored width-only width without applying a height', () => {
@@ -758,7 +766,8 @@ describe('a stored placement made on a different monitor', () => {
 
 describe('the rectangle config mode opens a widget at', () => {
 	const STORED = { x: 900, y: 600, width: 0, height: 0, visible: true };
-	const MEASURED = { x: 900, y: 600, w: 312, h: 96 };
+	// Wider than `RESIZABLE.defaults.w`, so the measurement is what decides.
+	const MEASURED = { x: 900, y: 600, w: 480, h: 96 };
 
 	// The regression: a widget that is not on screen has no measured box, and
 	// seeding it from the defaults meant any Save — of any widget in the module —
@@ -788,7 +797,25 @@ describe('the rectangle config mode opens a widget at', () => {
 	// A content-sized widget stores 0 × 0, and a frame drawn at zero has no
 	// interior to grab and no edge to pull.
 	it('takes the size from the measured box when the stored size is empty', () => {
-		expect(seedRect(RESIZABLE, STORED, MEASURED, 1, HOST)).toMatchObject({ w: 312, h: 96 });
+		expect(seedRect(RESIZABLE, STORED, MEASURED, 1, HOST)).toMatchObject({ w: 480, h: 96 });
+	});
+
+	// The live overlay clamps a content-sized widget with its DEFAULT width
+	// (`placementFor`). A box measured narrower than that — squeezed against the
+	// right edge — let the frame be saved where the overlay then pulled it left
+	// (2026-09-14: the merc strip saved at x 1541, drawn at x 1460).
+	it('opens a content-sized frame at least as wide as the width the overlay clamps with', () => {
+		const squeezed = { x: 1541, y: 500, w: 378, h: 260 };
+
+		expect(
+			seedRect(WIDTH_ONLY, { x: 1541, y: 500, width: 0, height: 0, visible: true }, squeezed, 1, HOST)
+		).toMatchObject({ x: HOST.width - WIDTH_ONLY.defaults.w, w: WIDTH_ONLY.defaults.w, h: 260 });
+	});
+
+	it('opens an unstored frame at least as wide as the width the overlay clamps with', () => {
+		expect(
+			seedRect(WIDTH_ONLY, undefined, { x: 1541, y: 500, w: 378, h: 260 }, 1, HOST)
+		).toMatchObject({ x: HOST.width - WIDTH_ONLY.defaults.w, w: WIDTH_ONLY.defaults.w });
 	});
 
 	it('takes the size from the shipped default when there is neither', () => {
@@ -809,7 +836,7 @@ describe('the rectangle config mode opens a widget at', () => {
 			seedRect(
 				WIDTH_ONLY,
 				{ x: 900, y: 600, width: 300, height: 0, visible: true },
-				{ x: 900, y: 600, w: 312, h: 96 },
+				MEASURED,
 				1,
 				HOST
 			)
@@ -842,7 +869,7 @@ describe('the rectangle config mode opens a widget at', () => {
 	// One zero side is enough: a box with no height is as ungrabbable as one
 	// with no area at all.
 	it('rejects a measurement with one degenerate side', () => {
-		expect(seedRect(RESIZABLE, STORED, { x: 900, y: 600, w: 312, h: 0 }, 1, HOST)).toMatchObject({
+		expect(seedRect(RESIZABLE, STORED, { x: 900, y: 600, w: 480, h: 0 }, 1, HOST)).toMatchObject({
 			w: RESIZABLE.defaults.w,
 			h: RESIZABLE.defaults.h
 		});
