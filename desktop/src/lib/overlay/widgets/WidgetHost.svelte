@@ -163,6 +163,16 @@
 	 *  which is what a fresh install has. */
 	let stored = $state<Record<string, WidgetGeometry>>({});
 
+	/**
+	 * Whether the first `loadStored` has answered, successfully or not. No widget
+	 * is drawn before it: an empty `stored` reads as "nothing configured", so a
+	 * configured widget was drawn at its shipped default and then jumped to its
+	 * saved place each time the window opened (2026-09-14, the merc strip
+	 * appearing on the left and moving right). A failed read still ends the wait —
+	 * the defaults are then the real answer.
+	 */
+	let storedLoaded = $state(false);
+
 	async function loadStored(): Promise<void> {
 		try {
 			const rows = await invoke<{ id: string; geometry: WidgetGeometry }[]>(
@@ -174,6 +184,8 @@
 			stored = next;
 		} catch (e) {
 			log(`could not read the saved placements, using the defaults: ${e}`);
+		} finally {
+			storedLoaded = true;
 		}
 	}
 
@@ -658,7 +670,7 @@
 	// ---- placement ---------------------------------------------------------
 
 	const placed = $derived(
-		specs
+		(storedLoaded ? specs : [])
 			.map((spec) => {
 				const rect = configMode ? draft[spec.id] : null;
 				// In config mode the draft IS the rectangle, size included: the
