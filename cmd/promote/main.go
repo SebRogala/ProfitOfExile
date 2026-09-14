@@ -6,7 +6,7 @@
 //	promote <prefix> <role>              — set role for device matching fingerprint prefix
 //	promote <prefix> <role> "New Alias"  — set role + alias
 //
-// Valid roles: user, editor, admin.
+// Valid roles: user, beta, editor, admin.
 // The tool connects directly to the database via DATABASE_URL.
 package main
 
@@ -29,7 +29,7 @@ import (
 // validRoles is the role vocabulary this CLI accepts. The values come from
 // internal/device so the roles the CLI can assign and the roles Entitlements
 // recognises cannot drift apart.
-var validRoles = []string{device.RoleUser, device.RoleEditor, device.RoleAdmin}
+var validRoles = []string{device.RoleUser, device.RoleBeta, device.RoleEditor, device.RoleAdmin}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -235,7 +235,7 @@ Commands:
   <prefix> <role>              Set role for device matching fingerprint prefix
   <prefix> <role> "alias"      Set role and alias
 
-Valid roles: user, editor, admin
+Valid roles: user, beta, editor, admin
 
 Environment:
   DATABASE_URL    PostgreSQL connection string (defaults to local Docker dev DB)

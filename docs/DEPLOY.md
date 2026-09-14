@@ -150,14 +150,16 @@ returned versions by semver itself.
 
 ### Who is on the beta channel, and what "hidden" means in a public repo
 
-A device is on the beta channel when its server-side role is `editor` or
-`admin`; the same role unlocks every hidden desktop feature (currently the
-mercenary triage module, the Currency Exchange page and the Temple of Atzoatl tools) via `GET /api/device/me`. Promotion is a server-side
+A device is on the beta channel when its server-side role is `beta`, `editor`
+or `admin`; the same role unlocks every hidden desktop feature (currently the
+mercenary triage module, the Currency Exchange page, the Temple of Atzoatl tools
+and the settings marked beta inside a module) via `GET /api/device/me`. `beta` is
+the tester role; `editor` and `admin` include it. Promotion is a server-side
 operation — no build, no config, no restart on the tester's side:
 
 ```
 docker exec <server-container> /promote list
-docker exec <server-container> /promote <fingerprint-prefix> editor "<alias>"
+docker exec <server-container> /promote <fingerprint-prefix> beta "<alias>"
 ```
 
 The tester finds their short device id in the app (Ctrl+Shift+F11 → identify

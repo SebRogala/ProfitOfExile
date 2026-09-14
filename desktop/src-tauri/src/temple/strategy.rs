@@ -657,8 +657,9 @@ impl Default for TempleConfig {
 }
 
 impl TempleConfig {
-    /// Incursion entrances per map — the rate at which the temple budget is
-    /// spent.
+    /// Incursion entrances per map — how many incursions share one map, i.e.
+    /// where the rollout's next-incursion slot block resets. The temple budget
+    /// drops by one per incursion either way.
     pub fn entrances_per_map(&self) -> u8 {
         if self.artefacts_of_the_vaal {
             4
