@@ -856,23 +856,37 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.features-grid {
+		container-type: inline-size;
 		display: flex;
 		flex-wrap: wrap;
 		gap: 16px;
 		justify-content: center;
 	}
 
+	/* Three, two or one column, each as wide as the row allows: a column
+	   drops once a card would go under 200px (3 × 200 + 2 × 16 = 632). */
 	.feature-card {
 		all: unset;
 		cursor: pointer;
 		width: calc(33.333% - 11px);
-		min-width: 200px;
 		box-sizing: border-box;
 		background: rgba(26, 26, 46, 0.6);
 		border: 1px solid rgba(201, 170, 113, 0.08);
 		padding: 28px 20px;
 		text-align: center;
 		transition: border-color 0.3s, background 0.3s, transform 0.2s;
+	}
+
+	@container (width < 632px) {
+		.feature-card {
+			width: calc(50% - 8px);
+		}
+	}
+
+	@container (width < 416px) {
+		.feature-card {
+			width: 100%;
+		}
 	}
 
 	.feature-card:hover {
