@@ -567,7 +567,8 @@ export function placementFor(
 ): WidgetPlacement | null {
 	if (geometry && !geometry.visible) return null;
 	// A resizable widget the user has never resized still wraps at the width the
-	// registry ships, as a CEILING rather than a size (see `maxWidth`).
+	// registry ships, as a CEILING rather than a size (see `maxWidth`) — a
+	// `'width'` widget takes it as a size.
 	const ceiling = spec.resizable ? spec.defaults.w : null;
 	const widthOnly = spec.resizable === 'width';
 	if (!geometry) {

@@ -55,7 +55,8 @@ export interface WidgetSpec {
 	 *
 	 * A widget that is not resizable is always sized to its own content; a
 	 * resizable one is sized to content until the user has dragged an edge, and
-	 * to the persisted size afterwards.
+	 * to the persisted size afterwards — except `'width'`, whose box takes
+	 * `defaults.w` as its width until one is stored.
 	 *
 	 * `'width'` offers left/right edges only; its placed height always follows
 	 * content, its config-mode frame keeps the height measured when the session
