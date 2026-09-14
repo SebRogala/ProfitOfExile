@@ -1606,10 +1606,11 @@ touching the named path.
   click and check it is the same figure, with the same provenance letter, after
   the third.
 - **Tiers 1-2 collapse, and a hand-priced hidden tier is still visible**
-  (POE-263): with the checkbox above the table clear, the table must be three
-  columns (Room line, Grade, Tier 3) and the BOX must be narrower than the card
-  rather than stretched across it. Tick **Tiers 1-2** and the two columns
-  appear; the pick must survive a restart like the sort. Then pick **Custom**,
+  (POE-263): on a profile with no stored `templeValueTableTiers` pick the table
+  opens with **Tiers 1-2** ticked; a stored collapsed pick is kept. Clear it and the table
+  must be three columns (Room line, Grade, Tier 3) and the BOX must be narrower
+  than the card rather than stretched across it; the cleared pick must survive a
+  restart like the sort. Tick it again and the two columns reappear. Then pick **Custom**,
   type a number into a tier-1 cell, and collapse the tiers again: the row's
   tier-3 cell must carry a small `•` after its provenance letter, and hovering
   it must read `tier 1: <your number> c, tier 2: —`. A missing dot is the

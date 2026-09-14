@@ -396,15 +396,16 @@ export function parseValueSort(raw: string): ValueSort {
 /** Which tier columns the table shows: all three, or tier 3 alone. */
 export type ValueTiersMode = 'all' | 'tier3';
 
-/** The table opens collapsed. Tiers 1 and 2 are a fixed fraction of tier 3, so
- *  in the common case they carry no information the tier-3 column does not,
- *  and the table is half the width without them. */
-export const DEFAULT_TIERS_MODE: ValueTiersMode = 'tier3';
+/** The table opens with all three tiers (owner's call, 2026-09-14); collapsing
+ *  to tier 3 alone is the player's pick. */
+export const DEFAULT_TIERS_MODE: ValueTiersMode = 'all';
 
 /** A stored tiers mode, or the default — same fallback rule as
- *  [`parseValueSort`], for the same reason. */
+ *  [`parseValueSort`], for the same reason. Both modes are read explicitly: a
+ *  stored `tier3` must not collapse into the default, or the checkbox could not
+ *  be cleared. */
 export function parseTiersMode(raw: string): ValueTiersMode {
-	return raw === 'all' ? 'all' : DEFAULT_TIERS_MODE;
+	return raw === 'all' || raw === 'tier3' ? raw : DEFAULT_TIERS_MODE;
 }
 
 /** A row's tier-3 total — what the `tier3` column orders on. */
