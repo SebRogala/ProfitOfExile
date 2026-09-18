@@ -113,6 +113,8 @@
 	<!-- 151 characters: Google shows about 155 and writes its own snippet from the
 	     body when the tag runs long or reads like a list. -->
 	<meta name="description" content={PITCH} />
+	<link rel="canonical" href="https://profitofexile.top/" />
+	<link rel="describedby" href="/llms.txt" />
 	<!-- Link previews (Discord, Twitter, Slack). Absolute URLs: scrapers fetch
 	     these without a page context, so a relative path resolves to nothing.
 	     og-card.jpg is the 1200x630 crop the format wants — swap the file, keep

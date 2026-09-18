@@ -239,6 +239,9 @@
 
 <svelte:head>
 	<title>Lab Farming Dashboard - ProfitOfExile</title>
+	<meta name="description" content="Live Path of Exile 1 gem rankings, Divine Font expected value, market signals, and Lab farming analysis." />
+	<link rel="canonical" href="https://profitofexile.top/lab" />
+	<link rel="describedby" href="/llms.txt" />
 </svelte:head>
 
 <div class="dashboard">
