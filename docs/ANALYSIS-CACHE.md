@@ -259,7 +259,8 @@ follow its shape: warmth is checked first, and the read is skipped once warm.
   would take ~10 hours to fill a ring at the ~30-minute gem cadence, and a
   partially filled ring is worse than an empty one: it answers short instead of
   falling back. `SignalHistoryWindow` seeds it once, bounded to the newest
-  `depth` snapshot times and to `signalHistorySeedMaxDays`.
+  `depth` rows per `(name, variant)` series (never a league-wide set of
+  snapshot times) and to `signalHistorySeedMaxDays`.
 - **`gemDictSkills` / `gemDictTransfigured`**
   (`internal/lab/gem_dictionary_cache.go`) — the OCR name dictionary. The tick
   sees only the current snapshot's names; the endpoint's answer is `gem_colors`
