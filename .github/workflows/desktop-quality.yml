@@ -4,8 +4,11 @@ name: Desktop Quality
 # backend or docs change does not run them and a desktop change does not run
 # the Go suites. Same whitelist trade-off as quality.yml and deploy.yml.
 # docker-compose.yml and Makefile are inputs (compose build desktop,
-# make merc-seed-art); the Rust cache warmer is desktop-cache.yml, not here —
-# these jobs build inside a Linux container and cannot share its cache.
+# make merc-seed-art), and so are the three internal/ test-data directories
+# docker-compose.yml mounts into the desktop container: desktop tests read
+# them, so a change there alone must run these jobs. The Rust cache warmer is
+# desktop-cache.yml, not here — these jobs build inside a Linux container and
+# cannot share its cache.
 
 on:
   pull_request:
@@ -13,6 +16,9 @@ on:
       - 'desktop/**'
       - 'docker-compose.yml'
       - 'Makefile'
+      - 'internal/exchange/testdata/wire/**'
+      - 'internal/mercenary/testdata/merc-sig-v2/**'
+      - 'internal/icons/urls/**'
       - '.github/workflows/desktop-quality.yml'
   push:
     branches: [main]
@@ -20,6 +26,9 @@ on:
       - 'desktop/**'
       - 'docker-compose.yml'
       - 'Makefile'
+      - 'internal/exchange/testdata/wire/**'
+      - 'internal/mercenary/testdata/merc-sig-v2/**'
+      - 'internal/icons/urls/**'
       - '.github/workflows/desktop-quality.yml'
 
 jobs:
