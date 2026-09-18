@@ -5,8 +5,9 @@ import { modules, PITCH } from '$lib/site-content';
  *
  * Generated from the same `site-content` the page renders, so it cannot drift:
  * a new module reaches this file with its entry, and nothing has to be
- * remembered after a change. Nothing links to it, so `prerender` here is what
- * makes the build emit it as a static file for the Go handler to serve.
+ * remembered after a change. The public pages advertise it with
+ * `rel="describedby"`; `prerender` makes the build emit it as a static file for
+ * the Go handler to serve.
  */
 export const prerender = true;
 
