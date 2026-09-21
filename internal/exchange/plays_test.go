@@ -2,9 +2,11 @@ package exchange
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -3256,5 +3258,189 @@ func TestBestPlays_windowPricedMark_doesNotOrderTheServedList(t *testing.T) {
 	}
 	if !reflect.DeepEqual(served, want) {
 		t.Errorf("served order = %v, want key order %v — the mark does not order (ADR-018)", served, want)
+	}
+}
+
+// windowLivenessProbe is one market of windowLivenessFeed: an item that traded
+// in exactly ONE hour of the scored hour's clock window, `back` hours before it.
+type windowLivenessProbe struct {
+	item  string
+	quote string
+	back  int
+	units int64
+	// scored is what the feed published for the market in the scored hour when
+	// its trade sits behind it: "absent" (no row), "untraded" (the last ratios
+	// republished over zero volume) or "unpriced" (zero ratios, PriceValid false —
+	// the shape prod published for the Apocalypse card's divine market at 19:00Z
+	// and 22:00Z on 2026-09-18). A probe whose trade IS the scored hour has "".
+	scored string
+}
+
+// hour renders the probe's one traded hour: a single print, at 552 chaos or 4
+// divine an item, stock on both sides so no book gate can speak.
+func (p windowLivenessProbe) hour() rowSpec {
+	price := int64(552)
+	if p.quote == divineID {
+		price = 4
+	}
+	return pairedHour(p.quote, p.item, [2]int64{price, 1}, [2]int64{price, 1}, [2]int64{price * p.units, p.units})
+}
+
+// windowLivenessProbes is every shape a live thin market takes on the wire:
+// quoted in chaos or in divine, its one traded hour anywhere from the scored
+// hour to the oldest hour of the clock span, that hour one unit (under
+// Config.MinWindowVolume) or two (at it), and a quiet scored hour in each of the
+// three forms the feed publishes one.
+func windowLivenessProbes() []windowLivenessProbe {
+	var probes []windowLivenessProbe
+	for _, quote := range []string{chaosID, divineID} {
+		quoteName := map[string]string{chaosID: "Chaos", divineID: "Divine"}[quote]
+		for back := 0; back < DefaultConfig().WindowPriceHours; back++ {
+			for _, units := range []int64{1, 2} {
+				shapes := []string{"absent", "untraded", "unpriced"}
+				if back == 0 {
+					shapes = []string{""}
+				}
+				for _, scored := range shapes {
+					probes = append(probes, windowLivenessProbe{
+						item:   fmt.Sprintf("Metadata/Items/Currency/CurrencyLivenessProbe%sBack%dUnits%d%s", quoteName, back, units, scored),
+						quote:  quote,
+						back:   back,
+						units:  units,
+						scored: scored,
+					})
+				}
+			}
+		}
+	}
+	return probes
+}
+
+// windowLivenessFeed renders the probes into ONE feed of WindowPriceHours hours,
+// with the divine/chaos anchor in every hour so a divine-quoted probe always has
+// a rate to be valued at.
+func windowLivenessFeed(probes []windowLivenessProbe) []StoredRow {
+	hours := DefaultConfig().WindowPriceHours
+	var rows []StoredRow
+	for back := 0; back < hours; back++ {
+		rows = append(rows, storedBack(back, divineChaosAnchor()))
+	}
+	for _, p := range probes {
+		rows = append(rows, storedBack(p.back, p.hour()))
+		if p.back == 0 {
+			continue
+		}
+		quiet := p.hour()
+		quiet.volume = [2]int64{0, 0}
+		switch p.scored {
+		case "untraded":
+			rows = append(rows, storedBack(0, quiet))
+		case "unpriced":
+			quiet.lowestRatio, quiet.highestRatio = [2]int64{0, 0}, [2]int64{0, 0}
+			quiet.priceInvalid = true
+			rows = append(rows, storedBack(0, quiet))
+		}
+	}
+	return rows
+}
+
+func TestBestPlays_marketThatTradedAnywhereInsideItsClockWindow_isServedInBothHorizons(t *testing.T) {
+	// The invariant the Apocalypse card has been deleted against over and over
+	// (ADR-017's incidents, POE-252, and 2026-09-19): liveness is "a trade
+	// happened", a market that traded inside the clock window is live, and a live
+	// market is SERVED — flagged and ranked, never hidden. Every one of those
+	// regressions was a composition of individually-correct rules, so this is
+	// asserted end to end through BestPlays, over one feed carrying every shape a
+	// thin market takes at once, for every item that shape could belong to.
+	//
+	// The 2026-09-19 incident is the units-1 probes with a quiet scored hour:
+	// Config.MinWindowVolume refused a window holding one card, and the rescue
+	// then had nothing to carry.
+	probes := windowLivenessProbes()
+	rows := windowLivenessFeed(probes)
+
+	for _, horizon := range DefaultHorizons() {
+		t.Run(string(horizon.Horizon), func(t *testing.T) {
+			got := BestPlays("Allflame", rows, horizonConfig(DefaultConfig(), horizon))
+
+			served := playKeys(got.Plays)
+			var missing []string
+			for _, p := range probes {
+				if indexOf(served, directKey(p.quote, p.item)) < 0 {
+					missing = append(missing, fmt.Sprintf("%s (trade %dh back, %d unit(s), scored hour %q)", p.item, p.back, p.units, p.scored))
+				}
+			}
+			if len(missing) > 0 {
+				t.Errorf("%d of %d live markets not served:\n  %s", len(missing), len(probes), strings.Join(missing, "\n  "))
+			}
+		})
+	}
+}
+
+func TestBestPlays_marketWhoseOnlyTradeSitsOneHourPastItsClockWindow_isNotServed(t *testing.T) {
+	// The boundary of the invariant above, read with the same single-unit print:
+	// one hour past the clock span the trade is history, not liveness, and the
+	// window path must not revive it — whatever the probe's volume, a rescue
+	// needs a contributor INSIDE the span.
+	pastSpan := windowLivenessProbe{
+		item:   "Metadata/Items/Currency/CurrencyLivenessProbePastSpan",
+		quote:  chaosID,
+		back:   DefaultConfig().WindowPriceHours,
+		units:  1,
+		scored: "absent",
+	}
+	rows := windowLivenessFeed([]windowLivenessProbe{pastSpan})
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	if key := directKey(chaosID, pastSpan.item); indexOf(playKeys(got.Plays), key) >= 0 {
+		t.Errorf("%s was served; its only trade is %d hours old, one past the %d-hour clock span", key, pastSpan.back, DefaultConfig().WindowPriceHours)
+	}
+}
+
+func TestBestPlays_apocalypseDivineMarketWithOneCardInItsWindow_isServedFromThatCard(t *testing.T) {
+	// THE INCIDENT (2026-09-19 00:00Z, prod, measured rows). The card's divine
+	// market published no row in the scored hour; inside its clock span it had
+	// traded ONE card, at 20:00Z for 4 divine, and published unpriced zero rows
+	// at 19:00Z and 22:00Z. Its chaos market was no better off, so the app showed
+	// no Apocalypse play at all while the card was trading at 4 divine.
+	//
+	// Backs are counted from 00:00Z; the anchor is the measured 00:00Z
+	// chaos/divine row (359 chaos a divine).
+	anchor := rowSpec{
+		itemA:        chaosID,
+		itemB:        divineID,
+		volume:       [2]int64{1200240, 3342},
+		lowestStock:  [2]int64{5404600, 2484},
+		highestStock: [2]int64{5550022, 3502},
+		lowestRatio:  [2]int64{350, 1},
+		highestRatio: [2]int64{372, 1},
+	}
+	unpriced := func(lowestStock, highestStock [2]int64) rowSpec {
+		return rowSpec{itemA: divineID, itemB: apocalypseID, lowestStock: lowestStock, highestStock: highestStock, priceInvalid: true}
+	}
+	rows := []StoredRow{
+		storedBack(0, anchor),
+		storedBack(2, unpriced([2]int64{167, 10}, [2]int64{255, 16})),
+		storedBack(4, rowSpec{
+			itemA:        divineID,
+			itemB:        apocalypseID,
+			volume:       [2]int64{4, 1},
+			lowestStock:  [2]int64{255, 7},
+			highestStock: [2]int64{255, 9},
+			lowestRatio:  [2]int64{4, 1},
+			highestRatio: [2]int64{4, 1},
+		}),
+		storedBack(5, unpriced([2]int64{255, 8}, [2]int64{255, 8})),
+	}
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	play := playByKey(t, got, directKey(divineID, apocalypseID))
+	if !play.WindowPriced || play.WindowHours != 1 || play.WindowVolume != 1 {
+		t.Errorf("window marks = %v/%d/%v, want true/1/1 — one card in one hour carried the market", play.WindowPriced, play.WindowHours, play.WindowVolume)
+	}
+	if buy, sell := play.Legs[0], play.Legs[1]; buy.Price != 4 || sell.Price != 4 {
+		t.Errorf("legs priced %v / %v divine, want the 20:00Z card's 4 / 4", buy.Price, sell.Price)
 	}
 }

@@ -507,8 +507,14 @@ type Config struct {
 	// caps it.
 	WindowPriceHours int
 	// MinWindowVolume is the item-side volume a window must have traded, summed
-	// over the hours that priced it, before it may price a leg. Two units over
-	// six hours is the floor a single trade cannot clear on its own.
+	// over the hours that priced it, before it may REPRICE a leg whose own hour
+	// traded. Two units over six hours is the floor a single trade cannot clear
+	// on its own, so one print never replaces an hour's price with no spread
+	// either. It does not apply to a window-RESCUED leg (no trade in its own
+	// hour): there the window is the only reading, so one contributing trade
+	// carries it — liveness is a trade having happened (ADR-017). Applying it to
+	// rescues deleted the Apocalypse card's divine market on 2026-09-19, whose
+	// window held one card.
 	//
 	// These three take no environment override, following the same shape
 	// ADR-016's calibration-locked sim knobs do (see DefaultConfig): they are
