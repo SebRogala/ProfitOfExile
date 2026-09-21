@@ -244,7 +244,10 @@ from a trailing clock window, marked with the span it read.**
   `ThinHourVolume` (2) is the ITEM-side unit volume under which the scored hour is
   too thin to price; `WindowPriceHours` (6) is the span; `MinWindowVolume` (2) is
   the item-side volume the window must have traded, summed over the rows that
-  priced. They take no env knob for a reason adjacent to the sim knobs' above:
+  priced, before it may REPRICE a leg whose own hour traded. A window-RESCUED leg
+  needs one contributing row and no more (corrected 2026-09-19: the floor on
+  rescues deleted the Apocalypse card's divine market, whose window held one
+  card — ADR-017's rule, liveness is a trade having happened). They take no env knob for a reason adjacent to the sim knobs' above:
   these decide what a served PRICE is, so a per-deployment value would mean two
   installations disagreeing about what the market printed.
 - **The window is a CLOSED CLOCK span** `[h − (WindowPriceHours−1)h, h]`, not "the
@@ -333,7 +336,7 @@ from a trailing clock window, marked with the span it read.**
   `HoursSeen`. A market rescued in every ranking hour has `hoursCleared == 0` and
   would be dropped by a floor that defends PERSISTENCE against a one-off ghost. A
   window-priced row is not that ghost: its liveness is the window's, bounded at
-  `WindowPriceHours`, floored at `MinWindowVolume` and disclosed on the row, so the
+  `WindowPriceHours`, floored at one contributing trade and disclosed on the row, so the
   reader is told how thin the evidence is instead of the engine guessing for them.
   The cut exempts a row window-priced in the scored hour. At default config the
   exemption is INERT — `WindowPriceHours` (6) equals the recent horizon's

@@ -255,12 +255,14 @@ func windowContributors(rows []StoredRow, hour time.Time, item, quote string, cf
 // clock span is what bounds it.
 //
 // ok is false on exactly two refusals: no row contributed, or the contributing
-// rows traded less than Config.MinWindowVolume between them. priceIn's third
+// rows traded less than minVolume between them. The caller picks minVolume
+// because the floor depends on what the window is FOR (gatedLeg): repricing a
+// leg that has a price of its own, or carrying one that has none. priceIn's third
 // refusal — a result that is not a usable interval — cannot fire here, because
 // every contributor already cleared priceIn: the min of positive lows is
 // positive, and the max of the highs is at or above it since each row's own high
 // is at or above its own low.
-func windowPriceIn(rows []StoredRow, hour time.Time, item, quote string, cfg Config) (low, high pricePoint, contributors []StoredRow, volume float64, ok bool) {
+func windowPriceIn(rows []StoredRow, hour time.Time, item, quote string, cfg Config, minVolume float64) (low, high pricePoint, contributors []StoredRow, volume float64, ok bool) {
 	contributors = windowContributors(rows, hour, item, quote, cfg)
 	if len(contributors) == 0 {
 		return pricePoint{}, pricePoint{}, nil, 0, false
@@ -280,7 +282,7 @@ func windowPriceIn(rows []StoredRow, hour time.Time, item, quote string, cfg Con
 		volume += float64(volumeOf(stored.Row, item))
 	}
 
-	if volume < cfg.MinWindowVolume {
+	if volume < minVolume {
 		return pricePoint{}, pricePoint{}, nil, 0, false
 	}
 	return low, high, contributors, volume, true

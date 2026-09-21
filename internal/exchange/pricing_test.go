@@ -776,7 +776,7 @@ func TestWindowPriceIn_extremesFromDifferentHours_eachCarriesItsOwnPostedPair(t 
 		storedBack(2, pairedHour(chaosID, cardID, [2]int64{1499, 3}, [2]int64{1148, 1}, [2]int64{1500, 3})),
 	}
 
-	low, high, contributors, volume, ok := windowPriceIn(rows, feedHour, cardID, chaosID, DefaultConfig())
+	low, high, contributors, volume, ok := windowPriceIn(rows, feedHour, cardID, chaosID, DefaultConfig(), DefaultConfig().MinWindowVolume)
 	hours := len(contributors)
 
 	if !ok {
@@ -814,7 +814,7 @@ func TestWindowPriceIn_untradedHour_doesNotLendItsRatiosToTheExtremes(t *testing
 		storedBack(3, pairedHour(chaosID, cardID, [2]int64{500, 1}, [2]int64{1148, 1}, [2]int64{1400, 2})),
 	}
 
-	low, high, contributors, volume, ok := windowPriceIn(rows, feedHour, cardID, chaosID, cfg)
+	low, high, contributors, volume, ok := windowPriceIn(rows, feedHour, cardID, chaosID, cfg, cfg.MinWindowVolume)
 	hours := len(contributors)
 
 	if !ok {
@@ -846,7 +846,7 @@ func TestWindowPriceIn_reverseDirection_returnsTheReciprocalIntervalWithTranspos
 		storedBack(1, pairedHour(chaosID, divineID, [2]int64{150, 1}, [2]int64{300, 1}, [2]int64{9000000, 40000})),
 	}
 
-	low, high, contributors, _, ok := windowPriceIn(rows, feedHour, chaosID, divineID, DefaultConfig())
+	low, high, contributors, _, ok := windowPriceIn(rows, feedHour, chaosID, divineID, DefaultConfig(), DefaultConfig().MinWindowVolume)
 	hours := len(contributors)
 
 	if !ok {
@@ -872,7 +872,7 @@ func TestWindowPriceIn_windowVolumeUnderTheFloor_returnsNotOk(t *testing.T) {
 		storedBack(0, pairedHour(chaosID, cardID, [2]int64{552, 1}, [2]int64{552, 1}, [2]int64{552, 1})),
 	}
 
-	_, _, contributors, volume, ok := windowPriceIn(rows, feedHour, cardID, chaosID, DefaultConfig())
+	_, _, contributors, volume, ok := windowPriceIn(rows, feedHour, cardID, chaosID, DefaultConfig(), DefaultConfig().MinWindowVolume)
 	hours := len(contributors)
 
 	if ok {
@@ -891,7 +891,7 @@ func TestWindowPriceIn_oldestHourOfTheClockSpan_stillContributes(t *testing.T) {
 		storedBack(5, pairedHour(chaosID, cardID, [2]int64{486, 1}, [2]int64{1148, 1}, [2]int64{2000, 3})),
 	}
 
-	low, high, contributors, _, ok := windowPriceIn(rows, feedHour, cardID, chaosID, DefaultConfig())
+	low, high, contributors, _, ok := windowPriceIn(rows, feedHour, cardID, chaosID, DefaultConfig(), DefaultConfig().MinWindowVolume)
 	hours := len(contributors)
 
 	if !ok {
@@ -913,7 +913,7 @@ func TestWindowPriceIn_pricedRowOneHourPastTheClockSpan_isNotReached(t *testing.
 		storedBack(6, pairedHour(chaosID, cardID, [2]int64{486, 1}, [2]int64{1148, 1}, [2]int64{2000, 3})),
 	}
 
-	_, _, contributors, volume, ok := windowPriceIn(rows, feedHour, cardID, chaosID, DefaultConfig())
+	_, _, contributors, volume, ok := windowPriceIn(rows, feedHour, cardID, chaosID, DefaultConfig(), DefaultConfig().MinWindowVolume)
 	hours := len(contributors)
 
 	if ok {
@@ -938,7 +938,7 @@ func TestWindowPriceIn_rowNewerThanTheScoredHour_doesNotContribute(t *testing.T)
 		storedBack(1, pairedHour(chaosID, cardID, [2]int64{500, 1}, [2]int64{1000, 1}, [2]int64{1000, 2})),
 	}
 
-	low, high, contributors, _, ok := windowPriceIn(rows, feedHour, cardID, chaosID, DefaultConfig())
+	low, high, contributors, _, ok := windowPriceIn(rows, feedHour, cardID, chaosID, DefaultConfig(), DefaultConfig().MinWindowVolume)
 
 	if !ok {
 		t.Fatalf("ok = false, want the two hours at and behind the scored one to price")
@@ -965,7 +965,7 @@ func TestWindowPriceIn_windowVolumeExactlyAtTheFloor_pricesTheWindow(t *testing.
 		storedBack(1, pairedHour(chaosID, cardID, [2]int64{486, 1}, [2]int64{1148, 1}, [2]int64{1148, 1})),
 	}
 
-	low, high, contributors, volume, ok := windowPriceIn(rows, feedHour, cardID, chaosID, cfg)
+	low, high, contributors, volume, ok := windowPriceIn(rows, feedHour, cardID, chaosID, cfg, cfg.MinWindowVolume)
 
 	if !ok {
 		t.Fatalf("ok = false at exactly the floor of %v, want a priced window", cfg.MinWindowVolume)
@@ -994,7 +994,7 @@ func TestWindowPriceIn_contributorVolumeExactlyAtAnArmedFloor_keepsTheHour(t *te
 		storedBack(1, pairedHour(chaosID, cardID, [2]int64{486, 1}, [2]int64{1148, 1}, [2]int64{24300, 50})),
 	}
 
-	_, high, contributors, volume, ok := windowPriceIn(rows, feedHour, cardID, chaosID, cfg)
+	_, high, contributors, volume, ok := windowPriceIn(rows, feedHour, cardID, chaosID, cfg, cfg.MinWindowVolume)
 
 	if !ok {
 		t.Fatalf("ok = false, want a priced window")

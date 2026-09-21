@@ -346,8 +346,20 @@ func gatedLeg(action, item, quote string, r legRow, view windowView, cfg Config)
 		windowVolume          float64
 		priced                bool
 	)
+
+	// The window's volume floor depends on which half fires. Repricing an
+	// hour-live leg must clear Config.MinWindowVolume: that leg already has a
+	// price of its own, and one print is no better a spread than the hour's.
+	// Rescuing a leg needs only a contributor, because the window is then the
+	// leg's only reading and liveness is a trade having happened (ADR-017). With
+	// the floor on rescues too, a market whose window held one trade was
+	// deleted: the Apocalypse card's divine market at 00:00Z on 2026-09-19.
+	minWindowVolume := cfg.MinWindowVolume
+	if rescued {
+		minWindowVolume = 0
+	}
 	if float64(volume) < cfg.ThinHourVolume {
-		windowLow, windowHigh, contributors, windowVolume, priced = windowPriceIn(view.rowsFor(r.marketID), view.hour, item, quote, cfg)
+		windowLow, windowHigh, contributors, windowVolume, priced = windowPriceIn(view.rowsFor(r.marketID), view.hour, item, quote, cfg, minWindowVolume)
 	}
 	if rescued && !priced {
 		return candidateLeg{}, false

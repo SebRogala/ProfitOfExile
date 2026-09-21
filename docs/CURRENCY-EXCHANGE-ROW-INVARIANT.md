@@ -689,6 +689,12 @@ ten served nothing. That is the flicker the task was filed on
 (`TestCorpus_apocalypseWindow_isServedInAllSeventeenShifts`,
 `internal/exchange/corpus_test.go:1300`).
 
+A rescue needs one contributing row; `Config.MinWindowVolume` binds only a window
+that REPRICES an hour-live leg. Until 2026-09-19 it bound rescues too, and a
+market whose window held a single trade was not served at all (the Apocalypse
+card's divine market at 00:00Z;
+`TestBestPlays_marketThatTradedAnywhereInsideItsClockWindow_isServedInBothHorizons`).
+
 *Why it belongs here rather than in §5:* §5's deviation is a cross-hour
 STATISTIC that is never a price. This one IS a price — it just belongs to a
 different hour than the row was scored in. The doctrine it bends is the one
