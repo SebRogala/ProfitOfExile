@@ -9,8 +9,8 @@
 	import { nav } from '$lib/stores/navigation.svelte';
 	import { untrack } from 'svelte';
 	import { ocrRectsKey, screenGeometryView } from '$lib/geometry/view';
-	import { chooseMonitor, type GameMonitorInfo } from '$lib/overlay/monitor-choice';
-	import { clickthroughReport } from '$lib/overlay/clickthrough-report';
+	import { createOcrPreviewOwner } from '$lib/overlay/ocr-preview';
+	import type { GameMonitorInfo } from '$lib/overlay/monitor-choice';
 	import {
 		canStartConfigure,
 		overlayGroups,
@@ -40,11 +40,6 @@
 	const MERC_PREVIEW_KEYS = ['merc.panel'] as const;
 	const LAB_GEM_PREVIEW_KEY = LAB_PREVIEW_KEYS[0];
 	const LAB_FONT_PREVIEW_KEY = LAB_PREVIEW_KEYS[1];
-
-	type OverlayMonitorPlacement = {
-		origin: { x: number; y: number };
-		scaleFactor: number;
-	};
 
 	// --- Update ---
 	let appVersion = $state('...');
@@ -123,8 +118,7 @@
 
 	let ocrRects = $state<OcrRectView[]>([]);
 	let ocrRectsLoaded = $state(false);
-	let previewWin = $state<any>(null);
-	let previewTimer: ReturnType<typeof setTimeout> | undefined;
+	const ocrPreview = createOcrPreviewOwner();
 
 	// Inline editing states
 	let editingServerUrl = $state(false);
@@ -183,82 +177,16 @@
 		editingClientTxt = false;
 	}
 
-	async function resolveOverlayMonitor(context: string): Promise<OverlayMonitorPlacement | null> {
-		const { availableMonitors, currentMonitor, primaryMonitor } = await import(
-			'@tauri-apps/api/window'
-		);
-		const primary =
-			(await primaryMonitor().catch((e: any) => {
-				console.warn(`[settings] primaryMonitor failed for ${context}:`, e);
-				return null;
-			})) ?? (await currentMonitor().catch((e: any) => {
-				console.warn(`[settings] currentMonitor failed for ${context}:`, e);
-				return null;
-			}));
-		const game = await invoke<GameMonitorInfo | null>('get_game_monitor').catch((e: any) => {
-			console.warn(`[settings] get_game_monitor failed for ${context}:`, e);
-			return null;
-		});
-		const listed = await availableMonitors().catch((e: any) => {
-			console.warn(`[settings] availableMonitors failed for ${context}:`, e);
-			return [];
-		});
-		const monitor = chooseMonitor(game, listed, primary);
-		if (!monitor) {
-			console.error(`[settings] ${context} has no monitor to build on`);
-			return null;
-		}
-		if (game && (monitor.position.x !== game.x || monitor.position.y !== game.y)) {
-			console.warn(
-				`[settings] ${context} monitor disagreement: game at (${game.x}, ${game.y}), ` +
-				`using primary at (${monitor.position.x}, ${monitor.position.y})`
-			);
-		}
-		return {
-			origin: { x: monitor.position.x, y: monitor.position.y },
-			scaleFactor: monitor.scaleFactor > 0 ? monitor.scaleFactor : 1,
-		};
-	}
-
-	function reportClickthroughFailure(label: string, reason: unknown): void {
-		const report = clickthroughReport(label, reason);
-		if (report.level === 'error') console.error(`[overlay] ${report.message}`);
-		else console.info(`[overlay] ${report.message}`);
-		invoke('app_log_from_frontend', { msg: report.message })
-			.catch((e) => console.error('[overlay] app log unreachable:', e));
-	}
-
-	// Destroy the owner-side preview window — retries up to 5 times for async
-	// Tauri/Win32 cleanup, matching the comparator's close+destroy sequence.
-	async function destroyPreviewOverlay(): Promise<void> {
-		previewWin = null;
-		if (previewTimer) {
-			clearTimeout(previewTimer);
-			previewTimer = undefined;
-		}
-
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		for (let i = 0; i < 5; i++) {
-			const existing = await WebviewWindow.getByLabel('overlay-preview').catch(() => null);
-			if (!existing) return;
-			try { await existing.close(); } catch (_) {}
-			try { await existing.destroy(); } catch (_) {}
-			if (i < 4) await new Promise((resolve) => setTimeout(resolve, 100));
-		}
-		const remaining = await WebviewWindow.getByLabel('overlay-preview').catch(() => null);
-		if (remaining) console.error('[settings] destroying OCR preview failed after 5 attempts');
-	}
-
 	// The preview is focusless, so Escape belongs to the Settings window that
 	// created it. Component cleanup owns the same destroy path.
 	$effect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape' && previewWin) void destroyPreviewOverlay();
+			if (event.key === 'Escape' && ocrPreview.hasPreview) void ocrPreview.destroy();
 		};
 		window.addEventListener('keydown', onKeyDown);
 		return () => {
 			window.removeEventListener('keydown', onKeyDown);
-			void destroyPreviewOverlay();
+			void ocrPreview.destroy();
 		};
 	});
 
@@ -308,7 +236,7 @@
 	});
 
 	async function previewOcrRegion(key: string): Promise<void> {
-		await destroyPreviewOverlay();
+		await ocrPreview.destroy();
 
 		try {
 			const rows = await invoke<OcrRectView[]>('get_ocr_rects');
@@ -318,56 +246,11 @@
 				console.warn(`[settings] OCR preview '${key}' is unlocated`);
 				return;
 			}
-			const monitor = await resolveOverlayMonitor('OCR preview');
-			if (!monitor) return;
-
-			const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-			const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
-
-			const [x, y, width, height] = row.rect;
-			const win = new WebviewWindow('overlay-preview', {
-				url: `/overlay?preview=${encodeURIComponent(key)}&label=${encodeURIComponent(row.label)}&rect=${row.rect.join(',')}&rows=${encodeURIComponent(JSON.stringify(row.rows))}&dpr=${monitor.scaleFactor}`,
-				transparent: true,
-				decorations: false,
-				alwaysOnTop: true,
-				resizable: false,
-				shadow: false,
-				skipTaskbar: true,
-				focus: false,
-				width: Math.max(1, Math.round(width / monitor.scaleFactor)),
-				height: Math.max(1, Math.round(height / monitor.scaleFactor)),
-			});
-			previewWin = win;
-			win.once('tauri://created', async () => {
-				if (previewWin !== win) return;
-				try {
-					const position = new PhysicalPosition(monitor.origin.x + x, monitor.origin.y + y);
-					const exactSize = new PhysicalSize(width, height);
-					await win.setPosition(position);
-					await win.setSize(exactSize);
-					const size = await win.outerSize();
-					await win.setSize(new PhysicalSize(size.width + 1, size.height + 1));
-					await win.setSize(new PhysicalSize(size.width, size.height));
-					if (previewWin !== win) return;
-					await win.setPosition(position);
-					await win.setSize(exactSize);
-					try {
-						await invoke('set_overlay_clickthrough', { label: win.label });
-					} catch (e) {
-						reportClickthroughFailure(win.label, e);
-						await destroyPreviewOverlay();
-						return;
-					}
-					if (previewWin !== win) return;
-					previewTimer = setTimeout(() => { void destroyPreviewOverlay(); }, 10_000);
-				} catch (e) {
-					console.error('[settings] positioning OCR preview failed:', e);
-					await destroyPreviewOverlay();
-				}
-			});
-			win.once('tauri://error', (e: any) => {
-				console.error('[settings] OCR preview creation failed:', e);
-				void destroyPreviewOverlay();
+			await ocrPreview.preview({
+				key,
+				label: row.label,
+				rect: row.rect,
+				rows: row.rows
 			});
 		} catch (e) {
 			console.error('[settings] OCR preview failed:', e);
