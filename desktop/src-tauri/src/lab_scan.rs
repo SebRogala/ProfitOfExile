@@ -7,11 +7,42 @@
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{AppState, CaptureRegion};
+use crate::{AppState, CaptureRegion, FontSessionData};
+
+pub struct LabScanState {
+    pub detected_gems: Mutex<Vec<String>>,
+    /// Generation counter for gem OCR scans. Incremented on each start trigger
+    /// (FontOpened, manual scan).
+    pub gem_scan_generation: AtomicU64,
+    /// Generation counter for font panel OCR scans.
+    pub font_scan_generation: AtomicU64,
+    /// Generation of the font scan session that is currently running, or 0 when
+    /// none is. `FontOpened` re-arms the scan when it reads 0 — after a portal
+    /// trip no further `LabFinished` fires, so the event is the only chance to
+    /// bring the panel OCR back. Written by `spawn_font_scan` (its own
+    /// generation), by the loop on exit (compare-exchange, so a stale loop
+    /// cannot clear its replacement's token) and by anything that bumps
+    /// `font_scan_generation` without starting a replacement.
+    pub font_scan_live_gen: AtomicU64,
+    /// Liveness token for the single merged lab OCR thread.
+    pub lab_scan_live_gen: AtomicU64,
+    /// Counter from which the merged lab thread mints its liveness token.
+    pub lab_scan_generation: AtomicU64,
+    /// Monotonic count of `FontOpened` events. The craft ledger gates every
+    /// count change on it: the panel's count cannot change without a CRAFT
+    /// click, and a CRAFT click always fires this event, so a count change with
+    /// no new event is a misread. Never reset — the ledger stores the value it
+    /// accepted at, and a counter going backwards would re-open accepted rounds.
+    pub font_opened_seq: AtomicU64,
+    /// Font session data — accumulated rounds, shared between the lab scan loop
+    /// and handlers.
+    pub font_session: Mutex<FontSessionData>,
+}
 
 const SCAN_INTERVAL: Duration = Duration::from_millis(250);
 // 2.5 min (owner, 2026-09-09; was 45 s): reading the options, crafting and
@@ -167,7 +198,7 @@ impl GemProcessingState {
                 "Gem scan aborted — the gem dictionary loaded 0 names, so no OCR read could match. Either the request failed or this league has no gem dictionary yet; the preceding 'gem names' lines say which."
                     .to_string(),
             );
-            if state.gem_scan_generation.load(Ordering::SeqCst) == generation {
+            if state.lab_scan.gem_scan_generation.load(Ordering::SeqCst) == generation {
                 self.finished = true;
                 let mut lab_state = state
                     .lab_state
@@ -209,7 +240,7 @@ impl GemProcessingState {
             .lab_state
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        if state.gem_scan_generation.load(Ordering::SeqCst) == generation
+        if state.lab_scan.gem_scan_generation.load(Ordering::SeqCst) == generation
             && *lab_state == crate::lab_state::LabState::PickingGems
         {
             *lab_state = crate::lab_state::LabState::Idle;
@@ -328,7 +359,7 @@ impl GemProcessingState {
 
                     if let Some(gem_match) = best {
                         let current_generation =
-                            state.gem_scan_generation.load(Ordering::SeqCst);
+                            state.lab_scan.gem_scan_generation.load(Ordering::SeqCst);
                         if current_generation == generation
                             && self.accept_gem(generation, current_generation, &gem_match.name)
                         {
@@ -345,6 +376,7 @@ impl GemProcessingState {
                             );
                             let all_gems = {
                                 let mut gems = state
+                                    .lab_scan
                                     .detected_gems
                                     .lock()
                                     .unwrap_or_else(|e| e.into_inner());
@@ -371,7 +403,7 @@ impl GemProcessingState {
                                     .lab_state
                                     .lock()
                                     .unwrap_or_else(|e| e.into_inner());
-                                if state.gem_scan_generation.load(Ordering::SeqCst) == generation {
+                                if state.lab_scan.gem_scan_generation.load(Ordering::SeqCst) == generation {
                                     *lab_state = crate::lab_state::LabState::Idle;
                                     drop(lab_state);
                                     crate::emit_status(app);
@@ -448,7 +480,7 @@ impl FontProcessingState {
         generation: u64,
     ) -> bool {
         let mut active = crate::font_session::font_scan_is_live(
-            state.font_scan_live_gen.load(Ordering::SeqCst),
+            state.lab_scan.font_scan_live_gen.load(Ordering::SeqCst),
         );
         if active {
             let (deadline, idle_expired) = crate::font_session::idle_tick(
@@ -466,6 +498,7 @@ impl FontProcessingState {
                 );
                 crate::send_font_session_data(app);
                 if state
+                    .lab_scan
                     .font_scan_live_gen
                     .compare_exchange(generation, 0, Ordering::SeqCst, Ordering::SeqCst)
                     .is_ok()
@@ -473,7 +506,7 @@ impl FontProcessingState {
                     active = false;
                 } else {
                     active = crate::font_session::font_scan_is_live(
-                        state.font_scan_live_gen.load(Ordering::SeqCst),
+                        state.lab_scan.font_scan_live_gen.load(Ordering::SeqCst),
                     );
                 }
             }
@@ -529,17 +562,18 @@ impl FontProcessingState {
                 if panel.font_active && !panel.options.is_empty() {
                     let outcome = {
                         let mut session = state
+                            .lab_scan
                             .font_session
                             .lock()
                             .unwrap_or_else(|e| e.into_inner());
                         if !self.frame_is_current(
                             generation,
-                            state.font_scan_generation.load(Ordering::SeqCst),
-                            state.font_scan_live_gen.load(Ordering::SeqCst),
+                            state.lab_scan.font_scan_generation.load(Ordering::SeqCst),
+                            state.lab_scan.font_scan_live_gen.load(Ordering::SeqCst),
                         ) {
                             None
                         } else {
-                            let event_seq = state.font_opened_seq.load(Ordering::SeqCst);
+                            let event_seq = state.lab_scan.font_opened_seq.load(Ordering::SeqCst);
                             Some(crate::font_session::apply_font_frame(
                                 &mut session,
                                 &panel,
@@ -679,11 +713,11 @@ pub(crate) fn run(app: AppHandle, lab_generation: u64) {
     crate::report_ocr_engine(&app);
 
     loop {
-        let gem_generation = state.gem_scan_generation.load(Ordering::SeqCst);
+        let gem_generation = state.lab_scan.gem_scan_generation.load(Ordering::SeqCst);
         let previous_gem_generation =
             gem.reset_for_generation(&app, &state, gem_generation);
 
-        let font_generation = state.font_scan_generation.load(Ordering::SeqCst);
+        let font_generation = state.lab_scan.font_scan_generation.load(Ordering::SeqCst);
         let _previous_font_generation = font.reset_for_generation(&app, font_generation);
 
         let picking_gems = *state
@@ -722,7 +756,7 @@ pub(crate) fn run(app: AppHandle, lab_generation: u64) {
         }
 
         if !gem_active && !font_active {
-            let pending = state.font_scan_live_gen.load(Ordering::SeqCst) != 0
+            let pending = state.lab_scan.font_scan_live_gen.load(Ordering::SeqCst) != 0
                 || (*state
                     .lab_state
                     .lock()
@@ -735,8 +769,8 @@ pub(crate) fn run(app: AppHandle, lab_generation: u64) {
                 std::thread::sleep(SCAN_INTERVAL);
                 continue;
             }
-            match settle_idle_scan(&state.lab_scan_live_gen, lab_generation, || {
-                state.font_scan_live_gen.load(Ordering::SeqCst) != 0
+            match settle_idle_scan(&state.lab_scan.lab_scan_live_gen, lab_generation, || {
+                state.lab_scan.font_scan_live_gen.load(Ordering::SeqCst) != 0
                     || (*state
                         .lab_state
                         .lock()
@@ -830,7 +864,7 @@ pub(crate) fn run(app: AppHandle, lab_generation: u64) {
         std::thread::sleep(SCAN_INTERVAL);
     }
 
-    crate::font_session::try_clear_live(&state.lab_scan_live_gen, lab_generation);
+    crate::font_session::try_clear_live(&state.lab_scan.lab_scan_live_gen, lab_generation);
 }
 
 #[cfg(test)]
