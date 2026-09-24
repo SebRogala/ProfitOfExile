@@ -11,8 +11,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -160,32 +158,11 @@ func prepareDelayedRecompute(ctx context.Context, pool *pgxpool.Pool, captured l
 	return lock, "", nil
 }
 
-// corsOrigins returns allowed CORS origins from the CORS_ORIGINS env var.
-// Comma-separated list, e.g. "http://localhost:1420,tauri://localhost".
-// Returns nil (no CORS) when unset.
-func corsOrigins() []string {
-	raw := os.Getenv("CORS_ORIGINS")
-	if raw == "" {
-		return nil
-	}
-	var origins []string
-	for _, o := range strings.Split(raw, ",") {
-		if o = strings.TrimSpace(o); o != "" {
-			origins = append(origins, o)
-		}
-	}
-	return origins
-}
-
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
-	if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
+	port, portErr := loadPort()
+	if portErr != nil {
 		slog.Error("invalid PORT value", "port", port)
-		fmt.Fprintf(os.Stderr, "PORT must be a number between 1 and 65535, got %q\n", port)
+		fmt.Fprintln(os.Stderr, portErr)
 		os.Exit(1)
 	}
 
@@ -281,13 +258,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	mercureURL := os.Getenv("MERCURE_URL")
-	mercureSecret := os.Getenv("MERCURE_JWT_SECRET")
-	devMode := os.Getenv("APP_ENV") == "dev"
-
-	if mercureURL != "" && mercureSecret == "" {
-		slog.Warn("MERCURE_URL is set but MERCURE_JWT_SECRET is empty — publish operations will be skipped")
-	}
+	serviceCfg := loadSharedServiceConfig()
+	mercureURL := serviceCfg.MercureURL
+	mercureSecret := serviceCfg.MercureSecret
+	devMode := serviceCfg.DevMode
 
 	labRepo := lab.NewRepository(pool)
 	layoutRepo := lab.NewLayoutRepository(pool)
@@ -309,78 +283,7 @@ func main() {
 	templeCache := temple.NewCache(scope)
 	templeService := temple.NewService(temple.NewRepository(pool), templeCache, scope, slog.Default())
 
-	// Ranking knobs are overridable per deploy. Unlike the TRADE_* fallbacks
-	// above, an unusable value here is logged loudly rather than swallowed: a
-	// typo in a threshold silently changes which plays users are shown, with no
-	// other symptom to notice it by.
-	//
-	// Since POE-191 the four quality gates below (turnover, tick, edge/tick,
-	// chaos payout) ship OFF and the desktop applies them client-side, so
-	// setting one here re-arms it for everyone and can only tighten what the
-	// server serves — envPositiveFloat rejects a zero or negative value, which
-	// is also the only way back to "off" (unset the variable).
-	exchangeCfg := exchange.DefaultConfig()
-	// WindowHours and MinHoursSeen are per horizon (below), not on the base
-	// config: the base values would be overwritten by every horizon overlay, so
-	// an override here would read as configured and do nothing.
-	exchangeCfg.MinVolumePerHour = envPositiveFloat("EXCHANGE_MIN_VOLUME_PER_HOUR", exchangeCfg.MinVolumePerHour)
-	exchangeCfg.MaxPlays = envPositiveInt("EXCHANGE_MAX_PLAYS", exchangeCfg.MaxPlays)
-	exchangeCfg.MinTurnoverChaos = envPositiveFloat("EXCHANGE_MIN_TURNOVER_CHAOS", exchangeCfg.MinTurnoverChaos)
-	exchangeCfg.MaxTick = envPositiveFloat("EXCHANGE_MAX_TICK", exchangeCfg.MaxTick)
-	exchangeCfg.MinEdgeTickRatio = envPositiveFloat("EXCHANGE_MIN_EDGE_TICK_RATIO", exchangeCfg.MinEdgeTickRatio)
-	exchangeCfg.MinROIChaos = envPositiveFloat("EXCHANGE_MIN_ROI_CHAOS", exchangeCfg.MinROIChaos)
-	// The junk bands are fractions of an hour's VWAP, so both are positive and
-	// the low one is meant to be under 1 while the high one is over it. Nothing
-	// enforces that ordering here: a deploy that wants to widen or narrow either
-	// side of "believable" is allowed to, and inverting them would flag every
-	// leg rather than none, which is loud enough to notice.
-	exchangeCfg.SuspectLowBand = envPositiveFloat("EXCHANGE_SUSPECT_LOW_BAND", exchangeCfg.SuspectLowBand)
-	exchangeCfg.SuspectHighBand = envPositiveFloat("EXCHANGE_SUSPECT_HIGH_BAND", exchangeCfg.SuspectHighBand)
-	// HideSuspect turns the flag into a filter. Default false: a flagged row can
-	// be argued with, a missing one cannot.
-	exchangeCfg.HideSuspect = envBool("EXCHANGE_HIDE_SUSPECT", exchangeCfg.HideSuspect)
-	// MinEdge is where the engine FLAGS a play as having no spread worth taking
-	// (Play.LowLiquidity), not a floor it drops below — since 2026-08-22 raising
-	// this marks more rows and hides none, and an operator who wants rows GONE
-	// arms EXCHANGE_MIN_EDGE_TICK_RATIO or EXCHANGE_MIN_ROI_CHAOS instead. It is
-	// the one knob where a negative value is meaningful (it stops the small gains
-	// from being marked), so only an exact 0 is rejected — the engine reads 0 as
-	// "unset" and would restore the default behind the log line, making the
-	// configured value a lie.
-	if v := os.Getenv("EXCHANGE_MIN_EDGE"); v != "" {
-		f, err := strconv.ParseFloat(v, 64)
-		switch {
-		case err != nil:
-			slog.Warn("ignoring unparseable environment override; keeping the default",
-				"var", "EXCHANGE_MIN_EDGE", "value", v, "default", exchangeCfg.MinEdge)
-		case f == 0:
-			slog.Warn("EXCHANGE_MIN_EDGE=0 reads as unset by the engine; keeping the default (pass a small negative value to stop flagging small gains)",
-				"default", exchangeCfg.MinEdge)
-		default:
-			exchangeCfg.MinEdge = f
-		}
-	}
-
-	// Both served horizons are recomputed from one read; each has its own span
-	// and its own persistence demand. EXCHANGE_WINDOW_HOURS and
-	// EXCHANGE_MIN_HOURS_SEEN predate the split and still work: they set the
-	// RECENT horizon, which is the one an unqualified request gets, and the
-	// EXCHANGE_RECENT_* names override them for anyone who wants to say so.
-	horizons := append([]exchange.HorizonConfig(nil), exchangeCfg.Horizons...)
-	for i, horizon := range horizons {
-		switch horizon.Horizon {
-		case exchange.HorizonRecent:
-			horizon.WindowHours = envPositiveInt("EXCHANGE_WINDOW_HOURS", horizon.WindowHours)
-			horizon.MinHoursSeen = envPositiveInt("EXCHANGE_MIN_HOURS_SEEN", horizon.MinHoursSeen)
-			horizon.WindowHours = envPositiveInt("EXCHANGE_RECENT_WINDOW_HOURS", horizon.WindowHours)
-			horizon.MinHoursSeen = envPositiveInt("EXCHANGE_RECENT_MIN_HOURS_SEEN", horizon.MinHoursSeen)
-		case exchange.HorizonDay:
-			horizon.WindowHours = envPositiveInt("EXCHANGE_DAY_WINDOW_HOURS", horizon.WindowHours)
-			horizon.MinHoursSeen = envPositiveInt("EXCHANGE_DAY_MIN_HOURS_SEEN", horizon.MinHoursSeen)
-		}
-		horizons[i] = horizon
-	}
-	exchangeCfg.Horizons = horizons
+	exchangeCfg := loadExchangeConfig()
 
 	// Publishing "the served answer changed" is debounced: a catch-up pass
 	// stores several hours back to back and triggers one recompute per hour, and
@@ -417,12 +320,7 @@ func main() {
 	}
 
 	// Trade cache — created before analyzer so the v2 pipeline can use it.
-	tradeCacheMax := 200
-	if v := os.Getenv("TRADE_CACHE_MAX"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			tradeCacheMax = n
-		}
-	}
+	tradeCacheMax := loadTradeCacheMax()
 	tradeCache := trade.NewTradeCache(tradeCacheMax, scope)
 
 	analyzer := lab.NewAnalyzer(labRepo, throttler, labCache, tradeCache)
@@ -441,49 +339,14 @@ func main() {
 			slog.Info("trade cache warmed from DB", "entries", loaded)
 		}
 	}
+	tradeCfg := loadTradeConfig(scope.ID(), tradeCacheMax)
 
 	// Trade Gate (server-side GGG lookups) — optional, requires TRADE_ENABLED=true.
 	var tradeGate *trade.Gate
 	var tradeSyncTimeout time.Duration
 
-	if os.Getenv("TRADE_ENABLED") == "true" {
-		tradeCeiling := 0.65
-		if v := os.Getenv("TRADE_CEILING"); v != "" {
-			if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 && f <= 1 {
-				tradeCeiling = f
-			}
-		}
-		tradeLatencyPad := 1 * time.Second
-		if v := os.Getenv("TRADE_LATENCY_PAD"); v != "" {
-			if d, err := time.ParseDuration(v); err == nil {
-				tradeLatencyPad = d
-			}
-		}
-		tradeMaxWait := 30 * time.Second
-		if v := os.Getenv("TRADE_MAX_WAIT"); v != "" {
-			if d, err := time.ParseDuration(v); err == nil {
-				tradeMaxWait = d
-			}
-		}
-		tradeSyncTimeout = 500 * time.Millisecond
-		if v := os.Getenv("TRADE_SYNC_WAIT"); v != "" {
-			if d, err := time.ParseDuration(v); err == nil {
-				tradeSyncTimeout = d
-			}
-		}
-
-		tradeCfg := trade.TradeConfig{
-			Enabled:           true,
-			LeagueName:        scope.ID(),
-			CeilingFactor:     tradeCeiling,
-			LatencyPadding:    tradeLatencyPad,
-			DefaultSearchRate: 1,
-			DefaultFetchRate:  1,
-			MaxQueueWait:      tradeMaxWait,
-			CacheMaxEntries:   tradeCacheMax,
-			UserAgent:         getEnvDefault("TRADE_USER_AGENT", "profitofexile/0.1.0"),
-			SyncWaitBudget:    tradeSyncTimeout,
-		}
+	if tradeCfg.Enabled {
+		tradeSyncTimeout = tradeCfg.SyncWaitBudget
 
 		tradeLimiter := trade.NewRateLimiter(tradeCfg)
 		tradeClient := trade.NewClient(tradeCfg)
@@ -527,15 +390,15 @@ func main() {
 		LabCache:             labCache,
 		ExchangeCache:        exchangeCache,
 		TempleCache:          templeCache,
-		MercureSubscriberKey: os.Getenv("MERCURE_SUBSCRIBER_KEY"),
-		MercurePublicURL:     os.Getenv("MERCURE_PUBLIC_URL"),
+		MercureSubscriberKey: serviceCfg.MercureSubscriberKey,
+		MercurePublicURL:     serviceCfg.MercurePublicURL,
 		TradeGate:            tradeGate,
 		TradeCache:           tradeCache,
 		TradeRepo:            tradeRepo,
 		TradeSyncTimeout:     tradeSyncTimeout,
 		League:               scope,
 		Analyzer:             analyzer,
-		AllowedOrigins:       corsOrigins(),
+		AllowedOrigins:       serviceCfg.AllowedOrigins,
 		DeviceRepo:           deviceRepo,
 		MercTemplateRepo:     mercTemplateRepo,
 		FenceChecker:         serverLock,
@@ -548,7 +411,7 @@ func main() {
 		// cache-filename scheme and one flat directory would let a gem name and
 		// an item id reduce to the same file — and only if they also share a
 		// source URL, since the filename carries a hash of that URL too.
-		IconCacheDir: getEnvDefault("ICON_CACHE_DIR", server.DefaultIconCacheDir),
+		IconCacheDir: serviceCfg.IconCacheDir,
 	}
 
 	router := server.NewRouter(pool, frontendFS, routerCfg)
@@ -682,7 +545,7 @@ func main() {
 		// being spelled out here so the subscription and the read side cannot
 		// name different topics.
 		topics = append(topics, temple.Topics()...)
-		mercureSubKey := os.Getenv("MERCURE_SUBSCRIBER_KEY")
+		mercureSubKey := serviceCfg.MercureSubscriberKey
 		// One-shot warning for misconfigured deploys where the collector is
 		// publishing trade-ticks but the server has trade disabled. Repeated
 		// every-tick warnings would just be noise.
@@ -951,64 +814,4 @@ func main() {
 	}
 
 	slog.Info("server stopped")
-}
-
-// envPositiveInt reads key as a positive integer, falling back to def when the
-// variable is unset. An unparseable or non-positive value logs a Warn naming the
-// variable and keeps def: the engine treats a non-positive count as "unset" and
-// would restore the default anyway, so the log is the only way an operator finds
-// out their override never took effect.
-func envPositiveInt(key string, def int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		slog.Warn("ignoring invalid environment override; keeping the default",
-			"var", key, "value", v, "default", def)
-		return def
-	}
-	return n
-}
-
-// envPositiveFloat is envPositiveInt for a float knob, with the same
-// keep-the-default-and-say-so contract.
-func envPositiveFloat(key string, def float64) float64 {
-	v := os.Getenv(key)
-	if v == "" {
-		return def
-	}
-	f, err := strconv.ParseFloat(v, 64)
-	if err != nil || f <= 0 {
-		slog.Warn("ignoring invalid environment override; keeping the default",
-			"var", key, "value", v, "default", def)
-		return def
-	}
-	return f
-}
-
-// envBool is envPositiveInt for a switch, with the same
-// keep-the-default-and-say-so contract. There is no "unset" value to inherit
-// from — a bool that parses replaces the default outright — so an empty
-// variable and an unparseable one are the only ways to keep it.
-func envBool(key string, def bool) bool {
-	v := os.Getenv(key)
-	if v == "" {
-		return def
-	}
-	b, err := strconv.ParseBool(v)
-	if err != nil {
-		slog.Warn("ignoring invalid environment override; keeping the default",
-			"var", key, "value", v, "default", def)
-		return def
-	}
-	return b
-}
-
-func getEnvDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }
