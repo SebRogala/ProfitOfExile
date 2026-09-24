@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -176,55 +177,6 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 			limit = n
 		}
 
-		// Fast path: serve from cache.
-		var transfigure []lab.TransfigureResult
-		var signals []lab.GemSignal
-		var features []lab.GemFeature
-		usedCache := false
-
-		// Every row here joins all three corpora, so the cache can answer only when
-		// all three report warm. They report separately — transfigure comes from
-		// its own tick, and RunV2 stores features and signals in two calls — and
-		// none of them is judged by its length: this is the dashboard's endpoint,
-		// so a corpus that a tick legitimately left empty would otherwise send
-		// three queries per poll for the rest of the process's life.
-		if cache != nil {
-			ct, transfigureWarm := cache.For(scope).Transfigure()
-			cs, signalsWarm := cache.For(scope).GemSignals()
-			cf, featuresWarm := cache.For(scope).GemFeatures()
-			if transfigureWarm && signalsWarm && featuresWarm {
-				transfigure = filterTransfigure(ct, variant, 1000)
-				signals = filterGemSignals(cs, variant, "", 5000)
-				features = cf // features used for velocity/CV join, no need to filter heavily
-				usedCache = true
-			}
-		}
-
-		// Slow path: fall back to DB query.
-		if !usedCache {
-			var err error
-			transfigure, err = repo.LatestTransfigureResults(r.Context(), scope, variant, 1000)
-			if err != nil {
-				slog.Error("collective analysis: transfigure query failed", "error", err)
-				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-				return
-			}
-
-			signals, err = repo.LatestGemSignals(r.Context(), scope, variant, "", 5000)
-			if err != nil {
-				slog.Error("collective analysis: gem signals query failed", "error", err)
-				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-				return
-			}
-
-			features, err = repo.LatestGemFeatures(r.Context(), scope, variant, "", 50000)
-			if err != nil {
-				slog.Error("collective analysis: gem features query failed", "error", err)
-				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-				return
-			}
-		}
-
 		// Parse sort mode: "pct" for ROI%, "chaos" (default) for absolute ROI.
 		var sortBy lab.SortMode
 		if s := r.URL.Query().Get("sort"); s == "pct" {
@@ -234,144 +186,26 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 
 		searchName := r.URL.Query().Get("search")
 
-		effectiveLimit := limit
-		if searchName != "" {
-			effectiveLimit = 1000 // search returns all matches, not top-N
+		input := collectiveQueryInput{
+			Variant:      variant,
+			SparkVariant: r.URL.Query().Get("variant"),
+			Budget:       budget,
+			Limit:        limit,
+			SearchName:   searchName,
+			SortBy:       sortBy,
 		}
-		results := lab.RankCollective(transfigure, signals, features, budget, effectiveLimit, sortBy)
-
-		// Filter by gem name search (case-insensitive substring).
-		if searchName != "" {
-			q := strings.ToLower(searchName)
-			var matched []lab.CollectiveResult
-			for _, cr := range results {
-				if strings.Contains(strings.ToLower(cr.TransfiguredName), q) {
-					matched = append(matched, cr)
-				}
-			}
-			results = matched
-		}
-
-		// Build base price index: baseName → variant → basePrice (for GCP recipe).
-		type bKey struct{ name, variant string }
-		basePriceIndex := make(map[bKey]float64, len(transfigure))
-		for _, tr := range transfigure {
-			basePriceIndex[bKey{tr.BaseName, tr.Variant}] = tr.BasePrice
-		}
-
-		// GCP recipe: for 20/20 gems, compare buying 20/20 base vs 20/0 base + 20×GCP.
-		var gcpPrice float64
-		if cache != nil {
-			gcpPrice = cache.For(scope).GCPPrice()
-		}
-		if gcpPrice <= 0 {
-			gcpPrice = 4.0
-			slog.Warn("collective: GCP price not cached, using fallback", "fallback", gcpPrice)
-		}
-
-		// Sparkline data for the result gems.
-		// Warm cache: every gem/variant series the pipeline populates is in
-		// memory, so no gem_snapshots query is issued — not even for a gem the
-		// cache has no series for, which genuinely has no recent points.
-		// Cold cache: fall back to the queries. When a specific variant is
-		// selected one query suffices; when "ALL variants", group gems by their
-		// own variant and query per group so sparklines don't mix variant prices.
-		sparkVariant := r.URL.Query().Get("variant")
-		sparklines := make(map[string][]lab.SparklinePoint)
-
-		if cache != nil && cache.For(scope).HasSparklines() {
-			c := cache.For(scope)
-			for _, cr := range results {
-				v := sparkVariant
-				if v == "" {
-					v = cr.Variant
-				}
-				// Raw prices — normalization creates edge artifacts
-				if pts := trimSparkline(c.Sparklines(cr.TransfiguredName, v), sparklineWindowHours); len(pts) > 0 {
-					sparklines[cr.TransfiguredName] = pts
-				}
-			}
-		} else if sparkVariant != "" {
-			// Single variant — one query for all gems.
-			sparkNames := make([]string, 0, len(results))
-			for _, cr := range results {
-				sparkNames = append(sparkNames, cr.TransfiguredName)
-			}
-			sp, err := repo.SparklineData(r.Context(), scope, sparkNames, sparkVariant, sparklineWindowHours)
-			if err != nil {
-				slog.Error("collective analysis: sparkline query failed", "error", err)
+		query, err := queryCollective(r.Context(), repo, cache, scope, input)
+		if err != nil {
+			var queryErr *collectiveQueryError
+			if errors.As(err, &queryErr) {
+				slog.Error("collective analysis: "+queryErr.operation+" query failed", "error", queryErr.err)
 			} else {
-				sparklines = sp // Raw prices — normalization creates edge artifacts
+				slog.Error("collective analysis: query failed", "error", err)
 			}
-		} else {
-			// ALL variants — group by each gem's own variant.
-			byVariant := make(map[string][]string) // variant -> []name
-			for _, cr := range results {
-				byVariant[cr.Variant] = append(byVariant[cr.Variant], cr.TransfiguredName)
-			}
-			for v, names := range byVariant {
-				sp, err := repo.SparklineData(r.Context(), scope, names, v, sparklineWindowHours)
-				if err != nil {
-					slog.Error("collective analysis: sparkline query failed", "variant", v, "error", err)
-					continue
-				}
-				for k, pts := range sp {
-					sparklines[k] = pts
-				}
-			}
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
 		}
-
-		rows := make([]collectiveRow, 0, len(results))
-		for _, cr := range results {
-			r := collectiveRow{
-				TransfiguredName:     cr.TransfiguredName,
-				BaseName:             cr.BaseName,
-				Variant:              cr.Variant,
-				GemColor:             cr.GemColor,
-				ROI:                  cr.ROI,
-				ROIPct:               cr.ROIPct,
-				WeightedROI:          cr.WeightedROI,
-				WeightedROIPct:       cr.WeightedROIPct,
-				BasePrice:            cr.BasePrice,
-				TransfiguredPrice:    cr.TransfiguredPrice,
-				BaseListings:         cr.BaseListings,
-				TransfiguredListings: cr.TransfiguredListings,
-				Confidence:           cr.Confidence,
-				Signal:               cr.Signal,
-				PriceVelocity:        cr.PriceVelocity,
-				ListingVelocity:      cr.ListingVelocity,
-				CV:                   cr.CV,
-				HistPosition:         cr.HistPosition,
-				WindowSignal:         cr.WindowSignal,
-				AdvancedSignal:       cr.AdvancedSignal,
-				LiquidityTier:        cr.LiquidityTier,
-				PriceTier:            cr.PriceTier,
-				TierAction:           cr.TierAction,
-				SellUrgency:          cr.SellUrgency,
-				SellReason:           cr.SellReason,
-				Sellability:          cr.Sellability,
-				SellabilityLabel:     cr.SellabilityLabel,
-				Sparkline:            nonNilSparkline(sparklines[cr.TransfiguredName]),
-				Low7Days:             cr.Low7Days,
-				High7Days:            cr.High7Days,
-				SellConfidence:       cr.SellConfidence,
-				TradeConfidenceNote:  cr.TradeConfidenceNote,
-				LowConfidence:        cr.LowConfidence,
-			}
-
-			// GCP recipe for 20/20 variants: buy 20/0 base + 20×GCP.
-			// Always show — even when more expensive, it's useful context.
-			if cr.Variant == "20/20" {
-				if base20, ok := basePriceIndex[bKey{cr.BaseName, "20"}]; ok && base20 > 0 {
-					recipeCost := base20 + 20*gcpPrice
-					r.GCPRecipeCost = recipeCost
-					r.GCPRecipeBase = base20
-					r.GCPRecipeSaves = cr.BasePrice - recipeCost // negative = recipe is more expensive
-				}
-			}
-
-			rows = append(rows, r)
-		}
+		rows := assembleCollectiveRows(query)
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{

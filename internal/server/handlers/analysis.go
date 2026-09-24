@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -507,268 +508,30 @@ func filterFont(all []lab.FontResult, variant string, limit int) []lab.FontResul
 // Response shape matches the original v1 endpoint for frontend compatibility.
 func TrendAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		variant := normalizeVariant(r.URL.Query().Get("variant"))
-		signal := r.URL.Query().Get("signal")
-		window := r.URL.Query().Get("window")
-		advanced := r.URL.Query().Get("advanced")
-		tier := r.URL.Query().Get("tier")
-
 		limit, ok := parseLimit(w, r, 50, 500)
 		if !ok {
 			return
 		}
-
-		// Load signals and features from cache or DB.
-		var signals []lab.GemSignal
-		var features []lab.GemFeature
-		usedCache := false
-
-		// Both corpora are read whole and joined here, so the cache can answer this
-		// request only when both report warm. They report separately because RunV2
-		// stores them in two calls with a persist between: features warm says
-		// nothing about signals. Neither is judged by its length — a tick that
-		// produced no rows produced an answer.
-		if cache != nil {
-			cs, signalsWarm := cache.For(scope).GemSignals()
-			cf, featuresWarm := cache.For(scope).GemFeatures()
-			if signalsWarm && featuresWarm {
-				signals = cs
-				features = cf
-				usedCache = true
-			}
+		input := trendQueryInput{
+			Variant:  normalizeVariant(r.URL.Query().Get("variant")),
+			Signal:   r.URL.Query().Get("signal"),
+			Window:   r.URL.Query().Get("window"),
+			Advanced: r.URL.Query().Get("advanced"),
+			Tier:     r.URL.Query().Get("tier"),
+			Limit:    limit,
 		}
-
-		if !usedCache {
-			var err error
-			signals, err = repo.LatestGemSignals(r.Context(), scope, variant, tier, 50000)
-			if err != nil {
-				slog.Error("trend analysis: gem signals query failed", "error", err)
-				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-				return
+		query, err := queryTrend(r.Context(), repo, cache, scope, input)
+		if err != nil {
+			var queryErr *trendQueryError
+			if errors.As(err, &queryErr) {
+				slog.Error("trend analysis: "+queryErr.operation+" query failed", "error", queryErr.err)
+			} else {
+				slog.Error("trend analysis: query failed", "error", err)
 			}
-			features, err = repo.LatestGemFeatures(r.Context(), scope, variant, tier, 50000)
-			if err != nil {
-				slog.Error("trend analysis: gem features query failed", "error", err)
-				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-				return
-			}
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
 		}
-
-		// Index features by (name, variant) for joining.
-		type gk struct{ name, variant string }
-		featIndex := make(map[gk]*lab.GemFeature, len(features))
-		for i := range features {
-			f := &features[i]
-			featIndex[gk{f.Name, f.Variant}] = f
-		}
-
-		// Build merged rows, applying filters.
-		type row struct {
-			Time              string  `json:"time"`
-			Name              string  `json:"name"`
-			Variant           string  `json:"variant"`
-			GemColor          string  `json:"gemColor"`
-			CurrentPrice      float64 `json:"currentPrice"`
-			CurrentListings   int     `json:"currentListings"`
-			PriceVelocity     float64 `json:"priceVelocity"`
-			ListingVelocity   float64 `json:"listingVelocity"`
-			CV                float64 `json:"cv"`
-			Signal            string  `json:"signal"`
-			HistPosition      float64 `json:"histPosition"`
-			PriceHigh7Days    float64 `json:"priceHigh7d"`
-			PriceLow7Days     float64 `json:"priceLow7d"`
-			BaseListings      int     `json:"baseListings"`
-			BaseVelocity      float64 `json:"baseVelocity"`
-			RelativeLiquidity float64 `json:"relativeLiquidity"`
-			LiquidityTier     string  `json:"liquidityTier"`
-			WindowScore       float64 `json:"windowScore"`
-			WindowSignal      string  `json:"windowSignal"`
-			AdvancedSignal    string  `json:"advancedSignal"`
-			PriceTier         string  `json:"priceTier"`
-			TierAction        string  `json:"tierAction"`
-			SellUrgency       string  `json:"sellUrgency"`
-			SellReason        string  `json:"sellReason"`
-			Sellability       int     `json:"sellability"`
-			SellabilityLabel  string  `json:"sellabilityLabel"`
-			PriceTrend        []int   `json:"priceTrend,omitempty"`
-			ListingsTrend     []int   `json:"listingsTrend,omitempty"`
-			BaseListingsTrend []int   `json:"baseListingsTrend,omitempty"`
-		}
-
-		// Collect filtered signals into pre-row list for sparkline enrichment.
-		type sigWithFeat struct {
-			sig  *lab.GemSignal
-			feat *lab.GemFeature // may be nil
-		}
-		var filtered []sigWithFeat
-
-		for i := range signals {
-			s := &signals[i]
-			if variant != "" && s.Variant != variant {
-				continue
-			}
-			if signal != "" && s.Signal != signal {
-				continue
-			}
-			if window != "" && s.WindowSignal != window {
-				continue
-			}
-			if advanced != "" && s.AdvancedSignal != advanced {
-				continue
-			}
-			if tier != "" && s.Tier != tier {
-				continue
-			}
-			f := featIndex[gk{s.Name, s.Variant}]
-			filtered = append(filtered, sigWithFeat{sig: s, feat: f})
-			if len(filtered) >= limit {
-				break
-			}
-		}
-
-		// Collect window alert gems for sparkline enrichment (deduplicated).
-		windowAlerts := map[string]bool{"BREWING": true, "OPENING": true, "OPEN": true, "CLOSING": true}
-		type gemKey struct{ name, variant string }
-		seen := make(map[gemKey]bool)
-		var transNames, baseNames []string
-		for _, sf := range filtered {
-			key := gemKey{sf.sig.Name, sf.sig.Variant}
-			if windowAlerts[sf.sig.WindowSignal] && !seen[key] {
-				seen[key] = true
-				transNames = append(transNames, sf.sig.Name)
-				baseName := sf.sig.Name
-				if idx := strings.LastIndex(sf.sig.Name, " of "); idx > 0 {
-					baseName = sf.sig.Name[:idx]
-				}
-				baseNames = append(baseNames, baseName)
-			}
-		}
-
-		// Batch fetch sparkline data grouped by variant.
-		type trendData struct {
-			prices, listings, baseListings []int
-		}
-		trends := make(map[gemKey]trendData)
-		if len(transNames) > 0 {
-			type variantGroup struct {
-				transNames []string
-				baseNames  []string
-				gems       []gemKey
-			}
-			groups := make(map[string]*variantGroup)
-			for i, name := range transNames {
-				key := gemKey{name, ""}
-				// Find the variant for this gem from filtered results.
-				for _, sf := range filtered {
-					if sf.sig.Name == name && windowAlerts[sf.sig.WindowSignal] {
-						key.variant = sf.sig.Variant
-						break
-					}
-				}
-				g, exists := groups[key.variant]
-				if !exists {
-					g = &variantGroup{}
-					groups[key.variant] = g
-				}
-				g.transNames = append(g.transNames, name)
-				g.baseNames = append(g.baseNames, baseNames[i])
-				g.gems = append(g.gems, key)
-			}
-
-			last4 := func(pts []lab.SparklinePoint) []lab.SparklinePoint {
-				if len(pts) > 4 {
-					return pts[len(pts)-4:]
-				}
-				return pts
-			}
-
-			// A warm cache holds the full series each group needs, so no
-			// gem_snapshots query is issued; last4 trims to the points the row
-			// actually shows. Raw prices either way — normalization creates
-			// edge artifacts.
-			warmSparklines := cache != nil && cache.For(scope).HasSparklines()
-
-			for v, g := range groups {
-				var transSparklines, baseSparklines map[string][]lab.SparklinePoint
-
-				if warmSparklines {
-					transSparklines = cachedSparklines(cache, scope, g.transNames, v, 0)
-					baseSparklines = cachedSparklines(cache, scope, g.baseNames, v, 0)
-				} else {
-					var err error
-					transSparklines, err = repo.SparklineData(r.Context(), scope, g.transNames, v, 24*7)
-					if err != nil {
-						slog.Warn("trend analysis: trans sparkline batch failed", "variant", v, "error", err)
-						transSparklines = make(map[string][]lab.SparklinePoint)
-					}
-
-					baseSparklines, err = repo.SparklineData(r.Context(), scope, g.baseNames, v, 24*7)
-					if err != nil {
-						slog.Warn("trend analysis: base sparkline batch failed", "variant", v, "error", err)
-						baseSparklines = make(map[string][]lab.SparklinePoint)
-					}
-				}
-
-				for idx, key := range g.gems {
-					td := trendData{}
-					if pts := last4(transSparklines[key.name]); len(pts) >= 2 {
-						for _, p := range pts {
-							td.prices = append(td.prices, int(math.Round(p.Price)))
-							td.listings = append(td.listings, p.Listings)
-						}
-					}
-					if pts := last4(baseSparklines[g.baseNames[idx]]); len(pts) >= 2 {
-						for _, p := range pts {
-							td.baseListings = append(td.baseListings, p.Listings)
-						}
-					}
-					trends[key] = td
-				}
-			}
-		}
-
-		rows := make([]row, 0, len(filtered))
-		for _, sf := range filtered {
-			s := sf.sig
-			rr := row{
-				Time:             s.Time.UTC().Format(time.RFC3339),
-				Name:             s.Name,
-				Variant:          s.Variant,
-				Signal:           s.Signal,
-				WindowSignal:     s.WindowSignal,
-				AdvancedSignal:   s.AdvancedSignal,
-				PriceTier:        s.Tier,
-				TierAction:       lab.TierActionFor(s.Signal, s.WindowSignal, s.Tier),
-				SellUrgency:      s.SellUrgency,
-				SellReason:       s.SellReason,
-				Sellability:      s.Sellability,
-				SellabilityLabel: s.SellabilityLabel,
-			}
-
-			// Enrich from features.
-			if f := sf.feat; f != nil {
-				rr.GemColor = f.GemColor
-				rr.CurrentPrice = f.Chaos
-				rr.CurrentListings = f.Listings
-				rr.PriceVelocity = f.VelLongPrice
-				rr.ListingVelocity = f.VelLongListing
-				rr.CV = f.CV
-				rr.HistPosition = f.HistPosition
-				rr.PriceHigh7Days = f.High7Days
-				rr.PriceLow7Days = f.Low7Days
-				rr.RelativeLiquidity = f.RelativeListings
-				rr.LiquidityTier = lab.LiquidityTierFor(f.MarketDepth)
-				// BaseListings and BaseVelocity intentionally left at zero —
-				// TODO: base gem listings/velocity not available in v2 pipeline, requires separate query.
-			}
-
-			if td, ok := trends[gemKey{s.Name, s.Variant}]; ok {
-				rr.PriceTrend = td.prices
-				rr.ListingsTrend = td.listings
-				rr.BaseListingsTrend = td.baseListings
-			}
-			rows = append(rows, rr)
-		}
+		rows := assembleTrendRows(query)
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
