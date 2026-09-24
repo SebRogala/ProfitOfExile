@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,11 +10,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/db"
 	"profitofexile/internal/device"
@@ -33,61 +29,6 @@ import (
 //go:embed all:frontend_build
 var frontendEmbed embed.FS
 
-// runFullRecompute runs every analysis step in the order required by
-// RecomputeLatestV2. V2 must complete before Font — Font reads GemFeatures
-// for tier classification, so running them concurrently leaves Font with
-// stale tiers. Each step is run sequentially; an error in one step is logged
-// and the next step still runs (matches the pre-Mercure handler's behavior).
-//
-// Triggered by the poe/admin/recompute Mercure event from cmd/recalculate.
-func runFullRecompute(ctx context.Context, analyzer *lab.Analyzer, scope league.Scope) {
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("admin recompute panicked", "recover", r)
-		}
-	}()
-	slog.Info("admin recompute: started")
-	failures := 0
-	if err := analyzer.RunTransfigure(ctx, scope); err != nil {
-		slog.Error("admin recompute: transfigure failed", "error", err)
-		failures++
-	}
-	if err := analyzer.RunQuality(ctx, scope); err != nil {
-		slog.Error("admin recompute: quality failed", "error", err)
-		failures++
-	}
-	if err := analyzer.RecomputeLatestV2(ctx, scope); err != nil {
-		slog.Error("admin recompute: v2 failed", "error", err)
-		failures++
-	}
-	if err := analyzer.RunFont(ctx, scope); err != nil {
-		slog.Error("admin recompute: font failed", "error", err)
-		failures++
-	}
-	if err := analyzer.RunDoubleCorrupt(ctx, scope); err != nil {
-		slog.Error("admin recompute: double corrupt failed", "error", err)
-		failures++
-	}
-	if err := analyzer.RunDedication(ctx, scope); err != nil {
-		slog.Error("admin recompute: dedication failed", "error", err)
-		failures++
-	}
-	if failures == 0 {
-		slog.Info("admin recompute: complete")
-	} else {
-		slog.Warn("admin recompute: finished with failures", "failed_steps", failures, "total_steps", 6)
-	}
-}
-
-// delayedRecomputeLockTimeout bounds the delayed-recompute timer's attempt to
-// take the league data lock and re-resolve the active league. The timer fires
-// on context.Background(), and both pool.Acquire (advisory-lock connection) and
-// league.Resolve block on pool exhaustion, so without an independent deadline a
-// stuck decision would leak a goroutine every timer cycle. It is deliberately
-// separate from the context passed to RunV2, which keeps the pre-existing
-// unbounded background context so a long recompute is not truncated.
-const delayedRecomputeLockTimeout = 5 * time.Second
-
 // fenceAcquireMaxWait bounds how long the server boot fence retries a held
 // advisory lock before giving up. It absorbs a deploy handoff where the
 // orchestrator starts the new server before the previous instance has released
@@ -95,68 +36,6 @@ const delayedRecomputeLockTimeout = 5 * time.Second
 // second writer. This is the boot fence only; the delayed-recompute path keeps
 // its fail-fast acquire because it wants to skip the cycle, not wait.
 const fenceAcquireMaxWait = 15 * time.Second
-
-// prepareDelayedRecompute decides whether a fired delayed-recompute timer may
-// run RunV2 for the league it was scheduled under, and if so returns the held
-// league data lock the caller must Release.
-//
-// The 15-minute timer captures a scope at schedule time and fires much later on
-// context.Background(), guarded only by an in-process mutex. That guard cannot
-// see two hazards this function closes:
-//   - concurrent delayed recompute: another delayed-recompute run may already be
-//     writing the same league. DataLockKey serialises THIS delayed run against
-//     that one (and against a second server's delayed run once >1 server is
-//     permitted — today the ServerLockKey boot fence makes that cross-process
-//     case vacuous). The IMMEDIATE recompute chain (the Mercure gem-event RunV2)
-//     does NOT take this lock, so it is not serialised against — see POE-118.
-//   - wrong-league: the active league (id or revision) may have changed while
-//     the timer was in flight; committing RunV2 under the captured scope would
-//     write and cache the previous league's data as if it were current.
-//
-// TODO(POE-118): bring the immediate RunV2 paths under DataLockKey so all writers
-// of one league's computed data are serialised, not just the delayed timer.
-//
-// Return contract:
-//   - lock != nil, skip == "": proceed; caller runs RunV2 then Release()s lock.
-//   - lock == nil, skip != "": do not run; skip explains why (expected, log info).
-//   - err  != nil:            an unexpected failure while deciding; do not run.
-func prepareDelayedRecompute(ctx context.Context, pool *pgxpool.Pool, captured league.Scope) (lock *league.ProcessLock, skip string, err error) {
-	// Bound the whole decision independently of the recompute context: the timer
-	// fires on context.Background(), and both the lock acquire and the re-resolve
-	// hit the pool, which blocks on exhaustion. An unbounded decision would leak
-	// a goroutine per 15-minute cycle.
-	decCtx, cancel := context.WithTimeout(ctx, delayedRecomputeLockTimeout)
-	defer cancel()
-
-	lock, err = league.AcquireProcessLock(decCtx, pool, league.DataLockKey(captured))
-	if err != nil {
-		switch {
-		case errors.Is(err, league.ErrLockHeld):
-			return nil, "league data lock held by another recompute", nil
-		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
-			return nil, "timed out acquiring league data lock", nil
-		default:
-			return nil, "", err
-		}
-	}
-
-	// Lock held: re-resolve the active league and refuse if it drifted (id OR
-	// revision) since the timer was scheduled. Revision alone catches a same-name
-	// league bumped mid rolling deploy (ADR-009), which is exactly what the
-	// captured scope must not silently overwrite.
-	active, rerr := league.Resolve(decCtx, pool)
-	if rerr != nil {
-		lock.Release()
-		return nil, "", fmt.Errorf("re-resolve active league: %w", rerr)
-	}
-	if active.ID() != captured.ID() || active.Revision() != captured.Revision() {
-		lock.Release()
-		return nil, fmt.Sprintf("active league changed since timer was scheduled (was %s@%d, now %s@%d)",
-			captured.ID(), captured.Revision(), active.ID(), active.Revision()), nil
-	}
-
-	return lock, "", nil
-}
 
 func main() {
 	port, portErr := loadPort()
@@ -416,361 +295,57 @@ func main() {
 
 	router := server.NewRouter(pool, frontendFS, routerCfg)
 
-	// Seed cache from DB on startup.
-	go func() {
-		qCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-
-		// Estimate next fetch from the interval between last two gem snapshots.
-		var lastSnap, prevSnap time.Time
-		if err := pool.QueryRow(qCtx,
-			`SELECT time FROM gem_snapshots WHERE league = $1 ORDER BY time DESC LIMIT 1`, scope.ID(),
-		).Scan(&lastSnap); err == nil && !lastSnap.IsZero() {
-			// Find the previous distinct snapshot time.
-			_ = pool.QueryRow(qCtx,
-				`SELECT time FROM gem_snapshots WHERE league = $1 AND time < $2 ORDER BY time DESC LIMIT 1`, scope.ID(), lastSnap,
-			).Scan(&prevSnap)
-
-			var interval time.Duration
-			if !prevSnap.IsZero() {
-				interval = lastSnap.Sub(prevSnap)
-			}
-			if interval < 10*time.Minute || interval > 2*time.Hour {
-				interval = 30 * time.Minute // sane fallback
-			}
-			nextFetch := lastSnap.Add(interval)
-			labCache.For(scope).SetNextFetch(nextFetch)
-			slog.Info("startup: seeded nextFetch", "lastSnap", lastSnap, "interval", interval, "nextFetch", nextFetch)
+	runtime := newRecomputeRuntime(ctx, scope)
+	runtime.pool = pool
+	runtime.labCache = labCache
+	runtime.throttler = throttler
+	runtime.analyzer = analyzer
+	runtime.exchange = exchangeService
+	runtime.temple = templeService
+	runtime.mercureURL = mercureURL
+	runtime.subscriberKey = serviceCfg.MercureSubscriberKey
+	runtime.subscriberFactory = func(hubURL string, topics []string, subscriberKey string, handler func(server.MercureEvent)) runtimeSubscriber {
+		return server.NewMercureSubscriber(hubURL, topics, subscriberKey, handler)
+	}
+	if tradeGate != nil {
+		runtime.tradeTick = func(eventCtx context.Context, raw []byte) {
+			server.HandleTradeTick(eventCtx, tradeGate, tradeCache, labCache, scope, raw)
 		}
-
-		// Seed divine rate.
-		var divRate float64
+	}
+	runtime.updateRate = func(_ context.Context) {
+		qCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		var rate float64
 		if err := pool.QueryRow(qCtx,
 			`SELECT chaos FROM currency_snapshots WHERE league = $1 AND currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
 			scope.ID(),
-		).Scan(&divRate); err == nil && divRate > 0 {
-			labCache.For(scope).SetDivineRate(divRate)
-			slog.Info("startup: seeded divine rate", "rate", divRate)
+		).Scan(&rate); err != nil {
+			slog.Warn("currency event: divine rate query failed", "error", err)
+			return
 		}
-	}()
-
-	// Recompute latest v2 snapshot on startup — ensures fresh computed data
-	// after a deploy with new scoring logic (ON CONFLICT DO NOTHING would
-	// otherwise keep stale data). Only deletes computed tables, not raw snapshots.
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("startup v2+font analysis panicked", "recover", r)
-			}
-		}()
-		// Recompute V2: deletes latest computed data, then re-runs full pipeline.
-		if err := analyzer.RecomputeLatestV2(ctx, scope); err != nil {
-			slog.Warn("startup v2 recompute failed (non-fatal)", "error", err)
-		}
-		// Font analysis second — needs GemFeatures from V2.
-		if err := analyzer.RunFont(ctx, scope); err != nil {
-			slog.Warn("startup font analysis failed (non-fatal)", "error", err)
-		}
-		// Double corrupt runs after Font: the compare path uses its EV as the
-		// tiebreaker when no Font candidate wins on 20/20 value.
-		if err := analyzer.RunDoubleCorrupt(ctx, scope); err != nil {
-			slog.Warn("startup double corrupt analysis failed (non-fatal)", "error", err)
-		}
-		// Dedication runs after V2 for risk-adjustment features.
-		if err := analyzer.RunDedication(ctx, scope); err != nil {
-			slog.Warn("startup dedication analysis failed (non-fatal)", "error", err)
-		}
-	}()
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("transfigure analysis panicked on startup", "recover", r)
-			}
-		}()
-		if err := analyzer.RunTransfigure(ctx, scope); err != nil {
-			slog.Warn("startup transfigure analysis failed (non-fatal)", "error", err)
-		}
-	}()
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("quality analysis panicked on startup", "recover", r)
-			}
-		}()
-		if err := analyzer.RunQuality(ctx, scope); err != nil {
-			slog.Warn("startup quality analysis failed (non-fatal)", "error", err)
-		}
-	}()
-	// Currency-exchange plays are held in memory only, so a restart leaves the
-	// cache COLD until something recomputes it. Rebuild at boot rather than
-	// waiting for the collector's next stored hour, which can be minutes away.
-	// Trigger logs its own failures and never blocks serving.
-	go exchangeService.Trigger(ctx)
-	// Same reason for the temple market: it is held in memory only, so a restart
-	// leaves it COLD until something recomputes it. Rebuild at boot rather than
-	// waiting for the next stored item tick, which is up to a poe.ninja cache
-	// cycle away. Trigger logs its own failures and never blocks serving.
-	go templeService.Trigger(ctx)
-	// Delayed recompute timer — fires 15min after the last ninja_gems event
-	// so that the v2 pipeline picks up trade data accumulated since the snapshot.
-	// Protected by a mutex since the timer callback and Mercure handler run on
-	// different goroutines.
-	var (
-		delayedRecomputeMu    sync.Mutex
-		delayedRecomputeTimer *time.Timer
-	)
-	defer func() {
-		delayedRecomputeMu.Lock()
-		if delayedRecomputeTimer != nil {
-			delayedRecomputeTimer.Stop()
-		}
-		delayedRecomputeMu.Unlock()
-	}()
-
-	// Start Mercure subscriber in background if configured.
-	if mercureURL != "" {
-		subCtx, subCancel := context.WithCancel(ctx)
-		defer subCancel()
-
-		topics := []string{
-			"poe/collector/gems",
-			"poe/collector/currency",
-			"poe/collector/fragments",
-			"poe/collector/trade-tick", // collector schedules trade refresh ticks
-			"poe/admin/recompute",      // operator-triggered full recompute
-			exchange.Topic,             // collector stored a currency-exchange hour
-		}
-		// The seven poe.ninja item-overview topics (POE-254), which the temple
-		// market is recomputed from. They come from internal/temple rather than
-		// being spelled out here so the subscription and the read side cannot
-		// name different topics.
-		topics = append(topics, temple.Topics()...)
-		mercureSubKey := serviceCfg.MercureSubscriberKey
-		// One-shot warning for misconfigured deploys where the collector is
-		// publishing trade-ticks but the server has trade disabled. Repeated
-		// every-tick warnings would just be noise.
-		var tradeDisabledWarn sync.Once
-		// Reject collector events stamped for a different league or a bumped
-		// revision — a stale publisher lingering across a rolling deploy must not
-		// have its data applied as current. Rejections are counted and logged.
-		eventGuard := server.NewLeagueEventGuard(scope)
-		sub := server.NewMercureSubscriber(mercureURL, topics, mercureSubKey, func(ev server.MercureEvent) {
-			// Operator-triggered full recompute (from cmd/recalculate). Use parent
-			// ctx so the pipeline survives a subscriber reconnect mid-run.
-			if ev.Topic == "poe/admin/recompute" {
-				slog.Info("mercure: admin recompute requested")
-				go runFullRecompute(ctx, analyzer, scope)
-				return
-			}
-
-			// Collector-driven trade refresh tick. Parent ctx for the same reason —
-			// we want any in-flight gate request to complete and log its outcome
-			// even if the subscriber temporarily drops.
-			if ev.Topic == "poe/collector/trade-tick" {
-				if tradeGate == nil {
-					tradeDisabledWarn.Do(func() {
-						slog.Warn("mercure: trade-tick received but trade subsystem is disabled; further ticks will be silently dropped")
-					})
-					return
-				}
-				if !eventGuard.AcceptRaw([]byte(ev.Data)) {
-					return
-				}
-				go server.HandleTradeTick(ctx, tradeGate, tradeCache, labCache, scope, []byte(ev.Data))
-				return
-			}
-
-			// A stored currency-exchange hour. This branch returns before the
-			// generic dispatch below, which reads payload["endpoint"] and knows
-			// only the poe.ninja endpoints — falling through would log a
-			// "missing endpoint" warning per hour and do nothing useful.
-			//
-			// The payload itself is ignored on purpose (see Service.HandleEvent):
-			// its "rows" field counts what that pass inserted, not what the hour
-			// holds, so a replayed hour reports 0 while being fully populated.
-			// Parent ctx, like the branches above, so a recompute survives a
-			// subscriber reconnect. Recomputes coalesce, so a catch-up burst
-			// costs one extra pass, not one per hour.
-			if ev.Topic == exchange.Topic {
-				if eventGuard.AcceptRaw([]byte(ev.Data)) {
-					go exchangeService.HandleEvent(ctx, []byte(ev.Data))
-				}
-				return
-			}
-
-			// Reject collector data events stamped for a non-active league or
-			// revision before they are processed as current data.
-			if !eventGuard.AcceptRaw([]byte(ev.Data)) {
-				return
-			}
-
-			var payload map[string]any
-			if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {
-				slog.Warn("mercure: invalid event payload", "error", err)
-				return
-			}
-			slog.Info("mercure event received",
-				"topic", ev.Topic,
-				"endpoint", payload["endpoint"],
-				"inserted", payload["inserted"],
-			)
-
-			// Parse nextFetch from collector payload so the throttler can
-			// include it as "nextAny" in the analysis-updated event.
-			var nextFetch time.Time
-			if nf, ok := payload["nextFetch"].(string); ok {
-				if parsed, err := time.Parse(time.RFC3339, nf); err == nil {
-					nextFetch = parsed
-				}
-			}
-
-			// Trigger analysis only on new gem data — currency/fragment updates
-			// are not relevant for the lab dashboard.
-			endpoint, ok := payload["endpoint"].(string)
-			if !ok {
-				slog.Warn("mercure: missing or non-string 'endpoint' in payload", "payload", payload)
-				return
-			}
-			if endpoint == "ninja_currency" || endpoint == "ninja-currency" {
-				// Update divine rate on cache from latest DB data.
-				go func() {
-					qCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-					defer cancel()
-					var rate float64
-					if err := pool.QueryRow(qCtx,
-						`SELECT chaos FROM currency_snapshots WHERE league = $1 AND currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
-						scope.ID(),
-					).Scan(&rate); err != nil {
-						slog.Warn("currency event: divine rate query failed", "error", err)
-						return
-					}
-					labCache.For(scope).SetDivineRate(rate)
-					slog.Info("currency event: divine rate updated", "rate", rate)
-				}()
-			}
-
-			if endpoint == "ninja_fragments" || endpoint == "ninja-fragments" {
-				go func() {
-					qCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					defer cancel()
-					// Stores the answer even when it is empty — see
-					// RefreshOfferingTimings and the cache-state contract in
-					// internal/lab/cache.go. This used to store only a non-empty
-					// result, the writer-side twin of the reader defect POE-152 fixed.
-					n, err := handlers.RefreshOfferingTimings(qCtx, pool, labCache, scope)
-					if err != nil {
-						slog.Warn("fragment event: offering timing refresh failed", "error", err)
-						return
-					}
-					slog.Info("fragment event: offering timing updated", "offerings", n)
-				}()
-			}
-
-			// One of the seven item feeds stored a snapshot. Recomputes coalesce
-			// (temple.Service.Trigger), so the seven events that land within
-			// seconds of each other cost two bounded queries rather than seven,
-			// and the served answer is the one computed after the last of them.
-			// Parent ctx like the branches above, so a recompute survives a
-			// subscriber reconnect mid-run.
-			if temple.IsFeedEndpoint(endpoint) {
-				go templeService.HandleEvent(ctx, []byte(ev.Data))
-				return
-			}
-
-			if endpoint == "ninja_gems" || endpoint == "ninja-gems" {
-				// Always signal throttler on gem events; nextFetch is optional enrichment.
-				throttler.Signal(nextFetch)
-				go func() {
-					defer func() {
-						if r := recover(); r != nil {
-							slog.Error("transfigure analysis panicked", "recover", r)
-						}
-					}()
-					if err := analyzer.RunTransfigure(subCtx, scope); err != nil {
-						slog.Warn("transfigure analysis failed", "error", err)
-					}
-				}()
-				go func() {
-					defer func() {
-						if r := recover(); r != nil {
-							slog.Error("quality analysis panicked", "recover", r)
-						}
-					}()
-					if err := analyzer.RunQuality(subCtx, scope); err != nil {
-						slog.Warn("quality analysis failed", "error", err)
-					}
-				}()
-				// RunV2 must complete before RunFont — font reads GemFeatures
-				// from cache (tier classification). Running them concurrently
-				// causes font to read stale tiers from the previous cycle.
-				go func() {
-					defer func() {
-						if r := recover(); r != nil {
-							slog.Error("v2/font analysis panicked", "recover", r)
-						}
-					}()
-					if err := analyzer.RunV2(subCtx, scope); err != nil {
-						slog.Warn("v2 analysis failed", "error", err)
-						return
-					}
-					// Font runs after V2 so it reads fresh GemFeatures with current tier classification.
-					if err := analyzer.RunFont(subCtx, scope); err != nil {
-						slog.Warn("font analysis failed", "error", err)
-					}
-					// Double corrupt runs after Font: the compare path uses its
-					// EV as the tiebreaker when no Font candidate wins on 20/20
-					// value, so its corpus must be warm by the time a compare
-					// request lands.
-					if err := analyzer.RunDoubleCorrupt(subCtx, scope); err != nil {
-						slog.Warn("double corrupt analysis failed", "error", err)
-					}
-					// Dedication runs after V2 for risk-adjustment features.
-					if err := analyzer.RunDedication(subCtx, scope); err != nil {
-						slog.Warn("dedication analysis failed", "error", err)
-					}
-				}()
-
-				// Schedule a delayed recompute T+15min after each ninja_gems event.
-				// This picks up trade data accumulated since the snapshot.
-				// A new ninja event cancels any pending delayed recompute.
-				delayedRecomputeMu.Lock()
-				if delayedRecomputeTimer != nil {
-					delayedRecomputeTimer.Stop()
-				}
-				delayedRecomputeTimer = time.AfterFunc(15*time.Minute, func() {
-					defer func() {
-						if r := recover(); r != nil {
-							slog.Error("delayed v2 recompute panicked", "recover", r)
-						}
-					}()
-
-					// Take the league data lock and confirm the active league has
-					// not changed since this timer was scheduled. Without this the
-					// callback would commit/cache RunV2 output under a league that
-					// may have drifted while the timer was in flight, and could
-					// race a second server's recompute of the same dataset.
-					lock, skip, err := prepareDelayedRecompute(context.Background(), pool, scope)
-					if err != nil {
-						slog.Warn("delayed recompute: skipped", "reason", "lock/league check failed", "error", err)
-						return
-					}
-					if lock == nil {
-						slog.Info("delayed recompute: skipped", "reason", skip)
-						return
-					}
-					defer lock.Release()
-
-					slog.Info("delayed recompute: running v2 with accumulated trade data")
-					if err := analyzer.RunV2(context.Background(), scope); err != nil {
-						slog.Warn("delayed v2 recompute failed", "error", err)
-					}
-				})
-				delayedRecomputeMu.Unlock()
-			}
-		})
-		go sub.Run(subCtx)
-		slog.Info("mercure subscriber started", "topics", topics)
+		labCache.For(scope).SetDivineRate(rate)
+		slog.Info("currency event: divine rate updated", "rate", rate)
 	}
+	runtime.refreshOfferingTiming = func(_ context.Context) {
+		qCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		// Stores the answer even when it is empty — see RefreshOfferingTimings and
+		// the cache-state contract in internal/lab/cache.go. This used to store
+		// only a non-empty result, the writer-side twin of the reader defect
+		// POE-152 fixed.
+		n, err := handlers.RefreshOfferingTimings(qCtx, pool, labCache, scope)
+		if err != nil {
+			slog.Warn("fragment event: offering timing refresh failed", "error", err)
+			return
+		}
+		slog.Info("fragment event: offering timing updated", "offerings", n)
+	}
+	runtime.prepareDelayed = func(decCtx context.Context, captured league.Scope) (runtimeLock, string, error) {
+		return adaptDelayedLockResult(prepareDelayedRecompute(decCtx, pool, captured))
+	}
+	runtime.runV2 = analyzer.RunV2
+	defer runtime.Close()
+	runtime.Start()
 
 	srv := &http.Server{
 		Addr:         ":" + port,
