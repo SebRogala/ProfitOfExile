@@ -333,7 +333,7 @@ pub struct AppState {
     pub pair_code: Mutex<String>,
     pub client_txt_path: Mutex<String>,
     pub server_url: Mutex<String>,
-    pub detected_gems: Mutex<Vec<String>>,
+    pub lab_scan: lab_scan::LabScanState,
     pub lab_state: Mutex<lab_state::LabState>,
     pub logs: Mutex<Vec<String>>,
     pub sidebar_open: Mutex<bool>,
@@ -360,34 +360,8 @@ pub struct AppState {
     pub trade_stale_critical_secs: Mutex<u32>,
     pub trade_auto_refresh_secs: Mutex<u32>,
     pub auto_trade_enabled: Mutex<bool>,
-    /// Generation counter for gem OCR scans. Incremented on each start trigger
-    /// (FontOpened, manual scan).
-    pub gem_scan_generation: AtomicU64,
-    /// Generation counter for font panel OCR scans.
-    pub font_scan_generation: AtomicU64,
-    /// Generation of the font scan session that is currently running, or 0 when
-    /// none is. `FontOpened` re-arms the scan when it reads 0 — after a portal
-    /// trip no further `LabFinished` fires, so the event is the only chance to
-    /// bring the panel OCR back. Written by `spawn_font_scan` (its own
-    /// generation), by the loop on exit (compare-exchange, so a stale loop
-    /// cannot clear its replacement's token) and by anything that bumps
-    /// `font_scan_generation` without starting a replacement.
-    pub font_scan_live_gen: AtomicU64,
-    /// Liveness token for the single merged lab OCR thread.
-    pub lab_scan_live_gen: AtomicU64,
-    /// Counter from which the merged lab thread mints its liveness token.
-    pub lab_scan_generation: AtomicU64,
-    /// Monotonic count of `FontOpened` events. The craft ledger gates every
-    /// count change on it: the panel's count cannot change without a CRAFT
-    /// click, and a CRAFT click always fires this event, so a count change with
-    /// no new event is a misread. Never reset — the ledger stores the value it
-    /// accepted at, and a counter going backwards would re-open accepted rounds.
-    pub font_opened_seq: AtomicU64,
     /// Aspirant's Trial entry count (reset on Aspirants' Plaza). Font OCR starts at 3.
     pub aspirant_trial_count: AtomicU32,
-    /// Font session data — accumulated rounds, shared between the lab scan loop
-    /// and handlers.
-    pub font_session: Mutex<FontSessionData>,
     /// True when player is inside the labyrinth (between PlazaEntered and LabExited).
     /// Used by lab_navigation to determine if a non-lab area entry is a lab exit.
     pub in_lab: AtomicBool,
@@ -650,7 +624,7 @@ fn build_status(state: &AppState) -> AppStatus {
         state: format!("{:?}", *state.lab_state.lock().unwrap_or_else(|e| e.into_inner())),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         pair_code: state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        detected_gems: state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        detected_gems: state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         client_txt_path,
         client_txt_exists,
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
@@ -662,7 +636,7 @@ fn build_status(state: &AppState) -> AppStatus {
         auto_trade_enabled: *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()),
         device_id: state.device_id.clone(),
         device_id_dev_salt: fingerprint::USES_DEV_SALT,
-        font_session_rounds: state.font_session.lock().unwrap_or_else(|e| e.into_inner()).rounds.len(),
+        font_session_rounds: state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner()).rounds.len(),
         ocr_language_warning: ocr_warning_field(),
     }
 }
@@ -1201,10 +1175,10 @@ fn spawn_gem_scan(app: &AppHandle, source: &str) {
 
     // Bump generation — the merged capture loop resets its gem-local state on
     // the next tick.
-    let gen = state.gem_scan_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let gen = state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst) + 1;
 
     // Clear frontend comparator.
-    *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
+    *state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
     if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
 
     // Set state to PickingGems (capture loop checks this + generation).
@@ -1221,8 +1195,9 @@ fn spawn_gem_scan(app: &AppHandle, source: &str) {
 /// grabs for the same Lab tick.
 fn ensure_lab_scan(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let generation = font_session::next_scan_generation(&state.lab_scan_generation);
+    let generation = font_session::next_scan_generation(&state.lab_scan.lab_scan_generation);
     if state
+        .lab_scan
         .lab_scan_live_gen
         .compare_exchange(0, generation, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -1246,7 +1221,7 @@ fn stop_scanning(app: AppHandle) {
     let state = app.state::<AppState>();
     app_log(&app, "Manual scan stopped".to_string());
     // Bump generation to cancel any running scan.
-    state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
+    state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
     *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::Idle;
     emit_status(&app);
 }
@@ -2357,7 +2332,7 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
         app_log(&app, result.clone());
 
         // Send to server
-        let mut gems = state.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+        let mut gems = state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
         if !gems.contains(&m.name) {
             gems.push(m.name.clone());
             let all_gems = gems.clone();
@@ -2383,10 +2358,10 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
 /// one is already running.
 fn spawn_font_scan(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let generation = font_session::next_scan_generation(&state.font_scan_generation);
-    state.font_scan_live_gen.store(generation, Ordering::SeqCst);
+    let generation = font_session::next_scan_generation(&state.lab_scan.font_scan_generation);
+    state.lab_scan.font_scan_live_gen.store(generation, Ordering::SeqCst);
 
-    *state.font_session.lock().unwrap_or_else(|e| e.into_inner()) = FontSessionData::default();
+    *state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner()) = FontSessionData::default();
     app_log(app, format!("Font scan started (gen={})", generation));
     emit_status(app);
 
@@ -2406,7 +2381,7 @@ fn seal_font_round(app: &AppHandle) {
     // `font_session` to read `font_session_rounds`, and std Mutex is not
     // re-entrant, so emitting while the guard is alive deadlocks this thread.
     let sealed = {
-        let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
+        let mut session = state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner());
         font_session::seal_leftover_round(&mut session)
     };
 
@@ -2444,7 +2419,7 @@ fn seal_font_round(app: &AppHandle) {
 fn discard_font_session(app: AppHandle) {
     let state = app.state::<AppState>();
     let discarded = {
-        let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
+        let mut session = state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner());
         let discarded = session.rounds.len();
         *session = FontSessionData::default();
         discarded
@@ -2460,7 +2435,7 @@ fn send_font_session_data(app: &AppHandle) {
     seal_font_round(app);
 
     let state = app.state::<AppState>();
-    let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
+    let mut session = state.lab_scan.font_session.lock().unwrap_or_else(|e| e.into_inner());
 
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -3031,9 +3006,9 @@ fn spawn_log_watcher(app: AppHandle) {
                                     // from FontReady/PickingGems, so a scan
                                     // spawned at LabFinished for a player who
                                     // never opened the font has no other stop.
-                                    state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
+                                    state.lab_scan.font_scan_generation.fetch_add(1, Ordering::SeqCst);
                                     let was_live = font_session::font_scan_is_live(
-                                        state.font_scan_live_gen.swap(0, Ordering::SeqCst),
+                                        state.lab_scan.font_scan_live_gen.swap(0, Ordering::SeqCst),
                                     );
                                     if was_live {
                                         app_log(&app, "Font scan stopped (lab exited)".to_string());
@@ -3079,7 +3054,7 @@ fn spawn_log_watcher(app: AppHandle) {
                                 // and a frame captured after the click must see
                                 // the new value, or the count change it carries
                                 // reads as a misread.
-                                state.font_opened_seq.fetch_add(1, Ordering::SeqCst);
+                                state.lab_scan.font_opened_seq.fetch_add(1, Ordering::SeqCst);
                                 // The event cannot seal a round — it fires on
                                 // font open as well as on CRAFT, an unbounded
                                 // number of times per craft. Only the panel's
@@ -3091,7 +3066,7 @@ fn spawn_log_watcher(app: AppHandle) {
                                 // what decides whether this event has to bring
                                 // the panel OCR back.
                                 let font_scan_live = font_session::font_scan_is_live(
-                                    state.font_scan_live_gen.load(Ordering::SeqCst),
+                                    state.lab_scan.font_scan_live_gen.load(Ordering::SeqCst),
                                 );
                                 for effect in font_session::font_opened_effects(font_opened_count, font_scan_live) {
                                     match effect {
@@ -3103,11 +3078,11 @@ fn spawn_log_watcher(app: AppHandle) {
                                         }
                                         font_session::FontOpenedEffect::StopGemScan => {
                                             // Even: CONFIRM click → stop scanning, clear comparator
-                                            state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
+                                            state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
                                             *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                                                 lab_state::LabState::Idle;
                                             detected_gems.clear();
-                                            *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
+                                            *state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
                                             if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
                                             app_log(&app, format!("FontOpened #{} — CONFIRM, gem scan stopped", font_opened_count));
                                         }
@@ -3125,12 +3100,12 @@ fn spawn_log_watcher(app: AppHandle) {
                                 app_log(&app, format!("Zone changed: {} — stopping", area));
 
                                 // Stop both gem and font scans + reset state.
-                                state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
-                                state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
+                                state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
+                                state.lab_scan.font_scan_generation.fetch_add(1, Ordering::SeqCst);
                                 // Synchronously, not by waiting for the loop to
                                 // notice: a `FontOpened` arriving in that window
                                 // must still see a dead scan and re-arm it.
-                                state.font_scan_live_gen.store(0, Ordering::SeqCst);
+                                state.lab_scan.font_scan_live_gen.store(0, Ordering::SeqCst);
                                 font_opened_count = 0;
                                 *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                                     lab_state::LabState::Idle;
@@ -3148,7 +3123,7 @@ fn spawn_log_watcher(app: AppHandle) {
                                 send_font_session_data(&app);
 
                                 // Clear frontend comparator — player left the area.
-                                *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) =
+                                *state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) =
                                     Vec::new();
                                 if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
                                 emit_status(&app);
@@ -3223,7 +3198,16 @@ pub fn run() {
             r"C:\Program Files (x86)\Grinding Gear Games\Path of Exile\logs\Client.txt",
         )),
         server_url: Mutex::new(String::from(option_env!("POE_SERVER_URL").unwrap_or("https://profitofexile.localhost"))),
-        detected_gems: Mutex::new(Vec::new()),
+        lab_scan: lab_scan::LabScanState {
+            detected_gems: Mutex::new(Vec::new()),
+            gem_scan_generation: AtomicU64::new(0),
+            font_scan_generation: AtomicU64::new(0),
+            font_scan_live_gen: AtomicU64::new(0),
+            lab_scan_live_gen: AtomicU64::new(0),
+            lab_scan_generation: AtomicU64::new(0),
+            font_opened_seq: AtomicU64::new(0),
+            font_session: Mutex::new(FontSessionData::default()),
+        },
         lab_state: Mutex::new(lab_state::LabState::Idle),
         logs: Mutex::new(Vec::new()),
         sidebar_open: Mutex::new(true),
@@ -3240,14 +3224,7 @@ pub fn run() {
         trade_stale_critical_secs: Mutex::new(settings::DEFAULT_TRADE_STALE_CRITICAL_SECS),
         trade_auto_refresh_secs: Mutex::new(settings::DEFAULT_TRADE_AUTO_REFRESH_SECS),
         auto_trade_enabled: Mutex::new(false),
-        gem_scan_generation: AtomicU64::new(0),
-        font_scan_generation: AtomicU64::new(0),
-        font_scan_live_gen: AtomicU64::new(0),
-        lab_scan_live_gen: AtomicU64::new(0),
-        lab_scan_generation: AtomicU64::new(0),
-        font_opened_seq: AtomicU64::new(0),
         aspirant_trial_count: AtomicU32::new(0),
-        font_session: Mutex::new(FontSessionData::default()),
         in_lab: AtomicBool::new(false),
         game_in_foreground: AtomicBool::new(false),
         compass_mode: Mutex::new(String::from("minimap")),
@@ -3533,9 +3510,9 @@ pub fn run() {
                         let _ = tx.send(true);
                     }
                     // Gem/font scan loops — bump generations so they exit
-                    state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
-                    state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
-                    state.font_scan_live_gen.store(0, Ordering::SeqCst);
+                    state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
+                    state.lab_scan.font_scan_generation.fetch_add(1, Ordering::SeqCst);
+                    state.lab_scan.font_scan_live_gen.store(0, Ordering::SeqCst);
 
                     let is_maximized = window.is_maximized().unwrap_or(false);
                     // Only save position/size if not maximized (restore to normal position)
