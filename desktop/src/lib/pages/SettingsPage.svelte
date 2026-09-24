@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { createSettingsUpdateController } from '$lib/updater/settings-update.svelte';
 	import { store } from '$lib/stores/status.svelte';
@@ -10,6 +9,7 @@
 	import { untrack } from 'svelte';
 	import { ocrRectsKey, screenGeometryView } from '$lib/geometry/view';
 	import { createOcrPreviewOwner } from '$lib/overlay/ocr-preview';
+	import { createWidgetConfigRequestController } from '$lib/overlay/widgets/widget-config-request.svelte';
 	import type { GameMonitorInfo } from '$lib/overlay/monitor-choice';
 	import {
 		canStartConfigure,
@@ -331,10 +331,15 @@
 			.filter((module): module is string => module !== null)
 	);
 
-	/** The module whose widgets are being arranged in its own overlay window
-	 *  right now, or null. Set when Configure is pressed, cleared by the host's
-	 *  `widget-config-end`. */
-	let widgetConfiguring = $state<string | null>(null);
+	const widgetConfigRequest = createWidgetConfigRequestController({
+		reloadGeometry: (module) => { void loadWidgetGeometries([module]); }
+	});
+	let widgetConfiguring = $derived(widgetConfigRequest.configuring);
+
+	$effect(() => {
+		widgetConfigRequest.connect();
+		return () => widgetConfigRequest.dispose();
+	});
 
 	$effect(() => {
 		resolveWidgetScaleFactor().catch((e: any) =>
@@ -362,134 +367,6 @@
 	$effect(() => {
 		const modules = widgetModules;
 		if (modules.length > 0) loadWidgetGeometries(modules);
-	});
-
-	/**
-	 * Ask the layout to open config mode on a module's overlay window.
-	 *
-	 * Settings owns none of the three ordering steps itself
-	 * (`docs/OVERLAY-GUIDE.md`, "Config-mode ordering contract") — the layout
-	 * does, because it is the file that builds and owns that window. This emits
-	 * the request and then waits for `widget-config-end`, which the HOST sends
-	 * after Save or Cancel and the layout sends if it could not open the window
-	 * at all.
-	 *
-	 * Pressing it again while a session is live is deliberate, not a bug to
-	 * guard: it is the user's way out of a window that somehow missed the event,
-	 * and both entering config mode and this request are idempotent.
-	 */
-	/**
-	 * How long the button waits for the layout to say config mode is OPEN.
-	 *
-	 * Not a limit on the arranging session — that ends when the user presses Save
-	 * or Cancel, however long they take. This bounds the OPENING only, and it has
-	 * to sit above the layout's own bound on the same work: it waits up to 10 s
-	 * for the window to be built and then makes three more IPC calls, and every
-	 * failure it can see it already reports as `widget-config-end`. What is left
-	 * for this timer is the failure the layout cannot report — its listener never
-	 * registered, or the emit never arrived — which is exactly the case where
-	 * nothing else will ever clear the button.
-	 */
-	const WIDGET_CONFIG_ACK_MS = 20_000;
-	let widgetConfigAckTimer: ReturnType<typeof setTimeout> | null = null;
-	/** Whether the layout has said it PICKED THE REQUEST UP (`widget-config-opening`)
-	 *  since this button was pressed. */
-	let widgetConfigPickedUp = false;
-
-	function clearWidgetConfigAck(): void {
-		if (widgetConfigAckTimer === null) return;
-		clearTimeout(widgetConfigAckTimer);
-		widgetConfigAckTimer = null;
-	}
-
-	/**
-	 * Arm the opening deadline.
-	 *
-	 * On expiry there are two different situations and only one of them may be
-	 * abandoned. If the layout never said it picked the request up, nothing is
-	 * running and nothing else will ever clear the button — end it. If it DID,
-	 * a start is still in flight (a hung IPC inside a 10 s window wait, say),
-	 * and tearing the session down now would leave that start setting config
-	 * mode on a window this very path had torn down. So the deadline is given
-	 * one more period, once, and the pick-up is forgotten so the second expiry
-	 * ends it either way.
-	 */
-	function armWidgetConfigAck(module: string): void {
-		clearWidgetConfigAck();
-		widgetConfigAckTimer = setTimeout(() => {
-			widgetConfigAckTimer = null;
-			if (widgetConfiguring !== module) return;
-			if (widgetConfigPickedUp) {
-				widgetConfigPickedUp = false;
-				console.warn(`[settings] ${module} config mode is slow to open — waiting once more`);
-				armWidgetConfigAck(module);
-				return;
-			}
-			console.warn(`[settings] no answer to widget config mode for ${module} — giving up`);
-			widgetConfiguring = null;
-			// Told, not just forgotten: if the layout DID force the module on and
-			// then went quiet, this is what gets it switched back off.
-			getCurrentWebviewWindow().emit('widget-config-end', { module }).catch(() => {});
-		}, WIDGET_CONFIG_ACK_MS);
-	}
-
-	async function configureWidgets(module: string): Promise<void> {
-		widgetConfiguring = module;
-		widgetConfigPickedUp = false;
-		armWidgetConfigAck(module);
-		try {
-			await getCurrentWebviewWindow().emit('widget-config-start', { module });
-		} catch (e) {
-			// Nothing is going to answer, so the button must not sit on
-			// "Configuring…" forever.
-			console.warn('[settings] could not ask for widget config mode:', e);
-			clearWidgetConfigAck();
-			widgetConfiguring = null;
-		}
-	}
-
-	$effect(() => {
-		// The layout has the request. It does not mean config mode is open — that
-		// is `widget-config-open` below — only that abandoning it now would be
-		// abandoning work in progress.
-		const picked = listen<{ module?: string }>('widget-config-opening', (event) => {
-			if (event.payload?.module === widgetConfiguring) widgetConfigPickedUp = true;
-		});
-		return () => {
-			picked.then((unlisten) => unlisten()).catch(() => {});
-		};
-	});
-
-	$effect(() => {
-		// The layout's acknowledgement that the window is interactive and the host
-		// has been told. The button stays on "Configuring…" — that state is now
-		// true rather than hopeful — and only the deadline is stood down.
-		const opened = listen<{ module?: string }>('widget-config-open', (event) => {
-			if (event.payload?.module !== widgetConfiguring) return;
-			clearWidgetConfigAck();
-			widgetConfigPickedUp = false;
-		});
-		return () => {
-			opened.then((unlisten) => unlisten()).catch(() => {});
-		};
-	});
-
-	$effect(() => {
-		const pending = listen<{ module?: string }>('widget-config-end', (event) => {
-			const module = event.payload?.module;
-			if (!module) return;
-			if (widgetConfiguring === module) {
-				widgetConfiguring = null;
-				clearWidgetConfigAck();
-				widgetConfigPickedUp = false;
-			}
-			// Save wrote through `set_widget_geometry` in the overlay window, and
-			// Cancel may have restored a map this page has a stale copy of.
-			loadWidgetGeometries([module]);
-		});
-		return () => {
-			pending.then((unlisten) => unlisten()).catch(() => {});
-		};
 	});
 
 	// --- Timer appearance ---
@@ -602,7 +479,7 @@
 						<span class="setting-value">
 							{widgetConfiguring === module ? 'Save or Cancel in the overlay' : ''}
 						</span>
-						<Button onclick={() => configureWidgets(module)} disabled={!configureAllowed}>
+						<Button onclick={() => widgetConfigRequest.configureWidgets(module)} disabled={!configureAllowed}>
 							{widgetConfiguring === module ? 'Configuring\u2026' : 'Configure widgets'}
 						</Button>
 					</div>
