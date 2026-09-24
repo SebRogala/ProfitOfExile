@@ -2,8 +2,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-	import { checkForUpdate } from '$lib/updater/check';
-	import { relaunch } from '@tauri-apps/plugin-process';
+	import { createSettingsUpdateController } from '$lib/updater/settings-update.svelte';
 	import { store } from '$lib/stores/status.svelte';
 	import { hasFeature, MERC_FEATURE, TEMPLE_FEATURE } from '$lib/stores/entitlements.svelte';
 	import { ssot, fetchSsot } from '$lib/stores/ssot.svelte';
@@ -49,12 +48,10 @@
 
 	// --- Update ---
 	let appVersion = $state('...');
-	let updateStatus = $state<'idle' | 'checking' | 'available' | 'downloading' | 'error'>(
-		store.updateAvailable ? 'available' : 'idle'
-	);
-	let updateVersion = $state(store.updateVersion || '');
-	let updateError = $state('');
-	let updateProgress = $state(0);
+	const updateController = createSettingsUpdateController({
+		updateAvailable: store.updateAvailable,
+		updateVersion: store.updateVersion
+	});
 
 	// Load version on mount
 	$effect(() => {
@@ -119,51 +116,10 @@
 
 	// Sync: when background checker detects an update, reflect it immediately
 	$effect(() => {
-		if (store.updateAvailable && updateStatus === 'idle') {
-			updateStatus = 'available';
-			updateVersion = store.updateVersion;
+		if (store.updateAvailable && updateController.status === 'idle') {
+			updateController.offerBackgroundUpdate(store.updateVersion);
 		}
 	});
-
-	async function checkForUpdates() {
-		updateStatus = 'checking';
-		updateError = '';
-		try {
-			const update = await checkForUpdate();
-			if (update) {
-				updateStatus = 'available';
-				updateVersion = update.version;
-			} else {
-				updateStatus = 'idle';
-				updateError = 'You are on the latest version.';
-			}
-		} catch (e: any) {
-			updateStatus = 'error';
-			updateError = e?.message || String(e);
-		}
-	}
-
-	async function installUpdate() {
-		updateStatus = 'downloading';
-		updateError = '';
-		try {
-			const update = await checkForUpdate();
-			if (!update) return;
-			await update.downloadAndInstall((progress: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => {
-				if (progress.event === 'Started' && progress.data?.contentLength) {
-					updateProgress = 0;
-				} else if (progress.event === 'Progress') {
-					updateProgress += progress.data?.chunkLength ?? 0;
-				} else if (progress.event === 'Finished') {
-					updateProgress = 0;
-				}
-			});
-			await relaunch();
-		} catch (e: any) {
-			updateStatus = 'error';
-			updateError = e?.message || String(e);
-		}
-	}
 
 	let ocrRects = $state<OcrRectView[]>([]);
 	let ocrRectsLoaded = $state(false);
@@ -705,21 +661,21 @@
 
 			<div class="setting-row">
 				<span class="setting-label">Updates</span>
-				{#if updateStatus === 'checking'}
+				{#if updateController.status === 'checking'}
 					<span class="setting-value muted">Checking...</span>
-				{:else if updateStatus === 'available'}
-					<span class="setting-value update-available">v{updateVersion} available</span>
-					<Button variant="save" onclick={installUpdate}>Install & Restart</Button>
-				{:else if updateStatus === 'downloading'}
-					<span class="setting-value muted">Downloading... {updateProgress > 0 ? `(${Math.round(updateProgress / 1024)}KB)` : ''}</span>
-				{:else if updateStatus === 'error'}
-					<span class="setting-value update-error">{updateError}</span>
-					<Button onclick={checkForUpdates}>Retry</Button>
+				{:else if updateController.status === 'available'}
+					<span class="setting-value update-available">v{updateController.version} available</span>
+					<Button variant="save" onclick={updateController.installUpdate}>Install & Restart</Button>
+				{:else if updateController.status === 'downloading'}
+					<span class="setting-value muted">Downloading... {updateController.progress > 0 ? `(${Math.round(updateController.progress / 1024)}KB)` : ''}</span>
+				{:else if updateController.status === 'error'}
+					<span class="setting-value update-error">{updateController.error}</span>
+					<Button onclick={updateController.checkForUpdates}>Retry</Button>
 				{:else}
-					{#if updateError}
-						<span class="setting-value muted">{updateError}</span>
+					{#if updateController.error}
+						<span class="setting-value muted">{updateController.error}</span>
 					{/if}
-					<Button onclick={checkForUpdates}>Check for Updates</Button>
+					<Button onclick={updateController.checkForUpdates}>Check for Updates</Button>
 				{/if}
 			</div>
 		</section>
