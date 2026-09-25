@@ -87,11 +87,15 @@ function makeHarness() {
 	const harness = {
 		activeWindow: null as (FakeWindow & WindowLike) | null,
 		windows: [] as (FakeWindow & WindowLike)[],
-		timers: [] as { callback: () => void; ms: number }[],
+		timers: [] as { id: number; callback: () => void; ms: number; canceled: boolean }[],
 		wait: vi.fn(async (_ms: number) => {}),
 		logs: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), app: vi.fn(async (_message: string) => {}) },
 		onOuterSize: undefined as (() => void) | undefined,
 		destroyRemovesActive: true,
+		clearTimer: vi.fn((timer: ReturnType<typeof setTimeout>) => {
+			const entry = harness.timers.find((item) => item.id === timer);
+			if (entry) entry.canceled = true;
+		}),
 		primaryMonitor: async (): Promise<PreviewMonitor> => ({ position: { x: 100, y: 200 }, scaleFactor: 1.5 }),
 		currentMonitor: async (): Promise<PreviewMonitor> => null,
 		availableMonitors: async (): Promise<AvailableMonitors> => [
@@ -131,10 +135,11 @@ function makeHarness() {
 		appLog: harness.logs.app,
 		wait: harness.wait,
 		setTimer: (callback, ms) => {
-			harness.timers.push({ callback, ms });
-			return harness.timers.length - 1 as ReturnType<typeof setTimeout>;
+			const timer = { id: harness.timers.length + 1, callback, ms, canceled: false };
+			harness.timers.push(timer);
+			return timer.id as ReturnType<typeof setTimeout>;
 		},
-		clearTimer: vi.fn(),
+		clearTimer: harness.clearTimer,
 		warn: harness.logs.warn,
 		info: harness.logs.info,
 		error: harness.logs.error
@@ -230,18 +235,16 @@ describe('OCR preview owner', () => {
 		);
 	});
 
-	it('tears down the existing preview before a replacement', async () => {
+	it('destroys the current preview through close and destroy', async () => {
 		const harness = makeHarness();
 
 		await harness.owner.preview(request());
 		const first = harness.windows[0];
 		await harness.owner.destroy();
-		await harness.owner.preview(request([30, 40, 500, 600]));
 
 		expect(first.close).toHaveBeenCalledTimes(1);
 		expect(first.destroy).toHaveBeenCalledTimes(1);
-		expect(harness.windows).toHaveLength(2);
-		expect(harness.owner.hasPreview).toBe(true);
+		expect(harness.owner.hasPreview).toBe(false);
 	});
 
 	it('does no placement work when the creation callback is stale at entry', async () => {
@@ -285,7 +288,9 @@ describe('OCR preview owner', () => {
 			{ width: 300, height: 400 }
 		]);
 		expect(harness.clickthroughLabels).toEqual(['overlay-preview']);
-		expect(harness.timers).toEqual([{ callback: expect.any(Function), ms: 10_000 }]);
+		expect(harness.timers).toMatchObject([
+			{ id: 1, callback: expect.any(Function), ms: 10_000, canceled: false }
+		]);
 	});
 
 	it('stops after the resize checkpoint when replacement happens during the workaround', async () => {
@@ -370,5 +375,18 @@ describe('OCR preview owner', () => {
 		expect(preview.close).toHaveBeenCalledTimes(1);
 		expect(preview.destroy).toHaveBeenCalledTimes(1);
 		expect(harness.owner.hasPreview).toBe(false);
+	});
+
+	it('clears the exact outstanding expiry timer when destroying a live preview', async () => {
+		const harness = makeHarness();
+
+		await harness.owner.preview(request());
+		await harness.windows[0].emit('tauri://created');
+		const timer = harness.timers[0];
+
+		await harness.owner.destroy();
+
+		expect(harness.clearTimer).toHaveBeenCalledWith(timer.id);
+		expect(timer.canceled).toBe(true);
 	});
 });

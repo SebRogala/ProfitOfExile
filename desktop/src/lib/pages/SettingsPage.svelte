@@ -9,6 +9,7 @@
 	import { untrack } from 'svelte';
 	import { ocrRectsKey, screenGeometryView } from '$lib/geometry/view';
 	import { createOcrPreviewOwner } from '$lib/overlay/ocr-preview';
+	import { requestOcrPreview, type OcrRectView } from '$lib/pages/ocr-preview-request';
 	import { createWidgetConfigRequestController } from '$lib/overlay/widgets/widget-config-request.svelte';
 	import type { GameMonitorInfo } from '$lib/overlay/monitor-choice';
 	import {
@@ -27,14 +28,6 @@
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import { getVersion } from '@tauri-apps/api/app';
-	type OcrRectView = {
-		key: string;
-		label: string;
-		rect: [number, number, number, number] | null;
-		rows: [number, number, number, number][];
-		source: string;
-	};
-
 	const LAB_PREVIEW_KEYS = ['lab.gem', 'lab.font'] as const;
 	const TEMPLE_PREVIEW_KEYS = ['temple.panel', 'temple.remaining'] as const;
 	const MERC_PREVIEW_KEYS = ['merc.panel'] as const;
@@ -236,25 +229,13 @@
 	});
 
 	async function previewOcrRegion(key: string): Promise<void> {
-		await ocrPreview.destroy();
-
-		try {
-			const rows = await invoke<OcrRectView[]>('get_ocr_rects');
-			ocrRects = rows;
-			const row = rows.find((item) => item.key === key);
-			if (!row?.rect) {
-				console.warn(`[settings] OCR preview '${key}' is unlocated`);
-				return;
-			}
-			await ocrPreview.preview({
-				key,
-				label: row.label,
-				rect: row.rect,
-				rows: row.rows
-			});
-		} catch (e) {
-			console.error('[settings] OCR preview failed:', e);
-		}
+		await requestOcrPreview(key, {
+			owner: ocrPreview,
+			fetchRects: () => invoke<OcrRectView[]>('get_ocr_rects'),
+			setRects: (rows) => { ocrRects = rows; },
+			warn: (...args) => console.warn(...args),
+			error: (...args) => console.error(...args)
+		});
 	}
 
 	// --- Trade Staleness Settings ---
