@@ -453,3 +453,124 @@ func TestCollectiveAnalysis_OptionalSparklineErrorReturnsRowWithEmptySparkline(t
 		t.Errorf("logs = %s, want fallback warning at the query decision", logs.String())
 	}
 }
+
+// Known-defect characterization for the Trend sparkline collision recorded
+// under "Confirmed pre-existing behavior left unchanged" in the parent plan
+// (profitofexile-responsibility-splits.md): same-name rows rediscover one
+// variant by name before assembling their name+variant response keys. This
+// pins current behavior, not intended behavior, and exercises the HTTP
+// handler's warm path.
+func TestTrendAnalysis_AllVariantsSameNameUsesNameFirstVariantSeries(t *testing.T) {
+	now := time.Now()
+	winnerTrans := []lab.SparklinePoint{sparkAt(now, 3*time.Hour, 101, 31), sparkAt(now, 2*time.Hour, 112, 29)}
+	winnerBase := []lab.SparklinePoint{sparkAt(now, 3*time.Hour, 1, 51), sparkAt(now, 2*time.Hour, 1, 47)}
+	otherTrans := []lab.SparklinePoint{sparkAt(now, 3*time.Hour, 7, 91), sparkAt(now, 2*time.Hour, 9, 84)}
+	otherBase := []lab.SparklinePoint{sparkAt(now, 3*time.Hour, 1, 13), sparkAt(now, 2*time.Hour, 1, 11)}
+	cache := sameNameVariantCache(t,
+		sameNameVariantFixture{variant: "20/20", roi: 100, trans: winnerTrans, base: winnerBase},
+		sameNameVariantFixture{variant: "1/20", roi: 10, trans: otherTrans, base: otherBase},
+	)
+
+	w := serveWithoutRepository(t, TrendAnalysis(nil, cache, sparklineScope),
+		"/api/analysis/trends")
+	rows := decodeTrendJSONRows(t, w)
+	if len(rows) != 2 {
+		t.Fatalf("response rows = %d, want two same-name variants: %+v", len(rows), rows)
+	}
+	var firstVariant, secondVariant string
+	if err := json.Unmarshal(rows[0]["variant"], &firstVariant); err != nil {
+		t.Fatalf("decode row 0 variant: %v", err)
+	}
+	if err := json.Unmarshal(rows[1]["variant"], &secondVariant); err != nil {
+		t.Fatalf("decode row 1 variant: %v", err)
+	}
+	if firstVariant != "20/20" || secondVariant != "1/20" {
+		t.Fatalf("variants = (%q, %q), want (20/20, 1/20)", firstVariant, secondVariant)
+	}
+	for key, want := range map[string][]int{
+		"priceTrend":        {101, 112},
+		"listingsTrend":     {31, 29},
+		"baseListingsTrend": {51, 47},
+	} {
+		got := decodeTrendSeries(t, rows[0], key)
+		if !equalIntSlices(got, want) {
+			t.Errorf("20/20 %s = %v, want %v", key, got, want)
+		}
+		if _, ok := rows[1][key]; ok {
+			t.Errorf("1/20 unexpectedly has %s = %s; name-first selection should leave it missing", key, rows[1][key])
+		}
+	}
+}
+
+func TestTrendAnalysis_SameNameVariantControlsUseRequestedMarketSeries(t *testing.T) {
+	now := time.Now()
+	twentyTwenty := []lab.SparklinePoint{sparkAt(now, 2*time.Hour, 125, 26), sparkAt(now, time.Hour, 140, 22)}
+	oneTwenty := []lab.SparklinePoint{sparkAt(now, 2*time.Hour, 9, 90), sparkAt(now, time.Hour, 11, 84)}
+	baseTwentyTwenty := []lab.SparklinePoint{sparkAt(now, 2*time.Hour, 1, 51), sparkAt(now, time.Hour, 1, 47)}
+	baseOneTwenty := []lab.SparklinePoint{sparkAt(now, 2*time.Hour, 1, 13), sparkAt(now, time.Hour, 1, 11)}
+	cache := sameNameVariantCache(t,
+		sameNameVariantFixture{variant: "20/20", roi: 100, trans: twentyTwenty, base: baseTwentyTwenty},
+		sameNameVariantFixture{variant: "1/20", roi: 10, trans: oneTwenty, base: baseOneTwenty},
+	)
+
+	tests := []struct {
+		variant  string
+		prices   []int
+		listings []int
+		base     []int
+	}{
+		{variant: "20/20", prices: []int{125, 140}, listings: []int{26, 22}, base: []int{51, 47}},
+		{variant: "1/20", prices: []int{9, 11}, listings: []int{90, 84}, base: []int{13, 11}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.variant, func(t *testing.T) {
+			w := serveWithoutRepository(t, TrendAnalysis(nil, cache, sparklineScope),
+				"/api/analysis/trends?variant="+tt.variant)
+			rows := decodeTrendJSONRows(t, w)
+			if len(rows) != 1 {
+				t.Fatalf("response rows = %d, want one: %+v", len(rows), rows)
+			}
+			var gotVariant string
+			if err := json.Unmarshal(rows[0]["variant"], &gotVariant); err != nil {
+				t.Fatalf("decode variant: %v", err)
+			}
+			if gotVariant != tt.variant {
+				t.Fatalf("variant = %q, want %q", gotVariant, tt.variant)
+			}
+			for key, want := range map[string][]int{
+				"priceTrend":        tt.prices,
+				"listingsTrend":     tt.listings,
+				"baseListingsTrend": tt.base,
+			} {
+				if got := decodeTrendSeries(t, rows[0], key); !equalIntSlices(got, want) {
+					t.Errorf("%s = %v, want %v", key, got, want)
+				}
+			}
+		})
+	}
+}
+
+func decodeTrendSeries(t *testing.T, row map[string]json.RawMessage, key string) []int {
+	t.Helper()
+	raw, ok := row[key]
+	if !ok {
+		t.Fatalf("row has no %s: %v", key, row)
+	}
+	var series []int
+	if err := json.Unmarshal(raw, &series); err != nil {
+		t.Fatalf("decode %s: %v", key, err)
+	}
+	return series
+}
+
+func equalIntSlices(got, want []int) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
