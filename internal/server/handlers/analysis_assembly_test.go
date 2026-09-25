@@ -454,13 +454,7 @@ func TestCollectiveAnalysis_OptionalSparklineErrorReturnsRowWithEmptySparkline(t
 	}
 }
 
-// Known-defect characterization for the Trend sparkline collision recorded
-// under "Confirmed pre-existing behavior left unchanged" in the parent plan
-// (profitofexile-responsibility-splits.md): same-name rows rediscover one
-// variant by name before assembling their name+variant response keys. This
-// pins current behavior, not intended behavior, and exercises the HTTP
-// handler's warm path.
-func TestTrendAnalysis_AllVariantsSameNameUsesNameFirstVariantSeries(t *testing.T) {
+func TestTrendAnalysis_AllVariantsSameNameUsesEachVariantSeries(t *testing.T) {
 	now := time.Now()
 	winnerTrans := []lab.SparklinePoint{sparkAt(now, 3*time.Hour, 101, 31), sparkAt(now, 2*time.Hour, 112, 29)}
 	winnerBase := []lab.SparklinePoint{sparkAt(now, 3*time.Hour, 1, 51), sparkAt(now, 2*time.Hour, 1, 47)}
@@ -487,18 +481,91 @@ func TestTrendAnalysis_AllVariantsSameNameUsesNameFirstVariantSeries(t *testing.
 	if firstVariant != "20/20" || secondVariant != "1/20" {
 		t.Fatalf("variants = (%q, %q), want (20/20, 1/20)", firstVariant, secondVariant)
 	}
-	for key, want := range map[string][]int{
-		"priceTrend":        {101, 112},
-		"listingsTrend":     {31, 29},
-		"baseListingsTrend": {51, 47},
-	} {
-		got := decodeTrendSeries(t, rows[0], key)
-		if !equalIntSlices(got, want) {
-			t.Errorf("20/20 %s = %v, want %v", key, got, want)
+	wantByVariant := map[string]map[string][]int{
+		"20/20": {
+			"priceTrend":        {101, 112},
+			"listingsTrend":     {31, 29},
+			"baseListingsTrend": {51, 47},
+		},
+		"1/20": {
+			"priceTrend":        {7, 9},
+			"listingsTrend":     {91, 84},
+			"baseListingsTrend": {13, 11},
+		},
+	}
+	for key := range wantByVariant["20/20"] {
+		for i, variant := range []string{"20/20", "1/20"} {
+			got := decodeTrendSeries(t, rows[i], key)
+			want := wantByVariant[variant][key]
+			if !equalIntSlices(got, want) {
+				t.Errorf("%s %s = %v, want %v", variant, key, got, want)
+			}
 		}
-		if _, ok := rows[1][key]; ok {
-			t.Errorf("1/20 unexpectedly has %s = %s; name-first selection should leave it missing", key, rows[1][key])
-		}
+	}
+}
+
+func TestTrendAnalysis_MissingVariantTransformedSeriesDoesNotBorrowAnotherMarket(t *testing.T) {
+	now := time.Now()
+	cache := sameNameVariantCache(t,
+		sameNameVariantFixture{
+			variant: "20/20",
+			roi:     100,
+			trans:   []lab.SparklinePoint{sparkAt(now, 3*time.Hour, 101, 31), sparkAt(now, 2*time.Hour, 112, 29)},
+			base:    []lab.SparklinePoint{sparkAt(now, 3*time.Hour, 1, 51), sparkAt(now, 2*time.Hour, 1, 47)},
+		},
+		sameNameVariantFixture{
+			variant: "1/20",
+			roi:     10,
+			base:    []lab.SparklinePoint{sparkAt(now, 3*time.Hour, 1, 13), sparkAt(now, 2*time.Hour, 1, 11)},
+		},
+	)
+
+	w := serveWithoutRepository(t, TrendAnalysis(nil, cache, sparklineScope),
+		"/api/analysis/trends")
+	rows := decodeTrendJSONRows(t, w)
+	if len(rows) != 2 {
+		t.Fatalf("response rows = %d, want two same-name variants: %+v", len(rows), rows)
+	}
+	if got := decodeTrendSeries(t, rows[0], "priceTrend"); !equalIntSlices(got, []int{101, 112}) {
+		t.Errorf("20/20 priceTrend = %v, want [101 112]", got)
+	}
+	if got := decodeTrendSeries(t, rows[1], "baseListingsTrend"); !equalIntSlices(got, []int{13, 11}) {
+		t.Errorf("1/20 baseListingsTrend = %v, want [13 11]", got)
+	}
+	if _, ok := rows[1]["priceTrend"]; ok {
+		t.Errorf("1/20 unexpectedly has transformed series: %s", rows[1]["priceTrend"])
+	}
+}
+
+func TestTrendAnalysis_MissingVariantBaseSeriesDoesNotBorrowAnotherMarket(t *testing.T) {
+	now := time.Now()
+	cache := sameNameVariantCache(t,
+		sameNameVariantFixture{
+			variant: "20/20",
+			roi:     100,
+			trans:   []lab.SparklinePoint{sparkAt(now, 3*time.Hour, 101, 31), sparkAt(now, 2*time.Hour, 112, 29)},
+			base:    []lab.SparklinePoint{sparkAt(now, 3*time.Hour, 1, 51), sparkAt(now, 2*time.Hour, 1, 47)},
+		},
+		sameNameVariantFixture{
+			variant: "1/20",
+			trans:   []lab.SparklinePoint{sparkAt(now, 3*time.Hour, 7, 91), sparkAt(now, 2*time.Hour, 9, 84)},
+		},
+	)
+
+	w := serveWithoutRepository(t, TrendAnalysis(nil, cache, sparklineScope),
+		"/api/analysis/trends")
+	rows := decodeTrendJSONRows(t, w)
+	if len(rows) != 2 {
+		t.Fatalf("response rows = %d, want two same-name variants: %+v", len(rows), rows)
+	}
+	if got := decodeTrendSeries(t, rows[0], "baseListingsTrend"); !equalIntSlices(got, []int{51, 47}) {
+		t.Errorf("20/20 baseListingsTrend = %v, want [51 47]", got)
+	}
+	if got := decodeTrendSeries(t, rows[1], "priceTrend"); !equalIntSlices(got, []int{7, 9}) {
+		t.Errorf("1/20 priceTrend = %v, want [7 9]", got)
+	}
+	if _, ok := rows[1]["baseListingsTrend"]; ok {
+		t.Errorf("1/20 unexpectedly has base series: %s", rows[1]["baseListingsTrend"])
 	}
 }
 
