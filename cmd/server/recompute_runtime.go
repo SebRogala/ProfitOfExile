@@ -91,6 +91,10 @@ type recomputeRuntime struct {
 	subCancel  context.CancelFunc
 	subscriber runtimeSubscriber
 
+	// The timer fires 15 minutes after the last ninja_gems event so V2 picks up
+	// trade data accumulated since the snapshot. Mercure scheduling and Close can
+	// access the timer from different goroutines, so pointer access and replacement
+	// are protected by this mutex.
 	timerMu               sync.Mutex
 	delayedRecomputeTimer runtimeTimer
 }
@@ -264,9 +268,15 @@ func (r *recomputeRuntime) startup() {
 		go r.startupQuality()
 	}
 	if r.exchange != nil {
+		// Exchange plays live in memory. Rebuild them at boot instead of leaving
+		// the cache COLD until the collector stores its next hour, which may be
+		// minutes away; Trigger logs failures and never blocks serving.
 		go r.exchange.Trigger(r.ctx)
 	}
 	if r.temple != nil {
+		// The temple market is also held in memory only. Rebuild it at boot rather
+		// than waiting for the next stored item tick, which may be a full poe.ninja
+		// cache cycle away; Trigger logs failures and never blocks serving.
 		go r.temple.Trigger(r.ctx)
 	}
 }
@@ -314,15 +324,22 @@ func (r *recomputeRuntime) startupV2AndFont() {
 			slog.Error("startup v2+font analysis panicked", "recover", recovered)
 		}
 	}()
+	// RecomputeLatestV2 attempts to refresh computed data for the latest raw
+	// snapshot on startup after a deploy with new scoring logic. It deletes only
+	// computed tables, not raw snapshots; failures remain non-fatal below.
 	if err := r.analyzer.RecomputeLatestV2(r.ctx, r.scope); err != nil {
 		slog.Warn("startup v2 recompute failed (non-fatal)", "error", err)
 	}
+	// Font reads GemFeatures from V2, so it must run after the V2 rebuild.
 	if err := r.analyzer.RunFont(r.ctx, r.scope); err != nil {
 		slog.Warn("startup font analysis failed (non-fatal)", "error", err)
 	}
+	// Double corrupt uses its EV as the tiebreaker when no Font candidate wins
+	// on 20/20 value, so its comparison corpus follows Font.
 	if err := r.analyzer.RunDoubleCorrupt(r.ctx, r.scope); err != nil {
 		slog.Warn("startup double corrupt analysis failed (non-fatal)", "error", err)
 	}
+	// Dedication follows V2 for its risk-adjustment features.
 	if err := r.analyzer.RunDedication(r.ctx, r.scope); err != nil {
 		slog.Warn("startup dedication analysis failed (non-fatal)", "error", err)
 	}
@@ -359,9 +376,14 @@ func (r *recomputeRuntime) topics() []string {
 		"poe/admin/recompute",      // operator-triggered full recompute
 		exchange.Topic,             // collector stored a currency-exchange hour
 	}
+	// The seven item-overview topics come from temple.Topics rather than being
+	// repeated here, so subscription and endpoint dispatch cannot drift apart.
 	return append(topics, temple.Topics()...)
 }
 
+// MercureSubscriber.Run reconnects without cancelling subCtx; only Close
+// cancels it, just before main cancels r.ctx. The two contexts therefore differ
+// only during shutdown.
 func (r *recomputeRuntime) eventContext() context.Context {
 	if r.subCtx != nil {
 		return r.subCtx
@@ -373,6 +395,7 @@ func (r *recomputeRuntime) dispatch(ev server.MercureEvent) {
 	if ev.Topic == "poe/admin/recompute" {
 		slog.Info("mercure: admin recompute requested")
 		if r.analyzer != nil {
+			// Runs on the service context r.ctx, as before the extraction.
 			go runFullRecompute(r.ctx, r.analyzer, r.scope)
 		}
 		return
@@ -380,17 +403,25 @@ func (r *recomputeRuntime) dispatch(ev server.MercureEvent) {
 
 	if ev.Topic == "poe/collector/trade-tick" {
 		if r.tradeTick == nil {
+			// A misconfigured deployment may publish ticks with trade disabled;
+			// warn once because repeating the warning every tick is noise.
 			r.tradeDisabledWarn.Do(func() { r.warnTradeDisabled() })
 			return
 		}
 		if !r.eventGuard.AcceptRaw([]byte(ev.Data)) {
 			return
 		}
+		// Runs on the service context r.ctx so the gate request is not tied to the
+		// subscriber context.
 		go r.tradeTick(r.ctx, []byte(ev.Data))
 		return
 	}
 
 	if ev.Topic == exchange.Topic {
+		// Exchange events use their own topic and do not carry a poe.ninja
+		// endpoint. Return before generic endpoint dispatch, or this stored hour
+		// would produce a misleading missing-endpoint warning. The exchange
+		// service owns replay-safe coalescing. It runs on the service context r.ctx.
 		if r.eventGuard.AcceptRaw([]byte(ev.Data)) && r.exchange != nil {
 			go r.exchange.HandleEvent(r.ctx, []byte(ev.Data))
 		}
@@ -412,6 +443,8 @@ func (r *recomputeRuntime) dispatch(ev server.MercureEvent) {
 		"inserted", payload["inserted"],
 	)
 
+	// Parse nextFetch so the throttler can include it as nextAny in the
+	// analysis-updated event.
 	var nextFetch time.Time
 	if nf, ok := payload["nextFetch"].(string); ok {
 		if parsed, err := time.Parse(time.RFC3339, nf); err == nil {
@@ -419,6 +452,8 @@ func (r *recomputeRuntime) dispatch(ev server.MercureEvent) {
 		}
 	}
 
+	// Only gem snapshots trigger the lab analysis chain; currency and fragment
+	// events update their own cache-side data without recomputing the dashboard.
 	endpoint, ok := payload["endpoint"].(string)
 	if !ok {
 		slog.Warn("mercure: missing or non-string 'endpoint' in payload", "payload", payload)
@@ -435,6 +470,8 @@ func (r *recomputeRuntime) dispatch(ev server.MercureEvent) {
 		}
 	}
 	if temple.IsFeedEndpoint(endpoint) {
+		// The temple service coalesces the seven feed events into a bounded
+		// recompute. It runs on the service context r.ctx.
 		if r.temple != nil {
 			go r.temple.HandleEvent(r.ctx, []byte(ev.Data))
 		}
@@ -445,6 +482,8 @@ func (r *recomputeRuntime) dispatch(ev server.MercureEvent) {
 	}
 
 	if r.throttler != nil {
+		// Signal on every gem event; nextFetch is optional enrichment, so a missing or
+		// invalid timestamp remains the zero value rather than suppressing the update.
 		r.throttler.Signal(nextFetch)
 	}
 	eventCtx := r.eventContext()
@@ -488,12 +527,18 @@ func (r *recomputeRuntime) runGemV2Chain(ctx context.Context) {
 		slog.Warn("v2 analysis failed", "error", err)
 		return
 	}
+	// Font reads the GemFeatures tier classification produced by V2; running
+	// them concurrently would let Font observe the previous cycle's tiers.
 	if err := r.analyzer.RunFont(ctx, r.scope); err != nil {
 		slog.Warn("font analysis failed", "error", err)
 	}
+	// Double corrupt follows Font because its compare path uses EV as the
+	// tiebreaker when no Font candidate wins on 20/20 value, so its corpus must be
+	// warm by the time a compare request lands.
 	if err := r.analyzer.RunDoubleCorrupt(ctx, r.scope); err != nil {
 		slog.Warn("double corrupt analysis failed", "error", err)
 	}
+	// Dedication follows V2 for its risk-adjustment features.
 	if err := r.analyzer.RunDedication(ctx, r.scope); err != nil {
 		slog.Warn("dedication analysis failed", "error", err)
 	}
@@ -502,6 +547,10 @@ func (r *recomputeRuntime) runGemV2Chain(ctx context.Context) {
 func (r *recomputeRuntime) scheduleDelayedRecompute() {
 	r.timerMu.Lock()
 	defer r.timerMu.Unlock()
+	// Coalesce pending gem events: each ninja_gems event moves the T+15m run to
+	// 15 minutes after that event, allowing trade data accumulated since the latest
+	// snapshot to be included. Holding timerMu serializes replacement with Close; Stop
+	// does not cancel a callback already handed to its goroutine.
 	if r.delayedRecomputeTimer != nil {
 		r.delayedRecomputeTimer.Stop()
 	}

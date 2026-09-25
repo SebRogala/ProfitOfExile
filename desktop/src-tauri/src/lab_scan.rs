@@ -66,6 +66,8 @@ struct GemProcessingState {
     logged_rejects: HashSet<String>,
     rejects_suppressed: bool,
     logged_repeats: HashSet<String>,
+    // Ticks since the band last read text; starts "long ago" so the first read
+    // of a scan logs.
     ticks_since_text: u32,
     ticks_read: u32,
     ticks_with_text: u32,
@@ -309,6 +311,12 @@ impl GemProcessingState {
                 if band_has_text {
                     self.ticks_with_text += 1;
                 }
+                // Logged when the band reads text after at least two empty ticks — both
+                // kernels' turns, so a header only one kernel reads does not log on every
+                // other tick — then every 8th tick while it keeps reading. A hover shorter
+                // than eight ticks still leaves one line, so a scan with none of these lines
+                // read NOTHING off the band (2026-09-09: a third gem went undetected with no
+                // trace of what the band saw).
                 if band_has_text
                     && (self.ticks_since_text >= 2 || self.loop_count % 8 == 1)
                 {
@@ -412,6 +420,10 @@ impl GemProcessingState {
                         } else if current_generation == generation
                             && self.logged_repeats.insert(gem_match.name.clone())
                         {
+                            // A re-read of a gem this scan already holds was invisible: a
+                            // third gem whose text resolves to a detected name (a duplicate,
+                            // or a base name that jaro-winkler lands on its transfigured
+                            // sibling) left the log silent. Once per name per scan.
                             crate::app_log(
                                 app,
                                 format!(
@@ -693,6 +705,10 @@ where
     if !crate::font_session::try_clear_live(live_token, own_generation) {
         return IdleScanDecision::Wait;
     }
+    // The token is clear now, so a trigger arriving after this point can claim it
+    // and start a replacement thread. A trigger that arrived before the clear was
+    // rejected while this thread still owned the token; if work is now pending,
+    // reclaim it so this worker handles it instead of exiting with no worker.
     if pending_after_clear()
         && live_token
             .compare_exchange(0, own_generation, Ordering::SeqCst, Ordering::SeqCst)
