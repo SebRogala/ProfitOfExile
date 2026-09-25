@@ -36,10 +36,7 @@
 
 	// --- Update ---
 	let appVersion = $state('...');
-	const updateController = createSettingsUpdateController({
-		updateAvailable: store.updateAvailable,
-		updateVersion: store.updateVersion
-	});
+	const updateController = createSettingsUpdateController(store);
 
 	// Load version on mount
 	$effect(() => {

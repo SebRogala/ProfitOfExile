@@ -206,17 +206,90 @@ describe('settings update controller', () => {
 		expect(relaunch).not.toHaveBeenCalled();
 	});
 
-	it('keeps downloading when the install re-check finds no offer', async () => {
+	it('recovers when the install re-check finds no offer', async () => {
+		const installer = vi.fn(async () => {});
 		const relaunch = vi.fn(async () => {});
-		const controller = createSettingsUpdateController({
+		const checkForUpdate = vi.fn()
+			.mockResolvedValueOnce(offer('1.2.0', installer))
+			.mockResolvedValueOnce(null);
+		const snapshot = {
 			updateAvailable: true,
 			updateVersion: '1.2.0'
-		}, dependencies(async () => null, relaunch));
+		};
+		const controller = createSettingsUpdateController(snapshot, dependencies(checkForUpdate, relaunch));
 
+		await controller.checkForUpdates();
 		await controller.installUpdate();
 
-		expect(controller.status).toBe('downloading');
-		expect(controller.error).toBe('');
+		expect(controller.status).toBe('idle');
+		expect(controller.error).toBe('You are on the latest version.');
+		expect(snapshot.updateAvailable).toBe(false);
+		expect(snapshot.updateVersion).toBe('');
+		expect(installer).not.toHaveBeenCalled();
 		expect(relaunch).not.toHaveBeenCalled();
+	});
+
+	it('clears the matching shared offer when a manual check finds no offer', async () => {
+		const snapshot = {
+			updateAvailable: true,
+			updateVersion: '1.2.0'
+		};
+		const controller = createSettingsUpdateController(snapshot, dependencies(async () => null));
+
+		await controller.checkForUpdates();
+
+		expect(controller.status).toBe('idle');
+		expect(controller.error).toBe('You are on the latest version.');
+		expect(snapshot.updateAvailable).toBe(false);
+		expect(snapshot.updateVersion).toBe('');
+	});
+
+	it('preserves a newer background offer published during a pending install re-check', async () => {
+		const check = deferred<SettingsUpdateOffer | null>();
+		const snapshot = {
+			updateAvailable: true,
+			updateVersion: '1.2.0'
+		};
+		const controller = createSettingsUpdateController(snapshot, dependencies(() => check.promise));
+
+		const installing = controller.installUpdate();
+		snapshot.updateVersion = '1.3.0';
+		check.resolve(null);
+		await installing;
+
+		expect(controller.status).toBe('idle');
+		expect(controller.error).toBe('You are on the latest version.');
+		expect(snapshot.updateAvailable).toBe(true);
+		expect(snapshot.updateVersion).toBe('1.3.0');
+
+		controller.offerBackgroundUpdate('1.3.0');
+
+		expect(controller.status).toBe('available');
+		expect(controller.version).toBe('1.3.0');
+	});
+
+	it('does not clear a newly published offer when a check began without an offer', async () => {
+		const check = deferred<SettingsUpdateOffer | null>();
+		const snapshot = {
+			updateAvailable: false,
+			updateVersion: ''
+		};
+		const controller = createSettingsUpdateController(snapshot, dependencies(() => check.promise));
+
+		const checking = controller.checkForUpdates();
+		snapshot.updateAvailable = true;
+		snapshot.updateVersion = '1.3.0';
+		check.resolve(null);
+		await checking;
+
+		expect(controller.status).toBe('idle');
+		expect(controller.error).toBe('You are on the latest version.');
+		expect(snapshot.updateAvailable).toBe(true);
+		expect(snapshot.updateVersion).toBe('1.3.0');
+
+		controller.offerBackgroundUpdate('1.3.0');
+
+		expect(controller.status).toBe('available');
+		expect(controller.version).toBe('1.3.0');
 	});
 });
