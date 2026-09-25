@@ -31,6 +31,18 @@ const productionDependencies: SettingsUpdateDependencies = {
 	relaunch
 };
 
+function clearOfferIfUnchanged(
+	snapshot: SettingsUpdateSnapshot,
+	captured: SettingsUpdateSnapshot
+): void {
+	if (
+		snapshot.updateAvailable !== captured.updateAvailable ||
+		snapshot.updateVersion !== captured.updateVersion
+	) return;
+	snapshot.updateAvailable = false;
+	snapshot.updateVersion = '';
+}
+
 function errorMessage(error: unknown): string {
 	return (error as { message?: string } | null)?.message || String(error);
 }
@@ -47,12 +59,17 @@ export function createSettingsUpdateController(
 	async function checkForUpdates(): Promise<void> {
 		status = 'checking';
 		error = '';
+		const capturedOffer = {
+			updateAvailable: snapshot.updateAvailable,
+			updateVersion: snapshot.updateVersion
+		};
 		try {
 			const update = await dependencies.checkForUpdate();
 			if (update) {
 				status = 'available';
 				version = update.version;
 			} else {
+				clearOfferIfUnchanged(snapshot, capturedOffer);
 				status = 'idle';
 				error = 'You are on the latest version.';
 			}
@@ -65,9 +82,18 @@ export function createSettingsUpdateController(
 	async function installUpdate(): Promise<void> {
 		status = 'downloading';
 		error = '';
+		const capturedOffer = {
+			updateAvailable: snapshot.updateAvailable,
+			updateVersion: snapshot.updateVersion
+		};
 		try {
 			const update = await dependencies.checkForUpdate();
-			if (!update) return;
+			if (!update) {
+				clearOfferIfUnchanged(snapshot, capturedOffer);
+				status = 'idle';
+				error = 'You are on the latest version.';
+				return;
+			}
 			await update.downloadAndInstall((downloadProgress) => {
 				if (downloadProgress.event === 'Started' && downloadProgress.data?.contentLength) {
 					progress = 0;
