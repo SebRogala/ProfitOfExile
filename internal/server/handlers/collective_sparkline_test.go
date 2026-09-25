@@ -39,6 +39,69 @@ type sparklineGem struct {
 	windowSignal string
 }
 
+type sameNameVariantFixture struct {
+	variant string
+	roi     float64
+	trans   []lab.SparklinePoint
+	base    []lab.SparklinePoint
+}
+
+// sameNameVariantCache deliberately puts one gem name in two markets. The
+// price/listing series remain literal and unequal so collision
+// characterization tests cannot pass with an ineffective fixture.
+func sameNameVariantCache(t *testing.T, fixtures ...sameNameVariantFixture) *lab.Cache {
+	t.Helper()
+	now := time.Now()
+	cache := lab.NewCache(sparklineScope)
+	transfigure := make([]lab.TransfigureResult, 0, len(fixtures))
+	signals := make([]lab.GemSignal, 0, len(fixtures))
+	features := make([]lab.GemFeature, 0, len(fixtures))
+	series := map[string]map[string][]lab.SparklinePoint{"Spark of Nova": {}, "Spark": {}}
+	for _, fixture := range fixtures {
+		transfigure = append(transfigure, lab.TransfigureResult{
+			Time:                 now,
+			BaseName:             "Spark",
+			TransfiguredName:     "Spark of Nova",
+			Variant:              fixture.variant,
+			BasePrice:            10,
+			TransfiguredPrice:    10 + fixture.roi,
+			ROI:                  fixture.roi,
+			ROIPct:               fixture.roi * 10,
+			BaseListings:         25,
+			TransfiguredListings: 25,
+			GemColor:             "BLUE",
+			Confidence:           "OK",
+		})
+		signals = append(signals, lab.GemSignal{
+			Time:             now,
+			Name:             "Spark of Nova",
+			Variant:          fixture.variant,
+			Signal:           "STABLE",
+			Confidence:       80,
+			Sellability:      70,
+			SellabilityLabel: "FAIR",
+			WindowSignal:     "OPEN",
+			Tier:             "MID",
+		})
+		features = append(features, lab.GemFeature{
+			Time:     now,
+			Name:     "Spark of Nova",
+			Variant:  fixture.variant,
+			Chaos:    10 + fixture.roi,
+			Listings: 25,
+			GemColor: "BLUE",
+		})
+		series["Spark of Nova"][fixture.variant] = fixture.trans
+		series["Spark"][fixture.variant] = fixture.base
+	}
+	cache.For(sparklineScope).SetTransfigure(transfigure)
+	cache.For(sparklineScope).SetGemSignals(signals)
+	cache.For(sparklineScope).SetGemFeatures(features)
+	cache.For(sparklineScope).SetDoubleCorrupt(lab.BuildDoubleCorruptCorpus(nil))
+	warmSparklines(t, cache, series, nil)
+	return cache
+}
+
 // warmAnalysisCache returns a cache warm enough that CollectiveAnalysis,
 // CompareAnalysis and TrendAnalysis all take their cache-first path for
 // rankings. Sparklines are populated separately so a test can hold the ranking
@@ -158,6 +221,21 @@ func decodeSparklineRows(t *testing.T, w *httptest.ResponseRecorder) map[string]
 	return out
 }
 
+func decodeCollectiveSparklineRows(t *testing.T, w *httptest.ResponseRecorder) []sparklineRow {
+	t.Helper()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var resp struct {
+		Count int            `json:"count"`
+		Data  []sparklineRow `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	return resp.Data
+}
+
 func assertSparkline(t *testing.T, got, want []lab.SparklinePoint) {
 	t.Helper()
 	if len(got) != len(want) {
@@ -275,6 +353,70 @@ func TestCollectiveAnalysis_AllVariantsWarmCacheUsesEachGemsOwnVariant(t *testin
 	}
 	assertSparkline(t, rows["Spark of Nova"].Sparkline, twentyTwenty)
 	assertSparkline(t, rows["Ice Nova of Frostbolts"].Sparkline, oneTwenty)
+}
+
+// Known-defect characterization for the Collective sparkline collision
+// recorded under "Confirmed pre-existing behavior left unchanged" in the
+// parent plan (profitofexile-responsibility-splits.md): ALL-variant rows with
+// one name share the final name-keyed sparkline. This pins current behavior,
+// not intended behavior.
+func TestCollectiveAnalysis_AllVariantsSameNameUsesWinningSeriesForBothRows(t *testing.T) {
+	now := time.Now()
+	winnerSeries := []lab.SparklinePoint{sparkAt(now, 2*time.Hour, 9, 90), sparkAt(now, time.Hour, 11, 84)}
+	otherSeries := []lab.SparklinePoint{sparkAt(now, 2*time.Hour, 125, 26), sparkAt(now, time.Hour, 140, 22)}
+	cache := sameNameVariantCache(t,
+		sameNameVariantFixture{variant: "20/20", roi: 100, trans: otherSeries},
+		sameNameVariantFixture{variant: "1/20", roi: 10, trans: winnerSeries},
+	)
+
+	w := serveWithoutRepository(t, CollectiveAnalysis(nil, cache, sparklineScope),
+		"/api/analysis/collective")
+	rows := decodeCollectiveSparklineRows(t, w)
+	if len(rows) != 2 {
+		t.Fatalf("response rows = %d, want two same-name variants: %+v", len(rows), rows)
+	}
+	if rows[0].TransfiguredName != "Spark of Nova" || rows[0].Variant != "20/20" {
+		t.Errorf("row 0 identity = (%q, %q), want (Spark of Nova, 20/20)", rows[0].TransfiguredName, rows[0].Variant)
+	}
+	if rows[1].TransfiguredName != "Spark of Nova" || rows[1].Variant != "1/20" {
+		t.Errorf("row 1 identity = (%q, %q), want (Spark of Nova, 1/20)", rows[1].TransfiguredName, rows[1].Variant)
+	}
+	// The unequal ROI scores force the ranked order above; the lower-ranked
+	// 1/20 iteration currently overwrites the name-keyed map for both rows.
+	assertSparkline(t, rows[0].Sparkline, winnerSeries)
+	assertSparkline(t, rows[1].Sparkline, winnerSeries)
+}
+
+func TestCollectiveAnalysis_SameNameVariantControlsUseRequestedMarketSeries(t *testing.T) {
+	now := time.Now()
+	twentyTwenty := []lab.SparklinePoint{sparkAt(now, 2*time.Hour, 125, 26), sparkAt(now, time.Hour, 140, 22)}
+	oneTwenty := []lab.SparklinePoint{sparkAt(now, 2*time.Hour, 9, 90), sparkAt(now, time.Hour, 11, 84)}
+	cache := sameNameVariantCache(t,
+		sameNameVariantFixture{variant: "20/20", roi: 100, trans: twentyTwenty},
+		sameNameVariantFixture{variant: "1/20", roi: 10, trans: oneTwenty},
+	)
+
+	tests := []struct {
+		variant string
+		want    []lab.SparklinePoint
+	}{
+		{variant: "20/20", want: twentyTwenty},
+		{variant: "1/20", want: oneTwenty},
+	}
+	for _, tt := range tests {
+		t.Run(tt.variant, func(t *testing.T) {
+			w := serveWithoutRepository(t, CollectiveAnalysis(nil, cache, sparklineScope),
+				"/api/analysis/collective?variant="+tt.variant)
+			rows := decodeCollectiveSparklineRows(t, w)
+			if len(rows) != 1 {
+				t.Fatalf("response rows = %d, want one: %+v", len(rows), rows)
+			}
+			if rows[0].TransfiguredName != "Spark of Nova" || rows[0].Variant != tt.variant {
+				t.Fatalf("identity = (%q, %q), want (Spark of Nova, %s)", rows[0].TransfiguredName, rows[0].Variant, tt.variant)
+			}
+			assertSparkline(t, rows[0].Sparkline, tt.want)
+		})
+	}
 }
 
 // A cold sparkline cache must still reach the database, even when the rest of
@@ -532,8 +674,9 @@ func TestCollectiveRow_SparklineWithoutPointsMarshalsAsEmptyArray(t *testing.T) 
 // response — the default "all variants" request — the second lookup overwrites
 // the first and both rows render the same series. The cache path and the query
 // path share the defect, because both fill the same name-keyed map. Fixing it
-// means keying that map by name and variant; no test here asserts the current
-// behaviour, so a fix will not have to break one.
+// means keying that map by name and variant; the known-defect characterization
+// above pins the cache path's current behavior (the query path is not
+// exercised here).
 
 // Warmth is per corpus, not per variant: the population query filters on
 // lab.DedicationVariants, so one read covers both selectable pools. A cache
