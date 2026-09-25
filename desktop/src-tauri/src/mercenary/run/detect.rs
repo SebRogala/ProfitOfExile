@@ -9,7 +9,7 @@ use tauri::AppHandle;
 use tokio::sync::watch;
 
 use super::*;
-use super::super::read;
+use super::super::read::ReadResult;
 
 type GrabbedOn = (u32, (i32, i32), [i32; 4]);
 type PlacedReadData = (
@@ -56,7 +56,7 @@ struct RegisteredDetection {
 struct ReadStage {
     registered: RegisteredDetection,
     plan: ReadPlan,
-    result: read::ReadResult,
+    result: ReadResult,
     first_look_tick: bool,
     pass2_ms: u128,
     icons_ms: u128,
@@ -108,6 +108,20 @@ trait RegistrationEffects {
     fn persist_settings(&mut self);
 }
 
+trait DetectionEffects {
+    fn refit_counter(&self) -> u64;
+    fn debug_mode(&self) -> bool;
+    fn template_generation(&mut self) -> u64;
+    fn log(&mut self, line: String);
+    fn rederive_for_window(&mut self, geometry: &MercGeometry, scale: f32);
+    fn with_template_store<R>(
+        &mut self,
+        read: impl FnOnce(&crate::mercenary::icons::TemplateStore) -> R,
+    ) -> R;
+    fn registration_effects(&mut self) -> &mut dyn RegistrationEffects;
+    fn publication_sink(&mut self) -> &mut dyn PublicationSink;
+}
+
 struct AppRegistrationEffects<'app> {
     app: &'app AppHandle,
 }
@@ -126,7 +140,62 @@ impl RegistrationEffects for AppRegistrationEffects<'_> {
     }
 }
 
-fn register_screen<S: RegistrationEffects>(
+struct AppDetectionEffects<'app> {
+    app: &'app AppHandle,
+    registration: AppRegistrationEffects<'app>,
+    publication: AppPublicationSink<'app>,
+}
+
+impl<'app> AppDetectionEffects<'app> {
+    fn new(app: &'app AppHandle) -> Self {
+        Self {
+            app,
+            registration: AppRegistrationEffects { app },
+            publication: AppPublicationSink { app },
+        }
+    }
+}
+
+impl DetectionEffects for AppDetectionEffects<'_> {
+    fn refit_counter(&self) -> u64 {
+        refit_counter(self.app)
+    }
+
+    fn debug_mode(&self) -> bool {
+        debug_mode(self.app)
+    }
+
+    fn template_generation(&mut self) -> u64 {
+        template_generation(self.app)
+    }
+
+    fn log(&mut self, line: String) {
+        crate::app_log(self.app, line);
+    }
+
+    fn rederive_for_window(&mut self, geometry: &MercGeometry, scale: f32) {
+        seed::rederive_for_window(self.app, geometry, scale);
+    }
+
+    fn with_template_store<R>(
+        &mut self,
+        read: impl FnOnce(&crate::mercenary::icons::TemplateStore) -> R,
+    ) -> R {
+        let state = self.app.state::<AppState>();
+        let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+        read(&store)
+    }
+
+    fn registration_effects(&mut self) -> &mut dyn RegistrationEffects {
+        &mut self.registration
+    }
+
+    fn publication_sink(&mut self) -> &mut dyn PublicationSink {
+        &mut self.publication
+    }
+}
+
+fn register_screen<S: RegistrationEffects + ?Sized>(
     sink: &mut S,
     refusals: &mut OnceLog,
     screen: [u32; 2],
@@ -161,37 +230,22 @@ fn register_screen<S: RegistrationEffects>(
     (record, published)
 }
 
-struct ReadStageContext<'app, 'session> {
-    app: &'app AppHandle,
+struct ReadStageContext<'session> {
     session: &'session mut Session,
     cursor: Option<(i32, i32)>,
     registered: Option<RegisteredDetection>,
     first_look_tick: bool,
 }
 
-fn registered_then_read<C, T, R>(
-    context: &mut C,
-    register: impl FnOnce(&mut C) -> T,
-    read: impl FnOnce(&mut C, T) -> Option<R>,
-) -> Option<R> {
-    let registered = register(context);
-    read(context, registered)
-}
-
-fn read_stage_gate<C, R>(
+fn registered_read<E: DetectionEffects>(
+    effects: &mut E,
+    session: &mut Session,
+    cursor: Option<(i32, i32)>,
     cancel: &watch::Receiver<bool>,
-    context: &mut C,
-    first_look: impl FnOnce(&mut C) -> Option<MercCapture>,
-    publish_first_look: impl FnOnce(MercCapture),
-    execute_read: impl FnOnce(&mut C) -> R,
-) -> Option<R> {
-    if *cancel.borrow() {
-        return None;
-    }
-    if let Some(first_look) = first_look(context) {
-        publish_first_look(first_look);
-    }
-    Some(execute_read(context))
+    location: CaptureLocation,
+) -> Option<ReadStage> {
+    let registered = register_geometry(effects, session, location);
+    execute_read_plan(effects, session, cursor, cancel, registered)
 }
 
 fn publish_settled<S: PublicationSink>(
@@ -289,11 +343,8 @@ pub(super) fn detect_tick(
         Err(tick) => return tick,
     };
     let full_frame = location.full_frame;
-    let Some(read) = registered_then_read(
-        session,
-        |session| register_geometry(app, session, location),
-        |session, registered| execute_read_plan(app, session, cursor, cancel, registered),
-    ) else {
+    let mut effects = AppDetectionEffects::new(app);
+    let Some(read) = registered_read(&mut effects, session, cursor, cancel, location) else {
         return detect_report(None, full_frame);
     };
     reconcile_and_publish(app, session, cursor, read)
@@ -529,8 +580,8 @@ fn capture_location(
     })
 }
 
-fn register_geometry(
-    app: &AppHandle,
+fn register_geometry<E: DetectionEffects>(
+    effects: &mut E,
     session: &mut Session,
     location: CaptureLocation,
 ) -> RegisteredDetection {
@@ -559,19 +610,17 @@ fn register_geometry(
     // read ([`manual_tick`]), which `refit_located` records just below; this
     // re-reads the counter AT THE FIT, which is what ssot's bump-before-write
     // ordering relies on.
-    let refit = consume_refit(session, refit_counter(app));
+    let refit = consume_refit(session, effects.refit_counter());
     match &refit {
         Refit::NotRequested => {}
-        Refit::Dropped(held) => crate::app_log(
-            app,
+        Refit::Dropped(held) => effects.log(
             format!(
                 "Merc: Recalibrate — dropped the settled frame registration (scale \
                  {:.3}); this tick re-measures the panel",
                 held.scale
             ),
         ),
-        Refit::NothingHeld => crate::app_log(
-            app,
+        Refit::NothingHeld => effects.log(
             "Merc: Recalibrate — no frame registration was held; this tick measures \
              the panel"
                 .to_string(),
@@ -594,9 +643,8 @@ fn register_geometry(
     if let Some(held) = session.fitted {
         if held_is_stale(held.scale, s_ocr) {
             session.fitted = None;
-            if debug_mode(app) {
-                crate::app_log(
-                    app,
+            if effects.debug_mode() {
+                effects.log(
                     format!(
                         "Merc: frame registration dropped — session held scale {:.3} but the \
                          OCR now reads {s_ocr:.3}",
@@ -663,9 +711,8 @@ fn register_geometry(
     // takes its `captured_at_ms` from the same source: this is when the scale
     // was MEASURED, and publishing at the settle rather than after pass 2 keeps
     // a cancelled tick's measurement from being lost.
-    let mut registration = AppRegistrationEffects { app };
     let (_screen_record, _published) = register_screen(
-        &mut registration,
+        effects.registration_effects(),
         &mut session.screen_refusals,
         screen,
         layout.scale,
@@ -673,7 +720,7 @@ fn register_geometry(
         now_ms(),
         grabbed_on,
     );
-    if debug_mode(app) {
+    if effects.debug_mode() {
         match (&refined.fit, &refined.declined) {
             (Some(fit), _) => {
                 // The settled scale is what the capture is READ at; the fit's
@@ -687,8 +734,7 @@ fn register_geometry(
                         format!(" — session holds {:.3}", s.scale)
                     }
                 });
-                crate::app_log(
-                    app,
+                effects.log(
                     format!(
                         "Merc: frame fit scale {:.3} (ocr {:.3}) X0 {:.1} pitch {:.2} dark {}, \
                          {} cells span {}, row-pitch residual {:.1}{held}",
@@ -710,7 +756,7 @@ fn register_geometry(
                     }
                     None => format!("keeping ocr {s_ocr:.3}"),
                 };
-                crate::app_log(app, format!("Merc: frame fit declined — {why}; {kept}"));
+                effects.log(format!("Merc: frame fit declined — {why}; {kept}"));
             }
             (None, None) => {}
         }
@@ -724,8 +770,8 @@ fn register_geometry(
     }
 }
 
-fn execute_read_plan(
-    app: &AppHandle,
+fn execute_read_plan<E: DetectionEffects>(
+    effects: &mut E,
     session: &mut Session,
     cursor: Option<(i32, i32)>,
     cancel: &watch::Receiver<bool>,
@@ -733,44 +779,39 @@ fn execute_read_plan(
 ) -> Option<ReadStage> {
     let first_look_tick = session.current.is_none();
     let mut context = ReadStageContext {
-        app,
         session,
         cursor,
         registered: Some(registered),
         first_look_tick,
     };
-    let mut publication = AppPublicationSink { app };
     // What follows is this round's read: pass 2 — at most `max_rows` more OCR
     // calls, and only for the rows the plan below reads — and the icon walk.
     // A stop signal that arrived during pass 1 stops here, leaving the capture
     // state as it was; the settled screen measurement already published and
     // persisted during registration remains.
-    read_stage_gate(
-        cancel,
-        &mut context,
-        |context| {
-            // FIRST LOOK at a window: the rows go out NOW, before the read below,
-            // which is the tick's expensive half (2.2 s on a six-row panel in the
-            // 2026-09-06 log) and which the strip used to sit through saying
-            // "scanning". Only when nothing is live: a re-read of a window already on
-            // the slice would blank its icons for the length of every tick. The
-            // header is pass 1's, unguarded — it is replaced by the folded one below
-            // on this same tick. See [`MercCapture::partial`].
-            context.first_look_tick.then(|| {
-                let registered = context.registered.as_ref().expect("registered read stage");
-                first_look(
-                    &registered.location.layout,
-                    registered.location.screen,
-                    now_ms(),
-                    &context.session.geometry,
-                    &context.session.vocab,
-                )
-            })
-        },
-        |capture| publication.publish_first_look(capture),
-        |context| {
+    if *cancel.borrow() {
+        return None;
+    }
+    if context.first_look_tick {
+        // FIRST LOOK at a window: the rows go out NOW, before the read below,
+        // which is the tick's expensive half (2.2 s on a six-row panel in the
+        // 2026-09-06 log) and which the strip used to sit through saying
+        // "scanning". Only when nothing is live: a re-read of a window already on
+        // the slice would blank its icons for the length of every tick. The
+        // header is pass 1's, unguarded — it is replaced by the folded one below
+        // on this same tick. See [`MercCapture::partial`].
+        let registered = context.registered.as_ref().expect("registered read stage");
+        let first_look = first_look(
+            &registered.location.layout,
+            registered.location.screen,
+            now_ms(),
+            &context.session.geometry,
+            &context.session.vocab,
+        );
+        effects.publication_sink().publish_first_look(first_look);
+    }
+
     let registered = context.registered.take().expect("registered read stage");
-    let app = context.app;
     let session = &mut *context.session;
     let cursor = context.cursor;
     let fit_ms = registered.fit_ms;
@@ -805,7 +846,7 @@ fn execute_read_plan(
     // the read budget over ([`refills_budget`]), so a kept `Confirmed` cell is
     // read afresh rather than copied onto this round's capture.
     let templates_moved =
-        generation_changed(&mut session.template_generation, template_generation(app));
+        generation_changed(&mut session.template_generation, effects.template_generation());
     if templates_moved {
         session.confirmed.clear();
         session.hover_budget.clear();
@@ -830,7 +871,7 @@ fn execute_read_plan(
         &session.vocab,
     );
     if replaced_on_sight {
-        crate::app_log(app, "Merc: recruit window replaced — reading it fresh".to_string());
+        effects.log("Merc: recruit window replaced — reading it fresh".to_string());
         drop_replaced_window(session);
     }
 
@@ -885,12 +926,10 @@ fn execute_read_plan(
             // Costs nothing on every tick but the first at a given window — see
             // `seed::window_plan`.
             let stage = Instant::now();
-            seed::rederive_for_window(app, &session.geometry, layout.scale);
+            effects.rederive_for_window(&session.geometry, layout.scale);
             seeds_ms = stage.elapsed().as_millis();
             let stage = Instant::now();
-            let result = {
-                let state = app.state::<AppState>();
-                let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+            let result = effects.with_template_store(|store| {
                 build_planned(
                     view,
                     frame,
@@ -902,7 +941,7 @@ fn execute_read_plan(
                     &store,
                     planned,
                 )
-            };
+            });
             (result, stage.elapsed().as_millis(), planned.is_some())
         }
     };
@@ -911,7 +950,7 @@ fn execute_read_plan(
     let row_mismatch = row_mismatch_line(result.rows_on_screen, result.rows_read);
     if session.row_mismatch_logged.as_deref() != row_mismatch.as_deref() {
         if let Some(line) = row_mismatch.as_deref() {
-            crate::app_log(app, line.to_string());
+            effects.log(line.to_string());
         }
         session.row_mismatch_logged = row_mismatch;
     }
@@ -919,10 +958,9 @@ fn execute_read_plan(
     // slow; this one says which stage to look at. Always in debug mode, and
     // on every tick the backoff would call slow otherwise.
     let total_ms = started.elapsed().as_millis();
-    if debug_mode(app) || total_ms >= SLOW_TICK.as_millis() {
+    if effects.debug_mode() || total_ms >= SLOW_TICK.as_millis() {
         let cells: usize = result.capture.rows.iter().map(|row| row.supports.len()).sum();
-        crate::app_log(
-            app,
+        effects.log(
             format!(
                 "Merc: read stages — grab+ocr {took} ms, fit {fit_ms} ms, pass 2 {pass2_ms} ms, \
                  seeds {seeds_ms} ms, icons {icons_ms} ms ({cells} cells, {} rows) — {total_ms} ms \
@@ -933,28 +971,24 @@ fn execute_read_plan(
     }
     if crop.is_some() && !used_fallback && !session.crop_detect_logged {
         session.crop_detect_logged = true;
-        crate::app_log(
-            app,
+        effects.log(
             format!("Merc: detect on the crop frame took {} ms", started.elapsed().as_millis()),
         );
     }
     result.capture.header = published_header;
 
-
-            ReadStage {
-                registered,
-                plan,
-                result,
-                first_look_tick,
-                pass2_ms,
-                icons_ms,
-                from_kept,
-                replaced_on_sight,
-                header_guard,
-                current_panel,
-            }
-        },
-    )
+    Some(ReadStage {
+        registered,
+        plan,
+        result,
+        first_look_tick,
+        pass2_ms,
+        icons_ms,
+        from_kept,
+        replaced_on_sight,
+        header_guard,
+        current_panel,
+    })
 }
 
 fn reconcile_and_publish(
@@ -1170,12 +1204,12 @@ fn reconcile_and_publish(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
 
     #[derive(Default)]
     struct RecordingPublication {
         events: Vec<&'static str>,
         capture: Option<MercCapture>,
+        first_look_capture: Option<MercCapture>,
         complete: Option<bool>,
         origin: Option<[i32; 2]>,
     }
@@ -1183,6 +1217,7 @@ mod tests {
     impl PublicationSink for RecordingPublication {
         fn publish_first_look(&mut self, capture: MercCapture) {
             self.events.push("first-look");
+            self.first_look_capture = Some(capture.clone());
             self.capture = Some(capture);
         }
 
@@ -1226,6 +1261,63 @@ mod tests {
         }
     }
 
+    struct RecordingDetection {
+        refit_counter: u64,
+        debug_mode: bool,
+        template_generation: u64,
+        store: crate::mercenary::icons::TemplateStore,
+        registration: RecordingRegistration,
+        publication: RecordingPublication,
+    }
+
+    impl Default for RecordingDetection {
+        fn default() -> Self {
+            Self {
+                refit_counter: 0,
+                debug_mode: false,
+                template_generation: 0,
+                store: crate::mercenary::icons::TemplateStore::new(),
+                registration: RecordingRegistration::default(),
+                publication: RecordingPublication::default(),
+            }
+        }
+    }
+
+    impl DetectionEffects for RecordingDetection {
+        fn refit_counter(&self) -> u64 {
+            self.refit_counter
+        }
+
+        fn debug_mode(&self) -> bool {
+            self.debug_mode
+        }
+
+        fn template_generation(&mut self) -> u64 {
+            self.publication.events.push("read-start");
+            self.template_generation
+        }
+
+        fn log(&mut self, _line: String) {}
+
+        fn rederive_for_window(&mut self, _geometry: &MercGeometry, _scale: f32) {}
+
+        fn with_template_store<R>(
+            &mut self,
+            read: impl FnOnce(&crate::mercenary::icons::TemplateStore) -> R,
+        ) -> R {
+            self.publication.events.push("full-read");
+            read(&self.store)
+        }
+
+        fn registration_effects(&mut self) -> &mut dyn RegistrationEffects {
+            &mut self.registration
+        }
+
+        fn publication_sink(&mut self) -> &mut dyn PublicationSink {
+            &mut self.publication
+        }
+    }
+
     fn test_capture(screen: [u32; 2]) -> MercCapture {
         MercCapture {
             captured_at_ms: 42,
@@ -1239,6 +1331,106 @@ mod tests {
             rows_read: 0,
             partial: false,
         }
+    }
+
+    fn test_session() -> Session {
+        Session {
+            geometry: MercGeometry::default(),
+            vocab: MercVocab::load().expect("the compiled merc vocabulary parses"),
+            state: LoopState::default(),
+            errors: OnceLog::default(),
+            screen_refusals: OnceLog::default(),
+            current: None,
+            sigs: SigCache::new(),
+            pending_confirm: None,
+            confirmed: HashMap::new(),
+            hover_budget: HoverBudget::default(),
+            template_generation: 0,
+            saves: None,
+            miss_logged: false,
+            panel: None,
+            header_guard: None,
+            fallback: FallbackBudget::default(),
+            column_trusted_said: None,
+            crop_detect_logged: false,
+            occlusion: OcclusionRun::default(),
+            header_logged: None,
+            row_mismatch_logged: None,
+            retained: None,
+            trade: None,
+            fitted: Some(FittedScale {
+                scale: 1.0,
+                cell_px: 40,
+                x0_offset: 0.0,
+                pitch: 49.0,
+                source: FitSource::Grid,
+                pending: None,
+            }),
+            scale_source: ScaleSource::Ocr,
+            refit_seen: 0,
+            refit_located: 0,
+            geometry_changed: false,
+            revision: 0,
+        }
+    }
+
+    fn test_location() -> CaptureLocation {
+        let geometry = MercGeometry::default();
+        let layout = geometry::MercLayout {
+            scale: 1.0,
+            scale_source: ScaleSource::Ocr,
+            column_x0: 100,
+            row_pitch: geometry.row_pitch,
+            rows: vec![geometry::MercLayoutRow {
+                index: 0,
+                centre_y: 100.0,
+                skill_icon: [60, 80, 40, 40],
+                name_rect: [100, 90, 120, 20],
+                text: "Ice Shot".into(),
+                cells: (0..geometry.max_slots)
+                    .map(|slot| [140 + slot as i32 * 49, 80, 40, 40])
+                    .collect(),
+            }],
+            header: MercHeader::default(),
+        };
+        CaptureLocation {
+            started: Instant::now(),
+            image: image::DynamicImage::new_rgba8(1920, 1080),
+            cropped: None,
+            screen: [1920, 1080],
+            grabbed_on: (131_074, (-1920, 0), [11, 22, 333, 444]),
+            crop: None,
+            placement: None,
+            full_frame: true,
+            frame: geometry::Frame::full([1920, 1080]),
+            layout,
+            used_fallback: false,
+            located_panel: None,
+            remember_origin: None,
+            key: FallbackKey { refit: 0, gate: 0 },
+            took: 4,
+            how: "full",
+        }
+    }
+
+    #[test]
+    fn production_read_with_existing_capture_skips_first_look_publication() {
+        let (_tx, cancel) = watch::channel(false);
+        let mut effects = RecordingDetection::default();
+        let mut session = test_session();
+        session.current = Some(test_capture([1920, 1080]));
+
+        let read = registered_read(
+            &mut effects,
+            &mut session,
+            None,
+            &cancel,
+            test_location(),
+        );
+
+        assert!(read.is_some());
+        assert_eq!(effects.publication.events, vec!["read-start", "full-read"]);
+        assert!(effects.publication.first_look_capture.is_none());
     }
 
     #[test]
@@ -1278,76 +1470,72 @@ mod tests {
     #[test]
     fn cancelled_read_preserves_registered_screen() {
         let (_tx, cancel) = watch::channel(true);
-        let mut registration = RecordingRegistration::default();
-        let mut refusals = OnceLog::default();
-        let grabbed_on = (131_074, (-1920, 0), [11, 22, 333, 444]);
-        let later_publication = RefCell::new(RecordingPublication::default());
-        let mut registration_context = ();
-
-        let read = registered_then_read(
-            &mut registration_context,
-            |_| {
-                let (_, screen) = register_screen(
-                    &mut registration,
-                    &mut refusals,
-                    [1920, 1080],
-                    1.0,
-                    ScaleSource::Frame,
-                    1_724_000_000_000,
-                    grabbed_on,
-                );
-                screen
-            },
-            |_, _screen| {
-                let mut context = ();
-                read_stage_gate(
-                    &cancel,
-                    &mut context,
-                    |_| Some(test_capture([1920, 1080])),
-                    |capture| later_publication.borrow_mut().publish_first_look(capture),
-                    |_| {
-                        let mut publication = later_publication.borrow_mut();
-                        publication.events.push("full-read");
-                        publish_settled(&mut *publication, test_capture([1920, 1080]), true, None);
-                    },
-                )
-            },
+        let mut effects = RecordingDetection::default();
+        let mut session = test_session();
+        let read = registered_read(
+            &mut effects,
+            &mut session,
+            None,
+            &cancel,
+            test_location(),
         );
 
-        let screen = registration
+        let screen = effects
+            .registration
             .screen
             .expect("registered screen was published");
+        assert_eq!((screen.width, screen.height), (1920, 1080));
         assert_eq!(
             (screen.monitor_id, screen.origin, screen.client),
-            grabbed_on
+            (131_074, (-1920, 0), [11, 22, 333, 444])
         );
-        assert_eq!((screen.width, screen.height), (1920, 1080));
-        let persisted = registration.persisted.expect("frame screen was persisted");
-        assert_eq!((persisted.monitor_id, persisted.origin, persisted.client), grabbed_on);
+        let persisted = effects
+            .registration
+            .persisted
+            .expect("frame screen was persisted");
         assert_eq!((persisted.width, persisted.height), (1920, 1080));
-        assert_eq!(registration.events, vec!["publish", "persist"]);
+        assert_eq!(
+            (persisted.monitor_id, persisted.origin, persisted.client),
+            (131_074, (-1920, 0), [11, 22, 333, 444])
+        );
+        assert_eq!(effects.registration.events, vec!["publish", "persist"]);
         assert!(read.is_none());
-        assert!(later_publication.into_inner().events.is_empty());
+        assert!(effects.publication.events.is_empty());
     }
 
     #[test]
     fn first_look_precedes_the_full_read() {
         let (_tx, cancel) = watch::channel(false);
-        let publication = RefCell::new(RecordingPublication::default());
-
-        let read = read_stage_gate(
+        let mut effects = RecordingDetection::default();
+        let mut session = test_session();
+        let read = registered_read(
+            &mut effects,
+            &mut session,
+            None,
             &cancel,
-            &mut (),
-            |_| Some(test_capture([1920, 1080])),
-            |capture| publication.borrow_mut().publish_first_look(capture),
-            |_| {
-                publication.borrow_mut().events.push("full-read");
-                7u8
-            },
+            test_location(),
         );
 
-        assert_eq!(read, Some(7));
-        assert_eq!(publication.into_inner().events, vec!["first-look", "full-read"]);
+        assert!(read.is_some());
+        assert_eq!(
+            effects.publication.events,
+            vec!["first-look", "read-start", "full-read"]
+        );
+        let first_look = effects
+            .publication
+            .first_look_capture
+            .expect("production first-look publication was observed");
+        assert_eq!(first_look.screen, [1920, 1080]);
+        assert_eq!(first_look.rows_on_screen, 1);
+        assert!(first_look.partial);
+        let screen = effects
+            .registration
+            .screen
+            .expect("production registration published the screen");
+        assert_eq!(
+            (screen.monitor_id, screen.origin, screen.client),
+            (131_074, (-1920, 0), [11, 22, 333, 444])
+        );
     }
 
     #[test]
