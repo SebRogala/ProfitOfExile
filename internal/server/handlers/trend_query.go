@@ -158,11 +158,13 @@ func selectTrendSignals(corpus trendCorpus, input trendQueryInput) []trendSignal
 func loadTrendSparklines(ctx context.Context, repo *lab.Repository, cache *lab.Cache, scope league.Scope, filtered []trendSignalWithFeature) map[trendGemKey]trendData {
 	windowAlerts := map[string]bool{"BREWING": true, "OPENING": true, "OPEN": true, "CLOSING": true}
 	seen := make(map[trendGemKey]bool)
+	var selected []trendGemKey
 	var transNames, baseNames []string
 	for _, sf := range filtered {
 		key := trendGemKey{sf.signal.Name, sf.signal.Variant}
 		if windowAlerts[sf.signal.WindowSignal] && !seen[key] {
 			seen[key] = true
+			selected = append(selected, key)
 			transNames = append(transNames, sf.signal.Name)
 			baseName := sf.signal.Name
 			if idx := strings.LastIndex(sf.signal.Name, " of "); idx > 0 {
@@ -183,24 +185,13 @@ func loadTrendSparklines(ctx context.Context, repo *lab.Repository, cache *lab.C
 		gems       []trendGemKey
 	}
 	groups := make(map[string]*variantGroup)
-	for i, name := range transNames {
-		key := trendGemKey{name: name}
-		// Preserve the existing name-first variant rediscovery. The trends map is
-		// keyed by name+variant, but a same-name multi-variant request can be
-		// assigned to the first variant found here; that is the pre-existing
-		// collision this extraction must not silently change.
-		for _, sf := range filtered {
-			if sf.signal.Name == name && windowAlerts[sf.signal.WindowSignal] {
-				key.variant = sf.signal.Variant
-				break
-			}
-		}
+	for i, key := range selected {
 		group := groups[key.variant]
 		if group == nil {
 			group = &variantGroup{}
 			groups[key.variant] = group
 		}
-		group.transNames = append(group.transNames, name)
+		group.transNames = append(group.transNames, key.name)
 		group.baseNames = append(group.baseNames, baseNames[i])
 		group.gems = append(group.gems, key)
 	}
