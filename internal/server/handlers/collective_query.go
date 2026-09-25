@@ -37,9 +37,14 @@ type collectiveBaseKey struct {
 	variant string
 }
 
+type collectiveSparklineKey struct {
+	name    string
+	variant string
+}
+
 type collectiveQueryResult struct {
 	results        []lab.CollectiveResult
-	sparklines     map[string][]lab.SparklinePoint
+	sparklines     map[collectiveSparklineKey][]lab.SparklinePoint
 	basePriceIndex map[collectiveBaseKey]float64
 	gcpPrice       float64
 }
@@ -121,8 +126,8 @@ func queryCollective(ctx context.Context, repo *lab.Repository, cache *lab.Cache
 	}, nil
 }
 
-func loadCollectiveSparklines(ctx context.Context, repo *lab.Repository, cache *lab.Cache, scope league.Scope, sparkVariant string, results []lab.CollectiveResult) map[string][]lab.SparklinePoint {
-	sparklines := make(map[string][]lab.SparklinePoint)
+func loadCollectiveSparklines(ctx context.Context, repo *lab.Repository, cache *lab.Cache, scope league.Scope, sparkVariant string, results []lab.CollectiveResult) map[collectiveSparklineKey][]lab.SparklinePoint {
+	sparklines := make(map[collectiveSparklineKey][]lab.SparklinePoint)
 	if cache != nil && cache.For(scope).HasSparklines() {
 		c := cache.For(scope)
 		for _, result := range results {
@@ -132,7 +137,7 @@ func loadCollectiveSparklines(ctx context.Context, repo *lab.Repository, cache *
 			}
 			// Raw prices — normalization creates edge artifacts.
 			if points := trimSparkline(c.Sparklines(result.TransfiguredName, variant), sparklineWindowHours); len(points) > 0 {
-				sparklines[result.TransfiguredName] = points
+				sparklines[collectiveSparklineKey{name: result.TransfiguredName, variant: result.Variant}] = points
 			}
 		}
 		return sparklines
@@ -147,7 +152,11 @@ func loadCollectiveSparklines(ctx context.Context, repo *lab.Repository, cache *
 		if err != nil {
 			slog.Error("collective analysis: sparkline query failed", "error", err)
 		} else {
-			sparklines = points
+			for _, result := range results {
+				if series, ok := points[result.TransfiguredName]; ok {
+					sparklines[collectiveSparklineKey{name: result.TransfiguredName, variant: result.Variant}] = series
+				}
+			}
 		}
 		return sparklines
 	}
@@ -163,7 +172,7 @@ func loadCollectiveSparklines(ctx context.Context, repo *lab.Repository, cache *
 			continue
 		}
 		for name, series := range points {
-			sparklines[name] = series
+			sparklines[collectiveSparklineKey{name: name, variant: variant}] = series
 		}
 	}
 	return sparklines
@@ -200,7 +209,7 @@ func assembleCollectiveRows(query collectiveQueryResult) []collectiveRow {
 			SellReason:           result.SellReason,
 			Sellability:          result.Sellability,
 			SellabilityLabel:     result.SellabilityLabel,
-			Sparkline:            nonNilSparkline(query.sparklines[result.TransfiguredName]),
+			Sparkline:            nonNilSparkline(query.sparklines[collectiveSparklineKey{name: result.TransfiguredName, variant: result.Variant}]),
 			Low7Days:             result.Low7Days,
 			High7Days:            result.High7Days,
 			SellConfidence:       result.SellConfidence,

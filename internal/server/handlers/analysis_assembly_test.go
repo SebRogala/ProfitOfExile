@@ -102,8 +102,8 @@ func TestAssembleCollectiveRows_CalculatesTwentyTwentyGCPRecipe(t *testing.T) {
 			Sellability:       75,
 			SellabilityLabel:  "FAIR",
 		}},
-		sparklines: map[string][]lab.SparklinePoint{
-			"Spark of Nova": {{Time: "2026-09-24T12:00:00Z", Price: 180, Listings: 7}},
+		sparklines: map[collectiveSparklineKey][]lab.SparklinePoint{
+			{name: "Spark of Nova", variant: "20/20"}: {{Time: "2026-09-24T12:00:00Z", Price: 180, Listings: 7}},
 		},
 		basePriceIndex: map[collectiveBaseKey]float64{
 			{name: "Spark", variant: "20"}: 10,
