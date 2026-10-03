@@ -75,11 +75,9 @@ ADRs record decisions at a point in time. If implementation later supersedes a d
 - [Game facts](GAME-FACTS.md) — current game-side invariants with dates and sources, separate from codebase facts.
 - [Currency Exchange row invariant](CURRENCY-EXCHANGE-ROW-INVARIANT.md) — current normative spec for the exchange row: the invariant equations, the rendering rules, the re-affirmed exemptions, and the closure-test enforcement tiers.
 - [Historical overlay debugging notes](history/overlay-debugging-notes.md) — preserved runtime discoveries and obsolete implementation generations; not a current recipe.
-- [AI-Native Case Study](AI-NATIVE-CASE-STUDY.md) — public project/portfolio narrative, not an implementation contract.
 
 ## Codebase state
 
-- [Codebase State Report — 2026-07-22](STATE-REPORT-2026-07-22.md) — measured gate inventory, size/complexity distribution, module import graph, table-ownership map, and `project-seed` principle conformance. Dated measurement; re-run the cited commands rather than trusting the numbers after code changes.
 
 ## Dated research
 
@@ -97,7 +95,6 @@ These are retained as implementation history. They may contain obsolete paths, A
 - [Architecture rewrite baseline — 2026-03-12](history/architecture-rewrite-2026-03-12.md)
 - [Live dashboard plan](PLAN-live-dashboard.md)
 - [Frontend design](FRONTEND-DESIGN.md)
-- [Codex audit — 2026-04-26](CODEX-AUDIT-2026-04-26.md)
 - [Session tracker design](superpowers/specs/2026-03-16-session-tracker-design.md)
 - [Trade API integration design](superpowers/specs/2026-03-16-trade-api-integration-design.md)
 - [Desktop screen-reader proof of concept](superpowers/specs/2026-03-27-desktop-screen-reader-poc-design.md)

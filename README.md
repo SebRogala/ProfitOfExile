@@ -115,7 +115,6 @@ Fresh machine (WSL prerequisites, shared infra, Windows toolchain, `desktop/` sy
 - [Trade and Market Data Lifecycles](docs/TRADE-LIFECYCLE.md) — public-safe overview of collection, desktop-native trade, shared contributions, optional server trading, pairing, caching, and Mercure boundaries.
 - [Overlay Guide](docs/OVERLAY-GUIDE.md) — Tauri overlay architecture and interaction conventions.
 - [Game Facts](docs/GAME-FACTS.md) — dated, sourced Path of Exile facts the implementation relies on.
-- [AI-native case study](docs/AI-NATIVE-CASE-STUDY.md) — how the project is delivered and what the workflow changed.
 
 ## License
 
