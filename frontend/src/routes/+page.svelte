@@ -117,8 +117,8 @@
 	<link rel="describedby" href="/llms.txt" />
 	<!-- Link previews (Discord, Twitter, Slack). Absolute URLs: scrapers fetch
 	     these without a page context, so a relative path resolves to nothing.
-	     og-card.jpg is the 1200x630 crop the format wants — swap the file, keep
-	     the name and the size. -->
+	     og-card.jpg (1200x630) is rendered from frontend/og/home.html by
+	     frontend/og/render.sh. -->
 	<meta property="og:type" content="website" />
 	<meta property="og:site_name" content="ProfitOfExile" />
 	<meta property="og:url" content="https://profitofexile.top/" />
@@ -127,7 +127,7 @@
 	<meta property="og:image" content="https://profitofexile.top/og-card.jpg" />
 	<meta property="og:image:width" content="1200" />
 	<meta property="og:image:height" content="630" />
-	<meta property="og:image:alt" content="Two priced offer boxes from the app over the Temple of Atzoatl sheet in Path of Exile" />
+	<meta property="og:image:alt" content="ProfitOfExile logo and wordmark: companion overlays for Path of Exile" />
 	<meta name="twitter:card" content="summary_large_image" />
 	<!-- A literal <script> tag inside <svelte:head> is compiled as component
 	     code, so the JSON-LD goes in as markup. The content is our own strings;
