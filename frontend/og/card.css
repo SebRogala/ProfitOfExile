@@ -1,0 +1,23 @@
+/* Shared frame for the 1200x630 link-preview cards. Render with ./render.sh. */
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Inter:wght@400&display=block');
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 1200px; height: 630px; overflow: hidden; }
+body {
+	background: #0b0c10;
+	color: #e4e4e7;
+	font-family: Inter, sans-serif;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+.frame {
+	position: absolute;
+	inset: 28px;
+	border: 2px solid #6b5a36;
+	box-shadow: inset 0 0 0 6px #0b0c10, inset 0 0 0 7px #3a3322, inset 0 0 120px rgba(201, 170, 113, 0.08);
+}
+.content { display: flex; align-items: center; gap: 48px; position: relative; }
+.logo { filter: drop-shadow(0 0 36px rgba(201, 170, 113, 0.3)); }
+.wordmark { font-family: Cinzel, serif; font-weight: 700; letter-spacing: 0.02em; color: #c9aa71; }
+.rule { height: 2px; background: linear-gradient(90deg, #c9aa71, transparent); margin: 24px 0; }
+.subtitle { color: #9ca3af; line-height: 1.3; }

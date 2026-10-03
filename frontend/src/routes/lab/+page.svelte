@@ -242,6 +242,18 @@
 	<meta name="description" content="Live Path of Exile 1 gem rankings, Divine Font expected value, market signals, and Lab farming analysis." />
 	<link rel="canonical" href="https://profitofexile.top/lab" />
 	<link rel="describedby" href="/llms.txt" />
+	<!-- Link previews; see the home page for why the URLs are absolute.
+	     og-lab.jpg is rendered from frontend/og/lab.html. -->
+	<meta property="og:type" content="website" />
+	<meta property="og:site_name" content="ProfitOfExile" />
+	<meta property="og:url" content="https://profitofexile.top/lab" />
+	<meta property="og:title" content="Lab Farming Dashboard - ProfitOfExile" />
+	<meta property="og:description" content="Live Path of Exile 1 gem rankings, Divine Font expected value, market signals, and Lab farming analysis." />
+	<meta property="og:image" content="https://profitofexile.top/og-lab.jpg" />
+	<meta property="og:image:width" content="1200" />
+	<meta property="og:image:height" content="630" />
+	<meta property="og:image:alt" content="ProfitOfExile Lab Farming Dashboard: live gem rankings and Divine Font expected value" />
+	<meta name="twitter:card" content="summary_large_image" />
 </svelte:head>
 
 <div class="dashboard">
