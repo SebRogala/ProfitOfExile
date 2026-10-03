@@ -19,7 +19,8 @@ const spaFallback = "200.html"
 // a real file, the SPA shell (spaFallback) is served instead. This allows
 // client-side routing to work for any URL that doesn't match an API route,
 // while "/" and any other prerendered page are served as the real files
-// they are.
+// they are. adapter-static writes a prerendered route as `<route>.html`, so
+// /lab resolves to lab.html before falling back to the shell.
 func StaticHandler(fsys fs.FS) http.Handler {
 	fileServer := http.FileServer(http.FS(fsys))
 
@@ -44,6 +45,14 @@ func StaticHandler(fsys fs.FS) http.Handler {
 			if !errors.Is(err, fs.ErrNotExist) {
 				slog.Error("unexpected error checking static file", "path", fsPath, "error", err)
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			// A prerendered page: /lab is built as lab.html.
+			pagePath := fsPath + ".html"
+			if _, err := fs.Stat(fsys, pagePath); err == nil {
+				r2 := r.Clone(r.Context())
+				r2.URL.Path = "/" + pagePath
+				fileServer.ServeHTTP(w, r2)
 				return
 			}
 			// File not found — serve the SPA shell for client-side routing.
