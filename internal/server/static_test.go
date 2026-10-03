@@ -10,12 +10,16 @@ import (
 )
 
 // testFS mimics the built frontend: index.html is the prerendered landing
-// page, 200.html the SPA shell for client-only routes, plus one asset. The two
-// HTML files carry different markers so a test can tell which one was served.
+// page, lab.html a prerendered route, 200.html the SPA shell for client-only
+// routes, plus one asset. The HTML files carry different markers so a test can
+// tell which one was served.
 func testFS() fstest.MapFS {
 	return fstest.MapFS{
 		"index.html": &fstest.MapFile{
 			Data: []byte("<html><body>ProfitOfExile</body></html>"),
+		},
+		"lab.html": &fstest.MapFile{
+			Data: []byte("<html><body>Lab dashboard</body></html>"),
 		},
 		"200.html": &fstest.MapFile{
 			Data: []byte("<html><body>SPA shell</body></html>"),
@@ -104,6 +108,33 @@ func TestStaticHandler_UnknownPathReturnsSPAFallback(t *testing.T) {
 	contentType := w.Header().Get("Content-Type")
 	if !strings.Contains(contentType, "text/html") {
 		t.Errorf("SPA fallback Content-Type = %q, want text/html", contentType)
+	}
+}
+
+func TestStaticHandler_PrerenderedRouteServesItsHTMLFile(t *testing.T) {
+	handler := StaticHandler(testFS())
+
+	for _, path := range []string{"/lab", "/lab/"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("GET %s status = %d, want %d", path, w.Code, http.StatusOK)
+			}
+			body, err := io.ReadAll(w.Body)
+			if err != nil {
+				t.Fatalf("failed to read response body: %v", err)
+			}
+			if !strings.Contains(string(body), "Lab dashboard") {
+				t.Errorf("GET %s body = %q, want the prerendered lab.html", path, string(body))
+			}
+			if contentType := w.Header().Get("Content-Type"); !strings.Contains(contentType, "text/html") {
+				t.Errorf("GET %s Content-Type = %q, want text/html", path, contentType)
+			}
+		})
 	}
 }
 
