@@ -1,7 +1,7 @@
 # Gem Market Findings — March 2026
 
 > **Status: Dated, non-reproducible research record.** These observations were
-> added in commit `f736797` after a stated seven-day research session. The raw
+> added in commit `40abc19` after a stated seven-day research session. The raw
 > queries, dataset snapshot, and full report are not present in this repository,
 > so the figures preserve historical project knowledge but cannot be independently
 > reproduced here. Do not use them as current market truth without rerunning the

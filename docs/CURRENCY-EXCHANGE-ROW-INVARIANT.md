@@ -2,7 +2,7 @@
 
 Status: CURRENT. Normative for the desktop Currency Exchange table.
 
-Last verified: 2026-09-05 against `main@8219496` — `desktop/src/lib/exchange/view.ts`,
+Last verified: 2026-09-05 against `main@62d2104` — `desktop/src/lib/exchange/view.ts`,
 `filters.ts`, `desktop/src/lib/pages/CurrencyExchangePage.svelte`,
 `desktop/src/lib/components/ExchangeRoute.svelte`, `desktop/src/lib/tooltips.ts`,
 `internal/exchange/plays.go`, `internal/exchange/direct.go`. EVERY `file:line`
@@ -11,7 +11,7 @@ drifted — the earlier `poe-252@6f76efd` re-stamp moved the date without moving
 the offsets, which is the failure this line now forecloses. Each reference names
 the SYMBOL beside its offset, so the next drift is found by grepping the name.
 The divine trash-price knob that the 2026-08-23
-stamp carried as uncommitted landed in `c43e76f`; POE-220 (`c175941`) then edited
+stamp carried as uncommitted landed in `89a73cf`; POE-220 (`b3414ea`) then edited
 §4's sort ruling.
 
 This re-stamp covers **POE-252**: a market whose scored hour traded under

@@ -11,7 +11,7 @@ player might disagree with is a settings field split across exactly two presets.
 
 ## Status
 
-Accepted (POE-257, commits `cd5627c` (WI-1) + `f722d49` (WI-2), 2026-09-06),
+Accepted (POE-257, commits `7309687` (WI-1) + `8ec6553` (WI-2), 2026-09-06),
 under epic POE-124. Supersedes nothing.
 
 Two things it decided were **not yet reachable by a user** when it was accepted.

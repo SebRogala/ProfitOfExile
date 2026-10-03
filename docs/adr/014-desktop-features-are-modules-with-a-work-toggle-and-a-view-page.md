@@ -25,7 +25,7 @@ feature's work off short of a code change. Feature UI was equally ad hoc:
 overlay windows have per-overlay enabled flags, page-level features have
 none.
 
-Separately, commit `058fca3` established a hard lesson: when a feature's data
+Separately, commit `3955733` established a hard lesson: when a feature's data
 collection lives inside its UI toggle, turning the UI off silently kills the
 collection. UI visibility and background work are different axes and must not
 share a switch by accident.
@@ -51,7 +51,7 @@ state contract:
 
 Each module declares `disabled_means` explicitly: `NoWork` (the flag stops the
 tasks) or `NoWindow` (work is unconditional — reconcile structurally cannot
-stop it; the flag only gates windows). This encodes the `058fca3` rule in the
+stop it; the flag only gates windows). This encodes the `3955733` rule in the
 type system instead of in reviewers' memories.
 
 Enablement persists as a delta against registry defaults — an untouched
@@ -86,7 +86,7 @@ Rust-side background work does not get a `ModuleDef`.
 ## Amendment note (proposed, POE-246, 2026-09-03)
 
 Status of this section: **proposed, not accepted.** It records a rule POE-246
-shipped (commit `0dde882`) and argues it belongs in the Decision above. Nothing
+shipped (commit `475c10c`) and argues it belongs in the Decision above. Nothing
 in the Decision moves until an owner takes it.
 
 ### The proposal
@@ -174,7 +174,7 @@ The temple is the first module whose work is gated on a signal at all, but the
 shape is not temple-specific: any module that arms on an event and disarms on a
 timer has the same choice of clock, and the merc capture's voice-line gate is
 the nearest neighbour. Encoding it here would put it beside `disabled_means`,
-which is the other place this ADR turns a `058fca3`-class lesson into a rule
+which is the other place this ADR turns a `3955733`-class lesson into a rule
 rather than into reviewers' memories.
 
 **What is not settled**, and why this is proposed rather than accepted: whether

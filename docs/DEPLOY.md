@@ -364,7 +364,7 @@ dispatch is the deliberate answer rather than building machinery around it.
 
 ## The incident this document exists for
 
-On 2026-07-26 commit `c5c612f` added six entries to
+On 2026-07-26 commit `31990c7` added six entries to
 `internal/icons/urls/gems.json`, the `go:embed`ded gem icon map. "Test & Deploy"
 went green **in 11 seconds** and shipped nothing.
 

@@ -847,12 +847,12 @@ regression test/decision.
 
 ### Replaying a saved capture (no game needed)
 
-The Temple page's **Debug capture** takes an optional file path (POE-124, ad18695): paste the
+The Temple page's **Debug capture** takes an optional file path (POE-124, bfc3174): paste the
 full path of a dump's `screen.png` and the button reads **Debug read file** — the whole read
 path (anchor, ROIs, marker read, panel OCR, advisor) runs on that image on the real WinRT OCR
 engine and writes a new dump. The regression board is the 2026-09-03 laptop capture,
 `%APPDATA%\profitofexile\temple-debug\1788438639673\screen.png` (1920×1080, Lightning
-Workshop at C1). A pass (measured 2026-09-04 at 4b3e8dc): anchored at temple scale ≈ 1.0 with
+Workshop at C1). A pass (measured 2026-09-04 at 970470d): anchored at temple scale ≈ 1.0 with
 no search (`anchoring on the remembered screen scale …` or the scale table), `panelRect`
 ≈ [1131,5,543,453], `diamondRect` ≈ [1312,118,200,200], `markerError` null (6/6 seals),
 `panel — 2 architect block(s)` naming Hayoxi (upgrade → Omnitect Reactor Plant) and Xopec
@@ -1670,7 +1670,7 @@ touching the named path.
   contradiction and geometry-notice lines and the fallback read before using
   `temple_debug_capture`; the normal placed path has no moving-origin budget.
   **Amended 2026-09-11 (POE-275):** the second cause no longer reads that way. A
-  placed miss sweeps only under Re-arm, once per key (since 05a51a8), and this
+  placed miss sweeps only under Re-arm, once per key (since 602af3c), and this
   item runs without Re-arm; a null or unplaced slice sweeps off the loop on its
   third consecutive clean miss, then every three misses after the previous
   sweep ended, at most 10 per key, and a landed recheck ends that key's null
@@ -1765,7 +1765,7 @@ touching the named path.
   (x',y')` and the named geometry notice; the origin is remembered after the
   successful read. A panel-not-open miss has the existing no-panel path.
   **Amended 2026-09-11 (POE-275):** an Alva-announced miss buys no sweep (since
-  05a51a8); only a Re-arm miss does, once per key, off the loop, and it writes
+  602af3c); only a Re-arm miss does, once per key, off the loop, and it writes
   ONE `Temple: cold sweep (PlacedMiss) at WxH — N ms, …; release build` line
   when it ends. To exercise the contradiction line, press Re-arm with the
   placement wrong; the sweep's find is read only after the next capture confirms

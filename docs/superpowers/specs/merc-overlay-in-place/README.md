@@ -12,7 +12,7 @@ published at https://claude.ai/code/artifact/d49c7343-03a1-490c-8046-bf7bf13771c
   recruit panel, and the beside panel (name, verdict, status) anchored to its
   right. `PanelStates.dc.html` — the beside panel in four states.
 - `Mirror.dc.html`, `InContext.dc.html` — the strip restyle that SHIPPED on
-  2026-09-07 (commit `8a922d9`) as the fallback layout; kept for the record.
+  2026-09-07 (commit `7ecd71d`) as the fallback layout; kept for the record.
 - `DirectionB.dc.html` (support names as chips), `DirectionC.dc.html` (marks in
   place, everything else as tags on the panel) — rejected directions.
 - `Current.dc.html` + `current-strip.jpg` — the strip before the restyle.

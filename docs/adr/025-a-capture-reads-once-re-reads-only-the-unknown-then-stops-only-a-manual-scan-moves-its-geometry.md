@@ -19,9 +19,9 @@ temple and merc modules; the code is not (POE-278).
 Accepted (owner acceptance criteria stated on POE-278, 2026-09-10).
 
 Temple: shipped — every clause is current behaviour, with the homes named in
-the table below (`cdd67ba` partial rounds, POE-249 WI-2, 2026-09-07; `54e7ccd`
-POE-269 keyed fallback; `05a51a8` Manual-only placed-miss sweep, 2026-09-09;
-`332e40b` "placed" means anchored, POE-278).
+the table below (`44fbc5d` partial rounds, POE-249 WI-2, 2026-09-07; `c241ee9`
+POE-269 keyed fallback; `602af3c` Manual-only placed-miss sweep, 2026-09-09;
+`511c3c3` "placed" means anchored, POE-278).
 
 Merc: clause 1 shipped; clause 4 shipped (`POE-278 WI-B`, `f78786e`); clauses 2, 3 and 5 shipped (`POE-278 WI-C`, `072c98c`).
 
@@ -137,7 +137,7 @@ Row numbers and section names are those of [Temple Lifecycle](../TEMPLE-LIFECYCL
 
 Temple clause 4, as shipped (**temple (a) is amended by the POE-275 amendment
 below**): (a) is `ColdSweepReason::NullSlice` — no screen
-slice, or no ANCHORED Entrance origin (`332e40b`: a seed is not a placement) —
+slice, or no ANCHORED Entrance origin (`511c3c3`: a seed is not a placement) —
 for any arm source, once per `(temple_epoch, temple_rearm)` key, with one
 release when the sweep found an anchor whose slice was withheld
 (`null_sweep_key_after_publish`). It cannot replace an anchor, because (a)
@@ -151,7 +151,7 @@ Merc clause 4, as specified: merc's placement is `run::merc_placement` — the
 screen slice's `ssot::placements` merc panel, seed or remembered (a remembered
 `anchors.merc_panel` replaces the seed's origin). Case (a) is `merc_placement`
 returning `None`, which happens only with no screen slice. Temple's "a seed is
-not a placement" (`332e40b`) does not carry over: a merc placed miss with no
+not a placement" (`511c3c3`) does not carry over: a merc placed miss with no
 remembered anchor is a placed miss, not a cold start. A merc cold start
 remembers nothing, because `LocateReason::ColdStart` carries no placement and
 `run::fallback_panel` yields no origin for it; only

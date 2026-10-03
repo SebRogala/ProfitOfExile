@@ -416,7 +416,7 @@ This data is only used locally for AI-assisted brainstorming. It is never shared
 
 ## 9. Original Architecture Reference
 
-The original PHP/Symfony implementation is preserved in git history (commit `537e37e` and earlier). Key files for reference:
+The original PHP/Symfony implementation is preserved in git history (commit `a22cf7e` and earlier). Key files for reference:
 
 ```
 src/Domain/Strategy/Strategy.php              — core simulation loop (run method, lines 23-45)

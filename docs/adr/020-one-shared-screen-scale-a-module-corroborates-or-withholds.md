@@ -10,7 +10,7 @@ corroborates, and never teaches the slice a new number.
 
 ## Status
 
-Accepted (POE-234, commits `29ac1b9` + `0691be5`, 2026-09-03). Written up in the
+Accepted (POE-234, commits `f5a8147` + `73cb620`, 2026-09-03). Written up in the
 POE-223 follow-up audit, 2026-09-04.
 
 Amended 2026-09-04 (POE-233) — see
@@ -173,7 +173,7 @@ to forget one.
 ### 6. Read regions are keyed on the layout anchor, never on the screen edge
 
 The same discipline one level down, and the clause that makes the shared scale
-worth having (POE-230, commit `71df527`).
+worth having (POE-230, commit `17ca9f5`).
 
 A module's OCR rects are placed from `(origin, scale)` — the anchor it just
 measured — and never from an edge of the capture. Measured 2026-09-03 on the
@@ -232,7 +232,7 @@ and the read runs at up to 1 Hz.
 
 ## Amendment: the lab OCR regions are the one consumer that assumes 1080p (2026-09-04)
 
-POE-233 (`a7abbed`), written up in the POE-223 follow-up audit. Nothing in the
+POE-233 (`ec10784`), written up in the POE-223 follow-up audit. Nothing in the
 Decision moves; the second consumer of the slice is named, and with it the ONE
 place a `null` slice does not fail closed.
 

@@ -1,7 +1,7 @@
 # Codebase State Report — 2026-07-22
 
 **Status:** Dated measurement. Canonical for *what was measured on 2026-07-22*, not for current behavior thereafter.
-**Last verified:** 2026-07-22, branch `main` at `664751e`.
+**Last verified:** 2026-07-22, branch `main` at `f76bb29`.
 **Canonical for:** the gate inventory, size/complexity distribution, module import graph, table-ownership map, and conformance against `/var/www/project-seed` principles, as of the date above.
 **Not canonical for:** any of these facts after code changes. Re-run the commands cited inline rather than trusting the numbers.
 

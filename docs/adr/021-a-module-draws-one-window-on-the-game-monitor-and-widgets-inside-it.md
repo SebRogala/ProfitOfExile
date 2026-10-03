@@ -6,8 +6,8 @@ uid: 5b7e5c7a-1e24-4ca4-9573-014ee7bd3452
 
 ## Status
 
-Proposed (POE-223 epic, commits `1847358`…`dbf59de`, amended by
-`bb488cf`…`f700ac4`, 2026-09-02, and by `c175946` (POE-244) and `6959e8c`
+Proposed (POE-223 epic, commits `482e5ab`…`cf666c1`, amended by
+`8716038`…`eaacb79`, 2026-09-02, and by `4351399` (POE-244) and `2c7f544`
 (POE-245)). Written up in the POE-223 follow-up audit, 2026-09-04.
 
 It stays Proposed until the epic's Windows smoke list passes; three of its items
@@ -72,7 +72,7 @@ everything it draws over the game is a WIDGET inside that window.**
 
 - `routes/(app)/+layout.svelte` builds it from Rust's `get_game_monitor`, which
   the focus poller answers from the PoE window's own HWND on each transition
-  INTO the game (POE-237, `6c5082d`). `overlay/monitor-choice.ts` matches that
+  INTO the game (POE-237, `440e66f`). `overlay/monitor-choice.ts` matches that
   against an `availableMonitors()` entry by POSITION — the two enumerations do
   not share an id space — and falls back to `primaryMonitor()`, which is what
   shipped before POE-237.
@@ -103,7 +103,7 @@ everything it draws over the game is a WIDGET inside that window.**
 - The registry is `desktop/src/lib/overlay/widgets/widget-registry.ts`, keyed
   `"<module>.<widget>"`, with shipped defaults in CSS px. Placements persist in
   PHYSICAL, window-relative px in `Settings.widgets`.
-- **A stored placement is REBASED, then clamped** (POE-239, `9e553bf`). Every
+- **A stored placement is REBASED, then clamped** (POE-239, `c282b9d`). Every
   placement carries the host size it was made against (`host_width` /
   `host_height`); `rebase()` scales by the two axis ratios before
   `clampToHost()` sees it, so a widget two-thirds across a 3840×2160 monitor is
@@ -130,7 +130,7 @@ everything it draws over the game is a WIDGET inside that window.**
   lets the hook repair `WS_EX_TRANSPARENT`. Every overlay registers, so every
   overlay is repaired; the singleton is gone (epic D5).
 - **Where two windows claim the same click, `hit_test` gives it to the highest
-  `shown_seq`** (POE-239, `9e553bf`) — the most recently SHOWN, where shown is
+  `shown_seq`** (POE-239, `c282b9d`) — the most recently SHOWN, where shown is
   the window's registration or the false→true EDGE in `set_overlay_has_content`.
   Those are the only two show signals Rust receives. The rule it replaces was
   first-registered-wins, under which the window built FIRST — the one most
@@ -157,7 +157,7 @@ everything it draws over the game is a WIDGET inside that window.**
   `widget-config` webview-scoped — and `docs/OVERLAY-GUIDE.md`'s
   "Config-mode ordering contract" is normative for it.
 - **A session raises the WINDOW and never the module flag** (POE-241,
-  `dbf59de`). Arranging widget positions runs no capture loop and no OCR. The
+  `cf666c1`). Arranging widget positions runs no capture loop and no OCR. The
   transient force-enable that an earlier cut of this batch used is deleted, and
   a module-coupled overlay's desired state is
   `(module flag || widgetConfigLive(label)) && feature grant`, with
@@ -219,11 +219,11 @@ everything it draws over the game is a WIDGET inside that window.**
   above is the recorded fallback and re-opens this ADR's first Decision bullet.
 - **UNVERIFIED — the cross-display rebuild AS FIXED.** The pre-fix path ran on
   Windows: the owner's 2026-09-03 stranded overlay is what POE-245 was filed
-  from. The fix (`6959e8c`) has not been run there;
+  from. The fix (`2c7f544`) has not been run there;
   `docs/OVERLAY-GUIDE.md`'s "Game fullscreen on the secondary monitor" is the
   acceptance, and it is epic POE-223, "Windows smoke — follow-up batch
   additions" item 10.
-- **UNVERIFIED — `WATCHDOG_PERIOD_MS = 3000`** (POE-238, `0576894`), the period
+- **UNVERIFIED — `WATCHDOG_PERIOD_MS = 3000`** (POE-238, `931f0e3`), the period
   at which the message loop checks whether the `WH_MOUSE_LL` hook is still
   installed. Its own doc comment says it is a guess: the only measured anchor is
   `LowLevelHooksTimeout`'s 300 ms, which bounds how long a proc may take and not

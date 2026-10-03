@@ -1,7 +1,7 @@
 # Merc Overlay: In-Place Marks and a Beside Panel
 
 > Status: **proposed / unimplemented** (POE-274). Last verified 2026-09-07 against
-> commit `8a922d9` (the strip restyle) and ADR-023. Canonical for the TARGET form
+> commit `7ecd71d` (the strip restyle) and ADR-023. Canonical for the TARGET form
 > of the merc verdict overlay and its fallback rule; not for the strip that ships
 > today, which `desktop/src/routes/overlay/mercenary/+page.svelte` and
 > `desktop/src/lib/mercenaries/overlay-view.ts` are canonical for. Superseded by
@@ -13,7 +13,7 @@ The strip drew its read marks as a glyph run in a user-placed window, and the
 player had to map "cell 2 of Blood Mortar" onto the recruit panel's icons by
 counting (owner, 2026-09-07: "the supports table is right aligned, while the
 merc supports UI has them left aligned, and it creates a bit confusion when
-there is a need to check the gem"). The 2026-09-07 restyle (`8a922d9`) fixed the
+there is a need to check the gem"). The 2026-09-07 restyle (`7ecd71d`) fixed the
 ORDER — cells left-aligned in slot order at the panel's square rhythm — and is
 the layout this spec keeps as its fallback. The target removes the mapping:
 the mark is drawn on the icon it describes.
@@ -65,7 +65,7 @@ strip: every line still comes from `overlay-view.ts`.
 1. **Fallback is automatic, never a preference.** Rust publishes the exclusion
    outcome on the merc slice (`captureExclusion: 'held' | 'refused' |
    'unknown'`, written where `capture.rs` logs its once-lines). On `refused`
-   the overlay draws the strip layout of `8a922d9` with no in-place marks and
+   the overlay draws the strip layout of `7ecd71d` with no in-place marks and
    the status line says why; on `unknown` (no grab yet) it draws the panel and
    no marks until the first grab settles it. Two layouts in one route is the
    accepted cost; a user toggle is not (owner, 2026-09-07).

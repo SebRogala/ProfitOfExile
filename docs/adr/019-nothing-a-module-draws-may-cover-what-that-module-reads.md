@@ -6,7 +6,7 @@ uid: e3a56433-a589-49b2-8cf4-b32e6805e777
 
 ## Status
 
-Accepted (POE-244, commit `c175946`, 2026-09-02). Written up in the POE-223
+Accepted (POE-244, commit `4351399`, 2026-09-02). Written up in the POE-223
 follow-up audit, 2026-09-04, together with the violation it closes.
 
 Amended 2026-09-04 (POE-248) — see [the amendment at the end](#amendment-the-line-exception-is-retired-2026-09-04):
