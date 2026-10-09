@@ -44,7 +44,7 @@
 ## File map
 - **Canvas `desktop-app--strategies--harvest-flipping`:** https://claude.ai/artifact/PTogG15PdG1WJYjbDqNHJf
   — source in `design/canvas/desktop-app--strategies--harvest-flipping/project/`.
-- **Handoff (when built):** `design/handoffs/<slug>/`.
+- **Handoffs:** `design/handoffs/poe-283--desktop-app--strategies--harvest-flipping/` (build source `Overview-prototype.dc.html`) and `design/handoffs/poe-284--desktop-app--top-bar--divine-rate/` (build source `TopBar-prototype.dc.html`); both prototypes on the canvas page "Handoff · build sources". Index: `design/handoffs/README.md`.
 
 ## Decisions log (append-only — date + decision + why)
 - 2026-10-09 — design/ set up per playbook LOCAL.md (Door 2b); canvas created for POE-283.
@@ -64,11 +64,14 @@
 - 2026-10-10 — Essence rerolls (Deafening and corrupted) cost 30 Primal (blue), not Vivid: requester confirmed "blue ones" via the owner, matching poedb. POE-283's "Vivid for Essences" line (and the brief copied from it) is wrong. At Primal prices essences pay: keep Scorn/Envy/Misery/Zeal/Loathing/Rage, feed Torment +6.3c; corrupted: keep Horror, feed Hysteria +19.4c.
 - 2026-10-10 — App-wide divine:chaos rate goes in the top bar, one source for every page: the Currency Exchange rate (owner). Filed as POE-284 (relates to POE-283); top-bar mock lives on this canvas until the shell gets its own canvas.
 - 2026-10-10 — Owner answers to the brief's open questions: tiers computed on the server and cached so every user gets them warm, keep set/EV/regex on the desktop (Q3); price sides follow the Currency Exchange convention (Q4); keep/feed picks persist across sessions via the prefs map (Q6); page hidden behind the `beta` grant (Q2); desktop only, the web frontend is deprecated except Lab (Q1); handoff wanted (Q13).
-- 2026-10-10 — Variant C is the design; B removed from the canvas, A kept as reference only. App chrome (sidebar, top bar) on the boards is a 1:1 recreation of `Sidebar.svelte` / `TopBar.svelte`: the handoff adds only the Harvest nav entry (beta) and, under POE-284, the rate chip — nothing else in the chrome changes.
+- 2026-10-10 — Variant C is the design; B removed from the canvas, A kept as reference only. App chrome (sidebar, top bar) on the boards is a 1:1 recreation of `Sidebar.svelte` / `TopBar.svelte`: the handoff adds only the Harvest nav entry (shown only to `beta`-granted devices, no badge — the menu never shows one) and, under POE-284, the rate chip — nothing else in the chrome changes.
+- 2026-10-10 — Harvest Flipping nav icon: Wild Crystallised Lifeforce art with a green recycle badge filling its bottom-right quadrant, shipped as an image like `lab-icon.png` (owner). Rate chip sits at the top bar's right, left of the window controls (owner).
+- 2026-10-10 — Handoff 1 for POE-283 and POE-284 as two packages (one implementer session each). Reference PNGs captured by the Designer session with headless Chrome from the canvas source + the type's runtime, at the owner's request. POE-283's prototype has the chrome exactly as today plus the nav entry; the rate chip lives only in POE-284.
 
 ## Open questions / to confirm
 - 2026-10-10: POE-283 got a "Lifeforce colour correction" section (Primal for essences).
 - Brief Q11 (weight updates: merge vs replace, last-updated date) — still open.
-- Harvest Flipping nav glyph: the sidebar uses emoji; proposed 🌱 — confirm.
+- Div vs chaos per keeper: decided per keeper row in round 1, but variant C has no slot for it — owner to place it (open decision in the POE-283 handoff).
+- Price sides (input / outcome / lifeforce) under the CX convention — not pinned.
 - Data: `items.json` names both `CurrencyAfflictionOrbHarbinger` and `…Prophecies` "Fine Delirium Orb" (icons say Foreboding / Portentous); Fine = `CurrencyAfflictionOrbCurrency`. Name lookups would collide.
 - Token gap: CX hard-codes `#6b7280` / `#4b5563` greys that fail AA on `--color-lab-surface`; this design uses `--color-lab-text-secondary` / `--color-lab-text-muted` instead, no new token.

@@ -1,0 +1,23 @@
+{
+ "_note": "Exact mock data for POE-284. Do NOT invent or widen fields. One owner. The value is the Currency Exchange newest-hour divine/chaos VWAP for Allflame at 2026-09-09 23:00 UTC (local DB).",
+ "_owners": {
+  "rate": "internal/exchange (Currency Exchange module); served ungated — backend is a separate task"
+ },
+ "rate": {
+  "divineChaosRate": 360.07,
+  "priceHour": "2026-09-09T23:00:00Z",
+  "updatedMinutesAgo": 6,
+  "state": "ready",
+  "_note": "state: 'ready' | 'cold' (no exchange hour yet → value null, shows '—') | 'stale' (server unreachable; keep the last value). Stale example: lastHour 21:00, unreachable since 21:04."
+ },
+ "items": {
+  "divine": "Metadata/Items/Currency/CurrencyModValues",
+  "chaos": "Metadata/Items/Currency/CurrencyRerollRare"
+ },
+ "_formats": {
+  "chip": "whole chaos, no grouping below 1,000 ('360')",
+  "tooltip": "one decimal ('360.1 chaos')",
+  "hour": "'09 Sep 23:00' local",
+  "age": "'updated N min ago'"
+ }
+}

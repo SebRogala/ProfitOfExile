@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Harvest Flipping nav icon options</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{--bg:#1a1a2e;--surface:#16213e;--border:#0f3460;--text:#e0e0e0;--text-muted:#888;--accent:#e94560;--success:#4ade80;--color-lab-yellow:#eab308}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:var(--text);font-size:14px;line-height:1.5}
+.nav-item{all:unset;display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;border-radius:5px;color:var(--text);box-sizing:border-box;width:164px}
+.nav-item.active{background:var(--border);color:var(--accent)}
+.sb-beta{margin-left:auto;font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;border-radius:3px;border:1px solid currentcolor;padding:0 4px;color:var(--color-lab-yellow)}
+.cap{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)}
+</style>
+</helmet>
+<div style="width: 1024px; padding: 28px 32px; display: flex; flex-direction: column; gap: 28px">
+  <sc-for list="{{rows}}" as="row" hint-placeholder-count="2">
+    <section style="display: flex; flex-direction: column; gap: 12px">
+      <span class="cap">{{row.label}}</span>
+      <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px">
+        <sc-for list="{{row.opts}}" as="o" hint-placeholder-count="4">
+          <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 12px">
+            <div style="position: relative; width: 64px; height: 64px">
+              <img src="{{o.src}}" alt="" width="{{o.big}}" height="{{o.big}}" style="{{o.bigStyle}}">
+              <svg width="{{o.badge}}" height="{{o.badge}}" viewBox="0 0 16 16" aria-hidden="true" style="{{o.badgeStyle}}"><circle cx="8" cy="8" r="7.5" fill="{{o.fill}}" stroke="{{o.ring}}" stroke-width="{{o.ringW}}"/><path d="M2.6 7a5.6 5.6 0 0 1 9.9-2.8M13.4 9a5.6 5.6 0 0 1-9.9 2.8" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round"/><path d="M12.9 1.6v3.2H9.7M3.1 14.4v-3.2H6.3" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 4px; background: var(--surface); padding: 6px 4px; border-radius: 4px">
+              <span class="nav-item"><span style="position: relative; width: 18px; height: 18px; flex-shrink: 0"><img src="{{o.src}}" alt="" width="{{o.small}}" height="{{o.small}}" style="{{o.smallStyle}}"><svg width="{{o.sBadge}}" height="{{o.sBadge}}" viewBox="0 0 16 16" aria-hidden="true" style="{{o.sBadgeStyle}}"><circle cx="8" cy="8" r="7.5" fill="{{o.fill}}" stroke="{{o.ring}}" stroke-width="{{o.ringW}}"/><path d="M2.6 7a5.6 5.6 0 0 1 9.9-2.8M13.4 9a5.6 5.6 0 0 1-9.9 2.8" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round"/><path d="M12.9 1.6v3.2H9.7M3.1 14.4v-3.2H6.3" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Harvest Flipping</span></span>
+              <span class="nav-item active"><span style="position: relative; width: 18px; height: 18px; flex-shrink: 0"><img src="{{o.src}}" alt="" width="{{o.small}}" height="{{o.small}}" style="{{o.smallStyle}}"><svg width="{{o.sBadge}}" height="{{o.sBadge}}" viewBox="0 0 16 16" aria-hidden="true" style="{{o.sBadgeStyle}}"><circle cx="8" cy="8" r="7.5" fill="{{o.fill}}" stroke="{{o.ring}}" stroke-width="{{o.ringW}}"/><path d="M2.6 7a5.6 5.6 0 0 1 9.9-2.8M13.4 9a5.6 5.6 0 0 1-9.9 2.8" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round"/><path d="M12.9 1.6v3.2H9.7M3.1 14.4v-3.2H6.3" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Harvest Flipping</span></span>
+            </div>
+            <span style="font-size: 12px; color: var(--text-muted)">{{o.name}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+  </sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1024,"height":340}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const lf = [
+      { name: 'Wild (purple)', src: '/_blob/4e761014de9e89d5c4f6c1ab67a25699' },
+      { name: 'Vivid (yellow)', src: '/_blob/c5b810b7a49f9ba47a03c6cab97a48a8' },
+      { name: 'Primal (blue)', src: '/_blob/6ca792e27e1200c6712c052d6eb8fa7a' },
+      { name: 'Sacred', src: '/_blob/c57cbc6ae9f8c0748992d70d3d9d9eba' }
+    ];
+    // Badge: lifeforce full size, recycle circle in the bottom-right corner.
+    const badge = lf.map(x => Object.assign({}, x, {
+      big: 64, bigStyle: 'object-fit: contain; display: block',
+      badge: 32, badgeStyle: 'position: absolute; right: 0; bottom: 0',
+      small: 18, smallStyle: 'object-fit: contain; display: block',
+      sBadge: 9, sBadgeStyle: 'position: absolute; right: 0; bottom: 0',
+      fill: 'var(--surface)', ring: 'var(--surface)', ringW: 1
+    }));
+    // Ring: recycle arrows drawn around a smaller lifeforce.
+    const ring = lf.map(x => Object.assign({}, x, {
+      big: 38, bigStyle: 'object-fit: contain; position: absolute; left: 13px; top: 13px',
+      badge: 64, badgeStyle: 'position: absolute; left: 0; top: 0',
+      small: 11, smallStyle: 'object-fit: contain; position: absolute; left: 3.5px; top: 3.5px',
+      sBadge: 18, sBadgeStyle: 'position: absolute; left: 0; top: 0',
+      fill: 'none', ring: 'none', ringW: 0
+    }));
+    return { rows: [ { label: 'Lifeforce with a recycle badge filling the bottom-right quadrant (1/4 of the icon)', opts: badge } ] };
+  }
+}
+</script>
+</body>
+</html>
