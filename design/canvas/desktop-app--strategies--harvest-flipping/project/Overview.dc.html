@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Harvest Flipping — family overview</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{
+  /* desktop/src/tokens.css, copied verbatim — the only declaration site in the app */
+  --bg:#1a1a2e;--surface:#16213e;--border:#0f3460;--text:#e0e0e0;--text-muted:#888;--accent:#e94560;--success:#4ade80;--warning:#fbbf24;
+  --color-lab-bg:#0f1117;--color-lab-surface:#1a1d27;--color-lab-border:#2a2d37;--color-lab-text:#e4e4e7;
+  --color-lab-text-secondary:#9ca3af;--color-lab-text-muted:#888;--color-lab-green:#22c55e;--color-lab-red:#ef4444;
+  --color-lab-yellow:#eab308;--color-lab-blue:#3b82f6;--color-lab-cyan:#22d3ee;--color-lab-purple:#a855f7;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:var(--text);font-size:14px;line-height:1.5}
+a{color:var(--color-lab-blue)}a:hover{color:var(--color-lab-text)}
+button,input{font-family:inherit}
+button:focus-visible{outline:1px solid var(--color-lab-blue);outline-offset:-1px}
+.mono{font-family:'Consolas','Monaco',monospace;font-weight:600}
+.cap{font-size:.625rem;text-transform:uppercase;letter-spacing:.06em;color:var(--color-lab-text-secondary)}
+.sub{font-size:.6875rem;color:var(--color-lab-text-secondary);line-height:1.3}
+.gain{color:var(--color-lab-green);font-weight:700}
+.gain.loss{color:var(--color-lab-red)}
+.gain.flat{color:var(--color-lab-text-muted)}
+.amber{color:var(--color-lab-yellow)}
+/* App chrome — 1:1 with desktop/src/lib/components/TopBar.svelte + Sidebar.svelte (context only; unchanged except the rate chip and the Harvest nav entry) */
+.app-shell{display:flex;flex-direction:column;min-height:100vh;background:var(--bg)}
+.tb{height:36px;min-height:36px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 0 0 .75rem;overflow:hidden}
+.tb-l,.tb-c{display:flex;align-items:center;gap:.5rem}
+.tb-name{font-size:12px;font-weight:600;color:var(--text)}
+.tb-dot{width:7px;height:7px;border-radius:50%;background:var(--text-muted);flex-shrink:0}
+.tb-dot.on{background:var(--success)}
+.tb-gear{all:unset;font-size:1rem;opacity:.6;line-height:1;cursor:pointer}
+.tb-win{display:flex;align-items:stretch;height:36px}
+.tb-win button{background:none;border:none;color:var(--text-muted);width:46px;height:36px;display:flex;align-items:center;justify-content:center;font-size:14px}
+.rate{all:unset;cursor:help;display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text);padding:2px 6px;border-radius:4px}
+.rate:hover{background:rgba(255,255,255,.06)}
+.rate img{width:18px;height:18px;object-fit:contain}
+.rate .n{font-family:'Consolas','Monaco',monospace;font-weight:600}
+.app-body{display:flex;flex:1;min-height:0}
+.sb{width:180px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;justify-content:space-between}
+.sb-top{flex:1;padding:10px 8px}
+.sb-sec{margin-bottom:16px}
+.sb-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);padding:0 10px;margin-bottom:4px}
+.sb-ico{flex-shrink:0;width:16px;text-align:center}
+.sb-lab{width:18px;height:14px;object-fit:contain;flex-shrink:0}
+.sb-beta{margin-left:auto;font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;border-radius:3px;border:1px solid currentcolor;padding:0 4px;white-space:nowrap;color:var(--color-lab-yellow)}
+.sb-bottom{border-top:1px solid var(--border);padding:8px}
+.sb-bottom .sb-label{margin-bottom:6px}
+.sb-row{display:flex;justify-content:space-between;align-items:center;background:var(--bg);padding:4px 8px;margin-bottom:3px;border-radius:4px;font-size:11px;width:100%;border:none;color:var(--text);cursor:pointer;box-sizing:border-box}
+.sb-row.group{font-weight:600;margin-top:4px;border-top:1px solid var(--border);padding-top:6px}
+.sb-row.indent{padding-left:16px;font-size:10px}
+.mode{font-size:10px}.mode.off{color:var(--text-muted)}.mode.always{color:var(--success)}.mode.auto{color:var(--warning)}.mode.nodata{color:var(--accent)}
+.sb-collapse{background:none;border:none;border-top:1px solid var(--border);color:var(--text-muted);font-size:12px;padding:6px;width:100%;cursor:pointer}
+.nav-item{all:unset;display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;border-radius:5px;color:var(--text);cursor:pointer;box-sizing:border-box;width:100%}
+.nav-item.active{background:var(--border);color:var(--accent)}
+.seg{display:flex;border:1px solid var(--color-lab-border);border-radius:4px;overflow:hidden}
+.seg button{background:transparent;border:none;color:var(--color-lab-text-secondary);padding:4px 10px;font-size:.6875rem;font-weight:600;cursor:pointer}
+.seg button:hover{color:var(--color-lab-text);background:rgba(255,255,255,.05)}
+.seg button.on{color:var(--color-lab-text);background:rgba(99,102,241,.2)}
+.tab{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--color-lab-text-secondary);padding:8px 12px;font-size:.75rem;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.tab:hover{color:var(--color-lab-text)}
+.tab.on{color:var(--color-lab-text);border-bottom-color:var(--color-lab-blue)}
+.tab .pending{font-size:.5625rem;text-transform:uppercase;letter-spacing:.06em;color:var(--color-lab-text-muted);border:1px solid var(--color-lab-border);padding:1px 4px;border-radius:3px}
+.panel{background:var(--color-lab-surface);border:1px solid var(--color-lab-border)}
+.col-h{display:flex;align-items:baseline;gap:8px;padding:10px 12px 8px;border-bottom:1px solid var(--color-lab-border)}
+.tier{border-bottom:1px solid var(--color-lab-border);padding:8px 12px 10px;display:flex;flex-direction:column;gap:6px}
+.tier:last-child{border-bottom:none}
+.tier-h{display:flex;align-items:center;gap:8px}
+.tier-name{font-size:.6875rem;font-weight:700;letter-spacing:.06em;color:var(--color-lab-text)}
+.mixed{font-size:.5625rem;text-transform:uppercase;letter-spacing:.06em;color:var(--color-lab-yellow);border:1px solid color-mix(in srgb,var(--color-lab-yellow) 45%,transparent);border-radius:3px;padding:1px 4px}
+.move{all:unset;cursor:pointer;font-size:.6875rem;color:var(--color-lab-text-secondary);border:1px solid var(--color-lab-border);border-radius:4px;padding:2px 8px;white-space:nowrap}
+.move:hover{color:var(--color-lab-text);border-color:var(--color-lab-text-secondary)}
+.move:focus-visible{outline:1px solid var(--color-lab-blue)}
+.types{display:flex;flex-wrap:wrap;gap:4px}
+.t{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:2px 8px 2px 4px;border-radius:3px;font-size:.75rem;border:1px solid var(--color-lab-border);background:var(--color-lab-bg)}
+.t:hover{border-color:var(--color-lab-text-secondary)}
+.t:focus-visible{outline:1px solid var(--color-lab-blue)}
+.t.k{border-color:color-mix(in srgb,var(--color-lab-green) 40%,transparent);background:color-mix(in srgb,var(--color-lab-green) 10%,transparent)}
+.t.forced{border-style:dashed;border-color:var(--color-lab-yellow)}
+.t .p{color:var(--color-lab-text-secondary);font-family:'Consolas','Monaco',monospace;font-weight:600;font-size:.6875rem}
+.rx{display:flex;flex-direction:column;gap:4px}
+.rx-row{display:flex;gap:6px;align-items:stretch}
+.rx input{flex:1;min-width:0;background:var(--color-lab-bg);border:1px solid var(--color-lab-border);color:var(--color-lab-text);padding:6px 8px;font-family:'Consolas','Monaco',monospace;font-size:.75rem}
+.rx input:focus-visible{outline:1px solid var(--color-lab-blue)}
+.btn{background:transparent;border:1px solid var(--border);color:var(--text-muted);padding:.2rem .6rem;border-radius:4px;font-size:.75rem;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--accent);color:var(--text)}
+.lf{display:inline-flex;align-items:center;gap:4px;vertical-align:middle;white-space:nowrap}
+.lf img{width:18px;height:18px;object-fit:contain}
+.lf-name{color:var(--color-lab-text);font-weight:600}
+.kv{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:.75rem;color:var(--color-lab-text-secondary)}
+.kv .mono{color:var(--color-lab-text)}
+</style>
+</helmet>
+<div class="app-shell">
+<header class="tb">
+  <div class="tb-l"><img src="/_blob/691f40d405f988c0569701be82d2a85b" alt="ProfitOfExile" width="26" height="26"><span class="tb-name">ProfitOfExile</span></div>
+  <div class="tb-c">
+    <button class="rate" title="1 divine = 360.1 chaos · Currency Exchange, newest hour · used for every chaos/divine conversion (POE-284)"><img src="/_blob/efa83dfa414d534823b4c06c8d93e252" alt="Divine Orb"><span class="n">1</span><span>=</span><span class="n">360</span><img src="/_blob/78435a419710ac1cf980a8f964a9332b" alt="Chaos Orbs"></button>
+    <span class="tb-dot on" title="Server: Connected"></span>
+    <span class="tb-dot" title="OCR Scanner: Idle"></span>
+    <button class="tb-gear" title="Settings">⚙️</button>
+  </div>
+  <div class="tb-win"><button title="Minimize">–</button><button title="Maximize">◻</button><button title="Close">✕</button></div>
+</header>
+<div class="app-body">
+<nav class="sb" aria-label="Main">
+  <div class="sb-top">
+    <div class="sb-sec">
+      <div class="sb-label">Strategies</div>
+      <button class="nav-item"><img src="/_blob/6f16c42c90e00f29897099688097f2b9" alt="Lab" class="sb-lab"><span>Lab Farming</span></button>
+      <button class="nav-item"><span class="sb-ico">⚔️</span><span>Mercenaries</span></button>
+      <button class="nav-item"><span class="sb-ico">🏛️</span><span>Temple</span></button>
+      <button class="nav-item"><span class="sb-ico">💱</span><span>Currency Exchange</span></button>
+      <button class="nav-item active" aria-current="page"><span class="sb-ico">🌱</span><span>Harvest Flipping</span><span class="sb-beta">beta</span></button>
+    </div>
+  </div>
+  <div class="sb-bottom">
+    <div class="sb-label">Overlays</div>
+    <button class="sb-row group"><span>Lab Overlays</span><span class="mode always">on</span></button>
+    <button class="sb-row indent"><span>⚖️ Compare</span><span class="mode auto">hidden</span></button>
+    <button class="sb-row indent"><span>🧭 Compass</span><span class="mode auto">hidden</span></button>
+    <button class="sb-row indent"><span>🗺️ Map</span><span class="mode nodata">no data</span></button>
+    <button class="sb-row indent"><span>⏱️ Timer</span><span class="mode auto">hidden</span></button>
+    <div class="sb-label">Modules</div>
+    <button class="sb-row"><span>👁️ Merc OCR</span><span class="mode off">off</span></button>
+    <button class="sb-row"><span>🏛️ Temple reader</span><span class="mode off">off</span></button>
+  </div>
+  <button class="sb-collapse" title="Collapse sidebar">◀</button>
+</nav>
+
+<main style="flex: 1; min-width: 0; padding: 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; color: var(--color-lab-text)">
+
+  <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--color-lab-surface); border: 1px solid var(--color-lab-border); padding: 10px 16px">
+    <h1 style="font-size: 1rem; font-weight: 700; margin: 0">Harvest Flipping</h1>
+    <span style="font-size: .6875rem; text-transform: uppercase; letter-spacing: .5px; color: var(--color-lab-text-secondary)">Allflame</span>
+    <div style="flex: 1"></div>
+    <span class="cap">Prices</span>
+    <div class="seg" role="group" aria-label="Price window">
+      <button aria-pressed="false">Recent 6h</button>
+      <button class="on" aria-pressed="true">Day 24h</button>
+    </div>
+  </div>
+
+  <div role="tablist" aria-label="Reroll family" style="display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--color-lab-border)">
+    <sc-for list="{{tabs}}" as="t" hint-placeholder-count="7">
+      <button role="tab" class="{{t.cls}}" aria-selected="{{t.on}}" onClick="{{t.pick}}">
+        <span>{{t.label}}</span>
+        <sc-if value="{{t.pending}}" hint-placeholder-val="{{ false }}"><span class="pending">no data</span></sc-if>
+      </button>
+    </sc-for>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: .75rem; color: var(--color-lab-text-secondary); padding: 0 2px">
+    <span style="color: var(--color-lab-text); font-weight: 600">updated 6 min ago</span>
+    <span style="opacity: .5">·</span>
+    <span>prices: Currency Exchange, Day 24h · 1 div = 360c</span>
+    <span style="opacity: .5">·</span>
+    <span>weights: {{prov}}</span>
+  </div>
+
+  <div class="panel" style="padding: 12px 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap">
+    <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+      <span class="cap">Is it worth it?</span>
+      <span style="font-size: 1.25rem; font-weight: 700">{{v.headline}}</span>
+      <span class="sub">{{v.sub}}</span>
+    </div>
+    <div style="flex: 1"></div>
+    <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 2px">
+      <span class="{{v.evCls}}" style="font-size: 1.375rem">{{v.ev}}</span>
+      <span class="sub">{{v.evSub}}</span>
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 8px; padding: 0 2px">
+    <span class="cap">Keep / feed split</span>
+    <span class="{{picks.cls}}">{{picks.label}}</span>
+    <div style="flex: 1"></div>
+    <button class="btn" onClick="{{picks.reset}}" disabled="{{picks.none}}" style="{{picks.btnStyle}}">Reset to computed</button>
+  </div>
+
+  <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start">
+
+    <div style="flex: 3 1 400px; min-width: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 10px">
+      <section class="panel" aria-labelledby="feed-h">
+        <div class="col-h"><h2 id="feed-h" class="cap" style="margin: 0; color: var(--color-lab-text)">Feeders</h2><span class="sub">reroll these · Loop EV each</span></div>
+        <sc-for list="{{feedCards}}" as="c" hint-placeholder-count="1">
+          <div class="tier">
+            <div class="tier-h">
+              <span class="tier-name">{{c.tier}}</span>
+              <sc-if value="{{c.mixed}}" hint-placeholder-val="{{ false }}"><span class="mixed">split</span></sc-if>
+              <span class="sub">{{c.range}}</span>
+              <div style="flex: 1"></div>
+              <button class="move" onClick="{{c.move}}">{{c.moveLabel}}</button>
+            </div>
+            <div class="types">
+              <sc-for list="{{c.types}}" as="x" hint-placeholder-count="6">
+                <button class="{{x.cls}}" onClick="{{x.move}}" title="{{x.title}}"><img src="{{x.icon}}" alt="" width="20" height="20" style="object-fit: contain">{{x.name}}<span class="p">{{x.price}}</span><span class="{{x.evCls}}" style="font-size: .6875rem">{{x.ev}}</span></button>
+              </sc-for>
+            </div>
+          </div>
+        </sc-for>
+        <sc-if value="{{noFeed}}" hint-placeholder-val="{{ false }}"><div class="tier"><span class="sub">No feeders: every tier is kept.</span></div></sc-if>
+      </section>
+
+      <section class="panel" aria-labelledby="keep-h">
+        <div class="col-h"><h2 id="keep-h" class="cap" style="margin: 0; color: var(--color-lab-text)">Keepers</h2><span class="sub">stop and sell</span></div>
+        <sc-for list="{{keepCards}}" as="c" hint-placeholder-count="3">
+          <div class="tier">
+            <div class="tier-h">
+              <span class="tier-name">{{c.tier}}</span>
+              <sc-if value="{{c.mixed}}" hint-placeholder-val="{{ false }}"><span class="mixed">split</span></sc-if>
+              <span class="sub">{{c.range}}</span>
+              <div style="flex: 1"></div>
+              <button class="move" onClick="{{c.move}}">{{c.moveLabel}}</button>
+            </div>
+            <div class="types">
+              <sc-for list="{{c.types}}" as="x" hint-placeholder-count="3">
+                <button class="{{x.cls}}" onClick="{{x.move}}" title="{{x.title}}"><img src="{{x.icon}}" alt="" width="20" height="20" style="object-fit: contain">{{x.name}}<span class="p">{{x.price}}</span><span class="sub">{{x.share}}</span></button>
+              </sc-for>
+            </div>
+          </div>
+        </sc-for>
+        <sc-if value="{{noKeep}}" hint-placeholder-val="{{ false }}"><div class="tier"><span class="sub">No keepers: nothing to stop on.</span></div></sc-if>
+      </section>
+    </div>
+
+    <div style="flex: 2 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 10px">
+      <section class="panel" aria-label="Stash search" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 12px">
+        <div class="rx">
+          <label for="rx-feed" class="cap">Feeders regex</label>
+          <div class="rx-row"><input id="rx-feed" readonly="readonly" value="{{rx.feed}}"><button class="btn" onClick="{{rx.copyFeed}}">{{rx.feedBtn}}</button></div>
+          <span class="{{rx.feedLenCls}}">{{rx.feedLen}}</span>
+        </div>
+        <div class="rx">
+          <label for="rx-keep" class="cap">Keepers regex</label>
+          <div class="rx-row"><input id="rx-keep" readonly="readonly" value="{{rx.keep}}"><button class="btn" onClick="{{rx.copyKeep}}">{{rx.keepBtn}}</button></div>
+          <span class="{{rx.keepLenCls}}">{{rx.keepLen}}</span>
+        </div>
+        <span class="sub">Paste into the stash search. Shortest fragment unique within this family; follows your tier picks.</span>
+      </section>
+
+      <section class="panel" aria-labelledby="cost-h" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 6px">
+        <h2 id="cost-h" class="cap" style="margin: 0">Cost per reroll</h2>
+        <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: .8125rem">
+          <span class="mono" style="font-size: 1rem">{{cost.chaos}}</span>
+          <span>= 30 ×</span>
+          <span class="lf"><img src="{{cost.icon}}" alt=""><span class="lf-name">{{cost.lfName}}</span></span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: .8125rem">
+          <span class="mono">1 div</span><span>→</span><span class="mono">{{cost.perDivLf}}</span><span>lifeforce</span><span>→</span><span class="mono">{{cost.perDivRolls}}</span><span>rerolls</span>
+        </div>
+        <span class="sub">{{cost.note}}</span>
+      </section>
+
+      <section class="panel" aria-labelledby="ev-h" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 6px">
+        <h2 id="ev-h" class="cap" style="margin: 0">EV of your selection</h2>
+        <div class="kv"><span>Cheapest feeder</span><span class="mono">{{ev.feeder}}</span></div>
+        <div class="kv"><span>Loop EV per feeder</span><span class="{{ev.loopCls}}">{{ev.loop}}</span></div>
+        <div class="kv"><span>Keeper hit per roll</span><span class="mono">{{ev.pHit}}</span></div>
+        <div class="kv"><span>Rerolls per keeper</span><span class="mono">{{ev.rolls}}</span></div>
+        <div class="kv"><span>Lifeforce per keeper</span><span class="mono">{{ev.lfPerKeeper}}</span></div>
+        <div style="height: 1px; background: var(--color-lab-border); margin: 2px 0"></div>
+        <div class="kv"><span>1 div of lifeforce yields</span><span class="mono">{{ev.keepersPerDiv}}</span></div>
+        <div class="kv"><span>…worth after inputs</span><span class="{{ev.perDivCls}}">{{ev.perDiv}}</span></div>
+      </section>
+    </div>
+  </div>
+</main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1024,"height":1100}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { fam: 'fossil', ov: {}, copied: '' };
+  }
+  data() {
+    // Fixture: Currency Exchange, Allflame, 24h VWAP to 2026-09-09 (local DB). [name, logged rolls, chaos, divine]
+    return {
+      // Item icons: poewiki inventory art (items.json icon URLs), uploaded as canvas assets; key = full name, letters only.
+      icons: {"AberrantFossil":"/_blob/22dcbac52404466361b3aee05bbb4a87","ArmoursmithsDeliriumOrb":"/_blob/4424443601f7444a53e8754e10c33510","BlacksmithsDeliriumOrb":"/_blob/feb89f3d131decfea33c60a9411d75be","BlightedDeliriumOrb":"/_blob/df3ce577cf1f073c98d11a104c0bad02","BloodstainedFossil":"/_blob/6cc2ce20a7019057de2455a7074532cc","BoundFossil":"/_blob/a70add68f179bfaf1f8b1792eba1a36a","CartographersDeliriumOrb":"/_blob/3962254b9a0801bf92fc42287092a95e","CorrodedFossil":"/_blob/8f8a49287fb275980f95674e8f750ea0","DeafeningEssenceofAnger":"/_blob/498f17ad747f851bf8b355fac73bb053","DeafeningEssenceofAnguish":"/_blob/60f072907c5b5d96b844ad35c3a4e983","DeafeningEssenceofContempt":"/_blob/c628ea70019b8461a2ab0a2fd2e81a37","DeafeningEssenceofDoubt":"/_blob/a6f8f33454797c55009cff59feb32d72","DeafeningEssenceofDread":"/_blob/59d08d21f8caef83316e9a65ad28f63c","DeafeningEssenceofEnvy":"/_blob/79c527c1eed0fe426396d8e99fa82ea8","DeafeningEssenceofFear":"/_blob/6a465e54bdcdd88e13e36432b7592c70","DeafeningEssenceofGreed":"/_blob/fe7ff7cd4276bda14e9ebce8976447b0","DeafeningEssenceofHatred":"/_blob/33a16e74f47a1c48f71a4b66c410d126","DeafeningEssenceofLoathing":"/_blob/c513201397fdfa686df3398a72dc2699","DeafeningEssenceofMisery":"/_blob/8d8afc273159c03da6f7ea2838ec67c4","DeafeningEssenceofRage":"/_blob/1cfa9f6ba4e8d529a98dcee4ce05f605","DeafeningEssenceofScorn":"/_blob/ecf62d3783786972bc2e2e4b10fed25a","DeafeningEssenceofSorrow":"/_blob/d370c3d0af19532790b68ea73f69d44f","DeafeningEssenceofSpite":"/_blob/81e6d8daf0b65139430f1d7a68c042b5","DeafeningEssenceofSuffering":"/_blob/6601a7dd23310c9a9042055930fcc9b6","DeafeningEssenceofTorment":"/_blob/73e8f15f8ae08a152eab5ab2a0514fc5","DeafeningEssenceofWoe":"/_blob/059cf03f314ebb818ebe515fbff9ddfe","DeafeningEssenceofWrath":"/_blob/ebc70c0b0a026f02b65dbac484c5129c","DeafeningEssenceofZeal":"/_blob/8ae9a8a69df526e7e3c0629f5fd1bca6","DeftFossil":"/_blob/d6a9d41915f90441c1cb5438cc2d24d6","DenseFossil":"/_blob/4d071ba7c633c313428d7f9eed71d7d8","DivinersDeliriumOrb":"/_blob/1ae148db9a65a71fbf697b4db0661110","EssenceofDelirium":"/_blob/ad7931827d85e43e4aa7dae578be2fd8","EssenceofHorror":"/_blob/2b7aa078a7242f46db5a19467ee3c1be","EssenceofHysteria":"/_blob/fac59221bea35f09d4fd27c798b2e014","EssenceofInsanity":"/_blob/69117c413cf220b80f24e2de8e0d3aed","FacetedFossil":"/_blob/8952a8e27201c0a8b02f782146cd55db","FineDeliriumOrb":"/_blob/942df7ca6da730c8385df79efba456ae","FracturedFossil":"/_blob/29a1f5530e39462ce9e80fd289a6a1a4","FragmentedDeliriumOrb":"/_blob/5bd6da64e6db497fdf55f332d3b7df76","FrigidFossil":"/_blob/cf87e3834b263876df5f9599c13cf7f6","FundamentalFossil":"/_blob/7a643aef1230d08dbd87186e84bbbb24","GildedFossil":"/_blob/9fa985bbdf8519b6d0e605479b859cff","GlyphicFossil":"/_blob/65390a73fd8bf13bd88115ce4f3987d7","HollowFossil":"/_blob/edcc81b92678a077fd78cce21d1160a1","JaggedFossil":"/_blob/7d2002a5580e54c9d431f21063d0dc0b","JewellersDeliriumOrb":"/_blob/0c3c61fddfbde61a438212be9a5e44ec","LucentFossil":"/_blob/2efdfe9689ff3a68134a3bb380c18aec","MetallicFossil":"/_blob/4310301f9091ab4207d0e86efd269ab5","PristineFossil":"/_blob/a2dc1252a4bd257c43cbf56d6e90017e","SanctifiedFossil":"/_blob/d370481261d73bb63c1651ae1c863d23","ScorchedFossil":"/_blob/16a38133f3b2d14d6bdfd647d870df58","ShudderingFossil":"/_blob/96c8e2dabbc5732ab28044e04553a347","SingularDeliriumOrb":"/_blob/c7ea87b90a0b76a20f2b4d40f4565e3a","SkitteringDeliriumOrb":"/_blob/db5a9c81abb914ec31ad9f1ae079d01b","ThaumaturgesDeliriumOrb":"/_blob/f434174581a9c795bc44206f4f1af6ff","WhisperingDeliriumOrb":"/_blob/5430447c5c778ff23c905ada2c5c84ed"},
+      rate: 360.07,
+      lf: { Primal: { c: 0.049, perDiv: 7445, icon: '/_blob/6ca792e27e1200c6712c052d6eb8fa7a', colour: 'blue' }, Vivid: { c: 0.169, perDiv: 1917, icon: '/_blob/c5b810b7a49f9ba47a03c6cab97a48a8', colour: 'yellow' }, Wild: { c: 0.031, perDiv: 9905, icon: '/_blob/4e761014de9e89d5c4f6c1ab67a25699', colour: 'purple' } },
+      fams: {
+        delirium: { label: 'Delirium Orbs', lf: 'Primal', suffix: ' Delirium Orb', prefix: '', prov: 'HarvestForge log · 5,122 rolls · 2026-10-09 · one player’s sample', types: [
+          ["Blacksmith's",1066,10.58],["Armoursmith's",1093,10.56],["Jeweller's",1103,10.32],['Fine',937,16.69],["Diviner's",262,54.54],["Cartographer's",123,11.75],['Whispering',147,11.17],['Singular',102,12.57],["Thaumaturge's",56,12.67],['Fragmented',134,10.48],['Blighted',51,11.08],['Skittering',48,41.50]] },
+        essence: { label: 'Deafening Essences', lf: 'Primal', prefix: 'Deafening Essence of ', suffix: '', prov: 'HarvestForge log · 5,012 rolls · 2026-10-09 · uniform ~5%', types: [
+          ['Greed',1,5.85],['Contempt',1,9.68],['Hatred',1,5.58],['Woe',1,10.11],['Anger',1,6.23],['Wrath',1,5.48],['Sorrow',1,9.62],['Spite',1,10.07],['Scorn',1,26.93],['Envy',1,13.29],['Misery',1,13.65],['Dread',1,5.64],['Zeal',1,15.86],['Loathing',1,12.05],['Torment',1,5.01],['Fear',1,5.46],['Rage',1,13.84],['Doubt',1,5.26],['Suffering',1,5.15],['Anguish',1,5.49]] },
+        corrupt: { label: 'Corrupted Essences', lf: 'Primal', prefix: 'Essence of ', suffix: '', prov: 'no logged sample · assumed uniform, closed pool of four', types: [
+          ['Hysteria',1,41.91],['Insanity',1,42.61],['Horror',1,65.67],['Delirium',1,52.50]] },
+        fossil: { label: 'Fossils', lf: 'Wild', prefix: '', suffix: ' Fossil', prov: 'HarvestForge log · 5,271 rolls · 2026-10-09 · one player’s sample', types: [
+          ['Metallic',535,9.31],['Jagged',539,15.86],['Pristine',577,15.04],['Dense',550,33.09],['Frigid',562,9.15],['Scorched',577,9.95],['Aberrant',557,10.11],['Lucent',134,9.12],['Bound',122,9.77],['Corroded',129,29.96],['Shuddering',131,44.22],['Deft',126,13.87],['Fundamental',142,17.41],['Sanctified',11,108.95],['Gilded',11,89.14],['Faceted',5,192.39],['Fractured',5,41.18],['Bloodstained',2,10.82],['Hollow',1,401.63],['Glyphic',4,60.51]] },
+        astrolabe: { label: 'Astrolabes', pending: true },
+        oil: { label: 'Oils', pending: true },
+        catalyst: { label: 'Catalysts', pending: true }
+      }
+    };
+  }
+  // Port of internal/lab/classification.go: detectTops + computeVariantTiers + classifyTier (gem-only >5c filter dropped).
+  tiers(pricesIn) {
+    const p = pricesIn.slice().sort((a, b) => b - a);
+    let topB = Infinity;
+    if (p.length >= 4) {
+      const cap = Math.max(3, Math.floor(p.length / 10));
+      if (cap < p.length) {
+        const pool = Math.min(cap, p.length - 1), avg = (p[0] - p[pool]) / pool;
+        let end = 0, found = false;
+        for (let i = 0; i < cap && i < p.length - 1; i++) { const g = p[i] - p[i + 1]; if (g >= avg * 2) { end = i + 1; found = true; } else if (found) break; }
+        if (found) topB = p[end - 1];
+      }
+    }
+    const clean = p.filter(x => x < topB), top5 = clean.slice(0, 5);
+    const floor = Math.max((top5.reduce((a, b) => a + b, 0) / (top5.length || 1)) * 0.08, 1);
+    const snap = (arr, t, w) => { if (arr.length < 2) return t; let ti = arr.findIndex(x => x <= t); if (ti < 0) ti = arr.length - 1; const lo = Math.max(0, ti - w), hi = Math.min(arr.length - 1, ti + w); let bg = 0, bp = t; for (let i = lo; i < hi; i++) { const g = arr[i] - arr[i + 1]; if (g > bg) { bg = g; bp = arr[i]; } } return bp; };
+    let bounds = [], names = [];
+    const af = clean.filter(x => x >= floor);
+    if (clean.length < 4 || af.length < 4) { bounds = [floor]; names = ['LOW', 'FLOOR']; }
+    else {
+      const hb = snap(af, af[0] * 0.7, 2), mh = snap(af, hb * 0.5, 2);
+      const below = af.filter(x => x < mh); let ml = 0;
+      if (below.length >= 4) { let br = 0, bp = 0; for (let i = 2; i < below.length - 1; i++) { const r = (below[i] - below[i + 1]) / below[i]; if (r > br) { br = r; bp = below[i]; } } if (br >= 0.08) ml = bp; }
+      if (hb > 0) { bounds.push(hb); names.push('HIGH'); }
+      if (mh > 0 && mh < hb) { bounds.push(mh); names.push('MID-HIGH'); }
+      if (ml > 0 && ml > floor) { bounds.push(ml); names.push('MID'); }
+      bounds.push(floor); names.push('LOW'); names.push('FLOOR');
+    }
+    return x => { if (x >= topB) return 'TOP'; for (let i = 0; i < bounds.length; i++) if (x >= bounds[i]) return names[i]; return names[bounds.length] || names[names.length - 1]; };
+  }
+  solve(types, cost, ov) {
+    const n = types.length, tot = types.reduce((a, t) => a + t[1], 0);
+    const w = types.map(t => t[1] / tot), price = types.map(t => t[2]);
+    const P = (i, j) => (i === j ? 0 : w[j] / (1 - w[i]));
+    const rv = V => V.map((_, i) => { let s = 0; for (let j = 0; j < n; j++) s += P(i, j) * V[j]; return s - cost; });
+    let V = price.slice(), keep = price.map(() => true), R = rv(V);
+    for (let it = 0; it < 400; it++) {
+      R = rv(V);
+      keep = price.map((p, i) => (ov[types[i][0]] ? ov[types[i][0]] === 'keep' : p >= R[i]));
+      const nV = price.map((p, i) => (keep[i] ? p : R[i]));
+      const d = Math.max(...nV.map((x, i) => Math.abs(x - V[i])));
+      V = nV; if (d < 1e-9) break;
+    }
+    R = rv(V);
+    let N = price.map(() => 0);
+    for (let it = 0; it < 3000; it++) N = N.map((_, i) => { let s = 1; for (let j = 0; j < n; j++) if (!keep[j]) s += P(i, j) * N[j]; return s; });
+    const hit = price.map((_, i) => { let s = 0; for (let k = 0; k < n; k++) if (keep[k]) s += P(i, k); return s; });
+    return types.map((t, i) => ({ t, i, w: w[i], keep: keep[i], auto: price[i] >= R[i], loop: R[i] - price[i], rolls: N[i], hit: hit[i] }));
+  }
+  regex(chosen, all) {
+    const lower = all.map(s => s.toLowerCase());
+    const frag = name => {
+      const t = name.toLowerCase(), others = lower.filter(o => o !== t);
+      for (let L = 3; L <= t.length; L++) for (let i = 0; i + L <= t.length; i++) {
+        const s = t.slice(i, i + L);
+        if (/[^a-z]/.test(s)) continue;
+        if (!others.some(o => o.includes(s))) return s;
+      }
+      return t;
+    };
+    if (!chosen.length) return '';
+    return '"' + chosen.map(frag).join('|') + '"';
+  }
+  renderVals() {
+    const D = this.data();
+    const famId = this.state.fam, fam = D.fams[famId];
+    const c = x => (Math.abs(x) >= 100 ? Math.round(x).toLocaleString('en-US') : x.toFixed(1)) + 'c';
+    const g = x => (x > 0.05 ? '+' : x < -0.05 ? '−' : '') + c(Math.abs(x));
+    const gcls = x => 'mono gain' + (x < -0.05 ? ' loss' : x <= 0.05 ? ' flat' : '');
+    const tabs = Object.keys(D.fams).map(id => ({ label: D.fams[id].label, pending: !!D.fams[id].pending, on: id === famId, cls: 'tab' + (id === famId ? ' on' : ''), pick: () => { if (!D.fams[id].pending) this.setState({ fam: id }); } }));
+    const ov = this.state.ov[famId] || {};
+    const lf = D.lf[fam.lf], cost = 30 * lf.c;
+    const res = this.solve(fam.types, cost, ov);
+    const tierOf = this.tiers(fam.types.map(t => t[2]));
+    const full = n => fam.prefix + n + fam.suffix;
+    const icon = n => (D.icons || {})[n.replace(/[^A-Za-z]/g, '')] || '';
+    const setOv = patch => { const all = Object.assign({}, this.state.ov); all[famId] = Object.assign({}, all[famId] || {}, patch); this.setState({ ov: all }); };
+    const ORDER = ['TOP', 'HIGH', 'MID-HIGH', 'MID', 'LOW', 'FLOOR'];
+    const groups = {};
+    res.forEach(r => { const tn = tierOf(r.t[2]); (groups[tn] = groups[tn] || []).push(r); });
+    const tierList = ORDER.filter(tn => groups[tn]);
+    const card = (tn, side) => {
+      const all = groups[tn], mine = all.filter(r => (side === 'keep' ? r.keep : !r.keep));
+      if (!mine.length) return null;
+      const prices = all.map(r => r.t[2]);
+      const lo = Math.min(...prices), hi = Math.max(...prices);
+      const toSide = side === 'keep' ? 'reroll' : 'keep';
+      return {
+        tier: tn, mixed: mine.length !== all.length,
+        range: all.length + (all.length === 1 ? ' type · ' : ' types · ') + (lo === hi ? c(lo) : c(lo) + '–' + c(hi)),
+        moveLabel: side === 'keep' ? 'Feed tier →' : '← Keep tier',
+        move: () => { const p = {}; all.forEach(r => { p[r.t[0]] = toSide; }); setOv(p); },
+        types: mine.sort((a, b) => b.t[2] - a.t[2]).map(r => ({
+          name: r.t[0], icon: icon(full(r.t[0])), price: c(r.t[2]),
+          ev: side === 'keep' ? '' : g(r.loop), evCls: gcls(r.loop),
+          share: side === 'keep' ? (r.w * 100 < 1 ? (r.w * 100).toFixed(2) : (r.w * 100).toFixed(1)) + '%' : '',
+          cls: 't' + (r.keep ? ' k' : '') + (ov[r.t[0]] ? ' forced' : ''),
+          title: (side === 'keep' ? 'Kept' : 'Fed') + (ov[r.t[0]] ? ' (your pick)' : ' (engine)') + ' — click to ' + (side === 'keep' ? 'feed' : 'keep') + ' just ' + full(r.t[0]),
+          move: () => { const p = {}; p[r.t[0]] = toSide; setOv(p); }
+        }))
+      };
+    };
+    const keepCards = tierList.map(tn => card(tn, 'keep')).filter(Boolean);
+    const feedCards = tierList.map(tn => card(tn, 'feed')).filter(Boolean);
+    const feeders = res.filter(r => !r.keep), keepers = res.filter(r => r.keep);
+    const cheapest = feeders.slice().sort((a, b) => a.t[2] - b.t[2])[0];
+    const names = fam.types.map(t => full(t[0]));
+    const fx = this.regex(feeders.map(r => full(r.t[0])), names), kx = this.regex(keepers.map(r => full(r.t[0])), names);
+    const lenLine = s => s.length + ' / 250 characters';
+    const copied = this.state.copied;
+    const rx = {
+      feed: fx, keep: kx, feedLen: lenLine(fx), keepLen: lenLine(kx),
+      feedLenCls: 'sub' + (fx.length > 250 ? ' amber' : ''), keepLenCls: 'sub' + (kx.length > 250 ? ' amber' : ''),
+      feedBtn: copied === 'feed' ? 'Copied' : 'Copy', keepBtn: copied === 'keep' ? 'Copied' : 'Copy',
+      copyFeed: () => { try { navigator.clipboard.writeText(fx); } catch (e) {} this.setState({ copied: 'feed' }); },
+      copyKeep: () => { try { navigator.clipboard.writeText(kx); } catch (e) {} this.setState({ copied: 'keep' }); }
+    };
+    const v = {}, ev = {};
+    if (cheapest && keepers.length) {
+      const pays = cheapest.loop > 0.05;
+      const keepersPerDiv = lf.perDiv / 30 / cheapest.rolls;
+      v.headline = pays ? 'Yes — feed the cheap tiers' : 'No — not at these prices';
+      v.sub = pays ? 'Buy ' + full(cheapest.t[0]) + ' (' + c(cheapest.t[2]) + ', cheapest feeder) and reroll until a keeper.' : 'Even the cheapest feeder sells for more than the loop returns.';
+      v.ev = g(cheapest.loop); v.evCls = gcls(cheapest.loop); v.evSub = 'per ' + full(cheapest.t[0]);
+      ev.feeder = full(cheapest.t[0]) + ' · ' + c(cheapest.t[2]); ev.loop = g(cheapest.loop); ev.loopCls = gcls(cheapest.loop);
+      ev.pHit = (cheapest.hit * 100).toFixed(1) + '%'; ev.rolls = '~' + cheapest.rolls.toFixed(1);
+      ev.lfPerKeeper = '~' + Math.round(cheapest.rolls * 30).toLocaleString('en-US') + ' ' + fam.lf + ' · ' + c(cheapest.rolls * cost);
+      ev.keepersPerDiv = '~' + keepersPerDiv.toFixed(1) + ' keepers';
+      ev.perDiv = g(keepersPerDiv * cheapest.loop); ev.perDivCls = gcls(cheapest.loop);
+    } else {
+      const best = res.slice().sort((a, b) => b.loop - a.loop)[0];
+      v.headline = 'No — nothing to flip';
+      v.sub = !keepers.length ? 'The keep set is empty: pick a tier to keep.' : 'Every type sells for more than a reroll returns. Closest: ' + full(best.t[0]) + ' ' + g(best.loop) + '.';
+      v.ev = '—'; v.evCls = 'mono gain flat'; v.evSub = 'no feeder';
+      ev.feeder = '—'; ev.loop = '—'; ev.loopCls = 'mono gain flat'; ev.pHit = '—'; ev.rolls = '—'; ev.lfPerKeeper = '—'; ev.keepersPerDiv = '—'; ev.perDiv = '—'; ev.perDivCls = 'mono gain flat';
+    }
+    const cost_ = {
+      chaos: c(cost), icon: lf.icon, lfName: fam.lf + ' lifeforce (' + lf.colour + ')',
+      perDivLf: lf.perDiv.toLocaleString('en-US'), perDivRolls: Math.floor(lf.perDiv / 30).toLocaleString('en-US'),
+      note: 'chaos side ' + lf.c.toFixed(3) + 'c each; divine side from the lifeforce/divine market'
+    };
+    // A pick that matches what the engine would choose anyway is not a change.
+    const changed = res.filter(r => ov[r.t[0]] && (ov[r.t[0]] === 'keep') !== r.auto).length;
+    const picks = {
+      none: changed === 0,
+      label: changed === 0 ? 'computed from prices' : changed + (changed === 1 ? ' type moved by you' : ' types moved by you'),
+      cls: 'sub' + (changed ? ' amber' : ''),
+      btnStyle: changed ? '' : 'opacity: .4; cursor: default',
+      reset: () => { if (!changed) return; const all = Object.assign({}, this.state.ov); all[famId] = {}; this.setState({ ov: all }); }
+    };
+    return { tabs, prov: fam.prov, v, ev, rx, cost: cost_, keepCards, feedCards, picks, noFeed: !feedCards.length, noKeep: !keepCards.length };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Harvest Flipping — family table</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{
+  /* desktop/src/tokens.css, copied verbatim — the only declaration site in the app */
+  --bg:#1a1a2e;--surface:#16213e;--border:#0f3460;--text:#e0e0e0;--text-muted:#888;--accent:#e94560;
+  --color-lab-bg:#0f1117;--color-lab-surface:#1a1d27;--color-lab-border:#2a2d37;--color-lab-text:#e4e4e7;
+  --color-lab-text-secondary:#9ca3af;--color-lab-text-muted:#888;--color-lab-green:#22c55e;--color-lab-red:#ef4444;
+  --color-lab-yellow:#eab308;--color-lab-blue:#3b82f6;--color-lab-cyan:#22d3ee;--color-lab-purple:#a855f7;
+}
+body{margin:0;background:var(--color-lab-bg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:var(--color-lab-text)}
+a{color:var(--color-lab-blue)}a:hover{color:var(--color-lab-text)}
+button{font-family:inherit}
+button:focus-visible{outline:1px solid var(--color-lab-blue);outline-offset:-1px}
+.mono{font-family:'Consolas','Monaco',monospace;font-weight:600}
+.cap{font-size:.625rem;text-transform:uppercase;letter-spacing:.06em;color:var(--color-lab-text-secondary)}
+.sub{font-size:.6875rem;color:var(--color-lab-text-secondary);line-height:1.25;white-space:nowrap}
+.gain{color:var(--color-lab-green);font-weight:700}
+.gain.loss{color:var(--color-lab-red)}
+.gain.flat,.reserved{color:var(--color-lab-text-muted)}
+.amber{color:var(--color-lab-yellow)}
+.thin-div{color:var(--color-lab-red);opacity:.85}
+.nav-item{all:unset;display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;border-radius:5px;color:var(--text);cursor:pointer;box-sizing:border-box;width:100%}
+.nav-item.active{background:var(--border);color:var(--accent)}
+.nav-item svg{flex-shrink:0}
+.seg{display:flex;border:1px solid var(--color-lab-border);border-radius:4px;overflow:hidden}
+.seg button{background:transparent;border:none;color:var(--color-lab-text-secondary);padding:4px 10px;font-size:.6875rem;font-weight:600;cursor:pointer}
+.seg button:hover{color:var(--color-lab-text);background:rgba(255,255,255,.05)}
+.seg button.on{color:var(--color-lab-text);background:rgba(99,102,241,.2)}
+.seg button.on.keep{background:color-mix(in srgb,var(--color-lab-green) 22%,transparent)}
+.tab{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--color-lab-text-secondary);padding:8px 12px;font-size:.75rem;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.tab:hover{color:var(--color-lab-text)}
+.tab.on{color:var(--color-lab-text);border-bottom-color:var(--color-lab-blue)}
+.tab .pending{font-size:.5625rem;text-transform:uppercase;letter-spacing:.06em;color:var(--color-lab-text-muted);border:1px solid var(--color-lab-border);padding:1px 4px;border-radius:3px}
+.grid{display:grid;grid-template-columns:minmax(200px,1.6fr) 74px 82px 168px 82px 86px 58px 96px;min-width:860px}
+.hd{padding:8px;font-size:.6875rem;text-transform:uppercase;letter-spacing:.5px;color:var(--color-lab-text-secondary);font-weight:600;border-bottom:1px solid var(--color-lab-border);display:flex;align-items:flex-end;position:sticky;top:0;background:var(--color-lab-surface)}
+.hd.num{justify-content:flex-end;text-align:right}
+.hd button{all:unset;cursor:pointer;display:inline-flex;gap:4px;align-items:center}
+.hd button:hover{color:var(--color-lab-text)}
+.hd button:focus-visible{outline:1px solid var(--color-lab-blue)}
+.hd .arrow{color:var(--color-lab-blue);width:8px}
+.c{padding:6px 8px;border-bottom:1px solid var(--color-lab-border);display:flex;flex-direction:column;justify-content:center;font-size:.8125rem;min-height:40px;box-sizing:border-box}
+.c.num{align-items:flex-end;text-align:right}
+.c.type{flex-direction:row;align-items:center;justify-content:flex-start;gap:8px}
+.c.decide{flex-direction:row;align-items:center;justify-content:flex-start;gap:6px}
+.icon-ph{width:20px;height:20px;flex-shrink:0;border:1px dashed var(--color-lab-border);border-radius:2px;background:var(--color-lab-bg)}
+.override{all:unset;cursor:pointer;font-size:.625rem;color:var(--color-lab-yellow);border:1px solid color-mix(in srgb,var(--color-lab-yellow) 45%,transparent);border-radius:3px;padding:1px 5px;white-space:nowrap}
+.override:hover{background:color-mix(in srgb,var(--color-lab-yellow) 12%,transparent)}
+.autolbl{font-size:.625rem;color:var(--color-lab-text-muted)}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:3px;font-size:.6875rem;font-weight:600;background:color-mix(in srgb,var(--color-lab-green) 15%,transparent);color:var(--color-lab-text);border:1px solid color-mix(in srgb,var(--color-lab-green) 40%,transparent)}
+.chip.forced{border-color:color-mix(in srgb,var(--color-lab-yellow) 60%,transparent)}
+.btn{background:transparent;border:1px solid var(--border);color:var(--text-muted);padding:.2rem .5rem;border-radius:4px;font-size:.75rem;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--accent);color:var(--text)}
+.lf{display:inline-flex;align-items:center;gap:4px;vertical-align:middle;white-space:nowrap}
+.lf img{width:18px;height:18px;object-fit:contain}
+.lf-name{color:var(--color-lab-text);font-weight:600}
+.key{display:inline-flex;align-items:center;gap:6px;font-size:.6875rem;color:var(--color-lab-text-secondary)}
+</style>
+</helmet>
+<div style="display: flex; flex-wrap: wrap; min-height: 100vh; background: var(--color-lab-bg)">
+
+<nav aria-label="Main" style="flex: 0 0 180px; background: var(--surface); border-right: 1px solid var(--border); box-sizing: border-box; padding: 10px 8px; display: flex; flex-direction: column; gap: 2px">
+  <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); padding: 0 10px; margin-bottom: 4px">Strategies</div>
+  <button class="nav-item"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2 14 L8 2 L14 14 Z"/></svg><span>Lab Farming</span></button>
+  <button class="nav-item"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M3 13 L13 3 M9 3 H13 V7"/></svg><span>Mercenaries</span></button>
+  <button class="nav-item"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2 14 H14 M3 14 V7 M13 14 V7 M8 2 L14 7 H2 Z"/></svg><span>Temple</span></button>
+  <button class="nav-item"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M3 5 H13 L10 2 M13 11 H3 L6 14"/></svg><span>Currency Exchange</span></button>
+  <button class="nav-item active" aria-current="page"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M8 14 V7 M8 9 C8 5 5 4 2.5 4 C2.5 7 5 9 8 9 M8 7 C8 4 10.5 2.5 13.5 2.5 C13.5 5.5 11 7 8 7"/></svg><span>Harvest Flipping</span></button>
+</nav>
+
+<main style="flex: 999 1 560px; min-width: 0; padding: 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px">
+
+  <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--color-lab-surface); border: 1px solid var(--color-lab-border); padding: 10px 16px">
+    <h1 style="font-size: 1rem; font-weight: 700; margin: 0">Harvest Flipping</h1>
+    <span style="font-size: .6875rem; text-transform: uppercase; letter-spacing: .5px; color: var(--color-lab-text-secondary)">Allflame</span>
+    <div style="flex: 1"></div>
+    <span class="cap">Prices</span>
+    <div class="seg" role="group" aria-label="Price window">
+      <button class="{{h.recentCls}}" aria-pressed="{{h.recentOn}}" onClick="{{h.pickRecent}}">Recent 6h</button>
+      <button class="{{h.dayCls}}" aria-pressed="{{h.dayOn}}" onClick="{{h.pickDay}}">Day 24h</button>
+    </div>
+  </div>
+
+  <div role="tablist" aria-label="Reroll family" style="display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--color-lab-border)">
+    <sc-for list="{{tabs}}" as="t" hint-placeholder-count="7">
+      <button role="tab" class="{{t.cls}}" aria-selected="{{t.on}}" onClick="{{t.pick}}">
+        <span>{{t.label}}</span>
+        <sc-if value="{{t.pending}}" hint-placeholder-val="{{ false }}"><span class="pending">no data</span></sc-if>
+      </button>
+    </sc-for>
+  </div>
+
+  <sc-if value="{{isPending}}" hint-placeholder-val="{{ false }}">
+    <div style="background: var(--color-lab-surface); border: 1px solid var(--color-lab-border); padding: 28px 24px; display: flex; flex-direction: column; gap: 8px; max-width: 620px">
+      <div style="font-size: .875rem; font-weight: 700">{{pendingName}}: reroll weights not logged yet</div>
+      <div style="font-size: .8125rem; color: var(--color-lab-text-secondary); line-height: 1.5">The EV needs how often each type comes out of a reroll. Nobody has sent a HarvestForge log for this family yet, so there is nothing to compute. The tab fills in when one arrives.</div>
+      <div class="sub" style="white-space: normal">Prices for every {{pendingItem}} are already on the Currency Exchange.</div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{hasData}}" hint-placeholder-val="{{ true }}">
+    <div style="display: flex; flex-direction: column; gap: 10px">
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 1px; background: var(--color-lab-border); border: 1px solid var(--color-lab-border)">
+        <div style="background: var(--color-lab-surface); padding: 10px 14px; display: flex; flex-direction: column; gap: 3px">
+          <span class="cap">Best flip</span>
+          <span class="{{s.bestCls}}" style="font-size: 1.125rem">{{s.bestValue}}</span>
+          <span style="font-size: .8125rem">{{s.bestName}}</span>
+          <span class="sub">{{s.bestSub}}</span>
+        </div>
+        <div style="background: var(--color-lab-surface); padding: 10px 14px; display: flex; flex-direction: column; gap: 3px">
+          <span class="cap">Cost per reroll</span>
+          <span class="mono" style="font-size: 1.125rem">{{s.cost}}</span>
+          <span style="font-size: .8125rem; display: flex; align-items: center; gap: 5px; white-space: nowrap">30 × <span class="lf"><img src="{{s.lfIcon}}" alt=""><span class="lf-name">{{s.lfName}}</span></span></span>
+          <span class="sub">{{s.lfPrice}} each on the exchange</span>
+        </div>
+        <div style="background: var(--color-lab-surface); padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; grid-column: span 2">
+          <div style="display: flex; align-items: center; gap: 8px">
+            <span class="cap">Keep set · {{s.keepMode}}</span>
+            <div style="flex: 1"></div>
+            <sc-if value="{{s.anyOverride}}" hint-placeholder-val="{{ false }}">
+              <button class="btn" onClick="{{s.resetAll}}">Reset to computed</button>
+            </sc-if>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 4px">
+            <sc-for list="{{s.keepers}}" as="k" hint-placeholder-count="3">
+              <span class="{{k.cls}}">{{k.name}}<span class="mono" style="color: var(--color-lab-text-secondary)">{{k.price}}</span></span>
+            </sc-for>
+          </div>
+          <span class="sub" style="white-space: normal">Kept when its price beats what rerolling it returns. Force any row with Keep / Reroll.</span>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: .75rem; color: var(--color-lab-text-secondary); padding: 0 2px">
+        <span style="color: var(--color-lab-text); font-weight: 600">updated 6 min ago</span>
+        <span style="opacity: .5">·</span>
+        <span>prices: Currency Exchange, {{h.label}} · 1 div = 360c</span>
+        <span style="opacity: .5">·</span>
+        <span>weights: {{s.provenance}}</span>
+      </div>
+
+      <div style="overflow-x: auto; background: var(--color-lab-surface); border: 1px solid var(--color-lab-border)">
+        <div class="grid" role="table" aria-label="{{s.tableLabel}}">
+          <div role="row" style="display: contents">
+            <div class="hd" role="columnheader" aria-sort="{{ariaSort.name}}"><button onClick="{{sortBy.name}}">Type<span class="arrow">{{arrow.name}}</span></button></div>
+            <div class="hd num" role="columnheader" aria-sort="{{ariaSort.w}}"><button onClick="{{sortBy.w}}" title="Share of rolls in the logged sample, before the input is excluded. The sub-line is how many rolls that share stands on.">Weight<span class="arrow">{{arrow.w}}</span></button></div>
+            <div class="hd num" role="columnheader" aria-sort="{{ariaSort.price}}"><button onClick="{{sortBy.price}}" title="Currency Exchange price of one item, in chaos, with the divine price under it.">Price<span class="arrow">{{arrow.price}}</span></button></div>
+            <div class="hd" role="columnheader">Decision</div>
+            <div class="hd num" role="columnheader" aria-sort="{{ariaSort.one}}"><button onClick="{{sortBy.one}}" title="One reroll on its own: what the outcome is worth on average, minus 30 lifeforce, minus the item you put in.">Per roll<span class="arrow">{{arrow.one}}</span></button></div>
+            <div class="hd num" role="columnheader" aria-sort="{{ariaSort.loop}}"><button onClick="{{sortBy.loop}}" title="Reroll this item, then keep rerolling trash until a keeper comes out: the keeper's expected price, minus all the lifeforce spent, minus this item's price.">Loop EV<span class="arrow">{{arrow.loop}}</span></button></div>
+            <div class="hd num" role="columnheader" aria-sort="{{ariaSort.rolls}}"><button onClick="{{sortBy.rolls}}" title="Expected rerolls from this item until a keeper comes out.">Rolls<span class="arrow">{{arrow.rolls}}</span></button></div>
+            <div class="hd num" role="columnheader" title="For a keeper: which market pays more once the divine rate is applied. Same maths as the Currency Exchange route.">Sell in</div>
+          </div>
+          <sc-for list="{{rows}}" as="r" hint-placeholder-count="12">
+            <div role="row" style="display: contents">
+              <div class="c type" role="cell"><img src="{{r.icon}}" alt="" width="24" height="24" style="object-fit: contain; flex-shrink: 0"><span>{{r.name}}</span></div>
+              <div class="c num" role="cell"><span class="mono">{{r.wPct}}</span><span class="{{r.nCls}}">{{r.nLabel}}</span></div>
+              <div class="c num" role="cell"><span class="mono">{{r.price}}</span><span class="sub">{{r.priceDiv}}</span></div>
+              <div class="c decide" role="cell">
+                <div class="seg" role="group" aria-label="{{r.decideLabel}}">
+                  <button class="{{r.keepCls}}" aria-pressed="{{r.keepOn}}" onClick="{{r.onKeep}}">Keep</button>
+                  <button class="{{r.rerollCls}}" aria-pressed="{{r.rerollOn}}" onClick="{{r.onReroll}}">Reroll</button>
+                </div>
+                <sc-if value="{{r.overridden}}" hint-placeholder-val="{{ false }}">
+                  <button class="override" onClick="{{r.onReset}}" aria-label="{{r.resetLabel}}">forced ×</button>
+                </sc-if>
+                <sc-if value="{{r.auto}}" hint-placeholder-val="{{ true }}">
+                  <span class="autolbl">auto</span>
+                </sc-if>
+              </div>
+              <div class="c num" role="cell"><span class="{{r.oneCls}}">{{r.one}}</span></div>
+              <div class="c num" role="cell"><span class="{{r.loopCls}}">{{r.loop}}</span></div>
+              <div class="c num" role="cell"><span class="{{r.rollsCls}}">{{r.rolls}}</span></div>
+              <div class="c num" role="cell"><span class="{{r.sellCls}}">{{r.sell}}</span><span class="sub">{{r.sellSub}}</span></div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 6px 2px">
+        <span class="cap">Marks</span>
+        <span class="key"><span class="chip">Keep</span>in the keep set</span>
+        <span class="key"><span class="override">forced ×</span>your override, click to clear</span>
+        <span class="key"><span class="amber mono">n=1 · thin</span>under 10 logged rolls</span>
+        <span class="key"><span class="mono gain">+25.7c</span>pays</span>
+        <span class="key"><span class="mono gain loss">−4.4c</span>loses</span>
+        <span class="key"><span class="thin-div mono">div thin</span>divine market under 200 a day</span>
+        <span class="key"><span class="reserved mono">—</span>no reading</span>
+      </div>
+    </div>
+  </sc-if>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"family":{"editor":"enum","options":["delirium","essence","corrupt","fossil","astrolabe"],"default":"fossil"},"$preview":{"width":1024,"height":1320}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { fam: null, ov: {}, sort: 'loop', dir: -1, horizon: 'day' };
+  }
+  data() {
+    // Fixture: Currency Exchange, Allflame, 24h VWAP to 2026-09-09 (local DB). [name, logged rolls, chaos, divine, divine volume/day]
+    return {
+      // Item icons: poewiki inventory art (items.json icon URLs), uploaded as canvas assets; key = full name, letters only.
+      icons: {"AberrantFossil":"/_blob/22dcbac52404466361b3aee05bbb4a87","ArmoursmithsDeliriumOrb":"/_blob/4424443601f7444a53e8754e10c33510","BlacksmithsDeliriumOrb":"/_blob/feb89f3d131decfea33c60a9411d75be","BlightedDeliriumOrb":"/_blob/df3ce577cf1f073c98d11a104c0bad02","BloodstainedFossil":"/_blob/6cc2ce20a7019057de2455a7074532cc","BoundFossil":"/_blob/a70add68f179bfaf1f8b1792eba1a36a","CartographersDeliriumOrb":"/_blob/3962254b9a0801bf92fc42287092a95e","CorrodedFossil":"/_blob/8f8a49287fb275980f95674e8f750ea0","DeafeningEssenceofAnger":"/_blob/498f17ad747f851bf8b355fac73bb053","DeafeningEssenceofAnguish":"/_blob/60f072907c5b5d96b844ad35c3a4e983","DeafeningEssenceofContempt":"/_blob/c628ea70019b8461a2ab0a2fd2e81a37","DeafeningEssenceofDoubt":"/_blob/a6f8f33454797c55009cff59feb32d72","DeafeningEssenceofDread":"/_blob/59d08d21f8caef83316e9a65ad28f63c","DeafeningEssenceofEnvy":"/_blob/79c527c1eed0fe426396d8e99fa82ea8","DeafeningEssenceofFear":"/_blob/6a465e54bdcdd88e13e36432b7592c70","DeafeningEssenceofGreed":"/_blob/fe7ff7cd4276bda14e9ebce8976447b0","DeafeningEssenceofHatred":"/_blob/33a16e74f47a1c48f71a4b66c410d126","DeafeningEssenceofLoathing":"/_blob/c513201397fdfa686df3398a72dc2699","DeafeningEssenceofMisery":"/_blob/8d8afc273159c03da6f7ea2838ec67c4","DeafeningEssenceofRage":"/_blob/1cfa9f6ba4e8d529a98dcee4ce05f605","DeafeningEssenceofScorn":"/_blob/ecf62d3783786972bc2e2e4b10fed25a","DeafeningEssenceofSorrow":"/_blob/d370c3d0af19532790b68ea73f69d44f","DeafeningEssenceofSpite":"/_blob/81e6d8daf0b65139430f1d7a68c042b5","DeafeningEssenceofSuffering":"/_blob/6601a7dd23310c9a9042055930fcc9b6","DeafeningEssenceofTorment":"/_blob/73e8f15f8ae08a152eab5ab2a0514fc5","DeafeningEssenceofWoe":"/_blob/059cf03f314ebb818ebe515fbff9ddfe","DeafeningEssenceofWrath":"/_blob/ebc70c0b0a026f02b65dbac484c5129c","DeafeningEssenceofZeal":"/_blob/8ae9a8a69df526e7e3c0629f5fd1bca6","DeftFossil":"/_blob/d6a9d41915f90441c1cb5438cc2d24d6","DenseFossil":"/_blob/4d071ba7c633c313428d7f9eed71d7d8","DivinersDeliriumOrb":"/_blob/1ae148db9a65a71fbf697b4db0661110","EssenceofDelirium":"/_blob/ad7931827d85e43e4aa7dae578be2fd8","EssenceofHorror":"/_blob/2b7aa078a7242f46db5a19467ee3c1be","EssenceofHysteria":"/_blob/fac59221bea35f09d4fd27c798b2e014","EssenceofInsanity":"/_blob/69117c413cf220b80f24e2de8e0d3aed","FacetedFossil":"/_blob/8952a8e27201c0a8b02f782146cd55db","FineDeliriumOrb":"/_blob/942df7ca6da730c8385df79efba456ae","FracturedFossil":"/_blob/29a1f5530e39462ce9e80fd289a6a1a4","FragmentedDeliriumOrb":"/_blob/5bd6da64e6db497fdf55f332d3b7df76","FrigidFossil":"/_blob/cf87e3834b263876df5f9599c13cf7f6","FundamentalFossil":"/_blob/7a643aef1230d08dbd87186e84bbbb24","GildedFossil":"/_blob/9fa985bbdf8519b6d0e605479b859cff","GlyphicFossil":"/_blob/65390a73fd8bf13bd88115ce4f3987d7","HollowFossil":"/_blob/edcc81b92678a077fd78cce21d1160a1","JaggedFossil":"/_blob/7d2002a5580e54c9d431f21063d0dc0b","JewellersDeliriumOrb":"/_blob/0c3c61fddfbde61a438212be9a5e44ec","LucentFossil":"/_blob/2efdfe9689ff3a68134a3bb380c18aec","MetallicFossil":"/_blob/4310301f9091ab4207d0e86efd269ab5","PristineFossil":"/_blob/a2dc1252a4bd257c43cbf56d6e90017e","SanctifiedFossil":"/_blob/d370481261d73bb63c1651ae1c863d23","ScorchedFossil":"/_blob/16a38133f3b2d14d6bdfd647d870df58","ShudderingFossil":"/_blob/96c8e2dabbc5732ab28044e04553a347","SingularDeliriumOrb":"/_blob/c7ea87b90a0b76a20f2b4d40f4565e3a","SkitteringDeliriumOrb":"/_blob/db5a9c81abb914ec31ad9f1ae079d01b","ThaumaturgesDeliriumOrb":"/_blob/f434174581a9c795bc44206f4f1af6ff","WhisperingDeliriumOrb":"/_blob/5430447c5c778ff23c905ada2c5c84ed"},
+      rate: 360.07,
+      lf: { Primal: 0.049, Vivid: 0.169, Wild: 0.031 },
+      fams: {
+        delirium: { label: 'Delirium Orbs', lf: 'Primal', suffix: ' Delirium Orb', prefix: '', prov: 'HarvestForge log · 5,122 rolls · 153,720 Primal · 2026-10-09 · one player’s sample', types: [
+          ["Blacksmith's",1066,10.58,.04610,1193],["Armoursmith's",1093,10.56,.04502,311],["Jeweller's",1103,10.32,.04497,467],['Fine',937,16.69,.04070,19437],["Diviner's",262,54.54,.15185,6309],["Cartographer's",123,11.75,null,0],['Whispering',147,11.17,null,0],['Singular',102,12.57,null,0],["Thaumaturge's",56,12.67,null,0],['Fragmented',134,10.48,null,0],['Blighted',51,11.08,null,0],['Skittering',48,41.50,.12530,423]] },
+        essence: { label: 'Deafening Essences', lf: 'Primal', prefix: 'Deafening Essence of ', suffix: '', uniform: 'uniform', prov: 'HarvestForge log · 5,012 rolls · 150,420 lifeforce · 2026-10-09 · all 20 types ~5% · one player’s sample', types: [
+          ['Greed',1,5.85,.02309,4894],['Contempt',1,9.68,.03321,22584],['Hatred',1,5.58,.02004,4691],['Woe',1,10.11,.03550,17970],['Anger',1,6.23,.01928,21579],['Wrath',1,5.48,.02728,6892],['Sorrow',1,9.62,.03229,25486],['Spite',1,10.07,.03050,17411],['Scorn',1,26.93,.08346,20812],['Envy',1,13.29,.03531,21720],['Misery',1,13.65,.07764,4753],['Dread',1,5.64,.02683,2758],['Zeal',1,15.86,.04810,19378],['Loathing',1,12.05,.03346,15303],['Torment',1,5.01,.01907,6818],['Fear',1,5.46,.01747,9674],['Rage',1,13.84,.04078,24054],['Doubt',1,5.26,.01657,1871],['Suffering',1,5.15,.01573,3814],['Anguish',1,5.49,.01617,3464]] },
+        corrupt: { label: 'Corrupted Essences', lf: 'Primal', prefix: 'Essence of ', suffix: '', uniform: 'assumed', prov: 'no logged sample · assumed uniform · a closed pool of four (owner, 2026-10-09)', types: [
+          ['Hysteria',1,41.91,.13864,1320],['Insanity',1,42.61,.13340,2009],['Horror',1,65.67,.20698,6358],['Delirium',1,52.50,.15942,2415]] },
+        fossil: { label: 'Fossils', lf: 'Wild', prefix: '', suffix: ' Fossil', prov: 'HarvestForge log · 5,271 rolls · 158,910 Wild · 2026-10-09 · one player’s sample', types: [
+          ['Metallic',535,9.31,.06020,299],['Jagged',539,15.86,.05970,335],['Pristine',577,15.04,.04981,2690],['Dense',550,33.09,.08645,5356],['Frigid',562,9.15,.03158,285],['Scorched',577,9.95,.03254,338],['Aberrant',557,10.11,.05621,765],['Lucent',134,9.12,.06667,30],['Bound',122,9.77,.04402,1045],['Corroded',129,29.96,.08269,774],['Shuddering',131,44.22,.08301,1301],['Deft',126,13.87,.04487,468],['Fundamental',142,17.41,.08947,1263],['Sanctified',11,108.95,.40865,208],['Gilded',11,89.14,.21088,147],['Faceted',5,192.39,.83483,557],['Fractured',5,41.18,.15464,194],['Bloodstained',2,10.82,null,0],['Hollow',1,401.63,1.21105,1412],['Glyphic',4,60.51,.25556,90]] },
+        astrolabe: { label: 'Astrolabes', pending: true, item: 'Astrolabe' },
+        oil: { label: 'Oils', pending: true, item: 'Oil' },
+        catalyst: { label: 'Catalysts', pending: true, item: 'Catalyst' }
+      }
+    };
+  }
+  solve(types, cost, ov) {
+    const n = types.length, tot = types.reduce((a, t) => a + t[1], 0);
+    const w = types.map(t => t[1] / tot), price = types.map(t => t[2]);
+    const P = (i, j) => (i === j ? 0 : w[j] / (1 - w[i]));
+    const rv = V => V.map((_, i) => { let s = 0; for (let j = 0; j < n; j++) s += P(i, j) * V[j]; return s - cost; });
+    let V = price.slice(), keep = price.map(() => true), R = rv(V);
+    for (let it = 0; it < 400; it++) {
+      R = rv(V);
+      keep = price.map((p, i) => (ov[types[i][0]] ? ov[types[i][0]] === 'keep' : p >= R[i]));
+      const nV = price.map((p, i) => (keep[i] ? p : R[i]));
+      const d = Math.max(...nV.map((x, i) => Math.abs(x - V[i])));
+      V = nV; if (d < 1e-9) break;
+    }
+    R = rv(V);
+    const auto = price.map((p, i) => p >= R[i]);
+    let N = price.map(() => 0);
+    for (let it = 0; it < 3000; it++) N = N.map((_, i) => { let s = 1; for (let j = 0; j < n; j++) if (!keep[j]) s += P(i, j) * N[j]; return s; });
+    const one = price.map((p, i) => { let s = 0; for (let j = 0; j < n; j++) s += P(i, j) * price[j]; return s - cost - p; });
+    return types.map((t, i) => ({ t, w: w[i], keep: keep[i], auto: auto[i], loop: R[i] - price[i], one: one[i], rolls: keep.some(k => k) ? N[i] : Infinity }));
+  }
+  renderVals() {
+    const D = this.data();
+    const famId = this.state.fam || this.props.family || 'fossil';
+    const fam = D.fams[famId];
+    const c = x => (Math.abs(x) >= 100 ? Math.round(x).toLocaleString('en-US') : x.toFixed(1)) + 'c';
+    const g = x => (x > 0.05 ? '+' : x < -0.05 ? '−' : '') + c(Math.abs(x));
+    const gcls = x => 'mono gain' + (x < -0.05 ? ' loss' : x <= 0.05 ? ' flat' : '');
+    const set = patch => () => this.setState(patch);
+    const tabs = Object.keys(D.fams).map(id => ({ label: D.fams[id].label, pending: !!D.fams[id].pending, on: id === famId, cls: 'tab' + (id === famId ? ' on' : ''), pick: set({ fam: id }) }));
+    const hz = this.state.horizon;
+    const h = { label: hz === 'day' ? 'Day 24h' : 'Recent 6h', recentOn: hz === 'recent', dayOn: hz === 'day', recentCls: hz === 'recent' ? 'on' : '', dayCls: hz === 'day' ? 'on' : '', pickRecent: set({ horizon: 'recent' }), pickDay: set({ horizon: 'day' }) };
+    if (fam.pending) {
+      return { tabs, h, isPending: true, hasData: false, pendingName: fam.label, pendingItem: fam.item, s: {}, rows: [], sortBy: {}, arrow: {}, ariaSort: {} };
+    }
+    const ov = this.state.ov[famId] || {};
+    const lfp = D.lf[fam.lf], cost = 30 * lfp;
+    const res = this.solve(fam.types, cost, ov);
+    const full = n => fam.prefix + n + fam.suffix;
+    const icon = n => (D.icons || {})[n.replace(/[^A-Za-z]/g, '')] || '';
+    const setOv = (name, v) => () => { const all = Object.assign({}, this.state.ov); const f = Object.assign({}, all[famId] || {}); if (v) f[name] = v; else delete f[name]; all[famId] = f; this.setState({ ov: all }); };
+    const sortKey = { name: r => r.t[0], w: r => r.w, price: r => r.t[2], one: r => r.one, loop: r => r.loop, rolls: r => (r.keep ? Infinity : r.rolls) };
+    const { sort, dir } = this.state;
+    const sorted = res.slice().sort((a, b) => { const x = sortKey[sort](a), y = sortKey[sort](b); return (x > y ? 1 : x < y ? -1 : 0) * dir; });
+    const rows = sorted.map(r => {
+      const [name, n, cp, dp, dv] = r.t;
+      const forced = ov[name];
+      let sell = '—', sellCls = 'mono reserved', sellSub = '';
+      if (r.keep) {
+        if (dp == null) { sell = 'chaos'; sellCls = 'mono'; sellSub = 'no divine market'; }
+        else {
+          const diff = (dp * D.rate) / cp - 1;
+          if (Math.abs(diff) < 0.03) { sell = 'either'; sellCls = 'mono'; sellSub = 'within 3%'; }
+          else if (diff > 0) { sell = 'div +' + Math.round(diff * 100) + '%'; sellCls = dv < 200 ? 'mono thin-div' : 'mono'; sellSub = dv < 200 ? 'div thin · ' + dv + '/day' : dp.toFixed(3) + ' div'; }
+          else { sell = 'chaos +' + Math.round(-diff * 100) + '%'; sellCls = 'mono'; sellSub = ''; }
+        }
+      }
+      return {
+        name: full(name), icon: icon(full(name)),
+        wPct: (r.w * 100).toFixed(2) + '%',
+        nLabel: fam.uniform ? fam.uniform : 'n=' + n.toLocaleString('en-US') + (n < 10 ? ' · thin' : ''),
+        nCls: 'sub' + ((!fam.uniform && n < 10) || fam.uniform === 'assumed' ? ' amber' : ''),
+        price: c(cp), priceDiv: dp == null ? 'no div market' : dp.toFixed(3) + ' div',
+        keepOn: r.keep, rerollOn: !r.keep,
+        keepCls: r.keep ? 'on keep' : '', rerollCls: r.keep ? '' : 'on',
+        onKeep: setOv(name, r.auto ? null : 'keep'), onReroll: setOv(name, r.auto ? 'reroll' : null),
+        overridden: !!forced, auto: !forced,
+        decideLabel: 'Keep or reroll ' + full(name), resetLabel: 'Clear the override on ' + full(name),
+        one: g(r.one), oneCls: gcls(r.one),
+        loop: g(r.loop), loopCls: gcls(r.loop) + (r.keep ? '' : ''),
+        rolls: r.keep ? '—' : (isFinite(r.rolls) ? r.rolls.toFixed(1) : '∞'), rollsCls: r.keep ? 'mono reserved' : 'mono',
+        sell, sellCls, sellSub
+      };
+    });
+    const rerollers = res.filter(r => !r.keep).sort((a, b) => b.loop - a.loop);
+    const best = rerollers[0];
+    const s = {
+      cost: c(cost), lfName: fam.lf + ' lifeforce (' + { Primal: 'blue', Vivid: 'yellow', Wild: 'purple' }[fam.lf] + ')', lfPrice: lfp.toFixed(3) + 'c',
+      // Lifeforce icons (poewiki inventory art), uploaded as canvas assets.
+      lfIcon: { Primal: '/_blob/6ca792e27e1200c6712c052d6eb8fa7a', Vivid: '/_blob/c5b810b7a49f9ba47a03c6cab97a48a8', Wild: '/_blob/4e761014de9e89d5c4f6c1ab67a25699' }[fam.lf],
+      provenance: fam.prov, tableLabel: fam.label + ': keep or reroll, per type',
+      keepMode: Object.keys(ov).length ? 'computed, with your overrides' : 'computed from prices',
+      anyOverride: Object.keys(ov).length > 0, resetAll: () => { const all = Object.assign({}, this.state.ov); all[famId] = {}; this.setState({ ov: all }); },
+      keepers: res.filter(r => r.keep).sort((a, b) => b.t[2] - a.t[2]).map(r => ({ name: full(r.t[0]), price: ' ' + c(r.t[2]), cls: 'chip' + (ov[r.t[0]] ? ' forced' : '') }))
+    };
+    if (best && best.loop > 0.05) {
+      s.bestValue = g(best.loop) + ' per item'; s.bestCls = 'mono gain'; s.bestName = 'Reroll ' + full(best.t[0]);
+      s.bestSub = '~' + best.rolls.toFixed(1) + ' rolls · ' + Math.round(best.rolls * 30).toLocaleString('en-US') + ' ' + fam.lf + ' (' + c(best.rolls * cost) + ')';
+    } else {
+      const closest = res.slice().sort((a, b) => b.loop - a.loop)[0];
+      s.bestValue = 'Nothing pays'; s.bestCls = 'mono gain loss'; s.bestName = 'Every type sells for more than a reroll returns';
+      s.bestSub = 'closest: ' + full(closest.t[0]) + ' ' + g(closest.loop);
+    }
+    const sortBy = {}, arrow = {}, ariaSort = {};
+    Object.keys(sortKey).forEach(k => {
+      sortBy[k] = () => this.setState(sort === k ? { dir: -dir } : { sort: k, dir: k === 'name' ? 1 : -1 });
+      arrow[k] = sort === k ? (dir > 0 ? '↑' : '↓') : '';
+      ariaSort[k] = sort === k ? (dir > 0 ? 'ascending' : 'descending') : 'none';
+    });
+    return { tabs, h, isPending: false, hasData: true, s, rows, sortBy, arrow, ariaSort, pendingName: '', pendingItem: '' };
+  }
+}
+</script>
+</body>
+</html>

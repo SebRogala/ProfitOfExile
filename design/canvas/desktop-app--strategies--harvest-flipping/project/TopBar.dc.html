@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>App top bar — divine rate</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{
+  /* desktop/src/tokens.css, copied verbatim — the only declaration site in the app */
+  --bg:#1a1a2e;--surface:#16213e;--border:#0f3460;--text:#e0e0e0;--text-muted:#888;--accent:#e94560;--success:#4ade80;--warning:#fbbf24;
+  --color-lab-bg:#0f1117;--color-lab-surface:#1a1d27;--color-lab-border:#2a2d37;--color-lab-text:#e4e4e7;
+  --color-lab-text-secondary:#9ca3af;--color-lab-text-muted:#888;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:var(--text)}
+a{color:var(--text)}a:hover{color:var(--accent)}
+button{font-family:inherit}
+.bar{height:36px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding-left:.75rem;overflow:hidden}
+.grp{display:flex;align-items:center;gap:.5rem}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--success);flex-shrink:0}
+.dot.off{background:var(--text-muted)}
+.rate{all:unset;cursor:help;display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text);padding:2px 6px;border-radius:4px}
+.rate:hover{background:rgba(255,255,255,.06)}
+.rate:focus-visible{outline:1px solid var(--accent)}
+.rate img{width:18px;height:18px;object-fit:contain}
+.rate .n{font-family:'Consolas','Monaco',monospace;font-weight:600}
+.rate.stale .n{color:var(--warning)}
+.rate.none .n{color:var(--text-muted)}
+.stale-tag{font-size:.625rem;text-transform:uppercase;letter-spacing:.05em;color:var(--warning)}
+.sep{width:1px;height:16px;background:var(--border)}
+.win{background:none;border:none;color:var(--text-muted);width:46px;height:36px;display:flex;align-items:center;justify-content:center;font-size:14px}
+.label{font-size:.625rem;text-transform:uppercase;letter-spacing:.06em;color:var(--color-lab-text-secondary);margin:0 0 6px}
+.tip{background:var(--color-lab-surface);border:1px solid var(--color-lab-border);padding:8px 12px;max-width:360px;font-size:.75rem;line-height:1.5;color:var(--color-lab-text);box-shadow:0 8px 32px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.08)}
+.tip .m{color:var(--color-lab-text-secondary)}
+</style>
+</helmet>
+<div style="width: 1024px; box-sizing: border-box; padding: 20px 0 28px; display: flex; flex-direction: column; gap: 22px">
+
+  <section aria-label="Ready">
+    <p class="label" style="padding: 0 16px">1 · Ready — the one rate every page converts with</p>
+    <header class="bar">
+      <div class="grp"><img src="/_blob/691f40d405f988c0569701be82d2a85b" alt="ProfitOfExile" width="26" height="26"><span style="font-size: 12px; font-weight: 600">ProfitOfExile</span></div>
+      <div class="grp">
+        <button class="rate" aria-describedby="tip-ready"><img src="/_blob/efa83dfa414d534823b4c06c8d93e252" alt="Divine Orb"><span class="n">1</span><span>=</span><span class="n">360</span><img src="/_blob/78435a419710ac1cf980a8f964a9332b" alt="Chaos Orbs"></button>
+        <span class="dot" title="Server: Connected"></span>
+        <span class="dot off" title="OCR Scanner: Idle"></span>
+        <button style="all: unset; font-size: 1rem; opacity: .6; line-height: 1" title="Settings">⚙️</button>
+      </div>
+      <div class="grp" style="gap: 0"><span class="win" aria-hidden="true">–</span><span class="win" aria-hidden="true">◻</span><span class="win" aria-hidden="true">✕</span></div>
+    </header>
+    <div style="display: flex; justify-content: center; padding-top: 6px; padding-left: 120px">
+      <div class="tip" id="tip-ready" role="tooltip">
+        <div><strong>1 divine = 360.1 chaos</strong></div>
+        <div class="m">Currency Exchange, hour of 09 Sep 23:00 · updated 6 min ago</div>
+        <div class="m">Every chaos ↔ divine figure in the app uses this rate.</div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-label="Cold server">
+    <p class="label" style="padding: 0 16px">2 · Loading, or server holds no exchange hour yet</p>
+    <header class="bar">
+      <div class="grp"><img src="/_blob/691f40d405f988c0569701be82d2a85b" alt="ProfitOfExile" width="26" height="26"><span style="font-size: 12px; font-weight: 600">ProfitOfExile</span></div>
+      <div class="grp">
+        <button class="rate none" title="No divine rate yet: waiting for the first Currency Exchange hour."><img src="/_blob/efa83dfa414d534823b4c06c8d93e252" alt="Divine Orb"><span class="n">1</span><span>=</span><span class="n">—</span><img src="/_blob/78435a419710ac1cf980a8f964a9332b" alt="Chaos Orbs"></button>
+        <span class="dot" title="Server: Connected"></span>
+        <span class="dot off" title="OCR Scanner: Idle"></span>
+        <button style="all: unset; font-size: 1rem; opacity: .6; line-height: 1" title="Settings">⚙️</button>
+      </div>
+      <div class="grp" style="gap: 0"><span class="win" aria-hidden="true">–</span><span class="win" aria-hidden="true">◻</span><span class="win" aria-hidden="true">✕</span></div>
+    </header>
+  </section>
+
+  <section aria-label="Stale">
+    <p class="label" style="padding: 0 16px">3 · Stale — server unreachable, last rate kept</p>
+    <header class="bar">
+      <div class="grp"><img src="/_blob/691f40d405f988c0569701be82d2a85b" alt="ProfitOfExile" width="26" height="26"><span style="font-size: 12px; font-weight: 600">ProfitOfExile</span></div>
+      <div class="grp">
+        <button class="rate stale" title="Stale: last known rate from 21:00; server unreachable since 21:04."><img src="/_blob/efa83dfa414d534823b4c06c8d93e252" alt="Divine Orb"><span class="n">1</span><span>=</span><span class="n">360</span><img src="/_blob/78435a419710ac1cf980a8f964a9332b" alt="Chaos Orbs"><span class="stale-tag">stale</span></button>
+        <span class="dot off" title="Server: Disconnected"></span>
+        <span class="dot off" title="OCR Scanner: Idle"></span>
+        <button style="all: unset; font-size: 1rem; opacity: .6; line-height: 1" title="Settings">⚙️</button>
+      </div>
+      <div class="grp" style="gap: 0"><span class="win" aria-hidden="true">–</span><span class="win" aria-hidden="true">◻</span><span class="win" aria-hidden="true">✕</span></div>
+    </header>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1024,"height":380}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

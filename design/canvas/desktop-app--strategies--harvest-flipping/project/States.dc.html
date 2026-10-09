@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Harvest Flipping — states</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{
+  /* desktop/src/tokens.css, copied verbatim — the only declaration site in the app */
+  --bg:#1a1a2e;--surface:#16213e;--border:#0f3460;--text:#e0e0e0;--text-muted:#888;--accent:#e94560;--success:#4ade80;--warning:#fbbf24;
+  --color-lab-bg:#0f1117;--color-lab-surface:#1a1d27;--color-lab-border:#2a2d37;--color-lab-text:#e4e4e7;
+  --color-lab-text-secondary:#9ca3af;--color-lab-text-muted:#888;--color-lab-green:#22c55e;--color-lab-red:#ef4444;
+  --color-lab-yellow:#eab308;--color-lab-blue:#3b82f6;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:var(--color-lab-text);font-size:14px;line-height:1.5}
+a{color:var(--color-lab-blue)}a:hover{color:var(--color-lab-text)}
+button,input{font-family:inherit}
+.mono{font-family:'Consolas','Monaco',monospace;font-weight:600}
+.cap{font-size:.625rem;text-transform:uppercase;letter-spacing:.06em;color:var(--color-lab-text-secondary)}
+.sub{font-size:.6875rem;color:var(--color-lab-text-secondary);line-height:1.3}
+.gain{color:var(--color-lab-green);font-weight:700}.gain.loss{color:var(--color-lab-red)}.gain.flat{color:var(--color-lab-text-muted)}
+.amber{color:var(--color-lab-yellow)}
+.panel{background:var(--color-lab-surface);border:1px solid var(--color-lab-border)}
+.status{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:.75rem;color:var(--color-lab-text-secondary);padding:0 2px}
+.state-h{font-size:.625rem;text-transform:uppercase;letter-spacing:.06em;color:var(--color-lab-text-secondary);margin:0}
+.skel{display:block;height:10px;border-radius:2px;background:var(--color-lab-border)}
+.tier{padding:8px 12px 10px;display:flex;flex-direction:column;gap:6px}
+.tier-name{font-size:.6875rem;font-weight:700;letter-spacing:.06em}
+.t{display:inline-flex;align-items:center;gap:6px;padding:2px 8px 2px 4px;border-radius:3px;font-size:.75rem;border:1px solid color-mix(in srgb,var(--color-lab-green) 40%,transparent);background:color-mix(in srgb,var(--color-lab-green) 10%,transparent)}
+.t .p{color:var(--color-lab-text-secondary);font-family:'Consolas','Monaco',monospace;font-weight:600;font-size:.6875rem}
+.unpriced{font-size:.5625rem;text-transform:uppercase;letter-spacing:.06em;color:var(--color-lab-yellow);border:1px solid color-mix(in srgb,var(--color-lab-yellow) 45%,transparent);border-radius:3px;padding:0 4px}
+.rx input{flex:1;min-width:0;background:var(--color-lab-bg);border:1px solid var(--color-lab-border);color:var(--color-lab-text);padding:6px 8px;font-family:'Consolas','Monaco',monospace;font-size:.75rem}
+.btn{background:transparent;border:1px solid var(--border);color:var(--text-muted);padding:.2rem .6rem;border-radius:4px;font-size:.75rem;white-space:nowrap}
+.kv{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:.75rem;color:var(--color-lab-text-secondary)}
+.kv .mono{color:var(--color-lab-text)}
+</style>
+</helmet>
+<div style="padding: 24px; display: flex; flex-direction: column; gap: 26px; max-width: 844px">
+  <p class="sub" style="margin: 0">Page area only (the content column right of the sidebar). The chrome is unchanged; see board C.</p>
+
+  <section aria-labelledby="s1" style="display: flex; flex-direction: column; gap: 8px">
+    <h2 id="s1" class="state-h">1 · Loading — first fetch</h2>
+    <div class="status"><span>Loading…</span></div>
+    <div class="panel" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px" aria-busy="true">
+      <span class="skel" style="width: 38%"></span><span class="skel" style="width: 62%"></span>
+    </div>
+    <span class="sub">Tabs and weights render at once (they ship with the app); verdict, tiers, regex and EV wait for prices.</span>
+  </section>
+
+  <section aria-labelledby="s2" style="display: flex; flex-direction: column; gap: 8px">
+    <h2 id="s2" class="state-h">2 · Cold server — no exchange hour yet</h2>
+    <div class="status"><span>Waiting for the first Currency Exchange hour…</span></div>
+    <div class="panel" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 2px">
+      <span class="cap">Is it worth it?</span>
+      <span style="font-size: 1.25rem; font-weight: 700">No prices yet</span>
+      <span class="sub">The server has not read an hour of the exchange. This fills in on its own.</span>
+    </div>
+  </section>
+
+  <section aria-labelledby="s3" style="display: flex; flex-direction: column; gap: 8px">
+    <h2 id="s3" class="state-h">3 · Stale — server unreachable, last prices kept</h2>
+    <div class="status">
+      <span class="amber">stale since 21:04 — server unreachable</span><span style="opacity: .5">·</span>
+      <span style="color: var(--color-lab-text); font-weight: 600">prices from 21:00 (2 h ago)</span><span style="opacity: .5">·</span>
+      <span>prices: Currency Exchange, Day 24h · 1 div = 360c</span>
+    </div>
+    <span class="sub">Verdict, tiers, regex, picks and EV stay as they were; nothing is dimmed or hidden. The next Mercure update clears the line.</span>
+  </section>
+
+  <section aria-labelledby="s4" style="display: flex; flex-direction: column; gap: 8px">
+    <h2 id="s4" class="state-h">4 · Error — never reached the server</h2>
+    <div class="status"><span class="amber">Couldn't reach the server</span></div>
+  </section>
+
+  <section aria-labelledby="s5" style="display: flex; flex-direction: column; gap: 8px">
+    <h2 id="s5" class="state-h">5 · Unpriced type — no exchange price this window</h2>
+    <div class="panel" style="max-width: 420px">
+      <div class="tier">
+        <div style="display: flex; align-items: center; gap: 8px"><span class="tier-name">TOP</span><span class="sub">1 type · —</span></div>
+        <div style="display: flex; gap: 4px; flex-wrap: wrap"><span class="t"><img src="/_blob/edcc81b92678a077fd78cce21d1160a1" alt="" width="20" height="20" style="object-fit: contain">Hollow<span class="p">—</span><span class="unpriced">unpriced</span></span></div>
+      </div>
+    </div>
+    <div class="panel" style="padding: 10px 14px; display: flex; flex-direction: column; gap: 4px; max-width: 420px">
+      <div class="kv"><span>Loop EV per feeder</span><span class="mono gain">+23.8c</span></div>
+      <span class="sub amber">1 unpriced type counted as 0c, so this EV is a floor. At its last seen 402c it would read +25.7c.</span>
+    </div>
+    <span class="sub">An unpriced type is always a keeper (never feed what can't be priced), counts 0c as an outcome, and keeps its tier slot.</span>
+  </section>
+
+  <section aria-labelledby="s6" style="display: flex; flex-direction: column; gap: 8px">
+    <h2 id="s6" class="state-h">6 · Not worth it — illustrated at a hypothetical lifeforce price</h2>
+    <div class="panel" style="padding: 12px 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap">
+      <div style="display: flex; flex-direction: column; gap: 2px">
+        <span class="cap">Is it worth it?</span>
+        <span style="font-size: 1.25rem; font-weight: 700">No — not at these prices</span>
+        <span class="sub">Even the cheapest feeder sells for more than the loop returns.</span>
+      </div>
+      <div style="flex: 1"></div>
+      <div style="display: flex; flex-direction: column; align-items: flex-end"><span class="mono gain loss" style="font-size: 1.375rem">−0.3c</span><span class="sub">per Deafening Essence of Torment</span></div>
+    </div>
+    <span class="sub">Feeders and Keepers stay listed with their numbers; nothing is filtered out.</span>
+  </section>
+
+  <section aria-labelledby="s7" style="display: flex; flex-direction: column; gap: 8px">
+    <h2 id="s7" class="state-h">7 · Nothing to flip — keep set or feed set empty</h2>
+    <div class="panel" style="padding: 12px 16px; display: flex; flex-direction: column; gap: 2px">
+      <span class="cap">Is it worth it?</span>
+      <span style="font-size: 1.25rem; font-weight: 700">No — nothing to flip</span>
+      <span class="sub">The keep set is empty: pick a tier to keep.</span>
+    </div>
+    <div class="panel" style="max-width: 420px"><div class="tier"><span class="sub">No keepers: nothing to stop on.</span></div></div>
+  </section>
+
+  <section aria-labelledby="s8" style="display: flex; flex-direction: column; gap: 8px">
+    <h2 id="s8" class="state-h">8 · Regex longer than the stash search allows; Copy pressed</h2>
+    <div class="panel rx" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; max-width: 420px">
+      <label for="rx-long" class="cap">Feeders regex</label>
+      <div style="display: flex; gap: 6px"><input id="rx-long" readonly="readonly" value="&quot;bla|arm|jew|fin|car|whi|sin|tha|fra|bli|div|ski|…&quot;"><button class="btn" style="color: var(--color-lab-text)">Copied</button></div>
+      <span class="sub amber">263 / 250 characters: too long for one stash search</span>
+    </div>
+  </section>
+
+  <section aria-labelledby="s9" style="display: flex; flex-direction: column; gap: 8px">
+    <h2 id="s9" class="state-h">9 · Family without weights — Astrolabes, Oils, Catalysts</h2>
+    <div class="panel" style="padding: 22px 20px; display: flex; flex-direction: column; gap: 6px; max-width: 620px">
+      <span style="font-size: .875rem; font-weight: 700">Astrolabes: reroll weights not logged yet</span>
+      <span style="font-size: .8125rem; color: var(--color-lab-text-secondary)">The EV needs how often each type comes out of a reroll. Nobody has sent a HarvestForge log for this family yet, so there is nothing to compute. The tab fills in when one arrives.</span>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1024,"height":1640}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

@@ -53,3 +53,8 @@ desktop/.tauri/
 
 # Python bytecode from the seed scripts
 __pycache__/
+
+# Design inputs and working notes (claude-design-playbook LOCAL.md → What goes in git)
+/design/tasks/
+/design/pilot-notes.md
+/design/private/
