@@ -34,7 +34,7 @@ Compared against: POE-283 (description as of 2026-10-10) + `design/tasks/poe-283
 - Where EV is computed (open) → **tiers on the server, cached so every client gets them warm; keep set, EV and regex on the desktop**. Why: tiers depend only on prices and are the same for everyone; the rest depends on the player's picks and must react instantly (owner, same split as ADR-022).
 - New, not in the ticket: **stash-search regexes for feeders and keepers**, and **"1 div → N lifeforce → M rerolls"** under the cost per reroll. Why: the owner asked for both, since players buy lifeforce with divines and search their stash for feeders and keepers.
 - Unpriced type (the ticket's "thin markets" constraint) → **always a keeper, never fed; counts 0c as an outcome so the EV is a floor; the summary says how much its price would move the EV**. Why: the page must never recommend rerolling an item it cannot price.
-- Div vs chaos per keeper: the owner chose a "Sell in" mark per keeper row during design, but the final layout has no place for it. **Not built.** It is listed under Open decisions.
+- Div vs chaos (open in the ticket; per keeper row in round 1) → **a divine-scale line in the verdict panel instead**: "1 div profit ≈ 15 feeders · ~378 rerolls · ~11,349 Wild". Why: the owner wants the grind expressed in divines, in the one panel players read first, and C's layout has no per-keeper slot.
 
 ## Tokens
 All colours come from `desktop/src/tokens.css`. No new tokens.
@@ -67,7 +67,8 @@ Top to bottom, inside the existing app shell:
    weights: <provenance>". Provenance per family is in `fixtures.json` → `families[].weights.sample`.
 4. **Verdict panel**: "Is it worth it?" with one of three headlines: "Yes — feed the cheap tiers",
    "No — not at these prices" or "No — nothing to flip". Under it a one-line reason naming the cheapest
-   feeder. On the right, the loop EV of the cheapest feeder, large, with "per <item>".
+   feeder. On the right, the loop EV of the cheapest feeder, large, with "per <item>", and under it the
+   divine-scale line "1 div profit ≈ N feeders · ~R rerolls · ~L <colour>". The line appears only when the flip pays.
 5. **Keep / feed split row**: "computed from prices" or "N type(s) moved by you" (amber), and a
    "Reset to computed" button that is dimmed and inert when nothing was moved.
 6. **Two columns, Feeders | Keepers**. One card per tier present in that column, ordered TOP → FLOOR:
@@ -118,6 +119,7 @@ where `weights.sample.uniform`) and reroll cost `c = rerollCost × lifeforce.cha
 - Lifeforce per keeper = `30 × N(i)` and `c × N(i)` chaos.
 - 1 div of lifeforce yields `perDivine / 30 / N(i)` keepers, worth `that × loop EV`.
 - The headline uses the **cheapest feeder** by price.
+- Divine scale: `feeders = ceil(divineChaosRate / loopEV)`, `rerolls = feeders × N(i)` (rounded), `lifeforce = rerolls × 30`; shown only when loop EV > 0.05c.
 - An unpriced type counts `p = 0` as an outcome and is always kept.
 - **Regex**: for each chosen type's full name, the shortest lowercase run of ≥3 letters (no spaces or
   apostrophes) that appears in no other full name of the same family. Join with `|` and wrap in double
@@ -160,7 +162,6 @@ by `itemId`, never from poewiki URLs.
   - the server endpoint, the tier cache and weight storage: stub them at the seam, as `AGENT.md` §0 says
 
 ## Open decisions — questions, not requirements; do not invent answers
-- **Div vs chaos per keeper**: the owner picked a per-keeper "Sell in" mark early on; the final layout has
   no place for it. Interim: not shown. Ask the owner where it goes (chip tooltip, chip mark, or the EV panel).
 - **Price sides**: "follow the Currency Exchange convention" (owner), but which side prices an input, an
   outcome and lifeforce is not pinned. Interim: one chaos price per item (the fixture's).

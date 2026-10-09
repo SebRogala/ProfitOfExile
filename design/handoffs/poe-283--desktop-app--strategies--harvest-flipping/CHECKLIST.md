@@ -5,7 +5,7 @@ only one). Unticked = not done. Don't advance with open boxes on the current scr
 
 ## ⛔ MUST NOT DROP — the edge cases that get silently skipped
 - [ ] The **no-data families** (Astrolabes, Oils, Catalysts) stay visible as tabs with the "no data" mark, and open the "reroll weights not logged yet" panel (reference 06). They are never hidden.
-- [ ] **Not worth it**: when even the cheapest feeder loses, the verdict reads "No — not at these prices", the EV prints red with U+2212, and both columns stay listed (reference 08 §6).
+- [ ] **Not worth it** and **nothing to flip** show **no** divine-scale line. **Not worth it**: when even the cheapest feeder loses, the verdict reads "No — not at these prices", the EV prints red with U+2212, and both columns stay listed (reference 08 §6).
 - [ ] **Nothing to flip**: an empty keep set (or empty feed set) gives "No — nothing to flip", the reason line, and "No keepers: nothing to stop on." / "No feeders: every tier is kept." in place of the empty column (reference 08 §7). Never a crash, and never a blank column with no text.
 - [ ] **Unpriced type**: it is always a keeper, its price shows "—" with an "unpriced" mark, it counts 0c as an outcome, and the EV panel says the EV is a floor and what it would read at the last seen price (reference 08 §5).
 - [ ] **Split tier**: a tier with types on both sides appears in both columns with the "split" mark (reference 05).
@@ -29,7 +29,7 @@ only one). Unticked = not done. Don't advance with open boxes on the current scr
 
 ## Page — Fossils, default (reference 01)
 - [ ] Page head, tabs on one line at 1024px, status line with the provenance.
-- [ ] Verdict "Yes — feed the cheap tiers", reason naming Lucent Fossil (9.1c), headline "+25.7c per Lucent Fossil".
+- [ ] Verdict "Yes — feed the cheap tiers", reason naming Lucent Fossil (9.1c), headline "+25.7c per Lucent Fossil", divine line "1 div profit ≈ 15 feeders · ~378 rerolls · ~11,349 Wild".
 - [ ] Feeders: MID and LOW cards; Keepers: TOP, HIGH and MID. MID is already **split** by default: Dense and Corroded are fed, the other five are kept. Every card has its tier name, range and move button.
 - [ ] Every chip shows the item icon, short name and price; feeders add a signed EV, keepers add their weight share.
 - [ ] Right column: both regexes with counts, cost per reroll "0.9c = 30 × [icon] Wild lifeforce (purple)", "1 div → 9,905 lifeforce → 330 rerolls", and the EV panel rows.

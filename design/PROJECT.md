@@ -67,11 +67,11 @@
 - 2026-10-10 — Variant C is the design; B removed from the canvas, A kept as reference only. App chrome (sidebar, top bar) on the boards is a 1:1 recreation of `Sidebar.svelte` / `TopBar.svelte`: the handoff adds only the Harvest nav entry (shown only to `beta`-granted devices, no badge — the menu never shows one) and, under POE-284, the rate chip — nothing else in the chrome changes.
 - 2026-10-10 — Harvest Flipping nav icon: Wild Crystallised Lifeforce art with a green recycle badge filling its bottom-right quadrant, shipped as an image like `lab-icon.png` (owner). Rate chip sits at the top bar's right, left of the window controls (owner).
 - 2026-10-10 — Handoff 1 for POE-283 and POE-284 as two packages (one implementer session each). Reference PNGs captured by the Designer session with headless Chrome from the canvas source + the type's runtime, at the owner's request. POE-283's prototype has the chrome exactly as today plus the nav entry; the rate chip lives only in POE-284.
+- 2026-10-10 — Div vs chaos per keeper replaced by a divine-scale line in the verdict panel: "1 div profit ≈ N feeders · ~R rerolls · ~L lifeforce" (owner).
 
 ## Open questions / to confirm
 - 2026-10-10: POE-283 got a "Lifeforce colour correction" section (Primal for essences).
 - Brief Q11 (weight updates: merge vs replace, last-updated date) — still open.
-- Div vs chaos per keeper: decided per keeper row in round 1, but variant C has no slot for it — owner to place it (open decision in the POE-283 handoff).
 - Price sides (input / outcome / lifeforce) under the CX convention — not pinned.
 - Data: `items.json` names both `CurrencyAfflictionOrbHarbinger` and `…Prophecies` "Fine Delirium Orb" (icons say Foreboding / Portentous); Fine = `CurrencyAfflictionOrbCurrency`. Name lookups would collide.
 - Token gap: CX hard-codes `#6b7280` / `#4b5563` greys that fail AA on `--color-lab-surface`; this design uses `--color-lab-text-secondary` / `--color-lab-text-muted` instead, no new token.
