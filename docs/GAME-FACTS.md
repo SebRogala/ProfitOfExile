@@ -55,6 +55,24 @@ is not mistaken for a fact.
   (`desktop/src-tauri/src/temple/panel.rs`, `decide_kind`) settles the kind
   from the title by this rule when OCR loses the verb, which Windows OCR did
   on a legible crop on 2026-09-05 (`(KILL TO TO SHRINE OF`).
+- **A room is a rectangle, and its doors sit on fixed walls.** The diamond on
+  the side panel is an isometric view of the current room, with one seal per
+  board neighbour: green = open, red = closed. The two long walls carry two
+  doors each, the board's two upward diagonals on one and the two downward
+  diagonals on the other. The two short walls carry one same-row door each, at
+  the wall's midpoint. Owner-stated 2026-09-04; measured on 8 boards, 32 seals
+  and 2 UI scales, with an outline aspect of 1.147
+  (`desktop/src-tauri/src/temple/markers.rs`, `seal_position`). Re-checked
+  2026-10-03 against four more panels (Gemcutter's Workshop D0, Halls E0, Pits
+  C1, Banquet Hall B1).
+- **Walking length is not hop count.** Vertolka (the temple collaborator),
+  2026-10-03: the routes Doryani's Institute → Pits → Conduit of Lightning and
+  Doryani's Institute → Tempest Generator → Conduit of Lightning are both two
+  hops, but the first is a straight walk and the second zig-zags. That follows
+  from the door placement above: the straight route enters and leaves each room
+  on the same side, and the zig-zag crosses each room diagonally. How much
+  longer the zig-zag is in play has not been measured. The builder advisor
+  counts hops (`desktop/src-tauri/src/temple/advisor/convenience.rs`).
 
 ### Vial recipes: nine vials, eleven transformations
 
