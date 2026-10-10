@@ -7,6 +7,7 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
 	import { ssot, startSsotStore } from '$lib/stores/ssot.svelte';
+	import { initDivineRateStore } from '$lib/stores/divine-rate.svelte';
 	import { startRunRecorder } from '$lib/run-recorder';
 	import { nav, viewToPath, type View } from '$lib/stores/navigation.svelte';
 	import {
@@ -612,6 +613,7 @@
 	// ssot-changed nudge, but polling get_ssot is consistent with the overlays
 	// and cheap for a low-churn slice. No cleanup — this layout never unmounts.
 	startSsotStore();
+	initDivineRateStore();
 
 	// Record every lab run, whether or not the timer overlay is enabled. The
 	// recorder used to live in the overlay's webview, so a disabled overlay

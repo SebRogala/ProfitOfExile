@@ -5,6 +5,7 @@
 
 import { store } from '$lib/stores/status.svelte';
 import type { TradeLookupResult } from './tradeApi';
+import { readDivineRateFixture } from './stores/divine-rate-fixture';
 import { getVersion } from '@tauri-apps/api/app';
 
 // --- Types ---
@@ -1085,6 +1086,32 @@ export async function fetchCurrencyExchangePlays(
 	horizon: CurrencyExchangeHorizon = 'recent'
 ): Promise<CurrencyExchangeResponse> {
 	return get<CurrencyExchangeResponse>('/currency-exchange/plays', { mode, horizon });
+}
+
+/**
+ * The divine:chaos rate every chaos ↔ divine figure converts with (POE-284),
+ * owned by the Currency Exchange module (`internal/exchange`) and readable by
+ * every device. `divineChaosRate` is a finite number > 0 or `null` (no exchange
+ * hour yet, or no divine/chaos trade in it); `state` and `unreachableSince`
+ * come from the source. Read through `$lib/stores/divine-rate.svelte`, never
+ * directly.
+ */
+export interface DivineRate {
+	divineChaosRate: number | null;
+	priceHour: string | null;
+	updatedAt: string;
+	state: 'ready' | 'cold' | 'stale';
+	unreachableSince: string | null;
+}
+
+/**
+ * Read the divine rate through its port. Today the body answers the design
+ * handoff's fixture; going live replaces this body with the backend task's
+ * real read and deletes `stores/divine-rate-fixture.ts` — the store, its pure
+ * half and the top bar do not change.
+ */
+export async function fetchDivineRate(): Promise<DivineRate> {
+	return readDivineRateFixture(Date.now());
 }
 
 // --- Mercure SSE ---

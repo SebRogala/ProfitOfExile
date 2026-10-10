@@ -5,6 +5,12 @@
 	import { store } from '$lib/stores/status.svelte';
 	import { persisted } from '$lib/prefs.svelte';
 	import { LOCAL_SERVER_URL, serverToggle } from '$lib/server-toggle';
+	import { getApiBase } from '$lib/api';
+	import { CHAOS_ID, DIVINE_ID, currencyIconPath, iconSrc } from '$lib/exchange/view';
+	import { divineRate } from '$lib/stores/divine-rate.svelte';
+	import { divineRateView } from '$lib/stores/divine-rate';
+	import ItemIcon from '$lib/components/ItemIcon.svelte';
+	import Tooltip from '$lib/components/Tooltip.svelte';
 
 	let { status }: {
 		status: any;
@@ -26,6 +32,9 @@
 	const returnUrl = persisted('devServerReturnUrl', '');
 
 	const toggle = $derived(serverToggle(status?.server_url ?? '', BUILT_PROD_URL, returnUrl.value));
+
+	const apiBase = $derived(getApiBase());
+	const rateView = $derived(divineRateView(divineRate, divineRate.now));
 
 	async function toggleServer() {
 		// Nowhere to go: the tooltip has said why; take the click to where a
@@ -84,10 +93,24 @@
 		{/if}
 		<button class="settings-link" title="Settings" onclick={() => nav.go('/settings')}>&#9881;&#65039;</button>
 	</div>
-	<div class="window-controls">
-		<button class="win-btn" onclick={minimizeWindow} title="Minimize">&#x2013;</button>
-		<button class="win-btn" onclick={toggleMaximize} title="Maximize">&#9723;</button>
-		<button class="win-btn close" onclick={closeWindow} title="Close">&#10005;</button>
+	<div class="right">
+		<Tooltip text={rateView.tooltipHtml} position="below">
+			<button class="rate-chip" class:cold={rateView.state === 'cold'} class:stale={rateView.state === 'stale'}>
+				<ItemIcon src={iconSrc(apiBase, currencyIconPath(DIVINE_ID))} alt="Divine Orb" size={18} />
+				<span class="rate-n">1</span>
+				<span>=</span>
+				<span class="rate-n">{rateView.chip}</span>
+				<ItemIcon src={iconSrc(apiBase, currencyIconPath(CHAOS_ID))} alt="Chaos Orb" size={18} />
+				{#if rateView.state === 'stale'}
+					<span class="rate-tag">stale</span>
+				{/if}
+			</button>
+		</Tooltip>
+		<div class="window-controls">
+			<button class="win-btn" onclick={minimizeWindow} title="Minimize">&#x2013;</button>
+			<button class="win-btn" onclick={toggleMaximize} title="Maximize">&#9723;</button>
+			<button class="win-btn close" onclick={closeWindow} title="Close">&#10005;</button>
+		</div>
 	</div>
 </header>
 
@@ -208,6 +231,54 @@
 
 	.settings-link:hover {
 		opacity: 1;
+	}
+
+	.right {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.rate-chip {
+		all: unset;
+		cursor: help;
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 12px;
+		color: var(--text);
+		padding: 2px 6px;
+		border-radius: 4px;
+		-webkit-app-region: no-drag;
+	}
+
+	.rate-chip:hover {
+		background: rgba(255, 255, 255, 0.06);
+	}
+
+	.rate-chip:focus-visible {
+		outline: 1px solid var(--color-lab-blue);
+		outline-offset: -1px;
+	}
+
+	.rate-n {
+		font-family: 'Consolas', 'Monaco', monospace;
+		font-weight: 600;
+	}
+
+	.stale .rate-n,
+	.rate-tag {
+		color: var(--warning);
+	}
+
+	.cold .rate-n {
+		color: var(--text-muted);
+	}
+
+	.rate-tag {
+		font-size: 0.625rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
 	}
 
 	.window-controls {

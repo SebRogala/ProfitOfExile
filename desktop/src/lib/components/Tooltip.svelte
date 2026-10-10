@@ -1,3 +1,8 @@
+<script lang="ts" module>
+	/** Gives each popup its own id, for the focused control's `aria-describedby`. */
+	let nextTipId = 0;
+</script>
+
 <script lang="ts">
 	let { text, children, position = 'above' }: { text: string; children: any; position?: 'above' | 'below' } = $props();
 
@@ -5,10 +10,13 @@
 	let tipEl: HTMLDivElement | null = null;
 	let visible = $state(false);
 	let hideTimeout: ReturnType<typeof setTimeout> | null = null;
+	const tipId = `tooltip-${++nextTipId}`;
 
 	function ensureTip(): HTMLDivElement {
 		if (!tipEl) {
 			tipEl = document.createElement('div');
+			tipEl.id = tipId;
+			tipEl.setAttribute('role', 'tooltip');
 			tipEl.style.cssText = `
 				position: fixed;
 				z-index: 9999;
@@ -38,7 +46,7 @@
 		return tipEl;
 	}
 
-	function show() {
+	function show(e?: Event) {
 		if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
 		visible = true;
 		const tip = ensureTip();
@@ -47,6 +55,8 @@
 		tip.innerHTML = text; // eslint-disable-line no-unsanitized/property
 		tip.style.opacity = '1';
 		tip.style.visibility = 'visible';
+		// Keyboard focus: point the focused control at the popup it opened.
+		if (e?.type === 'focusin') (e.target as HTMLElement).setAttribute('aria-describedby', tipId);
 		requestAnimationFrame(() => positionTip());
 	}
 
@@ -90,6 +100,13 @@
 		tipEl.style.left = `${left}px`;
 	}
 
+	// An open tooltip follows its text, so a value that changes while it is
+	// read ("updated N min ago", a refreshed rate) does not freeze on screen.
+	$effect(() => {
+		const current = text;
+		if (visible && tipEl) tipEl.innerHTML = current; // eslint-disable-line no-unsanitized/property
+	});
+
 	$effect(() => {
 		return () => {
 			if (tipEl) {
@@ -100,7 +117,8 @@
 	});
 </script>
 
-<span class="tooltip-wrap" role="tooltip" bind:this={wrap} onmouseenter={show} onmouseleave={hide}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<span class="tooltip-wrap" bind:this={wrap} onmouseenter={show} onmouseleave={hide} onfocusin={show} onfocusout={hide}>
 	{@render children()}
 </span>
 
