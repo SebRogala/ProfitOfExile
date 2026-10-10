@@ -1,0 +1,5621 @@
+{
+ "bulk-six-variants": {
+  "font": {
+   "gems": [
+    {
+     "name": "Bulk 01 of Mixing",
+     "variant": "1",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 01 of Mixing",
+     "variant": "1/20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 01 of Mixing",
+     "variant": "20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 01 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 02 of Mixing",
+     "variant": "1",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 02 of Mixing",
+     "variant": "20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 02 of Mixing",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 04 of Mixing",
+     "variant": "1/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 04 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 05 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 05 of Mixing",
+     "variant": "1/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 05 of Mixing",
+     "variant": "20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 05 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 08 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 08 of Mixing",
+     "variant": "1/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 08 of Mixing",
+     "variant": "20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 10 of Mixing",
+     "variant": "1/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 10 of Mixing",
+     "variant": "20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 10 of Mixing",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 11 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 11 of Mixing",
+     "variant": "1/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 11 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 13 of Mixing",
+     "variant": "1",
+     "tier": "MID",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 13 of Mixing",
+     "variant": "1/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 13 of Mixing",
+     "variant": "20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 13 of Mixing",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 16 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 16 of Mixing",
+     "variant": "20",
+     "tier": "MID",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 16 of Mixing",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 17 of Mixing",
+     "variant": "1/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 17 of Mixing",
+     "variant": "20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 17 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 19 of Mixing",
+     "variant": "1",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 19 of Mixing",
+     "variant": "20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 19 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 20 of Mixing",
+     "variant": "1",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 20 of Mixing",
+     "variant": "1/20",
+     "tier": "MID",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 20 of Mixing",
+     "variant": "20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 20 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 22 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 22 of Mixing",
+     "variant": "1/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 22 of Mixing",
+     "variant": "20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 23 of Mixing",
+     "variant": "1",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 23 of Mixing",
+     "variant": "20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 23 of Mixing",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 25 of Mixing",
+     "variant": "1/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 25 of Mixing",
+     "variant": "20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 25 of Mixing",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 26 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 26 of Mixing",
+     "variant": "20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 29 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 29 of Mixing",
+     "variant": "1/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 29 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 31 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 31 of Mixing",
+     "variant": "1/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 31 of Mixing",
+     "variant": "20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 31 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 32 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 32 of Mixing",
+     "variant": "1/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 32 of Mixing",
+     "variant": "20",
+     "tier": "LOW",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 32 of Mixing",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 34 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 34 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 37 of Mixing",
+     "variant": "1",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 37 of Mixing",
+     "variant": "1/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 37 of Mixing",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 38 of Mixing",
+     "variant": "1",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 38 of Mixing",
+     "variant": "1/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 38 of Mixing",
+     "variant": "20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 40 of Mixing",
+     "variant": "20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 40 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 41 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 41 of Mixing",
+     "variant": "1/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 41 of Mixing",
+     "variant": "20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 41 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 43 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 43 of Mixing",
+     "variant": "1/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 43 of Mixing",
+     "variant": "20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 43 of Mixing",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 44 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 44 of Mixing",
+     "variant": "1/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 44 of Mixing",
+     "variant": "20",
+     "tier": "MID-HIGH",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 44 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 46 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 46 of Mixing",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 47 of Mixing",
+     "variant": "1",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 47 of Mixing",
+     "variant": "1/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    },
+    {
+     "name": "Bulk 47 of Mixing",
+     "variant": "20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bulk 47 of Mixing",
+     "variant": "20/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    }
+   ],
+   "boundaries": {
+    "1": {
+     "boundaries": [
+      1879.55,
+      290.69,
+      126.17728
+     ],
+     "names": [
+      "HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "1/20": {
+     "boundaries": [
+      258.01,
+      46.71,
+      27.0936
+     ],
+     "names": [
+      "HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "20": {
+     "boundaries": [
+      1059.42,
+      542.92,
+      134.67,
+      53.603680000000004
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "20/20": {
+     "boundaries": [
+      1091.46,
+      421.81,
+      104.78304
+     ],
+     "names": [
+      "HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [
+     {
+      "name": "Bulk 00",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 06",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 09",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 12",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": true
+     },
+     {
+      "name": "Bulk 15",
+      "variant": "21/20c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 18",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 21",
+      "variant": "21/20c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 24",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": true
+     },
+     {
+      "name": "Bulk 27",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 30",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 33",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 36",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 39",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 42",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 45",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/20c": {
+      "boundaries": [
+       2473.82,
+       387.76,
+       84.99056
+      ],
+      "names": [
+       "HIGH",
+       "MID",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Bulk 00",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 03",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 06",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 09",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 21",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 27",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 30",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 33",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 39",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 45",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       1466.37,
+       414.97,
+       54.932
+      ],
+      "names": [
+       "HIGH",
+       "MID",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [
+     {
+      "name": "Bulk 01 of Mixing",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 02 of Mixing",
+      "variant": "21/20c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 05 of Mixing",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 07 of Mixing",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 08 of Mixing",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 11 of Mixing",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 13 of Mixing",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 16 of Mixing",
+      "variant": "21/20c",
+      "tier": "TOP",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 17 of Mixing",
+      "variant": "21/20c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 23 of Mixing",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 25 of Mixing",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": true
+     },
+     {
+      "name": "Bulk 26 of Mixing",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 28 of Mixing",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 29 of Mixing",
+      "variant": "21/20c",
+      "tier": "TOP",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 31 of Mixing",
+      "variant": "21/20c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 32 of Mixing",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": true
+     },
+     {
+      "name": "Bulk 34 of Mixing",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 35 of Mixing",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 37 of Mixing",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": true
+     },
+     {
+      "name": "Bulk 38 of Mixing",
+      "variant": "21/20c",
+      "tier": "LOW",
+      "lowConfidence": true
+     },
+     {
+      "name": "Bulk 40 of Mixing",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 41 of Mixing",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 43 of Mixing",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 44 of Mixing",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 46 of Mixing",
+      "variant": "21/20c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 47 of Mixing",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/20c": {
+      "boundaries": [
+       1022.71,
+       128.84,
+       73.41808
+      ],
+      "names": [
+       "HIGH",
+       "MID",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [
+     {
+      "name": "Bulk 01 of Mixing",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 02 of Mixing",
+      "variant": "21/23c",
+      "tier": "MID-HIGH",
+      "lowConfidence": true
+     },
+     {
+      "name": "Bulk 04 of Mixing",
+      "variant": "21/23c",
+      "tier": "MID-HIGH",
+      "lowConfidence": true
+     },
+     {
+      "name": "Bulk 05 of Mixing",
+      "variant": "21/23c",
+      "tier": "TOP",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 07 of Mixing",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 08 of Mixing",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 10 of Mixing",
+      "variant": "21/23c",
+      "tier": "MID-HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 11 of Mixing",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 13 of Mixing",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 14 of Mixing",
+      "variant": "21/23c",
+      "tier": "TOP",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 17 of Mixing",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": true
+     },
+     {
+      "name": "Bulk 19 of Mixing",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 20 of Mixing",
+      "variant": "21/23c",
+      "tier": "TOP",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 25 of Mixing",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 26 of Mixing",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 28 of Mixing",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": true
+     },
+     {
+      "name": "Bulk 29 of Mixing",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": true
+     },
+     {
+      "name": "Bulk 32 of Mixing",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 34 of Mixing",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 35 of Mixing",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 37 of Mixing",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 41 of Mixing",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 43 of Mixing",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Bulk 47 of Mixing",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       1083.56,
+       771.54,
+       230.29,
+       52.711040000000004
+      ],
+      "names": [
+       "HIGH",
+       "MID-HIGH",
+       "MID",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     1091.46,
+     421.81,
+     104.78304
+    ],
+    "names": [
+     "HIGH",
+     "MID",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "1": {
+     "boundaries": [
+      1879.55,
+      290.69,
+      126.17728
+     ],
+     "names": [
+      "HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "1/20": {
+     "boundaries": [
+      258.01,
+      46.71,
+      27.0936
+     ],
+     "names": [
+      "HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "20": {
+     "boundaries": [
+      1059.42,
+      542.92,
+      134.67,
+      53.603680000000004
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "20/20": {
+     "boundaries": [
+      1091.46,
+      421.81,
+      104.78304
+     ],
+     "names": [
+      "HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      1091.46,
+      421.81,
+      104.78304
+     ],
+     "names": [
+      "HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "double-corrupt-cutoff": {
+  "font": {
+   "gems": [
+    {
+     "name": "Molten Strike of the Zenith",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      90,
+      90,
+      90
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [
+     {
+      "name": "Arc",
+      "variant": "21/20c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Cleave",
+      "variant": "21/20c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Molten Strike",
+      "variant": "21/20c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Spark",
+      "variant": "21/20c",
+      "tier": "MID-HIGH",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/20c": {
+      "boundaries": [
+       120,
+       96,
+       7.44
+      ],
+      "names": [
+       "HIGH",
+       "MID-HIGH",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Arc",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Cleave",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Fireball",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Molten Strike",
+      "variant": "21/23c",
+      "tier": "MID-HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Spark",
+      "variant": "21/23c",
+      "tier": "MID-HIGH",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       150,
+       105,
+       8.88
+      ],
+      "names": [
+       "HIGH",
+       "MID-HIGH",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     90,
+     90,
+     90
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      90,
+      90,
+      90
+     ]
+    },
+    "all": {
+     "boundaries": [
+      90,
+      90,
+      90
+     ]
+    }
+   }
+  }
+ },
+ "eligibility-names": {
+  "font": {
+   "gems": [
+    {
+     "name": "Clean of Five",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Clean of Four",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Clean of One",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Clean of Three",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Clean of Two",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Vaal Arc of Surging",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      800,
+      200,
+      33.6
+     ],
+     "names": [
+      "HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Clean Ded A",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Clean Ded B",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Clean Ded C",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Clean Ded D",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       600,
+       26
+      ],
+      "names": [
+       "HIGH",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     800,
+     200,
+     33.6
+    ],
+    "names": [
+     "HIGH",
+     "MID",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      800,
+      200,
+      33.6
+     ],
+     "names": [
+      "HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      800,
+      200,
+      33.6
+     ],
+     "names": [
+      "HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "existing-tests/TestComputeCleanTierBoundaries_ExcludesLowConfAndTops": {
+  "font": {
+   "gems": [
+    {
+     "name": "Normal A",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal B",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal C",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal D",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Spike",
+     "variant": "20/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    },
+    {
+     "name": "Top Gem",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      300,
+      13
+     ],
+     "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     300,
+     13
+    ],
+    "names": [
+     "HIGH",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      300,
+      13
+     ],
+     "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      300,
+      13
+     ],
+     "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "existing-tests/TestComputeCleanTierBoundaries_REDLikePool": {
+  "font": {
+   "gems": [
+    {
+     "name": "G1",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "G10",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "G11",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "G12",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "G13",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "G14",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "G15",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "G16",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "G17",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "G18",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "G19",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "G2",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "G20",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "G21",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "G22",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "G23",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "G24",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "G25",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "G3",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "G4",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "G5",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "G6",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "G7",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "G8",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "G9",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      175,
+      89,
+      63,
+      17.936
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     175,
+     89,
+     63,
+     17.936
+    ],
+    "names": [
+     "HIGH",
+     "MID-HIGH",
+     "MID",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      175,
+      89,
+      63,
+      17.936
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      175,
+      89,
+      63,
+      17.936
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "existing-tests/TestComputeDedicationClassification_ClassifiesEachVariantAgainstItsOwnPool": {
+  "font": {
+   "gems": [],
+   "boundaries": {},
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [
+     {
+      "name": "Arc",
+      "variant": "21/20c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ball Lightning",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Firestorm",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Freezing Pulse",
+      "variant": "21/20c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Spark",
+      "variant": "21/20c",
+      "tier": "MID",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/20c": {
+      "boundaries": [
+       200,
+       30,
+       6.752000000000001
+      ],
+      "names": [
+       "HIGH",
+       "MID",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Arc",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ball Lightning",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Firestorm",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Spark",
+      "variant": "21/23c",
+      "tier": "MID-HIGH",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       5000,
+       4000,
+       280
+      ],
+      "names": [
+       "HIGH",
+       "MID-HIGH",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "variantTiers": {
+    "all": {
+     "boundaries": null
+    }
+   }
+  }
+ },
+ "existing-tests/TestComputeDedicationClassification_ExcludesNonCorrupted": {
+  "font": {
+   "gems": [],
+   "boundaries": {},
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Valid Gem 1",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Valid Gem 2",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Valid Gem 3",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Valid Gem 4",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       300,
+       13
+      ],
+      "names": [
+       "HIGH",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "variantTiers": {
+    "all": {
+     "boundaries": null
+    }
+   }
+  }
+ },
+ "existing-tests/TestComputeDedicationClassification_ExcludesSupports": {
+  "font": {
+   "gems": [],
+   "boundaries": {},
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Arc",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Cleave",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Fireball",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Slam",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       300,
+       13
+      ],
+      "names": [
+       "HIGH",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "variantTiers": {
+    "all": {
+     "boundaries": null
+    }
+   }
+  }
+ },
+ "existing-tests/TestComputeDedicationClassification_ExcludesTrarthus": {
+  "font": {
+   "gems": [],
+   "boundaries": {},
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Arc",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Cleave",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Fireball",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Slam",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       300,
+       13
+      ],
+      "names": [
+       "HIGH",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "variantTiers": {
+    "all": {
+     "boundaries": null
+    }
+   }
+  }
+ },
+ "existing-tests/TestComputeDedicationClassification_ExcludesWhiteGems": {
+  "font": {
+   "gems": [],
+   "boundaries": {},
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Arc",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Cleave",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Cyclone",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Fireball",
+      "variant": "21/23c",
+      "tier": "MID-HIGH",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       300,
+       250,
+       18.6
+      ],
+      "names": [
+       "HIGH",
+       "MID-HIGH",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "variantTiers": {
+    "all": {
+     "boundaries": null
+    }
+   }
+  }
+ },
+ "existing-tests/TestComputeDedicationClassification_PoolIsolation": {
+  "font": {
+   "gems": [],
+   "boundaries": {},
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Arc",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Cleave",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Fireball",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Slam",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       300,
+       13
+      ],
+      "names": [
+       "HIGH",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [
+     {
+      "name": "Arc of Surging",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Cleave of Rage",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Fireball of Volatility",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Slam of Magnitude",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       800,
+       41
+      ],
+      "names": [
+       "HIGH",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "variantTiers": {
+    "all": {
+     "boundaries": null
+    }
+   }
+  }
+ },
+ "existing-tests/TestComputeDedicationClassification_SkillPool": {
+  "font": {
+   "gems": [],
+   "boundaries": {},
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Expensive Gem",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Floor Gem 1",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Floor Gem 2",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "High Gem",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Low Gem 1",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Low Gem 2",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Mid Gem 1",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Mid Gem 2",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Mid Gem 3",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       1500,
+       200,
+       48.800000000000004
+      ],
+      "names": [
+       "HIGH",
+       "MID",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "variantTiers": {
+    "all": {
+     "boundaries": null
+    }
+   }
+  }
+ },
+ "existing-tests/TestComputeDedicationClassification_TierDistribution": {
+  "font": {
+   "gems": [],
+   "boundaries": {},
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Floor 1",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Floor 2",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Floor 3",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "High 1",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "High 2",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Low 1",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Low 2",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Mid 1",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Mid 2",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Mid 3",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Top 1",
+      "variant": "21/23c",
+      "tier": "TOP",
+      "lowConfidence": false
+     },
+     {
+      "name": "Top 2",
+      "variant": "21/23c",
+      "tier": "TOP",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       700,
+       200,
+       36
+      ],
+      "names": [
+       "HIGH",
+       "MID",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "variantTiers": {
+    "all": {
+     "boundaries": null
+    }
+   }
+  }
+ },
+ "existing-tests/TestComputeDedicationClassification_TransfiguredPool": {
+  "font": {
+   "gems": [],
+   "boundaries": {},
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [
+     {
+      "name": "Trans Expensive",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Trans Floor",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Trans High",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Trans Low 1",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     },
+     {
+      "name": "Trans Low 2",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Trans Mid",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       1200,
+       80,
+       34.08
+      ],
+      "names": [
+       "HIGH",
+       "MID",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "variantTiers": {
+    "all": {
+     "boundaries": null
+    }
+   }
+  }
+ },
+ "existing-tests/TestComputeGemClassification_ExcludesWhiteGems": {
+  "font": {
+   "gems": [
+    {
+     "name": "Arc of Oscillating",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Bash of Impact",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Cleave of Rage",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Fireball of Volatility",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Ice Shot of Shattering",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Slam of Magnitude",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Spark of Unpredictability",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Strike of Swiping",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      300,
+      19.68
+     ],
+     "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     300,
+     19.68
+    ],
+    "names": [
+     "HIGH",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      300,
+      19.68
+     ],
+     "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      300,
+      19.68
+     ],
+     "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "existing-tests/TestComputeGemClassification_Integration": {
+  "font": {
+   "gems": [
+    {
+     "name": "AG of Smiting",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Another",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Cheap Gem",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Cleave",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Cyclone of Tumult",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Fireball",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Frostbolt",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Ground Slam",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Ice Shot",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "KB of Clustering",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Lacerate",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Lightning Strike",
+     "variant": "20/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    },
+    {
+     "name": "Some Floor",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Spark of Nova",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      350,
+      250,
+      100,
+      26.88
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     350,
+     250,
+     100,
+     26.88
+    ],
+    "names": [
+     "HIGH",
+     "MID-HIGH",
+     "MID",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      350,
+      250,
+      100,
+      26.88
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      350,
+      250,
+      100,
+      26.88
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "existing-tests/TestDetectLowConfidence_BasicThreshold": {
+  "font": {
+   "gems": [
+    {
+     "name": "Another Normal",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Moderate Gem",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal Gem",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Thin Gem",
+     "variant": "20/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      350,
+      200,
+      150
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     350,
+     200,
+     150
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      350,
+      200,
+      150
+     ]
+    },
+    "all": {
+     "boundaries": [
+      350,
+      200,
+      150
+     ]
+    }
+   }
+  }
+ },
+ "existing-tests/TestDetectLowConfidence_PerVariant": {
+  "font": {
+   "gems": [
+    {
+     "name": "Gem A",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Gem B",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Gem C",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": true
+    },
+    {
+     "name": "Gem D",
+     "variant": "1",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Gem E",
+     "variant": "1",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Gem F",
+     "variant": "1",
+     "tier": "TOP",
+     "lowConfidence": true
+    }
+   ],
+   "boundaries": {
+    "1": {
+     "boundaries": [
+      10,
+      10,
+      10
+     ]
+    },
+    "20/20": {
+     "boundaries": [
+      100,
+      100,
+      100
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     100,
+     100,
+     100
+    ]
+   },
+   "variantTiers": {
+    "1": {
+     "boundaries": [
+      10,
+      10,
+      10
+     ]
+    },
+    "20/20": {
+     "boundaries": [
+      100,
+      100,
+      100
+     ]
+    },
+    "all": {
+     "boundaries": [
+      100,
+      100,
+      100
+     ]
+    }
+   }
+  }
+ },
+ "existing-tests/TestDetectLowConfidence_SkipsNonAnalyzable": {
+  "font": {
+   "gems": [
+    {
+     "name": "Normal",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      100,
+      100,
+      100
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     100,
+     100,
+     100
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      100,
+      100,
+      100
+     ]
+    },
+    "all": {
+     "boundaries": [
+      100,
+      100,
+      100
+     ]
+    }
+   }
+  }
+ },
+ "existing-tests/TestDetectTops_ExcludesLowConfidence": {
+  "font": {
+   "gems": [
+    {
+     "name": "Normal A",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal B",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal C",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal D",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal E",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Spike Gem",
+     "variant": "20/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      500,
+      400,
+      24
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     500,
+     400,
+     24
+    ],
+    "names": [
+     "HIGH",
+     "MID-HIGH",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      500,
+      400,
+      24
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      500,
+      400,
+      24
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "existing-tests/TestDetectTops_GapDetection": {
+  "font": {
+   "gems": [
+    {
+     "name": "Big Gem",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Floor A",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Floor B",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Floor C",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "High Gem",
+     "variant": "20/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    },
+    {
+     "name": "Low Gem",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Mega Gem",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Mid Gem",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      300,
+      14.08
+     ],
+     "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     300,
+     14.08
+    ],
+    "names": [
+     "HIGH",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      300,
+      14.08
+     ],
+     "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      300,
+      14.08
+     ],
+     "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "existing-tests/TestDetectTops_PerVariant": {
+  "font": {
+   "gems": [
+    {
+     "name": "Gem 1A",
+     "variant": "1",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Gem 1B",
+     "variant": "1",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Gem 1C",
+     "variant": "1",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Gem 1D",
+     "variant": "1",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Gem 1E",
+     "variant": "1",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Low 2020 A",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Low 2020 B",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Low 2020 C",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Mid 2020",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Top 2020",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "1": {
+     "boundaries": [
+      180,
+      150,
+      12
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "20/20": {
+     "boundaries": [
+      200,
+      10
+     ],
+     "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     200,
+     10
+    ],
+    "names": [
+     "HIGH",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "1": {
+     "boundaries": [
+      180,
+      150,
+      12
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "20/20": {
+     "boundaries": [
+      200,
+      10
+     ],
+     "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      200,
+      10
+     ],
+     "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "fewer-than-4-above-floor": {
+  "font": {
+   "gems": [
+    {
+     "name": "A of One",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "B of Two",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "C of Three",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "D of Four",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "E of Five",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "F of Six",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      30.824
+     ],
+     "names": [
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     30.824
+    ],
+    "names": [
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      30.824
+     ],
+     "names": [
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      30.824
+     ],
+     "names": [
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "fewer-than-4-prices": {
+  "font": {
+   "gems": [
+    {
+     "name": "Arc of Surging",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Cleave of Rage",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Spark of Nova",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      250,
+      200,
+      150
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Ded Three A",
+      "variant": "21/23c",
+      "tier": "TOP",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded Three B",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded Three C",
+      "variant": "21/23c",
+      "tier": "MID",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       250,
+       200,
+       150
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     250,
+     200,
+     150
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      250,
+      200,
+      150
+     ]
+    },
+    "all": {
+     "boundaries": [
+      250,
+      200,
+      150
+     ]
+    }
+   }
+  }
+ },
+ "harvest-prices-as-font-pool": {
+  "font": {
+   "gems": [
+    {
+     "name": "astrolabe:Metadata/Items/Currency/AstrolabeAbyss",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "astrolabe:Metadata/Items/Currency/AstrolabeBlight",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "astrolabe:Metadata/Items/Currency/AstrolabeBreach",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "astrolabe:Metadata/Items/Currency/AstrolabeDelirium",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "astrolabe:Metadata/Items/Currency/AstrolabeExpedition",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "astrolabe:Metadata/Items/Currency/AstrolabeHarvest",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "astrolabe:Metadata/Items/Currency/AstrolabeLegion",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "astrolabe:Metadata/Items/Currency/AstrolabeRitual",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "astrolabe:Metadata/Items/Currency/AstrolabeUltimatum",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "catalyst:Metadata/Items/Currency/CurrencyJewelleryQualityCritical",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "catalyst:Metadata/Items/Currency/CurrencyJewelleryQualityDefense",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "catalyst:Metadata/Items/Currency/CurrencyJewelleryQualityResistance",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "catalyst:Metadata/Items/Currency/CurrencyJewelleryQualityResource",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "corrupt:Metadata/Items/Currency/CurrencyEssenceDelirium1",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "corrupt:Metadata/Items/Currency/CurrencyEssenceHorror1",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "corrupt:Metadata/Items/Currency/CurrencyEssenceHysteria1",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "corrupt:Metadata/Items/Currency/CurrencyEssenceInsanity1",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbArmour",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbBlight",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbCurrency",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbDivinationCards",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbEssences",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbFragments",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbGems",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbMaps",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbScarabs",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbTrinkets",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbUniques",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbWeapons",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceAnger6",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceAnguish4",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceContempt7",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceDoubt5",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceDread3",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceEnvy3",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceFear6",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceGreed7",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceHatred7",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceLoathing4",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceMisery3",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceRage5",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceScorn3",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceSorrow6",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceSpite4",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceSuffering5",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceTorment6",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceWoe7",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceWrath5",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "essence:Metadata/Items/Currency/CurrencyEssenceZeal4",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingAbyss",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingBleedPoison",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingChaos",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingCold",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingCorruptEssence",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingDefences",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingEnchant",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingFire",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingGemLevel",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingLife",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingLightning",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingLuckyModRolls",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingMana",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingMinionsAuras",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingMirror",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingPhysical",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingSellPrice",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingSockets",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingSpeed",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingVaal",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "oil:Metadata/Items/Currency/Mushrune10",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "oil:Metadata/Items/Currency/Mushrune11",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "oil:Metadata/Items/Currency/Mushrune12",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "oil:Metadata/Items/Currency/Mushrune8",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "oil:Metadata/Items/Currency/Mushrune9",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      179.76,
+      89.14,
+      26.93,
+      15.01024
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     179.76,
+     89.14,
+     26.93,
+     15.01024
+    ],
+    "names": [
+     "HIGH",
+     "MID-HIGH",
+     "MID",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      179.76,
+      89.14,
+      26.93,
+      15.01024
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      179.76,
+      89.14,
+      26.93,
+      15.01024
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "low-confidence-above-top-boundary": {
+  "font": {
+   "gems": [
+    {
+     "name": "Normal 0 of Pool",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal 1 of Pool",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal 10 of Pool",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal 11 of Pool",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal 2 of Pool",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal 3 of Pool",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal 4 of Pool",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal 5 of Pool",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal 6 of Pool",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal 7 of Pool",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal 8 of Pool",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Normal 9 of Pool",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": false
+    },
+    {
+     "name": "Shallow of Depth",
+     "variant": "20/20",
+     "tier": "MID",
+     "lowConfidence": true
+    },
+    {
+     "name": "Spike of Cascade",
+     "variant": "20/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      340,
+      220,
+      100,
+      27.2
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Ded Normal 0",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded Normal 1",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded Normal 2",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded Normal 3",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded Normal 4",
+      "variant": "21/23c",
+      "tier": "MID-HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded Normal 5",
+      "variant": "21/23c",
+      "tier": "MID-HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded Normal 6",
+      "variant": "21/23c",
+      "tier": "MID-HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded Normal 7",
+      "variant": "21/23c",
+      "tier": "MID-HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded Normal 8",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded Normal 9",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded Spike",
+      "variant": "21/23c",
+      "tier": "CHAOTIC",
+      "lowConfidence": true
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       395,
+       255,
+       34.4
+      ],
+      "names": [
+       "HIGH",
+       "MID-HIGH",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     340,
+     220,
+     100,
+     27.2
+    ],
+    "names": [
+     "HIGH",
+     "MID-HIGH",
+     "MID",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      340,
+      220,
+      100,
+      27.2
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      340,
+      220,
+      100,
+      27.2
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "median-listings-zero": {
+  "font": {
+   "gems": [
+    {
+     "name": "Empty 0 of Book",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Empty 1 of Book",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Empty 2 of Book",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Empty 3 of Book",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Empty 4 of Book",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    },
+    {
+     "name": "Empty 5 of Book",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": true
+    }
+   ],
+   "boundaries": {},
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [
+     {
+      "name": "Ded Empty 0",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": true
+     },
+     {
+      "name": "Ded Empty 1",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": true
+     },
+     {
+      "name": "Ded Empty 2",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": true
+     },
+     {
+      "name": "Ded Empty 3",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": true
+     },
+     {
+      "name": "Ded Empty 4",
+      "variant": "21/20c",
+      "tier": "FLOOR",
+      "lowConfidence": true
+     }
+    ],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "variantTiers": {
+    "20/20": {
+     "boundaries": null
+    },
+    "all": {
+     "boundaries": null
+    }
+   }
+  }
+ },
+ "no-top-found": {
+  "font": {
+   "gems": [
+    {
+     "name": "Even 0 of Spacing",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Even 1 of Spacing",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Even 2 of Spacing",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Even 3 of Spacing",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Even 4 of Spacing",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Even 5 of Spacing",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Even 6 of Spacing",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Even 7 of Spacing",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      180,
+      120,
+      12.8
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     180,
+     120,
+     12.8
+    ],
+    "names": [
+     "HIGH",
+     "MID-HIGH",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      180,
+      120,
+      12.8
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      180,
+      120,
+      12.8
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "price-5.00-and-5.01": {
+  "font": {
+   "gems": [
+    {
+     "name": "Five of Cent",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Font 0 of Fives",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Font 1 of Fives",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Font 2 of Fives",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Font 3 of Fives",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Font 4 of Fives",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      260,
+      220,
+      17.6
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Cent Five",
+      "variant": "21/23c",
+      "tier": "FLOOR",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded A",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded B",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded C",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Ded D",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       300,
+       10.480160000000001
+      ],
+      "names": [
+       "HIGH",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     260,
+     220,
+     17.6
+    ],
+    "names": [
+     "HIGH",
+     "MID-HIGH",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      260,
+      220,
+      17.6
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      260,
+      220,
+      17.6
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "seed-002": {
+  "font": {
+   "gems": [
+    {
+     "name": "Arcanist Brand of Volatility",
+     "variant": "20/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    },
+    {
+     "name": "Ball Lightning of Orbiting",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Kinetic Blast of Fragmentation",
+     "variant": "1/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "1/20": {
+     "boundaries": [
+      177,
+      177,
+      177
+     ]
+    },
+    "20/20": {
+     "boundaries": [
+      350,
+      350,
+      350
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     350,
+     350,
+     350
+    ]
+   },
+   "variantTiers": {
+    "1/20": {
+     "boundaries": [
+      177,
+      177,
+      177
+     ]
+    },
+    "20/20": {
+     "boundaries": [
+      350,
+      350,
+      350
+     ]
+    },
+    "all": {
+     "boundaries": [
+      350,
+      350,
+      350
+     ]
+    }
+   }
+  }
+ },
+ "tie-at-boundary": {
+  "font": {
+   "gems": [
+    {
+     "name": "Tie 0 of Mid",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Tie 1 of Mid",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Tie 10 of Mid",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Tie 11 of Mid",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Tie 12 of Mid",
+     "variant": "20/20",
+     "tier": "FLOOR",
+     "lowConfidence": false
+    },
+    {
+     "name": "Tie 2 of Mid",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Tie 3 of Mid",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Tie 4 of Mid",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Tie 5 of Mid",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Tie 6 of Mid",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Tie 7 of Mid",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Tie 8 of Mid",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Tie 9 of Mid",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Tie A of Top",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    },
+    {
+     "name": "Tie B of Top",
+     "variant": "20/20",
+     "tier": "TOP",
+     "lowConfidence": false
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      300,
+      200,
+      27.2
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [
+     {
+      "name": "Tie Ded A",
+      "variant": "21/23c",
+      "tier": "TOP",
+      "lowConfidence": false
+     },
+     {
+      "name": "Tie Ded B",
+      "variant": "21/23c",
+      "tier": "TOP",
+      "lowConfidence": false
+     },
+     {
+      "name": "Tie Ded C",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Tie Ded D",
+      "variant": "21/23c",
+      "tier": "HIGH",
+      "lowConfidence": false
+     },
+     {
+      "name": "Tie Ded E",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     },
+     {
+      "name": "Tie Ded F",
+      "variant": "21/23c",
+      "tier": "LOW",
+      "lowConfidence": false
+     }
+    ],
+    "boundaries": {
+     "21/23c": {
+      "boundaries": [
+       250,
+       14
+      ],
+      "names": [
+       "HIGH",
+       "LOW",
+       "FLOOR"
+      ]
+     }
+    },
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     300,
+     200,
+     27.2
+    ],
+    "names": [
+     "HIGH",
+     "MID-HIGH",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      300,
+      200,
+      27.2
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      300,
+      200,
+      27.2
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ },
+ "zero-listing-gems": {
+  "font": {
+   "gems": [
+    {
+     "name": "Deep 0 of Market",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Deep 1 of Market",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Deep 2 of Market",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Deep 3 of Market",
+     "variant": "20/20",
+     "tier": "HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Deep 4 of Market",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Deep 5 of Market",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Deep 6 of Market",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Deep 7 of Market",
+     "variant": "20/20",
+     "tier": "MID-HIGH",
+     "lowConfidence": false
+    },
+    {
+     "name": "Deep 8 of Market",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Deep 9 of Market",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": false
+    },
+    {
+     "name": "Ghost of Nil",
+     "variant": "20/20",
+     "tier": "LOW",
+     "lowConfidence": true
+    },
+    {
+     "name": "Ghost of Zero",
+     "variant": "20/20",
+     "tier": "CHAOTIC",
+     "lowConfidence": true
+    }
+   ],
+   "boundaries": {
+    "20/20": {
+     "boundaries": [
+      395,
+      255,
+      34.4
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   },
+   "topBoundary": {}
+  },
+  "dedication": {
+   "skills 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "skills 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/20c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   },
+   "transfigured 21/23c": {
+    "gems": [],
+    "boundaries": {},
+    "topBoundary": {}
+   }
+  },
+  "marketContext": {
+   "tierBoundaries": {
+    "boundaries": [
+     395,
+     255,
+     34.4
+    ],
+    "names": [
+     "HIGH",
+     "MID-HIGH",
+     "LOW",
+     "FLOOR"
+    ]
+   },
+   "variantTiers": {
+    "20/20": {
+     "boundaries": [
+      395,
+      255,
+      34.4
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    },
+    "all": {
+     "boundaries": [
+      395,
+      255,
+      34.4
+     ],
+     "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+     ]
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,6480 @@
+[
+ {
+  "case": "existing-tests/TestDetectLowConfidence_BasicThreshold",
+  "gems": [
+   {
+    "Name": "Normal Gem",
+    "Variant": "20/20",
+    "Chaos": 500,
+    "Listings": 60,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Thin Gem",
+    "Variant": "20/20",
+    "Chaos": 3000,
+    "Listings": 3,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Another Normal",
+    "Variant": "20/20",
+    "Chaos": 200,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Moderate Gem",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 40,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestDetectLowConfidence_PerVariant",
+  "gems": [
+   {
+    "Name": "Gem A",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Gem B",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 60,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Gem C",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 10,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Gem D",
+    "Variant": "1",
+    "Chaos": 10,
+    "Listings": 10,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Gem E",
+    "Variant": "1",
+    "Chaos": 10,
+    "Listings": 12,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Gem F",
+    "Variant": "1",
+    "Chaos": 10,
+    "Listings": 3,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestDetectLowConfidence_SkipsNonAnalyzable",
+  "gems": [
+   {
+    "Name": "Normal",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Corrupted",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 3,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": ""
+   },
+   {
+    "Name": "Not Trans",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 3,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Too Cheap",
+    "Variant": "20/20",
+    "Chaos": 3,
+    "Listings": 3,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestDetectTops_GapDetection",
+  "gems": [
+   {
+    "Name": "Mega Gem",
+    "Variant": "20/20",
+    "Chaos": 1300,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Big Gem",
+    "Variant": "20/20",
+    "Chaos": 1200,
+    "Listings": 40,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "High Gem",
+    "Variant": "20/20",
+    "Chaos": 400,
+    "Listings": 30,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Mid Gem",
+    "Variant": "20/20",
+    "Chaos": 350,
+    "Listings": 60,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Low Gem",
+    "Variant": "20/20",
+    "Chaos": 300,
+    "Listings": 80,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Floor A",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Floor B",
+    "Variant": "20/20",
+    "Chaos": 80,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Floor C",
+    "Variant": "20/20",
+    "Chaos": 50,
+    "Listings": 120,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestDetectTops_ExcludesLowConfidence",
+  "gems": [
+   {
+    "Name": "Spike Gem",
+    "Variant": "20/20",
+    "Chaos": 5000,
+    "Listings": 3,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Normal A",
+    "Variant": "20/20",
+    "Chaos": 500,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Normal B",
+    "Variant": "20/20",
+    "Chaos": 400,
+    "Listings": 60,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Normal C",
+    "Variant": "20/20",
+    "Chaos": 300,
+    "Listings": 70,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Normal D",
+    "Variant": "20/20",
+    "Chaos": 200,
+    "Listings": 80,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Normal E",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 90,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestDetectTops_PerVariant",
+  "gems": [
+   {
+    "Name": "Top 2020",
+    "Variant": "20/20",
+    "Chaos": 1000,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Mid 2020",
+    "Variant": "20/20",
+    "Chaos": 200,
+    "Listings": 60,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Low 2020 A",
+    "Variant": "20/20",
+    "Chaos": 150,
+    "Listings": 70,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Low 2020 B",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 70,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Low 2020 C",
+    "Variant": "20/20",
+    "Chaos": 50,
+    "Listings": 70,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Gem 1A",
+    "Variant": "1",
+    "Chaos": 200,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Gem 1B",
+    "Variant": "1",
+    "Chaos": 180,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Gem 1C",
+    "Variant": "1",
+    "Chaos": 150,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Gem 1D",
+    "Variant": "1",
+    "Chaos": 120,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Gem 1E",
+    "Variant": "1",
+    "Chaos": 100,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestComputeCleanTierBoundaries_REDLikePool",
+  "gems": [
+   {
+    "Name": "G1",
+    "Variant": "20/20",
+    "Chaos": 267,
+    "Listings": 30,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G2",
+    "Variant": "20/20",
+    "Chaos": 250,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G3",
+    "Variant": "20/20",
+    "Chaos": 229,
+    "Listings": 70,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G4",
+    "Variant": "20/20",
+    "Chaos": 200,
+    "Listings": 40,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G5",
+    "Variant": "20/20",
+    "Chaos": 175,
+    "Listings": 30,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G6",
+    "Variant": "20/20",
+    "Chaos": 137,
+    "Listings": 60,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G7",
+    "Variant": "20/20",
+    "Chaos": 120,
+    "Listings": 80,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G8",
+    "Variant": "20/20",
+    "Chaos": 115,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G9",
+    "Variant": "20/20",
+    "Chaos": 105,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G10",
+    "Variant": "20/20",
+    "Chaos": 95,
+    "Listings": 40,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G11",
+    "Variant": "20/20",
+    "Chaos": 89,
+    "Listings": 60,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G12",
+    "Variant": "20/20",
+    "Chaos": 75,
+    "Listings": 80,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G13",
+    "Variant": "20/20",
+    "Chaos": 74,
+    "Listings": 70,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G14",
+    "Variant": "20/20",
+    "Chaos": 73,
+    "Listings": 60,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G15",
+    "Variant": "20/20",
+    "Chaos": 66,
+    "Listings": 90,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G16",
+    "Variant": "20/20",
+    "Chaos": 65,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G17",
+    "Variant": "20/20",
+    "Chaos": 63,
+    "Listings": 80,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G18",
+    "Variant": "20/20",
+    "Chaos": 54,
+    "Listings": 70,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G19",
+    "Variant": "20/20",
+    "Chaos": 50,
+    "Listings": 60,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G20",
+    "Variant": "20/20",
+    "Chaos": 48,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G21",
+    "Variant": "20/20",
+    "Chaos": 42,
+    "Listings": 40,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G22",
+    "Variant": "20/20",
+    "Chaos": 40,
+    "Listings": 30,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G23",
+    "Variant": "20/20",
+    "Chaos": 35,
+    "Listings": 90,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G24",
+    "Variant": "20/20",
+    "Chaos": 31,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "G25",
+    "Variant": "20/20",
+    "Chaos": 29,
+    "Listings": 80,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestComputeCleanTierBoundaries_ExcludesLowConfAndTops",
+  "gems": [
+   {
+    "Name": "Top Gem",
+    "Variant": "20/20",
+    "Chaos": 1300,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Spike",
+    "Variant": "20/20",
+    "Chaos": 5000,
+    "Listings": 3,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Normal A",
+    "Variant": "20/20",
+    "Chaos": 300,
+    "Listings": 60,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Normal B",
+    "Variant": "20/20",
+    "Chaos": 200,
+    "Listings": 70,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Normal C",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 80,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   },
+   {
+    "Name": "Normal D",
+    "Variant": "20/20",
+    "Chaos": 50,
+    "Listings": 90,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": ""
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestComputeGemClassification_Integration",
+  "gems": [
+   {
+    "Name": "KB of Clustering",
+    "Variant": "20/20",
+    "Chaos": 1300,
+    "Listings": 260,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Cyclone of Tumult",
+    "Variant": "20/20",
+    "Chaos": 1200,
+    "Listings": 135,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Lightning Strike",
+    "Variant": "20/20",
+    "Chaos": 4500,
+    "Listings": 3,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Spark of Nova",
+    "Variant": "20/20",
+    "Chaos": 400,
+    "Listings": 74,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "AG of Smiting",
+    "Variant": "20/20",
+    "Chaos": 380,
+    "Listings": 68,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Lacerate",
+    "Variant": "20/20",
+    "Chaos": 350,
+    "Listings": 80,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Ground Slam",
+    "Variant": "20/20",
+    "Chaos": 300,
+    "Listings": 90,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Frostbolt",
+    "Variant": "20/20",
+    "Chaos": 250,
+    "Listings": 85,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Fireball",
+    "Variant": "20/20",
+    "Chaos": 200,
+    "Listings": 70,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Ice Shot",
+    "Variant": "20/20",
+    "Chaos": 150,
+    "Listings": 60,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Cleave",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 90,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Some Floor",
+    "Variant": "20/20",
+    "Chaos": 50,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Cheap Gem",
+    "Variant": "20/20",
+    "Chaos": 30,
+    "Listings": 120,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Another",
+    "Variant": "20/20",
+    "Chaos": 60,
+    "Listings": 80,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestComputeDedicationClassification_SkillPool",
+  "gems": [
+   {
+    "Name": "Expensive Gem",
+    "Variant": "21/23c",
+    "Chaos": 1500,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "High Gem",
+    "Variant": "21/23c",
+    "Chaos": 800,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Mid Gem 1",
+    "Variant": "21/23c",
+    "Chaos": 300,
+    "Listings": 60,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Mid Gem 2",
+    "Variant": "21/23c",
+    "Chaos": 250,
+    "Listings": 55,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Mid Gem 3",
+    "Variant": "21/23c",
+    "Chaos": 200,
+    "Listings": 70,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Low Gem 1",
+    "Variant": "21/23c",
+    "Chaos": 100,
+    "Listings": 80,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Low Gem 2",
+    "Variant": "21/23c",
+    "Chaos": 50,
+    "Listings": 90,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Floor Gem 1",
+    "Variant": "21/23c",
+    "Chaos": 20,
+    "Listings": 100,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Floor Gem 2",
+    "Variant": "21/23c",
+    "Chaos": 10,
+    "Listings": 120,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestComputeDedicationClassification_TransfiguredPool",
+  "gems": [
+   {
+    "Name": "Trans Expensive",
+    "Variant": "21/23c",
+    "Chaos": 1200,
+    "Listings": 35,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Trans High",
+    "Variant": "21/23c",
+    "Chaos": 600,
+    "Listings": 45,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Trans Mid",
+    "Variant": "21/23c",
+    "Chaos": 200,
+    "Listings": 55,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Trans Low 1",
+    "Variant": "21/23c",
+    "Chaos": 80,
+    "Listings": 70,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Trans Low 2",
+    "Variant": "21/23c",
+    "Chaos": 50,
+    "Listings": 85,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Trans Floor",
+    "Variant": "21/23c",
+    "Chaos": 10,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestComputeDedicationClassification_ExcludesNonCorrupted",
+  "gems": [
+   {
+    "Name": "Non Corrupted",
+    "Variant": "21/23c",
+    "Chaos": 500,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Valid Gem 1",
+    "Variant": "21/23c",
+    "Chaos": 300,
+    "Listings": 60,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Valid Gem 2",
+    "Variant": "21/23c",
+    "Chaos": 200,
+    "Listings": 70,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Valid Gem 3",
+    "Variant": "21/23c",
+    "Chaos": 100,
+    "Listings": 80,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Valid Gem 4",
+    "Variant": "21/23c",
+    "Chaos": 50,
+    "Listings": 90,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestComputeDedicationClassification_ExcludesSupports",
+  "gems": [
+   {
+    "Name": "Lifetap Support",
+    "Variant": "21/23c",
+    "Chaos": 500,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Empower Support",
+    "Variant": "21/23c",
+    "Chaos": 800,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Arc",
+    "Variant": "21/23c",
+    "Chaos": 300,
+    "Listings": 60,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Fireball",
+    "Variant": "21/23c",
+    "Chaos": 200,
+    "Listings": 70,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Cleave",
+    "Variant": "21/23c",
+    "Chaos": 100,
+    "Listings": 80,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Slam",
+    "Variant": "21/23c",
+    "Chaos": 50,
+    "Listings": 90,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestComputeDedicationClassification_ExcludesTrarthus",
+  "gems": [
+   {
+    "Name": "Trarthus Ire",
+    "Variant": "21/23c",
+    "Chaos": 5000,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Arc",
+    "Variant": "21/23c",
+    "Chaos": 300,
+    "Listings": 60,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Fireball",
+    "Variant": "21/23c",
+    "Chaos": 200,
+    "Listings": 70,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Cleave",
+    "Variant": "21/23c",
+    "Chaos": 100,
+    "Listings": 80,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Slam",
+    "Variant": "21/23c",
+    "Chaos": 50,
+    "Listings": 90,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestComputeDedicationClassification_PoolIsolation",
+  "gems": [
+   {
+    "Name": "Arc",
+    "Variant": "21/23c",
+    "Chaos": 300,
+    "Listings": 60,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Fireball",
+    "Variant": "21/23c",
+    "Chaos": 200,
+    "Listings": 70,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Cleave",
+    "Variant": "21/23c",
+    "Chaos": 100,
+    "Listings": 80,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Slam",
+    "Variant": "21/23c",
+    "Chaos": 50,
+    "Listings": 90,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Arc of Surging",
+    "Variant": "21/23c",
+    "Chaos": 800,
+    "Listings": 35,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Fireball of Volatility",
+    "Variant": "21/23c",
+    "Chaos": 600,
+    "Listings": 45,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Cleave of Rage",
+    "Variant": "21/23c",
+    "Chaos": 400,
+    "Listings": 55,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Slam of Magnitude",
+    "Variant": "21/23c",
+    "Chaos": 250,
+    "Listings": 65,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestComputeDedicationClassification_TierDistribution",
+  "gems": [
+   {
+    "Name": "Top 1",
+    "Variant": "21/23c",
+    "Chaos": 3000,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Top 2",
+    "Variant": "21/23c",
+    "Chaos": 2500,
+    "Listings": 35,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "High 1",
+    "Variant": "21/23c",
+    "Chaos": 800,
+    "Listings": 60,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "High 2",
+    "Variant": "21/23c",
+    "Chaos": 700,
+    "Listings": 55,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Mid 1",
+    "Variant": "21/23c",
+    "Chaos": 300,
+    "Listings": 70,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Mid 2",
+    "Variant": "21/23c",
+    "Chaos": 250,
+    "Listings": 65,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Mid 3",
+    "Variant": "21/23c",
+    "Chaos": 200,
+    "Listings": 80,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Low 1",
+    "Variant": "21/23c",
+    "Chaos": 100,
+    "Listings": 90,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Low 2",
+    "Variant": "21/23c",
+    "Chaos": 80,
+    "Listings": 85,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Floor 1",
+    "Variant": "21/23c",
+    "Chaos": 20,
+    "Listings": 100,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Floor 2",
+    "Variant": "21/23c",
+    "Chaos": 15,
+    "Listings": 110,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Floor 3",
+    "Variant": "21/23c",
+    "Chaos": 10,
+    "Listings": 120,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestComputeDedicationClassification_ClassifiesEachVariantAgainstItsOwnPool",
+  "gems": [
+   {
+    "Name": "Arc",
+    "Variant": "21/23c",
+    "Chaos": 5000,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Spark",
+    "Variant": "21/23c",
+    "Chaos": 4000,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ball Lightning",
+    "Variant": "21/23c",
+    "Chaos": 3000,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Firestorm",
+    "Variant": "21/23c",
+    "Chaos": 2000,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Arc",
+    "Variant": "21/20c",
+    "Chaos": 200,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Spark",
+    "Variant": "21/20c",
+    "Chaos": 120,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ball Lightning",
+    "Variant": "21/20c",
+    "Chaos": 60,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Firestorm",
+    "Variant": "21/20c",
+    "Chaos": 30,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Freezing Pulse",
+    "Variant": "21/20c",
+    "Chaos": 12,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestComputeDedicationClassification_ExcludesWhiteGems",
+  "gems": [
+   {
+    "Name": "Cyclone",
+    "Variant": "21/23c",
+    "Chaos": 300,
+    "Listings": 12,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Fireball",
+    "Variant": "21/23c",
+    "Chaos": 250,
+    "Listings": 20,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Cleave",
+    "Variant": "21/23c",
+    "Chaos": 200,
+    "Listings": 15,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Arc",
+    "Variant": "21/23c",
+    "Chaos": 180,
+    "Listings": 18,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Pact of Beidat",
+    "Variant": "21/23c",
+    "Chaos": 34220,
+    "Listings": 20,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "WHITE"
+   }
+  ]
+ },
+ {
+  "case": "existing-tests/TestComputeGemClassification_ExcludesWhiteGems",
+  "gems": [
+   {
+    "Name": "Spark of Unpredictability",
+    "Variant": "20/20",
+    "Chaos": 1300,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Arc of Oscillating",
+    "Variant": "20/20",
+    "Chaos": 1200,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Cleave of Rage",
+    "Variant": "20/20",
+    "Chaos": 400,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Slam of Magnitude",
+    "Variant": "20/20",
+    "Chaos": 350,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Ice Shot of Shattering",
+    "Variant": "20/20",
+    "Chaos": 300,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Fireball of Volatility",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bash of Impact",
+    "Variant": "20/20",
+    "Chaos": 80,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Strike of Swiping",
+    "Variant": "20/20",
+    "Chaos": 50,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Pact of Beidat",
+    "Variant": "20/20",
+    "Chaos": 34220,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "WHITE"
+   }
+  ]
+ },
+ {
+  "case": "seed-002",
+  "gems": [
+   {
+    "Name": "Kinetic Blast of Fragmentation",
+    "Variant": "1/20",
+    "Chaos": 177.0,
+    "Listings": 65,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Kinetic Blast of Fragmentation",
+    "Variant": "1/20",
+    "Chaos": 55.0,
+    "Listings": 18,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Kinetic Blast",
+    "Variant": "1/20",
+    "Chaos": 7.0,
+    "Listings": 95,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ball Lightning of Orbiting",
+    "Variant": "20/20",
+    "Chaos": 350.0,
+    "Listings": 12,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Empower Support",
+    "Variant": "1/0",
+    "Chaos": 1.0,
+    "Listings": 407,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Empower Support",
+    "Variant": "3/0",
+    "Chaos": 45.0,
+    "Listings": 120,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Empower Support",
+    "Variant": "3/0",
+    "Chaos": 38.0,
+    "Listings": 85,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Vaal Grace",
+    "Variant": "20/20",
+    "Chaos": 25.0,
+    "Listings": 88,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Arcanist Brand of Volatility",
+    "Variant": "20/20",
+    "Chaos": 750.0,
+    "Listings": 2,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Arcanist Brand of Volatility",
+    "Variant": "20/20",
+    "Chaos": 900.0,
+    "Listings": 3,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Herald of Ice of Freezing",
+    "Variant": "1/20",
+    "Chaos": 0.0,
+    "Listings": 0,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Determination",
+    "Variant": "1/0",
+    "Chaos": 0.0,
+    "Listings": 500,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   }
+  ]
+ },
+ {
+  "case": "harvest-prices-as-font-pool",
+  "gems": [
+   {
+    "Name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbWeapons",
+    "Variant": "20/20",
+    "Chaos": 10.58,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbArmour",
+    "Variant": "20/20",
+    "Chaos": 10.56,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbTrinkets",
+    "Variant": "20/20",
+    "Chaos": 10.32,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbCurrency",
+    "Variant": "20/20",
+    "Chaos": 16.69,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbDivinationCards",
+    "Variant": "20/20",
+    "Chaos": 54.54,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbMaps",
+    "Variant": "20/20",
+    "Chaos": 11.75,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbEssences",
+    "Variant": "20/20",
+    "Chaos": 11.17,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbUniques",
+    "Variant": "20/20",
+    "Chaos": 12.57,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbGems",
+    "Variant": "20/20",
+    "Chaos": 12.67,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbFragments",
+    "Variant": "20/20",
+    "Chaos": 10.48,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbBlight",
+    "Variant": "20/20",
+    "Chaos": 11.08,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "delirium:Metadata/Items/Currency/CurrencyAfflictionOrbScarabs",
+    "Variant": "20/20",
+    "Chaos": 41.5,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceGreed7",
+    "Variant": "20/20",
+    "Chaos": 5.85,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceContempt7",
+    "Variant": "20/20",
+    "Chaos": 9.68,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceHatred7",
+    "Variant": "20/20",
+    "Chaos": 5.58,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceWoe7",
+    "Variant": "20/20",
+    "Chaos": 10.11,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceAnger6",
+    "Variant": "20/20",
+    "Chaos": 6.23,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceWrath5",
+    "Variant": "20/20",
+    "Chaos": 5.48,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceSorrow6",
+    "Variant": "20/20",
+    "Chaos": 9.62,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceSpite4",
+    "Variant": "20/20",
+    "Chaos": 10.07,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceScorn3",
+    "Variant": "20/20",
+    "Chaos": 26.93,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceEnvy3",
+    "Variant": "20/20",
+    "Chaos": 13.29,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceMisery3",
+    "Variant": "20/20",
+    "Chaos": 13.65,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceDread3",
+    "Variant": "20/20",
+    "Chaos": 5.64,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceZeal4",
+    "Variant": "20/20",
+    "Chaos": 15.86,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceLoathing4",
+    "Variant": "20/20",
+    "Chaos": 12.05,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceTorment6",
+    "Variant": "20/20",
+    "Chaos": 5.01,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceFear6",
+    "Variant": "20/20",
+    "Chaos": 5.46,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceRage5",
+    "Variant": "20/20",
+    "Chaos": 13.84,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceDoubt5",
+    "Variant": "20/20",
+    "Chaos": 5.26,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceSuffering5",
+    "Variant": "20/20",
+    "Chaos": 5.15,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "essence:Metadata/Items/Currency/CurrencyEssenceAnguish4",
+    "Variant": "20/20",
+    "Chaos": 5.49,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "corrupt:Metadata/Items/Currency/CurrencyEssenceHysteria1",
+    "Variant": "20/20",
+    "Chaos": 41.91,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "corrupt:Metadata/Items/Currency/CurrencyEssenceInsanity1",
+    "Variant": "20/20",
+    "Chaos": 42.61,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "corrupt:Metadata/Items/Currency/CurrencyEssenceHorror1",
+    "Variant": "20/20",
+    "Chaos": 65.67,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "corrupt:Metadata/Items/Currency/CurrencyEssenceDelirium1",
+    "Variant": "20/20",
+    "Chaos": 52.5,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingLightning",
+    "Variant": "20/20",
+    "Chaos": 9.31,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingPhysical",
+    "Variant": "20/20",
+    "Chaos": 15.86,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingLife",
+    "Variant": "20/20",
+    "Chaos": 15.04,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingDefences",
+    "Variant": "20/20",
+    "Chaos": 33.09,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingCold",
+    "Variant": "20/20",
+    "Chaos": 9.15,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingFire",
+    "Variant": "20/20",
+    "Chaos": 9.95,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingChaos",
+    "Variant": "20/20",
+    "Chaos": 10.11,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingMana",
+    "Variant": "20/20",
+    "Chaos": 9.12,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingMinionsAuras",
+    "Variant": "20/20",
+    "Chaos": 9.77,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingBleedPoison",
+    "Variant": "20/20",
+    "Chaos": 29.96,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingSpeed",
+    "Variant": "20/20",
+    "Chaos": 44.22,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingEnchant",
+    "Variant": "20/20",
+    "Chaos": 13.87,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingSockets",
+    "Variant": "20/20",
+    "Chaos": 17.41,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingLuckyModRolls",
+    "Variant": "20/20",
+    "Chaos": 108.95,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingSellPrice",
+    "Variant": "20/20",
+    "Chaos": 89.14,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingGemLevel",
+    "Variant": "20/20",
+    "Chaos": 192.39,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingMirror",
+    "Variant": "20/20",
+    "Chaos": 41.18,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingVaal",
+    "Variant": "20/20",
+    "Chaos": 10.82,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingAbyss",
+    "Variant": "20/20",
+    "Chaos": 401.63,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "fossil:Metadata/Items/Currency/CurrencyDelveCraftingCorruptEssence",
+    "Variant": "20/20",
+    "Chaos": 60.51,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "astrolabe:Metadata/Items/Currency/AstrolabeUltimatum",
+    "Variant": "20/20",
+    "Chaos": 133.2,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "astrolabe:Metadata/Items/Currency/AstrolabeDelirium",
+    "Variant": "20/20",
+    "Chaos": 142.95,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "astrolabe:Metadata/Items/Currency/AstrolabeHarvest",
+    "Variant": "20/20",
+    "Chaos": 372.81,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "astrolabe:Metadata/Items/Currency/AstrolabeBlight",
+    "Variant": "20/20",
+    "Chaos": 135.63,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "astrolabe:Metadata/Items/Currency/AstrolabeBreach",
+    "Variant": "20/20",
+    "Chaos": 179.76,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "astrolabe:Metadata/Items/Currency/AstrolabeAbyss",
+    "Variant": "20/20",
+    "Chaos": 207.8,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "astrolabe:Metadata/Items/Currency/AstrolabeRitual",
+    "Variant": "20/20",
+    "Chaos": 160.11,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "astrolabe:Metadata/Items/Currency/AstrolabeExpedition",
+    "Variant": "20/20",
+    "Chaos": 132.88,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "astrolabe:Metadata/Items/Currency/AstrolabeLegion",
+    "Variant": "20/20",
+    "Chaos": 143.43,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "catalyst:Metadata/Items/Currency/CurrencyJewelleryQualityResource",
+    "Variant": "20/20",
+    "Chaos": 49.03,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "catalyst:Metadata/Items/Currency/CurrencyJewelleryQualityResistance",
+    "Variant": "20/20",
+    "Chaos": 99.65,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "catalyst:Metadata/Items/Currency/CurrencyJewelleryQualityAttribute",
+    "Variant": "20/20",
+    "Chaos": 2.53,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "catalyst:Metadata/Items/Currency/CurrencyJewelleryQualityPhysicalChaos",
+    "Variant": "20/20",
+    "Chaos": 2.44,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "catalyst:Metadata/Items/Currency/CurrencyJewelleryQualityCaster",
+    "Variant": "20/20",
+    "Chaos": 2.02,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "catalyst:Metadata/Items/Currency/CurrencyJewelleryQualityElemental",
+    "Variant": "20/20",
+    "Chaos": 2.43,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "catalyst:Metadata/Items/Currency/CurrencyJewelleryQualityAttack",
+    "Variant": "20/20",
+    "Chaos": 2.18,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "catalyst:Metadata/Items/Currency/CurrencyJewelleryQualitySpeed",
+    "Variant": "20/20",
+    "Chaos": 2.49,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "catalyst:Metadata/Items/Currency/CurrencyJewelleryQualityDefense",
+    "Variant": "20/20",
+    "Chaos": 8.81,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "catalyst:Metadata/Items/Currency/CurrencyJewelleryQualityCritical",
+    "Variant": "20/20",
+    "Chaos": 8.11,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "oil:Metadata/Items/Currency/Mushrune1",
+    "Variant": "20/20",
+    "Chaos": 0.25,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "oil:Metadata/Items/Currency/Mushrune2",
+    "Variant": "20/20",
+    "Chaos": 0.09,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "oil:Metadata/Items/Currency/Mushrune3",
+    "Variant": "20/20",
+    "Chaos": 0.46,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "oil:Metadata/Items/Currency/Mushrune4",
+    "Variant": "20/20",
+    "Chaos": 0.8,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "oil:Metadata/Items/Currency/Mushrune5",
+    "Variant": "20/20",
+    "Chaos": 0.45,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "oil:Metadata/Items/Currency/Mushrune6",
+    "Variant": "20/20",
+    "Chaos": 0.65,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "oil:Metadata/Items/Currency/Mushrune6b",
+    "Variant": "20/20",
+    "Chaos": 0.85,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "oil:Metadata/Items/Currency/Mushrune7",
+    "Variant": "20/20",
+    "Chaos": 2.92,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "oil:Metadata/Items/Currency/Mushrune8",
+    "Variant": "20/20",
+    "Chaos": 7.42,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "oil:Metadata/Items/Currency/Mushrune9",
+    "Variant": "20/20",
+    "Chaos": 20.36,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "oil:Metadata/Items/Currency/Mushrune10",
+    "Variant": "20/20",
+    "Chaos": 56.36,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "oil:Metadata/Items/Currency/Mushrune11",
+    "Variant": "20/20",
+    "Chaos": 198.08,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "oil:Metadata/Items/Currency/Mushrune12",
+    "Variant": "20/20",
+    "Chaos": 411.2,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   }
+  ]
+ },
+ {
+  "case": "fewer-than-4-prices",
+  "gems": [
+   {
+    "Name": "Arc of Surging",
+    "Variant": "20/20",
+    "Chaos": 300,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Spark of Nova",
+    "Variant": "20/20",
+    "Chaos": 200,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Cleave of Rage",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Cheap of Nothing",
+    "Variant": "20/20",
+    "Chaos": 4,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Ded Three A",
+    "Variant": "21/23c",
+    "Chaos": 300,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Three B",
+    "Variant": "21/23c",
+    "Chaos": 200,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Three C",
+    "Variant": "21/23c",
+    "Chaos": 100,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Cheap",
+    "Variant": "21/23c",
+    "Chaos": 4,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   }
+  ]
+ },
+ {
+  "case": "fewer-than-4-above-floor",
+  "gems": [
+   {
+    "Name": "A of One",
+    "Variant": "20/20",
+    "Chaos": 1000,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "B of Two",
+    "Variant": "20/20",
+    "Chaos": 600,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "C of Three",
+    "Variant": "20/20",
+    "Chaos": 300,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "D of Four",
+    "Variant": "20/20",
+    "Chaos": 20,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "E of Five",
+    "Variant": "20/20",
+    "Chaos": 6,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "F of Six",
+    "Variant": "20/20",
+    "Chaos": 6.5,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   }
+  ]
+ },
+ {
+  "case": "no-top-found",
+  "gems": [
+   {
+    "Name": "Even 0 of Spacing",
+    "Variant": "20/20",
+    "Chaos": 200,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Even 1 of Spacing",
+    "Variant": "20/20",
+    "Chaos": 180,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Even 2 of Spacing",
+    "Variant": "20/20",
+    "Chaos": 160,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Even 3 of Spacing",
+    "Variant": "20/20",
+    "Chaos": 140,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Even 4 of Spacing",
+    "Variant": "20/20",
+    "Chaos": 120,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Even 5 of Spacing",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Even 6 of Spacing",
+    "Variant": "20/20",
+    "Chaos": 80,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Even 7 of Spacing",
+    "Variant": "20/20",
+    "Chaos": 60,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   }
+  ]
+ },
+ {
+  "case": "low-confidence-above-top-boundary",
+  "gems": [
+   {
+    "Name": "Spike of Cascade",
+    "Variant": "20/20",
+    "Chaos": 4500,
+    "Listings": 3,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Normal 0 of Pool",
+    "Variant": "20/20",
+    "Chaos": 400,
+    "Listings": 60,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Normal 1 of Pool",
+    "Variant": "20/20",
+    "Chaos": 370,
+    "Listings": 61,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Normal 2 of Pool",
+    "Variant": "20/20",
+    "Chaos": 340,
+    "Listings": 62,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Normal 3 of Pool",
+    "Variant": "20/20",
+    "Chaos": 310,
+    "Listings": 63,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Normal 4 of Pool",
+    "Variant": "20/20",
+    "Chaos": 280,
+    "Listings": 64,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Normal 5 of Pool",
+    "Variant": "20/20",
+    "Chaos": 250,
+    "Listings": 65,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Normal 6 of Pool",
+    "Variant": "20/20",
+    "Chaos": 220,
+    "Listings": 66,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Normal 7 of Pool",
+    "Variant": "20/20",
+    "Chaos": 190,
+    "Listings": 67,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Normal 8 of Pool",
+    "Variant": "20/20",
+    "Chaos": 160,
+    "Listings": 68,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Normal 9 of Pool",
+    "Variant": "20/20",
+    "Chaos": 130,
+    "Listings": 69,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Normal 10 of Pool",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 70,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Normal 11 of Pool",
+    "Variant": "20/20",
+    "Chaos": 70,
+    "Listings": 71,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Shallow of Depth",
+    "Variant": "20/20",
+    "Chaos": 150,
+    "Listings": 22,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Spike",
+    "Variant": "21/23c",
+    "Chaos": 6000,
+    "Listings": 3,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Normal 0",
+    "Variant": "21/23c",
+    "Chaos": 500,
+    "Listings": 60,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Normal 1",
+    "Variant": "21/23c",
+    "Chaos": 465,
+    "Listings": 61,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Normal 2",
+    "Variant": "21/23c",
+    "Chaos": 430,
+    "Listings": 62,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Normal 3",
+    "Variant": "21/23c",
+    "Chaos": 395,
+    "Listings": 63,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Normal 4",
+    "Variant": "21/23c",
+    "Chaos": 360,
+    "Listings": 64,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Normal 5",
+    "Variant": "21/23c",
+    "Chaos": 325,
+    "Listings": 65,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Normal 6",
+    "Variant": "21/23c",
+    "Chaos": 290,
+    "Listings": 66,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Normal 7",
+    "Variant": "21/23c",
+    "Chaos": 255,
+    "Listings": 67,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Normal 8",
+    "Variant": "21/23c",
+    "Chaos": 220,
+    "Listings": 68,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Normal 9",
+    "Variant": "21/23c",
+    "Chaos": 185,
+    "Listings": 69,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   }
+  ]
+ },
+ {
+  "case": "median-listings-zero",
+  "gems": [
+   {
+    "Name": "Empty 0 of Book",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 0,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Empty 1 of Book",
+    "Variant": "20/20",
+    "Chaos": 150,
+    "Listings": 0,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Empty 2 of Book",
+    "Variant": "20/20",
+    "Chaos": 200,
+    "Listings": 0,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Empty 3 of Book",
+    "Variant": "20/20",
+    "Chaos": 250,
+    "Listings": 0,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Empty 4 of Book",
+    "Variant": "20/20",
+    "Chaos": 300,
+    "Listings": 0,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Empty 5 of Book",
+    "Variant": "20/20",
+    "Chaos": 350,
+    "Listings": 0,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Base Zero",
+    "Variant": "20/20",
+    "Chaos": 80,
+    "Listings": 0,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Ded Empty 0",
+    "Variant": "21/20c",
+    "Chaos": 100,
+    "Listings": 0,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Empty 1",
+    "Variant": "21/20c",
+    "Chaos": 140,
+    "Listings": 0,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Empty 2",
+    "Variant": "21/20c",
+    "Chaos": 180,
+    "Listings": 0,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Empty 3",
+    "Variant": "21/20c",
+    "Chaos": 220,
+    "Listings": 0,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded Empty 4",
+    "Variant": "21/20c",
+    "Chaos": 260,
+    "Listings": 0,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   }
+  ]
+ },
+ {
+  "case": "zero-listing-gems",
+  "gems": [
+   {
+    "Name": "Deep 0 of Market",
+    "Variant": "20/20",
+    "Chaos": 500,
+    "Listings": 40,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Deep 1 of Market",
+    "Variant": "20/20",
+    "Chaos": 465,
+    "Listings": 45,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Deep 2 of Market",
+    "Variant": "20/20",
+    "Chaos": 430,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Deep 3 of Market",
+    "Variant": "20/20",
+    "Chaos": 395,
+    "Listings": 55,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Deep 4 of Market",
+    "Variant": "20/20",
+    "Chaos": 360,
+    "Listings": 60,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Deep 5 of Market",
+    "Variant": "20/20",
+    "Chaos": 325,
+    "Listings": 65,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Deep 6 of Market",
+    "Variant": "20/20",
+    "Chaos": 290,
+    "Listings": 70,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Deep 7 of Market",
+    "Variant": "20/20",
+    "Chaos": 255,
+    "Listings": 75,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Deep 8 of Market",
+    "Variant": "20/20",
+    "Chaos": 220,
+    "Listings": 80,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Deep 9 of Market",
+    "Variant": "20/20",
+    "Chaos": 185,
+    "Listings": 85,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Ghost of Zero",
+    "Variant": "20/20",
+    "Chaos": 900,
+    "Listings": 0,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Ghost of Nil",
+    "Variant": "20/20",
+    "Chaos": 55,
+    "Listings": 0,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   }
+  ]
+ },
+ {
+  "case": "price-5.00-and-5.01",
+  "gems": [
+   {
+    "Name": "Five of Exact",
+    "Variant": "20/20",
+    "Chaos": 5.0,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Five of Cent",
+    "Variant": "20/20",
+    "Chaos": 5.01,
+    "Listings": 30,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Font 0 of Fives",
+    "Variant": "20/20",
+    "Chaos": 300,
+    "Listings": 30,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Font 1 of Fives",
+    "Variant": "20/20",
+    "Chaos": 260,
+    "Listings": 30,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Font 2 of Fives",
+    "Variant": "20/20",
+    "Chaos": 220,
+    "Listings": 30,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Font 3 of Fives",
+    "Variant": "20/20",
+    "Chaos": 180,
+    "Listings": 30,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Font 4 of Fives",
+    "Variant": "20/20",
+    "Chaos": 140,
+    "Listings": 30,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Exact Five",
+    "Variant": "21/23c",
+    "Chaos": 5.0,
+    "Listings": 100,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Cent Five",
+    "Variant": "21/23c",
+    "Chaos": 5.01,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded A",
+    "Variant": "21/23c",
+    "Chaos": 300,
+    "Listings": 100,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded B",
+    "Variant": "21/23c",
+    "Chaos": 200,
+    "Listings": 100,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded C",
+    "Variant": "21/23c",
+    "Chaos": 100,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Ded D",
+    "Variant": "21/23c",
+    "Chaos": 50,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   }
+  ]
+ },
+ {
+  "case": "tie-at-boundary",
+  "gems": [
+   {
+    "Name": "Tie A of Top",
+    "Variant": "20/20",
+    "Chaos": 1000,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie B of Top",
+    "Variant": "20/20",
+    "Chaos": 1000,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie 0 of Mid",
+    "Variant": "20/20",
+    "Chaos": 400,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie 1 of Mid",
+    "Variant": "20/20",
+    "Chaos": 400,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie 2 of Mid",
+    "Variant": "20/20",
+    "Chaos": 300,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie 3 of Mid",
+    "Variant": "20/20",
+    "Chaos": 300,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie 4 of Mid",
+    "Variant": "20/20",
+    "Chaos": 300,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie 5 of Mid",
+    "Variant": "20/20",
+    "Chaos": 200,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie 6 of Mid",
+    "Variant": "20/20",
+    "Chaos": 200,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie 7 of Mid",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie 8 of Mid",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie 9 of Mid",
+    "Variant": "20/20",
+    "Chaos": 50,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie 10 of Mid",
+    "Variant": "20/20",
+    "Chaos": 50,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie 11 of Mid",
+    "Variant": "20/20",
+    "Chaos": 20,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie 12 of Mid",
+    "Variant": "20/20",
+    "Chaos": 20,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Tie Ded A",
+    "Variant": "21/23c",
+    "Chaos": 500,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Tie Ded B",
+    "Variant": "21/23c",
+    "Chaos": 500,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Tie Ded C",
+    "Variant": "21/23c",
+    "Chaos": 250,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Tie Ded D",
+    "Variant": "21/23c",
+    "Chaos": 250,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Tie Ded E",
+    "Variant": "21/23c",
+    "Chaos": 100,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Tie Ded F",
+    "Variant": "21/23c",
+    "Chaos": 100,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   }
+  ]
+ },
+ {
+  "case": "eligibility-names",
+  "gems": [
+   {
+    "Name": "Clean of One",
+    "Variant": "20/20",
+    "Chaos": 800,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Clean of Two",
+    "Variant": "20/20",
+    "Chaos": 600,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Clean of Three",
+    "Variant": "20/20",
+    "Chaos": 400,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Clean of Four",
+    "Variant": "20/20",
+    "Chaos": 200,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Clean of Five",
+    "Variant": "20/20",
+    "Chaos": 100,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Corrupt of Font",
+    "Variant": "20/20",
+    "Chaos": 5000,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Pale of White",
+    "Variant": "20/20",
+    "Chaos": 4000,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "WHITE"
+   },
+   {
+    "Name": "Awakened Brutality Support",
+    "Variant": "20/20",
+    "Chaos": 3000,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Vaal Arc of Surging",
+    "Variant": "20/20",
+    "Chaos": 2500,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Wave of Conviction of Trarthus",
+    "Variant": "20/20",
+    "Chaos": 2000,
+    "Listings": 50,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Clean Ded A",
+    "Variant": "21/23c",
+    "Chaos": 600,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Clean Ded B",
+    "Variant": "21/23c",
+    "Chaos": 400,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Clean Ded C",
+    "Variant": "21/23c",
+    "Chaos": 200,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Clean Ded D",
+    "Variant": "21/23c",
+    "Chaos": 100,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Pale Ded",
+    "Variant": "21/23c",
+    "Chaos": 30000,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "WHITE"
+   },
+   {
+    "Name": "Empower Support",
+    "Variant": "21/23c",
+    "Chaos": 9000,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Vaal Arc",
+    "Variant": "21/23c",
+    "Chaos": 7000,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Sunder of Trarthus",
+    "Variant": "21/23c",
+    "Chaos": 8000,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Unresolved Ded",
+    "Variant": "21/23c",
+    "Chaos": 6000,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": ""
+   }
+  ]
+ },
+ {
+  "case": "bulk-six-variants",
+  "gems": [
+   {
+    "Name": "Bulk 00",
+    "Variant": "1",
+    "Chaos": 12.93,
+    "Listings": 46,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 01 of Mixing",
+    "Variant": "1",
+    "Chaos": 290.69,
+    "Listings": 189,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 02 of Mixing",
+    "Variant": "1",
+    "Chaos": 198.23,
+    "Listings": 79,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 03",
+    "Variant": "1",
+    "Chaos": 124.25,
+    "Listings": 136,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 04 of Mixing",
+    "Variant": "1",
+    "Chaos": 1.76,
+    "Listings": 14,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 05 of Mixing",
+    "Variant": "1",
+    "Chaos": 41.12,
+    "Listings": 102,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 06",
+    "Variant": "1",
+    "Chaos": 961.91,
+    "Listings": 182,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 07 of Mixing",
+    "Variant": "1",
+    "Chaos": 8.38,
+    "Listings": 103,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 08 of Mixing",
+    "Variant": "1",
+    "Chaos": 13.56,
+    "Listings": 83,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 09",
+    "Variant": "1",
+    "Chaos": 1070.1,
+    "Listings": 124,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 10 of Mixing",
+    "Variant": "1",
+    "Chaos": 3.24,
+    "Listings": 30,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 11 of Mixing",
+    "Variant": "1",
+    "Chaos": 23.93,
+    "Listings": 20,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 12",
+    "Variant": "1",
+    "Chaos": 1.75,
+    "Listings": 108,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 13 of Mixing",
+    "Variant": "1",
+    "Chaos": 670.74,
+    "Listings": 24,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 14 of Mixing",
+    "Variant": "1",
+    "Chaos": 207.61,
+    "Listings": 116,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 15",
+    "Variant": "1",
+    "Chaos": 8.66,
+    "Listings": 86,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 16 of Mixing",
+    "Variant": "1",
+    "Chaos": 15.96,
+    "Listings": 51,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 17 of Mixing",
+    "Variant": "1",
+    "Chaos": 2.26,
+    "Listings": 148,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 18",
+    "Variant": "1",
+    "Chaos": 16.28,
+    "Listings": 10,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 19 of Mixing",
+    "Variant": "1",
+    "Chaos": 2835.06,
+    "Listings": 191,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 20 of Mixing",
+    "Variant": "1",
+    "Chaos": 1879.55,
+    "Listings": 84,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 21",
+    "Variant": "1",
+    "Chaos": 7.91,
+    "Listings": 162,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 22 of Mixing",
+    "Variant": "1",
+    "Chaos": 73.67,
+    "Listings": 96,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 23 of Mixing",
+    "Variant": "1",
+    "Chaos": 327.5,
+    "Listings": 199,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 24",
+    "Variant": "1",
+    "Chaos": 1927.95,
+    "Listings": 169,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 25 of Mixing",
+    "Variant": "1",
+    "Chaos": 3.62,
+    "Listings": 80,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 26 of Mixing",
+    "Variant": "1",
+    "Chaos": 48.79,
+    "Listings": 187,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 27",
+    "Variant": "1",
+    "Chaos": 426.5,
+    "Listings": 108,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 28 of Mixing",
+    "Variant": "1",
+    "Chaos": 4.2,
+    "Listings": 109,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 29 of Mixing",
+    "Variant": "1",
+    "Chaos": 99.75,
+    "Listings": 155,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 30",
+    "Variant": "1",
+    "Chaos": 338.59,
+    "Listings": 18,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 31 of Mixing",
+    "Variant": "1",
+    "Chaos": 50.85,
+    "Listings": 81,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 32 of Mixing",
+    "Variant": "1",
+    "Chaos": 60.33,
+    "Listings": 71,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 33",
+    "Variant": "1",
+    "Chaos": 85.32,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 34 of Mixing",
+    "Variant": "1",
+    "Chaos": 13.24,
+    "Listings": 8,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 35 of Mixing",
+    "Variant": "1",
+    "Chaos": 8.59,
+    "Listings": 157,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 36",
+    "Variant": "1",
+    "Chaos": 1.36,
+    "Listings": 198,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 37 of Mixing",
+    "Variant": "1",
+    "Chaos": 326.41,
+    "Listings": 87,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 38 of Mixing",
+    "Variant": "1",
+    "Chaos": 2517.56,
+    "Listings": 98,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 39",
+    "Variant": "1",
+    "Chaos": 2.06,
+    "Listings": 32,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 40 of Mixing",
+    "Variant": "1",
+    "Chaos": 3.05,
+    "Listings": 75,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 41 of Mixing",
+    "Variant": "1",
+    "Chaos": 28.2,
+    "Listings": 167,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 42",
+    "Variant": "1",
+    "Chaos": 1.43,
+    "Listings": 73,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 43 of Mixing",
+    "Variant": "1",
+    "Chaos": 5.09,
+    "Listings": 123,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 44 of Mixing",
+    "Variant": "1",
+    "Chaos": 27.64,
+    "Listings": 91,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 45",
+    "Variant": "1",
+    "Chaos": 327.01,
+    "Listings": 165,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 46 of Mixing",
+    "Variant": "1",
+    "Chaos": 22.06,
+    "Listings": 143,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 47 of Mixing",
+    "Variant": "1",
+    "Chaos": 95.03,
+    "Listings": 94,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 00",
+    "Variant": "1/20",
+    "Chaos": 51.96,
+    "Listings": 60,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 01 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 20.13,
+    "Listings": 0,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 02 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 2.83,
+    "Listings": 13,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 03",
+    "Variant": "1/20",
+    "Chaos": 4.98,
+    "Listings": 71,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 04 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 309.12,
+    "Listings": 125,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 05 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 70.68,
+    "Listings": 187,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 06",
+    "Variant": "1/20",
+    "Chaos": 9.6,
+    "Listings": 24,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 07 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 20.79,
+    "Listings": 120,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 08 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 258.01,
+    "Listings": 138,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 09",
+    "Variant": "1/20",
+    "Chaos": 31.57,
+    "Listings": 49,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 10 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 6.26,
+    "Listings": 164,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 11 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 382.08,
+    "Listings": 13,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 12",
+    "Variant": "1/20",
+    "Chaos": 375.72,
+    "Listings": 109,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 13 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 1528.18,
+    "Listings": 23,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 14 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 2.3,
+    "Listings": 158,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 15",
+    "Variant": "1/20",
+    "Chaos": 7.5,
+    "Listings": 53,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 16 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 4.38,
+    "Listings": 135,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 17 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 806.73,
+    "Listings": 22,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 18",
+    "Variant": "1/20",
+    "Chaos": 1.33,
+    "Listings": 38,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 19 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 1.26,
+    "Listings": 190,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 20 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 80.88,
+    "Listings": 2,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 21",
+    "Variant": "1/20",
+    "Chaos": 13.74,
+    "Listings": 88,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 22 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 8.7,
+    "Listings": 176,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 23 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 1.79,
+    "Listings": 0,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 24",
+    "Variant": "1/20",
+    "Chaos": 134.03,
+    "Listings": 62,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 25 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 2222.59,
+    "Listings": 109,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 26 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 3.73,
+    "Listings": 4,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 27",
+    "Variant": "1/20",
+    "Chaos": 896.12,
+    "Listings": 144,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 28 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 15.25,
+    "Listings": 185,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 29 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 512.59,
+    "Listings": 17,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 30",
+    "Variant": "1/20",
+    "Chaos": 1.6,
+    "Listings": 1,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 31 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 425.05,
+    "Listings": 104,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 32 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 267.15,
+    "Listings": 188,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 33",
+    "Variant": "1/20",
+    "Chaos": 4.3,
+    "Listings": 58,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 34 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 1.21,
+    "Listings": 160,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 35 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 40.3,
+    "Listings": 191,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 36",
+    "Variant": "1/20",
+    "Chaos": 13.9,
+    "Listings": 136,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 37 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 319.65,
+    "Listings": 138,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 38 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 46.71,
+    "Listings": 124,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 39",
+    "Variant": "1/20",
+    "Chaos": 2.64,
+    "Listings": 25,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 40 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 2.53,
+    "Listings": 120,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 41 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 372.38,
+    "Listings": 48,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 42",
+    "Variant": "1/20",
+    "Chaos": 258.9,
+    "Listings": 7,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 43 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 41.61,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 44 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 138.7,
+    "Listings": 109,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 45",
+    "Variant": "1/20",
+    "Chaos": 1451.56,
+    "Listings": 152,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 46 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 3.34,
+    "Listings": 77,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 47 of Mixing",
+    "Variant": "1/20",
+    "Chaos": 463.74,
+    "Listings": 11,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 00",
+    "Variant": "20",
+    "Chaos": 18.72,
+    "Listings": 76,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 01 of Mixing",
+    "Variant": "20",
+    "Chaos": 150.73,
+    "Listings": 167,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 02 of Mixing",
+    "Variant": "20",
+    "Chaos": 595.27,
+    "Listings": 127,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 03",
+    "Variant": "20",
+    "Chaos": 226.39,
+    "Listings": 166,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 04 of Mixing",
+    "Variant": "20",
+    "Chaos": 1.72,
+    "Listings": 2,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 05 of Mixing",
+    "Variant": "20",
+    "Chaos": 10.26,
+    "Listings": 3,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 06",
+    "Variant": "20",
+    "Chaos": 3.89,
+    "Listings": 110,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 07 of Mixing",
+    "Variant": "20",
+    "Chaos": 1934.43,
+    "Listings": 171,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 08 of Mixing",
+    "Variant": "20",
+    "Chaos": 178.87,
+    "Listings": 156,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 09",
+    "Variant": "20",
+    "Chaos": 39.38,
+    "Listings": 86,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 10 of Mixing",
+    "Variant": "20",
+    "Chaos": 20.96,
+    "Listings": 55,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 11 of Mixing",
+    "Variant": "20",
+    "Chaos": 1.03,
+    "Listings": 86,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 12",
+    "Variant": "20",
+    "Chaos": 4.53,
+    "Listings": 41,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 13 of Mixing",
+    "Variant": "20",
+    "Chaos": 1059.42,
+    "Listings": 154,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 14 of Mixing",
+    "Variant": "20",
+    "Chaos": 2881.64,
+    "Listings": 61,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 15",
+    "Variant": "20",
+    "Chaos": 33.44,
+    "Listings": 157,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 16 of Mixing",
+    "Variant": "20",
+    "Chaos": 370.51,
+    "Listings": 25,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 17 of Mixing",
+    "Variant": "20",
+    "Chaos": 16.48,
+    "Listings": 130,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 18",
+    "Variant": "20",
+    "Chaos": 511.08,
+    "Listings": 156,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 19 of Mixing",
+    "Variant": "20",
+    "Chaos": 13.12,
+    "Listings": 30,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 20 of Mixing",
+    "Variant": "20",
+    "Chaos": 2910.96,
+    "Listings": 45,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 21",
+    "Variant": "20",
+    "Chaos": 110.28,
+    "Listings": 65,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 22 of Mixing",
+    "Variant": "20",
+    "Chaos": 12.5,
+    "Listings": 40,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 23 of Mixing",
+    "Variant": "20",
+    "Chaos": 31.94,
+    "Listings": 31,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 24",
+    "Variant": "20",
+    "Chaos": 1032.21,
+    "Listings": 180,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 25 of Mixing",
+    "Variant": "20",
+    "Chaos": 542.92,
+    "Listings": 161,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 26 of Mixing",
+    "Variant": "20",
+    "Chaos": 56.33,
+    "Listings": 100,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 27",
+    "Variant": "20",
+    "Chaos": 15.9,
+    "Listings": 123,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 28 of Mixing",
+    "Variant": "20",
+    "Chaos": 1320.69,
+    "Listings": 109,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 29 of Mixing",
+    "Variant": "20",
+    "Chaos": 4.74,
+    "Listings": 66,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 30",
+    "Variant": "20",
+    "Chaos": 1688.56,
+    "Listings": 96,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 31 of Mixing",
+    "Variant": "20",
+    "Chaos": 23.34,
+    "Listings": 145,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 32 of Mixing",
+    "Variant": "20",
+    "Chaos": 108.95,
+    "Listings": 31,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 33",
+    "Variant": "20",
+    "Chaos": 56.09,
+    "Listings": 45,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 34 of Mixing",
+    "Variant": "20",
+    "Chaos": 2.36,
+    "Listings": 133,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 35 of Mixing",
+    "Variant": "20",
+    "Chaos": 59.1,
+    "Listings": 114,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 36",
+    "Variant": "20",
+    "Chaos": 90.58,
+    "Listings": 75,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 37 of Mixing",
+    "Variant": "20",
+    "Chaos": 2.77,
+    "Listings": 29,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 38 of Mixing",
+    "Variant": "20",
+    "Chaos": 134.67,
+    "Listings": 94,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 39",
+    "Variant": "20",
+    "Chaos": 1866.99,
+    "Listings": 15,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 40 of Mixing",
+    "Variant": "20",
+    "Chaos": 184.32,
+    "Listings": 172,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 41 of Mixing",
+    "Variant": "20",
+    "Chaos": 17.43,
+    "Listings": 132,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 42",
+    "Variant": "20",
+    "Chaos": 1.67,
+    "Listings": 160,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 43 of Mixing",
+    "Variant": "20",
+    "Chaos": 824.42,
+    "Listings": 54,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 44 of Mixing",
+    "Variant": "20",
+    "Chaos": 610.78,
+    "Listings": 10,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 45",
+    "Variant": "20",
+    "Chaos": 21.62,
+    "Listings": 49,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 46 of Mixing",
+    "Variant": "20",
+    "Chaos": 1.04,
+    "Listings": 193,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 47 of Mixing",
+    "Variant": "20",
+    "Chaos": 328.2,
+    "Listings": 195,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 00",
+    "Variant": "20/20",
+    "Chaos": 1297.16,
+    "Listings": 59,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 01 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 5.13,
+    "Listings": 128,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 02 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 171.34,
+    "Listings": 11,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 03",
+    "Variant": "20/20",
+    "Chaos": 738.45,
+    "Listings": 168,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 04 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 32.65,
+    "Listings": 76,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 05 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 23.96,
+    "Listings": 115,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 06",
+    "Variant": "20/20",
+    "Chaos": 44.55,
+    "Listings": 118,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 07 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 10.65,
+    "Listings": 153,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 08 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 2.22,
+    "Listings": 81,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 09",
+    "Variant": "20/20",
+    "Chaos": 489.85,
+    "Listings": 174,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 10 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 517.87,
+    "Listings": 124,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 11 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 11.22,
+    "Listings": 137,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 12",
+    "Variant": "20/20",
+    "Chaos": 4.12,
+    "Listings": 10,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 13 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 1450.91,
+    "Listings": 186,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 14 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 2940.52,
+    "Listings": 34,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 15",
+    "Variant": "20/20",
+    "Chaos": 2750.1,
+    "Listings": 147,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 16 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 1091.46,
+    "Listings": 41,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 17 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 76.5,
+    "Listings": 116,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 18",
+    "Variant": "20/20",
+    "Chaos": 2213.09,
+    "Listings": 13,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 19 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 12.99,
+    "Listings": 163,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 20 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 54.92,
+    "Listings": 197,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 21",
+    "Variant": "20/20",
+    "Chaos": 905.75,
+    "Listings": 65,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 22 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 1.31,
+    "Listings": 25,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 23 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 565.33,
+    "Listings": 96,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 24",
+    "Variant": "20/20",
+    "Chaos": 68.17,
+    "Listings": 24,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 25 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 130.45,
+    "Listings": 184,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 26 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 2.06,
+    "Listings": 149,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 27",
+    "Variant": "20/20",
+    "Chaos": 1.19,
+    "Listings": 52,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 28 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 64.26,
+    "Listings": 143,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 29 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 5.36,
+    "Listings": 75,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 30",
+    "Variant": "20/20",
+    "Chaos": 24.34,
+    "Listings": 167,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 31 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 5.78,
+    "Listings": 60,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 32 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 1958.46,
+    "Listings": 78,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 33",
+    "Variant": "20/20",
+    "Chaos": 97.11,
+    "Listings": 63,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 34 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 18.24,
+    "Listings": 31,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 35 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 62.64,
+    "Listings": 85,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 36",
+    "Variant": "20/20",
+    "Chaos": 1001.47,
+    "Listings": 156,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 37 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 1482.78,
+    "Listings": 136,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 38 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 3.11,
+    "Listings": 1,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 39",
+    "Variant": "20/20",
+    "Chaos": 4.66,
+    "Listings": 110,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 40 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 42.84,
+    "Listings": 87,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 41 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 25.0,
+    "Listings": 174,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 42",
+    "Variant": "20/20",
+    "Chaos": 3.28,
+    "Listings": 62,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 43 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 421.81,
+    "Listings": 95,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 44 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 78.82,
+    "Listings": 14,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 45",
+    "Variant": "20/20",
+    "Chaos": 256.79,
+    "Listings": 36,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 46 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 28.61,
+    "Listings": 11,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 47 of Mixing",
+    "Variant": "20/20",
+    "Chaos": 1473.56,
+    "Listings": 10,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 00",
+    "Variant": "21/23c",
+    "Chaos": 434.37,
+    "Listings": 43,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 01 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 12.85,
+    "Listings": 142,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 02 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 977.05,
+    "Listings": 25,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 03",
+    "Variant": "21/23c",
+    "Chaos": 25.49,
+    "Listings": 142,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 04 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 882.81,
+    "Listings": 43,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 05 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 2431.54,
+    "Listings": 108,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 06",
+    "Variant": "21/23c",
+    "Chaos": 19.16,
+    "Listings": 97,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 07 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 345.3,
+    "Listings": 83,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 08 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 230.29,
+    "Listings": 125,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 09",
+    "Variant": "21/23c",
+    "Chaos": 203.74,
+    "Listings": 77,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 10 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 771.54,
+    "Listings": 156,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 11 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 331.05,
+    "Listings": 184,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 12",
+    "Variant": "21/23c",
+    "Chaos": 4.46,
+    "Listings": 193,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 13 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 362.3,
+    "Listings": 106,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 14 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 2715.87,
+    "Listings": 52,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 15",
+    "Variant": "21/23c",
+    "Chaos": 1.29,
+    "Listings": 93,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 16 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 3.98,
+    "Listings": 172,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 17 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 505.94,
+    "Listings": 44,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 18",
+    "Variant": "21/23c",
+    "Chaos": 4.49,
+    "Listings": 23,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 19 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 34.43,
+    "Listings": 159,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 20 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 2901.11,
+    "Listings": 112,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 21",
+    "Variant": "21/23c",
+    "Chaos": 23.98,
+    "Listings": 77,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 22 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 1.03,
+    "Listings": 35,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 23 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 2.33,
+    "Listings": 118,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 24",
+    "Variant": "21/23c",
+    "Chaos": 2.83,
+    "Listings": 161,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 25 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 1083.56,
+    "Listings": 144,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 26 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 344.56,
+    "Listings": 196,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 27",
+    "Variant": "21/23c",
+    "Chaos": 148.4,
+    "Listings": 53,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 28 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 117.69,
+    "Listings": 21,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 29 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 239.14,
+    "Listings": 40,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 30",
+    "Variant": "21/23c",
+    "Chaos": 414.97,
+    "Listings": 47,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 31 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 1.15,
+    "Listings": 24,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 32 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 8.68,
+    "Listings": 76,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 33",
+    "Variant": "21/23c",
+    "Chaos": 1466.37,
+    "Listings": 182,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 34 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 600.47,
+    "Listings": 125,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 35 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 86.44,
+    "Listings": 181,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 36",
+    "Variant": "21/23c",
+    "Chaos": 1.75,
+    "Listings": 190,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 37 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 59.83,
+    "Listings": 58,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 38 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 1.54,
+    "Listings": 5,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 39",
+    "Variant": "21/23c",
+    "Chaos": 49.94,
+    "Listings": 141,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 40 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 1.1,
+    "Listings": 188,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 41 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 44.92,
+    "Listings": 146,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 42",
+    "Variant": "21/23c",
+    "Chaos": 3.56,
+    "Listings": 14,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 43 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 138.87,
+    "Listings": 56,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 44 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 3.14,
+    "Listings": 9,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 45",
+    "Variant": "21/23c",
+    "Chaos": 913.8,
+    "Listings": 113,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 46 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 1.93,
+    "Listings": 19,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 47 of Mixing",
+    "Variant": "21/23c",
+    "Chaos": 476.57,
+    "Listings": 137,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 00",
+    "Variant": "21/20c",
+    "Chaos": 16.71,
+    "Listings": 129,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 01 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 180.57,
+    "Listings": 83,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 02 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 1022.71,
+    "Listings": 96,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 03",
+    "Variant": "21/20c",
+    "Chaos": 3.21,
+    "Listings": 70,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 04 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 1.5,
+    "Listings": 69,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 05 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 137.48,
+    "Listings": 185,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 06",
+    "Variant": "21/20c",
+    "Chaos": 7.14,
+    "Listings": 66,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 07 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 62.95,
+    "Listings": 94,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 08 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 361.49,
+    "Listings": 167,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 09",
+    "Variant": "21/20c",
+    "Chaos": 1215.49,
+    "Listings": 171,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 10 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 3.27,
+    "Listings": 110,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 11 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 14.09,
+    "Listings": 164,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 12",
+    "Variant": "21/20c",
+    "Chaos": 28.57,
+    "Listings": 34,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 13 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 64.93,
+    "Listings": 119,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 14 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 1.62,
+    "Listings": 62,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 15",
+    "Variant": "21/20c",
+    "Chaos": 204.03,
+    "Listings": 183,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 16 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 1810.97,
+    "Listings": 79,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 17 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 1274.22,
+    "Listings": 197,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 18",
+    "Variant": "21/20c",
+    "Chaos": 9.23,
+    "Listings": 172,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 19 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 1.79,
+    "Listings": 108,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 20 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 2.98,
+    "Listings": 114,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 21",
+    "Variant": "21/20c",
+    "Chaos": 2473.82,
+    "Listings": 111,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 22 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 1.21,
+    "Listings": 144,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 23 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 10.99,
+    "Listings": 138,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 24",
+    "Variant": "21/20c",
+    "Chaos": 1706.9,
+    "Listings": 28,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 25 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 51.82,
+    "Listings": 28,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 26 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 35.94,
+    "Listings": 54,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 27",
+    "Variant": "21/20c",
+    "Chaos": 1030.81,
+    "Listings": 170,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 28 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 6.35,
+    "Listings": 143,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 29 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 1931.0,
+    "Listings": 171,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 30",
+    "Variant": "21/20c",
+    "Chaos": 51.45,
+    "Listings": 138,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 31 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 75.92,
+    "Listings": 133,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 32 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 452.65,
+    "Listings": 38,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 33",
+    "Variant": "21/20c",
+    "Chaos": 60.12,
+    "Listings": 90,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 34 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 173.96,
+    "Listings": 56,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 35 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 217.76,
+    "Listings": 196,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 36",
+    "Variant": "21/20c",
+    "Chaos": 387.76,
+    "Listings": 54,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 37 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 769.2,
+    "Listings": 8,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 38 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 83.61,
+    "Listings": 37,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 39",
+    "Variant": "21/20c",
+    "Chaos": 26.75,
+    "Listings": 54,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 40 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 34.16,
+    "Listings": 69,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 41 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 176.64,
+    "Listings": 41,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 42",
+    "Variant": "21/20c",
+    "Chaos": 67.29,
+    "Listings": 84,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 43 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 570.67,
+    "Listings": 83,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 44 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 128.84,
+    "Listings": 152,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Bulk 45",
+    "Variant": "21/20c",
+    "Chaos": 15.6,
+    "Listings": 98,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Bulk 46 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 1359.54,
+    "Listings": 76,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "GREEN"
+   },
+   {
+    "Name": "Bulk 47 of Mixing",
+    "Variant": "21/20c",
+    "Chaos": 294.46,
+    "Listings": 177,
+    "IsTransfigured": true,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   }
+  ]
+ },
+ {
+  "case": "double-corrupt-cutoff",
+  "gems": [
+   {
+    "Name": "Spark",
+    "Variant": "20/20",
+    "Chaos": 30,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Fireball",
+    "Variant": "20/20",
+    "Chaos": 4,
+    "Listings": 1,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Cleave",
+    "Variant": "20/20",
+    "Chaos": 25,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Molten Strike",
+    "Variant": "20/20",
+    "Chaos": 35,
+    "Listings": 60,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Arc",
+    "Variant": "20/20",
+    "Chaos": 40,
+    "Listings": 50,
+    "IsTransfigured": false,
+    "IsCorrupted": false,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Arc",
+    "Variant": "21/23c",
+    "Chaos": 150.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Arc",
+    "Variant": "21/20c",
+    "Chaos": 120.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Arc",
+    "Variant": "20/23c",
+    "Chaos": 90.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Arc",
+    "Variant": "20/20c",
+    "Chaos": 50.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Arc",
+    "Variant": "19/20c",
+    "Chaos": 40.0,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Spark",
+    "Variant": "21/23c",
+    "Chaos": 120.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Spark",
+    "Variant": "21/20c",
+    "Chaos": 96.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Spark",
+    "Variant": "20/23c",
+    "Chaos": 72.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Spark",
+    "Variant": "20/20c",
+    "Chaos": 40.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Spark",
+    "Variant": "19/20c",
+    "Chaos": 32.0,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Cleave",
+    "Variant": "21/23c",
+    "Chaos": 90.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Cleave",
+    "Variant": "21/20c",
+    "Chaos": 72.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Cleave",
+    "Variant": "20/23c",
+    "Chaos": 54.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Cleave",
+    "Variant": "20/20c",
+    "Chaos": 30.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Cleave",
+    "Variant": "19/20c",
+    "Chaos": 24.0,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Molten Strike",
+    "Variant": "21/23c",
+    "Chaos": 105.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Molten Strike",
+    "Variant": "21/20c",
+    "Chaos": 84.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Molten Strike",
+    "Variant": "20/23c",
+    "Chaos": 63.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Molten Strike",
+    "Variant": "20/20c",
+    "Chaos": 35.0,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Molten Strike",
+    "Variant": "19/20c",
+    "Chaos": 4,
+    "Listings": 1,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Fireball",
+    "Variant": "21/20c",
+    "Chaos": 4,
+    "Listings": 1,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Fireball",
+    "Variant": "21/23c",
+    "Chaos": 90,
+    "Listings": 40,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Vaal Molten Strike (Molten Strike of the Zenith)",
+    "Variant": "20/20c",
+    "Chaos": 300,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Vaal Molten Strike",
+    "Variant": "20/20c",
+    "Chaos": 110,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Molten Strike of the Zenith",
+    "Variant": "20/20",
+    "Chaos": 90,
+    "Listings": 55,
+    "IsTransfigured": true,
+    "IsCorrupted": false,
+    "GemColor": "RED"
+   },
+   {
+    "Name": "Vaal Arc",
+    "Variant": "20/20c",
+    "Chaos": 120,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Vaal Arc",
+    "Variant": "21/20c",
+    "Chaos": 150,
+    "Listings": 30,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   },
+   {
+    "Name": "Spark",
+    "Variant": "20c",
+    "Chaos": 2,
+    "Listings": 1,
+    "IsTransfigured": false,
+    "IsCorrupted": true,
+    "GemColor": "BLUE"
+   }
+  ]
+ }
+]
