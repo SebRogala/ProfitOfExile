@@ -226,7 +226,8 @@ export type ViewStateKind = 'loading' | 'warming' | 'ready' | 'stale' | 'unreach
 
 /** The four page variables `deriveState` reads. */
 export interface ViewStateInput {
-	result: CurrencyExchangeResponse | null;
+	/** Structural: CX passes its response; Harvest passes its two owners combined (POE-283). */
+	result: { warm: boolean; lastUpdated: string | null } | null;
 	lastFetchedAt: Date | null;
 	lastError: string | null;
 	now: Date;
