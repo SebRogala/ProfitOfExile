@@ -1421,3 +1421,54 @@ describe('picks prefs', () => {
 		expect(parseHarvestHorizon('recent')).toBe('recent');
 	});
 });
+
+describe('Astrolabes, Oils and Catalysts on the committed fixture (WI-2b)', () => {
+	const body = async (familyId: string) => family(pageView(await input({ familyId })));
+
+	/** Every chip the page lists, carded or untiered, on both sides. */
+	const allChips = (b: FamilyBody) =>
+		[b.feeders, b.keepers].flatMap((c) => [...c.cards.flatMap((card) => card.chips), ...c.untiered]);
+
+	const untieredChip = (b: FamilyBody, itemId: string) =>
+		[...b.feeders.untiered, ...b.keepers.untiered].find((c) => c.itemId === itemId);
+
+	/** The tier of the card that lists `itemId`, or null when no card does. */
+	const cardTierOf = (b: FamilyBody, itemId: string) =>
+		[...b.feeders.cards, ...b.keepers.cards].find((card) => card.chips.some((c) => c.itemId === itemId))?.tier ??
+		null;
+
+	// ADR-017: a sub-5c type the server leaves untiered is listed priced, never hidden.
+	it('lists Clear Oil (0.25c, no tier) untiered at 0.3c', async () => {
+		const chip = untieredChip(await body('oil'), 'Metadata/Items/Currency/Mushrune1');
+		expect([chip?.priceText, chip?.unpriced]).toEqual(['0.3c', false]);
+	});
+
+	it('lists Intrinsic Catalyst (no tier) untiered and priced', async () => {
+		const chip = untieredChip(await body('catalyst'), 'Metadata/Items/Currency/CurrencyJewelleryQualityAttribute');
+		expect(chip?.unpriced).toBe(false);
+	});
+
+	it.each([
+		['oil', 13],
+		['catalyst', 10]
+	])('counts every %s type on the page, untiered ones included: %i chips', async (id, n) => {
+		expect(new Set(allChips(await body(id)).map((c) => c.itemId)).size).toBe(n);
+	});
+
+	it.each([
+		['astrolabe', 'Metadata/Items/Currency/AstrolabeHarvest', 'TOP'],
+		['oil', 'Metadata/Items/Currency/Mushrune12', 'HIGH'],
+		['catalyst', 'Metadata/Items/Currency/CurrencyJewelleryQualityResistance', 'HIGH']
+	])('cards the %s tier member %s under %s', async (id, itemId, tier) => {
+		expect(cardTierOf(await body(id), itemId)).toBe(tier);
+	});
+
+	// Hand-computed: 400 × 0.031c (Wild) = 12.4c; floor(9905 / 400) = 24 rerolls per divine.
+	it('costs an Astrolabe reroll 12.4c = 400 × Wild lifeforce', async () => {
+		expect((await body('astrolabe')).cost.line).toBe('12.4c = 400 × Wild lifeforce (purple)');
+	});
+
+	it('buys 24 Astrolabe rerolls per divine', async () => {
+		expect((await body('astrolabe')).cost.perDivineRerolls).toBe('24');
+	});
+});

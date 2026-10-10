@@ -249,6 +249,134 @@
     "Metadata/Items/Currency/CurrencyDelveCraftingCorruptEssence": {
       "chaos": 60.51,
       "divine": 0.25556
+    },
+    "Metadata/Items/Currency/AstrolabeUltimatum": {
+      "chaos": 133.2,
+      "divine": 0.425
+    },
+    "Metadata/Items/Currency/AstrolabeDelirium": {
+      "chaos": 142.95,
+      "divine": 0.46798
+    },
+    "Metadata/Items/Currency/AstrolabeHarvest": {
+      "chaos": 372.81,
+      "divine": 1.03104
+    },
+    "Metadata/Items/Currency/AstrolabeBlight": {
+      "chaos": 135.63,
+      "divine": 0.38318
+    },
+    "Metadata/Items/Currency/AstrolabeBreach": {
+      "chaos": 179.76,
+      "divine": 0.61494
+    },
+    "Metadata/Items/Currency/AstrolabeAbyss": {
+      "chaos": 207.8,
+      "divine": 0.70354
+    },
+    "Metadata/Items/Currency/AstrolabeRitual": {
+      "chaos": 160.11,
+      "divine": 0.51073
+    },
+    "Metadata/Items/Currency/AstrolabeExpedition": {
+      "chaos": 132.88,
+      "divine": 0.4
+    },
+    "Metadata/Items/Currency/AstrolabeLegion": {
+      "chaos": 143.43,
+      "divine": 0.53755
+    },
+    "Metadata/Items/Currency/Mushrune1": {
+      "chaos": 0.25,
+      "divine": null
+    },
+    "Metadata/Items/Currency/Mushrune2": {
+      "chaos": 0.09,
+      "divine": null
+    },
+    "Metadata/Items/Currency/Mushrune3": {
+      "chaos": 0.46,
+      "divine": null
+    },
+    "Metadata/Items/Currency/Mushrune4": {
+      "chaos": 0.8,
+      "divine": null
+    },
+    "Metadata/Items/Currency/Mushrune5": {
+      "chaos": 0.45,
+      "divine": 0.00625
+    },
+    "Metadata/Items/Currency/Mushrune6": {
+      "chaos": 0.65,
+      "divine": null
+    },
+    "Metadata/Items/Currency/Mushrune6b": {
+      "chaos": 0.85,
+      "divine": 0.04545
+    },
+    "Metadata/Items/Currency/Mushrune7": {
+      "chaos": 2.92,
+      "divine": null
+    },
+    "Metadata/Items/Currency/Mushrune8": {
+      "chaos": 7.42,
+      "divine": 0.03704
+    },
+    "Metadata/Items/Currency/Mushrune9": {
+      "chaos": 20.36,
+      "divine": 0.06047
+    },
+    "Metadata/Items/Currency/Mushrune10": {
+      "chaos": 56.36,
+      "divine": 0.11845
+    },
+    "Metadata/Items/Currency/Mushrune11": {
+      "chaos": 198.08,
+      "divine": 0.57801
+    },
+    "Metadata/Items/Currency/Mushrune12": {
+      "chaos": 411.2,
+      "divine": 1.22117
+    },
+    "Metadata/Items/Currency/CurrencyJewelleryQualityResource": {
+      "chaos": 49.03,
+      "divine": 0.12463
+    },
+    "Metadata/Items/Currency/CurrencyJewelleryQualityResistance": {
+      "chaos": 99.65,
+      "divine": 0.30077
+    },
+    "Metadata/Items/Currency/CurrencyJewelleryQualityAttribute": {
+      "chaos": 2.53,
+      "divine": 0.00907
+    },
+    "Metadata/Items/Currency/CurrencyJewelleryQualityPhysicalChaos": {
+      "chaos": 2.44,
+      "divine": 0.01765
+    },
+    "Metadata/Items/Currency/CurrencyJewelleryQualityCaster": {
+      "chaos": 2.02,
+      "divine": 0.00984
+    },
+    "Metadata/Items/Currency/CurrencyJewelleryQualityElemental": {
+      "chaos": 2.43,
+      "divine": 0.00994
+    },
+    "Metadata/Items/Currency/CurrencyJewelleryQualityAttack": {
+      "chaos": 2.18,
+      "divine": 0.0073
+    },
+    "Metadata/Items/Currency/CurrencyJewelleryQualitySpeed": {
+      "chaos": 2.49,
+      "divine": 0.02353
+    },
+    "Metadata/Items/Currency/CurrencyJewelleryQualityDefense": {
+      "chaos": 8.81,
+      "divine": 0.0301
+    },
+    "Metadata/Items/Currency/CurrencyJewelleryQualityCritical": {
+      "chaos": 8.11,
+      "divine": 0.02772
     }
   }
 }

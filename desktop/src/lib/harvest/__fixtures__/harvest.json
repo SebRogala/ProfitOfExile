@@ -589,7 +589,32 @@
           }
         ]
       },
-      "_note": "Weights from the requester's HarvestForge log, committed byte-identical at desktop/src/lib/harvest/__fixtures__/harvestforge/HarvestForge_Astrolabes_20261010_134926.csv. HarvestForge's CSV footer undercounts lifeforce spent (it says Wild 60360); rerollCost 400 and lifeforceSpent 804000 are the Operator's values of 2026-10-10."
+      "tiers": {
+        "boundariesChaos": [
+          179.76,
+          135.63,
+          13.34
+        ],
+        "names": [
+          "HIGH",
+          "MID-HIGH",
+          "LOW",
+          "FLOOR"
+        ],
+        "topBoundaryChaos": 372.81,
+        "byItem": {
+          "Metadata/Items/Currency/AstrolabeUltimatum": "LOW",
+          "Metadata/Items/Currency/AstrolabeDelirium": "MID-HIGH",
+          "Metadata/Items/Currency/AstrolabeHarvest": "TOP",
+          "Metadata/Items/Currency/AstrolabeBlight": "MID-HIGH",
+          "Metadata/Items/Currency/AstrolabeBreach": "HIGH",
+          "Metadata/Items/Currency/AstrolabeAbyss": "HIGH",
+          "Metadata/Items/Currency/AstrolabeRitual": "MID-HIGH",
+          "Metadata/Items/Currency/AstrolabeExpedition": "LOW",
+          "Metadata/Items/Currency/AstrolabeLegion": "MID-HIGH"
+        }
+      },
+      "_note": "Weights from the requester's HarvestForge log, committed byte-identical at desktop/src/lib/harvest/__fixtures__/harvestforge/HarvestForge_Astrolabes_20261010_134926.csv. HarvestForge's CSV footer undercounts lifeforce spent (it says Wild 60360); rerollCost 400 and lifeforceSpent 804000 are the Operator's values of 2026-10-10. Prices and tiers: Currency Exchange pooled VWAP over 25 clock hours 2026-09-08 00:00 to 2026-09-09 00:00 UTC (league Allflame), tiers by the unified tier system (internal/lab/classification.go), one variant per family; items at or below 5c are left untiered (server-owned tiers); queries in the HARVEST-DATA lane record, 2026-10-10."
     },
     {
       "id": "oil",
@@ -684,7 +709,26 @@
           }
         ]
       },
-      "_note": "Weights from the requester's HarvestForge log, committed byte-identical at desktop/src/lib/harvest/__fixtures__/harvestforge/HarvestForge_Oils_20261010_000148.csv. HarvestForge's CSV footer undercounts lifeforce spent on the Astrolabe and Catalyst logs; this footer says Primal 78180, and rerollCost 30 and lifeforceSpent 78180 are kept as logged, to be confirmed by the Operator (2026-10-10)."
+      "tiers": {
+        "boundariesChaos": [
+          411.2,
+          11.09
+        ],
+        "names": [
+          "HIGH",
+          "LOW",
+          "FLOOR"
+        ],
+        "topBoundaryChaos": null,
+        "byItem": {
+          "Metadata/Items/Currency/Mushrune8": "FLOOR",
+          "Metadata/Items/Currency/Mushrune9": "LOW",
+          "Metadata/Items/Currency/Mushrune10": "LOW",
+          "Metadata/Items/Currency/Mushrune11": "LOW",
+          "Metadata/Items/Currency/Mushrune12": "HIGH"
+        }
+      },
+      "_note": "Weights from the requester's HarvestForge log, committed byte-identical at desktop/src/lib/harvest/__fixtures__/harvestforge/HarvestForge_Oils_20261010_000148.csv. HarvestForge's CSV footer undercounts lifeforce spent on the Astrolabe and Catalyst logs; this footer says Primal 78180, and rerollCost 30 and lifeforceSpent 78180 are kept as logged, to be confirmed by the Operator (2026-10-10). Prices and tiers: Currency Exchange pooled VWAP over 25 clock hours 2026-09-08 00:00 to 2026-09-09 00:00 UTC (league Allflame), tiers by the unified tier system (internal/lab/classification.go), one variant per family; items at or below 5c are left untiered (server-owned tiers); queries in the HARVEST-DATA lane record, 2026-10-10."
     },
     {
       "id": "catalyst",
@@ -761,7 +805,25 @@
           }
         ]
       },
-      "_note": "Weights from the requester's HarvestForge log, committed byte-identical at desktop/src/lib/harvest/__fixtures__/harvestforge/HarvestForge_Catalysts_20261010_023020.csv. HarvestForge's CSV footer undercounts lifeforce spent (it says Wild 25040); rerollCost 30 and lifeforceSpent 75120 are the Operator's values of 2026-10-10."
+      "tiers": {
+        "boundariesChaos": [
+          99.65,
+          3.31
+        ],
+        "names": [
+          "HIGH",
+          "LOW",
+          "FLOOR"
+        ],
+        "topBoundaryChaos": null,
+        "byItem": {
+          "Metadata/Items/Currency/CurrencyJewelleryQualityResource": "LOW",
+          "Metadata/Items/Currency/CurrencyJewelleryQualityResistance": "HIGH",
+          "Metadata/Items/Currency/CurrencyJewelleryQualityDefense": "LOW",
+          "Metadata/Items/Currency/CurrencyJewelleryQualityCritical": "LOW"
+        }
+      },
+      "_note": "Weights from the requester's HarvestForge log, committed byte-identical at desktop/src/lib/harvest/__fixtures__/harvestforge/HarvestForge_Catalysts_20261010_023020.csv. HarvestForge's CSV footer undercounts lifeforce spent (it says Wild 25040); rerollCost 30 and lifeforceSpent 75120 are the Operator's values of 2026-10-10. Prices and tiers: Currency Exchange pooled VWAP over 25 clock hours 2026-09-08 00:00 to 2026-09-09 00:00 UTC (league Allflame), tiers by the unified tier system (internal/lab/classification.go), one variant per family; items at or below 5c are left untiered (server-owned tiers); queries in the HARVEST-DATA lane record, 2026-10-10."
     }
   ]
 }

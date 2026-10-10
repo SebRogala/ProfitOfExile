@@ -66,8 +66,20 @@ describe('harvest fixture adapter', () => {
 		expect((await unloggedFamily()).note).toBe(NO_DATA_NOTE);
 	});
 
-	it.each(['astrolabe', 'oil', 'catalyst'])('serves %s without tiers', async (id) => {
-		expect((await family(id)).tiers).toBeNull();
+	it.each([
+		['astrolabe', ['HIGH', 'MID-HIGH', 'LOW', 'FLOOR'], 'Metadata/Items/Currency/AstrolabeHarvest', 'TOP'],
+		['oil', ['HIGH', 'LOW', 'FLOOR'], 'Metadata/Items/Currency/Mushrune12', 'HIGH'],
+		['catalyst', ['HIGH', 'LOW', 'FLOOR'], 'Metadata/Items/Currency/CurrencyJewelleryQualityResistance', 'HIGH']
+	])('serves %s with tiers %j, %s placed %s, stamped with the price hour', async (id, names, itemId, tier) => {
+		const tiers = (await family(id)).tiers;
+		expect([tiers?.names, tiers?.byItem[itemId], tiers?.priceHour]).toEqual([names, tier, '2026-09-09T23:00:00Z']);
+	});
+
+	it.each([
+		['oil', 'Metadata/Items/Currency/Mushrune1'],
+		['catalyst', 'Metadata/Items/Currency/CurrencyJewelleryQualityAttribute']
+	])('leaves the sub-5c %s type %s without a tier', async (id, itemId) => {
+		expect(Object.hasOwn((await family(id)).tiers!.byItem, itemId)).toBe(false);
 	});
 
 	it('serves Delirium Orbs as twelve types', async () => {
@@ -114,7 +126,7 @@ describe('harvest fixture adapter', () => {
 	it('stamps every served tier set with the exchange price hour', async () => {
 		const data = await loadHarvestFamilies('day');
 		const tiered = data.families.filter((f) => f.tiers !== null);
-		expect(tiered.map((f) => f.tiers?.priceHour)).toEqual(Array(4).fill('2026-09-09T23:00:00Z'));
+		expect(tiered.map((f) => f.tiers?.priceHour)).toEqual(Array(7).fill('2026-09-09T23:00:00Z'));
 	});
 
 	it('serves the fossil tier names from the fixture', async () => {

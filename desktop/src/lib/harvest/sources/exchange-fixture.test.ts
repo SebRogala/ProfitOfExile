@@ -55,7 +55,7 @@ describe('exchange fixture adapter', () => {
 	it('carries no last seen price for any item', async () => {
 		const read = await load('day');
 		const lastSeen = Object.values(read.prices).map((p) => p.lastSeenChaos);
-		expect(lastSeen).toHaveLength(56);
+		expect(lastSeen).toHaveLength(88);
 		expect(lastSeen.every((v) => v === null)).toBe(true);
 	});
 
