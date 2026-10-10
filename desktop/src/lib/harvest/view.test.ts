@@ -1062,6 +1062,36 @@ describe('the family rerollCost (C12, test-local 60)', () => {
 	});
 });
 
+describe('a tier label that draws no card (ADR-017, WI-6 Q6)', () => {
+	// Test-local: Lucent's tiers.byItem label renamed to one neither TOP nor in tiers.names.
+	const unknownLabel = async () => {
+		const base = await input();
+		const lucent = itemId(base.harvest!, 'fossil', 'Lucent');
+		const harvest = {
+			...base.harvest!,
+			families: base.harvest!.families.map((f) =>
+				f.id === 'fossil' ? { ...f, tiers: { ...f.tiers!, byItem: { ...f.tiers!.byItem, [lucent]: 'ODD' } } } : f
+			)
+		};
+		return { harvest, body: family(pageView({ ...base, harvest })) };
+	};
+
+	it('lists the type among the untiered feeders', async () => {
+		expect((await unknownLabel()).body.feeders.untiered.map((c) => c.shortName)).toEqual(['Lucent']);
+	});
+
+	it('shows exactly the feeders the feeders regex selects', async () => {
+		// The stash search reads the quoted alternation case-insensitively; applied here
+		// by hand to every full name of the test-local family, not through regex.ts.
+		const { harvest, body } = await unknownLabel();
+		const search = new RegExp(body.regex.feeders.text.replaceAll('"', ''), 'i');
+		const names = harvest.families.find((f) => f.id === 'fossil')!.weights!.types.map((x) => x.name);
+		const matched = names.filter((n) => search.test(n)).sort();
+		const shown = [...body.feeders.cards.flatMap((c) => c.chips), ...body.feeders.untiered].map((c) => c.name).sort();
+		expect(matched).toEqual(shown);
+	});
+});
+
 describe('restored family id no family carries (C16)', () => {
 	it('falls back to the Fossils tab', async () => {
 		const view = pageView(await input({ familyId: 'removed-family' }));

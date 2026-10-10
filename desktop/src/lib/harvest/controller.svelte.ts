@@ -179,7 +179,7 @@ export function createHarvestController(
 		prefs.family.value = id;
 	}
 
-	/** Prototype line 417: a chip click always moves the chip to the other column, picked or not. */
+	/** The prototype's chip `move` (`card` in `renderVals`): a click always moves the chip to the other column, picked or not. */
 	function togglePick(itemId: string): void {
 		const body = view.body;
 		if (!exchange || body?.kind !== 'family') return;

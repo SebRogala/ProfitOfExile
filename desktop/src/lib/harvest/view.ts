@@ -287,7 +287,7 @@ export interface Chip {
 	unpriced: boolean;
 	picked: boolean;
 	/**
-	 * Prototype line 416: `Kept (engine) — click to feed just <full name>`, or
+	 * The prototype's chip `title` (`card` in `renderVals`): `Kept (engine) — click to feed just <full name>`, or
 	 * `(your pick)` when the player picked it. `null` on an unpriced chip: a
 	 * click cannot feed it (C2) and the prototype draws no unpriced type.
 	 */
@@ -456,7 +456,7 @@ export function verdictView(result: FamilyResult, lifeforceName: string): Verdic
 					: null
 		};
 	}
-	// Prototype lines 452–455: headline EV "—" muted over "no feeder".
+	// The prototype's `renderVals` nothing-to-flip branch: headline EV "—" muted over "no feeder".
 	return {
 		question: QUESTION,
 		headline: 'No — nothing to flip',
@@ -479,7 +479,7 @@ export interface CostPanel {
 	lifeforceLabel: string;
 	/** `0.9c = 30 × Wild lifeforce (purple)`; the page draws the icon between `×` and the label. */
 	line: string;
-	/** `1 div → <perDivineLifeforce> lifeforce → <perDivineRerolls> rerolls`; the page sets only the numbers and "1 div" in mono (prototype line 266). */
+	/** `1 div → <perDivineLifeforce> lifeforce → <perDivineRerolls> rerolls`; the page sets only the numbers and "1 div" in mono (the prototype's "Cost per reroll" panel). */
 	perDivineLifeforce: string;
 	perDivineRerolls: string;
 	caption: string;
@@ -527,7 +527,7 @@ function evRows(labels: string[], values: string[], notes: (string | null)[] = [
 	return labels.map((label, i) => ({ label, value: values[i], note: notes[i] ?? null }));
 }
 
-/** Prototype lines 451–456: with nothing to flip the panel stays, every value "—". */
+/** The prototype's `renderVals` nothing-to-flip branch: the panel stays, every value "—". */
 export function evPanel(
 	result: FamilyResult,
 	lifeforceName: string,
@@ -660,7 +660,7 @@ function regexBox(names: string[], familyNames: string[]): RegexBox {
 }
 
 /**
- * Prototype lines 463–471: a pick counts as a move only when its side differs
+ * The prototype's `changed` count: a pick counts as a move only when its side differs
  * from the engine's own decision (`p ≥ R`). Without an `ok` result there is no
  * `R`, so the side the engine takes with no picks stands in; with no answer at
  * all, every pick counts.
@@ -717,6 +717,10 @@ function familyBody(input: PageInput, family: HarvestFamily, exchange: ExchangeP
 
 	const totalWeight = types.reduce((s, t) => s + t.weight, 0);
 	const byItem = family.tiers?.byItem ?? {};
+	const tierNames = family.tiers?.names ?? [];
+	// A label that is neither TOP nor a known tier name draws no card, so its type is
+	// listed untiered rather than lost from both columns (ADR-017, WI-6 Q6).
+	const cardTiers = new Set([TOP_TIER, ...tierNames]);
 	const solved = result.kind === 'ok' ? new Map(result.types.map((t) => [t.itemId, t])) : null;
 	const rows: Row[] = types.map((t) => {
 		const price = prices.get(t.itemId) ?? null;
@@ -731,10 +735,9 @@ function familyBody(input: PageInput, family: HarvestFamily, exchange: ExchangeP
 			picked: pick,
 			loopEv: s ? s.loopEvChaos : null,
 			share: s ? s.weightShare : t.weight / totalWeight,
-			tier: Object.hasOwn(byItem, t.itemId) ? byItem[t.itemId] : null
+			tier: Object.hasOwn(byItem, t.itemId) && cardTiers.has(byItem[t.itemId]) ? byItem[t.itemId] : null
 		};
 	});
-	const tierNames = family.tiers?.names ?? [];
 	const column = (side: 'feeders' | 'keepers'): Column => {
 		const kept = side === 'keepers';
 		const cards = tierCards(rows, tierNames, side);
