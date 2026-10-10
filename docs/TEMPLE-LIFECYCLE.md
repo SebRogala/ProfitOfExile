@@ -288,8 +288,9 @@ the last two bullets:
   (POE-282, 2026-10-09). A move past the 2 px / 1 % band (`FRAME_ORIGIN_TOLERANCE`,
   `FRAME_SCALE_TOLERANCE_DENOM`) buys no read once the board is locked, so the overlays stay
   where the read put them until START, END, a zone change or Re-arm. Accepted as the cost of the
-  owner's "no frame move triggers OCR"; nothing re-projects the kept read. The answer is
-  **Re-arm**.
+  owner's "no frame move triggers OCR"; nothing re-projects the kept read. No OCR runs while the
+  board is locked, so ADR-019's confident-wrong-board case is not engaged. The answer is
+  **Re-arm**, which reads the board again.
 - **A hover during a retry round still reads a new board** (POE-282, 2026-10-09). Before the lock
   the identity rules stand: a tooltip that flips a corridor changes the `layout_signature`, so
   the read it buys is a NEW board and restores the `RETRIES` budget (`LoopState::note_read`). A

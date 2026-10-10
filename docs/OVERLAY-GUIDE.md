@@ -1823,8 +1823,11 @@ touching the named path.
   guard's `Drop`.
 - **The room widget says `reading…` while a read runs** (POE-276): open a
   sheet — the door widget must show a muted `reading…` with a beating dot,
-  then the room. Walk to the next room and open the sheet: the old room must
-  stay drawn with the line under it, and its name and shape must not move.
+  then the room. Once the board is locked (a clean read or all retry rounds
+  finished), walk to the next room and open the sheet: the locked board
+  re-shows with no read and no line (POE-282). Press **Re-arm**, then open the
+  sheet: the old room must stay drawn with the line under it while the new
+  read runs, and its name and shape must not move.
   Then a board that needs a retry round (open the sheet with a plate covered,
   as in the unreadable-region item above; the read line says `round 2 of 3`)
   shows the verdict without the line coming back (owner, 2026-09-11).
