@@ -345,6 +345,11 @@
 		background: var(--border);
 	}
 
+	.nav-item:focus-visible {
+		outline: 1px solid var(--color-lab-blue);
+		outline-offset: -1px;
+	}
+
 	.nav-item.active {
 		background: var(--border);
 		color: var(--accent);
@@ -478,6 +483,11 @@
 
 	.collapsed-item:hover:not(.disabled) {
 		background: var(--border);
+	}
+
+	.collapsed-item:focus-visible {
+		outline: 1px solid var(--color-lab-blue);
+		outline-offset: -1px;
 	}
 
 	.collapsed-item.active {
