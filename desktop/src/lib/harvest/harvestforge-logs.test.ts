@@ -54,7 +54,7 @@ describe('HarvestForge logs behind Astrolabes, Catalysts and Oils', () => {
 	it.each([
 		['astrolabe', 'Wild', 400, 804000],
 		['catalyst', 'Wild', 30, 75120],
-		['oil', 'Primal', 30, 78180]
+		['oil', 'Vivid', 30, 78180]
 	] as const)(
 		'serves %s at the Operator’s figures: %s lifeforce, %i a reroll, %i spent',
 		async (id, lifeforce, rerollCost, lifeforceSpent) => {

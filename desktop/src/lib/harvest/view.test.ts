@@ -1512,4 +1512,19 @@ describe('Astrolabes, Oils and Catalysts on the committed fixture (WI-2b)', () =
 	it('buys 24 Astrolabe rerolls per divine', async () => {
 		expect((await body('astrolabe')).cost.perDivineRerolls).toBe('24');
 	});
+
+	// P48 closed: Oils pay Vivid (HarvestSeedGreen, yellow, 0.169c). Hand-computed: 30 × 0.169c = 5.07c → 5.1c.
+	it('labels the Oil reroll cost Vivid lifeforce (yellow)', async () => {
+		expect((await body('oil')).cost.lifeforceLabel).toBe('Vivid lifeforce (yellow)');
+	});
+
+	it('shows the Vivid lifeforce icon on the Oil cost panel', async () => {
+		expect((await body('oil')).cost.lifeforceIcon).toBe(
+			'/icon/currency-exchange/Metadata%2FItems%2FCurrency%2FHarvestSeedGreen'
+		);
+	});
+
+	it('costs an Oil reroll 5.1c = 30 × Vivid lifeforce', async () => {
+		expect((await body('oil')).cost.line).toBe('5.1c = 30 × Vivid lifeforce (yellow)');
+	});
 });
