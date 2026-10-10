@@ -410,8 +410,10 @@ the timer, compass, path-strip and comparator widgets.
   gate's own `LoopState::same_board`); `doorWidget` then leaves the widget as
   the verdict drew it. The webview cannot tell a retry from the next room's
   read from the status sequence alone, which is why the flag is Rust's. A
-  first read, a Re-arm, a settings change and a new board — another epoch, or
-  a sheet walked or moved — are not retries and show the line. A retry inside
+  first read, a Re-arm, a settings change and a new board — another epoch, or,
+  only before the lock, a sheet walked or moved — are not retries and show the
+  line. On a locked board (POE-282: read clean, or out of rounds) a walked or
+  moved sheet is not read and draws no line. A retry inside
   the temple run after the sheet was closed and reopened in the same room is
   still a round of the same board, and draws no line either.
   **Retired again in POE-248**, after the first live session: the callout's
@@ -1654,9 +1656,11 @@ touching the named path.
   **without walking anywhere and without pressing Re-arm**. `app.log` must say
   `Temple: layout panel back — same board, no read` and must NOT say
   `Temple: layout panel found …` — the two branches are exclusive, and the reopen
-  taking the second one means the board identity did not match. Walking to
-  another room between the two opens moves `layout.current`, which is a NEW board
-  and reads: that is the gate working, not this item failing.
+  taking the second one means the board identity did not match. Since POE-282 a
+  walk to another room between the two opens also answers `Temple: layout panel
+  back — same board, no read` on a board read clean or out of rounds, and
+  `Temple: board locked — the sheet changed, no read (Re-arm reads it again)`
+  beside it (at most one per 10 s); Re-arm is what reads the new room.
   The corroborating half is the Temple page's `last read <time>`, which must NOT
   advance. Do NOT use the `Temple: rois …` line for this: it prints once per
   DISTINCT value, so a re-read at the same origin and scale prints nothing

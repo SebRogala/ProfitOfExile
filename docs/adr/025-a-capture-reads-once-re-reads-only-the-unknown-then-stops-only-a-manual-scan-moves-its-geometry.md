@@ -114,7 +114,7 @@ was built without them.
    TempleArea; merc the voice-line probe, the live re-detect and a
    `ColumnMoved` placed layout — trusts the placement and re-locates nothing.
 
-5. **What starts round 1 again.** A new identity or a Manual scan starts round 1
+5. **What starts round 1 again.** (**temple amended by the POE-282 amendment below**) A new identity or a Manual scan starts round 1
    with a fresh budget. Temple's identity is the board key
    `(temple_epoch, temple_rearm, BoardFrame)`; merc's is a new capture, or a
    panel judged REPLACED by `read::panel_replaced`.
@@ -129,9 +129,9 @@ POE-278).
 |---|---|---|
 | 1 one full read | row 2; `run::LoopState::gate` → `GateAnswer::Read`, `run::full_read` | shipped: `run::detect_tick` — placed crop (`geometry::placed_panel_crop`, `geometry::placed_layout`), then `read::pass2_texts` and `read::build_planned` with no plan (`read::build_capture` is now the debug/test wrapper) |
 | 2 two partial rounds | row 2 (WI-2) and "Where each rule lives"; `slice::plan_read` / `retry_plan` → `ReadPlan`, `slice::merge_reads` over `KeptRead`, `slice::unclean`, `run::RETRIES`, `run::kept_for` | shipped (`POE-278 WI-C`, `072c98c`): `read::plan_read` → `ReadPlan` / `RowPlan` from the kept capture, `read::pass2_planned`, `read::build_planned` (copies confident cells), `read::fold_unresolved_header`, `read::lines_up`; `run::RETRIES`, `run::LoopState::rounds`, `run::round_plan` |
-| 3 then stop | row 2 ("After round 3 all OCR stops"); `DETECT_INTERVAL` 650 ms, `GateAnswer::Reshow` | shipped (`POE-278 WI-C`, `072c98c`): `read::capture_complete` or `LoopState::rounds_spent` → `LoopState::detect_interval` returns `LIVENESS_INTERVAL`; `ReadPlan::Nothing` → `read::carry_capture` re-reads nothing, and `run::replaced_on_sight` checks a REMATCH on pass 1 |
+| 3 then stop (**temple amended by the POE-282 amendment below**) | row 2 ("After round 3 all OCR stops"); `DETECT_INTERVAL` 650 ms, `GateAnswer::Reshow` | shipped (`POE-278 WI-C`, `072c98c`): `read::capture_complete` or `LoopState::rounds_spent` → `LoopState::detect_interval` returns `LIVENESS_INTERVAL`; `ReadPlan::Nothing` → `read::carry_capture` re-reads nothing, and `run::replaced_on_sight` checks a REMATCH on pass 1 |
 | 4 geometry moves only on a manual scan | row 3, residual "Placed-origin verification", "Owner decisions" 2026-09-09; `run::cold_sweep_reason` → `ColdSweepReason::{NullSlice, PlacedMiss}`, `run::cold_sweep`, `placed_origin_contradiction`, `remember_fallback_anchor` → `ssot::remember_anchor` | shipped (`POE-278 WI-B`, `f78786e`): `run::locate_decision` (`LocateReason::{ColdStart, ManualMiss}`, `PlacedRead`), asked from `run::detect_tick`; `run::manual_tick` / `refit_requested` — a voice-probe miss while a Recalibrate is pending is a manual miss; `MERC_COLUMN_TRUSTED_LINE` |
-| 5 fresh budget | row 3 (board identity); `run::board_key`, `slice::BoardFrame`, `LoopState::note_read`; Re-arm bumps `temple_rearm` | shipped (`POE-278 WI-C`, `072c98c`): `LoopState::refill_rounds` — from `run::round_plan` on a new capture or one `read::panel_replaced` dropped, `LoopState::resume` on Scan now, `run::refills_budget` on a Recalibrate `consume_refit` acted on; and, merc-specific (not in clause 5), `run::refills_budget` on a template-store generation change (`run::generation_changed`) |
+| 5 fresh budget (**temple amended by the POE-282 amendment below**) | row 3 (board identity); `run::board_key`, `slice::BoardFrame`, `LoopState::note_read`; Re-arm bumps `temple_rearm` | shipped (`POE-278 WI-C`, `072c98c`): `LoopState::refill_rounds` — from `run::round_plan` on a new capture or one `read::panel_replaced` dropped, `LoopState::resume` on Scan now, `run::refills_budget` on a Recalibrate `consume_refit` acted on; and, merc-specific (not in clause 5), `run::refills_budget` on a template-store generation change (`run::generation_changed`) |
 
 Row numbers and section names are those of [Temple Lifecycle](../TEMPLE-LIFECYCLE.md).
 
@@ -226,3 +226,37 @@ placement" are untouched for both modules: a null-slice sweep still runs only
 when no anchored origin stands, so it cannot replace one, and the temple's
 placed-miss sweep is still `ColdSweepReason::PlacedMiss` under
 `ArmReason::Manual`, once per key.
+
+## Amended 2026-10-09 (POE-282)
+
+**Temple clauses 3 and 5 are amended; merc is unchanged.** Owner, 2026-10-09:
+*"Once a board is read, it is locked for the Alva encounter."* The sheet does
+not change during the encounter, so a read that is done is the board for the
+whole key.
+
+Temple clause 5's identity is `(temple_epoch, temple_rearm, BoardFrame)` only
+BEFORE the lock. The board is locked once its read is done: clean, or
+`RETRIES` = 2 spent (`run::BoardRead::locked`). After the lock, only a new
+`(temple_epoch, temple_rearm)` key starts round 1. A walk, a hover that flips a
+corridor, a drag or a rescale no longer starts it.
+
+Temple clause 3's "then stop" is answered by `GateAnswer::Locked`, which
+replaces `GateAnswer::Reshow`. A locked board re-shows its read under any frame
+and keeps its overlay geometry.
+
+The lock is released only by a new key. The Alva START line, the END line and a
+zone change bump `temple_epoch` (`trigger::ends_epoch`). Re-arm and every
+temple settings change (`temple_set_config`, `temple_set_profile`,
+`temple_set_preset`, `temple_set_custom`) bump `temple_rearm`, all through
+`commands::rearm`.
+
+Homes: `run::BoardRead::locked` (the lock), `run::LoopState::gate` (the key
+first, then the lock), `run::GateAnswer::Locked` (the answer, with `changed`
+for a sighting whose frame moved), and `run::locked_sighting_line` (one
+`Temple: board locked — the sheet changed, no read (Re-arm reads it again)`
+line per `LOCKED_SIGHTING_LOG_EVERY` = 10 s). Normative write-up in
+[Temple Lifecycle](../TEMPLE-LIFECYCLE.md), rows 2 and 3.
+
+Merc is unchanged: the contract is shared; the code is not. Merc's clause 5
+identity — a new capture, or a panel judged REPLACED by `read::panel_replaced`
+— stands as written.
