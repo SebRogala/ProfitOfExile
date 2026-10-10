@@ -244,6 +244,14 @@ describe('createHarvestController — failed refresh', () => {
 		const { h } = await failedRefresh();
 		expect(storedPicks(h)).toEqual({ fossil: { [DENSE]: 'keep' } });
 	});
+
+	it('the next Mercure update clears the stale line (reference 08 §3)', async () => {
+		const { h, controller } = await failedRefresh();
+		h.fireUpdated();
+		await vi.advanceTimersByTimeAsync(DELAY_MS);
+		await answer(h, latest(h));
+		expect([controller.view.state, controller.view.status?.segments[0]]).toEqual(['ready', 'updated 6 min ago']);
+	});
 });
 
 describe('createHarvestController — horizon loads', () => {

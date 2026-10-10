@@ -185,6 +185,130 @@ describe('status line', () => {
 		const view = pageView(await input({ divineChaosRate: 400 }));
 		expect(view.status?.segments[1]).toBe('prices: Currency Exchange, Day 24h · 1 div = 400c');
 	});
+
+	it('Delirium Orbs name their logged sample (reference 02)', async () => {
+		const view = pageView(await input({ familyId: 'delirium' }));
+		expect(view.status?.segments.at(-1)).toBe("weights: HarvestForge log · 5,122 rolls · 2026-10-09 · one player's sample");
+	});
+
+	it('Deafening Essences read uniform ~5% (reference 03)', async () => {
+		const view = pageView(await input({ familyId: 'essence' }));
+		expect(view.status?.segments.at(-1)).toBe('weights: HarvestForge log · 5,012 rolls · 2026-10-09 · uniform ~5%');
+	});
+});
+
+// ----------------------------------------------------- other families --
+
+describe('Delirium Orbs (reference 02)', () => {
+	const body = async () => family(pageView(await input({ familyId: 'delirium' })));
+
+	it('names Jeweller’s Delirium Orb at 10.3c as the cheapest feeder', async () => {
+		expect((await body()).verdict.reason).toBe(
+			"Buy Jeweller's Delirium Orb (10.3c, cheapest feeder) and reroll until a keeper."
+		);
+	});
+
+	it('prints the divine line in Primal', async () => {
+		expect((await body()).verdict.divineLine).toBe('1 div profit ≈ 17 feeders · ~229 rerolls · ~6,872 Primal');
+	});
+
+	it('feeds one LOW card', async () => {
+		expect((await body()).feeders.cards.map((c) => c.tier)).toEqual(['LOW']);
+	});
+
+	it('prints LOW as 10 types · 10.3c–16.7c', async () => {
+		expect(card(await body(), 'feeders', 'LOW').meta).toBe('10 types · 10.3c–16.7c');
+	});
+
+	it('keeps one HIGH card', async () => {
+		expect((await body()).keepers.cards.map((c) => c.tier)).toEqual(['HIGH']);
+	});
+
+	it('prints HIGH as 2 types · 41.5c–54.5c', async () => {
+		expect(card(await body(), 'keepers', 'HIGH').meta).toBe('2 types · 41.5c–54.5c');
+	});
+
+	it('keeps Diviner’s and Skittering in HIGH', async () => {
+		expect(card(await body(), 'keepers', 'HIGH').chips.map((c) => c.shortName)).toEqual(["Diviner's", 'Skittering']);
+	});
+});
+
+describe('Deafening Essences (reference 03)', () => {
+	const body = async () => family(pageView(await input({ familyId: 'essence' })));
+
+	it('names Torment at 5.0c as the cheapest feeder', async () => {
+		expect((await body()).verdict.reason).toBe(
+			'Buy Deafening Essence of Torment (5.0c, cheapest feeder) and reroll until a keeper.'
+		);
+	});
+
+	it('prints the loop EV +6.3c', async () => {
+		expect((await body()).verdict.evText).toBe('+6.3c');
+	});
+
+	it('prints the divine line', async () => {
+		expect((await body()).verdict.divineLine).toBe('1 div profit ≈ 58 feeders · ~184 rerolls · ~5,510 Primal');
+	});
+
+	it('feeds MID-HIGH then LOW', async () => {
+		expect((await body()).feeders.cards.map((c) => c.tier)).toEqual(['MID-HIGH', 'LOW']);
+	});
+
+	it('prints MID-HIGH as 4 types · 9.6c–10.1c', async () => {
+		expect(card(await body(), 'feeders', 'MID-HIGH').meta).toBe('4 types · 9.6c–10.1c');
+	});
+
+	it('prints LOW as 10 types · 5.0c–6.2c', async () => {
+		expect(card(await body(), 'feeders', 'LOW').meta).toBe('10 types · 5.0c–6.2c');
+	});
+
+	it('keeps TOP then HIGH', async () => {
+		expect((await body()).keepers.cards.map((c) => c.tier)).toEqual(['TOP', 'HIGH']);
+	});
+
+	it('prints TOP as 1 type · 26.9c', async () => {
+		expect(card(await body(), 'keepers', 'TOP').meta).toBe('1 type · 26.9c');
+	});
+
+	it('prints HIGH as 5 types · 12.1c–15.9c', async () => {
+		expect(card(await body(), 'keepers', 'HIGH').meta).toBe('5 types · 12.1c–15.9c');
+	});
+});
+
+describe('Corrupted Essences (reference 04)', () => {
+	const body = async () => family(pageView(await input({ familyId: 'corrupt' })));
+
+	it('prints the divine line in Primal', async () => {
+		expect((await body()).verdict.divineLine).toBe('1 div profit ≈ 19 feeders · ~57 rerolls · ~1,710 Primal');
+	});
+
+	it('feeds MID-HIGH then LOW', async () => {
+		expect((await body()).feeders.cards.map((c) => c.tier)).toEqual(['MID-HIGH', 'LOW']);
+	});
+
+	it('prints MID-HIGH as 1 type · 52.5c', async () => {
+		expect(card(await body(), 'feeders', 'MID-HIGH').meta).toBe('1 type · 52.5c');
+	});
+
+	it('prints LOW as 2 types · 41.9c–42.6c', async () => {
+		expect(card(await body(), 'feeders', 'LOW').meta).toBe('2 types · 41.9c–42.6c');
+	});
+
+	it('prints HIGH as 1 type · 65.7c', async () => {
+		expect(card(await body(), 'keepers', 'HIGH').meta).toBe('1 type · 65.7c');
+	});
+
+	it('keeps Horror alone in HIGH', async () => {
+		expect(card(await body(), 'keepers', 'HIGH').chips.map((c) => c.shortName)).toEqual(['Horror']);
+	});
+
+	it('gives Horror the weight share 25.0%', async () => {
+		expect(card(await body(), 'keepers', 'HIGH').chips[0].shareText).toBe('25.0%');
+	});
+
+	it('cheapest feeder row reads Essence of Hysteria · 41.9c', async () => {
+		expect((await body()).ev!.rows[0].value).toBe('Essence of Hysteria · 41.9c');
+	});
 });
 
 // ------------------------------------------------------------------ cards --
@@ -409,6 +533,10 @@ describe('split row', () => {
 		const dense = itemId(base.harvest!, 'fossil', 'Dense');
 		return { dense, body: family(pageView({ ...base, picks: { fossil: { [dense]: 'keep' } } })) };
 	};
+	const denseEvRow = async (label: string) => {
+		const ev = (await densePicked()).body.ev!;
+		return [...ev.rows, ...ev.yield].find((r) => r.label === label)?.value;
+	};
 	const denseChip = async () => {
 		const { dense, body } = await densePicked();
 		return card(body, 'keepers', 'MID').chips.find((c) => c.itemId === dense)!;
@@ -444,6 +572,64 @@ describe('split row', () => {
 
 	it('titles a kept pick as your pick', async () => {
 		expect((await denseChip()).pickTitle).toBe('Your pick: kept. Click to return it to the computed side.');
+	});
+
+	it('moves the headline to Lucent Fossil +24.3c after the Dense pick (reference 05)', async () => {
+		expect((await densePicked()).body.verdict.evText).toBe('+24.3c');
+	});
+
+	it('prints the divine line after the Dense pick (reference 05)', async () => {
+		expect((await densePicked()).body.verdict.divineLine).toBe(
+			'1 div profit ≈ 15 feeders · ~90 rerolls · ~2,686 Wild'
+		);
+	});
+
+	it('EV panel after the Dense pick — Cheapest feeder: Lucent Fossil · 9.1c (reference 05)', async () => {
+		expect(await denseEvRow('Cheapest feeder')).toBe('Lucent Fossil · 9.1c');
+	});
+
+	it('EV panel after the Dense pick — Loop EV per feeder: +24.3c (reference 05)', async () => {
+		expect(await denseEvRow('Loop EV per feeder')).toBe('+24.3c');
+	});
+
+	it('EV panel after the Dense pick — Keeper hit per roll: 15.7% (reference 05)', async () => {
+		expect(await denseEvRow('Keeper hit per roll')).toBe('15.7%');
+	});
+
+	it('EV panel after the Dense pick — Rerolls per keeper: ~6.0 (reference 05)', async () => {
+		expect(await denseEvRow('Rerolls per keeper')).toBe('~6.0');
+	});
+
+	it('EV panel after the Dense pick — Lifeforce per keeper: ~179 Wild · 5.6c (reference 05)', async () => {
+		expect(await denseEvRow('Lifeforce per keeper')).toBe('~179 Wild · 5.6c');
+	});
+
+	it('EV panel after the Dense pick — 1 div of lifeforce yields: ~55.3 keepers (reference 05)', async () => {
+		expect(await denseEvRow('1 div of lifeforce yields')).toBe('~55.3 keepers');
+	});
+
+	it('EV panel after the Dense pick — …worth after inputs: +1,344c (reference 05)', async () => {
+		expect(await denseEvRow('…worth after inputs')).toBe('+1,344c');
+	});
+
+	it('keeps the feeder MID card split after the Dense pick (reference 05)', async () => {
+		expect(card((await densePicked()).body, 'feeders', 'MID').split).toBe(true);
+	});
+
+	it('leaves Corroded alone in the feeder MID card after the Dense pick (reference 05)', async () => {
+		expect(card((await densePicked()).body, 'feeders', 'MID').chips.map((c) => c.shortName)).toEqual(['Corroded']);
+	});
+
+	it('gives Corroded the loop EV +3.5c after the Dense pick (reference 05)', async () => {
+		expect(card((await densePicked()).body, 'feeders', 'MID').chips[0].evText).toBe('+3.5c');
+	});
+
+	it('gives the picked Dense chip its keeper share 11.7% (reference 05)', async () => {
+		expect((await denseChip()).shareText).toBe('11.7%');
+	});
+
+	it('counts the feeders regex after the Dense pick: 49 / 250 characters (reference 05)', async () => {
+		expect((await densePicked()).body.regex.feeders.count).toBe('49 / 250 characters');
 	});
 
 	it('counts picks of the active family only', async () => {
@@ -563,6 +749,11 @@ describe('unpriced Hollow (reference 08 §5, test-local price)', () => {
 		const chip = card(body, 'keepers', 'TOP').chips.find((c) => c.itemId === hollow)!;
 		expect([chip.priceText, chip.unpriced]).toEqual(['—', true]);
 	});
+
+	it('prints no weight share on its chip, as drawn', async () => {
+		const { body, hollow } = await unpriced();
+		expect(card(body, 'keepers', 'TOP').chips.find((c) => c.itemId === hollow)!.shareText).toBeNull();
+	});
 });
 
 // ------------------------------------------------------------------ regex --
@@ -659,6 +850,17 @@ describe('page states (reference 08 §1–4, §9)', () => {
 		const fetched = new Date(2026, 8, 9, 21, 4);
 		const view = pageView({ ...(await input()), lastError: 'boom', lastFetchedAt: fetched });
 		expect([view.state, view.status?.segments[0]]).toEqual(['stale', 'stale since 21:04 — server unreachable']);
+	});
+
+	it('stale: prints prices from HH:MM with their age (reference 08 §3)', async () => {
+		const base = await input();
+		const view = pageView({
+			...base,
+			exchange: { ...base.exchange!, lastUpdated: new Date(2026, 8, 9, 21, 0).toISOString() },
+			lastError: 'boom',
+			now: new Date(2026, 8, 9, 23, 0)
+		});
+		expect(view.status?.segments[1]).toBe('prices from 21:00 (2 h ago)');
 	});
 
 	it('stale keeps every number: the verdict EV still reads +25.7c', async () => {

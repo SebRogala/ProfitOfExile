@@ -7,7 +7,7 @@
 	 * Presentation only. `harvest/controller.svelte.ts` owns the fetch, the
 	 * Mercure refetch, the persisted picks and the clipboard; `harvest/view.ts`
 	 * projects every string and flag this template prints, so it computes
-	 * nothing. Not mounted yet: the nav wiring lands with WI-10.
+	 * nothing. Mounted at `/harvest-flipping` behind `BETA_FEATURE`.
 	 */
 	import { untrack } from 'svelte';
 	import { getApiBase } from '$lib/api';
@@ -413,8 +413,10 @@
 		font-weight: 600;
 	}
 
+	/* Prototype `.gain` draws the headline EV at 700; it also keeps red on surface (4.47:1) inside the large-bold-text exception. */
 	.ev-big {
 		font-size: 1.375rem;
+		font-weight: 700;
 	}
 
 	.ev-big.gain {

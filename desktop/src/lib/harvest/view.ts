@@ -290,7 +290,7 @@ export interface Chip {
 	/** Feeders only: the loop EV, signed. */
 	evText: string | null;
 	evTone: 'gain' | 'loss' | 'flat' | null;
-	/** Keepers only: the weight share. */
+	/** Priced keepers only: the weight share. */
 	shareText: string | null;
 }
 
@@ -351,7 +351,8 @@ function chipOf(row: Row): Chip {
 					: PICK_TITLE_FED,
 		evText: row.kept || row.loopEv === null ? null : formatHarvestGain(row.loopEv),
 		evTone: row.kept ? null : tone,
-		shareText: row.kept ? formatHarvestPercent(row.share * 100) : null
+		// Reference 08 §5 draws an unpriced keeper as "— UNPRICED" with no share.
+		shareText: row.kept && row.price !== null ? formatHarvestPercent(row.share * 100) : null
 	};
 }
 

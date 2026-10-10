@@ -140,6 +140,11 @@ Accepted by the Supervisor (WI-6 answer, run record after 09:26:43Z), recorded f
 - **Before any port answers, no tabs (WI-8).** The tabs come from the Harvest server read, so before either owner answers the page shows the drawn "Loading…" line and the skeleton panel without tabs; once the Harvest read lands, tabs show while prices load (ref 08 §1). Reference 08 §1 assumes tabs ship with the app; a drawn pre-tab loading state, or tab labels shipped with the app, is a designer item.
 - **Horizon control has no tooltip (WI-8).** The undrawn `title` on the Prices segmented control was dropped (Supervisor ruling); only the "Prices" label and the two options are shown.
 - **Designer intake — "prices unavailable" no-data variant (Q7).** The no-data panel is drawn only for families without weights (ref 06, ref 08 §9). Engine results whose numbers are unusable reuse its text (see PENDING OPERATOR). A drawn "prices unavailable" variant of the panel is requested.
+- **Stale status line keeps the weights segment (WI-11).** Reference 08 §3 draws the stale line as "stale since 21:04 — server unreachable · prices from 21:00 (2 h ago) · prices: Currency Exchange, Day 24h · 1 div = 360c" and stops there; reference 01's ready line ends with the weights provenance. The page keeps the weights segment in the stale state too, since every derived number shows its provenance. Designer: confirm, or redraw §3 if the stale line should drop it.
+- **Unpriced chip shows no weight share (WI-11).** Reference 08 §5 draws an unpriced keeper as "Hollow — UNPRICED" with no share; the page now matches (priced keepers keep their share).
+- **Sidebar entry focus ring (WI-11).** Pre-existing app-wide gap: no sidebar item has a focus ring (Sidebar.svelte all: unset, no :focus-visible). The Harvest entry inherits it; no Sidebar.svelte change (Supervisor ruling). Follow-up task for the whole sidebar (relayed to the Coordinator).
+- **Headline EV contrast (WI-11).** `--color-lab-red` on `--color-lab-surface` measures 4.47:1, below 4.5:1 for normal text. `.ev-big` is now 1.375rem/700, matching the prototype's `.gain` weight (700), so it qualifies as large bold text (3:1). Chip loss EVs sit on `--color-lab-bg` at 5.01:1.
+- **Tabs on one line at 1024 px (WI-11).** Nowrap + horizontal scroll; fit at 1024 px not verified without a render (pixel pass waived by the Operator 2026-10-10).
 
 ## PENDING OPERATOR
 
@@ -149,7 +154,7 @@ Copy the design does not draw. Each string is one named constant in `desktop/src
   - `PICK_TITLE_KEPT` (`view.ts:332`): "Your pick: kept. Click to return it to the computed side."
   - `PICK_TITLE_FED` (`view.ts:333`): "Your pick: fed. Click to return it to the computed side."
 - **Q7 — no-data text for unusable-number engine results.**
-  - `NO_DATA_TEXT` (`view.ts:600`): "The EV needs how often each type comes out of a reroll. Nobody has sent a HarvestForge log for this family yet, so there is nothing to compute. The tab fills in when one arrives."
+  - `NO_DATA_TEXT` (`view.ts:601`): "The EV needs how often each type comes out of a reroll. Nobody has sent a HarvestForge log for this family yet, so there is nothing to compute. The tab fills in when one arrives."
 
 ## Follow-ups outside this lane
 
