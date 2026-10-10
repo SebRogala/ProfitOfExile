@@ -85,7 +85,7 @@ type characterisedMarketContext struct {
 	// TierBoundaries is recorded only when the Font result has a 20/20 pool:
 	// without one, ComputeMarketContext takes "the first available variant"
 	// in map order, which is not deterministic.
-	TierBoundaries *TierBoundaries            `json:"tierBoundaries,omitempty"`
+	TierBoundaries *TierBoundaries           `json:"tierBoundaries,omitempty"`
 	VariantTiers   map[string]TierBoundaries `json:"variantTiers"`
 }
 
