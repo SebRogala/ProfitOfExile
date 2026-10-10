@@ -1,0 +1,196 @@
+{
+  "astrolabe": {
+    "boundariesChaos": [
+      179.76,
+      135.63,
+      13.34
+    ],
+    "byItem": {
+      "Metadata/Items/Currency/AstrolabeAbyss": "HIGH",
+      "Metadata/Items/Currency/AstrolabeBlight": "MID-HIGH",
+      "Metadata/Items/Currency/AstrolabeBreach": "HIGH",
+      "Metadata/Items/Currency/AstrolabeDelirium": "MID-HIGH",
+      "Metadata/Items/Currency/AstrolabeExpedition": "LOW",
+      "Metadata/Items/Currency/AstrolabeHarvest": "TOP",
+      "Metadata/Items/Currency/AstrolabeLegion": "MID-HIGH",
+      "Metadata/Items/Currency/AstrolabeRitual": "MID-HIGH",
+      "Metadata/Items/Currency/AstrolabeUltimatum": "LOW"
+    },
+    "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+    ],
+    "topBoundaryChaos": 372.81
+  },
+  "catalyst": {
+    "boundariesChaos": [
+      99.65,
+      2.69
+    ],
+    "byItem": {
+      "Metadata/Items/Currency/CurrencyJewelleryQualityAttack": "FLOOR",
+      "Metadata/Items/Currency/CurrencyJewelleryQualityAttribute": "FLOOR",
+      "Metadata/Items/Currency/CurrencyJewelleryQualityCaster": "FLOOR",
+      "Metadata/Items/Currency/CurrencyJewelleryQualityCritical": "LOW",
+      "Metadata/Items/Currency/CurrencyJewelleryQualityDefense": "LOW",
+      "Metadata/Items/Currency/CurrencyJewelleryQualityElemental": "FLOOR",
+      "Metadata/Items/Currency/CurrencyJewelleryQualityPhysicalChaos": "FLOOR",
+      "Metadata/Items/Currency/CurrencyJewelleryQualityResistance": "HIGH",
+      "Metadata/Items/Currency/CurrencyJewelleryQualityResource": "LOW",
+      "Metadata/Items/Currency/CurrencyJewelleryQualitySpeed": "FLOOR"
+    },
+    "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+    ],
+    "topBoundaryChaos": null
+  },
+  "corrupt": {
+    "boundariesChaos": [
+      65.67,
+      52.5,
+      4.05
+    ],
+    "byItem": {
+      "Metadata/Items/Currency/CurrencyEssenceDelirium1": "MID-HIGH",
+      "Metadata/Items/Currency/CurrencyEssenceHorror1": "HIGH",
+      "Metadata/Items/Currency/CurrencyEssenceHysteria1": "LOW",
+      "Metadata/Items/Currency/CurrencyEssenceInsanity1": "LOW"
+    },
+    "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+    ],
+    "topBoundaryChaos": null
+  },
+  "delirium": {
+    "boundariesChaos": [
+      41.5,
+      2.21
+    ],
+    "byItem": {
+      "Metadata/Items/Currency/CurrencyAfflictionOrbArmour": "LOW",
+      "Metadata/Items/Currency/CurrencyAfflictionOrbBlight": "LOW",
+      "Metadata/Items/Currency/CurrencyAfflictionOrbCurrency": "LOW",
+      "Metadata/Items/Currency/CurrencyAfflictionOrbDivinationCards": "HIGH",
+      "Metadata/Items/Currency/CurrencyAfflictionOrbEssences": "LOW",
+      "Metadata/Items/Currency/CurrencyAfflictionOrbFragments": "LOW",
+      "Metadata/Items/Currency/CurrencyAfflictionOrbGems": "LOW",
+      "Metadata/Items/Currency/CurrencyAfflictionOrbMaps": "LOW",
+      "Metadata/Items/Currency/CurrencyAfflictionOrbScarabs": "HIGH",
+      "Metadata/Items/Currency/CurrencyAfflictionOrbTrinkets": "LOW",
+      "Metadata/Items/Currency/CurrencyAfflictionOrbUniques": "LOW",
+      "Metadata/Items/Currency/CurrencyAfflictionOrbWeapons": "LOW"
+    },
+    "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+    ],
+    "topBoundaryChaos": null
+  },
+  "essence": {
+    "boundariesChaos": [
+      12.05,
+      9.62,
+      1.1
+    ],
+    "byItem": {
+      "Metadata/Items/Currency/CurrencyEssenceAnger6": "LOW",
+      "Metadata/Items/Currency/CurrencyEssenceAnguish4": "LOW",
+      "Metadata/Items/Currency/CurrencyEssenceContempt7": "MID-HIGH",
+      "Metadata/Items/Currency/CurrencyEssenceDoubt5": "LOW",
+      "Metadata/Items/Currency/CurrencyEssenceDread3": "LOW",
+      "Metadata/Items/Currency/CurrencyEssenceEnvy3": "HIGH",
+      "Metadata/Items/Currency/CurrencyEssenceFear6": "LOW",
+      "Metadata/Items/Currency/CurrencyEssenceGreed7": "LOW",
+      "Metadata/Items/Currency/CurrencyEssenceHatred7": "LOW",
+      "Metadata/Items/Currency/CurrencyEssenceLoathing4": "HIGH",
+      "Metadata/Items/Currency/CurrencyEssenceMisery3": "HIGH",
+      "Metadata/Items/Currency/CurrencyEssenceRage5": "HIGH",
+      "Metadata/Items/Currency/CurrencyEssenceScorn3": "TOP",
+      "Metadata/Items/Currency/CurrencyEssenceSorrow6": "MID-HIGH",
+      "Metadata/Items/Currency/CurrencyEssenceSpite4": "MID-HIGH",
+      "Metadata/Items/Currency/CurrencyEssenceSuffering5": "LOW",
+      "Metadata/Items/Currency/CurrencyEssenceTorment6": "LOW",
+      "Metadata/Items/Currency/CurrencyEssenceWoe7": "MID-HIGH",
+      "Metadata/Items/Currency/CurrencyEssenceWrath5": "LOW",
+      "Metadata/Items/Currency/CurrencyEssenceZeal4": "HIGH"
+    },
+    "names": [
+      "HIGH",
+      "MID-HIGH",
+      "LOW",
+      "FLOOR"
+    ],
+    "topBoundaryChaos": 26.93
+  },
+  "fossil": {
+    "boundariesChaos": [
+      192.39,
+      29.96,
+      7.92
+    ],
+    "byItem": {
+      "Metadata/Items/Currency/CurrencyDelveCraftingAbyss": "TOP",
+      "Metadata/Items/Currency/CurrencyDelveCraftingBleedPoison": "MID",
+      "Metadata/Items/Currency/CurrencyDelveCraftingChaos": "LOW",
+      "Metadata/Items/Currency/CurrencyDelveCraftingCold": "LOW",
+      "Metadata/Items/Currency/CurrencyDelveCraftingCorruptEssence": "MID",
+      "Metadata/Items/Currency/CurrencyDelveCraftingDefences": "MID",
+      "Metadata/Items/Currency/CurrencyDelveCraftingEnchant": "LOW",
+      "Metadata/Items/Currency/CurrencyDelveCraftingFire": "LOW",
+      "Metadata/Items/Currency/CurrencyDelveCraftingGemLevel": "HIGH",
+      "Metadata/Items/Currency/CurrencyDelveCraftingLife": "LOW",
+      "Metadata/Items/Currency/CurrencyDelveCraftingLightning": "LOW",
+      "Metadata/Items/Currency/CurrencyDelveCraftingLuckyModRolls": "MID",
+      "Metadata/Items/Currency/CurrencyDelveCraftingMana": "LOW",
+      "Metadata/Items/Currency/CurrencyDelveCraftingMinionsAuras": "LOW",
+      "Metadata/Items/Currency/CurrencyDelveCraftingMirror": "MID",
+      "Metadata/Items/Currency/CurrencyDelveCraftingPhysical": "LOW",
+      "Metadata/Items/Currency/CurrencyDelveCraftingSellPrice": "MID",
+      "Metadata/Items/Currency/CurrencyDelveCraftingSockets": "LOW",
+      "Metadata/Items/Currency/CurrencyDelveCraftingSpeed": "MID",
+      "Metadata/Items/Currency/CurrencyDelveCraftingVaal": "LOW"
+    },
+    "names": [
+      "HIGH",
+      "MID",
+      "LOW",
+      "FLOOR"
+    ],
+    "topBoundaryChaos": 401.63
+  },
+  "oil": {
+    "boundariesChaos": [
+      411.2,
+      11.09
+    ],
+    "byItem": {
+      "Metadata/Items/Currency/Mushrune1": "FLOOR",
+      "Metadata/Items/Currency/Mushrune10": "LOW",
+      "Metadata/Items/Currency/Mushrune11": "LOW",
+      "Metadata/Items/Currency/Mushrune12": "HIGH",
+      "Metadata/Items/Currency/Mushrune2": "FLOOR",
+      "Metadata/Items/Currency/Mushrune3": "FLOOR",
+      "Metadata/Items/Currency/Mushrune4": "FLOOR",
+      "Metadata/Items/Currency/Mushrune5": "FLOOR",
+      "Metadata/Items/Currency/Mushrune6": "FLOOR",
+      "Metadata/Items/Currency/Mushrune6b": "FLOOR",
+      "Metadata/Items/Currency/Mushrune7": "FLOOR",
+      "Metadata/Items/Currency/Mushrune8": "FLOOR",
+      "Metadata/Items/Currency/Mushrune9": "LOW"
+    },
+    "names": [
+      "HIGH",
+      "LOW",
+      "FLOOR"
+    ],
+    "topBoundaryChaos": null
+  }
+}
