@@ -39,7 +39,7 @@ const FloorRule = "median of room lines; above floor at >= 2x"
 
 // lowConfidenceDepth is the fraction of its market's median listing count below
 // which a line is flagged thin. It is POE-131's gem rule applied unchanged —
-// internal/lab/classification.go, detectLowConfidence — because it answers the
+// tier.LowConfidence in internal/price/tier — because it answers the
 // same question about the same kind of feed.
 const lowConfidenceDepth = 0.4
 

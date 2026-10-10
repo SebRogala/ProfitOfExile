@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"profitofexile/internal/price/tier"
 )
 
 // Double-corruption calculator (POE-125): expected value of handing a gem to
@@ -374,7 +376,7 @@ func dcInputLevelQuality(variant string) (level, quality int, ok bool) {
 // price, and at the top of a profit ranking it is the *only* thing there: the
 // gems that rank first are exactly the ones carrying one freakish outlier cell.
 // Both sides of the subtraction are therefore gated by the same rule the Font
-// and Dedication classifiers use — detectLowConfidenceFiltered, per variant,
+// and Dedication classifiers use — labLowConfidence (tier.LowConfidence), per variant,
 // flagging any row whose listing depth is under 40% of its variant's median.
 //
 //   - An outcome cell whose corrupted row is low-confidence is treated as
@@ -409,8 +411,8 @@ func AnalyzeDoubleCorrupt(snapTime time.Time, gems []GemPrice, features []GemFea
 	}
 	vaalIdentity := buildVaalIdentityIndex(gems, listedCorrupted)
 
-	lowConfOutcome := detectLowConfidenceFiltered(gems, func(g GemPrice) bool { return g.IsCorrupted })
-	lowConfInput := detectLowConfidenceFiltered(gems, isDoubleCorruptInput)
+	lowConfOutcome := labLowConfidence(gems, func(g GemPrice) bool { return g.IsCorrupted })
+	lowConfInput := labLowConfidence(gems, isDoubleCorruptInput)
 
 	featureLookup := make(map[priceKey]*GemFeature, len(features))
 	for i := range features {
@@ -438,7 +440,7 @@ func AnalyzeDoubleCorrupt(snapTime time.Time, gems []GemPrice, features []GemFea
 			if g.Variant != inputVariant || !isDoubleCorruptInput(*g) || g.Chaos <= 0 {
 				continue
 			}
-			if lowConfInput[g.Name+"|"+g.Variant] {
+			if lowConfInput[tier.Key{Group: g.Variant, Key: g.Name}] {
 				continue
 			}
 
@@ -460,7 +462,7 @@ func AnalyzeDoubleCorrupt(snapTime time.Time, gems []GemPrice, features []GemFea
 
 				if row, listed := corrupted[priceKey{name, cell.variant}]; listed && row.Chaos > 0 {
 					out.Listings = row.Listings
-					out.LowConfidence = lowConfOutcome[name+"|"+cell.variant]
+					out.LowConfidence = lowConfOutcome[tier.Key{Group: cell.variant, Key: name}]
 					if !out.LowConfidence {
 						out.Priced = true
 						out.Chaos = row.Chaos

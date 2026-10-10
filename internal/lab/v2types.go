@@ -3,6 +3,8 @@ package lab
 import (
 	"fmt"
 	"time"
+
+	"profitofexile/internal/price/tier"
 )
 
 // MarketContext holds pre-computed market-wide statistics for a single snapshot.
@@ -77,13 +79,11 @@ func (mc MarketContext) PriceP50() float64 {
 	return mc.PricePercentiles["P50"]
 }
 
-// TierBoundaries holds dynamic tier boundary thresholds produced by recursive
-// average splitting. Boundaries are sorted descending: boundaries[0] = TOP
-// threshold, boundaries[1] = HIGH threshold, etc.
-type TierBoundaries struct {
-	Boundaries []float64 `json:"boundaries"`
-	Names      []string  `json:"names,omitempty"` // if nil, use global TierNames
-}
+// TierBoundaries holds dynamic tier boundary thresholds, sorted descending:
+// boundaries[0] = TOP threshold, boundaries[1] = HIGH threshold, etc. Names,
+// when set, overrides TierNames. It is tier.Boundaries, so the stored and
+// served JSON shape is the tier package's.
+type TierBoundaries = tier.Boundaries
 
 // GemFeature holds pre-computed per-gem metrics for a single snapshot.
 type GemFeature struct {

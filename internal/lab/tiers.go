@@ -2,13 +2,15 @@ package lab
 
 import (
 	"sort"
+
+	"profitofexile/internal/price/tier"
 )
 
-// TierNames lists tier names in order from highest to lowest.
+// TierNames lists tier names in order from highest to lowest: tier.Order.
 // The algorithm produces N boundaries -> N+1 tiers. Index into this array
 // based on boundary position: boundary[0] -> TierNames[0] (TOP), etc.
 // Anything below all boundaries gets the last applicable name.
-var TierNames = []string{"TOP", "HIGH", "MID-HIGH", "MID", "LOW", "FLOOR"}
+var TierNames = tier.Order
 
 // DetectTierBoundariesRecursive produces dynamic tier boundaries using
 // recursive average splitting. Each step computes the average of the
@@ -80,7 +82,7 @@ func DetectTierBoundariesRecursive(gems []GemPrice) TierBoundaries {
 		pool = pool[:splitIdx] // keep only above-average gems for next iteration
 	}
 
-	// Sort boundaries descending for classifyTier to work correctly.
+	// Sort boundaries descending for ClassifyTier to work correctly.
 	sort.Sort(sort.Reverse(sort.Float64Slice(boundaries)))
 
 	return TierBoundaries{Boundaries: boundaries}
@@ -125,7 +127,7 @@ func DetectTierBoundariesNoTop(gems []GemPrice) TierBoundaries {
 		pool = pool[:splitIdx] // keep only above-average gems for next iteration
 	}
 
-	// Sort boundaries descending for classifyTier to work correctly.
+	// Sort boundaries descending for ClassifyTier to work correctly.
 	sort.Sort(sort.Reverse(sort.Float64Slice(boundaries)))
 
 	return TierBoundaries{Boundaries: boundaries}
@@ -212,7 +214,7 @@ func average(vals []float64) float64 {
 
 // tierFallback produces boundaries using percentile splitting when there are
 // too few distinct prices for recursive detection. Returns boundaries matching
-// P75/P50/P25 positions so that classifyTier still produces reasonable results.
+// P75/P50/P25 positions so that ClassifyTier still produces reasonable results.
 func tierFallback(descPrices []float64) TierBoundaries {
 	if len(descPrices) == 0 {
 		return TierBoundaries{}
@@ -231,30 +233,8 @@ func tierFallback(descPrices []float64) TierBoundaries {
 	}
 }
 
-// classifyTier assigns a price tier based on TierBoundaries.
-// Uses >= semantics: a gem priced exactly at a boundary belongs to the higher tier.
-func classifyTier(price float64, tb TierBoundaries) string {
-	names := TierNames
-	if len(tb.Names) > 0 {
-		names = tb.Names
-	}
-	for i, boundary := range tb.Boundaries {
-		if price >= boundary {
-			if i < len(names) {
-				return names[i]
-			}
-			return names[len(names)-1]
-		}
-	}
-	// Below all boundaries.
-	belowIdx := len(tb.Boundaries)
-	if belowIdx < len(names) {
-		return names[belowIdx]
-	}
-	return names[len(names)-1]
-}
-
-// ClassifyTier is the exported variant for use by the optimizer.
+// ClassifyTier assigns a price tier based on TierBoundaries (tier.Of): >=
+// semantics, a gem priced exactly at a boundary belongs to the higher tier.
 func ClassifyTier(price float64, tb TierBoundaries) string {
-	return classifyTier(price, tb)
+	return tier.Of(price, tb)
 }

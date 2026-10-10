@@ -477,7 +477,7 @@ func TestBuild_everyLineOfAZeroMedianCategoryIsLowConfidence(t *testing.T) {
 }
 
 func TestMedianOf_takesTheUpperMiddleOfAnEvenCount(t *testing.T) {
-	// The convention matches internal/lab/classification.go's detectLowConfidence
+	// The convention matches tier.LowConfidence in internal/price/tier
 	// so the two thin-market rules in this repository agree on "median".
 	lines := []Line{room("a", 1, 0), room("b", 2, 0), room("c", 3, 0), room("d", 4, 0)}
 	if got := medianOf(lines, func(l Line) float64 { return l.Chaos }); got != 3 {

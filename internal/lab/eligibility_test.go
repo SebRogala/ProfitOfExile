@@ -135,7 +135,7 @@ func TestComputeDedicationClassification_ExcludesWhiteGems(t *testing.T) {
 }
 
 // makeFontGem creates an uncorrupted transfigured 20/20 GemPrice for Font pool
-// tests. Listings are uniform across a pool so that detectLowConfidence — which
+// tests. Listings are uniform across a pool so that tier.LowConfidence — which
 // flags anything under 40% of the variant median — leaves every gem in and the
 // tier assertion reads on the colour rule alone.
 func makeFontGem(name, color string, chaos float64) GemPrice {
