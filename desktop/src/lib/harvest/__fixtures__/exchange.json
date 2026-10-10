@@ -1,0 +1,254 @@
+{
+  "league": "Allflame",
+  "horizon": "day",
+  "priceHour": "2026-09-09T23:00:00Z",
+  "updatedMinutesAgo": 6,
+  "divineChaosRate": 360.07,
+  "lifeforce": {
+    "Primal": {
+      "itemId": "Metadata/Items/Currency/HarvestSeedBlue",
+      "colour": "blue",
+      "chaos": 0.049,
+      "perDivine": 7445
+    },
+    "Vivid": {
+      "itemId": "Metadata/Items/Currency/HarvestSeedGreen",
+      "colour": "yellow",
+      "chaos": 0.169,
+      "perDivine": 1917
+    },
+    "Wild": {
+      "itemId": "Metadata/Items/Currency/HarvestSeedRed",
+      "colour": "purple",
+      "chaos": 0.031,
+      "perDivine": 9905
+    }
+  },
+  "_note": "perDivine = lifeforce bought per 1 divine on the lifeforce/divine market (shown as '1 div → 9,905 lifeforce → 330 rerolls'). Status line shows the rate rounded: '1 div = 360c'.",
+  "prices": {
+    "Metadata/Items/Currency/CurrencyAfflictionOrbWeapons": {
+      "chaos": 10.58,
+      "divine": 0.0461
+    },
+    "Metadata/Items/Currency/CurrencyAfflictionOrbArmour": {
+      "chaos": 10.56,
+      "divine": 0.04502
+    },
+    "Metadata/Items/Currency/CurrencyAfflictionOrbTrinkets": {
+      "chaos": 10.32,
+      "divine": 0.04497
+    },
+    "Metadata/Items/Currency/CurrencyAfflictionOrbCurrency": {
+      "chaos": 16.69,
+      "divine": 0.0407
+    },
+    "Metadata/Items/Currency/CurrencyAfflictionOrbDivinationCards": {
+      "chaos": 54.54,
+      "divine": 0.15185
+    },
+    "Metadata/Items/Currency/CurrencyAfflictionOrbMaps": {
+      "chaos": 11.75,
+      "divine": null
+    },
+    "Metadata/Items/Currency/CurrencyAfflictionOrbEssences": {
+      "chaos": 11.17,
+      "divine": null
+    },
+    "Metadata/Items/Currency/CurrencyAfflictionOrbUniques": {
+      "chaos": 12.57,
+      "divine": null
+    },
+    "Metadata/Items/Currency/CurrencyAfflictionOrbGems": {
+      "chaos": 12.67,
+      "divine": null
+    },
+    "Metadata/Items/Currency/CurrencyAfflictionOrbFragments": {
+      "chaos": 10.48,
+      "divine": null
+    },
+    "Metadata/Items/Currency/CurrencyAfflictionOrbBlight": {
+      "chaos": 11.08,
+      "divine": null
+    },
+    "Metadata/Items/Currency/CurrencyAfflictionOrbScarabs": {
+      "chaos": 41.5,
+      "divine": 0.1253
+    },
+    "Metadata/Items/Currency/CurrencyEssenceGreed7": {
+      "chaos": 5.85,
+      "divine": 0.02309
+    },
+    "Metadata/Items/Currency/CurrencyEssenceContempt7": {
+      "chaos": 9.68,
+      "divine": 0.03321
+    },
+    "Metadata/Items/Currency/CurrencyEssenceHatred7": {
+      "chaos": 5.58,
+      "divine": 0.02004
+    },
+    "Metadata/Items/Currency/CurrencyEssenceWoe7": {
+      "chaos": 10.11,
+      "divine": 0.0355
+    },
+    "Metadata/Items/Currency/CurrencyEssenceAnger6": {
+      "chaos": 6.23,
+      "divine": 0.01928
+    },
+    "Metadata/Items/Currency/CurrencyEssenceWrath5": {
+      "chaos": 5.48,
+      "divine": 0.02728
+    },
+    "Metadata/Items/Currency/CurrencyEssenceSorrow6": {
+      "chaos": 9.62,
+      "divine": 0.03229
+    },
+    "Metadata/Items/Currency/CurrencyEssenceSpite4": {
+      "chaos": 10.07,
+      "divine": 0.0305
+    },
+    "Metadata/Items/Currency/CurrencyEssenceScorn3": {
+      "chaos": 26.93,
+      "divine": 0.08346
+    },
+    "Metadata/Items/Currency/CurrencyEssenceEnvy3": {
+      "chaos": 13.29,
+      "divine": 0.03531
+    },
+    "Metadata/Items/Currency/CurrencyEssenceMisery3": {
+      "chaos": 13.65,
+      "divine": 0.07764
+    },
+    "Metadata/Items/Currency/CurrencyEssenceDread3": {
+      "chaos": 5.64,
+      "divine": 0.02683
+    },
+    "Metadata/Items/Currency/CurrencyEssenceZeal4": {
+      "chaos": 15.86,
+      "divine": 0.0481
+    },
+    "Metadata/Items/Currency/CurrencyEssenceLoathing4": {
+      "chaos": 12.05,
+      "divine": 0.03346
+    },
+    "Metadata/Items/Currency/CurrencyEssenceTorment6": {
+      "chaos": 5.01,
+      "divine": 0.01907
+    },
+    "Metadata/Items/Currency/CurrencyEssenceFear6": {
+      "chaos": 5.46,
+      "divine": 0.01747
+    },
+    "Metadata/Items/Currency/CurrencyEssenceRage5": {
+      "chaos": 13.84,
+      "divine": 0.04078
+    },
+    "Metadata/Items/Currency/CurrencyEssenceDoubt5": {
+      "chaos": 5.26,
+      "divine": 0.01657
+    },
+    "Metadata/Items/Currency/CurrencyEssenceSuffering5": {
+      "chaos": 5.15,
+      "divine": 0.01573
+    },
+    "Metadata/Items/Currency/CurrencyEssenceAnguish4": {
+      "chaos": 5.49,
+      "divine": 0.01617
+    },
+    "Metadata/Items/Currency/CurrencyEssenceHysteria1": {
+      "chaos": 41.91,
+      "divine": 0.13864
+    },
+    "Metadata/Items/Currency/CurrencyEssenceInsanity1": {
+      "chaos": 42.61,
+      "divine": 0.1334
+    },
+    "Metadata/Items/Currency/CurrencyEssenceHorror1": {
+      "chaos": 65.67,
+      "divine": 0.20698
+    },
+    "Metadata/Items/Currency/CurrencyEssenceDelirium1": {
+      "chaos": 52.5,
+      "divine": 0.15942
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingLightning": {
+      "chaos": 9.31,
+      "divine": 0.0602
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingPhysical": {
+      "chaos": 15.86,
+      "divine": 0.0597
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingLife": {
+      "chaos": 15.04,
+      "divine": 0.04981
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingDefences": {
+      "chaos": 33.09,
+      "divine": 0.08645
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingCold": {
+      "chaos": 9.15,
+      "divine": 0.03158
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingFire": {
+      "chaos": 9.95,
+      "divine": 0.03254
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingChaos": {
+      "chaos": 10.11,
+      "divine": 0.05621
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingMana": {
+      "chaos": 9.12,
+      "divine": 0.06667
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingMinionsAuras": {
+      "chaos": 9.77,
+      "divine": 0.04402
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingBleedPoison": {
+      "chaos": 29.96,
+      "divine": 0.08269
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingSpeed": {
+      "chaos": 44.22,
+      "divine": 0.08301
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingEnchant": {
+      "chaos": 13.87,
+      "divine": 0.04487
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingSockets": {
+      "chaos": 17.41,
+      "divine": 0.08947
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingLuckyModRolls": {
+      "chaos": 108.95,
+      "divine": 0.40865
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingSellPrice": {
+      "chaos": 89.14,
+      "divine": 0.21088
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingGemLevel": {
+      "chaos": 192.39,
+      "divine": 0.83483
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingMirror": {
+      "chaos": 41.18,
+      "divine": 0.15464
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingVaal": {
+      "chaos": 10.82,
+      "divine": null
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingAbyss": {
+      "chaos": 401.63,
+      "divine": 1.21105
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingCorruptEssence": {
+      "chaos": 60.51,
+      "divine": 0.25556
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "_note": "Values the default reference screens show; recompute, never hard-code.",
+  "fossil": {
+    "cheapestFeeder": "Lucent Fossil",
+    "loopEvChaos": 25.7,
+    "keepers": [
+      "Hollow",
+      "Faceted",
+      "Sanctified",
+      "Gilded",
+      "Glyphic",
+      "Fractured",
+      "Shuddering"
+    ],
+    "divLine": "1 div profit ≈ 15 feeders · ~378 rerolls · ~11,349 Wild"
+  },
+  "delirium": {
+    "keepers": [
+      "Diviner's",
+      "Skittering"
+    ]
+  },
+  "essence": {
+    "cheapestFeeder": "Deafening Essence of Torment",
+    "loopEvChaos": 6.3,
+    "keepers": [
+      "Scorn",
+      "Zeal",
+      "Rage",
+      "Misery",
+      "Envy",
+      "Loathing"
+    ]
+  },
+  "corrupt": {
+    "keepers": [
+      "Horror"
+    ]
+  }
+}

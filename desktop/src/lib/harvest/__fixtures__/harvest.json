@@ -1,0 +1,542 @@
+{
+  "families": [
+    {
+      "id": "delirium",
+      "label": "Delirium Orbs",
+      "lifeforce": "Primal",
+      "rerollCost": 30,
+      "weights": {
+        "sample": {
+          "rolls": 5122,
+          "lifeforceSpent": 153720,
+          "date": "2026-10-09",
+          "source": "requester's HarvestForge log"
+        },
+        "types": [
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbWeapons",
+            "name": "Blacksmith's Delirium Orb",
+            "shortName": "Blacksmith's",
+            "loggedRolls": 1066
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbArmour",
+            "name": "Armoursmith's Delirium Orb",
+            "shortName": "Armoursmith's",
+            "loggedRolls": 1093
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbTrinkets",
+            "name": "Jeweller's Delirium Orb",
+            "shortName": "Jeweller's",
+            "loggedRolls": 1103
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbCurrency",
+            "name": "Fine Delirium Orb",
+            "shortName": "Fine",
+            "loggedRolls": 937
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbDivinationCards",
+            "name": "Diviner's Delirium Orb",
+            "shortName": "Diviner's",
+            "loggedRolls": 262
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbMaps",
+            "name": "Cartographer's Delirium Orb",
+            "shortName": "Cartographer's",
+            "loggedRolls": 123
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbEssences",
+            "name": "Whispering Delirium Orb",
+            "shortName": "Whispering",
+            "loggedRolls": 147
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbUniques",
+            "name": "Singular Delirium Orb",
+            "shortName": "Singular",
+            "loggedRolls": 102
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbGems",
+            "name": "Thaumaturge's Delirium Orb",
+            "shortName": "Thaumaturge's",
+            "loggedRolls": 56
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbFragments",
+            "name": "Fragmented Delirium Orb",
+            "shortName": "Fragmented",
+            "loggedRolls": 134
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbBlight",
+            "name": "Blighted Delirium Orb",
+            "shortName": "Blighted",
+            "loggedRolls": 51
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbScarabs",
+            "name": "Skittering Delirium Orb",
+            "shortName": "Skittering",
+            "loggedRolls": 48
+          }
+        ]
+      },
+      "tiers": {
+        "boundariesChaos": [
+          41.5,
+          2.21
+        ],
+        "names": [
+          "HIGH",
+          "LOW",
+          "FLOOR"
+        ],
+        "topBoundaryChaos": null,
+        "byItem": {
+          "Metadata/Items/Currency/CurrencyAfflictionOrbWeapons": "LOW",
+          "Metadata/Items/Currency/CurrencyAfflictionOrbArmour": "LOW",
+          "Metadata/Items/Currency/CurrencyAfflictionOrbTrinkets": "LOW",
+          "Metadata/Items/Currency/CurrencyAfflictionOrbCurrency": "LOW",
+          "Metadata/Items/Currency/CurrencyAfflictionOrbDivinationCards": "HIGH",
+          "Metadata/Items/Currency/CurrencyAfflictionOrbMaps": "LOW",
+          "Metadata/Items/Currency/CurrencyAfflictionOrbEssences": "LOW",
+          "Metadata/Items/Currency/CurrencyAfflictionOrbUniques": "LOW",
+          "Metadata/Items/Currency/CurrencyAfflictionOrbGems": "LOW",
+          "Metadata/Items/Currency/CurrencyAfflictionOrbFragments": "LOW",
+          "Metadata/Items/Currency/CurrencyAfflictionOrbBlight": "LOW",
+          "Metadata/Items/Currency/CurrencyAfflictionOrbScarabs": "HIGH"
+        }
+      }
+    },
+    {
+      "id": "essence",
+      "label": "Deafening Essences",
+      "lifeforce": "Primal",
+      "rerollCost": 30,
+      "weights": {
+        "sample": {
+          "rolls": 5012,
+          "lifeforceSpent": 150420,
+          "date": "2026-10-09",
+          "source": "requester's HarvestForge log",
+          "uniform": true
+        },
+        "types": [
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceGreed7",
+            "name": "Deafening Essence of Greed",
+            "shortName": "Greed",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceContempt7",
+            "name": "Deafening Essence of Contempt",
+            "shortName": "Contempt",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceHatred7",
+            "name": "Deafening Essence of Hatred",
+            "shortName": "Hatred",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceWoe7",
+            "name": "Deafening Essence of Woe",
+            "shortName": "Woe",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceAnger6",
+            "name": "Deafening Essence of Anger",
+            "shortName": "Anger",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceWrath5",
+            "name": "Deafening Essence of Wrath",
+            "shortName": "Wrath",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceSorrow6",
+            "name": "Deafening Essence of Sorrow",
+            "shortName": "Sorrow",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceSpite4",
+            "name": "Deafening Essence of Spite",
+            "shortName": "Spite",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceScorn3",
+            "name": "Deafening Essence of Scorn",
+            "shortName": "Scorn",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceEnvy3",
+            "name": "Deafening Essence of Envy",
+            "shortName": "Envy",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceMisery3",
+            "name": "Deafening Essence of Misery",
+            "shortName": "Misery",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceDread3",
+            "name": "Deafening Essence of Dread",
+            "shortName": "Dread",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceZeal4",
+            "name": "Deafening Essence of Zeal",
+            "shortName": "Zeal",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceLoathing4",
+            "name": "Deafening Essence of Loathing",
+            "shortName": "Loathing",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceTorment6",
+            "name": "Deafening Essence of Torment",
+            "shortName": "Torment",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceFear6",
+            "name": "Deafening Essence of Fear",
+            "shortName": "Fear",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceRage5",
+            "name": "Deafening Essence of Rage",
+            "shortName": "Rage",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceDoubt5",
+            "name": "Deafening Essence of Doubt",
+            "shortName": "Doubt",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceSuffering5",
+            "name": "Deafening Essence of Suffering",
+            "shortName": "Suffering",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceAnguish4",
+            "name": "Deafening Essence of Anguish",
+            "shortName": "Anguish",
+            "loggedRolls": null
+          }
+        ]
+      },
+      "tiers": {
+        "boundariesChaos": [
+          12.05,
+          9.62,
+          1.1
+        ],
+        "names": [
+          "HIGH",
+          "MID-HIGH",
+          "LOW",
+          "FLOOR"
+        ],
+        "topBoundaryChaos": 26.93,
+        "byItem": {
+          "Metadata/Items/Currency/CurrencyEssenceGreed7": "LOW",
+          "Metadata/Items/Currency/CurrencyEssenceContempt7": "MID-HIGH",
+          "Metadata/Items/Currency/CurrencyEssenceHatred7": "LOW",
+          "Metadata/Items/Currency/CurrencyEssenceWoe7": "MID-HIGH",
+          "Metadata/Items/Currency/CurrencyEssenceAnger6": "LOW",
+          "Metadata/Items/Currency/CurrencyEssenceWrath5": "LOW",
+          "Metadata/Items/Currency/CurrencyEssenceSorrow6": "MID-HIGH",
+          "Metadata/Items/Currency/CurrencyEssenceSpite4": "MID-HIGH",
+          "Metadata/Items/Currency/CurrencyEssenceScorn3": "TOP",
+          "Metadata/Items/Currency/CurrencyEssenceEnvy3": "HIGH",
+          "Metadata/Items/Currency/CurrencyEssenceMisery3": "HIGH",
+          "Metadata/Items/Currency/CurrencyEssenceDread3": "LOW",
+          "Metadata/Items/Currency/CurrencyEssenceZeal4": "HIGH",
+          "Metadata/Items/Currency/CurrencyEssenceLoathing4": "HIGH",
+          "Metadata/Items/Currency/CurrencyEssenceTorment6": "LOW",
+          "Metadata/Items/Currency/CurrencyEssenceFear6": "LOW",
+          "Metadata/Items/Currency/CurrencyEssenceRage5": "HIGH",
+          "Metadata/Items/Currency/CurrencyEssenceDoubt5": "LOW",
+          "Metadata/Items/Currency/CurrencyEssenceSuffering5": "LOW",
+          "Metadata/Items/Currency/CurrencyEssenceAnguish4": "LOW"
+        }
+      }
+    },
+    {
+      "id": "corrupt",
+      "label": "Corrupted Essences",
+      "lifeforce": "Primal",
+      "rerollCost": 30,
+      "weights": {
+        "sample": {
+          "rolls": null,
+          "lifeforceSpent": null,
+          "date": null,
+          "source": "none — assumed uniform (owner, 2026-10-10)",
+          "uniform": true
+        },
+        "types": [
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceHysteria1",
+            "name": "Essence of Hysteria",
+            "shortName": "Hysteria",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceInsanity1",
+            "name": "Essence of Insanity",
+            "shortName": "Insanity",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceHorror1",
+            "name": "Essence of Horror",
+            "shortName": "Horror",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceDelirium1",
+            "name": "Essence of Delirium",
+            "shortName": "Delirium",
+            "loggedRolls": null
+          }
+        ]
+      },
+      "tiers": {
+        "boundariesChaos": [
+          65.67,
+          52.5,
+          4.05
+        ],
+        "names": [
+          "HIGH",
+          "MID-HIGH",
+          "LOW",
+          "FLOOR"
+        ],
+        "topBoundaryChaos": null,
+        "byItem": {
+          "Metadata/Items/Currency/CurrencyEssenceHysteria1": "LOW",
+          "Metadata/Items/Currency/CurrencyEssenceInsanity1": "LOW",
+          "Metadata/Items/Currency/CurrencyEssenceHorror1": "HIGH",
+          "Metadata/Items/Currency/CurrencyEssenceDelirium1": "MID-HIGH"
+        }
+      }
+    },
+    {
+      "id": "fossil",
+      "label": "Fossils",
+      "lifeforce": "Wild",
+      "rerollCost": 30,
+      "weights": {
+        "sample": {
+          "rolls": 5271,
+          "lifeforceSpent": 158910,
+          "date": "2026-10-09",
+          "source": "requester's HarvestForge log"
+        },
+        "types": [
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingLightning",
+            "name": "Metallic Fossil",
+            "shortName": "Metallic",
+            "loggedRolls": 535
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingPhysical",
+            "name": "Jagged Fossil",
+            "shortName": "Jagged",
+            "loggedRolls": 539
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingLife",
+            "name": "Pristine Fossil",
+            "shortName": "Pristine",
+            "loggedRolls": 577
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingDefences",
+            "name": "Dense Fossil",
+            "shortName": "Dense",
+            "loggedRolls": 550
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingCold",
+            "name": "Frigid Fossil",
+            "shortName": "Frigid",
+            "loggedRolls": 562
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingFire",
+            "name": "Scorched Fossil",
+            "shortName": "Scorched",
+            "loggedRolls": 577
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingChaos",
+            "name": "Aberrant Fossil",
+            "shortName": "Aberrant",
+            "loggedRolls": 557
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingMana",
+            "name": "Lucent Fossil",
+            "shortName": "Lucent",
+            "loggedRolls": 134
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingMinionsAuras",
+            "name": "Bound Fossil",
+            "shortName": "Bound",
+            "loggedRolls": 122
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingBleedPoison",
+            "name": "Corroded Fossil",
+            "shortName": "Corroded",
+            "loggedRolls": 129
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingSpeed",
+            "name": "Shuddering Fossil",
+            "shortName": "Shuddering",
+            "loggedRolls": 131
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingEnchant",
+            "name": "Deft Fossil",
+            "shortName": "Deft",
+            "loggedRolls": 126
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingSockets",
+            "name": "Fundamental Fossil",
+            "shortName": "Fundamental",
+            "loggedRolls": 142
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingLuckyModRolls",
+            "name": "Sanctified Fossil",
+            "shortName": "Sanctified",
+            "loggedRolls": 11
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingSellPrice",
+            "name": "Gilded Fossil",
+            "shortName": "Gilded",
+            "loggedRolls": 11
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingGemLevel",
+            "name": "Faceted Fossil",
+            "shortName": "Faceted",
+            "loggedRolls": 5
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingMirror",
+            "name": "Fractured Fossil",
+            "shortName": "Fractured",
+            "loggedRolls": 5
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingVaal",
+            "name": "Bloodstained Fossil",
+            "shortName": "Bloodstained",
+            "loggedRolls": 2
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingAbyss",
+            "name": "Hollow Fossil",
+            "shortName": "Hollow",
+            "loggedRolls": 1
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingCorruptEssence",
+            "name": "Glyphic Fossil",
+            "shortName": "Glyphic",
+            "loggedRolls": 4
+          }
+        ]
+      },
+      "tiers": {
+        "boundariesChaos": [
+          192.39,
+          29.96,
+          7.92
+        ],
+        "names": [
+          "HIGH",
+          "MID",
+          "LOW",
+          "FLOOR"
+        ],
+        "topBoundaryChaos": 401.63,
+        "byItem": {
+          "Metadata/Items/Currency/CurrencyDelveCraftingLightning": "LOW",
+          "Metadata/Items/Currency/CurrencyDelveCraftingPhysical": "LOW",
+          "Metadata/Items/Currency/CurrencyDelveCraftingLife": "LOW",
+          "Metadata/Items/Currency/CurrencyDelveCraftingDefences": "MID",
+          "Metadata/Items/Currency/CurrencyDelveCraftingCold": "LOW",
+          "Metadata/Items/Currency/CurrencyDelveCraftingFire": "LOW",
+          "Metadata/Items/Currency/CurrencyDelveCraftingChaos": "LOW",
+          "Metadata/Items/Currency/CurrencyDelveCraftingMana": "LOW",
+          "Metadata/Items/Currency/CurrencyDelveCraftingMinionsAuras": "LOW",
+          "Metadata/Items/Currency/CurrencyDelveCraftingBleedPoison": "MID",
+          "Metadata/Items/Currency/CurrencyDelveCraftingSpeed": "MID",
+          "Metadata/Items/Currency/CurrencyDelveCraftingEnchant": "LOW",
+          "Metadata/Items/Currency/CurrencyDelveCraftingSockets": "LOW",
+          "Metadata/Items/Currency/CurrencyDelveCraftingLuckyModRolls": "MID",
+          "Metadata/Items/Currency/CurrencyDelveCraftingSellPrice": "MID",
+          "Metadata/Items/Currency/CurrencyDelveCraftingGemLevel": "HIGH",
+          "Metadata/Items/Currency/CurrencyDelveCraftingMirror": "MID",
+          "Metadata/Items/Currency/CurrencyDelveCraftingVaal": "LOW",
+          "Metadata/Items/Currency/CurrencyDelveCraftingAbyss": "TOP",
+          "Metadata/Items/Currency/CurrencyDelveCraftingCorruptEssence": "MID"
+        }
+      }
+    },
+    {
+      "id": "astrolabe",
+      "label": "Astrolabes",
+      "weights": null,
+      "_note": "No HarvestForge log yet → the tab shows 'no data' and the 'reroll weights not logged yet' panel (reference 06). Never hide the tab."
+    },
+    {
+      "id": "oil",
+      "label": "Oils",
+      "weights": null,
+      "_note": "No HarvestForge log yet → the tab shows 'no data' and the 'reroll weights not logged yet' panel (reference 06). Never hide the tab."
+    },
+    {
+      "id": "catalyst",
+      "label": "Catalysts",
+      "weights": null,
+      "_note": "No HarvestForge log yet → the tab shows 'no data' and the 'reroll weights not logged yet' panel (reference 06). Never hide the tab."
+    }
+  ]
+}
