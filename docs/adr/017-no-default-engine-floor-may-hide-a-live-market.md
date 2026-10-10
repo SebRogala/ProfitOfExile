@@ -349,3 +349,7 @@ of gated on.**
   reorientation). The wire shape is pinned in
   `TestResult_marshalsWithTheFieldNamesTheHandlerPublishes` and
   `TestCurrencyExchangePlays_legsCarryDisplayDataBesideTheRawFeedIDs`.
+
+## References
+
+- [ADR-026](026-price-tiering-is-one-leaf-package-callers-own-eligibility-and-cutoff.md) — the zero tier `Policy` applies no price cutoff; Lab's 5c is an explicit Lab parameter

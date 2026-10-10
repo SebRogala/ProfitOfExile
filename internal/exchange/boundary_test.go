@@ -21,8 +21,9 @@ import (
 // rather than joins; the Mercure stamping adapter that legitimately needs both
 // lives in cmd/collector. internal/lab is the gem-farming analysis stack — the
 // best-plays engine scores the currency feed on its own terms and must not
-// borrow lab's scoring, tiering or signal vocabulary (see
-// internal/exchange/doc.go and docs/adr/008-current-go-package-architecture.md).
+// borrow lab's scoring or signal vocabulary (see internal/exchange/doc.go and
+// docs/adr/008-current-go-package-architecture.md). Price tiering is not lab's:
+// it lives in internal/price/tier, which this package may import (ADR-026).
 var forbiddenImports = []string{
 	"profitofexile/internal/collector",
 	"profitofexile/internal/lab",

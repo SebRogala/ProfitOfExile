@@ -47,3 +47,7 @@ The existing feature packages are the current package architecture.
 - Composition in `cmd/server/main.go` and `cmd/collector/main.go`.
 - Router and handlers under `internal/server`.
 - [Historical rewrite baseline](../history/architecture-rewrite-2026-03-12.md).
+
+## References
+
+- [ADR-026](026-price-tiering-is-one-leaf-package-callers-own-eligibility-and-cutoff.md) — the package list gains `internal/price/tier`, justified by the exchange import boundary

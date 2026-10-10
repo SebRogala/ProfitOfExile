@@ -29,8 +29,10 @@
 // (docs/adr/008-current-go-package-architecture.md). The layering rules the
 // compiler cannot enforce: this package must never import internal/collector,
 // and never internal/lab either — the engine scores the currency feed on its own
-// terms rather than borrowing the gem stack's scoring vocabulary. The Mercure
-// stamping adapters that need both live in cmd/collector and cmd/server.
+// terms rather than borrowing the gem stack's scoring vocabulary. It may import
+// internal/price/tier, the shared price-tier package; a tier label attached here
+// is a flag, never a sort key (docs/adr/026-*.md). The Mercure stamping adapters
+// that need both live in cmd/collector and cmd/server.
 //
 // # Engine
 //

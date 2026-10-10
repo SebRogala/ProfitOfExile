@@ -93,3 +93,4 @@ Keep trade data integration in HTTP handlers (like the existing compare endpoint
 
 - POE-101 — epic that prompted this decision
 - [ADR-002](002-internal-architecture-hexagonal-cqrs-vertical-slice.md) — hexagonal architecture that this pipeline follows
+- [ADR-026](026-price-tiering-is-one-leaf-package-callers-own-eligibility-and-cutoff.md) — price tiering moved to `internal/price/tier`; this ADR's tier step now runs through it
