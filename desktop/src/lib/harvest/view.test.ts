@@ -1429,23 +1429,64 @@ describe('Astrolabes, Oils and Catalysts on the committed fixture (WI-2b)', () =
 	const allChips = (b: FamilyBody) =>
 		[b.feeders, b.keepers].flatMap((c) => [...c.cards.flatMap((card) => card.chips), ...c.untiered]);
 
-	const untieredChip = (b: FamilyBody, itemId: string) =>
-		[...b.feeders.untiered, ...b.keepers.untiered].find((c) => c.itemId === itemId);
+	/** The chip of `itemId` on the FLOOR card, or undefined when that card does not list it. */
+	const floorChip = (b: FamilyBody, itemId: string) =>
+		[...b.feeders.cards, ...b.keepers.cards]
+			.find((card) => card.tier === 'FLOOR')
+			?.chips.find((c) => c.itemId === itemId);
 
 	/** The tier of the card that lists `itemId`, or null when no card does. */
 	const cardTierOf = (b: FamilyBody, itemId: string) =>
 		[...b.feeders.cards, ...b.keepers.cards].find((card) => card.chips.some((c) => c.itemId === itemId))?.tier ??
 		null;
 
-	// ADR-017: a sub-5c type the server leaves untiered is listed priced, never hidden.
-	it('lists Clear Oil (0.25c, no tier) untiered at 0.3c', async () => {
-		const chip = untieredChip(await body('oil'), 'Metadata/Items/Currency/Mushrune1');
+	// P49: Harvest tiers have no price cutoff, so the sub-5c types are carded, priced, under FLOOR.
+	it('cards Clear Oil (0.25c) under FLOOR at 0.3c', async () => {
+		const chip = floorChip(await body('oil'), 'Metadata/Items/Currency/Mushrune1');
 		expect([chip?.priceText, chip?.unpriced]).toEqual(['0.3c', false]);
 	});
 
-	it('lists Intrinsic Catalyst (no tier) untiered and priced', async () => {
-		const chip = untieredChip(await body('catalyst'), 'Metadata/Items/Currency/CurrencyJewelleryQualityAttribute');
+	it('cards Intrinsic Catalyst under FLOOR, priced', async () => {
+		const chip = floorChip(await body('catalyst'), 'Metadata/Items/Currency/CurrencyJewelleryQualityAttribute');
 		expect(chip?.unpriced).toBe(false);
+	});
+
+	// The 14 types at or below 5c (harvest.json weights), written out.
+	const SUB_5C = [
+		...['1', '2', '3', '4', '5', '6', '6b', '7'].map((n) => ['oil', `Metadata/Items/Currency/Mushrune${n}`]),
+		...['Attack', 'Attribute', 'Caster', 'Elemental', 'PhysicalChaos', 'Speed'].map((s) => [
+			'catalyst',
+			`Metadata/Items/Currency/CurrencyJewelleryQuality${s}`
+		])
+	];
+
+	it.each(SUB_5C)('cards the sub-5c %s type %s under FLOOR', async (id, itemId) => {
+		expect(cardTierOf(await body(id), itemId)).toBe('FLOOR');
+	});
+
+	it.each(['oil', 'catalyst'])('lists no untiered %s type on either side', async (id) => {
+		const b = await body(id);
+		expect([...b.feeders.untiered, ...b.keepers.untiered].map((c) => c.itemId)).toEqual([]);
+	});
+
+	// regen/tier-output.json nocutoff: the FLOOR oils are the 8 sub-5c ones plus Mushrune8.
+	const FLOOR_OILS = ['1', '2', '3', '4', '5', '6', '6b', '7', '8'].map((n) => `Metadata/Items/Currency/Mushrune${n}`);
+	const FLOOR_CATALYSTS = ['Attack', 'Attribute', 'Caster', 'Elemental', 'PhysicalChaos', 'Speed'].map(
+		(s) => `Metadata/Items/Currency/CurrencyJewelleryQuality${s}`
+	);
+
+	it('moveTier feeds exactly the nine FLOOR Oils', async () => {
+		const { exchange, harvest } = await readModels();
+		const oil = harvest.families.find((f) => f.id === 'oil')!;
+		const moved = moveTier({}, oil, 'FLOOR', 'reroll', exchange.prices);
+		expect(moved.oil).toEqual(Object.fromEntries(FLOOR_OILS.map((id) => [id, 'reroll'])));
+	});
+
+	it('moveTier feeds exactly the six FLOOR Catalysts', async () => {
+		const { exchange, harvest } = await readModels();
+		const catalyst = harvest.families.find((f) => f.id === 'catalyst')!;
+		const moved = moveTier({}, catalyst, 'FLOOR', 'reroll', exchange.prices);
+		expect(moved.catalyst).toEqual(Object.fromEntries(FLOOR_CATALYSTS.map((id) => [id, 'reroll'])));
 	});
 
 	it.each([

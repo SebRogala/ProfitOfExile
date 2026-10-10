@@ -78,8 +78,12 @@ describe('harvest fixture adapter', () => {
 	it.each([
 		['oil', 'Metadata/Items/Currency/Mushrune1'],
 		['catalyst', 'Metadata/Items/Currency/CurrencyJewelleryQualityAttribute']
-	])('leaves the sub-5c %s type %s without a tier', async (id, itemId) => {
-		expect(Object.hasOwn((await family(id)).tiers!.byItem, itemId)).toBe(false);
+	])('tiers the sub-5c %s type %s as FLOOR', async (id, itemId) => {
+		expect((await family(id)).tiers!.byItem[itemId]).toBe('FLOOR');
+	});
+
+	it('serves the catalyst boundaries with no price cutoff', async () => {
+		expect((await family('catalyst')).tiers!.boundariesChaos).toEqual([99.65, 2.69]);
 	});
 
 	it('serves Delirium Orbs as twelve types', async () => {
