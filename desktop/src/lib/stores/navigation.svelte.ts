@@ -22,7 +22,14 @@
  */
 import { persisted } from '$lib/prefs.svelte';
 
-export type View = 'lab' | 'settings' | 'dev' | 'mercenaries' | 'temple' | 'currency-exchange';
+export type View =
+	| 'lab'
+	| 'settings'
+	| 'dev'
+	| 'mercenaries'
+	| 'temple'
+	| 'currency-exchange'
+	| 'harvest-flipping';
 
 /**
  * The path each view answers to. These strings are the Sidebar's keys — it
@@ -40,6 +47,7 @@ export const VIEW_PATHS: Record<View, string> = {
 	mercenaries: '/mercenaries',
 	temple: '/temple',
 	'currency-exchange': '/currency-exchange',
+	'harvest-flipping': '/harvest-flipping',
 };
 
 /** The path for a view — the inverse of `go` for every path `go` recognises. */

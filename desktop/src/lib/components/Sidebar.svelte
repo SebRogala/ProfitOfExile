@@ -5,7 +5,8 @@
 		hasFeature,
 		MERC_FEATURE,
 		EXCHANGE_FEATURE,
-		TEMPLE_FEATURE
+		TEMPLE_FEATURE,
+		BETA_FEATURE
 	} from '$lib/stores/entitlements.svelte';
 
 	// --- Modules (SSOT) ---
@@ -46,6 +47,9 @@
 
 	/** Whether this device may see the Currency Exchange page. */
 	const exchangeGranted = $derived(hasFeature(EXCHANGE_FEATURE));
+
+	/** Whether this device may see the Harvest Flipping page (beta, POE-283). */
+	const harvestGranted = $derived(hasFeature(BETA_FEATURE));
 
 	/**
 	 * The module switches this device may see, in registry order. Derived rather
@@ -125,6 +129,11 @@
 		{#if exchangeGranted}
 			<button class="collapsed-item" class:active={currentPath === '/currency-exchange'} title="Currency Exchange" onclick={() => nav.go('/currency-exchange')}>
 				<span class="icon">&#x1F4B1;</span>
+			</button>
+		{/if}
+		{#if harvestGranted}
+			<button class="collapsed-item" class:active={currentPath === '/harvest-flipping'} title="Harvest Flipping" onclick={() => nav.go('/harvest-flipping')}>
+				<img src="/harvest-flipping-icon.png" alt="Harvest Flipping" class="lab-icon" />
 			</button>
 		{/if}
 		{#if import.meta.env.DEV}
@@ -211,6 +220,12 @@
 				<button class="nav-item" class:active={currentPath === '/currency-exchange'} onclick={() => nav.go('/currency-exchange')}>
 					<span class="icon">&#x1F4B1;</span>
 					<span>Currency Exchange</span>
+				</button>
+			{/if}
+			{#if harvestGranted}
+				<button class="nav-item" class:active={currentPath === '/harvest-flipping'} onclick={() => nav.go('/harvest-flipping')}>
+					<img src="/harvest-flipping-icon.png" alt="" class="lab-icon-expanded" style="height: 18px" />
+					<span>Harvest Flipping</span>
 				</button>
 			{/if}
 			{#if import.meta.env.DEV}

@@ -14,7 +14,8 @@
 		hasFeature,
 		MERC_FEATURE,
 		EXCHANGE_FEATURE,
-		TEMPLE_FEATURE
+		TEMPLE_FEATURE,
+		BETA_FEATURE
 	} from '$lib/stores/entitlements.svelte';
 	import {
 		LAB_WINDOW_LABEL,
@@ -40,6 +41,7 @@
 	import MercenariesPage from '$lib/pages/MercenariesPage.svelte';
 	import TemplePage from '$lib/pages/TemplePage.svelte';
 	import CurrencyExchangePage from '$lib/pages/CurrencyExchangePage.svelte';
+	import HarvestFlippingPage from '$lib/pages/HarvestFlippingPage.svelte';
 	import DevPage from '$lib/pages/DevPage.svelte';
 	import IdentifyDialog from '$lib/components/IdentifyDialog.svelte';
 
@@ -50,7 +52,7 @@
 
 	/**
 	 * The feature each hidden view is gated on (POE-203). A view absent from this
-	 * map is visible to every device; the three listed here are drawn only where
+	 * map is visible to every device; the four listed here are drawn only where
 	 * the server granted the named feature — hiding, not securing: the code ships
 	 * in every build.
 	 *
@@ -61,7 +63,8 @@
 	const VIEW_FEATURES: Partial<Record<View, string>> = {
 		mercenaries: MERC_FEATURE,
 		temple: TEMPLE_FEATURE,
-		'currency-exchange': EXCHANGE_FEATURE
+		'currency-exchange': EXCHANGE_FEATURE,
+		'harvest-flipping': BETA_FEATURE
 	};
 
 	/** Whether this device may see a view. Reactive — `hasFeature` reads the store. */
@@ -76,6 +79,8 @@
 	let templeGranted = $derived(viewGranted('temple'));
 	/** Gates the Currency Exchange page (no overlay, no module). */
 	let exchangeGranted = $derived(viewGranted('currency-exchange'));
+	/** Gates the Harvest Flipping page (beta, POE-283; no overlay, no module). */
+	let harvestGranted = $derived(viewGranted('harvest-flipping'));
 
 	/**
 	 * The view actually on screen.
@@ -690,6 +695,11 @@
 			{#if exchangeGranted}
 				<div class:view-hidden={visibleView !== 'currency-exchange'}>
 					<CurrencyExchangePage />
+				</div>
+			{/if}
+			{#if harvestGranted}
+				<div class:view-hidden={visibleView !== 'harvest-flipping'}>
+					<HarvestFlippingPage />
 				</div>
 			{/if}
 			{#if import.meta.env.DEV}

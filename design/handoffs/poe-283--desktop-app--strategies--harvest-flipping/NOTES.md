@@ -125,9 +125,9 @@ Orchestrator rulings from written authorities, agreed by the Supervisor ("C1-C4 
 - **C3 — default horizon.** `'day'`, under its own pref `harvestFlippingHorizon`. The parser falls back to `'day'`, not to CX's `'recent'`. Sources: `fixtures.json` `"horizon": "day"`; references 01 and 08 show Day 24h; audit Medium 9.
 - **C4 — divine-scale rounding.** `rerolls = round(feeders × N)` and `lifeforce = round(feeders × N × 30)` from the unrounded `N`. Sources: CHECKLIST (acceptance contract) and `derived.fossil.divLine` (~11,349); the README wording is under Ticket updates needed (item 2).
 
-### D5 — divine-rate interim
+### D5 — one divine rate (the shared store)
 
-One current divine rate feeds both the status line ("1 div = 360c") and the divine-scale calculation. The controller takes a dependency `divineRate: () => number | null` and uses `divineRate() ?? exchange.divineChaosRate`. Until WI-10, production `divineRate` returns `null`, so the rate is this lane's CX fixture seam (`ExchangePriceRead.divineChaosRate`, 360.07). WI-10 switches production `divineRate` to POE-284's shared divine-rate store (`$lib/stores/divine-rate.svelte`, `currentDivineRate()`), read-only, so the top bar and Harvest never show two different rates. Sources: plan D5 and R2-1; run record SUPERVISOR STATUS 2026-10-09T23:59:54Z and GO (store API path). WI-10 updates this section when the switch lands.
+One current divine rate feeds both the status line ("1 div = 360c") and the divine-scale calculation. The controller takes a dependency `divineRate: () => number | null` and uses `divineRate() ?? exchange.divineChaosRate`. Since WI-10, production `divineRate` is `currentDivineRate()` from POE-284's shared store (`$lib/stores/divine-rate.svelte`), read-only — the rate the top-bar chip shows — so the top bar and Harvest never show two different rates. The exchange seam's `ExchangePriceRead.divineChaosRate` (fixture 360.07) stands in only while that store is cold (`null`). A store rate that moves (400 → 300) moves both lines without a reload (`controller.svelte.test.ts`, "the shared divine rate"). Sources: plan D5 and R2-1; run record SUPERVISOR STATUS 2026-10-09T23:59:54Z and GO (store API path).
 
 ## Designer items
 
@@ -136,6 +136,9 @@ Accepted by the Supervisor (WI-6 answer, run record after 09:26:43Z), recorded f
 - **Q2 — empty feed set has no reason line.** When the feed set is empty, the verdict shows no reason line; nothing is composed. The drawn column text "No feeders: every tier is kept." carries it. Reference 08 §7 draws only the empty-keep-set reason.
 - **Q5 — plural unpriced note.** With two or more unpriced types, the EV-panel floor note uses a mechanical plural of the drawn singular sentence ("1 unpriced type counted as 0c, so this EV is a floor…"). It is not a new state.
 - **Q6 — untiered chips.** A type with no `tiers.byItem` entry is listed plainly in its column (same chip, no new card style, no invented header), never hidden (ADR-017 visibility).
+- **Clipboard write failure has no drawn state (WI-8).** When the clipboard write is refused, the app logs a warning (`console.warn`) and the button stays "Copy"; nothing else is shown (Supervisor ruling). A drawn error state is a designer item if wanted.
+- **Before any port answers, no tabs (WI-8).** The tabs come from the Harvest server read, so before either owner answers the page shows the drawn "Loading…" line and the skeleton panel without tabs; once the Harvest read lands, tabs show while prices load (ref 08 §1). Reference 08 §1 assumes tabs ship with the app; a drawn pre-tab loading state, or tab labels shipped with the app, is a designer item.
+- **Horizon control has no tooltip (WI-8).** The undrawn `title` on the Prices segmented control was dropped (Supervisor ruling); only the "Prices" label and the two options are shown.
 - **Designer intake — "prices unavailable" no-data variant (Q7).** The no-data panel is drawn only for families without weights (ref 06, ref 08 §9). Engine results whose numbers are unusable reuse its text (see PENDING OPERATOR). A drawn "prices unavailable" variant of the panel is requested.
 
 ## PENDING OPERATOR

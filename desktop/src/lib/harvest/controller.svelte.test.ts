@@ -8,11 +8,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CurrencyExchangeHorizon } from '$lib/exchange/view';
 import type { PersistedString } from '$lib/prefs.svelte';
-import { createHarvestController, type HarvestControllerDependencies } from './controller.svelte';
+import { divineRate as sharedDivineRate } from '$lib/stores/divine-rate.svelte';
+import {
+	createHarvestController,
+	productionDependencies,
+	type HarvestControllerDependencies
+} from './controller.svelte';
 import type { ExchangePriceRead, HarvestFamilyData } from './seam';
 import { createExchangeFixture } from './sources/exchange-fixture';
 import { loadHarvestFamilies } from './sources/harvest-fixture';
 import type { FamilyBody } from './view';
+
+// `productionDependencies()` builds real `persisted()` prefs, which ask Tauri for the map.
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => ({})) }));
 
 const NOW = new Date('2026-09-10T00:00:00Z');
 const DELAY_MS = 3000;
@@ -501,6 +509,88 @@ describe('createHarvestController — one divine rate', () => {
 		await answer(h, 0);
 
 		expect(body(controller).verdict.divineLine).toContain('29 feeders');
+	});
+});
+
+describe('createHarvestController — the shared divine rate (POE-284 store)', () => {
+	/** A `divineRate` backed by a `$state` value, as the shared store's reactive snapshot is. */
+	function sharedRate(initial: number) {
+		let rate = $state(initial);
+		return {
+			read: () => rate,
+			set: (next: number) => {
+				rate = next;
+			}
+		};
+	}
+
+	async function withSharedRate(initial: number) {
+		const h = harness();
+		const shared = sharedRate(initial);
+		h.dependencies.divineRate = shared.read;
+		const controller = createHarvestController(h.dependencies);
+		controller.start();
+		horizonEffect(controller);
+		await answer(h, 0);
+		return { h, controller, shared };
+	}
+
+	it('a shared rate of 400 reads 1 div = 400c in the status line', async () => {
+		const { controller } = await withSharedRate(400);
+		expect(controller.view.status?.text).toContain('1 div = 400c');
+	});
+
+	it('a shared rate of 400 gives the fossil divine line 16 feeders', async () => {
+		const { controller } = await withSharedRate(400);
+		expect(body(controller).verdict.divineLine).toContain('≈ 16 feeders');
+	});
+
+	it('the shared rate moving to 300 reads 1 div = 300c', async () => {
+		const { controller, shared } = await withSharedRate(400);
+
+		shared.set(300);
+
+		expect(controller.view.status?.text).toContain('1 div = 300c');
+	});
+
+	it('the shared rate moving reloads neither owner port', async () => {
+		const { h, controller, shared } = await withSharedRate(400);
+		const before = { exchange: h.exchangeCalls.length, harvest: h.harvestCalls.length };
+
+		shared.set(300);
+		void controller.view;
+		horizonEffect(controller);
+		await settle();
+
+		expect({ exchange: h.exchangeCalls.length, harvest: h.harvestCalls.length }).toEqual(before);
+	});
+
+	it('production divineRate answers the shared store rate', () => {
+		const held = sharedDivineRate.divineChaosRate;
+		sharedDivineRate.divineChaosRate = 400;
+		try {
+			expect(productionDependencies().divineRate()).toBe(400);
+		} finally {
+			sharedDivineRate.divineChaosRate = held;
+		}
+	});
+
+	it('production divineRate answers null while the shared store is cold', () => {
+		const held = sharedDivineRate.divineChaosRate;
+		sharedDivineRate.divineChaosRate = null;
+		try {
+			expect(productionDependencies().divineRate()).toBeNull();
+		} finally {
+			sharedDivineRate.divineChaosRate = held;
+		}
+	});
+
+	it('the shared rate moving to 300 gives the fossil divine line 12 feeders', async () => {
+		const { controller, shared } = await withSharedRate(400);
+
+		shared.set(300);
+
+		expect(body(controller).verdict.divineLine).toContain('≈ 12 feeders');
 	});
 });
 

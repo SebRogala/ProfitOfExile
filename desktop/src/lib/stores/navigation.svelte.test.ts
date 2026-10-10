@@ -13,6 +13,14 @@ import { VIEW_PATHS, type View } from './navigation.svelte';
  * `invoke`, so it is mocked. And both modules hold module-level state — the
  * pref's loaded map, its per-key dirty flag — so each test imports a fresh store
  * rather than inheriting whatever the previous one parked it on.
+ *
+ * A fresh module is not enough on its own: `vi.resetModules()` does not reset
+ * the `invoke` mock, and a `go` schedules its `set_ui_pref` write on a 300 ms
+ * timer that outlives its test. On real timers that write lands in whichever
+ * later test is running when the wall clock reaches 300 ms — under a loaded
+ * full-suite run, the `persists …` tests below, which then saw an extra
+ * `navView` write (reproduced by delaying one of them 350 ms). So every test
+ * runs on fake timers and `afterEach` drops whatever is still pending.
  */
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => ({})) }));
 
@@ -31,11 +39,13 @@ let invokeMock: ReturnType<typeof vi.mocked<typeof import('@tauri-apps/api/core'
 beforeEach(async () => {
 	vi.resetModules();
 	vi.clearAllMocks();
+	vi.useFakeTimers();
 	const core = await import('@tauri-apps/api/core');
 	invokeMock = vi.mocked(core.invoke);
 });
 
 afterEach(() => {
+	vi.clearAllTimers();
 	vi.useRealTimers();
 });
 
@@ -44,9 +54,9 @@ function callsOf(command: string): unknown[] {
 	return invokeMock.mock.calls.filter((c) => c[0] === command).map((c) => c[1]);
 }
 
-/** Yield to the macrotask queue, which drains the prefs load's promise chain. */
-function settle(): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, 0));
+/** Drain the prefs load's promise chain (timers are fake in every test). */
+async function settle(): Promise<void> {
+	await vi.advanceTimersByTimeAsync(0);
 }
 
 /** A fresh store whose prefs load has already answered with `prefs`. */
@@ -154,6 +164,11 @@ describe('viewToPath', () => {
 		const { viewToPath } = await loadStoreWith({});
 		expect(viewToPath('currency-exchange')).toBe('/currency-exchange');
 	});
+
+	it("maps 'harvest-flipping' to '/harvest-flipping', the path both Sidebar buttons go to", async () => {
+		const { viewToPath } = await loadStoreWith({});
+		expect(viewToPath('harvest-flipping')).toBe('/harvest-flipping');
+	});
 });
 
 describe('go', () => {
@@ -170,6 +185,12 @@ describe('go', () => {
 		const mod = await storeSeededAwayFrom(view);
 		mod.nav.go(mod.viewToPath(view));
 		expect(mod.nav.view).toBe(view);
+	});
+
+	it("selects 'harvest-flipping' from the literal Sidebar path '/harvest-flipping'", async () => {
+		const mod = await loadStoreWith({ navView: 'lab' });
+		mod.nav.go('/harvest-flipping');
+		expect(mod.nav.view).toBe('harvest-flipping');
 	});
 
 	it("falls back to 'lab' for a path no view claims", async () => {
@@ -283,5 +304,23 @@ describe('a pick made before the prefs load lands', () => {
 		const { mod, deliver } = await loadStorePending();
 		await deliver({ navView: 'temple' });
 		expect(mod.nav.view).toBe('temple');
+	});
+});
+
+describe('test isolation', () => {
+	// These two run in order. The first leaves a debounced write pending; the
+	// second waits past the debounce on the real clock and must not receive it.
+	// On real timers the first test's write fires into the second.
+	it('leaves a navView write pending when it ends', async () => {
+		const mod = await loadStoreWith({});
+		mod.nav.go('/settings');
+		expect(callsOf('set_ui_pref')).toEqual([]);
+	});
+
+	it("does not receive the previous test's pending navView write", async () => {
+		await loadStoreWith({});
+		vi.useRealTimers();
+		await new Promise((resolve) => setTimeout(resolve, 350));
+		expect(callsOf('set_ui_pref')).toEqual([]);
 	});
 });

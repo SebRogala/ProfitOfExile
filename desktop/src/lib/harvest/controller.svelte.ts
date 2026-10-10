@@ -15,12 +15,15 @@
  * together, so one view never mixes two refreshes.
  *
  * D5: `currentDivineRate` is the one rate the status line and the engine's
- * divine-scale line read. `dependencies.divineRate()` wins when it answers;
- * until WI-10 production answers `null`, so the rate is the exchange seam's.
+ * divine-scale line read. `dependencies.divineRate()` wins when it answers:
+ * production reads POE-284's shared store (`currentDivineRate()`, the top-bar
+ * chip's rate), and only while that store is cold (`null`) does the exchange
+ * seam's `divineChaosRate` stand in.
  */
 import { listen } from '@tauri-apps/api/event';
 import { refetchDelay, type CurrencyExchangeHorizon } from '$lib/exchange/view';
 import { persisted, type PersistedString } from '$lib/prefs.svelte';
+import { currentDivineRate } from '$lib/stores/divine-rate.svelte';
 import type { Pick } from './engine';
 import type { ExchangePriceRead, HarvestFamilyData, LoadExchangePrices, LoadHarvestFamilies } from './seam';
 import { loadExchangePrices } from './sources/exchange-fixture';
@@ -68,7 +71,7 @@ export interface HarvestControllerDependencies {
 	clearInterval: (timer: ReturnType<typeof setInterval>) => void;
 	writeClipboard: (text: string) => Promise<void>;
 	now: () => Date;
-	/** D5: the shared divine rate, `null` when unknown. Production answers `null` until WI-10. */
+	/** D5: the shared divine rate, `null` when unknown. Production reads `$lib/stores/divine-rate.svelte`, read-only. */
 	divineRate: () => number | null;
 }
 
@@ -90,7 +93,7 @@ export function productionDependencies(): HarvestControllerDependencies {
 		clearInterval: (timer) => clearInterval(timer),
 		writeClipboard: (text) => navigator.clipboard.writeText(text),
 		now: () => new Date(),
-		divineRate: () => null
+		divineRate: () => currentDivineRate()
 	};
 }
 
