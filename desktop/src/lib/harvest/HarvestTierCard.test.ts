@@ -21,7 +21,7 @@ function chip(shortName: string, priceText: string): Chip {
 		priceText,
 		unpriced: false,
 		picked: false,
-		pickTitle: null,
+		title: `Fed (engine) — click to keep just ${shortName} Fossil`,
 		evText: '+1.8c',
 		evTone: 'gain',
 		shareText: null
@@ -33,6 +33,7 @@ const FEEDER_MID: TierCard = {
 	split: true,
 	meta: '7 types · 30.0c–109c',
 	moveLabel: '← Keep tier',
+	movable: true,
 	moveTo: 'keep',
 	chips: [chip('Dense', '33.1c'), chip('Corroded', '30.0c')]
 };
@@ -42,6 +43,7 @@ const KEEPER_TOP: TierCard = {
 	split: false,
 	meta: '1 type · 402c',
 	moveLabel: 'Feed tier →',
+	movable: true,
 	moveTo: 'reroll',
 	chips: [{ ...chip('Hollow', '402c'), evText: null, evTone: null, shareText: '0.02%' }]
 };
@@ -87,6 +89,10 @@ describe('HarvestTierCard', () => {
 
 	it('labels a keeper card move button "Feed tier →"', () => {
 		expect(moveButtons(html(KEEPER_TOP))).toEqual(['Feed tier →']);
+	});
+
+	it('draws no move button on a card that cannot move (reference 08 §5)', () => {
+		expect(moveButtons(html({ ...KEEPER_TOP, movable: false }))).toEqual([]);
 	});
 
 	it('draws exactly one chip per prop chip, in prop order', () => {

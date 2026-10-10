@@ -27,9 +27,10 @@ export interface StashRegex {
 
 /**
  * Shortest unique run of `name` among `others`. A name with no unique run (it
- * is contained in another name) breaks the generator's uniqueness invariant,
- * so it throws naming the type rather than widening or dropping its search.
- * No current fixture family reaches this: all 56 weighted types have a unique run.
+ * is contained in another name) falls back to its whole lowercase name, as the
+ * prototype's `frag` does (line 376): the regex is built inside the page's
+ * render, so a throw would blank the page over live data. No current fixture
+ * family reaches this: all 56 weighted types have a unique run.
  */
 function fragment(name: string, others: string[]): string {
 	const lower = name.toLowerCase();
@@ -41,7 +42,7 @@ function fragment(name: string, others: string[]): string {
 			if (lowerOthers.every((o) => !o.includes(run))) return run;
 		}
 	}
-	throw new Error(`stashRegex: no unique fragment of at least ${MIN_FRAGMENT} letters for "${name}"`);
+	return lower;
 }
 
 /**
@@ -53,6 +54,7 @@ export function stashRegex(names: string[], familyNames: string[]): StashRegex {
 	const fragments = familyNames
 		.filter((name) => chosen.has(name))
 		.map((name) => fragment(name, familyNames.filter((other) => other !== name)));
-	const text = `"${fragments.join('|')}"`;
+	// Prototype line 378: an empty side is an empty box, not a quoted empty string.
+	const text = fragments.length === 0 ? '' : `"${fragments.join('|')}"`;
 	return { text, length: text.length, overLimit: text.length > STASH_SEARCH_LIMIT };
 }

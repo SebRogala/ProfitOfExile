@@ -22,6 +22,7 @@ function family(id: FamilyId): FixtureFamily {
 
 interface InputOverrides {
 	rerollCostChaos?: number;
+	lifeforcePerReroll?: number;
 	picks?: Record<string, Pick>;
 	prices?: Record<string, number | null>;
 	lastSeen?: Record<string, number | null>;
@@ -45,6 +46,7 @@ function inputFor(id: FamilyId, overrides: InputOverrides = {}): FamilyInput {
 		lastSeen,
 		rerollCostChaos:
 			overrides.rerollCostChaos ?? (f.rerollCost ?? 0) * (lifeforce ? lifeforce.chaos : 0),
+		lifeforcePerReroll: overrides.lifeforcePerReroll ?? f.rerollCost ?? 0,
 		picks: new Map(Object.entries(overrides.picks ?? {})),
 		lifeforcePerDivine: lifeforce ? lifeforce.perDivine : 0,
 		divineChaosRate: exchange.divineChaosRate
@@ -291,6 +293,70 @@ describe('solveFamily', () => {
 
 	it('High cost without picks: 8c a reroll keeps every type, so there is nothing to feed', () => {
 		expect(solveFamily(inputFor('essence', { rerollCostChaos: 8 })).kind).toBe('no-feeders');
+	});
+
+	// Closest literals from the all-kept closed form R(i) = Σ_{j≠i} p(j)/19 − c (uniform
+	// weights, computed by hand from the fixture prices), minus p(i).
+	it('Nothing to feed at 8c names Torment as the closest type', () => {
+		const r = solveFamily(inputFor('essence', { rerollCostChaos: 8 }));
+		expect(r.kind === 'no-feeders' && r.closest?.itemId).toBe(idOf('essence', 'Torment'));
+	});
+
+	it('Nothing to feed at 8c gives Torment its loop EV −3.26c', () => {
+		const r = solveFamily(inputFor('essence', { rerollCostChaos: 8 }));
+		expect(r.kind === 'no-feeders' ? r.closest?.loopEvChaos : null).toBeCloseTo(-3.2605, 4);
+	});
+
+	it('An unpriced type is never the closest: Torment unpriced at 8c hands it to Suffering', () => {
+		const torment = idOf('essence', 'Torment');
+		const r = solveFamily(inputFor('essence', { rerollCostChaos: 8, prices: { [torment]: null } }));
+		expect(r.kind === 'no-feeders' && r.closest?.itemId).toBe(idOf('essence', 'Suffering'));
+	});
+
+	const allKeptFossil = () =>
+		solveFamily(
+			inputFor('fossil', {
+				picks: Object.fromEntries(family('fossil').weights!.types.map((t) => [t.itemId, 'keep' as Pick]))
+			})
+		);
+
+	it('Every type picked keep names Frigid as the closest', () => {
+		const r = allKeptFossil();
+		expect(r.kind === 'no-feeders' ? r.closest?.itemId : null).toBe(idOf('fossil', 'Frigid'));
+	});
+
+	it('Every type picked keep gives Frigid its all-kept loop EV +7.26c', () => {
+		const r = allKeptFossil();
+		expect(r.kind === 'no-feeders' ? r.closest?.loopEvChaos : null).toBeCloseTo(7.256, 3);
+	});
+
+	describe('the family\'s rerollCost, not a constant 30 (C12)', () => {
+		// Every fixture family costs 30, so 60 is test-local; the chaos cost is left at the fixture's,
+		// so only the lifeforce count per reroll changes.
+		const at60 = () => ok(solveFamily(inputFor('fossil', { lifeforcePerReroll: 60 })));
+
+		it('buys 9,905 / 60 = 165 rerolls per divine', () => {
+			expect(Math.round(at60().rerollsPerDivine)).toBe(165);
+		});
+
+		it('spends 60 lifeforce for every reroll of a keeper', () => {
+			const h = at60().headline;
+			expect(h.lifeforcePerKeeper / h.rerollsPerKeeper).toBeCloseTo(60, 9);
+		});
+
+		it('halves the keepers a divine of lifeforce yields: ~6.5', () => {
+			expect(at60().headline.keepersPerDivine.toFixed(1)).toBe('6.5');
+		});
+
+		it('counts 60 lifeforce per reroll in the divine line', () => {
+			const line = at60().divineLine!;
+			// Both are rounded counts, so 60 within rounding (a constant 30 would read ~30).
+			expect(line.lifeforce / line.rerolls).toBeCloseTo(60, 0);
+		});
+
+		it('a zero rerollCost gives no-data', () => {
+			expect(solveFamily(inputFor('fossil', { lifeforcePerReroll: 0 })).kind).toBe('no-data');
+		});
 	});
 
 	it('Degenerate: every type picked reroll gives no-keepers', () => {

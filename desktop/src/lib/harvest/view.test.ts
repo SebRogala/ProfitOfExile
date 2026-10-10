@@ -16,8 +16,10 @@ import {
 	type FamilyBody,
 	type HarvestPicks,
 	type PageInput,
-	type PageView
+	type PageView,
+	verdictView
 } from './view';
+import type { FamilyResult } from './engine';
 import { createExchangeFixture } from './sources/exchange-fixture';
 import { loadHarvestFamilies } from './sources/harvest-fixture';
 import type { ExchangePriceRead, HarvestFamilyData } from './seam';
@@ -165,7 +167,7 @@ describe('status line', () => {
 	it('Fossils ready reads updated · prices · weights (reference 01)', async () => {
 		const view = pageView(await input());
 		expect(view.status?.text).toBe(
-			"updated 6 min ago · prices: Currency Exchange, Day 24h · 1 div = 360c · weights: HarvestForge log · 5,271 rolls · 2026-10-09 · one player's sample"
+			"updated 6 min ago · prices: Currency Exchange, Day 24h · 1 div = 360c · weights: HarvestForge log · 5,271 rolls · 2026-10-09 · one player’s sample"
 		);
 	});
 
@@ -188,7 +190,7 @@ describe('status line', () => {
 
 	it('Delirium Orbs name their logged sample (reference 02)', async () => {
 		const view = pageView(await input({ familyId: 'delirium' }));
-		expect(view.status?.segments.at(-1)).toBe("weights: HarvestForge log · 5,122 rolls · 2026-10-09 · one player's sample");
+		expect(view.status?.segments.at(-1)).toBe('weights: HarvestForge log · 5,122 rolls · 2026-10-09 · one player’s sample');
 	});
 
 	it('Deafening Essences read uniform ~5% (reference 03)', async () => {
@@ -477,6 +479,28 @@ describe('verdict', () => {
 			expect((await allKept()).verdict.headline).toBe('No — nothing to flip');
 		});
 
+		it('names the closest type: Torment at −3.3c (prototype line 454)', async () => {
+			expect((await allKept()).verdict.reason).toBe(
+				'Every type sells for more than a reroll returns. Closest: Deafening Essence of Torment −3.3c.'
+			);
+		});
+
+		it('prints the headline EV as — (prototype line 455)', async () => {
+			expect((await allKept()).verdict.evText).toBe('—');
+		});
+
+		it('mutes the — headline EV', async () => {
+			expect((await allKept()).verdict.evTone).toBe('flat');
+		});
+
+		it('prints no feeder under the — headline EV (prototype line 455)', async () => {
+			expect((await allKept()).verdict.per).toBe('no feeder');
+		});
+
+		it('keeps the EV panel with — for the cheapest feeder', async () => {
+			expect((await allKept()).ev.rows[0].value).toBe('—');
+		});
+
 		it('says No feeders: every tier is kept. in place of the feeder column', async () => {
 			expect((await allKept()).feeders.empty).toBe('No feeders: every tier is kept.');
 		});
@@ -504,8 +528,34 @@ describe('verdict', () => {
 			expect((await allFed()).verdict.reason).toBe('The keep set is empty: pick a tier to keep.');
 		});
 
-		it('prints no EV', async () => {
-			expect((await allFed()).verdict.evText).toBeNull();
+		it('prints the headline EV as — (prototype line 455)', async () => {
+			expect((await allFed()).verdict.evText).toBe('—');
+		});
+
+		it('mutes the — headline EV', async () => {
+			expect((await allFed()).verdict.evTone).toBe('flat');
+		});
+
+		it('prints no feeder under the — headline EV (prototype line 455)', async () => {
+			expect((await allFed()).verdict.per).toBe('no feeder');
+		});
+
+		it('keeps the EV panel with every value — (prototype lines 451–456)', async () => {
+			const ev = (await allFed()).ev;
+			expect([...ev.rows, ...ev.yield].map((r) => [r.label, r.value])).toEqual([
+				['Cheapest feeder', '—'],
+				['Loop EV per feeder', '—'],
+				['Keeper hit per roll', '—'],
+				['Rerolls per keeper', '—'],
+				['Lifeforce per keeper', '—'],
+				['1 div of lifeforce yields', '—'],
+				['…worth after inputs', '—']
+			]);
+		});
+
+		it('leaves the empty keepers regex box empty: 0 / 250 characters (prototype line 378)', async () => {
+			const box = (await allFed()).regex.keepers;
+			expect([box.text, box.count]).toEqual(['', '0 / 250 characters']);
 		});
 
 		it('shows no divine line', async () => {
@@ -570,8 +620,8 @@ describe('split row', () => {
 		expect((await denseChip()).picked).toBe(true);
 	});
 
-	it('titles a kept pick as your pick', async () => {
-		expect((await denseChip()).pickTitle).toBe('Your pick: kept. Click to return it to the computed side.');
+	it('titles a kept pick Kept (your pick) — click to feed just Dense Fossil (prototype line 416)', async () => {
+		expect((await denseChip()).title).toBe('Kept (your pick) — click to feed just Dense Fossil');
 	});
 
 	it('moves the headline to Lucent Fossil +24.3c after the Dense pick (reference 05)', async () => {
@@ -647,8 +697,12 @@ describe('cost panel (reference 01)', () => {
 		expect(family(pageView(await input())).cost.line).toBe('0.9c = 30 × Wild lifeforce (purple)');
 	});
 
-	it('prints 1 div → 9,905 lifeforce → 330 rerolls', async () => {
-		expect(family(pageView(await input())).cost.perDivine).toBe('1 div → 9,905 lifeforce → 330 rerolls');
+	it('prints 1 div → 9,905 lifeforce', async () => {
+		expect(family(pageView(await input())).cost.perDivineLifeforce).toBe('9,905');
+	});
+
+	it('prints → 330 rerolls a divine', async () => {
+		expect(family(pageView(await input())).cost.perDivineRerolls).toBe('330');
 	});
 
 	it('names both markets in the caption', async () => {
@@ -664,9 +718,11 @@ describe('cost panel (reference 01)', () => {
 	});
 
 	it('Delirium Orbs buy 248 rerolls a divine', async () => {
-		expect(family(pageView(await input({ familyId: 'delirium' }))).cost.perDivine).toBe(
-			'1 div → 7,445 lifeforce → 248 rerolls'
-		);
+		expect(family(pageView(await input({ familyId: 'delirium' }))).cost.perDivineRerolls).toBe('248');
+	});
+
+	it('Delirium Orbs buy 7,445 Primal a divine', async () => {
+		expect(family(pageView(await input({ familyId: 'delirium' }))).cost.perDivineLifeforce).toBe('7,445');
 	});
 });
 
@@ -718,7 +774,7 @@ describe('EV panel (reference 01)', () => {
 	});
 
 	it('carries no unpriced note when every type is priced', async () => {
-		expect(family(pageView(await input())).ev!.unpricedNote).toBeNull();
+		expect(family(pageView(await input())).ev.rows.map((r) => r.note)).toEqual([null, null, null, null, null]);
 	});
 });
 
@@ -734,7 +790,7 @@ describe('unpriced Hollow (reference 08 §5, test-local price)', () => {
 	});
 
 	it('notes the floor and the EV at the last seen price', async () => {
-		expect((await unpriced()).body.ev!.unpricedNote).toBe(
+		expect((await unpriced()).body.ev.rows[1].note).toBe(
 			'1 unpriced type counted as 0c, so this EV is a floor. At its last seen 402c it would read +25.7c.'
 		);
 	});
@@ -805,6 +861,283 @@ describe('regex boxes', () => {
 	it('captions both boxes', async () => {
 		expect(family(pageView(await input())).regex.caption).toBe(
 			'Paste into the stash search. Shortest fragment unique within this family; follows your tier picks.'
+		);
+	});
+});
+
+// ------------------------------------------------- completeness round 1 --
+
+describe('moves counted against the engine (C1, prototype lines 463–471)', () => {
+	const midKept = async () => {
+		const base = await input();
+		const fossil = base.harvest!.families.find((f) => f.id === 'fossil')!;
+		const picks = moveTier({}, fossil, 'MID', 'keep', base.exchange!.prices);
+		return { base, picks, body: family(pageView({ ...base, picks })) };
+	};
+
+	// The prototype's own solve (ported) agrees: once Corroded is kept, Dense's 33.09c is at
+	// least its re-solved reroll value 32.96c, so only Corroded left the engine's side.
+	it('← Keep tier on the feeder MID card counts only Corroded: 1 type moved by you', async () => {
+		expect((await midKept()).body.split.label).toBe('1 type moved by you');
+	});
+
+	it('still stores a pick on all seven MID types', async () => {
+		expect(Object.keys((await midKept()).picks.fossil)).toHaveLength(7);
+	});
+
+	it('a pick on the side the engine already chose reads computed from prices', async () => {
+		const base = await input();
+		const lucent = itemId(base.harvest!, 'fossil', 'Lucent');
+		const split = family(pageView({ ...base, picks: { fossil: { [lucent]: 'reroll' } } })).split;
+		expect(split.label).toBe('computed from prices');
+	});
+
+	it('a pick on the side the engine already chose leaves Reset inert', async () => {
+		const base = await input();
+		const lucent = itemId(base.harvest!, 'fossil', 'Lucent');
+		const split = family(pageView({ ...base, picks: { fossil: { [lucent]: 'reroll' } } })).split;
+		expect(split.resetEnabled).toBe(false);
+	});
+
+	it('a pick on the side the engine already chose is not marked moved', async () => {
+		const base = await input();
+		const lucent = itemId(base.harvest!, 'fossil', 'Lucent');
+		const split = family(pageView({ ...base, picks: { fossil: { [lucent]: 'reroll' } } })).split;
+		expect(split.moved).toBe(false);
+	});
+
+	// F1.1: every Fossil unpriced (test-local) keeps every type, so a stored Hollow 'reroll'
+	// pick is ignored (C2) and must not count as a move on the nothing-to-flip path either.
+	const allUnpricedHollowFed = async () => {
+		const base = await input();
+		const hollow = itemId(base.harvest!, 'fossil', 'Hollow');
+		const fossil = base.harvest!.families.find((f) => f.id === 'fossil')!;
+		const exchange = fossil.weights!.types.reduce((ex, t) => withPrice(ex, t.itemId, null, null), base.exchange!);
+		return { hollow, body: family(pageView({ ...base, exchange, picks: { fossil: { [hollow]: 'reroll' } } })) };
+	};
+
+	it('all unpriced with a stored Hollow reroll pick reads computed from prices', async () => {
+		expect((await allUnpricedHollowFed()).body.split.label).toBe('computed from prices');
+	});
+
+	it('all unpriced with a stored Hollow reroll pick leaves Reset inert', async () => {
+		expect((await allUnpricedHollowFed()).body.split.resetEnabled).toBe(false);
+	});
+
+	it('all unpriced with a stored Hollow reroll pick leaves every keeper chip unpicked', async () => {
+		const { body } = await allUnpricedHollowFed();
+		const chips = [...body.keepers.cards.flatMap((c) => c.chips), ...body.keepers.untiered];
+		expect(chips.filter((c) => c.picked).map((c) => c.shortName)).toEqual([]);
+	});
+
+	it('with nothing to flip, counts picks against the unpicked engine: all-fed Fossils move the 7 keepers', async () => {
+		const base = await input();
+		const fossil = base.harvest!.families.find((f) => f.id === 'fossil')!;
+		const picks: HarvestPicks = {
+			fossil: Object.fromEntries(fossil.weights!.types.map((t) => [t.itemId, 'reroll' as const]))
+		};
+		expect(family(pageView({ ...base, picks })).split.label).toBe('7 types moved by you');
+	});
+});
+
+describe('chip titles (C5 + Q4, prototype line 416)', () => {
+	const body = async () => family(pageView(await input()));
+
+	it('titles an engine keeper Kept (engine) — click to feed just Hollow Fossil', async () => {
+		expect(card(await body(), 'keepers', 'TOP').chips[0].title).toBe('Kept (engine) — click to feed just Hollow Fossil');
+	});
+
+	it('titles an engine feeder Fed (engine) — click to keep just Lucent Fossil', async () => {
+		expect(card(await body(), 'feeders', 'LOW').chips.at(-1)!.title).toBe(
+			'Fed (engine) — click to keep just Lucent Fossil'
+		);
+	});
+
+	it('titles a fed pick Fed (your pick) — click to keep just Sanctified Fossil', async () => {
+		const base = await input();
+		const sanctified = itemId(base.harvest!, 'fossil', 'Sanctified');
+		const b = family(pageView({ ...base, picks: { fossil: { [sanctified]: 'reroll' } } }));
+		const chip = b.feeders.cards.flatMap((c) => c.chips).find((c) => c.itemId === sanctified)!;
+		expect(chip.title).toBe('Fed (your pick) — click to keep just Sanctified Fossil');
+	});
+
+	it('gives an unpriced chip no title: a click cannot feed it', async () => {
+		const base = await input();
+		const hollow = itemId(base.harvest!, 'fossil', 'Hollow');
+		const b = family(pageView({ ...base, exchange: withPrice(base.exchange!, hollow, null, 402) }));
+		expect(card(b, 'keepers', 'TOP').chips[0].title).toBeNull();
+	});
+});
+
+describe('tier move button (C14, reference 08 §5)', () => {
+	it('draws no move on a tier whose chips here are all unpriced', async () => {
+		const base = await input();
+		const hollow = itemId(base.harvest!, 'fossil', 'Hollow');
+		const b = family(pageView({ ...base, exchange: withPrice(base.exchange!, hollow, null, 402) }));
+		expect(card(b, 'keepers', 'TOP').movable).toBe(false);
+	});
+
+	it('draws the move on a tier with a priced chip', async () => {
+		expect(card(family(pageView(await input())), 'keepers', 'TOP').movable).toBe(true);
+	});
+});
+
+describe('headline EV tone (C17)', () => {
+	it('is gain on Fossils at +25.7c', async () => {
+		expect(family(pageView(await input())).verdict.evTone).toBe('gain');
+	});
+
+	it('is loss below −0.05c: Torment fed at 8c a reroll', async () => {
+		const base = await input({ familyId: 'essence' });
+		const torment = itemId(base.harvest!, 'essence', 'Torment');
+		const v = family(
+			pageView({ ...base, exchange: atEightChaosPerReroll(base.exchange!), picks: { essence: { [torment]: 'reroll' } } })
+		).verdict;
+		expect(v.evTone).toBe('loss');
+	});
+
+	// Test-local engine results: only the fields verdictView reads.
+	const okAt = (loopEvChaos: number) =>
+		({
+			kind: 'ok',
+			headline: { name: 'Lucent Fossil', priceChaos: 9.12, loopEvChaos },
+			divineLine: null
+		}) as unknown as FamilyResult;
+
+	it('is flat at +0.05c', () => {
+		expect(verdictView(okAt(0.05), 'Wild').evTone).toBe('flat');
+	});
+
+	it('is flat at −0.05c', () => {
+		expect(verdictView(okAt(-0.05), 'Wild').evTone).toBe('flat');
+	});
+
+	it('is gain just above +0.05c', () => {
+		expect(verdictView(okAt(0.051), 'Wild').evTone).toBe('gain');
+	});
+});
+
+describe('cost caption to three decimals (C10)', () => {
+	it('prints a live 0.03 as 0.030c', async () => {
+		const base = await input();
+		const exchange = {
+			...base.exchange!,
+			lifeforce: { ...base.exchange!.lifeforce, Wild: { ...base.exchange!.lifeforce.Wild, chaos: 0.03 } }
+		};
+		expect(family(pageView({ ...base, exchange })).cost.caption).toBe(
+			'chaos side 0.030c each; divine side from the lifeforce/divine market'
+		);
+	});
+
+	it.each(['delirium', 'essence', 'corrupt'])('prints 0.049c for %s (references 02–04)', async (familyId) => {
+		expect(family(pageView(await input({ familyId }))).cost.caption).toBe(
+			'chaos side 0.049c each; divine side from the lifeforce/divine market'
+		);
+	});
+});
+
+describe('the family rerollCost (C12, test-local 60)', () => {
+	const at60 = async () => {
+		const base = await input();
+		const harvest = {
+			...base.harvest!,
+			families: base.harvest!.families.map((f) => (f.id === 'fossil' ? { ...f, rerollCost: 60 } : f))
+		};
+		return family(pageView({ ...base, harvest }));
+	};
+
+	it('prints 1.9c = 60 × Wild lifeforce (purple)', async () => {
+		expect((await at60()).cost.line).toBe('1.9c = 60 × Wild lifeforce (purple)');
+	});
+
+	it('buys 165 rerolls a divine', async () => {
+		expect((await at60()).cost.perDivineRerolls).toBe('165');
+	});
+
+	it('counts 60 Wild per reroll in the divine line', async () => {
+		const line = (await at60()).verdict.divineLine!;
+		const [, rerolls, wild] = line.match(/~([\d,]+) rerolls · ~([\d,]+) Wild/)!.map((s) => Number(s.replaceAll(',', '')));
+		// Both counts are rounded, so the ratio is 60 within rounding (30 would read ~30).
+		expect(wild / rerolls).toBeCloseTo(60, 0);
+	});
+});
+
+describe('restored family id no family carries (C16)', () => {
+	it('falls back to the Fossils tab', async () => {
+		const view = pageView(await input({ familyId: 'removed-family' }));
+		expect(view.tabs.filter((t) => t.active).map((t) => t.label)).toEqual(['Fossils']);
+	});
+
+	it('shows the Fossils body', async () => {
+		expect(family(pageView(await input({ familyId: 'constructor' }))).verdict.evText).toBe('+25.7c');
+	});
+});
+
+describe('reference values (C13)', () => {
+	it('reference 01: feeders regex 53 / 250 characters', async () => {
+		expect(family(pageView(await input())).regex.feeders.count).toBe('53 / 250 characters');
+	});
+
+	it('reference 01: Corroded feeds at +4.8c', async () => {
+		const chip = card(family(pageView(await input())), 'feeders', 'MID').chips.find((c) => c.shortName === 'Corroded')!;
+		expect(chip.evText).toBe('+4.8c');
+	});
+
+	it('reference 02: feeders regex 41 / 250 characters', async () => {
+		expect(family(pageView(await input({ familyId: 'delirium' }))).regex.feeders.count).toBe('41 / 250 characters');
+	});
+
+	it('reference 02: shares Diviner’s 5.1% and Skittering 0.94%', async () => {
+		const chips = card(family(pageView(await input({ familyId: 'delirium' }))), 'keepers', 'HIGH').chips;
+		expect(chips.map((c) => c.shareText)).toEqual(['5.1%', '0.94%']);
+	});
+
+	const essence = async () => family(pageView(await input({ familyId: 'essence' })));
+	const corrupt = async () => family(pageView(await input({ familyId: 'corrupt' })));
+	const rowValue = (body: FamilyBody, label: string) =>
+		[...body.ev.rows, ...body.ev.yield].find((r) => r.label === label)?.value;
+
+	it('reference 03: keepers regex "sco|env|mis|zea|loa|rag"', async () => {
+		expect((await essence()).regex.keepers.text).toBe('"sco|env|mis|zea|loa|rag"');
+	});
+
+	it('reference 03: feeders regex 57 / 250 characters', async () => {
+		expect((await essence()).regex.feeders.count).toBe('57 / 250 characters');
+	});
+
+	it('reference 03: keepers regex 25 / 250 characters', async () => {
+		expect((await essence()).regex.keepers.count).toBe('25 / 250 characters');
+	});
+
+	it.each([
+		['Keeper hit per roll', '31.6%'],
+		['Rerolls per keeper', '~3.2'],
+		['Lifeforce per keeper', '~95 Primal · 4.7c'],
+		['1 div of lifeforce yields', '~78.4 keepers'],
+		['…worth after inputs', '+492c']
+	])('reference 03: EV panel %s reads %s', async (label, value) => {
+		expect(rowValue(await essence(), label)).toBe(value);
+	});
+
+	it('reference 04: feeders regex 13 / 250 characters', async () => {
+		expect((await corrupt()).regex.feeders.count).toBe('13 / 250 characters');
+	});
+
+	it('reference 04: keepers regex 5 / 250 characters', async () => {
+		expect((await corrupt()).regex.keepers.count).toBe('5 / 250 characters');
+	});
+
+	it.each([
+		['Lifeforce per keeper', '~90 Primal · 4.4c'],
+		['1 div of lifeforce yields', '~82.7 keepers'],
+		['…worth after inputs', '+1,601c']
+	])('reference 04: EV panel %s reads %s', async (label, value) => {
+		expect(rowValue(await corrupt(), label)).toBe(value);
+	});
+
+	it('reference 04: Buy Essence of Hysteria (41.9c, cheapest feeder) and reroll until a keeper.', async () => {
+		expect((await corrupt()).verdict.reason).toBe(
+			'Buy Essence of Hysteria (41.9c, cheapest feeder) and reroll until a keeper.'
 		);
 	});
 });

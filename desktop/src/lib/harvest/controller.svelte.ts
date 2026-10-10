@@ -29,12 +29,14 @@ import type { ExchangePriceRead, HarvestFamilyData, LoadExchangePrices, LoadHarv
 import { loadExchangePrices } from './sources/exchange-fixture';
 import { loadHarvestFamilies } from './sources/harvest-fixture';
 import {
+	DEFAULT_FAMILY_ID,
 	applyPick,
 	moveTier as moveTierPicks,
 	pageView,
 	parseHarvestHorizon,
 	parsePicks,
 	resetFamily as resetFamilyPicks,
+	resolveFamily,
 	serializePicks,
 	type Chip,
 	type Column,
@@ -46,7 +48,6 @@ import {
 export const PICKS_PREF = 'harvestFlippingPicks';
 export const HORIZON_PREF = 'harvestFlippingHorizon';
 export const FAMILY_PREF = 'harvestFlippingFamily';
-const DEFAULT_FAMILY = 'fossil';
 
 /** Same cadence as `CurrencyExchangePage.svelte`'s `NOW_TICK_MS`: "updated N min ago" moves on its own. */
 const NOW_TICK_MS = 30_000;
@@ -83,7 +84,7 @@ export function productionDependencies(): HarvestControllerDependencies {
 		prefs: {
 			picks: persisted(PICKS_PREF, '{}'),
 			horizon: persisted(HORIZON_PREF, 'day'),
-			family: persisted(FAMILY_PREF, DEFAULT_FAMILY)
+			family: persisted(FAMILY_PREF, DEFAULT_FAMILY_ID)
 		},
 		listen: (event, handler) => listen(event, handler),
 		refetchDelay: () => refetchDelay(),
@@ -118,7 +119,9 @@ export function createHarvestController(
 	let copiedText = $state<Record<RegexKind, string | null>>({ feeders: null, keepers: null });
 
 	const horizon = $derived(parseHarvestHorizon(prefs.horizon.value));
-	const familyId = $derived(prefs.family.value);
+	/** The family on screen: a stored id no family carries falls back (`resolveFamily`), so picks land on the shown tab. */
+	const family = $derived(harvest ? resolveFamily(harvest.families, prefs.family.value) : null);
+	const familyId = $derived(family?.id ?? prefs.family.value);
 	const picks = $derived<HarvestPicks>(harvest ? parsePicks(prefs.picks.value, harvest.families) : {});
 	const currentDivineRate = $derived(dependencies.divineRate() ?? exchange?.divineChaosRate ?? null);
 	const view = $derived<PageView>(
@@ -134,7 +137,6 @@ export function createHarvestController(
 			divineChaosRate: currentDivineRate
 		})
 	);
-	const family = $derived(harvest?.families.find((f) => f.id === familyId) ?? null);
 
 	/** A plain counter, as CX's `loadGeneration`: nothing renders it. */
 	let loadGeneration = 0;
@@ -177,14 +179,14 @@ export function createHarvestController(
 		prefs.family.value = id;
 	}
 
-	/** A picked chip returns to its computed side; any other moves to the side it is not on. */
+	/** Prototype line 417: a chip click always moves the chip to the other column, picked or not. */
 	function togglePick(itemId: string): void {
 		const body = view.body;
 		if (!exchange || body?.kind !== 'family') return;
 		const keeper = columnChips(body.keepers).find((c) => c.itemId === itemId);
 		const chip = keeper ?? columnChips(body.feeders).find((c) => c.itemId === itemId);
 		if (!chip) return;
-		const pick: Pick | null = chip.picked ? null : keeper ? 'reroll' : 'keep';
+		const pick: Pick = keeper ? 'reroll' : 'keep';
 		writePicks(applyPick(picks, familyId, itemId, pick, exchange.prices));
 	}
 

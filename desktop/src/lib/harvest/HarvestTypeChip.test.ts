@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { render } from 'svelte/server';
 import HarvestTypeChip from './HarvestTypeChip.svelte';
-import { PICK_TITLE_KEPT, type Chip } from './view';
+import type { Chip } from './view';
 
 const HOLLOW: Chip = {
 	itemId: 'Metadata/Items/Currency/CurrencyDelveCraftingSockets',
@@ -19,7 +19,7 @@ const HOLLOW: Chip = {
 	priceText: '402c',
 	unpriced: false,
 	picked: false,
-	pickTitle: null,
+	title: 'Kept (engine) — click to feed just Hollow Fossil',
 	evText: null,
 	evTone: null,
 	shareText: '0.02%'
@@ -36,8 +36,8 @@ const LUCENT: Chip = {
 	shareText: null
 };
 
-const UNPRICED: Chip = { ...HOLLOW, priceText: '—', unpriced: true };
-const PICKED: Chip = { ...HOLLOW, picked: true, pickTitle: PICK_TITLE_KEPT };
+const UNPRICED: Chip = { ...HOLLOW, priceText: '—', unpriced: true, title: null };
+const PICKED: Chip = { ...HOLLOW, picked: true, title: 'Kept (your pick) — click to feed just Hollow Fossil' };
 
 function html(chip: Chip): string {
 	return render(HarvestTypeChip, { props: { chip, apiBase: 'http://api', onpick: () => {} } }).body;
@@ -112,15 +112,19 @@ describe('HarvestTypeChip', () => {
 		expect(chipTag(html(PICKED))).toMatch(/class="[^"]*\bpicked\b/);
 	});
 
-	it('titles a picked chip with its pick title', () => {
-		expect(chipTag(html(PICKED))).toContain(`title="${PICK_TITLE_KEPT}"`);
+	it('titles a picked chip with its prop title', () => {
+		expect(chipTag(html(PICKED))).toContain('title="Kept (your pick) — click to feed just Hollow Fossil"');
+	});
+
+	it('titles a computed chip with its prop title (prototype line 416)', () => {
+		expect(chipTag(html(HOLLOW))).toContain('title="Kept (engine) — click to feed just Hollow Fossil"');
 	});
 
 	it('carries no picked style on a computed chip', () => {
 		expect(chipTag(html(HOLLOW))).not.toMatch(/class="[^"]*\bpicked\b/);
 	});
 
-	it('carries no title on a computed chip', () => {
-		expect(chipTag(html(HOLLOW))).not.toContain('title=');
+	it('carries no title when the prop has none (an unpriced chip)', () => {
+		expect(chipTag(html(UNPRICED))).not.toContain('title=');
 	});
 });

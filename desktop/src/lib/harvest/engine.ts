@@ -42,6 +42,8 @@ export interface FamilyInput {
 	/** Last seen chaos price per itemId, read only for unpriced types. */
 	lastSeen: Map<string, number | null>;
 	rerollCostChaos: number;
+	/** Lifeforce spent per reroll: the family's `rerollCost`. */
+	lifeforcePerReroll: number;
 	picks: Map<string, Pick>;
 	/** Lifeforce of the family's colour bought per 1 divine. */
 	lifeforcePerDivine: number;
@@ -87,6 +89,13 @@ export interface DivineLine {
 	lifeforce: number;
 }
 
+/** The priced type whose loop EV comes closest to paying, when every type is kept. */
+export interface Closest {
+	itemId: string;
+	name: string;
+	loopEvChaos: number;
+}
+
 export type FamilyResult =
 	| {
 			kind: 'ok';
@@ -101,11 +110,13 @@ export type FamilyResult =
 			rerollsPerDivine: number;
 	  }
 	| { kind: 'no-keepers' }
-	| { kind: 'no-feeders' }
+	| {
+			kind: 'no-feeders';
+			/** `null` when no type is priced. */
+			closest: Closest | null;
+	  }
 	| { kind: 'no-data' };
 
-/** Lifeforce spent per reroll (README § Engine; `rerollCost` is 30 for every logged family). */
-export const LIFEFORCE_PER_REROLL = 30;
 export const VALUE_ITERATION_TOLERANCE = 1e-9;
 export const VALUE_ITERATION_MAX_PASSES = 400;
 /** The divine-scale line shows only when the flip pays more than this per feeder. */
@@ -274,6 +285,8 @@ export function solveFamily(input: FamilyInput): FamilyResult {
 		!Number.isFinite(totalWeight) ||
 		types.some((t) => !Number.isFinite(t.weight) || t.weight < 0) ||
 		!Number.isFinite(input.rerollCostChaos) ||
+		!Number.isFinite(input.lifeforcePerReroll) ||
+		!(input.lifeforcePerReroll > 0) ||
 		!Number.isFinite(input.lifeforcePerDivine) ||
 		input.lifeforcePerDivine < 0 ||
 		!Number.isFinite(input.divineChaosRate) ||
@@ -295,15 +308,37 @@ export function solveFamily(input: FamilyInput): FamilyResult {
 	const picks = types.map((t, i) => (unpriced[i] ? null : (input.picks.get(t.itemId) ?? null)));
 	const forced = types.map((_, i) => (unpriced[i] ? true : picks[i] === null ? null : picks[i] === 'keep'));
 
+	/**
+	 * Every type kept: `V = p`, so `R(i) = Σ P(i,j)·p(j) − c` exactly. The closest
+	 * is the priced type with the highest loop EV (prototype: "Closest: <name>
+	 * <EV>"); an unpriced one counts 0c and is never a feeder candidate.
+	 */
+	const noFeeders = (): FamilyResult => {
+		const candidates = types
+			.map((t, i) => ({
+				itemId: t.itemId,
+				name: t.name,
+				loopEvChaos: P[i].reduce((s, pij, j) => s + pij * prices[j], 0) - input.rerollCostChaos - prices[i]
+			}))
+			.filter((_, i) => !unpriced[i]);
+		const closest = candidates.reduce<Closest | null>(
+			(best, c) => (best === null || c.loopEvChaos > best.loopEvChaos ? c : best),
+			null
+		);
+		return closest === null || Number.isFinite(closest.loopEvChaos)
+			? { kind: 'no-feeders', closest }
+			: { kind: 'no-data' };
+	};
+
 	// Degenerate sets decided by picks alone: check before iterating.
 	if (forced.every((f) => f === false)) return { kind: 'no-keepers' };
-	if (forced.every((f) => f === true)) return { kind: 'no-feeders' };
+	if (forced.every((f) => f === true)) return noFeeders();
 
 	const policy = solvePolicy(P, w, prices, forced, input.rerollCostChaos);
 	if (policy === null) return { kind: 'no-data' };
 	if (policy === 'no-keepers') return { kind: 'no-keepers' };
 	const { keep, R, N } = policy;
-	if (keep.every(Boolean)) return { kind: 'no-feeders' };
+	if (keep.every(Boolean)) return noFeeders();
 
 	const feederOrder = types
 		.map((t, i) => ({ i, price: prices[i], name: t.name }))
@@ -322,7 +357,7 @@ export function solveFamily(input: FamilyInput): FamilyResult {
 	}
 
 	const keeperHit = w.reduce((s, _, k) => s + (keep[k] ? P[h][k] : 0), 0);
-	const keepersPerDivine = input.lifeforcePerDivine / LIFEFORCE_PER_REROLL / N[h];
+	const keepersPerDivine = input.lifeforcePerDivine / input.lifeforcePerReroll / N[h];
 	const divineLine =
 		loopEv > DIVINE_LINE_MIN_EV_CHAOS && input.divineChaosRate > 0
 			? (() => {
@@ -330,7 +365,7 @@ export function solveFamily(input: FamilyInput): FamilyResult {
 					return {
 						feeders,
 						rerolls: Math.round(feeders * N[h]),
-						lifeforce: Math.round(feeders * N[h] * LIFEFORCE_PER_REROLL)
+						lifeforce: Math.round(feeders * N[h] * input.lifeforcePerReroll)
 					};
 				})()
 			: null;
@@ -362,14 +397,14 @@ export function solveFamily(input: FamilyInput): FamilyResult {
 			loopEvAtLastSeenChaos: loopEvAtLastSeen,
 			keeperHitPerRoll: keeperHit,
 			rerollsPerKeeper: N[h],
-			lifeforcePerKeeper: LIFEFORCE_PER_REROLL * N[h],
+			lifeforcePerKeeper: input.lifeforcePerReroll * N[h],
 			lifeforceChaosPerKeeper: input.rerollCostChaos * N[h],
 			keepersPerDivine,
 			keepersPerDivineWorthChaos: keepersPerDivine * loopEv
 		},
 		divineLine,
 		rerollCostChaos: input.rerollCostChaos,
-		rerollsPerDivine: input.lifeforcePerDivine / LIFEFORCE_PER_REROLL
+		rerollsPerDivine: input.lifeforcePerDivine / input.lifeforcePerReroll
 	};
 	// Finite inputs can still overflow (a huge rate × rerolls per keeper).
 	return allFinite(result) ? result : { kind: 'no-data' };

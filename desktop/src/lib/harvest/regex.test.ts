@@ -109,8 +109,18 @@ describe('stashRegex', () => {
 		expect(r.overLimit).toBe(true);
 	});
 
-	it('rejects a name contained in another family name, naming it', () => {
+	it('falls back to the whole lowercase name when no run of it is unique (prototype line 376)', () => {
 		// "Orb" sits inside "Orbit": no run of it is unique.
-		expect(() => stashRegex(['Orb'], ['Orb', 'Orbit'])).toThrow('"Orb"');
+		expect(stashRegex(['Orb'], ['Orb', 'Orbit']).text).toBe('"orb"');
+	});
+
+	it('keeps a fallback name whole, apostrophe included, beside the other fragments', () => {
+		// No run of "Al's" is unique against "Al's Orb"; "zeb" stays its own 3-letter run.
+		expect(stashRegex(["Al's", 'Zeb'], ["Al's", "Al's Orb", 'Zeb']).text).toBe('"al\'s|zeb"');
+	});
+
+	it('leaves an empty side empty, not a quoted empty string (prototype line 378)', () => {
+		const r = stashRegex([], ['Orb', 'Zeb']);
+		expect([r.text, r.length, r.overLimit]).toEqual(['', 0, false]);
 	});
 });

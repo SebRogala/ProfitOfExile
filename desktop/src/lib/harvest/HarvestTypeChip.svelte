@@ -24,7 +24,7 @@
 	class="chip"
 	class:kept
 	class:picked={chip.picked}
-	title={chip.pickTitle ?? undefined}
+	title={chip.title ?? undefined}
 	onclick={() => onpick(chip.itemId)}
 >
 	<ItemIcon src={iconSrc(apiBase, chip.icon)} alt={chip.name} size={18} />

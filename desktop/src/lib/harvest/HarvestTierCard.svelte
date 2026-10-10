@@ -1,8 +1,9 @@
 <script lang="ts">
 	/**
 	 * One tier of a Harvest column: tier name, "split" mark, "<n> types ·
-	 * <min>–<max>c", the move button, then one chip per type (README § Screens
-	 * 6, references 01 and 05).
+	 * <min>–<max>c", the move button (absent when no chip here is priced,
+	 * reference 08 §5), then one chip per type (README § Screens 6, references
+	 * 01 and 05).
 	 *
 	 * Presentation only over `view.ts`'s `TierCard`. A keeper card is the one
 	 * whose move sends the tier to `'reroll'`. Both clicks leave through
@@ -35,9 +36,11 @@
 			<span class="mark">SPLIT</span>
 		{/if}
 		<span class="meta">{card.meta}</span>
-		<span class="move">
-			<Button onclick={() => onmove(card.tier, card.moveTo)}>{card.moveLabel}</Button>
-		</span>
+		{#if card.movable}
+			<span class="move">
+				<Button onclick={() => onmove(card.tier, card.moveTo)}>{card.moveLabel}</Button>
+			</span>
+		{/if}
 	</header>
 	<div class="chips">
 		{#each card.chips as chip (chip.itemId)}

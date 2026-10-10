@@ -136,19 +136,13 @@
 					<p class="reason">{body.verdict.reason}</p>
 				{/if}
 			</div>
-			{#if body.verdict.evText !== null}
-				<div class="verdict-ev">
-					<span class="mono ev-big" class:gain={body.verdict.worth} class:loss={body.verdict.evNegative}
-						>{body.verdict.evText}</span
-					>
-					{#if body.verdict.per !== null}
-						<span class="per">{body.verdict.per}</span>
-					{/if}
-					{#if body.verdict.divineLine !== null}
-						<span class="divine-line">{body.verdict.divineLine}</span>
-					{/if}
-				</div>
-			{/if}
+			<div class="verdict-ev">
+				<span class="mono ev-big {body.verdict.evTone}">{body.verdict.evText}</span>
+				<span class="per">{body.verdict.per}</span>
+				{#if body.verdict.divineLine !== null}
+					<span class="divine-line">{body.verdict.divineLine}</span>
+				{/if}
+			</div>
 		</section>
 
 		<div class="split-row">
@@ -202,30 +196,31 @@
 						<ItemIcon src={iconSrc(apiBase, body.cost.lifeforceIcon)} alt={body.cost.lifeforceLabel} size={16} />
 						<strong>{body.cost.lifeforceLabel}</strong>
 					</p>
-					<p class="mono per-divine">{body.cost.perDivine}</p>
+					<p class="per-divine">
+						<span class="mono">1 div</span> → <span class="mono">{body.cost.perDivineLifeforce}</span> lifeforce →
+						<span class="mono">{body.cost.perDivineRerolls}</span> rerolls
+					</p>
 					<p class="small">{body.cost.caption}</p>
 				</section>
 
-				{#if body.ev}
-					<section class="panel side-panel">
-						<span class="caption">EV of your selection</span>
-						<dl class="ev-rows">
-							{#each body.ev.rows as row (row.label)}
-								<dt>{row.label}</dt>
-								<dd class="mono">{row.value}</dd>
-							{/each}
-						</dl>
-						{#if body.ev.unpricedNote !== null}
-							<p class="small warn">{body.ev.unpricedNote}</p>
-						{/if}
-						<dl class="ev-rows yield">
-							{#each body.ev.yield as row (row.label)}
-								<dt>{row.label}</dt>
-								<dd class="mono">{row.value}</dd>
-							{/each}
-						</dl>
-					</section>
-				{/if}
+				<section class="panel side-panel">
+					<span class="caption">EV of your selection</span>
+					<dl class="ev-rows">
+						{#each body.ev.rows as row (row.label)}
+							<dt>{row.label}</dt>
+							<dd class="mono">{row.value}</dd>
+							{#if row.note !== null}
+								<dd class="small warn note">{row.note}</dd>
+							{/if}
+						{/each}
+					</dl>
+					<dl class="ev-rows yield">
+						{#each body.ev.yield as row (row.label)}
+							<dt>{row.label}</dt>
+							<dd class="mono">{row.value}</dd>
+						{/each}
+					</dl>
+				</section>
 			</div>
 		</div>
 	{/if}
@@ -288,12 +283,12 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		padding: 6px 8px;
+		padding: 8px 9px;
 		background: transparent;
 		border: none;
 		border-bottom: 2px solid transparent;
 		color: var(--color-lab-text-secondary);
-		font-size: 0.8125rem;
+		font-size: 0.75rem;
 		font-weight: 600;
 		white-space: nowrap;
 		cursor: pointer;
@@ -310,12 +305,12 @@
 	}
 
 	.no-data-mark {
-		padding: 0 4px;
+		padding: 1px 4px;
 		border: 1px solid var(--color-lab-border);
 		border-radius: 3px;
 		font-size: 0.5625rem;
 		letter-spacing: 0.06em;
-		color: var(--color-lab-text-secondary);
+		color: var(--color-lab-text-muted);
 	}
 
 	.status-line {
@@ -376,7 +371,7 @@
 
 	.verdict {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		gap: 16px;
 		padding: 14px 16px;
 	}
@@ -425,6 +420,10 @@
 
 	.ev-big.loss {
 		color: var(--color-lab-red);
+	}
+
+	.ev-big.flat {
+		color: var(--color-lab-text-muted);
 	}
 
 	.per,
@@ -553,12 +552,19 @@
 		text-align: right;
 	}
 
+	/* Reference 08 §5: the floor note sits directly under its row, full width. */
+	.ev-rows dd.note {
+		grid-column: 1 / -1;
+		text-align: left;
+	}
+
 	.ev-rows.yield {
 		padding-top: 8px;
 		border-top: 1px solid var(--color-lab-border);
 	}
 
 	.no-data {
+		max-width: 620px;
 		padding: 18px 20px;
 	}
 

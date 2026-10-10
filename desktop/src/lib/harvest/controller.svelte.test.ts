@@ -26,6 +26,7 @@ const NOW = new Date('2026-09-10T00:00:00Z');
 const DELAY_MS = 3000;
 const DENSE = 'Metadata/Items/Currency/CurrencyDelveCraftingDefences';
 const LUCENT = 'Metadata/Items/Currency/CurrencyDelveCraftingMana';
+const SANCTIFIED = 'Metadata/Items/Currency/CurrencyDelveCraftingLuckyModRolls';
 const DELIRIUM_WEAPONS = 'Metadata/Items/Currency/CurrencyAfflictionOrbWeapons';
 const KEEPERS_REGEX = '"shu|san|gil|fac|fra|hol|gly"';
 
@@ -151,6 +152,12 @@ function body(controller: ReturnType<typeof createHarvestController>): FamilyBod
 	const b = controller.view.body;
 	if (b?.kind !== 'family') throw new Error(`expected a family body, got ${b?.kind ?? 'none'}`);
 	return b;
+}
+
+function card(b: FamilyBody, side: 'feeders' | 'keepers', tier: string) {
+	const found = b[side].cards.find((c) => c.tier === tier);
+	if (!found) throw new Error(`no ${tier} card among ${side}`);
+	return found;
 }
 
 function storedPicks(h: Harness): Record<string, Record<string, string>> {
@@ -396,6 +403,19 @@ describe('createHarvestController — restored prefs', () => {
 	});
 });
 
+describe('createHarvestController — restored family id no family carries (C16)', () => {
+	it('opens on the Fossils tab', async () => {
+		const { controller } = await loaded({ family: 'removed-family' });
+		expect(controller.view.tabs.find((t) => t.active)?.label).toBe('Fossils');
+	});
+
+	it('writes a chip click under the shown Fossils family', async () => {
+		const { h, controller } = await loaded({ family: 'removed-family' });
+		controller.togglePick(DENSE);
+		expect(storedPicks(h)).toEqual({ fossil: { [DENSE]: 'keep' } });
+	});
+});
+
 describe('createHarvestController — actions', () => {
 	it('togglePick writes the fossil entry and leaves the delirium entry intact', async () => {
 		const { h, controller } = await loaded({ picks: JSON.stringify({ delirium: { [DELIRIUM_WEAPONS]: 'keep' } }) });
@@ -408,13 +428,31 @@ describe('createHarvestController — actions', () => {
 		});
 	});
 
-	it('togglePick on a picked chip returns it to the computed side', async () => {
-		const { h, controller } = await loaded();
+	it('togglePick on a picked chip moves it back to the feeders (prototype line 417)', async () => {
+		const { controller } = await loaded();
 		controller.togglePick(DENSE);
 
 		controller.togglePick(DENSE);
 
-		expect(storedPicks(h)).toEqual({});
+		expect(card(body(controller), 'feeders', 'MID').chips.map((c) => c.itemId)).toContain(DENSE);
+	});
+
+	it('togglePick back to the engine side reads computed from prices', async () => {
+		const { controller } = await loaded();
+		controller.togglePick(DENSE);
+
+		controller.togglePick(DENSE);
+
+		expect(body(controller).split.label).toBe('computed from prices');
+	});
+
+	it('after ← Keep tier on MID, a Sanctified click moves Sanctified to the feeders (C1)', async () => {
+		const { controller } = await loaded();
+		controller.moveTier('MID', 'keep');
+
+		controller.togglePick(SANCTIFIED);
+
+		expect(card(body(controller), 'feeders', 'MID').chips.map((c) => c.itemId)).toEqual([SANCTIFIED]);
 	});
 
 	it('moveTier(LOW) on Fossils leaves no LOW card among the feeders', async () => {

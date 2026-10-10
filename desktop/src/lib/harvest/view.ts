@@ -241,7 +241,7 @@ function weightsSegment(family: HarvestFamily): string {
 	if (sample.rolls === null) {
 		return `weights: no logged sample · ${sample.uniform ? 'assumed uniform, ' : ''}closed pool of ${countWord(types.length)}`;
 	}
-	const kind = sample.uniform ? `uniform ~${Math.round(100 / types.length)}%` : "one player's sample";
+	const kind = sample.uniform ? `uniform ~${Math.round(100 / types.length)}%` : 'one player’s sample';
 	return ['weights: HarvestForge log', `${formatHarvestCount(sample.rolls)} rolls`, sample.date, kind]
 		.filter((s): s is string => s !== null)
 		.join(' · ');
@@ -286,7 +286,12 @@ export interface Chip {
 	priceText: string;
 	unpriced: boolean;
 	picked: boolean;
-	pickTitle: string | null;
+	/**
+	 * Prototype line 416: `Kept (engine) — click to feed just <full name>`, or
+	 * `(your pick)` when the player picked it. `null` on an unpriced chip: a
+	 * click cannot feed it (C2) and the prototype draws no unpriced type.
+	 */
+	title: string | null;
 	/** Feeders only: the loop EV, signed. */
 	evText: string | null;
 	evTone: 'gain' | 'loss' | 'flat' | null;
@@ -300,6 +305,8 @@ export interface TierCard {
 	/** `7 types · 30.0c–109c`, `1 type · 402c`, `1 type · —`. */
 	meta: string;
 	moveLabel: string;
+	/** `false` when no chip on this side is priced: the move would send nothing (reference 08 §5 draws no button). */
+	movable: boolean;
 	/** The side the move button sends the tier to. */
 	moveTo: Pick;
 	chips: Chip[];
@@ -328,9 +335,12 @@ export interface Row {
 
 const TOP_TIER = 'TOP';
 
-/** Q4 (PENDING OPERATOR, P45): titles of a chip the player picked; README asks only for "a title that says so". */
-export const PICK_TITLE_KEPT = 'Your pick: kept. Click to return it to the computed side.';
-export const PICK_TITLE_FED = 'Your pick: fed. Click to return it to the computed side.';
+function chipTitle(row: Row): string | null {
+	if (row.price === null) return null;
+	const side = row.kept ? 'Kept' : 'Fed';
+	const by = row.picked === null ? '(engine)' : '(your pick)';
+	return `${side} ${by} — click to ${row.kept ? 'feed' : 'keep'} just ${row.name}`;
+}
 
 function chipOf(row: Row): Chip {
 	const tone =
@@ -343,12 +353,7 @@ function chipOf(row: Row): Chip {
 		priceText: row.price === null ? DASH : formatHarvestChaos(row.price),
 		unpriced: row.price === null,
 		picked: row.picked !== null,
-		pickTitle:
-			row.picked === null
-				? null
-				: row.picked === 'keep'
-					? PICK_TITLE_KEPT
-					: PICK_TITLE_FED,
+		title: chipTitle(row),
 		evText: row.kept || row.loopEv === null ? null : formatHarvestGain(row.loopEv),
 		evTone: row.kept ? null : tone,
 		// Reference 08 §5 draws an unpriced keeper as "— UNPRICED" with no share.
@@ -392,6 +397,7 @@ export function tierCards(rows: Row[], tierNames: string[], side: 'feeders' | 'k
 				split: mine.length < n,
 				meta: `${n} type${n === 1 ? '' : 's'} · ${rangeText(members)}`,
 				moveLabel: kept ? 'Feed tier →' : '← Keep tier',
+				movable: mine.some((r) => r.price !== null),
 				moveTo: (kept ? 'reroll' : 'keep') as Pick,
 				chips: [...mine].sort(byPriceDesc).map(chipOf)
 			};
@@ -406,13 +412,27 @@ export interface Verdict {
 	headline: string;
 	reason: string | null;
 	worth: boolean;
-	evText: string | null;
-	evNegative: boolean;
-	per: string | null;
+	evText: string;
+	/** Prototype `gcls`: `gain` above +0.05c, `loss` below −0.05c, else `flat` (muted). */
+	evTone: 'gain' | 'loss' | 'flat';
+	per: string;
 	divineLine: string | null;
 }
 
 const QUESTION = 'Is it worth it?';
+
+function toneOf(chaos: number): 'gain' | 'loss' | 'flat' {
+	return chaos > 0.05 ? 'gain' : chaos < -0.05 ? 'loss' : 'flat';
+}
+
+function nothingToFlipReason(result: FamilyResult): string | null {
+	if (result.kind === 'no-keepers') return 'The keep set is empty: pick a tier to keep.';
+	if (result.kind === 'no-feeders' && result.closest !== null) {
+		const c = result.closest;
+		return `Every type sells for more than a reroll returns. Closest: ${c.name} ${formatHarvestGain(c.loopEvChaos)}.`;
+	}
+	return null;
+}
 
 /** The verdict panel per engine result (references 01, 08 §6–7). */
 export function verdictView(result: FamilyResult, lifeforceName: string): Verdict {
@@ -428,7 +448,7 @@ export function verdictView(result: FamilyResult, lifeforceName: string): Verdic
 				: 'Even the cheapest feeder sells for more than the loop returns.',
 			worth,
 			evText: formatHarvestGain(h.loopEvChaos),
-			evNegative: h.loopEvChaos < -0.05,
+			evTone: toneOf(h.loopEvChaos),
 			per: `per ${h.name}`,
 			divineLine:
 				worth && line
@@ -436,14 +456,15 @@ export function verdictView(result: FamilyResult, lifeforceName: string): Verdic
 					: null
 		};
 	}
+	// Prototype lines 452–455: headline EV "—" muted over "no feeder".
 	return {
 		question: QUESTION,
 		headline: 'No — nothing to flip',
-		reason: result.kind === 'no-keepers' ? 'The keep set is empty: pick a tier to keep.' : null,
+		reason: nothingToFlipReason(result),
 		worth: false,
-		evText: null,
-		evNegative: false,
-		per: null,
+		evText: DASH,
+		evTone: 'flat',
+		per: 'no feeder',
 		divineLine: null
 	};
 }
@@ -458,7 +479,9 @@ export interface CostPanel {
 	lifeforceLabel: string;
 	/** `0.9c = 30 × Wild lifeforce (purple)`; the page draws the icon between `×` and the label. */
 	line: string;
-	perDivine: string;
+	/** `1 div → <perDivineLifeforce> lifeforce → <perDivineRerolls> rerolls`; the page sets only the numbers and "1 div" in mono (prototype line 266). */
+	perDivineLifeforce: string;
+	perDivineRerolls: string;
 	caption: string;
 }
 
@@ -473,29 +496,49 @@ export function costPanel(family: HarvestFamily, exchange: ExchangePriceRead): C
 		lifeforceIcon: currencyIconPath(lifeforce.itemId),
 		lifeforceLabel: label,
 		line: `${formatHarvestChaos(cost)} = ${family.rerollCost} × ${label}`,
-		perDivine: `1 div → ${formatHarvestCount(lifeforce.perDivine)} lifeforce → ${formatHarvestCount(Math.floor(lifeforce.perDivine / family.rerollCost))} rerolls`,
-		caption: `chaos side ${lifeforce.chaos}c each; divine side from the lifeforce/divine market`
+		perDivineLifeforce: formatHarvestCount(lifeforce.perDivine),
+		perDivineRerolls: formatHarvestCount(Math.floor(lifeforce.perDivine / family.rerollCost)),
+		caption: `chaos side ${lifeforce.chaos.toFixed(3)}c each; divine side from the lifeforce/divine market`
 	};
 }
 
 export interface EvRow {
 	label: string;
 	value: string;
+	/** Reference 08 §5: the floor note under "Loop EV per feeder", when a type is unpriced. */
+	note: string | null;
 }
 
 export interface EvPanel {
 	rows: EvRow[];
 	yield: EvRow[];
-	/** Reference 08 §5: the floor note, when a type is unpriced. */
-	unpricedNote: string | null;
 }
 
+const EV_ROW_LABELS = [
+	'Cheapest feeder',
+	'Loop EV per feeder',
+	'Keeper hit per roll',
+	'Rerolls per keeper',
+	'Lifeforce per keeper'
+];
+const EV_YIELD_LABELS = ['1 div of lifeforce yields', '…worth after inputs'];
+
+function evRows(labels: string[], values: string[], notes: (string | null)[] = []): EvRow[] {
+	return labels.map((label, i) => ({ label, value: values[i], note: notes[i] ?? null }));
+}
+
+/** Prototype lines 451–456: with nothing to flip the panel stays, every value "—". */
 export function evPanel(
 	result: FamilyResult,
 	lifeforceName: string,
 	lastSeen: Map<string, number | null>
-): EvPanel | null {
-	if (result.kind !== 'ok') return null;
+): EvPanel {
+	if (result.kind !== 'ok') {
+		return {
+			rows: evRows(EV_ROW_LABELS, EV_ROW_LABELS.map(() => DASH)),
+			yield: evRows(EV_YIELD_LABELS, EV_YIELD_LABELS.map(() => DASH))
+		};
+	}
 	const h = result.headline;
 	let unpricedNote: string | null = null;
 	const n = result.unpriced.length;
@@ -510,21 +553,21 @@ export function evPanel(
 		}
 	}
 	return {
-		rows: [
-			{ label: 'Cheapest feeder', value: `${h.name} · ${formatHarvestChaos(h.priceChaos)}` },
-			{ label: 'Loop EV per feeder', value: formatHarvestGain(h.loopEvChaos) },
-			{ label: 'Keeper hit per roll', value: formatHarvestPercent(h.keeperHitPerRoll * 100) },
-			{ label: 'Rerolls per keeper', value: formatHarvestRolls(h.rerollsPerKeeper) },
-			{
-				label: 'Lifeforce per keeper',
-				value: `~${formatHarvestCount(h.lifeforcePerKeeper)} ${lifeforceName} · ${formatHarvestChaos(h.lifeforceChaosPerKeeper)}`
-			}
-		],
-		yield: [
-			{ label: '1 div of lifeforce yields', value: `${formatHarvestRolls(h.keepersPerDivine)} keepers` },
-			{ label: '…worth after inputs', value: formatHarvestGain(h.keepersPerDivineWorthChaos) }
-		],
-		unpricedNote
+		rows: evRows(
+			EV_ROW_LABELS,
+			[
+				`${h.name} · ${formatHarvestChaos(h.priceChaos)}`,
+				formatHarvestGain(h.loopEvChaos),
+				formatHarvestPercent(h.keeperHitPerRoll * 100),
+				formatHarvestRolls(h.rerollsPerKeeper),
+				`~${formatHarvestCount(h.lifeforcePerKeeper)} ${lifeforceName} · ${formatHarvestChaos(h.lifeforceChaosPerKeeper)}`
+			],
+			[null, unpricedNote]
+		),
+		yield: evRows(EV_YIELD_LABELS, [
+			`${formatHarvestRolls(h.keepersPerDivine)} keepers`,
+			formatHarvestGain(h.keepersPerDivineWorthChaos)
+		])
 	};
 }
 
@@ -552,7 +595,7 @@ export interface FamilyBody {
 	keepers: Column;
 	regex: { feeders: RegexBox; keepers: RegexBox; caption: string };
 	cost: CostPanel;
-	ev: EvPanel | null;
+	ev: EvPanel;
 }
 
 export type PageBody =
@@ -616,6 +659,29 @@ function regexBox(names: string[], familyNames: string[]): RegexBox {
 	};
 }
 
+/**
+ * Prototype lines 463–471: a pick counts as a move only when its side differs
+ * from the engine's own decision (`p ≥ R`). Without an `ok` result there is no
+ * `R`, so the side the engine takes with no picks stands in; with no answer at
+ * all, every pick counts.
+ */
+function movedCount(result: FamilyResult, picks: Map<string, Pick>, unpicked: () => FamilyResult): number {
+	if (result.kind === 'ok') {
+		return result.types.filter(
+			(t) => t.picked !== null && t.priceChaos !== null && (t.picked === 'keep') !== t.priceChaos >= t.rerollValueChaos
+		).length;
+	}
+	const base = unpicked();
+	const autoKept =
+		base.kind === 'ok'
+			? new Map(base.types.map((t) => [t.itemId, t.kept]))
+			: base.kind === 'no-feeders'
+				? new Map([...picks.keys()].map((id) => [id, true]))
+				: null;
+	if (autoKept === null) return picks.size;
+	return [...picks].filter(([id, pick]) => (pick === 'keep') !== autoKept.get(id)).length;
+}
+
 function familyBody(input: PageInput, family: HarvestFamily, exchange: ExchangePriceRead): PageBody | null {
 	const cost = costPanel(family, exchange);
 	if (!family.weights || !family.lifeforce || !cost) return noDataBody(family);
@@ -629,18 +695,24 @@ function familyBody(input: PageInput, family: HarvestFamily, exchange: ExchangeP
 		])
 	);
 	const own = familyPicks(input.picks, family.id);
+	// The effective picks: known, priced types only. A stored pick on an unpriced type is
+	// ignored (C2), so it neither reaches the engine nor counts as a move.
 	const picks = new Map(
-		types.filter((t) => Object.hasOwn(own, t.itemId) && isPick(own[t.itemId])).map((t) => [t.itemId, own[t.itemId]])
+		types
+			.filter((t) => Object.hasOwn(own, t.itemId) && isPick(own[t.itemId]) && prices.get(t.itemId) !== null)
+			.map((t) => [t.itemId, own[t.itemId]])
 	);
-	const result = solveFamily({
+	const engineInput = {
 		types,
 		prices,
 		lastSeen,
-		rerollCostChaos: (family.rerollCost ?? 0) * lifeforce.chaos,
+		rerollCostChaos: cost.perReroll * lifeforce.chaos,
+		lifeforcePerReroll: cost.perReroll,
 		picks,
 		lifeforcePerDivine: lifeforce.perDivine,
 		divineChaosRate: input.divineChaosRate ?? 0
-	});
+	};
+	const result = solveFamily(engineInput);
 	if (result.kind === 'no-data') return noDataBody(family);
 
 	const totalWeight = types.reduce((s, t) => s + t.weight, 0);
@@ -671,7 +743,7 @@ function familyBody(input: PageInput, family: HarvestFamily, exchange: ExchangeP
 		return { cards, untiered, empty: cards.length + untiered.length === 0 ? emptyText : null };
 	};
 	const familyNames = types.map((t) => t.name);
-	const moved = rows.filter((r) => r.picked !== null).length;
+	const moved = movedCount(result, picks, () => solveFamily({ ...engineInput, picks: new Map() }));
 	return {
 		kind: 'family',
 		verdict: verdictView(result, family.lifeforce),
@@ -692,17 +764,31 @@ function familyBody(input: PageInput, family: HarvestFamily, exchange: ExchangeP
 	};
 }
 
+/** The family a fresh install opens on (D10's `harvestFlippingFamily` default). */
+export const DEFAULT_FAMILY_ID = 'fossil';
+
+/**
+ * The family the page shows for a stored id: that family, else the default,
+ * else the first. A restored id no family carries (a removed family, a
+ * hand-edited pref) would otherwise leave tabs with no active tab and no body.
+ */
+export function resolveFamily(families: HarvestFamily[], familyId: string): HarvestFamily | null {
+	return (
+		families.find((f) => f.id === familyId) ?? families.find((f) => f.id === DEFAULT_FAMILY_ID) ?? families[0] ?? null
+	);
+}
+
 /** The whole page model for one state (references 01–08). */
 export function pageView(input: PageInput): PageView {
 	const state = combineOwnerState(input);
 	const { exchange, harvest } = input;
+	const family = resolveFamily(harvest?.families ?? [], input.familyId);
 	const tabs: Tab[] = (harvest?.families ?? []).map((f) => ({
 		id: f.id,
 		label: f.label,
 		noData: f.weights === null,
-		active: f.id === input.familyId
+		active: f.id === family?.id
 	}));
-	const family = harvest?.families.find((f) => f.id === input.familyId) ?? null;
 	const view: PageView = { state: state.kind, stateLine: STATE_LINES[state.kind] ?? null, tabs, status: null, body: null };
 	if (!family) return view;
 	const status =

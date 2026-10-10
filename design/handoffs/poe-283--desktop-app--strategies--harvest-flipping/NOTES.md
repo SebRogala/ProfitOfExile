@@ -106,6 +106,8 @@ Write these into POE-283. Without tracker access, a human does it (`AGENT.md` §
 4. **Reference 08 §5, unpriced floor +23.8c, is an illustration error.** Under the rule (an unpriced type counts 0c and is always kept), the Fossils floor with Hollow unpriced is 23.743c, printed +23.7c. The drawn +23.8c matches 23.789c, which is Hollow fed. The rule wins, and the page prints +23.7c; the designer should recapture §5. Source: run record, SUPERVISOR RULING after WI-1 DONE (08:45).
 5. **Weight-share denominator.** A keeper's weight share is `loggedRolls / Σ loggedRolls` over the family's types (`harvest/engine.ts` `weightShare = w / Σw`). For Fossils that is Σ loggedRolls = 4,720, not `sample.rolls` = 5,271. The status line still prints the sample's 5,271 rolls. Measured from `harvest/__fixtures__/harvest.json`: Delirium Σ = 5,122 = `sample.rolls`; Fossils Σ = 4,720 ≠ 5,271. The ticket should state which number a share and the "N rolls" provenance mean.
 6. **Reference 04, Hysteria vs ticket.** The plan's reviewer question 4 resolved "reference over ticket" before the rounding ruling. Item 3 above supersedes it: the ticket's +19.4c is the correct figure.
+7. **Seam fields carried but not read (WI-12, completeness C12).** The engine now reads `HarvestFamily.rerollCost` as the lifeforce per reroll (it hard-coded 30 before). These seam fields are carried and drawn nowhere, so nothing reads them: `ExchangeItemPrice.divine`, `HarvestWeightSample.lifeforceSpent`, `HarvestTiers.boundariesChaos`, `HarvestTiers.topBoundaryChaos`, and `HarvestTiers.priceHour` (never compared with `ExchangePriceRead.priceHour`, so a tier/price hour mismatch is not detected). The backend task should keep or drop each deliberately.
+8. **Weights provenance label (WI-12, completeness C11).** The status line prints "weights: HarvestForge log · … · one player’s sample" as constants, as references 01–03 draw it. The fixture's `sample.source` reads "requester's HarvestForge log" (and "none — assumed uniform (owner, 2026-10-10)" for Corrupted Essences), which is not the drawn copy, so the page does not print it. The ticket should say whether provenance comes from `source` or stays fixed copy.
 
 ## Open decisions
 
@@ -123,7 +125,7 @@ Orchestrator rulings from written authorities, agreed by the Supervisor ("C1-C4 
 - **C1 — unpriced tier slot and seam widening.** Reference 08 §5 shows Hollow UNPRICED inside a TOP card ("1 type · —") that "keeps its tier slot". So `tiers.byItem` keeps the entry, and a card with no priced member prints "—" as its range. The CX read model gets `chaos: number | null` + `lastSeenChaos: number | null`. Sources: ref 08 §5; README § Spec changes (unpriced type).
 - **C2 — pick vs unpriced.** The unpriced rule wins over a pick: "always a keeper, never fed" (README) and "never feed what can't be priced" (ref 08 §5). The chip click and the tier move skip an unpriced type.
 - **C3 — default horizon.** `'day'`, under its own pref `harvestFlippingHorizon`. The parser falls back to `'day'`, not to CX's `'recent'`. Sources: `fixtures.json` `"horizon": "day"`; references 01 and 08 show Day 24h; audit Medium 9.
-- **C4 — divine-scale rounding.** `rerolls = round(feeders × N)` and `lifeforce = round(feeders × N × 30)` from the unrounded `N`. Sources: CHECKLIST (acceptance contract) and `derived.fossil.divLine` (~11,349); the README wording is under Ticket updates needed (item 2).
+- **C4 — divine-scale rounding.** `rerolls = round(feeders × N)` and `lifeforce = round(feeders × N × rerollCost)` (30 for every logged family) from the unrounded `N`. Sources: CHECKLIST (acceptance contract) and `derived.fossil.divLine` (~11,349); the README wording is under Ticket updates needed (item 2).
 
 ### D5 — one divine rate (the shared store)
 
@@ -133,7 +135,10 @@ One current divine rate feeds both the status line ("1 div = 360c") and the divi
 
 Accepted by the Supervisor (WI-6 answer, run record after 09:26:43Z), recorded for the designer:
 
-- **Q2 — empty feed set has no reason line.** When the feed set is empty, the verdict shows no reason line; nothing is composed. The drawn column text "No feeders: every tier is kept." carries it. Reference 08 §7 draws only the empty-keep-set reason.
+- **Q2 — empty feed set (superseded, WI-12).** The prototype draws it (`Overview-prototype.dc.html` lines 454–455), so the page builds it: "Every type sells for more than a reroll returns. Closest: <full name> <signed EV>.", with the headline EV "—" (muted) over "no feeder". The closest is the priced type with the highest loop EV when every type is kept; an unpriced type is never named. With no priced type at all there is nothing to name and the reason line is left out (undrawn). The earlier ruling (no reason line) is superseded by the Supervisor (run record after 10:46:37Z).
+- **Nothing to flip keeps the EV panel (WI-12).** As drawn (prototype lines 451–456), the "EV of your selection" panel stays with every value "—", and both nothing-to-flip states show the "—" headline EV over "no feeder".
+- **Unpriced chip has no title (WI-12).** The drawn chip titles (prototype line 416) say "click to feed just <name>", which an unpriced chip cannot do (C2). The prototype draws no unpriced type, so the unpriced chip has no title; a drawn title is a designer item.
+- **"N types moved by you" counts changes only (WI-12).** As the prototype does (lines 463–471), a pick counts only when its side differs from the engine's own decision (`price ≥ reroll value`) under the current picks, and Reset is inert when none differs. A chip whose pick matches the engine still shows the dashed "your pick" style, as in the prototype. When the picks leave nothing to flip, the side the engine takes without picks stands in for the comparison (the prototype's own count is undefined there).
 - **Q5 — plural unpriced note.** With two or more unpriced types, the EV-panel floor note uses a mechanical plural of the drawn singular sentence ("1 unpriced type counted as 0c, so this EV is a floor…"). It is not a new state.
 - **Q6 — untiered chips.** A type with no `tiers.byItem` entry is listed plainly in its column (same chip, no new card style, no invented header), never hidden (ADR-017 visibility).
 - **Clipboard write failure has no drawn state (WI-8).** When the clipboard write is refused, the app logs a warning (`console.warn`) and the button stays "Copy"; nothing else is shown (Supervisor ruling). A drawn error state is a designer item if wanted.
@@ -150,13 +155,14 @@ Accepted by the Supervisor (WI-6 answer, run record after 09:26:43Z), recorded f
 
 Copy the design does not draw. Each string is one named constant in `desktop/src/lib/harvest/view.ts`, recorded for the Operator as P45 (coordinator-18; run record, SUPERVISOR ANSWER after 09:26:43Z):
 
-- **Q4 — picked-chip titles.** README asks only for "a title that says so".
-  - `PICK_TITLE_KEPT` (`view.ts:332`): "Your pick: kept. Click to return it to the computed side."
-  - `PICK_TITLE_FED` (`view.ts:333`): "Your pick: fed. Click to return it to the computed side."
+Q4 (picked-chip titles) is answered by the design (WI-12): every chip carries the prototype's title (line 416), "Kept (engine) — click to feed just <full name>", "Kept (your pick) — …", "Fed (engine) — click to keep just <full name>", "Fed (your pick) — …" (`chipTitle`, `view.ts`). Q7 stays pending:
+
 - **Q7 — no-data text for unusable-number engine results.**
-  - `NO_DATA_TEXT` (`view.ts:601`): "The EV needs how often each type comes out of a reroll. Nobody has sent a HarvestForge log for this family yet, so there is nothing to compute. The tab fills in when one arrives."
+  - `NO_DATA_TEXT` (`view.ts:644`): "The EV needs how often each type comes out of a reroll. Nobody has sent a HarvestForge log for this family yet, so there is nothing to compute. The tab fills in when one arrives."
 
 ## Follow-ups outside this lane
+
+- **Sidebar entry hidden without `BETA_FEATURE` has no test (WI-12, completeness C18).** INVENTORY B22 rests on reading `Sidebar.svelte`; no Sidebar or layout test covers any feature-gated entry (a pre-existing pattern, not Harvest's). Follow-up task: a Sidebar test that the gated entries (Harvest Flipping among them) are absent without their feature and present with it. Outside this lane's files.
 
 - **Lifeforce colour facts for `docs/GAME-FACTS.md`** (another owner's file; noted here only). Primal = blue, Vivid = yellow, Wild = purple. A reroll costs 30 lifeforce of the family's colour. Deafening and corrupted essences cost Primal (blue), Fossils cost Wild (purple), and Delirium Orbs cost Primal. Sources: `fixtures.json` `exchange.lifeforce` and `families[].lifeforce`; README § Spec changes ("the blue ones", poedb). `docs/GAME-FACTS.md` has no lifeforce entry at `d82d311a`.
 - **`items.json` name defect.** `internal/exchange/itemdata/items.json:847` names `Metadata/Items/Currency/CurrencyAfflictionOrbHarbinger` "Fine Delirium Orb", while its icon URL (`icon-urls.json:169`) is the Foreboding Delirium Orb. `…Prophecies` (`items.json:882`, icon Portentous) carries the same name; `design/PROJECT.md:76` records both. The real Fine Delirium Orb is `CurrencyAfflictionOrbCurrency`. Harvest looks items up by itemId only, but any name lookup would collide. Fix the item names in the item data.
