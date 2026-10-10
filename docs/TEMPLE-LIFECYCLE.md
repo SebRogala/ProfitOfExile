@@ -221,9 +221,11 @@ the last two bullets:
   misses over an open sheet from a close: they end the cycle, the boxes do not come back, and the
   answer is the same Re-arm, bounded as before by the board already being published — what is
   lost is the boxes, not the advice or the room widget.
-- **A kill taken mid-incursion** changes panel content that no `BoardFrame` can see: the origin,
+- **Superseded 2026-10-10 by the Operator:** **A kill taken mid-incursion** changes panel content that no `BoardFrame` can see: the origin,
   the scale and the `layout_signature` are all unchanged. The answers are the END line's own
   epoch bump and Re-arm (`BoardRead` says so at the type).
+  A kill mid-incursion does not change the temple sheet during an Alva encounter, so the
+  locked read stays correct until the END line (`BoardRead::locked`; GAME-FACTS.md).
 - **Placed-origin verification** checks the Entrance placement from the current
   screen slice once per detect tick. The first successful recheck logs
   `Temple: placed-origin recheck — NCC N, N ms`. A below-floor result on a

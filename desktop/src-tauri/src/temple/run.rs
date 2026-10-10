@@ -390,9 +390,9 @@ pub struct LoopState {
 /// (POE-249 WI-1, docs/TEMPLE-LIFECYCLE.md row 4). Only an incursion adds a room
 /// or an upgrade, and `super::trigger::ends_epoch` bumps on the START line as
 /// well as the END one, so a completed incursion always has a bump on each side
-/// of it. What that does NOT mean is that the contents hold still between two
-/// bumps: the kill itself happens INSIDE the epoch it opened — see "what is
-/// left" below.
+/// of it. A kill mid-incursion does not change the temple sheet during an Alva
+/// encounter (Operator, 2026-10-10), so the contents the read saw hold until
+/// the END line — see "what is left" below for the superseded kill residual.
 ///
 /// `rearm` is `crate::AppState::temple_rearm`, which the Re-arm button and
 /// every settings command bump. It is in the key because the user pressing it
@@ -445,7 +445,12 @@ pub struct LoopState {
 /// Re-arm — so after a drag its overlays stay where the read put them, and
 /// Re-arm is the fix.
 ///
-/// Two things are left outside both halves.
+/// One thing is left outside both halves: an origin that moves. The kill
+/// paragraph below is kept as history.
+///
+/// **Superseded 2026-10-10 by the Operator:** a kill mid-incursion does not
+/// change the temple sheet during an Alva encounter, so the locked read stays
+/// correct until the END line. The original paragraph follows.
 ///
 /// **The kill, mid-incursion.** The architect dies between the START line and
 /// the END line, so it lands inside one epoch: a plate changes name or tier and
