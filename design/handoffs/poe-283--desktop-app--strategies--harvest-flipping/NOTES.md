@@ -38,7 +38,7 @@ The backend task must honour this shape. Going live means swapping the data sour
 | `id` | `string` | Family id (pref key; `delirium`, `essence`, `corrupt`, `fossil`, `astrolabe`, `oil`, `catalyst`). |
 | `label` | `string` | Tab label. |
 | `lifeforce` | `'Primal' \| 'Vivid' \| 'Wild' \| null` | The reroll colour; `null` for a family without logged weights. |
-| `rerollCost` | `number \| null` | Lifeforce per reroll (30 for every logged family); `null` without weights. |
+| `rerollCost` | `number \| null` | Lifeforce per reroll (30, and 400 for Astrolabes); `null` without weights. |
 | `weights` | `HarvestWeights \| null` | `null` when no HarvestForge log exists yet. The tab then shows "no data" and is never hidden. |
 | `tiers` | `HarvestTiers \| null` | `null` without weights. |
 | `note` | `string \| null` | Free text from the source (the fixture's `_note`). |
@@ -51,9 +51,25 @@ The backend task must honour this shape. Going live means swapping the data sour
 
 - **Tiers per horizon, stamped with `priceHour`** (audit Medium 7). Tiers are derived from prices, so the server must serve them per horizon and carry the `priceHour` they were computed on. Otherwise Recent 6h chips render under Day 24h tiers, and a card's `<min>–<max>c` contradicts its chips. A Mercure tick could also refresh prices and tiers at different times.
 - **The mock echoes the horizon** (WI-5 doubt 1, accepted in review). Both fixture adapters return the same data for both horizons, and the exchange adapter echoes the requested horizon in `horizon`. The live source must actually key prices and tiers by horizon + `priceHour`.
-- **Adapter choices the live source must reproduce or replace deliberately** (WI-5 doubt 2, accepted in review). The exchange fixture has no `warm` field, so the adapter sets `warm: true`; the Harvest adapter also sets `warm: true`. No-data families (astrolabe, oil, catalyst) omit `lifeforce` and `rerollCost` in the fixture, so the adapter returns `null` for both and carries `_note` as `note`.
+- **Adapter choices the live source must reproduce or replace deliberately** (WI-5 doubt 2, accepted in review). The exchange fixture has no `warm` field, so the adapter sets `warm: true`; the Harvest adapter also sets `warm: true`. A family without weights may omit `lifeforce` and `rerollCost`; the adapter then returns `null` for both and carries `_note` as `note`. Since 2026-10-10 every fixture family carries weights, so this null mapping is covered by test-local data (`sources/harvest-fixture.test.ts`, `serves a family without a log without weights` and its siblings).
 - **Both ports are async** (audit Medium 8). A synchronous source would never render `loading`.
 - **Two owners, two statuses** (audit Medium 6, D8). The page combines them through `deriveState`, whose input is widened to `{warm; lastUpdated}`: any owner errored → stale or unreachable; any owner cold → warming.
+
+## HarvestForge logs for Astrolabes, Oils and Catalysts (2026-10-10)
+
+- **Logs.** The Operator sent three HarvestForge reroll logs. They are committed unedited (byte-identical, UTF-8 BOM, CRLF) at `desktop/src/lib/harvest/__fixtures__/harvestforge/`: `HarvestForge_Astrolabes_20261010_134926.csv`, `HarvestForge_Catalysts_20261010_023020.csv`, `HarvestForge_Oils_20261010_000148.csv`. `harvest.json` takes each family's types, `loggedRolls` and `sample.rolls` from them; `harvestforge-logs.test.ts` checks the fixture against the committed CSVs.
+- **Lifeforce spent.** HarvestForge's CSV footer miscounts lifeforce spent. The fixture holds the Operator's values (coordinator ruling P48, interim pending Operator confirmation):
+
+  | Family | Colour | `rerollCost` | `lifeforceSpent` | CSV footer |
+  |---|---|---|---|---|
+  | Astrolabes | Wild | 400 | 804000 | Wild 60360 |
+  | Catalysts | Wild | 30 | 75120 | Wild 25040 |
+  | Oils | Primal | 30 | 78180 (as logged, to be confirmed) | Primal 78180 |
+
+  For the Operator: Astrolabe 804000 = 2010 rolls × 400. Catalyst 75120 = 2500 × 30 + 120 and Oil 78180 = 2602 × 30 + 120.
+- **Prices and tiers of the 32 new items.** Currency Exchange pooled VWAP over the 25 clock hours 2026-09-08 00:00 → 2026-09-09 00:00 UTC, league Allflame, local database. Chaos is the market against Chaos Orb; divine is the item's own divine market. Tiers come from `classifyWithFilter` (`internal/lab/classification.go:417`), one variant per family. Reproduction gate: the same procedure reproduced every existing fixture price and tier exactly (191 of 191 fields). Queries and outputs: HARVEST-DATA lane record, 2026-10-10. The exchange fixture states `priceHour` 2026-09-09T23:00:00Z, while the reproducing window ends at 00:00 (the local database holds no Allflame market rows after 2026-09-09 00:00). Six oils (Clear, Sepia, Amber, Verdant, Azure, Violet) have `divine: null`: no divine-market trade in the window.
+- **Owner item (Supervisor Q2): sub-5c Harvest types stay untiered.** `classifyWithFilter` skips every price at or below 5c (`internal/lab/classification.go:429`, `g.Chaos <= 5`). That leaves 14 types untiered (Supervisor Q2 said 13, a count slip corrected 2026-10-10): catalysts Intrinsic, Noxious, Imbued, Turbulent, Abrasive, Accelerating; oils Clear, Sepia, Amber, Verdant, Teal, Azure, Indigo, Violet. They carry no `byItem` entry and no client-side label (tiers are server-owned). The page lists them plainly per Designer item Q6 (ADR-017). Whether the server tier procedure should tier sub-5c Harvest types is the owner's call.
+- **Divergence from the handoff.** The desktop fixture now differs from the handoff's `fixtures.json` for these three families: the designer's file still shows them as no-data.
 
 ## Fixture → codebase names
 
@@ -125,7 +141,7 @@ Orchestrator rulings from written authorities, agreed by the Supervisor ("C1-C4 
 - **C1 — unpriced tier slot and seam widening.** Reference 08 §5 shows Hollow UNPRICED inside a TOP card ("1 type · —") that "keeps its tier slot". So `tiers.byItem` keeps the entry, and a card with no priced member prints "—" as its range. The CX read model gets `chaos: number | null` + `lastSeenChaos: number | null`. Sources: ref 08 §5; README § Spec changes (unpriced type).
 - **C2 — pick vs unpriced.** The unpriced rule wins over a pick: "always a keeper, never fed" (README) and "never feed what can't be priced" (ref 08 §5). The chip click and the tier move skip an unpriced type.
 - **C3 — default horizon.** `'day'`, under its own pref `harvestFlippingHorizon`. The parser falls back to `'day'`, not to CX's `'recent'`. Sources: `fixtures.json` `"horizon": "day"`; references 01 and 08 show Day 24h; audit Medium 9.
-- **C4 — divine-scale rounding.** `rerolls = round(feeders × N)` and `lifeforce = round(feeders × N × rerollCost)` (30 for every logged family) from the unrounded `N`. Sources: CHECKLIST (acceptance contract) and `derived.fossil.divLine` (~11,349); the README wording is under Ticket updates needed (item 2).
+- **C4 — divine-scale rounding.** `rerolls = round(feeders × N)` and `lifeforce = round(feeders × N × rerollCost)` (`rerollCost`: 30, and 400 for Astrolabes) from the unrounded `N`. Sources: CHECKLIST (acceptance contract) and `derived.fossil.divLine` (~11,349); the README wording is under Ticket updates needed (item 2).
 
 ### D5 — one divine rate (the shared store)
 
@@ -164,5 +180,5 @@ Q4 (picked-chip titles) is answered by the design (WI-12): every chip carries th
 
 - **Sidebar entry hidden without `BETA_FEATURE` has no test (WI-12, completeness C18).** INVENTORY B22 rests on reading `Sidebar.svelte`; no Sidebar or layout test covers any feature-gated entry (a pre-existing pattern, not Harvest's). Follow-up task: a Sidebar test that the gated entries (Harvest Flipping among them) are absent without their feature and present with it. Outside this lane's files.
 
-- **Lifeforce colour facts for `docs/GAME-FACTS.md`** (another owner's file; noted here only). Primal = blue, Vivid = yellow, Wild = purple. A reroll costs 30 lifeforce of the family's colour. Deafening and corrupted essences cost Primal (blue), Fossils cost Wild (purple), and Delirium Orbs cost Primal. Sources: `fixtures.json` `exchange.lifeforce` and `families[].lifeforce`; README § Spec changes ("the blue ones", poedb). `docs/GAME-FACTS.md` has no lifeforce entry at `d82d311a`.
+- **Lifeforce colour facts for `docs/GAME-FACTS.md`** (another owner's file; noted here only). Primal = blue, Vivid = yellow, Wild = purple. A reroll costs 30 lifeforce of the family's colour (400 for Astrolabes). Deafening and corrupted essences cost Primal (blue), Fossils cost Wild (purple), and Delirium Orbs cost Primal. Astrolabes cost Wild at 400 per reroll, Catalysts Wild, and Oils Primal (source: the Operator's HarvestForge logs and ruling P48, interim; § HarvestForge logs for Astrolabes, Oils and Catalysts). Sources: `fixtures.json` `exchange.lifeforce` and `families[].lifeforce`; README § Spec changes ("the blue ones", poedb). `docs/GAME-FACTS.md` has no lifeforce entry at `d82d311a`.
 - **`items.json` name defect.** `internal/exchange/itemdata/items.json:847` names `Metadata/Items/Currency/CurrencyAfflictionOrbHarbinger` "Fine Delirium Orb", while its icon URL (`icon-urls.json:169`) is the Foreboding Delirium Orb. `…Prophecies` (`items.json:882`, icon Portentous) carries the same name; `design/PROJECT.md:76` records both. The real Fine Delirium Orb is `CurrencyAfflictionOrbCurrency`. Harvest looks items up by itemId only, but any name lookup would collide. Fix the item names in the item data.

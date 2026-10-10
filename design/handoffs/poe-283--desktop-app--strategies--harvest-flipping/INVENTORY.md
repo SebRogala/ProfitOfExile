@@ -21,7 +21,7 @@ delivery against it and every reference PNG.
 
 ### MUST NOT DROP
 
-- [x] A1 — No-data families (Astrolabes, Oils, Catalysts) stay visible as tabs with the "no data" mark and open the "reroll weights not logged yet" panel; never hidden. · ref 06, 08 §9 · CL MUST NOT DROP · **WI-5, WI-6, WI-8, WI-11**
+- [x] A1 — No-data families (Astrolabes, Oils, Catalysts) stay visible as tabs with the "no data" mark and open the "reroll weights not logged yet" panel; never hidden. · ref 06, 08 §9 · CL MUST NOT DROP · **WI-5, WI-6, WI-8, WI-11** *2026-10-10: the three fixture families now have HarvestForge logs; the no-data path is verified with a test-local family.*
 - [x] A2 — Not worth it / nothing to flip show no divine-scale line; not worth it reads "No — not at these prices", EV red with U+2212, both columns listed. · ref 08 §6 · CL MUST NOT DROP · **WI-1, WI-6, WI-11**
 - [x] A3 — Nothing to flip: "No — nothing to flip", the reason line, "No keepers: nothing to stop on." / "No feeders: every tier is kept." in place of the empty column; no crash, no blank column. · ref 08 §7 · CL MUST NOT DROP · **WI-1, WI-6, WI-11**
 - [x] A4 — Unpriced type: always a keeper, price "—" with an "unpriced" mark, counts 0c as an outcome, EV panel says the EV is a floor and what it reads at the last seen price. · ref 08 §5 · CL MUST NOT DROP · **WI-1, WI-5, WI-6, WI-7** · *WI-12 (C14/C15: floor note under "Loop EV per feeder"; no move on an all-unpriced tier)*
@@ -77,7 +77,7 @@ delivery against it and every reference PNG.
 - [x] B3 — Deafening Essences tab: Primal 1.5c, feed Torment +6.3c, six keepers, provenance "uniform ~5%". · ref 03 · RM § Screens · **WI-1, WI-11**
 - [x] B4 — Corrupted Essences tab: closed pool of four, "assumed uniform, closed pool of four" provenance, MID-HIGH tier name. · ref 04 · RM § Screens · **WI-1, WI-2, WI-6, WI-11**
 - [x] B5 — Fossils split tier after Dense clicked (pick state). · ref 05 · RM § Interactions & state · **WI-1, WI-6, WI-7, WI-8, WI-11**
-- [x] B6 — Astrolabes tab, no data: no-data panel, status line "weights: no log yet", tab still listed. · ref 06 · RM § Screens 2 · **WI-6, WI-8, WI-11** · *WI-12 (C2/C7: page test `family without weights`; panel capped at 620 px)*
+- [x] B6 — Astrolabes tab, no data: no-data panel, status line "weights: no log yet", tab still listed. · ref 06 · RM § Screens 2 · **WI-6, WI-8, WI-11** · *WI-12 (C2/C7: page describe `HarvestFlippingPage family without weights (reference 06, 08 §9)`; panel capped at 620 px)* *2026-10-10: the three fixture families now have HarvestForge logs; the no-data path is verified with a test-local family.* Status line: view.test `no-data family keeps the status line (reference 06)`.
 - [x] B7 — Fossils, Copy pressed: button reads "Copied". · ref 07 · RM § Interactions & state · **WI-7, WI-8, WI-11**
 
 ### States sheet (reference 08)
@@ -90,9 +90,9 @@ delivery against it and every reference PNG.
 - [x] B13 — §6 Not worth it: "No — not at these prices", "Even the cheapest feeder sells for more than the loop returns.", red negative EV with U+2212 and "per <item>" (the PNG illustrates −0.3c; the plan's WI-1/WI-6 test input asserts the negative sign, not that literal), no divine line, columns still listed. · ref 08 §6 · **WI-1, WI-6, WI-11**
 - [x] B14 — §7 Nothing to flip: "No — nothing to flip", "The keep set is empty: pick a tier to keep.", column text "No keepers: nothing to stop on." (and the feed-set twin "No feeders: every tier is kept."). · ref 08 §7 · **WI-1, WI-6, WI-11** · *WI-12 (C2/C3 + Q2 superseded: closest-type reason on an empty feed set, "—" headline over "no feeder", EV panel kept with "—")*
 - [x] B15 — §8 Regex over 250, Copy pressed: "263 / 250 characters: too long for one stash search" in amber, button "Copied". · ref 08 §8 · **WI-2, WI-6, WI-7**
-- [x] B16 — §9 No data (Astrolabes, Oils, Catalysts): "<Family>: reroll weights not logged yet" panel with the HarvestForge-log body text. · ref 08 §9 · **WI-6, WI-8, WI-11** · *WI-12 (C2/C7: page test, max-width 620 px)*
-- [x] B17 — Oils tab, no data (same panel, family name "Oils"). · ref 08 §9 (not drawn on its own) · **WI-6, WI-8, WI-11**
-- [x] B18 — Catalysts tab, no data (same panel, family name "Catalysts"). · ref 08 §9 (not drawn on its own) · **WI-6, WI-8, WI-11**
+- [x] B16 — §9 No data (Astrolabes, Oils, Catalysts): "<Family>: reroll weights not logged yet" panel with the HarvestForge-log body text. · ref 08 §9 · **WI-6, WI-8, WI-11** · *WI-12 (C2/C7: page test, max-width 620 px)* *2026-10-10: the three fixture families now have HarvestForge logs; the no-data path is verified with a test-local family.* Panel: page test `titles the no-data panel`, `explains the no-data panel`.
+- [x] B17 — Oils tab, no data (same panel, family name "Oils"). · ref 08 §9 (not drawn on its own) · **WI-6, WI-8, WI-11** *2026-10-10: the three fixture families now have HarvestForge logs; the no-data path is verified with a test-local family.*
+- [x] B18 — Catalysts tab, no data (same panel, family name "Catalysts"). · ref 08 §9 (not drawn on its own) · **WI-6, WI-8, WI-11** *2026-10-10: the three fixture families now have HarvestForge logs; the no-data path is verified with a test-local family.*
 
 ### Sidebar entry (reference 09)
 
