@@ -73,6 +73,13 @@ is not mistaken for a fact.
   on the same side, and the zig-zag crosses each room diagonally. How much
   longer the zig-zag is in play has not been measured. The builder advisor
   counts hops (`desktop/src-tauri/src/temple/advisor/convenience.rs`).
+- **The layout sheet does not change during an Alva encounter.** The player's
+  position on it is frozen in the building phase. Opening a door with a Stone
+  of Passage mid-run does not update the board either. Owner-stated,
+  2026-10-09 (POE-282). A kill mid-incursion does not change the sheet
+  either (Operator ruling, 2026-10-10). Consequence: the read the temple
+  module takes is the board for the whole encounter
+  (`desktop/src-tauri/src/temple/run.rs`, `BoardRead::locked`).
 
 ### Vial recipes: nine vials, eleven transformations
 
