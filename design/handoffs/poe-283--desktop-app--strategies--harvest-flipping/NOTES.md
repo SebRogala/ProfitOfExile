@@ -147,7 +147,7 @@ Accepted by the Supervisor (WI-6 answer, run record after 09:26:43Z), recorded f
 - **Designer intake — "prices unavailable" no-data variant (Q7).** The no-data panel is drawn only for families without weights (ref 06, ref 08 §9). Engine results whose numbers are unusable reuse its text (see PENDING OPERATOR). A drawn "prices unavailable" variant of the panel is requested.
 - **Stale status line keeps the weights segment (WI-11).** Reference 08 §3 draws the stale line as "stale since 21:04 — server unreachable · prices from 21:00 (2 h ago) · prices: Currency Exchange, Day 24h · 1 div = 360c" and stops there; reference 01's ready line ends with the weights provenance. The page keeps the weights segment in the stale state too, since every derived number shows its provenance. Designer: confirm, or redraw §3 if the stale line should drop it.
 - **Unpriced chip shows no weight share (WI-11).** Reference 08 §5 draws an unpriced keeper as "Hollow — UNPRICED" with no share; the page now matches (priced keepers keep their share).
-- **Sidebar entry focus ring (WI-11).** Pre-existing app-wide gap: no sidebar item has a focus ring (Sidebar.svelte all: unset, no :focus-visible). The Harvest entry inherits it; no Sidebar.svelte change (Supervisor ruling). Follow-up task for the whole sidebar (relayed to the Coordinator).
+- **Sidebar entry focus ring (WI-11).** Pre-existing app-wide gap: no sidebar item had a focus ring (Sidebar.svelte all: unset, no :focus-visible). The Harvest entry inherited it; no Sidebar.svelte change in this lane (Supervisor ruling). Fixed for every sidebar item by commit 422bc7a4 (`fix(desktop): sidebar: keyboard focus ring on every item`): a `--color-lab-blue` `:focus-visible` outline on `.nav-item` and `.collapsed-item`.
 - **Headline EV contrast (WI-11).** `--color-lab-red` on `--color-lab-surface` measures 4.47:1, below 4.5:1 for normal text. `.ev-big` is now 1.375rem/700, matching the prototype's `.gain` weight (700), so it qualifies as large bold text (3:1). Chip loss EVs sit on `--color-lab-bg` at 5.01:1.
 - **Tabs on one line at 1024 px (WI-11).** Nowrap + horizontal scroll; fit at 1024 px not verified without a render (pixel pass waived by the Operator 2026-10-10).
 
@@ -155,9 +155,9 @@ Accepted by the Supervisor (WI-6 answer, run record after 09:26:43Z), recorded f
 
 Copy the design does not draw. Each string is one named constant in `desktop/src/lib/harvest/view.ts`, recorded for the Operator as P45 (coordinator-18; run record, SUPERVISOR ANSWER after 09:26:43Z):
 
-Q4 (picked-chip titles) is answered by the design (WI-12): every chip carries the prototype's title (line 416), "Kept (engine) — click to feed just <full name>", "Kept (your pick) — …", "Fed (engine) — click to keep just <full name>", "Fed (your pick) — …" (`chipTitle`, `view.ts`). Q7 stays pending:
+Q4 (picked-chip titles) is answered by the design (WI-12): every chip carries the prototype's title (line 416), "Kept (engine) — click to feed just <full name>", "Kept (your pick) — …", "Fed (engine) — click to keep just <full name>", "Fed (your pick) — …" (`chipTitle`, `view.ts`). Q7 is answered by the Operator 2026-10-10 (P45, "Accept now, Designer later"): `NO_DATA_TEXT` ships as is; the Designer-intake line for a "prices unavailable" variant stays at § Designer items. Nothing is pending in this section.
 
-- **Q7 — no-data text for unusable-number engine results.**
+- **Q7 — no-data text for unusable-number engine results (answered: ships as is).**
   - `NO_DATA_TEXT` (`view.ts:644`): "The EV needs how often each type comes out of a reroll. Nobody has sent a HarvestForge log for this family yet, so there is nothing to compute. The tab fills in when one arrives."
 
 ## Follow-ups outside this lane

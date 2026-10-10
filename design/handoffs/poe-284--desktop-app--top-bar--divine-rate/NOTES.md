@@ -67,7 +67,10 @@ interface DivineRate {
 - **Lab** (`formatPrice`, the Rust `trade_lookup` normalization, the queue snapshot rate) and **the comparator
   overlay** stay on `status.divinePrice`. The store is fixture-fed, and the three Lab paths must move together or the
   queue's price delta picks up rate drift as a price move (homes audit High 3, High 4, Medium 1; Supervisor ruling 1, Q1).
-  The README's open "Lab conversions" decision moves to the backend task.
+  The README's "Lab conversions" decision is answered by the Operator 2026-10-10 (P41, "Yes, one rate everywhere"):
+  when the store goes live, the backend task moves Lab (`formatPrice`, the Rust `trade_lookup` normalization, the queue
+  snapshot rate), the comparator and the overlay off `status.divinePrice` onto the shared store, all three paths
+  together. The work stays with the backend task.
 - **Currency Exchange** keeps its response's `divineChaosRate` for un-converting entry prices: the server valued
   each play at that hour's rate, so a store read at another moment would mis-convert (homes audit High 1; ruling 1, Q2).
 - **Lab header and MarketOverview** keep their poe.ninja rate readouts (ruling 1, Q4) — a follow-up, since they can
@@ -77,7 +80,7 @@ interface DivineRate {
 ## 5. Open decisions with interims
 
 - **Cold server fallback** (poe.ninja stand-in vs "—"): interim "—" (README, ref 02).
-- **Lab conversions:** moved to the backend task (§4).
+- **Lab conversions:** decided (P41, one rate everywhere); the move is the backend task's work (§4).
 - **`--text-muted` contrast** 4.48:1 on the cold dash: unresolved AA owner item (§1).
 - **Tooltip grouping at ≥1,000:** `_formats.tooltip` says only "one decimal"; the tooltip groups like the chip
   (`1,234.5`) for consistency — an interpretation.
