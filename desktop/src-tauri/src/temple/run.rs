@@ -88,9 +88,12 @@
 //! sufficient because the shared slice is corroborated across modules (ADR-020),
 //! while the placed origin is verified on every tick by the recheck.
 //!
-//! The OCR gate remains independent: [`LoopState::gate`] compares the board key
-//! and [`slice::BoardFrame`], re-shows an already-read board, or pays for the
-//! read and its bounded [`RETRIES`] partial rounds. [`LoopState::on_detect`]
+//! The OCR gate remains independent: [`LoopState::gate`] compares the board key,
+//! pays for the read and its bounded [`RETRIES`] partial rounds, and re-shows a
+//! board whose read is done — clean, or the budget spent — as LOCKED (POE-282).
+//! A moved [`slice::BoardFrame`] is a new board only before the lock; a locked
+//! board keeps its read and its geometry until START, END, a zone change or
+//! Re-arm. [`LoopState::on_detect`]
 //! and [`publish_anchor_scale`] still run before that gate on every sighting.
 //!
 //! # The detect cadence
@@ -218,6 +221,11 @@ const SLOW_TICK: Duration = DETECT_INTERVAL;
 /// on EVERY tick would otherwise write one line per tick into `app_log`'s
 /// 50-entry buffer; the file log is append-only either way.
 const SLOW_TICK_LOG_EVERY: Duration = Duration::from_secs(10);
+/// At most one [`locked_sighting_line`] per this much wall time (POE-282). The
+/// same value as [`SLOW_TICK_LOG_EVERY`] for the same reason: `app_log` keeps
+/// 50 entries, and a changed sighting repeats on every tick while a tooltip or
+/// a drag lasts, so one line per tick would empty it in about half a minute.
+const LOCKED_SIGHTING_LOG_EVERY: Duration = Duration::from_secs(10);
 /// How long to idle between focus checks while the game is not focused.
 const UNFOCUSED_NAP: Duration = Duration::from_millis(1000);
 /// Distinct error messages logged before the loop stops repeating itself. The
@@ -399,16 +407,23 @@ pub struct LoopState {
 /// Temple of Atzoatl run, where the sheet is the navigation aid and no
 /// `EnteredTemple` bumps anything. A corridor the beam could not see resolves,
 /// which moves `layout.doors`. The game window is dragged or the UI scale
-/// changes, which moves `origin`/`scale`. A reopen answered on the key alone
-/// would put back the PREVIOUS room's outline, seals, advice and never-cover
-/// set over the frame in front of the player (ADR-019).
+/// changes, which moves `origin`/`scale`. Before the lock, treating the key
+/// alone as retry identity would keep the previous read for partial-round
+/// planning. `slice::merge_reads` would then reject the moved frame and
+/// return that partial round alone, discarding the kept readings.
 ///
 /// So the identity carries a [`slice::BoardFrame`] as well: what the sheet says
 /// (`current`, `doors`, `uncertain`, compared exactly) and where it says it
 /// (`origin`, `scale`, compared inside a BAND). It is pixels-only, so it costs
-/// the one anchor match this tick has already paid for. A frame that moved is a
-/// NEW board: it is read, and it starts from a whole [`RETRIES`] budget rather
-/// than out of the old board's.
+/// the one anchor match this tick has already paid for. BEFORE the lock
+/// ([`Self::locked`]), a frame that moved is read without merging the old
+/// read. Changed content starts a whole [`RETRIES`] budget; a geometry-only
+/// move carries the remaining budget unchanged (`LoopState::note_read`).
+/// Once the read is done the board is locked (POE-282, owner 2026-10-09: the
+/// sheet does not change during the encounter): it keeps its read and its
+/// geometry until START, END, a zone change or Re-arm, and a walk, a hover, a
+/// drag or a rescale re-shows it. Inside a Temple of Atzoatl run that means
+/// the locked board re-shows in every later room, and Re-arm reads the new one.
 ///
 /// It is not the OLD gate. That one hashed the panel TEXT too, so it needed the
 /// 28 OCR calls to compute what it was deciding whether to spend, and it was
@@ -422,8 +437,13 @@ pub struct LoopState {
 /// Inside [`slice::FRAME_ORIGIN_TOLERANCE`] px and
 /// [`slice::FRAME_SCALE_TOLERANCE_DENOM`]'s one per cent, the sheet has not
 /// moved — it has been re-found by a correlation over a frame the game is still
-/// drawing — and a reopen re-shows. Beyond it the window was dragged or the UI
-/// was rescaled, and every ROI this read placed is somewhere else, so it reads.
+/// drawing. Beyond it the window was dragged or the UI was rescaled, and every
+/// ROI this read placed is somewhere else. That difference matters only BEFORE
+/// the lock, where it decides whether a read is a retry or a new board (see
+/// [`LoopState::note_read`]). A locked board re-shows on both sides of the band
+/// and keeps its read and its geometry until START, END, a zone change or
+/// Re-arm — so after a drag its overlays stay where the read put them, and
+/// Re-arm is the fix.
 ///
 /// Two things are left outside both halves.
 ///
@@ -437,9 +457,11 @@ pub struct LoopState {
 /// same shape as the missed-Alva-line orphan above and is bounded the same way:
 /// one incursion, ended by a line the loop is already watching for.
 ///
-/// **An origin that moves.** A frame outside the origin or scale band is a new
-/// board position and is read from the newly resolved anchor. It receives the
-/// ordinary read/retry rules; there is no separate geometry-only cap.
+/// **An origin that moves.** Before the lock, a frame outside the origin or
+/// scale band is a new board position and is read from the newly resolved
+/// anchor. It receives the ordinary read/retry rules; there is no separate
+/// geometry-only cap. A locked board keeps its read and its geometry until
+/// START, END, a zone change or Re-arm.
 ///
 /// A MAP-side reopen is not sighted, and that is the design rather than a
 /// defect: the cycle completed when the sheet closed and the loop stood down, so
@@ -477,6 +499,19 @@ pub struct BoardRead {
     pub retries_left: u8,
 }
 
+impl BoardRead {
+    /// Whether this read is DONE — the POE-282 lock: it came out clean, or its
+    /// [`RETRIES`] budget is spent.
+    ///
+    /// A locked board is the board for the rest of its key (owner, 2026-10-09:
+    /// the sheet does not change during the encounter). [`LoopState::gate`]
+    /// re-shows it whatever the frame says, and only a new key — START, END,
+    /// a zone change, Re-arm or a settings change — releases it.
+    pub fn locked(&self) -> bool {
+        !self.unclean || self.retries_left == 0
+    }
+}
+
 /// Extra reading rounds an UNCLEAN board is worth, on top of the first.
 ///
 /// Two, owner-decided — docs/TEMPLE-LIFECYCLE.md row 2, and restated
@@ -496,10 +531,21 @@ pub const RETRIES: u8 = 2;
 /// What the OCR gate decided about one sighting — [`LoopState::gate`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateAnswer {
-    /// Pay for the 28 OCR calls.
+    /// Pay for the 28 OCR calls: a new key, or a board that is not locked yet
+    /// (unclean and still owed a round).
     Read,
-    /// Re-show `status`: the same board, in the same place, with nothing owed.
-    Reshow(TempleStatus),
+    /// Re-show `status`: the board under this key is locked
+    /// ([`BoardRead::locked`]), so nothing seen on the sheet buys OCR. It keeps
+    /// its read and its geometry until START, END, a zone change or Re-arm.
+    Locked {
+        /// The status the locked read produced.
+        status: TempleStatus,
+        /// This sighting's frame does not match the locked read's frame
+        /// ([`slice::BoardFrame::matches`]) — a walk, a hover that flipped a
+        /// corridor, a drag or a rescale. Before the lock that would have been a
+        /// new board; now it only feeds [`locked_sighting_line`].
+        changed: bool,
+    },
 }
 
 /// What one pixel tick did to the panel state.
@@ -626,28 +672,34 @@ impl LoopState {
     /// one question and a caller that asked them separately could see them
     /// disagree. [`Self::reshow`] and [`Self::wants_read`] are views over it.
     ///
-    /// The order is the order of the three thirds:
+    /// The order (POE-282):
     ///
-    /// 1. a different key, or a different `semantic`, is a different BOARD —
-    ///    read, and the budget starts over;
-    /// 2. the same board whose frame MOVED past the band is the same OCR
-    ///    content in a different place — the ROIs are stale, so read;
-    /// 3. the same board in the same place re-shows, unless it read unclean and
-    ///    is still owed a retry.
+    /// 1. no board, or a different key, is a different BOARD — read. The key
+    ///    comes first because it is the only thing that releases the lock: an
+    ///    Alva START or END line or a zone change bumps the epoch, Re-arm and
+    ///    every settings change bump the rearm count;
+    /// 2. a board under this key that is not locked yet ([`BoardRead::locked`]:
+    ///    unclean, with a round owed) — read. Whether the frame moved decides
+    ///    only how [`Self::note_read`] treats that read: a moved frame is a new
+    ///    board only BEFORE the lock;
+    /// 3. a locked board re-shows, whatever the frame says — a walk, a hover, a
+    ///    drag or a rescale. It keeps its read and its geometry until START,
+    ///    END, a zone change or Re-arm. `changed` says whether the frame moved,
+    ///    for the log line and nothing else.
     pub fn gate(&self, key: (u64, u64), frame: &slice::BoardFrame) -> GateAnswer {
         let Some(board) = &self.board else {
             return GateAnswer::Read;
         };
-        if board.key != key || !board.frame.same_content(frame) {
+        if board.key != key {
             return GateAnswer::Read;
         }
-        if !board.frame.matches(frame) {
+        if !board.locked() {
             return GateAnswer::Read;
         }
-        if board.unclean && board.retries_left > 0 {
-            return GateAnswer::Read;
+        GateAnswer::Locked {
+            status: board.status,
+            changed: !board.frame.matches(frame),
         }
-        GateAnswer::Reshow(board.status)
     }
 
     /// Whether the board this loop last read is the one `(key, frame)`
@@ -657,10 +709,13 @@ impl LoopState {
     /// third catches. Two callers ask it and they must not drift apart:
     /// [`Self::note_read`] (is this a retry, or something else?) and
     /// [`kept_for`] (may the kept reading be merged into, or must it be dropped
-    /// first?). [`Self::gate`] asks the same two questions in its own order
-    /// because it has a third answer to give.
+    /// first?). [`Self::gate`] asks only the key and [`BoardRead::locked`]:
+    /// before the lock every sighting reads, and this rule then decides what
+    /// that read is.
     ///
-    /// It is NOT the read decision: a moved frame is not the same board.
+    /// It is NOT the read decision: a moved frame is a new board only BEFORE
+    /// the lock. A locked board keeps its read and its geometry until START,
+    /// END, a zone change or Re-arm.
     pub fn same_board(&self, key: (u64, u64), frame: &slice::BoardFrame) -> bool {
         matches!(&self.board, Some(board) if board.key == key && board.frame.matches(frame))
     }
@@ -675,7 +730,7 @@ impl LoopState {
     pub fn reshow(&self, key: (u64, u64), frame: &slice::BoardFrame) -> Option<TempleStatus> {
         match self.gate(key, frame) {
             GateAnswer::Read => None,
-            GateAnswer::Reshow(status) => Some(status),
+            GateAnswer::Locked { status, .. } => Some(status),
         }
     }
 
@@ -839,6 +894,34 @@ pub fn slow_tick_line(
         ms(stages.anchor),
         ms(DETECT_INTERVAL),
     ))
+}
+
+/// The line a tick writes when a LOCKED board ignored a sighting whose frame
+/// changed ([`GateAnswer::Locked`] with `changed`), or `None` (POE-282).
+///
+/// It is what makes the hover case visible in the log: a tooltip that flips a
+/// corridor, a walk, a drag or a rescale would each have bought a read before
+/// the lock. `said` is when this loop last wrote one; the line is rate-limited
+/// to one per [`LOCKED_SIGHTING_LOG_EVERY`], so a hover of a few seconds writes
+/// one line and a persistent drag one per window. An unchanged sighting writes
+/// nothing and leaves `said` alone.
+pub fn locked_sighting_line(
+    said: &mut Option<Instant>,
+    now: Instant,
+    changed: bool,
+) -> Option<String> {
+    if !changed {
+        return None;
+    }
+    if let Some(last) = *said {
+        if now.duration_since(last) < LOCKED_SIGHTING_LOG_EVERY {
+            return None;
+        }
+    }
+    *said = Some(now);
+    Some(
+        "Temple: board locked — the sheet changed, no read (Re-arm reads it again)".to_string(),
+    )
 }
 
 /// The line every full read writes: each stage from the grab to the publish,
@@ -2890,6 +2973,8 @@ struct Session {
     tick_stages: TickStages,
     /// When [`slow_tick_line`] last wrote, for its rate limit.
     slow_tick_said: Option<Instant>,
+    /// When [`locked_sighting_line`] last wrote, for its rate limit.
+    locked_said: Option<Instant>,
     gate: slice::RearmGate,
     errors: ErrorLog,
     /// The last completed read of the board [`LoopState::board`] is keeping, so
@@ -2965,6 +3050,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         state: LoopState::default(),
         tick_stages: TickStages::default(),
         slow_tick_said: None,
+        locked_said: None,
         gate: slice::RearmGate::default(),
         errors: ErrorLog::default(),
         kept: None,
@@ -3349,18 +3435,28 @@ fn tick(
     // some region is unclean — and those re-read only the unclean regions
     // (`slice::plan_read`), not the 28.
     //
-    // The frame costs nothing here: it is read off the layout the anchor above
-    // already resolved, and it is what stops a reopen answering with the
-    // previous ROOM's board inside one epoch — see `BoardRead`.
+    // Once the read is done — clean, or the budget spent — the board is LOCKED
+    // under its key (POE-282, `BoardRead::locked`): nothing seen on the sheet
+    // buys OCR until START, END, a zone change or Re-arm, and the locked board
+    // keeps its read and its geometry. The frame costs nothing here: it is read
+    // off the layout the anchor above already resolved. Before the lock it
+    // decides whether a read is a retry or a new board (`note_read`); after it,
+    // only whether the ignore line below is written.
     let frame = slice::BoardFrame::of(&layout);
     let rearmed = session.gate.rearm_pending(rearm);
     let answer = session.state.gate(key, &frame);
+    if let GateAnswer::Locked { changed, .. } = answer {
+        if let Some(line) = locked_sighting_line(&mut session.locked_said, Instant::now(), changed)
+        {
+            crate::app_log(app, line);
+        }
+    }
     if matches!(answer, GateAnswer::Read) && rearmed {
         session.gate.note_rearm(rearm);
     }
     let reshown = match answer {
         GateAnswer::Read => None,
-        GateAnswer::Reshow(status) => Some(status),
+        GateAnswer::Locked { status, .. } => Some(status),
     };
 
     // ONE line per reopen, and it says which way the gate went (POE-249).
@@ -3398,10 +3494,11 @@ fn tick(
         return true;
     };
 
-    // Nothing to read: the sheet was closed and reopened inside one incursion
-    // onto a board whose pixels have not moved, so the board on the slice is the
-    // board on screen. Only the STATUS is put back — a retired panel published
-    // `panel_not_visible` and the sheet-bound overlays went with it.
+    // Nothing to read: under the same key, a locked board keeps its read payload
+    // and its geometry on the slice (POE-282) — whatever the frame now says, a
+    // moved frame is a new board only before the lock. Only the STATUS is put
+    // back — a retired panel published `panel_not_visible` and the sheet-bound
+    // overlays went with it.
     publish(app, |slice| apply_status(slice, TickOutcome::Reshown(status)));
     true
 }
@@ -4443,21 +4540,102 @@ mod tests {
         assert!(state.wants_read(NEXT_BOARD, &same_frame()));
     }
 
-    /// The other half of the identity, and the trigger POE-249 restored: the
-    /// key cannot see the player walk to the next room, a corridor open or the
-    /// window move, and all three happen INSIDE one epoch on a Temple of
-    /// Atzoatl run. This is the old `layout_wants_read` gate, kept as the frame
-    /// half of `same_board`.
+    /// The POE-282 lock (owner, 2026-10-09): once a board read clean, a sighting
+    /// whose sheet changed — a walk, or a tooltip flipping a corridor — under
+    /// the same key re-shows the locked read and buys no OCR.
     ///
-    /// Fails if `same_board` compares the key alone — a reopen would answer
-    /// `Reshown` with the previous room's outline, seals, advice and
-    /// never-cover set over the frame in front of the player (ADR-019).
+    /// Fails if `gate` still sends a changed frame to `Read` after the lock: a
+    /// hover over the corridors would buy a fresh 28-call read with the
+    /// tooltip on screen, and another when it left.
     #[test]
-    fn a_board_whose_frame_moved_is_read_again() {
+    fn a_locked_board_whose_sheet_changed_is_re_shown_not_read() {
         let mut state = LoopState::default();
         state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
 
-        assert_eq!(state.reshow(BOARD, &walked_frame()), None);
+        assert_eq!(state.reshow(BOARD, &walked_frame()), Some(TempleStatus::Read));
+    }
+
+    /// The band does not release the lock: a clean board dragged one px past
+    /// `slice::FRAME_ORIGIN_TOLERANCE` keeps its read.
+    ///
+    /// Fails if `gate` asks `BoardFrame::matches` before `BoardRead::locked` —
+    /// a window drag would buy a read the owner ruled out.
+    #[test]
+    fn a_locked_board_moved_past_the_origin_band_is_not_read() {
+        let mut state = LoopState::default();
+        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
+
+        assert!(!state.wants_read(BOARD, &nudged(slice::FRAME_ORIGIN_TOLERANCE + 1, 0)));
+    }
+
+    /// …nor does a UI rescale two per cent past the scale band.
+    ///
+    /// Fails if `gate` reads a locked board whose scale left
+    /// `slice::FRAME_SCALE_TOLERANCE_DENOM`'s band.
+    #[test]
+    fn a_locked_board_rescaled_past_the_scale_band_is_not_read() {
+        let mut state = LoopState::default();
+        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
+
+        assert!(!state.wants_read(BOARD, &nudged(0, 20)));
+    }
+
+    /// Before the lock nothing changes: an unclean board with a round owed is
+    /// read on a walked sheet.
+    ///
+    /// Fails if `BoardRead::locked` ignores `retries_left` (treats every board
+    /// as locked once read) — an unclean first read would stand for the whole
+    /// encounter with no retry.
+    #[test]
+    fn an_unclean_board_with_retries_left_is_read_after_a_walk() {
+        let mut state = LoopState::default();
+        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
+
+        assert!(state.wants_read(BOARD, &walked_frame()));
+    }
+
+    /// …and on a sheet dragged past the origin band.
+    ///
+    /// Fails if `BoardRead::locked` ignores `unclean`, or if `gate` re-shows a
+    /// moved frame before the lock.
+    #[test]
+    fn an_unclean_board_with_retries_left_is_read_after_a_move_past_the_band() {
+        let mut state = LoopState::default();
+        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
+
+        assert!(state.wants_read(BOARD, &nudged(slice::FRAME_ORIGIN_TOLERANCE + 1, 0)));
+    }
+
+    /// A locked sighting reports whether its frame changed, which is what the
+    /// ignore line in `tick` is written from.
+    ///
+    /// Fails if `changed` is hard-wired `false` or computed with `matches`
+    /// un-negated — the hover case would never reach `app.log`.
+    #[test]
+    fn a_locked_board_reports_a_changed_sighting_as_changed() {
+        let mut state = LoopState::default();
+        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
+
+        assert_eq!(
+            state.gate(BOARD, &walked_frame()),
+            GateAnswer::Locked { status: TempleStatus::Read, changed: true },
+        );
+    }
+
+    /// …and a sighting inside the band as unchanged: the same sheet re-found
+    /// `slice::FRAME_ORIGIN_TOLERANCE` px away is not a change worth a line.
+    ///
+    /// Fails if `changed` is hard-wired `true` or compares origins exactly —
+    /// every steady tick of an open sheet would count toward the ignore line.
+    #[test]
+    fn a_locked_board_reports_a_sighting_inside_the_band_as_unchanged() {
+        let mut state = LoopState::default();
+        state.note_read(BOARD, &same_frame(), TempleStatus::Read, false);
+
+        assert_eq!(
+            state.gate(BOARD, &nudged(slice::FRAME_ORIGIN_TOLERANCE, 0)),
+            GateAnswer::Locked { status: TempleStatus::Read, changed: false },
+        );
     }
 
     /// The Re-arm button is the third part of the identity, so pressing it
@@ -4526,30 +4704,71 @@ mod tests {
         );
     }
 
-    /// …and so does the board the player WALKED into under an unchanged key,
-    /// which is the same rule reached through the frame's exact third. That
-    /// board is a first look, not the third attempt at the room behind it.
+    /// A spent budget locks the board too (POE-282): an unclean board that has
+    /// used every round is done, and a walk under the same key re-shows it.
     ///
-    /// Fails if `note_read`'s restore is keyed on the key alone: a spent board
-    /// would hand its exhausted budget to the next room, and an unclean read
-    /// there would stand for the rest of the epoch with no retry. It is also the
-    /// second symptom of a key-only gate — a same-key read whose merge the frame
-    /// rejected spent a retry it never got the benefit of.
+    /// Fails if `BoardRead::locked` checks `unclean` alone — a board that never
+    /// reads clean would be re-read in full on every changed sighting for the
+    /// rest of the encounter.
     #[test]
-    fn a_walk_to_the_next_room_restores_the_retry_budget() {
+    fn a_board_locked_by_a_spent_budget_is_not_read_after_a_walk() {
         let mut state = LoopState::default();
         for _ in 0..=RETRIES {
             state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
         }
-        assert!(!state.wants_read(BOARD, &same_frame()), "precondition: the budget is spent");
 
-        assert!(state.wants_read(BOARD, &walked_frame()), "the moved board is read");
+        assert!(!state.wants_read(BOARD, &walked_frame()));
+    }
+
+    /// Before the lock, the board the player WALKED into under an unchanged key
+    /// is a first look, not the next attempt at the room behind it — the rule
+    /// reached through the frame's exact third.
+    ///
+    /// Fails if `note_read`'s restore is keyed on the key alone: the moved
+    /// board would inherit the previous board's part-spent budget and lock one
+    /// round early.
+    #[test]
+    fn a_walk_before_the_lock_restores_the_retry_budget() {
+        let mut state = LoopState::default();
+        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
+        state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
+        assert!(state.wants_read(BOARD, &walked_frame()), "precondition: not locked yet");
+
         state.note_read(BOARD, &walked_frame(), TempleStatus::Read, true);
 
         assert_eq!(
             state.board.expect("a board was just recorded").retries_left,
             RETRIES,
         );
+    }
+
+    /// A new epoch — START, END or a zone change — releases a lock, including
+    /// one a spent budget set.
+    ///
+    /// Fails if `gate` asks `BoardRead::locked` before it compares the key: the
+    /// next incursion would re-show this one's board.
+    #[test]
+    fn a_new_epoch_releases_a_board_locked_by_a_spent_budget() {
+        let mut state = LoopState::default();
+        for _ in 0..=RETRIES {
+            state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
+        }
+
+        assert!(state.wants_read(NEXT_BOARD, &same_frame()));
+    }
+
+    /// …and so does Re-arm, the manual half of the key.
+    ///
+    /// Fails if `gate` compares only the epoch half of the key, or asks the
+    /// lock first: the button would change nothing on a locked board.
+    #[test]
+    fn a_rearm_releases_a_board_locked_by_a_spent_budget() {
+        let mut state = LoopState::default();
+        for _ in 0..=RETRIES {
+            state.note_read(BOARD, &same_frame(), TempleStatus::Read, true);
+        }
+
+        assert!(state.wants_read((BOARD.0, BOARD.1 + 1), &same_frame()));
     }
 
     /// `full_read` drops its kept reading on exactly this predicate before
@@ -4589,8 +4808,8 @@ mod tests {
     /// kept read placed is somewhere else.
     ///
     /// Fails if the band is applied with `<` instead of `>` on the wrong side,
-    /// or widened: a dragged panel would re-show the outline, seals and
-    /// never-cover set at the old coordinates (ADR-019).
+    /// or widened: before the lock, a read of the dragged panel would count as
+    /// a retry and be merged into the read taken at the old coordinates.
     #[test]
     fn an_origin_past_the_tolerance_is_a_new_board() {
         let mut state = LoopState::default();
@@ -4612,9 +4831,9 @@ mod tests {
         assert!(state.same_board(BOARD, &nudged(0, 5)));
     }
 
-    /// Two per cent is not: that is two search steps, which is the in-game UI
-    /// scale slider having moved. Fails if the band is widened past one step —
-    /// the plate crops would be placed at the old pitch.
+    /// Two per cent of scale drift is outside the band. Fails if the scale band
+    /// is widened past one per cent: before the lock, a rescaled sheet would
+    /// count as a retry and could reuse readings taken at the old scale.
     #[test]
     fn a_scale_past_the_tolerance_is_a_new_board() {
         let mut state = LoopState::default();
@@ -4629,9 +4848,9 @@ mod tests {
     /// gate, kept as `BoardFrame::semantic`.
     ///
     /// Fails if `current` is dropped from `slice::layout_signature`, or if the
-    /// semantic third is banded like the other two: a reopen would answer
-    /// `Reshown` with the previous room's outline, seals, advice and never-cover
-    /// set over the frame in front of the player (ADR-019).
+    /// semantic third is banded like the other two: before the lock, a read of
+    /// the next room's sheet would count as a retry and be merged into the
+    /// previous room's read across the moved sheet.
     #[test]
     fn a_new_current_room_is_a_new_board() {
         let mut state = LoopState::default();
@@ -4640,10 +4859,9 @@ mod tests {
         assert!(!state.same_board(BOARD, &walked_frame()));
     }
 
-    /// …and so is a corridor that opened under an unmoved player, which is the
-    /// other half of the same third. Fails if `doors` is dropped from
-    /// `slice::layout_signature`: the room widget would keep drawing the sealed
-    /// door the player just opened.
+    /// A changed corridor set is a different frame too. Fails if `doors` is
+    /// dropped from `slice::layout_signature`: before the lock, a changed sheet
+    /// could count as a retry and reuse readings from the previous frame.
     #[test]
     fn an_opened_corridor_is_a_new_board() {
         let mut state = LoopState::default();
@@ -5213,6 +5431,42 @@ mod tests {
             .is_some(),
             "the window has passed",
         );
+    }
+
+    /// The POE-282 ignore line is rate-limited like the slow-tick line: one per
+    /// `LOCKED_SIGHTING_LOG_EVERY` while a locked board keeps seeing a changed
+    /// sheet. Fails if the first changed sighting writes nothing, if two inside
+    /// one window both write (a hover would fill `app_log`'s 50 entries), or if
+    /// the window never reopens.
+    #[test]
+    fn a_changed_sighting_on_a_locked_board_is_logged_once_per_window() {
+        let mut said = None;
+        let t0 = Instant::now();
+
+        let line = locked_sighting_line(&mut said, t0, true)
+            .expect("the first changed sighting writes");
+        assert!(line.contains("board locked"), "{line}");
+
+        assert_eq!(
+            locked_sighting_line(&mut said, t0 + LOCKED_SIGHTING_LOG_EVERY / 2, true),
+            None,
+            "inside the window the fact is already on the log",
+        );
+        assert!(
+            locked_sighting_line(&mut said, t0 + LOCKED_SIGHTING_LOG_EVERY, true).is_some(),
+            "the window has passed",
+        );
+    }
+
+    /// An unchanged sighting — the player just reading a locked sheet — writes
+    /// nothing and does not start a window. Fails if `changed` is ignored:
+    /// every open sheet would log the ignore line every 10 s.
+    #[test]
+    fn an_unchanged_sighting_on_a_locked_board_is_not_logged() {
+        let mut said = None;
+
+        assert_eq!(locked_sighting_line(&mut said, Instant::now(), false), None);
+        assert_eq!(said, None);
     }
 
     /// The stage timings a read line is built from, distinct per stage so a
