@@ -10,7 +10,7 @@ import derived from './__fixtures__/derived.json';
  * expected number is a literal from the reference screens named on the case.
  */
 
-type FamilyId = 'delirium' | 'essence' | 'corrupt' | 'fossil' | 'astrolabe';
+type FamilyId = 'delirium' | 'essence' | 'corrupt' | 'fossil' | 'astrolabe' | 'oil' | 'catalyst';
 type FixtureFamily = (typeof harvest.families)[number];
 type LifeforceName = keyof typeof exchange.lifeforce;
 
@@ -50,6 +50,20 @@ function inputFor(id: FamilyId, overrides: InputOverrides = {}): FamilyInput {
 		picks: new Map(Object.entries(overrides.picks ?? {})),
 		lifeforcePerDivine: lifeforce ? lifeforce.perDivine : 0,
 		divineChaosRate: exchange.divineChaosRate
+	};
+}
+
+/**
+ * A test-local family without weights (every fixture family now has them), as
+ * `inputFor` arranges one: no types, no lifeforce colour, no reroll cost.
+ */
+function unloggedInput(): FamilyInput {
+	return {
+		...inputFor('fossil'),
+		types: familyTypes(null),
+		rerollCostChaos: 0,
+		lifeforcePerReroll: 0,
+		lifeforcePerDivine: 0
 	};
 }
 
@@ -373,8 +387,8 @@ describe('solveFamily', () => {
 		expect(solveFamily(inputFor('fossil', { picks })).kind).toBe('no-feeders');
 	});
 
-	it('Degenerate: Astrolabes without weights give no-data', () => {
-		expect(solveFamily(inputFor('astrolabe')).kind).toBe('no-data');
+	it('Degenerate: a family without weights gives no-data', () => {
+		expect(solveFamily(unloggedInput()).kind).toBe('no-data');
 	});
 
 	// Expected literals from a closed form, not the engine: with Hollow the only keeper,
@@ -443,9 +457,10 @@ describe('solveFamily', () => {
 		const torment = idOf('essence', 'Torment');
 		const hollow = idOf('fossil', 'Hollow');
 		const results = [
-			...(['fossil', 'delirium', 'essence', 'corrupt', 'astrolabe'] as const).map((id) =>
+			...(['fossil', 'delirium', 'essence', 'corrupt', 'astrolabe', 'oil', 'catalyst'] as const).map((id) =>
 				solveFamily(inputFor(id))
 			),
+			solveFamily(unloggedInput()),
 			solveFamily(inputFor('essence', { rerollCostChaos: 8, picks: { [torment]: 'reroll' } })),
 			solveFamily(inputFor('fossil', { prices: { [hollow]: null } }))
 		];

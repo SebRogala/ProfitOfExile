@@ -1,0 +1,17 @@
+﻿Type,Rolls,Chance %
+"Fertile Catalyst",111,4.440
+"Prismatic Catalyst",107,4.280
+"Intrinsic Catalyst",609,24.360
+"Noxious Catalyst",367,14.680
+"Imbued Catalyst",329,13.160
+"Turbulent Catalyst",343,13.720
+"Abrasive Catalyst",326,13.040
+"Accelerating Catalyst",100,4.000
+"Tempering Catalyst",97,3.880
+"Unstable Catalyst",111,4.440
+
+Total rolls,2500
+Items processed,227
+Hits,218
+Wild Lifeforce spent,25040
+Session time,00:26:56

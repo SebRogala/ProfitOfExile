@@ -8,7 +8,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
 import type { HarvestController } from '$lib/harvest/controller.svelte';
-import type { ExchangePriceRead, HarvestFamilyData } from '$lib/harvest/seam';
+import type { ExchangePriceRead, HarvestFamily, HarvestFamilyData } from '$lib/harvest/seam';
 import { loadExchangePrices } from '$lib/harvest/sources/exchange-fixture';
 import { loadHarvestFamilies } from '$lib/harvest/sources/harvest-fixture';
 
@@ -115,6 +115,41 @@ async function renderWithPrefs(restored: { family?: string; picks?: object }): P
 	return renderPage();
 }
 
+/** A test-local family with no HarvestForge log: every fixture family now has weights. */
+const UNLOGGED: HarvestFamily = {
+	id: 'unlogged',
+	label: 'Unlogged Orbs',
+	lifeforce: null,
+	rerollCost: null,
+	weights: null,
+	tiers: null,
+	note: null
+};
+
+/** The fixtures plus the test-local unlogged family, opened on `family`; prices pending unless `priced`. */
+async function renderWithUnlogged(opts: { family: string; priced: boolean }): Promise<string> {
+	const controller = createHarvestController({
+		...productionDependencies(),
+		...(opts.priced ? {} : { loadExchangePrices: () => never<ExchangePriceRead>() }),
+		loadHarvestFamilies: async (horizon) => {
+			const data = await loadHarvestFamilies(horizon);
+			return { ...data, families: [...data.families, UNLOGGED] };
+		},
+		prefs: {
+			picks: { value: '{}' },
+			horizon: { value: 'day' },
+			family: { value: opts.family }
+		}
+	});
+	if (opts.priced) await controller.load();
+	else {
+		void controller.load();
+		await settle();
+	}
+	pageHarness.controller = controller;
+	return renderPage();
+}
+
 /** The fixtures, with the exchange read changed by `edit`. */
 async function renderWithExchange(edit: (read: ExchangePriceRead) => ExchangePriceRead): Promise<string> {
 	const controller = createHarvestController({
@@ -149,6 +184,13 @@ async function renderStale(): Promise<string> {
 	await controller.load();
 	pageHarness.controller = controller;
 	return renderPage();
+}
+
+/** The tab labels that carry the NO DATA mark, in tab order. */
+function noDataMarked(html: string): string[] {
+	return [
+		...html.matchAll(/role="tab"[^>]*>([^<]*)(?:<!--[^>]*-->)?<span class="no-data-mark[^"]*">NO DATA</g)
+	].map((m) => m[1].trim());
 }
 
 /** The opening tag of the first element whose class list holds `cls`, or ''. */
@@ -191,12 +233,13 @@ describe('HarvestFlippingPage with prices pending', () => {
 		expect(tabs).toEqual(FAMILY_LABELS);
 	});
 
-	it('marks NO DATA on Astrolabes, Oils and Catalysts only', async () => {
-		const html = await renderPricesPending();
-		const marked = [
-			...html.matchAll(/role="tab"[^>]*>([^<]*)(?:<!--[^>]*-->)?<span class="no-data-mark[^"]*">NO DATA</g)
-		].map((m) => m[1].trim());
-		expect(marked).toEqual(['Astrolabes', 'Oils', 'Catalysts']);
+	it('marks NO DATA on no fixture family: all seven carry weights', async () => {
+		expect(noDataMarked(await renderPricesPending())).toEqual([]);
+	});
+
+	it('marks NO DATA on a family without weights only', async () => {
+		const html = await renderWithUnlogged({ family: 'fossil', priced: false });
+		expect(noDataMarked(html)).toEqual(['Unlogged Orbs']);
 	});
 
 	it('shows the drawn Loading… line', async () => {
@@ -326,18 +369,18 @@ describe('HarvestFlippingPage stale (reference 08 §3)', () => {
 });
 
 describe('HarvestFlippingPage family without weights (reference 06, 08 §9)', () => {
-	const astrolabes = () => renderWithPrefs({ family: 'astrolabe' });
+	const unlogged = () => renderWithUnlogged({ family: 'unlogged', priced: true });
 
 	it('titles the no-data panel', async () => {
-		expect(textOf(await astrolabes(), 'no-data-title')).toBe('Astrolabes: reroll weights not logged yet');
+		expect(textOf(await unlogged(), 'no-data-title')).toBe('Unlogged Orbs: reroll weights not logged yet');
 	});
 
 	it('explains the no-data panel', async () => {
-		expect(textOf(await astrolabes(), 'no-data-text')).toMatch(/^The EV needs how often each type comes out of a reroll\./);
+		expect(textOf(await unlogged(), 'no-data-text')).toMatch(/^The EV needs how often each type comes out of a reroll\./);
 	});
 
 	it('draws no verdict', async () => {
-		expect(await astrolabes()).not.toContain('Is it worth it?');
+		expect(await unlogged()).not.toContain('Is it worth it?');
 	});
 });
 

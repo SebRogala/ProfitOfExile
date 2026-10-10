@@ -1,8 +1,25 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { loadHarvestFamilies } from './harvest-fixture';
 
-const NO_DATA_NOTE =
-	"No HarvestForge log yet → the tab shows 'no data' and the 'reroll weights not logged yet' panel (reference 06). Never hide the tab.";
+const NO_DATA_NOTE = 'No HarvestForge log yet.';
+
+/**
+ * Every fixture family now has a log, so the no-data mapping runs over a
+ * test-local fixture: the adapter re-imported with `harvest.json` replaced.
+ */
+async function unloggedFamily() {
+	vi.resetModules();
+	vi.doMock('../__fixtures__/harvest.json', () => ({
+		default: { families: [{ id: 'unlogged', label: 'Unlogged Orbs', weights: null, _note: NO_DATA_NOTE }] }
+	}));
+	try {
+		const adapter = await import('./harvest-fixture');
+		return (await adapter.loadHarvestFamilies('day')).families[0];
+	} finally {
+		vi.doUnmock('../__fixtures__/harvest.json');
+		vi.resetModules();
+	}
+}
 
 async function family(id: string) {
 	const data = await loadHarvestFamilies('day');
@@ -29,24 +46,28 @@ describe('harvest fixture adapter', () => {
 		expect((await loadHarvestFamilies('day')).warm).toBe(true);
 	});
 
-	it.each(['astrolabe', 'oil', 'catalyst'])('serves %s without weights', async (id) => {
-		expect((await family(id)).weights).toBeNull();
+	it('serves a family without a log without weights', async () => {
+		expect((await unloggedFamily()).weights).toBeNull();
+	});
+
+	it('serves a family without a log without tiers', async () => {
+		expect((await unloggedFamily()).tiers).toBeNull();
+	});
+
+	it('serves a family without a log without a lifeforce colour', async () => {
+		expect((await unloggedFamily()).lifeforce).toBeNull();
+	});
+
+	it('serves a family without a log without a reroll cost', async () => {
+		expect((await unloggedFamily()).rerollCost).toBeNull();
+	});
+
+	it('carries the fixture note of a family without a log', async () => {
+		expect((await unloggedFamily()).note).toBe(NO_DATA_NOTE);
 	});
 
 	it.each(['astrolabe', 'oil', 'catalyst'])('serves %s without tiers', async (id) => {
 		expect((await family(id)).tiers).toBeNull();
-	});
-
-	it.each(['astrolabe', 'oil', 'catalyst'])('serves %s without a lifeforce colour', async (id) => {
-		expect((await family(id)).lifeforce).toBeNull();
-	});
-
-	it.each(['astrolabe', 'oil', 'catalyst'])('serves %s without a reroll cost', async (id) => {
-		expect((await family(id)).rerollCost).toBeNull();
-	});
-
-	it.each(['astrolabe', 'oil', 'catalyst'])('carries the fixture no-data note for %s', async (id) => {
-		expect((await family(id)).note).toBe(NO_DATA_NOTE);
 	});
 
 	it('serves Delirium Orbs as twelve types', async () => {
@@ -90,10 +111,10 @@ describe('harvest fixture adapter', () => {
 		expect((await family('fossil')).lifeforce).toBe('Wild');
 	});
 
-	it('stamps every logged family tier set with the exchange price hour', async () => {
+	it('stamps every served tier set with the exchange price hour', async () => {
 		const data = await loadHarvestFamilies('day');
-		const logged = data.families.filter((f) => f.weights !== null);
-		expect(logged.map((f) => f.tiers?.priceHour)).toEqual(Array(4).fill('2026-09-09T23:00:00Z'));
+		const tiered = data.families.filter((f) => f.tiers !== null);
+		expect(tiered.map((f) => f.tiers?.priceHour)).toEqual(Array(4).fill('2026-09-09T23:00:00Z'));
 	});
 
 	it('serves the fossil tier names from the fixture', async () => {

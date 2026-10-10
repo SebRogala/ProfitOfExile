@@ -523,20 +523,245 @@
     {
       "id": "astrolabe",
       "label": "Astrolabes",
-      "weights": null,
-      "_note": "No HarvestForge log yet → the tab shows 'no data' and the 'reroll weights not logged yet' panel (reference 06). Never hide the tab."
+      "lifeforce": "Wild",
+      "rerollCost": 400,
+      "weights": {
+        "sample": {
+          "rolls": 2010,
+          "lifeforceSpent": 804000,
+          "date": "2026-10-10",
+          "source": "requester's HarvestForge log"
+        },
+        "types": [
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeUltimatum",
+            "name": "Chaotic Astrolabe",
+            "shortName": "Chaotic",
+            "loggedRolls": 202
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeDelirium",
+            "name": "Deceptive Astrolabe",
+            "shortName": "Deceptive",
+            "loggedRolls": 221
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeHarvest",
+            "name": "Fruiting Astrolabe",
+            "shortName": "Fruiting",
+            "loggedRolls": 243
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeBlight",
+            "name": "Fungal Astrolabe",
+            "shortName": "Fungal",
+            "loggedRolls": 205
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeBreach",
+            "name": "Grasping Astrolabe",
+            "shortName": "Grasping",
+            "loggedRolls": 242
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeAbyss",
+            "name": "Lightless Astrolabe",
+            "shortName": "Lightless",
+            "loggedRolls": 228
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeRitual",
+            "name": "Nameless Astrolabe",
+            "shortName": "Nameless",
+            "loggedRolls": 236
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeExpedition",
+            "name": "Runic Astrolabe",
+            "shortName": "Runic",
+            "loggedRolls": 187
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeLegion",
+            "name": "Timeless Astrolabe",
+            "shortName": "Timeless",
+            "loggedRolls": 246
+          }
+        ]
+      },
+      "_note": "Weights from the requester's HarvestForge log, committed byte-identical at desktop/src/lib/harvest/__fixtures__/harvestforge/HarvestForge_Astrolabes_20261010_134926.csv. HarvestForge's CSV footer undercounts lifeforce spent (it says Wild 60360); rerollCost 400 and lifeforceSpent 804000 are the Operator's values of 2026-10-10."
     },
     {
       "id": "oil",
       "label": "Oils",
-      "weights": null,
-      "_note": "No HarvestForge log yet → the tab shows 'no data' and the 'reroll weights not logged yet' panel (reference 06). Never hide the tab."
+      "lifeforce": "Primal",
+      "rerollCost": 30,
+      "weights": {
+        "sample": {
+          "rolls": 2602,
+          "lifeforceSpent": 78180,
+          "date": "2026-10-10",
+          "source": "requester's HarvestForge log"
+        },
+        "types": [
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune1",
+            "name": "Clear Oil",
+            "shortName": "Clear",
+            "loggedRolls": 717
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune2",
+            "name": "Sepia Oil",
+            "shortName": "Sepia",
+            "loggedRolls": 597
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune3",
+            "name": "Amber Oil",
+            "shortName": "Amber",
+            "loggedRolls": 407
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune4",
+            "name": "Verdant Oil",
+            "shortName": "Verdant",
+            "loggedRolls": 349
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune5",
+            "name": "Teal Oil",
+            "shortName": "Teal",
+            "loggedRolls": 167
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune6",
+            "name": "Azure Oil",
+            "shortName": "Azure",
+            "loggedRolls": 101
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune6b",
+            "name": "Indigo Oil",
+            "shortName": "Indigo",
+            "loggedRolls": 77
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune7",
+            "name": "Violet Oil",
+            "shortName": "Violet",
+            "loggedRolls": 66
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune8",
+            "name": "Crimson Oil",
+            "shortName": "Crimson",
+            "loggedRolls": 52
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune9",
+            "name": "Black Oil",
+            "shortName": "Black",
+            "loggedRolls": 33
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune10",
+            "name": "Opalescent Oil",
+            "shortName": "Opalescent",
+            "loggedRolls": 24
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune11",
+            "name": "Silver Oil",
+            "shortName": "Silver",
+            "loggedRolls": 9
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune12",
+            "name": "Golden Oil",
+            "shortName": "Golden",
+            "loggedRolls": 3
+          }
+        ]
+      },
+      "_note": "Weights from the requester's HarvestForge log, committed byte-identical at desktop/src/lib/harvest/__fixtures__/harvestforge/HarvestForge_Oils_20261010_000148.csv. HarvestForge's CSV footer undercounts lifeforce spent on the Astrolabe and Catalyst logs; this footer says Primal 78180, and rerollCost 30 and lifeforceSpent 78180 are kept as logged, to be confirmed by the Operator (2026-10-10)."
     },
     {
       "id": "catalyst",
       "label": "Catalysts",
-      "weights": null,
-      "_note": "No HarvestForge log yet → the tab shows 'no data' and the 'reroll weights not logged yet' panel (reference 06). Never hide the tab."
+      "lifeforce": "Wild",
+      "rerollCost": 30,
+      "weights": {
+        "sample": {
+          "rolls": 2500,
+          "lifeforceSpent": 75120,
+          "date": "2026-10-10",
+          "source": "requester's HarvestForge log"
+        },
+        "types": [
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityResource",
+            "name": "Fertile Catalyst",
+            "shortName": "Fertile",
+            "loggedRolls": 111
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityResistance",
+            "name": "Prismatic Catalyst",
+            "shortName": "Prismatic",
+            "loggedRolls": 107
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityAttribute",
+            "name": "Intrinsic Catalyst",
+            "shortName": "Intrinsic",
+            "loggedRolls": 609
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityPhysicalChaos",
+            "name": "Noxious Catalyst",
+            "shortName": "Noxious",
+            "loggedRolls": 367
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityCaster",
+            "name": "Imbued Catalyst",
+            "shortName": "Imbued",
+            "loggedRolls": 329
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityElemental",
+            "name": "Turbulent Catalyst",
+            "shortName": "Turbulent",
+            "loggedRolls": 343
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityAttack",
+            "name": "Abrasive Catalyst",
+            "shortName": "Abrasive",
+            "loggedRolls": 326
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualitySpeed",
+            "name": "Accelerating Catalyst",
+            "shortName": "Accelerating",
+            "loggedRolls": 100
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityDefense",
+            "name": "Tempering Catalyst",
+            "shortName": "Tempering",
+            "loggedRolls": 97
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityCritical",
+            "name": "Unstable Catalyst",
+            "shortName": "Unstable",
+            "loggedRolls": 111
+          }
+        ]
+      },
+      "_note": "Weights from the requester's HarvestForge log, committed byte-identical at desktop/src/lib/harvest/__fixtures__/harvestforge/HarvestForge_Catalysts_20261010_023020.csv. HarvestForge's CSV footer undercounts lifeforce spent (it says Wild 25040); rerollCost 30 and lifeforceSpent 75120 are the Operator's values of 2026-10-10."
     }
   ]
 }

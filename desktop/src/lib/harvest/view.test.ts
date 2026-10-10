@@ -22,7 +22,7 @@ import {
 import type { FamilyResult } from './engine';
 import { createExchangeFixture } from './sources/exchange-fixture';
 import { loadHarvestFamilies } from './sources/harvest-fixture';
-import type { ExchangePriceRead, HarvestFamilyData } from './seam';
+import type { ExchangePriceRead, HarvestFamily, HarvestFamilyData } from './seam';
 import type { CurrencyExchangeHorizon } from '$lib/exchange/view';
 
 /**
@@ -59,6 +59,23 @@ async function input(overrides: Partial<PageInput> = {}): Promise<PageInput> {
 		divineChaosRate: exchange.divineChaosRate,
 		...overrides
 	};
+}
+
+/** A test-local family with no HarvestForge log: every served family now has weights. */
+const UNLOGGED: HarvestFamily = {
+	id: 'unlogged',
+	label: 'Unlogged Orbs',
+	lifeforce: null,
+	rerollCost: null,
+	weights: null,
+	tiers: null,
+	note: null
+};
+
+/** The fixture input plus the test-local unlogged family, opened on `familyId`. */
+async function inputWithUnlogged(overrides: Partial<PageInput> = {}): Promise<PageInput> {
+	const base = await input(overrides);
+	return { ...base, harvest: { ...base.harvest!, families: [...base.harvest!.families, UNLOGGED] } };
 }
 
 function family(view: PageView): FamilyBody {
@@ -1231,33 +1248,38 @@ describe('page states (reference 08 §1–4, §9)', () => {
 		expect(family(view).verdict.evText).toBe('+25.7c');
 	});
 
-	it('no-data family: Astrolabes say their weights are not logged yet', async () => {
-		const view = pageView(await input({ familyId: 'astrolabe' }));
+	it('no-data family: a family without weights says they are not logged yet', async () => {
+		const view = pageView(await inputWithUnlogged({ familyId: 'unlogged' }));
 		expect(view.body).toEqual({
 			kind: 'no-data',
-			title: 'Astrolabes: reroll weights not logged yet',
+			title: 'Unlogged Orbs: reroll weights not logged yet',
 			text: 'The EV needs how often each type comes out of a reroll. Nobody has sent a HarvestForge log for this family yet, so there is nothing to compute. The tab fills in when one arrives.'
 		});
 	});
 
 	it('no-data family keeps the status line (reference 06)', async () => {
-		const view = pageView(await input({ familyId: 'astrolabe' }));
+		const view = pageView(await inputWithUnlogged({ familyId: 'unlogged' }));
 		expect(view.status?.text).toBe(
 			'updated 6 min ago · prices: Currency Exchange, Day 24h · 1 div = 360c · weights: no log yet'
 		);
 	});
 
-	it('lists every family as a tab, marking the three without weights', async () => {
+	it('lists every fixture family as a tab, none of them without weights', async () => {
 		const view = pageView(await input());
 		expect(view.tabs.map((t) => [t.label, t.noData, t.active])).toEqual([
 			['Delirium Orbs', false, false],
 			['Deafening Essences', false, false],
 			['Corrupted Essences', false, false],
 			['Fossils', false, true],
-			['Astrolabes', true, false],
-			['Oils', true, false],
-			['Catalysts', true, false]
+			['Astrolabes', false, false],
+			['Oils', false, false],
+			['Catalysts', false, false]
 		]);
+	});
+
+	it('marks a family without weights as a no-data tab', async () => {
+		const view = pageView(await inputWithUnlogged());
+		expect(view.tabs.map((t) => [t.label, t.noData])).toContainEqual(['Unlogged Orbs', true]);
 	});
 });
 
