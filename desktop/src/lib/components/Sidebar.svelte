@@ -13,18 +13,20 @@
 	// User-facing names for the Rust module registry (src-tauri/src/modules.rs).
 	// Adding a module means adding its id here too — an unlisted module has a
 	// flag and a background task but no way for the user to reach it. The flags
-	// themselves live in `ssot.modules`; this map only supplies labels.
-	const MODULE_LABELS: Record<string, string> = {
+	// themselves live in `ssot.modules`; this map only supplies the label and
+	// the icon, which is the module's nav-page icon so a switch reads as
+	// belonging to its page.
+	const MODULES: Record<string, { label: string; icon: string }> = {
 		// One switch, three things since POE-199: the capture loop, the page's
 		// capture + verdict, AND the verdict overlay window. The Mercenaries
 		// PAGE is a nav item and stays reachable with this off — it just has no
 		// live capture to judge.
-		mercenary: '👁️ Merc OCR',
+		mercenary: { label: 'Merc OCR', icon: '/mercenaries-icon.png' },
 		// One switch, two things: the temple capture loop AND the temple overlay
 		// window. They are deliberately not separable — an overlay with no reader
 		// behind it can only show a board that is no longer on screen. The Temple
 		// PAGE is a nav item and stays reachable with this off.
-		temple: '🏛️ Temple reader',
+		temple: { label: 'Temple reader', icon: '/temple-icon.png' },
 	};
 
 	/**
@@ -57,7 +59,7 @@
 	 * disagree about which switches exist.
 	 */
 	const moduleEntries = $derived(
-		Object.entries(MODULE_LABELS).filter(
+		Object.entries(MODULES).filter(
 			([id]) => !MODULE_FEATURES[id] || hasFeature(MODULE_FEATURES[id])
 		)
 	);
@@ -70,7 +72,7 @@
 
 	/** What a module toggle's `title` says: the specific note, or the default. */
 	function moduleTitle(id: string, label: string, on: boolean): string {
-		return MODULE_TITLES[id] ?? `${label.replace(/^\S+\s/, '')}: ${on ? 'on' : 'off'}`;
+		return MODULE_TITLES[id] ?? `${label}: ${on ? 'on' : 'off'}`;
 	}
 
 	let {
@@ -118,22 +120,22 @@
 		     the server granted `merc` / `temple` / `exchange` (POE-203). -->
 		{#if mercGranted}
 			<button class="collapsed-item" class:active={currentPath === '/mercenaries'} title="Mercenaries" onclick={() => nav.go('/mercenaries')}>
-				<span class="icon">&#x2694;&#xFE0F;</span>
+				<img src="/mercenaries-icon.png" alt="Mercenaries" class="rail-icon" />
 			</button>
 		{/if}
 		{#if templeGranted}
 			<button class="collapsed-item" class:active={currentPath === '/temple'} title="Temple of Atzoatl" onclick={() => nav.go('/temple')}>
-				<span class="icon">&#x1F3DB;&#xFE0F;</span>
+				<img src="/temple-icon.png" alt="Temple" class="rail-icon" />
 			</button>
 		{/if}
 		{#if exchangeGranted}
 			<button class="collapsed-item" class:active={currentPath === '/currency-exchange'} title="Currency Exchange" onclick={() => nav.go('/currency-exchange')}>
-				<span class="icon">&#x1F4B1;</span>
+				<img src="/currency-exchange-icon.png" alt="Currency Exchange" class="rail-icon" />
 			</button>
 		{/if}
 		{#if harvestGranted}
 			<button class="collapsed-item" class:active={currentPath === '/harvest-flipping'} title="Harvest Flipping" onclick={() => nav.go('/harvest-flipping')}>
-				<img src="/harvest-flipping-icon.png" alt="Harvest Flipping" class="lab-icon" />
+				<img src="/harvest-flipping-icon.png" alt="Harvest Flipping" class="rail-icon" />
 			</button>
 		{/if}
 		{#if import.meta.env.DEV}
@@ -161,23 +163,23 @@
 	</div>
 	<div class="collapsed-overlays">
 		<button class="collapsed-overlay group-btn" title="Lab Overlays: {labOverlaysActive ? 'on' : 'off'}" onclick={onToggleLabOverlays}>
-			<span class="icon" style="font-size: 10px; font-weight: 700;">LAB</span>
+			<img src="/lab-icon.png" alt="Lab Overlays" class="lab-icon" />
 			<span class="indicator" class:off={!labOverlaysActive} class:always={labOverlaysActive}></span>
 		</button>
 		<button class="collapsed-overlay" title="Compare: {comparatorActive ? (gameFocused ? 'on' : 'hidden') : 'off'}" onclick={onToggleComparator}>
-			<span class="icon">&#x2696;&#xFE0F;</span>
+			<img src="/compare-icon.png" alt="Compare" class="rail-icon" />
 			<span class="indicator" class:off={!comparatorActive} class:always={comparatorActive && gameFocused} class:auto={comparatorActive && !gameFocused}></span>
 		</button>
 		<button class="collapsed-overlay" title="Compass: {compassActive ? (gameFocused ? 'on' : 'hidden') : 'off'}" onclick={onToggleCompass}>
-			<span class="icon">&#x1F9ED;</span>
+			<img src="/compass-icon.png" alt="Compass" class="rail-icon" />
 			<span class="indicator" class:off={!compassActive} class:always={compassActive && gameFocused} class:auto={compassActive && !gameFocused}></span>
 		</button>
 		<button class="collapsed-overlay" title="Lab Map: {pathstripActive ? (pathstripHasData ? (gameFocused ? 'on' : 'hidden') : 'no data') : 'off'}" onclick={onTogglePathstrip}>
-			<span class="icon">&#x1F5FA;&#xFE0F;</span>
+			<img src="/pathstrip-icon.png" alt="Lab Map" class="rail-icon" />
 			<span class="indicator" class:off={!pathstripActive} class:always={pathstripActive && pathstripHasData && gameFocused} class:auto={pathstripActive && pathstripHasData && !gameFocused} class:nodata={pathstripActive && !pathstripHasData}></span>
 		</button>
 		<button class="collapsed-overlay" title="Timer: {timerActive ? (gameFocused ? 'on' : 'hidden') : 'off'}" onclick={onToggleTimer}>
-			<span class="icon">&#x23F1;&#xFE0F;</span>
+			<img src="/timer-icon.png" alt="Timer" class="rail-icon" />
 			<span class="indicator" class:off={!timerActive} class:always={timerActive && gameFocused} class:auto={timerActive && !gameFocused}></span>
 		</button>
 		<!-- Modules are not Lab overlays: the expanded panel gives them their own
@@ -185,10 +187,10 @@
 		{#if moduleEntries.length > 0}
 			<div class="collapsed-sep"></div>
 		{/if}
-		{#each moduleEntries as [id, label] (id)}
+		{#each moduleEntries as [id, { label, icon }] (id)}
 			{@const on = ssot.modules[id] ?? false}
 			<button class="collapsed-overlay" title={moduleTitle(id, label, on)} onclick={() => setModuleEnabled(id, !on)}>
-				<span class="icon">{label.split(' ')[0]}</span>
+				<img src={icon} alt={label} class="rail-icon" />
 				<span class="indicator" class:off={!on} class:always={on}></span>
 			</button>
 		{/each}
@@ -206,19 +208,19 @@
 			</button>
 			{#if mercGranted}
 				<button class="nav-item" class:active={currentPath === '/mercenaries'} onclick={() => nav.go('/mercenaries')}>
-					<span class="icon">&#x2694;&#xFE0F;</span>
+					<img src="/mercenaries-icon.png" alt="" class="lab-icon-expanded" style="height: 18px" />
 					<span>Mercenaries</span>
 				</button>
 			{/if}
 			{#if templeGranted}
 				<button class="nav-item" class:active={currentPath === '/temple'} onclick={() => nav.go('/temple')}>
-					<span class="icon">&#x1F3DB;&#xFE0F;</span>
+					<img src="/temple-icon.png" alt="" class="lab-icon-expanded" style="height: 18px" />
 					<span>Temple</span>
 				</button>
 			{/if}
 			{#if exchangeGranted}
 				<button class="nav-item" class:active={currentPath === '/currency-exchange'} onclick={() => nav.go('/currency-exchange')}>
-					<span class="icon">&#x1F4B1;</span>
+					<img src="/currency-exchange-icon.png" alt="" class="lab-icon-expanded" style="height: 18px" />
 					<span>Currency Exchange</span>
 				</button>
 			{/if}
@@ -264,30 +266,30 @@
 	<div class="bottom">
 		<div class="label">Overlays</div>
 		<button class="overlay-row clickable group-toggle" onclick={onToggleLabOverlays}>
-			<span>Lab Overlays</span>
+			<span class="module-name"><img src="/lab-icon.png" alt="" class="module-icon" />Lab Overlays</span>
 			<span class="mode" class:off={!labOverlaysActive} class:always={labOverlaysActive}>{labOverlaysActive ? 'on' : 'off'}</span>
 		</button>
 		<button class="overlay-row clickable indent" onclick={onToggleComparator}>
-			<span>&#x2696;&#xFE0F; Compare</span>
+			<span class="module-name"><img src="/compare-icon.png" alt="" class="module-icon" />Compare</span>
 			<span class="mode" class:off={!comparatorActive} class:always={comparatorActive && gameFocused} class:auto={comparatorActive && !gameFocused}>{comparatorActive ? (gameFocused ? 'on' : 'hidden') : 'off'}</span>
 		</button>
 		<button class="overlay-row clickable indent" onclick={onToggleCompass}>
-			<span>&#x1F9ED; Compass</span>
+			<span class="module-name"><img src="/compass-icon.png" alt="" class="module-icon" />Compass</span>
 			<span class="mode" class:off={!compassActive} class:always={compassActive && gameFocused} class:auto={compassActive && !gameFocused}>{compassActive ? (gameFocused ? 'on' : 'hidden') : 'off'}</span>
 		</button>
 		<button class="overlay-row clickable indent" onclick={onTogglePathstrip}>
-			<span>&#x1F5FA;&#xFE0F; Map</span>
+			<span class="module-name"><img src="/pathstrip-icon.png" alt="" class="module-icon" />Map</span>
 			<span class="mode" class:off={!pathstripActive} class:always={pathstripActive && pathstripHasData && gameFocused} class:auto={pathstripActive && pathstripHasData && !gameFocused} class:nodata={pathstripActive && !pathstripHasData}>{pathstripActive ? (pathstripHasData ? (gameFocused ? 'on' : 'hidden') : 'no data') : 'off'}</span>
 		</button>
 		<button class="overlay-row clickable indent" onclick={onToggleTimer}>
-			<span>&#x23F1;&#xFE0F; Timer</span>
+			<span class="module-name"><img src="/timer-icon.png" alt="" class="module-icon" />Timer</span>
 			<span class="mode" class:off={!timerActive} class:always={timerActive && gameFocused} class:auto={timerActive && !gameFocused}>{timerActive ? (gameFocused ? 'on' : 'hidden') : 'off'}</span>
 		</button>
 		<div class="label">Modules</div>
-		{#each moduleEntries as [id, label] (id)}
+		{#each moduleEntries as [id, { label, icon }] (id)}
 			{@const on = ssot.modules[id] ?? false}
 			<button class="overlay-row clickable" title={moduleTitle(id, label, on)} onclick={() => setModuleEnabled(id, !on)}>
-				<span>{label}</span>
+				<span class="module-name"><img src={icon} alt="" class="module-icon" />{label}</span>
 				<span class="mode" class:off={!on} class:always={on}>{on ? 'on' : 'off'}</span>
 			</button>
 		{/each}
@@ -374,8 +376,28 @@
 	}
 
 	.lab-icon {
+		width: 26px;
+		height: 21px;
+		object-fit: contain;
+	}
+
+	.module-name {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.module-icon {
+		width: 14px;
+		height: 14px;
+		object-fit: contain;
+	}
+
+	/* Square game-art icons fill the rail button's 22 px instead of the
+	   wide Lab skull's 22×18 box. */
+	.rail-icon {
 		width: 22px;
-		height: 18px;
+		height: 22px;
 		object-fit: contain;
 	}
 
