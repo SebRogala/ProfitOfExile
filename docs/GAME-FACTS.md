@@ -203,14 +203,20 @@ wording change in the game shows up there first.
 
 ### Crafts per labyrinth
 
-| Lab | Crafts | Options per craft | With Twice Blessed |
-|---|---|---|---|
-| Normal | 1 | 2 | 2 crafts |
-| Cruel | 1 | 3 | 2 crafts |
-| Merciless | 1 | 4 | 2 crafts |
-| Eternal (Uber) | 2 | 4 | 3 crafts |
-| Gift / Tribute to the Goddess | 8 | 4 | 9 crafts |
-| Dedication to the Goddess | 2 | 4 | 3 crafts |
+| Lab | Area level | Crafts | Options per craft | With Twice Blessed |
+|---|---|---|---|---|
+| Normal | 33 | 1 | 2 | 2 crafts |
+| Cruel | 55 | 1 | 3 | 2 crafts |
+| Merciless | 68 | 1 | 4 | 2 crafts |
+| Eternal (Uber) | 75 | 2 | 4 | 3 crafts |
+| Potential (Dedication to the Goddess) | 83 | 2 | 4 | 3 crafts |
+| Fortune (Tribute to the Goddess) | 83 | 2 | 4 | 3 crafts |
+| Opportunity (Gift to the Goddess) | 83 | 8 | 4 | 9 crafts |
+
+Source: the poewiki Labyrinth table (owner screenshot, 2026-10-11) for area
+level, crafts and options; Dedication adds the corrupted-gem options, Tribute
+enriches lab rewards. An earlier version of this table gave Tribute 8 crafts
+with no source. The Twice Blessed column is the +1 rule, not checked per lab.
 
 The panel hides its "Crafts Remaining" line on the last craft; the parser
 treats an absent line as "one left" and a garbled one as "unknown", which are
