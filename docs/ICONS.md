@@ -2,6 +2,8 @@
 
 Status: current. Last verified: 2026-09-08. This is the canonical guide for
 the HTTP icon routes, embedded source maps, cache layout, and cache seeding.
+Static UI art bundled with the desktop app (nav icons) is sourced per
+[Game art sourcing](GAME-ART-SOURCING.md).
 
 ## Routes and cache layout
 

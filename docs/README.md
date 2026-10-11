@@ -13,6 +13,7 @@ This is the documentation entry point. Documents are classified so historical pl
 - [Game facts](GAME-FACTS.md) — current, dated reference of Path of Exile facts the code treats as invariants: one golden door per lab run, temple rooms log nothing, Divine Font wordings and parser anchors, Dedication rules, the vial recipe table and poedb's per-tier temple room bonuses, exchange sidebar categories, trade complexity; unvalidated claims kept in their own section.
 - [Collector Endpoint Guide](COLLECTOR-ENDPOINTS.md) — current cross-layer recipe for adding a market-data source.
 - [Icons](ICONS.md) — current procedure for adding or changing an icon, and why seeding precedes deploy.
+- [Game art sourcing](GAME-ART-SOURCING.md) — current procedure for finding and extracting game art (CDN item art, atlas-tree sprites, minimap and quest icons from the game files) for static desktop UI assets, plus the provenance of the shipped sidebar icons.
 - [Deployment](DEPLOY.md) — how main reaches production, why the deploy is path-filtered, and what a green pipeline does not tell you, desktop release channels (stable / beta by device role), the public-repo rules for beta testers, and the one-off POE-215 merc registration-reset runbook.
 - [League Schema Migration Runbook](LEAGUE-SCHEMA-MIGRATION-RUNBOOK.md) — current production gate and rehearsal procedure for POE-119; requires the matching POE-120/POE-121 application revision.
 - [Currency Exchange row invariant](CURRENCY-EXCHANGE-ROW-INVARIANT.md) — current normative spec for what one exchange row's numbers mean: the one scale every figure counts, the one price basis they are quoted at, and the single labeled deviation from it.
@@ -70,6 +71,7 @@ ADRs record decisions at a point in time. If implementation later supersedes a d
 - [Overlay Guide](OVERLAY-GUIDE.md) — current click-through, positioning, lifecycle distinctions, and Windows regression guards.
 - [Collector Endpoint Guide](COLLECTOR-ENDPOINTS.md) — current endpoint extension procedure, verified against the fragments implementation.
 - [Icons](ICONS.md) — current icon maps, cache-seeding order, and the puller/repopulate steps.
+- [Game art sourcing](GAME-ART-SOURCING.md) — current sources and extraction recipes for static UI art, including the minimap Id→sprite-cell mapping.
 - [Deployment](DEPLOY.md) — current deploy workflow, filter derivation, manual-dispatch cases, and the accepted verification gap.
 - [Development setup](DEV-SETUP.md) — current WSL + Windows dev-machine procedure and the daily edit/sync/run loop.
 - [Analysis Cache Guide](ANALYSIS-CACHE.md) — current `lab.Cache` topology, tick chain, tenancy and concurrency contract, cold start, and the sparkline series cache.
