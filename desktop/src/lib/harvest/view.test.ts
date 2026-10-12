@@ -184,7 +184,7 @@ describe('status line', () => {
 	it('Fossils ready reads updated · prices · weights (reference 01)', async () => {
 		const view = pageView(await input());
 		expect(view.status?.text).toBe(
-			"updated 6 min ago · prices: Currency Exchange, Day 24h · 1 div = 360c · weights: HarvestForge log · 5,271 rolls · 2026-10-09 · one player’s sample"
+			"updated 6 min ago · prices: Currency Exchange, Day 24h · 1 div = 360c · weights: HarvestForge log · 5,271 rolls · 2026-10-09"
 		);
 	});
 
@@ -207,7 +207,7 @@ describe('status line', () => {
 
 	it('Delirium Orbs name their logged sample (reference 02)', async () => {
 		const view = pageView(await input({ familyId: 'delirium' }));
-		expect(view.status?.segments.at(-1)).toBe('weights: HarvestForge log · 5,122 rolls · 2026-10-09 · one player’s sample');
+		expect(view.status?.segments.at(-1)).toBe('weights: HarvestForge log · 5,122 rolls · 2026-10-09');
 	});
 
 	it('Deafening Essences read uniform ~5% (reference 03)', async () => {

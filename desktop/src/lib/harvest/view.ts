@@ -241,7 +241,7 @@ function weightsSegment(family: HarvestFamily): string {
 	if (sample.rolls === null) {
 		return `weights: no logged sample · ${sample.uniform ? 'assumed uniform, ' : ''}closed pool of ${countWord(types.length)}`;
 	}
-	const kind = sample.uniform ? `uniform ~${Math.round(100 / types.length)}%` : 'one player’s sample';
+	const kind = sample.uniform ? `uniform ~${Math.round(100 / types.length)}%` : null;
 	return ['weights: HarvestForge log', `${formatHarvestCount(sample.rolls)} rolls`, sample.date, kind]
 		.filter((s): s is string => s !== null)
 		.join(' · ');
