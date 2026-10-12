@@ -596,6 +596,8 @@ export interface FamilyBody {
 	regex: { feeders: RegexBox; keepers: RegexBox; caption: string };
 	cost: CostPanel;
 	ev: EvPanel;
+	/** A family-specific warning shown under the verdict, or null. */
+	notice: string | null;
 }
 
 export type PageBody =
@@ -631,6 +633,15 @@ const STATE_LINES: Partial<Record<ViewStateKind, string>> = {
 	loading: 'Loading…',
 	warming: 'Waiting for the first Currency Exchange hour…',
 	unreachable: "Couldn't reach the server"
+};
+
+/**
+ * Data-provider warning (2026-10-12): the expensive, rare Fossils stack to 10,
+ * so a larger stack rerolled into one is cut to 10 and the excess is lost.
+ */
+const FAMILY_NOTICES: Record<string, string> = {
+	fossil:
+		'Reroll Fossil stacks of 10 or fewer. The rare, expensive Fossils stack to 10, so a stack of 20 that hits one is cut to 10 and the rest is lost.'
 };
 
 const REGEX_CAPTION =
@@ -763,7 +774,8 @@ function familyBody(input: PageInput, family: HarvestFamily, exchange: ExchangeP
 			caption: REGEX_CAPTION
 		},
 		cost,
-		ev: evPanel(result, family.lifeforce, lastSeen)
+		ev: evPanel(result, family.lifeforce, lastSeen),
+		notice: FAMILY_NOTICES[family.id] ?? null
 	};
 }
 

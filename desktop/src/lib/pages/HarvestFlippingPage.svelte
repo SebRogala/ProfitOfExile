@@ -145,6 +145,10 @@
 			</div>
 		</section>
 
+		{#if body.notice !== null}
+			<p class="panel notice" role="note">{body.notice}</p>
+		{/if}
+
 		<div class="split-row">
 			<span class="caption">Keep / feed split</span>
 			<span class="split-label" class:moved={body.split.moved}>{body.split.label}</span>
@@ -349,6 +353,14 @@
 	.panel {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
+	}
+
+	.notice {
+		margin: 0;
+		padding: 8px 12px;
+		border-left: 3px solid var(--color-lab-yellow);
+		font-size: 0.8125rem;
+		color: var(--color-lab-yellow);
 	}
 
 	.skeleton {

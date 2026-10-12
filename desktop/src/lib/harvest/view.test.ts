@@ -332,6 +332,16 @@ describe('Corrupted Essences (reference 04)', () => {
 
 // ------------------------------------------------------------------ cards --
 
+describe('family notice', () => {
+	it('warns Fossil flippers to reroll stacks of 10 or fewer', async () => {
+		expect(family(pageView(await input())).notice).toContain('stacks of 10 or fewer');
+	});
+
+	it('carries no notice on Delirium Orbs', async () => {
+		expect(family(pageView(await input({ familyId: 'delirium' }))).notice).toBeNull();
+	});
+});
+
 describe('Fossil tier cards (reference 01)', () => {
 	it('feeds MID then LOW', async () => {
 		const body = family(pageView(await input()));
