@@ -1527,4 +1527,13 @@ describe('Astrolabes, Oils and Catalysts on the committed fixture (WI-2b)', () =
 	it('costs an Oil reroll 5.1c = 30 × Vivid lifeforce', async () => {
 		expect((await body('oil')).cost.line).toBe('5.1c = 30 × Vivid lifeforce (yellow)');
 	});
+
+	// Catalysts pay Vivid (yellow), not Wild: a tester's report, 2026-10-12 — the HarvestForge log registered the wrong colour, as it did for Oils. Hand-computed: 30 × 0.169c = 5.07c → 5.1c.
+	it('labels the Catalyst reroll cost Vivid lifeforce (yellow)', async () => {
+		expect((await body('catalyst')).cost.lifeforceLabel).toBe('Vivid lifeforce (yellow)');
+	});
+
+	it('costs a Catalyst reroll 5.1c = 30 × Vivid lifeforce', async () => {
+		expect((await body('catalyst')).cost.line).toBe('5.1c = 30 × Vivid lifeforce (yellow)');
+	});
 });
