@@ -26,6 +26,9 @@ the language-pack warning, follow the
   community guide ruleset, with optional live trade checks.
 - **Currency Exchange (beta)** — Ranks arbitrage routes from GGG's public
   currency-exchange feed and derives a worthwhile trade size.
+- **Harvest Flipping (beta)** — For Delirium Orbs, Essences, Fossils,
+  Astrolabes, Oils and Catalysts: which types to keep, which to reroll with
+  lifeforce, what a reroll is worth, and a stash-search regex for each side.
 - **Live dashboard** — Shows gem rankings, market signals, and Divine Font
   expected value from periodically refreshed market data.
 
