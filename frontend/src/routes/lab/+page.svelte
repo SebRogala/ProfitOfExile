@@ -238,8 +238,8 @@
 </script>
 
 <svelte:head>
-	<title>Lab Farming Dashboard - ProfitOfExile</title>
-	<meta name="description" content="Live Path of Exile 1 gem rankings, Divine Font expected value, market signals, and Lab farming analysis." />
+	<title>PoE Lab Farming Dashboard - Transfigured Gem Prices | ProfitOfExile</title>
+	<meta name="description" content="PoE lab farming and transfigured gems farming: live Path of Exile 1 gem prices, expected value per font use and market signals for Uber, Gift and Dedication labs." />
 	<link rel="canonical" href="https://profitofexile.top/lab" />
 	<link rel="describedby" href="/llms.txt" />
 	<!-- Link previews; see the home page for why the URLs are absolute.
@@ -247,12 +247,12 @@
 	<meta property="og:type" content="website" />
 	<meta property="og:site_name" content="ProfitOfExile" />
 	<meta property="og:url" content="https://profitofexile.top/lab" />
-	<meta property="og:title" content="Lab Farming Dashboard - ProfitOfExile" />
-	<meta property="og:description" content="Live Path of Exile 1 gem rankings, Divine Font expected value, market signals, and Lab farming analysis." />
+	<meta property="og:title" content="PoE Lab Farming Dashboard - ProfitOfExile" />
+	<meta property="og:description" content="PoE lab farming and transfigured gems farming: live Path of Exile 1 gem prices, expected value per font use and market signals for Uber, Gift and Dedication labs." />
 	<meta property="og:image" content="https://profitofexile.top/og-lab.jpg" />
 	<meta property="og:image:width" content="1200" />
 	<meta property="og:image:height" content="630" />
-	<meta property="og:image:alt" content="ProfitOfExile Lab Farming Dashboard: live gem rankings and Divine Font expected value" />
+	<meta property="og:image:alt" content="ProfitOfExile Lab Farming Dashboard: live transfigured gem rankings and expected value per font use" />
 	<meta name="twitter:card" content="summary_large_image" />
 </svelte:head>
 

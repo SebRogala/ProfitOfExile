@@ -50,7 +50,7 @@
 
 <header class="header">
 	<div class="header-row">
-		<h1 class="title">ProfitOfExile — Lab Farming Dashboard</h1>
+		<h1 class="title">ProfitOfExile — PoE Lab Farming Dashboard</h1>
 		<div class="lab-selector">
 			{#each LABS as lab}
 				<button

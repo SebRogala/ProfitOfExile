@@ -45,7 +45,7 @@ export const modules: Module[] = [
 		id: 'lab',
 		name: 'Lab Farming',
 		status: 'available',
-		tagline: 'Divine Font farming in the Labyrinth: which gem to take, and at what price.',
+		tagline: 'PoE lab farming and transfigured gems farming: which gem to take, and at what price.',
 		trigger: "Entering the 3rd Aspirant's Trial, from Client.txt.",
 		reads: 'The gem tooltip while you hover Font options, and the Font craft panel.',
 		gives: [
