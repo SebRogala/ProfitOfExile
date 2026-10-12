@@ -937,7 +937,7 @@
 	}
 
 	.setting-value.muted {
-		color: var(--border);
+		color: var(--text-muted);
 		font-style: italic;
 	}
 
