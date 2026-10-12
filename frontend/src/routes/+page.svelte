@@ -587,6 +587,10 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 				<a href="https://www.youtube.com/@Vertolka_Exiled" target="_blank" rel="noopener">Vertolka</a>
 				<span class="credit-desc">Partner on the project: ideas, prototype testing, and always there to talk it through</span>
 			</div>
+			<div class="credit">
+				<span class="credit-name">Alfiro</span>
+				<span class="credit-desc">Module ideas, and the massive data samples for the app</span>
+			</div>
 		</div>
 	</section>
 
@@ -1329,7 +1333,8 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 		gap: 12px;
 	}
 
-	.credit a {
+	.credit a,
+	.credit-name {
 		color: #d4b87a;
 		text-decoration: none;
 		font-family: 'Cinzel', serif;
@@ -1338,6 +1343,11 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 		letter-spacing: 0.03em;
 		border-bottom: 1px solid rgba(201, 170, 113, 0.2);
 		transition: border-color 0.2s;
+	}
+
+	/* A contributor without a link: the name style, without the link's underline. */
+	.credit-name {
+		border-bottom: none;
 	}
 
 	.credit a:hover {
