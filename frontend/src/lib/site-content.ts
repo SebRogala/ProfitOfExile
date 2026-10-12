@@ -126,4 +126,24 @@ export const modules: Module[] = [
 			},
 		],
 	},
+	{
+		id: 'harvest',
+		name: 'Harvest Flipping',
+		status: 'beta',
+		tagline: 'Lifeforce rerolls: which types to keep, which to feed back, and what a reroll is worth.',
+		trigger: 'None — you pick a family on the page.',
+		reads: 'Nothing on your screen.',
+		gives: [
+			'Per family — Delirium Orbs, Essences, Fossils, Astrolabes, Oils and Catalysts — the keepers and the feeders, with the chaos value of rerolling until a keeper comes out.',
+			'Reroll odds from logged HarvestForge samples, priced from the Currency Exchange, lifeforce cost included.',
+			'A stash-search regex for each side, ready to paste, so the feeders light up in your stash.',
+		],
+		screenshots: [
+			{
+				src: '/module-harvest-page.webp',
+				alt: 'Harvest Flipping page on the Delirium Orbs tab: a "Yes — feed the cheap tiers" verdict at +22.4c per Jeweller’s Delirium Orb, ten feeder types beside two keepers, a stash-search regex for each side, and the lifeforce cost per reroll',
+				caption: 'Harvest Flipping page — the verdict, feeders beside keepers, and a regex for each',
+			},
+		],
+	},
 ];
