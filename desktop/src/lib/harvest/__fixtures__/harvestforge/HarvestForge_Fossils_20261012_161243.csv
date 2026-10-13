@@ -1,0 +1,32 @@
+﻿Type,Rolls,Chance %
+"Metallic Fossil",1215,11.152
+"Jagged Fossil",1141,10.473
+"Pristine Fossil",1180,10.831
+"Dense Fossil",1184,10.867
+"Frigid Fossil",1142,10.482
+"Scorched Fossil",1137,10.436
+"Lucent Fossil",235,2.157
+"Bound Fossil",266,2.441
+"Tangled Fossil",7,0.064
+"Aberrant Fossil",1180,10.831
+"Prismatic Fossil",266,2.441
+"Opulent Fossil",290,2.662
+"Corroded Fossil",276,2.533
+"Sanctified Fossil",28,0.257
+"Faceted Fossil",4,0.037
+"Hollow Fossil",4,0.037
+"Fractured Fossil",11,0.101
+"Glyphic Fossil",5,0.046
+"Shuddering Fossil",260,2.386
+"Bloodstained Fossil",8,0.073
+"Gilded Fossil",19,0.174
+"Deft Fossil",269,2.469
+"Serrated Fossil",245,2.249
+"Aetheric Fossil",251,2.304
+"Fundamental Fossil",272,2.497
+
+Total rolls,10895
+Items processed,354
+Hits,331
+Wild Lifeforce spent,327270
+Session time,01:36:12

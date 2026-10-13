@@ -61,7 +61,12 @@
   "Metadata/Items/Currency/CurrencyDelveCraftingMirror": 41.18,
   "Metadata/Items/Currency/CurrencyDelveCraftingVaal": 10.82,
   "Metadata/Items/Currency/CurrencyDelveCraftingAbyss": 401.63,
-  "Metadata/Items/Currency/CurrencyDelveCraftingCorruptEssence": 60.51
+  "Metadata/Items/Currency/CurrencyDelveCraftingCorruptEssence": 60.51,
+  "Metadata/Items/Currency/CurrencyDelveCraftingRandom": 9.59,
+  "Metadata/Items/Currency/CurrencyDelveCraftingElemental": 11.42,
+  "Metadata/Items/Currency/CurrencyDelveCraftingQuality": 9.46,
+  "Metadata/Items/Currency/CurrencyDelveCraftingAttackMods": 10.45,
+  "Metadata/Items/Currency/CurrencyDelveCraftingCasterMods": 14.15
  },
  "astrolabe": {
   "Metadata/Items/Currency/AstrolabeUltimatum": 133.2,

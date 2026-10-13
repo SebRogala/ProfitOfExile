@@ -273,9 +273,9 @@
       "rerollCost": 30,
       "weights": {
         "sample": {
-          "rolls": 5271,
-          "lifeforceSpent": 158910,
-          "date": "2026-10-09",
+          "rolls": 10895,
+          "lifeforceSpent": 327270,
+          "date": "2026-10-12",
           "source": "requester's HarvestForge log"
         },
         "types": [
@@ -283,124 +283,155 @@
             "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingLightning",
             "name": "Metallic Fossil",
             "shortName": "Metallic",
-            "loggedRolls": 535
+            "loggedRolls": 1215
           },
           {
             "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingPhysical",
             "name": "Jagged Fossil",
             "shortName": "Jagged",
-            "loggedRolls": 539
+            "loggedRolls": 1141
           },
           {
             "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingLife",
             "name": "Pristine Fossil",
             "shortName": "Pristine",
-            "loggedRolls": 577
+            "loggedRolls": 1180
           },
           {
             "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingDefences",
             "name": "Dense Fossil",
             "shortName": "Dense",
-            "loggedRolls": 550
+            "loggedRolls": 1184
           },
           {
             "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingCold",
             "name": "Frigid Fossil",
             "shortName": "Frigid",
-            "loggedRolls": 562
+            "loggedRolls": 1142
           },
           {
             "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingFire",
             "name": "Scorched Fossil",
             "shortName": "Scorched",
-            "loggedRolls": 577
-          },
-          {
-            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingChaos",
-            "name": "Aberrant Fossil",
-            "shortName": "Aberrant",
-            "loggedRolls": 557
+            "loggedRolls": 1137
           },
           {
             "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingMana",
             "name": "Lucent Fossil",
             "shortName": "Lucent",
-            "loggedRolls": 134
+            "loggedRolls": 235
           },
           {
             "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingMinionsAuras",
             "name": "Bound Fossil",
             "shortName": "Bound",
-            "loggedRolls": 122
+            "loggedRolls": 266
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingRandom",
+            "name": "Tangled Fossil",
+            "shortName": "Tangled",
+            "loggedRolls": 7
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingChaos",
+            "name": "Aberrant Fossil",
+            "shortName": "Aberrant",
+            "loggedRolls": 1180
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingElemental",
+            "name": "Prismatic Fossil",
+            "shortName": "Prismatic",
+            "loggedRolls": 266
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingQuality",
+            "name": "Opulent Fossil",
+            "shortName": "Opulent",
+            "loggedRolls": 290
           },
           {
             "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingBleedPoison",
             "name": "Corroded Fossil",
             "shortName": "Corroded",
-            "loggedRolls": 129
-          },
-          {
-            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingSpeed",
-            "name": "Shuddering Fossil",
-            "shortName": "Shuddering",
-            "loggedRolls": 131
-          },
-          {
-            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingEnchant",
-            "name": "Deft Fossil",
-            "shortName": "Deft",
-            "loggedRolls": 126
-          },
-          {
-            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingSockets",
-            "name": "Fundamental Fossil",
-            "shortName": "Fundamental",
-            "loggedRolls": 142
+            "loggedRolls": 276
           },
           {
             "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingLuckyModRolls",
             "name": "Sanctified Fossil",
             "shortName": "Sanctified",
-            "loggedRolls": 11
-          },
-          {
-            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingSellPrice",
-            "name": "Gilded Fossil",
-            "shortName": "Gilded",
-            "loggedRolls": 11
+            "loggedRolls": 28
           },
           {
             "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingGemLevel",
             "name": "Faceted Fossil",
             "shortName": "Faceted",
-            "loggedRolls": 5
-          },
-          {
-            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingMirror",
-            "name": "Fractured Fossil",
-            "shortName": "Fractured",
-            "loggedRolls": 5
-          },
-          {
-            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingVaal",
-            "name": "Bloodstained Fossil",
-            "shortName": "Bloodstained",
-            "loggedRolls": 2
+            "loggedRolls": 4
           },
           {
             "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingAbyss",
             "name": "Hollow Fossil",
             "shortName": "Hollow",
-            "loggedRolls": 1
+            "loggedRolls": 4
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingMirror",
+            "name": "Fractured Fossil",
+            "shortName": "Fractured",
+            "loggedRolls": 11
           },
           {
             "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingCorruptEssence",
             "name": "Glyphic Fossil",
             "shortName": "Glyphic",
-            "loggedRolls": 4
+            "loggedRolls": 5
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingSpeed",
+            "name": "Shuddering Fossil",
+            "shortName": "Shuddering",
+            "loggedRolls": 260
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingVaal",
+            "name": "Bloodstained Fossil",
+            "shortName": "Bloodstained",
+            "loggedRolls": 8
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingSellPrice",
+            "name": "Gilded Fossil",
+            "shortName": "Gilded",
+            "loggedRolls": 19
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingEnchant",
+            "name": "Deft Fossil",
+            "shortName": "Deft",
+            "loggedRolls": 269
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingAttackMods",
+            "name": "Serrated Fossil",
+            "shortName": "Serrated",
+            "loggedRolls": 245
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingCasterMods",
+            "name": "Aetheric Fossil",
+            "shortName": "Aetheric",
+            "loggedRolls": 251
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingSockets",
+            "name": "Fundamental Fossil",
+            "shortName": "Fundamental",
+            "loggedRolls": 272
           }
         ]
-      }
+      },
+      "_note": "Weights from the requester's HarvestForge log, committed byte-identical at desktop/src/lib/harvest/__fixtures__/harvestforge/HarvestForge_Fossils_20261012_161243.csv. It replaces the 2026-10-09 log, which missed Tangled, Prismatic, Opulent, Serrated and Aetheric; rerollCost 30 and lifeforceSpent from the footer (Operator: correct data, 2026-10-12). Prices of the five added types: same method and window as the rest (Currency Exchange pooled VWAP, 25 clock hours 2026-09-08 00:00 to 2026-09-09 00:00 UTC, league Allflame, local database), checked by reproducing the committed Hollow and Metallic prices exactly; Opulent has no divine-market trade in the window. Tiers in harvest-tiers.json."
     },
     {
       "id": "astrolabe",

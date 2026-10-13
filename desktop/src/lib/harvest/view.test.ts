@@ -184,7 +184,7 @@ describe('status line', () => {
 	it('Fossils ready reads updated · prices · weights (reference 01)', async () => {
 		const view = pageView(await input());
 		expect(view.status?.text).toBe(
-			"updated 6 min ago · prices: Currency Exchange, Day 24h · 1 div = 360c · weights: HarvestForge log · 5,271 rolls · 2026-10-09"
+			"updated 6 min ago · prices: Currency Exchange, Day 24h · 1 div = 360c · weights: HarvestForge log · 10,895 rolls · 2026-10-12"
 		);
 	});
 
@@ -369,8 +369,8 @@ describe('Fossil tier cards (reference 01)', () => {
 		expect(card(family(pageView(await input())), 'feeders', 'LOW').split).toBe(false);
 	});
 
-	it('prints LOW as 11 types · 9.1c–17.4c', async () => {
-		expect(card(family(pageView(await input())), 'feeders', 'LOW').meta).toBe('11 types · 9.1c–17.4c');
+	it('prints LOW as 16 types · 9.1c–17.4c', async () => {
+		expect(card(family(pageView(await input())), 'feeders', 'LOW').meta).toBe('16 types · 9.1c–17.4c');
 	});
 
 	it('prints a one-type tier with one price: TOP 1 type · 402c', async () => {
@@ -396,8 +396,8 @@ describe('Fossil tier cards (reference 01)', () => {
 	it('orders chips by price, high to low', async () => {
 		const low = card(family(pageView(await input())), 'feeders', 'LOW');
 		expect(low.chips.map((c) => c.shortName)).toEqual([
-			'Fundamental', 'Jagged', 'Pristine', 'Deft', 'Bloodstained', 'Aberrant',
-			'Scorched', 'Bound', 'Metallic', 'Frigid', 'Lucent'
+			'Fundamental', 'Jagged', 'Pristine', 'Aetheric', 'Deft', 'Prismatic', 'Bloodstained', 'Serrated',
+			'Aberrant', 'Scorched', 'Bound', 'Tangled', 'Opulent', 'Metallic', 'Frigid', 'Lucent'
 		]);
 	});
 
@@ -408,8 +408,8 @@ describe('Fossil tier cards (reference 01)', () => {
 		expect((await lucent()).priceText).toBe('9.1c');
 	});
 
-	it('gives a feeder chip its signed loop EV: +25.7c', async () => {
-		expect((await lucent()).evText).toBe('+25.7c');
+	it('gives a feeder chip its signed loop EV: +23.4c', async () => {
+		expect((await lucent()).evText).toBe('+23.4c');
 	});
 
 	it('gives a feeder chip no weight share', async () => {
@@ -420,8 +420,8 @@ describe('Fossil tier cards (reference 01)', () => {
 		expect([(await hollow()).shortName, (await hollow()).priceText]).toEqual(['Hollow', '402c']);
 	});
 
-	it('gives a keeper chip its weight share: 0.02%', async () => {
-		expect((await hollow()).shareText).toBe('0.02%');
+	it('gives a keeper chip its weight share: 0.04%', async () => {
+		expect((await hollow()).shareText).toBe('0.04%');
 	});
 
 	it('gives a keeper chip no loop EV', async () => {
@@ -443,8 +443,8 @@ describe('verdict', () => {
 			expect((await v()).reason).toBe('Buy Lucent Fossil (9.1c, cheapest feeder) and reroll until a keeper.');
 		});
 
-		it('prints the loop EV +25.7c', async () => {
-			expect((await v()).evText).toBe('+25.7c');
+		it('prints the loop EV +23.4c', async () => {
+			expect((await v()).evText).toBe('+23.4c');
 		});
 
 		it('prints per Lucent Fossil', async () => {
@@ -452,7 +452,7 @@ describe('verdict', () => {
 		});
 
 		it('prints the divine line', async () => {
-			expect((await v()).divineLine).toBe('1 div profit ≈ 15 feeders · ~378 rerolls · ~11,349 Wild');
+			expect((await v()).divineLine).toBe('1 div profit ≈ 16 feeders · ~106 rerolls · ~3,186 Wild');
 		});
 	});
 
@@ -596,19 +596,21 @@ describe('verdict', () => {
 
 		it('still lists every type as a feeder', async () => {
 			const body = await allFed();
-			expect(body.feeders.cards.reduce((n, c) => n + c.chips.length, 0)).toBe(20);
+			expect(body.feeders.cards.reduce((n, c) => n + c.chips.length, 0)).toBe(25);
 		});
 	});
 });
 
 // ------------------------------------------------------- split row, picks --
 
+// Reference 05 picks Dense keep; on the 2026-10-12 log Dense is a default keeper, so the moved
+// pick here is Dense picked reroll, and every figure is re-derived for that pick.
 describe('split row', () => {
 	const unmoved = async () => family(pageView(await input())).split;
 	const densePicked = async () => {
 		const base = await input();
 		const dense = itemId(base.harvest!, 'fossil', 'Dense');
-		return { dense, body: family(pageView({ ...base, picks: { fossil: { [dense]: 'keep' } } })) };
+		return { dense, body: family(pageView({ ...base, picks: { fossil: { [dense]: 'reroll' } } })) };
 	};
 	const denseEvRow = async (label: string) => {
 		const ev = (await densePicked()).body.ev!;
@@ -616,7 +618,7 @@ describe('split row', () => {
 	};
 	const denseChip = async () => {
 		const { dense, body } = await densePicked();
-		return card(body, 'keepers', 'MID').chips.find((c) => c.itemId === dense)!;
+		return card(body, 'feeders', 'MID').chips.find((c) => c.itemId === dense)!;
 	};
 
 	it('reads computed from prices when nothing was moved', async () => {
@@ -647,17 +649,17 @@ describe('split row', () => {
 		expect((await denseChip()).picked).toBe(true);
 	});
 
-	it('titles a kept pick Kept (your pick) — click to feed just Dense Fossil (prototype line 416)', async () => {
-		expect((await denseChip()).title).toBe('Kept (your pick) — click to feed just Dense Fossil');
+	it('titles a fed pick Fed (your pick) — click to keep just Dense Fossil (prototype line 416)', async () => {
+		expect((await denseChip()).title).toBe('Fed (your pick) — click to keep just Dense Fossil');
 	});
 
-	it('moves the headline to Lucent Fossil +24.3c after the Dense pick (reference 05)', async () => {
-		expect((await densePicked()).body.verdict.evText).toBe('+24.3c');
+	it('moves the headline to Lucent Fossil +21.4c after the Dense pick (reference 05)', async () => {
+		expect((await densePicked()).body.verdict.evText).toBe('+21.4c');
 	});
 
 	it('prints the divine line after the Dense pick (reference 05)', async () => {
 		expect((await densePicked()).body.verdict.divineLine).toBe(
-			'1 div profit ≈ 15 feeders · ~90 rerolls · ~2,686 Wild'
+			'1 div profit ≈ 17 feeders · ~511 rerolls · ~15,335 Wild'
 		);
 	});
 
@@ -665,48 +667,48 @@ describe('split row', () => {
 		expect(await denseEvRow('Cheapest feeder')).toBe('Lucent Fossil · 9.1c');
 	});
 
-	it('EV panel after the Dense pick — Loop EV per feeder: +24.3c (reference 05)', async () => {
-		expect(await denseEvRow('Loop EV per feeder')).toBe('+24.3c');
+	it('EV panel after the Dense pick — Loop EV per feeder: +21.4c (reference 05)', async () => {
+		expect(await denseEvRow('Loop EV per feeder')).toBe('+21.4c');
 	});
 
-	it('EV panel after the Dense pick — Keeper hit per roll: 15.7% (reference 05)', async () => {
-		expect(await denseEvRow('Keeper hit per roll')).toBe('15.7%');
+	it('EV panel after the Dense pick — Keeper hit per roll: 3.1% (reference 05)', async () => {
+		expect(await denseEvRow('Keeper hit per roll')).toBe('3.1%');
 	});
 
-	it('EV panel after the Dense pick — Rerolls per keeper: ~6.0 (reference 05)', async () => {
-		expect(await denseEvRow('Rerolls per keeper')).toBe('~6.0');
+	it('EV panel after the Dense pick — Rerolls per keeper: ~30.1 (reference 05)', async () => {
+		expect(await denseEvRow('Rerolls per keeper')).toBe('~30.1');
 	});
 
-	it('EV panel after the Dense pick — Lifeforce per keeper: ~179 Wild · 5.6c (reference 05)', async () => {
-		expect(await denseEvRow('Lifeforce per keeper')).toBe('~179 Wild · 5.6c');
+	it('EV panel after the Dense pick — Lifeforce per keeper: ~902 Wild · 28.0c (reference 05)', async () => {
+		expect(await denseEvRow('Lifeforce per keeper')).toBe('~902 Wild · 28.0c');
 	});
 
-	it('EV panel after the Dense pick — 1 div of lifeforce yields: ~55.3 keepers (reference 05)', async () => {
-		expect(await denseEvRow('1 div of lifeforce yields')).toBe('~55.3 keepers');
+	it('EV panel after the Dense pick — 1 div of lifeforce yields: ~11.0 keepers (reference 05)', async () => {
+		expect(await denseEvRow('1 div of lifeforce yields')).toBe('~11.0 keepers');
 	});
 
-	it('EV panel after the Dense pick — …worth after inputs: +1,344c (reference 05)', async () => {
-		expect(await denseEvRow('…worth after inputs')).toBe('+1,344c');
+	it('EV panel after the Dense pick — …worth after inputs: +235c (reference 05)', async () => {
+		expect(await denseEvRow('…worth after inputs')).toBe('+235c');
 	});
 
 	it('keeps the feeder MID card split after the Dense pick (reference 05)', async () => {
 		expect(card((await densePicked()).body, 'feeders', 'MID').split).toBe(true);
 	});
 
-	it('leaves Corroded alone in the feeder MID card after the Dense pick (reference 05)', async () => {
-		expect(card((await densePicked()).body, 'feeders', 'MID').chips.map((c) => c.shortName)).toEqual(['Corroded']);
+	it('puts Dense beside Corroded in the feeder MID card after the Dense pick (reference 05)', async () => {
+		expect(card((await densePicked()).body, 'feeders', 'MID').chips.map((c) => c.shortName)).toEqual(['Dense', 'Corroded']);
 	});
 
-	it('gives Corroded the loop EV +3.5c after the Dense pick (reference 05)', async () => {
-		expect(card((await densePicked()).body, 'feeders', 'MID').chips[0].evText).toBe('+3.5c');
+	it('gives Corroded the loop EV +0.6c after the Dense pick (reference 05)', async () => {
+		expect(card((await densePicked()).body, 'feeders', 'MID').chips[1].evText).toBe('+0.6c');
 	});
 
-	it('gives the picked Dense chip its keeper share 11.7% (reference 05)', async () => {
-		expect((await denseChip()).shareText).toBe('11.7%');
+	it('gives the picked Dense chip its loop EV, a loss: −2.4c (reference 05)', async () => {
+		expect((await denseChip()).evText).toBe('−2.4c');
 	});
 
-	it('counts the feeders regex after the Dense pick: 49 / 250 characters (reference 05)', async () => {
-		expect((await densePicked()).body.regex.feeders.count).toBe('49 / 250 characters');
+	it('counts the feeders regex after the Dense pick: 73 / 250 characters (reference 05)', async () => {
+		expect((await densePicked()).body.regex.feeders.count).toBe('73 / 250 characters');
 	});
 
 	it('counts picks of the active family only', async () => {
@@ -776,28 +778,28 @@ describe('EV panel (reference 01)', () => {
 		expect(await rowOf('Cheapest feeder')).toBe('Lucent Fossil · 9.1c');
 	});
 
-	it('Loop EV per feeder: +25.7c', async () => {
-		expect(await rowOf('Loop EV per feeder')).toBe('+25.7c');
+	it('Loop EV per feeder: +23.4c', async () => {
+		expect(await rowOf('Loop EV per feeder')).toBe('+23.4c');
 	});
 
-	it('Keeper hit per roll: 3.7%', async () => {
-		expect(await rowOf('Keeper hit per roll')).toBe('3.7%');
+	it('Keeper hit per roll: 14.2%', async () => {
+		expect(await rowOf('Keeper hit per roll')).toBe('14.2%');
 	});
 
-	it('Rerolls per keeper: ~25.2', async () => {
-		expect(await rowOf('Rerolls per keeper')).toBe('~25.2');
+	it('Rerolls per keeper: ~6.6', async () => {
+		expect(await rowOf('Rerolls per keeper')).toBe('~6.6');
 	});
 
-	it('Lifeforce per keeper: ~757 Wild · 23.5c', async () => {
-		expect(await rowOf('Lifeforce per keeper')).toBe('~757 Wild · 23.5c');
+	it('Lifeforce per keeper: ~199 Wild · 6.2c', async () => {
+		expect(await rowOf('Lifeforce per keeper')).toBe('~199 Wild · 6.2c');
 	});
 
-	it('1 div of lifeforce yields: ~13.1 keepers', async () => {
-		expect(await rowOf('1 div of lifeforce yields')).toBe('~13.1 keepers');
+	it('1 div of lifeforce yields: ~49.7 keepers', async () => {
+		expect(await rowOf('1 div of lifeforce yields')).toBe('~49.7 keepers');
 	});
 
-	it('…worth after inputs: +336c', async () => {
-		expect(await rowOf('…worth after inputs')).toBe('+336c');
+	it('…worth after inputs: +1,162c', async () => {
+		expect(await rowOf('…worth after inputs')).toBe('+1,162c');
 	});
 
 	it('carries no unpriced note when every type is priced', async () => {
@@ -812,13 +814,13 @@ describe('unpriced Hollow (reference 08 §5, test-local price)', () => {
 		return { hollow, body: family(pageView({ ...base, exchange: withPrice(base.exchange!, hollow, null, 402) })) };
 	};
 
-	it('prints the floor EV +23.7c (floor ruling)', async () => {
-		expect((await unpriced()).body.ev!.rows[1].value).toBe('+23.7c');
+	it('prints the floor EV +22.3c (floor ruling)', async () => {
+		expect((await unpriced()).body.ev!.rows[1].value).toBe('+22.3c');
 	});
 
 	it('notes the floor and the EV at the last seen price', async () => {
 		expect((await unpriced()).body.ev.rows[1].note).toBe(
-			'1 unpriced type counted as 0c, so this EV is a floor. At its last seen 402c it would read +25.7c.'
+			'1 unpriced type counted as 0c, so this EV is a floor. At its last seen 402c it would read +23.4c.'
 		);
 	});
 
@@ -843,26 +845,26 @@ describe('unpriced Hollow (reference 08 §5, test-local price)', () => {
 
 describe('regex boxes', () => {
 	it('builds the Fossil keepers regex (reference 01)', async () => {
-		expect(family(pageView(await input())).regex.keepers.text).toBe('"shu|san|gil|fac|fra|hol|gly"');
+		expect(family(pageView(await input())).regex.keepers.text).toBe('"den|san|fac|hol|fra|gly|shu|gil"');
 	});
 
-	it('counts it: 29 / 250 characters, within the limit', async () => {
+	it('counts it: 33 / 250 characters, within the limit', async () => {
 		const box = family(pageView(await input())).regex.keepers;
-		expect([box.count, box.overLimit]).toEqual(['29 / 250 characters', false]);
+		expect([box.count, box.overLimit]).toEqual(['33 / 250 characters', false]);
 	});
 
-	it('follows the picks: Dense kept leads the keepers regex (reference 05)', async () => {
+	it('follows the picks: Dense fed drops out of the keepers regex (reference 05)', async () => {
 		const base = await input();
 		const dense = itemId(base.harvest!, 'fossil', 'Dense');
-		const box = family(pageView({ ...base, picks: { fossil: { [dense]: 'keep' } } })).regex.keepers;
-		expect(box.text).toBe('"den|shu|san|gil|fac|fra|hol|gly"');
+		const box = family(pageView({ ...base, picks: { fossil: { [dense]: 'reroll' } } })).regex.keepers;
+		expect(box.text).toBe('"san|fac|hol|fra|gly|shu|gil"');
 	});
 
-	it('counts the picked keepers regex: 33 / 250 characters', async () => {
+	it('counts the picked keepers regex: 29 / 250 characters', async () => {
 		const base = await input();
 		const dense = itemId(base.harvest!, 'fossil', 'Dense');
-		const box = family(pageView({ ...base, picks: { fossil: { [dense]: 'keep' } } })).regex.keepers;
-		expect(box.count).toBe('33 / 250 characters');
+		const box = family(pageView({ ...base, picks: { fossil: { [dense]: 'reroll' } } })).regex.keepers;
+		expect(box.count).toBe('29 / 250 characters');
 	});
 
 	it('flags a regex over 250 characters with the long count (reference 08 §8)', async () => {
@@ -902,8 +904,8 @@ describe('moves counted against the engine (C1, prototype lines 463–471)', () 
 		return { base, picks, body: family(pageView({ ...base, picks })) };
 	};
 
-	// The prototype's own solve (ported) agrees: once Corroded is kept, Dense's 33.09c is at
-	// least its re-solved reroll value 32.96c, so only Corroded left the engine's side.
+	// Dense is already a default keeper, so of the seven MID types only Corroded left the
+	// engine's side.
 	it('← Keep tier on the feeder MID card counts only Corroded: 1 type moved by you', async () => {
 		expect((await midKept()).body.split.label).toBe('1 type moved by you');
 	});
@@ -957,13 +959,13 @@ describe('moves counted against the engine (C1, prototype lines 463–471)', () 
 		expect(chips.filter((c) => c.picked).map((c) => c.shortName)).toEqual([]);
 	});
 
-	it('with nothing to flip, counts picks against the unpicked engine: all-fed Fossils move the 7 keepers', async () => {
+	it('with nothing to flip, counts picks against the unpicked engine: all-fed Fossils move the 8 keepers', async () => {
 		const base = await input();
 		const fossil = base.harvest!.families.find((f) => f.id === 'fossil')!;
 		const picks: HarvestPicks = {
 			fossil: Object.fromEntries(fossil.weights!.types.map((t) => [t.itemId, 'reroll' as const]))
 		};
-		expect(family(pageView({ ...base, picks })).split.label).toBe('7 types moved by you');
+		expect(family(pageView({ ...base, picks })).split.label).toBe('8 types moved by you');
 	});
 });
 
@@ -1126,18 +1128,18 @@ describe('restored family id no family carries (C16)', () => {
 	});
 
 	it('shows the Fossils body', async () => {
-		expect(family(pageView(await input({ familyId: 'constructor' }))).verdict.evText).toBe('+25.7c');
+		expect(family(pageView(await input({ familyId: 'constructor' }))).verdict.evText).toBe('+23.4c');
 	});
 });
 
 describe('reference values (C13)', () => {
-	it('reference 01: feeders regex 53 / 250 characters', async () => {
-		expect(family(pageView(await input())).regex.feeders.count).toBe('53 / 250 characters');
+	it('reference 01: feeders regex 69 / 250 characters', async () => {
+		expect(family(pageView(await input())).regex.feeders.count).toBe('69 / 250 characters');
 	});
 
-	it('reference 01: Corroded feeds at +4.8c', async () => {
+	it('reference 01: Corroded feeds at +2.5c', async () => {
 		const chip = card(family(pageView(await input())), 'feeders', 'MID').chips.find((c) => c.shortName === 'Corroded')!;
-		expect(chip.evText).toBe('+4.8c');
+		expect(chip.evText).toBe('+2.5c');
 	});
 
 	it('reference 02: feeders regex 41 / 250 characters', async () => {
@@ -1253,9 +1255,9 @@ describe('page states (reference 08 §1–4, §9)', () => {
 		expect(view.status?.segments[1]).toBe('prices from 21:00 (2 h ago)');
 	});
 
-	it('stale keeps every number: the verdict EV still reads +25.7c', async () => {
+	it('stale keeps every number: the verdict EV still reads +23.4c', async () => {
 		const view = pageView({ ...(await input()), lastError: 'boom' });
-		expect(family(view).verdict.evText).toBe('+25.7c');
+		expect(family(view).verdict.evText).toBe('+23.4c');
 	});
 
 	it('no-data family: a family without weights says they are not logged yet', async () => {
@@ -1396,12 +1398,13 @@ describe('picks prefs', () => {
 		expect(applyPick({}, 'fossil', id, 'reroll', prices)).toEqual({});
 	});
 
-	// The eleven LOW Fossils of fixtures.json fossil tiers.byItem, written out.
+	// The sixteen LOW Fossils of harvest-tiers.json fossil byItem, written out.
 	const LOW_FOSSILS = [
-		'Lightning', 'Physical', 'Life', 'Cold', 'Fire', 'Chaos', 'Mana', 'MinionsAuras', 'Enchant', 'Sockets', 'Vaal'
+		'Lightning', 'Physical', 'Life', 'Cold', 'Fire', 'Chaos', 'Mana', 'MinionsAuras', 'Enchant', 'Sockets', 'Vaal',
+		'Random', 'Elemental', 'Quality', 'AttackMods', 'CasterMods'
 	].map((s) => `Metadata/Items/Currency/CurrencyDelveCrafting${s}`);
 
-	it('moveTier keeps exactly the eleven LOW Fossils', async () => {
+	it('moveTier keeps exactly the sixteen LOW Fossils', async () => {
 		const { exchange, harvest } = await readModels();
 		const fossil = harvest.families.find((f) => f.id === 'fossil')!;
 		const moved = moveTier({}, fossil, 'LOW', 'keep', exchange.prices);

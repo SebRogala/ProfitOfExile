@@ -7,7 +7,10 @@ import derived from './__fixtures__/derived.json';
 /**
  * Inputs come from the per-owner fixture copies; the expected keeper sets come
  * from `derived.json`, which only tests read (the handoff's oracle). Every other
- * expected number is a literal from the reference screens named on the case.
+ * expected number is a literal from the reference screens named on the case,
+ * except Fossils: the 2026-10-12 HarvestForge log replaced the sample those
+ * screens were drawn from, so their figures were re-derived outside the repo
+ * (exact rational arithmetic over the fixture) and differ from the screens.
  */
 
 type FamilyId = 'delirium' | 'essence' | 'corrupt' | 'fossil' | 'astrolabe' | 'oil' | 'catalyst';
@@ -110,36 +113,36 @@ describe('solveFamily', () => {
 			expect(r().headline.priceChaos.toFixed(1)).toBe('9.1');
 		});
 
-		it('pays +25.7c per Lucent loop', () => {
+		it('pays +23.4c per Lucent loop', () => {
 			expect(r().headline.loopEvChaos.toFixed(1)).toBe(String(derived.fossil.loopEvChaos));
 		});
 
-		it('rounds the divine line to 15 feeders, 378 rerolls, 11,349 Wild (C4)', () => {
-			expect(r().divineLine).toEqual({ feeders: 15, rerolls: 378, lifeforce: 11349 });
+		it('rounds the divine line to 16 feeders, 106 rerolls, 3,186 Wild (C4)', () => {
+			expect(r().divineLine).toEqual({ feeders: 16, rerolls: 106, lifeforce: 3186 });
 		});
 
-		it('hits a keeper 3.7% of rolls', () => {
-			expect((r().headline.keeperHitPerRoll * 100).toFixed(1)).toBe('3.7');
+		it('hits a keeper 14.2% of rolls', () => {
+			expect((r().headline.keeperHitPerRoll * 100).toFixed(1)).toBe('14.2');
 		});
 
-		it('takes ~25.2 rerolls per keeper', () => {
-			expect(r().headline.rerollsPerKeeper.toFixed(1)).toBe('25.2');
+		it('takes ~6.6 rerolls per keeper', () => {
+			expect(r().headline.rerollsPerKeeper.toFixed(1)).toBe('6.6');
 		});
 
-		it('spends ~757 Wild per keeper', () => {
-			expect(Math.round(r().headline.lifeforcePerKeeper)).toBe(757);
+		it('spends ~199 Wild per keeper', () => {
+			expect(Math.round(r().headline.lifeforcePerKeeper)).toBe(199);
 		});
 
-		it('spends 23.5c of lifeforce per keeper', () => {
-			expect(r().headline.lifeforceChaosPerKeeper.toFixed(1)).toBe('23.5');
+		it('spends 6.2c of lifeforce per keeper', () => {
+			expect(r().headline.lifeforceChaosPerKeeper.toFixed(1)).toBe('6.2');
 		});
 
-		it('yields ~13.1 keepers per divine of lifeforce', () => {
-			expect(r().headline.keepersPerDivine.toFixed(1)).toBe('13.1');
+		it('yields ~49.7 keepers per divine of lifeforce', () => {
+			expect(r().headline.keepersPerDivine.toFixed(1)).toBe('49.7');
 		});
 
-		it('makes +336c from those keepers', () => {
-			expect(Math.round(r().headline.keepersPerDivineWorthChaos)).toBe(336);
+		it('makes +1,162c from those keepers', () => {
+			expect(Math.round(r().headline.keepersPerDivineWorthChaos)).toBe(1162);
 		});
 
 		it('costs 0.93c a reroll', () => {
@@ -151,13 +154,13 @@ describe('solveFamily', () => {
 		});
 	});
 
-	it('Fossil weight share divides by the sum of logged rolls (4,720), not the sample size', () => {
+	it('Fossil weight share divides by the sum of logged rolls (10,895)', () => {
 		const r = ok(solveFamily(inputFor('fossil')));
 		const share = (s: string) => r.types.find((t) => t.itemId === idOf('fossil', s))!.weightShare;
-		expect((share('Shuddering') * 100).toFixed(1)).toBe('2.8');
-		expect((share('Faceted') * 100).toFixed(2)).toBe('0.11');
-		expect((share('Hollow') * 100).toFixed(2)).toBe('0.02');
-		expect(share('Hollow')).toBeCloseTo(1 / 4720, 12);
+		expect((share('Shuddering') * 100).toFixed(1)).toBe('2.4');
+		expect((share('Fractured') * 100).toFixed(2)).toBe('0.10');
+		expect((share('Hollow') * 100).toFixed(2)).toBe('0.04');
+		expect(share('Hollow')).toBeCloseTo(4 / 10895, 12);
 	});
 
 	describe('Delirium default (reference 02)', () => {
@@ -252,19 +255,20 @@ describe('solveFamily', () => {
 		});
 	});
 
-	it('Pick: Dense picked keep is kept, Corroded stays fed, and Lucent re-solves to +24.3c (reference 05)', () => {
+	// Reference 05 picks Dense keep; on the 2026-10-12 log Dense is a default keeper, so the
+	// moved pick is Dense picked reroll.
+	it('Pick: Dense picked reroll is fed, Corroded stays fed, and Lucent re-solves to +21.4c (reference 05)', () => {
 		const dense = idOf('fossil', 'Dense');
-		const r = ok(solveFamily(inputFor('fossil', { picks: { [dense]: 'keep' } })));
-		expect(r.keepers).toContain(dense);
+		const r = ok(solveFamily(inputFor('fossil', { picks: { [dense]: 'reroll' } })));
+		expect(sorted(shortNamesOf('fossil', r.keepers))).toEqual(sorted(derived.fossil.keepers.filter((k) => k !== 'Dense')));
 		expect(r.feeders).toContain(idOf('fossil', 'Corroded'));
 		expect(r.headline.shortName).toBe('Lucent');
-		expect(r.headline.loopEvChaos.toFixed(1)).toBe('24.3');
+		expect(r.headline.loopEvChaos.toFixed(1)).toBe('21.4');
 	});
 
-	// Reference 08 §5 prints +23.8c; that is the EV with Hollow FED at 0c (23.789). The rule it
-	// illustrates keeps an unpriced type (README § Engine, C2), which gives 23.743 → +23.7c.
-	// Disputed in the WI-1 return; the rule wins until ruled otherwise.
-	it('Unpriced: Hollow with no price is kept, the EV is a +23.7c floor and reads +25.7c at its last seen 402c (reference 08 §5)', () => {
+	// The rule reference 08 §5 illustrates keeps an unpriced type (README § Engine, C2) and
+	// counts it 0c: 22.295 → +22.3c; at its last seen 402c, 23.356 → +23.4c.
+	it('Unpriced: Hollow with no price is kept, the EV is a +22.3c floor and reads +23.4c at its last seen 402c (reference 08 §5)', () => {
 		const hollow = idOf('fossil', 'Hollow');
 		const r = ok(
 			solveFamily(
@@ -276,8 +280,8 @@ describe('solveFamily', () => {
 		);
 		expect(r.keepers).toContain(hollow);
 		expect(r.unpriced).toEqual([hollow]);
-		expect(r.headline.loopEvChaos.toFixed(1)).toBe('23.7');
-		expect(r.headline.loopEvAtLastSeenChaos?.toFixed(1)).toBe('25.7');
+		expect(r.headline.loopEvChaos.toFixed(1)).toBe('22.3');
+		expect(r.headline.loopEvAtLastSeenChaos?.toFixed(1)).toBe('23.4');
 	});
 
 	it('Unpriced beats a pick: Hollow picked reroll with no price stays a keeper (C2)', () => {
@@ -339,9 +343,9 @@ describe('solveFamily', () => {
 		expect(r.kind === 'no-feeders' ? r.closest?.itemId : null).toBe(idOf('fossil', 'Frigid'));
 	});
 
-	it('Every type picked keep gives Frigid its all-kept loop EV +7.26c', () => {
+	it('Every type picked keep gives Frigid its all-kept loop EV +6.58c', () => {
 		const r = allKeptFossil();
-		expect(r.kind === 'no-feeders' ? r.closest?.loopEvChaos : null).toBeCloseTo(7.256, 3);
+		expect(r.kind === 'no-feeders' ? r.closest?.loopEvChaos : null).toBeCloseTo(6.579, 3);
 	});
 
 	describe('the family\'s rerollCost, not a constant 30 (C12)', () => {
@@ -358,8 +362,8 @@ describe('solveFamily', () => {
 			expect(h.lifeforcePerKeeper / h.rerollsPerKeeper).toBeCloseTo(60, 9);
 		});
 
-		it('halves the keepers a divine of lifeforce yields: ~6.5', () => {
-			expect(at60().headline.keepersPerDivine.toFixed(1)).toBe('6.5');
+		it('halves the keepers a divine of lifeforce yields: ~24.9', () => {
+			expect(at60().headline.keepersPerDivine.toFixed(1)).toBe('24.9');
 		});
 
 		it('counts 60 lifeforce per reroll in the divine line', () => {
@@ -393,7 +397,7 @@ describe('solveFamily', () => {
 
 	// Expected literals from a closed form, not the engine: with Hollow the only keeper,
 	// Lucent's EV = 401.63 − c·N − 9.12 and N = 1 − w(L) + Σ_{j fed} w(j)(1 − w(j)) / w(Hollow)
-	// = 4238.151483 (scratch oracle.py over the fixture weights).
+	// = 2488.365902 (scratch oracle.py over the fixture weights).
 	describe('Sparse picks: only Hollow kept, every other Fossil picked reroll', () => {
 		const sparse = (rerollCostChaos?: number) => {
 			const picks = Object.fromEntries(
@@ -402,20 +406,20 @@ describe('solveFamily', () => {
 			return ok(solveFamily(inputFor('fossil', { picks, rerollCostChaos })));
 		};
 
-		it('solves Lucent to its exact fixed point at the fixture cost: \u22123,548.97c', () => {
-			expect(sparse().headline.loopEvChaos).toBeCloseTo(-3548.970879, 4);
+		it('solves Lucent to its exact fixed point at the fixture cost: \u22121,921.67c', () => {
+			expect(sparse().headline.loopEvChaos).toBeCloseTo(-1921.670289, 4);
 		});
 
-		it('solves rerolls per keeper exactly: 4,238.15', () => {
-			expect(sparse().headline.rerollsPerKeeper).toBeCloseTo(4238.151483, 4);
+		it('solves rerolls per keeper exactly: 2,488.37', () => {
+			expect(sparse().headline.rerollsPerKeeper).toBeCloseTo(2488.365902, 4);
 		});
 
-		it('stays a loss at 0.1c a reroll: \u221231.31c', () => {
-			expect(sparse(0.1).headline.loopEvChaos).toBeCloseTo(-31.305148, 4);
+		it('stays a loss at 0.2c a reroll: \u2212105.16c', () => {
+			expect(sparse(0.2).headline.loopEvChaos).toBeCloseTo(-105.16318, 4);
 		});
 
-		it('shows no divine line at 0.1c a reroll', () => {
-			expect(sparse(0.1).divineLine).toBeNull();
+		it('shows no divine line at 0.2c a reroll', () => {
+			expect(sparse(0.2).divineLine).toBeNull();
 		});
 	});
 

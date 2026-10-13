@@ -5,7 +5,8 @@ import harvest from './__fixtures__/harvest.json';
 /**
  * Full names come from the fixture's family type lists; the chosen sides are
  * the reference screens' default keep sets (01, 02, 04), named by short name
- * here so the regex is tested apart from the engine that picks them.
+ * here so the regex is tested apart from the engine that picks them. Fossils
+ * use the 2026-10-12 log's default keep set: reference 01's plus Dense.
  */
 
 type FamilyId = 'fossil' | 'delirium' | 'corrupt';
@@ -23,21 +24,22 @@ function side(id: FamilyId, keeperShortNames: string[], keepers: boolean): strin
 		.map((t) => t.name);
 }
 
-const FOSSIL_KEEPERS = ['Hollow', 'Faceted', 'Sanctified', 'Gilded', 'Glyphic', 'Fractured', 'Shuddering'];
+const FOSSIL_KEEPERS = ['Hollow', 'Faceted', 'Sanctified', 'Gilded', 'Glyphic', 'Fractured', 'Shuddering', 'Dense'];
 const DELIRIUM_KEEPERS = ["Diviner's", 'Skittering'];
 const CORRUPT_KEEPERS = ['Horror'];
 
 describe('stashRegex', () => {
-	it('Fossil default keepers give "shu|san|gil|fac|fra|hol|gly", 29 characters', () => {
+	it('Fossil default keepers give "den|san|fac|hol|fra|gly|shu|gil", 33 characters', () => {
 		const r = stashRegex(side('fossil', FOSSIL_KEEPERS, true), familyNames('fossil'));
-		expect(r.text).toBe('"shu|san|gil|fac|fra|hol|gly"');
-		expect(r.length).toBe(29);
+		expect(r.text).toBe('"den|san|fac|hol|fra|gly|shu|gil"');
+		expect(r.length).toBe(33);
 	});
 
-	it('Fossil default feeders give 53 characters starting "met|jag|pri|den|fri|sco|abe|l', () => {
+	// Prismatic shares "pri" with Pristine, so each takes its own run: "ist" and "ism".
+	it('Fossil default feeders give "met|jag|ist|…|fun", 69 characters', () => {
 		const r = stashRegex(side('fossil', FOSSIL_KEEPERS, false), familyNames('fossil'));
-		expect(r.text.startsWith('"met|jag|pri|den|fri|sco|abe|l')).toBe(true);
-		expect(r.length).toBe(53);
+		expect(r.text).toBe('"met|jag|ist|fri|sco|luc|bou|tan|abe|ism|opu|orr|blo|def|ser|aet|fun"');
+		expect(r.length).toBe(69);
 	});
 
 	it('Delirium keepers give "div|ski", 9 characters', () => {

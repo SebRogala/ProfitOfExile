@@ -2,13 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { loadHarvestFamilies } from './sources/harvest-fixture';
 import astrolabesCsv from './__fixtures__/harvestforge/HarvestForge_Astrolabes_20261010_134926.csv?raw';
 import catalystsCsv from './__fixtures__/harvestforge/HarvestForge_Catalysts_20261010_023020.csv?raw';
+import fossilsCsv from './__fixtures__/harvestforge/HarvestForge_Fossils_20261012_161243.csv?raw';
 import oilsCsv from './__fixtures__/harvestforge/HarvestForge_Oils_20261010_000148.csv?raw';
 
 /**
- * The served weights of Astrolabes, Catalysts and Oils must match the
+ * The served weights of Astrolabes, Catalysts, Fossils and Oils must match the
  * committed HarvestForge logs they came from. Lifeforce spent and reroll cost
  * are NOT read from the logs: HarvestForge's footer undercounts lifeforce
- * spent, so they are pinned as literals (the Operator's figures, 2026-10-10).
+ * spent on some logs, so they are pinned as literals (the Operator's figures,
+ * 2026-10-10; Fossils 2026-10-12).
  */
 
 interface HarvestForgeLog {
@@ -31,6 +33,7 @@ function parseLog(csv: string): HarvestForgeLog {
 const LOGS = [
 	['astrolabe', parseLog(astrolabesCsv)],
 	['catalyst', parseLog(catalystsCsv)],
+	['fossil', parseLog(fossilsCsv)],
 	['oil', parseLog(oilsCsv)]
 ] as const;
 
@@ -41,7 +44,7 @@ async function family(id: string) {
 	return found;
 }
 
-describe('HarvestForge logs behind Astrolabes, Catalysts and Oils', () => {
+describe('HarvestForge logs behind Astrolabes, Catalysts, Fossils and Oils', () => {
 	it.each(LOGS)('serves %s weights, sampled over the log’s total rolls', async (id, log) => {
 		expect((await family(id)).weights?.sample.rolls).toBe(log.totalRolls);
 	});
@@ -54,6 +57,7 @@ describe('HarvestForge logs behind Astrolabes, Catalysts and Oils', () => {
 	it.each([
 		['astrolabe', 'Wild', 400, 804000],
 		['catalyst', 'Vivid', 30, 75120],
+		['fossil', 'Wild', 30, 327270],
 		['oil', 'Vivid', 30, 78180]
 	] as const)(
 		'serves %s at the Operator’s figures: %s lifeforce, %i a reroll, %i spent',

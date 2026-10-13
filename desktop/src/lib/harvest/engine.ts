@@ -124,8 +124,8 @@ export const DIVINE_LINE_MIN_EV_CHAOS = 0.05;
 /**
  * Policy-improvement rounds after the value iteration. The 400 passes pick a
  * keep set; a sparse pick set (one rare keeper) can leave `R` far from its
- * fixed point at the cap (Hollow-only on Fossils: −313c after 400 passes vs
- * −3,549c exact), so the chosen policy is evaluated exactly and re-decided
+ * fixed point at the cap (Hollow-only on Fossils: −280c after 400 passes vs
+ * −1,922c exact), so the chosen policy is evaluated exactly and re-decided
  * until stable. Monotone for optimal stopping; a round per type is ample.
  */
 const POLICY_MAX_ROUNDS = 64;

@@ -38,7 +38,7 @@ const { createHarvestController, productionDependencies } = await vi.importActua
 
 import HarvestFlippingPage from './HarvestFlippingPage.svelte';
 
-const KEEPERS_REGEX = '"shu|san|gil|fac|fra|hol|gly"';
+const KEEPERS_REGEX = '"den|san|fac|hol|fra|gly|shu|gil"';
 const DENSE = 'Metadata/Items/Currency/CurrencyDelveCraftingDefences';
 const HOLLOW = 'Metadata/Items/Currency/CurrencyDelveCraftingAbyss';
 const FAMILY_LABELS = [
@@ -256,8 +256,8 @@ describe('HarvestFlippingPage populated (Fossils, reference 01)', () => {
 		expect(textOf(await renderPopulated(), 'headline')).toBe('Yes — feed the cheap tiers');
 	});
 
-	it('headline EV reads +25.7c', async () => {
-		expect(textOf(await renderPopulated(), 'ev-big')).toBe('+25.7c');
+	it('headline EV reads +23.4c', async () => {
+		expect(textOf(await renderPopulated(), 'ev-big')).toBe('+23.4c');
 	});
 
 	it('names the feeder: per Lucent Fossil', async () => {
@@ -266,7 +266,7 @@ describe('HarvestFlippingPage populated (Fossils, reference 01)', () => {
 
 	it('shows the divine-scale line', async () => {
 		expect(textOf(await renderPopulated(), 'divine-line')).toBe(
-			'1 div profit ≈ 15 feeders · ~378 rerolls · ~11,349 Wild'
+			'1 div profit ≈ 16 feeders · ~106 rerolls · ~3,186 Wild'
 		);
 	});
 
@@ -300,7 +300,7 @@ describe('HarvestFlippingPage populated (Fossils, reference 01)', () => {
 		expect(textOf(await renderPopulated(), 'league')).toBe('Allflame');
 	});
 
-	it('colours the +25.7c headline EV as a gain', async () => {
+	it('colours the +23.4c headline EV as a gain', async () => {
 		expect(tagOf(await renderPopulated(), 'ev-big')).toMatch(/class="[^"]*\bgain\b/);
 	});
 
@@ -312,9 +312,9 @@ describe('HarvestFlippingPage populated (Fossils, reference 01)', () => {
 		expect(await renderPopulated()).toMatch(/<button class="btn[^"]*"[^>]*disabled/);
 	});
 
-	it('shows the yield ~13.1 keepers', async () => {
+	it('shows the yield ~49.7 keepers', async () => {
 		const html = await renderPopulated();
-		expect(html).toMatch(/1 div of lifeforce yields<\/dt>\s*<dd class="mono[^"]*">~13\.1 keepers</);
+		expect(html).toMatch(/1 div of lifeforce yields<\/dt>\s*<dd class="mono[^"]*">~49\.7 keepers</);
 	});
 });
 
@@ -363,8 +363,8 @@ describe('HarvestFlippingPage stale (reference 08 §3)', () => {
 		expect(textOf(html, 'age')).toMatch(/^prices from /);
 	});
 
-	it('keeps every number: the headline EV still reads +25.7c', async () => {
-		expect(textOf(await renderStale(), 'ev-big')).toBe('+25.7c');
+	it('keeps every number: the headline EV still reads +23.4c', async () => {
+		expect(textOf(await renderStale(), 'ev-big')).toBe('+23.4c');
 	});
 });
 
@@ -385,7 +385,8 @@ describe('HarvestFlippingPage family without weights (reference 06, 08 §9)', ()
 });
 
 describe('HarvestFlippingPage picks (reference 05)', () => {
-	const densePicked = () => renderWithPrefs({ picks: { fossil: { [DENSE]: 'keep' } } });
+	// Dense is a default keeper on the 2026-10-12 log, so the moved pick feeds it.
+	const densePicked = () => renderWithPrefs({ picks: { fossil: { [DENSE]: 'reroll' } } });
 
 	it('reads 1 type moved by you', async () => {
 		expect(textOf(await densePicked(), 'split-label')).toBe('1 type moved by you');
@@ -437,7 +438,7 @@ describe('HarvestFlippingPage unpriced Hollow (reference 08 §5)', () => {
 
 	it('prints the floor note directly under Loop EV per feeder', async () => {
 		expect(await unpriced()).toMatch(
-			/Loop EV per feeder<\/dt>\s*<dd class="mono[^"]*">\+23\.7c<\/dd>\s*(?:<!--[^>]*-->\s*)*<dd class="small warn note[^"]*">1 unpriced type counted as 0c, so this EV is a floor\. At its last seen 402c it would read \+25\.7c\.</
+			/Loop EV per feeder<\/dt>\s*<dd class="mono[^"]*">\+22\.3c<\/dd>\s*(?:<!--[^>]*-->\s*)*<dd class="small warn note[^"]*">1 unpriced type counted as 0c, so this EV is a floor\. At its last seen 402c it would read \+23\.4c\.</
 		);
 	});
 

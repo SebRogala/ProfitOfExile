@@ -30,7 +30,7 @@ export interface StashRegex {
  * is contained in another name) falls back to its whole lowercase name, as the
  * prototype's `frag` (inside its `regex`) does: the regex is built inside the page's
  * render, so a throw would blank the page over live data. No current fixture
- * family reaches this: all 56 weighted types have a unique run.
+ * family reaches this: all 93 weighted types have a unique run.
  */
 function fragment(name: string, others: string[]): string {
 	const lower = name.toLowerCase();

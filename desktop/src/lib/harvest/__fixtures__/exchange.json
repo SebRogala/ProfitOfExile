@@ -250,6 +250,26 @@
       "chaos": 60.51,
       "divine": 0.25556
     },
+    "Metadata/Items/Currency/CurrencyDelveCraftingRandom": {
+      "chaos": 9.59,
+      "divine": 0.1
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingElemental": {
+      "chaos": 11.42,
+      "divine": 0.05
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingQuality": {
+      "chaos": 9.46,
+      "divine": null
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingAttackMods": {
+      "chaos": 10.45,
+      "divine": 0.24359
+    },
+    "Metadata/Items/Currency/CurrencyDelveCraftingCasterMods": {
+      "chaos": 14.15,
+      "divine": 0.09713
+    },
     "Metadata/Items/Currency/AstrolabeUltimatum": {
       "chaos": 133.2,
       "divine": 0.425

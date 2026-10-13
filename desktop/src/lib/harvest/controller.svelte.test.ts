@@ -28,7 +28,7 @@ const DENSE = 'Metadata/Items/Currency/CurrencyDelveCraftingDefences';
 const LUCENT = 'Metadata/Items/Currency/CurrencyDelveCraftingMana';
 const SANCTIFIED = 'Metadata/Items/Currency/CurrencyDelveCraftingLuckyModRolls';
 const DELIRIUM_WEAPONS = 'Metadata/Items/Currency/CurrencyAfflictionOrbWeapons';
-const KEEPERS_REGEX = '"shu|san|gil|fac|fra|hol|gly"';
+const KEEPERS_REGEX = '"den|san|fac|hol|fra|gly|shu|gil"';
 
 interface Deferred<T> {
 	promise: Promise<T>;
@@ -178,7 +178,7 @@ async function loaded(prefs?: Parameters<typeof harness>[0]) {
 	return s;
 }
 
-/** Loaded, Dense picked, then a refresh that the server rejects. */
+/** Loaded, Dense picked reroll (a default keeper), then a refresh that the server rejects. */
 async function failedRefresh() {
 	const s = await loaded();
 	s.controller.togglePick(DENSE);
@@ -188,7 +188,7 @@ async function failedRefresh() {
 	return s;
 }
 
-/** Loaded, Dense picked, a Mercure publish, then the refetch answered with Lucent at 8c. */
+/** Loaded, Dense picked reroll, a Mercure publish, then the refetch answered with Lucent at 8c. */
 async function refetched() {
 	const s = await loaded();
 	s.controller.togglePick(DENSE);
@@ -199,7 +199,7 @@ async function refetched() {
 }
 
 const RESTORED = {
-	picks: JSON.stringify({ fossil: { [DENSE]: 'keep' } }),
+	picks: JSON.stringify({ fossil: { [DENSE]: 'reroll' } }),
 	horizon: 'recent',
 	family: 'delirium'
 };
@@ -225,9 +225,9 @@ describe('createHarvestController — populated', () => {
 		expect(body(controller).verdict.headline).toBe('Yes — feed the cheap tiers');
 	});
 
-	it('opens Fossils with the headline +25.7c', async () => {
+	it('opens Fossils with the headline +23.4c', async () => {
 		const { controller } = await loaded();
-		expect(body(controller).verdict.evText).toBe('+25.7c');
+		expect(body(controller).verdict.evText).toBe('+23.4c');
 	});
 
 	it('opens Fossils with the keepers regex of the fixture', async () => {
@@ -242,14 +242,14 @@ describe('createHarvestController — failed refresh', () => {
 		expect(controller.view.state).toBe('stale');
 	});
 
-	it('keeps the picked headline +24.3c through the rejected refresh', async () => {
+	it('keeps the picked headline +21.4c through the rejected refresh', async () => {
 		const { controller } = await failedRefresh();
-		expect(body(controller).verdict.evText).toBe('+24.3c');
+		expect(body(controller).verdict.evText).toBe('+21.4c');
 	});
 
 	it('keeps the Dense pick through the rejected refresh', async () => {
 		const { h } = await failedRefresh();
-		expect(storedPicks(h)).toEqual({ fossil: { [DENSE]: 'keep' } });
+		expect(storedPicks(h)).toEqual({ fossil: { [DENSE]: 'reroll' } });
 	});
 
 	it('the next Mercure update clears the stale line (reference 08 §3)', async () => {
@@ -412,7 +412,7 @@ describe('createHarvestController — restored family id no family carries (C16)
 	it('writes a chip click under the shown Fossils family', async () => {
 		const { h, controller } = await loaded({ family: 'removed-family' });
 		controller.togglePick(DENSE);
-		expect(storedPicks(h)).toEqual({ fossil: { [DENSE]: 'keep' } });
+		expect(storedPicks(h)).toEqual({ fossil: { [DENSE]: 'reroll' } });
 	});
 });
 
@@ -424,17 +424,17 @@ describe('createHarvestController — actions', () => {
 
 		expect(storedPicks(h)).toEqual({
 			delirium: { [DELIRIUM_WEAPONS]: 'keep' },
-			fossil: { [DENSE]: 'keep' }
+			fossil: { [DENSE]: 'reroll' }
 		});
 	});
 
-	it('togglePick on a picked chip moves it back to the feeders (prototype line 417)', async () => {
+	it('togglePick on a picked chip moves it back to the keepers (prototype line 417)', async () => {
 		const { controller } = await loaded();
 		controller.togglePick(DENSE);
 
 		controller.togglePick(DENSE);
 
-		expect(card(body(controller), 'feeders', 'MID').chips.map((c) => c.itemId)).toContain(DENSE);
+		expect(card(body(controller), 'keepers', 'MID').chips.map((c) => c.itemId)).toContain(DENSE);
 	});
 
 	it('togglePick back to the engine side reads computed from prices', async () => {
@@ -461,10 +461,10 @@ describe('createHarvestController — actions', () => {
 		expect(body(controller).feeders.cards.map((c) => c.tier)).not.toContain('LOW');
 	});
 
-	it('moveTier(LOW) on Fossils puts all eleven LOW types among the keepers', async () => {
+	it('moveTier(LOW) on Fossils puts all sixteen LOW types among the keepers', async () => {
 		const { controller } = await loaded();
 		controller.moveTier('LOW');
-		expect(body(controller).keepers.cards.find((c) => c.tier === 'LOW')?.chips).toHaveLength(11);
+		expect(body(controller).keepers.cards.find((c) => c.tier === 'LOW')?.chips).toHaveLength(16);
 	});
 
 	it('resetFamily clears the fossil entry only and the delirium entry survives', async () => {
@@ -530,9 +530,9 @@ describe('createHarvestController — one divine rate', () => {
 		expect(controller.view.status?.text).toContain('1 div = 360c');
 	});
 
-	it('with divineRate null the fossil divine line reads 15 feeders', async () => {
+	it('with divineRate null the fossil divine line reads 16 feeders', async () => {
 		const { controller } = await loaded();
-		expect(body(controller).verdict.divineLine).toContain('15 feeders');
+		expect(body(controller).verdict.divineLine).toContain('16 feeders');
 	});
 
 	it('a shared divineRate answer sets the status line rate', async () => {
@@ -554,7 +554,7 @@ describe('createHarvestController — one divine rate', () => {
 		horizonEffect(controller);
 		await answer(h, 0);
 
-		expect(body(controller).verdict.divineLine).toContain('29 feeders');
+		expect(body(controller).verdict.divineLine).toContain('31 feeders');
 	});
 });
 
@@ -586,9 +586,9 @@ describe('createHarvestController — the shared divine rate (POE-284 store)', (
 		expect(controller.view.status?.text).toContain('1 div = 400c');
 	});
 
-	it('a shared rate of 400 gives the fossil divine line 16 feeders', async () => {
+	it('a shared rate of 400 gives the fossil divine line 18 feeders', async () => {
 		const { controller } = await withSharedRate(400);
-		expect(body(controller).verdict.divineLine).toContain('≈ 16 feeders');
+		expect(body(controller).verdict.divineLine).toContain('≈ 18 feeders');
 	});
 
 	it('the shared rate moving to 300 reads 1 div = 300c', async () => {
@@ -631,12 +631,12 @@ describe('createHarvestController — the shared divine rate (POE-284 store)', (
 		}
 	});
 
-	it('the shared rate moving to 300 gives the fossil divine line 12 feeders', async () => {
+	it('the shared rate moving to 300 gives the fossil divine line 13 feeders', async () => {
 		const { controller, shared } = await withSharedRate(400);
 
 		shared.set(300);
 
-		expect(body(controller).verdict.divineLine).toContain('≈ 12 feeders');
+		expect(body(controller).verdict.divineLine).toContain('≈ 13 feeders');
 	});
 });
 
