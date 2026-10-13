@@ -101,29 +101,40 @@ no screenshot. Instead, the chip markup + CSS and the `divineRateView` test stri
 `fixtures.json`. Ref colours were sampled from the PNGs' pixels (chip row, y 8–28).
 
 - **Ref 01 (ready).**
-  - Element order divine icon, "1", "=", "360", chaos icon: `desktop/src/lib/components/TopBar.svelte:99-103`.
+  - Element order divine icon, "1", "=", "360", chaos icon: `desktop/src/lib/components/TopBar.svelte:99-105`.
   - Number tokens: "1" and "360" sampled `#dedede`–`#dfdfdf` ≈ `--text #e0e0e0`; `.rate-chip` `color: var(--text)`
-    (`TopBar.svelte:242-253`); numbers in `'Consolas', 'Monaco', monospace` 600 (`.rate-n`, `TopBar.svelte:264`).
-  - 12px gap to the window controls: `.right` `gap: 12px` (`TopBar.svelte:236-240`); `.window-controls` is the second
-    child of `.right` (`TopBar.svelte:109`); in the ref the chip ends ≈ x 866–870 and the controls start at x 886.
+    (`TopBar.svelte:252-263`); numbers in `'Consolas', 'Monaco', monospace` 600 (`.rate-n`, `TopBar.svelte:281`).
+  - 12px gap to the window controls: `.right` `gap: 12px` (`TopBar.svelte:238-242`); `.window-controls` is the second
+    child of `.right` (`TopBar.svelte:111`); in the ref the chip ends ≈ x 866–870 and the controls start at x 886.
   - Tooltip lines: `divine-rate.test.ts` "words the ready state as reference 01" asserts the three lines exactly, in UTC.
 - **Ref 02 (no rate yet).**
-  - The chip still draws icon, "1", "=", "—", icon (`TopBar.svelte:99-103`; ref 02 shows "1 = —").
+  - The chip still draws icon, "1", "=", "—", icon (`TopBar.svelte:99-105`; ref 02 shows "1 = —").
   - "1" and "—" sampled `#858585`–`#868686` ≈ `--text-muted #888`; "=" sampled `#dedede`. `.cold .rate-n` colours both
-    `.rate-n` spans (`TopBar.svelte:274`), which is what the ref shows.
+    `.rate-n` spans (`TopBar.svelte:291`), which is what the ref shows.
   - Tooltip: `divine-rate.test.ts` "words the cold state as reference 02"; "prints neither 0 nor NaN anywhere in the cold state".
 - **Ref 03 (stale).**
   - "1" and "360" sampled `#f7bc23`–`#fabe23` ≈ `--warning #fbbf24`; "=" sampled `#dedede`; `.stale .rate-n` colours
-    both `.rate-n` spans (`TopBar.svelte:269-272`), as the ref shows.
+    both `.rate-n` spans (`TopBar.svelte:286-289`), as the ref shows.
   - "STALE" after the chaos icon: `<span class="rate-tag">stale</span>` rendered uppercase by `.rate-tag`
-    `text-transform: uppercase` 0.625rem, `--warning` (`TopBar.svelte:104-106`, `:269-282`).
+    `text-transform: uppercase` 0.625rem, `--warning` (`TopBar.svelte:106-108`, `:286-299`).
   - Tooltip: `divine-rate.test.ts` "words the stale state as reference 03".
 - **Observed differences, not built:**
   - **Tooltip horizontal anchor.** In all three refs the popup's right edge sits near the chip's right edge (ref 01
     popup x ≈ 514–875). The shared `Tooltip.svelte` anchors the popup's LEFT edge to the wrapper and clamps it to the
     window, so at 1024px wide it lands ≈ x 656–1016. Changing the shared component's placement was not in scope (D10).
+    Closed by the Operator (DIVINE-CHIP lane, queued 2026-10-10): "it's correctly moved to the right side, that's how
+    i wanted it". The left-anchored, window-clamped popup is the accepted placement; no code change.
   - **Hour zone.** The refs print the fixture hour in UTC (`09 Sep 23:00`); the app prints it in the machine's local zone
     (`_formats.hour` "local"), so a CEST machine shows `10 Sep 01:00`.
+- **Chip centring (DIVINE-CHIP, 2026-10-13).** The Operator found the chip ~2–3px above the window buttons and its
+  "=" ~2px below the digits. Two causes, both inferred mechanisms with measured effects: Tooltip's unstyled wrapper span
+  held an inline line box that baseline-aligned the chip, and the Consolas digits and the UI-font "=" were centred box by
+  box, so their baselines differed. Fix: `.right :global(.tooltip-wrap)` is a centred flex container
+  (`TopBar.svelte:247-250`) and the three text spans share one baseline in `.rate-text` (`TopBar.svelte:100-104`,
+  `:275-279`); the chip grows 22 → 23px. A real render replaced the waiver for this check: headless Edge 155 on Windows
+  (Segoe UI, Consolas), 1024px, DPR 1, ink measured on a 4× capture in CSS px — chip box centre 16.0 → 17.5 (window
+  buttons 17.5); digits ink 16.12 → 18.12 (□ and × 18.12); "=" ink 1.25 → 0.25px from the digits. Cold, stale, hover,
+  focus, the tooltip (top = wrapper bottom + 4, right edge clamped at 1016) and the icon "?" fallback were checked.
 - **No unit seam (surfaced finding).** `.svelte` files have no unit harness in this repo, so the `+layout.svelte` init
   (`desktop/src/routes/(app)/+layout.svelte:616`), the `Tooltip.svelte` focus open / `role="tooltip"` / `aria-describedby`
   / live text update (`Tooltip.svelte:13-19`, `:59`, `:100-105`, `:120-121`) and the chip's drag exclusion (a `<button>`
