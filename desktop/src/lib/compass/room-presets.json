@@ -182,22 +182,22 @@
         "areaCode": "rt_branch_bottleneck_1",
         "contentLocations": {
           "generic": [
-            "E",
+            "NE",
             "SW"
           ]
         },
         "doorLocations": [
           "SE",
           "NW",
-          "NE"
+          "N"
         ],
         "minimap": {
           "rows": 9,
           "columns": 8,
           "directions": {
             "NE": [
-              1,
-              0
+              0,
+              3
             ],
             "NW": [
               4,
@@ -210,6 +210,10 @@
             "SW": [
               8,
               5
+            ],
+            "N": [
+              1,
+              0
             ]
           }
         }
@@ -311,16 +315,12 @@
         },
         "doorLocations": [
           "SE",
-          "NE"
+          "N"
         ],
         "minimap": {
           "rows": 10,
           "columns": 9,
           "directions": {
-            "NE": [
-              0,
-              0
-            ],
             "NW": [
               5,
               2
@@ -332,6 +332,10 @@
             "SW": [
               9,
               6
+            ],
+            "N": [
+              0,
+              0
             ]
           }
         }
@@ -346,7 +350,7 @@
         },
         "doorLocations": [
           "SE",
-          "NE"
+          "N"
         ],
         "minimap": {
           "rows": 8,
@@ -364,7 +368,7 @@
               4,
               8
             ],
-            "NE": [
+            "N": [
               0,
               1
             ]
@@ -522,7 +526,7 @@
         },
         "doorLocations": [
           "S",
-          "NE"
+          "N"
         ],
         "minimap": {
           "rows": 7,
@@ -540,7 +544,7 @@
               6,
               3
             ],
-            "NE": [
+            "N": [
               0,
               1
             ]
@@ -935,7 +939,7 @@
         },
         "doorLocations": [
           "S",
-          "NE"
+          "N"
         ],
         "minimap": {
           "rows": 8,
@@ -953,7 +957,7 @@
               6,
               7
             ],
-            "NE": [
+            "N": [
               0,
               2
             ]
@@ -1611,7 +1615,7 @@
         "doorLocations": [
           "SE",
           "W",
-          "NE"
+          "N"
         ],
         "minimap": {
           "rows": 8,
@@ -1633,7 +1637,7 @@
               7,
               5
             ],
-            "NE": [
+            "N": [
               1,
               0
             ]
@@ -1651,7 +1655,7 @@
         "doorLocations": [
           "S",
           "NW",
-          "NE"
+          "N"
         ],
         "minimap": {
           "rows": 7,
@@ -1659,7 +1663,7 @@
           "directions": {
             "NE": [
               0,
-              0
+              3
             ],
             "NW": [
               3,
@@ -1672,6 +1676,10 @@
             "SW": [
               6,
               5
+            ],
+            "N": [
+              0,
+              0
             ]
           }
         }
@@ -1773,7 +1781,7 @@
         },
         "doorLocations": [
           "S",
-          "NE"
+          "N"
         ],
         "minimap": {
           "rows": 9,
@@ -1791,7 +1799,7 @@
               8,
               6
             ],
-            "NE": [
+            "N": [
               1,
               0
             ]
@@ -2025,15 +2033,15 @@
         "doorLocations": [
           "S",
           "NW",
-          "NE"
+          "N"
         ],
         "minimap": {
           "rows": 10,
           "columns": 9,
           "directions": {
             "NE": [
-              0,
-              0
+              1,
+              5
             ],
             "NW": [
               4,
@@ -2046,6 +2054,10 @@
             "SW": [
               9,
               5
+            ],
+            "N": [
+              0,
+              0
             ]
           }
         }
@@ -2147,7 +2159,7 @@
         },
         "doorLocations": [
           "S",
-          "NE"
+          "N"
         ],
         "minimap": {
           "rows": 9,
@@ -2165,7 +2177,7 @@
               8,
               5
             ],
-            "NE": [
+            "N": [
               0,
               0
             ]
@@ -2182,7 +2194,7 @@
         },
         "doorLocations": [
           "SE",
-          "NE"
+          "N"
         ],
         "minimap": {
           "rows": 7,
@@ -2200,7 +2212,7 @@
               4,
               8
             ],
-            "NE": [
+            "N": [
               0,
               0
             ]
