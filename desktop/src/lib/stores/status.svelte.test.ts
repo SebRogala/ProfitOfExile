@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 	loadEntitlements: vi.fn(),
 	refreshEntitlements: vi.fn(),
 	resetEntitlements: vi.fn(),
+	syncDivineRateToServer: vi.fn(),
 	checkForUpdate: vi.fn(),
 	/** The `status-changed` / `logs-changed` handlers the store registered. */
 	handlers: {} as Record<string, (event: { payload: unknown }) => void>
@@ -32,6 +33,7 @@ vi.mock('$lib/stores/entitlements.svelte', () => ({
 	refreshEntitlements: mocks.refreshEntitlements,
 	resetEntitlements: mocks.resetEntitlements
 }));
+vi.mock('$lib/stores/divine-rate.svelte', () => ({ syncDivineRateToServer: mocks.syncDivineRateToServer }));
 vi.mock('$lib/updater/check', () => ({ checkForUpdate: mocks.checkForUpdate }));
 
 /** The bound `status.svelte.ts` gives entitlements before it checks anyway. */
@@ -53,6 +55,8 @@ beforeEach(() => {
 	mocks.refreshEntitlements.mockReset();
 	mocks.refreshEntitlements.mockResolvedValue(undefined);
 	mocks.resetEntitlements.mockReset();
+	mocks.syncDivineRateToServer.mockReset();
+	mocks.syncDivineRateToServer.mockResolvedValue(undefined);
 	mocks.handlers = {};
 	mocks.checkForUpdate.mockReset();
 	mocks.checkForUpdate.mockResolvedValue(null);
@@ -222,5 +226,50 @@ describe('a server_url change', () => {
 		mocks.handlers['status-changed'](status('https://profitofexile.localhost'));
 
 		expect(order).toEqual(['reset', 'refresh']);
+	});
+});
+
+/**
+ * The divine rate follows the saved server (POE-286). The store decides whether
+ * a rate must be withdrawn; this module only asks it to sync on the first url
+ * and on every change.
+ */
+describe('the divine rate across server_url', () => {
+	/** A status carrying just what the rate reads. */
+	function status(serverUrl: string) {
+		return { payload: { server_url: serverUrl } };
+	}
+
+	it('syncs the divine rate once the first status lands', async () => {
+		mocks.loadEntitlements.mockResolvedValue(undefined);
+		const { initStatusStore } = await import('./status.svelte');
+		await initStatusStore();
+
+		mocks.handlers['status-changed'](status('https://prod.example'));
+
+		expect(mocks.syncDivineRateToServer).toHaveBeenCalledTimes(1);
+	});
+
+	it('syncs the divine rate again on a server change', async () => {
+		mocks.loadEntitlements.mockResolvedValue(undefined);
+		const { initStatusStore } = await import('./status.svelte');
+		await initStatusStore();
+		mocks.handlers['status-changed'](status('https://prod.example'));
+
+		mocks.handlers['status-changed'](status('https://profitofexile.localhost'));
+
+		expect(mocks.syncDivineRateToServer).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not sync the divine rate for a repeated url', async () => {
+		mocks.loadEntitlements.mockResolvedValue(undefined);
+		const { initStatusStore } = await import('./status.svelte');
+		await initStatusStore();
+		mocks.handlers['status-changed'](status('https://prod.example'));
+
+		mocks.handlers['status-changed'](status('https://prod.example'));
+		mocks.handlers['status-changed'](status('https://prod.example'));
+
+		expect(mocks.syncDivineRateToServer).toHaveBeenCalledTimes(1);
 	});
 });

@@ -18,11 +18,11 @@ The backend task must honour this shape. Going live means swapping the data sour
 | `league` | `string` | League name. |
 | `horizon` | `CurrencyExchangeHorizon` (`'recent' \| 'day'`, re-exported by `exchange/view.ts`) | The price window the read answers. |
 | `lastUpdated` | `string \| null` | ISO time of the newest price; `null` before the first exchange hour. |
-| `priceHour` | `string` | ISO hour the prices were read from. The tiers built on them carry the same hour. |
+| `priceHour` | `string \| null` | ISO hour the prices were read from; `null` while cold (POE-286). The tiers built on them carry the same hour. |
 | `warm` | `boolean` | `false` while the server has not read an exchange hour (the cold state, ref 08 §2). |
 | `divineChaosRate` | `number` | Divine:chaos rate. |
 | `prices` | `Record<itemId, ExchangeItemPrice>` | Every item of every family, keyed by itemId and read with `Object.hasOwn`. Not derived from CX plays, which are a filtered set (audit Medium 5). |
-| `lifeforce` | `Record<'Primal' \| 'Vivid' \| 'Wild', LifeforcePrice>` | Every lifeforce colour. |
+| `lifeforce` | `Partial<Record<'Primal' \| 'Vivid' \| 'Wild', LifeforcePrice>>` | Each priced lifeforce colour; a colour without both a chaos price and a per-divine quote is omitted (POE-286 D6), and the family then shows its no-data body. |
 
 `ExchangeItemPrice` = `{ chaos: number | null; divine: number | null; lastSeenChaos: number | null }`. `chaos: null` marks an unpriced type. `lastSeenChaos` is the latest earlier chaos price, read only for an unpriced type (C1).
 

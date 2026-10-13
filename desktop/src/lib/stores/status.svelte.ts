@@ -12,6 +12,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { loadEntitlements, refreshEntitlements, resetEntitlements } from '$lib/stores/entitlements.svelte';
+import { syncDivineRateToServer } from '$lib/stores/divine-rate.svelte';
 import { checkForUpdate } from '$lib/updater/check';
 
 /** Shape of the Rust AppStatus struct emitted via "status-changed" events. */
@@ -108,21 +109,27 @@ export async function initStatusStore(): Promise<() => void> {
 /**
  * The `server_url` the last status carried, or null before the first one.
  *
- * A CHANGE means the grant on screen — hidden modules, update channel — came
+ * A CHANGE means the grant on screen — hidden modules and update channel — came
  * from a server the app is no longer talking to: the local server and
  * production hold different roles for the same device. So a change withdraws
  * the grant and asks the new server at once, instead of drawing the previous
- * server's modules until the 30-minute tick or a restart. The first status is
- * not a change (startup asks on its own), and a status that repeats the url
- * is ignored, because `status-changed` fires on every state mutation.
+ * server's answers until the 30-minute tick, a restart, or an exchange update.
+ * The divine rate is synced on the first status and on a change; its store
+ * withdraws a rate another server answered before it asks. The first status
+ * is the saved server becoming known. Startup asks for the grant on its own.
+ * A status that repeats the url is ignored, because `status-changed` fires on
+ * every state mutation.
  */
 let knownServerUrl: string | null = null;
 
 function noteServerUrl(url: string | undefined): void {
 	if (url === undefined) return;
-	if (knownServerUrl !== null && url !== knownServerUrl) {
+	if (knownServerUrl === null) {
+		void syncDivineRateToServer();
+	} else if (url !== knownServerUrl) {
 		resetEntitlements();
 		void refreshEntitlements();
+		void syncDivineRateToServer();
 	}
 	knownServerUrl = url;
 }

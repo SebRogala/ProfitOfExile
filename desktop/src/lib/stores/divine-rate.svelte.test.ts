@@ -10,6 +10,7 @@ import type { DivineRate } from '$lib/api';
 
 const mocks = vi.hoisted(() => ({
 	fetchDivineRate: vi.fn(),
+	getApiBase: vi.fn(),
 	unlisten: vi.fn(),
 	/** The handlers the store registered, by Tauri event name. */
 	handlers: {} as Record<string, (event: { payload: unknown }) => void>
@@ -21,7 +22,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 		return mocks.unlisten;
 	})
 }));
-vi.mock('$lib/api', () => ({ fetchDivineRate: mocks.fetchDivineRate }));
+vi.mock('$lib/api', () => ({ fetchDivineRate: mocks.fetchDivineRate, getApiBase: mocks.getApiBase }));
 
 const T0 = Date.parse('2026-09-10T00:00:00Z');
 const DELAY_MS = 4000;
@@ -58,6 +59,8 @@ beforeEach(() => {
 	vi.setSystemTime(T0);
 	vi.spyOn(Math, 'random').mockReturnValue(0.5);
 	mocks.fetchDivineRate.mockReset();
+	mocks.getApiBase.mockReset();
+	mocks.getApiBase.mockReturnValue('https://prod.example/api');
 	mocks.unlisten.mockReset();
 	mocks.handlers = {};
 });
@@ -161,6 +164,22 @@ describe('initDivineRateStore', () => {
 		expect({ ...s.divineRate, now: 0 }).toEqual({ ...port(), now: 0 });
 	});
 
+	it('resetDivineRate returns the snapshot to cold', async () => {
+		mocks.fetchDivineRate.mockResolvedValue(port());
+		const s = await load();
+		cleanup = s.initDivineRateStore();
+		await settle();
+		s.resetDivineRate();
+		expect({ ...s.divineRate, now: 0 }).toEqual({
+			divineChaosRate: null,
+			priceHour: null,
+			updatedAt: null,
+			state: 'cold',
+			unreachableSince: null,
+			now: 0
+		});
+	});
+
 	it('moves the age from 6 to 7 minutes after 60 seconds', async () => {
 		mocks.fetchDivineRate.mockResolvedValue(port());
 		const s = await load();
@@ -201,5 +220,90 @@ describe('initDivineRateStore', () => {
 		stop();
 		await settle();
 		expect(mocks.unlisten).toHaveBeenCalledTimes(1);
+	});
+});
+
+/** A promise the test settles by hand, so the order answers arrive in is the test's. */
+function deferred(): { promise: Promise<DivineRate>; resolve: (rate: DivineRate) => void } {
+	let resolve!: (rate: DivineRate) => void;
+	const promise = new Promise<DivineRate>((r) => {
+		resolve = r;
+	});
+	return { promise, resolve };
+}
+
+describe('refreshDivineRate and syncDivineRateToServer', () => {
+	it('keeps the newest answer when an older read settles last', async () => {
+		const older = deferred();
+		const newer = deferred();
+		mocks.fetchDivineRate.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+		const s = await load();
+		const first = s.refreshDivineRate();
+		const second = s.refreshDivineRate();
+
+		newer.resolve(port({ divineChaosRate: 351.08 }));
+		await second;
+		older.resolve(port({ divineChaosRate: 360.07 }));
+		await first;
+
+		expect(s.currentDivineRate()).toBe(351.08);
+	});
+
+	it('an older cold answer does not erase a newer rate', async () => {
+		const older = deferred();
+		const newer = deferred();
+		mocks.fetchDivineRate.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+		const s = await load();
+		const first = s.refreshDivineRate();
+		const second = s.refreshDivineRate();
+
+		newer.resolve(port({ divineChaosRate: 351.08 }));
+		await second;
+		older.resolve(port({ divineChaosRate: 0 }));
+		await first;
+
+		expect(s.currentDivineRate()).toBe(351.08);
+	});
+
+	it('reset drops a read in flight', async () => {
+		const pending = deferred();
+		mocks.fetchDivineRate.mockReturnValueOnce(pending.promise);
+		const s = await load();
+		const read = s.refreshDivineRate();
+
+		s.resetDivineRate();
+		pending.resolve(port({ divineChaosRate: 360.07 }));
+		await read;
+
+		expect(s.currentDivineRate()).toBeNull();
+	});
+
+	it('withdraws a rate answered by another server before asking the new one', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const s = await load();
+		mocks.fetchDivineRate.mockResolvedValueOnce(port());
+		await s.refreshDivineRate();
+		mocks.getApiBase.mockReturnValue('https://other.example/api');
+		const offline = new Error('offline');
+		mocks.fetchDivineRate.mockRejectedValueOnce(offline);
+
+		await s.syncDivineRateToServer();
+
+		expect(s.currentDivineRate()).toBeNull();
+		expect(warn).toHaveBeenCalledWith('[divine-rate] read failed, keeping the last rate:', offline);
+	});
+
+	it('keeps the rate while re-asking the same server', async () => {
+		const pending = deferred();
+		const s = await load();
+		mocks.fetchDivineRate.mockResolvedValueOnce(port());
+		await s.refreshDivineRate();
+		mocks.fetchDivineRate.mockReturnValueOnce(pending.promise);
+
+		const sync = s.syncDivineRateToServer();
+
+		expect(s.currentDivineRate()).toBe(360.07);
+		pending.resolve(port({ divineChaosRate: 361 }));
+		await sync;
 	});
 });
