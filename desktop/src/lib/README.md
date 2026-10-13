@@ -82,7 +82,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | File | Props | Description |
 |------|-------|-------------|
 | `compass/RoomMinimap.svelte` | `areaCode`, `doors`, `contents`, `targetDirection`, `roomName` | Room SVG background with positioned door/content overlays. Target exit highlighted green. |
-| `compass/DirectionCompass.svelte` | `directions`, `targetDirection`, `roomName`, `hasContent` | Compass circle with exit markers at compass angles. |
+| `compass/DirectionCompass.svelte` | `directions`, `targetDirection`, `roomName`, `contents` | Compass circle with exit markers at compass angles. |
 | `compass/MinimalBar.svelte` | `targetDirection`, `contents`, `timerText` | Compact bar with arrow, content badges, timer. |
 | `compass/LabCompassWidget.svelte` | `configMode`, `label` | Lab compass widget moved from its standalone route; preserves compass navigation, shrine warnings, settings polling and catch-up while filling its widget box. |
 | `compass/LabPathstripWidget.svelte` | `configMode`, `label` | Lab map widget moved from its standalone route; preserves graph rendering, navigation, settings polling and catch-up while filling its widget box. |

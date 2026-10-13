@@ -2,7 +2,7 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { invoke } from '@tauri-apps/api/core';
 	import CompassOverlay from '$lib/compass/CompassOverlay.svelte';
-	import { resolvePreset, getDoorExitLocations, getContentLocations, getTileRect } from '$lib/compass/room-presets';
+	import { resolvePreset, getDoorExitLocations, getVisibleContentLocations, hasSecretPassage, getTileRect } from '$lib/compass/room-presets';
 	import {
 		createNavState,
 		loadLayout,
@@ -53,10 +53,21 @@
 	// physical doors are in the room SVG). The target is the door the next
 	// room's connection was normalized onto at layout load.
 	let doors = $derived<DoorExitLocation[]>(preset ? getDoorExitLocations(preset) : []);
-	let contents = $derived<ContentLocation[]>(preset && currentRoom?.contents.length ? getContentLocations(preset) : []);
 	let navDirection = $derived(getNextDirection(navState));
 	// Route guidance needs no preset: a room without one keeps its layout direction.
 	let targetDirection = $derived(navDirection);
+	// Content positions shown only for the loot the room holds; 'C' as the way
+	// on is a secret passage, which turns non-major content into the target.
+	let contents = $derived<ContentLocation[]>(
+		preset && currentRoom
+			? getVisibleContentLocations(
+					preset,
+					currentRoom.contents,
+					hasSecretPassage(navState.exitDirections.get(currentRoom.id) ?? []),
+					navDirection === 'C',
+				)
+			: [],
+	);
 	let exitText = $derived(getNextExitText(navState));
 	let roomName = $derived(currentRoom?.name ?? '');
 	let areaCode = $derived(preset?.areaCode ?? currentRoom?.areacode ?? '');

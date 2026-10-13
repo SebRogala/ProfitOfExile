@@ -1,9 +1,11 @@
 <script lang="ts">
+	import { isDoorDirection, lootColor, type ContentLocation } from './room-presets';
+
 	let {
 		directions = [] as string[],
 		targetDirection = null as string | null,
 		roomName = '',
-		hasContent = false,
+		contents = [] as ContentLocation[],
 	} = $props();
 
 	const ANGLE_MAP: Record<string, number> = {
@@ -14,6 +16,12 @@
 		const angle = ANGLE_MAP[direction] ?? 0;
 		const rad = (angle * Math.PI) / 180;
 		const r = 42;
+		return { cx: 60 + r * Math.cos(rad), cy: 60 + r * Math.sin(rad) };
+	}
+
+	function contentPos(direction: string): { cx: number; cy: number } {
+		const rad = ((ANGLE_MAP[direction] ?? 0) * Math.PI) / 180;
+		const r = 26;
 		return { cx: 60 + r * Math.cos(rad), cy: 60 + r * Math.sin(rad) };
 	}
 
@@ -43,7 +51,8 @@
 		<circle cx="60" cy="60" r="40" fill="none" stroke="#1a1a28" stroke-width="0.5" />
 
 		<!-- Arrow to target -->
-		{#if targetDirection}
+		<!-- A secret passage ('C') is not a door: no arrow. -->
+		{#if targetDirection && isDoorDirection(targetDirection)}
 			{@const end = arrowEnd(targetDirection)}
 			<line x1="60" y1="60" x2={end.x} y2={end.y} stroke="#10b981" stroke-width="1.5" opacity="0.5" stroke-linecap="round" />
 		{/if}
@@ -62,10 +71,21 @@
 			{/if}
 		{/each}
 
-		<!-- Center content indicator -->
-		{#if hasContent}
-			<circle cx="60" cy="60" r="4" fill="#a855f7" opacity="0.8" />
-		{/if}
+		<!-- Content positions, inside the door ring (upstream DirectionDisplay.qml:31-45: radius 30 of 48) -->
+		{#each contents as content}
+			{@const pos = contentPos(content.direction)}
+			<rect
+				class="content-marker"
+				x={pos.cx - 3}
+				y={pos.cy - 3}
+				width="6"
+				height="6"
+				transform="rotate(45 {pos.cx} {pos.cy})"
+				fill={lootColor(content.target)}
+				stroke="black"
+				stroke-width="0.8"
+			/>
+		{/each}
 	</svg>
 	{#if roomName}
 		<div class="room-label">{roomName}</div>

@@ -42,6 +42,8 @@ export interface DoorExitLocation {
 export interface ContentLocation {
 	direction: string;
 	major: boolean;
+	/** Drawn as the target (upstream loot-target): non-major content when the way on is a secret passage. */
+	target: boolean;
 	tileRect: TileRect;
 }
 
@@ -83,8 +85,13 @@ export function getPresetsByName(roomName: string, goldenDoor: boolean): RoomPre
  */
 export function resolvePreset(room: { areacode: string; name: string; contents: string[] }): RoomPreset | null {
 	if (room.areacode) return getPresetByAreaCode(room.areacode);
-	const byName = getPresetsByName(room.name, room.contents.includes('golden-door'));
+	const byName = getPresetsByName(room.name, hasGoldenDoor(room.contents));
 	return byName.length === 1 ? byName[0] : null;
+}
+
+/** Whether a room's contents hold the exact 'golden-door' entry poelab writes (upstream roompresetmodel.cpp:25-26). */
+export function hasGoldenDoor(contents: string[]): boolean {
+	return contents.includes('golden-door');
 }
 
 /** Set of all valid area codes for validation. */
@@ -204,19 +211,102 @@ export function getContentLocations(preset: RoomPreset): ContentLocation[] {
 
 	if (contentLocations.generic) {
 		for (const direction of contentLocations.generic) {
-			result.push({ direction, major: false, tileRect: getTileRect(preset, direction) });
+			result.push({ direction, major: false, target: false, tileRect: getTileRect(preset, direction) });
 		}
 	}
 	if (contentLocations.major) {
 		for (const direction of contentLocations.major) {
-			result.push({ direction, major: true, tileRect: getTileRect(preset, direction) });
+			result.push({ direction, major: true, target: false, tileRect: getTileRect(preset, direction) });
 		}
 	}
 	if (contentLocations.minor) {
 		for (const direction of contentLocations.minor) {
-			result.push({ direction, major: false, tileRect: getTileRect(preset, direction) });
+			result.push({ direction, major: false, target: false, tileRect: getTileRect(preset, direction) });
 		}
 	}
 
 	return result;
+}
+
+/** Room contents upstream counts as loot (instructionmodel.cpp:6-16); poelab spells them the same. */
+export const LOOT_LIST: readonly string[] = [
+	'Switch puzzle', 'Floor puzzle', 'Escort gauntlet', 'Trap gauntlet',
+	'darkshrine', 'argus', 'golden-key', 'silver-key', 'silver-door',
+];
+
+/** Loot drawn at a preset's major positions (instructionmodel.cpp:17-21). */
+export const MAJOR_LOOT_LIST: readonly string[] = ['golden-key', 'silver-key', 'silver-door'];
+
+/** A compass direction a door can sit at; 'C' (secret passage) and '' (unknown) are not. */
+export function isDoorDirection(direction: string): boolean {
+	return REGULAR_DIRECTIONS.includes(direction);
+}
+
+/** Whether a room's own connections include a secret passage (upstream roomHasSecretPassage). */
+export function hasSecretPassage(connections: RoomConnection[]): boolean {
+	return connections.some((c) => c.direction === 'C');
+}
+
+/**
+ * The content positions to draw for a room, per upstream
+ * updateContentsAndLocations (instructionmodel.cpp:114-145) and
+ * MinimapDisplay.qml:36-41. With no loot nothing is drawn; otherwise generic
+ * positions always, major positions only with major loot, minor positions only
+ * with minor loot, a secret passage counting as minor loot. Non-major content
+ * is the target when the way on is a secret passage (`nextIsSecret`).
+ */
+export function getVisibleContentLocations(
+	preset: RoomPreset,
+	contents: string[],
+	secretPassage: boolean,
+	nextIsSecret: boolean,
+): ContentLocation[] {
+	const loot = contents.filter((c) => LOOT_LIST.includes(c));
+	const hasMajor = loot.some((c) => MAJOR_LOOT_LIST.includes(c));
+	const hasMinor = secretPassage || loot.some((c) => !MAJOR_LOOT_LIST.includes(c));
+	if (!hasMajor && !hasMinor) return [];
+
+	const { generic = [], major = [], minor = [] } = preset.contentLocations;
+	const positions = [
+		...generic.map((direction) => ({ direction, major: false })),
+		...(hasMajor ? major.map((direction) => ({ direction, major: true })) : []),
+		...(hasMinor ? minor.map((direction) => ({ direction, major: false })) : []),
+	];
+	return positions.map(({ direction, major }) => ({
+		direction,
+		major,
+		target: nextIsSecret && !major,
+		tileRect: getTileRect(preset, direction),
+	}));
+}
+
+/**
+ * The variant the room editor starts on: the preset `resolvePreset` gives, else
+ * none (''). An area code that matches no preset selects nothing, as upstream
+ * (roompresetmodel.cpp:31-49).
+ */
+export function defaultEditorAreaCode(room: { areacode: string; name: string; contents: string[] }): string {
+	return resolvePreset(room)?.areaCode ?? '';
+}
+
+/** Upstream loot-normal fill (DirectionDisplay.qml, MinimapDisplay.qml). */
+export const LOOT_NORMAL_COLOR = '#FFA726';
+/** Direction view target fill: upstream Global.activePathColor (Global.qml:26). */
+export const LOOT_TARGET_COLOR = '#8BC34A';
+/** Minimap target fill: upstream loot-target.svg (MinimapDisplay.qml:38-39), a different green. */
+export const MINIMAP_LOOT_TARGET_COLOR = '#4caf50';
+
+/** Fill of a direction-view content marker: green as the target, else orange. */
+export function lootColor(target: boolean): string {
+	return target ? LOOT_TARGET_COLOR : LOOT_NORMAL_COLOR;
+}
+
+/** Fill of a minimap content marker: green as the target, else orange. */
+export function minimapLootColor(target: boolean): string {
+	return target ? MINIMAP_LOOT_TARGET_COLOR : LOOT_NORMAL_COLOR;
+}
+
+/** How a next direction is shown: 'C' is named, never drawn as a direction. */
+export function directionLabel(direction: string): string {
+	return direction === 'C' ? 'Secret Passage' : direction;
 }

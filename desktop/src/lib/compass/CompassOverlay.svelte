@@ -16,13 +16,12 @@
 	} = $props();
 
 	const directions = $derived(doors.map(d => d.direction));
-	const hasContent = $derived(contents.length > 0);
 </script>
 
 {#if mode === 'minimap'}
 	<RoomMinimap {areaCode} {doors} {contents} {targetDirection} {roomName} />
 {:else if mode === 'direction'}
-	<DirectionCompass {directions} {targetDirection} {roomName} {hasContent} />
+	<DirectionCompass {directions} {targetDirection} {roomName} {contents} />
 {:else if mode === 'minimal'}
 	<MinimalBar {targetDirection} contents={contentNames} {timerText} />
 {/if}

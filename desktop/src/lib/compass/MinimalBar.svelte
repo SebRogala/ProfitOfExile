@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { directionLabel, isDoorDirection } from './room-presets';
+
 	let {
 		targetDirection = null as string | null,
 		contents = [] as string[],
@@ -14,10 +16,12 @@
 
 <div class="bar">
 	{#if targetDirection}
-		<svg viewBox="0 0 24 24" width="20" height="20" class="arrow" style="transform: rotate({arrowRotation}deg);">
-			<polygon points="12,2 20,18 12,14 4,18" fill="#10b981" opacity="0.9" />
-		</svg>
-		<span class="direction">{targetDirection}</span>
+		{#if isDoorDirection(targetDirection)}
+			<svg viewBox="0 0 24 24" width="20" height="20" class="arrow" style="transform: rotate({arrowRotation}deg);">
+				<polygon points="12,2 20,18 12,14 4,18" fill="#10b981" opacity="0.9" />
+			</svg>
+		{/if}
+		<span class="direction">{directionLabel(targetDirection)}</span>
 	{:else}
 		<span class="no-target">---</span>
 	{/if}

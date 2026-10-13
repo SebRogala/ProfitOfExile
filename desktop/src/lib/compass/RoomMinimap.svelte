@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { DoorExitLocation, ContentLocation } from './room-presets';
+	import { minimapLootColor, directionLabel, type DoorExitLocation, type ContentLocation } from './room-presets';
 	import { getRoomSvgUrl, getDisabledSvgUrl } from './svg-loader';
 
 	let {
@@ -13,10 +13,6 @@
 	const svgUrl = $derived(getRoomSvgUrl(areaCode) ?? getDisabledSvgUrl());
 	const hasFallback = $derived(!areaCode || doors.length === 0);
 
-	function contentColor(direction: string, major: boolean): string {
-		if (major) return '#ef4444'; // darkshrine/major = red (poelab style)
-		return '#fbbf24'; // generic content = gold
-	}
 </script>
 
 <div class="minimap">
@@ -26,7 +22,7 @@
 		<div class="fallback-box">
 			<div class="fallback-name">{roomName || 'Unknown Room'}</div>
 			{#if targetDirection}
-				<div class="fallback-dir">{targetDirection}</div>
+				<div class="fallback-dir">{directionLabel(targetDirection)}</div>
 			{/if}
 		</div>
 	{:else}
@@ -45,7 +41,7 @@
 		{#each contents as content}
 			<div
 				class="content-marker"
-				style="left: {content.tileRect.x * 100}%; top: {content.tileRect.y * 100}%; width: {content.tileRect.width * 100}%; height: {content.tileRect.height * 100}%; --content-color: {contentColor(content.direction, content.major)};"
+				style="left: {content.tileRect.x * 100}%; top: {content.tileRect.y * 100}%; width: {content.tileRect.width * 100}%; height: {content.tileRect.height * 100}%; --content-color: {minimapLootColor(content.target)};"
 			>
 				<span class="content-dot"></span>
 			</div>

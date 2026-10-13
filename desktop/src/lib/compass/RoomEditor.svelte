@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getPresetsByName, getDoorExitLocations, getContentLocations, type RoomPreset } from './room-presets';
+	import { getPresetsByName, getDoorExitLocations, getContentLocations, defaultEditorAreaCode, hasGoldenDoor as roomHasGoldenDoor, type RoomPreset } from './room-presets';
 	import Select from '$lib/components/Select.svelte';
 	import { getRoomSvgUrl, getDisabledSvgUrl } from './svg-loader';
 	import type { LabLayoutRoom } from './navigation';
@@ -19,14 +19,14 @@
 	} = $props();
 
 	// Available variants for this room
-	let hasGoldenDoor = $derived(room.contents.some(c => c.toLowerCase().includes('golden-door')));
+	let hasGoldenDoor = $derived(roomHasGoldenDoor(room.contents));
 	let variants = $derived(getPresetsByName(room.name, hasGoldenDoor));
 	let variantsNoDoor = $derived(hasGoldenDoor ? [] : getPresetsByName(room.name, true));
 	let allVariants = $derived([...variants, ...variantsNoDoor]);
 
 	let selectedAreaCode = $state('');
 	$effect(() => {
-		selectedAreaCode = room.areacode || (allVariants[0]?.areaCode ?? '');
+		selectedAreaCode = defaultEditorAreaCode(room);
 	});
 
 	// Content toggles
