@@ -65,7 +65,7 @@ The page reads `GET /api/harvest?horizon=` (both ports share one request per hor
 - **Tiers:** per horizon in the same snapshot as the prices; tier input is the window chaos price, else `lastSeenChaos` (keeps an unpriced type's slot, C1). Residual: a type with no trade in 72 hours is untiered.
 - **Lifeforce:** chaos (window, else last seen) and `perDivine = round(lifeforce volume / divine volume)`; a colour missing either is omitted (the seam's `lifeforce` is `Partial`), never served as zero; the family then shows its no-data body.
 - **Cold:** the server stays cold until a recompute found a stored hour; cold answers list the families with `tiers: null`.
-- **Divine rate:** `fetchDivineRate()` reads `GET /api/currency-exchange/divine-rate` (the exchange's recent-horizon rate). Stale/unreachable detection is still the store's F1 gap.
+- **Divine rate:** `fetchDivineRate()` reads `GET /api/currency-exchange/divine-rate` (the exchange's recent-horizon rate). The status store calls `syncDivineRateToServer()` on the first `server_url` and on every change (the entitlements pattern), so the rate always comes from the saved server; only the newest read may write. Stale/unreachable detection is still the store's F1 gap.
 - **Residuals:** a load that overlaps a still-pending read of the same horizon shares it and can show the earlier snapshot until the next update; the desktop refetches on `currency-exchange-updated`, which in theory can land before the Harvest recompute finished (the exchange publish is debounced 2 s and clients wait 2–6 s more).
 
 ## HarvestForge logs for Astrolabes, Oils and Catalysts (2026-10-10)
