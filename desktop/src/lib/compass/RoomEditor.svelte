@@ -120,13 +120,13 @@
 				>
 					<div class="variant-preview" style="background-image: url({getRoomSvgUrl(variant.areaCode) ?? getDisabledSvgUrl()});">
 						{#each doors as door}
-							<div class="variant-dot" style="left: {door.tileRect.x * 100 + 5}%; top: {door.tileRect.y * 100 + 5}%;">
+							<div class="variant-dot" style="left: {(door.tileRect.x + door.tileRect.width / 2) * 100}%; top: {(door.tileRect.y + door.tileRect.height / 2) * 100}%;">
 								<span class="variant-exit-label">{door.direction}</span>
 							</div>
 						{/each}
 						{#each contents as content}
-							<div class="variant-dot variant-content-dot" class:major={content.major}
-								style="left: {content.tileRect.x * 100 + 5}%; top: {content.tileRect.y * 100 + 5}%;"></div>
+							<div class="variant-dot variant-content-dot"
+								style="left: {(content.tileRect.x + content.tileRect.width / 2) * 100}%; top: {(content.tileRect.y + content.tileRect.height / 2) * 100}%;"></div>
 						{/each}
 					</div>
 					<span class="variant-code">{variant.areaCode.replace(/^[a-z]+_/, '')}</span>
@@ -276,12 +276,8 @@
 		width: 8px;
 		height: 8px;
 		border-radius: 50%;
-		background: #fbbf24;
+		background: #ffa726;
 		opacity: 0.8;
-	}
-
-	.variant-content-dot.major {
-		background: #a855f7;
 	}
 
 	.variant-code {
