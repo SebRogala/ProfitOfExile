@@ -8,6 +8,8 @@
  * page calls these and stores the result in $state.
  */
 
+import { normalizeDirections, resolvePreset, type RoomConnection } from './room-presets';
+
 // --- Types ---
 
 export interface LabLayoutRoom {
@@ -76,6 +78,8 @@ export interface NavState {
 	sections: LabSection[];
 	adjacency: Map<string, string[]>;
 	roomById: Map<string, LabLayoutRoom>;
+	/** Each room's connections with directions normalized onto its preset's doors. */
+	exitDirections: Map<string, RoomConnection[]>;
 }
 
 export type NavEvent =
@@ -107,6 +111,7 @@ export function createNavState(): NavState {
 		sections: [],
 		adjacency: new Map(),
 		roomById: new Map(),
+		exitDirections: new Map(),
 	};
 }
 
@@ -205,6 +210,7 @@ export function loadLayout(state: NavState, layout: LabLayout): NavState {
 		lockedDoors,
 		goldenKeys: 0,
 		portalRooms: new Set(),
+		exitDirections: deriveExitDirections(layout.rooms, sectionFirstRooms),
 	};
 
 	// Targets FIRST: computeRoute reads newState.targetRooms, so computing the
@@ -266,6 +272,55 @@ function deriveLockedDoors(
 		}
 	}
 	return lockedDoors;
+}
+
+/**
+ * Every room's connections, directions normalized onto its preset's doors.
+ * Port of upstream loadConnectionMatrix (labyrinthdata.cpp:228-290) followed by
+ * normalizeDoorDirections (:88-109).
+ *
+ * Connections: the room's own non-'C' exits; a '' (unknown) reverse for each
+ * neighbour that exits into it when it has no exit of its own back, except a
+ * trial's exit into a section's first room; then its 'C' exits. A room with no
+ * preset keeps its directions as the layout gives them.
+ *
+ * Preset: `resolvePreset`.
+ */
+function deriveExitDirections(
+	rooms: LabLayoutRoom[],
+	sectionFirstRooms: Set<string>,
+): Map<string, RoomConnection[]> {
+	const connections = new Map<string, RoomConnection[]>();
+	for (const room of rooms) {
+		connections.set(
+			room.id,
+			Object.entries(room.exits)
+				.filter(([direction]) => direction !== 'C')
+				.map(([direction, roomId]) => ({ roomId, direction })),
+		);
+	}
+	for (const room of rooms) {
+		for (const [direction, targetId] of Object.entries(room.exits)) {
+			if (direction === 'C') continue;
+			if (isTrialRoom(room) && sectionFirstRooms.has(targetId)) continue;
+			const target = connections.get(targetId);
+			if (!target || target.some((c) => c.roomId === room.id)) continue;
+			target.push({ roomId: room.id, direction: '' });
+		}
+	}
+	for (const room of rooms) {
+		for (const [direction, roomId] of Object.entries(room.exits)) {
+			if (direction === 'C') connections.get(room.id)!.push({ roomId, direction });
+		}
+	}
+
+	const normalized = new Map<string, RoomConnection[]>();
+	for (const room of rooms) {
+		const preset = resolvePreset(room);
+		const own = connections.get(room.id)!;
+		normalized.set(room.id, preset ? normalizeDirections(own, preset.doorLocations) : own);
+	}
+	return normalized;
 }
 
 const isTrialRoom = (room: LabLayoutRoom) => room.name.toLowerCase() === "aspirant's trial";
@@ -1115,34 +1170,31 @@ function permutations<T>(arr: T[]): T[][] {
 // --- Query helpers ---
 
 /** Get the exit direction from currentRoom to the next room on the planned route. */
-export function getNextDirection(state: NavState): string | null {
+/**
+ * The current room's normalized connection to the next room on the planned
+ * route, or null when there is no next room. The first one listed for that
+ * room wins, as upstream's `connections.first()`.
+ */
+function nextConnection(state: NavState): RoomConnection | null {
 	if (!state.currentRoom || state.plannedRoute.length < 2) return null;
 
 	const currentIdx = state.plannedRoute.indexOf(state.currentRoom);
 	if (currentIdx < 0 || currentIdx >= state.plannedRoute.length - 1) return null;
 
 	const nextRoomId = state.plannedRoute[currentIdx + 1];
-	const currentRoom = state.roomById.get(state.currentRoom);
-	if (!currentRoom) return null;
-
-	// Check forward exits (current room exits to next room)
-	for (const [direction, targetId] of Object.entries(currentRoom.exits)) {
-		if (targetId === nextRoomId) return direction;
-	}
-
-	// Check reverse exits (next room exits to current room — backtracking)
-	// The direction to go is the opposite of the next room's exit to us.
-	const nextRoom = state.roomById.get(nextRoomId);
-	if (nextRoom) {
-		for (const [direction, targetId] of Object.entries(nextRoom.exits)) {
-			if (targetId === state.currentRoom) return OPPOSITE_DIR[direction] ?? direction;
-		}
-	}
-
-	return null;
+	return state.exitDirections.get(state.currentRoom)?.find((c) => c.roomId === nextRoomId) ?? null;
 }
 
-export const OPPOSITE_DIR: Record<string, string> = {
+/**
+ * The preset door to the next room on the planned route: normalized at layout
+ * load, so a reverse door is known only where it could be deduced. Null when
+ * unknown ('') or when there is no next room.
+ */
+export function getNextDirection(state: NavState): string | null {
+	return nextConnection(state)?.direction || null;
+}
+
+const OPPOSITE_DIR: Record<string, string> = {
 	N: 'S', S: 'N', E: 'W', W: 'E',
 	NE: 'SW', SW: 'NE', NW: 'SE', SE: 'NW',
 };
@@ -1150,6 +1202,8 @@ export const OPPOSITE_DIR: Record<string, string> = {
 /**
  * Every door of every room, keyed by room id — the drawable counterpart of the
  * adjacency built in `loadLayout`, and gated by the same two one-way rules.
+ * Directions are the normalized ones (`NavState.exitDirections`), so a door
+ * sits at the preset door it was assigned to.
  *
  * A room's OWN exits are its doors — one marker per exit it can be left by,
  * which is what the marker is read for. The reverse door is added in exactly
@@ -1162,57 +1216,83 @@ export const OPPOSITE_DIR: Record<string, string> = {
  * ends of every line, which doubled the markers and buried the one that says
  * where to go next.
  *
- * Secret passages ('C') and beaten trial gates never earn a reverse door: the
- * game opens neither from the far side, so drawing one would advertise a way
- * back that does not exist.
+ * A reverse door whose direction stays unknown ('') is drawn opposite the
+ * neighbour's exit, as before normalization: the graph needs a position, and
+ * without it every final trial and preset-less dead end had no marker. (Open
+ * owner question: upstream draws no door there.) Secret passages ('C') and beaten trial gates
+ * never earn a reverse connection in `exitDirections` at all: the game opens
+ * neither from the far side.
  */
-export function deriveRoomDoors(rooms: LabLayoutRoom[]): Map<string, [string, string][]> {
+export function deriveRoomDoors(
+	rooms: LabLayoutRoom[],
+	exitDirections: Map<string, RoomConnection[]>,
+): Map<string, [string, string][]> {
+	const normalizedTo = (roomId: string, targetId: string) =>
+		exitDirections.get(roomId)?.find((c) => c.roomId === targetId && c.direction !== 'C')?.direction;
+
 	const doors = new Map<string, [string, string][]>();
 	for (const room of rooms) {
-		doors.set(room.id, Object.entries(room.exits) as [string, string][]);
+		doors.set(
+			room.id,
+			Object.entries(room.exits).map(([direction, targetId]): [string, string] => [
+				direction === 'C' ? 'C' : (normalizedTo(room.id, targetId) ?? direction),
+				targetId,
+			]),
+		);
 	}
-
-	const sectionFirstRooms = computeSectionFirstRooms(rooms);
 
 	for (const room of rooms) {
 		for (const [direction, targetId] of Object.entries(room.exits)) {
 			if (direction === 'C') continue;
-			if (room.name.toLowerCase() === "aspirant's trial" && sectionFirstRooms.has(targetId)) {
-				continue;
-			}
-
-			const back = OPPOSITE_DIR[direction];
 			const targetDoors = doors.get(targetId);
-			if (!back || !targetDoors) continue;
 			// Only a room with nothing of its own. A room that describes even one
 			// exit already shows the marker the player needs.
-			if (targetDoors.length > 0) continue;
+			if (!targetDoors || targetDoors.length > 0) continue;
 
-			targetDoors.push([back, room.id]);
+			// Only an actual reverse connection: none exists back through a
+			// trial gate or a secret passage.
+			const reverse = normalizedTo(targetId, room.id);
+			if (reverse === undefined) continue;
+			const back = reverse || OPPOSITE_DIR[direction];
+			if (back) targetDoors.push([back, room.id]);
 		}
 	}
 
 	return doors;
 }
 
-/** Get the exit text description (e.g., "Northwest Exit To Estate Path"). */
+/**
+ * Exit text for the next room, e.g. "Northwest Exit — Estate Path". Port of
+ * upstream's cascade (DirectionInstructionItem.qml:29-33, inputs from
+ * instructionmodel.cpp:56-75): back to the previous room first, with no
+ * destination (:39); then a known direction, a secret passage, a trial's unknown
+ * door back into its own section ("Opposite Exit"), else "Unmarked Exit".
+ */
 export function getNextExitText(state: NavState): string | null {
-	const dir = getNextDirection(state);
-	if (!dir || state.plannedRoute.length < 2) return null;
-
-	const currentIdx = state.plannedRoute.indexOf(state.currentRoom!);
-	if (currentIdx < 0) return null;
-
-	const nextRoomId = state.plannedRoute[currentIdx + 1];
-	const nextRoom = state.roomById.get(nextRoomId);
+	const connection = nextConnection(state);
+	if (!connection) return null;
+	const nextRoom = state.roomById.get(connection.roomId);
 	if (!nextRoom) return null;
 
 	const dirNames: Record<string, string> = {
 		N: 'North', NE: 'Northeast', E: 'East', SE: 'Southeast',
-		S: 'South', SW: 'Southwest', W: 'West', NW: 'Northwest', C: 'Secret',
+		S: 'South', SW: 'Southwest', W: 'West', NW: 'Northwest',
 	};
+	const currentRoom = state.roomById.get(state.currentRoom!);
+	const opposite =
+		currentRoom !== undefined &&
+		isTrialRoom(currentRoom) &&
+		state.sections.some((s) => s.endRoom === currentRoom.id && s.roomIds.includes(nextRoom.id));
 
-	return `${dirNames[dir] ?? dir} Exit — ${nextRoom.name}`;
+	// Upstream shows no destination for the way back.
+	if (connection.roomId === state.previousRoom) return 'Back to Previous Room';
+
+	const label =
+		dirNames[connection.direction] ? `${dirNames[connection.direction]} Exit`
+		: connection.direction === 'C' ? 'Secret Passage'
+		: opposite ? 'Opposite Exit'
+		: 'Unmarked Exit';
+	return `${label} — ${nextRoom.name}`;
 }
 
 /** Get contents for a specific room. */

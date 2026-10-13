@@ -2,7 +2,7 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { invoke } from '@tauri-apps/api/core';
 	import CompassOverlay from '$lib/compass/CompassOverlay.svelte';
-	import { getPresetByAreaCode, getPresetsByName, getDoorExitLocations, getContentLocations, getTileRect, matchExitToPresetDoor } from '$lib/compass/room-presets';
+	import { resolvePreset, getDoorExitLocations, getContentLocations, getTileRect } from '$lib/compass/room-presets';
 	import {
 		createNavState,
 		loadLayout,
@@ -47,35 +47,16 @@
 
 	// --- Derived from navigation state ---
 	let currentRoom = $derived(navState.currentRoom ? navState.roomById.get(navState.currentRoom) : null);
-	let preset = $derived.by(() => {
-		if (!currentRoom) return null;
-		// Try area code first (exact match)
-		if (currentRoom.areacode) {
-			const p = getPresetByAreaCode(currentRoom.areacode);
-			if (p) return p;
-		}
-		// Fallback: look up by room name (handles missing area codes in Normal/Cruel labs)
-		const hasGoldenDoor = currentRoom.contents.some(c => c.toLowerCase().includes('golden-door'));
-		const byName = getPresetsByName(currentRoom.name, hasGoldenDoor);
-		if (byName.length <= 1) return byName[0] ?? null;
-		// Multiple variants: prefer non-bottleneck (simpler room shape, more common)
-		const nonBottleneck = byName.find(p => !p.areaCode.includes('bottleneck'));
-		return nonBottleneck ?? byName[0];
-	});
+	// The same preset the room's exits were normalized with at layout load.
+	let preset = $derived(currentRoom ? resolvePreset(currentRoom) : null);
 	// Door markers use PRESET doorLocations for positioning (they know where
-	// physical doors are in the room SVG). The target is determined by matching
-	// the navigation engine's next direction against the layout exits, then
-	// finding which preset door corresponds to that connection.
+	// physical doors are in the room SVG). The target is the door the next
+	// room's connection was normalized onto at layout load.
 	let doors = $derived<DoorExitLocation[]>(preset ? getDoorExitLocations(preset) : []);
 	let contents = $derived<ContentLocation[]>(preset && currentRoom?.contents.length ? getContentLocations(preset) : []);
-	// Nav engine returns layout exit direction (e.g. "NE") but preset doors use
-	// physical positions (e.g. "N", "S"). Match by angular proximity.
 	let navDirection = $derived(getNextDirection(navState));
-	let targetDirection = $derived(
-		navDirection && preset
-			? matchExitToPresetDoor(navDirection, preset.doorLocations)
-			: null
-	);
+	// Route guidance needs no preset: a room without one keeps its layout direction.
+	let targetDirection = $derived(navDirection);
 	let exitText = $derived(getNextExitText(navState));
 	let roomName = $derived(currentRoom?.name ?? '');
 	let areaCode = $derived(preset?.areaCode ?? currentRoom?.areacode ?? '');

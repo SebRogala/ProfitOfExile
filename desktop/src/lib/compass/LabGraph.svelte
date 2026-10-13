@@ -119,10 +119,10 @@
 	});
 
 	// Doors to mark, including the reverse ones poelab's forward-only exits omit.
-	// Only the dots use this — `connections` still iterates the raw exits, so
-	// every line keeps its single forward start point.
+	// `connections` still iterates the raw exits, so every line keeps its single
+	// forward start point, drawn from that exit's door marker.
 	let doorsByRoom = $derived(
-		navState.layout ? deriveRoomDoors(navState.layout.rooms) : new Map<string, [string, string][]>(),
+		navState.layout ? deriveRoomDoors(navState.layout.rooms, navState.exitDirections) : new Map<string, [string, string][]>(),
 	);
 
 	// Directed connections: from exit dot on source room → target room perimeter
@@ -191,7 +191,9 @@
 					startX = d0 > 0 ? fromNode.cx + (dx0 / d0) * (fromR + 2) : fromNode.cx;
 					startY = d0 > 0 ? fromNode.cy + (dy0 / d0) * (fromR + 2) : fromNode.cy;
 				} else {
-					const exitDot = exitDotPos(fromNode.cx, fromNode.cy, dir, fromR);
+					// Start at the door marker, which sits at the normalized direction.
+					const doorDir = (doorsByRoom.get(room.id) ?? []).find(([d, id]) => id === targetId && d !== 'C')?.[0] ?? dir;
+					const exitDot = exitDotPos(fromNode.cx, fromNode.cy, doorDir, fromR);
 					startX = exitDot.x;
 					startY = exitDot.y;
 				}

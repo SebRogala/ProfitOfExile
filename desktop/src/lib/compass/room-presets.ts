@@ -74,6 +74,19 @@ export function getPresetsByName(roomName: string, goldenDoor: boolean): RoomPre
 	return byNameAndDoor.get(key) ?? [];
 }
 
+/**
+ * The preset a layout room is drawn and normalized with. Upstream rule
+ * (labyrinthdata.cpp:216-226, :94): a non-empty area code is looked up as
+ * given, so one that matches nothing gives no preset; an empty one falls back
+ * to the room name, but only when exactly one variant carries it. The golden
+ * door flag is the exact 'golden-door' content entry, as poelab writes it.
+ */
+export function resolvePreset(room: { areacode: string; name: string; contents: string[] }): RoomPreset | null {
+	if (room.areacode) return getPresetByAreaCode(room.areacode);
+	const byName = getPresetsByName(room.name, room.contents.includes('golden-door'));
+	return byName.length === 1 ? byName[0] : null;
+}
+
 /** Set of all valid area codes for validation. */
 export const VALID_AREA_CODES: ReadonlySet<string> = new Set(byAreaCode.keys());
 
@@ -109,44 +122,79 @@ export function getDoorExitLocations(preset: RoomPreset): DoorExitLocation[] {
 	}));
 }
 
-/** Direction angles for proximity matching. */
-const DIR_ANGLES: Record<string, number> = {
-	N: 0, NE: 45, E: 90, SE: 135, S: 180, SW: 225, W: 270, NW: 315,
-};
+/** One connection of a room: the neighbouring room and the direction it is reached by. */
+export interface RoomConnection {
+	roomId: string;
+	/** A compass direction, 'C' for a secret passage, or '' when unknown (a reverse door). */
+	direction: string;
+}
 
-function angleDiff(a: number, b: number): number {
-	const d = Math.abs(a - b) % 360;
-	return d > 180 ? 360 - d : d;
+const REGULAR_DIRECTIONS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+
+/** Squared step distance around the eight-point compass (upstream costBetweenDirections). */
+function costBetweenDirections(d1: string, d2: string): number {
+	const diff = Math.abs(REGULAR_DIRECTIONS.indexOf(d1) - REGULAR_DIRECTIONS.indexOf(d2));
+	const steps = diff <= 4 ? diff : 8 - diff;
+	return steps * steps;
 }
 
 /**
- * Match a layout exit direction to the closest preset door direction.
- * Layout exits use inter-cardinal directions (NE, NW) for graph edges,
- * while preset doors use the physical door positions within the room.
- * Returns the preset door direction closest in angle to the layout exit.
+ * Map a room's connections onto its preset's door slots, the whole room at once.
+ * Port of upstream DirectionNormalizer::normalize (directionnormalizer.cpp:11-46).
+ *
+ * Regular exits get the one-to-one door assignment of least total cost. Exactly
+ * one unknown ('') connection, when regular + unknown equals the door count,
+ * takes the one door left over; any other unknown stays ''. 'C' passes through
+ * and spends no door. Any other direction code is dropped, as upstream's
+ * breakdown drops it. The result lists regular directions, then 'C', then '',
+ * each group in input order (upstream reconstructConnections).
+ *
+ * Tie-break: upstream leaves equal-cost assignments to its Hungarian solver's
+ * order. Here the first minimum wins when assignments are enumerated with the
+ * earlier exit taking the earlier door first. No fixture room has a tie.
+ *
+ * A room with more regular exits than doors is returned unchanged: upstream
+ * does not guard that case.
  */
-export function matchExitToPresetDoor(
-	exitDirection: string,
-	presetDoorLocations: string[],
-): string | null {
-	if (presetDoorLocations.length === 0) return null;
-	// "C" = secret passage — not a compass direction. Map to the first available door.
-	if (exitDirection === 'C') return presetDoorLocations[0];
-	const exitAngle = DIR_ANGLES[exitDirection];
-	if (exitAngle === undefined) return null;
+export function normalizeDirections(connections: RoomConnection[], pattern: string[]): RoomConnection[] {
+	connections = connections.filter(
+		(c) => REGULAR_DIRECTIONS.includes(c.direction) || c.direction === 'C' || c.direction === '',
+	);
+	const regular = connections.flatMap((c, i) => (REGULAR_DIRECTIONS.includes(c.direction) ? [i] : []));
+	const unknown = connections.flatMap((c, i) => (c.direction === '' ? [i] : []));
+	if (regular.length > pattern.length) return connections;
 
-	let bestDoor: string | null = null;
-	let bestDiff = Infinity;
-	for (const door of presetDoorLocations) {
-		const doorAngle = DIR_ANGLES[door];
-		if (doorAngle === undefined) continue;
-		const diff = angleDiff(exitAngle, doorAngle);
-		if (diff < bestDiff) {
-			bestDiff = diff;
-			bestDoor = door;
+	let best: number[] = [];
+	let bestCost = Infinity;
+	const used = new Array<boolean>(pattern.length).fill(false);
+	const chosen: number[] = [];
+	const search = (k: number, cost: number) => {
+		if (cost >= bestCost) return;
+		if (k === regular.length) {
+			bestCost = cost;
+			best = [...chosen];
+			return;
 		}
+		for (let j = 0; j < pattern.length; j++) {
+			if (used[j]) continue;
+			used[j] = true;
+			chosen.push(j);
+			search(k + 1, cost + costBetweenDirections(connections[regular[k]].direction, pattern[j]));
+			chosen.pop();
+			used[j] = false;
+		}
+	};
+	search(0, 0);
+
+	const result = connections.map((c) => ({ ...c }));
+	regular.forEach((i, k) => (result[i].direction = pattern[best[k]]));
+
+	if (unknown.length === 1 && unknown.length + regular.length === pattern.length) {
+		const unused = pattern.filter((_, j) => !best.includes(j));
+		result[unknown[0]].direction = unused[0];
 	}
-	return bestDoor;
+	const rank = (d: string) => (d === '' ? 2 : d === 'C' ? 1 : 0);
+	return result.sort((a, b) => rank(a.direction) - rank(b.direction));
 }
 
 /** Get all content positions with computed tile rects. */

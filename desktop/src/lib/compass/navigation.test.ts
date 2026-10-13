@@ -8,6 +8,8 @@ import {
 	toggleTargetRoom,
 	isRoomNamePriced,
 	deriveRoomDoors,
+	getNextExitText,
+	getNextDirection,
 	routeCost,
 	type LabLayout,
 	type RouteStrategy,
@@ -15,6 +17,12 @@ import {
 } from './navigation';
 import cruel20260801 from './__fixtures__/poelab-prod-2026-08-01-cruel.json';
 import uber20260802 from './__fixtures__/poelab-prod-2026-08-02-uber.json';
+import merciless20180109 from './__fixtures__/poelab-2018-01-09-merciless.json';
+
+/** Graph door markers of a layout, from its normalized connections. */
+function doorsOf(layout: LabLayout): Map<string, [string, string][]> {
+	return deriveRoomDoors(layout.rooms, loadLayout(createNavState(), layout).exitDirections);
+}
 
 /** Build a minimal lab layout for testing. */
 function makeLayout(rooms: { id: string; name: string; x: string; exits: Record<string, string>; contents?: string[] }[]): LabLayout {
@@ -1066,7 +1074,7 @@ describe('real poelab layouts', () => {
 		// the second hides the first — including hiding an on-route door behind
 		// an off-route one.
 		it(`should give every room at most one door per direction in ${name}`, () => {
-			for (const [roomId, doors] of deriveRoomDoors(layout.rooms)) {
+			for (const [roomId, doors] of doorsOf(layout)) {
 				const dirs = doors.map(([dir]) => dir);
 				expect(new Set(dirs).size, `${roomId}: ${dirs.join(',')}`).toBe(dirs.length);
 			}
@@ -1076,7 +1084,7 @@ describe('real poelab layouts', () => {
 		// poelab lists exits forward-only, so a dead-end branch room describes
 		// none of its own and rendered no door marker at all.
 		it(`should give every reachable room a door in ${name}`, () => {
-			const doors = deriveRoomDoors(layout.rooms);
+			const doors = doorsOf(layout);
 			const reachable = new Set(
 				layout.rooms.flatMap((room) => Object.values(room.exits) as string[]),
 			);
@@ -1090,7 +1098,7 @@ describe('real poelab layouts', () => {
 		// neither may earn a reverse door — the same two exceptions the adjacency
 		// build makes.
 		it(`should not invent a door back through a trial or secret passage in ${name}`, () => {
-			const doors = deriveRoomDoors(layout.rooms);
+			const doors = doorsOf(layout);
 			const roomById = new Map(layout.rooms.map((r) => [r.id, r]));
 
 			for (const [roomId, roomDoors] of doors) {
@@ -1138,11 +1146,70 @@ describe('2026-08-02 Uber layout', () => {
 	});
 
 	it('should mark the dead-end branch rooms with the door they were entered by', () => {
-		const doors = deriveRoomDoors(layout.rooms);
+		const doors = doorsOf(layout);
 
-		// Rooms 3, 4 and 7 carry `exits: {}` in the payload.
+		// Rooms 3, 4 and 7 carry `exits: {}` in the payload. Each is an end room
+		// with one preset door (NE), which its single unknown reverse takes.
 		expect(doors.get('3')).toEqual([['NE', '2']]);
-		expect(doors.get('4')).toEqual([['SW', '2']]);
-		expect(doors.get('7')).toEqual([['SE', '6']]);
+		expect(doors.get('4')).toEqual([['NE', '2']]);
+		expect(doors.get('7')).toEqual([['NE', '6']]);
+	});
+
+	it('should mark a forward exit at the preset door it was normalized onto', () => {
+		// Room 6 (c_quad_door) exits N→8 normalizes onto preset door NW.
+		expect(doorsOf(layout).get('6')).toContainEqual(['NW', '8']);
+	});
+});
+
+describe('getNextExitText', () => {
+	const merciless2018 = merciless20180109 as unknown as LabLayout;
+	const at = (layout: LabLayout, current: string, next: string, previous: string | null = null): NavState => ({
+		...loadLayout(createNavState(), layout),
+		currentRoom: current,
+		previousRoom: previous,
+		plannedRoute: [current, next],
+	});
+
+	it('gives the raw layout direction for a room whose area code matches no preset', () => {
+		// 2018 Merciless room 2 ('3_labyrinth_p_branch_bottleneck_2') exits NE to 3.
+		expect(getNextDirection(at(merciless2018, '2', '3'))).toBe('NE');
+	});
+
+	it('names a known exit direction and the room it leads to', () => {
+		// 2018 Merciless room 2 exits NE to 3; its area code matches no preset.
+		expect(getNextExitText(at(merciless2018, '2', '3'))).toBe('Northeast Exit — mansion passage');
+	});
+
+	it('says Back to Previous Room when the next room is the one the player came from', () => {
+		// Room 1 reaches 2 by NE; 2 has no exit back, so its direction to 1 is unknown.
+		expect(getNextExitText(at(merciless2018, '2', '1', '1'))).toBe('Back to Previous Room');
+	});
+
+	it('says Unmarked Exit for an unknown direction into a room the player did not come from', () => {
+		expect(getNextExitText(at(merciless2018, '2', '1'))).toBe('Unmarked Exit — estate path');
+	});
+
+	it('says Secret Passage when a secret passage is the only connection', () => {
+		const layout = makeLayout([
+			{ id: 'a', name: 'Nowhere A', x: '0', exits: { C: 'b' } },
+			{ id: 'b', name: 'Nowhere B', x: '1', exits: {} },
+		]);
+		expect(getNextExitText(at(layout, 'a', 'b'))).toBe('Secret Passage — Nowhere B');
+	});
+
+	it('says Opposite Exit when a trial leads back into its own section by an unknown door', () => {
+		// Trial 7 closes the section holding room 8, which exits NE into it.
+		expect(getNextExitText(at(merciless2018, '7', '8'))).toBe('Opposite Exit — basilica passage');
+	});
+});
+
+describe('deriveRoomDoors reverse markers', () => {
+	it('gives no door back through the trial that opened the section into an exitless room', () => {
+		const layout = makeLayout([
+			{ id: 'a', name: 'Estate Path', x: '0', exits: { E: 't' } },
+			{ id: 't', name: "Aspirant's Trial", x: '1', exits: { E: 'x' } },
+			{ id: 'x', name: 'Nowhere X', x: '2', exits: {} },
+		]);
+		expect(doorsOf(layout).get('x')).toEqual([]);
 	});
 });
