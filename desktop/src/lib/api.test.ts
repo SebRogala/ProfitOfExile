@@ -8,7 +8,7 @@ vi.mock('$lib/stores/status.svelte', () => ({
 	store: { status: { server_url: 'https://server.test', device_id: 'device-abc123' } }
 }));
 
-const { displayVariant, signalTransitionLabel, fetchCurrencyExchangePlays, mapCompareRow } = await import('./api');
+const { displayVariant, signalTransitionLabel, fetchCurrencyExchangePlays, fetchHarvest, mapCompareRow } = await import('./api');
 
 import type { CurrencyExchangeLeg, CurrencyExchangeResponse } from './api';
 
@@ -508,5 +508,78 @@ describe('mapCompareRow — double corruption', () => {
 		const gem = mapCompareRow({ doubleCorruptModel: 'estimated', doubleCorruptPricedProbability: 0.79 });
 
 		expect(gem.doubleCorruptPricedProbability).toBe(0.79);
+	});
+});
+
+/**
+ * The Harvest page reads prices and tiers through this one request. A cold
+ * server answers 200 with empty maps and null hours, which the page treats as
+ * "no data yet", so the fetcher has to hand that body through unchanged.
+ */
+describe('fetchHarvest', () => {
+	const COLD_RESPONSE = {
+		prices: {
+			league: 'Allflame',
+			horizon: 'day',
+			lastUpdated: null,
+			priceHour: null,
+			warm: false,
+			divineChaosRate: 0,
+			prices: {},
+			lifeforce: {}
+		},
+		families: { warm: false, families: [] }
+	};
+
+	let originalFetch: typeof globalThis.fetch;
+	let fetchMock: ReturnType<typeof vi.fn>;
+
+	/** The URL and init of the single request the fetcher made. */
+	function request(): { url: URL; init: RequestInit } {
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const [url, init] = fetchMock.mock.calls[0];
+		return { url: new URL(url as string), init: (init ?? {}) as RequestInit };
+	}
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+		fetchMock = vi.fn(async () => ({ ok: true, json: async () => structuredClone(COLD_RESPONSE) }));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it('requests the harvest endpoint under the configured server API base', async () => {
+		await fetchHarvest('recent');
+
+		const { url } = request();
+		expect(url.origin + url.pathname).toBe('https://server.test/api/harvest');
+	});
+
+	it('sends the requested horizon as the horizon query parameter', async () => {
+		await fetchHarvest('recent');
+
+		expect(request().url.searchParams.get('horizon')).toBe('recent');
+	});
+
+	it('identifies the device and app version on the request', async () => {
+		await fetchHarvest('day');
+
+		expect(request().init.headers).toEqual({
+			'X-Device-ID': 'device-abc123',
+			'X-App-Version': '0.0.0-test'
+		});
+	});
+
+	it('returns a cold snapshot unchanged, with null hours and empty maps', async () => {
+		expect(await fetchHarvest('day')).toEqual(COLD_RESPONSE);
+	});
+
+	it('throws on a failed request so the caller keeps what it has', async () => {
+		fetchMock.mockResolvedValue({ ok: false, status: 500, statusText: 'Internal Server Error' });
+
+		await expect(fetchHarvest('day')).rejects.toThrow('API /harvest: 500 Internal Server Error');
 	});
 });

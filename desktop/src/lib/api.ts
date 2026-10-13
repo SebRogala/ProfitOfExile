@@ -5,6 +5,7 @@
 
 import { store } from '$lib/stores/status.svelte';
 import type { TradeLookupResult } from './tradeApi';
+import type { ExchangePriceRead, HarvestFamilyData } from '$lib/harvest/seam';
 import { readDivineRateFixture } from './stores/divine-rate-fixture';
 import { getVersion } from '@tauri-apps/api/app';
 
@@ -1086,6 +1087,24 @@ export async function fetchCurrencyExchangePlays(
 	horizon: CurrencyExchangeHorizon = 'recent'
 ): Promise<CurrencyExchangeResponse> {
 	return get<CurrencyExchangeResponse>('/currency-exchange/plays', { mode, horizon });
+}
+
+/** One Harvest snapshot: prices and family tiers read together (POE-286 D10). */
+export interface HarvestResponse {
+	prices: ExchangePriceRead;
+	families: HarvestFamilyData;
+}
+
+/**
+ * The Harvest Flipping read for one horizon: exchange prices and the family
+ * tiers built on them, from one server snapshot so the two never straddle a
+ * recompute. Cold (`prices.warm: false`) answers with empty maps, not an error.
+ *
+ * Like `fetchCurrencyExchangePlays`, this throws on a failed request — the
+ * caller keeps the result it already has.
+ */
+export async function fetchHarvest(horizon: CurrencyExchangeHorizon): Promise<HarvestResponse> {
+	return get<HarvestResponse>('/harvest', { horizon });
 }
 
 /**

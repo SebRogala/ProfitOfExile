@@ -40,8 +40,8 @@ export interface ExchangePriceRead {
 	horizon: CurrencyExchangeHorizon;
 	/** ISO time of the newest price; `null` before the first exchange hour. */
 	lastUpdated: string | null;
-	/** ISO hour the prices (and the tiers built on them) were read from. */
-	priceHour: string;
+	/** ISO hour the prices (and the tiers built on them) were read from; `null` while cold. */
+	priceHour: string | null;
 	/** `false` while the server has not read an exchange hour (cold). */
 	warm: boolean;
 	divineChaosRate: number;
