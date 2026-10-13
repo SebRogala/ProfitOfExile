@@ -159,11 +159,12 @@
 	}
 
 	.content-dot {
-		width: 5px;
-		height: 5px;
+		width: 55%;
+		min-width: 7px;
+		aspect-ratio: 1;
 		border-radius: 50%;
 		background: var(--content-color, #fbbf24);
-		opacity: 0.7;
+		opacity: 0.9;
 	}
 
 	.room-badge {
