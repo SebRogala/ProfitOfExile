@@ -97,9 +97,11 @@
 		<Tooltip text={rateView.tooltipHtml} position="below">
 			<button class="rate-chip" class:cold={rateView.state === 'cold'} class:stale={rateView.state === 'stale'}>
 				<ItemIcon src={iconSrc(apiBase, currencyIconPath(DIVINE_ID))} alt="Divine Orb" size={18} />
-				<span class="rate-n">1</span>
-				<span>=</span>
-				<span class="rate-n">{rateView.chip}</span>
+				<span class="rate-text">
+					<span class="rate-n">1</span>
+					<span>=</span>
+					<span class="rate-n">{rateView.chip}</span>
+				</span>
 				<ItemIcon src={iconSrc(apiBase, currencyIconPath(CHAOS_ID))} alt="Chaos Orb" size={18} />
 				{#if rateView.state === 'stale'}
 					<span class="rate-tag">stale</span>
@@ -239,6 +241,14 @@
 		gap: 12px;
 	}
 
+	/* Tooltip's wrapper is an unstyled span: as a flex item it holds an inline
+	   line box, which baseline-aligns the chip instead of centring it on the
+	   window buttons. Centre it here; the shared Tooltip stays untouched. */
+	.right :global(.tooltip-wrap) {
+		display: flex;
+		align-items: center;
+	}
+
 	.rate-chip {
 		all: unset;
 		cursor: help;
@@ -259,6 +269,13 @@
 	.rate-chip:focus-visible {
 		outline: 1px solid var(--color-lab-blue);
 		outline-offset: -1px;
+	}
+
+	/* Align the mixed-font text on one baseline; the chip centres this row between its icons. */
+	.rate-text {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 4px;
 	}
 
 	.rate-n {
