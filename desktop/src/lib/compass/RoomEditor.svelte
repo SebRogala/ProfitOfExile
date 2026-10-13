@@ -1,17 +1,25 @@
 <script lang="ts">
 	import { getPresetsByName, getDoorExitLocations, getContentLocations, defaultEditorAreaCode, hasGoldenDoor as roomHasGoldenDoor, type RoomPreset } from './room-presets';
 	import Select from '$lib/components/Select.svelte';
-	import { getRoomSvgUrl, getDisabledSvgUrl } from './svg-loader';
-	import type { LabLayoutRoom } from './navigation';
+	import RoomMinimap from './RoomMinimap.svelte';
+	import { resolveRouteDoors, type LabLayoutRoom } from './navigation';
 
 	let {
 		room,
+		rooms = [] as LabLayoutRoom[],
+		route = [] as string[],
+		previousRoom = null as string | null,
 		serverUrl = '',
 		difficulty = '',
 		onSave = (() => {}) as () => void,
 		onClose = (() => {}) as () => void,
 	}: {
 		room: LabLayoutRoom;
+		/** The layout's rooms and the planned route, for the entry and exit door of each variant. */
+		rooms: LabLayoutRoom[];
+		route: string[];
+		/** The room the player came from, for a route that starts at this room. */
+		previousRoom: string | null;
 		serverUrl: string;
 		difficulty: string;
 		onSave: () => void;
@@ -110,24 +118,21 @@
 		<div class="section-label">Room Layout Variant</div>
 		<div class="variants">
 			{#each allVariants as variant}
-				{@const doors = getDoorExitLocations(variant)}
-			{@const contents = getContentLocations(variant)}
+				{@const routeDoors = resolveRouteDoors(rooms, route, room.id, previousRoom, variant)}
 				<button
 					class="variant-thumb"
 					class:selected={variant.areaCode === selectedAreaCode}
 					onclick={() => { selectedAreaCode = variant.areaCode; }}
 					title={variant.areaCode}
 				>
-					<div class="variant-preview" style="background-image: url({getRoomSvgUrl(variant.areaCode) ?? getDisabledSvgUrl()});">
-						{#each doors as door}
-							<div class="variant-dot" style="left: {(door.tileRect.x + door.tileRect.width / 2) * 100}%; top: {(door.tileRect.y + door.tileRect.height / 2) * 100}%;">
-								<span class="variant-exit-label">{door.direction}</span>
-							</div>
-						{/each}
-						{#each contents as content}
-							<div class="variant-dot variant-content-dot"
-								style="left: {(content.tileRect.x + content.tileRect.width / 2) * 100}%; top: {(content.tileRect.y + content.tileRect.height / 2) * 100}%;"></div>
-						{/each}
+					<div class="variant-preview">
+						<RoomMinimap
+							areaCode={variant.areaCode}
+							doors={getDoorExitLocations(variant)}
+							contents={getContentLocations(variant)}
+							targetDirection={routeDoors.exit}
+							entryDirection={routeDoors.entry}
+						/>
 					</div>
 					<span class="variant-code">{variant.areaCode.replace(/^[a-z]+_/, '')}</span>
 				</button>
@@ -253,31 +258,6 @@
 		position: relative;
 		width: 100%;
 		aspect-ratio: 1.3;
-		background-size: 100% 100%;
-		background-repeat: no-repeat;
-	}
-
-	.variant-dot {
-		position: absolute;
-		transform: translate(-50%, -50%);
-	}
-
-	.variant-exit-label {
-		background: rgba(0, 0, 0, 0.75);
-		color: #67e8f9;
-		font-size: 9px;
-		font-weight: 700;
-		padding: 1px 4px;
-		border-radius: 3px;
-		border: 1px solid #0e7490;
-	}
-
-	.variant-content-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		background: #ffa726;
-		opacity: 0.8;
 	}
 
 	.variant-code {

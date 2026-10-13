@@ -306,6 +306,9 @@
 					{#key editingRoom.id}
 						<RoomEditor
 							room={editingRoom}
+							rooms={navState.layout?.rooms ?? []}
+							route={navState.plannedRoute}
+							previousRoom={navState.previousRoom}
 							{serverUrl}
 							{difficulty}
 							onSave={handleEditorSave}

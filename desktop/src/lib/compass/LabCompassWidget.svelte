@@ -259,6 +259,7 @@
 				{doors}
 				{contents}
 				{targetDirection}
+				{entryDirection}
 				{roomName}
 				{contentNames}
 				{timerText}

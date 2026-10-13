@@ -7,6 +7,7 @@
 		doors = [] as DoorExitLocation[],
 		contents = [] as ContentLocation[],
 		targetDirection = null as string | null,
+		entryDirection = null as string | null,
 		roomName = '',
 	} = $props();
 
@@ -16,7 +17,34 @@
 </script>
 
 <div class="minimap">
-	<img src={svgUrl} alt={roomName} class="room-svg" />
+	<!-- Markers are fractions of the room image, so they share its 1.3:1 box. -->
+	<div class="stage">
+		<img src={svgUrl} alt={roomName} class="room-svg" />
+
+		{#if !hasFallback}
+			<!-- Door exit markers -->
+			{#each doors as door}
+				<div
+					class="door-marker"
+					class:target={door.direction === targetDirection}
+					class:entry={door.direction === entryDirection && door.direction !== targetDirection}
+					style="left: {door.tileRect.x * 100}%; top: {door.tileRect.y * 100}%; width: {door.tileRect.width * 100}%; height: {door.tileRect.height * 100}%;"
+				>
+					<span class="door-label">{door.direction}</span>
+				</div>
+			{/each}
+
+			<!-- Content location markers -->
+			{#each contents as content}
+				<div
+					class="content-marker"
+					style="left: {content.tileRect.x * 100}%; top: {content.tileRect.y * 100}%; width: {content.tileRect.width * 100}%; height: {content.tileRect.height * 100}%; --content-color: {minimapLootColor(content.target)};"
+				>
+					<span class="content-dot"></span>
+				</div>
+			{/each}
+		{/if}
+	</div>
 
 	{#if hasFallback}
 		<div class="fallback-box">
@@ -25,28 +53,7 @@
 				<div class="fallback-dir">{directionLabel(targetDirection)}</div>
 			{/if}
 		</div>
-	{:else}
-		<!-- Door exit markers -->
-		{#each doors as door}
-			<div
-				class="door-marker"
-				class:target={door.direction === targetDirection}
-				style="left: {door.tileRect.x * 100}%; top: {door.tileRect.y * 100}%; width: {door.tileRect.width * 100}%; height: {door.tileRect.height * 100}%;"
-			>
-				<span class="door-label">{door.direction}</span>
-			</div>
-		{/each}
-
-		<!-- Content location markers -->
-		{#each contents as content}
-			<div
-				class="content-marker"
-				style="left: {content.tileRect.x * 100}%; top: {content.tileRect.y * 100}%; width: {content.tileRect.width * 100}%; height: {content.tileRect.height * 100}%; --content-color: {minimapLootColor(content.target)};"
-			>
-				<span class="content-dot"></span>
-			</div>
-		{/each}
-
+	{:else if roomName}
 		<!-- Room name badge -->
 		<div class="room-badge">{roomName}</div>
 	{/if}
@@ -60,12 +67,22 @@
 		overflow: hidden;
 		background: transparent;
 		border-radius: 4px;
+		container-type: size;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	/* The largest 1.3:1 box the container holds, like upstream's ratio-locked item. */
+	.stage {
+		position: relative;
+		width: min(100cqw, 100cqh * 1.3);
+		height: min(100cqh, 100cqw / 1.3);
 	}
 
 	.room-svg {
 		width: 100%;
 		height: 100%;
-		object-fit: contain;
 		display: block;
 	}
 
@@ -125,6 +142,12 @@
 		color: #ecfdf5;
 		box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
 		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+	}
+
+	.door-marker.entry .door-label {
+		background: rgba(30, 41, 59, 0.9);
+		color: #cbd5e1;
+		border: 1px dashed #64748b;
 	}
 
 	.content-marker {

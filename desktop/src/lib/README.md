@@ -81,7 +81,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 
 | File | Props | Description |
 |------|-------|-------------|
-| `compass/RoomMinimap.svelte` | `areaCode`, `doors`, `contents`, `targetDirection`, `roomName` | Room SVG background with positioned door/content overlays. Target exit highlighted green. |
+| `compass/RoomMinimap.svelte` | `areaCode`, `doors`, `contents`, `targetDirection`, `entryDirection`, `roomName` | Room SVG background with positioned door/content overlays. Target exit highlighted green; entry door in a distinct muted style. |
 | `compass/DirectionCompass.svelte` | `directions`, `targetDirection`, `roomName`, `contents` | Compass circle with exit markers at compass angles. |
 | `compass/MinimalBar.svelte` | `targetDirection`, `contents`, `timerText` | Compact bar with arrow, content badges, timer. |
 | `compass/LabCompassWidget.svelte` | `configMode`, `label` | Lab compass widget moved from its standalone route; preserves compass navigation, shrine warnings, settings polling and catch-up while filling its widget box. |
@@ -90,7 +90,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | `compass/LabComparatorWidget.svelte` | `configMode`, `label`, `handleAction(action, target)` | Lab gem comparator widget moved from its standalone route; preserves comparator polling and trade queue state while filling its widget box. The Lab route binds the component instance and passes the WidgetHost `onAction` callback to `handleAction`. |
 | `compass/CompassOverlay.svelte` | `mode`, all child props | Mode switcher — renders minimap, direction, or minimal mode. |
 | `compass/LabGraph.svelte` | layout/navigation props | Full lab graph used by planner and path-strip presentation. |
-| `compass/RoomEditor.svelte` | room/editing props | Room metadata and connection editor used by planner tooling. |
+| `compass/RoomEditor.svelte` | `room`, `rooms`, `route`, `previousRoom`, `serverUrl`, `difficulty`, `onSave`, `onClose` | Room metadata and connection editor used by planner tooling. Variant thumbnails render through `RoomMinimap` with the route's entry and exit door from `resolveRouteDoors`. |
 
 ## Mercenary Data
 

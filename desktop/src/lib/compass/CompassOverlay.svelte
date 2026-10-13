@@ -10,6 +10,7 @@
 		doors = [] as DoorExitLocation[],
 		contents = [] as ContentLocation[],
 		targetDirection = null as string | null,
+		entryDirection = null as string | null,
 		roomName = '',
 		contentNames = [] as string[],
 		timerText = '00:00',
@@ -19,7 +20,7 @@
 </script>
 
 {#if mode === 'minimap'}
-	<RoomMinimap {areaCode} {doors} {contents} {targetDirection} {roomName} />
+	<RoomMinimap {areaCode} {doors} {contents} {targetDirection} {entryDirection} {roomName} />
 {:else if mode === 'direction'}
 	<DirectionCompass {directions} {targetDirection} {roomName} {contents} />
 {:else if mode === 'minimal'}
