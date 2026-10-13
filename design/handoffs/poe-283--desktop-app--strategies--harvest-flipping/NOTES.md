@@ -75,7 +75,7 @@ The page reads `GET /api/harvest?horizon=` (both ports share one request per hor
 
   | Family | Colour | `rerollCost` | `lifeforceSpent` | CSV footer |
   |---|---|---|---|---|
-  | Astrolabes | Wild | 400 | 804000 | Wild 60360 |
+  | Astrolabes | Primal | 400 | 804000 | Wild 60360 |
   | Catalysts | Wild | 30 | 75120 | Wild 25040 |
   | Oils | Vivid | 30 | 78180 | Primal 78180 |
 
@@ -193,5 +193,5 @@ Q4 (picked-chip titles) is answered by the design (WI-12): every chip carries th
 
 - **Sidebar entry hidden without `BETA_FEATURE` has no test (WI-12, completeness C18).** INVENTORY B22 rests on reading `Sidebar.svelte`; no Sidebar or layout test covers any feature-gated entry (a pre-existing pattern, not Harvest's). Follow-up task: a Sidebar test that the gated entries (Harvest Flipping among them) are absent without their feature and present with it. Outside this lane's files.
 
-- **Lifeforce colour facts for `docs/GAME-FACTS.md`** (another owner's file; noted here only). Primal = blue, Vivid = yellow, Wild = purple. A reroll costs 30 lifeforce of the family's colour (400 for Astrolabes). Deafening and corrupted essences cost Primal (blue), Fossils cost Wild (purple), and Delirium Orbs cost Primal. Astrolabes cost Wild at 400 per reroll, Catalysts Wild, and Oils Vivid (yellow) (source: the Operator's HarvestForge logs and ruling P48, closed 2026-10-10; § HarvestForge logs for Astrolabes, Oils and Catalysts). Sources: `fixtures.json` `exchange.lifeforce` and `families[].lifeforce`; README § Spec changes ("the blue ones", poedb). `docs/GAME-FACTS.md` has no lifeforce entry at `d82d311a`.
+- **Lifeforce colour facts for `docs/GAME-FACTS.md`** (another owner's file; noted here only). Primal = blue, Vivid = yellow, Wild = purple. A reroll costs 30 lifeforce of the family's colour (400 for Astrolabes). Deafening and corrupted essences cost Primal (blue), Fossils cost Wild (purple), and Delirium Orbs cost Primal. Astrolabes cost Primal at 400 per reroll (Operator, 2026-10-14: the log registered Wild), Catalysts Wild, and Oils Vivid (yellow) (source: the Operator's HarvestForge logs and ruling P48, closed 2026-10-10; § HarvestForge logs for Astrolabes, Oils and Catalysts). Sources: `fixtures.json` `exchange.lifeforce` and `families[].lifeforce`; README § Spec changes ("the blue ones", poedb). `docs/GAME-FACTS.md` has no lifeforce entry at `d82d311a`.
 - **`items.json` name defect.** `internal/exchange/itemdata/items.json:847` names `Metadata/Items/Currency/CurrencyAfflictionOrbHarbinger` "Fine Delirium Orb", while its icon URL (`icon-urls.json:169`) is the Foreboding Delirium Orb. `…Prophecies` (`items.json:882`, icon Portentous) carries the same name; `design/PROJECT.md:76` records both. The real Fine Delirium Orb is `CurrencyAfflictionOrbCurrency`. Harvest looks items up by itemId only, but any name lookup would collide. Fix the item names in the item data.

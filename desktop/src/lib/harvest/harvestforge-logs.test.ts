@@ -55,7 +55,7 @@ describe('HarvestForge logs behind Astrolabes, Catalysts, Fossils and Oils', () 
 	});
 
 	it.each([
-		['astrolabe', 'Wild', 400, 804000],
+		['astrolabe', 'Primal', 400, 804000],
 		['catalyst', 'Vivid', 30, 75120],
 		['fossil', 'Wild', 30, 327270],
 		['oil', 'Vivid', 30, 78180]
