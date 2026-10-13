@@ -1273,8 +1273,9 @@ const OPPOSITE_DIR: Record<string, string> = {
  *
  * A reverse door whose direction stays unknown ('') is drawn opposite the
  * neighbour's exit, as before normalization: the graph needs a position, and
- * without it every final trial and preset-less dead end had no marker. (Open
- * owner question: upstream draws no door there.) Secret passages ('C') and beaten trial gates
+ * without it every final trial and preset-less dead end had no marker. Upstream
+ * draws no door there; the owner kept the guess (2026-10-13): a marker that can
+ * sit 45° off beats no marker. Secret passages ('C') and beaten trial gates
  * never earn a reverse connection in `exitDirections` at all: the game opens
  * neither from the far side.
  */
