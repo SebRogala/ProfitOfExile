@@ -1048,3 +1048,198 @@ func TestCurrencyExchangePlays_isNeverCached(t *testing.T) {
 		t.Errorf("Content-Type = %q, want %q", got, "application/json")
 	}
 }
+
+// divineRateBody is the GET /api/currency-exchange/divine-rate body. The rate
+// and the hour are pointers so a JSON null is distinguishable from zero.
+type divineRateBody struct {
+	DivineChaosRate *float64 `json:"divineChaosRate"`
+	PriceHour       *string  `json:"priceHour"`
+	Warm            bool     `json:"warm"`
+}
+
+// divineRateCache holds a warm one-hour result for the default horizon at rate,
+// and a different rate for the day horizon, so a handler that reads the wrong
+// horizon answers a visibly different number.
+func divineRateCache(t *testing.T, rate float64) *exchange.Cache {
+	t.Helper()
+	cache := exchange.NewCache()
+	cache.Set(exchange.DefaultHorizon, exchange.Result{
+		League:          "Mirage",
+		Horizon:         string(exchange.DefaultHorizon),
+		From:            fixtureLastHour,
+		To:              fixtureLastHour.Add(time.Hour),
+		Hours:           1,
+		DivineChaosRate: rate,
+	})
+	cache.Set(exchange.HorizonDay, exchange.Result{
+		League:          "Mirage",
+		Horizon:         string(exchange.HorizonDay),
+		From:            fixtureLastHour.Add(-23 * time.Hour),
+		To:              fixtureLastHour.Add(time.Hour),
+		Hours:           24,
+		DivineChaosRate: 999,
+	})
+	return cache
+}
+
+// getDivineRate serves one request through a chi router, the way the server
+// mounts the handler, and returns the recorder.
+func getDivineRate(t *testing.T, cache *exchange.Cache) *httptest.ResponseRecorder {
+	t.Helper()
+	router := chi.NewRouter()
+	router.Get("/api/currency-exchange/divine-rate", CurrencyExchangeDivineRate(cache))
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/currency-exchange/divine-rate", nil))
+	return w
+}
+
+// decodeDivineRate decodes a 200 body, failing the test on any other status. It
+// reads the recorder's bytes without consuming them, so divineRateFields can
+// decode the same response.
+func decodeDivineRate(t *testing.T, w *httptest.ResponseRecorder) divineRateBody {
+	t.Helper()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusOK, w.Body.String())
+	}
+	var body divineRateBody
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body %q: %v", w.Body.String(), err)
+	}
+	return body
+}
+
+// divineRateFields decodes the same body as a key map, so a test can tell a
+// present key holding null from a key the handler omitted. A typed pointer
+// reads both as nil.
+func divineRateFields(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	var fields map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &fields); err != nil {
+		t.Fatalf("decode body %q as a key map: %v", w.Body.String(), err)
+	}
+	return fields
+}
+
+// requireDivineRateKey fails unless key is present in fields and returns its value.
+func requireDivineRateKey(t *testing.T, fields map[string]any, key string) any {
+	t.Helper()
+	value, ok := fields[key]
+	if !ok {
+		t.Fatalf("body has no %q key, want it present (null when unset)", key)
+	}
+	return value
+}
+
+func TestCurrencyExchangeDivineRate_coldIsNullAndNotWarm(t *testing.T) {
+	// A nil cache and a fresh one are the same answer: 200, not warm, and no rate
+	// or hour to report, so a client does not mistake a missing rate for zero.
+	for name, cache := range map[string]*exchange.Cache{
+		"nil cache":   nil,
+		"fresh cache": exchange.NewCache(),
+	} {
+		w := getDivineRate(t, cache)
+		body := decodeDivineRate(t, w)
+		if body.Warm {
+			t.Errorf("%s: warm = true, want false", name)
+		}
+		if body.DivineChaosRate != nil {
+			t.Errorf("%s: divineChaosRate = %v, want null", name, *body.DivineChaosRate)
+		}
+		if body.PriceHour != nil {
+			t.Errorf("%s: priceHour = %v, want null", name, *body.PriceHour)
+		}
+
+		fields := divineRateFields(t, w)
+		if v := requireDivineRateKey(t, fields, "divineChaosRate"); v != nil {
+			t.Errorf("%s: divineChaosRate key = %v, want present with null", name, v)
+		}
+		if v := requireDivineRateKey(t, fields, "priceHour"); v != nil {
+			t.Errorf("%s: priceHour key = %v, want present with null", name, v)
+		}
+	}
+}
+
+func TestCurrencyExchangeDivineRate_warmServesTheRateAndItsHour(t *testing.T) {
+	cache := divineRateCache(t, 360.07)
+	body := decodeDivineRate(t, getDivineRate(t, cache))
+
+	if !body.Warm {
+		t.Fatal("warm = false, want true")
+	}
+	if body.DivineChaosRate == nil {
+		t.Fatal("divineChaosRate = null, want 360.07 from the default horizon")
+	}
+	if *body.DivineChaosRate != 360.07 {
+		t.Errorf("divineChaosRate = %v, want 360.07 from the default horizon, not the day horizon's 999", *body.DivineChaosRate)
+	}
+	result, _ := cache.Snapshot(exchange.DefaultHorizon)
+	last, ok := exchange.LastUpdated(result)
+	if !ok {
+		t.Fatal("LastUpdated reports no hour for a one-hour result")
+	}
+	want := last.UTC().Format(time.RFC3339)
+	if body.PriceHour == nil || *body.PriceHour != want {
+		t.Errorf("priceHour = %v, want %q (the newest feed hour)", body.PriceHour, want)
+	}
+}
+
+func TestCurrencyExchangeDivineRate_warmWithoutARateIsNull(t *testing.T) {
+	// A warm horizon whose divine/chaos market did not trade reports warm and a
+	// priceHour, with the rate null rather than zero.
+	w := getDivineRate(t, divineRateCache(t, 0))
+	body := decodeDivineRate(t, w)
+
+	if !body.Warm {
+		t.Fatal("warm = false, want true")
+	}
+	if body.DivineChaosRate != nil {
+		t.Errorf("divineChaosRate = %v, want null for a zero rate", *body.DivineChaosRate)
+	}
+	if body.PriceHour == nil {
+		t.Error("priceHour = null, want the feed hour the warm horizon was read at")
+	}
+
+	fields := divineRateFields(t, w)
+	if v := requireDivineRateKey(t, fields, "divineChaosRate"); v != nil {
+		t.Errorf("divineChaosRate key = %v, want present with null for a zero rate", v)
+	}
+	if v := requireDivineRateKey(t, fields, "priceHour"); v == nil {
+		t.Error("priceHour key = null, want present with the feed hour string")
+	}
+}
+
+func TestCurrencyExchangeDivineRate_warmEmptyResultHasNoHour(t *testing.T) {
+	// A warm default horizon with no hours has no feed hour to report, so priceHour
+	// is null, not the zero time, and the rate is null for the same reason.
+	cache := exchange.NewCache()
+	cache.Set(exchange.DefaultHorizon, exchange.Result{})
+	w := getDivineRate(t, cache)
+	body := decodeDivineRate(t, w)
+
+	if !body.Warm {
+		t.Fatal("warm = false, want true for a seeded default horizon")
+	}
+	if body.DivineChaosRate != nil {
+		t.Errorf("divineChaosRate = %v, want null for an empty result", *body.DivineChaosRate)
+	}
+	if body.PriceHour != nil {
+		t.Errorf("priceHour = %v, want null for an empty result", *body.PriceHour)
+	}
+
+	fields := divineRateFields(t, w)
+	if v := requireDivineRateKey(t, fields, "divineChaosRate"); v != nil {
+		t.Errorf("divineChaosRate key = %v, want present with null", v)
+	}
+	if v := requireDivineRateKey(t, fields, "priceHour"); v != nil {
+		t.Errorf("priceHour key = %v, want present with null", v)
+	}
+}
+
+func TestCurrencyExchangeDivineRate_isNeverCached(t *testing.T) {
+	w := getDivineRate(t, divineRateCache(t, 360.07))
+
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
+	}
+}

@@ -170,6 +170,49 @@ func CurrencyExchangePlays(cache *exchange.Cache) http.HandlerFunc {
 	}
 }
 
+// divineRateResponse is the GET /api/currency-exchange/divine-rate body.
+//
+// DivineChaosRate is null when the default horizon is cold or its divine/chaos
+// market did not trade, so a client can tell "no rate yet" from a rate of zero.
+// PriceHour is the newest feed hour the rate was read at, RFC3339 UTC, or null
+// when the horizon has no hour.
+type divineRateResponse struct {
+	DivineChaosRate *float64 `json:"divineChaosRate"`
+	PriceHour       *string  `json:"priceHour"`
+	Warm            bool     `json:"warm"`
+}
+
+// CurrencyExchangeDivineRate serves the chaos-per-divine rate the currency
+// exchange valued its plays with, read from the default horizon's cache entry.
+//
+// GET /api/currency-exchange/divine-rate takes no parameters. The handler never
+// touches the database, and a nil or cold cache answers 200 with warm:false and
+// null fields, the same contract as CurrencyExchangePlays.
+//
+// Responses are Cache-Control: no-store, because the rate moves with every feed
+// hour.
+func CurrencyExchangeDivineRate(cache *exchange.Cache) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// A nil *exchange.Cache reads as cold; Snapshot handles the nil receiver.
+		result, warm := cache.Snapshot(exchange.DefaultHorizon)
+
+		var body divineRateResponse
+		body.Warm = warm
+		if warm && result.DivineChaosRate > 0 {
+			rate := result.DivineChaosRate
+			body.DivineChaosRate = &rate
+		}
+		if last, ok := exchange.LastUpdated(result); warm && ok {
+			hour := last.UTC().Format(time.RFC3339)
+			body.PriceHour = &hour
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(body)
+	}
+}
+
 // decorateLegs attaches display names, icon paths and categories to a play's
 // legs, noting every id the item asset does not cover on unknown, which must not
 // be nil.

@@ -228,6 +228,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	// analysis still serves currency-exchange plays. The handler treats a nil
 	// ExchangeCache as cold, so registration never depends on the wiring.
 	r.Get("/api/currency-exchange/plays", handlers.CurrencyExchangePlays(cfg.ExchangeCache))
+	r.Get("/api/currency-exchange/divine-rate", handlers.CurrencyExchangeDivineRate(cfg.ExchangeCache))
 	r.Get("/api/harvest", handlers.Harvest(cfg.HarvestCache))
 
 	// Entitlements come from the device record the middleware attached, so this
