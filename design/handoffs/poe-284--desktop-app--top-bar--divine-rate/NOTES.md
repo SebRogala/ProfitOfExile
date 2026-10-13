@@ -135,11 +135,13 @@ no screenshot. Instead, the chip markup + CSS and the `divineRateView` test stri
   (Segoe UI, Consolas), 1024px, DPR 1, ink measured on a 4× capture in CSS px — chip box centre 16.0 → 17.5 (window
   buttons 17.5); digits ink 16.12 → 18.12 (□ and × 18.12); "=" ink 1.25 → 0.25px from the digits. Cold, stale, hover,
   focus, the tooltip (top = wrapper bottom + 4, right edge clamped at 1016) and the icon "?" fallback were checked.
+  Fix committed in 52dd0908; native window dragging was not exercised (a browser cannot run `startDragging`).
 - **No unit seam (surfaced finding).** `.svelte` files have no unit harness in this repo, so the `+layout.svelte` init
   (`desktop/src/routes/(app)/+layout.svelte:616`), the `Tooltip.svelte` focus open / `role="tooltip"` / `aria-describedby`
   / live text update (`Tooltip.svelte:13-19`, `:59`, `:100-105`, `:120-121`) and the chip's drag exclusion (a `<button>`
   matched by `startDrag`'s `closest('button, a, .status-dot')`, `TopBar.svelte:66-70`) are verified by diff reading
-  only. The smallest seam — extracting them into a pure `.ts` — would move the shared component's DOM code out of the
+  only. Since then the chip's tooltip opening on hover and on keyboard focus was rendered (chip-centring entry above);
+  `role`/`aria-describedby`, the live text update, the layout init and native dragging remain unexercised. The smallest seam — extracting them into a pure `.ts` — would move the shared component's DOM code out of the
   component for one test; the observable that would unblock them is a component test harness (none exists).
 
 ## 8. Known gaps

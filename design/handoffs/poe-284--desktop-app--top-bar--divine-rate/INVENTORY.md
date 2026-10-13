@@ -3,7 +3,8 @@
 Every screen × state × affordance this delivery must contain, mined from `CHECKLIST.md` (incl. MUST NOT DROP)
 and the three reference PNGs. One screen: the top bar, on every page of the main window. Dark theme only.
 The pixel pass is waived by the Operator 2026-10-10; visual rows are verified by reading code + fixtures
-against refs 01–03 (`NOTES.md` §7).
+against refs 01–03 (`NOTES.md` §7). DIVINE-CHIP (2026-10-13) later rendered the chip's alignment, cold, stale,
+hover and focus states in Windows Edge (`NOTES.md` §7, chip-centring entry); native dragging stays unrendered.
 
 ## States (each supplied by the fixture adapter `readDivineRateFixture(now, state)`)
 
@@ -43,10 +44,10 @@ against refs 01–03 (`NOTES.md` §7).
 
 | CHECKLIST box | Ticked | Evidence |
 |---|---|---|
-| No rate yet shows "—" in `--text-muted`, never 0/NaN | [x] | `divineRateView` cold tests; `.cold .rate-n` CSS read against ref 02; pixel pass waived by the Operator 2026-10-10 |
-| Stale keeps last value in `--warning` with "STALE" | [x] | store stale test keeps the value; `.stale` CSS + tag markup read against ref 03; pixel pass waived |
-| Chip right of centre group, left of window controls; drag area still works | [x] | `.right` group read against ref 01; `<button>` skipped by `startDrag`; pixel pass waived |
-| Tooltip opens on hover and on keyboard focus | [x] | `Tooltip.svelte` diff: mouse handlers unchanged, `onfocusin={show}` / `onfocusout={hide}`, popup `id` + `role="tooltip"`, `aria-describedby` |
+| No rate yet shows "—" in `--text-muted`, never 0/NaN | [x] | `divineRateView` cold tests; `.cold .rate-n` CSS read against ref 02; pixel pass waived by the Operator 2026-10-10; rendered 2026-10-13 by DIVINE-CHIP (`NOTES.md` §7) |
+| Stale keeps last value in `--warning` with "STALE" | [x] | store stale test keeps the value; `.stale` CSS + tag markup read against ref 03; pixel pass waived; rendered 2026-10-13 by DIVINE-CHIP (`NOTES.md` §7) |
+| Chip right of centre group, left of window controls; drag area still works | [x] | `.right` group read against ref 01; `<button>` skipped by `startDrag`; pixel pass waived; position rendered 2026-10-13 by DIVINE-CHIP, dragging not (`NOTES.md` §7) |
+| Tooltip opens on hover and on keyboard focus | [x] | `Tooltip.svelte` diff: mouse handlers unchanged, `onfocusin={show}` / `onfocusout={hide}`, popup `id` + `role="tooltip"`, `aria-describedby`; rendered 2026-10-13 by DIVINE-CHIP (`NOTES.md` §7) |
 | Every conversion reads the same store | [x] partial | Met for chip + store only — Lab / overlay / CX / Harvest deferred, see `NOTES.md` §4 |
 | Nothing else in TopBar / Sidebar changes | [x] | `TopBar.svelte` diff; `Sidebar.svelte` untouched |
 | Tokens only; copy exact incl. "↔" | [x] | `tooltipHtml` equality tests (U+2194); CSS `var(--…)` except the README hover rgba |
