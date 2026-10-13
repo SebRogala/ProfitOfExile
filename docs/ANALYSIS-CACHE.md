@@ -143,12 +143,19 @@ place (POE-158).
 ## Other caches on the same contract
 
 `lab.Cache` is not the only in-memory cache the server serves from, and the
-contracts above are written once for all of them. Two others follow them with
-their own type, because each is filled by a different event and a single type
-would tie three unrelated tick chains together:
+contracts above are written once for all of them. Three others follow them with
+their own type, because each is filled by a different event or answer and a
+single type would tie unrelated tick chains together:
 
 - **`exchange.Cache`** (`internal/exchange/service.go`) — the currency-exchange
   ranking, refreshed by `exchange.Service` on a stored feed hour.
+- **`harvest.Cache`** (`internal/harvest/service.go`) — Harvest Flipping's
+  per-horizon prices and tiers (POE-286), refreshed by `harvest.Service` at boot
+  and on the same stored feed hour as `exchange.Cache`. One `Snapshot` per
+  horizon holds prices and the tiers built from them, so `GET /api/harvest` can
+  never mix two recomputes. Unlike `exchange.Cache` it stays COLD while the
+  league has no stored hour (the desktop reads warm as "an exchange hour was
+  read"), and `Set`/`Snapshot` deep-copy.
 - **`temple.Cache`** (`internal/temple/service.go`) — the aggregated temple
   market (POE-255), refreshed by `temple.Service` on any of the seven
   `poe/collector/items/*` ticks and once at boot from the warm-up goroutine.
@@ -159,9 +166,10 @@ would tie three unrelated tick chains together:
   read is served as `temple.EmptyMarket` — 200 with the static recipe table and
   `asOf: null` — matching `MarketOverview`'s cold behaviour.
 
-Both report warmth explicitly (`Snapshot() (value, warm bool)`), store an empty
-answer rather than skipping it, and build their replacement value outside the
-lock. Tenancy is where they differ: `temple.Cache` asserts it the way `Cache.For`
+All three report warmth explicitly (`Snapshot() (value, warm bool)`) and build
+their replacement value outside the lock; `exchange.Cache` and `temple.Cache`
+store an empty answer rather than skipping it, while `harvest.Cache` stays cold
+until a stored hour exists (see its bullet above). Tenancy is where they differ: `temple.Cache` asserts it the way `Cache.For`
 does, while `exchange.Cache` exposes only `Set` and `Snapshot` — it is keyed by
 horizon rather than by league, and the process-scoped `exchange.Service` is its
 only writer.
