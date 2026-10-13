@@ -480,6 +480,49 @@ func TestRecomputeRuntime_routesExchangeTopic(t *testing.T) {
 	}
 }
 
+func TestRecomputeRuntime_routesExchangeTopicToHarvest(t *testing.T) {
+	exchangeService := &fakeRuntimeService{}
+	harvestService := &fakeRuntimeService{}
+	runtime := newRecomputeRuntime(context.Background(), runtimeScope())
+	runtime.exchange = exchangeService
+	runtime.harvest = harvestService
+	raw := `{"league":"Mirage","leagueRevision":0}`
+
+	runtime.dispatch(server.MercureEvent{Topic: exchange.Topic, Data: raw})
+	if got := string(harvestService.waitForEvent(t)); got != raw {
+		t.Fatalf("harvest event = %s, want %s", got, raw)
+	}
+}
+
+func TestRecomputeRuntime_rejectsStaleExchangeEventForHarvest(t *testing.T) {
+	harvestService := &fakeRuntimeService{eventsCh: make(chan []byte, 1)}
+	runtime := newRecomputeRuntime(context.Background(), runtimeScope())
+	runtime.harvest = harvestService
+
+	runtime.dispatch(server.MercureEvent{
+		Topic: exchange.Topic,
+		Data:  `{"league":"Mirage","leagueRevision":1}`,
+	})
+
+	if got := runtime.eventGuard.Rejected(); got != 1 {
+		t.Fatalf("stale exchange rejection count = %d, want 1", got)
+	}
+	select {
+	case raw := <-harvestService.eventsCh:
+		t.Fatalf("stale exchange event reached harvest: %s", raw)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestRecomputeRuntime_startTriggersHarvest(t *testing.T) {
+	harvestService := &fakeRuntimeService{started: make(chan struct{}, 1)}
+	runtime := newRecomputeRuntime(context.Background(), runtimeScope())
+	runtime.harvest = harvestService
+
+	runtime.Start()
+	waitForStruct(t, harvestService.started, "harvest boot trigger")
+}
+
 func TestRecomputeRuntime_routesTempleEndpoint(t *testing.T) {
 	service := &fakeRuntimeService{}
 	runtime := newRecomputeRuntime(context.Background(), runtimeScope())

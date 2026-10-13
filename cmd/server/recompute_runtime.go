@@ -74,6 +74,7 @@ type recomputeRuntime struct {
 	analyzer              recomputeAnalyzer
 	exchange              recomputeService
 	temple                recomputeService
+	harvest               recomputeService
 	tradeTick             func(context.Context, []byte)
 	updateRate            func(context.Context)
 	refreshOfferingTiming func(context.Context)
@@ -279,6 +280,11 @@ func (r *recomputeRuntime) startup() {
 		// cache cycle away; Trigger logs failures and never blocks serving.
 		go r.temple.Trigger(r.ctx)
 	}
+	if r.harvest != nil {
+		// Harvest prices and tiers are held in memory only: rebuild them at boot
+		// from the stored exchange rows; Trigger logs failures and never blocks.
+		go r.harvest.Trigger(r.ctx)
+	}
 }
 
 func (r *recomputeRuntime) seedCaches() {
@@ -422,8 +428,14 @@ func (r *recomputeRuntime) dispatch(ev server.MercureEvent) {
 		// endpoint. Return before generic endpoint dispatch, or this stored hour
 		// would produce a misleading missing-endpoint warning. The exchange
 		// service owns replay-safe coalescing. It runs on the service context r.ctx.
-		if r.eventGuard.AcceptRaw([]byte(ev.Data)) && r.exchange != nil {
-			go r.exchange.HandleEvent(r.ctx, []byte(ev.Data))
+		if r.eventGuard.AcceptRaw([]byte(ev.Data)) {
+			if r.exchange != nil {
+				go r.exchange.HandleEvent(r.ctx, []byte(ev.Data))
+			}
+			// Harvest recomputes from the same stored hour, behind the same guard.
+			if r.harvest != nil {
+				go r.harvest.HandleEvent(r.ctx, []byte(ev.Data))
+			}
 		}
 		return
 	}

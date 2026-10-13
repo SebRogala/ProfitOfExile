@@ -16,6 +16,7 @@ import (
 	"profitofexile/internal/db"
 	"profitofexile/internal/device"
 	"profitofexile/internal/exchange"
+	"profitofexile/internal/harvest"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
 	"profitofexile/internal/mercenary"
@@ -181,6 +182,10 @@ func main() {
 	// from a process on its way out, and clients refetch on their next poll.
 	defer exchangeDebounce.Stop()
 	exchangeService := exchange.NewService(exchangeRepo, scope, exchangeCfg, exchangeCache, exchangeDebounce.Signal, slog.Default())
+	// Harvest prices + tiers, recomputed from the same stored exchange rows
+	// (POE-286): the read side of GET /api/harvest and the exchange.Topic dispatch.
+	harvestCache := harvest.NewCache()
+	harvestService := harvest.NewService(exchangeRepo, scope, harvestCache, slog.Default())
 	slog.Info("currency exchange service configured",
 		"minVolumePerHour", exchangeCfg.MinVolumePerHour,
 		"minEdge", exchangeCfg.MinEdge,
@@ -268,6 +273,7 @@ func main() {
 		LayoutRepo:           layoutRepo,
 		LabCache:             labCache,
 		ExchangeCache:        exchangeCache,
+		HarvestCache:         harvestCache,
 		TempleCache:          templeCache,
 		MercureSubscriberKey: serviceCfg.MercureSubscriberKey,
 		MercurePublicURL:     serviceCfg.MercurePublicURL,
@@ -302,6 +308,7 @@ func main() {
 	runtime.analyzer = analyzer
 	runtime.exchange = exchangeService
 	runtime.temple = templeService
+	runtime.harvest = harvestService
 	runtime.mercureURL = mercureURL
 	runtime.subscriberKey = serviceCfg.MercureSubscriberKey
 	runtime.subscriberFactory = func(hubURL string, topics []string, subscriberKey string, handler func(server.MercureEvent)) runtimeSubscriber {
