@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -1722,6 +1723,48 @@ func TestSignalHistoryWindow_readsOnlyTheNewestDepthSnapshotTimes(t *testing.T) 
 		if c.Signal == "oldest" {
 			t.Errorf("ring = %+v, want the two newest snapshot times only", ring)
 		}
+	}
+}
+
+// Each series comes back newest first. The query has no ORDER BY (with one,
+// TimescaleDB planned a merge join over a mis-ordered ChunkAppend and failed with
+// "mergejoin input data is out of order"), so the order is the repository's own
+// sort, and rows inserted oldest first must still come out newest first.
+func TestSignalHistoryWindow_returnsEachSeriesNewestFirst(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-mergejoin-sigwin-order"
+	registerLeague(t, pool, leagueID)
+
+	const name = "Mergejoin SignalWindow Order Gem"
+	const variant = "20/20"
+
+	times := []time.Time{futureTime(31), futureTime(32), futureTime(33)}
+	signals := []string{"oldest", "middle", "newest"}
+	for i, tm := range times {
+		cleanupAtTime(t, pool, tm, "gem_signals", "gem_features")
+		if _, err := repo.SaveGemSignals(ctx, league.Historical(leagueID), []GemSignal{{
+			Time: tm, Name: name, Variant: variant,
+			Signal: signals[i], WindowSignal: "CLOSED", SellabilityLabel: "MODERATE", Tier: "LOW",
+		}}); err != nil {
+			t.Fatalf("SaveGemSignals at %v: %v", tm, err)
+		}
+	}
+
+	rings, err := repo.SignalHistoryWindow(ctx, league.Historical(leagueID), SignalHistoryDepth)
+	if err != nil {
+		t.Fatalf("SignalHistoryWindow: %v", err)
+	}
+
+	ring := rings[signalKey{name: name, variant: variant}]
+	got := make([]string, len(ring))
+	for i, c := range ring {
+		got[i] = c.Signal
+	}
+	if want := []string{"newest", "middle", "oldest"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ring signals = %v, want %v (newest first)", got, want)
 	}
 }
 

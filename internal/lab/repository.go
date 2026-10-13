@@ -972,8 +972,7 @@ func (r *Repository) SignalHistoryWindow(ctx context.Context, scope league.Scope
 		FROM ranked r
 		LEFT JOIN gem_features f
 		  ON f.league = $1 AND f.time = r.time AND f.name = r.name AND f.variant = r.variant
-		WHERE r.rn <= $2
-		ORDER BY r.time DESC`, scope.ID(), depth, signalHistorySeedMaxDays)
+		WHERE r.rn <= $2`, scope.ID(), depth, signalHistorySeedMaxDays)
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query signal history window: %w", err)
 	}
@@ -991,6 +990,16 @@ func (r *Repository) SignalHistoryWindow(ctx context.Context, scope league.Scope
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("lab repo: signal history window rows iteration: %w", err)
+	}
+
+	// Newest first per series, sorted here rather than by an ORDER BY time DESC
+	// on the query: with that ORDER BY, TimescaleDB 2.25.2 planned an ordered
+	// ChunkAppend over gem_features with its chunks newest first while labelling
+	// it ascending for the merge join, and the join failed with "mergejoin input
+	// data is out of order" (local and production, 2026-10-13). Without it the
+	// planner does not build that path; a series holds at most depth rows.
+	for _, ring := range out {
+		sort.Slice(ring, func(i, j int) bool { return ring[i].Time.After(ring[j].Time) })
 	}
 
 	return out, nil
