@@ -1,0 +1,680 @@
+{
+  "families": [
+    {
+      "id": "delirium",
+      "label": "Delirium Orbs",
+      "lifeforce": "Primal",
+      "rerollCost": 30,
+      "weights": {
+        "sample": {
+          "rolls": 5122,
+          "lifeforceSpent": 153720,
+          "date": "2026-10-09",
+          "source": "requester's HarvestForge log"
+        },
+        "types": [
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbWeapons",
+            "name": "Blacksmith's Delirium Orb",
+            "shortName": "Blacksmith's",
+            "loggedRolls": 1066
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbArmour",
+            "name": "Armoursmith's Delirium Orb",
+            "shortName": "Armoursmith's",
+            "loggedRolls": 1093
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbTrinkets",
+            "name": "Jeweller's Delirium Orb",
+            "shortName": "Jeweller's",
+            "loggedRolls": 1103
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbCurrency",
+            "name": "Fine Delirium Orb",
+            "shortName": "Fine",
+            "loggedRolls": 937
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbDivinationCards",
+            "name": "Diviner's Delirium Orb",
+            "shortName": "Diviner's",
+            "loggedRolls": 262
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbMaps",
+            "name": "Cartographer's Delirium Orb",
+            "shortName": "Cartographer's",
+            "loggedRolls": 123
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbEssences",
+            "name": "Whispering Delirium Orb",
+            "shortName": "Whispering",
+            "loggedRolls": 147
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbUniques",
+            "name": "Singular Delirium Orb",
+            "shortName": "Singular",
+            "loggedRolls": 102
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbGems",
+            "name": "Thaumaturge's Delirium Orb",
+            "shortName": "Thaumaturge's",
+            "loggedRolls": 56
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbFragments",
+            "name": "Fragmented Delirium Orb",
+            "shortName": "Fragmented",
+            "loggedRolls": 134
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbBlight",
+            "name": "Blighted Delirium Orb",
+            "shortName": "Blighted",
+            "loggedRolls": 51
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyAfflictionOrbScarabs",
+            "name": "Skittering Delirium Orb",
+            "shortName": "Skittering",
+            "loggedRolls": 48
+          }
+        ]
+      }
+    },
+    {
+      "id": "essence",
+      "label": "Deafening Essences",
+      "lifeforce": "Primal",
+      "rerollCost": 30,
+      "weights": {
+        "sample": {
+          "rolls": 5012,
+          "lifeforceSpent": 150420,
+          "date": "2026-10-09",
+          "source": "requester's HarvestForge log",
+          "uniform": true
+        },
+        "types": [
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceGreed7",
+            "name": "Deafening Essence of Greed",
+            "shortName": "Greed",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceContempt7",
+            "name": "Deafening Essence of Contempt",
+            "shortName": "Contempt",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceHatred7",
+            "name": "Deafening Essence of Hatred",
+            "shortName": "Hatred",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceWoe7",
+            "name": "Deafening Essence of Woe",
+            "shortName": "Woe",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceAnger6",
+            "name": "Deafening Essence of Anger",
+            "shortName": "Anger",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceWrath5",
+            "name": "Deafening Essence of Wrath",
+            "shortName": "Wrath",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceSorrow6",
+            "name": "Deafening Essence of Sorrow",
+            "shortName": "Sorrow",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceSpite4",
+            "name": "Deafening Essence of Spite",
+            "shortName": "Spite",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceScorn3",
+            "name": "Deafening Essence of Scorn",
+            "shortName": "Scorn",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceEnvy3",
+            "name": "Deafening Essence of Envy",
+            "shortName": "Envy",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceMisery3",
+            "name": "Deafening Essence of Misery",
+            "shortName": "Misery",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceDread3",
+            "name": "Deafening Essence of Dread",
+            "shortName": "Dread",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceZeal4",
+            "name": "Deafening Essence of Zeal",
+            "shortName": "Zeal",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceLoathing4",
+            "name": "Deafening Essence of Loathing",
+            "shortName": "Loathing",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceTorment6",
+            "name": "Deafening Essence of Torment",
+            "shortName": "Torment",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceFear6",
+            "name": "Deafening Essence of Fear",
+            "shortName": "Fear",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceRage5",
+            "name": "Deafening Essence of Rage",
+            "shortName": "Rage",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceDoubt5",
+            "name": "Deafening Essence of Doubt",
+            "shortName": "Doubt",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceSuffering5",
+            "name": "Deafening Essence of Suffering",
+            "shortName": "Suffering",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceAnguish4",
+            "name": "Deafening Essence of Anguish",
+            "shortName": "Anguish",
+            "loggedRolls": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "corrupt",
+      "label": "Corrupted Essences",
+      "lifeforce": "Primal",
+      "rerollCost": 30,
+      "weights": {
+        "sample": {
+          "rolls": null,
+          "lifeforceSpent": null,
+          "date": null,
+          "source": "none — assumed uniform (owner, 2026-10-10)",
+          "uniform": true
+        },
+        "types": [
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceHysteria1",
+            "name": "Essence of Hysteria",
+            "shortName": "Hysteria",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceInsanity1",
+            "name": "Essence of Insanity",
+            "shortName": "Insanity",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceHorror1",
+            "name": "Essence of Horror",
+            "shortName": "Horror",
+            "loggedRolls": null
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyEssenceDelirium1",
+            "name": "Essence of Delirium",
+            "shortName": "Delirium",
+            "loggedRolls": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "fossil",
+      "label": "Fossils",
+      "lifeforce": "Wild",
+      "rerollCost": 30,
+      "weights": {
+        "sample": {
+          "rolls": 10895,
+          "lifeforceSpent": 327270,
+          "date": "2026-10-12",
+          "source": "requester's HarvestForge log"
+        },
+        "types": [
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingLightning",
+            "name": "Metallic Fossil",
+            "shortName": "Metallic",
+            "loggedRolls": 1215
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingPhysical",
+            "name": "Jagged Fossil",
+            "shortName": "Jagged",
+            "loggedRolls": 1141
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingLife",
+            "name": "Pristine Fossil",
+            "shortName": "Pristine",
+            "loggedRolls": 1180
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingDefences",
+            "name": "Dense Fossil",
+            "shortName": "Dense",
+            "loggedRolls": 1184
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingCold",
+            "name": "Frigid Fossil",
+            "shortName": "Frigid",
+            "loggedRolls": 1142
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingFire",
+            "name": "Scorched Fossil",
+            "shortName": "Scorched",
+            "loggedRolls": 1137
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingMana",
+            "name": "Lucent Fossil",
+            "shortName": "Lucent",
+            "loggedRolls": 235
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingMinionsAuras",
+            "name": "Bound Fossil",
+            "shortName": "Bound",
+            "loggedRolls": 266
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingRandom",
+            "name": "Tangled Fossil",
+            "shortName": "Tangled",
+            "loggedRolls": 7
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingChaos",
+            "name": "Aberrant Fossil",
+            "shortName": "Aberrant",
+            "loggedRolls": 1180
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingElemental",
+            "name": "Prismatic Fossil",
+            "shortName": "Prismatic",
+            "loggedRolls": 266
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingQuality",
+            "name": "Opulent Fossil",
+            "shortName": "Opulent",
+            "loggedRolls": 290
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingBleedPoison",
+            "name": "Corroded Fossil",
+            "shortName": "Corroded",
+            "loggedRolls": 276
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingLuckyModRolls",
+            "name": "Sanctified Fossil",
+            "shortName": "Sanctified",
+            "loggedRolls": 28
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingGemLevel",
+            "name": "Faceted Fossil",
+            "shortName": "Faceted",
+            "loggedRolls": 4
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingAbyss",
+            "name": "Hollow Fossil",
+            "shortName": "Hollow",
+            "loggedRolls": 4
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingMirror",
+            "name": "Fractured Fossil",
+            "shortName": "Fractured",
+            "loggedRolls": 11
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingCorruptEssence",
+            "name": "Glyphic Fossil",
+            "shortName": "Glyphic",
+            "loggedRolls": 5
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingSpeed",
+            "name": "Shuddering Fossil",
+            "shortName": "Shuddering",
+            "loggedRolls": 260
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingVaal",
+            "name": "Bloodstained Fossil",
+            "shortName": "Bloodstained",
+            "loggedRolls": 8
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingSellPrice",
+            "name": "Gilded Fossil",
+            "shortName": "Gilded",
+            "loggedRolls": 19
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingEnchant",
+            "name": "Deft Fossil",
+            "shortName": "Deft",
+            "loggedRolls": 269
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingAttackMods",
+            "name": "Serrated Fossil",
+            "shortName": "Serrated",
+            "loggedRolls": 245
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingCasterMods",
+            "name": "Aetheric Fossil",
+            "shortName": "Aetheric",
+            "loggedRolls": 251
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyDelveCraftingSockets",
+            "name": "Fundamental Fossil",
+            "shortName": "Fundamental",
+            "loggedRolls": 272
+          }
+        ]
+      },
+      "_note": "Weights from the requester's HarvestForge log, committed byte-identical at desktop/src/lib/harvest/__fixtures__/harvestforge/HarvestForge_Fossils_20261012_161243.csv. It replaces the 2026-10-09 log, which missed Tangled, Prismatic, Opulent, Serrated and Aetheric; rerollCost 30 and lifeforceSpent from the footer (Operator: correct data, 2026-10-12). Prices of the five added types: same method and window as the rest (Currency Exchange pooled VWAP, 25 clock hours 2026-09-08 00:00 to 2026-09-09 00:00 UTC, league Allflame, local database), checked by reproducing the committed Hollow and Metallic prices exactly; Opulent has no divine-market trade in the window. Tiers in harvest-tiers.json."
+    },
+    {
+      "id": "astrolabe",
+      "label": "Astrolabes",
+      "lifeforce": "Wild",
+      "rerollCost": 400,
+      "weights": {
+        "sample": {
+          "rolls": 2010,
+          "lifeforceSpent": 804000,
+          "date": "2026-10-10",
+          "source": "requester's HarvestForge log"
+        },
+        "types": [
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeUltimatum",
+            "name": "Chaotic Astrolabe",
+            "shortName": "Chaotic",
+            "loggedRolls": 202
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeDelirium",
+            "name": "Deceptive Astrolabe",
+            "shortName": "Deceptive",
+            "loggedRolls": 221
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeHarvest",
+            "name": "Fruiting Astrolabe",
+            "shortName": "Fruiting",
+            "loggedRolls": 243
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeBlight",
+            "name": "Fungal Astrolabe",
+            "shortName": "Fungal",
+            "loggedRolls": 205
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeBreach",
+            "name": "Grasping Astrolabe",
+            "shortName": "Grasping",
+            "loggedRolls": 242
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeAbyss",
+            "name": "Lightless Astrolabe",
+            "shortName": "Lightless",
+            "loggedRolls": 228
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeRitual",
+            "name": "Nameless Astrolabe",
+            "shortName": "Nameless",
+            "loggedRolls": 236
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeExpedition",
+            "name": "Runic Astrolabe",
+            "shortName": "Runic",
+            "loggedRolls": 187
+          },
+          {
+            "itemId": "Metadata/Items/Currency/AstrolabeLegion",
+            "name": "Timeless Astrolabe",
+            "shortName": "Timeless",
+            "loggedRolls": 246
+          }
+        ]
+      },
+      "_note": "Weights from the requester's HarvestForge log, committed byte-identical at desktop/src/lib/harvest/__fixtures__/harvestforge/HarvestForge_Astrolabes_20261010_134926.csv. HarvestForge's CSV footer undercounts lifeforce spent (it says Wild 60360); rerollCost 400 and lifeforceSpent 804000 are the Operator's values of 2026-10-10. Prices and tiers: Currency Exchange pooled VWAP over 25 clock hours 2026-09-08 00:00 to 2026-09-09 00:00 UTC (league Allflame), tiers in harvest-tiers.json, generated by cmd/harvest-tiers through internal/price/tier with no price cutoff, one group per family; queries in the HARVEST-DATA lane record, 2026-10-10."
+    },
+    {
+      "id": "oil",
+      "label": "Oils",
+      "lifeforce": "Vivid",
+      "rerollCost": 30,
+      "weights": {
+        "sample": {
+          "rolls": 2602,
+          "lifeforceSpent": 78180,
+          "date": "2026-10-10",
+          "source": "requester's HarvestForge log"
+        },
+        "types": [
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune1",
+            "name": "Clear Oil",
+            "shortName": "Clear",
+            "loggedRolls": 717
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune2",
+            "name": "Sepia Oil",
+            "shortName": "Sepia",
+            "loggedRolls": 597
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune3",
+            "name": "Amber Oil",
+            "shortName": "Amber",
+            "loggedRolls": 407
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune4",
+            "name": "Verdant Oil",
+            "shortName": "Verdant",
+            "loggedRolls": 349
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune5",
+            "name": "Teal Oil",
+            "shortName": "Teal",
+            "loggedRolls": 167
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune6",
+            "name": "Azure Oil",
+            "shortName": "Azure",
+            "loggedRolls": 101
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune6b",
+            "name": "Indigo Oil",
+            "shortName": "Indigo",
+            "loggedRolls": 77
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune7",
+            "name": "Violet Oil",
+            "shortName": "Violet",
+            "loggedRolls": 66
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune8",
+            "name": "Crimson Oil",
+            "shortName": "Crimson",
+            "loggedRolls": 52
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune9",
+            "name": "Black Oil",
+            "shortName": "Black",
+            "loggedRolls": 33
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune10",
+            "name": "Opalescent Oil",
+            "shortName": "Opalescent",
+            "loggedRolls": 24
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune11",
+            "name": "Silver Oil",
+            "shortName": "Silver",
+            "loggedRolls": 9
+          },
+          {
+            "itemId": "Metadata/Items/Currency/Mushrune12",
+            "name": "Golden Oil",
+            "shortName": "Golden",
+            "loggedRolls": 3
+          }
+        ]
+      },
+      "_note": "Weights from the requester's HarvestForge log, committed byte-identical at desktop/src/lib/harvest/__fixtures__/harvestforge/HarvestForge_Oils_20261010_000148.csv. HarvestForge's CSV footer undercounts lifeforce spent on the Astrolabe and Catalyst logs; the log registered Primal but the lifeforce is Vivid; 30 per reroll and 78180 spent are correct (Operator, 2026-10-10, P48 closed). Prices and tiers: Currency Exchange pooled VWAP over 25 clock hours 2026-09-08 00:00 to 2026-09-09 00:00 UTC (league Allflame), tiers in harvest-tiers.json, generated by cmd/harvest-tiers through internal/price/tier with no price cutoff, one group per family; queries in the HARVEST-DATA lane record, 2026-10-10."
+    },
+    {
+      "id": "catalyst",
+      "label": "Catalysts",
+      "lifeforce": "Vivid",
+      "rerollCost": 30,
+      "weights": {
+        "sample": {
+          "rolls": 2500,
+          "lifeforceSpent": 75120,
+          "date": "2026-10-10",
+          "source": "requester's HarvestForge log"
+        },
+        "types": [
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityResource",
+            "name": "Fertile Catalyst",
+            "shortName": "Fertile",
+            "loggedRolls": 111
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityResistance",
+            "name": "Prismatic Catalyst",
+            "shortName": "Prismatic",
+            "loggedRolls": 107
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityAttribute",
+            "name": "Intrinsic Catalyst",
+            "shortName": "Intrinsic",
+            "loggedRolls": 609
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityPhysicalChaos",
+            "name": "Noxious Catalyst",
+            "shortName": "Noxious",
+            "loggedRolls": 367
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityCaster",
+            "name": "Imbued Catalyst",
+            "shortName": "Imbued",
+            "loggedRolls": 329
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityElemental",
+            "name": "Turbulent Catalyst",
+            "shortName": "Turbulent",
+            "loggedRolls": 343
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityAttack",
+            "name": "Abrasive Catalyst",
+            "shortName": "Abrasive",
+            "loggedRolls": 326
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualitySpeed",
+            "name": "Accelerating Catalyst",
+            "shortName": "Accelerating",
+            "loggedRolls": 100
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityDefense",
+            "name": "Tempering Catalyst",
+            "shortName": "Tempering",
+            "loggedRolls": 97
+          },
+          {
+            "itemId": "Metadata/Items/Currency/CurrencyJewelleryQualityCritical",
+            "name": "Unstable Catalyst",
+            "shortName": "Unstable",
+            "loggedRolls": 111
+          }
+        ]
+      },
+      "_note": "Weights from the requester's HarvestForge log, committed byte-identical at desktop/src/lib/harvest/__fixtures__/harvestforge/HarvestForge_Catalysts_20261010_023020.csv. HarvestForge's CSV footer undercounts lifeforce spent (it says Wild 25040) and registered Wild, but the lifeforce is Vivid (a tester's report, 2026-10-12); rerollCost 30 and lifeforceSpent 75120 are the Operator's values of 2026-10-10. Prices and tiers: Currency Exchange pooled VWAP over 25 clock hours 2026-09-08 00:00 to 2026-09-09 00:00 UTC (league Allflame), tiers in harvest-tiers.json, generated by cmd/harvest-tiers through internal/price/tier with no price cutoff, one group per family; queries in the HARVEST-DATA lane record, 2026-10-10."
+    }
+  ]
+}
