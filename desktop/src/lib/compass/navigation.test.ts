@@ -10,6 +10,7 @@ import {
 	deriveRoomDoors,
 	getNextExitText,
 	getNextDirection,
+	resolveRouteDoors,
 	routeCost,
 	type LabLayout,
 	type RouteStrategy,
@@ -18,6 +19,8 @@ import {
 import cruel20260801 from './__fixtures__/poelab-prod-2026-08-01-cruel.json';
 import uber20260802 from './__fixtures__/poelab-prod-2026-08-02-uber.json';
 import merciless20180109 from './__fixtures__/poelab-2018-01-09-merciless.json';
+import uber20260728 from './__fixtures__/poelab-prod-2026-07-28-uber.json';
+import { getPresetByAreaCode, resolvePreset } from './room-presets';
 
 /** Graph door markers of a layout, from its normalized connections. */
 function doorsOf(layout: LabLayout): Map<string, [string, string][]> {
@@ -1212,4 +1215,70 @@ describe('deriveRoomDoors reverse markers', () => {
 		]);
 		expect(doorsOf(layout).get('x')).toEqual([]);
 	});
+});
+
+describe('resolveRouteDoors', () => {
+	// 2026-07-28 Uber, planned route 1>3>4>3>5>6>8>10>11>14>16; trials 5, 10, 16.
+	const july28 = uber20260728 as unknown as LabLayout;
+	const route = ['1', '3', '4', '3', '5', '6', '8', '10', '11', '14', '16'];
+	const doorsOf = (roomId: string, plannedRoute: string[], previous: string | null, areaCode: string | null) =>
+		resolveRouteDoors(july28.rooms, plannedRoute, roomId, previous, areaCode ? getPresetByAreaCode(areaCode) : null);
+
+	it('gives entry and exit doors of a room mid-route', () => {
+		// c_branch_bottleneck_1 (S, NW, N): own exits NE>10 to N, NW>9 to NW; the
+		// unknown reverse from 6 takes the door left over, S.
+		expect(doorsOf('8', route, null, 'c_branch_bottleneck_1')).toEqual({ entry: 'S', exit: 'N' });
+	});
+
+	it('gives no entry door for the first room after a trial, whose gate does not open back', () => {
+		// dg_branch_bottleneck_1 (S, W, NE): NE>8 stays NE.
+		expect(doorsOf('6', route, null, 'dg_branch_bottleneck_1')).toEqual({ entry: null, exit: 'NE' });
+	});
+
+	it('leaves a dead end by the door it entered through', () => {
+		// rt_end_bottleneck has one door, NE; the reverse from 3 takes it.
+		expect(doorsOf('4', route, null, 'rt_end_bottleneck')).toEqual({ entry: 'NE', exit: 'NE' });
+	});
+
+	it('takes the entry from the previous room when the route starts at the room', () => {
+		// A route replanned from room 3 after the dead end 4. eh_quad_door
+		// (SE, W, NW, N): N>4 to NW, NE>5 to N, NW>2 to W (cost 3; keeping N
+		// on N would send NE to NW, two steps, cost 5).
+		expect(doorsOf('3', ['3', '5', '6'], '4', 'eh_quad_door')).toEqual({ entry: 'NW', exit: 'N' });
+	});
+
+	it('normalizes against the variant asked for, not only the one resolvePreset picks', () => {
+		// Room 14 has no area code and three Estate Walkways variants: no preset resolves.
+		const room = july28.rooms.find((r) => r.id === '14')!;
+		expect(resolvePreset(room)).toBeNull();
+		// Own exits N>15, NE>16; the unknown reverse from 11 takes the door left over.
+		expect(doorsOf('14', route, null, 'oh_branch')).toEqual({ entry: 'SE', exit: 'NE' });
+		expect(doorsOf('14', route, null, 'oh_branch_bottleneck_2')).toEqual({ entry: 'S', exit: 'N' });
+		// No variant: the layout's own direction, and the reverse stays unknown.
+		expect(doorsOf('14', route, null, null)).toEqual({ entry: null, exit: 'NE' });
+	});
+
+	it('gives neither door for a room off the route, even one connected to the previous room', () => {
+		// Room 7 is a dead end off 6, so a fallback to previous room 6 would find its reverse door.
+		expect(doorsOf('7', route, '6', 'eh_end_bottleneck')).toEqual({ entry: null, exit: null });
+	});
+
+	// The compass exit was getNextDirection before the resolver; it must not move.
+	const layouts = import.meta.glob('./__fixtures__/poelab-*.json', { eager: true, import: 'default' }) as Record<string, LabLayout>;
+	for (const [path, layout] of Object.entries(layouts)) {
+		it(`gives the compass the same exit as getNextDirection on every route step of ${path.split('/').pop()}`, () => {
+			const state = loadLayout(createNavState(), layout);
+			const planned = state.plannedRoute;
+			expect(planned.length).toBeGreaterThan(1);
+			for (let i = 0; i < planned.length; i++) {
+				// The full route, and the route as replanned from this step.
+				for (const plannedRoute of [planned, planned.slice(i)]) {
+					const step = { ...state, currentRoom: planned[i], previousRoom: planned[i - 1] ?? null, plannedRoute };
+					const room = state.roomById.get(planned[i])!;
+					const doors = resolveRouteDoors(layout.rooms, plannedRoute, room.id, step.previousRoom, resolvePreset(room));
+					expect(doors.exit, `${path} step ${i}`).toBe(getNextDirection(step));
+				}
+			}
+		});
+	}
 });

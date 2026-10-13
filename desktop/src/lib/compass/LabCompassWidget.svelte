@@ -7,7 +7,7 @@
 		createNavState,
 		loadLayout,
 		handleNavEvent,
-		getNextDirection,
+		resolveRouteDoors,
 		getNextExitText,
 		getRoomContents,
 		setStrategy,
@@ -53,7 +53,15 @@
 	// physical doors are in the room SVG). The target is the door the next
 	// room's connection was normalized onto at layout load.
 	let doors = $derived<DoorExitLocation[]>(preset ? getDoorExitLocations(preset) : []);
-	let navDirection = $derived(getNextDirection(navState));
+	// Entry and exit doors from the resolver the room editor uses too, against
+	// the same preset, so the two views cannot disagree.
+	let routeDoors = $derived(
+		currentRoom && navState.layout
+			? resolveRouteDoors(navState.layout.rooms, navState.plannedRoute, currentRoom.id, navState.previousRoom, preset)
+			: { entry: null, exit: null },
+	);
+	let navDirection = $derived(routeDoors.exit);
+	let entryDirection = $derived(routeDoors.entry);
 	// Route guidance needs no preset: a room without one keeps its layout direction.
 	let targetDirection = $derived(navDirection);
 	// Content positions shown only for the loot the room holds; 'C' as the way
@@ -97,7 +105,7 @@
 		navState = handleNavEvent(navState, event as NavEvent);
 		if (navState.currentRoom) {
 			const room = navState.roomById.get(navState.currentRoom);
-			logToApp(`[compass] room=${room?.name} id=${navState.currentRoom} route=${navState.plannedRoute.slice(0,4).join('>')} navDir=${navDirection} targetDir=${targetDirection}`);
+			logToApp(`[compass] room=${room?.name} id=${navState.currentRoom} route=${navState.plannedRoute.slice(0,4).join('>')} navDir=${navDirection} targetDir=${targetDirection} entryDir=${entryDirection}`);
 		}
 
 		switch (event.type) {

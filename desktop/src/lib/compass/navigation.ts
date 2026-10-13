@@ -8,7 +8,7 @@
  * page calls these and stores the result in $state.
  */
 
-import { normalizeDirections, resolvePreset, type RoomConnection } from './room-presets';
+import { normalizeDirections, resolvePreset, type RoomConnection, type RoomPreset } from './room-presets';
 
 // --- Types ---
 
@@ -279,14 +279,33 @@ function deriveLockedDoors(
  * Port of upstream loadConnectionMatrix (labyrinthdata.cpp:228-290) followed by
  * normalizeDoorDirections (:88-109).
  *
- * Connections: the room's own non-'C' exits; a '' (unknown) reverse for each
- * neighbour that exits into it when it has no exit of its own back, except a
- * trial's exit into a section's first room; then its 'C' exits. A room with no
- * preset keeps its directions as the layout gives them.
+ * Connections: `deriveConnections`. A room with no preset keeps its
+ * directions as the layout gives them.
  *
  * Preset: `resolvePreset`.
  */
 function deriveExitDirections(
+	rooms: LabLayoutRoom[],
+	sectionFirstRooms: Set<string>,
+): Map<string, RoomConnection[]> {
+	const connections = deriveConnections(rooms, sectionFirstRooms);
+	const normalized = new Map<string, RoomConnection[]>();
+	for (const room of rooms) {
+		const preset = resolvePreset(room);
+		const own = connections.get(room.id)!;
+		normalized.set(room.id, preset ? normalizeDirections(own, preset.doorLocations) : own);
+	}
+	return normalized;
+}
+
+/**
+ * Every room's connections as the layout gives them, before normalization
+ * (upstream loadConnectionMatrix, labyrinthdata.cpp:228-290): the room's own
+ * non-'C' exits; a '' (unknown) reverse for each neighbour that exits into it
+ * when it has no exit of its own back, except a trial's exit into a section's
+ * first room; then its 'C' exits.
+ */
+function deriveConnections(
 	rooms: LabLayoutRoom[],
 	sectionFirstRooms: Set<string>,
 ): Map<string, RoomConnection[]> {
@@ -313,14 +332,7 @@ function deriveExitDirections(
 			if (direction === 'C') connections.get(room.id)!.push({ roomId, direction });
 		}
 	}
-
-	const normalized = new Map<string, RoomConnection[]>();
-	for (const room of rooms) {
-		const preset = resolvePreset(room);
-		const own = connections.get(room.id)!;
-		normalized.set(room.id, preset ? normalizeDirections(own, preset.doorLocations) : own);
-	}
-	return normalized;
+	return connections;
 }
 
 const isTrialRoom = (room: LabLayoutRoom) => room.name.toLowerCase() === "aspirant's trial";
@@ -1192,6 +1204,49 @@ function nextConnection(state: NavState): RoomConnection | null {
  */
 export function getNextDirection(state: NavState): string | null {
 	return nextConnection(state)?.direction || null;
+}
+
+/** The doors a room on the route is entered and left by. */
+export interface RouteDoors {
+	/** Preset door, 'C', or null when unknown or there is no previous room. */
+	entry: string | null;
+	/** Preset door, 'C', or null when unknown or there is no next room. */
+	exit: string | null;
+}
+
+/**
+ * Through which door of `preset` the player enters room `roomId` on `route`,
+ * and through which they leave it — the one answer the compass and the room
+ * editor both draw. `preset` is any variant of the room, not only the one
+ * `resolvePreset` picks; null keeps the layout's own directions, as
+ * `NavState.exitDirections` does for a room with no preset.
+ *
+ * The neighbours are the rooms before and after the first occurrence of
+ * `roomId` on the route (`nextConnection` takes the first one too); the room
+ * before falls back to `previousRoomId` when the route starts at the room. A
+ * room not on the route has neither door. Connections come from `deriveConnections`, normalized onto
+ * the variant's doors; with the variant `resolvePreset` picks, the exit equals
+ * `getNextDirection`. A door into the first room after a trial is null: the
+ * trial gate gives that room no connection back.
+ */
+export function resolveRouteDoors(
+	rooms: LabLayoutRoom[],
+	route: string[],
+	roomId: string,
+	previousRoomId: string | null,
+	preset: RoomPreset | null,
+): RouteDoors {
+	const own = deriveConnections(rooms, computeSectionFirstRooms(rooms)).get(roomId) ?? [];
+	const connections = preset ? normalizeDirections(own, preset.doorLocations) : own;
+	const doorTo = (neighbourId: string | null | undefined) =>
+		(neighbourId != null && connections.find((c) => c.roomId === neighbourId)?.direction) || null;
+
+	const index = route.indexOf(roomId);
+	if (index < 0) return { entry: null, exit: null };
+	return {
+		entry: doorTo(index > 0 ? route[index - 1] : previousRoomId),
+		exit: doorTo(route[index + 1]),
+	};
 }
 
 const OPPOSITE_DIR: Record<string, string> = {
