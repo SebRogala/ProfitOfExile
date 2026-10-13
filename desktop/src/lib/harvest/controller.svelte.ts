@@ -26,8 +26,7 @@ import { persisted, type PersistedString } from '$lib/prefs.svelte';
 import { currentDivineRate } from '$lib/stores/divine-rate.svelte';
 import type { Pick } from './engine';
 import type { ExchangePriceRead, HarvestFamilyData, LoadExchangePrices, LoadHarvestFamilies } from './seam';
-import { loadExchangePrices } from './sources/exchange-fixture';
-import { loadHarvestFamilies } from './sources/harvest-fixture';
+import { createHarvestHttp } from './sources/harvest-http';
 import {
 	DEFAULT_FAMILY_ID,
 	applyPick,
@@ -78,9 +77,10 @@ export interface HarvestControllerDependencies {
 
 /** Built per controller: `persisted()` starts its prefs load, so nothing runs at import. */
 export function productionDependencies(): HarvestControllerDependencies {
+	const http = createHarvestHttp();
 	return {
-		loadExchangePrices,
-		loadHarvestFamilies,
+		loadExchangePrices: http.loadExchangePrices,
+		loadHarvestFamilies: http.loadHarvestFamilies,
 		prefs: {
 			picks: persisted(PICKS_PREF, '{}'),
 			horizon: persisted(HORIZON_PREF, 'day'),

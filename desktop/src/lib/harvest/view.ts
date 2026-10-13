@@ -488,6 +488,7 @@ export interface CostPanel {
 export function costPanel(family: HarvestFamily, exchange: ExchangePriceRead): CostPanel | null {
 	if (!family.lifeforce || family.rerollCost === null) return null;
 	const lifeforce = exchange.lifeforce[family.lifeforce];
+	if (!lifeforce) return null;
 	const cost = family.rerollCost * lifeforce.chaos;
 	const label = `${family.lifeforce} lifeforce (${lifeforce.colour})`;
 	return {
@@ -697,6 +698,7 @@ function familyBody(input: PageInput, family: HarvestFamily, exchange: ExchangeP
 	const cost = costPanel(family, exchange);
 	if (!family.weights || !family.lifeforce || !cost) return noDataBody(family);
 	const lifeforce = exchange.lifeforce[family.lifeforce];
+	if (!lifeforce) return noDataBody(family);
 	const types = familyTypes(family.weights);
 	const prices = new Map(types.map((t) => [t.itemId, priceOf(exchange.prices, t.itemId)]));
 	const lastSeen = new Map(

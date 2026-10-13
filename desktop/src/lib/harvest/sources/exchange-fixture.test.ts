@@ -39,11 +39,11 @@ describe('exchange fixture adapter', () => {
 	});
 
 	it('serves Primal lifeforce as the blue colour', async () => {
-		expect((await load('day')).lifeforce.Primal.colour).toBe('blue');
+		expect((await load('day')).lifeforce.Primal?.colour).toBe('blue');
 	});
 
 	it('serves the Primal lifeforce chaos price essences pay', async () => {
-		expect((await load('day')).lifeforce.Primal.chaos).toBe(0.049);
+		expect((await load('day')).lifeforce.Primal?.chaos).toBe(0.049);
 	});
 
 	it('prices Fine Delirium Orb by its itemId', async () => {
@@ -78,8 +78,10 @@ describe('exchange fixture adapter', () => {
 
 	it('hands out fresh lifeforce so a caller mutating one read cannot change the next', async () => {
 		const first = await load('day');
-		first.lifeforce.Wild.perDivine = 1;
+		const wild = first.lifeforce.Wild;
+		if (!wild) throw new Error('no Wild lifeforce in the fixture');
+		wild.perDivine = 1;
 		const second = await load('day');
-		expect(second.lifeforce.Wild.perDivine).toBe(9905);
+		expect(second.lifeforce.Wild?.perDivine).toBe(9905);
 	});
 });

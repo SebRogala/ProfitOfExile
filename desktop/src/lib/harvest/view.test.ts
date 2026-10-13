@@ -91,10 +91,9 @@ function card(body: FamilyBody, side: 'feeders' | 'keepers', tier: string) {
 
 /** Test-local exchange data: Primal at 8/30c makes a 30-Primal reroll cost 8c (the WI-1 not-worth-it input). */
 function atEightChaosPerReroll(exchange: ExchangePriceRead): ExchangePriceRead {
-	return {
-		...exchange,
-		lifeforce: { ...exchange.lifeforce, Primal: { ...exchange.lifeforce.Primal, chaos: 8 / 30 } }
-	};
+	const primal = exchange.lifeforce.Primal;
+	if (!primal) throw new Error('no Primal lifeforce in the fixture');
+	return { ...exchange, lifeforce: { ...exchange.lifeforce, Primal: { ...primal, chaos: 8 / 30 } } };
 }
 
 function withPrice(
@@ -1049,9 +1048,11 @@ describe('headline EV tone (C17)', () => {
 describe('cost caption to three decimals (C10)', () => {
 	it('prints a live 0.03 as 0.030c', async () => {
 		const base = await input();
+		const wild = base.exchange!.lifeforce.Wild;
+		if (!wild) throw new Error('no Wild lifeforce in the fixture');
 		const exchange = {
 			...base.exchange!,
-			lifeforce: { ...base.exchange!.lifeforce, Wild: { ...base.exchange!.lifeforce.Wild, chaos: 0.03 } }
+			lifeforce: { ...base.exchange!.lifeforce, Wild: { ...wild, chaos: 0.03 } }
 		};
 		expect(family(pageView({ ...base, exchange })).cost.caption).toBe(
 			'chaos side 0.030c each; divine side from the lifeforce/divine market'
@@ -1274,6 +1275,14 @@ describe('page states (reference 08 §1–4, §9)', () => {
 		expect(view.status?.text).toBe(
 			'updated 6 min ago · prices: Currency Exchange, Day 24h · 1 div = 360c · weights: no log yet'
 		);
+	});
+
+	it('Fossils with no Wild lifeforce price show the no-data body', async () => {
+		const base = await input();
+		const lifeforce = { ...base.exchange!.lifeforce };
+		delete lifeforce.Wild;
+		const view = pageView({ ...base, exchange: { ...base.exchange!, lifeforce } });
+		expect(view.body).toMatchObject({ kind: 'no-data', title: 'Fossils: reroll weights not logged yet' });
 	});
 
 	it('lists every fixture family as a tab, none of them without weights', async () => {

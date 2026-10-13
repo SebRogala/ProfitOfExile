@@ -47,7 +47,8 @@ export interface ExchangePriceRead {
 	divineChaosRate: number;
 	/** Keyed by itemId; read with `Object.hasOwn`. */
 	prices: Record<string, ExchangeItemPrice>;
-	lifeforce: Record<LifeforceColour, LifeforcePrice>;
+	/** A colour with no price is omitted (D6). */
+	lifeforce: Partial<Record<LifeforceColour, LifeforcePrice>>;
 }
 
 export interface HarvestWeightSample {

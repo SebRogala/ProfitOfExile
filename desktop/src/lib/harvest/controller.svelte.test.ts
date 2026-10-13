@@ -662,3 +662,54 @@ describe('createHarvestController — before prices', () => {
 		expect(controller.view.stateLine).toBe("Couldn't reach the server");
 	});
 });
+
+describe('productionDependencies wiring', () => {
+	it('serves both ports from one GET /api/harvest?horizon=day read', async () => {
+		const response: import('$lib/api').HarvestResponse = {
+			prices: {
+				league: 'TestLeague',
+				horizon: 'day',
+				lastUpdated: null,
+				priceHour: '2026-10-13T08:00:00Z',
+				warm: true,
+				divineChaosRate: 100,
+				prices: {},
+				lifeforce: {}
+			},
+			families: {
+				warm: true,
+				families: [
+					{
+						id: 'wiring',
+						label: 'wiring-family',
+						lifeforce: null,
+						rerollCost: null,
+						weights: null,
+						tiers: null,
+						note: null
+					}
+				]
+			}
+		};
+		const originalFetch = globalThis.fetch;
+		const fetchMock = vi.fn(async (_url: string) => ({
+			ok: true,
+			json: async () => response
+		}));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		try {
+			const deps = productionDependencies();
+			const [prices, families] = await Promise.all([
+				deps.loadExchangePrices('day'),
+				deps.loadHarvestFamilies('day')
+			]);
+			expect(fetchMock).toHaveBeenCalledTimes(1);
+			expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/api\/harvest\?horizon=day$/);
+			expect(prices.priceHour).toBe('2026-10-13T08:00:00Z');
+			expect(prices.league).toBe('TestLeague');
+			expect(families.families[0].label).toBe('wiring-family');
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+});

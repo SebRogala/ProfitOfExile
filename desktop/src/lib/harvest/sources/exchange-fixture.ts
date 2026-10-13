@@ -1,6 +1,6 @@
 /**
+ * Test fixture — production reads `harvest-http.ts` (POE-286).
  * Currency Exchange fixture adapter — the mock behind `LoadExchangePrices`.
- * Going live replaces this file with a fetch of the server's read model.
  *
  * The fixture states its age as `updatedMinutesAgo`, which is not a server
  * shape: the adapter turns it into `lastUpdated = now − minutes`. Both horizons

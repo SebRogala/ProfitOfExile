@@ -7,7 +7,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
-import type { HarvestController } from '$lib/harvest/controller.svelte';
+import type { HarvestController, HarvestControllerDependencies } from '$lib/harvest/controller.svelte';
 import type { ExchangePriceRead, HarvestFamily, HarvestFamilyData } from '$lib/harvest/seam';
 import { loadExchangePrices } from '$lib/harvest/sources/exchange-fixture';
 import { loadHarvestFamilies } from '$lib/harvest/sources/harvest-fixture';
@@ -51,6 +51,11 @@ const FAMILY_LABELS = [
 	'Catalysts'
 ];
 
+/** Production deps with both ports on the fixture adapters, so no page test reaches `GET /api/harvest`. */
+function fixtureDependencies(): HarvestControllerDependencies {
+	return { ...productionDependencies(), loadExchangePrices, loadHarvestFamilies };
+}
+
 function never<T>(): Promise<T> {
 	return new Promise<T>(() => {});
 }
@@ -67,7 +72,7 @@ async function settle(): Promise<void> {
 /** Neither port has answered. */
 function renderBeforeAnyPort(): string {
 	const controller = createHarvestController({
-		...productionDependencies(),
+		...fixtureDependencies(),
 		loadExchangePrices: () => never<ExchangePriceRead>(),
 		loadHarvestFamilies: () => never<HarvestFamilyData>()
 	});
@@ -79,7 +84,7 @@ function renderBeforeAnyPort(): string {
 /** Harvest has answered (tabs and weights ship with the app); prices have not. */
 async function renderPricesPending(): Promise<string> {
 	const controller = createHarvestController({
-		...productionDependencies(),
+		...fixtureDependencies(),
 		loadExchangePrices: () => never<ExchangePriceRead>()
 	});
 	void controller.load();
@@ -90,7 +95,7 @@ async function renderPricesPending(): Promise<string> {
 
 /** Both fixture adapters answered: Fossils, reference 01. */
 async function renderPopulated(): Promise<string> {
-	const controller = createHarvestController(productionDependencies());
+	const controller = createHarvestController(fixtureDependencies());
 	await controller.load();
 	pageHarness.controller = controller;
 	return renderPage();
@@ -103,7 +108,7 @@ async function renderPopulated(): Promise<string> {
  */
 async function renderWithPrefs(restored: { family?: string; picks?: object }): Promise<string> {
 	const controller = createHarvestController({
-		...productionDependencies(),
+		...fixtureDependencies(),
 		prefs: {
 			picks: { value: JSON.stringify(restored.picks ?? {}) },
 			horizon: { value: 'day' },
@@ -129,7 +134,7 @@ const UNLOGGED: HarvestFamily = {
 /** The fixtures plus the test-local unlogged family, opened on `family`; prices pending unless `priced`. */
 async function renderWithUnlogged(opts: { family: string; priced: boolean }): Promise<string> {
 	const controller = createHarvestController({
-		...productionDependencies(),
+		...fixtureDependencies(),
 		...(opts.priced ? {} : { loadExchangePrices: () => never<ExchangePriceRead>() }),
 		loadHarvestFamilies: async (horizon) => {
 			const data = await loadHarvestFamilies(horizon);
@@ -153,7 +158,7 @@ async function renderWithUnlogged(opts: { family: string; priced: boolean }): Pr
 /** The fixtures, with the exchange read changed by `edit`. */
 async function renderWithExchange(edit: (read: ExchangePriceRead) => ExchangePriceRead): Promise<string> {
 	const controller = createHarvestController({
-		...productionDependencies(),
+		...fixtureDependencies(),
 		loadExchangePrices: async (horizon) => edit(await loadExchangePrices(horizon))
 	});
 	await controller.load();
@@ -164,7 +169,7 @@ async function renderWithExchange(edit: (read: ExchangePriceRead) => ExchangePri
 /** Harvest answered, the exchange rejected: never reached the server (reference 08 §4). */
 async function renderUnreachable(): Promise<string> {
 	const controller = createHarvestController({
-		...productionDependencies(),
+		...fixtureDependencies(),
 		loadExchangePrices: () => Promise.reject(new Error('server down'))
 	});
 	await controller.load();
@@ -176,7 +181,7 @@ async function renderUnreachable(): Promise<string> {
 async function renderStale(): Promise<string> {
 	let calls = 0;
 	const controller = createHarvestController({
-		...productionDependencies(),
+		...fixtureDependencies(),
 		loadExchangePrices: (horizon) =>
 			calls++ === 0 ? loadExchangePrices(horizon) : Promise.reject(new Error('server down'))
 	});
