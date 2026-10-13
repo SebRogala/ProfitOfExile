@@ -6,6 +6,8 @@ import (
 	"os"
 	"reflect"
 	"testing"
+
+	"profitofexile/internal/harvest"
 )
 
 const (
@@ -36,7 +38,7 @@ func TestGenerate_reproducesTheNoCutoffOracle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the oracle: %v", err)
 	}
-	var want map[string]familyTiers
+	var want map[string]harvest.FamilyTiers
 	if err := json.Unmarshal(raw, &want); err != nil {
 		t.Fatalf("decode the oracle: %v", err)
 	}
