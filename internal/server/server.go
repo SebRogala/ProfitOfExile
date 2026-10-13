@@ -13,6 +13,7 @@ import (
 
 	"profitofexile/internal/device"
 	"profitofexile/internal/exchange"
+	"profitofexile/internal/harvest"
 	"profitofexile/internal/icons"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
@@ -69,6 +70,8 @@ type RouterConfig struct {
 	// exchange.Service in cmd/server. May be nil — the handler then reads as
 	// COLD and answers 200 with no plays rather than failing.
 	ExchangeCache *exchange.Cache
+	// HarvestCache holds per-horizon Harvest prices and tiers; nil reads as cold.
+	HarvestCache *harvest.Cache
 	// AllowedOrigins for CORS (desktop app needs cross-origin access).
 	// Example: ["http://localhost:1420", "tauri://localhost"]
 	AllowedOrigins []string
@@ -225,6 +228,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	// analysis still serves currency-exchange plays. The handler treats a nil
 	// ExchangeCache as cold, so registration never depends on the wiring.
 	r.Get("/api/currency-exchange/plays", handlers.CurrencyExchangePlays(cfg.ExchangeCache))
+	r.Get("/api/harvest", handlers.Harvest(cfg.HarvestCache))
 
 	// Entitlements come from the device record the middleware attached, so this
 	// route needs no repository and is registered UNCONDITIONALLY — outside the
