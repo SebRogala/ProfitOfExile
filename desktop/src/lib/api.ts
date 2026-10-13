@@ -6,7 +6,6 @@
 import { store } from '$lib/stores/status.svelte';
 import type { TradeLookupResult } from './tradeApi';
 import type { ExchangePriceRead, HarvestFamilyData } from '$lib/harvest/seam';
-import { readDivineRateFixture } from './stores/divine-rate-fixture';
 import { getVersion } from '@tauri-apps/api/app';
 
 // --- Types ---
@@ -1124,13 +1123,23 @@ export interface DivineRate {
 }
 
 /**
- * Read the divine rate through its port. Today the body answers the design
- * handoff's fixture; going live replaces this body with the backend task's
- * real read and deletes `stores/divine-rate-fixture.ts` — the store, its pure
- * half and the top bar do not change.
+ * Read the divine rate through its port: the Currency Exchange's own rate
+ * (`GET /currency-exchange/divine-rate`). `state` is `ready` only when the
+ * server is warm and holds a rate; otherwise `cold`. Stale and unreachable
+ * detection is not done here (known gap F1): the store keeps its last
+ * snapshot when this rejects.
  */
 export async function fetchDivineRate(): Promise<DivineRate> {
-	return readDivineRateFixture(Date.now());
+	const body = await get<{ divineChaosRate: number | null; priceHour: string | null; warm: boolean }>(
+		'/currency-exchange/divine-rate'
+	);
+	return {
+		divineChaosRate: body.divineChaosRate,
+		priceHour: body.priceHour,
+		updatedAt: new Date().toISOString(),
+		state: body.warm && body.divineChaosRate !== null ? 'ready' : 'cold',
+		unreachableSince: null
+	};
 }
 
 // --- Mercure SSE ---

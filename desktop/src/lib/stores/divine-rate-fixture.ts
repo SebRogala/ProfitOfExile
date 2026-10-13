@@ -1,7 +1,5 @@
 /**
- * MOCK — the fixture adapter behind `fetchDivineRate()` (POE-284). Deleted at
- * go-live, when the backend task replaces that function's body with the real
- * read of owner `internal/exchange`; nothing else changes then.
+ * Test fixture — production reads GET /api/currency-exchange/divine-rate (POE-286).
  *
  * `DIVINE_RATE_FIXTURE` is the `rate` object of
  * `design/handoffs/poe-284--desktop-app--top-bar--divine-rate/fixtures.json`,

@@ -8,7 +8,7 @@ vi.mock('$lib/stores/status.svelte', () => ({
 	store: { status: { server_url: 'https://server.test', device_id: 'device-abc123' } }
 }));
 
-const { displayVariant, signalTransitionLabel, fetchCurrencyExchangePlays, fetchHarvest, mapCompareRow } = await import('./api');
+const { displayVariant, signalTransitionLabel, fetchCurrencyExchangePlays, fetchDivineRate, fetchHarvest, mapCompareRow } = await import('./api');
 
 import type { CurrencyExchangeLeg, CurrencyExchangeResponse } from './api';
 
@@ -581,5 +581,92 @@ describe('fetchHarvest', () => {
 		fetchMock.mockResolvedValue({ ok: false, status: 500, statusText: 'Internal Server Error' });
 
 		await expect(fetchHarvest('day')).rejects.toThrow('API /harvest: 500 Internal Server Error');
+	});
+});
+
+describe('fetchDivineRate', () => {
+	const NOW = '2026-10-13T12:00:00.000Z';
+
+	let originalFetch: typeof globalThis.fetch;
+	let fetchMock: ReturnType<typeof vi.fn>;
+
+	/** The URL and init of the single request the fetcher made. */
+	function request(): { url: URL; init: RequestInit } {
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const [url, init] = fetchMock.mock.calls[0];
+		return { url: new URL(url as string), init: (init ?? {}) as RequestInit };
+	}
+
+	/** Make the next request answer the server body the endpoint returns. */
+	function answer(body: { divineChaosRate: number | null; priceHour: string | null; warm: boolean }): void {
+		fetchMock.mockResolvedValue({ ok: true, json: async () => structuredClone(body) });
+	}
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date(NOW));
+		originalFetch = globalThis.fetch;
+		fetchMock = vi.fn();
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+		vi.useRealTimers();
+	});
+
+	it('maps a warm server rate to a ready divine rate', async () => {
+		answer({ divineChaosRate: 351.08, priceHour: '2026-10-13T11:00:00Z', warm: true });
+
+		expect(await fetchDivineRate()).toEqual({
+			divineChaosRate: 351.08,
+			priceHour: '2026-10-13T11:00:00Z',
+			updatedAt: NOW,
+			state: 'ready',
+			unreachableSince: null
+		});
+	});
+
+	it('maps a cold server answer to a cold divine rate with no rate or hour', async () => {
+		answer({ divineChaosRate: null, priceHour: null, warm: false });
+
+		expect(await fetchDivineRate()).toEqual({
+			divineChaosRate: null,
+			priceHour: null,
+			updatedAt: NOW,
+			state: 'cold',
+			unreachableSince: null
+		});
+	});
+
+	it('maps a warm answer without a rate to cold, keeping its hour', async () => {
+		answer({ divineChaosRate: null, priceHour: '2026-10-13T11:00:00Z', warm: true });
+
+		expect(await fetchDivineRate()).toEqual({
+			divineChaosRate: null,
+			priceHour: '2026-10-13T11:00:00Z',
+			updatedAt: NOW,
+			state: 'cold',
+			unreachableSince: null
+		});
+	});
+
+	it('requests the divine rate endpoint under the configured server API base with device headers', async () => {
+		answer({ divineChaosRate: null, priceHour: null, warm: false });
+
+		await fetchDivineRate();
+
+		const { url, init } = request();
+		expect(url.origin + url.pathname).toBe('https://server.test/api/currency-exchange/divine-rate');
+		expect(init.headers).toEqual({
+			'X-Device-ID': 'device-abc123',
+			'X-App-Version': '0.0.0-test'
+		});
+	});
+
+	it('throws on a failed request so the store keeps its last snapshot', async () => {
+		fetchMock.mockResolvedValue({ ok: false, status: 500, statusText: 'Internal Server Error' });
+
+		await expect(fetchDivineRate()).rejects.toThrow('API /currency-exchange/divine-rate: 500 Internal Server Error');
 	});
 });
