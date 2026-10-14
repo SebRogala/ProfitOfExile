@@ -950,6 +950,16 @@ const signalHistorySeedMaxDays = 14
 // Bounded twice over: to depth rows per series, and to signalHistorySeedMaxDays
 // so the time predicate prunes chunks — see that constant for what the window
 // means to a caller.
+//
+// The gem_features join repeats that time bound, though f.time = r.time already
+// implies it. Without it the planner scans every gem_features chunk, and on
+// production 2026-10-14 (TimescaleDB 2.25.2) it chose an ordered ChunkAppend
+// merge join that failed every time with "mergejoin input data is out of order"
+// (SQLSTATE XX000). Reading the chunks in primary-key order found no corruption,
+// and the query succeeded with timescaledb.enable_chunk_append off. With the
+// bound it pruned to three chunks, passed under custom and generic plans, and
+// returned the same rows; replayed locally on production's rows, 1.6 s against
+// 4-6 s.
 func (r *Repository) SignalHistoryWindow(ctx context.Context, scope league.Scope, depth int) (map[signalKey][]SignalChange, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, fmt.Errorf("lab repo: signal history window: %w", err)
@@ -972,6 +982,7 @@ func (r *Repository) SignalHistoryWindow(ctx context.Context, scope league.Scope
 		FROM ranked r
 		LEFT JOIN gem_features f
 		  ON f.league = $1 AND f.time = r.time AND f.name = r.name AND f.variant = r.variant
+		 AND f.time > NOW() - make_interval(days => $3)
 		WHERE r.rn <= $2`, scope.ID(), depth, signalHistorySeedMaxDays)
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query signal history window: %w", err)
