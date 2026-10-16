@@ -44,6 +44,8 @@ type GemPrice struct {
 	IsTransfigured bool
 	IsCorrupted    bool
 	GemColor       string
+	SampleCount    *int  // nil means the poe.ninja sample is unknown.
+	SparklineEmpty *bool // nil means the poe.ninja sparkline is unknown.
 }
 
 // AnalyzeTransfigure computes transfigure ROI for all base→transfigured pairs.

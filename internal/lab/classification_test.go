@@ -2,6 +2,49 @@ package lab
 
 import "testing"
 
+func TestGemPriceThinSample(t *testing.T) {
+	zero, two, three, five, six := 0, 2, 3, 5, 6
+	empty, populated := true, false
+	tests := []struct {
+		name string
+		gem  GemPrice
+		want bool
+	}{
+		{"count_two_with_populated_sparkline_is_thin", GemPrice{Name: "Ice Crash of Cadence", Variant: "20/20", SampleCount: &two, SparklineEmpty: &populated}, true},
+		{"zero_count_is_thin", GemPrice{SampleCount: &zero}, true},
+		{"count_five_is_thin", GemPrice{SampleCount: &five}, true},
+		{"count_six_is_not_thin", GemPrice{SampleCount: &six}, false},
+		{"count_three_with_empty_sparkline_is_thin", GemPrice{SampleCount: &three, SparklineEmpty: &empty}, true},
+		{"unknown_count_is_not_thin", GemPrice{}, false},
+		{"unknown_count_with_empty_sparkline_is_not_thin", GemPrice{SparklineEmpty: &empty}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.gem.ThinSample(); got != tt.want {
+				t.Errorf("ThinSample() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGemPriceThinSample_UsesEachVariantsSample(t *testing.T) {
+	thinCount, deepCount := 2, 40
+	tests := []struct {
+		gem  GemPrice
+		want bool
+	}{
+		{GemPrice{Name: "Ice Crash of Cadence", Variant: "20/20", SampleCount: &thinCount}, true},
+		{GemPrice{Name: "Ice Crash of Cadence", Variant: "1", SampleCount: &deepCount}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.gem.Variant, func(t *testing.T) {
+			if got := tt.gem.ThinSample(); got != tt.want {
+				t.Errorf("%s variant %s: ThinSample() = %v, want %v", tt.gem.Name, tt.gem.Variant, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestComputeGemClassification_LeavesOutCorruptedUntransfiguredAndLabCutoffGems(t *testing.T) {
 	gems := []GemPrice{
 		{Name: "Normal", Variant: "20/20", Chaos: 100, Listings: 50, IsTransfigured: true},

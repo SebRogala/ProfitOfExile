@@ -9,8 +9,17 @@ import "profitofexile/internal/price/tier"
 // markets classify with their own tier.Policy.
 const labTierCutoffChaos = 5
 
+// labThinSampleCount is the fixed poe.ninja sample threshold from POE-296 L6.
+const labThinSampleCount = 5
+
 // labPolicy is the tier policy every Lab pool classifies under.
 var labPolicy = tier.Policy{CutoffChaos: labTierCutoffChaos, HasCutoff: true}
+
+// ThinSample reports whether this variant's known poe.ninja sample is thin.
+// Unknown counts are not thin; sparkline emptiness does not decide it.
+func (g GemPrice) ThinSample() bool {
+	return g.SampleCount != nil && *g.SampleCount <= labThinSampleCount
+}
 
 // tierItems maps the gems that pass filter to tier items: the market is the
 // variant, the key the gem name, the depth its listing count.
