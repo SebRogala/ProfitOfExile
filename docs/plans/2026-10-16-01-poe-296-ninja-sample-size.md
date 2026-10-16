@@ -26,11 +26,11 @@ poe.ninja's gem endpoint serves a per-line sample size (`count`) and a price-his
 | Gate image `profitofexile-app:latest` and volume `profitofexile_go-pkg` | MET — `docker images` lists the image (7 weeks old); `docker volume ls` lists the volume | all |
 | Local TimescaleDB on the shared `postgres` container | MET — `SELECT extversion FROM pg_extension WHERE extname='timescaledb'` → `2.25.2` | WI-2, WI-4 |
 | Integration harness `scripts/integration-test.sh` (throwaway DB `profitofexile_integration` on the `infra` network) | MET — script read this session; it recreates the database and runs phase 1 (migrations) and phase 2 (every other package) | WI-2, WI-4 |
-| **E1** — `DB-backed tests:` field in pipeforge's WI-plan template | OPEN — lane DG (`lane/render-db-grant`) is not merged into pipeforge main a4323761. This plan uses the lane's syntax (`lane/render-db-grant:plugin/lib/wi-plan-template.md`, the `DB-backed tests:` bullet) | all |
-| **E2** — engine classifies a `*_test.go` path as a test path | OPEN — `isTestPath` (pipeforge `plugin/bin/lib/wi-scope.mjs:80-87`) matches `*.test.*`, `*.spec.*`, `*Test.php` and `test/`/`tests/`/`__tests__/` directories only, so `pipeforge wi-scope --plan <this plan> --wi WI-<n>` returns scope `code` for all four WIs, not `code-with-tests`. Lane DG stops a `code`-scope WI that carries `DB-backed tests:` before the renderer dispatch (`lane/render-db-grant:plugin/bin/commands/walk.test.mjs:12340`). Each WI keeps the field as its intent; a pipeforge fix or an Operator ruling decides whether it stays | all |
-| **E3** — engine reads a Go test red as `red-test`, or the Operator accepts park-on-red for this plan | OPEN — the engine parses Node and PHPUnit output only (`plugin/bin/lib/wi-gate-execution.mjs:51-52`); any other non-zero test exit is `gate-error` (`:101-106`) and the WI escalates (prep § 3). No Operator ruling on park-on-red is recorded | all |
-| **E4** — worktree-config row for workspace `main` with `homeBranch` and `databaseIdentity` | OPEN — the main checkout's workspace key is `main` (pipeforge `plugin/bin/lib/git.mjs:93-97`); `getWorktreeConfig {"workspace":"main"}` → `{"config": null}`. Unit-open `run-create` requires `databaseIdentity` and every `mini-deliver-wi` `run-create` requires `homeBranch`, else `WORKSPACE_VALUE_MISSING` (`plugin/bin/commands/run-create.mjs:259-268`). Operator act; draft in `engine-prep/worktree-config-draft.md` | all |
-| **E5** — the POE-295 route is readable under the workspace key the main checkout uses | OPEN — the POE-295 route (POE-296 `pending`) is saved under MCP workspace key `/var/www/ProfitOfExile` (`engine-prep/route-poe295.json`); key `main`, which the main checkout reads, holds the stale POE-165 route (`engine-prep/route-main.json`, epic POE-165, created 2026-08-27) | all |
+| **E1** — `DB-backed tests:` field in pipeforge's WI-plan template | MET 2026-10-16 on pipeforge main `a42e70d3` — `plugin/lib/wi-plan-template.md` carries the `DB-backed tests:` field (DG archived on main `a06204c0`) | all |
+| **E2** — engine classifies a `*_test.go` path as a test path | MET 2026-10-16 on pipeforge main `a42e70d3` (GP landed; `isTestPath` + `declaredBreakRunner` return `go` for `*_test.go`, `plugin/bin/lib/wi-scope.mjs:193`) — `pipeforge wi-scope --plan <this plan> --wi WI-1` → `code-with-tests`, consistent with WI-1's `DB-backed tests: none` | all |
+| **E3** — engine reads a Go test red as `red-test`, or the Operator accepts park-on-red for this plan | MET 2026-10-16 on pipeforge main `a42e70d3` — `classifyCommand` calls `parseGoTestFailures` after Node and PHPUnit (`plugin/bin/lib/wi-gate-execution.mjs:17,56`); POE `config.testing.suites[go]` (config v7, testing section v4) carries the Go `fileCommand` with `-json {package}` | all |
+| **E4** — worktree-config row for workspace `main` with `homeBranch` and `databaseIdentity` | MET 2026-10-16 — `getWorktreeConfig {"workspace":"main"}` → `{homeBranch: "dev", databaseIdentity: "db:v1:f09a9874-…"}` | all |
+| **E5** — the POE-295 route is readable under the workspace key the main checkout uses | MET 2026-10-16 — `getRoute {"workspace":"main"}` → epic POE-295, POE-296 `pending` | all |
 
 ## Decisions
 
@@ -44,10 +44,10 @@ poe.ninja's gem endpoint serves a per-line sample size (`count`) and a price-his
 
 ## Work items
 
-### WI-1 — Parse poe.ninja gem `count` and sparkline emptiness into `GemSnapshot` — **GATED: engine readiness E1–E5**
+### WI-1 — Parse poe.ninja gem `count` and sparkline emptiness into `GemSnapshot` — **BUILDABLE NOW**
 
 - **Task:** POE-296
-- **Prerequisite:** engine readiness E1–E5 (§ Prerequisites; pipeforge and Operator). No code prerequisite: the code is buildable at base 1f69f126.
+- **Prerequisite:** BUILDABLE NOW — engine readiness E1–E5 MET 2026-10-16 on pipeforge main `a42e70d3` (§ Prerequisites). No code prerequisite.
 - `Files:` internal/collector/ninja.go, internal/collector/fetcher.go, internal/collector/ninja_test.go
 - **DB-backed tests:** none — ninja_test.go is an httptest unit test with no database
 - **Authorities:** AGENTS.md (§ Modeling rules), .claude/agents/backend.md, /root/repos/pipeforge/plugin/lib/test-quality-contract.md, this plan (§ Decisions D1, D2, D6)
