@@ -1,6 +1,6 @@
 # POE-296 ninja sample size — store poe.ninja's gem sample and expose a per-variant thin-sample flag
 
-> **Status:** not-started · 0/4 WI built · audited 2026-10-16
+> **Status:** partial · 1/4 WI built · audited 2026-10-16
 > **Repos:** ProfitOfExile only — `internal/collector/`, `internal/db/migrations/`, `internal/lab/`
 > **Origin:** tracker POE-296 (epic POE-295, locks L1–L7); MCP discoveries POE-296 and POE-295 (`item:ninja-sample-signal`); ADR-027 (MCP, "Trade Is the Primary Gem Price; poe.ninja Is the Fallback"); engine-unit prep `prep-poe296.md` § 1a (WI-1 as drafted there)
 > **Target:** dev
@@ -44,7 +44,7 @@ poe.ninja's gem endpoint serves a per-line sample size (`count`) and a price-his
 
 ## Work items
 
-### WI-1 — Parse poe.ninja gem `count` and sparkline emptiness into `GemSnapshot` — **BUILDABLE NOW**
+### WI-1 — Parse poe.ninja gem `count` and sparkline emptiness into `GemSnapshot` — **BUILT: 0c8b8b8c1030bd793e286714e29852020ea6c4b0**
 
 - **Task:** POE-296
 - **Prerequisite:** BUILDABLE NOW — engine readiness E1–E5 MET 2026-10-16 on pipeforge main `a42e70d3` (§ Prerequisites). No code prerequisite.
