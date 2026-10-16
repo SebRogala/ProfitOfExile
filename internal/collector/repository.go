@@ -239,8 +239,8 @@ func (r *Repository) InsertGemSnapshots(ctx context.Context, scope league.Scope,
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	const query = `INSERT INTO gem_snapshots (league, time, name, variant, chaos, listings, is_transfigured, is_corrupted, gem_color)
-	               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	const query = `INSERT INTO gem_snapshots (league, time, name, variant, chaos, listings, is_transfigured, is_corrupted, gem_color, sample_count, sparkline_empty)
+	               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	               ON CONFLICT DO NOTHING`
 
 	batch := &pgx.Batch{}
@@ -249,7 +249,7 @@ func (r *Repository) InsertGemSnapshots(ctx context.Context, scope league.Scope,
 		if s.GemColor != "" {
 			gemColor = &s.GemColor
 		}
-		batch.Queue(query, scope.ID(), snapTime, s.Name, s.Variant, s.Chaos, s.Listings, s.IsTransfigured, s.IsCorrupted, gemColor)
+		batch.Queue(query, scope.ID(), snapTime, s.Name, s.Variant, s.Chaos, s.Listings, s.IsTransfigured, s.IsCorrupted, gemColor, s.SampleCount, s.SparklineEmpty)
 	}
 
 	results := tx.SendBatch(ctx, batch)

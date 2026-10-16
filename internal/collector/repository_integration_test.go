@@ -773,3 +773,74 @@ func TestInsertItemSnapshots_writesUnderTheGivenLeague(t *testing.T) {
 		t.Errorf("stored league = %q, want %q", storedLeague, otherLeagueID)
 	}
 }
+
+func TestGemSnapshotNinjaSampleRoundTrip(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+	countTwo, countOne := 2, 1
+	populated, empty := false, true
+	// Synthetic rows carry WI-2's measured count/flag pairs; nil means unknown.
+	for _, tc := range []struct {
+		name  string
+		count *int
+		empty *bool
+	}{
+		{"populated", &countTwo, &populated},
+		{"empty", &countOne, &empty},
+		{"unknown", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapTime := time.Now().UTC().Truncate(time.Microsecond)
+			name := "Ninja sample " + tc.name
+			t.Cleanup(func() {
+				if _, err := pool.Exec(context.Background(),
+					`DELETE FROM gem_snapshots WHERE league = $1 AND time = $2 AND name = $3`,
+					testScope.ID(), snapTime, name); err != nil {
+					t.Errorf("delete sample row: %v", err)
+				}
+			})
+			_, err := repo.InsertGemSnapshots(ctx, testScope, snapTime, []GemSnapshot{{
+				Name: name, Variant: "20/20", Chaos: 1817, Listings: 9,
+				SampleCount: tc.count, SparklineEmpty: tc.empty,
+			}})
+			if err != nil {
+				t.Fatalf("InsertGemSnapshots: %v", err)
+			}
+			t.Run("sample_count", func(t *testing.T) {
+				var got *int
+				if err := pool.QueryRow(ctx,
+					`SELECT sample_count FROM gem_snapshots WHERE league = $1 AND time = $2 AND name = $3`,
+					testScope.ID(), snapTime, name).Scan(&got); err != nil {
+					t.Fatalf("read sample_count: %v", err)
+				}
+				if tc.count == nil {
+					if got != nil {
+						t.Errorf("sample_count = %d, want SQL NULL", *got)
+					}
+				} else if got == nil {
+					t.Errorf("sample_count = SQL NULL, want %d", *tc.count)
+				} else if *got != *tc.count {
+					t.Errorf("sample_count = %d, want %d", *got, *tc.count)
+				}
+			})
+			t.Run("sparkline_empty", func(t *testing.T) {
+				var got *bool
+				if err := pool.QueryRow(ctx,
+					`SELECT sparkline_empty FROM gem_snapshots WHERE league = $1 AND time = $2 AND name = $3`,
+					testScope.ID(), snapTime, name).Scan(&got); err != nil {
+					t.Fatalf("read sparkline_empty: %v", err)
+				}
+				if tc.empty == nil {
+					if got != nil {
+						t.Errorf("sparkline_empty = %t, want SQL NULL", *got)
+					}
+				} else if got == nil {
+					t.Errorf("sparkline_empty = SQL NULL, want %t", *tc.empty)
+				} else if *got != *tc.empty {
+					t.Errorf("sparkline_empty = %t, want %t", *got, *tc.empty)
+				}
+			})
+		})
+	}
+}

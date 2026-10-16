@@ -695,3 +695,81 @@ func TestLeagueScopedSeedScriptsInsertMirageRows(t *testing.T) {
 		})
 	}
 }
+
+// Keep this last: TestLeagueMigrationsPreserveLegacySchemaContract must run
+// before any test applies the forward-only corruption-identity migration.
+func TestGemSnapshotNinjaSampleCompressedHistoryMigration(t *testing.T) {
+	pool, m := testSetup(t)
+	defer pool.Close()
+	defer m.Close()
+	requireTimescaleDB(t, pool)
+	ctx := context.Background()
+	const previousVersion uint = 20260906024420
+	const name = "Ninja sample compressed history"
+	// Isolate the fixture from the existing 2099 migration fixtures' chunks.
+	snapshotTime := time.Date(2101, 1, 1, 0, 0, 0, 0, time.UTC)
+	var chunk string
+	defer func() {
+		if chunk != "" {
+			if _, err := pool.Exec(ctx, `SELECT decompress_chunk($1::regclass, if_compressed => true)`, chunk); err != nil {
+				t.Errorf("decompress fixture chunk: %v", err)
+			}
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM gem_snapshots WHERE league = 'Mirage' AND time = $1 AND name = $2`, snapshotTime, name); err != nil {
+			t.Errorf("delete historical fixture: %v", err)
+		}
+		if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+			t.Errorf("restore fully migrated schema: %v", err)
+		}
+	}()
+	if err := m.Migrate(previousVersion); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatalf("migrate to pre-sample version: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO gem_snapshots (league, time, name, variant, is_corrupted, chaos, listings)
+		VALUES ('Mirage', $1, $2, '20/20', false, 1817, 9)
+		RETURNING tableoid::regclass::text`, snapshotTime, name).Scan(&chunk); err != nil {
+		t.Fatalf("insert pre-sample row: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `SELECT compress_chunk($1::regclass)`, chunk); err != nil {
+		t.Fatalf("compress historical chunk: %v", err)
+	}
+	var compressed bool
+	if err := pool.QueryRow(ctx, `
+		SELECT is_compressed FROM timescaledb_information.chunks
+		WHERE format('%I.%I', chunk_schema, chunk_name)::regclass = $1::regclass`, chunk).Scan(&compressed); err != nil {
+		t.Fatalf("check historical compression: %v", err)
+	}
+	if !compressed {
+		t.Fatal("historical row's chunk is not compressed before migration")
+	}
+	migrateUp(t, m)
+	for _, column := range []string{"sample_count", "sparkline_empty"} {
+		t.Run(column+"_historical_null", func(t *testing.T) {
+			var isNull bool
+			query := fmt.Sprintf(`SELECT %s IS NULL FROM gem_snapshots WHERE league = 'Mirage' AND time = $1 AND name = $2`, column)
+			if err := pool.QueryRow(ctx, query, snapshotTime, name).Scan(&isNull); err != nil {
+				t.Fatalf("read historical %s: %v", column, err)
+			}
+			if !isNull {
+				t.Errorf("historical %s is non-NULL, want unknown (SQL NULL)", column)
+			}
+		})
+	}
+	if err := m.Migrate(previousVersion); err != nil {
+		t.Fatalf("roll back sample migration: %v", err)
+	}
+	for _, column := range []string{"sample_count", "sparkline_empty"} {
+		t.Run(column+"_removed_on_rollback", func(t *testing.T) {
+			var columns int
+			if err := pool.QueryRow(ctx, `
+				SELECT count(*) FROM information_schema.columns
+				WHERE table_schema = 'public' AND table_name = 'gem_snapshots' AND column_name = $1`, column).Scan(&columns); err != nil {
+				t.Fatalf("lookup rolled-back %s: %v", column, err)
+			}
+			if columns != 0 {
+				t.Errorf("%s columns after rollback = %d, want 0", column, columns)
+			}
+		})
+	}
+}
