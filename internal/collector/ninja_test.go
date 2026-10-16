@@ -1035,3 +1035,90 @@ func TestFetchItemEndpoint_304NotModifiedCarriesNoData(t *testing.T) {
 		t.Errorf("ETag = %q, want %q", result.ETag, `"temple-etag"`)
 	}
 }
+
+func TestFetchGemsEndpoint_sampleCount(t *testing.T) {
+	// Synthetic raw JSON pins the wire keys independently of ninjaGemLine.
+	cases := []struct {
+		name  string
+		line  string
+		known bool
+		want  int
+	}{
+		{"iceCrashCountTwo", `{"name":"Ice Crash of Cadence","variant":"20/20","chaosValue":1817,"listingCount":9,"count":2,"sparkLine":{"totalChange":0,"data":[0,1.5,3.2]}}`, true, 2},
+		{"flameGolemCountOne", `{"name":"Summon Flame Golem of the Meteor","variant":"20/20","chaosValue":1817,"listingCount":4,"count":1,"sparkLine":{"totalChange":0,"data":[]}}`, true, 1},
+		{"absentKeysRemainUnknown", `{"name":"Arc","variant":"20/20","chaosValue":10,"listingCount":9}`, false, 0},
+		{"zeroCountRemainsKnown", `{"name":"Arc","chaosValue":10,"listingCount":9,"count":0}`, true, 0},
+		{"nullCountRemainsUnknown", `{"name":"Arc","chaosValue":10,"listingCount":9,"count":null}`, false, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server, _ := itemServer(t, `{"lines":[`+tc.line+`]}`)
+			f := testNinjaFetcher(t, server)
+			result, err := f.FetchGemsEndpoint(context.Background(), "Standard", "")
+			if err != nil {
+				t.Fatalf("fetch synthetic gem: %v", err)
+			}
+			if len(result.GemData) != 1 {
+				t.Fatalf("got %d gems, want 1", len(result.GemData))
+			}
+			got := result.GemData[0].SampleCount
+			if !tc.known {
+				if got != nil {
+					t.Errorf("SampleCount = %d, want nil", *got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("SampleCount = nil, want %d", tc.want)
+			}
+			if *got != tc.want {
+				t.Errorf("SampleCount = %d, want %d", *got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFetchGemsEndpoint_sparklineEmpty(t *testing.T) {
+	// Synthetic raw JSON distinguishes absent/null objects from empty history.
+	cases := []struct {
+		name  string
+		line  string
+		known bool
+		want  bool
+	}{
+		{"iceCrashHistoryIsNotEmpty", `{"name":"Ice Crash of Cadence","variant":"20/20","chaosValue":1817,"listingCount":9,"count":2,"sparkLine":{"totalChange":0,"data":[0,1.5,3.2]}}`, true, false},
+		{"flameGolemHistoryIsEmpty", `{"name":"Summon Flame Golem of the Meteor","variant":"20/20","chaosValue":1817,"listingCount":4,"count":1,"sparkLine":{"totalChange":0,"data":[]}}`, true, true},
+		{"absentKeysRemainUnknown", `{"name":"Arc","variant":"20/20","chaosValue":10,"listingCount":9}`, false, false},
+		{"nullPointWithNumericPointIsNotEmpty", `{"name":"Arc","chaosValue":10,"sparkLine":{"data":[null,2.0]}}`, true, false},
+		{"singleNullPointIsNotEmpty", `{"name":"Arc","chaosValue":10,"sparkLine":{"data":[null]}}`, true, false},
+		{"nullSparklineRemainsUnknown", `{"name":"Arc","chaosValue":10,"sparkLine":null}`, false, false},
+		{"absentDataIsEmpty", `{"name":"Arc","chaosValue":10,"sparkLine":{}}`, true, true},
+		{"nullDataIsEmpty", `{"name":"Arc","chaosValue":10,"sparkLine":{"data":null}}`, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server, _ := itemServer(t, `{"lines":[`+tc.line+`]}`)
+			f := testNinjaFetcher(t, server)
+			result, err := f.FetchGemsEndpoint(context.Background(), "Standard", "")
+			if err != nil {
+				t.Fatalf("fetch synthetic gem: %v", err)
+			}
+			if len(result.GemData) != 1 {
+				t.Fatalf("got %d gems, want 1", len(result.GemData))
+			}
+			got := result.GemData[0].SparklineEmpty
+			if !tc.known {
+				if got != nil {
+					t.Errorf("SparklineEmpty = %t, want nil", *got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("SparklineEmpty = nil, want %t", tc.want)
+			}
+			if *got != tc.want {
+				t.Errorf("SparklineEmpty = %t, want %t", *got, tc.want)
+			}
+		})
+	}
+}

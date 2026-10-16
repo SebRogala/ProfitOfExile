@@ -16,6 +16,8 @@ type GemSnapshot struct {
 	Variant        string
 	Chaos          float64
 	Listings       int
+	SampleCount    *int  // nil when poe.ninja's count is absent or null
+	SparklineEmpty *bool // nil when poe.ninja's sparkLine is absent or null
 	IsTransfigured bool
 	IsCorrupted    bool
 	GemColor       string // RED, GREEN, BLUE, WHITE, or "" if unresolved

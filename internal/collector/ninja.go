@@ -45,9 +45,13 @@ type ninjaGemLine struct {
 	Variant      string  `json:"variant"`
 	ChaosValue   float64 `json:"chaosValue"`
 	ListingCount int     `json:"listingCount"`
-	Corrupted    bool    `json:"corrupted"`
-	Icon         string  `json:"icon"`
-	TradeFilter  struct {
+	Count        *int    `json:"count"`
+	SparkLine    *struct {
+		Data []json.RawMessage `json:"data"`
+	} `json:"sparkLine"`
+	Corrupted   bool   `json:"corrupted"`
+	Icon        string `json:"icon"`
+	TradeFilter struct {
 		Query struct {
 			Type struct {
 				Discriminator string `json:"discriminator"`
@@ -383,11 +387,19 @@ func (f *NinjaFetcher) convertGemLines(lines []ninjaGemLine) []GemSnapshot {
 			variant = "default"
 		}
 
+		var sparklineEmpty *bool
+		if line.SparkLine != nil {
+			empty := len(line.SparkLine.Data) == 0
+			sparklineEmpty = &empty
+		}
+
 		snapshots = append(snapshots, GemSnapshot{
 			Name:           line.Name,
 			Variant:        variant,
 			Chaos:          line.ChaosValue,
 			Listings:       line.ListingCount,
+			SampleCount:    line.Count,
+			SparklineEmpty: sparklineEmpty,
 			IsTransfigured: isTransfigured,
 			IsCorrupted:    line.Corrupted,
 			GemColor:       color,
