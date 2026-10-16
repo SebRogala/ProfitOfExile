@@ -1,6 +1,6 @@
 # POE-296 ninja sample size — store poe.ninja's gem sample and expose a per-variant thin-sample flag
 
-> **Status:** partial · 2/4 WI built · audited 2026-10-16
+> **Status:** partial · 3/4 WI built · audited 2026-10-16
 > **Repos:** ProfitOfExile only — `internal/collector/`, `internal/db/migrations/`, `internal/lab/`
 > **Origin:** tracker POE-296 (epic POE-295, locks L1–L7); MCP discoveries POE-296 and POE-295 (`item:ninja-sample-signal`); ADR-027 (MCP, "Trade Is the Primary Gem Price; poe.ninja Is the Fallback"); engine-unit prep `prep-poe296.md` § 1a (WI-1 as drafted there)
 > **Target:** dev
@@ -74,7 +74,7 @@ poe.ninja's gem endpoint serves a per-line sample size (`count`) and a price-his
 - **Commit:** `--type feat` · `--summary store the poe.ninja gem sample in nullable gem_snapshots columns`
 - **Acceptance:** gate 1 exits 0 and prints `ok  	profitofexile/internal/collector`; gate 2 exits 0 and prints `==> Integration suite passed`, with the new migration test and the new collector round-trip test on `--- PASS:` lines; the diff adds the migration pair with nullable columns and no `DEFAULT`, no `NOT NULL`, no change to the primary key, `compress_segmentby` or the continuous aggregates; `InsertGemSnapshots` writes both columns.
 
-### WI-3 — Lab `GemPrice` carries the sample and derives thin-sample per variant — **BUILDABLE NOW**
+### WI-3 — Lab `GemPrice` carries the sample and derives thin-sample per variant — **BUILT: 16cebbd6fd6bdd51a7dbaec3a341895d2fe0b57d**
 
 - **Task:** POE-296
 - **Prerequisite:** BUILDABLE NOW — engine readiness E1–E5 MET for WI-3 on pipeforge main `cba8c63c` (§ Prerequisites). No code prerequisite: it adds the fields to `GemPrice` itself and reads no new column
