@@ -369,8 +369,8 @@ func TestDeviceMe_RoleDeterminesChannelAndFeatures(t *testing.T) {
 		{"beta is a beta device with every hidden feature", "beta", "beta", []string{"merc", "exchange", "temple", "beta"}},
 		{"editor is a beta device with every hidden feature", "editor", "beta", []string{"merc", "exchange", "temple", "beta"}},
 		{"admin is a beta device with every hidden feature", "admin", "beta", []string{"merc", "exchange", "temple", "beta"}},
-		{"user is a stable device with no features", "user", "stable", []string{}},
-		{"unset role is a stable device with no features", "", "stable", []string{}},
+		{"user is a stable device with only temple", "user", "stable", []string{"temple"}},
+		{"unset role is a stable device with only temple", "", "stable", []string{"temple"}},
 	}
 
 	for _, tt := range tests {
@@ -464,9 +464,9 @@ func TestDeviceMe_UnregisteredDeviceHasNullAlias(t *testing.T) {
 	}
 }
 
-func TestDeviceMe_WithoutDeviceID_ReturnsStableAndNoFeatures(t *testing.T) {
+func TestDeviceMe_WithoutDeviceID_ReturnsStableAndOnlyTemple(t *testing.T) {
 	// No X-Device-ID header means the middleware attaches no device, so the
-	// handler must fall back to the unentitled answer rather than reject the
+	// handler must fall back to the stable temple-only answer rather than reject the
 	// request the way DeviceIdentify does.
 	upserter := &mockUpserter{
 		UpsertFn: func(_ context.Context, _, _ string) (*device.Device, error) {
@@ -494,12 +494,12 @@ func TestDeviceMe_WithoutDeviceID_ReturnsStableAndNoFeatures(t *testing.T) {
 	if resp.Channel != "stable" {
 		t.Errorf("channel = %q, want %q", resp.Channel, "stable")
 	}
-	if len(resp.Features) != 0 {
-		t.Errorf("features = %#v, want empty", resp.Features)
+	if !reflect.DeepEqual(resp.Features, []string{"temple"}) {
+		t.Errorf("features = %#v, want %#v", resp.Features, []string{"temple"})
 	}
 }
 
-func TestDeviceMe_WithoutDeviceMiddleware_ReturnsStableAndNoFeatures(t *testing.T) {
+func TestDeviceMe_WithoutDeviceMiddleware_ReturnsStableAndOnlyTemple(t *testing.T) {
 	// Mirrors a server started with cfg.DeviceRepo == nil: the middleware is
 	// never installed, but the route is registered unconditionally and must
 	// still answer rather than 404/500.
@@ -523,14 +523,13 @@ func TestDeviceMe_WithoutDeviceMiddleware_ReturnsStableAndNoFeatures(t *testing.
 	if resp.Channel != "stable" {
 		t.Errorf("channel = %q, want %q", resp.Channel, "stable")
 	}
-	if len(resp.Features) != 0 {
-		t.Errorf("features = %#v, want empty", resp.Features)
+	if !reflect.DeepEqual(resp.Features, []string{"temple"}) {
+		t.Errorf("features = %#v, want %#v", resp.Features, []string{"temple"})
 	}
 }
 
-func TestDeviceMe_UnentitledDeviceEncodesFeaturesAsEmptyArray(t *testing.T) {
-	// The desktop client reads features with an includes() check, so an unentitled
-	// device must get [] on the wire — a null would be a different type there.
+func TestDeviceMe_StableDeviceEncodesOnlyTempleFeature(t *testing.T) {
+	// Stable devices receive temple on the wire while beta-only ids stay hidden.
 	fingerprint := "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
 	upserter := &mockUpserter{
 		UpsertFn: func(_ context.Context, fp, _ string) (*device.Device, error) {
@@ -555,7 +554,14 @@ func TestDeviceMe_UnentitledDeviceEncodesFeaturesAsEmptyArray(t *testing.T) {
 	}
 
 	body := strings.TrimSpace(w.Body.String())
-	if !strings.Contains(body, `"features":[]`) {
-		t.Errorf("body = %s, want it to encode features as an empty array", body)
+	if !strings.Contains(body, `"features":["temple"]`) {
+		t.Errorf("body = %s, want it to encode only the temple feature", body)
+	}
+	var resp meResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !reflect.DeepEqual(resp.Features, []string{"temple"}) {
+		t.Errorf("features = %#v, want only temple without merc, exchange or beta", resp.Features)
 	}
 }

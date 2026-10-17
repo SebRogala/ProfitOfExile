@@ -69,7 +69,7 @@ export const modules: Module[] = [
 	{
 		id: 'temple',
 		name: 'Temple of Atzoatl',
-		status: 'beta',
+		status: 'available',
 		tagline: "Alva's incursions: which architect to kill and which door to open.",
 		trigger: "Alva's start line (\"Time to go\"), from Client.txt; any other Alva line or a zone change stands it down. The read needs the sheet on screen, so you open it yourself: inside the incursion, press the league button (V by default) — the game pauses while it is open, so it costs you nothing.",
 		reads: 'The temple sheet — the 13 rooms and both architect offers — once per board.',

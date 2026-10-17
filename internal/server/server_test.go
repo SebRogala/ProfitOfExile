@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -435,9 +436,8 @@ func writeIconFile(t *testing.T, path string, body []byte) {
 func TestNewRouter_DeviceMeRouteIsRegisteredWithoutADeviceRepo(t *testing.T) {
 	// A server started without device identity leaves DeviceRepo nil, so the
 	// device middleware is never installed. The route is registered anyway and
-	// answers with the unentitled defaults — the desktop app gates its beta
-	// module on this reply, so a 404 would be a distinct failure mode for the
-	// same "nothing hidden is available" outcome.
+	// answers with the stable channel and only temple, even without a device
+	// repository. Beta-only features stay hidden.
 	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/device/me", nil)
@@ -464,7 +464,7 @@ func TestNewRouter_DeviceMeRouteIsRegisteredWithoutADeviceRepo(t *testing.T) {
 	if body.Channel != "stable" {
 		t.Errorf("channel = %q, want %q", body.Channel, "stable")
 	}
-	if len(body.Features) != 0 {
-		t.Errorf("features = %#v, want empty", body.Features)
+	if !reflect.DeepEqual(body.Features, []string{"temple"}) {
+		t.Errorf("features = %#v, want %#v", body.Features, []string{"temple"})
 	}
 }

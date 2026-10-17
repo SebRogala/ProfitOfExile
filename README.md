@@ -20,7 +20,7 @@ the language-pack warning, follow the
 
 - **Lab Farming** — Prices and ranks Divine Font gem choices, tracks Font
   crafts, and provides Labyrinth route and compass overlays.
-- **Temple of Atzoatl (beta)** — Reads the temple sheet and ranks both
+- **Temple of Atzoatl** — Reads the temple sheet and ranks both
   architect choices, including room value, reasoning, and gamble risk.
 - **Mercenaries (beta)** — Reads a recruit window and shows a verdict per
   community guide ruleset, with optional live trade checks.

@@ -83,16 +83,16 @@ type deviceMeResponse struct {
 }
 
 // DeviceMe handles GET /api/device/me. It reports the calling device's role
-// together with the update channel and hidden features that role entitles it
-// to, so the desktop app can gate its beta module and updater on one answer.
+// together with its update channel and visible features, so the desktop app
+// can gate its features and updater on one answer. Every device gets temple.
 //
 // It needs no repository: the device record is whatever DeviceMiddleware
 // attached to the context. A request with no X-Device-ID header — and a server
 // started without a device repository, where the middleware is not installed at
 // all — therefore reads as no device, which maps to the same stable channel and
-// empty feature list an unrecognised role gets. That is deliberate: the handler
-// itself has no error path, so a missing or unknown device is answered rather
-// than rejected. DeviceMiddleware can still reject the request before the
+// temple-only feature list an unrecognised role gets. That is deliberate: the
+// handler itself has no error path, so a missing or unknown device is answered
+// rather than rejected. DeviceMiddleware can still reject the request before the
 // handler runs — 400 for a malformed X-Device-ID, 403 for a banned device (see
 // internal/server/middleware/device.go).
 //

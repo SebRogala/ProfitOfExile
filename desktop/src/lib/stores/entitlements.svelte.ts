@@ -2,14 +2,15 @@
  * Per-device entitlements — release channel and hidden features (POE-203).
  *
  * The server answers `GET /api/device/me` for the device identity POE-102
- * already attaches to every request: `{ role, channel, features[] }`, with
- * beta, editor and admin devices getting `channel: "beta"` and the hidden
- * feature ids — `merc`, `exchange`, `temple`, `beta`.
+ * already attaches to every request: `{ role, channel, features[] }`. Every
+ * device the server answers for gets `temple`; beta, editor and admin also get
+ * `merc`, `exchange`, `beta` and `channel: "beta"`.
  *
  * **The device id is a precondition, not a detail.** `X-Device-ID` IS the
  * question; without it the server can only answer for an anonymous device, and
  * it answers 200 — so a fetch made before `get_status` landed would write a
- * blank role and no features over the store and look like a settled answer.
+ * blank role and the stable default (`["temple"]`) over the store and look like
+ * a settled answer, hiding an entitled device's beta features.
  * A load with no device id therefore does not fetch at all; it counts as
  * not-yet-loaded and is retried.
  *
@@ -173,7 +174,8 @@ async function attemptLoad(): Promise<Entitlements | null> {
 		const deviceId = await currentDeviceId();
 		if (!deviceId) {
 			// Not an error and not an answer: the server would reply 200 for an
-			// anonymous device and that reply would read as "entitled to nothing".
+			// anonymous device. Its blank role and stable default (["temple"])
+			// would look settled and hide an entitled device's beta features.
 			console.warn('[entitlements] no device id yet — not asking /api/device/me, will retry');
 			return null;
 		}

@@ -31,28 +31,28 @@ func TestEntitlements(t *testing.T) {
 			wantFeatures: []string{"merc", "exchange", "temple", "beta"},
 		},
 		{
-			name:         "user gets stable channel and no features",
+			name:         "user gets stable channel and only the temple feature",
 			role:         "user",
 			wantChannel:  "stable",
-			wantFeatures: []string{},
+			wantFeatures: []string{"temple"},
 		},
 		{
-			name:         "empty role gets stable channel and no features",
+			name:         "empty role gets stable channel and only the temple feature",
 			role:         "",
 			wantChannel:  "stable",
-			wantFeatures: []string{},
+			wantFeatures: []string{"temple"},
 		},
 		{
-			name:         "unknown role gets stable channel and no features",
+			name:         "unknown role gets stable channel and only the temple feature",
 			role:         "beta-tester",
 			wantChannel:  "stable",
-			wantFeatures: []string{},
+			wantFeatures: []string{"temple"},
 		},
 		{
-			name:         "role match is case-sensitive so Editor is not entitled",
+			name:         "case-mismatched Editor gets stable channel and only the temple feature",
 			role:         "Editor",
 			wantChannel:  "stable",
-			wantFeatures: []string{},
+			wantFeatures: []string{"temple"},
 		},
 	}
 
@@ -63,9 +63,7 @@ func TestEntitlements(t *testing.T) {
 			if channel != tt.wantChannel {
 				t.Errorf("channel = %q, want %q", channel, tt.wantChannel)
 			}
-			// DeepEqual against []string{} also fails on a nil slice, which is
-			// what the wire format depends on: the handler encodes this list
-			// directly, and a nil would become `null` instead of `[]`.
+			// Exact lists also reject nil and any unexpected feature.
 			if !reflect.DeepEqual(features, tt.wantFeatures) {
 				t.Errorf("features = %#v, want %#v", features, tt.wantFeatures)
 			}
@@ -82,5 +80,16 @@ func TestEntitlements_CallerCannotMutateSharedFeatureList(t *testing.T) {
 
 	if second[0] != FeatureMerc {
 		t.Errorf("second call features[0] = %q, want %q", second[0], FeatureMerc)
+	}
+}
+
+func TestEntitlements_StableCallerCannotMutateSharedFeatureList(t *testing.T) {
+	_, first := Entitlements(RoleUser)
+	first[0] = "tampered"
+
+	_, second := Entitlements(RoleUser)
+
+	if !reflect.DeepEqual(second, []string{FeatureTemple}) {
+		t.Errorf("second call features = %#v, want %#v", second, []string{FeatureTemple})
 	}
 }
