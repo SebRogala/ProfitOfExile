@@ -1488,7 +1488,7 @@ touching the named path.
 
   4. **Fallback.** Start the app with no network (or point its server URL at
      nothing) and open a panel. With no usable market, the value reads
-     `grade <letter>` at 17 px — and there is NO `F` beside it, because the word
+     `grade <tier><rank>` (for example `grade C1`) at 17 px — and there is NO `F` beside it, because the word
      already says what the letter said; a ` · est.` on line two is the only
      provenance mark left, and it fires where the rung is a live inference
      (`valuation.rs`'s `summed <= 0` branch) rather than the cold preset's base
@@ -1598,9 +1598,9 @@ touching the named path.
   Corruption first and Doryani's Institute second — tier 3, biggest first, the
   default sort. Click **Tier 3**: the order flips to cheapest first and the
   header's arrow with it. Click **Room line**: A→Z, and the arrow moves to that
-  header — not the direction that was on Tier 3. Click **Grade**: A++ first, and
-  the check that matters is that `B-` sits between `C+` and `B`, NOT below `D` —
-  a grade off the ladder is what a typographic minus in `GRADES` looks like.
+  header — not the direction that was on Tier 3. Click **Grade**: A1 first,
+  then A2 and A3, through E7; click again to reverse it. The column sorts on
+  Rust's derived `pickOrder`, not on the displayed tier/rank string.
   Reach all three headers by TAB alone and fire one with Enter; a screen reader
   must announce the sorted column as ascending or descending. Then close the app,
   reopen it, and the table must come back on the sort you left it on. **Nothing a

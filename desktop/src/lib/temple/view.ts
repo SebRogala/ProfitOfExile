@@ -608,7 +608,7 @@ export interface OfferBox {
 	 *  the letter ladder ranked it — there is no chaos number to print then,
 	 *  and [`valueText`](Self.valueText) carries the grade instead. */
 	value: number | null;
-	/** What the value slot prints: `"96"`, or `"grade A++"` on the ladder.
+	/** What the value slot prints: `"96"`, or `"grade A1"` on the ladder.
 	 *  Null when the offer resolved to no room — there is nothing to price, so
 	 *  the box draws no value row at all rather than a zero or a dash. */
 	valueText: string | null;
@@ -633,7 +633,7 @@ export interface OfferBox {
 	 *  `G` when any value term is guessed.
 	 *
 	 *  Kept as DATA and no longer drawn as letters. POE-277's v5 retired both
-	 *  boxed glyphs from the overlay: `F` said twice what `grade C` already
+	 *  boxed glyphs from the overlay: `F` said twice what `grade C1` already
 	 *  said in words, and `G` became the muted ` · est.` on the header's second
 	 *  line — so the box reads this array for that one word and prints nothing
 	 *  else from it. The page and the tests still read both letters. */

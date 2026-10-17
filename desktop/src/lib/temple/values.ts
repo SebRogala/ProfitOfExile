@@ -176,11 +176,10 @@ export function markTitle(value: RoomValueView): string {
  * are noise and the figure is rounded; from 1 c up two decimals are the
  * difference between two rooms. BELOW 1 c two decimals stop being a rendering
  * and start being a claim: since a room nothing priced is now a fraction of the
- * cheapest room something priced, a D-grade rung is 0.0066 c on the committed
- * capture, and `toFixed(2)` prints that as `0.01` — or, once the vial rate
- * lands, as `0.00`, which reads as ZERO and is the one thing epic lock L4
- * forbids a fallback from saying. Under 1 c the value keeps two SIGNIFICANT
- * digits instead, so 0.015 prints as `0.015` and 0.0051 as `0.0051`.
+ * cheapest room something priced, an E-tier rung is about 0.0046 c on the
+ * committed capture. `toFixed(2)` prints that as `0.00`, which reads as ZERO
+ * and is the one thing epic lock L4 forbids a fallback from saying. Under 1 c
+ * the value keeps two SIGNIFICANT digits instead, so 0.015 prints as `0.015` and 0.0051 as `0.0051`.
  *
  * Zero, negatives and `NaN` keep the two-decimal form they had: zero is a
  * value a player can state outright ("this room is worth nothing to me") and
@@ -272,6 +271,8 @@ export interface ValueRow {
 	key: string;
 	name: string;
 	grade: string;
+	/** Rust-derived total pick order, zero = best. */
+	pickOrder: number;
 	cells: ValueCell[];
 }
 
@@ -287,6 +288,7 @@ export function valueRows(rows: TempleValueRow[], custom: TempleCustom | null): 
 		key: row.key,
 		name: row.name,
 		grade: row.grade,
+		pickOrder: row.pickOrder,
 		cells: TIERS.map((tier) => {
 			const value = row.tiers[tier - 1];
 			return {
@@ -310,25 +312,6 @@ export function overrideOf(custom: TempleCustom, key: string, tier: number): num
 
 // --- sorting, and the columns the table shows ------------------------------
 
-/**
- * The ten grades, WORST first — the wire strings, in `rooms::Grade`'s own
- * order (`temple/rooms.rs`, whose derived `Ord` is worst-first too).
- *
- * One list and not a string comparison, because the letters do not collate:
- * `"A++" < "A+"` is true of the characters and false of the grades, and `"B-"`
- * sorts before `"B"` while the room graded `B-` is the worse of the two.
- * The strings are the ASCII forms Rust prints (`"B-"`, `"C-"`), not the
- * typographic minus — a grade that misses this list is one Rust never sent.
- */
-export const GRADES = ['D', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A', 'A+', 'A++'] as const;
-
-/** Where a grade sits on the ladder, worst at 0. `-1` for a letter this build
- *  does not know, which sorts it below `D` rather than throwing: an unknown
- *  grade is a room the table still has to show. */
-export function gradeRank(grade: string): number {
-	return (GRADES as readonly string[]).indexOf(grade);
-}
-
 /** The three sortable columns. Tier 1 and 2 are not among them: they are
  *  `tierFraction` of tier 3 (ADR-022 §1), so sorting on one of them is
  *  sorting on tier 3 with extra steps — unless the player overrode it, and a
@@ -350,11 +333,11 @@ export interface ValueSort {
 export const DEFAULT_VALUE_SORT: ValueSort = { key: 'tier3', direction: 'desc' };
 
 /** Which way a column reads when it is FIRST clicked: a name ascends (A→Z), a
- *  grade and a value descend (best first). A column that opened at its least
- *  interesting end would cost every player a second click. */
+ *  pick order ascends (best first), and a value descends. A column that opened
+ *  at its least interesting end would cost every player a second click. */
 const FIRST_DIRECTION: Record<ValueSortKey, ValueSortDirection> = {
 	room: 'asc',
-	grade: 'desc',
+	grade: 'asc',
 	tier3: 'desc'
 };
 
@@ -437,7 +420,7 @@ export function sortValueRows(
 	return [...rows].sort((a, b) => {
 		let primary = 0;
 		if (key === 'room') primary = a.name.localeCompare(b.name);
-		else if (key === 'grade') primary = gradeRank(a.grade) - gradeRank(b.grade);
+		else if (key === 'grade') primary = a.pickOrder - b.pickOrder;
 		else primary = tier3Total(a) - tier3Total(b);
 		if (primary !== 0) return primary * sign;
 		return a.name.localeCompare(b.name);

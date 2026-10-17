@@ -61,53 +61,32 @@
 //!
 //! **A read that prices nothing** — [`MarketInput::none`] before the first poll
 //! answers, a stale payload, or one with an unusable floor — prices EVERY room
-//! at [`Grade::fallback_chaos`](super::rooms::Grade::fallback_chaos), the cold
-//! ladder, and nothing else. Those ten rungs ARE the preset's base-value table
+//! at [`RoomRank::fallback_chaos`](super::rooms::RoomRank::fallback_chaos), the cold
+//! ladder, and nothing else. Those five tier rungs ARE the preset's base-value table
 //! that L4 names. Mixing them with the terms that survive a cold market — a
 //! poedb quantity bonus, `drops.rs`'s manually priced temple-mod item — is
-//! what this module used to do, and it produced a board where Sanctum of
-//! Immortality (grade A) sat at 6 c UNDER Sadist's Den (grade C) at 10 c. Half
-//! a formula and half a ladder is not a ranking in either unit. A Custom
+//! what this module used to do: a bonus-priced room could sit below a cold
+//! fallback. Half a formula and half a ladder is not a ranking in either unit. A Custom
 //! override still wins over the rung: the player stating a number outright is
 //! not a missing price.
 //!
 //! **A live read** sums the formula. The ladder stands in only for a room
 //! where **nothing at all was summed** — no sale, no priced drop, no bonus —
 //! and there it is
-//! [`fallback_chaos_scaled`](super::rooms::Grade::fallback_chaos_scaled)
+//! [`fallback_chaos_scaled`](super::rooms::RoomRank::fallback_chaos_scaled)
 //! anchored on [`lowest_summed_room_total`]: the SMALLEST tier-3 total among
 //! the rooms that summed something on this read. The set is the FORMULA sums
 //! of the 23 non-instrumental lines, overrides ignored — a player's stated
 //! number is not a sum, so it never enters the set and never moves it, while
 //! the line's own formula sum always does. On the committed capture the
-//! anchor is Toxic Grove's 1.857, so A++ reads 1.857, B− reads 0.0696 and D
-//! reads 0.0046.
+//! anchor is Toxic Grove's 1.857. Tier A equals it; every lower tier is a
+//! fixed fraction of it. Rank within a tier never affects the price.
 //!
-//! That is Vertolka's rule (POE-262, 2026-09-06): *"if temple does not have
-//! APEX, value of room itself is just zero and should be counted only based on
-//! what you can drop from it"*. An unpriced room is worth less than every room
-//! something priced, and the letter only orders the unpriced rooms among
-//! themselves. It CLOSES the fork ADR-022 §3 left open — the shipped rule used
-//! to anchor on the read's best sale delta and then cap at the lowest
-//! SALE-PRICED room, which let Apex of Ascension (B−, nothing summed) stand at
-//! 31.7 c over Chamber of Iron's measured 6 c. A guess no longer outranks a
-//! measurement.
-//!
-//! Two properties the anchor buys, and both are why it is the LOWEST summed
-//! total rather than anything else:
-//!
-//! - **A letter never beats a price.** Every rung is at most the anchor
-//!   ([`Grade::APlusPlus`](super::rooms::Grade::APlusPlus) equals it, every
-//!   lower grade is a fixed fraction of it) and the anchor is by construction
-//!   at or below every summed room. A++ equalling the anchor is stated rather
-//!   than hidden: the only A++ line is Locus of Corruption, which is a
-//!   fallback room only on a read that prices neither it nor anything it
-//!   drops.
-//! - **A room's rung depends on its own letter and on nothing else that
-//!   happened to fall back.** Clipping each rung at the anchor instead would
-//!   tie B− and C together at it, and anchoring the board's top FALLBACK
-//!   letter on it would move a C room's value the moment a B− room lost its
-//!   price.
+//! This implements Vertolka's rule (POE-262): an unpriced room must not
+//! outrank a summed room. Anchoring on the best sale delta instead could put
+//! a fallback above a measured sum. The lowest formula sum keeps every rung
+//! at or below every summed room, independently of which other rooms fell
+//! back. Clipping individual rungs would instead collapse different tiers.
 //!
 //! The two [`INSTRUMENTAL_LINES`] do NOT take this anchor — see below; they
 //! keep §4's own two-step, and [`lowest_sale_priced_room_total`] is the cap in
@@ -125,7 +104,7 @@
 //! missing, summing is simply the wrong question for them. Their worth is the
 //! tiers they lift and the rooms they clear, which the advisor's rollout
 //! models; their own drops are a 6 c quantity bonus, which would price the
-//! shrine that lifts a 846 c line below a junk C-grade room. See
+//! shrine that lifts a 846 c line below a fallback room. See
 //! [`instrumental`] for the board-7 evidence and the double-pay trade-off. A
 //! Custom override replaces the rung like any other room's value.
 //!
@@ -159,7 +138,7 @@ use std::collections::BTreeMap;
 
 use super::drops::Estimate;
 use super::market::{ItemQuote, MarketInput};
-use super::rooms::{Grade, RoomLine, LINES};
+use super::rooms::{RoomLine, RoomRank, LINES};
 use super::strategy::{Tier, INSTRUMENTAL_LINES};
 
 // ---------------------------------------------------------------- the knobs --
@@ -293,7 +272,7 @@ pub enum DriverKind {
     /// through the rollout (`advisor::rollout::UPGRADE_TARGETS` and
     /// `CHARGES`), not through a price. What the room itself drops — Temple
     /// Nexus's 6 c quantity bonus — is not what a player is buying when they
-    /// take it, and summing it would put the shrine below a junk C-grade room.
+    /// take it, and summing it would put the shrine below a fallback room.
     /// The letter is the honest stand-in: Vertolka graded the line for what it
     /// does, not for what falls out of it.
     Instrumental,
@@ -309,7 +288,7 @@ impl DriverKind {
     ///
     /// Hand-written rather than derived because [`DriverKind`] is a reasoning
     /// type the projection reads, exactly like
-    /// [`Grade::as_str`](super::rooms::Grade::as_str).
+    /// [`RoomRank::label`](super::rooms::RoomRank::label).
     pub fn as_str(self) -> &'static str {
         match self {
             DriverKind::Sale => "sale",
@@ -687,7 +666,7 @@ fn top_tier3_sale_delta(market: &MarketInput) -> Option<f64> {
 /// 390 on the committed capture, where the two such rooms are Locus of
 /// Corruption (846) and Doryani's Institute (390). This is ADR-022 §4's cap
 /// and it is now read by [`instrumental`] alone: those two lines are priced at
-/// their letter on the read's best sale delta, and without the cap a scaled B+
+/// their letter on the read's best sale delta, and without the cap a scaled tier
 /// rung could outrank the cheapest price the feed actually printed, which is
 /// the letter beating the market epic lock L1 forbids.
 ///
@@ -695,7 +674,7 @@ fn top_tier3_sale_delta(market: &MarketInput) -> Option<f64> {
 /// [`lowest_summed_room_total`], a strictly wider set and a much lower number
 /// (1.857 against 390 on the capture). The two are deliberately separate
 /// rather than folded into one: §4's departure from L1 rests on its own
-/// board-7 evidence, and holding the upgrade line at 0.0033 of the cheapest
+/// board-7 evidence, and holding the upgrade line at a fraction of the cheapest
 /// summed room would reproduce the miss that evidence is about.
 ///
 /// `None` where there is no above-floor room (any read
@@ -730,12 +709,12 @@ fn lowest_sale_priced_room_total(market: &MarketInput, knobs: &Knobs) -> Option<
 /// The lowest tier-3 total among the rooms that SUMMED something on this read
 /// — the anchor a room that summed nothing hangs its letter off (POE-262).
 ///
-/// Vertolka's rule: a room nothing priced is worth less than every room
-/// something priced, and the letter only orders such rooms among themselves.
-/// [`Grade::fallback_chaos_scaled`] maps A++ onto this number exactly and
-/// every lower grade onto a fixed fraction of it, so both halves of the rule
+/// A room nothing priced must not outrank a room something priced. The
+/// fallback tier orders such rooms among themselves; same-tier ranks tie.
+/// [`RoomRank::fallback_chaos_scaled`] maps tier A onto this number exactly and
+/// every lower tier onto a fixed fraction of it, so both halves of the rule
 /// hold at once — the whole ladder sits at or under the cheapest measured
-/// room, and its ten rungs keep the order Vertolka graded them in.
+/// room, and its five tier rungs keep the tier order in the matrix.
 ///
 /// **The set is what makes it that number**, and it is the FORMULA sums of the
 /// 23 non-instrumental lines, overrides ignored:
@@ -754,7 +733,7 @@ fn lowest_sale_priced_room_total(market: &MarketInput, knobs: &Knobs) -> Option<
 ///   rooms, which excluding the overridden line would do (overriding the
 ///   capture's anchor room would raise every rung by 6.00/1.857, and overriding
 ///   the last summed room would drop the whole board onto the cold ladder,
-///   from 0.03 c to 30 c in one edit).
+///   from a scaled fraction to its cold rung in one edit).
 ///
 /// `None` on a read that prices nothing, and on a live read where no room
 /// summed anything at all — every room at the floor with every rate and weight
@@ -782,8 +761,8 @@ fn lowest_summed_room_total(market: &MarketInput, knobs: &Knobs) -> Option<f64> 
 
 /// One room-tier on a read that priced nothing: its cold grade rung, alone.
 ///
-/// Epic lock L4's "base value" — the ten rungs of
-/// [`Grade::fallback_chaos`](super::rooms::Grade::fallback_chaos) are the
+/// Epic lock L4's "base value" — the five tier rungs of
+/// [`RoomRank::fallback_chaos`](super::rooms::RoomRank::fallback_chaos) are the
 /// preset's stated table for a board with no market, and the whole board is
 /// read off it so that every room is ranked in the same unit. No other driver
 /// is listed: nothing was tried, because there was nothing to try it against.
@@ -792,21 +771,21 @@ fn lowest_summed_room_total(market: &MarketInput, knobs: &Knobs) -> Option<f64> 
 /// One grade's rung for a room that summed NOTHING on a live read (POE-262).
 ///
 /// `measured_floor` is [`lowest_summed_room_total`], and one multiplication is
-/// the whole rule: A++ lands on that floor and every lower grade on a fixed
-/// fraction of it, so no letter reaches a room something priced and the
-/// letters still order the unpriced rooms among themselves.
+/// the whole rule: tier A lands on that floor and every lower tier on a fixed
+/// fraction of it, so no fallback exceeds a room something priced. Ranks
+/// within the same tier share the price.
 ///
 /// `None` is the read where nothing summed at all, and the answer there is the
 /// COLD rung rather than a third ladder — with no summed room there is nothing
-/// for a letter to be beating, and the ten rungs are the preset's stated table
+/// for a letter to be beating, and the five tier rungs are the preset's stated table
 /// for exactly that board. On a live read it also means no SALE-priced room
 /// exists, since a sale is a sum. It is unreachable from the shipped knobs on
 /// any read that prices anything: it takes every room at the floor with both
 /// bonus rates and the drops weight zeroed.
-fn fallback_rung(grade: Grade, measured_floor: Option<f64>) -> f64 {
+fn fallback_rung(rank: RoomRank, measured_floor: Option<f64>) -> f64 {
     match measured_floor {
-        Some(floor) => grade.fallback_chaos_scaled(floor),
-        None => grade.fallback_chaos(),
+        Some(floor) => rank.fallback_chaos_scaled(floor),
+        None => rank.fallback_chaos(),
     }
 }
 
@@ -820,13 +799,13 @@ fn fallback_rung(grade: Grade, measured_floor: Option<f64>) -> f64 {
 /// which is why it is not summed and not held under what it drops — and
 /// POE-262 changed the fallback ladder without touching that departure or its
 /// evidence.
-fn instrumental_rung(grade: Grade, live: bool, ladder_top: Option<f64>, cap: Option<f64>) -> f64 {
+fn instrumental_rung(rank: RoomRank, live: bool, ladder_top: Option<f64>, cap: Option<f64>) -> f64 {
     if !live {
-        return grade.fallback_chaos();
+        return rank.fallback_chaos();
     }
     let rung = match ladder_top {
-        Some(top) => grade.fallback_chaos_scaled(top),
-        None => grade.fallback_chaos(),
+        Some(top) => rank.fallback_chaos_scaled(top),
+        None => rank.fallback_chaos(),
     };
     match cap {
         Some(cap) => rung.min(cap),
@@ -836,14 +815,11 @@ fn instrumental_rung(grade: Grade, live: bool, ladder_top: Option<f64>, cap: Opt
 
 /// One of the two [`INSTRUMENTAL_LINES`], priced at its letter.
 ///
-/// Temple Nexus is B+ and Shrine of Unmaking is D, and those two rungs are
-/// what the lines are worth — 100 and 2 cold, 105.75 and 2.115 on the
-/// committed capture. NOT what they drop. Temple Nexus is the room the claim
-/// turns on: it carries a 6 c area bonus (6 % quantity, 12 % rarity at tier
-/// 3), and summing that would price the room that lifts an 846 c line at 6 c,
-/// below a junk C-grade room. Shrine of Unmaking drops NOTHING — the
-/// explosive line is `None` at every tier of `drops.rs` — so summing gives it
-/// zero and the ordinary fallback would hand it the same D rung; what this
+/// Temple Nexus is C1 and Shrine of Unmaking is E2: 20 and 2 cold,
+/// 21.15 and 2.115 on the committed capture. NOT what they drop. The Nexus
+/// lifts other rooms; its own 6 c area bonus does not represent that effect.
+/// Shrine of Unmaking drops nothing, so the ordinary fallback would take the
+/// same E-tier rung; what this
 /// path changes for the shrine is [`Priced::Instrumental`] rather than
 /// [`Priced::Fallback`], which is the honest label for a room whose price is
 /// not missing. What both lines are actually worth is the tiers they lift and
@@ -865,8 +841,8 @@ fn instrumental(
     ladder_top: Option<f64>,
     cap: Option<f64>,
 ) -> RoomValue {
-    let grade = line.grade();
-    let chaos = instrumental_rung(grade, live, ladder_top, cap);
+    let rank = line.rank();
+    let chaos = instrumental_rung(rank, live, ladder_top, cap);
     RoomValue {
         sale: 0.0,
         drops: 0.0,
@@ -877,7 +853,7 @@ fn instrumental(
             // The letter, exactly as `GradeFallback` names it: the rung IS the
             // grade, and the box's own wording for what that means belongs to
             // the surface (POE-260), not to a data field.
-            name: grade.as_str().to_string(),
+            name: rank.label(),
             count: None,
             unit_price: None,
             chaos: Some(chaos),
@@ -893,8 +869,8 @@ fn instrumental(
 }
 
 fn cold_fallback(line: &RoomLine) -> RoomValue {
-    let grade = line.grade();
-    let chaos = grade.fallback_chaos();
+    let rank = line.rank();
+    let chaos = rank.fallback_chaos();
     RoomValue {
         sale: 0.0,
         drops: 0.0,
@@ -902,7 +878,7 @@ fn cold_fallback(line: &RoomLine) -> RoomValue {
         total: chaos,
         drivers: vec![Driver {
             kind: DriverKind::GradeFallback,
-            name: grade.as_str().to_string(),
+            name: rank.label(),
             count: None,
             unit_price: None,
             chaos: Some(chaos),
@@ -1057,10 +1033,10 @@ fn value_tier3(
     // header for why the letter may not win there.
     let summed = sale + drops + bonus;
     if summed <= 0.0 {
-        let grade = line.grade();
+        let rank = line.rank();
         // `value_tier3` only runs on a live read, so the rung is the rescaled
         // one — the cold rungs are `cold_fallback`'s, one branch earlier.
-        let ladder = fallback_rung(grade, measured_floor);
+        let ladder = fallback_rung(rank, measured_floor);
         // The rung is the whole total, so it must be the whole accounting: a
         // term still carrying `Some(0.0)` would make the drivers the box
         // prints disagree with the number the advisor ranked on. Counts and
@@ -1070,7 +1046,7 @@ fn value_tier3(
         }
         drivers.push(Driver {
             kind: DriverKind::GradeFallback,
-            name: grade.as_str().to_string(),
+            name: rank.label(),
             count: None,
             unit_price: None,
             chaos: Some(ladder),
@@ -1238,7 +1214,7 @@ fn scale_from_tier3(line: &RoomLine, tier3: &RoomValue, knobs: &Knobs) -> RoomVa
 mod tests {
     use super::*;
     use crate::temple::market::{allflame, STALE_AFTER_MS};
-    use crate::temple::rooms::Grade;
+    use crate::temple::rooms::RankingTier;
 
     fn tier(n: u8) -> Tier {
         Tier::new(n).expect("test tier is 0..=3")
@@ -1249,6 +1225,14 @@ mod tests {
             .get(key, tier(n))
             .unwrap_or_else(|| panic!("no value for {key} tier {n}"))
             .clone()
+    }
+
+    fn rank_of(key: &str) -> RoomRank {
+        LINES
+            .iter()
+            .find(|line| line.key() == key)
+            .expect("ranked line")
+            .rank()
     }
 
     fn close(actual: f64, expected: f64) -> bool {
@@ -1596,9 +1580,7 @@ mod tests {
         assert!(close(priced.drops, 61.35), "drops was {}", priced.drops);
         assert_eq!(rushed.drops, 0.0);
         // And what is left is still the market's ranking: Crucible keeps its
-        // 6 c quantity bonus instead of falling to the 400 c its A+ rung would
-        // have stood in for, which would have put it above the 390 c the feed
-        // actually pays for Doryani's Institute.
+        // 6 c quantity bonus: summing something bypasses its A-tier fallback.
         assert!(close(rushed.total, 6.0), "total was {}", rushed.total);
         assert_eq!(value_of(&valued, "gem", 3).total, 390.0, "Doryani's sale");
         assert_eq!(
@@ -1622,14 +1604,17 @@ mod tests {
         );
 
         assert_eq!(value.priced, Priced::Fallback);
-        // The D rung on the LIVE ladder, which POE-262 WI-1 re-anchored and
+        // The E5 rung on the LIVE ladder, which POE-262 WI-1 re-anchored and
         // WI-2 moved: the capture's cheapest SUMMED room is Toxic Grove at
         // `ANCHOR` = 1.85710..., so every rung is ANCHOR/800 of its cold value
-        // and D is 2 x 1.85710.../800 = 0.0046428. 2.0 here would mean the
+        // and E is 2 x 1.85710.../800 = 0.0046428. 2.0 here would mean the
         // ladder had stopped moving with the market; 2.115 would mean it was
         // still anchored on the top sale delta; 0.006625 would mean Toxic
         // Grove's vial had gone back to a flat 0.1 per run.
-        assert_eq!(value.total, Grade::D.fallback_chaos_scaled(ANCHOR));
+        assert_eq!(
+            value.total,
+            rank_of("museum_of_artefacts").fallback_chaos_scaled(ANCHOR)
+        );
         assert!(
             close(value.total, 0.004_642_761_989),
             "total was {}",
@@ -1638,7 +1623,7 @@ mod tests {
         assert_eq!(value.sale, 0.0);
         assert_eq!(value.drops, 0.0);
         assert_eq!(value.bonus, 0.0);
-        assert_eq!(driver(&value, DriverKind::GradeFallback).name, "D");
+        assert_eq!(driver(&value, DriverKind::GradeFallback).name, "E5");
     }
 
     #[test]
@@ -1646,7 +1631,7 @@ mod tests {
         // Factory tier 3 sells at the floor and drops nothing anybody has
         // quantified, but poedb measures +66 % quantity and +12 % rarity on
         // it. At the default rates that is 36 c, and the room is worth that
-        // rather than the 50 c its B rung would have stood in for: a term that
+        // rather than the 100 c its B1 rung would have stood in for: a term that
         // was summed always beats the ladder.
         let value = value_of(
             &Valued::compute(&allflame(), &Knobs::default()),
@@ -1658,7 +1643,7 @@ mod tests {
         assert!(close(value.bonus, 36.0), "66 x 0.5 + 12 x 0.25");
         assert_ne!(
             value.total,
-            Grade::B.fallback_chaos_scaled(846.0),
+            rank_of("factory").fallback_chaos_scaled(846.0),
             "not the B rung — and the LIVE B rung, which is the one this read \
              would have fallen back to",
         );
@@ -1680,9 +1665,9 @@ mod tests {
     fn a_fallback_total_is_carried_by_the_grade_driver_alone() {
         // Zero both bonus rates and Chamber of Iron has nothing left: it sits
         // at the floor, drops nothing, and its two percentages now price at 0,
-        // so its C rung stands in. The terms stay listed — the percentages are
+        // so its C2 rung stands in. The terms stay listed — the percentages are
         // real — but one still carrying `Some(0)` would make the lines the box
-        // prints disagree with the 0.0232138 c the advisor ranked on.
+        // prints disagree with the 0.0464276 c the advisor ranked on.
         let knobs = Knobs {
             c_per_quantity: 0.0,
             c_per_rarity: 0.0,
@@ -1691,15 +1676,18 @@ mod tests {
         let value = value_of(&Valued::compute(&allflame(), &knobs), "chamber_of_iron", 3);
 
         assert_eq!(value.priced, Priced::Fallback);
-        // The C rung on the LIVE ladder, stated as a number as well as as an
+        // The C2 rung on the LIVE ladder, stated as a number as well as as an
         // expression: an assertion written only in terms of
         // `fallback_chaos_scaled` moves with any change to that function and
         // could not fail. Zeroing the two rates does not move the anchor —
-        // Toxic Grove's 1.85710... is a DROP, not a bonus — so C is
-        // 10 x 1.85710.../800 = 0.0232138.
-        assert_eq!(value.total, Grade::C.fallback_chaos_scaled(ANCHOR));
+        // Toxic Grove's 1.85710... is a DROP, not a bonus — so tier C is
+        // 20 x 1.85710.../800 = 0.0464276.
+        assert_eq!(
+            value.total,
+            rank_of("chamber_of_iron").fallback_chaos_scaled(ANCHOR)
+        );
         assert!(
-            close(value.total, 0.023_213_809_947),
+            close(value.total, 0.046_427_619_893),
             "total was {}",
             value.total
         );
@@ -1720,23 +1708,21 @@ mod tests {
             carried,
             vec![(
                 DriverKind::GradeFallback,
-                Some(Grade::C.fallback_chaos_scaled(ANCHOR))
+                Some(rank_of("chamber_of_iron").fallback_chaos_scaled(ANCHOR))
             )],
         );
     }
 
     /// A read that prices nothing prices the WHOLE board off the cold ladder.
     ///
-    /// Epic lock L4's "base value" is those ten rungs, and it is all of them:
+    /// Epic lock L4's "base value" is those five tier rungs, and it is all of them:
     /// the terms that survive a cold market — poedb's area bonuses, Crucible of
     /// Flame's manually priced temple-mod item — are deliberately NOT summed
-    /// alongside a letter. Mixing them is what this module used to do, and it
-    /// put Sanctum of Immortality (grade A, 6 c of quantity bonus) under
-    /// Sadist's Den (grade C, 10 c of letter). Half a formula and half a ladder
-    /// is not a ranking in either unit.
+    /// alongside a rung. Mixing those paths used to put a bonus-priced room
+    /// below a cold fallback. Every cold room now reads the same tier ladder.
     ///
     /// Fails the moment the bonus term is summed on a cold read again: Sanctum
-    /// reads 6 instead of 200, and Crucible reads 66 instead of 400.
+    /// reads 6 instead of 100, and Crucible reads 66 instead of 800.
     #[test]
     fn a_read_that_prices_nothing_reads_the_whole_board_off_the_cold_ladder() {
         let valued = Valued::compute(&MarketInput::none(), &Knobs::default());
@@ -1749,9 +1735,9 @@ mod tests {
                 .expect("every valued key is a room line");
             assert_eq!(
                 tiers[2].total,
-                line.grade().fallback_chaos(),
+                line.rank().fallback_chaos(),
                 "{key} is graded {}",
-                line.grade().as_str(),
+                line.rank().label(),
             );
             // The two instrumental lines reach the SAME rung by a different
             // route and say so: they are not priced at their letter because
@@ -1789,23 +1775,27 @@ mod tests {
 
         // The order the ladder is FOR, spelled out on the rooms the epic
         // argues about.
-        assert_eq!(value_of(&valued, "corruption", 3).total, 800.0, "Locus A++");
-        assert_eq!(value_of(&valued, "gem", 3).total, 400.0, "Doryani A+");
+        assert_eq!(
+            value_of(&valued, "corruption", 3).total,
+            800.0,
+            "Locus tier A"
+        );
+        assert_eq!(value_of(&valued, "gem", 3).total, 800.0, "Doryani A2");
         assert_eq!(
             value_of(&valued, "crucible_of_flame", 3).total,
-            400.0,
-            "Crucible A+, and NOT the 66 its mod item plus bonus would sum to",
+            800.0,
+            "Crucible A3, and NOT the 66 its mod item plus bonus would sum to",
         );
         assert_eq!(
             value_of(&valued, "sanctum_of_immortality", 3).total,
-            200.0,
-            "Sanctum A, and NOT the 6 its quantity bonus would sum to",
+            100.0,
+            "Sanctum B3, and NOT the 6 its quantity bonus would sum to",
         );
-        assert_eq!(value_of(&valued, "sadists_den", 3).total, 10.0, "C");
+        assert_eq!(value_of(&valued, "sadists_den", 3).total, 5.0, "D2");
         assert_eq!(
             value_of(&valued, "upgrade", 3).total,
-            100.0,
-            "Temple Nexus B+, priced at its letter and NOT at its 6 c bonus",
+            20.0,
+            "Temple Nexus C1, priced at its letter and NOT at its 6 c bonus",
         );
         assert!(
             value_of(&valued, "sanctum_of_immortality", 3).total
@@ -1832,7 +1822,7 @@ mod tests {
         );
 
         assert_eq!(value.priced, Priced::Fallback);
-        assert_eq!(value.total, 400.0, "the A+ rung, not the 66 it can sum");
+        assert_eq!(value.total, 800.0, "the A3 rung, not the 66 it can sum");
         assert!(
             !value.drivers.iter().any(|d| d.kind == DriverKind::ModItem),
             "and nothing was tried, so nothing is listed: {:?}",
@@ -1859,13 +1849,13 @@ mod tests {
     /// The POE-262 report, from his 2026-09-06 review of the value table:
     /// Hybridisation Chamber tier 3 measured 8.7 c on that day's read and sat
     /// UNDER Sadist's Den and Hall of War, which summed nothing at all and
-    /// took a C rung of 10.575 between them. His rule ends it — *"if temple
+    /// took fallback values above that measured sum. His rule ends it — *"if temple
     /// does not have APEX, value of room itself is just zero and should be
     /// counted only based on what you can drop from it"*.
     ///
     /// Fails on the shipped-before state: anchor the fallback rung on
     /// `top_tier3_sale_delta` instead of on `lowest_summed_room_total` and the
-    /// two letters read 10.575 again, over a room the market priced.
+    /// fallbacks rise above the cheaper summed rooms.
     #[test]
     fn the_room_vertolka_flagged_outranks_the_two_letters_that_beat_it() {
         let valued = Valued::compute(&allflame(), &Knobs::default());
@@ -1882,15 +1872,15 @@ mod tests {
             measured.total
         );
         assert_eq!(measured.priced, Priced::Partial, "it summed a real drop");
-        assert_eq!(sadists.priced, Priced::Fallback, "C, and it sums nothing");
+        assert_eq!(sadists.priced, Priced::Fallback, "D2, and it sums nothing");
         assert_eq!(
             war.priced,
             Priced::Fallback,
-            "C, and pack size prices at nothing"
+            "D4, and pack size prices at nothing"
         );
-        // 10 x ANCHOR/800: the C rung on the cheapest SUMMED room.
-        assert!(close(sadists.total, 0.023_213_809_947), "{}", sadists.total);
-        assert!(close(war.total, 0.023_213_809_947), "{}", war.total);
+        // 5 x ANCHOR/800: the D-tier rung on the cheapest SUMMED room.
+        assert!(close(sadists.total, 0.011_606_904_973), "{}", sadists.total);
+        assert!(close(war.total, 0.011_606_904_973), "{}", war.total);
         assert!(measured.total > sadists.total);
         assert!(measured.total > war.total);
     }
@@ -2001,11 +1991,11 @@ mod tests {
         // this is what "0 removes every vial term" costs a player who sets it.
         let throne = value_of(&valued, "throne_of_atziri", 3);
         assert_eq!(throne.priced, Priced::Fallback, "nothing left to sum");
-        // C- on an anchor that is now Toxic Grove's unique term alone: the
+        // D1 on an anchor that is now Toxic Grove's unique term alone: the
         // cheapest summed room lost its vial with everything else.
         assert_eq!(
             throne.total,
-            Grade::CMinus.fallback_chaos_scaled(ANCHOR_NO_VIALS)
+            rank_of("throne_of_atziri").fallback_chaos_scaled(ANCHOR_NO_VIALS)
         );
         assert!(close(throne.total, 0.010_937_5), "{}", throne.total);
     }
@@ -2221,11 +2211,14 @@ mod tests {
         assert!(close(l, 1.964_209_591_474), "L was {l}");
         assert!(l > ANCHOR, "the anchor rose with the rate");
 
-        // And the C rung rose with it, in the same ratio.
+        // And the D2 rung rose with it, in the same ratio.
         let sadists = value_of(&doubled, "sadists_den", 3);
         assert_eq!(sadists.priced, Priced::Fallback, "precondition");
-        assert_eq!(sadists.total, Grade::C.fallback_chaos_scaled(l));
-        assert!(close(sadists.total, 0.024_552_619_893), "{}", sadists.total);
+        assert_eq!(
+            sadists.total,
+            rank_of("sadists_den").fallback_chaos_scaled(l)
+        );
+        assert!(close(sadists.total, 0.012_276_309_947), "{}", sadists.total);
     }
 
     /// The capture's anchor L is Toxic Grove's formula sum, to the bit.
@@ -2274,26 +2267,11 @@ mod tests {
         assert!(ANCHOR < second);
     }
 
-    /// On a live read a letter never reaches a room that summed something.
-    ///
-    /// The whole point of POE-262's anchor, stated over all 25 lines rather
-    /// than over the pair that was reported: `fallback_chaos_scaled` maps A++
-    /// onto `lowest_summed_room_total` exactly and every lower grade onto a
-    /// fraction of it, so the ladder as a whole sits at or under the cheapest
-    /// measured room. The `<=` is A++'s alone and is stated rather than papered
-    /// over with a margin constant — the only A++ line is Locus of Corruption,
-    /// which reaches this path only on a read that prices neither it nor
-    /// anything it drops.
-    ///
-    /// It is the property that closes ADR-022 §3's recorded fork, and Apex of
-    /// Ascension is the fork's own example: B-, summing nothing, it used to
-    /// stand at 31.725 over Chamber of Iron's measured 6.
-    ///
-    /// Fails if the anchor widens back to the sale-priced set (Apex reads
-    /// 31.725 against a floor of 1.857) and fails if any rung stops being a
-    /// fraction of the anchor.
+    /// No fallback exceeds a room that summed something. Tier A equals the
+    /// lowest sum; every lower tier is a fixed fraction of it. This fails if
+    /// the anchor widens to the sale-priced set or a rung exceeds the anchor.
     #[test]
-    fn no_letter_reaches_a_room_that_summed_something() {
+    fn no_fallback_exceeds_a_room_that_summed_something() {
         let valued = Valued::compute(&allflame(), &Knobs::default());
 
         let cheapest_summed = valued
@@ -2317,10 +2295,10 @@ mod tests {
                 .iter()
                 .find(|line| line.key() == key)
                 .expect("every valued key is a room line");
-            if line.grade() == Grade::APlusPlus {
+            if line.rank().tier == RankingTier::A {
                 assert!(
                     tiers[2].total <= cheapest_summed,
-                    "{key} is A++, which EQUALS the anchor, and read {}",
+                    "{key} is tier A, which EQUALS the anchor, and read {}",
                     tiers[2].total,
                 );
             } else {
@@ -2337,20 +2315,9 @@ mod tests {
         assert_eq!(fallbacks, 10, "the capture's unpriced rooms");
     }
 
-    /// On the rusher's board the anchor collapses onto the two rooms the feed
-    /// prices.
-    ///
-    /// `drops_weight = 0` is the rusher's setting (ADR-022 §5) and zeroing both
-    /// bonus rates with it leaves a board where the ONLY summed rooms are Locus
-    /// (846) and Doryani (390). The anchor is the cheaper of them, so Crucible
-    /// of Flame — an A+ line sitting at the floor, which those knobs push onto
-    /// the fallback path — reads 400 x 390/800 = 195 and stays under the 390
-    /// the feed printed.
-    ///
-    /// The set is what moves here, not the rule: the same expression that gives
-    /// 1.857 at the shipped knobs gives 390 at these. Fails if the anchor is
-    /// hard-coded to the capture's 1.857, and fails if it goes back to the top
-    /// sale delta (Crucible would read 423, over Doryani).
+    /// With drops and bonus rates zeroed, only the two sales remain in the
+    /// anchor set. A-tier Crucible equals the cheaper sale, never exceeds it.
+    /// Using the top sale delta instead would put Crucible above Doryani.
     #[test]
     fn the_rushers_knobs_leave_the_two_sale_priced_rooms_as_the_whole_anchor_set() {
         let knobs = Knobs {
@@ -2363,30 +2330,22 @@ mod tests {
 
         let crucible = value_of(&valued, "crucible_of_flame", 3);
         assert_eq!(crucible.priced, Priced::Fallback, "precondition");
-        assert!(close(crucible.total, 195.0), "A+, was {}", crucible.total);
+        assert!(close(crucible.total, 390.0), "A3, was {}", crucible.total);
         assert_eq!(
             crucible.total,
-            Grade::APlus.fallback_chaos_scaled(390.0),
+            rank_of("crucible_of_flame").fallback_chaos_scaled(390.0),
             "anchored on Doryani, the cheaper of the two summed rooms",
         );
         assert!(
-            crucible.total < value_of(&valued, "gem", 3).total,
-            "and under the price the feed actually printed",
+            crucible.total <= value_of(&valued, "gem", 3).total,
+            "and no higher than the price the feed actually printed",
         );
     }
 
-    /// Among the rooms nothing priced, the letters still order them.
-    ///
-    /// The half of Vertolka's rule that is easy to lose: an unpriced room is
-    /// worth less than every priced one, and the ten rungs are what says which
-    /// unpriced room is worth more than which other. Every rung being a fixed
-    /// fraction of one anchor is what keeps both halves at once.
-    ///
-    /// Fails if the rungs are CLIPPED at the anchor rather than scaled onto it
-    /// — B- and C would tie at 1.857 on this capture — and fails if the ladder
-    /// is flattened to a constant.
+    /// Unpriced rooms are priced by tier alone: D2 and D3 tie, below C5
+    /// and above E1. Clipping every rung at the anchor would lose these gaps.
     #[test]
-    fn the_letters_still_order_the_rooms_nothing_priced() {
+    fn the_tiers_price_the_rooms_nothing_priced() {
         let valued = Valued::compute(&allflame(), &Knobs::default());
 
         let apex = value_of(&valued, "apex_of_ascension", 3);
@@ -2397,18 +2356,18 @@ mod tests {
         for value in [&apex, &sadists, &storm, &atlas] {
             assert_eq!(value.priced, Priced::Fallback, "precondition");
         }
-        // B- 30, C 10, C- 5, D 2, each x ANCHOR/800.
-        assert!(close(apex.total, 0.069_641_429_840), "B-, {}", apex.total);
+        // D3 and D2 share 5; C5 takes 20; E1 takes 2, each x ANCHOR/800.
+        assert!(close(apex.total, 0.011_606_904_973), "D3, {}", apex.total);
         assert!(
-            close(sadists.total, 0.023_213_809_947),
-            "C, {}",
+            close(sadists.total, 0.011_606_904_973),
+            "D2, {}",
             sadists.total
         );
-        assert!(close(storm.total, 0.011_606_904_973), "C-, {}", storm.total);
-        assert!(close(atlas.total, 0.004_642_761_989), "D, {}", atlas.total);
-        assert!(apex.total > sadists.total);
-        assert!(sadists.total > storm.total);
-        assert!(storm.total > atlas.total);
+        assert!(close(storm.total, 0.046_427_619_893), "C5, {}", storm.total);
+        assert!(close(atlas.total, 0.004_642_761_989), "E1, {}", atlas.total);
+        assert_eq!(apex.total, sadists.total);
+        assert!(storm.total > sadists.total);
+        assert!(sadists.total > atlas.total);
     }
 
     /// An override on the anchor room moves no other room's value.
@@ -2427,8 +2386,8 @@ mod tests {
     /// the one this pins against: it would make one Custom edit move ten
     /// other rooms (the anchor would jump to Chamber of Iron's 6.00 and every
     /// rung would rise by 6.00/1.857), and overriding the LAST summed room would
-    /// drop the whole board onto the cold ladder — a C room going from 0.033 c
-    /// to 10 c because of an edit made somewhere else.
+    /// drop the whole board onto the cold ladder — a fallback rising from its scaled value
+    /// to its cold rung because of an edit made somewhere else.
     ///
     /// Fails if the override filter is re-added to `lowest_summed_room_total`.
     #[test]
@@ -2468,14 +2427,15 @@ mod tests {
     ///
     /// The other half of the same rule, and the one a player would hit first:
     /// writing 0.5 c against the room that IS the anchor must not drag all
-    /// ten unpriced rooms down by a factor of five. Toxic Grove is the room
-    /// because its stated 0.5 sits below its own formula sum of 1.857, so the
+    /// ten unpriced rooms down with it. Toxic Grove is the room because its
+    /// stated 0.5 sits below its own formula sum of 1.857, so the
     /// two answers are distinguishable on the row and on every rung — its
     /// formula sum is `ANCHOR`, 1.857.
     ///
     /// Fails if the set is ever fed the PUBLISHED totals — the row as the
     /// player sees it — rather than the formula value of each line: Sadist's
-    /// Den would read 10 x 0.5/800 = 0.00625 instead of 10 x ANCHOR/800.
+    /// Den would read 5 x 0.5/800 = 0.003125 instead of
+    /// 5 x ANCHOR/800 = 0.0116069.
     #[test]
     fn a_stated_number_never_becomes_the_anchor() {
         let market = allflame();
@@ -2490,11 +2450,11 @@ mod tests {
         );
         let sadists = value_of(&valued, "sadists_den", 3);
         assert_eq!(sadists.priced, Priced::Fallback);
-        // 10 x ANCHOR/800, the formula sum of the overridden line — not
-        // 10 x 0.5/800, the number the player wrote over it.
+        // 5 x ANCHOR/800, the formula sum of the overridden line — not
+        // 5 x 0.5/800, the number the player wrote over it.
         assert!(
-            close(sadists.total, 0.023_213_809_947),
-            "C, {}",
+            close(sadists.total, 0.011_606_904_973),
+            "D2, {}",
             sadists.total
         );
     }
@@ -2509,7 +2469,7 @@ mod tests {
     /// evidence and it is `advisor::tests`'s, not this module's.
     ///
     /// Fails if the two lines are routed through `fallback_rung`: at the
-    /// capture's 1.857 anchor Temple Nexus would read 0.232138 and the shrine
+    /// capture's 1.857 anchor Temple Nexus would read 0.046428 and the shrine
     /// 0.0046428, which is the shape that produced the board-7 miss.
     #[test]
     fn the_instrumental_lines_are_not_re_anchored_on_the_cheapest_summed_room() {
@@ -2520,35 +2480,18 @@ mod tests {
 
         assert_eq!(nexus.priced, Priced::Instrumental);
         assert_eq!(shrine.priced, Priced::Instrumental);
-        // 100 and 2 x 846/800, the top sale delta, capped at Doryani's 390.
-        assert!(close(nexus.total, 105.75), "B+, was {}", nexus.total);
-        assert!(close(shrine.total, 2.115), "D, was {}", shrine.total);
+        // 20 and 2 x 846/800, the top sale delta, capped at Doryani's 390.
+        assert!(close(nexus.total, 21.15), "C1, was {}", nexus.total);
+        assert!(close(shrine.total, 2.115), "E2, was {}", shrine.total);
         // And they really do stand above the rooms the same read prices,
         // which is the departure from L1 §4 takes on its own evidence.
         assert!(nexus.total > value_of(&valued, "chamber_of_iron", 3).total);
     }
 
-    /// The §4 cap really does hold an instrumental line under the cheapest
-    /// price the feed printed.
-    ///
-    /// On the committed capture the cap never bites — the B+ rung is 105.75
-    /// and the cheapest sale-priced room is Doryani's Institute at 390 — so
-    /// the capture alone cannot tell `rung.min(cap)` apart from `rung`. This
-    /// read is the capture with Doryani's tier-3 sale delta taken down to 60,
-    /// which leaves it sale-priced (still above the 10 c floor, still
-    /// `above_floor`) and makes it the cheapest such room. Its sale is its
-    /// whole value, so its total is 60 exactly.
-    ///
-    /// Temple Nexus is then B+ at 100 x 846/800 = 105.75 before the cap and
-    /// 60 after it — the price the feed actually printed, never over it, which
-    /// is the one thing §4's departure from epic lock L1 still owes L1. The
-    /// Shrine of Unmaking's D rung is 2 x 846/800 = 2.115, under the cap, and
-    /// stays there.
-    ///
-    /// Fails if `instrumental_rung`'s `Some(cap) => rung.min(cap)` becomes
-    /// `Some(_cap) => rung` (Temple Nexus reads 105.75, over the feed), and
-    /// fails if it becomes `Some(cap) => cap` (the shrine reads 60, an
-    /// explosives line priced like Doryani's Institute).
+    /// The cap must bite: reduce Doryani's sale delta to 10, below the
+    /// Nexus C1 rung of 21.15 but above the shrine E2 rung of 2.115.
+    /// Returning the rung unconditionally fails for Nexus; returning the cap
+    /// unconditionally fails for the shrine.
     #[test]
     fn an_instrumental_line_is_held_under_the_cheapest_sale_priced_room() {
         let mut market = allflame();
@@ -2557,38 +2500,27 @@ mod tests {
             .get_mut(&("Doryani's Institute".to_string(), 3))
             .expect("the capture prices Doryani's Institute at tier 3");
         assert!(quote.above_floor, "precondition: it is a sale-priced room");
-        quote.sale_delta = 60.0;
+        quote.sale_delta = 10.0;
 
         let valued = Valued::compute(&market, &Knobs::default());
 
         assert!(
-            close(value_of(&valued, "gem", 3).total, 60.0),
+            close(value_of(&valued, "gem", 3).total, 10.0),
             "precondition: Doryani's is now the cheapest sale-priced room",
         );
         let nexus = value_of(&valued, "upgrade", 3);
         assert_eq!(nexus.priced, Priced::Instrumental);
-        assert!(close(nexus.total, 60.0), "B+ capped, was {}", nexus.total);
+        assert!(close(nexus.total, 10.0), "C1 capped, was {}", nexus.total);
         let shrine = value_of(&valued, "explosive", 3);
         assert!(
             close(shrine.total, 2.115),
-            "D, under the cap, was {}",
+            "E2, under the cap, was {}",
             shrine.total,
         );
     }
 
-    /// A room losing its price takes its own letter and moves nothing else.
-    ///
-    /// Take Doryani's Institute down to the floor and the gem line, whose sale
-    /// was its whole value, falls to its A+ rung. What must NOT happen is the
-    /// rest of the board moving with it: the anchor is the cheapest room that
-    /// SUMMED something, and Doryani at 390 was never that room, so every
-    /// other unpriced room reads exactly what it read before.
-    ///
-    /// The old rule failed this by construction — the cap was a function of
-    /// which rooms the feed priced, so removing Doryani raised it from 390 to
-    /// 846 and lifted the gem line to 423, above every measured room but
-    /// Locus. Fails if the fallback rung goes back to reading a set that
-    /// depends on which rooms fell back.
+    /// Losing Doryani's sale makes it fall back to its A-tier rung on the
+    /// unchanged formula-sum anchor. Other fallback rooms must not move.
     #[test]
     fn a_room_losing_its_price_takes_its_letter_and_moves_no_other_room() {
         let untouched = Valued::compute(&allflame(), &Knobs::default());
@@ -2604,14 +2536,16 @@ mod tests {
 
         let gem = value_of(&valued, "gem", 3);
         assert_eq!(gem.priced, Priced::Fallback, "its sale was its whole value");
-        // 400 x ANCHOR/800: the A+ rung on the unchanged anchor, not the 423
-        // the capped ladder used to hand it.
+        // 800 x ANCHOR/800: the A2 rung on the unchanged formula-sum anchor.
         assert!(
-            close(gem.total, Grade::APlus.fallback_chaos_scaled(ANCHOR)),
+            close(
+                gem.total,
+                rank_of("crucible_of_flame").fallback_chaos_scaled(ANCHOR)
+            ),
             "was {}",
             gem.total,
         );
-        assert!(close(gem.total, 0.928_552_397_869), "was {}", gem.total);
+        assert!(close(gem.total, 1.857_104_795_737), "was {}", gem.total);
         for (key, tiers) in valued.lines() {
             if key == "gem" || tiers[2].priced != Priced::Fallback {
                 continue;
@@ -2665,9 +2599,9 @@ mod tests {
                 .expect("every valued key is a room line");
             assert_eq!(
                 tiers[2].total,
-                line.grade().fallback_chaos(),
+                line.rank().fallback_chaos(),
                 "{key} is graded {}",
-                line.grade().as_str(),
+                line.rank().label(),
             );
             assert!(
                 tiers[2].guessed,
@@ -2724,7 +2658,7 @@ mod tests {
         let stale = Valued::compute(&market, &Knobs::default());
         let cold = Valued::compute(&MarketInput::none(), &Knobs::default());
 
-        assert_eq!(value_of(&stale, "corruption", 3).total, 800.0, "A++");
+        assert_eq!(value_of(&stale, "corruption", 3).total, 800.0, "tier A");
         for (key, tiers) in stale.lines() {
             let same = cold.get(key, Tier::T3).expect("valued");
             assert_eq!(tiers[2].total, same.total, "{key}");
@@ -2772,15 +2706,13 @@ mod tests {
     }
 
     #[test]
-    fn the_grade_ladder_keeps_the_two_above_floor_rooms_in_the_feeds_order() {
-        // The ladder is only defensible if it does not reorder the two rooms
-        // the market actually prices. Live: Locus 846 > Doryani 390.
+    fn cold_prices_share_a_tier_while_live_prices_keep_the_feed_values() {
         let cold = Valued::compute(&MarketInput::none(), &Knobs::default());
-
-        assert!(
-            value_of(&cold, "corruption", 3).total > value_of(&cold, "gem", 3).total,
-            "A++ must outrank A+ with no market, as the feed does with one"
-        );
+        assert_eq!(value_of(&cold, "corruption", 3).total, 800.0);
+        assert_eq!(value_of(&cold, "gem", 3).total, 800.0);
+        let live = Valued::compute(&allflame(), &Knobs::default());
+        assert!(close(value_of(&live, "corruption", 3).total, 846.506_808_762_581));
+        assert_eq!(value_of(&live, "gem", 3).total, 390.0);
     }
 
     #[test]

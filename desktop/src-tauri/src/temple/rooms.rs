@@ -9,8 +9,8 @@
 //!
 //! RePoE's `dat-export … IncursionRooms.csv` (2026-08-18). The T1→T2→T3 chains
 //! are the game's own `RoomUpgrade` keys rather than anyone's memory of them,
-//! and the tier-3 grades are Vertolka's sheet. Three of his spellings differ
-//! from game data (`Ascencion`, `House of the Other`, `Sadist Den`); they are
+//! and the tier-3 room rankings are Vertolka's ranking matrix, 2026-10-17.
+//! Sheet spellings that differ from game data are
 //! carried as explicit [`ALIASES`] rather than left to the fuzzy matcher, so a
 //! sheet import resolves deterministically instead of depending on a threshold.
 //!
@@ -37,142 +37,85 @@ use strsim::jaro_winkler;
 
 use super::strategy::{Line, Tier};
 
-// ------------------------------------------------------------------ grades --
+// ----------------------------------------------------------------- ranking --
 
-/// Vertolka's tier-3 ranking for a line, imported now and unused by scoring
-/// until POE-170 decides what weight (if any) a third-party grade carries.
-///
-/// Declared **worst first**, so the derived [`Ord`] reads "greater is better".
-/// Every one of the 25 lines is graded on his sheet, which is why this is not
-/// an `Option`.
+/// Ranking tiers, best first. Distinct from the room's built tier (`Tier`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Grade {
-    D,
-    CMinus,
-    C,
-    CPlus,
-    BMinus,
-    B,
-    BPlus,
+pub enum RankingTier {
     A,
-    APlus,
-    APlusPlus,
+    B,
+    C,
+    D,
+    E,
 }
 
-impl Grade {
-    /// The grade as it is written on the sheet — the wire form of this enum
-    /// (`slice::OfferView::grade`, POE-249), because `Grade` itself is a
-    /// reasoning type with a derived worst-first `Ord` and no `Serialize`.
-    pub fn as_str(self) -> &'static str {
+impl RankingTier {
+    fn letter(self) -> &'static str {
         match self {
-            Grade::D => "D",
-            Grade::CMinus => "C-",
-            Grade::C => "C",
-            Grade::CPlus => "C+",
-            Grade::BMinus => "B-",
-            Grade::B => "B",
-            Grade::BPlus => "B+",
-            Grade::A => "A",
-            Grade::APlus => "A+",
-            Grade::APlusPlus => "A++",
+            Self::A => "A",
+            Self::B => "B",
+            Self::C => "C",
+            Self::D => "D",
+            Self::E => "E",
         }
     }
 
-    /// What this grade stands in for, in chaos, when **nothing about the room
-    /// is priced** — POE-257's fallback and epic lock L1's only use of the
-    /// letter in arithmetic.
+    /// Cold fallback chaos per tier; rank within a tier never changes price.
     ///
-    /// **PROVISIONAL, calibrated 2026-09-06.** The ladder is geometric and it
-    /// is anchored on the one thing the market states outright: on that day's
-    /// Allflame capture (`assets/temple-market-allflame-2026-09-06.json`) the
-    /// two rooms above the 10 c floor were Locus of Corruption at 856 c (A++)
-    /// and Doryani's Institute at 400 c (A+). The rungs 800 and 400 keep those
-    /// two in the feed's order at roughly the feed's ratio, and the rest of the
-    /// ladder halves down from there. Nothing else about it is measured: no
-    /// feed prices a C+ room above the floor, so those rungs are a ranking, not
-    /// a valuation.
-    ///
-    /// Read ONLY where nothing is priced. A room with a live sale, a priced
-    /// drop or a priced bonus is worth what was summed and never touches this
-    /// — otherwise a third-party letter would silently outrank the feed.
-    /// POE-259's Custom preset overrides it per room, which is the intended
-    /// escape when a player disagrees with a rung.
-    ///
-    /// **These ten rungs are absolute chaos amounts fixed on one day, which is
-    /// exactly the shape `AGENTS.md` warns about**: an absolute price cutoff
-    /// stops meaning what it meant as the league ages and the currency moves.
-    /// 800 c was two thirds of Locus on 2026-09-06; it will be a different
-    /// fraction of it next month, and the ladder will quietly re-rank the
-    /// unpriced rooms against the priced ones without anyone editing it.
-    /// [`Self::fallback_chaos_scaled`] is the answer, and it is what a live
-    /// read uses; these ten numbers are the COLD ladder, kept for the read
-    /// that has no anchor to take a fraction of.
+    /// A=800, B=100, C=20, D=5, E=2 are approved by the owner, 2026-10-17.
+    /// They are not measured room prices. These absolute amounts age
+    /// with the league and currency, the cutoff shape `AGENTS.md` warns about.
+    /// Live reads use `RoomRank::fallback_chaos_scaled` instead; these are the
+    /// cold rungs when there is no usable market anchor. Read only where
+    /// nothing is priced, except the two instrumental lines (ADR-022 §4).
     pub fn fallback_chaos(self) -> f64 {
         match self {
-            Grade::D => 2.0,
-            Grade::CMinus => 5.0,
-            Grade::C => 10.0,
-            Grade::CPlus => 20.0,
-            Grade::BMinus => 30.0,
-            Grade::B => 50.0,
-            Grade::BPlus => 100.0,
-            Grade::A => 200.0,
-            Grade::APlus => 400.0,
-            Grade::APlusPlus => 800.0,
+            Self::A => 800.0,
+            Self::B => 100.0,
+            Self::C => 20.0,
+            Self::D => 5.0,
+            Self::E => 2.0,
         }
     }
+}
 
-    /// [`Self::fallback_chaos`] re-anchored on a chaos amount THIS read
-    /// produced.
+/// Vertolka's ranking for a line's tier-3 room. All 25 lines are ranked in
+/// `LINES`; smaller tier, then smaller position, means picked first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RoomRank {
+    pub tier: RankingTier,
+    pub pos: u8,
+}
+
+impl RoomRank {
+    /// The sheet's display string, also the wire form (`OfferView::grade`).
+    pub fn label(self) -> String {
+        format!("{}{}", self.tier.letter(), self.pos)
+    }
+
+    /// Total pick order derived from `LINES`, zero = best. No second scale
+    /// or tier lengths to maintain: count the lines picked before this rank.
+    pub fn pick_order(self) -> usize {
+        LINES.iter().filter(|line| line.rank < self).count()
+    }
+
+    pub fn fallback_chaos(self) -> f64 {
+        self.tier.fallback_chaos()
+    }
+
+    /// Re-anchor each tier's rung on this read: tier A equals the anchor,
+    /// every other tier is its fixed share. Position is displayed, not priced.
     ///
-    /// Every rung is multiplied by `anchor / 800`, so A++ equals the anchor
-    /// exactly and the ratios between the ten rungs are the ones
-    /// [`Self::fallback_chaos`] fixes — the ladder moves with the market
-    /// instead of standing still while the currency does.
-    ///
-    /// **Why this exists rather than the ten absolute numbers alone.** The
-    /// absolute rungs reproduce an inversion the epic's L1 lock forbids: at
-    /// `Grade::APlus` = 400 an A+ line that summed NOTHING outranks Doryani's
-    /// Institute, whose 390 the feed actually printed. That is a third-party
-    /// letter beating the market, and it is structural — not a property of the
-    /// 2026-09-06 capture, where it happens not to fire because both A+ lines
-    /// price something.
-    ///
-    /// # Which anchor, and what that buys
-    ///
-    /// [`crate::temple::valuation::Valued`] owns the choice and passes two
-    /// different ones, because the two rung-priced paths answer different
-    /// questions (ADR-022 §3 as amended by POE-262, and §4):
-    ///
-    /// - a room that **summed nothing** is anchored on
-    ///   `valuation::lowest_summed_room_total` — the lowest tier-3 total among
-    ///   the rooms that summed something, over the FORMULA sums of the 23
-    ///   non-instrumental lines with Custom overrides ignored, 1.857 on the
-    ///   committed capture. Since A++ equals the anchor and every lower grade
-    ///   is a fixed fraction of it, no letter can reach a room something
-    ///   priced. That CLOSES the fork ADR-022 §3 recorded: Apex of Ascension
-    ///   (B−, nothing summed) used to stand at 31.7 over Chamber of Iron's
-    ///   measured 6, and now reads 0.0696;
-    /// - the two `strategy::INSTRUMENTAL_LINES` are anchored on the read's
-    ///   best tier-3 sale delta and then capped at the lowest sale-priced room
-    ///   (846 and 390 on the capture, so Temple Nexus reads its B+ 105.75 and
-    ///   the Shrine of Unmaking its D 2.115). That two-step is §4's, it rests
-    ///   on board-7 evidence, and POE-262 left it alone.
-    ///
-    /// The rescale on its own guarantees NEITHER — it is arithmetic, and this
-    /// doc once claimed otherwise. A++ equals whatever it is handed, so the
-    /// property each path holds is a property of the ANCHOR that path picks.
-    ///
-    /// A non-finite or non-positive `anchor` is not a read to anchor on, and
-    /// falls back to [`Self::fallback_chaos`] — that is the cold-read path,
-    /// and the caller ([`crate::temple::valuation::Valued`]) also withholds a
-    /// stale read's numbers so a stale market cannot re-anchor the ladder
-    /// either.
+    /// `valuation::lowest_summed_room_total` anchors rooms that summed nothing
+    /// at the cheapest formula sum, so no fallback exceeds a priced room.
+    /// Instrumental lines use the best sale delta, capped at the cheapest
+    /// sale-priced room (ADR-022 §4). The anchor choice supplies those bounds;
+    /// rescaling alone does not. Invalid anchors keep the cold ladder.
     pub fn fallback_chaos_scaled(self, anchor: f64) -> f64 {
         if !anchor.is_finite() || anchor <= 0.0 {
             return self.fallback_chaos();
         }
-        self.fallback_chaos() * (anchor / Grade::APlusPlus.fallback_chaos())
+        self.fallback_chaos() * (anchor / RankingTier::A.fallback_chaos())
     }
 }
 
@@ -181,12 +124,12 @@ impl Grade {
 /// One three-tier room family.
 ///
 /// The tier-1 name is the line's root but not its identity: the player cares
-/// about `tiers[2]`, which is also what Vertolka grades.
+/// about `tiers[2]`, which is also what Vertolka ranks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoomLine {
     key: &'static str,
     tiers: [&'static str; 3],
-    grade: Grade,
+    rank: RoomRank,
 }
 
 impl RoomLine {
@@ -213,11 +156,10 @@ impl RoomLine {
         }
     }
 
-    /// Vertolka's grade for this line's tier-3 room. Published per offer since
-    /// POE-249 (`slice::offer_view`), paired with the tier-3 name so the letter
-    /// is never read as a grade of the room the kill actually builds.
-    pub fn grade(self) -> Grade {
-        self.grade
+    /// Ranking of the line's tier-3 room, paired with that name on offers so
+    /// it is not mistaken for the built room's tier.
+    pub fn rank(self) -> RoomRank {
+        self.rank
     }
 
     /// The POE-167 [`Line`] this family scores as.
@@ -261,7 +203,10 @@ pub const LINES: [RoomLine; 25] = [
             "Hall of Offerings",
             "Apex of Ascension",
         ],
-        grade: Grade::BMinus,
+        rank: RoomRank {
+            tier: RankingTier::D,
+            pos: 3,
+        },
     },
     RoomLine {
         key: "atlas_of_worlds",
@@ -270,12 +215,18 @@ pub const LINES: [RoomLine; 25] = [
             "Office of Cartography",
             "Atlas of Worlds",
         ],
-        grade: Grade::D,
+        rank: RoomRank {
+            tier: RankingTier::E,
+            pos: 1,
+        },
     },
     RoomLine {
         key: "chamber_of_iron",
         tiers: ["Armourer's Workshop", "Armoury", "Chamber of Iron"],
-        grade: Grade::C,
+        rank: RoomRank {
+            tier: RankingTier::C,
+            pos: 2,
+        },
     },
     RoomLine {
         key: "conduit_of_lightning",
@@ -284,7 +235,10 @@ pub const LINES: [RoomLine; 25] = [
             "Omnitect Reactor Plant",
             "Conduit of Lightning",
         ],
-        grade: Grade::C,
+        rank: RoomRank {
+            tier: RankingTier::B,
+            pos: 4,
+        },
     },
     RoomLine {
         key: "court_of_sealed_death",
@@ -293,12 +247,18 @@ pub const LINES: [RoomLine; 25] = [
             "Hall of Locks",
             "Court of Sealed Death",
         ],
-        grade: Grade::D,
+        rank: RoomRank {
+            tier: RankingTier::E,
+            pos: 4,
+        },
     },
     RoomLine {
         key: "crucible_of_flame",
         tiers: ["Flame Workshop", "Omnitect Forge", "Crucible of Flame"],
-        grade: Grade::APlus,
+        rank: RoomRank {
+            tier: RankingTier::A,
+            pos: 3,
+        },
     },
     RoomLine {
         key: "defense_research_lab",
@@ -307,7 +267,10 @@ pub const LINES: [RoomLine; 25] = [
             "Temple Defense Workshop",
             "Defense Research Lab",
         ],
-        grade: Grade::C,
+        rank: RoomRank {
+            tier: RankingTier::B,
+            pos: 6,
+        },
     },
     RoomLine {
         key: "gem",
@@ -316,32 +279,50 @@ pub const LINES: [RoomLine; 25] = [
             "Department of Thaumaturgy",
             "Doryani's Institute",
         ],
-        grade: Grade::APlus,
+        rank: RoomRank {
+            tier: RankingTier::A,
+            pos: 2,
+        },
     },
     RoomLine {
         key: "factory",
         tiers: ["Workshop", "Engineering Department", "Factory"],
-        grade: Grade::B,
+        rank: RoomRank {
+            tier: RankingTier::B,
+            pos: 1,
+        },
     },
     RoomLine {
         key: "glittering_halls",
         tiers: ["Jeweller's Workshop", "Jewellery Forge", "Glittering Halls"],
-        grade: Grade::B,
+        rank: RoomRank {
+            tier: RankingTier::B,
+            pos: 2,
+        },
     },
     RoomLine {
         key: "hall_of_champions",
         tiers: ["Sparring Room", "Arena of Valour", "Hall of Champions"],
-        grade: Grade::C,
+        rank: RoomRank {
+            tier: RankingTier::C,
+            pos: 3,
+        },
     },
     RoomLine {
         key: "hall_of_legends",
         tiers: ["Hall of Mettle", "Hall of Heroes", "Hall of Legends"],
-        grade: Grade::D,
+        rank: RoomRank {
+            tier: RankingTier::E,
+            pos: 6,
+        },
     },
     RoomLine {
         key: "hall_of_war",
         tiers: ["Guardhouse", "Barracks", "Hall of War"],
-        grade: Grade::C,
+        rank: RoomRank {
+            tier: RankingTier::D,
+            pos: 4,
+        },
     },
     RoomLine {
         key: "house_of_the_others",
@@ -350,12 +331,18 @@ pub const LINES: [RoomLine; 25] = [
             "Breach Containment Chamber",
             "House of the Others",
         ],
-        grade: Grade::D,
+        rank: RoomRank {
+            tier: RankingTier::E,
+            pos: 7,
+        },
     },
     RoomLine {
         key: "hybridisation_chamber",
         tiers: ["Hatchery", "Automaton Lab", "Hybridisation Chamber"],
-        grade: Grade::C,
+        rank: RoomRank {
+            tier: RankingTier::B,
+            pos: 5,
+        },
     },
     RoomLine {
         key: "corruption",
@@ -364,17 +351,26 @@ pub const LINES: [RoomLine; 25] = [
             "Catalyst of Corruption",
             "Locus of Corruption",
         ],
-        grade: Grade::APlusPlus,
+        rank: RoomRank {
+            tier: RankingTier::A,
+            pos: 1,
+        },
     },
     RoomLine {
         key: "museum_of_artefacts",
         tiers: ["Storage Room", "Warehouses", "Museum of Artefacts"],
-        grade: Grade::D,
+        rank: RoomRank {
+            tier: RankingTier::E,
+            pos: 5,
+        },
     },
     RoomLine {
         key: "sadists_den",
         tiers: ["Torment Cells", "Torture Cages", "Sadist's Den"],
-        grade: Grade::C,
+        rank: RoomRank {
+            tier: RankingTier::D,
+            pos: 2,
+        },
     },
     RoomLine {
         key: "sanctum_of_immortality",
@@ -383,12 +379,18 @@ pub const LINES: [RoomLine; 25] = [
             "Sanctum of Vitality",
             "Sanctum of Immortality",
         ],
-        grade: Grade::A,
+        rank: RoomRank {
+            tier: RankingTier::B,
+            pos: 3,
+        },
     },
     RoomLine {
         key: "explosive",
         tiers: ["Explosives Room", "Demolition Lab", "Shrine of Unmaking"],
-        grade: Grade::D,
+        rank: RoomRank {
+            tier: RankingTier::E,
+            pos: 2,
+        },
     },
     RoomLine {
         key: "storm_of_corruption",
@@ -397,36 +399,53 @@ pub const LINES: [RoomLine; 25] = [
             "Hurricane Engine",
             "Storm of Corruption",
         ],
-        grade: Grade::CMinus,
+        rank: RoomRank {
+            tier: RankingTier::C,
+            pos: 5,
+        },
     },
     RoomLine {
         key: "upgrade",
         tiers: ["Shrine of Empowerment", "Sanctum of Unity", "Temple Nexus"],
-        grade: Grade::BPlus,
+        rank: RoomRank {
+            tier: RankingTier::C,
+            pos: 1,
+        },
     },
     RoomLine {
         key: "throne_of_atziri",
         tiers: ["Royal Meeting Room", "Hall of Lords", "Throne of Atziri"],
-        grade: Grade::CMinus,
+        rank: RoomRank {
+            tier: RankingTier::D,
+            pos: 1,
+        },
     },
     RoomLine {
         key: "toxic_grove",
         tiers: ["Poison Garden", "Cultivar Chamber", "Toxic Grove"],
-        grade: Grade::CPlus,
+        rank: RoomRank {
+            tier: RankingTier::C,
+            pos: 4,
+        },
     },
     RoomLine {
         key: "wealth_of_the_vaal",
         tiers: ["Vault", "Treasury", "Wealth of the Vaal"],
-        grade: Grade::D,
+        rank: RoomRank {
+            tier: RankingTier::E,
+            pos: 3,
+        },
     },
 ];
 
 /// Spellings that are not the game's but must resolve anyway: Vertolka's sheet
-/// writes these three differently. `(printed, game name)`.
-pub const ALIASES: [(&str, &str); 3] = [
+/// uses these alternate names. `(printed, game name)`.
+pub const ALIASES: [(&str, &str); 5] = [
     ("Apex of Ascencion", "Apex of Ascension"),
     ("House of the Other", "House of the Others"),
     ("Sadist Den", "Sadist's Den"),
+    ("Museum of Artifacts", "Museum of Artefacts"),
+    ("House Of Others", "House of the Others"),
 ];
 
 // ---------------------------------------------------------------- identity --
@@ -481,7 +500,7 @@ impl RoomIdentity {
 }
 
 /// Every name the game can print, with what it means. 87 entries plus the
-/// three [`ALIASES`].
+/// five [`ALIASES`].
 fn vocabulary() -> impl Iterator<Item = (&'static str, RoomIdentity)> {
     let fixed = [
         (ENTRANCE_NAME, RoomIdentity::Entrance),
@@ -713,7 +732,7 @@ fn decide(ocr_text: &str, numeral: Option<Tier>) -> Match {
         return Match::Unknown;
     }
 
-    let mut scored: Vec<(f64, String, RoomIdentity)> = Vec::with_capacity(90);
+    let mut scored: Vec<(f64, String, RoomIdentity)> = Vec::with_capacity(87 + ALIASES.len());
     for (label, identity) in vocabulary() {
         let candidate = normalise(label);
         if candidate == query {
@@ -1042,11 +1061,11 @@ mod tests {
         assert_eq!(keys.len(), 87, "two names share a normalised key");
     }
 
-    // Vertolka's sheet is the source of the grade column, and three of its
+    // Vertolka's sheet is the source of the ranking column; its alternate
     // spellings are not the game's. They are aliases, not fuzzy hits, so this
     // holds no matter where MATCH sits. Fails if ALIASES is dropped.
     #[test]
-    fn the_three_vertolka_spellings_resolve_to_the_game_names() {
+    fn the_five_vertolka_spellings_resolve_to_the_game_names() {
         for (printed, game) in ALIASES {
             assert_eq!(
                 resolve_name(printed),
@@ -1069,103 +1088,167 @@ mod tests {
         );
     }
 
-    // Every line carries a grade, and the derived Ord reads best-last.
-    // Fails if a Grade variant is reordered.
     #[test]
-    fn grades_are_ordered_worst_first() {
-        assert!(Grade::APlusPlus > Grade::APlus);
-        assert!(Grade::APlus > Grade::A);
-        assert!(Grade::A > Grade::BPlus);
-        assert!(Grade::BMinus > Grade::D);
-        assert_eq!(line_by_key("corruption").grade(), Grade::APlusPlus);
-        assert_eq!(line_by_key("corruption").grade().as_str(), "A++");
-        assert_eq!(line_by_key("gem").grade(), Grade::APlus);
-        assert_eq!(line_by_key("explosive").grade(), Grade::D);
+    fn museum_artifacts_spelling_resolves_to_its_room_line() {
+        assert_eq!(
+            resolve_name("Museum of Artifacts")
+                .and_then(|room| room.line())
+                .map(|line| line.key()),
+            Some("museum_of_artefacts"),
+        );
     }
 
     #[test]
-    fn the_fallback_ladder_rises_with_the_grade() {
-        // The ladder stands in for a market that said nothing, so the one
-        // thing it can honestly claim is the sheet's own ordering. A rung out
-        // of place would rank a worse room above a better one on a cold read,
-        // and nothing else in the valuation would notice.
-        let worst_first = [
-            Grade::D,
-            Grade::CMinus,
-            Grade::C,
-            Grade::CPlus,
-            Grade::BMinus,
-            Grade::B,
-            Grade::BPlus,
-            Grade::A,
-            Grade::APlus,
-            Grade::APlusPlus,
-        ];
+    fn house_of_others_spelling_resolves_to_its_room_line() {
+        assert_eq!(
+            resolve_name("House Of Others")
+                .and_then(|room| room.line())
+                .map(|line| line.key()),
+            Some("house_of_the_others"),
+        );
+    }
 
-        for pair in worst_first.windows(2) {
-            let (worse, better) = (pair[0], pair[1]);
-            assert!(better > worse, "the arrangement is worst-first");
-            assert!(
-                better.fallback_chaos() > worse.fallback_chaos(),
-                "{} stands in for {} c, which does not beat {}'s {} c",
-                better.as_str(),
-                better.fallback_chaos(),
-                worse.as_str(),
-                worse.fallback_chaos()
+    #[test]
+    fn rankings_display_the_sheet_tier_and_position() {
+        assert_eq!(line_by_key("corruption").rank().label(), "A1");
+        assert_eq!(line_by_key("upgrade").rank().label(), "C1");
+        assert_eq!(line_by_key("house_of_the_others").rank().label(), "E7");
+    }
+
+    #[test]
+    fn pick_order_matches_the_matrix_for_all_25_lines() {
+        let expected = [
+            "corruption",
+            "gem",
+            "crucible_of_flame",
+            "factory",
+            "glittering_halls",
+            "sanctum_of_immortality",
+            "conduit_of_lightning",
+            "hybridisation_chamber",
+            "defense_research_lab",
+            "upgrade",
+            "chamber_of_iron",
+            "hall_of_champions",
+            "toxic_grove",
+            "storm_of_corruption",
+            "throne_of_atziri",
+            "sadists_den",
+            "apex_of_ascension",
+            "hall_of_war",
+            "atlas_of_worlds",
+            "explosive",
+            "wealth_of_the_vaal",
+            "court_of_sealed_death",
+            "museum_of_artefacts",
+            "hall_of_legends",
+            "house_of_the_others",
+        ];
+        let mut lines = LINES;
+        lines.sort_by_key(|line| line.rank().pick_order());
+        assert_eq!(lines.map(|line| line.key()), expected);
+        for (order, line) in lines.iter().enumerate() {
+            assert_eq!(
+                line.rank().pick_order(),
+                order,
+                "{} must have distinct order",
+                line.key()
             );
         }
     }
 
-    /// The top rung IS the read's best sale delta, and 800 is the one delta
-    /// that leaves the ladder where it stands.
-    ///
-    /// The boundary matters because the two ladders have to be the same object
-    /// seen from two sides: a scaled ladder that did not reduce to the cold
-    /// one at its own anchor would silently re-rank every unpriced room the
-    /// first time a market read arrived.
     #[test]
-    fn the_scaled_ladder_is_the_cold_ladder_at_its_own_anchor() {
-        let top = Grade::APlusPlus.fallback_chaos();
-
-        assert_eq!(Grade::APlusPlus.fallback_chaos_scaled(top), top);
-        assert_eq!(Grade::D.fallback_chaos_scaled(top), Grade::D.fallback_chaos());
-        assert_eq!(Grade::A.fallback_chaos_scaled(top), Grade::A.fallback_chaos());
+    fn tier_a_fallback_is_800() {
+        assert_eq!(RankingTier::A.fallback_chaos(), 800.0);
+    }
+    #[test]
+    fn tier_b_fallback_is_100() {
+        assert_eq!(RankingTier::B.fallback_chaos(), 100.0);
+    }
+    #[test]
+    fn tier_c_fallback_is_20() {
+        assert_eq!(RankingTier::C.fallback_chaos(), 20.0);
+    }
+    #[test]
+    fn tier_d_fallback_is_5() {
+        assert_eq!(RankingTier::D.fallback_chaos(), 5.0);
+    }
+    #[test]
+    fn tier_e_fallback_is_2() {
+        assert_eq!(RankingTier::E.fallback_chaos(), 2.0);
     }
 
-    /// Every rung is the same share of the anchor that it is of 800.
-    ///
-    /// This is the arithmetic and nothing more. The claim this test used to
-    /// make — "a letter stays below the feed" — is FALSE of the rescale on its
-    /// own: anchored on the capture's 846, A+ scales to 423, which is above
-    /// the 390 the feed pays for Doryani's Institute. The property that does
-    /// hold is a property of the ANCHOR `valuation::Valued` picks, and it is
-    /// tested through the real chain there
-    /// (`no_letter_reaches_a_room_that_summed_something`).
     #[test]
-    fn every_scaled_rung_is_its_cold_share_of_the_anchor() {
-        let anchor = 390.0;
-        let share = anchor / Grade::APlusPlus.fallback_chaos();
-
-        assert_eq!(Grade::APlus.fallback_chaos_scaled(anchor), 400.0 * share);
-        assert_eq!(Grade::C.fallback_chaos_scaled(anchor), 10.0 * share);
+    fn ranks_in_the_same_tier_have_the_same_fallback_price() {
+        let first = line_by_key("corruption").rank();
+        let second = line_by_key("gem").rank();
+        assert_eq!(first.fallback_chaos(), second.fallback_chaos());
         assert_eq!(
-            Grade::APlusPlus.fallback_chaos_scaled(anchor),
-            anchor,
-            "the top rung IS the anchor",
+            first.fallback_chaos_scaled(390.0),
+            second.fallback_chaos_scaled(390.0)
         );
     }
 
-    /// A read with no top delta is not a read to anchor on, and falls back to
-    /// the cold rungs rather than to zero — which would price every unpriced
-    /// room in the game at nothing the moment a market went quiet.
+    #[test]
+    fn the_fallback_ladder_rises_with_the_tier() {
+        for pair in [
+            RankingTier::E,
+            RankingTier::D,
+            RankingTier::C,
+            RankingTier::B,
+            RankingTier::A,
+        ]
+        .windows(2)
+        {
+            assert!(pair[1].fallback_chaos() > pair[0].fallback_chaos());
+        }
+    }
+
+    #[test]
+    fn the_scaled_ladder_is_the_cold_ladder_at_its_own_anchor() {
+        for line in LINES {
+            assert_eq!(
+                line.rank().fallback_chaos_scaled(800.0),
+                line.rank().fallback_chaos()
+            );
+        }
+    }
+
+    #[test]
+    fn every_scaled_rung_is_its_cold_share_of_the_anchor() {
+        let anchor = 390.0;
+        assert_eq!(
+            line_by_key("factory").rank().fallback_chaos_scaled(anchor),
+            100.0 * (anchor / 800.0)
+        );
+        assert_eq!(
+            line_by_key("upgrade").rank().fallback_chaos_scaled(anchor),
+            20.0 * (anchor / 800.0)
+        );
+        for line in LINES
+            .iter()
+            .filter(|line| line.rank().tier == RankingTier::A)
+        {
+            assert_eq!(
+                line.rank().fallback_chaos_scaled(anchor),
+                anchor,
+                "{}",
+                line.key()
+            );
+        }
+    }
+
     #[test]
     fn a_read_with_no_top_delta_leaves_the_cold_ladder_standing() {
         for top in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-            assert_eq!(
-                Grade::A.fallback_chaos_scaled(top),
-                Grade::A.fallback_chaos(),
-                "top delta {top} is not an anchor",
-            );
+            for line in LINES {
+                assert_eq!(
+                    line.rank().fallback_chaos_scaled(top),
+                    line.rank().fallback_chaos(),
+                    "{}: invalid anchor {top}",
+                    line.key()
+                );
+            }
         }
     }
 

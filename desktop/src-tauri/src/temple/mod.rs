@@ -33,7 +33,7 @@
 //! - [`valuation`] (POE-257) — what one room-tier is worth, in CHAOS: sale +
 //!   drops + bonus, tiers 1 and 2 at a fraction of tier 3, every term a
 //!   [`valuation::Driver`] carrying its count, price and provenance, and
-//!   [`rooms::Grade`]'s ladder standing in only where nothing was summed.
+//!   [`rooms::RoomRank`]'s ladder standing in only where nothing was summed.
 //!   ADR-022.
 //! - [`preset`] (POE-257) — the two valuations the player chooses between,
 //!   Default and Custom ([`preset::Preset`]), the Custom table's rates and

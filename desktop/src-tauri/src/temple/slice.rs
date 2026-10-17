@@ -130,7 +130,7 @@ impl TempleProfileSettings {
     ///    other 21 to `Line::Other(key)`. No exceptions, including the two
     ///    [`INSTRUMENTAL_LINES`](super::strategy::INSTRUMENTAL_LINES): the
     ///    valuation prices those at their grade rung
-    ///    (`valuation::instrumental` — Temple Nexus 100 cold, 105.75 on the
+    ///    (`valuation::instrumental` — Temple Nexus 20 cold, 21.15 on the
     ///    capture) and the bridge copies that like any other line, so the
     ///    number the box shows is the number the ranking used for every one of
     ///    the 25.
@@ -550,20 +550,11 @@ pub struct OfferView {
     pub display_name: Option<String>,
     /// The tier the kill guarantees. An `upgrade` also rolls one more at 50%.
     pub built_tier: Option<u8>,
-    /// Vertolka's grade for the LINE this kill builds into, as it is written on
-    /// his sheet — `"A++"`, `"C-"` (POE-249). The grade is the LINE's and not
-    /// the built room's: he ranks each of the 25 families by what its tier-3
-    /// room is worth, so a `change` that lands on tier 2 carries the same
-    /// letter as one that lands on tier 3. [`line_top`](Self::line_top) is the
-    /// room that letter is about.
-    ///
-    /// `None` when the printed target did not resolve — the same silence as
-    /// [`display_name`](Self::display_name), and for the same reason: there is
-    /// no line to have a grade.
-    ///
-    /// A string and not the `Grade` enum because `Grade` is a reasoning type
-    /// with a derived `Ord` (worst first) and no `Serialize`; the sheet's own
-    /// spelling is the wire form.
+    /// Vertolka's tier and rank for the LINE this kill builds into, e.g.
+    /// `"A1"` or `"C1"` (2026-10-17 matrix). The ranking is the tier-3
+    /// family's, not the built room's. `line_top` names that family.
+    /// `None` when the printed target does not resolve.
+    /// A display string from `RoomRank::label`, not a second ranking scale.
     #[serde(default)]
     pub grade: Option<String>,
     /// The tier-3 room of the line this kill builds into — what
@@ -744,10 +735,12 @@ pub struct RoomValueRowView {
     /// calls the family and what Vertolka graded, and the tier-1 name is only
     /// its root.
     pub name: String,
-    /// Vertolka's letter for the line
-    /// ([`Grade::as_str`](super::rooms::Grade::as_str)). Shown beside the
+    /// Vertolka's tier and rank for the line
+    /// ([`RoomRank::label`](super::rooms::RoomRank::label)). Shown beside the
     /// values because it is what prices a room nothing else priced.
     pub grade: String,
+    /// Derived total pick order from LINES, zero = best.
+    pub pick_order: usize,
     /// Tier 1, tier 2, tier 3 — an array and not a `Vec`, because a row is
     /// exactly three tiers and the editor indexes them.
     pub tiers: [RoomValueView; 3],
@@ -1511,7 +1504,8 @@ pub fn value_rows(valuation: &Valued) -> Vec<RoomValueRowView> {
             Some(RoomValueRowView {
                 key: key.to_string(),
                 name: line.name(Tier::T3)?.to_string(),
-                grade: line.grade().as_str().to_string(),
+                grade: line.rank().label(),
+                pick_order: line.rank().pick_order(),
                 tiers: [
                     room_value_view(&tiers[0], valuation),
                     room_value_view(&tiers[1], valuation),
@@ -1552,8 +1546,10 @@ fn offer_view(
         // family's letter and the tier-3 name that letter was given for. A
         // surface printing the grade beside a tier-2 room without the tier-3
         // name would be attributing the family's rating to the room in hand.
-        grade: resolved.as_ref().map(|r| r.line.grade().as_str().to_string()),
-        line_top: resolved.as_ref().and_then(|r| r.line.name(Tier::T3).map(|n| n.to_string())),
+        grade: resolved.as_ref().map(|r| r.line.rank().label()),
+        line_top: resolved
+            .as_ref()
+            .and_then(|r| r.line.name(Tier::T3).map(|n| n.to_string())),
         // Published verbatim: the reader already put it in capture px, and
         // re-deriving a rect from anything else here would be a second answer
         // to where the panel drew the block.
@@ -3534,7 +3530,7 @@ mod tests {
     ///
     /// The corruption line is asserted literally because a grade read off
     /// `LINES` at test time would pass against any mapping at all, including
-    /// none: `A++` is what the sheet says about Locus of Corruption, and it is
+    /// none: `A1` is what the sheet says about Locus of Corruption, and it is
     /// the one letter a wrong lookup could not produce by accident.
     #[test]
     fn a_resolved_offer_publishes_its_line_grade_and_the_tier_three_room() {
@@ -3550,8 +3546,14 @@ mod tests {
 
         let slice = project(&read(&layout, &rooms, &panel, None, None, &valued()), None);
 
-        let first = slice.panel.expect("panel").offers.into_iter().next().expect("one block");
-        assert_eq!(first.grade.as_deref(), Some("A++"));
+        let first = slice
+            .panel
+            .expect("panel")
+            .offers
+            .into_iter()
+            .next()
+            .expect("one block");
+        assert_eq!(first.grade.as_deref(), Some("A1"));
         assert_eq!(first.line_top.as_deref(), Some("Locus of Corruption"));
         assert_eq!(
             first.built_tier,
@@ -3602,7 +3604,7 @@ mod tests {
         assert_eq!(first.display_name.as_deref(), Some("Catalyst of Corruption"));
         assert_eq!(first.built_tier, Some(2));
         assert_eq!(first.line_top.as_deref(), Some("Locus of Corruption"));
-        assert_eq!(first.grade.as_deref(), Some("A++"));
+        assert_eq!(first.grade.as_deref(), Some("A1"));
     }
 
     #[test]
@@ -5713,7 +5715,7 @@ mod tests {
                     // still reads as a real offer: the grade is the LINE's, and
                     // `lineTop` is the room it was given for — which is not the
                     // tier-2 room `displayName` names.
-                    grade: Some("C".to_string()),
+                    grade: Some("D2".to_string()),
                     line_top: Some("Sadist's Den".to_string()),
                     rect: Some([1300, 140, 280, 43]),
                     // POE-257: what the ranking priced this kill's room at,
@@ -5902,7 +5904,7 @@ mod tests {
 
     /// The pinned sample. Kept as a constant so the string the TS suite copies
     /// is one literal rather than a value spread across an assertion.
-    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"C","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]},"recipe":{"base":{"name":"Story of the Vaal","chaos":5.0},"vial":{"name":"Vial of Fate","chaos":1.0},"upgraded":{"name":"Fate of the Vaal","chaos":null}},"line":{"kind":"content","content":"Extra monsters (dangerous)","modArchitect":null,"modHint":null,"modSlots":[],"modWorth":null,"quantityPct":null,"rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"vialsPerRun":0.1,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","waitingForPanel":true,"readRetry":true,"layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high","origin":[900,900],"centres":[[900,465],[795,569],[1005,569],[690,673],[900,673],[1110,673],[585,777],[795,777],[1005,777],[1215,777],[690,881],[900,900],[1110,881]],"rois":[{"kind":"panel","of":null,"rect":[1100,40,500,400]},{"kind":"corridor","of":"C1-C2","rect":[991,659,27,27]}],"diamond":{"corners":[[1.4,-0.1],[-0.1,1.2],[-1.4,0.1],[0.1,-1.2]],"seals":[{"neighbour":"C2","edge":"C1-C2","pos":[1.0,-0.9]}],"topIcon":[0.34,-0.3],"bottomIcon":[-0.34,0.3]}},"panel":{"room":"Locus of Corruption","roomRect":[1300,100,152,20],"offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2,"grade":"D2","lineTop":"Sadist's Den","rect":[1300,140,280,43],"value":{"total":10.0,"priced":"partial","guessed":true,"league":"Allflame","asOf":1788665199649,"scaledFromTier3":12.5,"drivers":[{"kind":"sale","name":"Sadist's Den","count":null,"unitPrice":22.5,"chaos":12.5,"guessed":false,"lowConfidence":true,"windowPriced":true},{"kind":"tier_fraction","name":"Sadist's Den","count":0.8,"unitPrice":12.5,"chaos":10.0,"guessed":false,"lowConfidence":false,"windowPriced":false}]},"recipe":{"base":{"name":"Story of the Vaal","chaos":5.0},"vial":{"name":"Vial of Fate","chaos":1.0},"upgraded":{"name":"Fate of the Vaal","chaos":null}},"line":{"kind":"content","content":"Extra monsters (dangerous)","modArchitect":null,"modHint":null,"modSlots":[],"modWorth":null,"quantityPct":null,"rarityPct":null}}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2","doors":["C1-C2"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"secondaryDoor":"C1-D2","convenience":null,"recommendedExit":{"door":"C1-C2","name":"Chamber of Iron"},"mapAction":"leaveMap","warnings":["the incursion budget was not legible","1 of 2 architects read — the kill shown is forced, not chosen"],"forcedKill":true},"mode":"chase","config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"preset":"custom","custom":{"tierFraction":0.8,"cPerQuantity":0.5,"cPerRarity":0.25,"vialsPerRun":0.1,"dropsWeight":0.0,"comboPremium":0.0,"rooms":{"corruption":[null,null,500.0]}},"market":{"asOf":1788665199649,"stale":true,"staleAfterMs":7200000,"unavailable":true},"pollMarket":{"asOf":1788672399649,"stale":false,"staleAfterMs":7200000,"unavailable":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"readNotice":"Temple: remaining ROI [810, 771, 300, 46] is outside the capture — windowed client?","lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///
@@ -6047,7 +6049,22 @@ mod tests {
             .find(|row| row.key == "corruption")
             .expect("the corruption line is one of the 25");
         assert_eq!(locus.name, "Locus of Corruption");
-        assert_eq!(locus.grade, "A++");
+        assert_eq!(locus.grade, "A1");
+    }
+
+    #[test]
+    fn value_rows_publish_pick_order_from_lines() {
+        let rows = value_rows(&allflame_valuation());
+        assert_eq!(rows.len(), rooms::LINES.len());
+        for line in rooms::LINES {
+            let row = rows
+                .iter()
+                .find(|row| row.key == line.key())
+                .expect("every line has a row");
+            assert_eq!(row.pick_order, line.rank().pick_order(), "{}", line.key());
+            let wire = serde_json::to_value(row).expect("serializes");
+            assert_eq!(wire["pickOrder"], line.rank().pick_order());
+        }
     }
 
     /// The three cells are tier 1, tier 2, tier 3 — in that order.
@@ -6153,7 +6170,7 @@ mod tests {
     ///
     /// Not by key: the four mechanical lines are keyed `corruption`, `gem`,
     /// `upgrade` and `explosive`, which in key order drops "Locus of
-    /// Corruption" between two unrelated C-grade rooms. Fails if the sort is
+    /// Corruption" between two unrelated ranked rooms. Fails if the sort is
     /// dropped — the `Valued` this runs over is a `BTreeMap`, so the
     /// unsorted order really is key order and really does differ.
     #[test]
@@ -6212,9 +6229,9 @@ mod tests {
     ///
     /// Three claims, one behaviour — every one of them breaks together if the
     /// bridge stops copying the valuation for these two lines. Temple Nexus is
-    /// B+ (105.75 on the capture) and Shrine of Unmaking is D (2.115); what
+    /// C1 (21.15 on the capture) and Shrine of Unmaking is E2 (2.115); what
     /// the rooms themselves drop is a 6 c quantity bonus, which is the number
-    /// that used to put the shrine under a junk C-grade room and produce the
+    /// that used to put the shrine under a bonus-priced room and produce the
     /// board-7 miss.
     #[test]
     fn the_two_instrumental_lines_are_priced_at_their_letter_by_the_bridge() {
@@ -6223,13 +6240,13 @@ mod tests {
         let profile = TempleProfileSettings::default().to_profile(&valuation);
 
         assert!(
-            close(profile.room_values[&Line::Upgrade][2], 105.75),
-            "Temple Nexus B+, got {}",
+            close(profile.room_values[&Line::Upgrade][2], 21.15),
+            "Temple Nexus C1, got {}",
             profile.room_values[&Line::Upgrade][2],
         );
         assert!(
             close(profile.room_values[&Line::Explosive][2], 2.115),
-            "Shrine of Unmaking D, got {}",
+            "Shrine of Unmaking E2, got {}",
             profile.room_values[&Line::Explosive][2],
         );
         assert_eq!(
@@ -6527,12 +6544,12 @@ mod tests {
     /// keep, and where it was briefly broken: while they scored zero in
     /// `room_values`, the box showed a Temple Nexus offer as worth its 6 c
     /// quantity bonus and the advisor ranked it at nothing — two numbers for
-    /// one room. Now the valuation prices the line at its B+ rung and the
+    /// one room. Now the valuation prices the line at its C1 rung and the
     /// bridge copies THAT, so the two agree by construction.
     ///
     /// Fails if the bridge goes back to zeroing the line, and fails if the
     /// valuation goes back to summing the room's own bonus for it: 6 is not
-    /// 105.75.
+    /// 21.15.
     #[test]
     fn an_instrumental_offer_publishes_the_same_total_the_ranking_used() {
         let layout = layout(Some(Slot::B0), &[], &[]);
@@ -6551,9 +6568,14 @@ mod tests {
             .value
             .clone()
             .expect("a resolved offer carries its value");
-        assert!(close(value.total, 105.75), "the B+ rung, was {}", value.total);
+        assert!(
+            close(value.total, 21.15),
+            "the C1 rung, was {}",
+            value.total
+        );
         assert_eq!(
-            value.total, ranked.room_values[&Line::Upgrade][2],
+            value.total,
+            ranked.room_values[&Line::Upgrade][2],
             "the box and the ranking read one table, this line included",
         );
         assert_eq!(value.priced, "instrumental", "and says why it has no terms");
@@ -6605,17 +6627,9 @@ mod tests {
     /// floor rule changed, the fallback anchor widened — fails with the room
     /// that moved named.
     ///
-    /// Temple Nexus is THIRD, at its B+ rung of 105.75, above two rooms the
-    /// feed prices — and that is the visible cost of the board-7 fix: the
-    /// upgrade line is paid its letter on top of the tiers it lifts.
-    ///
-    /// **Glittering Halls is FOURTH**, and that is POE-262 WI-2's headline:
-    /// its Vial of Transcendence is the temple's highest vial chance (raw 2815
-    /// against the anchor's 1689), so a derived rate of 0.1667 x 428 c puts
-    /// 71.33 c of vial on top of its 15 c rarity bonus. At WI-1 it carried no
-    /// vial rate at all and sat at 15 c, below Factory. It displaced Sanctum
-    /// of Immortality from the five, and Conduit of Lightning (56.13) is now
-    /// seventh.
+    /// With the 2026-10-17 C-tier rung, Temple Nexus takes 21.15 and
+    /// leaves the top five. Glittering Halls is third through its derived vial
+    /// rate, then Crucible of Flame and Sanctum of Immortality.
     #[test]
     fn the_live_captures_five_best_rooms_are_these_in_this_order() {
         let valued = value_read(&TempleSettings::default(), &crate::temple::market::allflame());
@@ -6632,24 +6646,23 @@ mod tests {
             vec![
                 "corruption",
                 "gem",
-                "upgrade",
                 "glittering_halls",
                 "crucible_of_flame",
+                "sanctum_of_immortality",
             ],
         );
         assert_eq!(ranked[0].1, LOCUS_T3, "Locus of Corruption, sale + vial");
         assert_eq!(ranked[1].1, 390.0, "Doryani's Institute, its sale delta");
-        assert!(close(ranked[2].1, 105.75), "Temple Nexus, its B+ rung");
         // 0.1 x 2815/1689 x 428 c of vial, plus 60 % rarity at 0.25 c a point.
         assert!(
-            close(ranked[3].1, 0.1 * 2815.0 / 1689.0 * 428.0 + 15.0),
+            close(ranked[2].1, 0.1 * 2815.0 / 1689.0 * 428.0 + 15.0),
             "Glittering Halls was {}",
-            ranked[3].1,
+            ranked[2].1,
         );
-        assert!(close(ranked[3].1, 86.333_333_333_333), "{}", ranked[3].1);
-        assert!(close(ranked[4].1, 67.35), "Crucible of Flame");
-        assert!(close(ranked[5].1, 60.75), "Sanctum of Immortality is sixth");
-        assert!(close(ranked[6].1, 56.125), "and Conduit of Lightning seventh");
+        assert!(close(ranked[2].1, 86.333_333_333_333), "{}", ranked[2].1);
+        assert!(close(ranked[3].1, 67.35), "Crucible of Flame");
+        assert!(close(ranked[4].1, 60.75), "Sanctum of Immortality is fifth");
+        assert!(close(ranked[5].1, 56.125), "and Conduit of Lightning sixth");
     }
 
     /// An offer whose printed target did not resolve publishes no value —

@@ -1191,7 +1191,7 @@ describe('temple slice', () => {
 							printedTarget: "Sadist's Den",
 							displayName: 'Torment Cells',
 							builtTier: 2,
-							grade: 'C',
+							grade: 'D2',
 							lineTop: "Sadist's Den",
 							rect: null
 						}
@@ -1417,7 +1417,7 @@ describe('temple slice', () => {
 			// The editor asks two questions — what is on screen now, and what
 			// Default would give — so the preset has to be an argument rather
 			// than read from the slice.
-			const rows = [{ key: 'corruption', name: 'Locus of Corruption', grade: 'A++', tiers: [] }];
+			const rows = [{ key: 'corruption', name: 'Locus of Corruption', grade: 'A1', pickOrder: 0, tiers: [] }];
 			invokeMock.mockImplementation(async (command: string) =>
 				command === 'temple_value_table' ? rows : { league }
 			);

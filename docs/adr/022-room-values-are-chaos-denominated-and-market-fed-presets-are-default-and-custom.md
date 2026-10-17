@@ -638,3 +638,19 @@ number it replaced there.
   from the ranking or reorder one (ADR-017, ADR-018).
 - **The two settings blocks are typed, against ADR-013's default.** Rust reads
   them, and `prefs` is a webview-owned map.
+
+
+### Amendment — ranking matrix, 2026-10-17
+
+The room ranking now uses Vertolka's ranking matrix, 2026-10-17: tiers A…E
+with a position within each tier (`A1`…`E7`). `rooms::LINES` is the only runtime
+home; Rust derives the display label and total pick order, which the value-table
+wire row sends as `pickOrder`. TypeScript holds no ranking ladder. This replaces
+the ten-step `Grade` ladder above; the earlier discussion remains historical.
+
+Fallback prices depend only on tier: A 800, B 100, C 20, D 5, E 2 chaos,
+approved by the owner, 2026-10-17. Rank is displayed and orders picks, never
+priced. Live scaling still divides by the A rung and uses §3's formula-sum
+anchor or §4's sale anchor and cap. Every A-tier fallback equals its anchor;
+therefore a fallback never exceeds a summed room, although it may tie one.
+These absolute cold rungs still age with the league and currency.

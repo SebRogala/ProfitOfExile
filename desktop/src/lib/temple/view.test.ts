@@ -176,7 +176,7 @@ function offer(over: Partial<OfferView> = {}): OfferView {
 		// fixture is one Rust could have published: the letter is the LINE's and
 		// the name is the tier-3 room it was given for, which is NOT the tier-2
 		// room `displayName` carries.
-		grade: 'C',
+		grade: 'D2',
 		lineTop: "Sadist's Den",
 		rect: null,
 		...over
@@ -1904,12 +1904,12 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		// the box says so rather than printing a rung as if it were a price.
 		const box = only(
 			offer({
-				grade: 'A++',
+				grade: 'A1',
 				value: value({ priced: 'fallback', total: 846, drivers: [uniqueTerm({ unitPrice: null, chaos: null })] })
 			})
 		);
 
-		expect(box.valueText).toBe('grade A++');
+		expect(box.valueText).toBe('grade A1');
 		expect(box.value).toBeNull();
 		expect(box.marks).toEqual(['F', 'G']);
 	});
@@ -1920,11 +1920,11 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		// them like the ladder would tell a player the market is down when it is
 		// not, and the number is one the advisor ranked on.
 		const box = only(
-			offer({ grade: 'B+', value: value({ priced: 'instrumental', total: 105.75, drivers: [] }) })
+			offer({ grade: 'C1', value: value({ priced: 'instrumental', total: 21.15, drivers: [] }) })
 		);
 
 		expect(box.note).toBe('valued at its letter — its worth is what it does, not what it drops');
-		expect(box.valueText).toBe('106');
+		expect(box.valueText).toBe('21');
 		expect(box.marks).not.toContain('F');
 	});
 
@@ -1963,8 +1963,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 					quantityPct: null,
 					rarityPct: null
 				},
-				grade: 'B+',
-				value: value({ priced: 'instrumental', total: 105.75, drivers: [] })
+				grade: 'C1',
+				value: value({ priced: 'instrumental', total: 21.15, drivers: [] })
 			})
 		);
 
@@ -2285,7 +2285,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 	it('keeps the fallback F mark when its terms are not guessed', () => {
 		const box = only(
 			offer({
-				grade: 'A',
+				grade: 'A1',
 				value: value({
 					priced: 'fallback',
 					guessed: false,

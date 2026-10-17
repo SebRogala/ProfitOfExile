@@ -341,9 +341,9 @@ export interface OfferView {
 	displayName: string | null;
 	/** The tier the kill guarantees. An `upgrade` also rolls one more at 50%. */
 	builtTier: number | null;
-	/** Vertolka's letter for the LINE this kill builds into, as his sheet spells
-	 *  it — `"A++"`, `"C-"` (POE-249). It grades the FAMILY, so a kill landing on
-	 *  tier 2 carries the same letter as one landing on tier 3; `lineTop` is the
+	/** Vertolka's tier and rank for the LINE this kill builds into, as his sheet
+	 *  spells it — `"A1"`, `"C1"` (2026-10-17). It ranks the FAMILY, so a kill
+	 *  landing on tier 2 carries the same ranking as one landing on tier 3; `lineTop` is the
 	 *  room it was given for. Null when the printed target did not resolve —
 	 *  there is no line to have a grade. */
 	grade: string | null;
@@ -700,9 +700,11 @@ export interface TempleValueRow {
 	/** The TIER-3 room's name: what the player calls the family, and what
 	 *  Vertolka graded. The tier-1 name is only its root. */
 	name: string;
-	/** Vertolka's letter for the line — what prices a room nothing else
-	 *  priced. */
+	/** Vertolka's tier and rank for the line. Only the tier prices a room
+	 *  nothing else priced. */
 	grade: string;
+	/** Rust-derived total pick order from LINES, zero = best. */
+	pickOrder: number;
 	/** Tier 1, tier 2, tier 3, in that order. */
 	tiers: [RoomValueView, RoomValueView, RoomValueView];
 }

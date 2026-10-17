@@ -1494,7 +1494,7 @@ mod tests {
 
         assert_eq!(
             total(&valued, "corruption", 3),
-            crate::temple::rooms::Grade::APlusPlus.fallback_chaos(),
+            crate::temple::rooms::RankingTier::A.fallback_chaos(),
             "and the recomputed table is the cold ladder, not the live prices",
         );
     }

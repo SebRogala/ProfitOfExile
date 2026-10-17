@@ -126,13 +126,12 @@ impl Line {
 /// and both effects reach the score through the rollout —
 /// `rollout::UPGRADE_TARGETS` and `rollout::CHARGES`, untouched. What the
 /// rooms themselves drop is a small quantity bonus: Temple Nexus is worth 6 c
-/// of it on the 2026-09-06 capture, which is what a junk C-grade room is
-/// worth, and which is not what a player is buying when they take the shrine
-/// that lifts a 846 c line by a tier.
+/// of it on the 2026-09-06 capture, which is not what a player is buying
+/// when they take the shrine that lifts a 846 c line by a tier.
 ///
-/// So `valuation::instrumental` prices these two at their GRADE RUNG instead —
-/// Temple Nexus B+ (100 cold, 105.75 on the capture), Shrine of Unmaking D
-/// (2, 2.115) — and the bridge copies that into
+/// So `valuation::instrumental` prices these two at their TIER RUNG instead —
+/// Temple Nexus C1 (20 cold, 21.15 on the capture), Shrine of Unmaking E2
+/// (2 cold, 2.115 on the capture) — and the bridge copies that into
 /// [`StrategyProfile::room_values`] like any other line.
 ///
 /// # The double payment, and why it is the accepted trade
@@ -143,11 +142,12 @@ impl Line {
 /// *upgrade to Armoury* (Chamber of Iron, 6 c) over Sebastian's *change to
 /// Sanctum of Unity*, on the cold board and on the capture alike — his own
 /// recorded miss, reproduced. The two architects fell inside one noise band
-/// 39 c wide and R4 broke the tie the wrong way; the rung separates them past
-/// the band. The cost is visible and is not hidden: Temple Nexus is now the
-/// THIRD most valuable tier-3 room on the capture, above two rooms the feed
-/// actually prices. The better model — valuing a `change` onto one of these
-/// lines by its own downstream effect — needs the board's upgrade-reachable
+/// and R4 broke the tie the wrong way; the instrumental rung retains the
+/// recorded Sanctum choice. At the 2026-10-17 C-tier rung, Temple Nexus takes
+/// 21.15 on the capture and is below Glittering Halls, Crucible of Flame and
+/// Sanctum of Immortality rather than third. The better model — valuing a
+/// `change` onto one of these lines by its own downstream effect — needs the
+/// board's upgrade-reachable
 /// set at scoring time, which `room_values` has no shape for.
 ///
 /// Beside [`Line`] rather than beside either caller, because the valuation and

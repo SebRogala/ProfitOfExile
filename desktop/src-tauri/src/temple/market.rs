@@ -400,7 +400,7 @@ impl From<WireMarket> for MarketInput {
 /// POE-257's brief asked the fixture to be scoped to. Two rooms are above the
 /// floor of 10 c — Locus of Corruption tier 3 at 856 (delta 846) and Doryani's
 /// Institute tier 3 at 400 (delta 390) — and those two numbers are what the
-/// grade ladder in [`rooms::Grade::fallback_chaos`](super::rooms::Grade::fallback_chaos)
+/// grade ladder in [`rooms::RoomRank::fallback_chaos`](super::rooms::RoomRank::fallback_chaos)
 /// is calibrated against.
 #[cfg(test)]
 pub const ALLFLAME_CAPTURE: &str = include_str!("assets/temple-market-allflame-2026-09-06.json");

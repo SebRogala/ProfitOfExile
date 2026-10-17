@@ -940,7 +940,7 @@ mod tests {
     /// with whenever POE-258's poll is holding prices.
     ///
     /// The difference from [`production_profile`] is not cosmetic: the cold
-    /// ladder tops out at 800 with every room on a ten-rung scale, while the
+    /// ladder tops out at 800 with every room on a five-tier scale, while the
     /// capture pays 846 for Locus and puts thirteen rooms under 10 c. A board
     /// that decides the same way under both is a board the market cannot move.
     fn live_production_profile() -> StrategyProfile {
@@ -3134,7 +3134,7 @@ mod tests {
             // RvMerge on both; R1Apex on the B0 corridor, which is
             // Apex-adjacent even though the Apex is already in the room's own
             // cluster; the door chain on every keyed set, RA included; the
-            // rollout separates the A++ upgrade from the change to junk past
+            // rollout separates the A1 upgrade from the change to junk past
             // the band, so the change's options carry ExpectedValue.
             &[
                 "ExpectedValue",
@@ -3235,26 +3235,15 @@ mod tests {
         );
     }
 
-    /// The kill moves on exactly two of the eight walked boards, and both are
-    /// boards Sebastian recorded as *"kill either"*.
-    ///
-    /// | Board | Recorded decision | Fixture kill | Cold production kill | Reading |
-    /// |---|---|---|---|---|
-    /// | 1 Tombs | *kill either*; open D3-C2 | Storage Room | Sparring Room | Harmless. Both architects are worthless and Sebastian said so; the fixture priced both at zero and first-seen order decided, while the cold ladder separates two junk letters. The door — the whole of his decision — is unchanged. |
-    /// | 3 Chasm-late | *kill either*; open B0-A0 | Throne of Atziri | Conduit of Lightning | Harmless, same reason. |
-    ///
-    /// The six boards not listed produce an identical kill. **Board 7 is among
-    /// them, and was not** until the two instrumental lines were priced at
-    /// their grade rung: it is the app's recorded MISS, it reproduced that miss
-    /// under every priced profile while Temple Nexus scored zero, and it now
-    /// plays Sebastian's *change to Sanctum of Unity* on the cold read and on
-    /// the capture alike. Board 2 — *upgrade the corruption line*, the one
-    /// board the Locus/Doryani targets actually drive — is unmoved throughout.
-    ///
-    /// Fails if the bridge stops pricing the board (every row would read
-    /// "same"), and fails if a third board moves.
+    /// The 2026-10-17 tier rungs change three kills from the strategy fixture.
+    /// Boards 1 and 3 record "kill either"; board 8 records a door, whose
+    /// separate regression stays unchanged. Board 8 now prefers the B4
+    /// Conduit upgrade over the E2 explosives change on the cold read too.
+    /// Board 7 still plays the recorded Sanctum change, and board 2 still
+    /// upgrades corruption. Pin the exact differences so a ranking change
+    /// cannot silently move another board.
     #[test]
-    fn the_production_profile_changes_the_kill_on_exactly_the_two_kill_either_boards() {
+    fn the_production_tier_rungs_change_three_fixture_kills() {
         let production = production_profile();
 
         let moved: Vec<(&str, Option<(OfferKind, String, u8)>, Option<(OfferKind, String, u8)>)> =
@@ -3279,6 +3268,11 @@ mod tests {
                     "3 Chasm-late",
                     Some((Change, "throne_of_atziri".to_string(), 1)),
                     Some((Change, "conduit_of_lightning".to_string(), 1)),
+                ),
+                (
+                    "8 LightningWorkshop",
+                    Some((Change, "explosive".to_string(), 2)),
+                    Some((Upgrade, "conduit_of_lightning".to_string(), 2)),
                 ),
             ],
         );
@@ -3379,33 +3373,11 @@ mod tests {
         );
     }
 
-    /// The kill on every walked board, at the capture's prices.
-    ///
-    /// Two rows differ from the cold path and both are recorded rather than
-    /// argued:
-    ///
-    /// - **board 8** kills the `upgrade` block (Conduit of Lightning II)
-    ///   where the cold path kills the `change` (Explosives Room II). The
-    ///   recorded decision on that board is a DOOR — *"open B0-C1"* — and the
-    ///   door is unchanged, so this contradicts nothing Sebastian said. It is
-    ///   the capture separating two lines the cold ladder tied.
-    /// - **board 7** plays Sebastian's *change to Sanctum of Unity*, which it
-    ///   did NOT while the upgrade line scored zero. That version recommended
-    ///   *upgrade to Armoury* — Chamber of Iron, 6 c of quantity bonus — and
-    ///   the mechanism was `rank`'s stage 1: the `change` was the better
-    ///   option by EV (697.48 at its best door against 658.56) but both
-    ///   architects fell inside one band, because the noise margin on a chaos
-    ///   board is `3 x stderr` and the rollout's spread is set by whether
-    ///   Locus (846) gets reached at all, not by the 6 c the two candidate
-    ///   rooms were worth. Inside the band the `ArchKey` ordered, and the
-    ///   `upgrade` kill carries R4 — *maxes a junk room out of the drop pool*
-    ///   — which the `change` does not. Pricing Temple Nexus at its B+ rung
-    ///   (105.75) instead of at its own bonus separates the two architects
-    ///   past the band, and the EV decides Sebastian's way again.
-    ///
-    /// Fails on `tier_total` returning `0.0` — the bridge pricing nothing —
-    /// which is the mutation that says these literals are the valuation's
-    /// answer and not the rule chain's.
+    /// The kill on every walked board at the capture's prices. These are
+    /// the valuation's current answers, including the C1 instrumental rung
+    /// for Temple Nexus. Board 7 retains the recorded Sanctum change; board
+    /// 8 chooses the Conduit upgrade on both cold and live reads now.
+    /// Fails if the bridge stops copying the valuation into the profile.
     #[test]
     fn the_live_priced_profile_kills_this_on_every_walked_board() {
         let live = live_production_profile();

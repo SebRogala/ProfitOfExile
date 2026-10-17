@@ -165,7 +165,7 @@ impl Valuation {
         // "Doryani alone" on Sebastian's 1-10 ranking. Since POE-257 the
         // profile the app actually ranks with is denominated in CHAOS, so the
         // same expression yields 390 on the 2026-09-06 capture (Doryani's
-        // Institute's sale delta) and 400 on a cold read (its A+ rung). No
+        // Institute's sale delta) and 800 on a cold read (its A2 tier rung). No
         // rescale is applied or needed: this is DERIVED from `room_values`, so
         // it is already in whatever unit those are — which is why
         // `StrategyProfile::value_scale`'s table does not list it.

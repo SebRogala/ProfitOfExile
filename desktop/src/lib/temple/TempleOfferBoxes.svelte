@@ -69,7 +69,7 @@
 	 * - **One value token.** `39 c ⧠G` was three visual objects for one fact.
 	 *   It is `39c` in one span; the `G` box became the muted ` · est.` on the
 	 *   header's second line and the `F` box was dropped outright, because the
-	 *   value it sat beside already reads `grade C`.
+	 *   value it sat beside already reads `grade C1`.
 	 * - **The mod name carries the verdict.** Vertolka, 12:23, on the nine grey
 	 *   slot silhouettes: *"for player it is information this chest is good
 	 *   because of temple mod items in it, it don't need further explanation on
@@ -740,7 +740,7 @@
 
 	/* The ladder's answer is a LETTER, not a number, and it is set smaller so
 	   the two are not mistaken for each other at a glance. No `F` box beside
-	   it: the value already reads `grade C`, and the letter was saying twice
+	   it: the value already reads `grade C1`, and the letter was saying twice
 	   what the word said once. */
 	.num.grade {
 		font-size: 17px;
