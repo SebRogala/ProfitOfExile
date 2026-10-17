@@ -96,16 +96,11 @@ ADRs record decisions at a point in time. If implementation later supersedes a d
 These are retained as implementation history. They may contain obsolete paths, APIs, topology, or incomplete work and must not override current code, accepted ADRs, or active proposed specifications.
 
 - [Architecture rewrite baseline — 2026-03-12](history/architecture-rewrite-2026-03-12.md)
-- [Live dashboard plan](PLAN-live-dashboard.md)
 - [Frontend design](FRONTEND-DESIGN.md)
 - [Session tracker design](superpowers/specs/2026-03-16-session-tracker-design.md)
 - [Trade API integration design](superpowers/specs/2026-03-16-trade-api-integration-design.md)
 - [Desktop screen-reader proof of concept](superpowers/specs/2026-03-27-desktop-screen-reader-poc-design.md)
 - [Desktop app-shell design](superpowers/specs/2026-03-28-desktop-app-shell-design.md)
-- [Unified tier implementation plan](superpowers/plans/2026-03-25-unified-tier-system.md)
-- [Comparator overlay plan](superpowers/plans/2026-03-28-comparator-overlay.md)
-- [Desktop app-shell implementation plan](superpowers/plans/2026-03-28-desktop-app-shell.md)
-- [Desktop dashboard migration plan](superpowers/plans/2026-03-28-desktop-dashboard-migration.md)
 
 ## Third-party documentation
 
