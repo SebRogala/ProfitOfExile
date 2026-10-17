@@ -58,3 +58,9 @@ __pycache__/
 /design/tasks/
 /design/pilot-notes.md
 /design/private/
+# Implementation plans stay out of this public repository (Operator 2026-10-17):
+# they can expose internal details of the production host. Plans live in the
+# pipeforge MCP; a local working copy under these paths is never committed.
+docs/plans/
+docs/superpowers/plans/
+docs/PLAN-*.md
