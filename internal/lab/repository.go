@@ -43,7 +43,7 @@ func (r *Repository) LatestGemPrices(ctx context.Context, scope league.Scope) ([
 
 	rows, err := r.pool.Query(ctx, `
 		SELECT name, variant, COALESCE(chaos, 0), COALESCE(listings, 0),
-		       is_transfigured, is_corrupted, COALESCE(gem_color, '')
+		       is_transfigured, is_corrupted, COALESCE(gem_color, ''), sample_count, sparkline_empty
 		FROM gem_snapshots
 		WHERE league = $1 AND time = $2`, scope.ID(), *snapTime)
 	if err != nil {
@@ -55,7 +55,7 @@ func (r *Repository) LatestGemPrices(ctx context.Context, scope league.Scope) ([
 	for rows.Next() {
 		var g GemPrice
 		if err := rows.Scan(&g.Name, &g.Variant, &g.Chaos, &g.Listings,
-			&g.IsTransfigured, &g.IsCorrupted, &g.GemColor); err != nil {
+			&g.IsTransfigured, &g.IsCorrupted, &g.GemColor, &g.SampleCount, &g.SparklineEmpty); err != nil {
 			return nil, time.Time{}, fmt.Errorf("lab repo: scan gem: %w", err)
 		}
 		gems = append(gems, g)
@@ -1940,7 +1940,7 @@ func (r *Repository) CorruptedGemPricesByNames(ctx context.Context, scope league
 
 	rows, err := r.pool.Query(ctx, `
 		SELECT name, variant, COALESCE(chaos, 0), COALESCE(listings, 0),
-		       is_transfigured, is_corrupted, COALESCE(gem_color, '')
+		       is_transfigured, is_corrupted, COALESCE(gem_color, ''), sample_count, sparkline_empty
 		FROM gem_snapshots
 		WHERE league = $1
 		  AND time = (SELECT MAX(time) FROM gem_snapshots WHERE league = $1)
@@ -1956,7 +1956,7 @@ func (r *Repository) CorruptedGemPricesByNames(ctx context.Context, scope league
 	for rows.Next() {
 		var g GemPrice
 		if err := rows.Scan(&g.Name, &g.Variant, &g.Chaos, &g.Listings,
-			&g.IsTransfigured, &g.IsCorrupted, &g.GemColor); err != nil {
+			&g.IsTransfigured, &g.IsCorrupted, &g.GemColor, &g.SampleCount, &g.SparklineEmpty); err != nil {
 			return nil, fmt.Errorf("lab repo: scan corrupted gem price: %w", err)
 		}
 		gems = append(gems, g)

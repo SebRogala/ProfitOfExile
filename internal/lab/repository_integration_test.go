@@ -153,6 +153,99 @@ func TestLatestGemPrices_returnsOnlyScopedLeague(t *testing.T) {
 	}
 }
 
+func TestLatestGemPrices_preservesStoredNinjaSample(t *testing.T) {
+	checkStoredNinjaSamples(t, 59, false, func(repo *Repository, scope league.Scope, name string) ([]GemPrice, error) {
+		gems, _, err := repo.LatestGemPrices(context.Background(), scope)
+		return gems, err
+	})
+}
+
+func TestCorruptedGemPricesByNames_preservesStoredNinjaSample(t *testing.T) {
+	checkStoredNinjaSamples(t, 60, true, func(repo *Repository, scope league.Scope, name string) ([]GemPrice, error) {
+		return repo.CorruptedGemPricesByNames(context.Background(), scope, []string{name}, "20/20")
+	})
+}
+
+// The cases are the measured EC1/EC2 samples in WI-4; NULL means unknown,
+// rather than a measured zero count or a measured nonempty sparkline.
+func checkStoredNinjaSamples(t *testing.T, day int, corrupted bool,
+	load func(*Repository, league.Scope, string) ([]GemPrice, error)) {
+	t.Helper()
+	countTwo, countOne := 2, 1
+	nonempty, empty := false, true
+	cases := []struct {
+		name           string
+		sampleCount    *int
+		sparklineEmpty *bool
+		thin           bool
+	}{
+		{"twoSamples", &countTwo, &nonempty, true},
+		{"emptySparkline", &countOne, &empty, true},
+		{"unknownSample", nil, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := labIntegrationPool(t)
+			ctx := context.Background()
+			leagueID := fmt.Sprintf("POE-296-sample-%d-%s", day, tc.name)
+			registerLeague(t, pool, leagueID)
+			tm := futureTime(day)
+			cleanupAtTime(t, pool, tm, "gem_snapshots")
+			const name = "POE296 Sample Gem"
+			seedGemSnapshot(t, pool, leagueID, tm, name, "20/20", true, corrupted, 111, 10, "BLUE")
+			updated, err := pool.Exec(ctx, `
+				UPDATE gem_snapshots SET sample_count = $1, sparkline_empty = $2
+				WHERE league = $3 AND time = $4 AND name = $5 AND variant = $6 AND is_corrupted = $7`,
+				tc.sampleCount, tc.sparklineEmpty, leagueID, tm, name, "20/20", corrupted)
+			if err != nil {
+				t.Fatalf("set stored ninja sample: %v", err)
+			}
+			if updated.RowsAffected() != 1 {
+				t.Fatalf("updated %d rows, want 1 seeded gem", updated.RowsAffected())
+			}
+
+			gems, err := load(NewRepository(pool), league.Historical(leagueID), name)
+			if err != nil {
+				t.Fatalf("load stored ninja sample: %v", err)
+			}
+			if len(gems) != 1 {
+				t.Fatalf("gem count = %d, want 1 seeded gem", len(gems))
+			}
+			got := gems[0]
+			if got.Name != name || got.Variant != "20/20" || got.IsCorrupted != corrupted {
+				t.Fatalf("loaded gem = %+v, want %q 20/20 with corrupted=%v", got, name, corrupted)
+			}
+			t.Run("sampleCount", func(t *testing.T) {
+				if tc.sampleCount == nil {
+					if got.SampleCount != nil {
+						t.Errorf("SampleCount = %d, want nil for SQL NULL", *got.SampleCount)
+					}
+				} else if got.SampleCount == nil {
+					t.Errorf("SampleCount = nil, want %d", *tc.sampleCount)
+				} else if *got.SampleCount != *tc.sampleCount {
+					t.Errorf("SampleCount = %d, want %d", *got.SampleCount, *tc.sampleCount)
+				}
+			})
+			t.Run("sparklineEmpty", func(t *testing.T) {
+				if tc.sparklineEmpty == nil {
+					if got.SparklineEmpty != nil {
+						t.Errorf("SparklineEmpty = %v, want nil for SQL NULL", *got.SparklineEmpty)
+					}
+				} else if got.SparklineEmpty == nil {
+					t.Errorf("SparklineEmpty = nil, want %v", *tc.sparklineEmpty)
+				} else if *got.SparklineEmpty != *tc.sparklineEmpty {
+					t.Errorf("SparklineEmpty = %v, want %v", *got.SparklineEmpty, *tc.sparklineEmpty)
+				}
+			})
+			t.Run("thinSample", func(t *testing.T) {
+				if thin := got.ThinSample(); thin != tc.thin {
+					t.Errorf("ThinSample() = %v, want %v for %s", thin, tc.thin, tc.name)
+				}
+			})
+		})
+	}
+}
+
 func TestGemPriceHistoryByVariant_returnsOnlyScopedLeague(t *testing.T) {
 	pool := labIntegrationPool(t)
 	ctx := context.Background()
