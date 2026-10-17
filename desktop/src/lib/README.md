@@ -178,7 +178,7 @@ Located in `routes/(app)/components/`. Lab farming dashboard components migrated
 
 | File | Description |
 |------|-------------|
-| `Header.svelte` | Dashboard header — lab selector, divine rate, update timer, connection status |
+| `Header.svelte` | Dashboard header — lab selector, update timer, connection status |
 | `Comparator.svelte` | Gem comparator — search, compare up to 3 gems, trade data, session queue integration. Uses Tauri `listen('gem-detected')` for OCR events. |
 | `SessionQueue.svelte` | Session queue — picked gems with snapshot/current prices and delta tracking |
 | `BestPlays.svelte` | Sortable gem table — price, ROI, signals, sparklines, expandable rows |

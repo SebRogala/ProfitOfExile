@@ -47,10 +47,6 @@
 	<div class="header-row">
 		<h1 class="title">ProfitOfExile — Lab Farming Dashboard</h1>
 		<div class="meta-row">
-			{#if status.divinePrice > 0}
-				<Tooltip text="Current Divine Orb price"><span class="meta divine-rate">1 div = {Math.round(status.divinePrice)}c</span></Tooltip>
-				<span class="meta-sep">|</span>
-			{/if}
 			<Tooltip text={status.lastUpdate ? formatTime(status.lastUpdate) : ''}><span class="meta">
 				{formatTimeAgo(status.lastUpdate, now)}
 			</span></Tooltip>
@@ -94,10 +90,6 @@
 	.meta {
 		color: var(--color-lab-text-secondary);
 		font-size: 0.9375rem;
-	}
-	.divine-rate {
-		color: var(--color-lab-yellow, #eab308);
-		font-weight: 600;
 	}
 	.meta-sep {
 		color: var(--color-lab-border);
