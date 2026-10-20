@@ -532,12 +532,26 @@ fn vocabulary() -> impl Iterator<Item = (&'static str, RoomIdentity)> {
 /// `Sadist's Den` are the same key), turns every other non-alphanumeric into a
 /// space, and collapses runs of whitespace. Digits survive: `0mnitect` has to
 /// stay a near-miss of `Omnitect` rather than becoming a different length.
+///
+/// A comma **between two letters** is deleted too, because no name in the
+/// vocabulary prints one: it is a fragment of a letter. **MEASURED**
+/// (Vertolka, 2026-10-20): the architect offer `Lightning Workshop` came back
+/// from Windows.Media.Ocr as `LIC,HTNNC, WORKSHOP`, each `G` split into `C`
+/// plus its spur read as `,`. Turned into a space, the inner comma cut the
+/// first word in two and the read scored 0.8756, under [`MATCH`]; deleted, it
+/// scores 0.9242 with the runner-up at 0.7675. Any other comma (beside a
+/// space, a digit or an edge) stays a separator.
 pub fn normalise(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut pending_space = false;
-    for ch in name.chars() {
+    let mut prev: Option<char> = None;
+    let mut chars = name.chars().peekable();
+    while let Some(ch) = chars.next() {
+        let after_letter = prev.is_some_and(char::is_alphabetic);
+        prev = Some(ch);
         match ch {
             '\'' | '\u{2018}' | '\u{2019}' | '`' | '\u{00B4}' => continue,
+            ',' if after_letter && chars.peek().is_some_and(|c| c.is_alphabetic()) => continue,
             c if c.is_ascii_alphanumeric() => {
                 if pending_space && !out.is_empty() {
                     out.push(' ');
@@ -1468,6 +1482,40 @@ mod tests {
             matches!(match_room_name("Sanctum of Vitalitv"), Match::Fuzzy(got, _) if got == vitality)
         );
         assert_eq!(match_room_name("Sanctum of ltality"), Match::Unknown);
+    }
+
+    // MEASURED (Vertolka, 2026-10-20): Windows OCR split each `G` of the
+    // architect offer `Lightning Workshop` into `C` plus a comma. With the
+    // inner comma read as a word break the read scores 0.8756, under MATCH;
+    // folded away it scores 0.9242. Fails if normalise turns a comma between
+    // two letters back into a space.
+    #[test]
+    fn a_letter_split_by_an_ocr_comma_still_resolves() {
+        let want = resolve_name("Lightning Workshop").expect("in vocabulary");
+        match match_room_name("LIC,HTNNC, WORKSHOP") {
+            Match::Fuzzy(got, score) => {
+                assert_eq!(got, want);
+                assert!(score >= MATCH, "score {score} under MATCH");
+            }
+            other => panic!("expected a fuzzy read, got {other:?}"),
+        }
+    }
+
+    // Only a comma between two letters is a glyph fragment. Beside a digit or
+    // a space it keeps separating words, as every other symbol does. Fails if
+    // normalise deletes every comma.
+    #[test]
+    fn a_comma_beside_a_digit_or_a_space_still_separates_words() {
+        assert_eq!(normalise("9,Incursions"), "9 incursions");
+        assert_eq!(normalise("Incursions,9"), "incursions 9");
+        assert_eq!(normalise("HTNNC, WORKSHOP"), "htnnc workshop");
+    }
+
+    // The comma fold feeds the same gates as any other read: `Hall of Lo,rks`
+    // folds to the `Hall of Lorks` coin flip and must stay Unknown.
+    #[test]
+    fn a_folded_comma_does_not_settle_an_ambiguous_read() {
+        assert_eq!(match_room_name("Hall of Lo,rks"), Match::Unknown);
     }
 
     // The case a no-lead escape hatch would get wrong: `Hall of Lorks` scores
