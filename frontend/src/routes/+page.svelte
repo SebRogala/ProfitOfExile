@@ -47,9 +47,12 @@
 	 * this is where the module names belong: the meta description has ~155
 	 * characters to work with, this has no such budget.
 	 */
+	const CARD_IMAGE = 'https://profitofexile.top/og-home.jpg';
+
 	const structuredData = {
 		'@context': 'https://schema.org',
 		'@type': 'SoftwareApplication',
+		'@id': 'https://profitofexile.top/#app',
 		name: 'ProfitOfExile',
 		url: 'https://profitofexile.top/',
 		description: PITCH,
@@ -57,13 +60,28 @@
 		applicationSubCategory: 'Game companion overlay',
 		operatingSystem: 'Windows 10, Windows 11',
 		softwareRequirements: 'Path of Exile 1',
-		screenshot: 'https://profitofexile.top/og-card.jpg',
+		image: CARD_IMAGE,
+		screenshot: CARD_IMAGE,
 		isAccessibleForFree: true,
 		offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
 		featureList: modules.map(
 			(m) => `${m.name}${m.status === 'beta' ? ' (beta)' : ''}: ${m.tagline}`,
 		),
 		sameAs: ['https://github.com/SebRogala/ProfitOfExile', 'https://discord.gg/QX53hrv5GP'],
+	};
+
+	/**
+	 * Names the page's preferred image for Google, which otherwise picks one of
+	 * the in-page screenshots. `primaryImageOfPage`, the main entity's `image`
+	 * and og:image are the documented hints, so all three name the same card.
+	 */
+	const webPageData = {
+		'@context': 'https://schema.org',
+		'@type': 'WebPage',
+		url: 'https://profitofexile.top/',
+		name: 'ProfitOfExile — Companion Overlays for Wraeclast',
+		primaryImageOfPage: { '@type': 'ImageObject', url: CARD_IMAGE, width: 1200, height: 630 },
+		mainEntity: { '@id': 'https://profitofexile.top/#app' },
 	};
 
 	/**
@@ -117,22 +135,23 @@
 	<link rel="describedby" href="/llms.txt" />
 	<!-- Link previews (Discord, Twitter, Slack). Absolute URLs: scrapers fetch
 	     these without a page context, so a relative path resolves to nothing.
-	     og-card.jpg (1200x630) is rendered from frontend/og/home.html by
+	     og-home.jpg (1200x630) is rendered from frontend/og/home.html by
 	     frontend/og/render.sh. -->
 	<meta property="og:type" content="website" />
 	<meta property="og:site_name" content="ProfitOfExile" />
 	<meta property="og:url" content="https://profitofexile.top/" />
 	<meta property="og:title" content="ProfitOfExile — Companion Overlays for Wraeclast" />
 	<meta property="og:description" content={PITCH} />
-	<meta property="og:image" content="https://profitofexile.top/og-card.jpg" />
+	<meta property="og:image" content={CARD_IMAGE} />
 	<meta property="og:image:width" content="1200" />
 	<meta property="og:image:height" content="630" />
-	<meta property="og:image:alt" content="ProfitOfExile logo and wordmark: companion overlays for Path of Exile" />
+	<meta property="og:image:alt" content="ProfitOfExile: Lab Farming Dashboard rankings, Temple of Atzoatl and mercenary overlays for Path of Exile" />
 	<meta name="twitter:card" content="summary_large_image" />
 	<!-- A literal <script> tag inside <svelte:head> is compiled as component
 	     code, so the JSON-LD goes in as markup. The content is our own strings;
 	     `<` is escaped anyway so no value can close the tag early. -->
 	{@html `<script type="application/ld+json">${JSON.stringify(structuredData).replace(/</g, '\\u003c')}</script>`}
+	{@html `<script type="application/ld+json">${JSON.stringify(webPageData).replace(/</g, '\\u003c')}</script>`}
 	<link rel="preconnect" href="https://fonts.googleapis.com" />
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
 	<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300&display=swap" rel="stylesheet" />

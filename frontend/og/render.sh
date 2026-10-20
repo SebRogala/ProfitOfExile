@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Renders the link-preview cards into frontend/static. Needs google-chrome
 # (fonts load from Google Fonts) and ImageMagick.
-#   home.html -> og-card.jpg   lab.html -> og-lab.jpg
+#   home.html -> og-home.jpg   lab.html -> og-lab.jpg
 set -euo pipefail
 dir="$(cd "$(dirname "$0")" && pwd)"
 static="$dir/../static"
@@ -13,5 +13,5 @@ render() {
 		--screenshot="$tmp/$1.png" "file://$dir/$1.html" 2>/dev/null
 	convert "$tmp/$1.png" -strip -quality 90 "$static/$2"
 }
-render home og-card.jpg
+render home og-home.jpg
 render lab og-lab.jpg

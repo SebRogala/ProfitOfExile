@@ -1,18 +1,38 @@
 <!doctype html>
 <meta charset="utf-8" />
 <link rel="stylesheet" href="card.css" />
+<!-- Mostly screenshots, little text: Google's image guidance passes over a
+     logo or text card as a page's representative image. -->
 <style>
-	.logo { width: 260px; height: 260px; }
-	.wordmark { font-size: 80px; line-height: 1; }
-	.rule { width: 540px; }
-	.subtitle { font-size: 34px; }
+	body { display: block; }
+	.shot {
+		position: absolute;
+		border: 2px solid #3a3322;
+		border-radius: 10px;
+		box-shadow: 0 18px 50px rgba(0, 0, 0, 0.7);
+		object-fit: cover;
+		object-position: left top;
+	}
+	.rankings { left: 64px; top: 64px; width: 640px; height: 366px; }
+	.temple { right: 64px; top: 120px; width: 560px; height: 278px; }
+	.merc { left: 520px; top: 316px; width: 400px; height: 274px; z-index: 2; }
+	.brand {
+		position: absolute;
+		left: 64px;
+		bottom: 56px;
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		z-index: 3;
+	}
+	.brand .logo { width: 76px; height: 76px; }
+	.brand .wordmark { font-size: 40px; text-shadow: 0 2px 18px #0b0c10; }
 </style>
 <div class="frame"></div>
-<div class="content">
+<img class="shot rankings" src="../static/dashboard-rankings.webp" alt="" />
+<img class="shot temple" src="../static/module-temple-overlay.webp" alt="" />
+<img class="shot merc" src="../static/module-merc-overlay.webp" alt="" />
+<div class="brand">
 	<img class="logo" src="../../desktop/src-tauri/icons/icon.png" alt="" />
-	<div>
-		<div class="wordmark">ProfitOfExile</div>
-		<div class="rule"></div>
-		<div class="subtitle">Companion overlays<br />for Path of Exile</div>
-	</div>
+	<div class="wordmark">ProfitOfExile</div>
 </div>
