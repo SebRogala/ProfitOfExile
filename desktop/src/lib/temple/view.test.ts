@@ -2169,6 +2169,48 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.stripPrices).toBe('196 · 68c');
 	});
 
+	it('drops a quoted sale from a scaled grade-fallback box', () => {
+		// Vault, grade E3: the ladder priced it because nothing summed, so the
+		// tier-3 room's 10c quote is its at-floor price and added nothing. The
+		// fallback nulls the sale's chaos and keeps that quote, and a scaled box
+		// prints quotes — so without the drop it reads as a 10c sale.
+		const box = only(
+			offer({
+				builtTier: 1,
+				value: value({
+					priced: 'fallback',
+					total: 2,
+					scaledFromTier3: 4,
+					drivers: [saleTerm({ name: 'Vault', unitPrice: 10, chaos: null }), uniqueTerm({ chaos: null })]
+				})
+			})
+		);
+
+		expect(box.drivers.map((driver) => driver.kind)).toEqual(['unique']);
+		expect(box.stripPrices).toBe('68c');
+	});
+
+	it('keeps an unquoted sale on a grade-fallback box as an em dash', () => {
+		// The other half of the fallback rule: with no quote the market never
+		// answered for the room, which is the unpriced fact the box keeps.
+		const box = only(
+			offer({
+				builtTier: 1,
+				value: value({
+					priced: 'fallback',
+					total: 2,
+					scaledFromTier3: 4,
+					drivers: [saleTerm({ name: 'Vault', unitPrice: null, chaos: null }), uniqueTerm({ chaos: null })]
+				})
+			})
+		);
+
+		expect(box.drivers.map((driver) => [driver.name, driver.price])).toEqual([
+			['tier 3 sale price', '—'],
+			['Story of the Vaal', '68c']
+		]);
+	});
+
 	it('folds nothing at three rows', () => {
 		const box = only(
 			offer({ value: value({ drivers: [saleTerm({ chaos: 186 }), uniqueTerm(), vialTerm()] }) })

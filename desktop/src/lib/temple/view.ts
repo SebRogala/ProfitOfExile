@@ -624,7 +624,7 @@ export interface OfferBox {
 	 *  one answer ([`offerState`]) rather than off the wire string. The markup
 	 *  does not branch on it: what a state changes is words, and the words are
 	 *  here. It is in [`offerBoxSignature`] because a state change IS a shape
-	 *  change — the fallback state has no rows at all. */
+	 *  change — a fallback box keeps only its drop rows, never a sale. */
 	state: OfferValueState | null;
 	/** `"floor · 2 unpriced"` on a partial sum, else null. It replaces
 	 *  `per run` in the value row, so the row's height does not move. */
@@ -896,13 +896,19 @@ interface DriverTerm {
  * every box, and a row saying the room is not worth selling would push a row
  * saying what it drops into the fold. An UNPRICED sale is kept: that the room's
  * own line could not be priced is a fact about this read.
+ *
+ * A grade-fallback box drops a QUOTED sale for the same reason. Rust takes the
+ * ladder only where nothing summed, so a quoted sale there was worth zero, but
+ * the fallback nulls its `chaos` and keeps its `unitPrice` — and a scaled box
+ * prints that unit price, which put the tier-3 room's at-floor poe.ninja price
+ * on a box the valuation never counted it on.
  */
 function offerDriverTerms(value: RoomValueView, state: OfferValueState): DriverTerm[] {
 	const ladder = state === 'fallback';
 	const scaled = rowsAreTier3(value);
 	return value.drivers
 		.filter((driver) => driver.kind in ROW_KINDS)
-		.filter((driver) => !(driver.kind === 'sale' && driver.chaos === 0))
+		.filter((driver) => !(driver.kind === 'sale' && saleAddedNothing(driver, ladder)))
 		.map((driver) => {
 			const kind = ROW_KINDS[driver.kind];
 			const sale = kind === 'sale';
@@ -940,6 +946,12 @@ function offerDriverTerms(value: RoomValueView, state: OfferValueState): DriverT
 				contributed: driver.chaos
 			};
 		});
+}
+
+/** Whether a sale term is a measured zero above the floor: `0` on a summed
+ *  box, or any quote at all on the ladder ([`offerDriverTerms`]). */
+function saleAddedNothing(driver: DriverView, ladder: boolean): boolean {
+	return driver.chaos === 0 || (ladder && driver.unitPrice !== null);
 }
 
 /** The full form's fixed drop columns: unique on the left, vial on the right. */
@@ -1037,7 +1049,7 @@ function offerBonusLine(value: RoomValueView): OfferBonus | null {
  * the empty-drop wording yields to it; the instrumental and own-number wordings
  * are about the VALUE — where the number came from — and still print under the
  * content row (POE-277 WI-6). Three different facts share the slot because no
- * box can carry two of them: a room valued at its letter has no rows at all, a
+ * box can carry two of them: a room valued at its letter has no priced sale, a
  * room the player priced has one row that is their own number, and a room with
  * no drops has an empty list that would otherwise read as a missing read.
  */
