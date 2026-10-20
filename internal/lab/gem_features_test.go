@@ -2,6 +2,7 @@ package lab
 
 import (
 	"math"
+	"reflect"
 	"testing"
 	"time"
 
@@ -672,6 +673,10 @@ func TestComputeGemFeatures_MarketRegime_Boundary(t *testing.T) {
 // Trade enrichment tests (from POE-101 chunk-4)
 // ---------------------------------------------------------------------------
 
+// oneListing is a placeholder listing for fixtures whose prices are set
+// directly: enrichment treats a zero-listing result as no trade data.
+var oneListing = []trade.TradeListingDetail{{Price: 1, Currency: "chaos", ChaosPrice: 1, Account: "acc"}}
+
 // newTestTradeCache creates a TradeCache pre-populated with the given entries.
 func newTestTradeCache(entries map[string]*trade.TradeLookupResult) *trade.TradeCache {
 	tc := trade.NewTradeCache(100, league.Historical("Mirage"))
@@ -740,6 +745,7 @@ func TestComputeGemFeatures_TradeCache_PopulatesFields(t *testing.T) {
 			PriceFloor:  185.0,
 			MedianTop10: 195.0,
 			FetchedAt:   snapTime.Add(-2 * time.Minute),
+			Listings:    oneListing,
 			Signals: trade.TradeSignals{
 				SellerConcentration: "CONCENTRATED",
 				CheapestStaleness:   "FRESH",
@@ -813,6 +819,7 @@ func TestComputeGemFeatures_TradeFreshnessDegradation(t *testing.T) {
 					PriceFloor:  100.0,
 					MedianTop10: 200.0,
 					FetchedAt:   snapTime.Add(-tt.age),
+					Listings:    oneListing,
 					Signals: trade.TradeSignals{
 						SellerConcentration: "NORMAL",
 						CheapestStaleness:   "FRESH",
@@ -849,6 +856,31 @@ func TestComputeGemFeatures_TradeFreshnessDegradation(t *testing.T) {
 	}
 }
 
+// A lookup that found zero listings (BuildResult defaults: NORMAL/FRESH signals,
+// zero floor) must not enrich the gem: features match having no trade entry.
+func TestComputeGemFeatures_EmptyTradeResult_MatchesNoTradeEntry(t *testing.T) {
+	gems := []GemPrice{
+		// 15 listings, no history: sell probability ~0.61, so the FRESH x1.05
+		// multiplier would visibly change it if the empty result leaked in.
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 200, Listings: 15, IsTransfigured: true, GemColor: "BLUE"},
+	}
+	mc := testMarketContext()
+
+	empty := trade.BuildResult("Spark of Nova", "20/20", "Mirage",
+		trade.SearchResponse{QueryID: "q", Total: 0}, []trade.TradeListingDetail{}, 200)
+	snapTime := empty.FetchedAt.Add(time.Minute) // fresh: weight 1.0
+	tc := newTestTradeCache(map[string]*trade.TradeLookupResult{
+		trade.CacheKey("Spark of Nova", "20/20"): empty,
+	})
+
+	withEmpty := ComputeGemFeatures(snapTime, gems, nil, mc, nil, tc)
+	without := ComputeGemFeatures(snapTime, gems, nil, mc, nil, newTestTradeCache(nil))
+
+	if !reflect.DeepEqual(withEmpty, without) {
+		t.Errorf("features with an empty trade result differ from no trade entry:\n got  %+v\n want %+v", withEmpty, without)
+	}
+}
+
 func TestComputeGemFeatures_TradeData_LOWFloorGem(t *testing.T) {
 	// Trade data for LOW/FLOOR gems should be consumed when fresh (user-submitted).
 	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
@@ -869,6 +901,7 @@ func TestComputeGemFeatures_TradeData_LOWFloorGem(t *testing.T) {
 			PriceFloor:  12.0,
 			MedianTop10: 14.0,
 			FetchedAt:   snapTime.Add(-1 * time.Minute), // fresh
+			Listings:    oneListing,
 			Signals: trade.TradeSignals{
 				SellerConcentration: "NORMAL",
 				CheapestStaleness:   "FRESH",

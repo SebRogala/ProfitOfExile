@@ -170,18 +170,21 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 	g.limiter.SyncFromHeaders("search", searchHeaders)
 	g.limiter.Record("search")
 
+	// No listings: skip the fetch but still cache a fresh, empty result.
+	// Erroring here left the old cache entry's FetchedAt untouched, so the
+	// background refresh (OldestStale) re-picked the same key every tick.
+	if len(searchResp.IDs) == 0 {
+		slog.Info("trade gate: no listings found, skipping fetch", "gem", req.Gem)
+		result := BuildResult(req.Gem, req.Variant, g.client.leagueName, *searchResp, []TradeListingDetail{}, g.divineRate())
+		g.completeLookup(ctx, req, key, result)
+		return
+	}
+
 	// Check fetch pool wait before phase 2.
 	if w := g.limiter.EstimateWait("fetch"); w > 0 {
 		if !g.sleepWithContext(ctx, w) {
 			return
 		}
-	}
-
-	// Skip fetch when search returned no results (gem has no listings).
-	if len(searchResp.IDs) == 0 {
-		slog.Info("trade gate: no listings found, skipping fetch", "gem", req.Gem)
-		g.deliverError(key, fmt.Errorf("no listings found for %s", req.Gem))
-		return
 	}
 
 	// Phase 2: Fetch listing details.
@@ -195,8 +198,13 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 	g.limiter.SyncFromHeaders("fetch", fetchHeaders)
 	g.limiter.Record("fetch")
 
-	// Build result, cache it, persist to DB, deliver to all fan-out waiters.
 	result := BuildResult(req.Gem, req.Variant, g.client.leagueName, *searchResp, listings, g.divineRate())
+	g.completeLookup(ctx, req, key, result)
+}
+
+// completeLookup caches the result, persists it to the DB in the background,
+// delivers it to all fan-out waiters, and publishes the ready event.
+func (g *Gate) completeLookup(ctx context.Context, req *GateRequest, key string, result *TradeLookupResult) {
 	g.cache.For(g.scope).Set(key, result)
 	if g.repo != nil {
 		go func() {

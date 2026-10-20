@@ -119,7 +119,9 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 		// Trade enrichment: populate trade fields from snapshot.
 		if tradeSnap != nil {
 			tradeKey := trade.CacheKey(g.Name, g.Variant)
-			if tr, ok := tradeSnap[tradeKey]; ok && tr != nil {
+			// A zero-listing lookup carries no price and default signals
+			// (NORMAL/FRESH); treat it as absent so the ninja fallback stands.
+			if tr, ok := tradeSnap[tradeKey]; ok && tr != nil && len(tr.Listings) > 0 {
 				ageSeconds := snapTime.Sub(tr.FetchedAt).Seconds()
 				if ageSeconds < 0 {
 					ageSeconds = 0 // guard against clock skew (FetchedAt slightly in future)

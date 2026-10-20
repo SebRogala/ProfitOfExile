@@ -702,3 +702,113 @@ func TestGate_Shutdown(t *testing.T) {
 		t.Fatal("Run did not exit after context cancellation")
 	}
 }
+
+// emptySearchServer returns an httptest.Server whose search endpoint reports
+// zero result IDs (a gem with no listings). Any fetch request fails the test:
+// an empty search must never reach phase 2.
+func emptySearchServer(t *testing.T, total int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/api/trade/search/") {
+			json.NewEncoder(w).Encode(tradeSearchResp{ID: "qid-empty", Result: []string{}, Total: total})
+			return
+		}
+		t.Errorf("unexpected request to %s after an empty search", r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+}
+
+func submitAndWait(t *testing.T, gate *Gate, gem, variant string) *GateResponse {
+	t.Helper()
+	req := &GateRequest{
+		Gem:         gem,
+		Variant:     variant,
+		RequestID:   "req-" + gem,
+		Priority:    PriorityLow,
+		SubmittedAt: time.Now(),
+		Result:      make(chan *GateResponse, 1),
+	}
+	gate.Submit(req)
+	select {
+	case resp := <-req.Result:
+		return resp
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for gate response")
+		return nil
+	}
+}
+
+// A zero-listing search must refresh the cache entry's FetchedAt; otherwise
+// the background refresh's OldestStale keeps picking the same key every tick.
+func TestGate_EmptySearch_RefreshedEntryLeavesOldestStale(t *testing.T) {
+	server := emptySearchServer(t, 0)
+	defer server.Close()
+
+	gate := newTestGate(t, server, &mockPublisher{}, 30*time.Second)
+	key := CacheKey("Empty Gem", "20/20")
+	staleAt := time.Now().Add(-2 * time.Hour)
+	gate.cache.Set(key, &TradeLookupResult{Gem: "Empty Gem", Variant: "20/20", FetchedAt: staleAt})
+	if got, ok := gate.cache.OldestStale(time.Hour, nil); !ok || got != key {
+		t.Fatalf("precondition: OldestStale = (%q, %v), want (%q, true)", got, ok, key)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go gate.Run(ctx)
+
+	submitAndWait(t, gate, "Empty Gem", "20/20")
+
+	if got, ok := gate.cache.OldestStale(time.Hour, nil); ok {
+		t.Errorf("OldestStale after empty search = %q, want none (entry should be fresh)", got)
+	}
+	cached, ok := gate.cache.Get(key)
+	if !ok {
+		t.Fatal("expected the empty-search result to remain cached")
+	}
+	if !cached.FetchedAt.After(staleAt) {
+		t.Errorf("cached FetchedAt = %v, want later than the stale %v", cached.FetchedAt, staleAt)
+	}
+}
+
+// A zero-listing search delivers an empty result (not an error) to waiters,
+// with listings serialised as [] and the search Total passed through.
+func TestGate_EmptySearch_DeliversEmptyResult(t *testing.T) {
+	server := emptySearchServer(t, 7)
+	defer server.Close()
+
+	pub := &mockPublisher{}
+	gate := newTestGate(t, server, pub, 30*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go gate.Run(ctx)
+
+	resp := submitAndWait(t, gate, "Empty Gem", "1/0")
+
+	if resp.Error != nil {
+		t.Fatalf("Error = %v, want nil (zero listings is a result, not a failure)", resp.Error)
+	}
+	if resp.Data == nil {
+		t.Fatal("Data = nil, want an empty lookup result")
+	}
+	if resp.Data.Gem != "Empty Gem" || resp.Data.Variant != "1/0" {
+		t.Errorf("result identity = %q/%q, want Empty Gem/1/0", resp.Data.Gem, resp.Data.Variant)
+	}
+	if resp.Data.Total != 7 {
+		t.Errorf("Total = %d, want 7 (search total passed through)", resp.Data.Total)
+	}
+	raw, err := json.Marshal(resp.Data.Listings)
+	if err != nil {
+		t.Fatalf("marshal listings: %v", err)
+	}
+	if string(raw) != "[]" {
+		t.Errorf("listings JSON = %s, want [] (nil would marshal to null)", raw)
+	}
+
+	// A web client waiting on the 202/Mercure path must hear a ready event;
+	// the old empty branch published nothing and left it to time out.
+	ready := waitForTradeEvent(t, pub, "req-Empty Gem", "ready")
+	data, _ := ready["data"].(map[string]interface{})
+	if listings, ok := data["listings"].([]interface{}); !ok || len(listings) != 0 {
+		t.Errorf("ready event data.listings = %v, want []", data["listings"])
+	}
+}
