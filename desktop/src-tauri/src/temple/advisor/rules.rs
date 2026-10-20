@@ -222,8 +222,8 @@ pub enum Reason {
     /// can still hit it.
     R4PoolCarveOut { upgrader: Slot },
     /// R4's carve-out, on the excluded side: this kill could take the slot to
-    /// tier 3 and destroy the only thing an adjacent upgrade room can still
-    /// lift.
+    /// tier 3 and destroy the only thing an adjacent Shrine/Sanctum can still
+    /// lift. Never a Temple Nexus: it lifts every neighbour.
     R4CarveOutVeto { upgrader: Slot },
     /// `reroll_until_favourable` — no favourable line exists, so change rather
     /// than upgrade junk.
@@ -1126,19 +1126,25 @@ fn neighbouring_upgrader(board: &BoardState, slot: Slot) -> Option<Slot> {
         })
 }
 
-/// R4's carve-out condition: an adjacent upgrade room that can still hit this
-/// slot, and whose pick on it is a certainty rather than a lottery ticket.
+/// R4's carve-out condition: an adjacent tier-1/2 upgrade room that can still
+/// hit this slot, and whose pick on it is a certainty rather than a lottery
+/// ticket.
 ///
 /// Three gates:
 ///
 /// - the slot must be liftable at all — tier 0 wastes the pick and tier 3
 ///   cannot be lifted, so neither is worth keeping in the drop pool for;
-/// - the upgrade room must be able to reach it: an **open corridor** at tiers
-///   1–2, bare **adjacency** at tier 3, because the Temple Nexus ignores doors;
-/// - at tiers 1–2 its picks must be **unsaturated** — at most as many connected
-///   neighbours as picks, so this slot is certain to be lifted. A shrine whose
-///   pick is already a lottery is not a synergy worth spending a drop-pool slot
-///   on, and RU is the rule that keeps it that way.
+/// - the upgrade room must reach it through an **open corridor**;
+/// - its picks must be **unsaturated** — at most as many connected neighbours
+///   as picks, so this slot is certain to be lifted. A shrine whose pick is
+///   already a lottery is not a synergy worth spending a drop-pool slot on,
+///   and RU is the rule that keeps it that way.
+///
+/// A tier-3 upgrade room (Temple Nexus) never qualifies: it lifts every
+/// adjacent room, so no single slot is a scarce pick it could lose, and the
+/// rollout already prices its +1 on whatever the kill builds. Vetoing on it
+/// overrode a better kill on live board 5. [`neighbouring_upgrader`] (RC) still
+/// counts it — there it really does supply the tier.
 fn live_upgrade_target(board: &BoardState, slot: Slot) -> Option<Slot> {
     if board.tier(slot) != Tier::T1 && board.tier(slot) != Tier::T2 {
         return None;
@@ -1152,10 +1158,7 @@ fn live_upgrade_target(board: &BoardState, slot: Slot) -> Option<Slot> {
                 return false;
             }
             let picks = board.tier(*n).get();
-            if picks == 3 {
-                return true;
-            }
-            if picks == 0 || !mask_holds(open[slot.index()], n.index()) {
+            if picks == 0 || picks == 3 || !mask_holds(open[slot.index()], n.index()) {
                 return false;
             }
             let pool = neighbours[n.index()] & !mask_of(Slot::APEX);
@@ -2071,13 +2074,15 @@ mod tests {
         assert!(upgrade.reasons.iter().any(|r| matches!(r, Reason::R4)));
     }
 
-    // The Temple Nexus lifts every adjacent room whether or not a corridor is
-    // open, so adjacency alone keeps the slot worth having in the pool.
+    // A Temple Nexus lifts every adjacent room, so no single neighbour is a
+    // scarce pick it could lose: the carve-out stands down and R4 speaks. The
+    // corridor C1-D1 is open and C1 has only D1 to pick from, so the tier is
+    // the only thing that differs from the Sanctum shape the carve-out vetoes.
     #[test]
-    fn a_temple_nexus_carves_the_slot_out_without_an_open_corridor() {
+    fn a_temple_nexus_never_vetoes_maxing_its_neighbour() {
         let state = board(
             &[(D1, "factory", 1), (C1, "upgrade", 3), (C2, "corruption", 1)],
-            &[(D1, E1)],
+            &[(C1, D1), (D1, E1)],
         );
         let upgrade = verdict_with(
             &state,
@@ -2087,11 +2092,12 @@ mod tests {
             1,
             &with_carve_out(),
         );
-        assert!(upgrade.architect.vetoed(), "{:?}", upgrade.reasons);
-        assert!(upgrade
-            .reasons
-            .iter()
-            .any(|r| matches!(r, Reason::R4CarveOutVeto { upgrader: C1 })));
+        assert!(!upgrade.architect.vetoed(), "{:?}", upgrade.reasons);
+        assert!(
+            upgrade.reasons.iter().any(|r| matches!(r, Reason::R4)),
+            "with no live target to protect, R4 maxes the junk room: {:?}",
+            upgrade.reasons
+        );
     }
 
     // Without a shrine that can still hit the slot, R4 takes over and points

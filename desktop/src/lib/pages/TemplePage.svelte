@@ -721,7 +721,7 @@
 					/>
 					<span>R4 keep upgrade targets <BetaBadge /></span>
 					<span class="meta">
-						Keep a slot in the drop pool while an adjacent upgrade room can still hit it.
+						Keep a slot in the drop pool while an adjacent tier 1–2 upgrade room can still hit it. A Temple Nexus lifts every neighbour, so it never keeps one.
 					</span>
 				</label>
 			</BetaGate>

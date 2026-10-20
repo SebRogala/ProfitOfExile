@@ -711,21 +711,34 @@ fn rank(scored: Vec<Scored>, profile: &StrategyProfile) -> Vec<Ranked> {
         .unwrap_or(summaries.len());
     summaries[..band].sort_by(|a, b| b.2.cmp(&a.2).then_with(|| b.1.mean.total_cmp(&a.1.mean)));
 
+    // The band ends either at the EV cutoff or where the veto flips. Only the
+    // first is the rollout's doing: a vetoed kill sits below an un-vetoed one
+    // whatever its EV, so neither side of a veto boundary was placed by EV.
+    let ev_cut = summaries
+        .get(band)
+        .is_some_and(|(_, _, key)| key.vetoed() == vetoed_leader);
+
     // -- stage 2: the door set --------------------------------------------
     let mut out = Vec::new();
-    for (rank, (index, _, _)) in summaries.iter().enumerate() {
+    for (rank, (index, _, key)) in summaries.iter().enumerate() {
         let mut bucket = std::mem::take(&mut groups[*index].1);
         bucket.sort_by(|a, b| {
             b.door
                 .cmp(&a.door)
                 .then_with(|| b.estimate.mean.total_cmp(&a.estimate.mean))
         });
-        // Outside the band the EV alone put this kill where it is; at rank 0
-        // with a band of one, the EV alone put the *leader* where it is, which
-        // is just as much a fact about the ranking and just as auditable. A
-        // band that covers every architect is the opposite claim — the rollout
-        // had no opinion — so `ExpectedValue` must stay off it.
-        let ev_decided = rank >= band || (band == 1 && summaries.len() > 1);
+        // Outside the band, on the leader's side of the veto, the EV alone put
+        // this kill where it is; at rank 0 with a band of one cut by the EV,
+        // the EV alone put the *leader* where it is, which is just as much a
+        // fact about the ranking and just as auditable. A band that covers
+        // every architect is the opposite claim — the rollout had no opinion —
+        // and a band cut by the veto is the veto's claim, not the rollout's,
+        // so `ExpectedValue` must stay off both.
+        let ev_decided = if rank >= band {
+            key.vetoed() == vetoed_leader
+        } else {
+            band == 1 && ev_cut
+        };
         out.extend(bucket.into_iter().map(|option| {
             let mut reasons = option.reasons;
             if ev_decided {
@@ -2410,6 +2423,128 @@ mod tests {
                 ))),
             "the carve-out must be silent on both sides when it is off"
         );
+    }
+
+    /// Live board 5's shape on board 8's lattice: the upgrade room beside the
+    /// slot is a **Temple Nexus** (C1 at tier 3), not a Sanctum, and the
+    /// upgrade's line is worth something on its own — board 5's Jewellery
+    /// Forge was, under the live-priced profile. Valuing `factory` (the line
+    /// Engineering Department belongs to) is what gives the rollout a reason
+    /// to prefer the double-tier roll; it stays off `mode_rule`, so it is not
+    /// a target line and the kill is still one R4's carve-out could veto.
+    fn nexus_beside_board_eight() -> (BoardState, Vec<ArchitectOffer>, StrategyProfile) {
+        let (_, offers) = board_eight();
+        let state = board(
+            &[(D1, "factory", 1), (C1, "upgrade", 3), (C2, "corruption", 1)],
+            &[(C1, D1), (D1, E1), (E1, E2)],
+            D1,
+            6,
+        );
+        let mut profile = rush();
+        profile.r4_keep_upgrade_targets = true;
+        profile.room_values.insert(Line::named("factory"), [0.0, 1.0, 3.0]);
+        (state, offers, profile)
+    }
+
+    // A Temple Nexus lifts every neighbour, so maxing one of them costs it no
+    // scarce pick: the carve-out stands down and the rollout's preferred kill
+    // wins. On live board 5 the veto fired here and recommended the lower-EV
+    // change "to protect" the Nexus's only live target.
+    #[test]
+    fn a_temple_nexus_beside_the_slot_leaves_the_kill_to_the_rollout() {
+        let (state, offers, profile) = nexus_beside_board_eight();
+        let advice = advise(
+            &state,
+            &offers,
+            0,
+            &profile,
+            &TempleConfig::default(),
+            N,
+            SEED,
+        );
+        assert!(
+            advice
+                .recommendations
+                .iter()
+                .all(|r| !has_reason(r, |x| matches!(x, Reason::R4CarveOutVeto { .. }))),
+            "a Nexus has no scarce pick to protect: {:?}",
+            advice.recommendations[0].reasons
+        );
+        let top = &advice.recommendations[0];
+        let change = advice
+            .recommendations
+            .iter()
+            .find(|r| r.option.architect.as_ref().expect("resolved").kind == Change)
+            .expect("both kills are ranked");
+        assert_eq!(
+            top.option.architect.as_ref().expect("resolved").kind,
+            Upgrade,
+            "the higher-EV kill must win: {:?}",
+            top.reasons
+        );
+        assert!(
+            top.ev > change.ev,
+            "the board only tests the veto while the rollout prefers the upgrade: {} vs {}",
+            top.ev,
+            change.ev
+        );
+    }
+
+    // When the rollout separated the kills past the noise band and nothing
+    // vetoed either, the leader says the EV put it there.
+    #[test]
+    fn a_leader_the_rollout_separated_says_expected_value_decided_it() {
+        let (state, offers, profile) = nexus_beside_board_eight();
+        let advice = advise(
+            &state,
+            &offers,
+            0,
+            &profile,
+            &TempleConfig::default(),
+            N,
+            SEED,
+        );
+        let top = &advice.recommendations[0];
+        assert!(
+            has_reason(top, |r| matches!(r, Reason::ExpectedValue)),
+            "the rollout decided this board: {:?}",
+            top.reasons
+        );
+    }
+
+    // When the veto decided, the EV did not: the leader sits on top BECAUSE its
+    // rival was vetoed, and the vetoed kill sits below whatever its EV. Neither
+    // may read "ranked on expected value; no rule discriminated" — the veto is
+    // exactly the rule that did.
+    #[test]
+    fn a_ranking_the_veto_decided_never_claims_expected_value_decided_it() {
+        let (state, offers) = board_eight();
+        let mut profile = rush();
+        profile.r4_keep_upgrade_targets = true;
+        let advice = advise(
+            &state,
+            &offers,
+            0,
+            &profile,
+            &TempleConfig::default(),
+            N,
+            SEED,
+        );
+        assert!(
+            advice
+                .recommendations
+                .iter()
+                .any(|r| has_reason(r, |x| matches!(x, Reason::R4CarveOutVeto { .. }))),
+            "the board must still be one the veto decides"
+        );
+        for ranked in &advice.recommendations {
+            assert!(
+                !has_reason(ranked, |r| matches!(r, Reason::ExpectedValue)),
+                "{:?} claims the EV decided a veto: {:?}",
+                ranked.option.architect.as_ref().expect("resolved").kind,
+                ranked.reasons
+            );
+        }
     }
 
     // `reroll_until_favourable` is a profile flag, so it changes the advice

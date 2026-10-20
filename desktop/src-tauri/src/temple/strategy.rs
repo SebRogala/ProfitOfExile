@@ -332,8 +332,10 @@ pub struct StrategyProfile {
     /// (deliberately max junk out of the drop pool) takes over. Read by the
     /// architect-choice advisor (POE-170), not by the scorer.
     pub reroll_until_favourable: bool,
-    /// R4's carve-out: keep a slot in the drop pool while an adjacent upgrade
-    /// room can still hit it, instead of maxing it out of the pool.
+    /// R4's carve-out: keep a slot in the drop pool while an adjacent tier-1/2
+    /// upgrade room can still hit it, instead of maxing it out of the pool. A
+    /// Temple Nexus never qualifies: it lifts every neighbour, so it has no
+    /// scarce pick to protect.
     ///
     /// **PROPOSED, pending Sebastian's explicit yes** (TEMPLE-CORE-RULES §6e).
     /// The evidence is live board 8: the transcript records him typing

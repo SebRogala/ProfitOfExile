@@ -87,8 +87,8 @@ pub struct TempleProfileSettings {
     pub path_cost: f64,
     /// Prefer `change` over `upgrade` while no favourable line exists.
     pub reroll_until_favourable: bool,
-    /// R4's carve-out: keep a slot in the drop pool while an adjacent upgrade
-    /// room can still hit it.
+    /// R4's carve-out: keep a slot in the drop pool while an adjacent tier-1/2
+    /// upgrade room can still hit it (never for a Temple Nexus).
     pub r4_keep_upgrade_targets: bool,
 }
 
