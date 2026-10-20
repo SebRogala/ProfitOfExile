@@ -14,7 +14,7 @@
 import { describe, expect, it } from 'vitest';
 import hostSource from './WidgetHost.svelte?raw';
 import { MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
-import { FULL_BOX_MAX_CSS } from '../../temple/overlay-geometry';
+import { FULL_BOX_BORROWED_MAX_CSS } from '../../temple/overlay-geometry';
 import {
 	WIDGETS,
 	anchoredWidgetsFor,
@@ -189,7 +189,7 @@ describe('the temple module', () => {
 	it('ships the offer boxes at the tallest a full box can be', () => {
 		const offers = WIDGETS.find((widget) => widget.id === 'temple.offers');
 
-		expect(offers?.defaults.h).toBe(FULL_BOX_MAX_CSS);
+		expect(offers?.defaults.h).toBe(FULL_BOX_BORROWED_MAX_CSS);
 	});
 
 	// `ships the advice widget clear of the board` was deleted with POE-244 and

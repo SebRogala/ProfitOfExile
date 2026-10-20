@@ -13,7 +13,10 @@ import { describe, expect, it } from 'vitest';
 import {
 	BANNER_TOP_CSS,
 	CALLOUT_GAP_CSS,
+	BORROWED_LINE_CSS,
 	DIAGONAL_BUDGET_CSS,
+	FULL_BOX_BORROWED_MAX_CSS,
+	FULL_BOX_BUDGET_CSS,
 	FULL_BOX_MAX_CSS,
 	FULL_PAIR_CSS,
 	MAX_FOLDABLE_DRIVERS,
@@ -47,6 +50,8 @@ import type { CaptureRect, DiamondView, LayoutView, RoiView } from './slice';
 import doorSource from './TempleDoorDiamond.svelte?raw';
 
 const HOST = { width: 1920, height: 1080 };
+/** Neither box carries the borrowed-price line (`offersCompact`'s `borrowed`). */
+const PLAIN = [false, false];
 
 /** The side panel's crop, in CSS px at scale factor 1. */
 const PANEL = { x: 480, y: 100, w: 200, h: 300 };
@@ -585,6 +590,28 @@ describe('offerStackPlacement', () => {
 		expect(rectIsClear(placed[0], obstacles)).toBe(true);
 	});
 
+	it('lifts a borrowed-price box clear of plate C0 rather than letting it cover the plate', () => {
+		// Owner, 2026-10-20: the borrowed-price line takes the full box 7 px past
+		// the diagonal's measured 316, so at the committed block (y 133) its foot
+		// would sit at 456, inside plate C0's crop (y 449). The placer moves it
+		// up those 7 px instead, still on the diagonal's x, and the second box
+		// under it stays clear too.
+		const obstacles = committedRegions();
+		const tallest = { w: 300, h: FULL_BOX_BORROWED_MAX_CSS };
+
+		const placed = offerStackPlacement({
+			blocks: V3_BLOCKS,
+			panel: COMMITTED_PANEL,
+			boxes: [tallest, tallest],
+			obstacles,
+			host: HOST
+		}) as WidgetRect[];
+
+		expect(placed[0]).toEqual({ x: 415, y: 126, ...tallest });
+		expect(rectIsClear(placed[0], obstacles)).toBe(true);
+		expect(rectIsClear(placed[1], [...obstacles, placed[0]])).toBe(true);
+	});
+
 	/**
 	 * `TempleOfferBoxes.svelte`'s full form, section by section, in CSS px —
 	 * each entry is that rule's own `height`/`line-height` plus its stated
@@ -631,6 +658,17 @@ describe('offerStackPlacement', () => {
 		expect(FULL_BOX_MAX_CSS).toBeLessThanOrEqual(DIAGONAL_BUDGET_CSS);
 	});
 
+	it('budgets the borrowed-price box at one caption line more, under the owner-approved ceiling', () => {
+		// Owner, 2026-10-20: a vial priced at the unique it upgrades into draws
+		// `as <unique>` under its rate caption, one more 12 px line (69 → 81).
+		// It is the only box allowed past the measured 316 diagonal, and only
+		// to FULL_BOX_BUDGET_CSS (316 + 7).
+		expect(BORROWED_LINE_CSS).toBe(12);
+		expect(FULL_BOX_BORROWED_MAX_CSS).toBe(WORST_FULL_BOX + 12);
+		expect(FULL_BOX_BUDGET_CSS).toBe(323);
+		expect(FULL_BOX_BORROWED_MAX_CSS).toBeLessThanOrEqual(FULL_BOX_BUDGET_CSS);
+	});
+
 	it('seats two worst-case boxes without clamping at exactly the clearance the compact rule allows', () => {
 		// The two constants meeting. `offersCompact` lets the pair render full
 		// down to `FULL_PAIR_CSS` of host below the first block, so at exactly
@@ -655,7 +693,13 @@ describe('offerStackPlacement', () => {
 		const box = { w: 300, h: WORST_FULL_BOX };
 
 		expect(
-			offersCompact({ driverCounts: [3, 3], blocks, panel: COMMITTED_PANEL, host: HOST })
+			offersCompact({
+				driverCounts: [3, 3],
+				borrowed: PLAIN,
+				blocks,
+				panel: COMMITTED_PANEL,
+				host: HOST
+			})
 		).toBe(false);
 		expect(
 			offerStackPlacement({ blocks, panel: COMMITTED_PANEL, boxes: [box, box], obstacles, host: HOST })
@@ -682,7 +726,13 @@ describe('offerStackPlacement', () => {
 		const compactBox = { w: 300, h: 108 };
 
 		expect(
-			offersCompact({ driverCounts: [3, 3], blocks, panel: COMMITTED_PANEL, host: shortHost })
+			offersCompact({
+				driverCounts: [3, 3],
+				borrowed: PLAIN,
+				blocks,
+				panel: COMMITTED_PANEL,
+				host: shortHost
+			})
 		).toBe(true);
 		expect(
 			offerStackPlacement({
@@ -725,9 +775,15 @@ describe('offersCompact', () => {
 	it('keeps the full form where the host has room for two of them', () => {
 		// 1080 - 133 is 947, and two full boxes plus the stack gap need
 		// FULL_PAIR_CSS = 311 * 2 + 8 = 630.
-		expect(offersCompact({ driverCounts: THREE, blocks: HIGH, panel: COMMITTED_PANEL, host: HOST })).toBe(
-			false
-		);
+		expect(
+			offersCompact({
+				driverCounts: THREE,
+				borrowed: PLAIN,
+				blocks: HIGH,
+				panel: COMMITTED_PANEL,
+				host: HOST
+			})
+		).toBe(false);
 	});
 
 	it('collapses when what is left of the host under the first block cannot seat the pair', () => {
@@ -737,9 +793,15 @@ describe('offersCompact', () => {
 		// the host's height alone would pass on a screen with no room at all.
 		const low = [{ ...HIGH[0], y: HOST.height - FULL_PAIR_CSS + 1 }, HIGH[1]];
 
-		expect(offersCompact({ driverCounts: THREE, blocks: low, panel: COMMITTED_PANEL, host: HOST })).toBe(
-			true
-		);
+		expect(
+			offersCompact({
+				driverCounts: THREE,
+				borrowed: PLAIN,
+				blocks: low,
+				panel: COMMITTED_PANEL,
+				host: HOST
+			})
+		).toBe(true);
 	});
 
 	it('keeps the full form at exactly the pair\'s own height', () => {
@@ -748,8 +810,47 @@ describe('offersCompact', () => {
 		const exact = [{ ...HIGH[0], y: HOST.height - FULL_PAIR_CSS }, HIGH[1]];
 
 		expect(
-			offersCompact({ driverCounts: THREE, blocks: exact, panel: COMMITTED_PANEL, host: HOST })
+			offersCompact({
+				driverCounts: THREE,
+				borrowed: PLAIN,
+				blocks: exact,
+				panel: COMMITTED_PANEL,
+				host: HOST
+			})
 		).toBe(false);
+	});
+
+	/** A 720 CSS px host — native 1280×720, 1080p at 150 %, 1440p at 200 % —
+	 *  with the committed first block (y 133) scaled by 1080/720 to 88.7,
+	 *  which leaves 631.3 px under it. */
+	const HOST_720 = { width: 1280, height: 720 };
+	const HIGH_720 = [{ ...HIGH[0], y: 133 / 1.5 }, HIGH[1]];
+
+	it('keeps a 720 px host full when no box carries the borrowed-price line', () => {
+		// 631.3 px against the 311-based pair's 630: the borrowed line's
+		// approval must not collapse every pair on this host.
+		expect(
+			offersCompact({
+				driverCounts: THREE,
+				borrowed: PLAIN,
+				blocks: HIGH_720,
+				panel: COMMITTED_PANEL,
+				host: HOST_720
+			})
+		).toBe(false);
+	});
+
+	it('collapses the same 720 px host when one box carries the borrowed-price line', () => {
+		// 631.3 px against 630 + 12: that box is 323 px, and the pair no longer fits.
+		expect(
+			offersCompact({
+				driverCounts: THREE,
+				borrowed: [false, true],
+				blocks: HIGH_720,
+				panel: COMMITTED_PANEL,
+				host: HOST_720
+			})
+		).toBe(true);
 	});
 
 	it('collapses when one box has more drivers than a fold can honestly hide', () => {
@@ -761,6 +862,7 @@ describe('offersCompact', () => {
 		expect(
 			offersCompact({
 				driverCounts: [MAX_FOLDABLE_DRIVERS + 1, 2],
+				borrowed: PLAIN,
 				blocks: HIGH,
 				panel: COMMITTED_PANEL,
 				host: HOST
@@ -772,6 +874,7 @@ describe('offersCompact', () => {
 		expect(
 			offersCompact({
 				driverCounts: [MAX_FOLDABLE_DRIVERS, 2],
+				borrowed: PLAIN,
 				blocks: HIGH,
 				panel: COMMITTED_PANEL,
 				host: HOST
@@ -787,7 +890,13 @@ describe('offersCompact', () => {
 		const shortHost = { width: 1920, height: COMMITTED_PANEL.y + FULL_PAIR_CSS - 1 };
 
 		expect(
-			offersCompact({ driverCounts: THREE, blocks: [null, null], panel: COMMITTED_PANEL, host: shortHost })
+			offersCompact({
+				driverCounts: THREE,
+				borrowed: PLAIN,
+				blocks: [null, null],
+				panel: COMMITTED_PANEL,
+				host: shortHost
+			})
 		).toBe(true);
 	});
 
@@ -795,7 +904,13 @@ describe('offersCompact', () => {
 		const shortHost = { width: 1920, height: BANNER_TOP_CSS + FULL_PAIR_CSS - 1 };
 
 		expect(
-			offersCompact({ driverCounts: THREE, blocks: [null, null], panel: null, host: shortHost })
+			offersCompact({
+				driverCounts: THREE,
+				borrowed: PLAIN,
+				blocks: [null, null],
+				panel: null,
+				host: shortHost
+			})
 		).toBe(true);
 	});
 });

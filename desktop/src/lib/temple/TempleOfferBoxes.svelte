@@ -160,7 +160,7 @@
 	import { getIconUrl } from '$lib/icons';
 	import { offersCompact, offerStackPlacement } from './overlay-geometry';
 	import { SLOT_NAMES } from './slice';
-	import { offerBoxSignature } from './view';
+	import { offerBoxBorrowedLine, offerBoxSignature } from './view';
 	import type { OfferBox, OfferDriver } from './view';
 	import type { HostSize, WidgetRect } from '$lib/overlay/widgets/widget-geometry';
 
@@ -203,6 +203,7 @@
 	const compact = $derived(
 		offersCompact({
 			driverCounts: boxes.map((box) => box.driverCount),
+			borrowed: boxes.map(offerBoxBorrowedLine),
 			blocks,
 			panel,
 			host
@@ -293,6 +294,9 @@
 		priced: boolean;
 		/** `upgraded` under the third cell's price, or a rare drop's rate, else null. */
 		caption: string | null;
+		/** `as <unique>` when the price is borrowed (`OfferDriver.source`), else
+		 *  null. A yellow line under `caption`: with both, the row is 81 px. */
+		source: string | null;
 	}
 
 	/** The icon endpoint's URL for one item, or null where there is no item.
@@ -317,7 +321,8 @@
 			kind: driver.kind,
 			price: driver.price,
 			priced: driver.priced,
-			caption: driver.caption
+			caption: driver.caption,
+			source: driver.source
 		};
 	}
 
@@ -355,7 +360,8 @@
 						kind: 'unique',
 						price: upgraded.upgraded.price,
 						priced: upgraded.upgraded.priced,
-						caption: 'upgraded'
+						caption: 'upgraded',
+						source: null
 					}
 		];
 	}
@@ -452,6 +458,7 @@
 		{@render icon(cell.iconName, cell.kind, 39)}
 		<span class="pr" class:none={!cell.priced}>{cell.price}</span>
 		{#if cell.caption}<span class="cap">{cell.caption}</span>{/if}
+		{#if cell.source}<span class="cap as">{cell.source}</span>{/if}
 	</div>
 {/snippet}
 
@@ -542,7 +549,12 @@
 				<div
 					class="items"
 					class:aftersale={sale !== null}
-					class:captioned={cells.some((cell) => cell !== null && cell.caption !== null)}
+					class:captioned={cells.some(
+						(cell) => cell !== null && (cell.caption !== null || cell.source !== null)
+					)}
+					class:sourced={cells.some(
+						(cell) => cell !== null && cell.caption !== null && cell.source !== null
+					)}
 				>
 					{#if cells[1] !== null}{@render itemCell(cells[1])}{/if}
 					<span class="content-spacer"></span>
@@ -559,7 +571,12 @@
 				<div
 					class="items"
 					class:aftersale={sale !== null}
-					class:captioned={cells.some((cell) => cell !== null && cell.caption !== null)}
+					class:captioned={cells.some(
+						(cell) => cell !== null && (cell.caption !== null || cell.source !== null)
+					)}
+					class:sourced={cells.some(
+						(cell) => cell !== null && cell.caption !== null && cell.source !== null
+					)}
 				>
 					{#if cells[0] !== null}{@render itemCell(cells[0])}{/if}
 					{#if cells[0] !== null && cells[1] !== null}<span class="join">+</span>{/if}
@@ -886,7 +903,8 @@
 		color: var(--color-lab-text-muted);
 	}
 
-	/* Row 5: height 57 (69 captioned), margin-top 0 — 5 under a sale row.
+	/* Row 5: height 57 (69 captioned, 81 with a borrowed-price line under a
+	   rate caption), margin-top 0 — 5 under a sale row.
 	   ONE row, THREE equal columns: the line's unique, the vial its architect
 	   rolls for, and what the two become. The `base → vial → upgraded` chain
 	   this replaces redrew the row's own two icons at half size underneath
@@ -980,6 +998,14 @@
 		height: 69px;
 	}
 
+	/* A cell carrying BOTH a rate caption and a borrowed price's source line:
+	   one more 12 px caption line. Owner-approved 2026-10-20 past the diagonal's
+	   316 px; `FULL_BOX_BORROWED_MAX_CSS` counts it and `offersCompact` budgets
+	   the pair for it per box (`offerBoxBorrowedLine`). */
+	.items.sourced {
+		height: 81px;
+	}
+
 	.items.aftersale {
 		margin-top: 8px;
 	}
@@ -1025,6 +1051,13 @@
 		line-height: 12px;
 		letter-spacing: 0.04em;
 		color: var(--color-lab-text-muted);
+	}
+
+	/* A borrowed price's source, under the caption at the caption's size, in the
+	   box's warning yellow (the stale underline, the market warning line): the
+	   number above it is not this item's own market. */
+	.item .cap.as {
+		color: var(--color-lab-yellow);
 	}
 
 	/* Row 6: height 13, margin-top 3 — inside the item group, not a new one.

@@ -495,6 +495,10 @@ export interface DriverView {
 	lowConfidence: boolean;
 	/** POE-252: that price is a trailing-window median, not the newest print. */
 	windowPriced: boolean;
+	/** The item whose price `unitPrice` borrows — an unquoted vial priced at
+	 *  the unique it upgrades into (`valuation.rs`'s `vial_unit_price`). Null
+	 *  where the price is the named item's own. */
+	standIn: string | null;
 }
 
 /** The side panel, as text gave it. */

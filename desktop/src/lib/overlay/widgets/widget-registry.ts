@@ -167,12 +167,15 @@ export const WIDGETS: readonly WidgetSpec[] = [
 		// never used — `overlay-geometry.ts`'s `offerStackPlacement` decides it
 		// per read, in the sheet's left margin — but the registry's own
 		// invariant is that every default is a real rectangle, so `h` is the
-		// tallest a FULL box can be (`FULL_BOX_MAX_CSS`, summed from the
-		// component's own row heights). The panel diagonal's 316
+		// tallest a FULL box can be (`FULL_BOX_BORROWED_MAX_CSS`, summed from
+		// the component's own row heights) — the borrowed-price box, not the
+		// 311 px common one, because a stored rect shorter than a box the
+		// component can draw is the ADR-019 hazard. Compaction does not read
+		// it; `offersCompact` budgets each pair on its own boxes. The panel diagonal's 316
 		// (`DIAGONAL_BUDGET_CSS`) is a fact about the BOARD, not about this
 		// box, and a default that stated it would be a rectangle the widget
 		// can exceed.
-		defaults: { x: 40, y: 115, w: 300, h: 311 },
+		defaults: { x: 40, y: 115, w: 300, h: 323 },
 		resizable: false,
 		anchored: true
 	},

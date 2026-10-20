@@ -47,7 +47,9 @@ import {
 	marketStale,
 	offerBoxes,
 	offerBoxSignature,
+	offerBoxBorrowedLine,
 	offerChaos,
+	formatDropRate,
 	type OfferBox
 } from './view';
 import { templeSliceDefault, type AdviceView, type DriverView, type ItemSlotId, type LayoutView, type MarketView, type ModWorth, type OfferView, type RankedView, type RoomValueView, type SlotId, type SlotView, type TempleStatus } from './slice';
@@ -1245,6 +1247,7 @@ function term(over: Partial<DriverView> & { kind: string; name: string }): Drive
 		guessed: false,
 		lowConfidence: false,
 		windowPriced: false,
+		standIn: null,
 		...over
 	};
 }
@@ -1715,10 +1718,10 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.drivers[0].caption).toBe('4.8% / run');
 	});
 
-	it('keeps the rarest rate in the table off a zero the player would read as never', () => {
+	it('states the rarest rate in the table as odds rather than a percentage', () => {
 		// Locus of Corruption and Throne of Atziri, 0.1 x 20/1689 — the two
-		// smallest rates POE-262 derives. One decimal place is what stands
-		// between `0.1% / run` and a caption saying the drop cannot happen.
+		// smallest rates POE-262 derives, one in 844.5 runs. `0.1% / run` was
+		// a decimal place away from reading as never.
 		const box = only(
 			offer({
 				value: value({
@@ -1734,7 +1737,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 			})
 		);
 
-		expect(box.drivers[0].caption).toBe('0.1% / run');
+		expect(box.drivers[0].caption).toBe('1 in ~840 runs');
 	});
 
 	it('captions a rare unique on the same rule as a rare vial', () => {
@@ -1776,6 +1779,68 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 
 		expect(box.drivers[0].perRun).toBeNull();
 		expect(box.drivers[0].caption).toBeNull();
+	});
+
+	describe('formatDropRate', () => {
+		it('prints a sub-percent rate as odds, rounded to two significant figures', () => {
+			// 1 / 0.00118 = 847.46: the rate is an estimate, so the odds are too.
+			expect(formatDropRate(0.00118)).toBe('1 in ~850 runs');
+		});
+
+		it('keeps a rate between one and five percent as a percentage', () => {
+			expect(formatDropRate(0.048)).toBe('4.8% / run');
+		});
+
+		it('switches to odds just under one percent', () => {
+			expect(formatDropRate(0.0099)).toBe('1 in ~100 runs');
+		});
+
+		it('keeps exactly one percent as a percentage', () => {
+			expect(formatDropRate(0.01)).toBe('1.0% / run');
+		});
+
+		it('never prints a zero rate as odds', () => {
+			// `vialsPerRun` 0 still lists the row; one in Infinity is no sentence.
+			expect(formatDropRate(0)).toBe('0.0% / run');
+		});
+	});
+
+	/** Locus of Corruption's vial on prod 2026-10-20: no poe.ninja line, so
+	 *  Rust priced it at Zerphi's Heart (`vial_unit_price`). */
+	const borrowedVial = () =>
+		vialTerm({
+			name: 'Vial of Sacrifice',
+			count: 0.1 * (20 / 1689),
+			unitPrice: 4578,
+			chaos: 5.42,
+			standIn: "Zerphi's Heart"
+		});
+
+	it('marks a borrowed vial price with a tilde', () => {
+		const box = only(offer({ value: value({ drivers: [borrowedVial()] }) }));
+
+		expect(box.drivers[0].price).toBe('~4578c');
+	});
+
+	it('names the unique a borrowed vial price came from', () => {
+		const box = only(offer({ value: value({ drivers: [borrowedVial()] }) }));
+
+		expect(box.drivers[0].source).toBe("as Zerphi's Heart");
+	});
+
+	it('marks a borrowed price on the compact strip as well', () => {
+		const box = only(offer({ value: value({ drivers: [uniqueTerm(), borrowedVial()] }) }));
+
+		expect(box.stripPrices).toBe('68 · ~4578c');
+	});
+
+	it('gives a vial quoted on its own market neither the tilde nor a source', () => {
+		const box = only(
+			offer({ value: value({ drivers: [vialTerm({ name: 'Vial of Sacrifice', unitPrice: 428 })] }) })
+		);
+
+		expect(box.drivers[0].price).toBe('428c');
+		expect(box.drivers[0].source).toBeNull();
 	});
 
 	it('never captions the sale row, whatever count the wire hung on it', () => {
@@ -2551,6 +2616,82 @@ describe('offerBoxSignature', () => {
 		});
 
 		expect(offerBoxSignature(captioned, false)).not.toBe(offerBoxSignature(one, false));
+	});
+
+	it('changes when a drop cell gains a borrowed-price source line', () => {
+		// A cell with no rare-rate caption gains a line under its price when
+		// its price is borrowed, which is the same 12 px row-height change.
+		const one = box({});
+		const sourced = box({
+			dropPair: [{ ...one.drivers[0], caption: null, source: "as Zerphi's Heart" }, null]
+		});
+
+		expect(offerBoxSignature(sourced, false)).not.toBe(offerBoxSignature(one, false));
+	});
+
+	it('changes when a captioned drop cell also gains a borrowed-price line', () => {
+		// Caption plus source is the 81 px row, one line taller than the 69 px
+		// row a caption alone draws.
+		const one = box({});
+		const captioned = box({
+			dropPair: [{ ...one.drivers[0], caption: '1 in ~840 runs', source: null }, null]
+		});
+		const both = box({
+			dropPair: [
+				{ ...one.drivers[0], caption: '1 in ~840 runs', source: "as Zerphi's Heart" },
+				null
+			]
+		});
+
+		expect(offerBoxSignature(both, false)).not.toBe(offerBoxSignature(captioned, false));
+	});
+
+	describe('offerBoxBorrowedLine', () => {
+		it('is true for a cell carrying both a rate caption and a source line', () => {
+			const one = box({});
+			const both = box({
+				dropPair: [
+					null,
+					{ ...one.drivers[0], caption: '1 in ~840 runs', source: "as Zerphi's Heart" }
+				]
+			});
+
+			expect(offerBoxBorrowedLine(both)).toBe(true);
+		});
+
+		it('is false for a source line with no rate caption above it', () => {
+			const one = box({});
+			const sourceOnly = box({
+				dropPair: [null, { ...one.drivers[0], caption: null, source: "as Zerphi's Heart" }]
+			});
+
+			expect(offerBoxBorrowedLine(sourceOnly)).toBe(false);
+		});
+
+		it('is false for a rate caption with no source line', () => {
+			const one = box({});
+			const captionOnly = box({
+				dropPair: [null, { ...one.drivers[0], caption: '1 in ~840 runs', source: null }]
+			});
+
+			expect(offerBoxBorrowedLine(captionOnly)).toBe(false);
+		});
+	});
+
+	it('tells a source-only cell from a caption-plus-source cell', () => {
+		// A source alone is the 69 px row; under a rate caption it is 81 px.
+		const one = box({});
+		const sourceOnly = box({
+			dropPair: [{ ...one.drivers[0], caption: null, source: "as Zerphi's Heart" }, null]
+		});
+		const both = box({
+			dropPair: [
+				{ ...one.drivers[0], caption: '1 in ~840 runs', source: "as Zerphi's Heart" },
+				null
+			]
+		});
+
+		expect(offerBoxSignature(both, false)).not.toBe(offerBoxSignature(sourceOnly, false));
 	});
 
 	it('ignores what the caption SAYS once a cell has one', () => {

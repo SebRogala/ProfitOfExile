@@ -734,8 +734,13 @@ export interface OfferDriver {
 	priced: boolean;
 	/** `"×0.25"`, or null where the term has no count (the sale). */
 	perRun: string | null;
-	/** `"4.8% / run"` for a rare unique/vial drop, or null otherwise. */
+	/** `"4.8% / run"` or `"1 in ~850 runs"` for a rare unique/vial drop
+	 *  ([`formatDropRate`]), or null otherwise. */
 	caption: string | null;
+	/** `"as Zerphi's Heart"` when [`price`](Self.price) is BORROWED — an
+	 *  unquoted vial priced at the unique it upgrades into (`standIn` on the
+	 *  wire) — else null. The price then carries a `~`. */
+	source: string | null;
 	marks: DriverMark[];
 }
 
@@ -775,7 +780,10 @@ export interface OfferRecipe {
  *
  * Three. The fourth and beyond fold into one muted line rather than growing
  * the box: the height is designed against the 316 px the panel's own diagonal
- * admits at 1920×1080, and a box that grows a row grows past plate C0.
+ * admits at 1920×1080. The one approved overrun is the borrowed-price line,
+ * which takes a box to 323 (`FULL_BOX_BUDGET_CSS`, owner 2026-10-20); the
+ * placer lifts such a box 7 px clear of plate C0 rather than covering it. Any
+ * other row grows the box past plate C0.
  */
 export const FULL_DRIVER_ROWS = 3;
 
@@ -854,11 +862,36 @@ const SCALED_SALE_ROW_NAME = 'tier 3 sale price';
  * `—` means the market has no answer at all — the read is cold or stale and
  * every term on the board is in the same state. `no price` means this ITEM was
  * looked up and came back empty while other terms priced. Never `0c` for
- * either: zero is a real price and neither of these is one.
+ * either: zero is a real price and neither of these is one. A `borrowed`
+ * amount — another item's price standing in — prints with a `~`.
  */
-function driverPrice(amount: number | null, ladder: boolean, gain: boolean): string {
+function driverPrice(
+	amount: number | null,
+	ladder: boolean,
+	gain: boolean,
+	borrowed: boolean
+): string {
 	if (amount === null) return ladder ? '—' : 'no price';
-	return `${gain ? '+' : ''}${offerChaos(amount)}c`;
+	return `${gain ? '+' : ''}${borrowed ? '~' : ''}${offerChaos(amount)}c`;
+}
+
+/** Below this per-run rate a caption reads as odds rather than a percentage. */
+const ODDS_BELOW_RATE = 0.01;
+
+/**
+ * A rare drop's caption: `"4.8% / run"`, or `"1 in ~850 runs"` under 1%.
+ *
+ * Under one percent a percentage needs a decimal place that rounds the two
+ * smallest rates in the table (0.1 x 20/1689, about 0.12%) to `0.1%`, and a
+ * player reads odds faster than a fraction of a percent. N is rounded to two
+ * significant figures, hence the `~`: the rate itself is an estimate. Zero is
+ * not odds — `1 in ~Infinity` is not a sentence — so it keeps `0.0% / run`.
+ */
+export function formatDropRate(rate: number): string {
+	if (rate > 0 && rate < ODDS_BELOW_RATE) {
+		return `1 in ~${Number((1 / rate).toPrecision(2))} runs`;
+	}
+	return `${(rate * 100).toFixed(1)}% / run`;
 }
 
 /** The marks on one row: how the price was measured first, then whether the
@@ -882,6 +915,8 @@ interface DriverTerm {
 	row: OfferDriver;
 	shown: number | null;
 	contributed: number | null;
+	/** Whether `shown` is a stand-in's price ([`OfferDriver.source`]). */
+	borrowed: boolean;
 }
 
 /**
@@ -926,23 +961,28 @@ function offerDriverTerms(value: RoomValueView, state: OfferValueState): DriverT
 			// number every other row shows: the tier-3 room's own price.
 			const saleDelta = sale && !scaled;
 			const shown = saleDelta ? driver.chaos : driver.unitPrice;
+			// A borrowed price is never drawn as the item's own quote: a `~` on
+			// the number and a line naming whose price it is.
+			const standIn = sale ? null : (driver.standIn ?? null);
 			return {
 				row: {
 					kind,
 					name: sale ? (scaled ? SCALED_SALE_ROW_NAME : SALE_ROW_NAME) : driver.name,
 					iconName: sale ? null : driver.name,
-					price: driverPrice(shown, ladder, saleDelta),
+					price: driverPrice(shown, ladder, saleDelta, standIn !== null && shown !== null),
 					priced: shown !== null,
 					perRun: driver.count === null || sale ? null : `×${formatCount(driver.count)}`,
 					caption:
 						(kind === 'unique' || kind === 'vial') &&
 						driver.count !== null &&
 						driver.count < 0.05
-							? `${(driver.count * 100).toFixed(1)}% / run`
+							? formatDropRate(driver.count)
 							: null,
+					source: standIn === null || shown === null ? null : `as ${standIn}`,
 					marks: driverMarks(driver)
 				},
 				shown,
+				borrowed: standIn !== null && shown !== null,
 				contributed: driver.chaos
 			};
 		});
@@ -1145,7 +1185,22 @@ function offerRecipe(recipe: RecipeView | null): OfferRecipe | null {
 function offerStripPrices(terms: DriverTerm[]): string | null {
 	const priced = terms.filter((term) => term.shown !== null);
 	if (priced.length === 0) return null;
-	return `${priced.map((term) => offerChaos(term.shown as number)).join(' · ')}c`;
+	const amounts = priced.map(
+		(term) => `${term.borrowed ? '~' : ''}${offerChaos(term.shown as number)}`
+	);
+	return `${amounts.join(' · ')}c`;
+}
+
+/**
+ * Whether a box draws the borrowed-price line UNDER a rate caption — the one
+ * shape that takes its item row from 69 to 81 px and the box past the
+ * diagonal (`overlay-geometry.ts`'s `FULL_BOX_BORROWED_MAX_CSS`).
+ * `offersCompact` budgets the pair on it before anything is measured.
+ */
+export function offerBoxBorrowedLine(box: OfferBox): boolean {
+	return box.dropPair.some(
+		(driver) => driver !== null && driver.caption !== null && driver.source !== null
+	);
 }
 
 /**
@@ -1189,6 +1244,9 @@ function offerStripPrices(terms: DriverTerm[]): string | null {
  *
  * `content` is present when the content cell draws, and each `dropPair` caption
  * presence is present because the rare-caption threshold is a row-height change.
+ * Each `source` presence (a borrowed price's `as <unique>` line) is there for
+ * the same reason, and the two are emitted RAW rather than folded: a source
+ * alone is the 69 px row, a source under a caption the 81 px one.
  *
  * `mod.slots.length` is present and is the one COUNT here that is not a row
  * count: the `Appears on:` chips wrap once the row passes 272 px — five
@@ -1218,6 +1276,7 @@ export function offerBoxSignature(box: OfferBox, compact: boolean): string {
 		box.ladder?.rarity ? 'r' : '-',
 		box.dropPair.map((driver) => driver?.kind ?? '-').join('/'),
 		box.dropPair.map((driver) => (driver?.caption ? 'caption' : '-')).join('/'),
+		box.dropPair.map((driver) => (driver?.source ? 'source' : '-')).join('/'),
 		box.mod ? 1 : 0,
 		box.mod?.slots.length ?? 0,
 		box.ageLine ? 'age' : '-'

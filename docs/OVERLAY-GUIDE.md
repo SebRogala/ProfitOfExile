@@ -1524,7 +1524,8 @@ touching the named path.
      temple mod's price; the value's chip and its ` · est.` still account for
      it, so on Crucible of Flame the strip is short of its largest term by
      design. **The v5 box is taller, so the pair collapses sooner** — the
-     clearance is now `FULL_PAIR_CSS` 630 where it was 546.
+     clearance is now `FULL_PAIR_CSS` 630 where it was 546, plus 12 for each
+     box carrying the borrowed-price line under a rate caption (2026-10-20).
 
   **Measured heights.** Every row is a fixed `height` (or `line-height`) plus a
   stated `margin-top`; the component's stylesheet names both on each rule and
@@ -1534,15 +1535,19 @@ touching the named path.
   `6 + 1 + 6 = 13`, and there are at most four (under the header, and between
   each pair of present sections). The sale row is 18. The item row is
   `39 + 3 + 15 = 57`, or 69 with the `upgraded` caption, plus 5 under a sale
-  row; a content row uses the same 57/69 heights. The room-bonus row is
-  `18 + 13 = 31`. The mod group is
+  row; a content row uses the same 57/69 heights. A vial priced at the unique
+  it upgrades into (`~4578c`) adds a yellow `as <unique>` line: 69 when it is
+  the cell's only caption, 81 under a rate caption (owner, 2026-10-20). The
+  room-bonus row is `18 + 13 = 31`. The mod group is
   `18 + 5 + 14 = 37` with one chip row and `18 + 5 + (14 + 4 + 14) = 55` with
   two. The market line is 13.
 
-  - The tallest the wording can build — sale, an item row carrying the upgrade,
-    the bonus row, a mod with its chips on two rows, the market warning, and
+  - The tallest the wording can build without a borrowed price — sale, an item
+    row carrying the upgrade, the bonus row, a mod with its chips on two rows, the market warning, and
     the four hairlines those five sections put between themselves:
-    `4 + 20 + 41 + 52 + 18 + 77 + 31 + 55 + 13 = **311 px**`.
+    `4 + 20 + 41 + 52 + 18 + 77 + 31 + 55 + 13 = **311 px**`; with the
+    borrowed-price line under a rate caption the item row is 89 and the box
+    **323 px**.
   - A priced full box on the pick with no sale row, one chip row and no
     warning is **241 px**. Omitted sections remove their own rows AND the
     hairline that would have preceded them.
@@ -1551,13 +1556,22 @@ touching the named path.
   - Compact is `4 + 20 + 41 + 13 + 26 = **104 px**` fresh and **130 px** with
     the warning line behind its own rule.
 
-  `FULL_BOX_MAX_CSS` is 311 px versus `DIAGONAL_BUDGET_CSS` at 316 px,
-  leaving **5 px** where v4's 269 px box left 47. The two-box full clearance is
-  `FULL_PAIR_CSS = 311×2 + 8 = 630 px`. The constant describes the WARN
-  form, where the age line is present, and the overlay-geometry test asserts
-  `FULL_BOX_MAX_CSS ≤ DIAGONAL_BUDGET_CSS`. **A row added to this box now costs
-  content**, not headroom — which is the trade the restyle made deliberately:
-  the slack went on air, the price under every icon, word chips and the hairlines.
+  `FULL_BOX_MAX_CSS` is 311 px versus the MEASURED `DIAGONAL_BUDGET_CSS` at
+  316 px: on the committed 1920×1080 frame a 316 px box sits flush under
+  plate C0's crop with 0 px headroom. The one owner-approved overrun
+  (2026-10-20) is `FULL_BOX_BORROWED_MAX_CSS = 311 + 12 = 323`, held under
+  `FULL_BOX_BUDGET_CSS = 316 + 7`. That 7 px is not spare space: at the first
+  block (y 133) a 323 px box would reach 7 px into plate C0, and
+  `offerStackPlacement` lifts it to y 126, still on the staggered x and clear
+  of all 42 read regions (pinned in `overlay-geometry.test.ts`). The two-box
+  full clearance is `FULL_PAIR_CSS = 311×2 + 8 = 630 px`, and `offersCompact`
+  adds `BORROWED_LINE_CSS` (12) only for each box that actually carries the
+  line (`offerBoxBorrowedLine`), so a 720 CSS px host (631 px under the
+  block) stays full unless a borrowed box is on it. The constants describe
+  the WARN form, where the age line is present, and the test asserts both
+  `FULL_BOX_MAX_CSS ≤ DIAGONAL_BUDGET_CSS` and
+  `FULL_BOX_BORROWED_MAX_CSS ≤ FULL_BOX_BUDGET_CSS`. **A further row costs
+  content**, not headroom.
 
 
   **And the blink must be gone.** Watch either box for three unbroken minutes on

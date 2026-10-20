@@ -329,13 +329,19 @@ pub struct Driver {
     pub chaos: Option<f64>,
     /// Whether this term rests on somebody's estimate rather than on measured
     /// data — a [`Basis::Guess`](super::drops::Basis::Guess) count, one of the
-    /// two unmeasured bonus rates, or the grade ladder.
+    /// two unmeasured bonus rates, the grade ladder, or a vial priced at the
+    /// unique it upgrades into ([`vial_unit_price`]).
     pub guessed: bool,
     /// POE-131's thin-market flag on the price behind this term.
     pub low_confidence: bool,
     /// POE-252: the price behind this term is a trailing-window median rather
     /// than the newest print.
     pub window_priced: bool,
+    /// The item whose price [`Self::unit_price`] borrows, or `None` where it is
+    /// the named item's own quote. Set only by [`vial_unit_price`]'s fallback:
+    /// an unquoted vial priced at the unique it upgrades into. The box prints
+    /// it, so a borrowed number never reads as the vial's market.
+    pub stand_in: Option<String>,
 }
 
 // ---------------------------------------------------------------- the value --
@@ -862,6 +868,7 @@ fn instrumental(
             guessed: live,
             low_confidence: false,
             window_priced: false,
+            stand_in: None,
         }],
         guessed: live,
         priced: Priced::Instrumental,
@@ -885,6 +892,7 @@ fn cold_fallback(line: &RoomLine) -> RoomValue {
             guessed: false,
             low_confidence: false,
             window_priced: false,
+            stand_in: None,
         }],
         guessed: false,
         priced: Priced::Fallback,
@@ -915,6 +923,7 @@ fn overridden(line: &RoomLine, tier: Tier, chaos: f64) -> RoomValue {
             guessed: false,
             low_confidence: false,
             window_priced: false,
+            stand_in: None,
         }],
         guessed: false,
         priced: Priced::Override,
@@ -961,6 +970,7 @@ fn value_tier3(
         guessed: false,
         low_confidence: quote.is_some_and(|q| q.low_confidence),
         window_priced: false,
+        stand_in: None,
     });
 
     // --- drops ---
@@ -983,7 +993,7 @@ fn value_tier3(
             DriverKind::VialDrop,
             vial,
             tier.vials_per_run(rate(knobs.vials_per_run)),
-            market.price(vial).map(UnitPrice::from_feed),
+            vial_unit_price(market, vial),
             weight,
         );
     }
@@ -996,6 +1006,7 @@ fn value_tier3(
             guessed: base.is_guess(),
             low_confidence: false,
             window_priced: false,
+            stand_in: None,
         });
         drops += push_drop(
             &mut drivers,
@@ -1053,6 +1064,7 @@ fn value_tier3(
             guessed: true,
             low_confidence: false,
             window_priced: false,
+            stand_in: None,
         });
         return RoomValue {
             sale: 0.0,
@@ -1104,23 +1116,62 @@ fn contributed_a_guess(drivers: &[Driver]) -> bool {
 /// What one unit of a drop term costs, and everything the driver has to record
 /// about where that figure came from.
 #[derive(Debug, Clone, Copy)]
-struct UnitPrice {
+struct UnitPrice<'a> {
     chaos: f64,
     guessed: bool,
     low_confidence: bool,
     window_priced: bool,
+    /// The item whose price this is when it is not the priced item's own —
+    /// [`Driver::stand_in`].
+    stand_in: Option<&'a str>,
 }
 
-impl UnitPrice {
+impl UnitPrice<'_> {
     /// A live feed price — measured by definition.
-    fn from_feed(quote: &ItemQuote) -> UnitPrice {
+    fn from_feed(quote: &ItemQuote) -> UnitPrice<'static> {
         UnitPrice {
             chaos: quote.chaos,
             guessed: false,
             low_confidence: quote.low_confidence,
             window_priced: quote.window_priced,
+            stand_in: None,
         }
     }
+}
+
+/// What one vial of a [`DriverKind::VialDrop`] term costs.
+///
+/// The vial's own feed quote when this read has one. When it has none, the
+/// quote of the unique the vial upgrades into, per the recipe table — Vertolka,
+/// 2026-10-20, on Vial of the Ghost and Soul Ripper: *"they should have equal
+/// price"*. That equality is his estimate rather than a trade, so the stand-in
+/// is `guessed` and names its source in `stand_in`; the thin-market and
+/// window flags are the upgraded unique's, because they describe the number
+/// actually used.
+///
+/// Only a vial the recipe table maps to exactly ONE upgraded unique takes a
+/// stand-in. Vial of Transcendence upgrades three jewels at three prices, and
+/// picking one would be a choice nobody stated, so an unquoted Transcendence
+/// stays unpriced. No double count arises: a line's chest unique
+/// ([`LineDrops::unique`](super::drops::LineDrops::unique)) is always a recipe
+/// BASE, never an upgraded unique.
+///
+/// A stale read prices nothing here either way: [`MarketInput::price`] is the
+/// one staleness gate and answers `None` for both lookups.
+fn vial_unit_price<'a>(market: &'a MarketInput, vial: &str) -> Option<UnitPrice<'a>> {
+    if let Some(quote) = market.price(vial) {
+        return Some(UnitPrice::from_feed(quote));
+    }
+    let mut upgrades = market.recipes.iter().filter(|recipe| recipe.vial == vial);
+    let recipe = upgrades.next()?;
+    if upgrades.next().is_some() {
+        return None;
+    }
+    market.price(&recipe.upgraded).map(|quote| UnitPrice {
+        guessed: true,
+        stand_in: Some(recipe.upgraded.as_str()),
+        ..UnitPrice::from_feed(quote)
+    })
 }
 
 /// Push one drop term and return what it added to the total.
@@ -1145,6 +1196,7 @@ fn push_drop(
         guessed: count.is_some_and(Estimate::is_guess) || price.is_some_and(|price| price.guessed),
         low_confidence: price.is_some_and(|price| price.low_confidence),
         window_priced: price.is_some_and(|price| price.window_priced),
+        stand_in: price.and_then(|price| price.stand_in).map(str::to_string),
     });
     chaos.unwrap_or(0.0)
 }
@@ -1173,6 +1225,7 @@ fn push_bonus(
         guessed: true,
         low_confidence: false,
         window_priced: false,
+        stand_in: None,
     });
     chaos
 }
@@ -1197,6 +1250,7 @@ fn scale_from_tier3(line: &RoomLine, tier3: &RoomValue, knobs: &Knobs) -> RoomVa
         guessed: false,
         low_confidence: false,
         window_priced: false,
+        stand_in: None,
     });
 
     RoomValue {
@@ -1350,6 +1404,122 @@ mod tests {
         // The unpriced unique adds NOTHING: the remaining vial and manual mod
         // terms are 0.1 x Vial of Fate at 1 c + 2 x gloves at 30 c.
         assert!(close(value.drops, 60.1), "drops were {}", value.drops);
+    }
+
+    /// The Allflame capture with these items moved to the unpriced set — what
+    /// the payload looks like when poe.ninja carries no usable line for them.
+    fn allflame_unpricing(items: &[&str]) -> MarketInput {
+        let mut market = allflame();
+        for item in items {
+            assert!(
+                market.items.remove(*item).is_some(),
+                "the capture prices {item}"
+            );
+            market.unpriced.insert((*item).to_string());
+        }
+        market
+    }
+
+    /// 0.1 x 20 / 1689: Throne of Atziri's tier-3 vial rate (POE-262).
+    const THRONE_VIAL_RATE: f64 = 0.1 * 20.0 / 1689.0;
+
+    #[test]
+    fn an_unquoted_vial_is_priced_at_the_unique_it_upgrades_into() {
+        // Vertolka, 2026-10-20: Vial of the Ghost and Soul Ripper "should have
+        // equal price". The capture prices Soul Ripper at 598 c, thin and
+        // window-priced.
+        let market = allflame_unpricing(&["Vial of the Ghost"]);
+        let throne = value_of(
+            &Valued::compute(&market, &Knobs::default()),
+            "throne_of_atziri",
+            3,
+        );
+
+        let ghost = driver(&throne, DriverKind::VialDrop);
+        assert_eq!(ghost.name, "Vial of the Ghost", "the row stays the vial");
+        assert_eq!(ghost.unit_price, Some(598.0));
+        assert_eq!(ghost.stand_in.as_deref(), Some("Soul Ripper"));
+        assert!(close(
+            ghost.chaos.expect("a priced term"),
+            THRONE_VIAL_RATE * 598.0
+        ));
+        assert!(ghost.low_confidence, "Soul Ripper's 70 listings are thin");
+        assert!(ghost.window_priced, "Soul Ripper is window-priced");
+        assert_eq!(throne.priced, Priced::Market);
+        assert!(close(throne.total, 0.708_111_308_466), "{}", throne.total);
+    }
+
+    #[test]
+    fn a_stand_in_vial_price_is_marked_as_an_estimate() {
+        let market = allflame_unpricing(&["Vial of the Ghost"]);
+        let price = vial_unit_price(&market, "Vial of the Ghost").expect("a stand-in");
+        assert_eq!(price.chaos, 598.0);
+        assert!(price.guessed, "the vial = unique equality is Vertolka's");
+    }
+
+    #[test]
+    fn a_quoted_vial_keeps_its_own_price_over_its_upgrade() {
+        // The capture quotes Vial of the Ghost at 1712 c and Soul Ripper at
+        // 598 c; the vial's own quote wins and is not an estimate.
+        let market = allflame();
+        let price = vial_unit_price(&market, "Vial of the Ghost").expect("quoted");
+        assert_eq!(price.chaos, 1712.0);
+        assert!(!price.guessed, "a feed quote is measured");
+    }
+
+    #[test]
+    fn a_stale_read_lends_an_unquoted_vial_no_price() {
+        // Soul Ripper is still in the payload, but a stale read prices nothing:
+        // the stand-in goes through the same staleness gate as the vial.
+        let mut market = allflame_unpricing(&["Vial of the Ghost"]);
+        market.stale = true;
+        assert!(vial_unit_price(&market, "Vial of the Ghost").is_none());
+    }
+
+    #[test]
+    fn a_quoted_vial_driver_names_no_stand_in() {
+        let throne = value_of(
+            &Valued::compute(&allflame(), &Knobs::default()),
+            "throne_of_atziri",
+            3,
+        );
+        let ghost = driver(&throne, DriverKind::VialDrop);
+        assert_eq!(ghost.unit_price, Some(1712.0));
+        assert_eq!(ghost.stand_in, None, "1712 c is the vial's own quote");
+    }
+
+    #[test]
+    fn a_vial_with_neither_quote_contributes_nothing() {
+        let market = allflame_unpricing(&["Vial of the Ghost", "Soul Ripper"]);
+        let throne = value_of(
+            &Valued::compute(&market, &Knobs::default()),
+            "throne_of_atziri",
+            3,
+        );
+
+        let ghost = driver(&throne, DriverKind::VialDrop);
+        assert_eq!(ghost.unit_price, None);
+        assert_eq!(ghost.chaos, None);
+        assert_eq!(ghost.stand_in, None, "nothing was borrowed");
+        // The vial is Throne's only term, so nothing summed and the grade
+        // ladder stands in — the behaviour before the stand-in existed.
+        assert_eq!(throne.priced, Priced::Fallback);
+    }
+
+    #[test]
+    fn an_unquoted_vial_with_several_upgrades_takes_no_stand_in() {
+        // Vial of Transcendence upgrades three jewels (600 / 320 / 853.6 c on
+        // the capture); none of them is THE vial's price.
+        let market = allflame_unpricing(&["Vial of Transcendence"]);
+        let halls = value_of(
+            &Valued::compute(&market, &Knobs::default()),
+            "glittering_halls",
+            3,
+        );
+
+        let vial = driver(&halls, DriverKind::VialDrop);
+        assert_eq!(vial.unit_price, None);
+        assert_eq!(vial.chaos, None);
     }
 
     /// Vertolka's "small chance" is a number now, on both lines that carry it.
@@ -2031,6 +2201,7 @@ mod tests {
                 guessed: false,
                 low_confidence: false,
                 window_priced: false,
+                stand_in: None,
             }),
             1.0,
         );

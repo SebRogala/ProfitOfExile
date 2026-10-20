@@ -269,12 +269,30 @@ export function offerStackPlacement(input: {
  * gives up the diagonal for it (slides it back onto the column) rather than
  * dropping content. So it is not what [`offersCompact`] budgets against —
  * [`FULL_BOX_MAX_CSS`] is — and the two are kept apart because they answer
- * different questions. POE-277 additionally holds FULL_BOX_MAX_CSS AT OR UNDER
- * this budget as a design requirement — `overlay-geometry.test.ts` asserts it
- * — so a row added to the component is a decision about what the box drops,
- * not a number to raise here.
+ * different questions. POE-277 held FULL_BOX_MAX_CSS AT OR UNDER this budget
+ * as a design requirement; since 2026-10-20 it is held under
+ * [`FULL_BOX_BUDGET_CSS`] instead, which is this plus one owner-approved line.
+ * This number stays the MEASUREMENT: a box of exactly this height sits flush
+ * under plate C0's crop with 0 px of headroom, and is not to be raised.
  */
 export const DIAGONAL_BUDGET_CSS = 316;
+
+/**
+ * The ceiling [`FULL_BOX_BORROWED_MAX_CSS`] is held under, CSS px: the measured
+ * [`DIAGONAL_BUDGET_CSS`] plus 7 px, approved by the owner on 2026-10-20 for
+ * the borrowed-price line (an unquoted vial priced at the unique it upgrades
+ * into, `as <unique>` under the rate caption). Every other box stays under
+ * the diagonal itself ([`FULL_BOX_MAX_CSS`]).
+ *
+ * NOT spare space — the diagonal had 0 px of headroom. MEASURED on the
+ * committed 1920x1080 frame: a 323 px box at the first block (y 133) would end
+ * at 456, 7 px inside plate C0's crop (y 449), and `offerStackPlacement` lifts
+ * it to y 126 instead — still on the staggered x, still clear of all 42 read
+ * regions, with the second box clear under it. The cost is that a worst-case
+ * box no longer sits level with its block, and a pair carrying the line needs
+ * 12 px more host per such box before it renders full ([`offersCompact`]).
+ */
+export const FULL_BOX_BUDGET_CSS = DIAGONAL_BUDGET_CSS + 7;
 
 /**
  * The tallest a FULL offer box can actually be, CSS px (POE-277, v5).
@@ -282,8 +300,8 @@ export const DIAGONAL_BUDGET_CSS = 316;
  * Summed from `TempleOfferBoxes.svelte`'s own fixed row heights — every row in
  * the full form is a `height` or a `line-height` with a stated margin, which is
  * what makes a box's geometry a function of its SHAPE — for the worst case
- * this wording can produce: a box with a sale row, an item row carrying the
- * upgrade (so the `upgraded` caption), the room-bonus row, the temple mod with
+ * this wording can produce WITHOUT a borrowed price: a box with a sale row, an
+ * item row carrying the upgrade (so the `upgraded` caption), the room-bonus row, the temple mod with
  * slot chips wrapped to two rows, the market warning line, and the four
  * section hairlines those five sections put between themselves.
  *
@@ -296,8 +314,9 @@ export const DIAGONAL_BUDGET_CSS = 316;
  *
  * The 316 px diagonal budget therefore has 5 px of spare height, where v4's
  * 269 px box had 47: the restyle bought air, a price under every icon, a word
- * under every ladder, slot chips and four hairlines with the rest. A row added
- * here is now a decision about what the box DROPS.
+ * under every ladder, slot chips and four hairlines with the rest. The one
+ * owner-approved exception is [`FULL_BOX_BORROWED_MAX_CSS`]; any other row
+ * added here is a decision about what the box DROPS.
  *
  * Three rows are deliberately outside the sum:
  *
@@ -316,9 +335,19 @@ export const DIAGONAL_BUDGET_CSS = 316;
  */
 export const FULL_BOX_MAX_CSS = 311;
 
+/** The borrowed-price line's height, CSS px: one 12 px caption line, which an
+ *  item row draws only when a drop cell carries BOTH a rate caption and an
+ *  `as <unique>` source (`view.ts`'s `offerBoxBorrowedLine`) — 69 → 81. */
+export const BORROWED_LINE_CSS = 12;
+
+/** The tallest a FULL box can be when it carries the borrowed-price line under
+ *  a rate caption, CSS px: 311 + 12 = 323, held under [`FULL_BOX_BUDGET_CSS`]. */
+export const FULL_BOX_BORROWED_MAX_CSS = FULL_BOX_MAX_CSS + BORROWED_LINE_CSS;
+
 /** What two FULL boxes and the gap between them need, CSS px —
- * `311 * 2 + STACK_GAP_CSS` = 630 for the current 311 px full form. This is
- * the clearance [`offersCompact`] demands before it lets the pair render full.
+ * `311 * 2 + STACK_GAP_CSS` = 630 for a pair with no borrowed-price line. This
+ * is the clearance [`offersCompact`] demands before it lets the pair render
+ * full, plus [`BORROWED_LINE_CSS`] for each box that carries the line.
  * It uses the WORST case rather than the design's typical one, because the box
  * that gets clamped for want of it is the LOWER one, and a clamped box lands
  * on the box above it and is then moved or dropped entirely. */
@@ -359,8 +388,9 @@ export const MAX_FOLDABLE_DRIVERS = 5;
  * 2. **Not enough screen under the first block.** The stack starts level with
  *    block 0 (or, with no block rect, at the panel crop's top, or at
  *    [`BANNER_TOP_CSS`]) and grows downward, so what is left of the host below
- *    that point is the whole budget. Under [`FULL_PAIR_CSS`] the pair cannot
- *    both be full.
+ *    that point is the whole budget. Under [`FULL_PAIR_CSS`], plus
+ *    [`BORROWED_LINE_CSS`] per box carrying the borrowed-price line, the pair
+ *    cannot both be full.
  *
  * **Together, never one each.** Two boxes in different forms read as two
  * different kinds of answer, and the whole point of the pair is that the player
@@ -374,16 +404,24 @@ export const MAX_FOLDABLE_DRIVERS = 5;
 export function offersCompact(input: {
 	/** Every box's driver-row count, in box order (`OfferBox.driverCount`). */
 	driverCounts: readonly number[];
+	/** Whether each box carries the borrowed-price line under a rate caption,
+	 *  in box order (`offerBoxBorrowedLine`). Required, so a caller cannot
+	 *  budget a borrowed box at the plain height by omission. */
+	borrowed: readonly boolean[];
 	/** Each offer's block rect in CSS px, `blocks[i]` for box `i`. */
 	blocks: readonly (WidgetRect | null)[];
 	/** The side panel's OCR crop in CSS px. */
 	panel: WidgetRect | null;
 	host: HostSize;
 }): boolean {
-	const { driverCounts, blocks, panel, host } = input;
+	const { driverCounts, borrowed, blocks, panel, host } = input;
 	if (driverCounts.some((count) => count > MAX_FOLDABLE_DRIVERS)) return true;
 	const top = blocks[0]?.y ?? panel?.y ?? BANNER_TOP_CSS;
-	return host.height - top < FULL_PAIR_CSS;
+	// The pair is budgeted at the 311 px box and grows only by the boxes that
+	// actually carry the borrowed-price line: a global 323 would collapse every
+	// pair on a 720 CSS px host (631 px under the block against 654).
+	const lines = borrowed.filter(Boolean).length;
+	return host.height - top < FULL_PAIR_CSS + lines * BORROWED_LINE_CSS;
 }
 
 /**
