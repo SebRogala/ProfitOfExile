@@ -42,7 +42,7 @@ func warmTempleCache(t *testing.T) *temple.Cache {
 		{Category: temple.RoomCategory, Name: "B (Tier 1)", Chaos: 10, Listings: 700},
 		{Category: temple.RoomCategory, Name: "Locus of Corruption (Tier 3)", Chaos: 853.6, Listings: 2489},
 		{Category: "Vial", Name: "Vial of Fate", Chaos: 1, Divine: 0.002, Listings: 343},
-	}, nil))
+	}, nil, nil))
 	return cache
 }
 
@@ -122,7 +122,7 @@ func TestTempleMarket_warmButEmptyMarketServesArraysNotNull(t *testing.T) {
 	// "rooms": null here — which the desktop's non-nullable list deserializer
 	// (POE-258) fails on, on exactly the responses nobody tests by hand.
 	cache := temple.NewCache(templeScope)
-	cache.Set(temple.Build("Allflame", nil, nil))
+	cache.Set(temple.Build("Allflame", nil, nil, nil))
 
 	body := templeRequest(t, cache)
 

@@ -62,7 +62,7 @@ func TestBuild_untieredRoomIsServedNotDropped(t *testing.T) {
 		room("Locus of Corruption (Tier 3)", 800, 2000),
 		room("Apex of Atzoatl", 10, 700),
 		room("Halls", 10, 700),
-	}, nil)
+	}, nil, nil)
 
 	if len(m.Rooms) != 3 {
 		t.Fatalf("rooms = %d, want all 3 served", len(m.Rooms))
@@ -82,59 +82,102 @@ func TestBuild_floorIsTheMedianOfTheRoomLines(t *testing.T) {
 		room("C (Tier 2)", 10, 700),
 		room("D (Tier 2)", 10, 700),
 		room("Locus of Corruption (Tier 3)", 800, 2000),
-	}, nil)
+	}, nil, nil)
 
 	if m.Floor != 10 {
 		t.Errorf("Floor = %v, want 10 (the median room price)", m.Floor)
 	}
 }
 
-func TestBuild_roomAtExactlyTwiceTheFloorIsAboveIt(t *testing.T) {
-	// The boundary is inclusive: >= 2x, not > 2x.
-	m := Build("Allflame", []Line{
-		room("A (Tier 1)", 10, 700),
-		room("B (Tier 1)", 10, 700),
-		room("Boundary (Tier 3)", 20, 700),
-	}, nil)
+// roomKey is the key Build reads a room line's trailing median under — the one
+// Repository.RoomWindowMedians returns it with.
+func roomKey(name string) string { return lineKey(Line{Category: RoomCategory, Name: name}) }
+
+// floorOfTen is two base-price room lines; with one more line beside them the
+// upper-middle median — the floor — is 10 whatever the third line prints.
+func floorOfTen(extra Line) []Line {
+	return []Line{room("A (Tier 1)", 10, 700), room("B (Tier 1)", 10, 700), extra}
+}
+
+func TestBuild_roomAtExactlyFourTimesTheFloorIsAboveIt(t *testing.T) {
+	// The boundary is inclusive: a 24h median of exactly 4x the floor is a sale.
+	m := Build("Allflame", floorOfTen(room("Boundary (Tier 3)", 10, 700)), nil,
+		map[string]float64{roomKey("Boundary (Tier 3)"): 40})
 
 	got := roomsByName(m)["Boundary (Tier 3)"]
 	if !got.AboveFloor {
-		t.Errorf("a room at exactly 2x the floor (%v) reported aboveFloor = false", m.Floor)
-	}
-	if got.SaleDelta != 10 {
-		t.Errorf("saleDelta = %v, want 10 (20 - the floor of 10)", got.SaleDelta)
+		t.Errorf("a room whose 24h median is exactly 4x the floor (%v) reported aboveFloor = false", m.Floor)
 	}
 }
 
-func TestBuild_roomJustBelowTwiceTheFloorReportsNoSale(t *testing.T) {
-	m := Build("Allflame", []Line{
-		room("A (Tier 1)", 10, 700),
-		room("B (Tier 1)", 10, 700),
-		room("Boundary (Tier 3)", 19.9, 700),
-	}, nil)
+func TestBuild_roomMedianJustBelowFourTimesTheFloorReportsNoSale(t *testing.T) {
+	m := Build("Allflame", floorOfTen(room("Boundary (Tier 3)", 10, 700)), nil,
+		map[string]float64{roomKey("Boundary (Tier 3)"): 39.9})
 
 	got := roomsByName(m)["Boundary (Tier 3)"]
-	if got.AboveFloor {
-		t.Errorf("a room below 2x the floor reported aboveFloor = true")
-	}
-	if got.SaleDelta != 0 {
-		t.Errorf("saleDelta = %v, want 0 — a room that is not above the floor has no sale", got.SaleDelta)
-	}
-	if got.Chaos != 19.9 {
-		t.Errorf("chaos = %v, want the feed price 19.9 served regardless of the floor rule", got.Chaos)
+	if got.AboveFloor || got.SaleDelta != 0 {
+		t.Errorf("room with a 24h median of 39.9 against a floor of 10 = aboveFloor %v, saleDelta %v; want false, 0", got.AboveFloor, got.SaleDelta)
 	}
 }
 
-func TestBuild_saleDeltaIsThePriceMinusTheFloor(t *testing.T) {
-	m := Build("Allflame", []Line{
-		room("A (Tier 1)", 10, 700),
-		room("B (Tier 1)", 10, 700),
-		room("Locus of Corruption (Tier 3)", 853.6, 2489),
-	}, nil)
+func TestBuild_singleCheapPrintOverAFloorPricedDayIsNotASale(t *testing.T) {
+	// The defect this rule fixes: Toxic Grove and friends printing 20 c once
+	// against a 10 c floor while the day sat at the floor. They are noise.
+	m := Build("Allflame", floorOfTen(room("Toxic Grove (Tier 3)", 20, 700)), nil,
+		map[string]float64{roomKey("Toxic Grove (Tier 3)"): 10})
+
+	got := roomsByName(m)["Toxic Grove (Tier 3)"]
+	if got.AboveFloor || got.SaleDelta != 0 {
+		t.Errorf("a 20 c print over a 10 c day = aboveFloor %v, saleDelta %v; want false, 0", got.AboveFloor, got.SaleDelta)
+	}
+	if got.Chaos != 20 {
+		t.Errorf("chaos = %v, want the newest print 20 served regardless of the gate", got.Chaos)
+	}
+}
+
+func TestBuild_newestPrintAboveTheMultipleDoesNotOpenTheGateWhenTheMedianIsAtTheFloor(t *testing.T) {
+	// A one-hour spike well past 4x: the gate reads the day, not the hour.
+	m := Build("Allflame", floorOfTen(room("Spike (Tier 3)", 80, 700)), nil,
+		map[string]float64{roomKey("Spike (Tier 3)"): 10})
+
+	if got := roomsByName(m)["Spike (Tier 3)"]; got.AboveFloor {
+		t.Errorf("a room printing 80 once over a 10 c day reported aboveFloor = true; the gate read the newest print")
+	}
+}
+
+func TestBuild_saleDeltaIsTheMedianMinusTheFloor(t *testing.T) {
+	// The value reads the same number the gate does, so the newest print (12,
+	// here a dip) neither shrinks nor inflates the sale.
+	m := Build("Allflame", floorOfTen(room("Crucible of Flame (Tier 3)", 12, 700)), nil,
+		map[string]float64{roomKey("Crucible of Flame (Tier 3)"): 45})
+
+	got := roomsByName(m)["Crucible of Flame (Tier 3)"]
+	if !got.AboveFloor || got.SaleDelta != 35 {
+		t.Errorf("room with a 24h median of 45 over a floor of 10 = aboveFloor %v, saleDelta %v; want true, 35 (45 - 10)", got.AboveFloor, got.SaleDelta)
+	}
+	if got.Chaos != 12 {
+		t.Errorf("chaos = %v, want the newest print 12, not the median", got.Chaos)
+	}
+}
+
+func TestBuild_roomWithNoWindowPrintsIsGatedAndValuedOnItsNewestPrint(t *testing.T) {
+	// Cold start: the window holds prints for another room but none for Locus,
+	// so Locus falls back to its newest print for both the gate and the value.
+	m := Build("Allflame", floorOfTen(room("Locus of Corruption (Tier 3)", 853.6, 2489)), nil,
+		map[string]float64{roomKey("A (Tier 1)"): 10})
 
 	got := roomsByName(m)["Locus of Corruption (Tier 3)"]
-	if got.SaleDelta != 843.6 {
-		t.Errorf("saleDelta = %v, want 843.6 (853.6 - 10); the feed price alone is not the sale", got.SaleDelta)
+	if !got.AboveFloor || got.SaleDelta != 843.6 {
+		t.Errorf("Locus with no window prints = aboveFloor %v, saleDelta %v; want true, 843.6 (newest 853.6 - 10)", got.AboveFloor, got.SaleDelta)
+	}
+}
+
+func TestBuild_roomWithNoWindowPrintsBelowTheMultipleReportsNoSale(t *testing.T) {
+	// The fallback applies the same 4x gate to the newest print, not a looser one.
+	m := Build("Allflame", floorOfTen(room("Toxic Grove (Tier 3)", 20, 700)), nil, nil)
+
+	if got := roomsByName(m)["Toxic Grove (Tier 3)"]; got.AboveFloor {
+		t.Errorf("a 20 c newest print with no window against a 10 c floor reported aboveFloor = true")
 	}
 }
 
@@ -143,7 +186,7 @@ func TestBuild_roomsAreSortedByNameSoThePayloadIsDeterministic(t *testing.T) {
 		room("C (Tier 1)", 10, 700),
 		room("A (Tier 1)", 10, 700),
 		room("B (Tier 1)", 10, 700),
-	}, nil)
+	}, nil, nil)
 
 	got := []string{m.Rooms[0].Name, m.Rooms[1].Name, m.Rooms[2].Name}
 	want := []string{"A (Tier 1)", "B (Tier 1)", "C (Tier 1)"}
@@ -171,7 +214,7 @@ func TestBuild_lowConfidenceIsRelativeToTheLinesOwnCategory(t *testing.T) {
 		item("Vial", "Vial of Fate", 1, 10),
 		item("Vial", "Vial of Dominance", 1, 10),
 		item("Vial", "Vial of the Ghost", 1689, 3),
-	}, nil)
+	}, nil, nil)
 
 	items := itemsByName(m)
 	if !items["Vial of the Ghost"].Price.LowConfidence {
@@ -189,7 +232,7 @@ func TestBuild_lineAtExactlyFortyPercentOfTheMedianIsConfident(t *testing.T) {
 		item("UniqueJewel", "Tempered Mind", 1, 40),
 		item("UniqueJewel", "Tempered Flesh", 8, 100),
 		item("UniqueJewel", "Tempered Spirit", 3, 200),
-	}, nil)
+	}, nil, nil)
 
 	items := itemsByName(m)
 	if items["Tempered Mind"].Price.LowConfidence {
@@ -202,7 +245,7 @@ func TestBuild_lineJustBelowFortyPercentOfTheMedianIsThin(t *testing.T) {
 		item("UniqueJewel", "Tempered Mind", 1, 39),
 		item("UniqueJewel", "Tempered Flesh", 8, 100),
 		item("UniqueJewel", "Tempered Spirit", 3, 200),
-	}, nil)
+	}, nil, nil)
 
 	items := itemsByName(m)
 	if !items["Tempered Mind"].Price.LowConfidence {
@@ -228,7 +271,7 @@ func TestBuild_thinLineIsPricedFromTheWindowMedianNotTheNewestPrint(t *testing.T
 		},
 	}
 
-	got := itemsByName(Build("Allflame", newest, window))["Vial of the Ghost"].Price
+	got := itemsByName(Build("Allflame", newest, window, nil))["Vial of the Ghost"].Price
 	if got.Chaos != 1600 {
 		t.Errorf("chaos = %v, want the window median 1600 rather than the newest print 1689", got.Chaos)
 	}
@@ -254,7 +297,7 @@ func TestBuild_confidentLineKeepsItsNewestPrintEvenWhenAWindowIsSupplied(t *test
 		"Vial|Vial of Fate": {{Chaos: 99}, {Chaos: 99}, {Chaos: 99}},
 	}
 
-	got := itemsByName(Build("Allflame", newest, window))["Vial of Fate"].Price
+	got := itemsByName(Build("Allflame", newest, window, nil))["Vial of Fate"].Price
 	if got.WindowPriced {
 		t.Errorf("a confident line reported windowPriced = true")
 	}
@@ -271,7 +314,7 @@ func TestBuild_thinLineWithNoWindowRowsKeepsItsNewestPrint(t *testing.T) {
 		item("Vial", "Vial of Dominance", 1, 107),
 	}
 
-	got := itemsByName(Build("Allflame", newest, nil))["Vial of the Ghost"].Price
+	got := itemsByName(Build("Allflame", newest, nil, nil))["Vial of the Ghost"].Price
 	if got.Chaos != 1689 {
 		t.Errorf("chaos = %v, want the newest print 1689 when the window read returned nothing", got.Chaos)
 	}
@@ -284,7 +327,7 @@ func TestBuild_thinLineWithNoWindowRowsKeepsItsNewestPrint(t *testing.T) {
 }
 
 func TestBuild_itemAbsentFromTheSnapshotIsUnpricedNotZero(t *testing.T) {
-	m := Build("Allflame", []Line{item("Vial", "Vial of Fate", 1, 343)}, nil)
+	m := Build("Allflame", []Line{item("Vial", "Vial of Fate", 1, 343)}, nil, nil)
 
 	got := itemsByName(m)["Zerphi's Heart"]
 	if !got.Unpriced {
@@ -307,7 +350,7 @@ func TestBuild_itemWithZeroListingsIsUnpriced(t *testing.T) {
 	m := Build("Allflame", []Line{
 		item("Vial", "Vial of Sacrifice", 422.3, 0),
 		item("Vial", "Vial of Fate", 1, 343),
-	}, nil)
+	}, nil, nil)
 
 	got := itemsByName(m)["Vial of Sacrifice"]
 	if !got.Unpriced || got.Price != nil {
@@ -316,7 +359,7 @@ func TestBuild_itemWithZeroListingsIsUnpriced(t *testing.T) {
 }
 
 func TestBuild_servesEveryRecipeMemberEvenWhenTheFeedIsEmpty(t *testing.T) {
-	m := Build("Allflame", nil, nil)
+	m := Build("Allflame", nil, nil, nil)
 
 	if len(m.Items) != len(ItemNames()) {
 		t.Errorf("items = %d, want all %d recipe members served as unpriced", len(m.Items), len(ItemNames()))
@@ -332,7 +375,7 @@ func TestBuild_categoriesSeenListsOnlyTheCategoriesThatStoredLines(t *testing.T)
 	m := Build("Allflame", []Line{
 		room("A (Tier 1)", 10, 700),
 		item("Vial", "Vial of Fate", 1, 343),
-	}, nil)
+	}, nil, nil)
 
 	want := []string{RoomCategory, "Vial"}
 	if !reflect.DeepEqual(m.CategoriesSeen, want) {
@@ -347,7 +390,7 @@ func TestBuild_asOfIsTheNewestTimeAcrossEveryCategory(t *testing.T) {
 	m := Build("Allflame", []Line{
 		{Category: RoomCategory, Time: older, Name: "A (Tier 1)", Chaos: 10, Listings: 700},
 		{Category: "Vial", Time: newer, Name: "Vial of Fate", Chaos: 1, Listings: 343},
-	}, nil)
+	}, nil, nil)
 
 	if m.AsOf == nil {
 		t.Fatalf("asOf = null on a snapshot with lines")
@@ -358,7 +401,7 @@ func TestBuild_asOfIsTheNewestTimeAcrossEveryCategory(t *testing.T) {
 }
 
 func TestBuild_carriesTheLeagueAndTheFloorRule(t *testing.T) {
-	m := Build("Allflame", []Line{room("A (Tier 1)", 10, 700)}, nil)
+	m := Build("Allflame", []Line{room("A (Tier 1)", 10, 700)}, nil, nil)
 
 	if m.League != "Allflame" {
 		t.Errorf("league = %q, want Allflame", m.League)
@@ -433,7 +476,7 @@ func TestPickLines_takesTheDeepestLineWhenANameIsServedTwice(t *testing.T) {
 		item("UniqueAccessory", "Sacrificial Heart", 5, 306),
 	}
 
-	got := itemsByName(Build("Allflame", newest, nil))["Zerphi's Heart"]
+	got := itemsByName(Build("Allflame", newest, nil, nil))["Zerphi's Heart"]
 	if got.Price == nil || got.Price.Listings != 29 || got.Price.Chaos != 1273 {
 		t.Errorf("Zerphi's Heart = %+v, want the deepest line (29 listings, 1273 chaos)", got.Price)
 	}
@@ -451,7 +494,7 @@ func TestPickLines_equalListingsInOneCategoryResolveOnTheLowerNinjaID(t *testing
 		item("UniqueAccessory", "Sacrificial Heart", 5, 306),
 	}
 
-	got := itemsByName(Build("Allflame", newest, nil))["Zerphi's Heart"]
+	got := itemsByName(Build("Allflame", newest, nil, nil))["Zerphi's Heart"]
 	if got.Price == nil || got.Price.Chaos != 100 {
 		t.Errorf("Zerphi's Heart = %+v, want the ninja_id 7001 line's 100 chaos", got.Price)
 	}
@@ -466,7 +509,7 @@ func TestBuild_everyLineOfAZeroMedianCategoryIsLowConfidence(t *testing.T) {
 		room("A (Tier 1)", 10, 0),
 		room("B (Tier 1)", 10, 0),
 		room("C (Tier 1)", 10, 5),
-	}, nil)
+	}, nil, nil)
 
 	rooms := roomsByName(m)
 	for _, name := range []string{"A (Tier 1)", "C (Tier 1)"} {
@@ -494,7 +537,7 @@ func TestMedianOf_isZeroForNoLines(t *testing.T) {
 func TestBuild_noRoomsMeansNoFloorAndNoSales(t *testing.T) {
 	// A zero floor must not make every item-only snapshot report every room-less
 	// payload as above floor; there are no rooms to report on at all.
-	m := Build("Allflame", []Line{item("Vial", "Vial of Fate", 1, 343)}, nil)
+	m := Build("Allflame", []Line{item("Vial", "Vial of Fate", 1, 343)}, nil, nil)
 
 	if m.Floor != 0 {
 		t.Errorf("floor = %v, want 0 with no room lines", m.Floor)

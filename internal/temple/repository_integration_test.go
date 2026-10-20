@@ -305,3 +305,83 @@ func TestWindowPrices_noLinesMeansNoQueryAndAnEmptyResult(t *testing.T) {
 		t.Errorf("result is nil; Build indexes it and a nil map would be a second shape to handle")
 	}
 }
+
+func TestRoomWindowMedians_returnsTheMedianOfThePrintsInsideTheWindowOnly(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewRepository(pool)
+
+	const name = "POE Median Probe Room (Tier 3)"
+	inside := []time.Time{
+		time.Now().UTC().Add(-1 * time.Hour).Truncate(time.Microsecond),
+		time.Now().UTC().Add(-5 * time.Hour).Truncate(time.Microsecond),
+		time.Now().UTC().Add(-23 * time.Hour).Truncate(time.Microsecond),
+	}
+	// Past the trailing window, and far enough above the others that reading it
+	// moves the median from 20 to 55.
+	outside := time.Now().UTC().Add(-(WindowHours + 2) * time.Hour).Truncate(time.Microsecond)
+	cleanupAt(t, pool, []string{integrationScope.ID()}, append(append([]time.Time{}, inside...), outside)...)
+
+	for i, chaos := range []float64{10, 20, 90} {
+		insertLine(t, pool, integrationScope.ID(), inside[i], RoomCategory, name, 990060, chaos, 0, 700)
+	}
+	insertLine(t, pool, integrationScope.ID(), outside, RoomCategory, name, 990060, 99999, 0, 700)
+
+	got, err := repo.RoomWindowMedians(context.Background(), integrationScope)
+	if err != nil {
+		t.Fatalf("RoomWindowMedians: %v", err)
+	}
+
+	median, ok := got[RoomCategory+"|"+name]
+	if !ok {
+		t.Fatalf("no median for %q in %+v", name, got)
+	}
+	if median != 20 {
+		t.Errorf("median = %v, want 20 — the middle of the three prints inside the %d-hour window", median, WindowHours)
+	}
+}
+
+func TestRoomWindowMedians_readsOnlyTheScopedLeague(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewRepository(pool)
+
+	const otherLeagueID = "POE-Room-Median-Other-League"
+	const name = "POE Median Scope Room (Tier 3)"
+	registerLeague(t, pool, otherLeagueID)
+
+	at := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Microsecond)
+	later := at.Add(time.Minute)
+	cleanupAt(t, pool, []string{integrationScope.ID(), otherLeagueID}, at, later)
+
+	insertLine(t, pool, integrationScope.ID(), at, RoomCategory, name, 990070, 10, 0, 700)
+	// Two prints in the other league outvote the scoped one in any pooled median.
+	insertLine(t, pool, otherLeagueID, at, RoomCategory, name, 990071, 88888, 0, 700)
+	insertLine(t, pool, otherLeagueID, later, RoomCategory, name, 990071, 88888, 0, 700)
+
+	got, err := repo.RoomWindowMedians(context.Background(), integrationScope)
+	if err != nil {
+		t.Fatalf("RoomWindowMedians: %v", err)
+	}
+	if median := got[RoomCategory+"|"+name]; median != 10 {
+		t.Errorf("median = %v, want 10 from the scoped league's only print", median)
+	}
+}
+
+func TestRoomWindowMedians_readsOnlyTheRoomCategory(t *testing.T) {
+	pool := integrationPool(t)
+	repo := NewRepository(pool)
+
+	at := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Microsecond)
+	cleanupAt(t, pool, []string{integrationScope.ID()}, at)
+
+	insertLine(t, pool, integrationScope.ID(), at, "Vial", "POE Median Not A Room", 990080, 500, 1, 7)
+
+	got, err := repo.RoomWindowMedians(context.Background(), integrationScope)
+	if err != nil {
+		t.Fatalf("RoomWindowMedians: %v", err)
+	}
+	for key := range got {
+		if key == "Vial|POE Median Not A Room" || key == RoomCategory+"|POE Median Not A Room" {
+			t.Errorf("a Vial line came back as a room median under %q", key)
+		}
+	}
+}

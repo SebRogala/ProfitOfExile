@@ -28,14 +28,16 @@ import (
 // ADR-017, ADR-018): every room-tier and every recipe member is served on every
 // response, and the client decides what to dim.
 
-// WindowHours is the trailing span a thin line is priced over. Twenty-four hours
+// WindowHours is the trailing span a thin line is priced over and a room-tier's
+// above-floor gate is read over (FloorRule spells the same 24). Twenty-four hours
 // covers a full daily price cycle at the collector's cadence, which is the span
 // the currency-exchange day horizon settled on for the same reason.
 const WindowHours = 24
 
 // FloorRule is served with the payload so a client can show the rule it is
-// reading rather than hard-coding a copy of it.
-const FloorRule = "median of room lines; above floor at >= 2x"
+// reading rather than hard-coding a copy of it. It states the rule buildRooms
+// applies: the floor, the gate, and the cold-start fallback.
+const FloorRule = "floor = median of the newest room lines; above floor when the room's trailing 24h median chaos >= 4x floor (newest print when no 24h prints)"
 
 // lowConfidenceDepth is the fraction of its market's median listing count below
 // which a line is flagged thin. It is POE-131's gem rule applied unchanged —
@@ -43,11 +45,19 @@ const FloorRule = "median of room lines; above floor at >= 2x"
 // same question about the same kind of feed.
 const lowConfidenceDepth = 0.4
 
-// aboveFloorMultiple is how far above the floor a room-tier's price must sit
-// before the room is read as carrying a sellable outcome. Two times the floor,
-// inclusive: 84 of the 86 room lines sit at the base price the floor IS, so any
-// smaller multiple would start reporting feed noise as a sale.
-const aboveFloorMultiple = 2.0
+// aboveFloorMultiple is how far above the floor a room-tier's trailing-WindowHours
+// median price must sit before the room is read as carrying a sellable outcome.
+// Four times the floor, inclusive.
+//
+// The multiple and the median work together. On the Allflame feed (257
+// snapshots) single cheap prints at twice the ~10 c floor — Toxic Grove,
+// Conduit, Sanctum of Immortality, Hall of Locks tier 2 — passed the previous
+// rule (newest print >= 2x) and were noise by the owner's domain read. A 24-hour
+// median at 4x gave 2 false positives and 3 flaps over those snapshots, against
+// 16 and 15 for a bare 4x on the newest print. Locus of Corruption and Doryani's
+// Institute sit far above it; Crucible of Flame (~35-50 c) passes whenever it
+// holds that price over a day.
+const aboveFloorMultiple = 4.0
 
 // tierSuffix matches poe.ninja's room-tier naming, e.g. "Locus of Corruption
 // (Tier 3)". The 11 lines with no such suffix are real rooms — Apex of Atzoatl
@@ -81,10 +91,13 @@ type WindowPrice struct {
 
 // Room is one temple room-tier line.
 //
-// SaleDelta is the whole point of the room half: the feed price minus the floor
-// when the room-tier is above the floor, and zero otherwise. On a typical
-// snapshot 84 of the 86 rooms read zero, and the two that do not are the rooms
-// worth selling.
+// SaleDelta is the whole point of the room half: the room-tier's trailing
+// WindowHours median chaos minus the floor when that median is above the floor,
+// and zero otherwise. It is the same number the gate read, so a one-hour spike
+// neither opens the gate nor inflates the value. Chaos stays the newest print.
+// A line with no prints in the window (cold start) is gated and valued on its
+// newest print instead. On a typical snapshot nearly every room reads zero, and
+// the few that do not are the rooms worth selling.
 type Room struct {
 	Name          string  `json:"name"`
 	Line          string  `json:"line"`
@@ -181,11 +194,13 @@ func EmptyMarket(leagueID string) Market {
 // categories. window holds, per line (category and name, as Repository
 // .WindowPrices keys it), that line's prints over the trailing WindowHours; only
 // thin lines need an entry, and a line with no entry — or an empty one — keeps
-// its newest print.
+// its newest print. roomMedians holds, per room line (same key, as Repository
+// .RoomWindowMedians returns it), its median chaos over the trailing
+// WindowHours; a room with no entry is gated on its newest print.
 //
 // It is pure: no clock, no query, no logging. The untiered room lines the caller
 // may want to report are visible in the result as Tier == 0.
-func Build(leagueID string, newest []Line, window map[string][]WindowPrice) Market {
+func Build(leagueID string, newest []Line, window map[string][]WindowPrice, roomMedians map[string]float64) Market {
 	market := EmptyMarket(leagueID)
 
 	byCategory := groupByCategory(newest)
@@ -206,14 +221,17 @@ func Build(leagueID string, newest []Line, window map[string][]WindowPrice) Mark
 
 	thin := thinLines(byCategory)
 
-	// Rooms are never window-priced. Locus of Corruption and Doryani's Institute
-	// carry thousands of listings, and the 84 floor lines' price is not used for
-	// anything — their sale delta is zero by the rule, not by their price — so a
-	// trailing window would only blur the two prints that matter. Their thinness
-	// is still reported as a flag.
+	// Rooms are GATED and VALUED on their trailing-WindowHours median, not on the
+	// newest print: a single cheap print at a few times the floor is feed noise,
+	// and reading the newest print let those prints count as sales (see
+	// aboveFloorMultiple). The floor itself stays the median of the newest
+	// snapshot's room lines, and each room's Chaos stays its newest print. Rooms
+	// are not flagged WindowPriced: that flag belongs to the item half's
+	// thin-line pricing, which a room's gate is not. Their thinness is still
+	// reported as a flag.
 	rooms := byCategory[RoomCategory]
 	market.Floor = medianOf(rooms, func(l Line) float64 { return l.Chaos })
-	market.Rooms = buildRooms(rooms, market.Floor, thin)
+	market.Rooms = buildRooms(rooms, market.Floor, thin, roomMedians)
 	market.Items = buildItems(pickLines(byCategory), thin, window)
 
 	return market
@@ -226,7 +244,8 @@ func Build(leagueID string, newest []Line, window map[string][]WindowPrice) Mark
 //
 // It shares thinLines and pickLines with Build rather than restating either
 // rule, so the lines queried and the lines window-priced cannot come apart.
-// Rooms are never returned: they are not window-priced (see Build).
+// Rooms are never returned: their window read is Repository.RoomWindowMedians,
+// which covers every room line (see Build).
 func ThinLines(newest []Line) []Line {
 	byCategory := groupByCategory(newest)
 	thin := thinLines(byCategory)
@@ -339,7 +358,7 @@ func betterLine(candidate, current Line) bool {
 	return candidate.NinjaID < current.NinjaID
 }
 
-func buildRooms(lines []Line, floor float64, thin map[string]bool) []Room {
+func buildRooms(lines []Line, floor float64, thin map[string]bool, medians map[string]float64) []Room {
 	rooms := make([]Room, 0, len(lines))
 	for _, line := range lines {
 		name, tier := parseRoomName(line.Name)
@@ -352,11 +371,17 @@ func buildRooms(lines []Line, floor float64, thin map[string]bool) []Room {
 			LowConfidence: thin[lineKey(line)],
 			Icon:          IconPath(RoomIconName),
 		}
-		// Inclusive at exactly the multiple: a room-tier printing at twice the
-		// floor is above it, so the boundary belongs to the sellable side.
-		if floor > 0 && line.Chaos >= aboveFloorMultiple*floor {
+		// The gate and the value read the same number: the trailing median, or
+		// the newest print when the window holds no prints for this line (cold
+		// start, or a collector outage longer than WindowHours). Inclusive at
+		// exactly the multiple, so the boundary belongs to the sellable side.
+		price := line.Chaos
+		if median, ok := medians[lineKey(line)]; ok {
+			price = median
+		}
+		if floor > 0 && price >= aboveFloorMultiple*floor {
 			room.AboveFloor = true
-			room.SaleDelta = line.Chaos - floor
+			room.SaleDelta = price - floor
 		}
 		rooms = append(rooms, room)
 	}

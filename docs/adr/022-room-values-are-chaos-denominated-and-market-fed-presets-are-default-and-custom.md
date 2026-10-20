@@ -654,3 +654,28 @@ priced. Live scaling still divides by the A rung and uses §3's formula-sum
 anchor or §4's sale anchor and cap. Every A-tier fallback equals its anchor;
 therefore a fallback never exceeds a summed room, although it may tie one.
 These absolute cold rungs still age with the league and currency.
+
+### Amendment — the server's above-floor rule, 2026-10-20
+
+§1's `sale` term is still the server's `saleDelta`, read and never re-derived
+by the desktop, but the server's rule behind it changed
+(`internal/temple/market.go`, `aboveFloorMultiple` and `buildRooms`). A
+room-tier is above the floor when its **trailing-24h median chaos** is at least
+**4×** the floor, and its `saleDelta` is that median minus the floor. Until this
+date it was the newest print at 2× and the newest print minus the floor. The
+floor is unchanged: the median of the newest snapshot's room lines. `chaos`
+stays the newest print. A room with no print inside the 24 hours is gated and
+valued on its newest print. Accepted gap: a scaled tier-1/2 box prints the
+tier-3 room's `chaos` while the value counts the median, so the two can differ
+until the server serves the gate price as its own field.
+
+Why: single cheap prints at 2× the ~10 c floor (Toxic Grove, Conduit, Sanctum
+of Immortality, Hall of Locks tier 2) passed as sales; the owner's domain read
+called them noise. Each counted as a sale, and the cheapest capped §4's
+instrumental lines through `valuation::lowest_sale_priced_room_total`. Over 257
+Allflame snapshots the 24h median at 4× gave 2 false positives and 3 flaps,
+against 16 and 15 for a bare 4× on the newest print. Locus of Corruption and
+Doryani's Institute stay above it; Crucible of Flame (~35–50 c) passes when it
+holds that price over a day. The served `floorRule` string states the new rule.
+The 856 c / 846 delta figures above are from the committed capture under the old
+rule and remain historical.

@@ -128,12 +128,13 @@ func copyMarket(m Market) Market {
 
 // Source is the storage a recompute reads. *Repository satisfies it.
 //
-// The service depends on this two-method interface rather than on *Repository so
-// the lifecycle — the two-phase read, the coalescing, the cache write — is
-// testable without a database.
+// The service depends on this interface rather than on *Repository so the
+// lifecycle — the reads, the coalescing, the cache write — is testable without a
+// database.
 type Source interface {
 	NewestLines(ctx context.Context, scope league.Scope) ([]Line, error)
 	WindowPrices(ctx context.Context, scope league.Scope, lines []Line) (map[string][]WindowPrice, error)
+	RoomWindowMedians(ctx context.Context, scope league.Scope) (map[string]float64, error)
 }
 
 // Service recomputes the temple market and keeps the cache filled.
@@ -162,11 +163,13 @@ func NewService(source Source, cache *Cache, scope league.Scope, logger *slog.Lo
 }
 
 // Recompute reads the newest snapshot of each category, window-prices the thin
-// lines, and stores the result.
+// lines, reads the room lines' trailing medians for the above-floor gate, and
+// stores the result.
 //
-// Two queries, in order: the second one's name list comes out of the first one's
-// answer (ThinLines), so a confident market costs one query and a thin one costs
-// two — never one per item.
+// The window read's name list comes out of the newest read's answer
+// (ThinLines), so a confident market skips it — never one query per item. The
+// room-median read is one aggregated query over the room category on every
+// recompute, because every room line is gated on it.
 func (s *Service) Recompute(ctx context.Context) (Market, error) {
 	if err := s.scope.Validate(); err != nil {
 		return Market{}, fmt.Errorf("temple service: recompute: %w", err)
@@ -183,7 +186,12 @@ func (s *Service) Recompute(ctx context.Context) (Market, error) {
 		return Market{}, fmt.Errorf("temple service: recompute: %w", err)
 	}
 
-	market := Build(s.scope.ID(), newest, window)
+	roomMedians, err := s.source.RoomWindowMedians(ctx, s.scope)
+	if err != nil {
+		return Market{}, fmt.Errorf("temple service: recompute: %w", err)
+	}
+
+	market := Build(s.scope.ID(), newest, window, roomMedians)
 	s.logUntieredRooms(market.Rooms)
 	s.cache.Set(market)
 
@@ -198,6 +206,9 @@ func (s *Service) Recompute(ctx context.Context) (Market, error) {
 		"rooms", len(market.Rooms),
 		"floor", market.Floor,
 		"windowPriced", len(thin),
+		// Below the room count means rooms fell back to their newest print
+		// (no print in the trailing window — e.g. a collector outage).
+		"roomsMedianGated", len(roomMedians),
 	)
 	return market, nil
 }
@@ -212,7 +223,7 @@ func (s *Service) Recompute(ctx context.Context) (Market, error) {
 //
 // This is a mutex and a rerun, deliberately not a debounce or a timer: there is
 // no quiet period to wait out and nothing to schedule, so a burst costs two
-// bounded queries rather than seven, and the answer served after the burst was
+// recomputes rather than seven, and the answer served after the burst was
 // computed after the last event.
 //
 // Errors are logged at Warn rather than returned: the callers are the Mercure

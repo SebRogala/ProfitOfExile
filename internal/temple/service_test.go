@@ -30,6 +30,9 @@ type fakeSource struct {
 	window    map[string][]WindowPrice
 	windowErr error
 
+	roomMedians    map[string]float64
+	roomMediansErr error
+
 	calls      int
 	windowedBy [][]Line
 
@@ -53,6 +56,10 @@ func (f *fakeSource) WindowPrices(ctx context.Context, scope league.Scope, lines
 	f.windowedBy = append(f.windowedBy, lines)
 	f.mu.Unlock()
 	return f.window, f.windowErr
+}
+
+func (f *fakeSource) RoomWindowMedians(ctx context.Context, scope league.Scope) (map[string]float64, error) {
+	return f.roomMedians, f.roomMediansErr
 }
 
 func (f *fakeSource) callCount() int {
@@ -136,6 +143,49 @@ func TestServiceRecompute_failedWindowReadLeavesTheCacheCold(t *testing.T) {
 	}
 	if _, warm := cache.Snapshot(); warm {
 		t.Errorf("cache reported warm after a failed window read; thin items would be served at their newest print with windowPriced false and nothing to say so")
+	}
+}
+
+func TestServiceRecompute_gatesRoomsOnTheRoomMediansItRead(t *testing.T) {
+	// The newest print sits at the floor; only the 24h median the source returns
+	// puts the room above it. A recompute that dropped the read would serve no sale.
+	source := &fakeSource{
+		newest: []Line{
+			room("A (Tier 1)", 10, 700),
+			room("B (Tier 1)", 10, 700),
+			room("Crucible of Flame (Tier 3)", 10, 700),
+		},
+		roomMedians: map[string]float64{RoomCategory + "|Crucible of Flame (Tier 3)": 45},
+	}
+	cache := NewCache(testScope)
+	svc := NewService(source, cache, testScope, quietLogger())
+
+	if _, err := svc.Recompute(context.Background()); err != nil {
+		t.Fatalf("Recompute: %v", err)
+	}
+
+	got, _ := cache.Snapshot()
+	crucible := roomsByName(got)["Crucible of Flame (Tier 3)"]
+	if !crucible.AboveFloor || crucible.SaleDelta != 35 {
+		t.Errorf("cached Crucible = aboveFloor %v, saleDelta %v; want true, 35 from the 45 c median", crucible.AboveFloor, crucible.SaleDelta)
+	}
+}
+
+func TestServiceRecompute_failedRoomMedianReadLeavesTheCacheCold(t *testing.T) {
+	// Building without the medians would gate every room on its newest print and
+	// serve the single-print noise this read exists to filter, with nothing to say so.
+	source := &fakeSource{
+		newest:         []Line{room("A (Tier 1)", 10, 700), room("Toxic Grove (Tier 3)", 40, 700)},
+		roomMediansErr: errors.New("statement timeout"),
+	}
+	cache := NewCache(testScope)
+	svc := NewService(source, cache, testScope, quietLogger())
+
+	if _, err := svc.Recompute(context.Background()); err == nil {
+		t.Fatalf("Recompute returned no error when the room-median read failed")
+	}
+	if _, warm := cache.Snapshot(); warm {
+		t.Errorf("cache reported warm after a failed room-median read")
 	}
 }
 
@@ -298,7 +348,7 @@ func TestCacheSnapshot_returnsACopyTheCallerCannotWriteThrough(t *testing.T) {
 	cache.Set(Build("Allflame", []Line{
 		room("A (Tier 1)", 10, 700),
 		item("Vial", "Vial of Fate", 1, 343),
-	}, nil))
+	}, nil, nil))
 
 	first, _ := cache.Snapshot()
 	first.Rooms[0].Chaos = 99999

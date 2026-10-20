@@ -149,6 +149,55 @@ func (r *Repository) WindowPrices(ctx context.Context, scope league.Scope, lines
 	return window, nil
 }
 
+// RoomWindowMedians returns each room line's median chaos over the trailing
+// WindowHours, keyed by category and name (lineKey), for Build's above-floor gate.
+//
+// One query, aggregated in SQL: every room line is gated, so the alternative is
+// fetching ~86 lines times every print in the window to take a median in Go.
+// The predicate is the same index-friendly shape WindowPrices uses — league,
+// category and a time lower bound on the (league, category, time DESC) prefix —
+// with the category pinned to RoomCategory.
+//
+// percentile_cont interpolates between the two middle prints on an even count,
+// which differs from medianOf's upper-middle convention. The gate compares this
+// number against a multiple of the floor and does not pair it with any other
+// axis, so an interpolated value is a fair reading of the day.
+//
+// A room line with no print inside the window is absent from the result, and
+// Build then gates it on its newest print.
+func (r *Repository) RoomWindowMedians(ctx context.Context, scope league.Scope) (map[string]float64, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("temple repo: room window medians: %w", err)
+	}
+
+	const query = `
+		SELECT name, percentile_cont(0.5) WITHIN GROUP (ORDER BY chaos)
+		FROM item_snapshots
+		WHERE league = $1 AND category = $2 AND time >= $3
+		GROUP BY name`
+
+	since := time.Now().Add(-WindowHours * time.Hour)
+	rows, err := r.pool.Query(ctx, query, scope.ID(), RoomCategory, since)
+	if err != nil {
+		return nil, fmt.Errorf("temple repo: room window medians: %w", err)
+	}
+	defer rows.Close()
+
+	medians := make(map[string]float64)
+	for rows.Next() {
+		var name string
+		var median float64
+		if err := rows.Scan(&name, &median); err != nil {
+			return nil, fmt.Errorf("temple repo: room window medians: scan: %w", err)
+		}
+		medians[lineKey(Line{Category: RoomCategory, Name: name})] = median
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("temple repo: room window medians: %w", err)
+	}
+	return medians, nil
+}
+
 func collectLines(rows pgx.Rows) ([]Line, error) {
 	defer rows.Close()
 

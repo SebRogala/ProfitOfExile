@@ -50,15 +50,19 @@ use super::strategy::Tier;
 
 /// One room-tier line as the server priced it.
 ///
-/// `sale_delta` is the whole point of the room half: the feed price minus the
-/// floor when the room-tier is above the floor, and zero otherwise. On a
+/// `sale_delta` is the whole point of the room half: what the room-tier sells
+/// for above the floor when the server reads it as above the floor, and zero
+/// otherwise. The server owns that rule (`internal/temple/market.go`: the
+/// trailing-24h median against a multiple of the floor) and this side only
+/// reads its answer. On a
 /// typical snapshot 84 of the 86 rooms read zero, and the two that do not are
 /// the rooms worth selling.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RoomQuote {
     /// The feed's price for this room-tier, in chaos.
     pub chaos: f64,
-    /// `chaos - floor` when above the floor, `0.0` otherwise.
+    /// The server's sale price above the floor (its 24h median, not `chaos`)
+    /// when above the floor, `0.0` otherwise.
     pub sale_delta: f64,
     /// Whether the server read this room-tier as carrying a sellable outcome.
     pub above_floor: bool,
