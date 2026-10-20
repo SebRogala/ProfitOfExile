@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { fetchGemNames, fetchCompare, DEDICATION_VARIANTS, type CompareGem } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
-	import { lookupTrade, pollTradeResult, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
+	import { hasTradeListings, lookupTrade, pollTradeResult, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 	import { formatPrice, formatPriceSigned } from '$lib/price.svelte';
 	import { getPairCode, clearPairCode, subscribeToDesktopGems } from '$lib/desktopBridge';
@@ -636,35 +636,44 @@
 							<!-- The assertion is guarded by the #if one line up: TS cannot
 							     carry index-access narrowing into the @const. -->
 							{@const td = tradeData[gem.name]!}
-							{@const divFloor = td.listings.find(l => l.currency === 'divine')}
-							{@const chaosFloor = td.listings.find(l => l.currency === 'chaos')}
+							{@const divFloor = td.listings?.find(l => l.currency === 'divine')}
+							{@const chaosFloor = td.listings?.find(l => l.currency === 'chaos')}
+							{@const listed = hasTradeListings(td)}
 							<div class="trade-data">
 								<div class="trade-price-row">
-									{#if divFloor}
-										<span class="trade-floor-price" title="Cheapest divine listing">{fmtPrice(divFloor.price)} div</span>
-									{/if}
-									{#if chaosFloor}
-										{#if divFloor}<span class="trade-floor-sep">/</span>{/if}
-										<span class="trade-floor-price" title="Cheapest chaos listing">{fmtPrice(chaosFloor.chaosPrice)}c</span>
-									{/if}
-									{#if !divFloor && !chaosFloor}
-										<span class="trade-floor-price">{fmtPrice(td.priceFloor)}c</span>
-									{/if}
-									<span class="trade-floor-label">trade floor</span>
-									<span class="trade-delta" class:trade-delta-positive={td.priceFloor - gem.roi > 0} class:trade-delta-negative={td.priceFloor - gem.roi < 0}>
-										{td.priceFloor - gem.roi > 0 ? '+' : ''}{fmtPrice(td.priceFloor - gem.roi)}c vs ninja
-									</span>
-									<span class="trade-signal-badge {concentrationClass(td.signals.sellerConcentration)}"
-										title="Seller concentration: {td.signals.uniqueAccounts} unique accounts in top 10">
-										{td.signals.sellerConcentration}
-									</span>
-									{#if td.signals.priceOutlier}
-										<span class="trade-signal-badge signal-red" title="Cheapest listing is significantly below median">OUTLIER</span>
+									{#if listed}
+										{#if divFloor}
+											<span class="trade-floor-price" title="Cheapest divine listing">{fmtPrice(divFloor.price)} div</span>
+										{/if}
+										{#if chaosFloor}
+											{#if divFloor}<span class="trade-floor-sep">/</span>{/if}
+											<span class="trade-floor-price" title="Cheapest chaos listing">{fmtPrice(chaosFloor.chaosPrice)}c</span>
+										{/if}
+										{#if !divFloor && !chaosFloor}
+											<span class="trade-floor-price">{fmtPrice(td.priceFloor)}c</span>
+										{/if}
+										<span class="trade-floor-label">trade floor</span>
+										<span class="trade-delta" class:trade-delta-positive={td.priceFloor - gem.roi > 0} class:trade-delta-negative={td.priceFloor - gem.roi < 0}>
+											{td.priceFloor - gem.roi > 0 ? '+' : ''}{fmtPrice(td.priceFloor - gem.roi)}c vs ninja
+										</span>
+										<span class="trade-signal-badge {concentrationClass(td.signals.sellerConcentration)}"
+											title="Seller concentration: {td.signals.uniqueAccounts} unique accounts in top 10">
+											{td.signals.sellerConcentration}
+										</span>
+										{#if td.signals.priceOutlier}
+											<span class="trade-signal-badge signal-red" title="Cheapest listing is significantly below median">OUTLIER</span>
+										{/if}
+									{:else}
+										<!-- A search that matched nothing comes back with every price at 0;
+										     those zeros are no price, so no floor, delta or signal is drawn. -->
+										<span class="trade-floor-label">No listings on trade</span>
 									{/if}
 								</div>
 								<div class="trade-meta-row">
-									<span class="trade-listings-badge">{td.total} listings</span>
-									<span class="trade-median" title="Median price of top 10 listings">median: {fmtPrice(td.medianTop10)}c</span>
+									{#if listed}
+										<span class="trade-listings-badge">{td.total} listings</span>
+										<span class="trade-median" title="Median price of top 10 listings">median: {fmtPrice(td.medianTop10)}c</span>
+									{/if}
 									<span class="trade-actions">
 										<span class="trade-cache-age" class:trade-cache-stale={isTradeCacheStale(gem.name)} title="Time since last trade lookup">{tradeCacheAgeStr(gem.name)}</span>
 										{#if gem.name.includes(' of ')}
@@ -672,7 +681,7 @@
 										{/if}
 									</span>
 								</div>
-								{#if td.listings.length > 0}
+								{#if listed}
 									<div class="trade-listings-table">
 										<div class="trade-listings-header">
 											<span class="tl-col-price">Price</span>

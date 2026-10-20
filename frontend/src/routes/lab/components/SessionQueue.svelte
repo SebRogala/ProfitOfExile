@@ -1,22 +1,6 @@
 <script lang="ts">
 	import GemIcon from './GemIcon.svelte';
-
-	export interface QueueItem {
-		gem: string;
-		variant: string;
-		pickedAt: Date;
-		snapshotROI: number;
-		snapshotFloor: number;
-		snapshotFloorOriginal: number;
-		snapshotCurrency: string;
-		snapshotDivineRate: number;
-		currentFloor?: number;
-		currentFloorOriginal?: number;
-		currentCurrency?: string;
-		priceDelta?: number;
-		recommendation?: string;
-		refreshing?: boolean;
-	}
+	import { fmtPrice, formatQuote, type QueueItem } from '$lib/session-queue';
 
 	let {
 		queue,
@@ -31,25 +15,6 @@
 	} = $props();
 
 	let anyRefreshing = $derived(queue.some((item) => item.refreshing));
-
-	function fmtPrice(v: number): string {
-		return Number.isInteger(v) ? v.toString() : v.toFixed(1);
-	}
-
-	function formatSnapshotPrice(item: QueueItem): string {
-		if (item.snapshotCurrency === 'divine') {
-			return `${fmtPrice(item.snapshotFloorOriginal)} div (${fmtPrice(item.snapshotFloor)}c)`;
-		}
-		return `${fmtPrice(item.snapshotFloor)}c`;
-	}
-
-	function formatCurrentPrice(item: QueueItem): string {
-		if (item.currentFloor == null) return '\u2014';
-		if (item.currentCurrency === 'divine' && item.currentFloorOriginal != null) {
-			return `${fmtPrice(item.currentFloorOriginal)} div (${fmtPrice(item.currentFloor)}c)`;
-		}
-		return `${fmtPrice(item.currentFloor)}c`;
-	}
 
 	function formatDelta(item: QueueItem): string {
 		if (item.priceDelta == null) return '\u2014';
@@ -107,12 +72,12 @@
 								</div>
 								<div class="picked-at">{formatPickedAt(item.pickedAt)}</div>
 							</td>
-							<td class="col-price">{formatSnapshotPrice(item)}</td>
+							<td class="col-price">{formatQuote(item.snapshot)}</td>
 							<td class="col-price">
 								{#if item.refreshing}
 									<span class="cell-spinner"></span>
 								{:else}
-									{formatCurrentPrice(item)}
+									{formatQuote(item.current)}
 								{/if}
 							</td>
 							<td class="col-delta {deltaClass(item)}">{formatDelta(item)}</td>

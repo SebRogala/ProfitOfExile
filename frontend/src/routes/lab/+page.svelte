@@ -19,7 +19,7 @@
 	import Header from './components/Header.svelte';
 	import Comparator from './components/Comparator.svelte';
 	import SessionQueue from './components/SessionQueue.svelte';
-	import type { QueueItem } from './components/SessionQueue.svelte';
+	import { floorQuote, type QueueItem } from '$lib/session-queue';
 	import ByVariant from './components/ByVariant.svelte';
 	import MarketOverview from './components/MarketOverview.svelte';
 	import Legend from './components/Legend.svelte';
@@ -121,9 +121,7 @@
 			variant,
 			pickedAt: new Date(),
 			snapshotROI: roi,
-			snapshotFloor: tradeData?.priceFloor ?? 0,
-			snapshotFloorOriginal: tradeData?.listings[0]?.price ?? tradeData?.priceFloor ?? 0,
-			snapshotCurrency: tradeData?.listings[0]?.currency ?? 'chaos',
+			snapshot: tradeData ? floorQuote(tradeData) : null,
 			snapshotDivineRate: tradeData?.divinePrice ?? 0,
 		};
 

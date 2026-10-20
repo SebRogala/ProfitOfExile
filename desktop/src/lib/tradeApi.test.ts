@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+	hasTradeListings,
 	isSource,
 	mercListingRow,
 	toListingRow,
@@ -127,5 +128,21 @@ describe('isSource', () => {
 	it('rejects a cancellation belonging to the other source', () => {
 		const cancelled: TradeQueueEvent = { kind: 'cancelled', source: 'mercenary', remaining: 2 };
 		expect(isSource(cancelled, 'gem')).toBe(false);
+	});
+});
+
+describe('hasTradeListings', () => {
+	it('is true for a lookup that found a listing', () => {
+		expect(hasTradeListings({ listings: [gemDetail()] })).toBe(true);
+	});
+
+	/** The server's answer for a search that matched nothing: a success with every price at 0. */
+	it('is false for a lookup whose listings came back empty', () => {
+		expect(hasTradeListings({ listings: [] })).toBe(false);
+	});
+
+	/** Go serialises a nil slice as `null`; that is the same empty search. */
+	it('is false for a lookup whose listings came back null', () => {
+		expect(hasTradeListings({ listings: null })).toBe(false);
 	});
 });

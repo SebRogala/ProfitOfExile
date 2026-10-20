@@ -26,7 +26,7 @@
 	import Header from '../../routes/(app)/components/Header.svelte';
 	import Comparator from '../../routes/(app)/components/Comparator.svelte';
 	import SessionQueue from '../../routes/(app)/components/SessionQueue.svelte';
-	import type { QueueItem } from '../../routes/(app)/components/SessionQueue.svelte';
+	import { floorQuote, quoteDelta, type QueueItem } from '$lib/session-queue';
 	import ByVariant from '../../routes/(app)/components/ByVariant.svelte';
 	import MarketOverview from '../../routes/(app)/components/MarketOverview.svelte';
 	import FontEVCompare from '../../routes/(app)/components/FontEVCompare.svelte';
@@ -241,9 +241,7 @@
 			variant,
 			pickedAt: new Date(),
 			snapshotROI: roi,
-			snapshotFloor: tradeData?.priceFloor ?? 0,
-			snapshotFloorOriginal: tradeData?.listings[0]?.price ?? tradeData?.priceFloor ?? 0,
-			snapshotCurrency: tradeData?.listings[0]?.currency ?? 'chaos',
+			snapshot: tradeData ? floorQuote(tradeData) : null,
 			snapshotDivineRate: tradeData?.divinePrice ?? 0,
 		};
 
@@ -281,12 +279,11 @@
 					});
 
 					if (result) {
+						const current = floorQuote(result);
 						patch(q => ({
 							...q,
-							currentFloor: result.priceFloor,
-							currentFloorOriginal: result.listings[0]?.price ?? result.priceFloor,
-							currentCurrency: result.listings[0]?.currency ?? 'chaos',
-							priceDelta: result.priceFloor - q.snapshotFloor,
+							current,
+							priceDelta: quoteDelta(current, q.snapshot),
 							refreshing: false,
 						}));
 					} else {

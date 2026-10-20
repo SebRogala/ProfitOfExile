@@ -2,7 +2,7 @@
 	import { fetchGemNames, fetchCompare, DEDICATION_VARIANTS, VARIANTS, type CompareGem } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import type { TradeLookupResult, TradeSignals, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
-	import { isSource, toListingRow } from '$lib/tradeApi';
+	import { hasTradeListings, isSource, toListingRow } from '$lib/tradeApi';
 	import { SIGNAL_TOOLTIPS } from '$lib/tooltips';
 	import { formatPrice, formatPriceSigned } from '$lib/price.svelte';
 	import { showsDoubleCorruptCard, doubleCorruptHeadline } from '$lib/double-corrupt-card';
@@ -52,7 +52,7 @@
 	function gemPickScore(gem: CompareGem): number {
 		const td = tradeData[gem.name];
 
-		if (td && td.listings.length > 0) {
+		if (td && hasTradeListings(td)) {
 			// Trade data available — use real market data
 			let base = td.signals.priceOutlier ? td.medianTop10 : td.priceFloor;
 			if (td.signals.sellerConcentration === 'MONOPOLY') base *= 0.85;
@@ -748,34 +748,43 @@
 						{/if}
 						{#if tradeData[gem.name]}
 							{@const td = tradeData[gem.name]!}
-							{@const divFloor = td.listings.find(l => l.currency === 'divine')}
-							{@const chaosFloor = td.listings.find(l => l.currency === 'chaos')}
+							{@const divFloor = td.listings?.find(l => l.currency === 'divine')}
+							{@const chaosFloor = td.listings?.find(l => l.currency === 'chaos')}
+							{@const listed = hasTradeListings(td)}
 							<div class="trade-data">
 								<div class="trade-price-row">
-									{#if divFloor}
-										<Tooltip text="Cheapest divine listing"><span class="trade-floor-price">{fmtPrice(divFloor.price)} div</span></Tooltip>
-									{/if}
-									{#if chaosFloor}
-										{#if divFloor}<span class="trade-floor-sep">/</span>{/if}
-										<Tooltip text="Cheapest chaos listing"><span class="trade-floor-price">{fmtPrice(chaosFloor.chaosPrice)}c</span></Tooltip>
-									{/if}
-									{#if !divFloor && !chaosFloor}
-										<span class="trade-floor-price">{fmtPrice(td.priceFloor)}c</span>
-									{/if}
-									<span class="trade-floor-label">trade floor</span>
-									<span class="trade-delta" class:trade-delta-positive={td.priceFloor - gem.roi > 0} class:trade-delta-negative={td.priceFloor - gem.roi < 0}>
-										{td.priceFloor - gem.roi > 0 ? '+' : ''}{fmtPrice(td.priceFloor - gem.roi)}c vs ninja
-									</span>
-									<Tooltip text="Seller concentration: {td.signals.uniqueAccounts} unique accounts in top 10"><span class="trade-signal-badge {concentrationClass(td.signals.sellerConcentration)}">
-										{td.signals.sellerConcentration}
-									</span></Tooltip>
-									{#if td.signals.priceOutlier}
-										<Tooltip text="Cheapest listing is significantly below median"><span class="trade-signal-badge signal-red">OUTLIER</span></Tooltip>
+									{#if listed}
+										{#if divFloor}
+											<Tooltip text="Cheapest divine listing"><span class="trade-floor-price">{fmtPrice(divFloor.price)} div</span></Tooltip>
+										{/if}
+										{#if chaosFloor}
+											{#if divFloor}<span class="trade-floor-sep">/</span>{/if}
+											<Tooltip text="Cheapest chaos listing"><span class="trade-floor-price">{fmtPrice(chaosFloor.chaosPrice)}c</span></Tooltip>
+										{/if}
+										{#if !divFloor && !chaosFloor}
+											<span class="trade-floor-price">{fmtPrice(td.priceFloor)}c</span>
+										{/if}
+										<span class="trade-floor-label">trade floor</span>
+										<span class="trade-delta" class:trade-delta-positive={td.priceFloor - gem.roi > 0} class:trade-delta-negative={td.priceFloor - gem.roi < 0}>
+											{td.priceFloor - gem.roi > 0 ? '+' : ''}{fmtPrice(td.priceFloor - gem.roi)}c vs ninja
+										</span>
+										<Tooltip text="Seller concentration: {td.signals.uniqueAccounts} unique accounts in top 10"><span class="trade-signal-badge {concentrationClass(td.signals.sellerConcentration)}">
+											{td.signals.sellerConcentration}
+										</span></Tooltip>
+										{#if td.signals.priceOutlier}
+											<Tooltip text="Cheapest listing is significantly below median"><span class="trade-signal-badge signal-red">OUTLIER</span></Tooltip>
+										{/if}
+									{:else}
+										<!-- A search that matched nothing comes back with every price at 0;
+										     those zeros are no price, so no floor, delta or signal is drawn. -->
+										<span class="trade-floor-label">No listings on trade</span>
 									{/if}
 								</div>
 								<div class="trade-meta-row">
-									<span class="trade-listings-badge">{td.total} listings</span>
-									<span class="trade-median">median: {fmtPrice(td.medianTop10)}c</span>
+									{#if listed}
+										<span class="trade-listings-badge">{td.total} listings</span>
+										<span class="trade-median">median: {fmtPrice(td.medianTop10)}c</span>
+									{/if}
 									<span class="trade-meta-right">
 										<span class="trade-cache-age" class:trade-cache-warn={tradeStaleness(gem.name) === 'warn'} class:trade-cache-critical={tradeStaleness(gem.name) === 'critical'}>{tradeCacheAgeStr(gem.name)}</span>
 										{#if tradeLoading[gem.name]}
@@ -793,7 +802,7 @@
 										{/if}
 									</span>
 								</div>
-								{#if td.listings.length > 0}
+								{#if listed}
 									<TradeListings rows={td.listings.map(toListingRow)} detailLabel="Lvl/Qual">
 										{#snippet detail(i)}
 											{@const listing = td.listings[i]}

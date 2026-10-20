@@ -38,6 +38,17 @@ export interface TradeSignals {
 	uniqueAccounts: number;
 }
 
+/**
+ * Whether a trade lookup found anything to price. A search that matched no
+ * listings still comes back as a successful result, with `listings: []` and
+ * every price field (floor, median, ceiling, spread) at 0 and the signals at
+ * their defaults. Those zeros mean "no price", not "worth 0c", so callers
+ * gate every price, delta and signal on this before showing or storing it.
+ */
+export function hasTradeListings(lookup: { listings?: ReadonlyArray<unknown> | null } | null | undefined): boolean {
+	return (lookup?.listings?.length ?? 0) > 0;
+}
+
 // --- Lookup response ---
 
 export interface LookupResponse {

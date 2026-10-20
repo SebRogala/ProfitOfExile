@@ -39,6 +39,17 @@ export interface TradeSignals {
 	uniqueAccounts: number;
 }
 
+/**
+ * Whether a trade lookup found anything to price. A search that matched no
+ * listings still comes back as a successful result, with `listings: []` and
+ * every price field (floor, median, ceiling, spread) at 0 and the signals at
+ * their defaults. Those zeros mean "no price", not "worth 0c", so callers
+ * gate every price, delta and signal on this before showing or storing it.
+ */
+export function hasTradeListings(lookup: { listings?: ReadonlyArray<unknown> | null } | null | undefined): boolean {
+	return (lookup?.listings?.length ?? 0) > 0;
+}
+
 // --- Mercenary trade result (mirrors Rust MercTradeResult) ---
 // Desktop-only: the server knows nothing about mercenary listings, so unlike
 // TradeLookupResult these types mirror no Go struct.

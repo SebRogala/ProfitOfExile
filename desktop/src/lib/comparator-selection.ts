@@ -1,4 +1,5 @@
 import type { CompareGem } from './api';
+import { hasTradeListings } from './tradeApi';
 
 /** The fields the default-selection rule reads. */
 export type SelectableGem = Pick<CompareGem, 'name' | 'transPrice' | 'sellabilityLabel'>;
@@ -29,7 +30,7 @@ function pickWeight(gem: SelectableGem): number {
  * lookup with no listings prices nothing and leaves the ninja price standing.
  */
 export function pickPrice(gem: SelectableGem, lookup?: PriceableLookup | null): number {
-	if (lookup && lookup.listings.length > 0 && lookup.priceFloor > 0) return lookup.priceFloor;
+	if (lookup && hasTradeListings(lookup) && lookup.priceFloor > 0) return lookup.priceFloor;
 	return gem.transPrice;
 }
 
