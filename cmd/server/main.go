@@ -319,8 +319,12 @@ func main() {
 		return server.NewMercureSubscriber(hubURL, topics, subscriberKey, handler)
 	}
 	if tradeGate != nil {
+		var knownGem func(context.Context, league.Scope, string) (bool, error)
+		if tradeRepo != nil {
+			knownGem = tradeRepo.KnownGem
+		}
 		runtime.tradeTick = func(eventCtx context.Context, raw []byte) {
-			server.HandleTradeTick(eventCtx, tradeGate, tradeCache, labCache, scope, raw)
+			server.HandleTradeTick(eventCtx, tradeGate, tradeCache, labCache, scope, raw, knownGem)
 		}
 	}
 	runtime.updateRate = func(_ context.Context) {

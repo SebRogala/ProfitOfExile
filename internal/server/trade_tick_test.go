@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -55,7 +56,7 @@ func TestHandleTradeTick_InvalidJSON_NoSubmit(t *testing.T) {
 	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
 	labCache := lab.NewCache(league.Historical("Mirage"))
 
-	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"), []byte("not json"))
+	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"), []byte("not json"), nil)
 
 	if _, ok := drainLow(gate); ok {
 		t.Fatal("invalid payload must not enqueue a refresh")
@@ -71,7 +72,7 @@ func TestHandleTradeTick_UnknownMinTier_NoSubmit(t *testing.T) {
 	seedStaleEntry(cache, "Arc of Surging", "20/20")
 
 	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
-		[]byte(`{"variant":"20/20","minTier":"NOPE","minAge":"1m"}`))
+		[]byte(`{"variant":"20/20","minTier":"NOPE","minAge":"1m"}`), nil)
 
 	if _, ok := drainLow(gate); ok {
 		t.Fatal("unknown minTier must not enqueue a refresh")
@@ -84,7 +85,7 @@ func TestHandleTradeTick_EmptyCache_NoSubmit(t *testing.T) {
 	labCache := lab.NewCache(league.Historical("Mirage"))
 
 	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
-		[]byte(`{"variant":"20/20","minAge":"1m"}`))
+		[]byte(`{"variant":"20/20","minAge":"1m"}`), nil)
 
 	if _, ok := drainLow(gate); ok {
 		t.Fatal("empty cache must not enqueue a refresh")
@@ -113,7 +114,7 @@ func TestHandleTradeTick_StaleTierMatch_Submits(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		HandleTradeTick(ctx, gate, cache, labCache, league.Historical("Mirage"),
-			[]byte(`{"variant":"20/20","minTier":"MID-HIGH","minAge":"1m"}`))
+			[]byte(`{"variant":"20/20","minTier":"MID-HIGH","minAge":"1m"}`), nil)
 		close(done)
 	}()
 
@@ -153,7 +154,7 @@ func TestHandleTradeTick_BaseGemFilter_NoSubmit(t *testing.T) {
 	seedStaleEntry(cache, "Arc", "20/20")
 
 	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
-		[]byte(`{"variant":"20/20","minAge":"1m"}`))
+		[]byte(`{"variant":"20/20","minAge":"1m"}`), nil)
 
 	if _, ok := drainLow(gate); ok {
 		t.Fatal("base gem (no transfigured suffix) must not be refreshed")
@@ -177,7 +178,7 @@ func TestHandleTradeTick_EmptyTierSet_NoSubmit(t *testing.T) {
 	})
 
 	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
-		[]byte(`{"variant":"20/20","minTier":"MID-HIGH","minAge":"1m"}`))
+		[]byte(`{"variant":"20/20","minTier":"MID-HIGH","minAge":"1m"}`), nil)
 
 	if _, ok := drainLow(gate); ok {
 		t.Fatal("empty tierSet must short-circuit before cache lookup")
@@ -192,7 +193,7 @@ func TestHandleTradeTick_InvalidMinAge_NoSubmit(t *testing.T) {
 	seedStaleEntry(cache, "Arc of Surging", "20/20")
 
 	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
-		[]byte(`{"variant":"20/20","minAge":"notaduration"}`))
+		[]byte(`{"variant":"20/20","minAge":"notaduration"}`), nil)
 
 	if _, ok := drainLow(gate); ok {
 		t.Fatal("invalid minAge must not enqueue a refresh")
@@ -212,7 +213,7 @@ func TestHandleTradeTick_DefaultsToTwentyTwenty_Submits(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		HandleTradeTick(ctx, gate, cache, labCache, league.Historical("Mirage"), []byte(`{"minAge":"1m"}`))
+		HandleTradeTick(ctx, gate, cache, labCache, league.Historical("Mirage"), []byte(`{"minAge":"1m"}`), nil)
 		close(done)
 	}()
 
@@ -250,7 +251,7 @@ func TestHandleTradeTick_NoTierFilter_PicksAnyTransfigured(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		HandleTradeTick(ctx, gate, cache, labCache, league.Historical("Mirage"),
-			[]byte(`{"variant":"20/20","minAge":"1m"}`))
+			[]byte(`{"variant":"20/20","minAge":"1m"}`), nil)
 		close(done)
 	}()
 
@@ -268,5 +269,125 @@ func TestHandleTradeTick_NoTierFilter_PicksAnyTransfigured(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("HandleTradeTick did not return")
+	}
+}
+
+// runDictionaryTradeTick observes the actual low-priority submission boundary
+// and completes it synchronously, without starting the HTTP gate worker.
+func runDictionaryTradeTick(t *testing.T, cache *trade.TradeCache, dictionary *lab.Cache, checker func(context.Context, league.Scope, string) (bool, error)) *trade.GateRequest {
+	t.Helper()
+	gate := newTickTestGate()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		HandleTradeTick(ctx, gate, cache, dictionary, league.Historical("Mirage"),
+			[]byte(`{"variant":"20/20","minAge":"5m"}`), checker)
+		close(done)
+	}()
+	var submitted *trade.GateRequest
+	select {
+	case submitted = <-gate.LowChan():
+		submitted.Result <- &trade.GateResponse{Data: &trade.TradeLookupResult{Gem: submitted.Gem}}
+	case <-done:
+		return nil
+	case <-time.After(2 * time.Second):
+		t.Fatal("tick did not finish or submit a refresh")
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tick did not finish after refresh completion")
+	}
+	return submitted
+}
+
+func TestHandleTradeTick_WarmDictionarySkipsRestoredUnknownKey(t *testing.T) {
+	for _, nextName := range []string{"Spark of Nova", "Seeded of Trarthus"} {
+		t.Run(nextName, func(t *testing.T) {
+			scope := league.Historical("Mirage")
+			cache := trade.NewTradeCache(10, scope)
+			dictionary := lab.NewCache(scope)
+			dictionary.SetGemDictionary([]string{"Arc"}, []string{"Spark of Nova"})
+			now := time.Now()
+			junkStamp := now.Add(-2 * time.Hour)
+			junkKey := trade.CacheKey("Junk of restored", "20/20")
+			cache.Warm([]trade.TradeLookupResult{
+				{Gem: "Junk of restored", Variant: "20/20", FetchedAt: junkStamp},
+				{Gem: nextName, Variant: "20/20", FetchedAt: now.Add(-time.Hour)},
+			})
+			req := runDictionaryTradeTick(t, cache, dictionary, func(_ context.Context, checkedScope league.Scope, name string) (bool, error) {
+				if checkedScope.ID() != scope.ID() {
+					t.Errorf("membership scope=%q, want %q", checkedScope.ID(), scope.ID())
+				}
+				// Membership may access shared cache state; it must run outside
+				// OldestStale's lock, just like the real PostgreSQL probe.
+				cache.GetSnapshot()
+				return name == nextName, nil
+			})
+			if req == nil || req.Gem != nextName || req.Variant != "20/20" || req.Priority != trade.PriorityLow {
+				t.Fatalf("submitted=%+v, want next known stale key %s/20/20", req, nextName)
+			}
+			junk, ok := cache.Get(junkKey)
+			if !ok || !junk.FetchedAt.Equal(junkStamp) || cache.Len() != 2 {
+				t.Fatalf("unknown cache entry was removed or restamped: %+v", junk)
+			}
+		})
+	}
+}
+
+func TestHandleTradeTick_ColdDictionaryKeepsOldestUnknownKey(t *testing.T) {
+	scope := league.Historical("Mirage")
+	empty := lab.NewCache(scope)
+	empty.SetGemDictionary(nil, nil)
+	for _, tc := range []struct {
+		name       string
+		dictionary *lab.Cache
+	}{
+		{"missing", nil},
+		{"cold", lab.NewCache(scope)},
+		{"warm-empty", empty},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := trade.NewTradeCache(10, scope)
+			now := time.Now()
+			cache.Warm([]trade.TradeLookupResult{
+				{Gem: "Junk of restored", Variant: "20/20", FetchedAt: now.Add(-2 * time.Hour)},
+				{Gem: "Spark of Nova", Variant: "20/20", FetchedAt: now.Add(-time.Hour)},
+			})
+			req := runDictionaryTradeTick(t, cache, tc.dictionary,
+				func(context.Context, league.Scope, string) (bool, error) { return false, nil })
+			if req == nil || req.Gem != "Junk of restored" {
+				t.Fatalf("cold dictionary submitted=%+v, want unchanged oldest-key behavior", req)
+			}
+		})
+	}
+}
+
+func TestHandleTradeTick_UnknownOnlyWarmCacheDoesNotSubmit(t *testing.T) {
+	scope := league.Historical("Mirage")
+	cache := trade.NewTradeCache(10, scope)
+	seedStaleEntry(cache, "Junk of restored", "20/20")
+	dictionary := lab.NewCache(scope)
+	dictionary.SetGemDictionary([]string{"Arc"}, nil)
+	req := runDictionaryTradeTick(t, cache, dictionary,
+		func(context.Context, league.Scope, string) (bool, error) { return false, nil })
+	if req != nil || cache.Len() != 1 {
+		t.Fatalf("submitted=%+v cache=%v, want no refresh while retaining the unknown entry", req, cache.GetSnapshot())
+	}
+}
+
+func TestHandleTradeTick_DictionaryQueryFailureDoesNotSubmit(t *testing.T) {
+	scope := league.Historical("Mirage")
+	cache := trade.NewTradeCache(10, scope)
+	seedStaleEntry(cache, "Junk of restored", "20/20")
+	dictionary := lab.NewCache(scope)
+	dictionary.SetGemDictionary([]string{"Arc"}, nil)
+	req := runDictionaryTradeTick(t, cache, dictionary,
+		func(context.Context, league.Scope, string) (bool, error) {
+			return false, errors.New("dictionary unavailable")
+		})
+	if req != nil || cache.Len() != 1 {
+		t.Fatalf("submitted=%+v cache=%v, want no refresh on dictionary failure", req, cache.GetSnapshot())
 	}
 }

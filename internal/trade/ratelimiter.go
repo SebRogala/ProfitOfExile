@@ -1,11 +1,20 @@
 package trade
 
 import (
+	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+)
+
+// These are conservative server policy, not GGG-published thresholds: the
+// invalid-request research gives no numeric threshold or window (POE-297).
+const (
+	invalidRequestThreshold = 5
+	invalidRequestWindow    = 10 * time.Minute
 )
 
 // Tier represents one rate-limit tier within a pool. GGG's trade API can report
@@ -30,8 +39,11 @@ type Pool struct {
 // independent pools. It starts with conservative defaults and refines its model
 // via SyncFromHeaders when real X-Rate-Limit-* headers arrive.
 type RateLimiter struct {
-	mu    sync.Mutex
-	pools map[string]*Pool
+	mu              sync.Mutex
+	pools           map[string]*Pool
+	blockedUntil    time.Time
+	invalidRequests []time.Time
+	now             func() time.Time
 }
 
 // NewRateLimiter creates a RateLimiter with conservative default pools derived
@@ -39,6 +51,7 @@ type RateLimiter struct {
 // requests per 5 seconds, and "fetch" defaults to DefaultFetchRate per 2 seconds.
 func NewRateLimiter(cfg TradeConfig) *RateLimiter {
 	return &RateLimiter{
+		now: time.Now,
 		pools: map[string]*Pool{
 			"search": {
 				tiers: []Tier{
@@ -59,7 +72,7 @@ func NewRateLimiter(cfg TradeConfig) *RateLimiter {
 }
 
 // Record stamps the current time into every tier in the named pool. Call this
-// immediately after a successful HTTP request to that endpoint.
+// immediately before sending an HTTP request, including requests that fail.
 func (rl *RateLimiter) Record(poolName string) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -69,7 +82,7 @@ func (rl *RateLimiter) Record(poolName string) {
 		return
 	}
 
-	now := time.Now()
+	now := rl.now()
 	for i := range pool.tiers {
 		pool.tiers[i].slots = append(pool.tiers[i].slots, now)
 	}
@@ -80,7 +93,7 @@ func (rl *RateLimiter) Record(poolName string) {
 //
 // For each tier, expired slots are purged first. If the active slot count has
 // reached the effective ceiling (maxHits * ceilingFactor), the wait is computed
-// as the time until the oldest slot expires plus the latency padding.
+// as the time until enough slots expire, including latency padding.
 func (rl *RateLimiter) EstimateWait(poolName string) time.Duration {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -90,14 +103,17 @@ func (rl *RateLimiter) EstimateWait(poolName string) time.Duration {
 		return 0
 	}
 
-	now := time.Now()
-	var maxWait time.Duration
+	now := rl.now()
+	maxWait := rl.blockedUntil.Sub(now)
+	if maxWait < 0 {
+		maxWait = 0
+	}
 
 	for i := range pool.tiers {
 		tier := &pool.tiers[i]
 
 		// Purge expired slots.
-		tier.slots = purgeExpired(tier.slots, tier.window, now)
+		tier.slots = purgeExpired(tier.slots, tier.window+pool.padding, now)
 
 		effectiveMax := int(float64(tier.maxHits) * pool.ceiling)
 		if effectiveMax < 1 {
@@ -105,8 +121,8 @@ func (rl *RateLimiter) EstimateWait(poolName string) time.Duration {
 		}
 
 		if len(tier.slots) >= effectiveMax {
-			// Oldest active slot determines when budget reopens.
-			wait := tier.slots[0].Add(tier.window).Add(pool.padding).Sub(now)
+			// Enough slots must expire to leave room below the ceiling.
+			wait := tier.slots[len(tier.slots)-effectiveMax].Add(tier.window).Add(pool.padding).Sub(now)
 			if wait > maxWait {
 				maxWait = wait
 			}
@@ -119,95 +135,148 @@ func (rl *RateLimiter) EstimateWait(poolName string) time.Duration {
 	return maxWait
 }
 
-// SyncFromHeaders updates the named pool's tier definitions and slot counts
-// using GGG's X-Rate-Limit-* response headers. This is the primary mechanism
-// for staying in sync with the server's actual rate-limit state.
-//
-// Expected headers (example for rule "account"):
-//
-//	X-Rate-Limit-Rules: account
-//	X-Rate-Limit-Account: 5:10:60,15:60:120
-//	X-Rate-Limit-Account-State: 3:10:0,8:60:0
-//
-// The method rebuilds tier definitions when server-reported limits differ from
-// current ones, and injects phantom slots when the server reports more hits
-// than we have tracked locally (e.g., after a restart or from another client
-// sharing the same account).
-func (rl *RateLimiter) SyncFromHeaders(poolName string, headers http.Header) {
-	rules := headers.Get("X-Rate-Limit-Rules")
-	if rules == "" {
-		return
+// BlockedUntil returns the active global restriction deadline, or zero when
+// unrestricted. Endpoint budget waits are separate from this restriction.
+func (rl *RateLimiter) BlockedUntil() time.Time {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if !rl.blockedUntil.After(rl.now()) {
+		return time.Time{}
 	}
+	return rl.blockedUntil
+}
 
+// restrictionDeadlineAfter retains a restriction overlapping a caller's queued
+// lifetime even if its timeout callback runs after the restriction expires.
+// Deadlines at or before the caller's submission do not defer that caller.
+func (rl *RateLimiter) restrictionDeadlineAfter(since time.Time) time.Time {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	if rl.blockedUntil.After(since) {
+		return rl.blockedUntil
+	}
+	return time.Time{}
+}
+
+// SyncFromHeaders updates all applicable rule tiers and honours restriction
+// headers, including restrictions reported without usable tier definitions.
+func (rl *RateLimiter) SyncFromHeaders(poolName string, headers http.Header) {
+	rl.ObserveResponse(poolName, headers, nil)
+}
+
+// ObserveResponse consumes headers even on unsuccessful requests. Restrictions
+// apply to the whole limiter: search and fetch originate from the same IP.
+// Headerless 401/403/429 use a bounded precautionary fallback. Other 4xx
+// are request-specific unless five headerless non-429 4xx arrive within ten
+// minutes. Parsed upstream restrictions are honoured on every response.
+func (rl *RateLimiter) ObserveResponse(poolName string, headers http.Header, responseErr error) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	pool, ok := rl.pools[poolName]
-	if !ok {
-		return
-	}
-
-	// GGG may report multiple comma-separated rule names; we take the first
-	// one that has both a limit and state header present.
-	for _, rule := range strings.Split(rules, ",") {
-		rule = strings.TrimSpace(rule)
-		if rule == "" {
+	now := rl.now()
+	until := retryAfterUntil(headers.Get("Retry-After"), now)
+	for name, values := range headers {
+		name = strings.ToLower(name)
+		if !strings.HasPrefix(name, "x-rate-limit-") || !strings.HasSuffix(name, "-state") {
 			continue
 		}
-
-		limitHeader := headers.Get("X-Rate-Limit-" + capitalize(rule))
-		stateHeader := headers.Get("X-Rate-Limit-" + capitalize(rule) + "-State")
-		if limitHeader == "" || stateHeader == "" {
-			continue
-		}
-
-		limitParts := strings.Split(limitHeader, ",")
-		stateParts := strings.Split(stateHeader, ",")
-		if len(limitParts) != len(stateParts) {
-			continue
-		}
-
-		serverTiers := make([]parsedTier, 0, len(limitParts))
-		for j := range limitParts {
-			lt := parseTierDef(limitParts[j])
-			st := parseTierState(stateParts[j])
-			if lt == nil || st == nil {
-				continue
-			}
-			serverTiers = append(serverTiers, parsedTier{def: *lt, state: *st})
-		}
-		if len(serverTiers) == 0 {
-			continue
-		}
-
-		// Rebuild tier definitions if the server reports different limits.
-		if tiersChanged(pool.tiers, serverTiers) {
-			pool.tiers = make([]Tier, len(serverTiers))
-			for j, st := range serverTiers {
-				pool.tiers[j] = Tier{
-					maxHits: st.def.maxHits,
-					window:  st.def.window,
-					penalty: st.def.penalty,
+		for _, value := range values {
+			for _, part := range strings.Split(value, ",") {
+				state := parseTierState(part)
+				if state != nil && state.banTime > 0 && now.Add(state.banTime).After(until) {
+					until = now.Add(state.banTime)
 				}
 			}
 		}
+	}
 
-		// Inject phantom slots where the server reports more hits than we track.
-		now := time.Now()
-		for j := range pool.tiers {
-			tier := &pool.tiers[j]
-			tier.slots = purgeExpired(tier.slots, tier.window, now)
-
-			serverHits := serverTiers[j].state.currentHits
-			if serverHits > len(tier.slots) {
-				deficit := serverHits - len(tier.slots)
-				tier.slots = injectPhantoms(tier.slots, deficit, tier.window, now)
+	pool, ok := rl.pools[poolName]
+	if ok {
+		serverTiers := make([]parsedTier, 0)
+		for _, rule := range strings.Split(headers.Get("X-Rate-Limit-Rules"), ",") {
+			rule = strings.TrimSpace(rule)
+			if rule == "" {
+				continue
+			}
+			limits := strings.Split(headers.Get("X-Rate-Limit-"+rule), ",")
+			states := strings.Split(headers.Get("X-Rate-Limit-"+rule+"-State"), ",")
+			if len(limits) != len(states) {
+				continue
+			}
+			for i := range limits {
+				def, state := parseTierDef(limits[i]), parseTierState(states[i])
+				if def != nil && state != nil && def.window == state.window {
+					serverTiers = append(serverTiers, parsedTier{def: *def, state: *state})
+				}
 			}
 		}
-
-		// Only process the first matching rule.
-		return
+		if len(serverTiers) > 0 {
+			if tiersChanged(pool.tiers, serverTiers) {
+				pool.tiers = make([]Tier, len(serverTiers))
+				for i, st := range serverTiers {
+					pool.tiers[i] = Tier{maxHits: st.def.maxHits, window: st.def.window, penalty: st.def.penalty}
+				}
+			}
+			for i, st := range serverTiers {
+				tier := &pool.tiers[i]
+				tier.slots = purgeExpired(tier.slots, tier.window+pool.padding, now)
+				if deficit := st.state.currentHits - len(tier.slots); deficit > 0 {
+					tier.slots = injectPhantoms(tier.slots, deficit, tier.window, now)
+				}
+			}
+		}
 	}
+
+	invalidFlood := false
+	if !until.After(now) && isInvalidRequestError(responseErr) && !errors.Is(responseErr, ErrRateLimited) {
+		// The sliding window is (now-W, now], so an event exactly W old no
+		// longer contributes. Keep only the last K events; older ones cannot
+		// affect whether at least K invalid requests remain in the window.
+		rl.invalidRequests = purgeExpired(rl.invalidRequests, invalidRequestWindow, now)
+		rl.invalidRequests = append(rl.invalidRequests, now)
+		if len(rl.invalidRequests) >= invalidRequestThreshold {
+			invalidFlood = true
+			rl.invalidRequests = rl.invalidRequests[len(rl.invalidRequests)-invalidRequestThreshold:]
+		}
+	}
+	if (isGlobalRestrictionError(responseErr) || invalidFlood) && !until.After(now) {
+		fallback := time.Minute
+		if ok {
+			for _, tier := range pool.tiers {
+				if tier.penalty > fallback {
+					fallback = tier.penalty
+				}
+				if tier.window > fallback {
+					fallback = tier.window
+				}
+			}
+		}
+		if fallback > 30*time.Minute {
+			fallback = 30 * time.Minute
+		}
+		until = now.Add(fallback)
+	}
+	if until.After(now) && until.After(rl.blockedUntil) {
+		rl.blockedUntil = until
+		slog.Warn("trade limiter: send pause", "blockedUntil", until, "wait", until.Sub(now))
+	}
+}
+
+// retryAfterUntil accepts the HTTP delta-seconds and HTTP-date forms. Invalid,
+// negative and overflowing values supply no deadline; precautionary pauses
+// and invalid-request floods then use the bounded fallback.
+func retryAfterUntil(value string, now time.Time) time.Time {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if seconds > 0 && seconds <= int64((1<<63-1)/time.Second) {
+			return now.Add(time.Duration(seconds) * time.Second)
+		}
+		return time.Time{}
+	}
+	if until, err := http.ParseTime(value); err == nil && until.After(now) {
+		return until
+	}
+	return time.Time{}
 }
 
 // --- internal helpers ---
@@ -244,11 +313,11 @@ func parseTierDef(s string) *tierDef {
 		return nil
 	}
 	windowSec, err := strconv.Atoi(parts[1])
-	if err != nil || windowSec <= 0 {
+	if err != nil || windowSec <= 0 || int64(windowSec) > int64((1<<63-1)/time.Second) {
 		return nil
 	}
 	penaltySec, err := strconv.Atoi(parts[2])
-	if err != nil {
+	if err != nil || penaltySec < 0 || int64(penaltySec) > int64((1<<63-1)/time.Second) {
 		return nil
 	}
 	return &tierDef{
@@ -266,15 +335,15 @@ func parseTierState(s string) *tierState {
 		return nil
 	}
 	hits, err := strconv.Atoi(parts[0])
-	if err != nil {
+	if err != nil || hits < 0 {
 		return nil
 	}
 	windowSec, err := strconv.Atoi(parts[1])
-	if err != nil {
+	if err != nil || windowSec <= 0 || int64(windowSec) > int64((1<<63-1)/time.Second) {
 		return nil
 	}
 	banSec, err := strconv.Atoi(parts[2])
-	if err != nil {
+	if err != nil || banSec < 0 || int64(banSec) > int64((1<<63-1)/time.Second) {
 		return nil
 	}
 	return &tierState{
@@ -292,7 +361,8 @@ func tiersChanged(current []Tier, server []parsedTier) bool {
 	}
 	for i := range current {
 		if current[i].maxHits != server[i].def.maxHits ||
-			current[i].window != server[i].def.window {
+			current[i].window != server[i].def.window ||
+			current[i].penalty != server[i].def.penalty {
 			return true
 		}
 	}
@@ -304,7 +374,7 @@ func tiersChanged(current []Tier, server []parsedTier) bool {
 func purgeExpired(slots []time.Time, window time.Duration, now time.Time) []time.Time {
 	cutoff := now.Add(-window)
 	i := 0
-	for i < len(slots) && slots[i].Before(cutoff) {
+	for i < len(slots) && !slots[i].After(cutoff) {
 		i++
 	}
 	if i == 0 {

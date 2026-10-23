@@ -7,7 +7,7 @@ This is the documentation entry point. Documents are classified so historical pl
 - [Project README](../README.md) — product overview, stack, and development commands.
 - [Development setup](DEV-SETUP.md) — current fresh-machine procedure: WSL prerequisites and the shared infra stack, the legacy `profitofexile.localhost` host naming, the Windows toolchain, `desktop/` sync, the three build-time variables a dev build needs to behave like a release, and running the desktop app under `npx tauri dev`.
 - [Product vision](product-vision.md) — historical strategy-simulation domain and future scope; not current architecture.
-- [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — current workflows plus clearly labeled reliability targets for collection, native trade, contributions, optional server trading, pairing, and Mercure.
+- [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — current workflows plus clearly labeled reliability targets for collection, native trade, contributions, optional server trading, pairing, and Mercure; includes current POE-297 restriction/backoff and empty-result behavior.
 - [Overlay Guide](OVERLAY-GUIDE.md) — maintained Windows/Tauri overlay mechanics and regression guards.
 - [Temple Lifecycle](TEMPLE-LIFECYCLE.md) — normative order of arming, detection, OCR and overlay show/hide for the temple module (POE-249, implemented 2026-09-04); every rule tagged shipped with the commit that shipped it, plus where the POE-257 room valuation, market read and presets live.
 - [Game facts](GAME-FACTS.md) — current, dated reference of Path of Exile facts the code treats as invariants: one golden door per lab run, temple rooms log nothing, Divine Font wordings and parser anchors, Dedication rules, the vial recipe table and poedb's per-tier temple room bonuses, exchange sidebar categories, trade complexity; unvalidated claims kept in their own section.
@@ -75,7 +75,7 @@ tier does not promote a proposal or restore a superseded clause.
 
 ## Current guides and narratives
 
-- [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — mixed current/target guide with per-section labels.
+- [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — mixed current/target guide with per-section labels; server gate hardening verified 2026-10-23 (POE-297).
 - [Overlay Guide](OVERLAY-GUIDE.md) — current click-through, positioning, lifecycle distinctions, and Windows regression guards.
 - [Collector Endpoint Guide](COLLECTOR-ENDPOINTS.md) — current endpoint extension procedure, verified against the fragments implementation.
 - [Icons](ICONS.md) — current icon maps, cache-seeding order, and the puller/repopulate steps.
@@ -85,6 +85,7 @@ tier does not promote a proposal or restore a superseded clause.
 - [Analysis Cache Guide](ANALYSIS-CACHE.md) — current `lab.Cache` topology, tick chain, tenancy and concurrency contract, cold start, the sparkline series cache, and the shared signal-history seed and cold-read retention window.
 - [Game facts](GAME-FACTS.md) — current game-side invariants with dates and sources, separate from codebase facts.
 - [Currency Exchange row invariant](CURRENCY-EXCHANGE-ROW-INVARIANT.md) — current normative spec for the exchange row: the invariant equations, the rendering rules, the re-affirmed exemptions, and the closure-test enforcement tiers.
+- [Server trade gate hardening review — 2026-10-23](history/2026-10-23-trade-gate-hardening.md) — POE-297 timeout mechanisms, dedup event review catch, regression locations and pending runtime gates.
 - [Temple advisor feedback investigation — 2026-10-23](history/2026-10-23-temple-advisor-feedback.md) — seven reported choices, bounded fixes, verification limits and an unimplemented R4 policy proposal.
 - [Historical overlay debugging notes](history/overlay-debugging-notes.md) — preserved runtime discoveries and obsolete implementation generations; not a current recipe.
 

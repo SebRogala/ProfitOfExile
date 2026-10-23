@@ -1,6 +1,6 @@
 # Trade and Market Data Lifecycles
 
-> **Status: Public architecture guide.** Current behavior and proposed reliability targets are labeled separately. Last code-grounded review: 2026-07-21.
+> **Status: Public architecture guide.** Current behavior and proposed reliability targets are labeled separately. Last code-grounded review: 2026-07-21; server gate hardening reviewed 2026-10-23 (POE-297).
 
 This document explains how ProfitOfExile obtains market data, performs optional live trade lookups, shares desktop-contributed results, and uses Mercure notifications. It is intentionally safe for a public repository: it documents trust boundaries and behavior without deployment credentials or private infrastructure identifiers.
 
@@ -209,6 +209,146 @@ When enabled:
 - Asynchronous progress uses a request-capability-scoped Mercure topic; result data is retrieved through capability-validated HTTP, with bounded polling/status reconciliation.
 - Server owns one shared search/fetch limiter.
 - Results persist with `source=server-gate`.
+
+### Current lookup and contribution input validation (POE-297)
+
+`POST /api/trade/lookup` and `POST /api/trade/submit` use the same
+`validateTradeInput` helper, dictionary and membership checker. Lookup validates
+before cache access or gate submission, including `force=true` and non-forced
+cache hits. Contribution validates before cache mutation or persistence enqueue.
+Unknown names and malformed variants return the existing JSON
+`{ "error": "..." }` shape with HTTP 400: these are invalid request fields rather
+than missing HTTP resources.
+
+The league-bound `lab.Cache.GemDictionary` is a positive name cache, not a complete
+allowlist. Its base and transfigured OCR pools union `gem_colors` with market
+snapshot names, including corrupted market identities, but deliberately exclude
+Heist-only names and base support gems. On a warm, nonempty dictionary miss,
+`trade.Repository.KnownGem` checks exact membership in the unfiltered shared
+`gem_colors` registry or this league's `gem_snapshots`. This preserves known
+support, base, transfigured and corrupted names without applying Font eligibility
+to trade lookups. Neither name source stores allowed variants: the snapshot's
+variant is separate from its name. The handler imports lab and trade; trade does
+not import lab, preserving the ADR-008 package direction.
+
+Variant syntax is decimal level `1`–`99`, optionally followed by `/` and quality
+`0`–`99`, without leading zeros. Level-only aliases such as `1`, `4` and `20`
+remain valid alongside `1/0`, `1/20`, `20/0` and `20/20`. The `c` suffix used by
+corrupted snapshot variants (`21/20c`, for example) is not accepted: the current
+server query parser does not implement it. Name membership does not change the
+query builder's existing corruption behavior.
+
+A cold, empty or missing dictionary, or a missing membership checker, permits
+names through so startup does not disable all live lookups. The limiter and
+flood breaker remain the fallback in that state. Dictionary warmth is read on
+every request. Once warm, a membership query error returns JSON 503 before
+submission, cache mutation or persistence; cancellation and database failure
+cannot be used as a validation bypass. The same startup allowance applies to
+contributions, including when the server-side lookup gate is disabled.
+
+Contributed `fetchedAt` must be later than receipt time minus five minutes and
+no later than receipt time. Missing, future, or at-least-five-minute-old stamps
+are reset to the server's receipt time in both the cache and persisted row;
+recent timestamps are retained. The five-minute window matches the current
+collector trade-tick stale age. Resetting an ancient stamp to receipt, rather
+than merely to the stale cutoff, prevents it immediately becoming the oldest
+refresh candidate. Future stamps cannot keep a contributed key fresh indefinitely.
+
+Collector ticks choose existing cache keys, not a gem name from the tick
+payload. New contributions pass the same input guard before entering that pool.
+On refresh selection, `HandleTradeTick` calls the same `KnownTradeGem` helper
+used by `validateTradeInput`. With a warm dictionary, unknown stale keys are
+skipped for that tick and the next known stale key can be refreshed, including
+when the unknown key was restored from persisted history. Name checks run
+outside the cache lock; a membership query error abandons the tick without
+sending. Exclusions are per tick so later dictionary growth can admit a name.
+Cold/empty dictionaries or an absent checker skip no names, preserving startup
+behavior. Cache entries and rows are retained unchanged.
+
+The live callback in `cmd/server` passes `trade.Repository.KnownGem` to the tick
+handler as it does to the HTTP routes. `Refresher` has no production constructor
+call and remains unchanged. Native desktop lookups still use the user's own
+limiter/IP; only their server contribution passes the server input guard.
+
+Known residuals: names present in `gem_colors` or `gem_snapshots` can still be
+rejected by GGG and contribute to the breaker. Each warm OCR dictionary miss
+costs one database membership probe when that checker is available. The cold allowance lasts until a v2 run
+successfully populates the dictionary; failed seed reads can prolong it.
+A genuinely old contribution is still stamped as receipt time by the clamp;
+the owner reports native desktop submissions arrive within seconds. Once name
+validation is warm, new-league names absent from both name sources are rejected
+on submit. Dictionary-query 503 responses have no `Retry-After` header.
+
+### Current server gate restrictions and empty results (POE-297)
+
+Search waits only for search capacity; fetch waits only when listings need
+fetching. Before each send, the gate rechecks capacity at intervals of at most
+250 ms, waking sooner at the endpoint's next allowed time or the queue deadline.
+Each queued caller has an independent deadline (30 seconds by default), including
+limiter waiting before search starts. A later deduplicated caller retains its
+own deadline. Timers expire queued callers even while another lookup is in HTTP
+or waiting for fetch capacity; expired queue items make no upstream request.
+The queue deadline stops when search starts, so it does not time out a running lookup.
+Cancellation during either wait delivers an error and releases the in-flight key.
+
+Every attempted send consumes a local slot, including failed requests. Every
+response's headers are observed, including errors. `Retry-After` (seconds or an
+HTTP date) and every `X-Rate-Limit-*-State` restriction extend one limiter-wide
+blocked-until timestamp. Both endpoints stop until that time and resume without
+operator action. HTTP 401, 403 and 429 without a usable restriction duration
+trigger a precautionary fallback of at least one minute, raised to the known
+endpoint window/penalty and capped at 30 minutes. Other individual 4xx responses
+(such as 400, 404 and 422) reject only that request and key; they do not pause
+unrelated lookups unless a restriction header supplies an active deadline.
+
+A limiter-wide circuit breaker also triggers the bounded fallback after five
+headerless non-429 4xx responses within a sliding ten-minute window. It combines
+search and fetch failures, including 401/403. Events exactly ten minutes old
+are excluded; successful requests do not reset the window. Responses with a
+parseable active restriction and 429 responses do not increment this counter.
+A threshold of five failures and a ten-minute window are local policy constants
+(`invalidRequestThreshold`, `invalidRequestWindow`), not published GGG limits:
+the research document gives no numeric invalid-request threshold. Explicit
+upstream restriction durations are never capped.
+Restriction extensions log once; queued requests do not each log the restriction.
+These are defensive server choices, not claimed upstream defaults. The upstream
+header semantics were checked against [GGG's rate-limit documentation](https://www.pathofexile.com/developer/docs#ratelimits)
+on 2026-10-23.
+
+A successful search with no IDs skips fetch and completes normally: a fresh
+empty `listings: []` result is cached, persisted and delivered. Its `FetchedAt`
+stamps the check so the stale picker does not select it again immediately;
+it becomes eligible again at the normal refresh age. Empty listings mean no
+quote, not a 0c price. Analysis falls back to ninja, and comparison clients show
+no listings. A restart warms the empty result instead of reviving an older quote.
+
+A failed upstream search or fetch postpones only that cached key's stale
+selection. Request-scoped 4xx rejections (all 4xx except 401/403/429) receive six
+hours; retrying an unchanged query every five minutes can repeat a rejection
+such as an unknown gem name. Transport, decode and 5xx failures retain five
+minutes, as do 401/403/429 responses. These are local retry policies, not upstream
+limits. An explicit lookup can still succeed and clear the delay.
+
+If a queued caller times out and a global restriction overlapped its queue
+lifetime, its key is also deferred until five minutes after restriction expiry
+or timeout processing, whichever is later. Expired restriction evidence is
+retained so delayed timer callbacks and dequeue processing still defer the key.
+This records
+scheduling metadata on the timeout path instead of coupling the stale picker
+to the limiter, and prevents an expired queued key immediately leading the
+picker on resume. An existing longer delay (such as the six-hour rejection
+delay) is never shortened. Ordinary queue expiry without a global restriction
+and shutdown cancellation do not record a market failure.
+
+The last successful result and its `FetchedAt` stay unchanged; no price row or
+zero-listing check is created. All per-key delays are process-local, cleared on
+successful replacement or eviction, and lost on restart. Other stale keys
+remain selectable during the delay.
+
+New gate history rows use `server-gate`, including interactive web requests and
+background refreshes. Historical `user` rows remain unchanged. Cache warming
+and backtest reads have no source predicate, accepting legacy `user`, new
+`server-gate` and desktop rows equally. No schema migration is needed.
 
 The browser must subscribe to its request-capability-scoped result topic only when this capability is enabled and in use. A shared `poe/trade/results` subscription is not an acceptable target design.
 

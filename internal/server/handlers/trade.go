@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
 
+	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
 	"profitofexile/internal/trade"
 )
@@ -149,25 +151,57 @@ func (sw *submitWriter) enqueue(ctx context.Context, result *trade.TradeLookupRe
 // from the desktop app (which queries GGG directly), stores it in the shared
 // LRU cache so CompareAnalysis can enrich responses, and optionally persists
 // to the database for historical tracking.
-func TradeSubmit(cache *trade.TradeCache, repo *trade.Repository, scope league.Scope) http.HandlerFunc {
+func TradeSubmit(cache *trade.TradeCache, repo *trade.Repository, scope league.Scope, dictionary *lab.Cache, checker tradeGemNameChecker) http.HandlerFunc {
 	// The nil check has to happen on the concrete type: a typed-nil
 	// *trade.Repository stored in an interface produces a non-nil interface.
 	var persister tradeLookupPersister
 	if repo != nil {
 		persister = repo
 	}
-	return tradeSubmit(cache, persister, scope, defaultSubmitWriterConfig)
+	return tradeSubmit(cache, persister, scope, defaultSubmitWriterConfig, tradeSubmitOptions{dictionary: dictionary, checker: checker})
 }
 
-// tradeSubmit is the testable form of TradeSubmit, taking the persistence seam
-// and the writer bounds explicitly.
-func tradeSubmit(cache *trade.TradeCache, persister tradeLookupPersister, scope league.Scope, cfg submitWriterConfig) http.HandlerFunc {
-	var writer *submitWriter
-	if persister != nil {
-		writer = newSubmitWriter(persister, scope, cfg)
-	}
+// contributionMaxAge matches HandleTradeTick's current default stale window.
+// A contributed timestamp already eligible for refresh is reset to receipt
+// time rather than
+// letting a client choose the oldest key; recent genuine timestamps are retained.
+const contributionMaxAge = 5 * time.Minute
 
+type tradeSubmitOptions struct {
+	dictionary *lab.Cache
+	checker    tradeGemNameChecker
+	now        func() time.Time
+}
+
+// tradeSubmit keeps the bounded writer lifecycle separate from HTTP validation.
+// Missing validation options use the same cold-dictionary startup policy.
+func tradeSubmit(cache *trade.TradeCache, persister tradeLookupPersister, scope league.Scope, cfg submitWriterConfig, options ...tradeSubmitOptions) http.HandlerFunc {
+	var enqueue func(context.Context, *trade.TradeLookupResult) bool
+	if persister != nil {
+		writer := newSubmitWriter(persister, scope, cfg)
+		enqueue = func(ctx context.Context, result *trade.TradeLookupResult) bool {
+			accepted := writer.enqueue(ctx, result)
+			if !accepted {
+				slog.Warn("trade submit: persist queue saturated, shedding load",
+					"gem", result.Gem, "variant", result.Variant,
+					"queue", cfg.queue, "workers", cfg.workers)
+			}
+			return accepted
+		}
+	}
+	var opts tradeSubmitOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	return tradeSubmitHandler(cache, scope, enqueue, opts)
+}
+
+func tradeSubmitHandler(cache *trade.TradeCache, scope league.Scope, enqueue func(context.Context, *trade.TradeLookupResult) bool, opts tradeSubmitOptions) http.HandlerFunc {
+	if opts.now == nil {
+		opts.now = time.Now
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
+		receivedAt := opts.now()
 		r.Body = http.MaxBytesReader(w, r.Body, 65536)
 
 		var result trade.TradeLookupResult
@@ -178,17 +212,11 @@ func tradeSubmit(cache *trade.TradeCache, persister tradeLookupPersister, scope 
 			return
 		}
 
-		if result.Gem == "" || result.Variant == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "gem and variant are required"})
+		if !validateTradeInput(w, r, scope, opts.dictionary, opts.checker, result.Gem, result.Variant) {
 			return
 		}
-		if len(result.Gem) > 200 || len(result.Variant) > 20 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "gem or variant too long"})
-			return
+		if result.FetchedAt.After(receivedAt) || !result.FetchedAt.After(receivedAt.Add(-contributionMaxAge)) {
+			result.FetchedAt = receivedAt
 		}
 
 		// Cap listings to max 20 and validate price floor.
@@ -207,10 +235,7 @@ func tradeSubmit(cache *trade.TradeCache, persister tradeLookupPersister, scope 
 
 		// Queued after the cache Set, so a shed submit still enriches other
 		// users' responses — only the durable history row is refused.
-		if writer != nil && !writer.enqueue(r.Context(), &result) {
-			slog.Warn("trade submit: persist queue saturated, shedding load",
-				"gem", result.Gem, "variant", result.Variant,
-				"queue", cfg.queue, "workers", cfg.workers)
+		if enqueue != nil && !enqueue(r.Context(), &result) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Retry-After", "1")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -222,6 +247,73 @@ func tradeSubmit(cache *trade.TradeCache, persister tradeLookupPersister, scope 
 	}
 }
 
+// tradeSubmitter is the lookup boundary; rejected HTTP inputs never reach it.
+type tradeSubmitter interface {
+	Submit(*trade.GateRequest)
+}
+
+type tradeGemNameChecker func(context.Context, league.Scope, string) (bool, error)
+
+// The server query builder accepts decimal level[/quality], without the c
+// suffix used by corrupted snapshot markets. Retain level-only legacy aliases.
+var tradeVariantPattern = regexp.MustCompile(`^[1-9][0-9]?(?:/(?:0|[1-9][0-9]?))?$`)
+
+// KnownTradeGem uses the OCR dictionary as a positive cache only: it excludes
+// support and Heist-only gems. Raw membership supplies those names on a miss.
+// Cold/empty caches or an absent checker permit lookup so startup does not
+// disable trading. Query errors are returned, so cancellation cannot bypass
+// validation once the dictionary is warm.
+func KnownTradeGem(ctx context.Context, dictionary *lab.Cache, checker tradeGemNameChecker, scope league.Scope, name string) (bool, error) {
+	if dictionary == nil {
+		return true, nil
+	}
+	c := dictionary.For(scope)
+	skills, skillsWarm := c.GemDictionary(false)
+	transfigured, transfiguredWarm := c.GemDictionary(true)
+	if !skillsWarm || !transfiguredWarm || len(skills)+len(transfigured) == 0 {
+		return true, nil
+	}
+	for _, names := range [][]string{skills, transfigured} {
+		for _, known := range names {
+			if name == known {
+				return true, nil
+			}
+		}
+	}
+	if checker == nil {
+		return true, nil
+	}
+	return checker(ctx, scope, name)
+}
+
+// validateTradeInput is shared by lookup and contribution: neither route may
+// let rejected names/variants reach the gate, shared cache or persisted history.
+func validateTradeInput(w http.ResponseWriter, r *http.Request, scope league.Scope, dictionary *lab.Cache, checker tradeGemNameChecker, gem, variant string) bool {
+	if gem == "" || variant == "" {
+		jsonError(w, http.StatusBadRequest, "gem and variant are required")
+		return false
+	}
+	if len(gem) > 200 || len(variant) > 20 {
+		jsonError(w, http.StatusBadRequest, "gem or variant too long")
+		return false
+	}
+	if !tradeVariantPattern.MatchString(variant) {
+		jsonError(w, http.StatusBadRequest, "invalid variant: expected level or level/quality")
+		return false
+	}
+	known, err := KnownTradeGem(r.Context(), dictionary, checker, scope, gem)
+	if err != nil {
+		slog.Warn("trade: gem dictionary query failed", "error", err)
+		jsonError(w, http.StatusServiceUnavailable, "gem dictionary unavailable")
+		return false
+	}
+	if !known {
+		jsonError(w, http.StatusBadRequest, "unknown gem name")
+		return false
+	}
+	return true
+}
+
 // tradeLookupRequest is the expected JSON body for POST /api/trade/lookup.
 type tradeLookupRequest struct {
 	Gem       string `json:"gem"`
@@ -230,11 +322,11 @@ type tradeLookupRequest struct {
 	CacheOnly bool   `json:"cacheOnly"`
 }
 
-// TradeLookup handles POST /api/trade/lookup. It checks the LRU cache first
+// TradeLookup validates POST /api/trade/lookup before checking the LRU cache
 // (unless force=true), then submits a GateRequest and either returns the result
 // synchronously (if it arrives within syncTimeout) or responds with 202 and a
 // requestId for the client to await via Mercure.
-func TradeLookup(gate *trade.Gate, cache *trade.TradeCache, scope league.Scope, syncTimeout time.Duration) http.HandlerFunc {
+func TradeLookup(gate tradeSubmitter, cache *trade.TradeCache, scope league.Scope, syncTimeout time.Duration, dictionary *lab.Cache, checker tradeGemNameChecker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body tradeLookupRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -244,16 +336,7 @@ func TradeLookup(gate *trade.Gate, cache *trade.TradeCache, scope league.Scope, 
 			return
 		}
 
-		if body.Gem == "" || body.Variant == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "gem and variant are required"})
-			return
-		}
-		if len(body.Gem) > 200 || len(body.Variant) > 20 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "gem or variant too long"})
+		if !validateTradeInput(w, r, scope, dictionary, checker, body.Gem, body.Variant) {
 			return
 		}
 

@@ -362,3 +362,58 @@ func TestCache_For_RejectsForeignLeague(t *testing.T) {
 		_, _ = c.For(other).Get(key)
 	})
 }
+
+func TestCache_FailureDelayExpiresAtRetryDeadline(t *testing.T) {
+	c := NewTradeCache(10, league.Historical("Mirage"))
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+	key := CacheKey("Arc", "20/20")
+	c.Set(key, &TradeLookupResult{Gem: "Arc", Variant: "20/20", FetchedAt: now.Add(-time.Hour)})
+	deadline := now.Add(5 * time.Minute)
+	c.RecordFailure(key, deadline)
+	now = deadline.Add(-time.Nanosecond)
+	if got, ok := c.OldestStale(time.Minute, nil); ok {
+		t.Fatalf("stale key before retry deadline=%q, want none", got)
+	}
+	now = deadline
+	if got, ok := c.OldestStale(time.Minute, nil); !ok || got != key {
+		t.Fatalf("stale key at retry deadline=%q found=%v, want Arc", got, ok)
+	}
+}
+
+func TestCache_SuccessfulReplacementClearsFailureDelay(t *testing.T) {
+	c := NewTradeCache(10, league.Historical("Mirage"))
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+	key := CacheKey("Arc", "20/20")
+	c.Set(key, &TradeLookupResult{FetchedAt: now.Add(-2 * time.Hour)})
+	c.RecordFailure(key, now.Add(time.Hour))
+	// A valid replacement may itself be old (e.g. a contributed lookup). Its
+	// own age controls eligibility, independent of the previous request failure.
+	c.Set(key, &TradeLookupResult{FetchedAt: now.Add(-time.Hour)})
+	if got, ok := c.OldestStale(time.Minute, nil); !ok || got != key {
+		t.Fatalf("replacement stale key=%q found=%v, want Arc with failure delay cleared", got, ok)
+	}
+}
+
+func TestCache_FailureDelayIsPerVariant(t *testing.T) {
+	c := NewTradeCache(10, league.Historical("Mirage"))
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+	failed, other := CacheKey("Arc", "20/20"), CacheKey("Arc", "1/0")
+	c.Set(failed, &TradeLookupResult{FetchedAt: now.Add(-2 * time.Hour)})
+	c.Set(other, &TradeLookupResult{FetchedAt: now.Add(-time.Hour)})
+	c.RecordFailure(failed, now.Add(time.Hour))
+	if got, ok := c.OldestStale(time.Minute, nil); !ok || got != other {
+		t.Fatalf("stale key=%q found=%v, want unaffected Arc 1/0", got, ok)
+	}
+}
+
+func TestCache_FailureWithoutPreviousLookupDoesNotCreateMarketCheck(t *testing.T) {
+	c := NewTradeCache(10, league.Historical("Mirage"))
+	key := CacheKey("Arc", "20/20")
+	c.RecordFailure(key, time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC))
+	if got, ok := c.Get(key); ok || got != nil || c.Len() != 0 {
+		t.Fatalf("failure created a checked market result: %+v found=%v", got, ok)
+	}
+}
