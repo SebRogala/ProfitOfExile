@@ -71,6 +71,8 @@ section for the complete data-flow and compliance description.
 - Production embeds the prerendered SvelteKit build in the Go server binary;
   Docker multi-stage builds and GitHub Actions cover server, frontend, and
   desktop quality gates.
+  Unknown `/api` paths return JSON 404 responses; other unknown paths serve the
+  SPA shell. Router method mismatches return 405.
 - Cross-language fixtures keep Go, Rust, and TypeScript implementations aligned
   where wire formats and image-derived signatures cross process boundaries.
 

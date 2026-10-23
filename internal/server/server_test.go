@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +15,8 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"profitofexile/internal/exchange"
 	"profitofexile/internal/league"
@@ -111,29 +114,25 @@ func TestNewRouter_StaticCatchAllServesFiles(t *testing.T) {
 	}
 }
 
-func TestNewRouter_StaticCatchAllFallbackForUnknownPaths(t *testing.T) {
-	frontendFS := fstest.MapFS{
-		"200.html": &fstest.MapFile{
-			Data: []byte("<html><body>ProfitOfExile</body></html>"),
-		},
-	}
+func TestNewRouter_SPAFallbackForUnknownNonAPIPaths(t *testing.T) {
+	const shell = "<html><body>ProfitOfExile</body></html>"
+	frontendFS := fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte(shell)}}
 	router := NewRouter(handlers.NopPinger{}, frontendFS, RouterConfig{})
 
-	req := httptest.NewRequest(http.MethodGet, "/strategies/lab", nil)
-	w := httptest.NewRecorder()
-
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("GET /strategies/lab status = %d, want %d", w.Code, http.StatusOK)
-	}
-
-	body, err := io.ReadAll(w.Body)
-	if err != nil {
-		t.Fatalf("failed to read response body: %v", err)
-	}
-	if !strings.Contains(string(body), "ProfitOfExile") {
-		t.Errorf("GET /strategies/lab body = %q, want SPA fallback with %q", string(body), "ProfitOfExile")
+	for _, path := range []string{"/strategies/lab", "/apiary"} {
+		t.Run(path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+			if w.Code != http.StatusOK {
+				t.Fatalf("GET %s status = %d, want 200", path, w.Code)
+			}
+			if got := w.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+				t.Errorf("Content-Type = %q, want HTML", got)
+			}
+			if got := w.Body.String(); got != shell {
+				t.Errorf("GET %s body = %q, want %q", path, got, shell)
+			}
+		})
 	}
 }
 
@@ -237,7 +236,8 @@ const currencyExchangeIconPath = "/api/icon/currency-exchange/Metadata%2FItems%2
 // NotFound, which sets no Cache-Control at all. Drop the r.Get and this fails on
 // the header.
 func TestNewRouter_CurrencyExchangeIconRouteIsRegisteredWhenACacheRootIsConfigured(t *testing.T) {
-	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{
+	frontend := fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("<html>SPA shell</html>")}}
+	router := NewRouter(handlers.NopPinger{}, frontend, RouterConfig{
 		IconCacheDir: t.TempDir(),
 	})
 
@@ -256,28 +256,102 @@ func TestNewRouter_CurrencyExchangeIconRouteIsRegisteredWhenACacheRootIsConfigur
 	}
 }
 
-func TestNewRouter_DroppedCurrencyExchangeIconRouteFallsThroughToSPA(t *testing.T) {
-	frontendFS := fstest.MapFS{
-		"200.html": &fstest.MapFile{
-			Data: []byte("<html><body>exchange shell</body></html>"),
-		},
+func TestNewRouter_UnknownAPIPathReturnsJSON(t *testing.T) {
+	frontends := map[string]fs.FS{
+		"embedded": fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("<html>SPA shell</html>")}},
+		"absent":   nil,
 	}
-	router := NewRouter(handlers.NopPinger{}, frontendFS, RouterConfig{IconCacheDir: t.TempDir()})
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet,
-		"/api/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyNotInTheAssetYet", nil))
+	for name, frontend := range frontends {
+		t.Run(name, func(t *testing.T) {
+			router := NewRouter(handlers.NopPinger{}, frontend, RouterConfig{})
+			for _, path := range []string{
+				"/api", "/api/", "/api/does-not-exist",
+				"/api/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyNotInTheAssetYet",
+			} {
+				t.Run(path, func(t *testing.T) {
+					w := httptest.NewRecorder()
+					router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+					assertAPINotFound(t, w)
+				})
+			}
+		})
+	}
+}
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("dropped currency-exchange icon route status = %d, want SPA 200", w.Code)
+func TestNewRouter_UnsupportedAPIMethodReturns405(t *testing.T) {
+	for name, frontend := range map[string]fs.FS{
+		"embedded": fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("<html>SPA shell</html>")}},
+		"absent":   nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			router := NewRouter(handlers.NopPinger{}, frontend, RouterConfig{})
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/health", nil))
+			if w.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("status = %d, want 405 (body: %s)", w.Code, w.Body.String())
+			}
+			if got := w.Header().Get("Allow"); got != "GET" {
+				t.Errorf("Allow = %q, want GET", got)
+			}
+			if got := w.Body.String(); got != "" {
+				t.Errorf("body = %q, want empty method rejection", got)
+			}
+		})
 	}
-	if got := w.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
-		t.Errorf("dropped currency-exchange icon route Content-Type = %q, want SPA HTML", got)
+}
+
+func TestNewRouter_MountedAPIRouteRemainsReachable(t *testing.T) {
+	router := routerWithAPIMount(t)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/mounted/known", nil))
+	if w.Code != http.StatusOK || w.Body.String() != "mounted route" {
+		t.Errorf("response = %d %q, want 200 mounted route", w.Code, w.Body.String())
 	}
-	if got := w.Header().Get("Cache-Control"); got != "no-cache" {
-		t.Errorf("dropped currency-exchange icon route Cache-Control = %q, want no-cache", got)
+}
+
+func TestNewRouter_UnknownMountedAPIPathReturnsJSON(t *testing.T) {
+	router := routerWithAPIMount(t)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/mounted/missing", nil))
+	assertAPINotFound(t, w)
+}
+
+func TestNewRouter_UnsupportedMountedAPIMethodReturns405(t *testing.T) {
+	router := routerWithAPIMount(t)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/mounted/known", nil))
+	if w.Code != http.StatusMethodNotAllowed || w.Header().Get("Allow") != "GET" || w.Body.Len() != 0 {
+		t.Errorf("response = %d Allow=%q body=%q, want 405 Allow=GET with empty body",
+			w.Code, w.Header().Get("Allow"), w.Body.String())
 	}
-	if got := w.Body.String(); !strings.Contains(got, "exchange shell") {
-		t.Errorf("dropped currency-exchange icon route body = %q, want the SPA shell", got)
+}
+
+func routerWithAPIMount(t *testing.T) http.Handler {
+	t.Helper()
+	frontend := fstest.MapFS{"200.html": &fstest.MapFile{Data: []byte("<html>SPA shell</html>")}}
+	router := NewRouter(handlers.NopPinger{}, frontend, RouterConfig{}).(*chi.Mux)
+	router.Route("/api/mounted", func(r chi.Router) {
+		r.Get("/known", func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("mounted route"))
+		})
+	})
+	return router
+}
+
+func assertAPINotFound(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (body: %s)", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", got)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode error response: %v (body: %s)", err, w.Body.String())
+	}
+	if !reflect.DeepEqual(body, map[string]string{"error": "not found"}) {
+		t.Errorf("body = %#v, want error: not found", body)
 	}
 }
 

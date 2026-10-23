@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -306,11 +307,23 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	// DevMode gate nor the device middleware was used on its own.
 	mountPprof(r, cfg.DevMode)
 
-	// Serve static frontend files with SPA fallback. The wildcard pattern never
-	// shadows explicit API routes because chi's radix tree prefers exact matches.
+	// Use NotFound rather than a wildcard route: chi otherwise falls back to
+	// that route for unsupported methods too, bypassing MethodNotAllowed.
+	var frontend http.Handler
 	if frontendFS != nil {
-		r.Handle("/*", StaticHandler(frontendFS))
+		frontend = StaticHandler(frontendFS)
 	}
+	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/api" || strings.HasPrefix(req.URL.Path, "/api/") {
+			handlers.APINotFound(w, req)
+			return
+		}
+		if frontend != nil {
+			frontend.ServeHTTP(w, req)
+			return
+		}
+		http.NotFound(w, req)
+	})
 
 	return r
 }
