@@ -43,9 +43,22 @@ function run(command, args, { cwd = root, input, label = command } = {}) {
 const docker = (args, options) => run('docker', ['--host', endpoint, ...args], options);
 const pg = sql => docker(['exec', '-i', 'postgres', 'psql', '-X', '--no-password', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-At', '-f', '-'], { input: sql, label: 'lane PostgreSQL operation' });
 const writeNew = (path, content) => writeFileSync(path, content, { flag: 'wx', mode: 0o600 });
+function databaseConnection(database, password) {
+  const url = new URL(`postgresql://postgres:5432/${database}`);
+  url.username = 'profitofexile';
+  // Encode raw password bytes once, including dollars that URL.password would
+  // otherwise preserve for Compose/Make to interpret as interpolation text.
+  url.password = encodeURIComponent(password).replace(/[!'()*]/g,
+    character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  url.searchParams.set('sslmode', 'disable');
+  privateValues.add(url.href);
+  privateValues.add(url.password);
+  return url;
+}
+const composeString = value => JSON.stringify(value.replaceAll('$', () => '$$'));
 function render(template, replacements) {
   let result = template;
-  for (const [key, value] of Object.entries(replacements)) result = result.replaceAll(`__${key}__`, value);
+  for (const [key, value] of Object.entries(replacements)) result = result.replaceAll(`__${key}__`, () => value);
   check(!/__[A-Z][A-Z_]*__/.test(result), 'Unresolved Compose template field');
   return result;
 }
@@ -88,18 +101,29 @@ function main() {
   const template = readFileSync(join(root, 'docker-compose.worktree.yml'), 'utf8');
   if (dryRun) {
     // Exercise the same template substitution without provider calls or writes.
-    const sample = { LANE: lane, DATABASE_URL: '"dry-run"' };
+    const password = process.env.WORKTREE_DB_PASSWORD ?? 'dry-run';
+    const url = databaseConnection(databases[0], password);
+    const sample = { LANE: lane, DATABASE_URL: composeString(url.href) };
     for (const service of services) {
       sample[`${service.toUpperCase()}_IMAGE`] = 'dry-run';
       sample[`${service.toUpperCase()}_TOKEN`] = 'dry-run';
     }
     const rendered = render(template, sample);
     for (const name of Object.values(names)) check(rendered.includes(`container_name: ${name}`), 'Template container inventory differs');
-    console.log(JSON.stringify({ dryRun: true, destination, branch: lane, baseOid: oid, project, host, databases, containers: names,
+    const renderedURLs = [...rendered.matchAll(/^\s+DATABASE_URL: (.+)$/gm)].map(match => JSON.parse(match[1]));
+    check(renderedURLs.length === 2, 'Template database URL inventory differs');
+    for (const value of renderedURLs) {
+      check(!value.includes('$'), 'Rendered database URL contains an interpolation dollar');
+      check(value === url.href && decodeURIComponent(new URL(value).password) === password, 'Rendered database password bytes differ');
+    }
+    check(render('__LITERAL__', { LITERAL: '$NAME $& $$' }) === '$NAME $& $$', 'Template replacement changed literal dollar text');
+    check(JSON.parse(composeString('$NAME $& $$')) === '$$NAME $$& $$$$', 'Compose string did not escape dollar text');
+    console.log(JSON.stringify({ dryRun: true, passwordRenderingVerified: true, destination, branch: lane, baseOid: oid, project, host, databases, containers: names,
       ports: [], volumes: [], networks: ['shared external infra'], effects: 'none; registration, Docker and PostgreSQL not contacted' }, null, 2));
     return;
   }
   check(process.env.WORKTREE_DB_PASSWORD, 'WORKTREE_DB_PASSWORD required for the existing local profitofexile role');
+  const dbURL = databaseConnection(databases[0], process.env.WORKTREE_DB_PASSWORD);
   const allocations = [];
   function resource(action, args = []) {
     const output = run(pipeforge, ['herdr-worktree', '--action', action, '--repo', root, '--out', handle.recordPath,
@@ -167,15 +191,9 @@ function main() {
     containers[service] = intent(`container-${service}`, 'docker-container', { daemonId, endpoint, name: names[service] }, ['database-0', 'database-1']);
     replacements[`${service.toUpperCase()}_TOKEN`] = containers[service].token;
   }
-  const dbURL = new URL(`postgresql://postgres:5432/${databases[0]}`);
-  dbURL.username = 'profitofexile';
-  dbURL.password = process.env.WORKTREE_DB_PASSWORD;
-  dbURL.searchParams.set('sslmode', 'disable');
-  privateValues.add(dbURL.href);
-  privateValues.add(dbURL.password);
   // Render a fixed lane URL: a caller's exported DATABASE_URL must never
   // redirect lane services into the main database through Compose precedence.
-  replacements.DATABASE_URL = JSON.stringify(dbURL.href);
+  replacements.DATABASE_URL = composeString(dbURL.href);
   writeNew(join(destination, 'docker-compose.lane.yml'), render(template, replacements));
   writeNew(join(destination, '.env'), `COMPOSE_FILE=docker-compose.lane.yml\nCOMPOSE_PROJECT_NAME=${project}\nINTEGRATION_DB=${databases[1]}\n`);
   writeNew(join(destination, '.worktree/db-password'), dbURL.password);

@@ -18,6 +18,11 @@ environment. No primary environment file is copied. Pipeforge must be installed
 at `/root/repos/pipeforge/plugin/bin/pipeforge`; PATH lookup is not used.
 `PIPEFORGE_LANE_RESOURCE_HANDLE` must be supplied by guarded provisioning.
 
+Passwords are percent-encoded once from their raw value, including dollar
+characters. Template values use literal callback replacement; any remaining
+dollars in Compose string values are doubled for Compose interpolation.
+The private integration password file uses the same percent-encoded value.
+
 Save these base `deliver` settings before guarded acceptance:
 
 ```json
@@ -139,12 +144,19 @@ to stderr only because no validated log location exists.
 
 ```sh
 LANE=lanexyz BASE=dev DRY_RUN=1 PIPEFORGE_LANE_RESOURCE_HANDLE=fake node scripts/worktree-create.mjs
+LANE=lanexyz BASE=dev DRY_RUN=1 PIPEFORGE_LANE_RESOURCE_HANDLE=fake WORKTREE_DB_PASSWORD='synthetic-$NAME' node scripts/worktree-create.mjs
+LANE=lanexyz BASE=dev DRY_RUN=1 PIPEFORGE_LANE_RESOURCE_HANDLE=fake WORKTREE_DB_PASSWORD='synthetic-$&' node scripts/worktree-create.mjs
 make -n worktree-create LANE=lanexyz BASE=dev
 ```
 
 Dry run resolves the base, checks lane/path/branch availability and template
-substitution, then prints the planned inventory. It ignores the fake handle and contacts neither Docker,
-PostgreSQL nor registration. It does not prove runtime setup or diagnostics.
+substitution, then prints the planned inventory. It verifies that both rendered
+service DB URLs contain no interpolation dollars and decode to the supplied
+password, and checks literal replacement and Compose dollar escaping separately.
+It reports only `passwordRenderingVerified: true`, never the password or URL.
+Without a supplied password it checks a dummy value. It ignores the fake handle
+and contacts neither Docker, PostgreSQL nor registration. It does not prove
+runtime setup, actual Compose parsing or diagnostics.
 
 Pipeforge's `herdr-worktree --action remove` owns removal: it verifies ownership
 and usage, drops registered PostgreSQL databases through the pinned argv above,
