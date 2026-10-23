@@ -679,3 +679,32 @@ Doryani's Institute stay above it; Crucible of Flame (~35–50 c) passes when it
 holds that price over a day. The served `floorRule` string states the new rule.
 The 856 c / 846 delta figures above are from the committed capture under the old
 rule and remain historical.
+
+
+### Amendment — fallback architect ties and the last incursion, 2026-10-23
+
+Current implementation. This clarifies the 2026-10-17 amendment's "orders
+picks, never priced": the chaos rungs are unchanged. When every architect in
+the leader's rollout noise band has `Priced::Fallback` at its guaranteed built
+tier, equal architect keys are ordered by `rooms::RoomRank` (the same ordering
+that derives `pickOrder`), before falling back to the sampled mean. A clearly
+separated rollout, R4 carve-out veto, or differing architect key retains its
+existing precedence. A priced, partial, instrumental or Custom override offer
+never borrows this fallback ordering. `TempleProfileSettings::to_profile`
+carries per-tier provenance alongside the chaos values; `advisor::rank`
+emits a grade reason when the grade comparison discriminates.
+
+R4 and both sides of its pool carve-out require `BoardState::remaining > 1`.
+This follows the existing model's interpretation of the panel footer:
+`Sim::rollout_from` applies the current move, spends one incursion, then draws
+future rooms. Thus 1 includes the current incursion and leaves no future draw;
+0 also represents an unread footer and enables no pool argument. This rule gate
+does not change the rollout horizon or the separate RC tier-supply rule.
+The EV explanation now says architect tie-breaks did not decide the ranking;
+other eligible rules and door rules may still be listed.
+
+This amendment supersedes only an interpretation that rank within a fallback
+letter never orders architect ties, and any pool argument on the final
+incursion. It does not redefine R4's non-target "junk" policy. Evidence,
+verification limits and the unimplemented policy proposal are recorded in
+[the feedback investigation](../history/2026-10-23-temple-advisor-feedback.md).

@@ -192,7 +192,16 @@ impl TempleProfileSettings {
         let rush = StrategyProfile::locus_doryani_rush();
 
         let mut room_values = BTreeMap::new();
+        let mut grade_fallback = BTreeMap::new();
         for line in rooms::LINES.iter() {
+            grade_fallback.insert(
+                line.mechanical_line(),
+                [Tier::T1, Tier::T2, Tier::T3].map(|tier| {
+                    valuation
+                        .get(line.key(), tier)
+                        .is_some_and(|value| value.priced == super::valuation::Priced::Fallback)
+                }),
+            );
             room_values.insert(
                 line.mechanical_line(),
                 [
@@ -228,6 +237,7 @@ impl TempleProfileSettings {
         // be ranked, rather than from a second copy of the same maximum.
         let scaled = StrategyProfile {
             room_values,
+            grade_fallback,
             combinations,
             ..rush.clone()
         };

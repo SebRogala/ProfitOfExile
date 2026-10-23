@@ -53,7 +53,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-019: Nothing a module draws may cover what that module reads](adr/019-nothing-a-module-draws-may-cover-what-that-module-reads.md)
 - [ADR-020: One shared screen scale; a module corroborates or withholds](adr/020-one-shared-screen-scale-a-module-corroborates-or-withholds.md)
 - [ADR-021: A module draws one window on the game's monitor, and widgets inside it](adr/021-a-module-draws-one-window-on-the-game-monitor-and-widgets-inside-it.md) — Proposed
-- [ADR-022: Room values are chaos-denominated and market-fed; presets are Default and Custom](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md)
+- [ADR-022: Room values are chaos-denominated and market-fed; presets are Default and Custom](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md) — includes fallback architect tie ordering and the final-incursion R4 gate.
 - [ADR-023: A window excluded from the grab may cover what its module reads](adr/023-a-window-excluded-from-the-grab-may-cover-what-its-module-reads.md) — amends ADR-019
 - [ADR-024: Module OCR positions are placed from the screen slice, not located](adr/024-module-ocr-positions-are-placed-from-the-screen-slice-not-located.md) — Accepted; Temple placement shipped in POE-269, remaining epic tasks pending
 - [ADR-025: A capture reads once, re-reads only the unknown, then stops; only a manual scan moves its geometry](adr/025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md) — Accepted; Temple shipped; Merc shipped (POE-278 WI-B `f78786e` clause 4, WI-C `072c98c` clauses 2, 3, 5)
@@ -77,6 +77,7 @@ ADRs record decisions at a point in time. If implementation later supersedes a d
 - [Analysis Cache Guide](ANALYSIS-CACHE.md) — current `lab.Cache` topology, tick chain, tenancy and concurrency contract, cold start, and the sparkline series cache.
 - [Game facts](GAME-FACTS.md) — current game-side invariants with dates and sources, separate from codebase facts.
 - [Currency Exchange row invariant](CURRENCY-EXCHANGE-ROW-INVARIANT.md) — current normative spec for the exchange row: the invariant equations, the rendering rules, the re-affirmed exemptions, and the closure-test enforcement tiers.
+- [Temple advisor feedback investigation — 2026-10-23](history/2026-10-23-temple-advisor-feedback.md) — seven reported choices, bounded fixes, verification limits and an unimplemented R4 policy proposal.
 - [Historical overlay debugging notes](history/overlay-debugging-notes.md) — preserved runtime discoveries and obsolete implementation generations; not a current recipe.
 
 ## Codebase state

@@ -238,7 +238,9 @@ pub enum Reason {
     /// RU declined the key: every corridor worth a key would dilute an upgrade
     /// room whose picks are currently certainties. Case 5's actual reason.
     RuDeclined { slot: Slot },
-    /// Ranked on expected value alone; no rule discriminated.
+    /// Equal architect rules inside the noise band were ordered by grade.
+    GradeFallback { grade: String },
+    /// The rollout separated the architects beyond the noise band.
     ExpectedValue,
 }
 
@@ -331,7 +333,10 @@ impl Reason {
                 "RU: every corridor a key could buy would dilute {}, so open nothing",
                 slot.as_str()
             ),
-            Reason::ExpectedValue => "ranked on expected value; no rule discriminated".to_string(),
+            Reason::GradeFallback { grade } => format!(
+                "grade fallback: {grade} in rollout noise; better grade breaks equal architect rules"
+            ),
+            Reason::ExpectedValue => "architect ranked on expected value; architect tie-breaks did not decide it".to_string(),
         }
     }
 }
@@ -1075,7 +1080,10 @@ fn architect_rules(
             key[4] = 1;
             reasons.push(Reason::RerollUntilFavourable);
         }
-    } else if !advances {
+    } else if !advances && board.remaining > 1 {
+        // The panel budget includes this incursion: Sim::rollout_from spends
+        // it before drawing again. Pool removal and its carve-out have no
+        // future draw to affect at remaining <= 1 (0 also means unread).
         // "Would this kill take the slot out of the pool?" — a guaranteed tier
         // 3, or the `upgrade` that rolls `DOUBLE_TIER_CHANCE` for one more.
         let leaves_pool = architect.built_tier == Tier::T3
@@ -1190,6 +1198,7 @@ mod tests {
 
     fn board(rooms: &[(Slot, &str, u8)], doors: &[(Slot, Slot)]) -> BoardState {
         let mut state = BoardState::empty();
+        state.remaining = 5;
         for (slot, key, tier) in rooms {
             let line = (!key.is_empty()).then(|| Line::named(key));
             state.set_room(*slot, line, Tier::new(*tier).expect("0..=3"));
@@ -2112,6 +2121,73 @@ mod tests {
             "only the upgrade rolls the double tier that empties the slot"
         );
         assert!(upgrade.reasons.iter().any(|r| matches!(r, Reason::R4)));
+    }
+
+    fn pool_reasons_at(remaining: u8, carve_out: bool) -> Vec<Reason> {
+        let mut state = board(
+            &[(D1, "factory", 1), (C1, "upgrade", 2), (C2, "corruption", 1)],
+            &[(C1, D1), (D1, E1)],
+        );
+        state.remaining = remaining;
+        let mut profile = rush();
+        profile.r4_keep_upgrade_targets = carve_out;
+        [OfferKind::Upgrade, OfferKind::Change].into_iter().flat_map(|kind| {
+            let line = if kind == OfferKind::Upgrade { "factory" } else { "museum_of_artefacts" };
+            let verdict = verdict_with(&state, D1, Some(&choice(kind, line, 2)), &[], 1, &profile);
+            assert!(!verdict.architect.vetoed(), "no future draw can justify a pool veto");
+            if remaining <= 1 {
+                assert_eq!(verdict.architect.0[4], 0, "no future draw can justify a pool preference");
+            }
+            verdict.reasons
+        }).filter(|reason| matches!(reason,
+            Reason::R4 | Reason::R4PoolCarveOut { .. } | Reason::R4CarveOutVeto { .. }
+        )).collect()
+    }
+
+    #[test]
+    fn r4_is_silent_on_the_last_incursion() {
+        assert_eq!(pool_reasons_at(1, false), Vec::<Reason>::new());
+    }
+
+    #[test]
+    fn r4_is_silent_when_the_budget_is_unknown() {
+        assert_eq!(pool_reasons_at(0, false), Vec::<Reason>::new());
+    }
+
+    #[test]
+    fn r4_still_applies_with_one_future_incursion() {
+        assert_eq!(pool_reasons_at(2, false), vec![Reason::R4]);
+    }
+
+    #[test]
+    fn one_future_incursion_keeps_the_pool_carve_out() {
+        let mut state = board(
+            &[(D1, "factory", 1), (C1, "upgrade", 2), (C2, "corruption", 1)],
+            &[(C1, D1), (D1, E1)],
+        );
+        state.remaining = 2;
+        let profile = with_carve_out();
+        let upgrade = verdict_with(
+            &state, D1, Some(&choice(OfferKind::Upgrade, "factory", 2)),
+            &[], 1, &profile,
+        );
+        let change = verdict_with(
+            &state, D1, Some(&choice(OfferKind::Change, "museum_of_artefacts", 2)),
+            &[], 1, &profile,
+        );
+        assert!(upgrade.architect.vetoed());
+        assert!(upgrade.reasons.contains(&Reason::R4CarveOutVeto { upgrader: C1 }));
+        assert!(change.reasons.contains(&Reason::R4PoolCarveOut { upgrader: C1 }));
+    }
+
+    #[test]
+    fn the_pool_carve_out_is_silent_on_the_last_incursion() {
+        assert_eq!(pool_reasons_at(1, true), Vec::<Reason>::new());
+    }
+
+    #[test]
+    fn the_pool_carve_out_is_silent_when_the_budget_is_unknown() {
+        assert_eq!(pool_reasons_at(0, true), Vec::<Reason>::new());
     }
 
     // R4 never applies to a target line — you do not want the corruption room
