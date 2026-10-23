@@ -1,3 +1,7 @@
+---
+uid: ff885da5-fc5d-4e75-96b7-d7ee0280f1a7
+---
+
 # ADR-005: gem_snapshots Separate Row Model — One Row Per Gem Observation
 
 ## Status
