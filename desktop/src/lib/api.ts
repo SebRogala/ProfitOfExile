@@ -1110,9 +1110,9 @@ export async function fetchHarvest(horizon: CurrencyExchangeHorizon): Promise<Ha
  * The divine:chaos rate every chaos ↔ divine figure converts with (POE-284),
  * owned by the Currency Exchange module (`internal/exchange`) and readable by
  * every device. `divineChaosRate` is a finite number > 0 or `null` (no exchange
- * hour yet, or no divine/chaos trade in it); `state` and `unreachableSince`
- * come from the source. Read through `$lib/stores/divine-rate.svelte`, never
- * directly.
+ * hour yet, or no divine/chaos trade in it). These are the source fields; the
+ * store additionally derives stale and `unreachableSince` on failed reads.
+ * Read through `$lib/stores/divine-rate.svelte`, never directly.
  */
 export interface DivineRate {
 	divineChaosRate: number | null;
@@ -1126,8 +1126,8 @@ export interface DivineRate {
  * Read the divine rate through its port: the Currency Exchange's own rate
  * (`GET /currency-exchange/divine-rate`). `state` is `ready` only when the
  * server is warm and holds a rate; otherwise `cold`. Stale and unreachable
- * detection is not done here (known gap F1): the store keeps its last
- * snapshot when this rejects.
+ * detection belongs to the store: when this rejects it keeps the last value
+ * and marks it stale (POE-291).
  */
 export async function fetchDivineRate(): Promise<DivineRate> {
 	const body = await get<{ divineChaosRate: number | null; priceHour: string | null; warm: boolean }>(

@@ -38,9 +38,9 @@ export function normalizeDivineRate(port: DivineRate): DivineRate {
 }
 
 /**
- * Cold whenever there is no rate — that beats the source's state, so boot,
- * loading and "no exchange hour" all render "—". With a rate, the source
- * decides between stale and ready; the store derives no liveness of its own.
+ * Cold whenever there is no rate — that beats the stored state, so boot,
+ * loading and "no exchange hour" all render "—". With a rate, use the stored
+ * state: the source can report stale, and the store marks failed reads stale.
  */
 export function deriveDivineRateState(snap: Pick<DivineRateSnapshot, 'divineChaosRate' | 'state'>): DivineRateState {
 	if (snap.divineChaosRate === null) return 'cold';

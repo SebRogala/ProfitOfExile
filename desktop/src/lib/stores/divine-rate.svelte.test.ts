@@ -1,7 +1,8 @@
 /**
  * The divine rate store (POE-284): one read at init through the `$lib/api`
  * port, one debounced read per `currency-exchange-updated` burst, a rejected
- * read that changes nothing, and the 30 s clock behind "updated N min ago".
+ * read that marks a held rate stale, periodic outage/recovery reads, and the
+ * 30 s clock behind "updated N min ago".
  * The port and Tauri's `listen` are mocked; `Math.random` is pinned so
  * `refetchDelay()` is a known 2000 + 0.5 × 4000 = 4000 ms.
  */
@@ -26,6 +27,7 @@ vi.mock('$lib/api', () => ({ fetchDivineRate: mocks.fetchDivineRate, getApiBase:
 
 const T0 = Date.parse('2026-09-10T00:00:00Z');
 const DELAY_MS = 4000;
+const HEALTH_POLL_MS = 75_000; // 60 s + the pinned 0.5 × 30 s session jitter.
 
 function port(over: Partial<DivineRate> = {}): DivineRate {
 	return {
@@ -154,14 +156,22 @@ describe('initDivineRateStore', () => {
 		expect(warn).toHaveBeenCalledWith('[divine-rate] read failed, keeping the last rate:', offline);
 	});
 
-	it('leaves the snapshot unchanged when a read after a good one is rejected', async () => {
-		mocks.fetchDivineRate.mockResolvedValueOnce(port()).mockRejectedValueOnce(new Error('offline'));
+	it('marks the last rate stale when an update read is rejected', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const offline = new Error('offline');
+		mocks.fetchDivineRate.mockResolvedValueOnce(port()).mockRejectedValueOnce(offline);
 		const s = await load();
 		cleanup = s.initDivineRateStore();
 		await settle();
 		fireUpdated();
 		await vi.advanceTimersByTimeAsync(DELAY_MS);
-		expect({ ...s.divineRate, now: 0 }).toEqual({ ...port(), now: 0 });
+		expect({ ...s.divineRate, now: 0 }).toEqual({
+			...port(),
+			state: 'stale',
+			unreachableSince: '2026-09-10T00:00:04.000Z',
+			now: 0
+		});
+		expect(warn).toHaveBeenCalledWith('[divine-rate] read failed, keeping the last rate:', offline);
 	});
 
 	it('resetDivineRate returns the snapshot to cold', async () => {
@@ -224,12 +234,14 @@ describe('initDivineRateStore', () => {
 });
 
 /** A promise the test settles by hand, so the order answers arrive in is the test's. */
-function deferred(): { promise: Promise<DivineRate>; resolve: (rate: DivineRate) => void } {
+function deferred(): { promise: Promise<DivineRate>; resolve: (rate: DivineRate) => void; reject: (error: Error) => void } {
 	let resolve!: (rate: DivineRate) => void;
-	const promise = new Promise<DivineRate>((r) => {
+	let reject!: (error: Error) => void;
+	const promise = new Promise<DivineRate>((r, fail) => {
 		resolve = r;
+		reject = fail;
 	});
-	return { promise, resolve };
+	return { promise, resolve, reject };
 }
 
 describe('refreshDivineRate and syncDivineRateToServer', () => {
@@ -305,5 +317,151 @@ describe('refreshDivineRate and syncDivineRateToServer', () => {
 		expect(s.currentDivineRate()).toBe(360.07);
 		pending.resolve(port({ divineChaosRate: 361 }));
 		await sync;
+	});
+});
+
+
+describe('failed divine-rate reads', () => {
+	it('keeps a failed first read cold', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const offline = new Error('offline');
+		mocks.fetchDivineRate.mockRejectedValueOnce(offline);
+		const s = await load();
+
+		await s.refreshDivineRate();
+
+		expect([s.currentDivineRate(), s.divineRateState(), s.divineRate.unreachableSince]).toEqual([null, 'cold', null]);
+		expect(warn).toHaveBeenCalledWith('[divine-rate] read failed, keeping the last rate:', offline);
+	});
+
+	it('keeps the first failure time through repeated failures', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const offline = new Error('offline');
+		mocks.fetchDivineRate.mockResolvedValueOnce(port()).mockRejectedValue(offline);
+		const s = await load();
+		await s.refreshDivineRate();
+		vi.setSystemTime(T0 + 60_000);
+		await s.refreshDivineRate();
+		vi.setSystemTime(T0 + 120_000);
+
+		await s.refreshDivineRate();
+
+		expect(s.divineRate.unreachableSince).toBe('2026-09-10T00:01:00.000Z');
+		expect(warn).toHaveBeenCalledWith('[divine-rate] read failed, keeping the last rate:', offline);
+	});
+
+	it('clears the outage on a successful recovery read', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const offline = new Error('offline');
+		mocks.fetchDivineRate.mockResolvedValueOnce(port()).mockRejectedValueOnce(offline)
+			.mockResolvedValueOnce(port({ divineChaosRate: 362 }));
+		const s = await load();
+		await s.refreshDivineRate();
+		await s.refreshDivineRate();
+
+		await s.refreshDivineRate();
+
+		expect([s.currentDivineRate(), s.divineRateState(), s.divineRate.unreachableSince]).toEqual([362, 'ready', null]);
+		expect(warn).toHaveBeenCalledWith('[divine-rate] read failed, keeping the last rate:', offline);
+	});
+
+	it('ignores an obsolete failure after a newer ready answer', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const offline = new Error('offline');
+		const older = deferred();
+		mocks.fetchDivineRate.mockReturnValueOnce(older.promise).mockResolvedValueOnce(port({ divineChaosRate: 351 }));
+		const s = await load();
+		const first = s.refreshDivineRate();
+		await s.refreshDivineRate();
+
+		older.reject(offline);
+		await first;
+
+		expect([s.currentDivineRate(), s.divineRateState(), s.divineRate.unreachableSince]).toEqual([351, 'ready', null]);
+		expect(warn).toHaveBeenCalledWith('[divine-rate] read failed, keeping the last rate:', offline);
+	});
+
+	it('ignores an obsolete failure after a reset', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const offline = new Error('offline');
+		const pending = deferred();
+		mocks.fetchDivineRate.mockResolvedValueOnce(port()).mockReturnValueOnce(pending.promise);
+		const s = await load();
+		await s.refreshDivineRate();
+		const read = s.refreshDivineRate();
+		s.resetDivineRate();
+		vi.setSystemTime(T0 + 60_000);
+
+		pending.reject(offline);
+		await read;
+
+		expect({ ...s.divineRate }).toEqual({
+			divineChaosRate: null, priceHour: null, updatedAt: null, state: 'cold', unreachableSince: null, now: T0
+		});
+		expect(warn).toHaveBeenCalledWith('[divine-rate] read failed, keeping the last rate:', offline);
+	});
+});
+
+describe('divine-rate health polling', () => {
+	it('detects an outage without a market update event', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const offline = new Error('offline');
+		mocks.fetchDivineRate.mockResolvedValueOnce(port()).mockRejectedValueOnce(offline);
+		const s = await load();
+		cleanup = s.initDivineRateStore();
+		await settle();
+
+		await vi.advanceTimersByTimeAsync(HEALTH_POLL_MS);
+
+		const { divineRateView } = await import('./divine-rate');
+		expect(divineRateView(s.divineRate, s.divineRate.now, 'UTC')).toEqual({
+			state: 'stale',
+			chip: '360',
+			tooltipHtml: '<div style="font-weight:700">1 divine = 360.1 chaos (stale)</div><div style="color:var(--color-lab-text-secondary)">Last known rate from 23:00; server unreachable since 00:01.</div><div style="color:var(--color-lab-text-secondary)">Every chaos ↔ divine figure in the app uses this rate.</div>'
+		});
+		expect(warn).toHaveBeenCalledWith('[divine-rate] read failed, keeping the last rate:', offline);
+	});
+
+	it('recovers without a market update event', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const offline = new Error('offline');
+		mocks.fetchDivineRate.mockResolvedValueOnce(port()).mockRejectedValueOnce(offline)
+			.mockResolvedValueOnce(port({ divineChaosRate: 363 }));
+		const s = await load();
+		cleanup = s.initDivineRateStore();
+		await settle();
+		await vi.advanceTimersByTimeAsync(HEALTH_POLL_MS);
+
+		await vi.advanceTimersByTimeAsync(HEALTH_POLL_MS);
+
+		expect([s.currentDivineRate(), s.divineRateState(), s.divineRate.unreachableSince]).toEqual([363, 'ready', null]);
+		expect(warn).toHaveBeenCalledWith('[divine-rate] read failed, keeping the last rate:', offline);
+	});
+
+	it('does not supersede a read still in flight', async () => {
+		const pending = deferred();
+		mocks.fetchDivineRate.mockReturnValueOnce(pending.promise);
+		const s = await load();
+		cleanup = s.initDivineRateStore();
+		await settle();
+
+		await vi.advanceTimersByTimeAsync(HEALTH_POLL_MS * 3);
+		pending.resolve(port({ divineChaosRate: 364 }));
+		await settle();
+
+		expect(s.currentDivineRate()).toBe(364);
+		expect(mocks.fetchDivineRate).toHaveBeenCalledTimes(1);
+	});
+
+	it('stops health reads on cleanup', async () => {
+		mocks.fetchDivineRate.mockResolvedValue(port());
+		const s = await load();
+		const stop = s.initDivineRateStore();
+		await settle();
+
+		stop();
+		await vi.advanceTimersByTimeAsync(HEALTH_POLL_MS * 3);
+
+		expect(mocks.fetchDivineRate).toHaveBeenCalledTimes(1);
 	});
 });
