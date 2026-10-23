@@ -8,6 +8,14 @@ uid: fc898b2c-7a08-435c-9f47-5fc6e3293f54
 
 Accepted (2026-10-14, owner during the POE-295 breakdown: "we should rather take trade data over PoeNinja"). Amends [ADR-007](007-v3-hybrid-analysis.md), which wired trade data into the feature layer only and named trade-primary pricing as future intent.
 
+## Enforcement
+
+Tier: required
+
+Scope: gem price resolution for Lab tiers, Font EV, Dedication, Double-corrupt, and the trade price shown on the Lab comparator row.
+
+Summary: Trade (median of the cheapest 3 listings) is the primary gem price, poe.ninja the fallback; one trade-price definition shared by every consumer.
+
 ## Context
 
 Gem tiers, Font EV, Dedication and Double-corrupt classify on the poe.ninja price. poe.ninja publishes lines built from a sample of 1–3 (`count`, empty sparkline). On 2026-10-14, 34 lines sat at exactly 1817c (5.0 div), among them Summon Flame Golem of the Meteor 20/20, which trades at ~14c. Those lines became TOP and inflated Font advice. The server trade gate already looks up ~1,100 gems a day, and desktop users submit lookups to the same history. That trade data only adjusted sellability, never the price that tiers and EV use.
@@ -33,3 +41,7 @@ Gem tiers, Font EV, Dedication and Double-corrupt classify on the poe.ninja pric
 - Mark every thin ninja line low-confidence on the existing path (EV = 0): 90 of 157 20/20 transfigured lines are thin late-league, so Font EV would collapse.
 - A targeted CHAOTIC rule for thin lines priced above the top boundary: it treats the symptom and keeps ninja as the primary source.
 - Ninja-history anomaly detection (POE-78): cannot tell a real price spike from a 1-sample artefact.
+
+### Amendment — N = 3, 2026-10-23
+
+Decision 2's "median of the cheapest ~5 listings" is now **the median of the cheapest 3 listings** (owner, 2026-10-23, POE-295 lock L2 updated). The same definition drives the Lab comparator row's displayed trade price (POE-302); a trade result built from fewer than 3 listings is the median of what exists and is low-confidence per POE-299. Supersedes only the "~5" in Decision 2.
