@@ -50,7 +50,12 @@ services:
       - "traefik.http.routers.profitofexile-frontend.priority=1"
       - "traefik.http.services.profitofexile-frontend.loadbalancer.server.port=5173"
 
+  # Opt-in only (POE-305): a local collector polls poe.ninja and GGG trade and
+  # shares the machine's rate-limit budget, so `make up` / `docker compose up`
+  # leave it out. Start it with `make up-collector`. Same profile name as the
+  # lane compose file. Prod deploys from the Dockerfile targets, not this file.
   collector:
+    profiles: [collector]
     build:
       context: .
       dockerfile: Dockerfile.dev

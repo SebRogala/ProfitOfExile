@@ -10,7 +10,7 @@ Three places, one repo:
 | Where | What runs there | Why |
 |---|---|---|
 | WSL2, `/var/www/infra` | Traefik, Postgres, Redis, Mailpit, Mercure (shared by every local project) | one stack that mirrors Coolify; this repo runs no database of its own |
-| WSL2, `/var/www/ProfitOfExile` | Go server + collector (air hot-reload), SvelteKit web UI, the desktop Rust/JS **test** containers | Docker-first; no Go or Node on the host |
+| WSL2, `/var/www/ProfitOfExile` | Go server + opt-in collector (air hot-reload), SvelteKit web UI, the desktop Rust/JS **test** containers | Docker-first; no Go or Node on the host |
 | Windows, `C:\Users\<you>\Projects\poe-desktop` | a synced copy of `desktop/` under `npx tauri dev` | Tauri produces a Windows GUI app: it cannot run in a Linux container, and Windows npm/cmd cannot build from a `\\wsl$\` UNC path, so the files must live on a native Windows path |
 
 The desktop app reaches the WSL server through Traefik at
@@ -46,14 +46,18 @@ traefik` in `/var/www/infra` fixes it.
    default `native-tls` backend, `schannel` in `desktop/src-tauri/Cargo.lock`).
 3. **Clone this repo** to `/var/www/ProfitOfExile`. Other documents and the
    Makefile assume that path.
-4. **`make up`.** Builds and starts `app`, `frontend`, and `collector` on the
-   external `infra` network (the `desktop` service is only built on demand by
-   the `desktop-*` targets). Every compose variable has a working default, so
+4. **`make up`.** Builds and starts `app`, `frontend`, and `desktop` on the
+   external `infra` network (the `desktop` container exits; the `desktop-*`
+   targets run it on demand). The `collector` is opt-in (POE-305): it sits
+   behind the Compose profile `collector`, and only `make up-collector` starts
+   it — see the README's Development section. `build-collector` compiles in
+   the running app container and refuses (pointing to `make up`) when app is
+   down; it never starts anything itself. Every compose variable has a working default, so
    no `.env` is needed locally; `.env.example` lists what can be overridden.
    The server applies pending migrations itself on start
    (`cmd/server/main.go`), and the league migration seeds `runtime_config`
    with an active league, so a fresh database is usable immediately. It fills
-   from poe.ninja on the collector's first tick; historical data is a
+   from poe.ninja on the collector's first tick once you start it; historical data is a
    prod-to-local copy, which is not documented in this repository.
 5. **Open `https://profitofexile.localhost`.** Traefik routes `/api` to the Go
    server and everything else to the Vite dev server (both `docker-compose.yml`
