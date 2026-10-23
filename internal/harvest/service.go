@@ -11,6 +11,9 @@ import (
 	"profitofexile/internal/league"
 )
 
+// UpdatedTopic notifies clients only after Harvest has stored both horizons.
+const UpdatedTopic = "poe/harvest/updated"
+
 // loadSpanHours is the clock hours one recompute reads: the 72 hours ending at
 // the newest stored hour, inclusive. It covers the 24-hour horizon and the
 // newest-hour-before-window lookback that LastSeenChaos needs (D5, D7).
@@ -100,6 +103,7 @@ type Service struct {
 	rows   exchange.RowSource
 	scope  league.Scope
 	cache  *Cache
+	notify func()
 	logger *slog.Logger
 
 	// mu guards running and dirty only. It is never held across a Recompute, so a
@@ -110,26 +114,30 @@ type Service struct {
 }
 
 // NewService builds a recompute service for one league scope. A nil logger
-// falls back to slog.Default.
-func NewService(rows exchange.RowSource, scope league.Scope, cache *Cache, logger *slog.Logger) *Service {
+// falls back to slog.Default; a nil notify is a no-op.
+func NewService(rows exchange.RowSource, scope league.Scope, cache *Cache, notify func(), logger *slog.Logger) *Service {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if notify == nil {
+		notify = func() {}
 	}
 	return &Service{
 		rows:   rows,
 		scope:  scope,
 		cache:  cache,
+		notify: notify,
 		logger: logger,
 	}
 }
 
 // Recompute reads the newest 72 hours from storage, prices every Harvest item
 // and lifeforce colour per horizon, classifies the families, and stores both
-// horizons in the cache.
+// horizons in the cache before signaling notify.
 //
 // A league with no rows returns nil and leaves the cache untouched, so a cold
 // cache stays cold. On any error the cache is left untouched and the error is
-// returned wrapped.
+// returned wrapped. Neither case signals notify.
 func (s *Service) Recompute(ctx context.Context) error {
 	if err := s.scope.Validate(); err != nil {
 		return fmt.Errorf("harvest service: recompute: %w", err)
@@ -178,6 +186,7 @@ func (s *Service) Recompute(ctx context.Context) error {
 			"newestHour", newest.UTC().Format(time.RFC3339),
 		)
 	}
+	s.notify()
 	return nil
 }
 

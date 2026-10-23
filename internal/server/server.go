@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -246,8 +248,14 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Post("/api/device/identify", handlers.DeviceIdentify(cfg.DeviceRepo))
 	}
 
+	// Both trade routes share name membership and dictionary warmth. Keep it
+	// available for contributions even when the live server gate is disabled.
+	var knownGem func(context.Context, league.Scope, string) (bool, error)
+	if cfg.TradeRepo != nil {
+		knownGem = cfg.TradeRepo.KnownGem
+	}
 	if cfg.TradeGate != nil {
-		r.Post("/api/trade/lookup", handlers.TradeLookup(cfg.TradeGate, cfg.TradeCache, cfg.League, cfg.TradeSyncTimeout))
+		r.Post("/api/trade/lookup", handlers.TradeLookup(cfg.TradeGate, cfg.TradeCache, cfg.League, cfg.TradeSyncTimeout, cfg.LabCache, knownGem))
 		// Trade refresh ticks arrive over Mercure (poe/collector/trade-tick),
 		// not HTTP. See cmd/server subscriber + internal/server/trade_tick.go.
 	}
@@ -255,7 +263,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	// Trade submit: available whenever trade cache exists (desktop can submit
 	// even when the server-side gate is disabled).
 	if cfg.TradeCache != nil {
-		r.Post("/api/trade/submit", handlers.TradeSubmit(cfg.TradeCache, cfg.TradeRepo, cfg.League))
+		r.Post("/api/trade/submit", handlers.TradeSubmit(cfg.TradeCache, cfg.TradeRepo, cfg.League, cfg.LabCache, knownGem))
 	}
 
 	r.Get("/api/mercure/token", handlers.MercureToken(cfg.MercureSubscriberKey, cfg.MercurePublicURL))
@@ -306,11 +314,23 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	// DevMode gate nor the device middleware was used on its own.
 	mountPprof(r, cfg.DevMode)
 
-	// Serve static frontend files with SPA fallback. The wildcard pattern never
-	// shadows explicit API routes because chi's radix tree prefers exact matches.
+	// Use NotFound rather than a wildcard route: chi otherwise falls back to
+	// that route for unsupported methods too, bypassing MethodNotAllowed.
+	var frontend http.Handler
 	if frontendFS != nil {
-		r.Handle("/*", StaticHandler(frontendFS))
+		frontend = StaticHandler(frontendFS)
 	}
+	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/api" || strings.HasPrefix(req.URL.Path, "/api/") {
+			handlers.APINotFound(w, req)
+			return
+		}
+		if frontend != nil {
+			frontend.ServeHTTP(w, req)
+			return
+		}
+		http.NotFound(w, req)
+	})
 
 	return r
 }

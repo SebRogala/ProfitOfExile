@@ -8,6 +8,14 @@ uid: 55dea7ab-ff6d-4869-964f-eeb0d123e206
 
 Accepted
 
+## Enforcement
+
+Tier: required
+
+Scope: Server startup, migration CLI and internal/db/migrations/.
+
+Summary: Embed timestamped golang-migrate SQL migrations; apply them before serving and fail startup on migration errors.
+
 ## Context
 
 POE-15 introduces the first real database code: a pgx connection pool, the `strategies` table, and versioned schema migrations. Before writing any migration files, the project must decide how migrations are discovered, applied, and managed across dev and production environments.

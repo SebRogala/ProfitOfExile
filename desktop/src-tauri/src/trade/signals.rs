@@ -3,6 +3,9 @@ use std::collections::HashSet;
 
 use super::types::{CheapestStaleness, SellerConcentration, TradeListingDetail, TradeLookupResult, TradeSignals};
 
+// Trade price definition: docs/TRADE-LIFECYCLE.md#trade-price-definition.
+const TRADE_PRICE_LISTING_COUNT: usize = 3;
+
 /// Normalize a listing price to chaos using the divine exchange rate.
 pub fn normalize_to_chaos(price: f64, currency: &str, divine_rate: f64) -> f64 {
     if currency == "divine" && divine_rate > 0.0 {
@@ -47,6 +50,11 @@ pub fn build_result(
         (0.0, 0.0, 0.0, 0.0)
     };
 
+    let cheapest: Vec<f64> = listings.iter()
+        .take(TRADE_PRICE_LISTING_COUNT)
+        .map(|l| l.chaos_price)
+        .collect();
+    let median_top3 = median_chaos_price(&cheapest);
     let signals = compute_signals(&listings);
 
     TradeLookupResult {
@@ -57,6 +65,7 @@ pub fn build_result(
         price_ceiling,
         price_spread,
         median_top10: median,
+        median_top3,
         listings,
         signals,
         divine_price: divine_rate,
@@ -131,4 +140,69 @@ pub(crate) fn floor_chaos_price(prices: &[f64]) -> f64 {
         .copied()
         .min_by(|a, b| a.total_cmp(b))
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct PriceVector {
+        name: String,
+        divine_rate: f64,
+        listings: Vec<RawPrice>,
+        median_top3: f64,
+        median_top10: f64,
+    }
+
+    #[derive(Deserialize)]
+    struct RawPrice {
+        price: f64,
+        currency: String,
+    }
+
+    fn vectors() -> Vec<PriceVector> {
+        // Shared with TestBuildResult_TradePriceVectors in internal/trade/types_test.go.
+        serde_json::from_str(include_str!(
+            "../../../../internal/trade/testdata/trade-price-vectors.json"
+        )).unwrap()
+    }
+
+    fn result(vector: &PriceVector) -> TradeLookupResult {
+        let listings = vector.listings.iter().map(|raw| TradeListingDetail {
+            price: raw.price,
+            currency: raw.currency.clone(),
+            chaos_price: 0.0,
+            account: "seller".to_string(),
+            indexed_at: Utc::now(),
+            gem_level: 20,
+            gem_quality: 20,
+            corrupted: false,
+        }).collect();
+        build_result("Gem", "20/20", "Test League", "query", 10, listings, vector.divine_rate)
+    }
+
+    #[test]
+    fn built_trade_price_matches_shared_vectors() {
+        for vector in vectors() {
+            assert_eq!(result(&vector).median_top3, vector.median_top3, "{}", vector.name);
+        }
+    }
+
+    #[test]
+    fn existing_median_still_uses_all_fetched_listings() {
+        for vector in vectors() {
+            assert_eq!(result(&vector).median_top10, vector.median_top10, "{}", vector.name);
+        }
+    }
+
+    #[test]
+    fn built_trade_price_serializes_for_the_widget() {
+        for vector in vectors() {
+            let json = serde_json::to_value(result(&vector)).unwrap();
+            assert_eq!(json["medianTop3"], vector.median_top3, "{}", vector.name);
+        }
+    }
 }

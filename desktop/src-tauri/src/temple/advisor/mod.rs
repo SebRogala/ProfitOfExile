@@ -42,8 +42,8 @@
 //!   §5 boards, which are walked room by room, are encoded verbatim in
 //!   [`cases`].
 //! - **R3, the budget gate, is not in the door chain.** `remaining` reaches the
-//!   rollout as its horizon and nothing else, so no rule reads it. The spec
-//!   frames R3 as the `n` in the opportunity probability R1/R2 approximate
+//!   rollout as its horizon; R4 and its carve-out also require a future draw.
+//!   The spec frames R3 as the `n` in the opportunity probability R1/R2 approximate
 //!   rather than as a separate term, and §6e's *"RV at any budget"* removes the
 //!   one place a budget term was expected to bite. Left out until a measured
 //!   board disagrees with the chain because of the count.
@@ -449,7 +449,7 @@ fn score_options(
 
     for (architect, door_sets) in choices.iter().zip(door_sets_per_choice) {
         for doors in door_sets {
-            let verdict = rules::evaluate_rules(
+            let mut verdict = rules::evaluate_rules(
                 board,
                 position,
                 architect.as_ref(),
@@ -458,6 +458,7 @@ fn score_options(
                 profile,
                 valuation,
             );
+            rules::limit_r4_by_grade(&mut verdict, choices);
             let rv = rules::rv_verdict(
                 board,
                 position,
@@ -709,7 +710,40 @@ fn rank(scored: Vec<Scored>, profile: &StrategyProfile) -> Vec<Ranked> {
         .iter()
         .position(|(_, estimate, key)| key.vetoed() != vetoed_leader || estimate.mean < cutoff)
         .unwrap_or(summaries.len());
-    summaries[..band].sort_by(|a, b| b.2.cmp(&a.2).then_with(|| b.1.mean.total_cmp(&a.1.mean)));
+    // The grade ladder already orders D above E in chaos. Its live values
+    // can be too small for Monte-Carlo means to distinguish, and same-letter
+    // positions deliberately share a price. Keep that price contract: use
+    // the existing rank only when EVERY contender in the band is fallback,
+    // after the architect rules tie. Clear EV differences remain authoritative.
+    let fallback_ranks: Vec<_> = groups
+        .iter()
+        .map(|(_, bucket)| {
+            let architect = bucket[0].option.architect.as_ref()?;
+            let fallback = profile.grade_fallback.get(&architect.line)?;
+            let tier_index = architect.built_tier.get().checked_sub(1)? as usize;
+            if !fallback[tier_index] {
+                return None;
+            }
+            rooms::LINES
+                .iter()
+                .find(|line| line.mechanical_line() == architect.line)
+                .map(|line| line.rank())
+        })
+        .collect();
+    let grade_band = summaries[..band]
+        .iter()
+        .all(|(index, _, _)| fallback_ranks[*index].is_some());
+    summaries[..band].sort_by(|a, b| {
+        b.2.cmp(&a.2)
+            .then_with(|| {
+                if grade_band {
+                    fallback_ranks[a.0].cmp(&fallback_ranks[b.0])
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .then_with(|| b.1.mean.total_cmp(&a.1.mean))
+    });
 
     // The band ends either at the EV cutoff or where the veto flips. Only the
     // first is the rollout's doing: a vetoed kill sits below an un-vetoed one
@@ -739,10 +773,19 @@ fn rank(scored: Vec<Scored>, profile: &StrategyProfile) -> Vec<Ranked> {
         } else {
             band == 1 && ev_cut
         };
+        let grade_decided = rank < band
+            && grade_band
+            && summaries[..band].iter().any(|(other, _, other_key)| {
+                *other_key == *key && fallback_ranks[*other] != fallback_ranks[*index]
+            });
         out.extend(bucket.into_iter().map(|option| {
             let mut reasons = option.reasons;
             if ev_decided {
                 reasons.insert(0, Reason::ExpectedValue);
+            } else if grade_decided {
+                reasons.insert(0, Reason::GradeFallback {
+                    grade: fallback_ranks[*index].expect("fallback band").label(),
+                });
             }
             Ranked {
                 option: option.option,
@@ -963,6 +1006,250 @@ mod tests {
                 &crate::temple::market::allflame(),
             ),
         )
+    }
+
+    /// Zero rollouts isolate the rule ranking from future-policy EV. The
+    /// change offer is first so only an active preference can promote upgrade.
+    fn grade_limited_r4_scores(offers: &[(OfferKind, &str)], carve_out: bool) -> Vec<Scored> {
+        let current_line = offers.iter()
+            .find(|(kind, _)| *kind == Upgrade)
+            .map_or("museum_of_artefacts", |(_, line)| *line);
+        let mut state = board(
+            &[(D1, current_line, 1), (C2, "corruption", 1)],
+            &[(D1, E1)], D1, 5,
+        );
+        if carve_out {
+            state.set_room(C1, Some(Line::Upgrade), Tier::T2);
+            state.doors.insert(Edge::new(C1, D1));
+        }
+        let choices: Vec<_> = offers.iter().enumerate().map(|(index, (kind, line))| {
+            Some(ArchitectChoice {
+                offer_index: index,
+                architect_name: "fixture".to_string(),
+                kind: *kind,
+                line: Line::named(line),
+                built_tier: Tier::T2,
+                display_name: "fixture",
+            })
+        }).collect();
+        let sets = vec![vec![BTreeSet::new()]; choices.len()];
+        let mut profile = rush();
+        profile.r4_keep_upgrade_targets = carve_out;
+        let valuation = Valuation::for_profile(&profile);
+        let (scored, _) = score_options(
+            &state, D1, &choices, &sets, 0, &profile, &valuation,
+            &TempleConfig::default(), 0, SEED, false,
+        );
+        scored
+    }
+
+    fn grade_limited_r4(offers: &[(OfferKind, &str)], carve_out: bool) -> Vec<Ranked> {
+        rank(grade_limited_r4_scores(offers, carve_out), &rush())
+    }
+
+    fn assert_upgrade_r4(offers: &[(OfferKind, &str)], expected: bool) {
+        let ranked = grade_limited_r4(offers, false);
+        let upgrade = ranked.iter().find(|option| {
+            option.option.architect.as_ref().unwrap().kind == Upgrade
+        }).expect("fixture has an upgrade");
+        assert_eq!(upgrade.reasons.contains(&Reason::R4), expected);
+        assert_eq!(ranked[0].option.architect.as_ref().unwrap().kind,
+            if expected { Upgrade } else { Change });
+    }
+
+    #[test]
+    fn storage_upgrade_loses_r4_against_cultivar_two_letters_better() {
+        assert_upgrade_r4(&[(Change, "toxic_grove"), (Upgrade, "museum_of_artefacts")], false);
+    }
+
+    #[test]
+    fn the_grade_limit_also_handles_upgrade_first() {
+        let ranked = grade_limited_r4(
+            &[(Upgrade, "museum_of_artefacts"), (Change, "toxic_grove")], false,
+        );
+        let upgrade = ranked.iter().find(|option| {
+            option.option.architect.as_ref().unwrap().kind == Upgrade
+        }).unwrap();
+        assert!(!upgrade.reasons.contains(&Reason::R4));
+    }
+
+    #[test]
+    fn torment_upgrade_loses_r4_against_defense_two_letters_better() {
+        assert_upgrade_r4(&[(Change, "defense_research_lab"), (Upgrade, "sadists_den")], false);
+    }
+
+    #[test]
+    fn armoury_upgrade_keeps_r4_against_reactor_one_letter_better() {
+        assert_upgrade_r4(&[(Change, "conduit_of_lightning"), (Upgrade, "chamber_of_iron")], true);
+    }
+
+    #[test]
+    fn r4_keeps_a_change_offer_worse_than_the_upgrade() {
+        assert_upgrade_r4(&[(Change, "museum_of_artefacts"), (Upgrade, "factory")], true);
+    }
+
+    #[test]
+    fn r4_keeps_an_equal_letter_change_offer() {
+        assert_upgrade_r4(&[(Change, "court_of_sealed_death"), (Upgrade, "museum_of_artefacts")], true);
+    }
+
+    #[test]
+    fn a_lone_upgrade_keeps_r4() {
+        assert_upgrade_r4(&[(Upgrade, "museum_of_artefacts")], true);
+    }
+
+    #[test]
+    fn an_unranked_change_preserves_r4() {
+        assert_upgrade_r4(&[(Change, "unread_line"), (Upgrade, "museum_of_artefacts")], true);
+    }
+
+    #[test]
+    fn an_unranked_upgrade_preserves_r4() {
+        assert_upgrade_r4(&[(Change, "conduit_of_lightning"), (Upgrade, "unread_line")], true);
+    }
+
+    #[test]
+    fn two_upgrade_offers_preserve_r4() {
+        let ranked = grade_limited_r4(
+            &[(Upgrade, "museum_of_artefacts"), (Upgrade, "conduit_of_lightning")], false,
+        );
+        assert_eq!(ranked.len(), 2);
+        assert!(ranked.iter().all(|option| option.reasons.contains(&Reason::R4)));
+    }
+
+    #[test]
+    fn two_change_offers_preserve_existing_pool_removal_r4() {
+        let mut state = board(&[(D1, "museum_of_artefacts", 2)], &[(D1, E1)], D1, 5);
+        state.current_tier = Some(Tier::T2);
+        let offers = [offer("fixture", Change, "Cultivar Chamber"),
+            offer("fixture", Change, "Omnitect Reactor Plant")];
+        let advice = advise(&state, &offers, 0, &rush(), &TempleConfig::default(), 0, SEED);
+        assert_eq!(advice.recommendations.len(), 2);
+        assert!(advice.recommendations.iter().all(|option| option.reasons.contains(&Reason::R4)));
+    }
+
+    #[test]
+    fn the_grade_limit_preserves_the_carve_out_veto() {
+        let scored = grade_limited_r4_scores(
+            &[(Change, "toxic_grove"), (Upgrade, "museum_of_artefacts")], true,
+        );
+        let upgrade = scored.iter().find(|option| {
+            option.option.architect.as_ref().unwrap().kind == Upgrade
+        }).unwrap();
+        assert!(upgrade.architect_key.vetoed());
+        assert!(upgrade.reasons.contains(&Reason::R4CarveOutVeto { upgrader: C1 }));
+    }
+
+    #[test]
+    fn the_grade_limit_preserves_the_carve_out_pool_preference() {
+        let scored = grade_limited_r4_scores(
+            &[(Change, "toxic_grove"), (Upgrade, "museum_of_artefacts")], true,
+        );
+        let change = scored.iter().find(|option| {
+            option.option.architect.as_ref().unwrap().kind == Change
+        }).unwrap();
+        assert_eq!(change.architect_key.0[4], 1);
+        assert!(change.reasons.contains(&Reason::R4PoolCarveOut { upgrader: C1 }));
+    }
+
+    /// Synthetic rollout estimates isolate the noise-band regression from
+    /// sampling and from any legitimate downstream board effect. Values and
+    /// fallback provenance still come through the production valuation bridge.
+    fn grade_pair(better: &str, worse: &str, gap: f64, priced: bool) -> Vec<Ranked> {
+        let profile = if priced {
+            let overrides = crate::temple::valuation::RoomOverrides::from([
+                (better.to_string(), [Some(0.001), None, None]),
+            ]);
+            let valued = crate::temple::valuation::Valued::compute_with(
+                &crate::temple::market::allflame(),
+                &crate::temple::valuation::Knobs::default(),
+                &overrides,
+            );
+            crate::temple::slice::TempleProfileSettings::default().to_profile(&valued)
+        } else {
+            live_production_profile()
+        };
+        let state = board(&[], &[], D1, 3);
+        let valuation = Valuation::for_profile(&profile);
+        let scored = [(better, -1504.59), (worse, -1504.59 + gap)]
+            .into_iter().enumerate().map(|(offer_index, (line, mean))| {
+                let architect = ArchitectChoice {
+                    offer_index,
+                    architect_name: "fixture".to_string(),
+                    kind: Change,
+                    line: Line::named(line),
+                    built_tier: Tier::T1,
+                    display_name: "fixture",
+                };
+                let verdict = rules::evaluate_rules(
+                    &state, D1, Some(&architect), &BTreeSet::new(), 0,
+                    &profile, &valuation,
+                );
+                Scored {
+                    option: Decision { architect: Some(architect), doors: BTreeSet::new() },
+                    estimate: Estimate { mean, risk: 0.0, stderr: 10.0 },
+                    door: verdict.door,
+                    architect_key: verdict.architect,
+                    reasons: verdict.reasons,
+                }
+            }).collect();
+        rank(scored, &profile)
+    }
+
+    #[test]
+    fn fallback_d2_beats_e4_inside_rollout_noise() {
+        let ranked = grade_pair("sadists_den", "court_of_sealed_death", 12.16, false);
+        assert_eq!(ranked[0].option.architect.as_ref().unwrap().line, Line::named("sadists_den"));
+        assert!(ranked[0].reasons.contains(&Reason::GradeFallback { grade: "D2".to_string() }));
+    }
+
+    #[test]
+    fn fallback_d3_beats_e3_inside_rollout_noise() {
+        let ranked = grade_pair("apex_of_ascension", "wealth_of_the_vaal", 12.16, false);
+        assert_eq!(ranked[0].option.architect.as_ref().unwrap().line, Line::named("apex_of_ascension"));
+    }
+
+    #[test]
+    fn equal_letter_fallbacks_follow_the_existing_pick_order() {
+        let ranked = grade_pair("wealth_of_the_vaal", "court_of_sealed_death", 12.16, false);
+        assert_eq!(ranked[0].option.architect.as_ref().unwrap().line, Line::named("wealth_of_the_vaal"));
+    }
+
+    #[test]
+    fn a_clear_rollout_difference_is_not_overridden_by_grade() {
+        let ranked = grade_pair("sadists_den", "court_of_sealed_death", 31.0, false);
+        assert_eq!(ranked[0].option.architect.as_ref().unwrap().line, Line::named("court_of_sealed_death"));
+        assert!(ranked[0].reasons.contains(&Reason::ExpectedValue));
+    }
+
+    #[test]
+    fn a_per_tier_override_does_not_borrow_the_fallback_grade_order() {
+        let ranked = grade_pair("sadists_den", "court_of_sealed_death", 12.16, true);
+        assert_eq!(ranked[0].option.architect.as_ref().unwrap().line, Line::named("court_of_sealed_death"));
+        assert!(!ranked[0].reasons.iter().any(|reason| matches!(reason, Reason::GradeFallback { .. })));
+    }
+
+    /// Synthetic board with the report's displayed 36c/41c and an explicit
+    /// 0.6 lower-tier fraction. It is not a replay of the missing market read.
+    #[test]
+    fn the_last_incursion_prefers_the_higher_double_tier_expected_value() {
+        let state = board(&[(D1, "sanctum_of_immortality", 1)], &[(D1, E1)], D1, 1);
+        let offers = vec![
+            offer("fixture", Upgrade, "Sanctum of Vitality"),
+            offer("fixture", Change, "Flame Workshop"),
+        ];
+        let mut profile = rush();
+        profile.room_values.insert(Line::named("sanctum_of_immortality"), [36.0, 36.0, 60.0]);
+        profile.room_values.insert(Line::named("crucible_of_flame"), [41.0, 41.0, 41.0 / 0.6]);
+        let advice = advise(&state, &offers, 0, &profile, &TempleConfig::default(), N, SEED);
+        let top = &advice.recommendations[0];
+        assert_eq!(top.option.architect.as_ref().unwrap().kind, Upgrade);
+    }
+
+    #[test]
+    fn expected_value_explanation_allows_eligible_architect_rules() {
+        assert_eq!(Reason::ExpectedValue.describe(),
+            "architect ranked on expected value; architect tie-breaks did not decide it");
     }
 
     /// What one board's top recommendation kills, as

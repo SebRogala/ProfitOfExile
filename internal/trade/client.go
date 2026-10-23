@@ -21,6 +21,45 @@ const (
 // ErrRateLimited is returned when the GGG trade API responds with 429.
 var ErrRateLimited = errors.New("trade: rate limited (429)")
 
+// HTTPStatusError preserves the upstream status for restriction handling while
+// retaining a bounded response excerpt for diagnosis.
+type HTTPStatusError struct {
+	StatusCode int
+	Operation  string
+	Excerpt    string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("trade %s: status %d: %s", e.Operation, e.StatusCode, e.Excerpt)
+}
+
+// Unwrap preserves errors.Is(err, ErrRateLimited) for existing callers.
+func (e *HTTPStatusError) Unwrap() error {
+	if e.StatusCode == http.StatusTooManyRequests {
+		return ErrRateLimited
+	}
+	return nil
+}
+
+// GGG counts every HTTP 4xx toward invalid-request restrictions
+// (RESEARCH-poe-trade-api.md). A single invalid request does not by itself
+// establish a global restriction; isGlobalRestrictionError identifies the
+// statuses for which the gate immediately takes a precautionary pause.
+func isInvalidRequestError(err error) bool {
+	var statusErr *HTTPStatusError
+	return errors.Is(err, ErrRateLimited) ||
+		(errors.As(err, &statusErr) && statusErr.StatusCode >= 400 && statusErr.StatusCode < 500)
+}
+
+// Authentication/access refusals and 429 pause both pools even without usable
+// restriction headers. Other 4xx are request-specific until the flood breaker
+// trips; this is the server gate policy selected in POE-297.
+func isGlobalRestrictionError(err error) bool {
+	var statusErr *HTTPStatusError
+	return errors.Is(err, ErrRateLimited) ||
+		(errors.As(err, &statusErr) && (statusErr.StatusCode == http.StatusUnauthorized || statusErr.StatusCode == http.StatusForbidden))
+}
+
 // Client is an HTTP client for the GGG Path of Exile trade API.
 type Client struct {
 	httpClient *http.Client
@@ -118,13 +157,13 @@ func (c *Client) Search(ctx context.Context, gem, variant string) (*SearchRespon
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, resp.Header, ErrRateLimited
-	}
-
 	if resp.StatusCode != http.StatusOK {
 		excerpt, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, resp.Header, fmt.Errorf("trade search: status %d: %s", resp.StatusCode, string(excerpt))
+		return nil, resp.Header, &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			Operation:  "search",
+			Excerpt:    string(excerpt),
+		}
 	}
 
 	var parsed tradeSearchResp
@@ -161,13 +200,13 @@ func (c *Client) Fetch(ctx context.Context, queryID string, ids []string) ([]Tra
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, resp.Header, ErrRateLimited
-	}
-
 	if resp.StatusCode != http.StatusOK {
 		excerpt, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, resp.Header, fmt.Errorf("trade fetch: status %d: %s", resp.StatusCode, string(excerpt))
+		return nil, resp.Header, &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			Operation:  "fetch",
+			Excerpt:    string(excerpt),
+		}
 	}
 
 	var parsed tradeFetchResp

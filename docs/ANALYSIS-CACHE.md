@@ -155,7 +155,9 @@ single type would tie unrelated tick chains together:
   horizon holds prices and the tiers built from them, so `GET /api/harvest` can
   never mix two recomputes. Unlike `exchange.Cache` it stays COLD while the
   league has no stored hour (the desktop reads warm as "an exchange hour was
-  read"), and `Set`/`Snapshot` deep-copy.
+  read"), and `Set`/`Snapshot` deep-copy. After both horizons are stored, its
+  own debounced `poe/harvest/updated` event tells the desktop to refetch
+  (POE-289); the independent Exchange completion is not a readiness signal.
 - **`temple.Cache`** (`internal/temple/service.go`) — the aggregated temple
   market (POE-255), refreshed by `temple.Service` on any of the seven
   `poe/collector/items/*` ticks and once at boot from the warm-up goroutine.
@@ -268,7 +270,10 @@ follow its shape: warmth is checked first, and the read is skipped once warm.
   partially filled ring is worse than an empty one: it answers short instead of
   falling back. `SignalHistoryWindow` seeds it once, bounded to the newest
   `depth` rows per `(name, variant)` series (never a league-wide set of
-  snapshot times) and to `signalHistorySeedMaxDays`.
+  snapshot times) and to `signalHistorySeedMaxDays`. The cold-cache fallback
+  `Repository.SignalHistory` uses the same time bound (POE-292), so a series
+  already outside the window is empty on either path at seed time. Warm rings
+  are subsequently capped by depth; they do not evict entries by age.
 - **`gemDictSkills` / `gemDictTransfigured`**
   (`internal/lab/gem_dictionary_cache.go`) — the OCR name dictionary. The tick
   sees only the current snapshot's names; the endpoint's answer is `gem_colors`

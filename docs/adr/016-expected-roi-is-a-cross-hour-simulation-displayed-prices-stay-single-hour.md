@@ -18,6 +18,14 @@ Amended 2026-09-04 (POE-252) — see
 the single-hour doctrine this decision owns now has a SECOND exception, and the
 Decision's third bullet below is scoped by it.
 
+## Enforcement
+
+Tier: required
+
+Scope: Exchange expected ROI simulation, displayed leg pricing and disclosed trailing-window pricing.
+
+Summary: Keep simulated expectation distinct from executable price readings; preserve calibrated simulation and whole-print pricing with the accepted window disclosure.
+
 ## Context
 
 The Currency Exchange engine's headline number was `RoiPct`/`Roi`: one hour's

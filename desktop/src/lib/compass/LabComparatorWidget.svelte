@@ -5,6 +5,7 @@
 	import { listen } from '@tauri-apps/api/event';
 	import type { CompareGem } from '$lib/api';
 	import { defaultSelectedGem } from '$lib/comparator-selection';
+	import { comparatorPrice } from './comparator-price';
 	import type { TradeLookupResult, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
 	import { isSource } from '$lib/tradeApi';
 	import GemIcon from '../../routes/(app)/components/GemIcon.svelte';
@@ -242,6 +243,7 @@
 					{@const sigColor = SIGNAL_COLORS[gem.signal] ?? '#9ca3af'}
 					{@const trade = tradeData[gem.name]}
 					{@const noData = gem.confidence === 'NO_DATA' || (gem.transPrice === 0 && gem.low7d === 0 && gem.high7d === 0)}
+					{@const quote = comparatorPrice(gem.transPrice, noData, trade)}
 					<div class="gem-row" class:selected={selectedGem === gem.name}>
 						<div class="row-top">
 							<GemIcon name={gem.name} size={24} />
@@ -258,9 +260,8 @@
 						<div class="row-bottom">
 							<span class="variant-label">{gem.variant}</span>
 							<span class="price-col">
-								<span class="price-label">ninja</span>
-								<!-- A NO_DATA gem's 0 means unpriced, not worth 0c — never print it as a price. -->
-								<span class="price">{noData ? '—' : formatPrice(gem.transPrice)}</span>
+								<span class="price-label">{quote.label}</span>
+								<span class="price">{formatPrice(quote.chaos)}</span>
 							</span>
 							{#if trade}
 								{#if trade.signals.sellerConcentration !== 'NORMAL'}

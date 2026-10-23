@@ -6,9 +6,9 @@
  *
  * Refresh: one read at init, then one debounced read per
  * `currency-exchange-updated` burst — LabPage's re-emit of the exchange's
- * Mercure topic, so this opens no second connection. A rejected read keeps
- * the last snapshot. The state comes from the source; this store derives no
- * liveness of its own.
+ * Mercure topic, so this opens no second connection. A periodic read also
+ * detects outages and recovery when no event arrives. The first failed read
+ * marks a held rate stale until a good read replaces it.
  *
  * Main window only: an overlay is its own WebView and shares no module state.
  */
@@ -19,9 +19,14 @@ import { deriveDivineRateState, normalizeDivineRate, type DivineRateSnapshot, ty
 
 /** How often `now` advances, so "updated N min ago" moves while the app is open. */
 const CLOCK_MS = 30_000;
+/** Session-jittered health reads keep working when the Mercure source is down. */
+const HEALTH_POLL_MS = 60_000;
+const HEALTH_POLL_JITTER_MS = 30_000;
 
 /** Bumped by every read and reset; a read that is not the latest one is dropped. */
 let generation = 0;
+/** The newest read is pending; health polling must not supersede a slow read. */
+let readInFlight = false;
 /** The server base that gave the snapshot's answer; null while cold. */
 let answeredBase: string | null = null;
 
@@ -50,6 +55,7 @@ export function divineRateState(): DivineRateState {
  */
 export function resetDivineRate(): void {
 	generation++;
+	readInFlight = false;
 	answeredBase = null;
 	divineRate.divineChaosRate = null;
 	divineRate.priceHour = null;
@@ -62,10 +68,12 @@ export function resetDivineRate(): void {
 /**
  * One read through the port. A newer read (or a reset) supersedes it, so only
  * the newest answer lands, whatever order the responses arrive in. A rejected
- * read leaves the snapshot and `answeredBase` unchanged.
+ * read keeps the value and timestamps, marks it stale from the first failure,
+ * and leaves `answeredBase` unchanged. A failed cold read stays cold.
  */
 export async function refreshDivineRate(): Promise<void> {
 	const mine = ++generation;
+	readInFlight = true;
 	const base = getApiBase();
 	try {
 		const next = normalizeDivineRate(await fetchDivineRate());
@@ -79,6 +87,14 @@ export async function refreshDivineRate(): Promise<void> {
 		answeredBase = base;
 	} catch (e) {
 		console.warn('[divine-rate] read failed, keeping the last rate:', e);
+		if (mine !== generation) return;
+		if (divineRate.divineChaosRate !== null) {
+			divineRate.state = 'stale';
+			divineRate.unreachableSince ??= new Date().toISOString();
+		}
+		divineRate.now = Date.now();
+	} finally {
+		if (mine === generation) readInFlight = false;
 	}
 }
 
@@ -99,6 +115,10 @@ export function initDivineRateStore(): () => void {
 
 	void refreshDivineRate();
 
+	const healthPoll = setInterval(() => {
+		if (!readInFlight) void refreshDivineRate();
+	}, HEALTH_POLL_MS + Math.random() * HEALTH_POLL_JITTER_MS);
+
 	const clock = setInterval(() => {
 		divineRate.now = Date.now();
 	}, CLOCK_MS);
@@ -117,6 +137,7 @@ export function initDivineRateStore(): () => void {
 	return () => {
 		cancelled = true;
 		clearInterval(clock);
+		clearInterval(healthPoll);
 		if (refetchTimer) {
 			clearTimeout(refetchTimer);
 			refetchTimer = null;

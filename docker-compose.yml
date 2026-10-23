@@ -50,7 +50,12 @@ services:
       - "traefik.http.routers.profitofexile-frontend.priority=1"
       - "traefik.http.services.profitofexile-frontend.loadbalancer.server.port=5173"
 
+  # Opt-in only (POE-305): a local collector polls poe.ninja and GGG trade and
+  # shares the machine's rate-limit budget, so `make up` / `docker compose up`
+  # leave it out. Start it with `make up-collector`. Same profile name as the
+  # lane compose file. Prod deploys from the Dockerfile targets, not this file.
   collector:
+    profiles: [collector]
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -96,6 +101,8 @@ services:
       # on the host, so `make desktop-test-js` failed on a file the host suite
       # passed on.
       - ./internal/exchange/testdata/wire:/app/internal/exchange/testdata/wire:ro
+      # Shared Go/Rust trade-price vectors (ADR-027, POE-302).
+      - ./internal/trade/testdata:/app/internal/trade/testdata:ro
       # The merc signature parity golden (POE-207), for the same reason and by
       # the same rule: `crop.png` + `signature.bin` are the ONE artefact the Go
       # and Rust derivations of format 2 are both checked against, so there is

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -384,5 +385,41 @@ func TestSearch_RequestURL(t *testing.T) {
 	}
 	if receivedMethod != http.MethodPost {
 		t.Errorf("method = %q, want %q", receivedMethod, http.MethodPost)
+	}
+}
+
+func TestClient_RejectionStatusPreserved(t *testing.T) {
+	for _, endpoint := range []string{"search", "fetch"} {
+		for _, status := range []int{http.StatusBadRequest, http.StatusForbidden, http.StatusTooManyRequests, http.StatusInternalServerError} {
+			t.Run(fmt.Sprintf("%s/%d", endpoint, status), func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(status)
+					w.Write([]byte("rejection detail"))
+				}))
+				defer server.Close()
+				c := testTradeClient(t, server)
+				var err error
+				if endpoint == "search" {
+					_, _, err = c.Search(context.Background(), "Arc", "20/20")
+				} else {
+					_, _, err = c.Fetch(context.Background(), "qid", []string{"id1"})
+				}
+				var statusErr *HTTPStatusError
+				if !errors.As(err, &statusErr) || statusErr.StatusCode != status || statusErr.Operation != endpoint || statusErr.Excerpt != "rejection detail" {
+					t.Fatalf("%s status %d: error = %#v, want typed status with operation and rejection excerpt", endpoint, status, err)
+				}
+			})
+		}
+	}
+}
+
+func TestFetch_RateLimitedIdentity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+	_, _, err := testTradeClient(t, server).Fetch(context.Background(), "qid", []string{"id1"})
+	if !errors.Is(err, ErrRateLimited) {
+		t.Errorf("fetch 429 error = %v, want errors.Is ErrRateLimited", err)
 	}
 }

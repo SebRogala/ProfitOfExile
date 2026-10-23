@@ -9,6 +9,7 @@ import (
 
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
+	"profitofexile/internal/server/handlers"
 	"profitofexile/internal/trade"
 )
 
@@ -39,7 +40,7 @@ var tradeTickTierRank = map[string]int{
 // filter and submit it to the trade gate. The submit outcome is logged
 // inside trade.SubmitRefresh; there is no reply path here since Mercure
 // is fire-and-forget.
-func HandleTradeTick(ctx context.Context, gate *trade.Gate, cache *trade.TradeCache, labCache *lab.Cache, scope league.Scope, raw []byte) {
+func HandleTradeTick(ctx context.Context, gate *trade.Gate, cache *trade.TradeCache, labCache *lab.Cache, scope league.Scope, raw []byte, checker func(context.Context, league.Scope, string) (bool, error)) {
 	var p TradeTickPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		slog.Warn("trade tick: invalid payload", "error", err)
@@ -97,30 +98,38 @@ func HandleTradeTick(ctx context.Context, gate *trade.Gate, cache *trade.TradeCa
 		}
 	}
 
-	key, found := cache.For(scope).OldestStale(minAge, func(key string, _ *trade.TradeLookupResult) bool {
+	// Keep validation outside OldestStale's cache lock: the shared checker can
+	// query PostgreSQL on an OCR-dictionary miss. Exclusions last for this tick
+	// only, so dictionary growth can admit a previously unknown name later.
+	excluded := make(map[string]bool)
+	for {
+		key, found := cache.For(scope).OldestStale(minAge, func(key string, _ *trade.TradeLookupResult) bool {
+			gem, variant := trade.ParseCacheKey(key)
+			if excluded[key] || variant != p.Variant || !strings.Contains(gem, " of ") {
+				return false
+			}
+			return tierSet == nil || tierSet[gem]
+		})
+		if !found {
+			slog.Debug("trade tick: no stale entry to refresh",
+				"variant", p.Variant,
+				"minTier", p.MinTier,
+				"minAge", minAge,
+			)
+			return
+		}
+
 		gem, variant := trade.ParseCacheKey(key)
-		if variant != p.Variant {
-			return false
+		known, err := handlers.KnownTradeGem(ctx, labCache, checker, scope, gem)
+		if err != nil {
+			slog.Warn("trade tick: gem dictionary query failed", "error", err)
+			return
 		}
-		if !strings.Contains(gem, " of ") {
-			return false
+		if !known {
+			excluded[key] = true
+			continue
 		}
-		if tierSet != nil && !tierSet[gem] {
-			return false
-		}
-		return true
-	})
-	if !found {
-		// Steady-state outcome: cache fresh, nothing to refresh. Logged at
-		// Debug to help diagnose unexpectedly empty caches.
-		slog.Debug("trade tick: no stale entry to refresh",
-			"variant", p.Variant,
-			"minTier", p.MinTier,
-			"minAge", minAge,
-		)
+		trade.SubmitRefresh(ctx, gate, gem, variant)
 		return
 	}
-
-	gem, variant := trade.ParseCacheKey(key)
-	trade.SubmitRefresh(ctx, gate, gem, variant)
 }

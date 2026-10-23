@@ -87,6 +87,14 @@ them. [ADR-017](017-no-default-engine-floor-may-hide-a-live-market.md) and
 provenance rides on each term as a flag and never gates a room out of the
 ranking.
 
+## Enforcement
+
+Tier: required
+
+Scope: Temple room valuation, market inputs, presets, advisor scoring and displayed values.
+
+Summary: Value and rank from one chaos-denominated market/preset object, preserve Default and Custom separately and apply the recorded fallback and final-incursion amendments.
+
 ## Context
 
 The temple builder advisor (POE-167…POE-171) ranked boards on
@@ -679,3 +687,60 @@ Doryani's Institute stay above it; Crucible of Flame (~35–50 c) passes when it
 holds that price over a day. The served `floorRule` string states the new rule.
 The 856 c / 846 delta figures above are from the committed capture under the old
 rule and remain historical.
+
+
+### Amendment — fallback architect ties and the last incursion, 2026-10-23
+
+Current implementation. This clarifies the 2026-10-17 amendment's "orders
+picks, never priced": the chaos rungs are unchanged. When every architect in
+the leader's rollout noise band has `Priced::Fallback` at its guaranteed built
+tier, equal architect keys are ordered by `rooms::RoomRank` (the same ordering
+that derives `pickOrder`), before falling back to the sampled mean. A clearly
+separated rollout, R4 carve-out veto, or differing architect key retains its
+existing precedence. A priced, partial, instrumental or Custom override offer
+never borrows this fallback ordering. `TempleProfileSettings::to_profile`
+carries per-tier provenance alongside the chaos values; `advisor::rank`
+emits a grade reason when the grade comparison discriminates.
+
+R4 and both sides of its pool carve-out require `BoardState::remaining > 1`.
+This follows the existing model's interpretation of the panel footer:
+`Sim::rollout_from` applies the current move, spends one incursion, then draws
+future rooms. Thus 1 includes the current incursion and leaves no future draw;
+0 also represents an unread footer and enables no pool argument. This rule gate
+does not change the rollout horizon or the separate RC tier-supply rule.
+The EV explanation now says architect tie-breaks did not decide the ranking;
+other eligible rules and door rules may still be listed.
+
+This amendment supersedes only an interpretation that rank within a fallback
+letter never orders architect ties, and any pool argument on the final
+incursion. It does not redefine R4's non-target "junk" policy. Evidence,
+verification limits and the unimplemented policy proposal are recorded in
+[the feedback investigation](../history/2026-10-23-temple-advisor-feedback.md).
+
+
+### Amendment — owner-approved R4 junk cutoff, 2026-10-23
+
+Current implementation. Owner ruling: "That grade letter sounds good, if other
+rules are kept, and it handles Vertolka cases, that's good one."
+
+For a complete pair of one upgrade offer and one change offer, R4 is eligible
+only when the change line is at most one grade letter better than the upgrade
+line. Letters are `RoomRank.tier` / `RankingTier` from `rooms::LINES`; position
+within a letter and chaos values do not enter this gate. Storage's E→C and
+Torment's D→B lose R4; Armoury's C→B keeps it. Equal or worse change letters
+also keep it.
+
+`score_options` applies `rules::limit_r4_by_grade` while both resolved offers
+are known, before ranking. It clears only R4's preference byte and explanation.
+The carve-out pair, last-incursion gate, RT, RC, reroll preference and fallback
+grade tie-break retain their existing behavior. A lone offer, unresolved or
+unranked line, same-kind pair, or any other incomplete pair preserves existing
+R4 behavior. Conditional second-door scoring has one fixed architect, so it
+also keeps that conservative behavior; the architect preference is constant
+across its door candidates.
+
+This supersedes the earlier amendment's unrestricted non-target junk policy
+for direct architect choices only, and decides section C of
+[the feedback investigation](../history/2026-10-23-temple-advisor-feedback.md).
+The simulated future-turn policy in `Sim::rollout` is unchanged; this amendment
+does not claim that clearing a tie-break changes a kill separated on EV.

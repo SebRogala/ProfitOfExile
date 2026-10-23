@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"profitofexile/internal/exchange"
+	"profitofexile/internal/harvest"
 )
 
 // subscribeClaims issues a token through the handler and returns the topics its
@@ -78,4 +79,14 @@ func TestMercureToken_grantsTheCurrencyExchangeUpdateTopicNotTheIngestTopic(t *t
 			t.Errorf("subscriber topics grant %q, want only the server-side %q", exchange.Topic, exchange.UpdatedTopic)
 		}
 	}
+}
+
+func TestMercureToken_grantsTheHarvestUpdateTopic(t *testing.T) {
+	got := subscribeClaims(t)
+	for _, topic := range got {
+		if topic == harvest.UpdatedTopic {
+			return
+		}
+	}
+	t.Errorf("subscriber topics %v missing %q", got, harvest.UpdatedTopic)
 }

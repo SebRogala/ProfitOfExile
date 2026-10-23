@@ -19,6 +19,14 @@ from the four QUALITY gates to the engine's own remaining floors, and
 bullet listed as what the server keeps (MinVolumePerHour 10, a per-horizon
 MinHoursSeen, MaxPlays 500) are not those levels any more.
 
+## Enforcement
+
+Tier: required
+
+Scope: Exchange engine defaults, liveness, action-side stock gates and sanctioned client price floors.
+
+Summary: Serve priceable live markets, including measured losses; express quality as flags and opt-in gates, with only the two sanctioned client price floors.
+
 ## Context
 
 ADR-015 moved the four absolute quality gates client-side and kept a short list

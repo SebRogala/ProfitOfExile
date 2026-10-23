@@ -9,6 +9,14 @@ uid: c62e3757-3699-439d-ad95-36930c1b19fd
 Superseded by [ADR-008](008-current-go-package-architecture.md). The repository
 did not adopt the described `domain/application/infrastructure` package tree.
 
+## Enforcement
+
+Tier: informational
+
+Scope: Historical internal Go package layout; superseded by ADR-008.
+
+Summary: The hexagonal/CQRS vertical-slice proposal was not adopted; ADR-008 governs current package boundaries.
+
 ## Context
 
 The Go rewrite of ProfitOfExile requires a clear internal package structure that can accommodate multiple feature domains (price engine, lab farming, simulation engine) while keeping each domain's code cohesive and its boundaries explicit. The structure must also be comprehensible to developers familiar with idiomatic Go, which tends to favor flat packages.

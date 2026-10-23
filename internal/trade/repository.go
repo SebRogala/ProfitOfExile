@@ -20,6 +20,27 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
+// KnownGem checks exact membership in the raw gem-name sources. Unlike the OCR
+// dictionary, these retain support, Heist and corrupted names; a trade lookup
+// is not limited to gems eligible for Labyrinth outcomes. Snapshot membership
+// is league-scoped; gem_colors is the shared name registry.
+func (r *Repository) KnownGem(ctx context.Context, scope league.Scope, name string) (bool, error) {
+	if err := scope.Validate(); err != nil {
+		return false, fmt.Errorf("repo: known gem: %w", err)
+	}
+	var known bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (
+		    SELECT 1 FROM gem_colors WHERE name = $2
+		    UNION ALL
+		    SELECT 1 FROM gem_snapshots WHERE league = $1 AND name = $2
+		)`, scope.ID(), name).Scan(&known)
+	if err != nil {
+		return false, fmt.Errorf("repo: known gem: %w", err)
+	}
+	return known, nil
+}
+
 // InsertTradeLookup persists a single trade lookup result. Uses ON CONFLICT DO
 // NOTHING to deduplicate rows with the same (time, gem, variant) key.
 func (r *Repository) InsertTradeLookup(ctx context.Context, scope league.Scope, result *TradeLookupResult, source string) error {

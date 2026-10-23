@@ -30,6 +30,7 @@ function lookup(listings: TradeListingDetail[], priceFloor = 0): TradeLookupResu
 		priceCeiling: 0,
 		priceSpread: 0,
 		medianTop10: 0,
+		medianTop3: 0,
 		listings,
 		signals: { sellerConcentration: 'NORMAL', cheapestStaleness: 'FRESH', priceOutlier: false, uniqueAccounts: 0 },
 		divinePrice: 240,

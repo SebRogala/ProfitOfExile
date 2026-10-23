@@ -1,8 +1,20 @@
+---
+uid: ff885da5-fc5d-4e75-96b7-d7ee0280f1a7
+---
+
 # ADR-005: gem_snapshots Separate Row Model — One Row Per Gem Observation
 
 ## Status
 
 Accepted
+
+## Enforcement
+
+Tier: required
+
+Scope: gem_snapshots schema, collector writes and gem observation queries.
+
+Summary: Store base and transfigured gem observations as separate rows, preserving per-observation identity and query-time pairing.
 
 ## Context
 

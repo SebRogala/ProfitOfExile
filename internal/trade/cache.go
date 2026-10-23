@@ -22,10 +22,12 @@ type TradeCache struct {
 	entries map[string]*cacheEntry
 	order   []string // LRU order: oldest at [0], newest at end
 	maxSize int
+	now     func() time.Time
 }
 
 type cacheEntry struct {
-	Result *TradeLookupResult
+	Result     *TradeLookupResult
+	retryAfter time.Time
 }
 
 // NewTradeCache creates an LRU cache that evicts the least-recently-used
@@ -37,6 +39,7 @@ func NewTradeCache(maxSize int, scope league.Scope) *TradeCache {
 		entries: make(map[string]*cacheEntry, maxSize),
 		order:   make([]string, 0, maxSize),
 		maxSize: maxSize,
+		now:     time.Now,
 	}
 }
 
@@ -71,11 +74,18 @@ func (c *TradeCache) Get(key string) (*TradeLookupResult, bool) {
 // is updated and the key is promoted. If the cache is at capacity, the
 // least-recently-used entry is evicted first.
 func (c *TradeCache) Set(key string, result *TradeLookupResult) {
+	// LatestLookups restores normalized listings without this derived field;
+	// older desktop contributions also lack it. Derive it before publishing.
+	derived := *result
+	derived.MedianTop3 = medianTop3ChaosPrice(derived.Listings)
+	result = &derived
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if _, ok := c.entries[key]; ok {
 		c.entries[key].Result = result
+		c.entries[key].retryAfter = time.Time{}
 		c.promote(key)
 		return
 	}
@@ -86,6 +96,17 @@ func (c *TradeCache) Set(key string, result *TradeLookupResult) {
 
 	c.entries[key] = &cacheEntry{Result: result}
 	c.order = append(c.order, key)
+}
+
+// RecordFailure delays stale selection without changing the last successful
+// lookup or its FetchedAt. Failure metadata is process-local and is discarded
+// on success, eviction or restart; it is never a price or an empty-market check.
+func (c *TradeCache) RecordFailure(key string, retryAfter time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if entry, ok := c.entries[key]; ok && retryAfter.After(entry.retryAfter) {
+		entry.retryAfter = retryAfter
+	}
 }
 
 // Delete removes a key from the cache. No-op if the key does not exist.
@@ -138,17 +159,22 @@ func (c *TradeCache) removeFromOrder(key string) {
 }
 
 // OldestStale returns the cache key whose FetchedAt is oldest among entries
-// matching the filter. Only entries older than minAge are considered.
+// matching the filter. Only entries older than minAge and outside a failure
+// retry delay are considered.
 // Returns ("", false) if nothing qualifies.
 func (c *TradeCache) OldestStale(minAge time.Duration, filter func(key string, r *TradeLookupResult) bool) (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	cutoff := time.Now().Add(-minAge)
+	now := c.now()
+	cutoff := now.Add(-minAge)
 	var oldestKey string
 	var oldestTime time.Time
 
 	for key, e := range c.entries {
+		if now.Before(e.retryAfter) {
+			continue
+		}
 		if e.Result.FetchedAt.After(cutoff) {
 			continue // too fresh
 		}

@@ -8,6 +8,14 @@ uid: 723f68df-5208-4743-ae8f-e6de4013e7ff
 
 Accepted; supersedes ADR-002.
 
+## Enforcement
+
+Tier: required
+
+Scope: internal/ Go feature packages, HTTP handlers and dependency boundaries.
+
+Summary: Keep behavior in its owning flat feature package and HTTP transport in internal/server; add abstractions for concrete boundaries.
+
 ## Context
 
 ADR-002 proposed vertical modules split into `domain`, `application`, and

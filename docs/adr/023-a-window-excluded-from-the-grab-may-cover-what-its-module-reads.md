@@ -21,6 +21,14 @@ and `overlay-preview`, the Settings-owned read-only OCR frame.
 Amended 2026-09-12 (POE-232) — see
 [the widget-placement amendment at the end](#amendment-the-mercenary-geometry-is-a-widget-placement-2026-09-12).
 
+## Enforcement
+
+Tier: required
+
+Scope: App-wide screen capture and EXCLUDED_WHILE_GRABBING overlay membership.
+
+Summary: Exclude only explicitly listed windows for each grab and restore capture affinity afterwards; unlisted overlays remain under ADR-019.
+
 ## Context
 
 The merc verdict strip is being redesigned to paint its read marks IN PLACE —

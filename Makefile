@@ -1,9 +1,15 @@
-.PHONY: help build test test-integration qa up down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-test desktop-test-js desktop-build desktop-deploy desktop-sync desktop-release-windows desktop-watch merc-seed-art
+.PHONY: help build test test-integration qa up up-collector down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-test desktop-test-js desktop-build desktop-deploy desktop-sync desktop-release-windows desktop-watch merc-seed-art
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' Makefile | sed 's/:.*## /\t/' | awk -F '\t' '{printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 -include .env.local
+
+.PHONY: worktree-create
+worktree-create: ## Provision a guarded isolated lane (LANE=lane… BASE=ref)
+	@node scripts/worktree-create.mjs
+
+export LANE BASE DRY_RUN
 
 build: ## Build Go server binary
 	@docker compose exec app true 2>/dev/null || $(MAKE) up
@@ -31,8 +37,14 @@ deps-check: ## Fail if installed npm deps violate declared peer ranges
 	docker compose run --rm -w /app/desktop desktop sh -c 'npm ls --all >/dev/null'
 	docker compose run --rm frontend sh -c 'cd /app && npm ls --all >/dev/null'
 
-up: ## Start dev environment (Docker Compose)
+# `up` never starts the collector: it sits behind the Compose profile
+# `collector` (POE-305). Every target that falls back to `$(MAKE) up` inherits
+# that, so only `up-collector` starts it.
+up: ## Start dev environment (Docker Compose) without the collector
 	docker compose up -d --build
+
+up-collector: ## Opt-in: start the collector (polls poe.ninja + GGG trade)
+	docker compose --profile collector up -d --build collector
 
 down: ## Stop dev environment
 	docker compose down
@@ -58,16 +70,19 @@ endif
 	touch internal/db/migrations/$${ts}_$(name).down.sql; \
 	echo "Created: internal/db/migrations/$${ts}_$(name).{up,down}.sql"
 
-build-collector: ## Build collector binary
-	@docker compose exec collector true 2>/dev/null || $(MAKE) up
-	docker compose exec collector go build -o bin/collector ./cmd/collector
+# Built in the app container: same image (Dockerfile.dev) and source mount, so
+# compiling never needs a collector container running. Refuses instead of
+# falling back to `make up`, so it never starts a stack on its own.
+build-collector: ## Build collector binary in the running app container (start it with make up)
+	@docker compose exec app true 2>/dev/null || { echo "app is not running; start it first with: make up" >&2; exit 1; }
+	docker compose exec app go build -o bin/collector ./cmd/collector
 
-shell-collector: ## Open shell in collector container
-	@docker compose exec collector true 2>/dev/null || $(MAKE) up
-	docker compose exec collector sh
+shell-collector: ## Open shell in a running collector container (start it with make up-collector)
+	@docker compose --profile collector exec collector true 2>/dev/null || { echo "collector is not running; start it explicitly with: make up-collector" >&2; exit 1; }
+	docker compose --profile collector exec collector sh
 
-logs-collector: ## Follow collector logs
-	docker compose logs -f collector
+logs-collector: ## Follow collector logs (starts nothing)
+	docker compose --profile collector logs -f collector
 
 # Where the merc seed-art fixture lives and which map names it. The art is
 # NOT committed (GPL-3 repo, CC-BY-NC-SA icons — see that directory's README

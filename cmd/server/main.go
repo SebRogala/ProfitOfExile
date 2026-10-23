@@ -168,13 +168,13 @@ func main() {
 	// Publishing "the served answer changed" is debounced: a catch-up pass
 	// stores several hours back to back and triggers one recompute per hour, and
 	// clients only need to be told once, about the final state.
-	exchangePublisher := exchangeUpdatePublisher{scope: scope, mercureURL: mercureURL, mercureSecret: mercureSecret}
+	marketPublisher := marketUpdatePublisher{scope: scope, mercureURL: mercureURL, mercureSecret: mercureSecret}
 	// Captured explicitly: the closure runs on a timer goroutine long after this
 	// line, so it must hold the process-lifetime context by value.
 	publishCtx := ctx
 	exchangeDebounce := exchange.NewDebouncer(exchange.DefaultUpdateDebounce, func() {
 		res, _ := exchangeCache.Snapshot(exchange.DefaultHorizon)
-		if err := exchangePublisher.Publish(publishCtx, exchange.UpdatedTopic, exchange.UpdatePayload(res, time.Now())); err != nil {
+		if err := marketPublisher.Publish(publishCtx, exchange.UpdatedTopic, exchange.UpdatePayload(res, time.Now())); err != nil {
 			slog.Warn("currency-exchange: publishing the update event failed", "error", err)
 		}
 	})
@@ -185,7 +185,11 @@ func main() {
 	// Harvest prices + tiers, recomputed from the same stored exchange rows
 	// (POE-286): the read side of GET /api/harvest and the exchange.Topic dispatch.
 	harvestCache := harvest.NewCache()
-	harvestService := harvest.NewService(exchangeRepo, scope, harvestCache, slog.Default())
+	// Exchange and Harvest recompute independently. Harvest's own completion
+	// event prevents clients from reading its previous hour after Exchange wins.
+	harvestDebounce := newHarvestUpdateDebouncer(publishCtx, harvestCache, marketPublisher)
+	defer harvestDebounce.Stop()
+	harvestService := harvest.NewService(exchangeRepo, scope, harvestCache, harvestDebounce.Signal, slog.Default())
 	slog.Info("currency exchange service configured",
 		"minVolumePerHour", exchangeCfg.MinVolumePerHour,
 		"minEdge", exchangeCfg.MinEdge,
@@ -315,8 +319,12 @@ func main() {
 		return server.NewMercureSubscriber(hubURL, topics, subscriberKey, handler)
 	}
 	if tradeGate != nil {
+		var knownGem func(context.Context, league.Scope, string) (bool, error)
+		if tradeRepo != nil {
+			knownGem = tradeRepo.KnownGem
+		}
 		runtime.tradeTick = func(eventCtx context.Context, raw []byte) {
-			server.HandleTradeTick(eventCtx, tradeGate, tradeCache, labCache, scope, raw)
+			server.HandleTradeTick(eventCtx, tradeGate, tradeCache, labCache, scope, raw, knownGem)
 		}
 	}
 	runtime.updateRate = func(_ context.Context) {

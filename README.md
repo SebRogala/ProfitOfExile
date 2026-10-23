@@ -71,6 +71,8 @@ section for the complete data-flow and compliance description.
 - Production embeds the prerendered SvelteKit build in the Go server binary;
   Docker multi-stage builds and GitHub Actions cover server, frontend, and
   desktop quality gates.
+  Unknown `/api` paths return JSON 404 responses; other unknown paths serve the
+  SPA shell. Router method mismatches return 405.
 - Cross-language fixtures keep Go, Rust, and TypeScript implementations aligned
   where wire formats and image-derived signatures cross process boundaries.
 
@@ -103,10 +105,23 @@ section for the complete data-flow and compliance description.
 Everything runs in Docker — no local Go/Node tooling needed.
 
 ```bash
-make up          # Start all services (Go + SvelteKit with hot reload)
+make up          # Start app, frontend, desktop (Go + SvelteKit with hot reload); never the collector
+make up-collector  # Opt-in: start the collector (polls poe.ninja + GGG trade)
 make test        # Run all Go tests
 make migration name=add_foo   # Generate new migration pair
 ```
+
+**The collector is opt-in (POE-305).** `make up`, and every target that falls
+back to it (`build`, `test`, `migrate*`), no longer starts the collector, on
+every machine running this repo: it sits behind the Compose profile
+`collector`. Start it with `make up-collector`. `build-collector` compiles in
+the app container and refuses unless app is running (run `make up` first);
+`shell-collector` refuses unless the collector is already running. A `profitofexile_collector` container
+created before this change keeps its `restart: unless-stopped` policy: if it
+is running it keeps running and comes back after a Docker restart until you
+stop or remove it (`docker compose --profile collector stop collector`, or
+`docker rm -f profitofexile_collector`). `make up` neither starts nor stops it.
+Check the default with `scripts/compose-profile.test.sh`.
 
 Single domain via Traefik: `/api` routes to Go, everything else to Vite dev server.
 

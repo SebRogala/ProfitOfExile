@@ -36,6 +36,48 @@ function responseFor(horizon: CurrencyExchangeHorizon): HarvestResponse {
 }
 
 describe('harvest HTTP adapter', () => {
+
+	it('returns the new hour for a newer generation while an older read is pending', async () => {
+		let finishOld!: (value: HarvestResponse) => void;
+		const old = new Promise<HarvestResponse>((resolve) => { finishOld = resolve; });
+		const fresh = responseFor('day');
+		fresh.prices.priceHour = '2026-09-10T00:00:00Z';
+		fresh.families.families = [family('new-hour-family')];
+		const fetchOne = vi.fn().mockReturnValueOnce(old).mockResolvedValueOnce(fresh);
+		const http = createHarvestHttp(fetchOne);
+		const oldPrices = http.loadExchangePrices('day', 1);
+		const newPrices = http.loadExchangePrices('day', 2);
+		const newFamilies = http.loadHarvestFamilies('day', 2);
+
+		// Resolve the old read too, so a regression fails on the value instead of timing out.
+		finishOld(responseFor('day'));
+		expect((await newPrices).priceHour).toBe('2026-09-10T00:00:00Z');
+		expect((await newFamilies).families[0].id).toBe('new-hour-family');
+		expect((await oldPrices).priceHour).toBe('2026-09-09T23:00:00Z');
+		expect(fetchOne).toHaveBeenCalledTimes(2);
+	});
+
+	it('keeps a newer pending read shareable when an older request settles', async () => {
+		let finishOld!: (value: HarvestResponse) => void;
+		let finishNew!: (value: HarvestResponse) => void;
+		const fetchOne = vi.fn(async () => responseFor('day'))
+			.mockReturnValueOnce(new Promise<HarvestResponse>((resolve) => { finishOld = resolve; }))
+			.mockReturnValueOnce(new Promise<HarvestResponse>((resolve) => { finishNew = resolve; }));
+		const http = createHarvestHttp(fetchOne);
+		const old = http.loadExchangePrices('day', 1);
+		const fresh = http.loadExchangePrices('day', 2);
+		finishOld(responseFor('day'));
+		await old;
+		const families = http.loadHarvestFamilies('day', 2);
+		const response = responseFor('day');
+		response.families.families = [family('pending-new-family')];
+		finishNew(response);
+
+		expect((await families).families[0].id).toBe('pending-new-family');
+		await fresh;
+		expect(fetchOne).toHaveBeenCalledTimes(2);
+	});
+
 	it('reads one snapshot for both ports when they load in the same tick', async () => {
 		// Prices and tiers must come from one response, or a recompute between two
 		// requests could pair a price hour with tiers from another.
@@ -51,7 +93,7 @@ describe('harvest HTTP adapter', () => {
 	});
 
 	it('fetches again for a pair that loads after the previous pair settled', async () => {
-		// The shared read is only in flight; a later refetch (currency-exchange-updated)
+		// The shared read is only in flight; a later refetch (harvest-updated)
 		// must return the second snapshot, not the one from before the update.
 		const first = responseFor('day');
 		const second: HarvestResponse = {

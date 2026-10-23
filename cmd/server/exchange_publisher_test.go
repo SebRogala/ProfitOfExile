@@ -79,7 +79,7 @@ func TestExchangeUpdatePublisher_hubNotConfigured_succeedsWithoutPublishing(t *t
 	// The recompute runs whether or not a hub is configured, and its debounced
 	// notify has nowhere to report a failure: an unconfigured publisher must
 	// report success rather than logging a warning after every recompute burst.
-	publisher := exchangeUpdatePublisher{scope: publisherScope}
+	publisher := marketUpdatePublisher{scope: publisherScope}
 
 	err := publisher.Publish(context.Background(), exchange.UpdatedTopic,
 		exchange.UpdatePayload(updateResult(), updateEventNow))
@@ -93,7 +93,7 @@ func TestExchangeUpdatePublisher_emptySecret_doesNotReachTheHub(t *testing.T) {
 	// A hub URL with no publishing secret cannot produce a signed request; the
 	// adapter must skip the POST instead of sending an unauthorized one.
 	hub := newHubRecorder(t)
-	publisher := exchangeUpdatePublisher{scope: publisherScope, mercureURL: hub.server.URL}
+	publisher := marketUpdatePublisher{scope: publisherScope, mercureURL: hub.server.URL}
 
 	if err := publisher.Publish(context.Background(), exchange.UpdatedTopic,
 		exchange.UpdatePayload(updateResult(), updateEventNow)); err != nil {
@@ -107,7 +107,7 @@ func TestExchangeUpdatePublisher_emptySecret_doesNotReachTheHub(t *testing.T) {
 
 func TestExchangeUpdatePublisher_configuredHub_postsOnTheTopicItWasGiven(t *testing.T) {
 	hub := newHubRecorder(t)
-	publisher := exchangeUpdatePublisher{
+	publisher := marketUpdatePublisher{
 		scope:         publisherScope,
 		mercureURL:    hub.server.URL,
 		mercureSecret: "test-secret",
@@ -134,7 +134,7 @@ func TestExchangeUpdatePublisher_configuredHub_stampsTheLeagueIdentity(t *testin
 	// leagueRevision, so an unstamped update would be invisible to every
 	// subscriber that checks.
 	hub := newHubRecorder(t)
-	publisher := exchangeUpdatePublisher{
+	publisher := marketUpdatePublisher{
 		scope:         publisherScope,
 		mercureURL:    hub.server.URL,
 		mercureSecret: "test-secret",
@@ -160,7 +160,7 @@ func TestExchangeUpdatePublisher_configuredHub_stampsTheLeagueIdentity(t *testin
 
 func TestExchangeUpdatePublisher_configuredHub_carriesTheUpdatePayloadUntouched(t *testing.T) {
 	hub := newHubRecorder(t)
-	publisher := exchangeUpdatePublisher{
+	publisher := marketUpdatePublisher{
 		scope:         publisherScope,
 		mercureURL:    hub.server.URL,
 		mercureSecret: "test-secret",

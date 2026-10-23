@@ -51,6 +51,75 @@ func TestCache_Miss(t *testing.T) {
 	}
 }
 
+func TestCache_WarmDerivesTradePriceFromNormalizedListings(t *testing.T) {
+	c := NewTradeCache(10, league.Historical("Test"))
+	c.Warm([]TradeLookupResult{{
+		Gem:     "Arc",
+		Variant: "20/20",
+		Listings: []TradeListingDetail{
+			{Price: 1, Currency: "divine", ChaosPrice: 200},
+			{Price: 50, Currency: "chaos", ChaosPrice: 50},
+			{Price: 40, Currency: "chaos", ChaosPrice: 40},
+			{Price: 55, Currency: "chaos", ChaosPrice: 55},
+			{Price: 60, Currency: "chaos", ChaosPrice: 60},
+		},
+	}})
+	got, ok := c.Get(CacheKey("Arc", "20/20"))
+	if !ok {
+		t.Fatal("expected warmed lookup")
+	}
+	if got.MedianTop3 != 50 {
+		t.Errorf("warmed MedianTop3 = %v, want 50", got.MedianTop3)
+	}
+}
+
+func TestCache_WarmPreservesLookupTimestamp(t *testing.T) {
+	c := NewTradeCache(10, league.Historical("Test"))
+	fetchedAt := time.Date(2026, 10, 23, 10, 0, 0, 0, time.UTC)
+	c.Warm([]TradeLookupResult{{Gem: "Arc", Variant: "20/20", FetchedAt: fetchedAt}})
+	got, ok := c.Get(CacheKey("Arc", "20/20"))
+	if !ok {
+		t.Fatal("expected warmed lookup")
+	}
+	if !got.FetchedAt.Equal(fetchedAt) {
+		t.Errorf("warmed FetchedAt = %v, want %v", got.FetchedAt, fetchedAt)
+	}
+}
+
+func TestCache_SetDerivesTradePriceFromNormalizedListings(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		medianTop3 float64
+	}{
+		{name: "missing field"},
+		{name: "incorrect supplied field", medianTop3: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewTradeCache(10, league.Historical("Test"))
+			key := CacheKey("Arc", "20/20")
+			c.Set(key, &TradeLookupResult{
+				Gem:        "Arc",
+				Variant:    "20/20",
+				MedianTop3: tc.medianTop3,
+				Listings: []TradeListingDetail{
+					{Price: 1, Currency: "divine", ChaosPrice: 200},
+					{Price: 50, Currency: "chaos", ChaosPrice: 50},
+					{Price: 40, Currency: "chaos", ChaosPrice: 40},
+					{Price: 55, Currency: "chaos", ChaosPrice: 55},
+					{Price: 60, Currency: "chaos", ChaosPrice: 60},
+				},
+			})
+			got, ok := c.Get(key)
+			if !ok {
+				t.Fatal("expected cached lookup")
+			}
+			if got.MedianTop3 != 50 {
+				t.Errorf("cached MedianTop3 = %v, want 50", got.MedianTop3)
+			}
+		})
+	}
+}
+
 func TestCache_Eviction(t *testing.T) {
 	c := NewTradeCache(3, league.Historical("Mirage"))
 
@@ -292,4 +361,59 @@ func TestCache_For_RejectsForeignLeague(t *testing.T) {
 	requirePanic(t, func() {
 		_, _ = c.For(other).Get(key)
 	})
+}
+
+func TestCache_FailureDelayExpiresAtRetryDeadline(t *testing.T) {
+	c := NewTradeCache(10, league.Historical("Mirage"))
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+	key := CacheKey("Arc", "20/20")
+	c.Set(key, &TradeLookupResult{Gem: "Arc", Variant: "20/20", FetchedAt: now.Add(-time.Hour)})
+	deadline := now.Add(5 * time.Minute)
+	c.RecordFailure(key, deadline)
+	now = deadline.Add(-time.Nanosecond)
+	if got, ok := c.OldestStale(time.Minute, nil); ok {
+		t.Fatalf("stale key before retry deadline=%q, want none", got)
+	}
+	now = deadline
+	if got, ok := c.OldestStale(time.Minute, nil); !ok || got != key {
+		t.Fatalf("stale key at retry deadline=%q found=%v, want Arc", got, ok)
+	}
+}
+
+func TestCache_SuccessfulReplacementClearsFailureDelay(t *testing.T) {
+	c := NewTradeCache(10, league.Historical("Mirage"))
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+	key := CacheKey("Arc", "20/20")
+	c.Set(key, &TradeLookupResult{FetchedAt: now.Add(-2 * time.Hour)})
+	c.RecordFailure(key, now.Add(time.Hour))
+	// A valid replacement may itself be old (e.g. a contributed lookup). Its
+	// own age controls eligibility, independent of the previous request failure.
+	c.Set(key, &TradeLookupResult{FetchedAt: now.Add(-time.Hour)})
+	if got, ok := c.OldestStale(time.Minute, nil); !ok || got != key {
+		t.Fatalf("replacement stale key=%q found=%v, want Arc with failure delay cleared", got, ok)
+	}
+}
+
+func TestCache_FailureDelayIsPerVariant(t *testing.T) {
+	c := NewTradeCache(10, league.Historical("Mirage"))
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+	failed, other := CacheKey("Arc", "20/20"), CacheKey("Arc", "1/0")
+	c.Set(failed, &TradeLookupResult{FetchedAt: now.Add(-2 * time.Hour)})
+	c.Set(other, &TradeLookupResult{FetchedAt: now.Add(-time.Hour)})
+	c.RecordFailure(failed, now.Add(time.Hour))
+	if got, ok := c.OldestStale(time.Minute, nil); !ok || got != other {
+		t.Fatalf("stale key=%q found=%v, want unaffected Arc 1/0", got, ok)
+	}
+}
+
+func TestCache_FailureWithoutPreviousLookupDoesNotCreateMarketCheck(t *testing.T) {
+	c := NewTradeCache(10, league.Historical("Mirage"))
+	key := CacheKey("Arc", "20/20")
+	c.RecordFailure(key, time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC))
+	if got, ok := c.Get(key); ok || got != nil || c.Len() != 0 {
+		t.Fatalf("failure created a checked market result: %+v found=%v", got, ok)
+	}
 }

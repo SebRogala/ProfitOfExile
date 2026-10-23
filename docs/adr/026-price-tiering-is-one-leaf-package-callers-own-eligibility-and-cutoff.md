@@ -10,6 +10,14 @@ Accepted (2026-10-10, Operator rescope on the Harvest tiers lane: "we need to
 make it SSOT and universal"). Shipped on branch `harvest-tiers` (`a39b733c`,
 "tiers: move the tier algorithm to internal/price/tier").
 
+## Enforcement
+
+Tier: required
+
+Scope: internal/price/tier and its Lab, Exchange and Harvest callers.
+
+Summary: Keep tiering in one stdlib-only leaf package; callers own eligibility and cutoff, groups remain separate markets and labels remain flags.
+
 ## Context
 
 The unified tier system (TOP, HIGH, MID-HIGH, MID, LOW, FLOOR, CHAOTIC) lived in

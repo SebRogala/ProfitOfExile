@@ -11,6 +11,14 @@ Accepted. Carries one **proposed** amendment — see
 at the end: a module's arming clock should measure absence of its subject
 rather than age of the signal. Nothing in the Decision below has moved.
 
+## Enforcement
+
+Tier: required
+
+Scope: Desktop module registry, background task lifecycle, navigation and shared state.
+
+Summary: Separate module work toggles from browsable views, declare disabled_means and share state through SSOT slices; the proposed arming amendment is advisory.
+
 ## Context
 
 New desktop capabilities keep arriving (mercenary triage now; CX flippables,

@@ -8,6 +8,14 @@ uid: cbd946d2-34a3-4258-a21d-1ec536493960
 
 Accepted
 
+## Enforcement
+
+Tier: required
+
+Scope: gem_colors storage, gem color resolution and collector discovery writes.
+
+Summary: Resolve colors through the database-backed shared resolver and persist discoveries without overwriting existing assignments.
+
 ## Context
 
 POE-19 requires mapping gem names to colors (RED/GREEN/BLUE/WHITE) to support the Font of Divine Skill strategy, which groups gems by color to compute win probabilities via the hypergeometric formula.

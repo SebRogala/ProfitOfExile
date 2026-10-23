@@ -292,6 +292,12 @@ pub struct StrategyProfile {
     /// Per-line, per-tier value, indexed `[tier1, tier2, tier3]`. Tier 0 always
     /// scores zero and has no slot. A line absent from the map is worth zero.
     pub room_values: BTreeMap<Line, [f64; 3]>,
+    /// Per-tier provenance from the valuation, used only to break otherwise
+    /// equal architect ties inside the rollout noise band. Absent on the
+    /// abstract Rush fixture; measured, instrumental and override values do
+    /// not borrow the grade order.
+    #[serde(default)]
+    pub grade_fallback: BTreeMap<Line, [bool; 3]>,
     /// What the Apex is worth **on its own**. On a board that already carries
     /// value the Apex instead adds [`Self::apex_mixed_increment`].
     pub apex_score: f64,
@@ -440,6 +446,7 @@ impl StrategyProfile {
 
         StrategyProfile {
             room_values,
+            grade_fallback: BTreeMap::new(),
             apex_score: 2.0,
             apex_mixed_increment: 0.5,
             combinations: vec![Combination {

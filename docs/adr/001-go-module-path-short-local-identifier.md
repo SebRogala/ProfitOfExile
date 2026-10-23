@@ -8,6 +8,14 @@ uid: 2c9b0507-f2f3-4a0f-be2c-432d1ec74c4a
 
 Accepted
 
+## Enforcement
+
+Tier: suggested
+
+Scope: go.mod and Go import paths.
+
+Summary: Use profitofexile as the local Go module path; the application is not a published library.
+
 ## Context
 
 When initializing the Go module for ProfitOfExile, the module path must be chosen. In Go, the module path appears in every import statement throughout the codebase and is embedded in `go.mod`. Changing it later requires a mass rename of all import paths across all source files.

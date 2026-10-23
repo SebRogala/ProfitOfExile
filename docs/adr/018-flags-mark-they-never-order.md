@@ -15,6 +15,14 @@ ranking clause to the served order (see that ADR's 2026-09-01 amendment).
 Amended 2026-09-01 (POE-222) — see the amendment at the end: a row cap is
 disclosure and not a filter, and the three properties that keep it one.
 
+## Enforcement
+
+Tier: required
+
+Scope: Client tables over served plays, sort comparators, flags and row caps.
+
+Summary: Sort only by the chosen displayed figure; flags never reorder rows, and row caps remain disclosed and immediately liftable.
+
 ## Context
 
 The Apocalypse card recipe stood in the book at buy 401c / sell 1200c for over

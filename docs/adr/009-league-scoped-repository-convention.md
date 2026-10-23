@@ -29,6 +29,14 @@ endpoint. Writer and reader in separate packages is the same arrangement
 `internal/lab`); what the convention binds is that every repository touching the
 table takes `league.Scope`, not that one package owns it.
 
+## Enforcement
+
+Tier: required
+
+Scope: All repositories and workflows accessing league-scoped tables.
+
+Summary: Resolve league.Scope once at the lifecycle boundary and carry it through every scoped read and write; historical access is explicit.
+
 ## Context
 
 POE-119 adds a league column to its twelve historical data tables and introduces

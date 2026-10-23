@@ -1110,9 +1110,9 @@ export async function fetchHarvest(horizon: CurrencyExchangeHorizon): Promise<Ha
  * The divine:chaos rate every chaos ↔ divine figure converts with (POE-284),
  * owned by the Currency Exchange module (`internal/exchange`) and readable by
  * every device. `divineChaosRate` is a finite number > 0 or `null` (no exchange
- * hour yet, or no divine/chaos trade in it); `state` and `unreachableSince`
- * come from the source. Read through `$lib/stores/divine-rate.svelte`, never
- * directly.
+ * hour yet, or no divine/chaos trade in it). These are the source fields; the
+ * store additionally derives stale and `unreachableSince` on failed reads.
+ * Read through `$lib/stores/divine-rate.svelte`, never directly.
  */
 export interface DivineRate {
 	divineChaosRate: number | null;
@@ -1126,8 +1126,8 @@ export interface DivineRate {
  * Read the divine rate through its port: the Currency Exchange's own rate
  * (`GET /currency-exchange/divine-rate`). `state` is `ready` only when the
  * server is warm and holds a rate; otherwise `cold`. Stale and unreachable
- * detection is not done here (known gap F1): the store keeps its last
- * snapshot when this rejects.
+ * detection belongs to the store: when this rejects it keeps the last value
+ * and marks it stale (POE-291).
  */
 export async function fetchDivineRate(): Promise<DivineRate> {
 	const body = await get<{ divineChaosRate: number | null; priceHour: string | null; warm: boolean }>(
@@ -1156,6 +1156,9 @@ export interface MercureConnection {
  */
 export const CURRENCY_EXCHANGE_UPDATED_TOPIC = 'poe/currency-exchange/updated';
 
+/** Harvest snapshots are stored before the server publishes this topic. */
+export const HARVEST_UPDATED_TOPIC = 'poe/harvest/updated';
+
 /**
  * Open the Mercure SSE stream and keep it open (token refresh, backoff,
  * visibility-aware reconnect). One connection serves the whole app — LabPage
@@ -1165,6 +1168,7 @@ export const CURRENCY_EXCHANGE_UPDATED_TOPIC = 'poe/currency-exchange/updated';
  * through: `poe/lab/layout` reaches `onLayoutUpdate` only, and
  * `poe/currency-exchange/updated` reaches `onCurrencyExchangeUpdate` only, so
  * a Currency Exchange tick does not drag the lab dashboard through a reload.
+ * `poe/harvest/updated` likewise reaches `onHarvestUpdate` only.
  * Everything else — `poe/analysis/updated` above all — calls `onUpdate`.
  *
  * @param onUpdate Fired for every topic without a dedicated callback.
@@ -1173,8 +1177,9 @@ export const CURRENCY_EXCHANGE_UPDATED_TOPIC = 'poe/currency-exchange/updated';
  * @param onCurrencyExchangeUpdate `poe/currency-exchange/updated` payloads.
  *   Optional like the rest: three-argument callers keep working unchanged and
  *   simply drop those events.
+ * @param onHarvestUpdate `poe/harvest/updated` payloads; only Harvest reloads.
  */
-export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void, onLayoutUpdate?: (data?: any) => void, onCurrencyExchangeUpdate?: (data?: any) => void): MercureConnection {
+export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void, onLayoutUpdate?: (data?: any) => void, onCurrencyExchangeUpdate?: (data?: any) => void, onHarvestUpdate?: (data?: any) => void): MercureConnection {
 	const state: MercureConnection = { close: () => {}, connected: false };
 	let eventSource: EventSource | null = null;
 	let tokenTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -1253,6 +1258,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 			authedUrl.searchParams.append('topic', 'poe/analysis/updated');
 			authedUrl.searchParams.append('topic', 'poe/lab/layout');
 			authedUrl.searchParams.append('topic', CURRENCY_EXCHANGE_UPDATED_TOPIC);
+			authedUrl.searchParams.append('topic', HARVEST_UPDATED_TOPIC);
 			authedUrl.searchParams.set('authorization', token);
 
 			eventSource = new EventSource(authedUrl.toString());
@@ -1291,6 +1297,11 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 
 				if (data?.topic === CURRENCY_EXCHANGE_UPDATED_TOPIC) {
 					onCurrencyExchangeUpdate?.(data);
+					return;
+				}
+
+				if (data?.topic === HARVEST_UPDATED_TOPIC) {
+					onHarvestUpdate?.(data);
 					return;
 				}
 

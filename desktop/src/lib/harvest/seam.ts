@@ -106,5 +106,6 @@ export interface HarvestFamilyData {
 	families: HarvestFamily[];
 }
 
-export type LoadExchangePrices = (horizon: CurrencyExchangeHorizon) => Promise<ExchangePriceRead>;
-export type LoadHarvestFamilies = (horizon: CurrencyExchangeHorizon) => Promise<HarvestFamilyData>;
+/** Both ports receive the same generation per controller load; only that load may share a pending read. */
+export type LoadExchangePrices = (horizon: CurrencyExchangeHorizon, generation?: number) => Promise<ExchangePriceRead>;
+export type LoadHarvestFamilies = (horizon: CurrencyExchangeHorizon, generation?: number) => Promise<HarvestFamilyData>;
