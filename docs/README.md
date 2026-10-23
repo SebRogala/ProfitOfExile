@@ -74,7 +74,7 @@ ADRs record decisions at a point in time. If implementation later supersedes a d
 - [Game art sourcing](GAME-ART-SOURCING.md) — current sources and extraction recipes for static UI art, including the minimap Id→sprite-cell mapping.
 - [Deployment](DEPLOY.md) — current deploy workflow, filter derivation, manual-dispatch cases, and the accepted verification gap.
 - [Development setup](DEV-SETUP.md) — current WSL + Windows dev-machine procedure and the daily edit/sync/run loop.
-- [Analysis Cache Guide](ANALYSIS-CACHE.md) — current `lab.Cache` topology, tick chain, tenancy and concurrency contract, cold start, and the sparkline series cache.
+- [Analysis Cache Guide](ANALYSIS-CACHE.md) — current `lab.Cache` topology, tick chain, tenancy and concurrency contract, cold start, the sparkline series cache, and the shared signal-history seed and cold-read retention window.
 - [Game facts](GAME-FACTS.md) — current game-side invariants with dates and sources, separate from codebase facts.
 - [Currency Exchange row invariant](CURRENCY-EXCHANGE-ROW-INVARIANT.md) — current normative spec for the exchange row: the invariant equations, the rendering rules, the re-affirmed exemptions, and the closure-test enforcement tiers.
 - [Temple advisor feedback investigation — 2026-10-23](history/2026-10-23-temple-advisor-feedback.md) — seven reported choices, bounded fixes, verification limits and an unimplemented R4 policy proposal.

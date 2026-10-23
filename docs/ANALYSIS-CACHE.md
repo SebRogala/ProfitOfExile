@@ -268,7 +268,10 @@ follow its shape: warmth is checked first, and the read is skipped once warm.
   partially filled ring is worse than an empty one: it answers short instead of
   falling back. `SignalHistoryWindow` seeds it once, bounded to the newest
   `depth` rows per `(name, variant)` series (never a league-wide set of
-  snapshot times) and to `signalHistorySeedMaxDays`.
+  snapshot times) and to `signalHistorySeedMaxDays`. The cold-cache fallback
+  `Repository.SignalHistory` uses the same time bound (POE-292), so a series
+  already outside the window is empty on either path at seed time. Warm rings
+  are subsequently capped by depth; they do not evict entries by age.
 - **`gemDictSkills` / `gemDictTransfigured`**
   (`internal/lab/gem_dictionary_cache.go`) — the OCR name dictionary. The tick
   sees only the current snapshot's names; the endpoint's answer is `gem_colors`

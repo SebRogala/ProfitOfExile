@@ -880,7 +880,8 @@ type SignalChange struct {
 	Listings int       `json:"currentListings"`
 }
 
-// SignalHistory returns the last N signal snapshots for a gem, used to show transitions.
+// SignalHistory returns the last N signal snapshots within signalHistorySeedMaxDays
+// for a gem, matching the ring cache's seed window.
 // Queries gem_signals joined with gem_features for velocity and price data.
 func (r *Repository) SignalHistory(ctx context.Context, scope league.Scope, name, variant string, limit int) ([]SignalChange, error) {
 	if err := scope.Validate(); err != nil {
@@ -892,9 +893,11 @@ func (r *Repository) SignalHistory(ctx context.Context, scope league.Scope, name
 		       COALESCE(f.chaos, 0), COALESCE(f.listings, 0)
 		FROM gem_signals s
 		LEFT JOIN gem_features f ON f.league = s.league AND f.time = s.time AND f.name = s.name AND f.variant = s.variant
+		  AND f.time > NOW() - make_interval(days => $5)
 		WHERE s.league = $1 AND s.name = $2 AND s.variant = $3
+		  AND s.time > NOW() - make_interval(days => $5)
 		ORDER BY s.time DESC
-		LIMIT $4`, scope.ID(), name, variant, limit)
+		LIMIT $4`, scope.ID(), name, variant, limit, signalHistorySeedMaxDays)
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: signal history: %w", err)
 	}
@@ -916,7 +919,7 @@ func (r *Repository) SignalHistory(ctx context.Context, scope league.Scope, name
 	return changes, nil
 }
 
-// signalHistorySeedMaxDays is the seed's retention window, and it is the
+// signalHistorySeedMaxDays bounds the seed and cold-cache fallback, and it is the
 // endpoint's semantics rather than an implementation detail: a gem whose last
 // signal predates it holds no ring, and /api/analysis/history answers empty for
 // it against a warm cache. That is deliberate — the per-request query this seed

@@ -1926,6 +1926,79 @@ func TestSignalHistoryWindow_seedsAGemThatStoppedBeforeTheNewestSnapshotTimes(t 
 	}
 }
 
+func TestSignalHistory_dropsASeriesWhoseNewestSignalPredatesTheRetentionWindow(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	const leagueID = "POE-292-sighist-expired"
+	registerLeague(t, pool, leagueID)
+	scope := league.Historical(leagueID)
+	const name = "POE292 Expired SignalHistory Gem"
+	const variant = "20/20"
+	for _, days := range []int{signalHistorySeedMaxDays + 1, signalHistorySeedMaxDays + 2} {
+		tm := time.Now().Add(-time.Duration(days) * 24 * time.Hour).Truncate(time.Microsecond)
+		cleanupAtTime(t, pool, tm, "gem_signals")
+		if _, err := repo.SaveGemSignals(ctx, scope, []GemSignal{{
+			Time: tm, Name: name, Variant: variant,
+			Signal: "STABLE", WindowSignal: "CLOSED", SellabilityLabel: "MODERATE", Tier: "LOW",
+		}}); err != nil {
+			t.Fatalf("SaveGemSignals: %v", err)
+		}
+	}
+
+	// This is the repository read used by the handler while the cache is cold.
+	cold, err := repo.SignalHistory(ctx, scope, name, variant, SignalHistoryDepth)
+	if err != nil {
+		t.Fatalf("SignalHistory: %v", err)
+	}
+	if len(cold) != 0 {
+		t.Fatalf("cold history = %+v, want no transitions older than the retention window", cold)
+	}
+
+	cache := NewCache(scope)
+	if err := populateSignalHistory(ctx, repo, cache, scope, nil, nil); err != nil {
+		t.Fatalf("populateSignalHistory: %v", err)
+	}
+	if !cache.For(scope).HasSignalHistory() {
+		t.Fatal("seeded cache is cold, want warm")
+	}
+	if warm := cache.For(scope).SignalHistory(name, variant); len(warm) != 0 {
+		t.Fatalf("warm history = %+v, want the same empty answer as the cold fallback", warm)
+	}
+}
+
+func TestSignalHistory_keepsASignalJustInsideTheRetentionWindow(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	const leagueID = "POE-292-sighist-recent"
+	registerLeague(t, pool, leagueID)
+	scope := league.Historical(leagueID)
+	const name = "POE292 Recent SignalHistory Gem"
+	const variant = "20/20"
+	tm := time.Now().Add(-time.Duration(signalHistorySeedMaxDays)*24*time.Hour + time.Hour).Truncate(time.Microsecond)
+	cleanupAtTime(t, pool, tm, "gem_signals")
+	if _, err := repo.SaveGemSignals(ctx, scope, []GemSignal{{
+		Time: tm, Name: name, Variant: variant,
+		Signal: "STABLE", WindowSignal: "CLOSED", SellabilityLabel: "MODERATE", Tier: "LOW",
+	}}); err != nil {
+		t.Fatalf("SaveGemSignals: %v", err)
+	}
+
+	changes, err := repo.SignalHistory(ctx, scope, name, variant, SignalHistoryDepth)
+	if err != nil {
+		t.Fatalf("SignalHistory: %v", err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("in-window history = %+v, want one transition", changes)
+	}
+	if !changes[0].Time.Equal(tm) || changes[0].Signal != "STABLE" || changes[0].Window != "CLOSED" {
+		t.Errorf("in-window transition = %+v, want STABLE/CLOSED at %v", changes[0], tm)
+	}
+}
+
 // The retention window is the endpoint's contract: a gem whose newest signal
 // predates signalHistorySeedMaxDays holds no ring, and the warm cache answers it
 // empty on purpose. Without the in-window gem alongside it this would pass
