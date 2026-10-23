@@ -1,14 +1,15 @@
 # League Schema Migration Runbook
 
-**Status:** Current operational gate for POE-119; execute only with the
-matching POE-120/POE-121 application revision.
+**Status:** Current runbook for league rollover with the POE-127 CLI, plus the
+POE-119 migration gate requiring the matching POE-120/POE-121 application revision.
 
-**Last verified:** 2026-07-23 against the POE-119 migration set, embedded
-migration loader, and deployment workflow.
+**Last verified:** 2026-10-23 against the league CLI, collector startup order,
+scoped-table registry, and desktop league refresh. Migration rehearsal
+measurements retain their original dates below.
 
 **Canonical for:** rehearsal and production execution of the POE-119
-league-scoping schema migration. The tracker tasks remain canonical for the
-application implementation.
+league-scoping schema migration and normal rollover with `/league`. The tracker
+tasks remain canonical for the application implementation.
 
 ## Gate
 
@@ -136,9 +137,11 @@ table is excluded from the rollover wipe by decision, not by oversight — see t
 | `double_corrupt_snapshots` |  |  |  |
 | `item_snapshots` |  |  |  |
 
-## Production execution (wipe-first — the chosen rollover)
+## Production execution (wipe-first — initial schema migration)
 
-Rehearsed end-to-end on the real ~27M-row prod backup, 2026-07-24.
+This procedure is specific to the initial schema migration; normal rollover
+uses [Changing the active league](#changing-the-active-league). Rehearsed
+end-to-end on the real ~27M-row prod backup, 2026-07-24.
 
 **Why wipe-first:** running the migration in place on ~27M `gem_snapshots` rows
 materializes two continuous aggregates and builds primary keys — locally it peaked
@@ -183,9 +186,12 @@ steps in order; each line is one action or one check.
    `runtime_config`) exist, and the recreated continuous aggregates are present
    (empty).
 10. The migration seeds `active_league = 'Mirage'`. Activate the new league via
-    the Phase A→B procedure below with `<NewLeagueId> = Allflame` (exact GGG
-    casing). After Phase B: `active_league = Allflame` (revision bumped), Mirage
-    archived, Allflame collecting.
+    [Changing the active league](#changing-the-active-league), using
+    `"Allflame"` as the new id and `"Mirage"` as the old id (exact upstream
+    casing). That procedure requires a revision shipping `/league`; do not run
+    it from an older image. Its Phase B includes the assertion, restarts, and
+    health checks in steps 11–14 below. After Phase B: Allflame active and
+    collecting (revision bumped), Mirage archived.
 11. Set `EXPECTED_LEAGUE=Allflame` (or unset it) in the server/collector config.
 12. Restart the server; wait for healthy.
 13. Start the collector from the same revision; verify health.
@@ -194,81 +200,162 @@ steps in order; each line is one action or one check.
 15. If any check fails, keep both services stopped and restore the pre-deploy
     backup. Do not attempt a generic down migration on production data.
 
-## Interim: changing the active league (until POE-127)
+## Changing the active league
 
-The active league lives in `runtime_config` in the database — there is no
-`LEAGUE` env var anymore (POE-121 removed it; `EXPECTED_LEAGUE` only *asserts*,
-it does not select). Until POE-127 delivers the rollover CLI, change leagues with
-the two-phase checklist below. Activation is **restart-to-activate**: the
-collector and server hold their resolved league for the process lifetime, so the
-DB change takes effect only after a restart.
+Current normal-rollover procedure (POE-127). Use a server image that ships
+`/league`. The active league lives in `runtime_config`; `LEAGUE` is no longer
+read. `EXPECTED_LEAGUE` only asserts the selected id. Activation is
+**restart-to-activate**: server and collector keep their boot-time league scope.
 
-The split matters because you rarely get a long calm window right before league
-start. **Phase A (pre-register)** is safe to run hours or days ahead and does not
-touch the running league; **Phase B (activate)** is the short, restart-bearing
-flip you run at go-time. Do the steps in order, one at a time — each line is a
-single action or a single check.
+Run each action and check in order. Phase A can run hours or days ahead without
+changing the running league. Phase B performs the flip at league start.
+`"<NewLeagueId>"` and `"<OldLeagueId>"` stand for exact upstream identifiers,
+including casing and spaces, as used by poe.ninja and trade requests. Compare
+with poe.ninja's league id, not a display alias. Replace all placeholders before
+running commands; `<server container>` names the current server container and
+must be resolved again after its restart. Keep deployment handles private.
 
-`<NewLeagueId>` / `<OldLeagueId>` are the exact upstream GGG league identifiers
-(the same string used in poe.ninja / trade requests), not display aliases.
+The CLI serializes administration with transaction advisory locks. Activation
+and committed wipes also require the collector's runtime fence to be free.
+Prepare and activate dry runs execute their control-row changes and roll back;
+wipe dry runs only preview counts, mode, and SQL, executing no TRUNCATE/DELETE.
 
-### Phase A — pre-register the new league (any time before start; no restart)
+### Phase A — prepare (before start; no restart)
 
-The new league's exact GGG id is known once GGG announces it, so do this ahead of
-time. It inserts an inert `'prepared'` row; the runtime keeps serving the current
-league until Phase B flips `runtime_config`.
+1. Preview registration, using the announced start in RFC3339 format:
 
-1. Run this single statement against the production database, substituting the
-   placeholders (`starts_at` is informational — set the announced start or `NULL`):
-
-   ```sql
-   INSERT INTO leagues (id, display_name, collection_state, prepared_at, starts_at)
-   VALUES ('<NewLeagueId>', '<Display Name>', 'prepared', NOW(), '<StartsAt or NULL>');
+   ```sh
+   docker exec <server container> /league prepare "<NewLeagueId>" --display-name "<Display Name>" --starts-at "<RFC3339 start>" --dry-run
    ```
 
-2. Confirm the row exists with `collection_state = 'prepared'` and that
-   `runtime_config.active_league` is still the old league (unchanged).
+   Compare the quoted id in the output with poe.ninja's exact league id. The
+   preview must end with `dry run: rolled back`. `--starts-at` is informational;
+   omit it when the start is unknown (stored as NULL).
+2. Register with the same checked arguments, without `--dry-run`:
 
-### Phase B — activate at league start (fast; restart-to-activate)
-
-3. Stop the collector (no new writes under the old league; frees the runtime
-   advisory lock before the flip).
-4. Confirm the collector process is stopped.
-5. Run this single transaction against the production database (if you skipped
-   Phase A, replace the first `UPDATE` with the `INSERT` from step 1 but with
-   `collection_state = 'collecting'` and `activated_at = NOW()`):
-
-   ```sql
-   BEGIN;
-   -- Promote the pre-registered league to active.
-   UPDATE leagues
-   SET collection_state = 'collecting', activated_at = NOW()
-   WHERE id = '<NewLeagueId>';
-   -- Point the runtime at it and bump the revision (the bump is what lets a
-   -- running process detect the change; do not skip it).
-   UPDATE runtime_config
-   SET active_league = '<NewLeagueId>', revision = revision + 1, updated_at = NOW()
-   WHERE singleton = TRUE;
-   -- Archive the outgoing league (state flip, not a delete; data stays queryable
-   -- per ADR-010).
-   UPDATE leagues
-   SET collection_state = 'archived', archived_at = NOW()
-   WHERE id = '<OldLeagueId>' AND collection_state <> 'archived';
-   COMMIT;
+   ```sh
+   docker exec <server container> /league prepare "<NewLeagueId>" --display-name "<Display Name>" --starts-at "<RFC3339 start>"
+   docker exec <server container> /league status --no-counts
    ```
 
-6. If `EXPECTED_LEAGUE` is set in the server/collector deploy config, set it to
-   `<NewLeagueId>` (or unset it) — a stale value makes both services refuse
-   readiness. Skip only if it is not set.
-7. Restart the server.
-8. Wait for the server to report healthy (it applies migrations and binds before
-   it is ready).
-9. Restart the collector — only after step 8 (it must not start before the
-   server is healthy).
-10. Check that `/health` reports `<NewLeagueId>`.
-11. Check that `/latest` reports `<NewLeagueId>`.
-12. Confirm a scoped write/read lands under `<NewLeagueId>`.
-13. Confirm the server rejects a lingering old-league event.
+   Confirm the new league is `prepared` and the active id and revision are
+   unchanged. The display name defaults to the id if `--display-name` is omitted.
+
+### Phase B — activate, wipe, and restart (at league start)
+
+3. Preserve a dedicated outgoing-league dump outside the nightly rotation and
+   verify its restore procedure using the private backup/restore guide outside
+   this repository. Past-league analysis requires restoring that dump to a
+   scratch database (ADR-011); do not record backup locations here.
+4. Disable collector auto-restart, stop the collector, and confirm it remains
+   stopped. Keep it stopped through the wipe, server restart, and stray cleanup.
+   It resolves its league **before** acquiring its runtime fence, so a process
+   started during the flip could retain the old scope even after the fence frees.
+5. Preview activation, inspect the quoted before/after ids and revision, then
+   commit the same checked id:
+
+   ```sh
+   docker exec <server container> /league activate "<NewLeagueId>" --dry-run
+   docker exec <server container> /league activate "<NewLeagueId>"
+   ```
+
+6. **Before any wipe**, compare the quoted new id in the committed activation
+   output against poe.ninja's exact league id. Confirm the outgoing id is
+   `"<OldLeagueId>"`, now `archived`, and the new id is `collecting` with the
+   revision incremented. If wrong, stop here and use the revert below. After a
+   wipe, recovery requires the preserved dump restore.
+7. Preview per-table outgoing counts and the selected mode, then wipe:
+
+   ```sh
+   docker exec <server container> /league wipe "<OldLeagueId>" --dry-run
+   docker exec <server container> /league wipe "<OldLeagueId>"
+   ```
+
+   With only outgoing-league rows, this selects one TRUNCATE across the sixteen
+   tables in `ScopedTables` (`internal/league/tables.go`). It runs while the old
+   server still serves. ACCESS EXCLUSIVE locks block table access for the
+   `EXISTS` probes plus TRUNCATE, without a full count under that lock. The lock
+   wait is bounded to 10 seconds. The preview counts are advisory; execution
+   checks again under the locks. Mode `none` means no outgoing rows remain.
+   A refusal for other leagues' rows requires investigation; reserve
+   `--allow-delete` for the checked stray cleanup below.
+8. Set `EXPECTED_LEAGUE` to `"<NewLeagueId>"` or unset it in **both** server and
+   collector deployment configuration. A stale assertion refuses startup.
+9. Restart the server and wait until healthy. Do not start the collector yet.
+10. Check counted status in the current server container:
+
+    ```sh
+    docker exec <server container> /league status
+    ```
+
+    Confirm the active id and revision. The counted form scans all scoped tables;
+    use it here to find outgoing rows the old server wrote after the first wipe.
+    If `"<OldLeagueId>"` has rows again, preview and clean them explicitly:
+
+    ```sh
+    docker exec <server container> /league wipe "<OldLeagueId>" --allow-delete --dry-run
+    docker exec <server container> /league wipe "<OldLeagueId>" --allow-delete
+    docker exec <server container> /league status
+    ```
+
+    With mixed leagues this deletes only outgoing rows, preserving the new
+    league's rows; an exclusive outgoing-only set still selects TRUNCATE.
+    Confirm no outgoing rows remain.
+11. Re-enable collector auto-restart and start the collector, after server health
+    and cleanup have passed.
+12. Check `/health` and `/latest` report `"<NewLeagueId>"`. Confirm a scoped
+    write/read lands under it and the server rejects a lingering old-league event.
+13. Desktop users press **Settings → Refresh** or restart the app. Its league
+    resolver has no background poller after a successful resolve
+    (`refresh_league` in `desktop/src-tauri/src/ssot.rs`).
+
+### Wrong committed activation — only before `wipe`
+
+There is no undo CLI command, and an archived league cannot be activated through
+`/league activate`. If step 6 catches a wrong id, keep the collector stopped with
+auto-restart disabled, pause other administration, and run this recovery
+transaction through the private database administration procedure. Substitute
+`"<WrongLeagueId>"` with the committed wrong id and `"<OldLeagueId>"` with the
+previous active id; escape SQL literals when substituting. Confirm those rows
+and states before committing; roll back if they differ from the captured
+activation output.
+
+```sql
+BEGIN;
+LOCK TABLE runtime_config, leagues IN ACCESS EXCLUSIVE MODE;
+SELECT active_league, revision FROM runtime_config WHERE singleton = TRUE;
+SELECT id, collection_state FROM leagues
+WHERE id IN ('<OldLeagueId>', '<WrongLeagueId>');
+-- Restore the selection, but advance the revision rather than restoring it.
+UPDATE runtime_config
+SET active_league = '<OldLeagueId>', revision = revision + 1, updated_at = NOW()
+WHERE singleton = TRUE AND active_league = '<WrongLeagueId>';
+UPDATE leagues
+SET collection_state = 'collecting', updated_at = NOW()
+WHERE id = '<OldLeagueId>' AND collection_state = 'archived';
+UPDATE leagues
+SET collection_state = 'prepared', updated_at = NOW()
+WHERE id = '<WrongLeagueId>' AND collection_state = 'collecting';
+-- Check each UPDATE affected exactly one row before committing.
+COMMIT;
+```
+
+This restores the selection and the two collection states; lifecycle timestamps
+remain a record of the attempted activation. Check `/league status --no-counts`
+in the server container, restore or unset `EXPECTED_LEAGUE` for both services,
+and restart the server before starting the collector if aborting the rollover.
+Prepare the correct id before retrying the normal procedure. **After `wipe`,
+this SQL cannot restore the outgoing data: recover from the preserved dump.**
+
+### Continuous-aggregate data retained
+
+The wipe leaves old-league buckets in `gem_snapshots_hourly` and
+`gem_snapshots_daily`. They remain league-keyed and do not mix with the new
+league. Disk and dump costs remain: the hourly aggregate measured 2.1 GB /
+20.5 M rows in July 2026 (POE-127 D10); ADR-011's backup-shrink expectation
+therefore applies only to the raw tables. Removing these buckets is deferred
+until a per-league aggregate DELETE is measured on a restored dump; it is not
+part of this procedure.
 
 ## Evidence to retain
 
@@ -292,8 +379,9 @@ repository.
 
 ## Operational lessons from the first rollover (Mirage → Allflame, 2026-07-24)
 
-Captured live during the first wipe-first deploy. **POE-127's rollover CLI must
-encode these**; until it exists, follow them manually.
+Historical observations captured during the first wipe-first deploy. The current
+[Changing the active league](#changing-the-active-league) procedure incorporates
+the restart and cleanup order with the POE-127 CLI.
 
 1. **The deploy auto-starts services on the SEEDED league, before the flip.**
    Pushing to main → Coolify builds → the new server + collector boot and resolve
@@ -303,16 +391,17 @@ encode these**; until it exists, follow them manually.
 2. **Running services hold their boot-time league scope.** The flip
    (`runtime_config` → Allflame) does NOT affect an already-running server or
    collector — they resolved at boot. **You must restart both** for the new
-   league to take effect. Order doesn't matter (distinct advisory locks); restart
-   both before cleaning strays.
+   league to take effect. Keep the collector stopped with auto-restart disabled;
+   restart the server, clean strays, then start the collector as Phase B specifies.
 3. **`EXPECTED_LEAGUE` must be set to the new league only AFTER the flip.** The
    migration seeds `Mirage`; if `EXPECTED_LEAGUE=Allflame` is set before the flip,
    the server fails its assertion on boot and crash-loops. Leave it unset for the
    initial deploy, set it after activating the new league, then restart.
-4. **Clean the stray outgoing-league rows** once services are on the new league
-   (so no new strays land): `DELETE FROM <each of the 14 league-scoped tables>
-   WHERE league='<OldLeagueId>';` (they are recent/uncompressed, so DELETE is
-   cheap).
+4. **Clean stray outgoing-league rows after the server restart, before collector
+   startup.** Use `/league status`, then `/league wipe "<OldLeagueId>"
+   --allow-delete` (dry-run first), as Phase B specifies. The registry now covers
+   sixteen tables; mixed-league cleanup preserves new-league rows. At the first
+   rollover the strays were recent/uncompressed, so their DELETE was cheap.
 5. **Collector boot fence can crash-loop on restart.** If a previous collector
    instance's DB connection is still holding `RuntimeLockKey`, the new one refuses
    to start ("another collector still holds the runtime fence after 15s"). It

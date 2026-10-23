@@ -15,7 +15,7 @@ This is the documentation entry point. Documents are classified so historical pl
 - [Icons](ICONS.md) — current procedure for adding or changing an icon, and why seeding precedes deploy.
 - [Game art sourcing](GAME-ART-SOURCING.md) — current procedure for finding and extracting game art (CDN item art, atlas-tree sprites, minimap and quest icons from the game files) for static desktop UI assets, plus the provenance of the shipped sidebar icons.
 - [Deployment](DEPLOY.md) — how main reaches production, why the deploy is path-filtered, and what a green pipeline does not tell you, desktop release channels (stable / beta by device role), the public-repo rules for beta testers, and the one-off POE-215 merc registration-reset runbook.
-- [League Schema Migration Runbook](LEAGUE-SCHEMA-MIGRATION-RUNBOOK.md) — current production gate and rehearsal procedure for POE-119; requires the matching POE-120/POE-121 application revision.
+- [League Schema Migration Runbook](LEAGUE-SCHEMA-MIGRATION-RUNBOOK.md) — current POE-127 CLI rollover procedure, plus the POE-119 migration gate and rehearsal requiring the matching POE-120/POE-121 application revision.
 - [Currency Exchange row invariant](CURRENCY-EXCHANGE-ROW-INVARIANT.md) — current normative spec for what one exchange row's numbers mean: the one scale every figure counts, the one price basis they are quoted at, and the single labeled deviation from it.
 - [Architecture decisions](adr/) — accepted and superseded architecture decisions.
 
