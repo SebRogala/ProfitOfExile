@@ -40,6 +40,9 @@ jobs:
               # direction; under-deploying is not. See docs/DEPLOY.md.
               - 'internal/**'
               - 'cmd/server/**'
+              - 'cmd/league/**'
+              - 'cmd/recalculate/**'
+              - 'cmd/promote/**'
               - 'frontend/**'
               - 'go.mod'
               - 'go.sum'

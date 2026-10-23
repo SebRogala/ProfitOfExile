@@ -38,7 +38,9 @@ As of 2026-07-26:
 
 - **server** imports every package under `internal/` — including
   `internal/collector` — so its filter is `internal/**` plus `cmd/server/**`,
-  `frontend/**`, `Dockerfile`, `go.mod`, `go.sum`. A collector-only change
+  `cmd/league/**`, `cmd/recalculate/**`, `cmd/promote/**` (the operational CLIs
+  shipped in the server image), `frontend/**`, `Dockerfile`, `go.mod`, `go.sum`.
+  The CLI paths were added for POE-127 on 2026-10-23. A collector-only change
   deploying the server is **correct**, not waste: that code is compiled into the
   server binary.
 - **collector** imports only `internal/{collector,db,league,mercure,price}`, so

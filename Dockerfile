@@ -36,6 +36,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w -X profitofexile/internal/server/hand
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/collector ./cmd/collector
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/recalculate ./cmd/recalculate
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/promote ./cmd/promote
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/league ./cmd/league
 
 # Stage 2: Minimal production image (collector)
 # NOTE: build with --target to select image:
@@ -55,6 +56,7 @@ FROM gcr.io/distroless/static-debian12 AS server
 COPY --from=build /bin/server /server
 COPY --from=build /bin/recalculate /recalculate
 COPY --from=build /bin/promote /promote
+COPY --from=build /bin/league /league
 
 EXPOSE 8080
 
