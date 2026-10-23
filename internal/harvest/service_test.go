@@ -88,7 +88,7 @@ func (f *fakeRows) loadCount() int {
 func newTestService(f *fakeRows) (*Service, *Cache) {
 	cache := NewCache()
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewService(f, testScope, cache, discard), cache
+	return NewService(f, testScope, cache, nil, discard), cache
 }
 
 func mustWarm(t *testing.T, cache *Cache, h exchange.Horizon) Snapshot {
@@ -465,5 +465,61 @@ func TestCache_nilReadsCold(t *testing.T) {
 
 	if _, ok := cache.Snapshot(exchange.HorizonRecent); ok {
 		t.Fatal("nil cache reported a warm snapshot")
+	}
+}
+
+func TestRecompute_notifiesWithBothNewSnapshotsReadable(t *testing.T) {
+	f := newFake(row(newest, lightningItem, exchange.ChaosID, 1, 9))
+	svc, cache := newTestService(f)
+	for _, h := range []exchange.Horizon{exchange.HorizonRecent, exchange.HorizonDay} {
+		cache.Set(h, Snapshot{PriceHour: hoursBefore(1)})
+	}
+	notifications := 0
+	svc.notify = func() {
+		notifications++
+		// Read synchronously at the notification boundary. Moving notify ahead
+		// of either Set must expose the old hour and fail this assertion.
+		for _, h := range []exchange.Horizon{exchange.HorizonRecent, exchange.HorizonDay} {
+			snapshot := mustWarm(t, cache, h)
+			if !snapshot.PriceHour.Equal(newest) {
+				t.Errorf("%s PriceHour at notification = %v, want %v", h, snapshot.PriceHour, newest)
+			}
+			assertPrice(t, string(h)+" price at notification", snapshot.Items[lightningItem].Chaos, 9)
+		}
+	}
+
+	if err := svc.Recompute(context.Background()); err != nil {
+		t.Fatalf("Recompute() error = %v", err)
+	}
+	if notifications != 1 {
+		t.Errorf("notifications = %d, want 1 for both stored horizons", notifications)
+	}
+}
+
+func TestRecompute_noRowsDoesNotNotify(t *testing.T) {
+	svc, _ := newTestService(&fakeRows{found: false})
+	notifications := 0
+	svc.notify = func() { notifications++ }
+
+	if err := svc.Recompute(context.Background()); err != nil {
+		t.Fatalf("Recompute() error = %v", err)
+	}
+	if notifications != 0 {
+		t.Errorf("notifications = %d, want 0 without a stored hour", notifications)
+	}
+}
+
+func TestRecompute_failedReadDoesNotNotify(t *testing.T) {
+	f := newFake()
+	f.loadErr = errBoom
+	svc, _ := newTestService(f)
+	notifications := 0
+	svc.notify = func() { notifications++ }
+
+	if err := svc.Recompute(context.Background()); !errors.Is(err, errBoom) {
+		t.Fatalf("Recompute() error = %v, want %v", err, errBoom)
+	}
+	if notifications != 0 {
+		t.Errorf("notifications = %d, want 0 on a failed read", notifications)
 	}
 }

@@ -394,6 +394,10 @@
 			// itself does not reload on this topic.
 			emit('currency-exchange-updated', data)
 				.catch(e => console.warn('[mercure] failed to emit currency exchange update:', e));
+		}, (data) => {
+			// Harvest publishes after its own snapshots are stored.
+			emit('harvest-updated', data)
+				.catch(e => console.warn('[mercure] failed to emit harvest update:', e));
 		});
 		mercure = connection;
 

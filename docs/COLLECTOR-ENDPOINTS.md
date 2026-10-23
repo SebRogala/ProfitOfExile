@@ -122,9 +122,11 @@ on every `poe/collector/currency-exchange` event. Prices are pooled VWAP over
 the horizon's clock hours ending at the newest stored hour (chaos and divine
 markets separately; `lastSeenChaos` from the newest earlier hour within 72
 hours when the window has none); tiers come from `internal/price/tier` with no
-cutoff and no depth, stamped with the same `priceHour`. Neither route touches
-the database. `internal/harvest/doc.go` and the POE-283 handoff NOTES carry the
-decisions.
+cutoff and no depth, stamped with the same `priceHour`. After both Harvest
+horizon snapshots are stored, a separate 2 s debounced `poe/harvest/updated`
+event triggers the desktop Harvest refetch through the existing Mercure
+connection (POE-289). Neither route touches the database.
+`internal/harvest/doc.go` and the POE-283 handoff NOTES carry the decisions.
 
 **Recovery from a stuck cursor.** If the feed's `next_change_id` is more than one
 hour ahead of the stored cursor — the hour aged out of retention or was never

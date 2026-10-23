@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: async () => '0.0.0-test' }));
 vi.mock('$lib/stores/status.svelte', () => ({ store: { status: { server_url: 'https://hub.test' } } }));
 
-const { connectMercure, CURRENCY_EXCHANGE_UPDATED_TOPIC } = await import('./api');
+const { connectMercure, CURRENCY_EXCHANGE_UPDATED_TOPIC, HARVEST_UPDATED_TOPIC } = await import('./api');
 
 const TOKEN_RESPONSE = {
 	ok: true,
@@ -50,13 +50,14 @@ async function connectedWithAllCallbacks() {
 	const onUpdate = vi.fn();
 	const onLayoutUpdate = vi.fn();
 	const onCurrencyExchangeUpdate = vi.fn();
+	const onHarvestUpdate = vi.fn();
 
-	connectMercure(onUpdate, undefined, onLayoutUpdate, onCurrencyExchangeUpdate);
+	connectMercure(onUpdate, undefined, onLayoutUpdate, onCurrencyExchangeUpdate, onHarvestUpdate);
 	await vi.advanceTimersByTimeAsync(0);
 
 	const publish = (payload: unknown) =>
 		opened[0].onmessage!({ data: JSON.stringify(payload) } as MessageEvent);
-	return { publish, onUpdate, onLayoutUpdate, onCurrencyExchangeUpdate };
+	return { publish, onUpdate, onLayoutUpdate, onCurrencyExchangeUpdate, onHarvestUpdate };
 }
 
 let originalFetch: typeof globalThis.fetch;
@@ -226,7 +227,7 @@ describe('connectMercure topic routing', () => {
 		return new URL(opened[0].url).searchParams.getAll('topic');
 	}
 
-	it('subscribes to the currency exchange topic alongside analysis and layout', async () => {
+	it('subscribes once to each app topic', async () => {
 		// A payload the server publishes on a topic nobody subscribed to never
 		// arrives at all, so the URL is the first half of the feature.
 		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
@@ -239,11 +240,11 @@ describe('connectMercure topic routing', () => {
 				'poe/analysis/updated',
 				'poe/lab/layout',
 				'poe/currency-exchange/updated',
+				'poe/harvest/updated',
 			]),
 		);
-		// Exactly those three: a duplicated append costs a subscriber slot on the
-		// hub, and a fourth topic would widen what the token has to grant.
-		expect(subscribedTopics()).toHaveLength(3);
+		// Exactly these four topics, each subscribed once.
+		expect(subscribedTopics()).toHaveLength(4);
 	});
 
 	it('hands a currency exchange publish to the currency exchange callback', async () => {
@@ -306,6 +307,29 @@ describe('connectMercure topic routing', () => {
 			data: JSON.stringify({ topic: CURRENCY_EXCHANGE_UPDATED_TOPIC }),
 		} as MessageEvent);
 
+		expect(onUpdate).not.toHaveBeenCalled();
+	});
+});
+
+
+describe('Harvest Mercure routing', () => {
+	it('delivers a Harvest publish only to the Harvest callback', async () => {
+		const { publish, onHarvestUpdate, onUpdate, onCurrencyExchangeUpdate, onLayoutUpdate } =
+			await connectedWithAllCallbacks();
+		const payload = { topic: HARVEST_UPDATED_TOPIC, league: 'Mirage' };
+		publish(payload);
+		expect(onHarvestUpdate.mock.calls).toEqual([[payload]]);
+		expect(onUpdate).not.toHaveBeenCalled();
+		expect(onCurrencyExchangeUpdate).not.toHaveBeenCalled();
+		expect(onLayoutUpdate).not.toHaveBeenCalled();
+	});
+
+	it('drops a Harvest publish when the caller has no Harvest callback', async () => {
+		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
+		const onUpdate = vi.fn();
+		connectMercure(onUpdate);
+		await vi.advanceTimersByTimeAsync(0);
+		opened[0].onmessage!({ data: JSON.stringify({ topic: HARVEST_UPDATED_TOPIC }) } as MessageEvent);
 		expect(onUpdate).not.toHaveBeenCalled();
 	});
 });

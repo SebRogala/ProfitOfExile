@@ -15,6 +15,7 @@ import {
 	type HarvestControllerDependencies
 } from './controller.svelte';
 import type { ExchangePriceRead, HarvestFamilyData } from './seam';
+import { createHarvestHttp } from './sources/harvest-http';
 import { createExchangeFixture } from './sources/exchange-fixture';
 import { loadHarvestFamilies } from './sources/harvest-fixture';
 import type { FamilyBody } from './view';
@@ -107,7 +108,7 @@ function harness(prefs: { picks?: string; horizon?: string; family?: string } = 
 			family: memoryPref(prefs.family ?? 'fossil')
 		},
 		listen: async (event, handler) => {
-			if (event === 'currency-exchange-updated') h.fireUpdated = handler;
+			if (event === 'harvest-updated') h.fireUpdated = handler;
 			return () => {};
 		},
 		refetchDelay: () => DELAY_MS,
@@ -710,6 +711,35 @@ describe('productionDependencies wiring', () => {
 			expect(families.families[0].label).toBe('wiring-family');
 		} finally {
 			globalThis.fetch = originalFetch;
+		}
+	});
+});
+
+
+describe('Harvest completion refetch with the live adapter', () => {
+	it('shows the new priceHour on the first refetch while the initial read is pending', async () => {
+		const h = harness();
+		const pending = [deferred<import('$lib/api').HarvestResponse>(), deferred<import('$lib/api').HarvestResponse>()];
+		let reads = 0;
+		const http = createHarvestHttp(() => pending[reads++].promise);
+		h.dependencies.loadExchangePrices = http.loadExchangePrices;
+		h.dependencies.loadHarvestFamilies = http.loadHarvestFamilies;
+		const controller = createHarvestController(h.dependencies);
+		const stop = controller.start();
+		try {
+			h.fireUpdated();
+			await vi.advanceTimersByTimeAsync(DELAY_MS);
+			const families = await loadHarvestFamilies('day');
+			const fresh = await exchangeRead('day');
+			fresh.priceHour = '2026-09-10T00:00:00Z';
+			pending[1].resolve({ prices: fresh, families });
+			await settle();
+			expect(controller.exchange?.priceHour).toBe('2026-09-10T00:00:00Z');
+			pending[0].resolve({ prices: await exchangeRead('day'), families });
+			await settle();
+			expect(controller.exchange?.priceHour).toBe('2026-09-10T00:00:00Z');
+		} finally {
+			stop();
 		}
 	});
 });

@@ -148,12 +148,12 @@ export function createHarvestController(
 		const generation = ++loadGeneration;
 		const asked = horizon;
 		requested = asked;
-		const families = dependencies.loadHarvestFamilies(asked).then((read) => {
+		const families = dependencies.loadHarvestFamilies(asked, generation).then((read) => {
 			if (generation === loadGeneration && harvest === null) harvest = read;
 			return read;
 		});
 		try {
-			const [prices, data] = await Promise.all([dependencies.loadExchangePrices(asked), families]);
+			const [prices, data] = await Promise.all([dependencies.loadExchangePrices(asked, generation), families]);
 			if (generation !== loadGeneration) return;
 			exchange = prices;
 			harvest = data;
@@ -233,7 +233,7 @@ export function createHarvestController(
 
 	/**
 	 * The first load, the wall clock and the Mercure refetch
-	 * (`currency-exchange-updated`, LabPage's re-emit) after a jittered
+	 * (`harvest-updated`, LabPage's re-emit) after a jittered
 	 * `refetchDelay()`. Returns the disposer.
 	 */
 	function start(): () => void {
@@ -244,7 +244,7 @@ export function createHarvestController(
 		const tick = dependencies.setInterval(() => {
 			now = dependencies.now();
 		}, NOW_TICK_MS);
-		const unlisten = dependencies.listen('currency-exchange-updated', () => {
+		const unlisten = dependencies.listen('harvest-updated', () => {
 			if (cancelled) return;
 			if (refetchTimer) dependencies.clearTimeout(refetchTimer);
 			refetchTimer = dependencies.setTimeout(() => {

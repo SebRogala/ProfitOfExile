@@ -10,7 +10,7 @@ Pixel pass waived by the Operator 2026-10-10. In WI-11, layout, states and copy 
 
 The backend task must honour this shape. Going live means swapping the data source only (`AGENT.md` §0, §6). The source is `desktop/src/lib/harvest/seam.ts` as committed in 70c1cbd7. One port and one fixture adapter exist per data owner (`fixtures.json` → `_owners`). Picks are desktop prefs (`persisted()`, ADR-013), not a port.
 
-### Owner: Currency Exchange — `LoadExchangePrices = (horizon: CurrencyExchangeHorizon) => Promise<ExchangePriceRead>`
+### Owner: Currency Exchange — `LoadExchangePrices = (horizon: CurrencyExchangeHorizon, generation?: number) => Promise<ExchangePriceRead>`
 
 `ExchangePriceRead`:
 | Field | Type | Meaning |
@@ -28,7 +28,7 @@ The backend task must honour this shape. Going live means swapping the data sour
 
 `LifeforcePrice` = `{ itemId: string; colour: string; chaos: number; perDivine: number }`. `colour` is the in-game colour name the page prints ("purple", "blue", "yellow"). `perDivine` is the lifeforce bought per 1 divine on the lifeforce/divine market.
 
-### Owner: Harvest server data — `LoadHarvestFamilies = (horizon: CurrencyExchangeHorizon) => Promise<HarvestFamilyData>`
+### Owner: Harvest server data — `LoadHarvestFamilies = (horizon: CurrencyExchangeHorizon, generation?: number) => Promise<HarvestFamilyData>`
 
 `HarvestFamilyData` = `{ warm: boolean; families: HarvestFamily[] }`, with families in display order (the tab order).
 
@@ -66,7 +66,7 @@ The page reads `GET /api/harvest?horizon=` (both ports share one request per hor
 - **Lifeforce:** chaos (window, else last seen) and `perDivine = round(lifeforce volume / divine volume)`; a colour missing either is omitted (the seam's `lifeforce` is `Partial`), never served as zero; the family then shows its no-data body.
 - **Cold:** the server stays cold until a recompute found a stored hour; cold answers list the families with `tiers: null`.
 - **Divine rate:** `fetchDivineRate()` reads `GET /api/currency-exchange/divine-rate` (the exchange's recent-horizon rate). The status store calls `syncDivineRateToServer()` on the first `server_url` and on every change (the entitlements pattern), so the rate always comes from the saved server; only the newest read may write. Stale/unreachable detection is still the store's F1 gap.
-- **Residuals:** a load that overlaps a still-pending read of the same horizon shares it and can show the earlier snapshot until the next update; the desktop refetches on `currency-exchange-updated`, which in theory can land before the Harvest recompute finished (the exchange publish is debounced 2 s and clients wait 2–6 s more).
+- **Refresh ordering (POE-289, current):** both residuals are closed. `harvest.Service` signals only after storing both horizon snapshots; its own 2 s debounced `poe/harvest/updated` publish is authorized by the subscriber token and travels through LabPage's existing Mercure connection as `harvest-updated`. The controller refetches on that event only, after its existing 2–6 s jitter: Exchange finishing independently cannot establish Harvest readiness. Each controller load passes the same generation to both ports; the HTTP adapter shares a pending read only within that generation and horizon, so the first refetch cannot join the older read. A settled request is never reused. This replaces the POE-286 D13 exchange-event refresh assumption.
 
 ## HarvestForge logs for Astrolabes, Oils and Catalysts (2026-10-10)
 

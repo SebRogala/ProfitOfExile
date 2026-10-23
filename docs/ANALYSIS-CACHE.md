@@ -155,7 +155,9 @@ single type would tie unrelated tick chains together:
   horizon holds prices and the tiers built from them, so `GET /api/harvest` can
   never mix two recomputes. Unlike `exchange.Cache` it stays COLD while the
   league has no stored hour (the desktop reads warm as "an exchange hour was
-  read"), and `Set`/`Snapshot` deep-copy.
+  read"), and `Set`/`Snapshot` deep-copy. After both horizons are stored, its
+  own debounced `poe/harvest/updated` event tells the desktop to refetch
+  (POE-289); the independent Exchange completion is not a readiness signal.
 - **`temple.Cache`** (`internal/temple/service.go`) — the aggregated temple
   market (POE-255), refreshed by `temple.Service` on any of the seven
   `poe/collector/items/*` ticks and once at boot from the warm-up goroutine.

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"profitofexile/internal/exchange"
+	"profitofexile/internal/harvest"
 )
 
 // MercureToken returns a short-lived subscriber JWT and the public Mercure URL.
@@ -53,6 +54,8 @@ func signSubscriberToken(secret string) (string, error) {
 				// changed the served answer; without the claim the browser's
 				// subscription is rejected and the page never refetches.
 				exchange.UpdatedTopic,
+				// Harvest finishes independently of the exchange recompute.
+				harvest.UpdatedTopic,
 			},
 		},
 		"iat": now.Unix(),
