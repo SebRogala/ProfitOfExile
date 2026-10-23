@@ -716,3 +716,31 @@ letter never orders architect ties, and any pool argument on the final
 incursion. It does not redefine R4's non-target "junk" policy. Evidence,
 verification limits and the unimplemented policy proposal are recorded in
 [the feedback investigation](../history/2026-10-23-temple-advisor-feedback.md).
+
+
+### Amendment — owner-approved R4 junk cutoff, 2026-10-23
+
+Current implementation. Owner ruling: "That grade letter sounds good, if other
+rules are kept, and it handles Vertolka cases, that's good one."
+
+For a complete pair of one upgrade offer and one change offer, R4 is eligible
+only when the change line is at most one grade letter better than the upgrade
+line. Letters are `RoomRank.tier` / `RankingTier` from `rooms::LINES`; position
+within a letter and chaos values do not enter this gate. Storage's E→C and
+Torment's D→B lose R4; Armoury's C→B keeps it. Equal or worse change letters
+also keep it.
+
+`score_options` applies `rules::limit_r4_by_grade` while both resolved offers
+are known, before ranking. It clears only R4's preference byte and explanation.
+The carve-out pair, last-incursion gate, RT, RC, reroll preference and fallback
+grade tie-break retain their existing behavior. A lone offer, unresolved or
+unranked line, same-kind pair, or any other incomplete pair preserves existing
+R4 behavior. Conditional second-door scoring has one fixed architect, so it
+also keeps that conservative behavior; the architect preference is constant
+across its door candidates.
+
+This supersedes the earlier amendment's unrestricted non-target junk policy
+for direct architect choices only, and decides section C of
+[the feedback investigation](../history/2026-10-23-temple-advisor-feedback.md).
+The simulated future-turn policy in `Sim::rollout` is unchanged; this amendment
+does not claim that clearing a tie-break changes a kill separated on EV.

@@ -1,9 +1,10 @@
 # Temple advisor feedback investigation — 2026-10-23
 
-Status: historical investigation; proposed policy is explicitly unimplemented.
+Status: historical investigation; section C decided and implemented by owner ruling,
+2026-10-23. Historical observations below describe the reporting build.
 Last verified: 2026-10-23 by source inspection and supplied screenshots/report;
 Rust execution remains pending. Canonical for this investigation's evidence and
-open policy question. Current rule semantics live in
+owner policy decision. Current rule semantics live in
 [ADR-022's final amendment](../adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md).
 
 ## Evidence and limits
@@ -87,35 +88,38 @@ last-incursion board exercises the 36c/41c double-tier choice. Rule tests cover
 remaining 0, 1 and 2, including both carve-out outcomes, rule-key preferences
 and vetoes. The tooltip wording has a direct output assertion.
 
-## R4 junk proposal — unimplemented, owner decision
+## C. R4 junk cutoff — decided, 2026-10-23
 
-Today `architect_rules` means any line outside `Valuation::targets` is junk;
-its value and ranking letter do not constrain R4. `Sim::rollout` independently
-upgrades non-target ordinary lines under its future-turn policy.
+Owner ruling: "That grade letter sounds good, if other rules are kept, and it
+handles Vertolka cases, that's good one."
 
-Propose a directional grade gate: retain the non-target check and allow R4
-only when the change offer's letter is at most one band better than the upgrade
-line's letter, using `rooms::LINES`. This suppresses R4 for item 1 E→C and item
-7 D→B, and retains it for item 3 C→B. A chaos-based alternative needs an owner
-chosen definition of materially better and treatment of partial valuations;
-this report supplies neither a fabricated threshold nor a new grade price.
+Decided and implemented: retain the non-target condition, and allow direct
+R4 only when the change offer's letter is at most one band better than the
+upgrade line's letter, using `RoomRank.tier` from `rooms::LINES`. This removes
+R4 for item 1 E→C and item 7 D→B, and retains it for item 3 C→B. Positions and
+chaos values do not affect the cutoff.
 
-A present-choice-only gate changes the tie-break and explanation. It does not
-promise different winning kills: smaller-pool effects may still win through
-EV. Applying the same gate to `Sim::rollout` also changes future-policy EVs
-and requires replaying the seeded suite.
+`score_options` is the seam: it knows both resolved offers, whereas
+`architect_rules` evaluates one. `rules::limit_r4_by_grade` removes only the R4
+preference and explanation before ranking; carve-out, remaining > 1, RT, RC,
+reroll and grade-fallback behavior stay intact. Missing/unranked offers and
+same-kind pairs preserve existing R4 behavior. The conditional second-door
+pass contains one fixed architect, so its architect preference remains constant
+across the door candidates.
 
-No inspected current fixture requires a changed expected winner under the
-present-choice-only directional gate:
-`r4_ranks_upgrade_above_change_when_no_shrine_can_still_hit_the_slot`
-(factory B→museum E),
-`a_junk_room_is_maxed_to_tier_three_to_shrink_the_drop_pool`
-(hall-of-champions C→museum E),
-`the_carve_out_ranks_change_above_upgrade_beside_a_live_sanctum`, and
-`maxing_a_sanctums_only_live_target_is_vetoed_however_the_rollout_prices_it`
-remain eligible. Add E→C, C→B and D→B fixtures before implementing the proposal.
-The future-policy version can move seeded means; exact winner changes are
-unverified without Rust execution.
+This is a present-choice gate. `Sim::rollout` still upgrades non-target ordinary
+lines under its existing future-turn policy. An EV-separated upgrade can still
+win after losing R4; no changed historical winner is promised.
+
+The existing R4/carve-out tests were left unchanged, including factory-B→museum-E
+and hall-of-champions-C→museum-E comparisons. New tests cover the three reported
+pairs, worse/equal change grades, one offer, each unranked side, same-kind pairs,
+and preservation of both carve-out outcomes when E→C would suppress ordinary R4.
+A separate regression pins the reroll preference byte and explanation under
+the same grade gap.
+They exercise the production scoring seam with zero rollouts to isolate the
+rule decision from simulated future value. Rust execution and applied mutation
+checks remain for the orchestrator; no Docker/cargo gate ran here.
 
 ## Incident accounting
 
@@ -171,7 +175,7 @@ orchestrator's existing Docker gates, as the brief requires.
 1. Run desktop Rust tests/checks before accepting these uncommitted changes.
 2. Execute mutation checks for the new grade comparison and remaining gate.
 3. Keep fallback provenance per tier when bridging any new valuation source.
-4. Decide the junk grade gate before changing present or simulated R4 policy.
+4. Keep the decided direct-choice grade gate separate from any future-policy change.
 5. Retain market/settings/stderr when collecting a future exact-replay report.
 
 Prevention homes: code and regression tests in this diff; normative rule

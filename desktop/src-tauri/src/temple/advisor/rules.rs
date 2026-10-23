@@ -751,6 +751,39 @@ pub struct RuleVerdict {
     pub reasons: Vec<Reason>,
 }
 
+/// Apply the owner-approved R4 grade limit where both offers are known.
+///
+/// Only a complete, ranked upgrade/change pair can restrict R4. A missing
+/// offer, unknown line or same-kind pair preserves the single-offer rules.
+/// Carve-out and reroll reasons also use byte 4, so change that byte only
+/// when the verdict actually carries R4 itself.
+pub fn limit_r4_by_grade(verdict: &mut RuleVerdict, choices: &[Option<ArchitectChoice>]) {
+    let [Some(first), Some(second)] = choices else {
+        return;
+    };
+    let (upgrade, change) = match (first.kind, second.kind) {
+        (OfferKind::Upgrade, OfferKind::Change) => (first, second),
+        (OfferKind::Change, OfferKind::Upgrade) => (second, first),
+        _ => return,
+    };
+    let rank = |choice: &ArchitectChoice| {
+        crate::temple::rooms::LINES.iter()
+            .find(|line| line.mechanical_line() == choice.line)
+            .map(|line| line.rank().tier)
+    };
+    let (Some(upgrade), Some(change)) = (rank(upgrade), rank(change)) else {
+        return;
+    };
+    // RankingTier is declared best-first A..E. Position within a letter
+    // never changes this gate, nor does the room's chaos valuation.
+    if (upgrade as u8).saturating_sub(change as u8) > 1
+        && verdict.reasons.contains(&Reason::R4)
+    {
+        verdict.architect.0[4] = 0;
+        verdict.reasons.retain(|reason| *reason != Reason::R4);
+    }
+}
+
 /// Score one option against the whole chain.
 ///
 /// `keys` is how many opening stones dropped. It is not redundant with `doors`:
@@ -2188,6 +2221,19 @@ mod tests {
     #[test]
     fn the_pool_carve_out_is_silent_when_the_budget_is_unknown() {
         assert_eq!(pool_reasons_at(0, true), Vec::<Reason>::new());
+    }
+
+    #[test]
+    fn the_grade_limit_preserves_the_reroll_preference() {
+        let state = board(&[(D1, "museum_of_artefacts", 1)], &[(D1, E1)]);
+        let change = choice(OfferKind::Change, "toxic_grove", 2);
+        let upgrade = choice(OfferKind::Upgrade, "museum_of_artefacts", 2);
+        let mut profile = rush();
+        profile.reroll_until_favourable = true;
+        let mut verdict = verdict_with(&state, D1, Some(&change), &[], 1, &profile);
+        limit_r4_by_grade(&mut verdict, &[Some(change), Some(upgrade)]);
+        assert_eq!(verdict.architect.0[4], 1);
+        assert!(verdict.reasons.contains(&Reason::RerollUntilFavourable));
     }
 
     // R4 never applies to a target line — you do not want the corruption room

@@ -449,7 +449,7 @@ fn score_options(
 
     for (architect, door_sets) in choices.iter().zip(door_sets_per_choice) {
         for doors in door_sets {
-            let verdict = rules::evaluate_rules(
+            let mut verdict = rules::evaluate_rules(
                 board,
                 position,
                 architect.as_ref(),
@@ -458,6 +458,7 @@ fn score_options(
                 profile,
                 valuation,
             );
+            rules::limit_r4_by_grade(&mut verdict, choices);
             let rv = rules::rv_verdict(
                 board,
                 position,
@@ -1005,6 +1006,150 @@ mod tests {
                 &crate::temple::market::allflame(),
             ),
         )
+    }
+
+    /// Zero rollouts isolate the rule ranking from future-policy EV. The
+    /// change offer is first so only an active preference can promote upgrade.
+    fn grade_limited_r4_scores(offers: &[(OfferKind, &str)], carve_out: bool) -> Vec<Scored> {
+        let current_line = offers.iter()
+            .find(|(kind, _)| *kind == Upgrade)
+            .map_or("museum_of_artefacts", |(_, line)| *line);
+        let mut state = board(
+            &[(D1, current_line, 1), (C2, "corruption", 1)],
+            &[(D1, E1)], D1, 5,
+        );
+        if carve_out {
+            state.set_room(C1, Some(Line::Upgrade), Tier::T2);
+            state.doors.insert(Edge::new(C1, D1));
+        }
+        let choices: Vec<_> = offers.iter().enumerate().map(|(index, (kind, line))| {
+            Some(ArchitectChoice {
+                offer_index: index,
+                architect_name: "fixture".to_string(),
+                kind: *kind,
+                line: Line::named(line),
+                built_tier: Tier::T2,
+                display_name: "fixture",
+            })
+        }).collect();
+        let sets = vec![vec![BTreeSet::new()]; choices.len()];
+        let mut profile = rush();
+        profile.r4_keep_upgrade_targets = carve_out;
+        let valuation = Valuation::for_profile(&profile);
+        let (scored, _) = score_options(
+            &state, D1, &choices, &sets, 0, &profile, &valuation,
+            &TempleConfig::default(), 0, SEED, false,
+        );
+        scored
+    }
+
+    fn grade_limited_r4(offers: &[(OfferKind, &str)], carve_out: bool) -> Vec<Ranked> {
+        rank(grade_limited_r4_scores(offers, carve_out), &rush())
+    }
+
+    fn assert_upgrade_r4(offers: &[(OfferKind, &str)], expected: bool) {
+        let ranked = grade_limited_r4(offers, false);
+        let upgrade = ranked.iter().find(|option| {
+            option.option.architect.as_ref().unwrap().kind == Upgrade
+        }).expect("fixture has an upgrade");
+        assert_eq!(upgrade.reasons.contains(&Reason::R4), expected);
+        assert_eq!(ranked[0].option.architect.as_ref().unwrap().kind,
+            if expected { Upgrade } else { Change });
+    }
+
+    #[test]
+    fn storage_upgrade_loses_r4_against_cultivar_two_letters_better() {
+        assert_upgrade_r4(&[(Change, "toxic_grove"), (Upgrade, "museum_of_artefacts")], false);
+    }
+
+    #[test]
+    fn the_grade_limit_also_handles_upgrade_first() {
+        let ranked = grade_limited_r4(
+            &[(Upgrade, "museum_of_artefacts"), (Change, "toxic_grove")], false,
+        );
+        let upgrade = ranked.iter().find(|option| {
+            option.option.architect.as_ref().unwrap().kind == Upgrade
+        }).unwrap();
+        assert!(!upgrade.reasons.contains(&Reason::R4));
+    }
+
+    #[test]
+    fn torment_upgrade_loses_r4_against_defense_two_letters_better() {
+        assert_upgrade_r4(&[(Change, "defense_research_lab"), (Upgrade, "sadists_den")], false);
+    }
+
+    #[test]
+    fn armoury_upgrade_keeps_r4_against_reactor_one_letter_better() {
+        assert_upgrade_r4(&[(Change, "conduit_of_lightning"), (Upgrade, "chamber_of_iron")], true);
+    }
+
+    #[test]
+    fn r4_keeps_a_change_offer_worse_than_the_upgrade() {
+        assert_upgrade_r4(&[(Change, "museum_of_artefacts"), (Upgrade, "factory")], true);
+    }
+
+    #[test]
+    fn r4_keeps_an_equal_letter_change_offer() {
+        assert_upgrade_r4(&[(Change, "court_of_sealed_death"), (Upgrade, "museum_of_artefacts")], true);
+    }
+
+    #[test]
+    fn a_lone_upgrade_keeps_r4() {
+        assert_upgrade_r4(&[(Upgrade, "museum_of_artefacts")], true);
+    }
+
+    #[test]
+    fn an_unranked_change_preserves_r4() {
+        assert_upgrade_r4(&[(Change, "unread_line"), (Upgrade, "museum_of_artefacts")], true);
+    }
+
+    #[test]
+    fn an_unranked_upgrade_preserves_r4() {
+        assert_upgrade_r4(&[(Change, "conduit_of_lightning"), (Upgrade, "unread_line")], true);
+    }
+
+    #[test]
+    fn two_upgrade_offers_preserve_r4() {
+        let ranked = grade_limited_r4(
+            &[(Upgrade, "museum_of_artefacts"), (Upgrade, "conduit_of_lightning")], false,
+        );
+        assert_eq!(ranked.len(), 2);
+        assert!(ranked.iter().all(|option| option.reasons.contains(&Reason::R4)));
+    }
+
+    #[test]
+    fn two_change_offers_preserve_existing_pool_removal_r4() {
+        let mut state = board(&[(D1, "museum_of_artefacts", 2)], &[(D1, E1)], D1, 5);
+        state.current_tier = Some(Tier::T2);
+        let offers = [offer("fixture", Change, "Cultivar Chamber"),
+            offer("fixture", Change, "Omnitect Reactor Plant")];
+        let advice = advise(&state, &offers, 0, &rush(), &TempleConfig::default(), 0, SEED);
+        assert_eq!(advice.recommendations.len(), 2);
+        assert!(advice.recommendations.iter().all(|option| option.reasons.contains(&Reason::R4)));
+    }
+
+    #[test]
+    fn the_grade_limit_preserves_the_carve_out_veto() {
+        let scored = grade_limited_r4_scores(
+            &[(Change, "toxic_grove"), (Upgrade, "museum_of_artefacts")], true,
+        );
+        let upgrade = scored.iter().find(|option| {
+            option.option.architect.as_ref().unwrap().kind == Upgrade
+        }).unwrap();
+        assert!(upgrade.architect_key.vetoed());
+        assert!(upgrade.reasons.contains(&Reason::R4CarveOutVeto { upgrader: C1 }));
+    }
+
+    #[test]
+    fn the_grade_limit_preserves_the_carve_out_pool_preference() {
+        let scored = grade_limited_r4_scores(
+            &[(Change, "toxic_grove"), (Upgrade, "museum_of_artefacts")], true,
+        );
+        let change = scored.iter().find(|option| {
+            option.option.architect.as_ref().unwrap().kind == Change
+        }).unwrap();
+        assert_eq!(change.architect_key.0[4], 1);
+        assert!(change.reasons.contains(&Reason::R4PoolCarveOut { upgrader: C1 }));
     }
 
     /// Synthetic rollout estimates isolate the noise-band regression from
