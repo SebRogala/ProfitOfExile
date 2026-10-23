@@ -5,6 +5,12 @@ help: ## Show available commands
 
 -include .env.local
 
+.PHONY: worktree-create
+worktree-create: ## Provision a guarded isolated lane (LANE=lane… BASE=ref)
+	@node scripts/worktree-create.mjs
+
+export LANE BASE DRY_RUN
+
 build: ## Build Go server binary
 	@docker compose exec app true 2>/dev/null || $(MAKE) up
 	docker compose exec app go build -o bin/server ./cmd/server

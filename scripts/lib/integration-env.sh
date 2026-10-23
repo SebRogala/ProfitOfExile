@@ -8,8 +8,8 @@ DB_NAME="${INTEGRATION_DB:-profitofexile_integration}"
 DB_USER="${INTEGRATION_DB_USER:-profitofexile}"
 DB_PASSWORD="${INTEGRATION_DB_PASSWORD:-profitofexile}"
 
-if [ "$DB_NAME" != profitofexile_integration ]; then
-	echo "FAIL: database rule requires profitofexile_integration; other INTEGRATION_DB values are refused." >&2
+if [[ ! "${INTEGRATION_DB-$DB_NAME}" =~ ^profitofexile_(lane[a-z0-9]{1,20}_)?integration$ ]]; then
+	echo "FAIL: database rule requires profitofexile_integration or profitofexile_<lane>_integration (lane[a-z0-9]{1,20}); other INTEGRATION_DB values are refused." >&2
 	exit 1
 fi
 

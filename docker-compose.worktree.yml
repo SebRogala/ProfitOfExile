@@ -1,0 +1,83 @@
+# Standalone template, rendered at the lane root as docker-compose.lane.yml.
+# No merge with the main stack: no inherited names, labels, ports or volumes.
+name: profitofexile-__LANE__
+services:
+  app:
+    image: __APP_IMAGE__
+    container_name: profitofexile___LANE___app
+    working_dir: /app
+    volumes:
+      - .:/app
+      - ./.worktree/go-pkg:/root/go/pkg
+    environment:
+      DATABASE_URL: __DATABASE_URL__
+      INTEGRATION_DB: profitofexile___LANE___integration
+      PORT: "8080"
+      TRADE_ENABLED: "false"
+      MERCURE_URL: http://mercure/.well-known/mercure
+      MERCURE_JWT_SECRET: ""
+      MERCURE_SUBSCRIBER_KEY: ""
+      MERCURE_PUBLIC_URL: https://mercure.localhost/.well-known/mercure
+      CORS_ORIGINS: https://profitofexile-__LANE__.dev.localhost
+    networks: [infra]
+    labels:
+      io.pipeforge.allocation: __APP_TOKEN__
+      traefik.enable: "true"
+      traefik.http.routers.profitofexile-__LANE__-api.rule: Host(`profitofexile-__LANE__.dev.localhost`) && PathPrefix(`/api`)
+      traefik.http.routers.profitofexile-__LANE__-api.entrypoints: websecure
+      traefik.http.routers.profitofexile-__LANE__-api.tls: "true"
+      traefik.http.routers.profitofexile-__LANE__-api.service: profitofexile-__LANE__-api
+      traefik.http.services.profitofexile-__LANE__-api.loadbalancer.server.port: "8080"
+  frontend:
+    image: __FRONTEND_IMAGE__
+    container_name: profitofexile___LANE___frontend
+    working_dir: /workspace/frontend
+    command: [sh, -c, "npm ci && npm run dev -- --config ../.worktree/vite.config.ts --host 0.0.0.0"]
+    volumes:
+      - .:/workspace
+      - ./.worktree/frontend_node_modules:/workspace/frontend/node_modules
+    networks: [infra]
+    labels:
+      io.pipeforge.allocation: __FRONTEND_TOKEN__
+      traefik.enable: "true"
+      traefik.http.routers.profitofexile-__LANE__-frontend.rule: Host(`profitofexile-__LANE__.dev.localhost`)
+      traefik.http.routers.profitofexile-__LANE__-frontend.entrypoints: websecure
+      traefik.http.routers.profitofexile-__LANE__-frontend.tls: "true"
+      traefik.http.routers.profitofexile-__LANE__-frontend.priority: "1"
+      traefik.http.routers.profitofexile-__LANE__-frontend.service: profitofexile-__LANE__-frontend
+      traefik.http.services.profitofexile-__LANE__-frontend.loadbalancer.server.port: "5173"
+  collector:
+    image: __COLLECTOR_IMAGE__
+    container_name: profitofexile___LANE___collector
+    working_dir: /app
+    command: [air, -c, .air.collector.toml]
+    volumes:
+      - .:/app
+      - ./.worktree/go-pkg:/root/go/pkg
+    environment:
+      DATABASE_URL: __DATABASE_URL__
+      SERVER_URL: http://profitofexile___LANE___app:8080
+      PORT: "8090"
+      MERCURE_URL: http://mercure/.well-known/mercure
+      MERCURE_JWT_SECRET: ""
+    networks: [infra]
+    labels:
+      io.pipeforge.allocation: __COLLECTOR_TOKEN__
+      traefik.enable: "false"
+  desktop:
+    image: __DESKTOP_IMAGE__
+    container_name: profitofexile___LANE___desktop
+    working_dir: /app/desktop/src-tauri
+    volumes:
+      - .:/app
+      - ./.worktree/desktop_cargo_registry:/usr/local/cargo/registry
+      - ./.worktree/desktop_cargo_git:/usr/local/cargo/git
+      - ./.worktree/desktop_target:/app/desktop/src-tauri/target
+      - ./.worktree/desktop_node_modules:/app/desktop/node_modules
+    networks: [infra]
+    labels:
+      io.pipeforge.allocation: __DESKTOP_TOKEN__
+      traefik.enable: "false"
+networks:
+  infra:
+    external: true

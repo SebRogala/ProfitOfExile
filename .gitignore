@@ -50,6 +50,9 @@ desktop/build/
 # Tauri signing keys (private key MUST NOT be committed)
 desktop/.tauri/
 .env.local
+.worktrees/
+.worktree/
+docker-compose.lane.yml
 
 # Python bytecode from the seed scripts
 __pycache__/
