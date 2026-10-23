@@ -96,6 +96,8 @@ services:
       # on the host, so `make desktop-test-js` failed on a file the host suite
       # passed on.
       - ./internal/exchange/testdata/wire:/app/internal/exchange/testdata/wire:ro
+      # Shared Go/Rust trade-price vectors (ADR-027, POE-302).
+      - ./internal/trade/testdata:/app/internal/trade/testdata:ro
       # The merc signature parity golden (POE-207), for the same reason and by
       # the same rule: `crop.png` + `signature.bin` are the ONE artefact the Go
       # and Rust derivations of format 2 are both checked against, so there is

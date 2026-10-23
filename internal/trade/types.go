@@ -53,6 +53,7 @@ type TradeLookupResult struct {
 	PriceFloor   float64              `json:"priceFloor"`
 	PriceCeiling float64              `json:"priceCeiling"`
 	PriceSpread  float64              `json:"priceSpread"`
+	MedianTop3   float64              `json:"medianTop3"`
 	MedianTop10  float64              `json:"medianTop10"`
 	Listings     []TradeListingDetail `json:"listings"`
 	Signals      TradeSignals         `json:"signals"`
@@ -165,6 +166,10 @@ func NormalizeToChaos(price float64, currency string, divineRate float64) float6
 	return price
 }
 
+// tradePriceListingCount follows the normative trade price definition in
+// docs/TRADE-LIFECYCLE.md#trade-price-definition (POE-302).
+const tradePriceListingCount = 3
+
 func BuildResult(gem, variant, league string, sr SearchResponse, listings []TradeListingDetail, divineRate float64) *TradeLookupResult {
 	// Normalize all listing prices to chaos.
 	for i := range listings {
@@ -202,12 +207,21 @@ func BuildResult(gem, variant, league string, sr SearchResponse, listings []Trad
 		}
 		result.PriceCeiling = ceiling
 		result.PriceSpread = ceiling - listings[0].ChaosPrice
+		result.MedianTop3 = medianTop3ChaosPrice(listings)
 		result.MedianTop10 = medianChaosPrice(listings)
 	}
 
 	result.Signals = ComputeSignals(listings)
 
 	return result
+}
+
+func medianTop3ChaosPrice(listings []TradeListingDetail) float64 {
+	cheapest := append([]TradeListingDetail(nil), listings...)
+	sort.SliceStable(cheapest, func(i, j int) bool {
+		return cheapest[i].ChaosPrice < cheapest[j].ChaosPrice
+	})
+	return medianChaosPrice(cheapest[:min(len(cheapest), tradePriceListingCount)])
 }
 
 // medianPrice returns the median price from a slice of listings.

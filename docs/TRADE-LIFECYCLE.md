@@ -86,6 +86,36 @@ Properties:
 
 The user explicitly refreshes trade information for a gem. The desktop performs one queued native lookup and displays the result locally.
 
+### Trade price definition
+
+**Current behavior (POE-302, verified 2026-10-23):** The normative definition is
+[ADR-027, amendment N = 3](adr/027-trade-is-the-primary-gem-price-poe-ninja-is-the-fallback.md#amendment--n--3-2026-10-23).
+The wire field is `TradeLookupResult.medianTop3`, separate from the existing
+`medianTop10`. Rust `trade::signals::build_result` and Go `trade.BuildResult`
+normalize seller amounts to chaos before ordering and computing it. Each
+implementation names its sample size once; both read the same expected outcomes
+from `internal/trade/testdata/trade-price-vectors.json`, following the existing
+cross-language fixture convention under `internal/*/testdata`.
+
+An empty lookup carries zero in this field but prices nothing. The Lab comparator
+widget selects the built quote only when listings exist, otherwise retaining
+the ninja price (or `—` for NO_DATA). It does no median calculation. This changes
+the row's quote only; tier and Font EV integration remains POE-299.
+
+The widget receives native Rust results and server-cached normal compare results
+through the main Comparator's `tradeData` → `set_comparator_data` JSON payload →
+`get_comparator_data` 500 ms poll. A new lookup changes `fetchedAt`, which causes
+the widget to replace its trade map and recompute the displayed quote. Go cache
+admission derives the field from normalized listings too, so database-warmed and
+older contributed results need no persisted field or schema change.
+
+Normal Rust and Go gem searches exclude corrupted items. Native Dedication
+searches omit that filter and request level ≥21 with exact variant quality;
+Dedication compare responses do not attach server trade cache entries. No builder
+combines these listing sets. Submitted results accept listing corruption flags
+as supplied, however, so the shared cache does not guarantee homogeneous flags.
+POE-302 adds no corruption filter.
+
 ### Opt-in automatic stale refresh
 
 **Current behavior:** Implemented in the native desktop comparator.

@@ -1,0 +1,169 @@
+[
+  {
+    "name": "empty",
+    "divineRate": 200,
+    "listings": [],
+    "medianTop3": 0,
+    "medianTop10": 0
+  },
+  {
+    "name": "one",
+    "divineRate": 200,
+    "listings": [
+      {
+        "price": 40,
+        "currency": "chaos"
+      }
+    ],
+    "medianTop3": 40,
+    "medianTop10": 40
+  },
+  {
+    "name": "two",
+    "divineRate": 200,
+    "listings": [
+      {
+        "price": 40,
+        "currency": "chaos"
+      },
+      {
+        "price": 51,
+        "currency": "chaos"
+      }
+    ],
+    "medianTop3": 45.5,
+    "medianTop10": 45.5
+  },
+  {
+    "name": "three",
+    "divineRate": 200,
+    "listings": [
+      {
+        "price": 40,
+        "currency": "chaos"
+      },
+      {
+        "price": 50,
+        "currency": "chaos"
+      },
+      {
+        "price": 55,
+        "currency": "chaos"
+      }
+    ],
+    "medianTop3": 50,
+    "medianTop10": 50
+  },
+  {
+    "name": "five",
+    "divineRate": 200,
+    "listings": [
+      {
+        "price": 40,
+        "currency": "chaos"
+      },
+      {
+        "price": 50,
+        "currency": "chaos"
+      },
+      {
+        "price": 55,
+        "currency": "chaos"
+      },
+      {
+        "price": 55,
+        "currency": "chaos"
+      },
+      {
+        "price": 60,
+        "currency": "chaos"
+      }
+    ],
+    "medianTop3": 50,
+    "medianTop10": 55
+  },
+  {
+    "name": "unsorted",
+    "divineRate": 200,
+    "listings": [
+      {
+        "price": 60,
+        "currency": "chaos"
+      },
+      {
+        "price": 55,
+        "currency": "chaos"
+      },
+      {
+        "price": 40,
+        "currency": "chaos"
+      },
+      {
+        "price": 55,
+        "currency": "chaos"
+      },
+      {
+        "price": 50,
+        "currency": "chaos"
+      }
+    ],
+    "medianTop3": 50,
+    "medianTop10": 55
+  },
+  {
+    "name": "troll",
+    "divineRate": 200,
+    "listings": [
+      {
+        "price": 1,
+        "currency": "chaos"
+      },
+      {
+        "price": 50,
+        "currency": "chaos"
+      },
+      {
+        "price": 55,
+        "currency": "chaos"
+      },
+      {
+        "price": 60,
+        "currency": "chaos"
+      },
+      {
+        "price": 70,
+        "currency": "chaos"
+      }
+    ],
+    "medianTop3": 50,
+    "medianTop10": 55
+  },
+  {
+    "name": "divine_normalized_before_sort",
+    "divineRate": 200,
+    "listings": [
+      {
+        "price": 1,
+        "currency": "divine"
+      },
+      {
+        "price": 60,
+        "currency": "chaos"
+      },
+      {
+        "price": 0.25,
+        "currency": "divine"
+      },
+      {
+        "price": 40,
+        "currency": "chaos"
+      },
+      {
+        "price": 55,
+        "currency": "chaos"
+      }
+    ],
+    "medianTop3": 50,
+    "medianTop10": 55
+  }
+]

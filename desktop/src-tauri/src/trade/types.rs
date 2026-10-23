@@ -13,6 +13,8 @@ pub struct TradeLookupResult {
     pub price_ceiling: f64,
     pub price_spread: f64,
     pub median_top10: f64,
+    /// Trade price; see docs/TRADE-LIFECYCLE.md#trade-price-definition.
+    pub median_top3: f64,
     pub listings: Vec<TradeListingDetail>,
     pub signals: TradeSignals,
     pub divine_price: f64,

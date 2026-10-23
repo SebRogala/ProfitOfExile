@@ -14,6 +14,8 @@ export interface TradeLookupResult {
 	priceCeiling: number;
 	priceSpread: number;
 	medianTop10: number;
+	/** Trade price; normative definition: docs/TRADE-LIFECYCLE.md#trade-price-definition. */
+	medianTop3: number;
 	listings: TradeListingDetail[];
 	signals: TradeSignals;
 	divinePrice: number;

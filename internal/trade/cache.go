@@ -71,6 +71,12 @@ func (c *TradeCache) Get(key string) (*TradeLookupResult, bool) {
 // is updated and the key is promoted. If the cache is at capacity, the
 // least-recently-used entry is evicted first.
 func (c *TradeCache) Set(key string, result *TradeLookupResult) {
+	// LatestLookups restores normalized listings without this derived field;
+	// older desktop contributions also lack it. Derive it before publishing.
+	derived := *result
+	derived.MedianTop3 = medianTop3ChaosPrice(derived.Listings)
+	result = &derived
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

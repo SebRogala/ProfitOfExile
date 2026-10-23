@@ -51,6 +51,75 @@ func TestCache_Miss(t *testing.T) {
 	}
 }
 
+func TestCache_WarmDerivesTradePriceFromNormalizedListings(t *testing.T) {
+	c := NewTradeCache(10, league.Historical("Test"))
+	c.Warm([]TradeLookupResult{{
+		Gem:     "Arc",
+		Variant: "20/20",
+		Listings: []TradeListingDetail{
+			{Price: 1, Currency: "divine", ChaosPrice: 200},
+			{Price: 50, Currency: "chaos", ChaosPrice: 50},
+			{Price: 40, Currency: "chaos", ChaosPrice: 40},
+			{Price: 55, Currency: "chaos", ChaosPrice: 55},
+			{Price: 60, Currency: "chaos", ChaosPrice: 60},
+		},
+	}})
+	got, ok := c.Get(CacheKey("Arc", "20/20"))
+	if !ok {
+		t.Fatal("expected warmed lookup")
+	}
+	if got.MedianTop3 != 50 {
+		t.Errorf("warmed MedianTop3 = %v, want 50", got.MedianTop3)
+	}
+}
+
+func TestCache_WarmPreservesLookupTimestamp(t *testing.T) {
+	c := NewTradeCache(10, league.Historical("Test"))
+	fetchedAt := time.Date(2026, 10, 23, 10, 0, 0, 0, time.UTC)
+	c.Warm([]TradeLookupResult{{Gem: "Arc", Variant: "20/20", FetchedAt: fetchedAt}})
+	got, ok := c.Get(CacheKey("Arc", "20/20"))
+	if !ok {
+		t.Fatal("expected warmed lookup")
+	}
+	if !got.FetchedAt.Equal(fetchedAt) {
+		t.Errorf("warmed FetchedAt = %v, want %v", got.FetchedAt, fetchedAt)
+	}
+}
+
+func TestCache_SetDerivesTradePriceFromNormalizedListings(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		medianTop3 float64
+	}{
+		{name: "missing field"},
+		{name: "incorrect supplied field", medianTop3: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewTradeCache(10, league.Historical("Test"))
+			key := CacheKey("Arc", "20/20")
+			c.Set(key, &TradeLookupResult{
+				Gem:        "Arc",
+				Variant:    "20/20",
+				MedianTop3: tc.medianTop3,
+				Listings: []TradeListingDetail{
+					{Price: 1, Currency: "divine", ChaosPrice: 200},
+					{Price: 50, Currency: "chaos", ChaosPrice: 50},
+					{Price: 40, Currency: "chaos", ChaosPrice: 40},
+					{Price: 55, Currency: "chaos", ChaosPrice: 55},
+					{Price: 60, Currency: "chaos", ChaosPrice: 60},
+				},
+			})
+			got, ok := c.Get(key)
+			if !ok {
+				t.Fatal("expected cached lookup")
+			}
+			if got.MedianTop3 != 50 {
+				t.Errorf("cached MedianTop3 = %v, want 50", got.MedianTop3)
+			}
+		})
+	}
+}
+
 func TestCache_Eviction(t *testing.T) {
 	c := NewTradeCache(3, league.Historical("Mirage"))
 
