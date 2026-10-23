@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Contract: pipeforge lib/herdr-session-recipes.md § Worktree provisioning.
 import { spawnSync } from 'node:child_process';
-import { constants, closeSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync, writeSync } from 'node:fs';
+import { constants, closeSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -56,11 +56,47 @@ function databaseConnection(database, password) {
   return url;
 }
 const composeString = value => JSON.stringify(value.replaceAll('$', () => '$$'));
-function render(template, replacements) {
+export function render(template, replacements) {
   let result = template;
   for (const [key, value] of Object.entries(replacements)) result = result.replaceAll(`__${key}__`, () => value);
   check(!/__[A-Z][A-Z_]*__/.test(result), 'Unresolved Compose template field');
   return result;
+}
+
+const GUARD_PATH = 'scripts/lib/integration-env.sh';
+// Tracked lane files come from the base commit, which may commit them as
+// symlinks. Refuse before reading or writing so no byte leaves the lane.
+// O_NOFOLLOW covers only the leaf; the kernel's /proc/self/fd link names the
+// file actually opened, so a directory swapped to a symlink after any path
+// check is still refused before the first read.
+function rewriteTracked(path, transform) {
+  let fd;
+  try { fd = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW); } catch (error) {
+    if (error.code === 'ELOOP') throw new Error(`Refusing lane write through a symlink: ${path}`);
+    throw error;
+  }
+  try {
+    check(readlinkSync(`/proc/self/fd/${fd}`) === path, `Refusing lane write through a symlinked directory: ${path}`);
+    check(fstatSync(fd).isFile(), `Refusing lane write to a non-regular file: ${path}`);
+    const before = readFileSync(fd, 'utf8');
+    const after = transform(before);
+    if (after !== before) { ftruncateSync(fd, 0); writeSync(fd, after, 0); }
+  } finally { closeSync(fd); }
+}
+export function patchLaneFiles(destination, guard) {
+  rewriteTracked(join(destination, '.gitignore'), ignore => {
+    const missing = ['.worktrees/', '.worktree/', 'docker-compose.lane.yml'].filter(line => !ignore.split('\n').includes(line));
+    return missing.length ? `${ignore}\n${missing.join('\n')}\n` : ignore;
+  });
+  if (guard) rewriteTracked(join(destination, GUARD_PATH), env => env.replace(guard.oldGuard, () => guard.newGuard));
+}
+// A committed symlink's blob is its target path; refuse it by tree mode
+// before any content check reads that blob as a guard.
+export function checkBaseTrackedFiles(repo, oid) {
+  for (const path of ['.gitignore', GUARD_PATH]) {
+    const entry = run('git', ['ls-tree', oid, '--', path], { cwd: repo, label: `inspect base ${path}` });
+    check(!entry.startsWith('120000 '), `Refusing base commit: ${path} is a symlink`);
+  }
 }
 
 function registrationContext(destination) {
@@ -163,24 +199,17 @@ function main() {
   }
   // Older bases carry the original guard. Update only that guard in the lane;
   // the requested base commit and all other source bytes stay authoritative.
-  const guardPath = 'scripts/lib/integration-env.sh';
-  const baseEnv = run('git', ['show', `${oid}:${guardPath}`], { label: 'inspect base integration guard' });
+  checkBaseTrackedFiles(root, oid);
+  const baseEnv = run('git', ['show', `${oid}:${GUARD_PATH}`], { label: 'inspect base integration guard' });
   const oldGuard = 'if [ "$DB_NAME" != profitofexile_integration ]; then\n\techo "FAIL: database rule requires profitofexile_integration; other INTEGRATION_DB values are refused." >&2\n\texit 1\nfi';
-  const newGuard = readFileSync(join(root, guardPath), 'utf8').match(/if \[\[ ! "\$\{INTEGRATION_DB-\$DB_NAME\}"[^]*?\nfi/)?.[0];
+  const newGuard = readFileSync(join(root, GUARD_PATH), 'utf8').match(/if \[\[ ! "\$\{INTEGRATION_DB-\$DB_NAME\}"[^]*?\nfi/)?.[0];
   check(newGuard && (baseEnv.includes(oldGuard) || baseEnv.includes(newGuard)), 'Unknown base integration guard; refusing unsafe adaptation');
 
   mkdirSync(join(root, '.worktrees'), { recursive: true });
   run('git', ['worktree', 'add', '-b', lane, destination, oid], { label: 'create lane worktree' });
   mkdirSync(join(destination, '.worktree'), { mode: 0o700 });
   for (const cache of ['go-pkg', 'frontend_node_modules', 'desktop_cargo_registry', 'desktop_cargo_git', 'desktop_target', 'desktop_node_modules']) mkdirSync(join(destination, '.worktree', cache));
-  const ignorePath = join(destination, '.gitignore');
-  const ignore = readFileSync(ignorePath, 'utf8');
-  const missingIgnores = ['.worktrees/', '.worktree/', 'docker-compose.lane.yml'].filter(line => !ignore.split('\n').includes(line));
-  if (missingIgnores.length) writeFileSync(ignorePath, `${ignore}\n${missingIgnores.join('\n')}\n`);
-  if (baseEnv.includes(oldGuard)) {
-    const path = join(destination, guardPath);
-    writeFileSync(path, readFileSync(path, 'utf8').replace(oldGuard, newGuard));
-  }
+  patchLaneFiles(destination, baseEnv.includes(oldGuard) ? { oldGuard, newGuard } : null);
   for (const [index, db] of databases.entries()) {
     const allocation = intent(`database-${index}`, 'postgres-database', { clusterId, endpoint: 'postgres', database: db, maintenanceDatabase: 'postgres' });
     pg(`CREATE DATABASE "${db}" OWNER profitofexile;\nCOMMENT ON DATABASE "${db}" IS 'pipeforge-allocation:${allocation.token}';`);
@@ -200,9 +229,9 @@ function main() {
   // Make includes .env.local, while Compose reads .env. Export the lane test
   // database into the host integration script before it sources its guard.
   writeNew(join(destination, '.env.local'), `export INTEGRATION_DB := ${databases[1]}\nexport INTEGRATION_DB_PASSWORD := $(shell cat .worktree/db-password)\nexport COMPOSE_FILE := docker-compose.lane.yml\nexport COMPOSE_PROJECT_NAME := ${project}\n`);
-  writeNew(join(destination, '.worktree/vite.config.ts'), `import config from '../frontend/vite.config';\nexport default { ...config, server: { ...config.server, allowedHosts: ['${host}'], proxy: { '/api': { target: 'http://${names.app}:8080', changeOrigin: true } } } };\n`);
+  writeNew(join(destination, '.worktree/vite.config.mts'), `import config from '../frontend/vite.config';\nexport default { ...config, server: { ...config.server, allowedHosts: ['${host}'], proxy: { '/api': { target: 'http://${names.app}:8080', changeOrigin: true } } } };\n`);
   const compose = args => docker(['compose', '--project-directory', destination, '--env-file', join(destination, '.env'), '-p', project,
-    '-f', join(destination, 'docker-compose.lane.yml'), ...args], { cwd: destination, label: `lane compose ${args[0]}` });
+    '--profile', 'collector', '-f', join(destination, 'docker-compose.lane.yml'), ...args], { cwd: destination, label: `lane compose ${args[0]}` });
   const config = JSON.parse(compose(['config', '--format', 'json']));
   check(Object.keys(config.services).sort().join(',') === services.slice().sort().join(','), 'Unexpected Compose service');
   check(!Object.keys(config.volumes ?? {}).length, 'Unregistered named volumes');
@@ -218,13 +247,18 @@ function main() {
   // Run migrations without allocating an unrecorded Compose run container.
   compose(['start', 'app']);
   compose(['exec', '-T', 'app', 'go', 'run', './cmd/migrate', 'up']);
-  compose(['start', 'frontend', 'collector']);
+  // The collector polls external rate-limited APIs; it is created but only
+  // started on explicit opt-in (README § Collector opt-in).
+  compose(['start', 'frontend']);
   resource('resources-complete', ['--allocations', JSON.stringify(allocations)]);
   console.log(`Created ${project}: https://${host}`);
 }
 
-try { main(); } catch (error) {
-  try { diagnose(`worktree-create: ${error.message}\nPartial resources retained; inspect the operation record before recovery.${logPath ? `\nLog: ${logPath}` : '\nNo validated scratch log available.'}`); }
-  catch { process.stderr.write('worktree-create failed; diagnostic log unavailable\n'); }
-  process.exitCode = 1;
+// Imported by scripts/worktree-create.test.mjs; run only as the CLI entry.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try { main(); } catch (error) {
+    try { diagnose(`worktree-create: ${error.message}\nPartial resources retained; inspect the operation record before recovery.${logPath ? `\nLog: ${logPath}` : '\nNo validated scratch log available.'}`); }
+    catch { process.stderr.write('worktree-create failed; diagnostic log unavailable\n'); }
+    process.exitCode = 1;
+  }
 }

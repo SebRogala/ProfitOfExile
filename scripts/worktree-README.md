@@ -79,9 +79,34 @@ ordinary Compose calls within the lane. The rendered service database URLs are
 fixed to the lane dev DB, so an exported main `DATABASE_URL` cannot override
 them. The generated Vite config selects the lane host and proxies to its exact
 app container name, avoiding main's shared `app` network alias. App migrations
-run at creation. App, frontend and collector start; desktop is created but stays
-stopped until used. Frontend dependencies install on startup. Creation does not
-prove HTTP readiness, upstream data availability, or a populated market cache.
+run at creation. App and frontend start; collector and desktop are created but
+stay stopped until used. Creation does not prove HTTP readiness, upstream data
+availability, or a populated market cache.
+
+Frontend dependencies install on every container start (`npm ci`, then
+`svelte-kit sync`) into the lane's `.worktree/frontend_node_modules` bind
+mount, never main's `frontend/node_modules`. Start-time install was chosen over
+install-at-create because creation would otherwise need an extra recorded
+container run, and `npm ci` keeps the cache exact to the lane's own lockfile
+after a branch changes it. The generated Vite config is
+`.worktree/vite.config.mts`: outside `frontend/` there is no `"type": "module"`
+package, so a `.ts` config there was bundled as CommonJS and failed to load the
+ESM-only `@sveltejs/kit/vite`.
+
+## Collector opt-in
+
+The collector polls poe.ninja and GGG trade, sharing the machine's rate-limit
+budget, so it sits behind the Compose profile `collector` and is not started by
+creation or by a plain `docker compose up`; `node --test
+scripts/worktree-create.test.mjs` checks the rendered service list both ways.
+Start it only when the Operator explicitly allows that start. To start it, run
+from the lane root:
+
+```sh
+docker compose --profile collector start collector
+```
+
+Stop it again with `docker compose --profile collector stop collector`.
 
 ## Integration tests
 
@@ -102,7 +127,17 @@ by Compose, not by Bash. Do not override these lane settings with main's values.
 When the requested base predates POE-303, creation replaces its recognized
 legacy integration guard and adds missing lane-local ignore entries. These
 appear as tracked lane diffs; the requested base commit is preserved. An unknown
-guard is refused.
+guard is refused. A base commit tracking either file as a symlink is refused,
+naming the path, before the worktree is created. In the lane, each file is
+opened with `O_NOFOLLOW` and its descriptor's `/proc/self/fd` link must equal
+the expected lane path before the first read, so a symlinked file or parent
+directory (including one swapped in after creation) is refused with a
+diagnostic naming the path. The regression test needs the Docker Compose CLI
+but creates or starts no containers and needs no database or lane:
+
+```sh
+node --test scripts/worktree-create.test.mjs
+```
 
 The full integration runner drops and recreates its database, changing the OID
 and removing its allocation comment. **After a full integration run, guarded

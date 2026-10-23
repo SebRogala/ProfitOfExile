@@ -32,7 +32,7 @@ services:
     image: __FRONTEND_IMAGE__
     container_name: profitofexile___LANE___frontend
     working_dir: /workspace/frontend
-    command: [sh, -c, "npm ci && npm run dev -- --config ../.worktree/vite.config.ts --host 0.0.0.0"]
+    command: [sh, -c, "npm ci && npx svelte-kit sync && npm run dev -- --config ../.worktree/vite.config.mts --host 0.0.0.0"]
     volumes:
       - .:/workspace
       - ./.worktree/frontend_node_modules:/workspace/frontend/node_modules
@@ -48,6 +48,8 @@ services:
       traefik.http.services.profitofexile-__LANE__-frontend.loadbalancer.server.port: "5173"
   collector:
     image: __COLLECTOR_IMAGE__
+    # Opt-in only: polls rate-limited external APIs (worktree-README.md).
+    profiles: [collector]
     container_name: profitofexile___LANE___collector
     working_dir: /app
     command: [air, -c, .air.collector.toml]
