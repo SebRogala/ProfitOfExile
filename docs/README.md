@@ -65,6 +65,14 @@ Superseded:
 
 ADRs record decisions at a point in time. If implementation later supersedes a decision, add a new ADR and update the earlier status rather than silently rewriting history.
 
+Each ADR keeps its existing `uid` frontmatter and carries a `## Enforcement`
+section in the body with `Tier:`, `Scope:` and `Summary:` fields. The delivery
+auditor reads those body fields: `required` marks a system contract; `suggested`
+is advisory; `informational` records superseded or deprecated decisions. Scope
+names the governed surfaces, and Summary states the decision with its accepted
+amendments. Status and dated amendments still determine which clauses apply; a
+tier does not promote a proposal or restore a superseded clause.
+
 ## Current guides and narratives
 
 - [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — mixed current/target guide with per-section labels.

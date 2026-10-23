@@ -8,6 +8,14 @@ uid: 84f28ce3-dcf5-48c5-9efb-4f56a4f9df30
 
 Accepted
 
+## Enforcement
+
+Tier: required
+
+Scope: Lab analysis pipeline, trade enrichment and analysis HTTP endpoints.
+
+Summary: Serve one unified feature/signal pipeline; the analysis layer owns trade-price selection and freshness, not HTTP handlers.
+
 ## Context
 
 The analysis system accumulated three parallel, competing subsystems:

@@ -37,6 +37,14 @@ Scope, as taken (epic D1): the engine and the temple, its first consumer. The
 lab OCR windows and the merc verdict strip keep their own per-surface windows
 and migrate in follow-ups.
 
+## Enforcement
+
+Tier: suggested
+
+Scope: Desktop widget windows, monitor selection, placement persistence and click arbitration; proposed pending Windows smoke checks.
+
+Summary: Use one game-monitor window per module or declared host with widgets inside it; retain the proposed status and explicit geometry-notice exception.
+
 ## Context
 
 Before this batch every overlay surface was its own `WebviewWindow` with its own

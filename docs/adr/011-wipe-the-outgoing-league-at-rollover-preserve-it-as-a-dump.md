@@ -14,6 +14,14 @@ removal of age-based retention policies stands.
 original twelve plus `currency_exchange_markets` and `currency_exchange_cursor`.
 Every table added to the league-scoped schema joins this set at creation.
 
+## Enforcement
+
+Tier: required
+
+Scope: League rollover, league-dependent tables and schema migration operations.
+
+Summary: Preserve outgoing league data as a dedicated dump before deliberate rollover wipes; league-dependent tables join the wipe set.
+
 ## Context
 
 ADR-010 removed age-based retention so archived leagues stay live and queryable,

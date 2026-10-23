@@ -8,6 +8,14 @@ uid: c0c62fa9-c47a-4920-847a-16c0d35e8e7c
 
 Accepted
 
+## Enforcement
+
+Tier: required
+
+Scope: Desktop and web preference persistence, typed Rust settings and cross-window state.
+
+Summary: Keep view-only picks in the validated prefs map; Rust-consumed settings and cross-window state use typed settings and SSOT slices.
+
 ## Context
 
 Every select the user can set — rankings sort mode, colour filter, row limit,

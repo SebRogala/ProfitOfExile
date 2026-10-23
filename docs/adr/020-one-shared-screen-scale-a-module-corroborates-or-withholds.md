@@ -26,6 +26,14 @@ Extends the module contract in
 that ADR made shared state flow only through SSOT slices; this one says what a
 module may do to the ONE slice that describes the screen.
 
+## Enforcement
+
+Tier: required
+
+Scope: ScreenSlice, screen geometry writers, consumers, verification and screen-key lifecycle.
+
+Summary: Keep one shared screen scale, corroborate module measurements and honor the amended geometry key and recalibration lifecycle.
+
 ## Context
 
 Three desktop consumers need to know how big the game's UI is drawn: the merc

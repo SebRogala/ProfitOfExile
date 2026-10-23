@@ -8,6 +8,14 @@ uid: 53495e24-6c45-41f9-84ed-40f065777ac8
 
 Accepted
 
+## Enforcement
+
+Tier: required
+
+Scope: Go repositories, PostgreSQL queries, transactions and database dependencies.
+
+Summary: Use direct pgx queries and explicit transactions without an ORM; current package placement follows ADR-008.
+
 ## Context
 
 ProfitOfExile stores price snapshots, lab analysis results, and strategy trees in PostgreSQL. The data access layer must be chosen before any repository implementations are written, because it affects the structure of every `infrastructure/postgres_repo.go` file across all modules.

@@ -25,6 +25,14 @@ POE-269 keyed fallback; `602af3c` Manual-only placed-miss sweep, 2026-09-09;
 
 Merc: clause 1 shipped; clause 4 shipped (`POE-278 WI-B`, `f78786e`); clauses 2, 3 and 5 shipped (`POE-278 WI-C`, `072c98c`).
 
+## Enforcement
+
+Tier: required
+
+Scope: Temple and merc capture read budgets, liveness, geometry replacement and identity lifecycles.
+
+Summary: Read once, retry only unknowns within the budget, then stop OCR; move live geometry only manually and honor the amended temple lock and cold-sweep rules.
+
 ## Context
 
 The owner's acceptance criteria on POE-278, as stated:

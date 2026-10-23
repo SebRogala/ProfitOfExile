@@ -19,6 +19,14 @@ re-detects per tick through the Temple and Merc paths
 
 **Superseded by the POE-269 amendment below.**
 
+## Enforcement
+
+Tier: required
+
+Scope: SSOT placement projection, module OCR rectangles, remembered anchors and locate fallbacks.
+
+Summary: Derive module geometry from the shared placement projection; keep fallbacks, anchor replacement and screen keys within the amended placement contract.
+
 ## Context
 
 ADR-020 §5 defines the scale lifecycle as trusted at start, verified on first

@@ -4,6 +4,14 @@
 
 Accepted
 
+## Enforcement
+
+Tier: required
+
+Scope: gem_snapshots schema, collector writes and gem observation queries.
+
+Summary: Store base and transfigured gem observations as separate rows, preserving per-observation identity and query-time pairing.
+
 ## Context
 
 POE-19 introduces the TimescaleDB schema for gem price history. The `gem_snapshots` hypertable must store prices for both base gems and their transfigured counterparts collected from poe.ninja every 15 minutes.

@@ -32,6 +32,14 @@ Amended 2026-09-08 (icon-route-and-layout) — the fifth amendment at the end
 supersedes the earlier current-route and current-layout claims. The
 content-addressed filename decision and seed-before-deploy ordering remain.
 
+## Enforcement
+
+Tier: required
+
+Scope: Icon maps, typed icon routes, compatibility alias, cache layout and deployment seeding.
+
+Summary: Seed icons before deploy, key cache files by source URL, isolate source-map categories and preserve the installed-client alias until its removal condition.
+
 ## Context
 
 The server serves gem and item artwork at `/api/gem-icon/{name}` from

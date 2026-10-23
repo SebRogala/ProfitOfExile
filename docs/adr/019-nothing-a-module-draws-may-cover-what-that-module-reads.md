@@ -35,6 +35,14 @@ or samples. Today that is the temple; the merc verdict strip and the lab
 overlays are the next candidates, and the rule is written for them rather than
 for the one module that needed it first.
 
+## Enforcement
+
+Tier: required
+
+Scope: Overlay placers over regions read by the app, subject to the stated user-placement and capture-exclusion exceptions.
+
+Summary: Readers publish read rectangles; placers consume them, refuse empty sets and withhold surfaces that cannot be placed clear.
+
 ## Context
 
 The temple builder draws two surfaces over the game — a kill callout with an

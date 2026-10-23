@@ -87,6 +87,14 @@ them. [ADR-017](017-no-default-engine-floor-may-hide-a-live-market.md) and
 provenance rides on each term as a flag and never gates a room out of the
 ranking.
 
+## Enforcement
+
+Tier: required
+
+Scope: Temple room valuation, market inputs, presets, advisor scoring and displayed values.
+
+Summary: Value and rank from one chaos-denominated market/preset object, preserve Default and Custom separately and apply the recorded fallback and final-incursion amendments.
+
 ## Context
 
 The temple builder advisor (POE-167…POE-171) ranked boards on

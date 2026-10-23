@@ -23,6 +23,14 @@ losing round trip IS served with its measured negative return, and `hoursSeen`
 widened again to count every hour the feed priced the recipe. The split this ADR
 decided is unchanged and is what ADR-017 argues from.
 
+## Enforcement
+
+Tier: required
+
+Scope: Exchange server eligibility and client quality filters, as amended by ADR-017.
+
+Summary: Serve sane plays and leave quality filtering to the reader; the original gate levels and default-on client gates are superseded.
+
 ## Context
 
 Until POE-191 the Currency Exchange engine applied five absolute quality gates

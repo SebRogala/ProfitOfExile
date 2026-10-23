@@ -17,6 +17,14 @@ league-scoped set is now fourteen tables — `currency_exchange_markets` and
 `currency_exchange_cursor` were created with a compression policy and no
 retention policy.
 
+## Enforcement
+
+Tier: informational
+
+Scope: League-scoped hypertable retention history; live-history intent superseded by ADR-011.
+
+Summary: Age-based retention was removed; ADR-011 replaces live archived history with deliberate rollover wipes and preserved dumps.
+
 ## Context
 
 **Amended 2026-08-24 (POE-125):** the no-retention rule binds new league-scoped
