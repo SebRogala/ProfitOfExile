@@ -193,7 +193,7 @@ class Component extends DCLogic {
       if (p < 1) continue;
       const d = disp(p / n);
       const b = buckets[d] || (buckets[d] = { d: d, r: p / n });
-      b.p = p; b.n = n;
+      b.p = p; b.n = n; b.r = p / n;
     }
     const rows = Object.keys(buckets).map((k) => buckets[k])
       .sort((a, b) => (sell ? b.r - a.r : a.r - b.r)).slice(0, 6)

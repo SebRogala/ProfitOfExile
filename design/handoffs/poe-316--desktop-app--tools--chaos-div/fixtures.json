@@ -119,21 +119,21 @@
     "rows": [
      {
       "ratio": "1 : 6.13",
-      "delta": "−0.2%",
+      "delta": "−0.1%",
       "iWant": 351,
       "iHave": 2150,
       "leftOver": 0
      },
      {
       "ratio": "1 : 6.14",
-      "delta": "−0.4%",
+      "delta": "−0.3%",
       "iWant": 350,
       "iHave": 2149,
       "leftOver": 1
      },
      {
       "ratio": "1 : 6.15",
-      "delta": "−0.5%",
+      "delta": "−0.4%",
       "iWant": 303,
       "iHave": 1862,
       "leftOver": 288
@@ -147,14 +147,14 @@
      },
      {
       "ratio": "1 : 6.17",
-      "delta": "−0.8%",
+      "delta": "−0.7%",
       "iWant": 151,
       "iHave": 931,
       "leftOver": 1219
      },
      {
       "ratio": "1 : 6.18",
-      "delta": "−1.0%",
+      "delta": "−0.9%",
       "iWant": 119,
       "iHave": 735,
       "leftOver": 1415
@@ -181,7 +181,7 @@
     "rows": [
      {
       "ratio": "1.47 : 1",
-      "delta": "−2.2%",
+      "delta": "−1.8%",
       "iWant": 28,
       "iHave": 19,
       "leftOver": 1
@@ -195,7 +195,7 @@
      },
      {
       "ratio": "1.45 : 1",
-      "delta": "−3.0%",
+      "delta": "−3.3%",
       "iWant": 29,
       "iHave": 20,
       "leftOver": 0
@@ -250,14 +250,14 @@
      },
      {
       "ratio": "6.10 : 1",
-      "delta": "+0.3%",
+      "delta": "+0.4%",
       "iWant": 2000,
       "iHave": 328,
       "leftOver": 0
      },
      {
       "ratio": "6.09 : 1",
-      "delta": "+0.5%",
+      "delta": "+0.4%",
       "iWant": 1804,
       "iHave": 296,
       "leftOver": 196
@@ -278,7 +278,7 @@
      },
      {
       "ratio": "6.06 : 1",
-      "delta": "+0.9%",
+      "delta": "+1.0%",
       "iWant": 691,
       "iHave": 114,
       "leftOver": 1309

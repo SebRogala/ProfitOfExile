@@ -42,6 +42,7 @@
 	import TemplePage from '$lib/pages/TemplePage.svelte';
 	import CurrencyExchangePage from '$lib/pages/CurrencyExchangePage.svelte';
 	import HarvestFlippingPage from '$lib/pages/HarvestFlippingPage.svelte';
+	import ChaosDivPage from '$lib/pages/ChaosDivPage.svelte';
 	import DevPage from '$lib/pages/DevPage.svelte';
 	import IdentifyDialog from '$lib/components/IdentifyDialog.svelte';
 
@@ -707,6 +708,9 @@
 					<DevPage />
 				</div>
 			{/if}
+			<div class:view-hidden={visibleView !== 'chaos-div'}>
+				<ChaosDivPage />
+			</div>
 		</main>
 	</div>
 </div>

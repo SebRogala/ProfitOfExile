@@ -29,7 +29,8 @@ export type View =
 	| 'mercenaries'
 	| 'temple'
 	| 'currency-exchange'
-	| 'harvest-flipping';
+	| 'harvest-flipping'
+	| 'chaos-div';
 
 /**
  * The path each view answers to. These strings are the Sidebar's keys — it
@@ -48,6 +49,7 @@ export const VIEW_PATHS: Record<View, string> = {
 	temple: '/temple',
 	'currency-exchange': '/currency-exchange',
 	'harvest-flipping': '/harvest-flipping',
+	'chaos-div': '/chaos-div',
 };
 
 /** The path for a view — the inverse of `go` for every path `go` recognises. */

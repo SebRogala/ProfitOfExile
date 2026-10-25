@@ -145,7 +145,12 @@
 			<div class="collapsed-item disabled" title="Bosses (soon)">
 				<span class="icon">&#x1F479;</span>
 			</div>
-			<div class="collapsed-sep"></div>
+		{/if}
+		<div class="collapsed-sep"></div>
+		<button class="collapsed-item" class:active={currentPath === '/chaos-div'} title="Chaos ⇄ Div" onclick={() => nav.go('/chaos-div')}>
+			<span class="icon" aria-hidden="true">⇄</span>
+		</button>
+		{#if import.meta.env.DEV}
 			<div class="collapsed-item disabled" title="Trade Lookup">
 				<span class="icon">&#x1F50D;</span>
 			</div>
@@ -244,9 +249,13 @@
 			{/if}
 		</div>
 
-		{#if import.meta.env.DEV}
 		<div class="section">
 			<div class="label">Tools</div>
+			<button class="nav-item" class:active={currentPath === '/chaos-div'} onclick={() => nav.go('/chaos-div')}>
+				<span class="icon" aria-hidden="true">⇄</span>
+				<span>Chaos ⇄ Div</span>
+			</button>
+			{#if import.meta.env.DEV}
 			<div class="nav-item disabled">
 				<span class="icon">&#x1F50D;</span>
 				<span>Trade Lookup</span>
@@ -259,8 +268,8 @@
 				<span class="icon">&#x1F6E0;&#xFE0F;</span>
 				<span>Dev Tools</span>
 			</button>
+			{/if}
 		</div>
-		{/if}
 	</div>
 
 	<div class="bottom">
