@@ -1,0 +1,291 @@
+{
+ "_note": "Calculation test vectors for Tools → Chaos ⇄ Div, generated from the canvas prototype's algorithm (Main.dc.html renderVals). The page owns no server data: every value is user input except the divine rate. 'rate' here is a fixed test value (420); the page reads the live rate from the existing divine-rate store. Do NOT invent or widen fields.",
+ "_owners": {
+  "rate": "existing desktop divine-rate store (`$lib/stores/divine-rate.svelte`, POE-284) — read only",
+  "everything else": "user input, page-local state"
+ },
+ "defaults": {
+  "mode": "sell",
+  "currency": "chaos",
+  "amount": 1,
+  "ratio": 1,
+  "oneSide": "right",
+  "_note": "What Reset restores, and the state the page opens in."
+ },
+ "_formats": {
+  "totalChaos": "whole chaos, grouped from 1,000 ('1,935'); Copy puts the ungrouped integer ('1935')",
+  "totalDivine": "two decimals ('4.61'); Copy puts the same string",
+  "split": "'<whole>d + <rest>c', rest rounded to whole chaos",
+  "perItem": "'<c>c · <d>d' — chaos whole from 10c up, else 2 decimals; divine 2 decimals, 4 below 0.1d",
+  "ratio": "as the game shows it: 2 decimals, whole numbers bare ('1 : 6.13', '644.50 : 1', '644 : 1')",
+  "delta": "percent vs the typed ratio's price, 1 decimal, '−' selling / '+' buying",
+  "iWant/iHave": "integers; currency side suffixed c/d in the cell, Copy puts the bare integer"
+ },
+ "vectors": [
+  {
+   "input": {
+    "mode": "sell",
+    "currency": "chaos",
+    "amount": 1,
+    "ratio": 1,
+    "oneSide": "right",
+    "rate": 420
+   },
+   "expect": {
+    "perItemChaos": 1,
+    "totalChaos": 1,
+    "totalDivine": "0.00",
+    "split": "0d + 1c",
+    "tableShown": false,
+    "rows": []
+   },
+   "case": "reset defaults"
+  },
+  {
+   "input": {
+    "mode": "sell",
+    "currency": "chaos",
+    "amount": 645,
+    "ratio": 1,
+    "oneSide": "right",
+    "rate": 420
+   },
+   "expect": {
+    "perItemChaos": 1,
+    "totalChaos": 645,
+    "totalDivine": "1.54",
+    "split": "1d + 225c",
+    "tableShown": false,
+    "rows": []
+   },
+   "case": "plain conversion (Amount 645, ratio 1)"
+  },
+  {
+   "input": {
+    "mode": "sell",
+    "currency": "chaos",
+    "amount": 3,
+    "ratio": 645,
+    "oneSide": "right",
+    "rate": 420
+   },
+   "expect": {
+    "perItemChaos": 645,
+    "totalChaos": 1935,
+    "totalDivine": "4.61",
+    "split": "4d + 255c",
+    "tableShown": true,
+    "rows": [
+     {
+      "ratio": "644.67 : 1",
+      "delta": "−0.1%",
+      "iWant": 1934,
+      "iHave": 3,
+      "leftOver": 0
+     },
+     {
+      "ratio": "644.50 : 1",
+      "delta": "−0.1%",
+      "iWant": 1289,
+      "iHave": 2,
+      "leftOver": 1
+     },
+     {
+      "ratio": "644 : 1",
+      "delta": "−0.2%",
+      "iWant": 644,
+      "iHave": 1,
+      "leftOver": 2
+     }
+    ]
+   },
+   "case": "Eye ×3 at 645 : 1"
+  },
+  {
+   "input": {
+    "mode": "sell",
+    "currency": "chaos",
+    "amount": 2150,
+    "ratio": 6.12,
+    "oneSide": "left",
+    "rate": 420
+   },
+   "expect": {
+    "perItemChaos": 0.16,
+    "totalChaos": 351,
+    "totalDivine": "0.84",
+    "split": "0d + 351c",
+    "tableShown": true,
+    "rows": [
+     {
+      "ratio": "1 : 6.13",
+      "delta": "−0.2%",
+      "iWant": 351,
+      "iHave": 2150,
+      "leftOver": 0
+     },
+     {
+      "ratio": "1 : 6.14",
+      "delta": "−0.4%",
+      "iWant": 350,
+      "iHave": 2149,
+      "leftOver": 1
+     },
+     {
+      "ratio": "1 : 6.15",
+      "delta": "−0.5%",
+      "iWant": 303,
+      "iHave": 1862,
+      "leftOver": 288
+     },
+     {
+      "ratio": "1 : 6.16",
+      "delta": "−0.6%",
+      "iWant": 200,
+      "iHave": 1231,
+      "leftOver": 919
+     },
+     {
+      "ratio": "1 : 6.17",
+      "delta": "−0.8%",
+      "iWant": 151,
+      "iHave": 931,
+      "leftOver": 1219
+     },
+     {
+      "ratio": "1 : 6.18",
+      "delta": "−1.0%",
+      "iWant": 119,
+      "iHave": 735,
+      "leftOver": 1415
+     }
+    ]
+   },
+   "case": "lifeforce sell, 1 : 6.12"
+  },
+  {
+   "input": {
+    "mode": "sell",
+    "currency": "div",
+    "amount": 20,
+    "ratio": 1.5,
+    "oneSide": "right",
+    "rate": 420
+   },
+   "expect": {
+    "perItemChaos": 630,
+    "totalChaos": 12600,
+    "totalDivine": "30.00",
+    "split": "30d + 0c",
+    "tableShown": true,
+    "rows": [
+     {
+      "ratio": "1.47 : 1",
+      "delta": "−2.2%",
+      "iWant": 28,
+      "iHave": 19,
+      "leftOver": 1
+     },
+     {
+      "ratio": "1.46 : 1",
+      "delta": "−2.6%",
+      "iWant": 19,
+      "iHave": 13,
+      "leftOver": 7
+     },
+     {
+      "ratio": "1.45 : 1",
+      "delta": "−3.0%",
+      "iWant": 29,
+      "iHave": 20,
+      "leftOver": 0
+     },
+     {
+      "ratio": "1.44 : 1",
+      "delta": "−3.7%",
+      "iWant": 26,
+      "iHave": 18,
+      "leftOver": 2
+     },
+     {
+      "ratio": "1.43 : 1",
+      "delta": "−4.8%",
+      "iWant": 20,
+      "iHave": 14,
+      "leftOver": 6
+     },
+     {
+      "ratio": "1.42 : 1",
+      "delta": "−5.6%",
+      "iWant": 17,
+      "iHave": 12,
+      "leftOver": 8
+     }
+    ]
+   },
+   "case": "Eye in divines, 20 × 1.50 : 1"
+  },
+  {
+   "input": {
+    "mode": "buy",
+    "currency": "chaos",
+    "amount": 2000,
+    "ratio": 6.12,
+    "oneSide": "right",
+    "rate": 420
+   },
+   "expect": {
+    "perItemChaos": 0.16,
+    "totalChaos": 327,
+    "totalDivine": "0.78",
+    "split": "0d + 327c",
+    "tableShown": true,
+    "rows": [
+     {
+      "ratio": "6.11 : 1",
+      "delta": "+0.1%",
+      "iWant": 1999,
+      "iHave": 327,
+      "leftOver": 1
+     },
+     {
+      "ratio": "6.10 : 1",
+      "delta": "+0.3%",
+      "iWant": 2000,
+      "iHave": 328,
+      "leftOver": 0
+     },
+     {
+      "ratio": "6.09 : 1",
+      "delta": "+0.5%",
+      "iWant": 1804,
+      "iHave": 296,
+      "leftOver": 196
+     },
+     {
+      "ratio": "6.08 : 1",
+      "delta": "+0.6%",
+      "iWant": 1223,
+      "iHave": 201,
+      "leftOver": 777
+     },
+     {
+      "ratio": "6.07 : 1",
+      "delta": "+0.8%",
+      "iWant": 899,
+      "iHave": 148,
+      "leftOver": 1101
+     },
+     {
+      "ratio": "6.06 : 1",
+      "delta": "+0.9%",
+      "iWant": 691,
+      "iHave": 114,
+      "leftOver": 1309
+     }
+    ]
+   },
+   "case": "lifeforce buy, 6.12 : 1"
+  }
+ ]
+}
