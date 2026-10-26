@@ -19,9 +19,11 @@ artboard using `fixtures.json`. Do not stop until every `CHECKLIST.md` box passe
 can't resolve in `NOTES.md`."_
 
 ## Spec changes vs ticket
-Compared against: POE-316 (description as of 2026-10-26). The ticket was filed from the design session; no changes.
+Compared against: POE-316 (description as of 2026-10-26). Owner-approved design change (fix round 3): mode changes also swap the item side; order candidates must cover at least one whole currency at the typed price; sub-0.1c per-item values use four decimals.
 
 ## Tokens
+
+Sibling pages (Harvest Flipping and Currency Exchange) win over the canvas sizes for layout, typography, panels and controls.
 All from `desktop/src/tokens.css`. The page is a Tools page, so it uses the `--color-lab-*` set like the
 Strategies pages (`design/PROJECT.md` → Design system decisions). The canvas draws with the legacy
 `--bg/--surface/--border` hexes; map them to `--color-lab-bg/-surface/-border`.
@@ -43,21 +45,23 @@ Strategies pages (`design/PROJECT.md` → Design system decisions). The canvas d
    "Total" at ratio 1, "Worth" when selling, "Cost" when buying.
 4. **Undercut table** ("Nearest undercuts" / "Nearest outbids"): columns Ratio, Undercut/Outbid, I want, I have,
    Left over / Short of target. Up to 6 rows. **I want** and **I have** each have their own Copy button. The first
-   row is highlighted. The table is **hidden** while the ratio is 1, or when no row exists.
+   row is highlighted. The table is **hidden** while the ratio is 1, or when no row exists. At a valid non-1 ratio with no row, show "At this ratio the smallest whole order is N items for 1<c|d>." instead, with N = ceil(1/r).
 5. There is no divine-rate line on the page; the top-bar chip already shows the rate.
 
 ## Interactions & state
+- **Mode changes:** switching Selling ⇄ Buying flips which side holds the fixed 1, preserving the typed price: selling `906 : 1` ⇄ buying `1 : 906`. Selecting the active mode leaves the side unchanged. The manual swap remains available for cheap items; its orientation also flips when changing mode.
+- **Per-item chaos:** whole chaos from 10c, two decimals below 10c, four decimals below 0.1c (`1/906c` → `0.0011c`).
 - **Calculation** (the algorithm lives in the canvas `renderVals()`; `fixtures.json` → `vectors` pin it):
-  - `r` = currency per item. The typed value is `v`. Selling reads the game's `want(currency) : have(item)`;
+  - `r` = currency per item. The typed value is snapped once to two decimals as `v`. Selling reads the game's `want(currency) : have(item)`;
     buying reads `want(item) : have(currency)`. So `v` is `r` when (selling and the 1 is on the right) or
     (buying and the 1 is on the left), and `1/v` otherwise.
   - Totals: chaos = round(r × chaos-per-currency × amount), where chaos-per-currency is the rate for Divine and 1 for Chaos.
     Divine = chaos / rate.
-  - Rows: the typed ratio's displayed bucket is its value ± 0.005. For each item count n from 1 to amount, take one
+  - Rows: the typed ratio's displayed bucket is its value ± 0.005. For each item count n from ceil(1/r) to amount (both modes), take one
     candidate: when selling, the largest whole currency p with p/n below the bucket; when buying, the smallest p with
     p/n above it. Group candidates by their displayed ratio (2 decimals, whole numbers bare), keep the largest n per
     group, sort nearest first, and take 6. Partial fills exist in game (owner, 2026-10-26), so the largest order is
-    the useful one.
+    the useful one. Percentages and sorting use the shown order’s price. When no candidate remains, hide the table and show the minimum whole-order line above.
 - **Copy:** writes the bare value (integer, or the divine 2-decimal string) via the app's clipboard pattern
   (`navigator.clipboard.writeText`, as `harvest/controller.svelte.ts`). The button reads "Copied" for ~1.2 s.
 - **Reset** restores `fixtures.json` → `defaults` (Selling, Chaos, 1, ratio 1, the 1 on the right). The page opens in

@@ -14,6 +14,11 @@ Source implementation coverage is checked below. Runtime rendering, visual compa
 - [x] No rate yet: rate-dependent figures show "—", never "0", "NaN" or "Infinity".
 - [x] Only one new sidebar entry; `TopBar.svelte` untouched. Tokens only; copy exact (including "⇄", "−").
 
+- [x] Switching mode flips the fixed 1 onto the other item side without changing the typed value; selecting the active mode leaves it unchanged.
+- [x] Both modes consider only n ≥ ceil(1/r); no rows at a valid non-1 ratio show "At this ratio the smallest whole order is N items for 1<c|d>."
+- [x] Per-item chaos below 0.1c uses four decimals; 1/906c reads "0.0011c".
+- [x] New 906-price vectors and mode-switch vectors match the updated prototype; existing vectors are unchanged.
+
 ## Page
 - [x] Header with Reset on the right.
 - [x] Input bar: Mode, Currency, Amount stepper (min 1), Ratio with the fixed 1, the swap button and the per-item line.

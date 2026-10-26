@@ -7,11 +7,14 @@ One screen: Tools → Chaos ⇄ Div, mounted in the real desktop shell.
 - [x] Release and dev navigation, expanded sidebar and collapsed rail; ungated.
 - [x] Opening and Reset: Selling / Chaos / amount 1 / ratio 1 / fixed 1 right.
 - [x] Header: exact title and Reset action with reset icon.
+- [x] Mode change flips the fixed 1 and preserves price; selecting the active mode leaves it unchanged.
+- [x] Orders start at ceil(1/r); no-candidate state explains the minimum whole order.
+- [x] Per-item chaos below 0.1c uses four decimals.
 - [x] Mode: Selling and Buying; Currency: Chaos and Divine, using SegmentedButtons.
 - [x] Amount: live numeric input, minimum 1, − / + with accessible names.
 - [x] Ratio: live numeric input, fixed 1 either side, keyboard-accessible swap icon.
 - [x] Labels: Amount at ratio 1; Items I have / Items I want otherwise.
-- [x] Per-item formats: whole chaos from 10c, two decimals below; divine two/four decimals.
+- [x] Per-item formats: whole chaos from 10c, two decimals below 10c, four below 0.1c; divine two/four decimals.
 - [x] Totals: Total / Worth / Cost, grouped whole chaos, two-decimal divine, whole split.
 - [x] Copy totals: bare values, successful Copied feedback for 1.2 seconds.
 - [x] Selling table: Nearest undercuts / Undercut / Left over.
@@ -27,7 +30,7 @@ One screen: Tools → Chaos ⇄ Div, mounted in the real desktop shell.
 - [x] Copy failure: no false Copied feedback; warning logged.
 - [x] Narrow layout: inputs wrap; table scrolls horizontally inside its surface.
 - [x] Tokens, exact English copy, accessible labels and keyboard focus styles.
-- [x] All six fixture vectors and calculation boundary tests pass.
+- [x] All eight calculation fixture vectors and three mode-switch vectors and calculation boundary tests pass.
 - [x] Focused tests, full desktop tests, svelte-check pass without new touched-file diagnostics.
 - [ ] Runtime rendering, screenshots, contrast/keyboard interaction and adversarial audit (orchestrator; see NOTES.md).
 

@@ -146,7 +146,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 
 | File | Exports | Description |
 |------|---------|-------------|
-| `tools/chaos-div.ts` | `calculateChaosDiv()`, `CHAOS_DIV_DEFAULTS`, `normalizeChaosDivAmount()`, `formatChaosDivWhole()`, `ChaosDivInput`, `ChaosDivResult` | Current POE-316 pure calculator and nearest undercut/outbid order candidates. Reads a nullable rate supplied by the page; owns no fetch or persistence. Fixture and boundary tests live beside it. |
+| `tools/chaos-div.ts` | `calculateChaosDiv()`, `switchChaosDivMode()`, `CHAOS_DIV_DEFAULTS`, `normalizeChaosDivAmount()`, `formatChaosDivWhole()`, `ChaosDivInput`, `ChaosDivResult` | Current POE-316 pure calculator and nearest undercut/outbid order candidates. Reads a nullable rate supplied by the page; owns no fetch or persistence. Fixture and boundary tests live beside it. |
 
 ## Pages
 

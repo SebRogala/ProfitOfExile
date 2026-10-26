@@ -16,7 +16,7 @@
   "totalChaos": "whole chaos, grouped from 1,000 ('1,935'); Copy puts the ungrouped integer ('1935')",
   "totalDivine": "two decimals ('4.61'); Copy puts the same string",
   "split": "'<whole>d + <rest>c', rest rounded to whole chaos",
-  "perItem": "'<c>c · <d>d' — chaos whole from 10c up, else 2 decimals; divine 2 decimals, 4 below 0.1d",
+  "perItem": "'<c>c · <d>d' — chaos whole from 10c up, 2 decimals below 10c, 4 below 0.1c; divine 2 decimals, 4 below 0.1d",
   "ratio": "as the game shows it: 2 decimals, whole numbers bare ('1 : 6.13', '644.50 : 1', '644 : 1')",
   "delta": "percent vs the typed ratio's price, 1 decimal, '−' selling / '+' buying",
   "iWant/iHave": "integers; currency side suffixed c/d in the cell, Copy puts the bare integer"
@@ -286,6 +286,112 @@
     ]
    },
    "case": "lifeforce buy, 6.12 : 1"
+  },
+  {
+   "input": {
+    "mode": "buy",
+    "currency": "chaos",
+    "amount": 4,
+    "ratio": 906,
+    "oneSide": "left",
+    "rate": 420
+   },
+   "expect": {
+    "perItemChaos": 906,
+    "totalChaos": 3624,
+    "totalDivine": "8.63",
+    "split": "8d + 264c",
+    "tableShown": true,
+    "rows": [
+     {
+      "ratio": "1 : 906.25",
+      "delta": "+0.0%",
+      "iWant": 4,
+      "iHave": 3625,
+      "leftOver": 0
+     },
+     {
+      "ratio": "1 : 906.33",
+      "delta": "+0.0%",
+      "iWant": 3,
+      "iHave": 2719,
+      "leftOver": 1
+     },
+     {
+      "ratio": "1 : 906.50",
+      "delta": "+0.1%",
+      "iWant": 2,
+      "iHave": 1813,
+      "leftOver": 2
+     },
+     {
+      "ratio": "1 : 907",
+      "delta": "+0.1%",
+      "iWant": 1,
+      "iHave": 907,
+      "leftOver": 3
+     }
+    ]
+   },
+   "case": "buying four items at 906c each"
+  },
+  {
+   "input": {
+    "mode": "buy",
+    "currency": "chaos",
+    "amount": 4,
+    "ratio": 906,
+    "oneSide": "right",
+    "rate": 420
+   },
+   "expect": {
+    "perItemChaos": 0.0011,
+    "totalChaos": 0,
+    "totalDivine": "0.00",
+    "split": "0d + 0c",
+    "tableShown": false,
+    "rows": [],
+    "minimumOrderMessage": "At this ratio the smallest whole order is 906 items for 1c."
+   },
+   "case": "buying four lifeforce at 906 per chaos"
+  }
+ ],
+ "modeSwitchVectors": [
+  {
+   "case": "selling to buying preserves the direct price",
+   "input": {
+    "mode": "sell",
+    "oneSide": "right"
+   },
+   "mode": "buy",
+   "expect": {
+    "mode": "buy",
+    "oneSide": "left"
+   }
+  },
+  {
+   "case": "buying to selling restores the item side",
+   "input": {
+    "mode": "buy",
+    "oneSide": "left"
+   },
+   "mode": "sell",
+   "expect": {
+    "mode": "sell",
+    "oneSide": "right"
+   }
+  },
+  {
+   "case": "cheap-item swap survives a mode change",
+   "input": {
+    "mode": "sell",
+    "oneSide": "left"
+   },
+   "mode": "buy",
+   "expect": {
+    "mode": "buy",
+    "oneSide": "right"
+   }
   }
  ]
 }

@@ -8,6 +8,7 @@
 		CHAOS_DIV_DEFAULTS,
 		calculateChaosDiv,
 		formatChaosDivWhole,
+		switchChaosDivMode,
 		type ChaosDivMode,
 		type ChaosDivCurrency,
 		type ChaosDivOneSide
@@ -34,6 +35,13 @@
 		copyGeneration++;
 		clearTimeout(copyTimer);
 		copied = null;
+	}
+
+	function selectMode(value: string): void {
+		const next = switchChaosDivMode({ mode, oneSide }, value === 'buy' ? 'buy' : 'sell');
+		mode = next.mode;
+		oneSide = next.oneSide;
+		clearCopy();
 	}
 
 	async function copy(value: number | string | null, key: string): Promise<void> {
@@ -72,16 +80,19 @@
 <div class="chaos-div-page">
 	<header class="page-head">
 		<h1>Chaos ⇄ Div</h1>
+		<div class="spacer"></div>
 		<Button onclick={reset}>
-			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></svg>
-			Reset
+			<span class="reset-label">
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></svg>
+				Reset
+			</span>
 		</Button>
 	</header>
 
 	<section class="input-bar panel" aria-label="Calculator inputs">
 		<div class="field">
 			<span class="caption">Mode</span>
-			<SegmentedButtons value={mode} title="Mode" options={[{ value: 'sell', label: 'Selling' }, { value: 'buy', label: 'Buying' }]} onselect={(value) => { mode = value === 'buy' ? 'buy' : 'sell'; clearCopy(); }} />
+			<SegmentedButtons value={mode} title="Mode" options={[{ value: 'sell', label: 'Selling' }, { value: 'buy', label: 'Buying' }]} onselect={selectMode} />
 		</div>
 		<div class="field">
 			<span class="caption">Currency</span>
@@ -147,6 +158,8 @@
 				</table>
 			</div>
 		</section>
+	{:else if result.minimumOrderMessage}
+		<p class="minimum-order">{result.minimumOrderMessage}</p>
 	{/if}
 </div>
 
@@ -154,56 +167,248 @@
 	.chaos-div-page {
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
-		max-width: 816px;
-		padding: 8px;
+		gap: 10px;
+		font-size: 0.8125rem;
 		color: var(--color-lab-text);
 	}
-	.page-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-	h1 { margin: 0; font-size: 20px; font-weight: 600; }
-	h2 { margin: 0; font-size: 14px; font-weight: 600; }
-	.panel { background: var(--color-lab-surface); border: 1px solid var(--color-lab-border); border-radius: 8px; }
-	.input-bar { display: flex; flex-wrap: wrap; align-items: start; gap: 12px; padding: 16px; }
-	.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-	.caption { font-size: 12px; color: var(--color-lab-text-secondary); }
-	.mono { font-family: 'Consolas', 'Monaco', monospace; font-weight: 600; }
-	.stepper, .ratio-control { display: flex; align-items: center; gap: 4px; }
-	.ratio-control { gap: 6px; font-size: 18px; }
-	.fixed-one { color: var(--color-lab-text-secondary); white-space: nowrap; }
-	input, .square { height: 44px; border: 1px solid var(--color-lab-border); border-radius: 6px; background: var(--color-lab-bg); color: var(--color-lab-text); font-size: 18px; }
-	input { min-width: 0; appearance: textfield; }
-	input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-	.amount { width: 88px; text-align: center; }
-	.ratio { width: 96px; padding: 0 10px; }
-	.square { width: 44px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
-	.square:hover { border-color: var(--color-lab-blue); }
-	input:focus-visible, .square:focus-visible, .chaos-div-page :global(.btn:focus-visible) { outline: 2px solid var(--color-lab-blue); outline-offset: 1px; }
-	.per-item, .split { font-size: 12px; color: var(--color-lab-text-secondary); }
-	.per-item .mono, .split .mono { color: var(--color-lab-text); }
-	.totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-	.total-card { display: flex; flex-direction: column; gap: 8px; padding: 16px; min-width: 0; }
-	.total-value { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-	.number { font-size: 32px; overflow-wrap: anywhere; }
-	.unit { font-size: 18px; color: var(--color-lab-text-secondary); }
-	.order-panel { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; min-width: 0; }
-	.table-scroll { overflow-x: auto; overflow-y: hidden; }
-	table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
-	th, td { padding: 6px 8px; border-bottom: 1px solid var(--color-lab-border); text-align: left; }
-	th { font-weight: 500; color: var(--color-lab-text-secondary); }
-	tr.first { background: color-mix(in srgb, var(--color-lab-green) 8%, transparent); }
-	.order-ratio { font-size: 15px; }
-	.delta { color: var(--color-lab-yellow); }
-	.left-over { color: var(--color-lab-text-secondary); }
-	.order-value { display: inline-flex; align-items: center; gap: 8px; }
-	.order-value > span { min-width: 64px; font-size: 15px; }
-	.chaos-div-page :global(.btn) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 6px; border-color: var(--color-lab-border); background: var(--color-lab-bg); color: var(--color-lab-text); font-family: inherit; font-size: 13px; }
-	.chaos-div-page :global(.btn:hover:not(:disabled)) { border-color: var(--color-lab-blue); color: var(--color-lab-text); }
-	.total-value :global(.btn), .order-value :global(.btn) { background: var(--color-lab-border); }
-	.order-value :global(.btn) { height: 32px; padding: 0 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 12px; }
-	.input-bar :global(.segmented) { height: 44px; border-radius: 6px; }
-	.input-bar :global(.segmented-btn) { min-width: 68px; padding: 0 12px; font-size: 13px; }
-	@media (max-width: 480px) {
-		.chaos-div-page { padding: 0; }
-		.total-card { padding: 12px; }
+
+	.page-head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+		background: var(--color-lab-surface);
+		border: 1px solid var(--color-lab-border);
+		padding: 10px 16px;
+	}
+
+	.page-head h1 {
+		margin: 0;
+		font-size: 1rem;
+		font-weight: 700;
+	}
+
+	.spacer {
+		flex: 1;
+	}
+
+	.reset-label {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.panel {
+		background: var(--color-lab-surface);
+		border: 1px solid var(--color-lab-border);
+	}
+
+	.input-bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: start;
+		gap: 12px;
+		padding: 8px 12px;
+	}
+
+	.field {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-width: 0;
+	}
+
+	.caption,
+	h2 {
+		font-size: 0.6875rem;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+		color: var(--color-lab-text-secondary);
+	}
+
+	.mono {
+		font-family: 'Consolas', 'Monaco', monospace;
+		font-weight: 600;
+	}
+
+	.stepper,
+	.ratio-control {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.ratio-control {
+		gap: 6px;
+		font-size: 0.75rem;
+	}
+
+	.fixed-one {
+		color: var(--color-lab-text-secondary);
+		white-space: nowrap;
+	}
+
+	input,
+	.square {
+		background: var(--color-lab-bg);
+		border: 1px solid var(--color-lab-border);
+		border-radius: 3px;
+		padding: 3px 8px;
+		font-size: 0.75rem;
+		line-height: 1.5;
+		color: var(--color-lab-text);
+	}
+
+	input {
+		min-width: 0;
+		appearance: textfield;
+	}
+
+	input::-webkit-outer-spin-button,
+	input::-webkit-inner-spin-button {
+		-webkit-appearance: none;
+		margin: 0;
+	}
+
+	.amount {
+		width: 68px;
+		text-align: center;
+	}
+
+	.ratio {
+		width: 68px;
+	}
+
+	.square {
+		min-width: 26px;
+		padding: 3px 6px;
+		flex-shrink: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+	}
+
+	.square:hover {
+		border-color: var(--color-lab-blue);
+	}
+
+	input:focus-visible,
+	.square:focus-visible,
+	.chaos-div-page :global(.btn:focus-visible) {
+		outline: 2px solid var(--color-lab-blue);
+		outline-offset: 1px;
+	}
+
+	.per-item,
+	.split {
+		font-size: 0.6875rem;
+		color: var(--color-lab-text-secondary);
+	}
+
+	.per-item .mono,
+	.split .mono {
+		color: var(--color-lab-text);
+	}
+
+	.totals {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 10px;
+	}
+
+	.total-card {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 12px 14px;
+		min-width: 0;
+	}
+
+	.total-value {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+
+	.number {
+		font-size: 1.375rem;
+		overflow-wrap: anywhere;
+	}
+
+	.unit {
+		font-size: 0.8125rem;
+		color: var(--color-lab-text-secondary);
+	}
+
+	.order-panel {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+
+	h2 {
+		margin: 0;
+		padding: 10px 12px;
+		font-weight: 700;
+	}
+
+	.table-scroll {
+		overflow-x: auto;
+		overflow-y: hidden;
+	}
+
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.8125rem;
+		white-space: nowrap;
+	}
+
+	th {
+		text-align: left;
+		padding: 8px;
+		font-size: 0.6875rem;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+		color: var(--color-lab-text-secondary);
+		border-bottom: 1px solid var(--color-lab-border);
+		font-weight: 600;
+		vertical-align: bottom;
+	}
+
+	td {
+		padding: 8px;
+		border-bottom: 1px solid var(--color-lab-border);
+		vertical-align: middle;
+	}
+
+	tr.first {
+		background: color-mix(in srgb, var(--color-lab-green) 8%, transparent);
+	}
+
+	.delta {
+		color: var(--color-lab-yellow);
+	}
+
+	.left-over {
+		color: var(--color-lab-text-secondary);
+	}
+
+	.minimum-order {
+		margin: 0;
+		color: var(--color-lab-text-secondary);
+	}
+
+	.order-value {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.order-value > span {
+		min-width: 4ch;
 	}
 </style>

@@ -34,8 +34,8 @@ The handoff lists no spec changes versus POE-316. Tracker access is unavailable,
 
 ## Verification
 
-- `npx vitest run src/lib/tools/chaos-div.test.ts src/lib/stores/navigation.svelte.test.ts`: 121 passed across 2 files (77 calculator tests, all six vectors).
-- `npm test`: 4,050 passed across 79 files.
+- `npx vitest run src/lib/tools/chaos-div.test.ts src/lib/stores/navigation.svelte.test.ts`: 140 passed across 2 files (96 calculator tests, eight calculation vectors and three mode transitions).
+- `npm test`: 4,069 passed across 79 files.
 - `npm run check`: 497 files, 0 errors and 0 warnings.
 - `git diff --check`, verbatim fixture comparison and untouched TopBar check passed.
 - Mutation check: in an allocated scratch copy, changing Divine's chaos conversion factor to `1` made six calculation tests fail. Shared production files were never mutated. A second scratch mutation restoring the incomplete overflow guard failed the new extreme-ratio percentage regression.
@@ -47,3 +47,22 @@ Per brief §4, Docker and Tauri were not run and no sandbox escalation was reque
 No reference PNGs were supplied. Visual implementation follows the local Main.dc.html source; visual fidelity is not claimed as verified. Inventory implementation checks distinguish source coverage from these pending runtime gates. All changes remain uncommitted, overriding AGENT.md's per-screen commit instruction as required by the implementation brief.
 
 - Fix round 1b (supersedes the first-candidate note above): corrected both fixture copies’ delta strings to the shown orders’ currency/items prices; the prototype now follows the shown order instead of retaining the first candidate price.
+
+- Fix round 3: owner-approved mode/item-side flip, minimum whole-order cutoff/message, and four-decimal per-item chaos below 0.1c are implemented in the page and prototype; two calculation vectors and three mode transitions were generated from the updated prototype, with the six previous vectors verified unchanged. Regression checks reproduce the prior behavior in scratch.
+
+## Fix round 3 prevention record
+
+Incident — buying mode retained the selling ratio layout · severity: low.
+- What: observed in the owner’s in-game report, entering 906 while buying displayed the reciprocal price and unreachable 1c outbids.
+- Root cause (Observed): the old mode handler changed only `mode`, leaving the fixed item-side 1 on the previous side; the old candidate loop started at one item regardless of the typed price.
+- Caught by: owner runtime testing, then the focused regression tests.
+- Prevention applied: `switchChaosDivMode` preserves the price orientation; the candidate minimum and precision rules now have regression tests in `chaos-div.test.ts` and accepted behavior in the handoff README/CHECKLIST. No proposed prevention remains unrouted.
+
+What worked (the net held): the owner found the layout defect; red tests reproduced it; scratch probes broke all six targeted regression checks; prototype-generated vectors verified the six existing vectors unchanged.
+
+Upstream fixes (not mine): none. Ticket updates needed: record the owner-approved fix-round-3 design changes in POE-316 when tracker access is available.
+
+Carry-forward checklist:
+1. Run the calculation and mode-transition vectors after changing price orientation or order eligibility (`chaos-div.test.ts`).
+
+Prevention homes: the calculation module, its tests, and the handoff README/CHECKLIST; runtime visual acceptance remains with the orchestrator.

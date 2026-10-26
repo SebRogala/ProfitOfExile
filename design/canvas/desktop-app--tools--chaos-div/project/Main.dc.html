@@ -139,6 +139,9 @@ input:focus-visible,button:focus-visible{outline:2px solid #3b82f6;outline-offse
         </div>
       </section>
       </sc-if>
+      <sc-if value="{{showMinimumOrder}}" hint-placeholder-val="{{ false }}">
+        <p style="margin: 0; font-size: 13px; color: #b8b8b8">{{minimumOrderMessage}}</p>
+      </sc-if>
     </main>
   </div>
 </div>
@@ -164,7 +167,7 @@ class Component extends DCLogic {
     const fmt = (n) => Math.round(n).toLocaleString('en-US');
     const sell = s.mode === 'sell';
     const Q = Math.max(1, Math.min(100000, Math.floor(Number(s.items) || 1)));
-    const v = Number(s.ratio) || 0;
+    const v = Math.round((Number(s.ratio) || 0) * 100) / 100;
     // Ratio 1 is a plain conversion: the amount field is the currency amount.
     const plain = v === 1;
     // r = currency per item. The "1" sits on either side, as the game shows it;
@@ -188,10 +191,12 @@ class Component extends DCLogic {
     const num = (x) => (Math.abs(x - Math.round(x)) < 0.005 ? String(Math.round(x)) : x.toFixed(2));
     const disp = (r) => { const x = vIsR ? r : 1 / r; return s.oneLeft ? '1 : ' + num(x) : num(x) + ' : 1'; };
     const buckets = {};
-    for (let n = 1; n <= Q && rc > 0 && !plain; n++) {
+    const minimumItems = rc > 0 ? Math.ceil(vIsR ? 1 / v : v) : null;
+    for (let n = minimumItems || 1; n <= Q && rc > 0 && !plain; n++) {
       const p = sell ? Math.ceil(n * rLo - 1e-9) - 1 : Math.floor(n * rHi + 1e-9) + 1;
       if (p < 1) continue;
       const d = disp(p / n);
+      if (d === disp(rc)) continue;
       const b = buckets[d] || (buckets[d] = { d: d, r: p / n });
       b.p = p; b.n = n; b.r = p / n;
     }
@@ -221,8 +226,8 @@ class Component extends DCLogic {
       isBuy: sell ? 'false' : 'true',
       sellBg: sell ? '#0f3460' : '#1a1a2e',
       buyBg: sell ? '#1a1a2e' : '#0f3460',
-      pickSell: () => this.setState({ mode: 'sell' }),
-      pickBuy: () => this.setState({ mode: 'buy' }),
+      pickSell: () => this.setState({ mode: 'sell', oneLeft: s.mode === 'sell' ? s.oneLeft : !s.oneLeft }),
+      pickBuy: () => this.setState({ mode: 'buy', oneLeft: s.mode === 'buy' ? s.oneLeft : !s.oneLeft }),
       isDiv: s.cur === 'div' ? 'true' : 'false',
       isChaos: s.cur === 'chaos' ? 'true' : 'false',
       divBg: s.cur === 'div' ? '#0f3460' : '#1a1a2e',
@@ -239,7 +244,7 @@ class Component extends DCLogic {
       oneLeft: !!s.oneLeft,
       oneRight: !s.oneLeft,
       flip: () => this.setState({ oneLeft: !s.oneLeft }),
-      perItemC: perC >= 10 ? fmt(perC) : perC.toFixed(2),
+      perItemC: perC >= 10 ? fmt(perC) : perC.toFixed(perC < 0.1 ? 4 : 2),
       perItemD: (perC / rate).toFixed(perC / rate < 0.1 ? 4 : 2),
       totalLead: plain ? 'Total' : (sell ? 'Worth' : 'Cost'),
       totalChaos: fmt(totalC),
@@ -251,6 +256,8 @@ class Component extends DCLogic {
       copyChaos: () => this.copy(totalC, 'c'),
       copyDiv: () => this.copy(totalD.toFixed(2), 'd'),
       showTable: !plain && rows.length > 0,
+      showMinimumOrder: !plain && rows.length === 0 && minimumItems !== null,
+      minimumOrderMessage: 'At this ratio the smallest whole order is ' + minimumItems + ' items for 1' + unit + '.',
       tableTitle: sell ? 'Nearest undercuts' : 'Nearest outbids',
       deltaHead: sell ? 'Undercut' : 'Outbid',
       leftHead: sell ? 'Left over' : 'Short of target',

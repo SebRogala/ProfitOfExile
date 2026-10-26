@@ -20,6 +20,11 @@ export const CHAOS_DIV_DEFAULTS: Omit<ChaosDivInput, 'rate'> = {
 	oneSide: 'right'
 };
 
+/** Changing trade direction swaps the game's item side while preserving the price. */
+export function switchChaosDivMode(state: Pick<ChaosDivInput, 'mode' | 'oneSide'>, mode: ChaosDivMode): Pick<ChaosDivInput, 'mode' | 'oneSide'> {
+	return { mode, oneSide: mode === state.mode ? state.oneSide : state.oneSide === 'left' ? 'right' : 'left' };
+}
+
 export interface ChaosDivRow {
 	ratio: string;
 	delta: string;
@@ -38,6 +43,7 @@ export interface ChaosDivResult {
 	totalDivine: string | null;
 	split: string | null;
 	tableShown: boolean;
+	minimumOrderMessage: string | null;
 	rows: ChaosDivRow[];
 }
 
@@ -70,7 +76,7 @@ export function calculateChaosDiv(input: ChaosDivInput): ChaosDivResult {
 	const rawDivine = totalChaos !== null && rate !== null ? totalChaos / rate : null;
 	const totalDivine = rawDivine !== null && Number.isFinite(rawDivine) ? rawDivine : null;
 	const perDivine = perItem !== null && rate !== null ? perItem / rate : null;
-	const perItemC = perItem === null ? '—' : perItem >= 10 ? formatChaosDivWhole(perItem) : perItem.toFixed(2);
+	const perItemC = perItem === null ? '—' : perItem >= 10 ? formatChaosDivWhole(perItem) : perItem.toFixed(perItem < 0.1 ? 4 : 2);
 	const perItemD = perDivine === null || !Number.isFinite(perDivine)
 		? '—' : perDivine.toFixed(perDivine < 0.1 ? 4 : 2);
 	const whole = totalDivine === null ? null : Math.floor(totalDivine);
@@ -78,6 +84,9 @@ export function calculateChaosDiv(input: ChaosDivInput): ChaosDivResult {
 		? `${whole}d + ${Math.round(totalChaos - whole * rate)}c` : null;
 
 	const rows: ChaosDivRow[] = [];
+	// Inverting 1 / 49 again rounds above 49; use the snapped item count directly.
+	const minimumItems = ratio !== null && price !== null && Number.isFinite(price) && price > 0
+		? Math.ceil(valueIsPrice ? 1 / ratio : ratio) : null;
 	if (ratio !== null && price !== null && Number.isFinite(price) && ratio !== 1) {
 		const low = valueIsPrice ? ratio - 0.005 : 1 / (ratio + 0.005);
 		const high = valueIsPrice ? ratio + 0.005 : 1 / (ratio - 0.005);
@@ -87,7 +96,7 @@ export function calculateChaosDiv(input: ChaosDivInput): ChaosDivResult {
 		};
 		const typedDisplay = display(price);
 		const buckets = new Map<string, { price: number; currency: number; items: number }>();
-		for (let items = 1; items <= amount; items++) {
+		for (let items = minimumItems ?? 1; items <= amount; items++) {
 			const currency = sell ? Math.ceil(items * low - 1e-9) - 1 : Math.floor(items * high + 1e-9) + 1;
 			if (!Number.isSafeInteger(currency) || currency < 1) continue;
 			const candidate = currency / items;
@@ -111,13 +120,15 @@ export function calculateChaosDiv(input: ChaosDivInput): ChaosDivResult {
 	return {
 		amount,
 		ratio,
-		perItemChaos: perItem === null ? null : Number(perItem < 10 ? perItem.toFixed(2) : Math.round(perItem)),
+		perItemChaos: perItem === null ? null : perItem < 10 ? Number(perItem.toFixed(perItem < 0.1 ? 4 : 2)) : Math.round(perItem),
 		perItemC,
 		perItemD,
 		totalChaos,
 		totalDivine: totalDivine === null ? null : totalDivine.toFixed(2),
 		split,
 		tableShown: rows.length > 0,
+		minimumOrderMessage: rows.length === 0 && ratio !== 1 && minimumItems !== null
+			? `At this ratio the smallest whole order is ${minimumItems} items for 1${input.currency === 'div' ? 'd' : 'c'}.` : null,
 		rows
 	};
 }
