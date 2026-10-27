@@ -8,7 +8,9 @@
 		CHAOS_DIV_DEFAULTS,
 		calculateChaosDiv,
 		formatChaosDivWhole,
+		formatChaosDivItems,
 		switchChaosDivMode,
+		type ChaosDivAmountKind,
 		type ChaosDivMode,
 		type ChaosDivCurrency,
 		type ChaosDivOneSide
@@ -16,15 +18,17 @@
 
 	let mode = $state<ChaosDivMode>(CHAOS_DIV_DEFAULTS.mode);
 	let currency = $state<ChaosDivCurrency>(CHAOS_DIV_DEFAULTS.currency);
+	let amountKind = $state<ChaosDivAmountKind>('items');
 	let amount = $state<number | undefined>(CHAOS_DIV_DEFAULTS.amount);
 	let ratio = $state<number | undefined>(CHAOS_DIV_DEFAULTS.ratio);
 	let oneSide = $state<ChaosDivOneSide>(CHAOS_DIV_DEFAULTS.oneSide);
 	const rate = $derived(currentDivineRate());
-	const result = $derived(calculateChaosDiv({ mode, currency, amount: Number(amount), ratio: Number(ratio), oneSide, rate }));
+	const result = $derived(calculateChaosDiv({ mode, currency, amount: Number(amount), amountKind, ratio: Number(ratio), oneSide, rate }));
 	const plain = $derived(result.ratio === 1);
 	const selling = $derived(mode === 'sell');
-	const amountLabel = $derived(plain ? 'Amount' : selling ? 'Items I have' : 'Items I want');
-	const totalLead = $derived(plain ? 'Total' : selling ? 'Worth' : 'Cost');
+	const budgetMode = $derived(!selling && amountKind === 'budget');
+	const amountLabel = $derived(budgetMode ? 'Budget' : plain ? 'Amount' : selling ? 'Items I have' : 'Items I want');
+	const totalLead = $derived(budgetMode ? 'Cost' : plain ? 'Total' : selling ? 'Worth' : 'Cost');
 	const unit = $derived(currency === 'chaos' ? 'c' : 'd');
 
 	let copied = $state<{ key: string; text: string } | null>(null);
@@ -68,6 +72,7 @@
 	function reset(): void {
 		mode = CHAOS_DIV_DEFAULTS.mode;
 		currency = CHAOS_DIV_DEFAULTS.currency;
+		amountKind = 'items';
 		amount = CHAOS_DIV_DEFAULTS.amount;
 		ratio = CHAOS_DIV_DEFAULTS.ratio;
 		oneSide = CHAOS_DIV_DEFAULTS.oneSide;
@@ -99,10 +104,16 @@
 			<SegmentedButtons value={currency} title="Currency" options={[{ value: 'chaos', label: 'Chaos' }, { value: 'div', label: 'Divine' }]} onselect={(value) => { currency = value === 'div' ? 'div' : 'chaos'; clearCopy(); }} />
 		</div>
 		<div class="field">
-			<label class="caption" for="chaos-div-amount">{amountLabel}</label>
+			<div class="field-label">
+				<label class="caption" for="chaos-div-amount">{amountLabel}</label>
+				{#if !selling}
+					<SegmentedButtons value={amountKind} title="Amount input" options={[{ value: 'items', label: 'Items' }, { value: 'budget', label: 'Budget' }]} onselect={(value) => { amountKind = value === 'budget' ? 'budget' : 'items'; clearCopy(); }} />
+				{/if}
+			</div>
 			<div class="stepper">
 				<button type="button" class="square" aria-label="Decrease amount" onclick={() => { amount = Math.max(1, result.amount - 1); clearCopy(); }}>−</button>
 				<input id="chaos-div-amount" class="amount mono" type="number" min="1" max="100000" step="1" bind:value={amount} oninput={clearCopy} onblur={() => { amount = result.amount; }} />
+				{#if budgetMode}<span class="fixed-one">{unit}</span>{/if}
 				<button type="button" class="square" aria-label="Increase amount" onclick={() => { amount = Math.min(100000, result.amount + 1); clearCopy(); }}>+</button>
 			</div>
 		</div>
@@ -119,6 +130,18 @@
 			<div class="per-item">Per item <span class="mono">{result.perItemC}{result.perItemC === '—' ? '' : 'c'} · {result.perItemD}{result.perItemD === '—' ? '' : 'd'}</span></div>
 		</div>
 	</section>
+
+	{#if result.budget}
+		{#if result.budget.belowOneMessage}
+			<p class="minimum-order">{result.budget.belowOneMessage}</p>
+		{:else}
+			<div class="budget-summary">
+				<span class="order-value"><strong class="mono">{formatChaosDivItems(result.budget.items)}</strong><Button title="Copy item count" onclick={() => copy(result.budget?.items ?? null, 'budget-items')}>{copyLabel('budget-items', result.budget.items)}</Button></span>
+				<span class="order-value"><strong class="mono">for {result.budget.cost}{unit}</strong><Button title="Copy whole order cost" onclick={() => copy(result.budget?.cost ?? null, 'budget-cost')}>{copyLabel('budget-cost', result.budget.cost)}</Button></span>
+				<span>· {result.budget.left}{unit} left</span>
+			</div>
+		{/if}
+	{/if}
 
 	<section class="totals" aria-label="Totals">
 		<div class="total-card panel">
@@ -143,7 +166,7 @@
 			<h2>{selling ? 'Nearest undercuts' : 'Nearest outbids'}</h2>
 			<div class="table-scroll">
 				<table>
-					<thead><tr><th scope="col">Ratio</th><th scope="col">{selling ? 'Undercut' : 'Outbid'}</th><th scope="col">I want</th><th scope="col">I have</th><th scope="col">{selling ? 'Left over' : 'Short of target'}</th></tr></thead>
+					<thead><tr><th scope="col">Ratio</th><th scope="col">{selling ? 'Undercut' : 'Outbid'}</th><th scope="col">I want</th><th scope="col">I have</th><th scope="col">{budgetMode ? 'Budget left' : selling ? 'Left over' : 'Short of target'}</th></tr></thead>
 					<tbody>
 						{#each result.rows as row, index (row.ratio)}
 							<tr class:first={index === 0} class="mono">
@@ -151,13 +174,15 @@
 								<td class="delta">{row.delta}</td>
 								<td><div class="order-value"><span>{row.iWant}{selling ? unit : ''}</span><Button title="Copy I want value" onclick={() => copy(row.iWant, `want-${index}`)}>{copyLabel(`want-${index}`, row.iWant)}</Button></div></td>
 								<td><div class="order-value"><span>{row.iHave}{selling ? '' : unit}</span><Button title="Copy I have value" onclick={() => copy(row.iHave, `have-${index}`)}>{copyLabel(`have-${index}`, row.iHave)}</Button></div></td>
-								<td class="left-over">{row.leftOver || '—'}</td>
+								<td class="left-over">{budgetMode ? row.budgetLeft : row.leftOver || '—'}</td>
 							</tr>
 						{/each}
 					</tbody>
 				</table>
 			</div>
 		</section>
+	{:else if result.noOutbidMessage}
+		<p class="minimum-order">{result.noOutbidMessage}</p>
 	{:else if result.minimumOrderMessage}
 		<p class="minimum-order">{result.minimumOrderMessage}</p>
 	{/if}
@@ -209,6 +234,14 @@
 		align-items: start;
 		gap: 12px;
 		padding: 8px 12px;
+	}
+
+	.field-label,
+	.budget-summary {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 8px;
 	}
 
 	.field {

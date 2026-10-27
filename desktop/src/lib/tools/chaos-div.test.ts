@@ -4,6 +4,7 @@ import {
 	calculateChaosDiv,
 	CHAOS_DIV_DEFAULTS,
 	formatChaosDivWhole,
+	formatChaosDivItems,
 	normalizeChaosDivAmount,
 	switchChaosDivMode,
 	type ChaosDivInput
@@ -168,5 +169,100 @@ describe('order boundaries', () => {
 	});
 	it('uses the direct price when buying with the fixed one on the left', () => {
 		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', ratio: 6.12, oneSide: 'left', amount: 100 }).totalChaos).toBe(612);
+	});
+});
+
+
+describe('budget handoff vectors', () => {
+	for (const vector of fixture.budgetVectors) {
+		describe(vector.case, () => {
+			for (const key of ['items', 'cost', 'left', 'belowOneMessage'] as const) {
+				it(`produces the specified budget.${key}`, () => {
+					expect(calculateChaosDiv(vector.input as ChaosDivInput).budget?.[key]).toEqual(vector.expect.budget[key]);
+				});
+			}
+			for (const key of ['totalChaos', 'totalDivine', 'split', 'tableShown', 'rows'] as const) {
+				it(`produces the specified ${key}`, () => {
+					expect(calculateChaosDiv(vector.input as ChaosDivInput)[key]).toEqual(vector.expect[key]);
+				});
+			}
+		});
+	}
+});
+
+describe('buying with a whole-currency budget', () => {
+	it.each([
+		{ amount: 44, items: 12, cost: 42, left: 2 },
+		{ amount: 39, items: 11, cost: 39, left: 0 }
+	])('fits $items items into $amount div at 3.5 div each', ({ amount, items, cost, left }) => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', currency: 'div', amountKind: 'budget', amount, ratio: 3.5, oneSide: 'left' }).budget)
+			.toEqual({ items, cost, left, belowOneMessage: null });
+	});
+	it('explains a budget below one item', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', currency: 'div', amountKind: 'budget', amount: 3, ratio: 3.5, oneSide: 'left' }).budget)
+			.toEqual({ items: 0, cost: 0, left: 3, belowOneMessage: 'Budget below one item (3.5d)' });
+	});
+	it('drops an outbid that costs more than the budget', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', currency: 'div', amountKind: 'budget', amount: 42, ratio: 3.5, oneSide: 'left' }).rows.map(row => row.iHave))
+			.toEqual([39, 32, 25, 36, 29, 22]);
+	});
+	it('keeps an exact seven-chaos cost at 0.07 chaos per item', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', amountKind: 'budget', amount: 7, ratio: 0.07, oneSide: 'left' }).budget)
+			.toEqual({ items: 100, cost: 7, left: 0, belowOneMessage: null });
+	});
+	it('keeps an exact reciprocal 49-item order within one chaos', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', amountKind: 'budget', amount: 1, ratio: 49, oneSide: 'right' }).budget)
+			.toEqual({ items: 49, cost: 1, left: 0, belowOneMessage: null });
+	});
+	it('converts the whole cost rather than the unrounded item subtotal', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', currency: 'div', amountKind: 'budget', amount: 39, ratio: 3.5, oneSide: 'left' }).totalChaos).toBe(16380);
+	});
+	it('keeps selected-currency budgeting available while the rate is cold', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', currency: 'div', amountKind: 'budget', amount: 44, ratio: 3.5, oneSide: 'left', rate: null }).budget)
+			.toEqual({ items: 12, cost: 42, left: 2, belowOneMessage: null });
+	});
+	it('fits more than 100000 items without applying the item-input cap', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', amountKind: 'budget', amount: 100, ratio: 2000, oneSide: 'right' }).budget)
+			.toEqual({ items: 200000, cost: 100, left: 0, belowOneMessage: null });
+	});
+});
+
+
+it('matches a per-item scan above the item-input cap', () => {
+	// Pinned from an independent scan of all 200000 item counts at 2000 items/c.
+	expect(calculateChaosDiv({ ...defaults(), mode: 'buy', amountKind: 'budget', amount: 100, ratio: 2000, oneSide: 'right' }).rows).toEqual([
+		{ ratio: '1999.99 : 1', delta: '+0.0%', iWant: 199999, iHave: 100, leftOver: 1, budgetLeft: 0 },
+		{ ratio: '1999.98 : 1', delta: '+0.0%', iWant: 199998, iHave: 100, leftOver: 2, budgetLeft: 0 },
+		{ ratio: '1999.97 : 1', delta: '+0.0%', iWant: 199997, iHave: 100, leftOver: 3, budgetLeft: 0 },
+		{ ratio: '1999.96 : 1', delta: '+0.0%', iWant: 199996, iHave: 100, leftOver: 4, budgetLeft: 0 },
+		{ ratio: '1999.95 : 1', delta: '+0.0%', iWant: 199995, iHave: 100, leftOver: 5, budgetLeft: 0 },
+		{ ratio: '1999.94 : 1', delta: '+0.0%', iWant: 199994, iHave: 100, leftOver: 6, budgetLeft: 0 }
+	]);
+});
+
+
+describe('budget without an affordable outbid', () => {
+	it('explains that no outbid fits even though the typed order fits', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', currency: 'div', amountKind: 'budget', amount: 100, ratio: 100, oneSide: 'left' }).noOutbidMessage)
+			.toBe('No outbid fits the budget.');
+	});
+	it('reserves the minimum whole-order hint for Items input', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', currency: 'div', amountKind: 'budget', amount: 100, ratio: 100, oneSide: 'left' }).minimumOrderMessage).toBeNull();
+	});
+	it('leaves the below-one-item message in charge when no item fits', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', currency: 'div', amountKind: 'budget', amount: 3, ratio: 3.5, oneSide: 'left' }).noOutbidMessage).toBeNull();
+	});
+	it('keeps the plain ratio-one conversion free of an outbid notice', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', amountKind: 'budget', amount: 1, ratio: 1 }).noOutbidMessage).toBeNull();
+	});
+});
+
+
+describe('item count wording', () => {
+	it('uses singular for one item in the summary and hint formatter', () => {
+		expect(formatChaosDivItems(1)).toBe('1 item');
+	});
+	it('uses plural for multiple items in the summary and hint formatter', () => {
+		expect(formatChaosDivItems(2)).toBe('2 items');
 	});
 });

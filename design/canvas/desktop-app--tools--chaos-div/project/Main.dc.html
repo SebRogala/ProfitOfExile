@@ -67,9 +67,11 @@ input:focus-visible,button:focus-visible{outline:2px solid #3b82f6;outline-offse
           </span>
         </div>
         <div style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #b8b8b8">{{qtyLabel}}
+          <sc-if value="{{showAmountKind}}" hint-placeholder-val="{{ false }}"><span style="display: inline-flex; gap: 2px"><button type="button" onClick="{{pickItems}}" aria-pressed="{{isItems}}" style="border: 1px solid #0f3460; border-radius: 4px; background: {{itemsBg}}; color: #e0e0e0; font-size: 12px; padding: 3px 8px; cursor: pointer">Items</button><button type="button" onClick="{{pickBudget}}" aria-pressed="{{isBudget}}" style="border: 1px solid #0f3460; border-radius: 4px; background: {{budgetBg}}; color: #e0e0e0; font-size: 12px; padding: 3px 8px; cursor: pointer">Budget</button></span></sc-if>
           <span style="display: flex; align-items: center; gap: 4px">
             <button type="button" aria-label="Decrease amount" onClick="{{dec}}" style="width: 44px; height: 44px; border-radius: 6px; border: 1px solid #0f3460; background: #1a1a2e; color: #e0e0e0; font-size: 18px; cursor: pointer">−</button>
             <input type="number" min="1" aria-label="{{qtyLabel}}" value="{{itemsStr}}" onInput="{{onItems}}" style="width: 88px; height: 44px; box-sizing: border-box; text-align: center; background: #1a1a2e; border: 1px solid #0f3460; border-radius: 6px; font-family: Consolas, Monaco, monospace; font-size: 18px" />
+            <span>{{amountUnit}}</span>
             <button type="button" aria-label="Increase amount" onClick="{{inc}}" style="width: 44px; height: 44px; border-radius: 6px; border: 1px solid #0f3460; background: #1a1a2e; color: #e0e0e0; font-size: 18px; cursor: pointer">+</button>
           </span>
         </div>
@@ -86,6 +88,8 @@ input:focus-visible,button:focus-visible{outline:2px solid #3b82f6;outline-offse
         </div>
       </section>
 
+      <sc-if value="{{showBudget}}" hint-placeholder-val="{{ false }}"><div style="display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px"><strong>{{budgetItemsLabel}}</strong><button type="button" onClick="{{copyBudgetItems}}" title="Copy item count" style="border: 1px solid #0f3460; border-radius: 4px; background: #16213e; color: #e0e0e0; font-size: 12px; padding: 3px 8px; cursor: pointer">{{budgetItemsCopyLabel}}</button><strong>for {{budgetCost}}</strong><button type="button" onClick="{{copyBudgetCost}}" title="Copy whole order cost" style="border: 1px solid #0f3460; border-radius: 4px; background: #16213e; color: #e0e0e0; font-size: 12px; padding: 3px 8px; cursor: pointer">{{budgetCostCopyLabel}}</button><span>· {{budgetLeft}} left</span></div></sc-if>
+      <sc-if value="{{showBelowBudget}}" hint-placeholder-val="{{ false }}"><p style="margin: 0; font-size: 13px; color: #b8b8b8">{{belowBudgetMessage}}</p></sc-if>
       <!-- Totals -->
       <section style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
         <div style="background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
@@ -139,6 +143,9 @@ input:focus-visible,button:focus-visible{outline:2px solid #3b82f6;outline-offse
         </div>
       </section>
       </sc-if>
+      <sc-if value="{{showNoOutbid}}" hint-placeholder-val="{{ false }}">
+        <p style="margin: 0; font-size: 13px; color: #b8b8b8">{{noOutbidMessage}}</p>
+      </sc-if>
       <sc-if value="{{showMinimumOrder}}" hint-placeholder-val="{{ false }}">
         <p style="margin: 0; font-size: 13px; color: #b8b8b8">{{minimumOrderMessage}}</p>
       </sc-if>
@@ -147,13 +154,71 @@ input:focus-visible,button:focus-visible{outline:2px solid #3b82f6;outline-offse
 </div>
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props='{"rate":{"editor":"float","default":420,"min":50,"max":2000,"step":1,"unit":"c","section":"Demo"},"$preview":{"width":1024,"height":768}}'>
+/** Snapped hundredths give exact whole-orb costs without ceil(100 * 0.07) becoming 8. */
+function fitBudget(amount, ratio, valueIsPrice, unit) {
+    const ticks = BigInt(Math.round(ratio * 100));
+    const numerator = valueIsPrice ? ticks : 100n;
+    const denominator = valueIsPrice ? 100n : ticks;
+    const count = BigInt(amount) * denominator / numerator;
+    if (count > BigInt(Number.MAX_SAFE_INTEGER))
+        return null;
+    let items = Number(count);
+    const costOf = (n) => Number((BigInt(n) * numerator + denominator - 1n) / denominator);
+    while (items > 0 && costOf(items) > amount)
+        items--;
+    const cost = costOf(items);
+    const price = valueIsPrice ? ratio : 1 / ratio;
+    return { items, cost, left: amount - cost, belowOneMessage: items === 0 ? `Budget below one item (${price}${unit})` : null };
+}
+/** Last index matching a monotone predicate; zero means no positive index matched. */
+function lastMatching(max, predicate) {
+    let low = 0;
+    let high = max;
+    while (low < high) {
+        const mid = low + Math.ceil((high - low) / 2);
+        if (predicate(mid))
+            low = mid;
+        else
+            high = mid - 1;
+    }
+    return low;
+}
+/**
+ * A large Budget count is bounded by currency orders, not an item-input cap.
+ * For each currency amount only its six nearest display buckets can reach the
+ * global nearest six. Binary searches skip the intervening item counts.
+ */
+function* budgetCandidates(amount, minimum, budget, currencyOf, display) {
+    if (amount <= 100000) {
+        for (let n = minimum; n <= amount; n++)
+            yield n;
+        return;
+    }
+    for (let currency = 1; currency <= budget; currency++) {
+        let n = lastMatching(amount, (items) => currencyOf(items) <= currency);
+        const first = Math.max(minimum, lastMatching(amount, (items) => currencyOf(items) < currency) + 1);
+        if (n < first || currencyOf(n) !== currency)
+            continue;
+        for (let bucket = 0; bucket < 6 && n >= first; bucket++) {
+            yield n;
+            const label = display(currency / n);
+            const beforeBucket = lastMatching(n, (items) => items < first || display(currency / items) !== label);
+            n = beforeBucket;
+        }
+    }
+}
+
+function formatChaosDivItems(count) {
+    return `${count} ${count === 1 ? 'item' : 'items'}`;
+}
+
 class Component extends DCLogic {
   constructor(props) {
     super(props);
     // Demo opens on the Eye case; Reset returns to the defaults below.
-    this.state = { mode: 'sell', cur: 'chaos', items: 3, ratio: 645, oneLeft: false, copied: null };
+    this.state = { mode: 'sell', amountKind: 'items', cur: 'chaos', items: 3, ratio: 645, oneLeft: false, copied: null };
   }
-  defaults() { return { mode: 'sell', cur: 'chaos', items: 1, ratio: 1, oneLeft: false, copied: null }; }
+  defaults() { return { mode: 'sell', amountKind: 'items', cur: 'chaos', items: 1, ratio: 1, oneLeft: false, copied: null }; }
   rate() { const r = Number(this.props.rate ?? 420); return r > 0 ? r : 420; }
   copy(text, which) {
     try { navigator.clipboard && navigator.clipboard.writeText(String(text)); } catch (e) {}
@@ -166,7 +231,7 @@ class Component extends DCLogic {
     const s = this.state;
     const fmt = (n) => Math.round(n).toLocaleString('en-US');
     const sell = s.mode === 'sell';
-    const Q = Math.max(1, Math.min(100000, Math.floor(Number(s.items) || 1)));
+    const inputAmount = Math.max(1, Math.min(100000, Math.floor(Number(s.items) || 1)));
     const v = Math.round((Number(s.ratio) || 0) * 100) / 100;
     // Ratio 1 is a plain conversion: the amount field is the currency amount.
     const plain = v === 1;
@@ -176,10 +241,13 @@ class Component extends DCLogic {
     const rc = v > 0 ? (vIsR ? v : 1 / v) : 0;
     const unit = s.cur === 'div' ? 'd' : 'c';
     const toChaos = s.cur === 'div' ? rate : 1;
+    const budgetMode = !sell && s.amountKind === 'budget';
+    const budget = budgetMode && v > 0 ? fitBudget(inputAmount, v, vIsR, unit) : null;
+    const Q = budgetMode ? budget?.items ?? 0 : inputAmount;
 
     // Totals
     const perC = rc * toChaos;
-    const totalC = Math.round(perC * Q);
+    const totalC = Math.round(budgetMode ? (budget?.cost ?? 0) * toChaos : perC * Q);
     const totalD = totalC / rate;
     const whole = Math.floor(totalD);
 
@@ -192,13 +260,19 @@ class Component extends DCLogic {
     const disp = (r) => { const x = vIsR ? r : 1 / r; return s.oneLeft ? '1 : ' + num(x) : num(x) + ' : 1'; };
     const buckets = {};
     const minimumItems = rc > 0 ? Math.ceil(vIsR ? 1 / v : v) : null;
-    for (let n = minimumItems || 1; n <= Q && rc > 0 && !plain; n++) {
-      const p = sell ? Math.ceil(n * rLo - 1e-9) - 1 : Math.floor(n * rHi + 1e-9) + 1;
+    const currencyOf = (n) => sell ? Math.ceil(n * rLo - 1e-9) - 1 : Math.floor(n * rHi + 1e-9) + 1;
+    const candidates = budgetMode
+      ? budgetCandidates(Q, minimumItems || 1, inputAmount, currencyOf, disp)
+      : (function* () { for (let n = minimumItems || 1; n <= Q; n++) yield n; })();
+    for (const n of candidates) {
+      if (!(rc > 0) || plain) break;
+      const p = currencyOf(n);
+      if (budgetMode && p > inputAmount) continue;
       if (p < 1) continue;
       const d = disp(p / n);
       if (d === disp(rc)) continue;
       const b = buckets[d] || (buckets[d] = { d: d, r: p / n });
-      b.p = p; b.n = n; b.r = p / n;
+      if (b.n === undefined || n > b.n) { b.p = p; b.n = n; b.r = p / n; }
     }
     const rows = Object.keys(buckets).map((k) => buckets[k])
       .sort((a, b) => (sell ? b.r - a.r : a.r - b.r)).slice(0, 6)
@@ -214,13 +288,32 @@ class Component extends DCLogic {
           haveLabel: s.copied === 'h' + i ? 'Copied' : 'Copy',
           copyWant: () => this.copy(want, 'w' + i),
           copyHave: () => this.copy(have, 'h' + i),
-          left: Q - b.n ? String(Q - b.n) : '—',
+          left: budgetMode ? String(inputAmount - b.p) : Q - b.n ? String(Q - b.n) : '—',
           bg: i === 0 ? 'rgba(74, 222, 128, 0.08)' : 'transparent'
         };
       });
 
     return {
       rateChip: fmt(rate),
+      budget,
+      showAmountKind: !sell,
+      isItems: s.amountKind !== 'budget' ? 'true' : 'false',
+      isBudget: s.amountKind === 'budget' ? 'true' : 'false',
+      itemsBg: s.amountKind !== 'budget' ? '#0f3460' : '#16213e',
+      budgetBg: s.amountKind === 'budget' ? '#0f3460' : '#16213e',
+      pickItems: () => this.setState({ amountKind: 'items' }),
+      pickBudget: () => this.setState({ amountKind: 'budget' }),
+      showBudget: budgetMode && budget !== null && budget.items > 0,
+      showBelowBudget: budgetMode && budget !== null && budget.items === 0,
+      belowBudgetMessage: budget?.belowOneMessage ?? '',
+      budgetItemsLabel: budget !== null ? formatChaosDivItems(budget.items) : '',
+      budgetCost: String(budget?.cost ?? '') + unit,
+      budgetLeft: String(budget?.left ?? '') + unit,
+      copyBudgetItems: () => this.copy(budget.items, 'budget-items'),
+      copyBudgetCost: () => this.copy(budget.cost, 'budget-cost'),
+      budgetItemsCopyLabel: s.copied === 'budget-items' ? 'Copied' : 'Copy',
+      budgetCostCopyLabel: s.copied === 'budget-cost' ? 'Copied' : 'Copy',
+      amountUnit: budgetMode ? unit : '',
       reset: () => this.setState(this.defaults()),
       isSell: sell ? 'true' : 'false',
       isBuy: sell ? 'false' : 'true',
@@ -234,11 +327,11 @@ class Component extends DCLogic {
       chaosBg: s.cur === 'chaos' ? '#0f3460' : '#1a1a2e',
       pickDiv: () => this.setState({ cur: 'div' }),
       pickChaos: () => this.setState({ cur: 'chaos' }),
-      qtyLabel: plain ? 'Amount' : (sell ? 'Items I have' : 'Items I want'),
+      qtyLabel: budgetMode ? 'Budget' : plain ? 'Amount' : (sell ? 'Items I have' : 'Items I want'),
       itemsStr: String(s.items),
       onItems: (e) => this.setState({ items: e.target.value }),
-      inc: () => this.setState({ items: Q + 1 }),
-      dec: () => this.setState({ items: Math.max(1, Q - 1) }),
+      inc: () => this.setState({ items: inputAmount + 1 }),
+      dec: () => this.setState({ items: Math.max(1, inputAmount - 1) }),
       ratioStr: String(s.ratio),
       onRatio: (e) => this.setState({ ratio: e.target.value }),
       oneLeft: !!s.oneLeft,
@@ -246,7 +339,7 @@ class Component extends DCLogic {
       flip: () => this.setState({ oneLeft: !s.oneLeft }),
       perItemC: perC >= 10 ? fmt(perC) : perC.toFixed(perC < 0.1 ? 4 : 2),
       perItemD: (perC / rate).toFixed(perC / rate < 0.1 ? 4 : 2),
-      totalLead: plain ? 'Total' : (sell ? 'Worth' : 'Cost'),
+      totalLead: budgetMode ? 'Cost' : plain ? 'Total' : (sell ? 'Worth' : 'Cost'),
       totalChaos: fmt(totalC),
       totalDiv: totalD.toFixed(2),
       splitWhole: String(whole),
@@ -256,11 +349,13 @@ class Component extends DCLogic {
       copyChaos: () => this.copy(totalC, 'c'),
       copyDiv: () => this.copy(totalD.toFixed(2), 'd'),
       showTable: !plain && rows.length > 0,
-      showMinimumOrder: !plain && rows.length === 0 && minimumItems !== null,
-      minimumOrderMessage: 'At this ratio the smallest whole order is ' + minimumItems + ' items for 1' + unit + '.',
+      showMinimumOrder: !budgetMode && !plain && rows.length === 0 && minimumItems !== null,
+      showNoOutbid: budgetMode && budget !== null && budget.items > 0 && !plain && rows.length === 0,
+      noOutbidMessage: budgetMode && budget !== null && budget.items > 0 && !plain && rows.length === 0 ? 'No outbid fits the budget.' : null,
+      minimumOrderMessage: !budgetMode && !plain && rows.length === 0 && minimumItems !== null ? 'At this ratio the smallest whole order is ' + formatChaosDivItems(minimumItems) + ' for 1' + unit + '.' : null,
       tableTitle: sell ? 'Nearest undercuts' : 'Nearest outbids',
       deltaHead: sell ? 'Undercut' : 'Outbid',
-      leftHead: sell ? 'Left over' : 'Short of target',
+      leftHead: budgetMode ? 'Budget left' : sell ? 'Left over' : 'Short of target',
       rows: rows
     };
   }

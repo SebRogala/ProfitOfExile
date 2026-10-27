@@ -393,5 +393,254 @@
     "oneSide": "right"
    }
   }
+ ],
+ "budgetVectors": [
+  {
+   "case": "buying with a 44d budget at 3.5d per item",
+   "input": {
+    "mode": "buy",
+    "currency": "div",
+    "amountKind": "budget",
+    "amount": 44,
+    "ratio": 3.5,
+    "oneSide": "left",
+    "rate": 420
+   },
+   "expect": {
+    "budget": {
+     "items": 12,
+     "cost": 42,
+     "left": 2,
+     "belowOneMessage": null
+    },
+    "totalChaos": 17640,
+    "totalDivine": "42.00",
+    "split": "42d + 0c",
+    "tableShown": true,
+    "rows": [
+     {
+      "ratio": "1 : 3.55",
+      "delta": "+1.3%",
+      "iWant": 11,
+      "iHave": 39,
+      "leftOver": 1,
+      "budgetLeft": 5
+     },
+     {
+      "ratio": "1 : 3.56",
+      "delta": "+1.6%",
+      "iWant": 9,
+      "iHave": 32,
+      "leftOver": 3,
+      "budgetLeft": 12
+     },
+     {
+      "ratio": "1 : 3.57",
+      "delta": "+2.0%",
+      "iWant": 7,
+      "iHave": 25,
+      "leftOver": 5,
+      "budgetLeft": 19
+     },
+     {
+      "ratio": "1 : 3.58",
+      "delta": "+2.4%",
+      "iWant": 12,
+      "iHave": 43,
+      "leftOver": 0,
+      "budgetLeft": 1
+     },
+     {
+      "ratio": "1 : 3.60",
+      "delta": "+2.9%",
+      "iWant": 10,
+      "iHave": 36,
+      "leftOver": 2,
+      "budgetLeft": 8
+     },
+     {
+      "ratio": "1 : 3.63",
+      "delta": "+3.6%",
+      "iWant": 8,
+      "iHave": 29,
+      "leftOver": 4,
+      "budgetLeft": 15
+     }
+    ]
+   }
+  },
+  {
+   "case": "buying with a 39d budget at 3.5d per item",
+   "input": {
+    "mode": "buy",
+    "currency": "div",
+    "amountKind": "budget",
+    "amount": 39,
+    "ratio": 3.5,
+    "oneSide": "left",
+    "rate": 420
+   },
+   "expect": {
+    "budget": {
+     "items": 11,
+     "cost": 39,
+     "left": 0,
+     "belowOneMessage": null
+    },
+    "totalChaos": 16380,
+    "totalDivine": "39.00",
+    "split": "39d + 0c",
+    "tableShown": true,
+    "rows": [
+     {
+      "ratio": "1 : 3.55",
+      "delta": "+1.3%",
+      "iWant": 11,
+      "iHave": 39,
+      "leftOver": 0,
+      "budgetLeft": 0
+     },
+     {
+      "ratio": "1 : 3.56",
+      "delta": "+1.6%",
+      "iWant": 9,
+      "iHave": 32,
+      "leftOver": 2,
+      "budgetLeft": 7
+     },
+     {
+      "ratio": "1 : 3.57",
+      "delta": "+2.0%",
+      "iWant": 7,
+      "iHave": 25,
+      "leftOver": 4,
+      "budgetLeft": 14
+     },
+     {
+      "ratio": "1 : 3.60",
+      "delta": "+2.9%",
+      "iWant": 10,
+      "iHave": 36,
+      "leftOver": 1,
+      "budgetLeft": 3
+     },
+     {
+      "ratio": "1 : 3.63",
+      "delta": "+3.6%",
+      "iWant": 8,
+      "iHave": 29,
+      "leftOver": 3,
+      "budgetLeft": 10
+     },
+     {
+      "ratio": "1 : 3.67",
+      "delta": "+4.8%",
+      "iWant": 6,
+      "iHave": 22,
+      "leftOver": 5,
+      "budgetLeft": 17
+     }
+    ]
+   }
+  },
+  {
+   "case": "buying with a 3d budget at 3.5d per item",
+   "input": {
+    "mode": "buy",
+    "currency": "div",
+    "amountKind": "budget",
+    "amount": 3,
+    "ratio": 3.5,
+    "oneSide": "left",
+    "rate": 420
+   },
+   "expect": {
+    "budget": {
+     "items": 0,
+     "cost": 0,
+     "left": 3,
+     "belowOneMessage": "Budget below one item (3.5d)"
+    },
+    "totalChaos": 0,
+    "totalDivine": "0.00",
+    "split": "0d + 0c",
+    "tableShown": false,
+    "rows": []
+   }
+  },
+  {
+   "case": "outbids exclude orders above a 42d budget",
+   "input": {
+    "mode": "buy",
+    "currency": "div",
+    "amountKind": "budget",
+    "amount": 42,
+    "ratio": 3.5,
+    "oneSide": "left",
+    "rate": 420
+   },
+   "expect": {
+    "budget": {
+     "items": 12,
+     "cost": 42,
+     "left": 0,
+     "belowOneMessage": null
+    },
+    "totalChaos": 17640,
+    "totalDivine": "42.00",
+    "split": "42d + 0c",
+    "tableShown": true,
+    "rows": [
+     {
+      "ratio": "1 : 3.55",
+      "delta": "+1.3%",
+      "iWant": 11,
+      "iHave": 39,
+      "leftOver": 1,
+      "budgetLeft": 3
+     },
+     {
+      "ratio": "1 : 3.56",
+      "delta": "+1.6%",
+      "iWant": 9,
+      "iHave": 32,
+      "leftOver": 3,
+      "budgetLeft": 10
+     },
+     {
+      "ratio": "1 : 3.57",
+      "delta": "+2.0%",
+      "iWant": 7,
+      "iHave": 25,
+      "leftOver": 5,
+      "budgetLeft": 17
+     },
+     {
+      "ratio": "1 : 3.60",
+      "delta": "+2.9%",
+      "iWant": 10,
+      "iHave": 36,
+      "leftOver": 2,
+      "budgetLeft": 6
+     },
+     {
+      "ratio": "1 : 3.63",
+      "delta": "+3.6%",
+      "iWant": 8,
+      "iHave": 29,
+      "leftOver": 4,
+      "budgetLeft": 13
+     },
+     {
+      "ratio": "1 : 3.67",
+      "delta": "+4.8%",
+      "iWant": 6,
+      "iHave": 22,
+      "leftOver": 6,
+      "budgetLeft": 20
+     }
+    ]
+   }
+  }
  ]
 }

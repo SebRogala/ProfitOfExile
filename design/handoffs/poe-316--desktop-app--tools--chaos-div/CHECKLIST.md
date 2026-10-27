@@ -15,9 +15,18 @@ Source implementation coverage is checked below. Runtime rendering, visual compa
 - [x] Only one new sidebar entry; `TopBar.svelte` untouched. Tokens only; copy exact (including "⇄", "−").
 
 - [x] Switching mode flips the fixed 1 onto the other item side without changing the typed value; selecting the active mode leaves it unchanged.
-- [x] Both modes consider only n ≥ ceil(1/r); no rows at a valid non-1 ratio show "At this ratio the smallest whole order is N items for 1<c|d>."
+- [x] Both modes consider only n ≥ ceil(1/r); Items mode with no rows at a valid non-1 ratio shows "At this ratio the smallest whole order is N items for 1<c|d>."
 - [x] Per-item chaos below 0.1c uses four decimals; 1/906c reads "0.0011c".
 - [x] New 906-price vectors and mode-switch vectors match the updated prototype; existing vectors are unchanged.
+
+- [x] Buying-only Items / Budget toggle; default and Reset are Items; Selling hides it.
+- [x] Budget is whole selected currency; exact snapped-price fit, whole cost, leftover and cost-derived cards.
+- [x] Budget lead copies the item count and whole cost independently.
+- [x] Below-one-item budget message replaces the table and minimum-order hint.
+- [x] Budget with fitted items but no affordable outbid shows "No outbid fits the budget."; below-one and plain-conversion states do not show that notice.
+- [x] Summary and minimum-order hint use "1 item" / "N items".
+- [x] Budget outbids exclude over-budget orders before grouping; Budget left displays zero explicitly.
+- [x] Budget vectors match the updated prototype; all previous vectors are unchanged.
 
 ## Page
 - [x] Header with Reset on the right.
