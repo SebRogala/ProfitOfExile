@@ -2056,15 +2056,35 @@ fn set_lab_mode(mode: String, app: AppHandle) {
         return;
     }
     let state = app.state::<AppState>();
+    apply_manual_lab_mode(&state, &mode, |event| {
+        if let Err(e) = app.emit(event, ()) {
+            log::warn!("emit {} failed: {}", event, e);
+        }
+    });
+    persist_settings(&app);
+}
+
+fn apply_manual_lab_mode(state: &AppState, mode: &str, mut emit: impl FnMut(&str)) {
     let changed = {
         let mut detection = state.lab_scan.detection.lock().unwrap_or_else(|e| e.into_inner());
         detection.override_mode();
-        change_lab_mode(&state, &mode)
+        change_lab_mode(state, mode)
     };
     if changed.is_some() {
-        emit_lab_mode_change(&app);
+        // A completed scan is Idle and will not restart on the generation
+        // bump: retain its gems so Comparator's mode reaction can reprice.
+        // An active scan resets its vocabulary and duplicate tracking in
+        // GemProcessingState::reset_for_generation, so discard partial picks.
+        let scanning = *state.lab_state.lock().unwrap_or_else(|e| e.into_inner())
+            == lab_state::LabState::PickingGems;
+        if scanning {
+            state.lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        }
+        emit("lab-mode-changed");
+        if scanning {
+            emit("gems-cleared");
+        }
     }
-    persist_settings(&app);
 }
 
 /// Called under the detection lock so a manual override cannot race an auto-switch.

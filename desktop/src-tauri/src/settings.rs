@@ -1049,6 +1049,55 @@ mod tests {
     }
 
     #[test]
+    fn manual_lab_mode_correction_keeps_completed_gems() {
+        let state = test_app_state();
+        *state.lab_mode.lock().unwrap() = "Normal".to_string();
+        *state.lab_scan.detected_gems.lock().unwrap() = vec![
+            "Fireball".to_string(),
+            "Arc".to_string(),
+            "Spark".to_string(),
+        ];
+        // A completed 3/3 scan leaves lab_state Idle; a generation bump does
+        // not restart it, so clearing these names loses the comparison.
+        crate::apply_manual_lab_mode(&state, "Dedication", |_| {});
+
+        assert_eq!(
+            *state.lab_scan.detected_gems.lock().unwrap(),
+            ["Fireball", "Arc", "Spark"],
+        );
+    }
+
+    #[test]
+    fn manual_lab_mode_correction_notifies_without_clearing_selection() {
+        let state = test_app_state();
+        *state.lab_mode.lock().unwrap() = "Dedication".to_string();
+        *state.lab_scan.detected_gems.lock().unwrap() = vec![
+            "Fireball".to_string(),
+            "Arc".to_string(),
+            "Spark".to_string(),
+        ];
+        let mut events = Vec::new();
+
+        crate::apply_manual_lab_mode(&state, "Normal", |event| events.push(event.to_string()));
+
+        // The comparator reprices on lab-mode-changed, but gems-cleared
+        // empties its selection even if Rust kept its detected names.
+        assert_eq!(events, ["lab-mode-changed"]);
+    }
+
+    #[test]
+    fn manual_lab_mode_correction_discards_partial_scan_gems() {
+        let state = test_app_state();
+        *state.lab_mode.lock().unwrap() = "Normal".to_string();
+        *state.lab_state.lock().unwrap() = crate::lab_state::LabState::PickingGems;
+        *state.lab_scan.detected_gems.lock().unwrap() = vec!["Arc".to_string()];
+
+        crate::apply_manual_lab_mode(&state, "Dedication", |_| {});
+
+        assert!(state.lab_scan.detected_gems.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn lab_detection_area_switches_selected_mode() {
         let state = test_app_state();
         *state.lab_mode.lock().unwrap() = "Dedication".to_string();
