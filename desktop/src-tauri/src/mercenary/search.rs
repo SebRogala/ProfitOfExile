@@ -3387,6 +3387,96 @@ mod tests {
         assert_eq!(wire["listings"][1]["chaosPrice"], Value::Null);
     }
 
+    #[test]
+    fn zero_merc_rate_retains_listings_with_unavailable_statistics() {
+        let raw = RawSearch {
+            items: vec![
+                json!({"listing": {"price": {"amount": 100, "currency": "chaos"}}}),
+                json!({"listing": {"price": {"amount": 2, "currency": "divine"}}}),
+            ],
+            ..raw_search("Allflame")
+        };
+
+        let (result, skipped) = to_result(raw, &query_of("a"), 123, Some(0.0));
+        let wire = serde_json::to_value(result).unwrap();
+
+        assert_eq!(wire["listings"][1]["chaosPrice"], Value::Null);
+        assert_eq!(wire["floorChaos"], Value::Null);
+        assert_eq!(wire["medianChaos"], Value::Null);
+        assert_eq!(skipped, 0);
+        assert_eq!(wire["listings"].as_array().unwrap().len(), 2);
+        assert_eq!(wire["listings"][0]["amount"], json!(100.0));
+        assert_eq!(wire["listings"][0]["currency"], json!("chaos"));
+        assert_eq!(wire["listings"][0]["chaosPrice"], json!(100.0));
+        assert_eq!(wire["listings"][1]["amount"], json!(2.0));
+        assert_eq!(wire["listings"][1]["currency"], json!("divine"));
+    }
+
+    #[test]
+    fn negative_merc_rate_retains_listings_with_unavailable_statistics() {
+        let raw = RawSearch {
+            items: vec![
+                json!({"listing": {"price": {"amount": 100, "currency": "chaos"}}}),
+                json!({"listing": {"price": {"amount": 2, "currency": "divine"}}}),
+            ],
+            ..raw_search("Allflame")
+        };
+
+        let (result, skipped) = to_result(raw, &query_of("a"), 123, Some(-200.0));
+        let wire = serde_json::to_value(result).unwrap();
+
+        assert_eq!(wire["listings"][1]["chaosPrice"], Value::Null);
+        assert_eq!(wire["floorChaos"], Value::Null);
+        assert_eq!(wire["medianChaos"], Value::Null);
+        assert_eq!(skipped, 0);
+        assert_eq!(wire["listings"].as_array().unwrap().len(), 2);
+        assert_eq!(wire["listings"][0]["amount"], json!(100.0));
+        assert_eq!(wire["listings"][0]["currency"], json!("chaos"));
+        assert_eq!(wire["listings"][0]["chaosPrice"], json!(100.0));
+        assert_eq!(wire["listings"][1]["amount"], json!(2.0));
+        assert_eq!(wire["listings"][1]["currency"], json!("divine"));
+    }
+
+    #[test]
+    fn non_finite_merc_rate_retains_listings_with_unavailable_statistics() {
+        let raw = RawSearch {
+            items: vec![
+                json!({"listing": {"price": {"amount": 100, "currency": "chaos"}}}),
+                json!({"listing": {"price": {"amount": 2, "currency": "divine"}}}),
+            ],
+            ..raw_search("Allflame")
+        };
+
+        let (result, skipped) = to_result(raw, &query_of("a"), 123, Some(f64::NAN));
+        let wire = serde_json::to_value(result).unwrap();
+
+        assert_eq!(wire["listings"][1]["chaosPrice"], Value::Null);
+        assert_eq!(wire["floorChaos"], Value::Null);
+        assert_eq!(wire["medianChaos"], Value::Null);
+        assert_eq!(skipped, 0);
+        assert_eq!(wire["listings"].as_array().unwrap().len(), 2);
+        assert_eq!(wire["listings"][0]["amount"], json!(100.0));
+        assert_eq!(wire["listings"][0]["currency"], json!("chaos"));
+        assert_eq!(wire["listings"][0]["chaosPrice"], json!(100.0));
+        assert_eq!(wire["listings"][1]["amount"], json!(2.0));
+        assert_eq!(wire["listings"][1]["currency"], json!("divine"));
+    }
+
+    #[test]
+    fn fractional_divine_merc_price_is_rounded_to_a_tenth_of_chaos() {
+        let raw = RawSearch {
+            items: vec![json!({"listing": {"price": {"amount": 1.5, "currency": "divine"}}})],
+            ..raw_search("Allflame")
+        };
+
+        let (result, _) = to_result(raw, &query_of("a"), 123, Some(133.33));
+        let wire = serde_json::to_value(result).unwrap();
+
+        assert_eq!(wire["listings"][0]["chaosPrice"], json!(200.0));
+        assert_eq!(wire["floorChaos"], json!(200.0));
+        assert_eq!(wire["medianChaos"], json!(200.0));
+    }
+
     /// The user is told the answer is looser than the panel only when the panel
     /// is what was cut. A dropped support CELL is that; dropping the app's own
     /// tier loosening is not — what survives it asks for exactly the supports
