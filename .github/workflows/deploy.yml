@@ -128,9 +128,17 @@ jobs:
           COOLIFY_UUID: ${{ secrets.COOLIFY_SERVER_UUID }}
           COOLIFY_WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
         run: |
-          curl -sf -X GET \
-            "${COOLIFY_WEBHOOK_URL}/api/v1/deploy?uuid=${COOLIFY_UUID}&force=false" \
-            -H "Authorization: Bearer ${COOLIFY_TOKEN}"
+          # POST is required since Coolify 4.2.0 (GET -> 405); 4.1.x accepted both.
+          # force as a JSON boolean: as a query string it coerced to true on
+          # 4.1.x and rebuilt with --no-cache every deploy.
+          HTTP_CODE=$(curl -s -o /tmp/coolify-deploy.json -w '%{http_code}' -X POST \
+            "${COOLIFY_WEBHOOK_URL}/api/v1/deploy" \
+            -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"uuid\": \"${COOLIFY_UUID}\", \"force\": false}")
+          echo "HTTP ${HTTP_CODE}"
+          cat /tmp/coolify-deploy.json
+          if [ "$HTTP_CODE" -ge 400 ]; then echo "::error::Coolify deploy failed (HTTP ${HTTP_CODE})"; exit 1; fi
 
   deploy-collector:
     # Sequential after deploy-server: prod host has ~3.7GB RAM and two
@@ -160,6 +168,14 @@ jobs:
           COOLIFY_UUID: ${{ secrets.COOLIFY_COLLECTOR_UUID }}
           COOLIFY_WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
         run: |
-          curl -sf -X GET \
-            "${COOLIFY_WEBHOOK_URL}/api/v1/deploy?uuid=${COOLIFY_UUID}&force=false" \
-            -H "Authorization: Bearer ${COOLIFY_TOKEN}"
+          # POST is required since Coolify 4.2.0 (GET -> 405); 4.1.x accepted both.
+          # force as a JSON boolean: as a query string it coerced to true on
+          # 4.1.x and rebuilt with --no-cache every deploy.
+          HTTP_CODE=$(curl -s -o /tmp/coolify-deploy.json -w '%{http_code}' -X POST \
+            "${COOLIFY_WEBHOOK_URL}/api/v1/deploy" \
+            -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"uuid\": \"${COOLIFY_UUID}\", \"force\": false}")
+          echo "HTTP ${HTTP_CODE}"
+          cat /tmp/coolify-deploy.json
+          if [ "$HTTP_CODE" -ge 400 ]; then echo "::error::Coolify deploy failed (HTTP ${HTTP_CODE})"; exit 1; fi
