@@ -1389,6 +1389,11 @@ pub fn close_session(app: &AppHandle) {
 /// `TradeApiClient` directly, so there is no branch in it that could ever get
 /// there.
 fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
+    let divine_rate = *app
+        .state::<AppState>()
+        .merc_divine_rate
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let hash = query.hash.clone();
@@ -1420,7 +1425,7 @@ fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
             // `Done` on the queue means the FETCH succeeded, not that the
             // lookup did — the terminal state is derived here, from the value.
             Ok(raw) => {
-                let (result, skipped) = to_result(raw, &query, now_ms());
+                let (result, skipped) = to_result(raw, &query, now_ms(), divine_rate);
                 if skipped > 0 {
                     crate::app_log(
                         &app,
@@ -1438,10 +1443,8 @@ fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
                     cache_insert(&mut cache, now_ms(), result.clone());
                 }
                 // The CHEAPEST LISTING, in the seller's own currency — the first
-                // row of a `sort.price=asc` fetch. Not `floor_chaos`: with no
-                // divine rate on this side that number is a bare `amount` with
-                // the currency stripped off, so logging it as a price says
-                // "floor 1.0" for a 1-divine mercenary.
+                // row of a `sort.price=asc` fetch. Keep the seller's ask in
+                // logs even when the conversion rate is unavailable.
                 let cheapest = result
                     .listings
                     .first()
@@ -1565,34 +1568,29 @@ fn accept_error(trade: &mut crate::mercenary::MercTradeState, hash: &str, error:
 /// nine good listings are a better answer than an error. The count is returned
 /// so the loss is logged rather than silent.
 ///
-/// # Prices are raw seller numbers, and the order is GGG's
-///
-/// There is no divine→chaos rate on the Rust side (the gem path is handed one
-/// by the webview, which reads it off the market page the Mercenaries page does
-/// not have), so `normalize_to_chaos` is called with a rate of 0 and
-/// `chaos_price` is just the seller's own `amount` — 1 divine and 1 chaos both
-/// read as 1. `floor_chaos` and `median_chaos` are statistics over those raw
-/// numbers, NOT a value floor and not a value median, which is why the page
-/// renders the currency beside every row and quotes the cheapest listing as
-/// "amount currency".
-///
-/// The row order is left exactly as GGG returned it, which is `sort.price=asc`
-/// — a real value order, computed by the only party in this pipeline that knows
-/// the exchange rates. Re-sorting by `chaos_price` here would replace it with
-/// an ordering that puts 5 chaos above 1 divine.
-fn to_result(raw: RawSearch, query: &CaptureQuery, fetched_at_ms: u64) -> (MercTradeResult, usize) {
+/// The webview supplies the lookup's divine rate snapshot. Without a usable
+/// rate, divine listings remain visible in seller currency and the result's
+/// chaos statistics are unavailable. Seller amounts and GGG row order survive
+/// conversion unchanged.
+fn to_result(
+    raw: RawSearch,
+    query: &CaptureQuery,
+    fetched_at_ms: u64,
+    divine_rate: Option<f64>,
+) -> (MercTradeResult, usize) {
     let seen = raw.items.len();
+    let divine_rate = divine_rate.filter(|rate| rate.is_finite() && *rate > 0.0);
     let listings: Vec<MercTradeListing> =
-        raw.items.iter().filter_map(parse_listing).collect();
+        raw.items.iter().filter_map(|item| parse_listing(item, divine_rate)).collect();
     let skipped = seen - listings.len();
-    let chaos: Vec<f64> = listings.iter().map(|l| l.chaos_price).collect();
+    let chaos: Option<Vec<f64>> = listings.iter().map(|l| l.chaos_price).collect();
     (
         MercTradeResult {
             query_hash: query.hash.clone(),
             league: raw.league,
             total: raw.total,
-            floor_chaos: crate::trade::signals::floor_chaos_price(&chaos),
-            median_chaos: crate::trade::signals::median_chaos_price(&chaos),
+            floor_chaos: chaos.as_ref().map(|prices| crate::trade::signals::floor_chaos_price(prices)),
+            median_chaos: chaos.as_ref().map(|prices| crate::trade::signals::median_chaos_price(prices)),
             listings,
             fetched_at_ms,
             // Only a dropped CELL. Dropping the app's own tier loosening
@@ -1615,7 +1613,7 @@ fn to_result(raw: RawSearch, query: &CaptureQuery, fetched_at_ms: u64) -> (MercT
 /// of. Only `amount` and `currency` are required: an entry without a price
 /// cannot join a floor or a median, while a missing account or timestamp costs
 /// the row a label and nothing else.
-fn parse_listing(item: &Value) -> Option<MercTradeListing> {
+fn parse_listing(item: &Value, divine_rate: Option<f64>) -> Option<MercTradeListing> {
     let listing = item.get("listing")?;
     let price = listing.get("price")?;
     let amount = price.get("amount")?.as_f64()?;
@@ -1632,7 +1630,11 @@ fn parse_listing(item: &Value) -> Option<MercTradeListing> {
         .unwrap_or_default()
         .to_string();
     Some(MercTradeListing {
-        chaos_price: crate::trade::signals::normalize_to_chaos(amount, &currency, 0.0),
+        chaos_price: if currency == "divine" {
+            divine_rate.map(|rate| crate::trade::signals::normalize_to_chaos(amount, &currency, rate))
+        } else {
+            Some(amount)
+        },
         currency,
         amount,
         account,
@@ -1690,6 +1692,16 @@ fn cache_insert(cache: &mut MercResultCache, now_ms: u64, result: MercTradeResul
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
+
+/// Receive the main webview's rate snapshot; Rust never fetches a second rate.
+#[tauri::command]
+pub fn merc_set_divine_rate(divine_rate: Option<f64>, app: AppHandle) {
+    *app
+        .state::<AppState>()
+        .merc_divine_rate
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = divine_rate;
+}
 
 /// Turn the captured mercenary's auto-search on or off.
 ///
@@ -3321,6 +3333,60 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_two_divine_merc_listing_uses_the_supplied_rate() {
+        let raw = RawSearch {
+            items: vec![json!({"listing": {"price": {"amount": 2, "currency": "divine"}}})],
+            ..raw_search("Allflame")
+        };
+
+        let (result, _) = to_result(raw, &query_of("a"), 123, Some(200.0));
+        let wire = serde_json::to_value(result).unwrap();
+
+        assert_eq!(wire["listings"][0]["chaosPrice"], json!(400.0));
+    }
+
+    #[test]
+    fn mixed_currency_merc_statistics_use_chaos_values() {
+        let raw = RawSearch {
+            items: vec![
+                json!({"listing": {"price": {"amount": 100, "currency": "chaos"}}}),
+                json!({"listing": {"price": {"amount": 1, "currency": "divine"}}}),
+                json!({"listing": {"price": {"amount": 2, "currency": "divine"}}}),
+            ],
+            ..raw_search("Allflame")
+        };
+
+        let (result, _) = to_result(raw, &query_of("a"), 123, Some(200.0));
+        let wire = serde_json::to_value(result).unwrap();
+
+        assert_eq!(wire["floorChaos"], json!(100.0));
+        assert_eq!(wire["medianChaos"], json!(200.0));
+    }
+
+    #[test]
+    fn missing_merc_rate_retains_listings_with_unavailable_statistics() {
+        let raw = RawSearch {
+            items: vec![
+                json!({"listing": {"price": {"amount": 100, "currency": "chaos"}}}),
+                json!({"listing": {"price": {"amount": 2, "currency": "divine"}}}),
+            ],
+            ..raw_search("Allflame")
+        };
+
+        let (result, skipped) = to_result(raw, &query_of("a"), 123, None);
+        let wire = serde_json::to_value(result).unwrap();
+
+        assert_eq!(wire["floorChaos"], Value::Null);
+        assert_eq!(wire["medianChaos"], Value::Null);
+        assert_eq!(skipped, 0);
+        assert_eq!(wire["listings"].as_array().unwrap().len(), 2);
+        assert_eq!(wire["listings"][0]["amount"], json!(100.0));
+        assert_eq!(wire["listings"][1]["amount"], json!(2.0));
+        assert_eq!(wire["listings"][1]["currency"], json!("divine"));
+        assert_eq!(wire["listings"][1]["chaosPrice"], Value::Null);
+    }
+
     /// The user is told the answer is looser than the panel only when the panel
     /// is what was cut. A dropped support CELL is that; dropping the app's own
     /// tier loosening is not — what survives it asks for exactly the supports
@@ -3336,8 +3402,8 @@ mod tests {
             ..query_of("a")
         };
 
-        let (from_cells, _) = to_result(raw_search("Allflame"), &cells, 0);
-        let (from_loosening, _) = to_result(raw_search("Allflame"), &loosening, 0);
+        let (from_cells, _) = to_result(raw_search("Allflame"), &cells, 0, None);
+        let (from_loosening, _) = to_result(raw_search("Allflame"), &loosening, 0, None);
 
         assert!(from_cells.truncated, "a cell the capture read was dropped");
         assert!(
@@ -3352,8 +3418,8 @@ mod tests {
             league: "Allflame".to_string(),
             total: 7,
             listings: Vec::new(),
-            floor_chaos: 0.0,
-            median_chaos: 0.0,
+            floor_chaos: Some(0.0),
+            median_chaos: Some(0.0),
             fetched_at_ms: 0,
             truncated: false,
         }

@@ -30,13 +30,8 @@
 		 * Print `amount currency` exactly as the seller wrote it, instead of the
 		 * chaos-denominated default.
 		 *
-		 * The default assumes what the gem surface has: every listing is priced
-		 * in chaos or divine, and `chaosPrice` is a REAL conversion, because the
-		 * Comparator reads a divine rate off the market page. The mercenary
-		 * result (POE-202) has neither — Rust normalises with a rate of 0, so
-		 * `chaosPrice` is just the seller's own number, and the currency can be
-		 * any of GGG's. Printing "1 div (1c)", or "5c" for 5 exalted, would be
-		 * an exchange rate nobody computed.
+		 * Mercenary listings keep the seller's currency visible even when the
+		 * divine rate needed for a chaos conversion is unavailable.
 		 */
 		rawCurrency?: boolean;
 	} = $props();

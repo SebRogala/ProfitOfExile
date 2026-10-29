@@ -442,6 +442,9 @@ pub struct AppState {
     /// trade tick, echoed onto the `mercenary` slice by
     /// `ssot::compose_snapshot`. Acquired alone, like every other merc Mutex.
     pub merc_trade_auto: Mutex<bool>,
+    /// Main webview's divine rate snapshot, read when a merc lookup starts.
+    /// Only `mercenary::search::merc_set_divine_rate` writes this bridge.
+    pub merc_divine_rate: Mutex<Option<f64>>,
     /// The lowest support tier that search accepts, 1..=3 (POE-202). Its own
     /// owner beside `merc_trade_auto` rather than a field of one struct: the
     /// two have separate commands and separate defaults, and neither is ever
@@ -3252,6 +3255,7 @@ pub fn run() {
         merc_icons_write: Mutex::new(()),
         merc_sources_off: Mutex::new(Vec::new()),
         merc_trade_auto: Mutex::new(mercenary::DEFAULT_TRADE_AUTO),
+        merc_divine_rate: Mutex::new(None),
         merc_tier_floor: Mutex::new(mercenary::DEFAULT_TIER_FLOOR),
         merc_trade_cache: Mutex::new(std::collections::HashMap::new()),
         merc_sync: Mutex::new(mercenary::sync::SyncState::default()),
@@ -3313,6 +3317,7 @@ pub fn run() {
             mercenary::debug::merc_reset_templates,
             mercenary::sources::merc_set_sources_off,
             mercenary::search::merc_set_trade_auto,
+            mercenary::search::merc_set_divine_rate,
             mercenary::search::merc_set_tier_floor,
             temple::commands::temple_set_config,
             temple::commands::temple_set_profile,

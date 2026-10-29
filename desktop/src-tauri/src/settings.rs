@@ -1028,6 +1028,7 @@ mod tests {
             merc_icons_write: Mutex::new(()),
             merc_sources_off: Mutex::new(Vec::new()),
             merc_trade_auto: Mutex::new(crate::mercenary::DEFAULT_TRADE_AUTO),
+            merc_divine_rate: Mutex::new(None),
             merc_tier_floor: Mutex::new(crate::mercenary::DEFAULT_TIER_FLOOR),
             merc_trade_cache: Mutex::new(std::collections::HashMap::new()),
             merc_sync: Mutex::new(crate::mercenary::sync::SyncState::default()),

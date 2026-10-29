@@ -81,14 +81,10 @@ impl Default for TradeSignals {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MercTradeListing {
-    /// Seller price normalized to chaos — EXCEPT on the mercenary path, which
-    /// has no divine rate on the Rust side and so normalizes with a rate of 0,
-    /// leaving this equal to [`Self::amount`]. Named for the field it mirrors
-    /// on the gem listing; read [`Self::amount`] with [`Self::currency`] when
-    /// the number has to mean a price.
-    pub chaos_price: f64,
-    /// Raw seller currency, kept because the Mercenaries page has no divine
-    /// rate and shows what the seller actually asked for.
+    /// Seller price normalized with the lookup's webview rate snapshot.
+    /// Unavailable when a divine listing has no usable rate.
+    pub chaos_price: Option<f64>,
+    /// Raw seller currency, kept to show what the seller actually asked for.
     pub currency: String,
     /// Raw seller amount in `currency`.
     pub amount: f64,
@@ -113,11 +109,10 @@ pub struct MercTradeResult {
     pub league: String,
     pub total: u32,
     pub listings: Vec<MercTradeListing>,
-    /// Cheapest and middle `chaos_price` of [`Self::listings`] — statistics
-    /// over raw seller amounts, not a value floor and not a value median, for
-    /// the reason given on [`MercTradeListing::chaos_price`].
-    pub floor_chaos: f64,
-    pub median_chaos: f64,
+    /// Cheapest and middle chaos price; unavailable if any listing cannot
+    /// be converted with the lookup's rate snapshot.
+    pub floor_chaos: Option<f64>,
+    pub median_chaos: Option<f64>,
     pub fetched_at_ms: u64,
     /// Set when GGG's complexity budget forced the query to drop support cells
     /// the capture READ — the listings answer a LOOSER question than the panel

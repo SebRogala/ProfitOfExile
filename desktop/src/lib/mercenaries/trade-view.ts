@@ -110,9 +110,8 @@ export const MERC_TRADE_MAX_SEARCHES = 3;
  *
  * The price is the cheapest listing's RAW seller amount and currency, taken
  * from `listings[0]` — the query sorts `price asc`, so the first row IS the
- * floor. `floorChaos` is deliberately not used: it is a chaos normalisation,
- * and this page has no divine rate to undo it with, so quoting it would print a
- * number no seller ever asked for.
+ * floor. `floorChaos` is a converted value; the headline preserves the
+ * seller's ask even when the rate needed for conversion is unavailable.
  */
 export function tradeHeadline(state: MercTradeState): string | null {
 	switch (state.status) {

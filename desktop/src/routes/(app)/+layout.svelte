@@ -7,7 +7,7 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
 	import { ssot, startSsotStore } from '$lib/stores/ssot.svelte';
-	import { initDivineRateStore } from '$lib/stores/divine-rate.svelte';
+	import { currentDivineRate, initDivineRateStore } from '$lib/stores/divine-rate.svelte';
 	import { startRunRecorder } from '$lib/run-recorder';
 	import { nav, viewToPath, type View } from '$lib/stores/navigation.svelte';
 	import {
@@ -623,6 +623,11 @@
 	// and cheap for a low-churn slice. No cleanup — this layout never unmounts.
 	startSsotStore();
 	initDivineRateStore();
+
+	$effect(() => {
+		invoke('merc_set_divine_rate', { divineRate: currentDivineRate() })
+			.catch(e => console.error('[layout] merc_set_divine_rate failed:', e));
+	});
 
 	// Record every lab run, whether or not the timer overlay is enabled. The
 	// recorder used to live in the overlay's webview, so a disabled overlay

@@ -57,7 +57,7 @@ export function hasTradeListings(lookup: { listings?: ReadonlyArray<unknown> | n
 // TradeLookupResult these types mirror no Go struct.
 
 export interface MercTradeListing {
-	chaosPrice: number;
+	chaosPrice: number | null;
 	currency: string;
 	amount: number;
 	account: string;
@@ -69,8 +69,8 @@ export interface MercTradeResult {
 	league: string;
 	total: number;
 	listings: MercTradeListing[];
-	floorChaos: number;
-	medianChaos: number;
+	floorChaos: number | null;
+	medianChaos: number | null;
 	fetchedAtMs: number;
 	/** The complexity budget forced the query to drop support cells the capture
 	 *  read, so it asks a looser question than the panel showed. */
@@ -116,12 +116,8 @@ export interface TradeQueueDisplay {
  */
 export interface TradeListingRow {
 	/**
-	 * Price normalized to chaos — but only where a rate existed to normalize
-	 * with. A gem row's is a real conversion (the Comparator reads a divine
-	 * rate off the market page); a mercenary row's is not, because Rust
-	 * normalizes merc listings with a rate of 0 and hands back the seller's own
-	 * `amount`. Cross-currency comparison on this field is only meaningful for
-	 * gem rows.
+	 * Price normalized to chaos. An unavailable merc conversion is represented
+	 * by NaN at this presentation boundary, matching the price formatters.
 	 */
 	chaosPrice: number;
 	/** Raw seller currency. */
@@ -144,7 +140,7 @@ export function toListingRow(detail: TradeListingDetail): TradeListingRow {
 
 export function mercListingRow(listing: MercTradeListing): TradeListingRow {
 	return {
-		chaosPrice: listing.chaosPrice,
+		chaosPrice: listing.chaosPrice ?? NaN,
 		currency: listing.currency,
 		amount: listing.amount,
 		account: listing.account,
