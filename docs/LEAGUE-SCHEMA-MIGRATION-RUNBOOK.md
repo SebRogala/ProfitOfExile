@@ -160,15 +160,20 @@ steps in order; each line is one action or one check.
 
 1. Reconfirm the gate, the staged server/collector revision, and the intended
    start time.
-2. Take a dedicated final backup of the outgoing league and store it in a
+2. Disable auto-restart for both collector and server, then stop both services.
+   Confirm both remain stopped and nothing is writing. Keep both stopped with
+   auto-restart disabled through the backup, count comparison, and TRUNCATE.
+3. Take a dedicated final backup of the outgoing league and store it in a
    non-rotating archive on the backup store (separate from the nightly rotation so
    it can't be overwritten) — this is the only way the old data stays reachable
    after the wipe (restore it to a scratch DB for analysis). Follow the private
    backup/restore guide kept outside this repository; do not record concrete
-   backup locations here (public repo).
-3. Stop the collector.
-4. Stop the current (old) server revision.
-5. Confirm both are stopped and nothing is writing.
+   backup locations here (public repo). Capture the count manifest for every
+   present scoped table inside this stopped-write boundary with the final dump.
+4. Verify the final dump and its restore procedure before proceeding.
+5. Immediately before TRUNCATE, repeat the manifest counts on the old schema
+   and compare every present table against the final dump's manifest. Stop on
+   any mismatch; investigate and repeat the final backup before retrying.
 6. On the production database (old schema, pre-migration), truncate the sixteen
    league-scoped tables in one statement:
    `TRUNCATE gem_snapshots, currency_snapshots, fragment_snapshots, font_snapshots, transfigure_results, quality_results, trend_results, gem_features, gem_signals, dedication_snapshots, trade_lookups, market_context, currency_exchange_markets, currency_exchange_cursor, double_corrupt_snapshots, item_snapshots;`
@@ -179,7 +184,9 @@ steps in order; each line is one action or one check.
    `item_snapshots` from the POE-254 migration onward; drop absent
    tables from the statement when running against an older schema.)
 7. Confirm all sixteen tables report zero rows.
-8. Deploy the staged 119–121 revision (the atomic merge). The server migrates on
+8. Deploy the staged 119–121 revision (the atomic merge), allowing only the
+   server to start; keep the collector stopped with auto-restart disabled.
+   The server migrates on
    boot against the now-empty tables — expect a near-instant apply.
 9. Verify migration state + server health: every table has a `NOT NULL` `league`
    column with its `*_league_fkey`, the control tables (`leagues`,
@@ -215,6 +222,21 @@ with poe.ninja's league id, not a display alias. Replace all placeholders before
 running commands; `<server container>` names the current server container and
 must be resolved again after its restart. Keep deployment handles private.
 
+While the server is stopped in Phase B, run `/league` in a one-shot container
+from the same immutable server image. The production `Dockerfile` copies the
+CLI to `/league` and sets `/server` as the entrypoint, so override the entrypoint:
+
+```sh
+docker run --rm --network <database network> --env DATABASE_URL --entrypoint /league <server image> status --no-counts
+```
+
+Resolve the image and database network from the existing deployment. Export the
+same `DATABASE_URL` securely into the operator environment; `--env DATABASE_URL`
+passes it without putting its value in the command. Use this invocation with the
+subcommand shown in each Phase B step. It starts only the CLI, not the server.
+Follow the order below if CLI output suggests running in the server container
+or restarting the server before cleanup.
+
 The CLI serializes administration with transaction advisory locks. Activation
 and committed wipes also require the collector's runtime fence to be free.
 Prepare and activate dry runs execute their control-row changes and roll back;
@@ -243,20 +265,24 @@ wipe dry runs only preview counts, mode, and SQL, executing no TRUNCATE/DELETE.
 
 ### Phase B — activate, wipe, and restart (at league start)
 
-3. Preserve a dedicated outgoing-league dump outside the nightly rotation and
-   verify its restore procedure using the private backup/restore guide outside
-   this repository. Past-league analysis requires restoring that dump to a
-   scratch database (ADR-011); do not record backup locations here.
-4. Disable collector auto-restart, stop the collector, and confirm it remains
-   stopped. Keep it stopped through the wipe, server restart, and stray cleanup.
-   It resolves its league **before** acquiring its runtime fence, so a process
-   started during the flip could retain the old scope even after the fence frees.
+3. Disable auto-restart for **both collector and server**, stop both services,
+   and confirm both remain stopped with no writes in flight. Keep this
+   stopped-write boundary through the final dump, activation, wipe, and any
+   stray cleanup. The collector resolves its league **before** acquiring its
+   runtime fence, so a process started during the flip could retain the old scope
+   even after the fence frees. Pause other administration during this window.
+4. Inside that boundary, capture outgoing-league counts for all sixteen scoped
+   tables and take the final dedicated `pg_dump` outside the nightly rotation.
+   Retain the counts as the dump's manifest, including zero-count tables, and
+   verify the dump and its restore procedure using the private backup/restore
+   guide outside this repository. Past-league analysis requires restoring that
+   dump to a scratch database (ADR-011); do not record backup locations here.
 5. Preview activation, inspect the quoted before/after ids and revision, then
    commit the same checked id:
 
    ```sh
-   docker exec <server container> /league activate "<NewLeagueId>" --dry-run
-   docker exec <server container> /league activate "<NewLeagueId>"
+   docker run --rm --network <database network> --env DATABASE_URL --entrypoint /league <server image> activate "<NewLeagueId>" --dry-run
+   docker run --rm --network <database network> --env DATABASE_URL --entrypoint /league <server image> activate "<NewLeagueId>"
    ```
 
 6. **Before any wipe**, compare the quoted new id in the committed activation
@@ -264,16 +290,26 @@ wipe dry runs only preview counts, mode, and SQL, executing no TRUNCATE/DELETE.
    `"<OldLeagueId>"`, now `archived`, and the new id is `collecting` with the
    revision incremented. If wrong, stop here and use the revert below. After a
    wipe, recovery requires the preserved dump restore.
-7. Preview per-table outgoing counts and the selected mode, then wipe:
+7. Preview per-table outgoing counts and the selected mode immediately before
+   the wipe:
 
    ```sh
-   docker exec <server container> /league wipe "<OldLeagueId>" --dry-run
-   docker exec <server container> /league wipe "<OldLeagueId>"
+   docker run --rm --network <database network> --env DATABASE_URL --entrypoint /league <server image> wipe "<OldLeagueId>" --dry-run
+   ```
+
+   Compare all sixteen per-table counts against the final dump's outgoing-league
+   manifest. **Stop on any mismatch or missing table count.** Investigate the
+   stopped-write boundary and repeat the final dump and manifest before retrying;
+   do not wipe data absent from the archive. Only after every count matches,
+   commit the wipe with both writers still stopped:
+
+   ```sh
+   docker run --rm --network <database network> --env DATABASE_URL --entrypoint /league <server image> wipe "<OldLeagueId>"
    ```
 
    With only outgoing-league rows, this selects one TRUNCATE across the sixteen
-   tables in `ScopedTables` (`internal/league/tables.go`). It runs while the old
-   server still serves. ACCESS EXCLUSIVE locks block table access for the
+   tables in `ScopedTables` (`internal/league/tables.go`). Both services remain
+   stopped. ACCESS EXCLUSIVE locks block table access for the
    `EXISTS` probes plus TRUNCATE, without a full count under that lock. The lock
    wait is bounded to 10 seconds. The preview counts are advisory; execution
    checks again under the locks. Mode `none` means no outgoing rows remain.
@@ -281,26 +317,30 @@ wipe dry runs only preview counts, mode, and SQL, executing no TRUNCATE/DELETE.
    `--allow-delete` for the checked stray cleanup below.
 8. Set `EXPECTED_LEAGUE` to `"<NewLeagueId>"` or unset it in **both** server and
    collector deployment configuration. A stale assertion refuses startup.
-9. Restart the server and wait until healthy. Do not start the collector yet.
-10. Check counted status in the current server container:
+9. Before restarting either service, check counted status with the one-shot CLI:
 
     ```sh
-    docker exec <server container> /league status
+    docker run --rm --network <database network> --env DATABASE_URL --entrypoint /league <server image> status
     ```
 
-    Confirm the active id and revision. The counted form scans all scoped tables;
-    use it here to find outgoing rows the old server wrote after the first wipe.
-    If `"<OldLeagueId>"` has rows again, preview and clean them explicitly:
+    Confirm the active id and revision. The counted form scans all scoped tables.
+    Outgoing rows are unexpected while both writers remain stopped: stop and
+    investigate if any appear. Before cleanup, establish that every remaining
+    outgoing row is preserved in the final dump; if not, archive those rows and
+    verify their manifest and restore procedure first. Then preview and clean
+    them explicitly, still inside the stopped-write boundary:
 
     ```sh
-    docker exec <server container> /league wipe "<OldLeagueId>" --allow-delete --dry-run
-    docker exec <server container> /league wipe "<OldLeagueId>" --allow-delete
-    docker exec <server container> /league status
+    docker run --rm --network <database network> --env DATABASE_URL --entrypoint /league <server image> wipe "<OldLeagueId>" --allow-delete --dry-run
+    docker run --rm --network <database network> --env DATABASE_URL --entrypoint /league <server image> wipe "<OldLeagueId>" --allow-delete
+    docker run --rm --network <database network> --env DATABASE_URL --entrypoint /league <server image> status
     ```
 
     With mixed leagues this deletes only outgoing rows, preserving the new
     league's rows; an exclusive outgoing-only set still selects TRUNCATE.
     Confirm no outgoing rows remain.
+10. Re-enable server auto-restart, restart the server, and wait until healthy.
+    Do not start the collector yet.
 11. Re-enable collector auto-restart and start the collector, after server health
     and cleanup have passed.
 12. Check `/health` and `/latest` report `"<NewLeagueId>"`. Confirm a scoped
@@ -312,7 +352,7 @@ wipe dry runs only preview counts, mode, and SQL, executing no TRUNCATE/DELETE.
 ### Wrong committed activation — only before `wipe`
 
 There is no undo CLI command, and an archived league cannot be activated through
-`/league activate`. If step 6 catches a wrong id, keep the collector stopped with
+`/league activate`. If step 6 catches a wrong id, keep both services stopped with
 auto-restart disabled, pause other administration, and run this recovery
 transaction through the private database administration procedure. Substitute
 `"<WrongLeagueId>"` with the committed wrong id and `"<OldLeagueId>"` with the
@@ -342,8 +382,9 @@ COMMIT;
 
 This restores the selection and the two collection states; lifecycle timestamps
 remain a record of the attempted activation. Check `/league status --no-counts`
-in the server container, restore or unset `EXPECTED_LEAGUE` for both services,
-and restart the server before starting the collector if aborting the rollover.
+using the one-shot CLI, restore or unset `EXPECTED_LEAGUE` for both services,
+and re-enable auto-restart and restart the server before starting the collector
+if aborting the rollover.
 Prepare the correct id before retrying the normal procedure. **After `wipe`,
 this SQL cannot restore the outgoing data: recover from the preserved dump.**
 
@@ -392,16 +433,19 @@ the restart and cleanup order with the POE-127 CLI.
    (`runtime_config` → Allflame) does NOT affect an already-running server or
    collector — they resolved at boot. **You must restart both** for the new
    league to take effect. Keep the collector stopped with auto-restart disabled;
-   restart the server, clean strays, then start the collector as Phase B specifies.
+   stop the server too, archive and wipe, clean strays, then restart the server
+   before starting the collector as Phase B specifies.
 3. **`EXPECTED_LEAGUE` must be set to the new league only AFTER the flip.** The
    migration seeds `Mirage`; if `EXPECTED_LEAGUE=Allflame` is set before the flip,
    the server fails its assertion on boot and crash-loops. Leave it unset for the
    initial deploy, set it after activating the new league, then restart.
-4. **Clean stray outgoing-league rows after the server restart, before collector
-   startup.** Use `/league status`, then `/league wipe "<OldLeagueId>"
-   --allow-delete` (dry-run first), as Phase B specifies. The registry now covers
-   sixteen tables; mixed-league cleanup preserves new-league rows. At the first
+4. **The first rollover needed stray cleanup after the server restart.** At that
    rollover the strays were recent/uncompressed, so their DELETE was cheap.
+   Current Phase B keeps both writers stopped and verifies archival before any
+   cleanup, then restarts the server. Use the one-shot `/league status`, then
+   `/league wipe "<OldLeagueId>" --allow-delete` (dry-run first) as specified
+   there. The registry covers sixteen tables; mixed-league cleanup preserves
+   new-league rows.
 5. **Collector boot fence can crash-loop on restart.** If a previous collector
    instance's DB connection is still holding `RuntimeLockKey`, the new one refuses
    to start ("another collector still holds the runtime fence after 15s"). It
