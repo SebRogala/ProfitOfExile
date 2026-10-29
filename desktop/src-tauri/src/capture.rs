@@ -125,7 +125,7 @@ mod platform {
     ///
     /// Labels, not handles: a window that is not built right now is simply
     /// skipped, and one rebuilt later is picked up by the next grab.
-    const EXCLUDED_WHILE_GRABBING: &[&str] = &["mercenary", "overlay-preview"];
+    const EXCLUDED_WHILE_GRABBING: &[&str] = &["mercenary", "overlay-preview", "loot-capture"];
 
     /// The affinity held for one grab. `Drop` clears it, so an error between
     /// `hold` and the end of the grab cannot leave a listed window out of

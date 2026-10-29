@@ -8,6 +8,7 @@ mod lab_scan;
 mod lab_navigation;
 mod lab_state;
 mod log_watcher;
+mod loot_capture;
 mod mercenary;
 mod modules;
 mod ocr;
@@ -3281,6 +3282,7 @@ pub fn run() {
             ssot::refresh_league,
             ssot::geometry_recalibrate,
             capture::get_game_monitor,
+            loot_capture::loot_capture_view,
             modules::set_module_enabled,
             get_pair_code,
             get_device_id,
@@ -3421,6 +3423,8 @@ pub fn run() {
 
             spawn_log_watcher(handle.clone());
             spawn_focus_poller(handle.clone());
+            // Loot capture POC (F8 / Shift+F8), see `loot_capture.rs`.
+            loot_capture::spawn_hotkey_poller(handle.clone());
             // Resolve the active league from the server (start-only, bounded
             // retry). Until it succeeds the SSOT stays unresolved and every
             // trade lookup fails closed — by design (POE-128 chunk 3).

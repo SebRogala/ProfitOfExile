@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "Default permissions for the desktop app",
-  "windows": ["main", "overlay", "overlay-preview", "temple", "mercenary", "lab"],
+  "windows": ["main", "overlay", "overlay-preview", "temple", "mercenary", "lab", "loot-capture"],
   "permissions": [
     "core:default",
     "shell:allow-open",
