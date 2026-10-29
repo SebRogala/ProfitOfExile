@@ -49,9 +49,12 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-/** Calls of one Tauri command, in order, with their argument objects. */
-function callsOf(command: string): unknown[] {
-	return invokeMock.mock.calls.filter((c) => c[0] === command).map((c) => c[1]);
+/** Calls of one Tauri command, optionally scoped to a preference key, in order. */
+function callsOf(command: string, key?: string): unknown[] {
+	return invokeMock.mock.calls
+		.filter((c) => c[0] === command)
+		.map((c) => c[1])
+		.filter((args) => key === undefined || (args as { key?: string })?.key === key);
 }
 
 /** Drain the prefs load's promise chain (timers are fake in every test). */
@@ -217,9 +220,10 @@ describe('go', () => {
 		const mod = await loadStoreWith({});
 		vi.useFakeTimers();
 		mod.nav.go('/temple');
-		// Writes are debounced per key inside prefs.svelte.ts.
+		// Writes are debounced per key inside prefs.svelte.ts; unrelated keys
+		// may also flush in this window, so count only navigation writes.
 		await vi.advanceTimersByTimeAsync(300);
-		expect(callsOf('set_ui_pref')).toEqual([{ key: 'navView', value: 'temple' }]);
+		expect(callsOf('set_ui_pref', 'navView')).toEqual([{ key: 'navView', value: 'temple' }]);
 	});
 
 	it("persists 'lab' for a path no view claims, not the unmapped path", async () => {
@@ -229,7 +233,7 @@ describe('go', () => {
 		vi.useFakeTimers();
 		mod.nav.go('/mercs');
 		await vi.advanceTimersByTimeAsync(300);
-		expect(callsOf('set_ui_pref')).toEqual([{ key: 'navView', value: 'lab' }]);
+		expect(callsOf('set_ui_pref', 'navView')).toEqual([{ key: 'navView', value: 'lab' }]);
 	});
 
 	it("persists 'lab' for an Object.prototype path, not an inherited function", async () => {
@@ -240,7 +244,7 @@ describe('go', () => {
 		vi.useFakeTimers();
 		mod.nav.go('constructor');
 		await vi.advanceTimersByTimeAsync(300);
-		expect(callsOf('set_ui_pref')).toEqual([{ key: 'navView', value: 'lab' }]);
+		expect(callsOf('set_ui_pref', 'navView')).toEqual([{ key: 'navView', value: 'lab' }]);
 	});
 });
 
