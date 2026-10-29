@@ -7,7 +7,7 @@ Status: current implementation, uncommitted; host gates recorded below. Runtime 
 The implementation brief explicitly settles the handoff's three open questions for this delivery:
 
 - Tools appears in release builds with Chaos ⇄ Div as its only entry. Dev Tools and placeholders remain dev-only, in both sidebar densities.
-- No access grant; the mounted page is ungated.
+- Access: behind the beta grant (owner decision 2026-10-29), in the sidebar and the page mount.
 - With no rate, conversion-dependent values display `—` and their total Copy buttons are disabled. Chaos totals in Chaos currency and rate-independent order rows remain available.
 
 ## Integration and fixture mapping

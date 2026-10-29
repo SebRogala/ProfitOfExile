@@ -53,6 +53,9 @@
 	/** Whether this device may see the Harvest Flipping page (beta, POE-283). */
 	const harvestGranted = $derived(hasFeature(BETA_FEATURE));
 
+	/** Whether this device may see the Chaos ⇄ Div page (beta, POE-316). */
+	const chaosDivGranted = $derived(hasFeature(BETA_FEATURE));
+
 	/**
 	 * The module switches this device may see, in registry order. Derived rather
 	 * than filtered inline so the collapsed rail and the expanded panel cannot
@@ -146,10 +149,14 @@
 				<span class="icon">&#x1F479;</span>
 			</div>
 		{/if}
-		<div class="collapsed-sep"></div>
-		<button class="collapsed-item" class:active={currentPath === '/chaos-div'} title="Chaos ⇄ Div" onclick={() => nav.go('/chaos-div')}>
-			<span class="icon" aria-hidden="true">⇄</span>
-		</button>
+		{#if chaosDivGranted || import.meta.env.DEV}
+			<div class="collapsed-sep"></div>
+		{/if}
+		{#if chaosDivGranted}
+			<button class="collapsed-item" class:active={currentPath === '/chaos-div'} title="Chaos ⇄ Div" onclick={() => nav.go('/chaos-div')}>
+				<span class="icon" aria-hidden="true">⇄</span>
+			</button>
+		{/if}
 		{#if import.meta.env.DEV}
 			<div class="collapsed-item disabled" title="Trade Lookup">
 				<span class="icon">&#x1F50D;</span>
@@ -249,12 +256,15 @@
 			{/if}
 		</div>
 
+		{#if chaosDivGranted || import.meta.env.DEV}
 		<div class="section">
 			<div class="label">Tools</div>
+			{#if chaosDivGranted}
 			<button class="nav-item" class:active={currentPath === '/chaos-div'} onclick={() => nav.go('/chaos-div')}>
 				<span class="icon" aria-hidden="true">⇄</span>
 				<span>Chaos ⇄ Div</span>
 			</button>
+			{/if}
 			{#if import.meta.env.DEV}
 			<div class="nav-item disabled">
 				<span class="icon">&#x1F50D;</span>
@@ -270,6 +280,7 @@
 			</button>
 			{/if}
 		</div>
+		{/if}
 	</div>
 
 	<div class="bottom">

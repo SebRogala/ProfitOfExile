@@ -89,6 +89,6 @@ inline SVG with `aria-hidden`. No item icons.
 ## Open decisions — questions, not requirements; do not invent answers
 - **Visibility:** the Tools section renders only in `import.meta.env.DEV` today. Interim: show the section in release
   builds with only this entry. Dev Tools and the placeholder items stay dev-only.
-- **Gating:** proposal is no grant (client-side maths over the public rate). Interim: ungated.
+- **Gating:** decided (owner, 2026-10-29): behind the beta grant (`BETA_FEATURE`), like Harvest Flipping. The Tools section shows only when the grant or a dev build gives it an entry.
 - **No rate yet** (store `cold`): not drawn. Interim: every figure that needs the rate shows "—" and its Copy is
   disabled. Chaos totals in Chaos currency still work.

@@ -65,7 +65,8 @@
 		mercenaries: MERC_FEATURE,
 		temple: TEMPLE_FEATURE,
 		'currency-exchange': EXCHANGE_FEATURE,
-		'harvest-flipping': BETA_FEATURE
+		'harvest-flipping': BETA_FEATURE,
+		'chaos-div': BETA_FEATURE
 	};
 
 	/** Whether this device may see a view. Reactive — `hasFeature` reads the store. */
@@ -82,6 +83,8 @@
 	let exchangeGranted = $derived(viewGranted('currency-exchange'));
 	/** Gates the Harvest Flipping page (beta, POE-283; no overlay, no module). */
 	let harvestGranted = $derived(viewGranted('harvest-flipping'));
+	/** Gates the Chaos ⇄ Div page (beta, POE-316; no overlay, no module). */
+	let chaosDivGranted = $derived(viewGranted('chaos-div'));
 
 	/**
 	 * The view actually on screen.
@@ -708,9 +711,11 @@
 					<DevPage />
 				</div>
 			{/if}
-			<div class:view-hidden={visibleView !== 'chaos-div'}>
-				<ChaosDivPage />
-			</div>
+			{#if chaosDivGranted}
+				<div class:view-hidden={visibleView !== 'chaos-div'}>
+					<ChaosDivPage />
+				</div>
+			{/if}
 		</main>
 	</div>
 </div>

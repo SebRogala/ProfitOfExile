@@ -4,7 +4,7 @@ Status: source implementation complete; checked items record implementation/sour
 
 One screen: Tools → Chaos ⇄ Div, mounted in the real desktop shell.
 
-- [x] Release and dev navigation, expanded sidebar and collapsed rail; ungated.
+- [x] Release and dev navigation, expanded sidebar and collapsed rail; beta-gated (owner, 2026-10-29).
 - [x] Opening and Reset: Selling / Chaos / amount 1 / ratio 1 / fixed 1 right.
 - [x] Header: exact title and Reset action with reset icon.
 - [x] Mode change flips the fixed 1 and preserves price; selecting the active mode leaves it unchanged.
