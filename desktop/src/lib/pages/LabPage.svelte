@@ -57,6 +57,24 @@
 
 	restoreFromRust();
 
+	$effect(() => {
+		let cancelled = false;
+		const unlistenPromise = listen('lab-mode-changed', async () => {
+			try {
+				const mode = await invoke<string>('get_lab_mode');
+				if (cancelled || (mode !== 'Normal' && mode !== 'Dedication')) return;
+				labMode = mode;
+				refreshBestPlays();
+			} catch (e) {
+				console.warn('[LabPage] lab-mode-changed failed:', e);
+			}
+		});
+		return () => {
+			cancelled = true;
+			unlistenPromise.then(unlisten => unlisten());
+		};
+	});
+
 	// Reset Everything rewrites mode and both markets in Rust. The store's poll
 	// would pick the markets up within an interval, but the top bar would show
 	// the pre-reset selection until then, so pull both immediately.

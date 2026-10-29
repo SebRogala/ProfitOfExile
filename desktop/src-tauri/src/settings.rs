@@ -976,6 +976,7 @@ mod tests {
             client_txt_path: Mutex::new(String::new()),
             server_url: Mutex::new(String::new()),
             lab_scan: crate::lab_scan::LabScanState {
+                detection: Mutex::new(crate::lab_detection::LabDetection::default()),
                 detected_gems: Mutex::new(Vec::new()),
                 gem_scan_generation: AtomicU64::new(0),
                 font_scan_generation: AtomicU64::new(0),
@@ -1045,6 +1046,97 @@ mod tests {
             screen: Mutex::new(None),
             widgets: Mutex::new(std::collections::BTreeMap::new()),
         }
+    }
+
+    #[test]
+    fn lab_detection_area_switches_selected_mode() {
+        let state = test_app_state();
+        *state.lab_mode.lock().unwrap() = "Dedication".to_string();
+        crate::record_lab_detection(&state, |detection| {
+            detection.observe_area(75, "EndGame_Labyrinth_boss_1");
+        });
+        assert_eq!(*state.lab_mode.lock().unwrap(), "Normal");
+    }
+
+    #[test]
+    fn lab_detection_font_switches_selected_mode() {
+        let state = test_app_state();
+        *state.lab_mode.lock().unwrap() = "Normal".to_string();
+        crate::record_lab_detection(&state, |detection| {
+            detection.observe_area(83, "EndGame_Labyrinth_boss_3");
+        });
+        crate::record_lab_detection(&state, |detection| {
+            detection.observe_font(["corrupted_gem_reroll"], Some(2));
+        });
+        assert_eq!(*state.lab_mode.lock().unwrap(), "Dedication");
+    }
+
+    #[test]
+    fn lab_detection_mode_flip_invalidates_dictionary_generation() {
+        use std::sync::atomic::Ordering;
+        let state = test_app_state();
+        *state.lab_mode.lock().unwrap() = "Dedication".to_string();
+        state.lab_scan.gem_scan_generation.store(7, Ordering::SeqCst);
+        crate::record_lab_detection(&state, |detection| {
+            detection.observe_area(75, "EndGame_Labyrinth_boss_1");
+        });
+        assert_eq!(state.lab_scan.gem_scan_generation.load(Ordering::SeqCst), 8);
+    }
+
+    #[test]
+    fn lab_detection_unchanged_mode_keeps_dictionary_generation() {
+        use std::sync::atomic::Ordering;
+        let state = test_app_state();
+        *state.lab_mode.lock().unwrap() = "Normal".to_string();
+        state.lab_scan.gem_scan_generation.store(7, Ordering::SeqCst);
+        crate::record_lab_detection(&state, |detection| {
+            detection.observe_area(75, "EndGame_Labyrinth_boss_1");
+        });
+        assert_eq!(state.lab_scan.gem_scan_generation.load(Ordering::SeqCst), 7);
+    }
+
+    #[test]
+    fn lab_detection_manual_override_keeps_selected_mode() {
+        let state = test_app_state();
+        *state.lab_mode.lock().unwrap() = "Dedication".to_string();
+        state.lab_scan.detection.lock().unwrap().override_mode();
+        crate::record_lab_detection(&state, |detection| {
+            detection.observe_area(75, "EndGame_Labyrinth_boss_1");
+        });
+        assert_eq!(*state.lab_mode.lock().unwrap(), "Dedication");
+    }
+
+    #[test]
+    fn lab_detection_mode_flip_reports_auto_switch() {
+        let state = test_app_state();
+        *state.lab_mode.lock().unwrap() = "Dedication".to_string();
+        let update = crate::record_lab_detection(&state, |detection| {
+            detection.observe_area(75, "EndGame_Labyrinth_boss_1");
+        });
+        assert_eq!(update.mode_change, Some(("Dedication".to_string(), "Normal")));
+    }
+
+    #[test]
+    fn lab_detection_recording_does_not_wait_for_status_gem_lock() {
+        use std::sync::{mpsc, Arc};
+        use std::time::Duration;
+        let state = Arc::new(test_app_state());
+        *state.lab_mode.lock().unwrap() = "Dedication".to_string();
+        let gems_guard = state.lab_scan.detected_gems.lock().unwrap();
+        let (tx, rx) = mpsc::channel();
+        let worker_state = Arc::clone(&state);
+        let worker = std::thread::spawn(move || {
+            let update = crate::record_lab_detection(&worker_state, |detection| {
+                detection.observe_area(75, "EndGame_Labyrinth_boss_1");
+            });
+            tx.send(update.detected).unwrap();
+        });
+        let observed = rx.recv_timeout(Duration::from_secs(2));
+        // Release before asserting: the mutated lock-order regression must
+        // report a bounded failure instead of leaving a blocked test thread.
+        drop(gems_guard);
+        worker.join().unwrap();
+        assert_eq!(observed, Ok(Some("Eternal")));
     }
 
     /// Fresh install: `apply_to_state` must fill the owner map with the registry

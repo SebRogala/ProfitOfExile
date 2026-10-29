@@ -15,6 +15,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::{AppState, CaptureRegion, FontSessionData};
 
 pub struct LabScanState {
+    pub detection: Mutex<crate::lab_detection::LabDetection>,
     pub detected_gems: Mutex<Vec<String>>,
     /// Generation counter for gem OCR scans. Incremented on each start trigger
     /// (FontOpened, manual scan).
@@ -586,14 +587,26 @@ impl FontProcessingState {
                             None
                         } else {
                             let event_seq = state.lab_scan.font_opened_seq.load(Ordering::SeqCst);
-                            Some(crate::font_session::apply_font_frame(
-                                &mut session,
-                                &panel,
-                                event_seq,
+                            // Resolve before the session lock is released: a zone
+                            // change may immediately seal and upload this session.
+                            let detection_update = crate::record_lab_detection(state, |detection| {
+                                detection.observe_font(
+                                    panel.options.iter().map(|option| option.option_type.as_str()),
+                                    panel.crafts_remaining,
+                                );
+                            });
+                            Some((
+                                crate::font_session::apply_font_frame(
+                                    &mut session,
+                                    &panel,
+                                    event_seq,
+                                ),
+                                detection_update,
                             ))
                         }
                     };
-                    if let Some(outcome) = outcome {
+                    if let Some((outcome, detection_update)) = outcome {
+                        crate::publish_lab_detection(app, detection_update);
                         if let Some(sealed) = &outcome.sealed {
                             crate::app_log(
                                 app,

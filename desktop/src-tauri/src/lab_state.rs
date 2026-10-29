@@ -60,7 +60,7 @@ impl LabStateMachine {
 
         // Zone change while picking — stop screen reading
         if matches!(self.state, LabState::FontReady | LabState::PickingGems) {
-            if let Some(area) = parse_area_change(line) {
+            if let Some((_, area)) = parse_area_change(line) {
                 log::info!("Lab state: {:?} -> Done (zone change: {})", self.state, area);
                 self.state = LabState::Done;
                 return Some(LabEvent::ZoneChanged {
@@ -90,14 +90,15 @@ impl LabStateMachine {
     }
 }
 
-fn parse_area_change(line: &str) -> Option<&str> {
+pub fn parse_area_change(line: &str) -> Option<(u32, &str)> {
     // Match: Generating level NN area "AREA_NAME"
     let marker = "Generating level ";
     let idx = line.find(marker)?;
     let rest = &line[idx + marker.len()..];
-    let area_start = rest.find('"')? + 1;
-    let area_end = rest[area_start..].find('"')? + area_start;
-    Some(&rest[area_start..area_end])
+    let (level, area) = rest.split_once(" area \"")?;
+    let level = level.parse().ok()?;
+    let area_end = area.find('"')?;
+    Some((level, &area[..area_end]))
 }
 
 #[cfg(test)]
@@ -160,7 +161,20 @@ mod tests {
     #[test]
     fn parse_area_change_extracts_name() {
         let line = r#"[DEBUG Client 39848] Generating level 69 area "2_10_town" with seed 1"#;
-        assert_eq!(parse_area_change(line), Some("2_10_town"));
+        assert_eq!(parse_area_change(line), Some((69, "2_10_town")));
+    }
+
+    #[test]
+    fn parse_area_change_rejects_invalid_level() {
+        assert_eq!(parse_area_change(r#"Generating level nope area "Labyrinth""#), None);
+    }
+
+    #[test]
+    fn parse_area_change_retains_offering_level() {
+        assert_eq!(
+            parse_area_change(r#"Generating level 83 area "EndGame_Labyrinth_boss_3" with seed 1"#),
+            Some((83, "EndGame_Labyrinth_boss_3")),
+        );
     }
 
     #[test]

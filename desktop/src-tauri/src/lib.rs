@@ -4,6 +4,7 @@ mod font_ledger;
 mod font_parser;
 mod font_session;
 mod gem_matcher;
+mod lab_detection;
 mod lab_scan;
 mod lab_navigation;
 mod lab_state;
@@ -380,8 +381,8 @@ pub struct AppState {
     pub shrine_warn_corner: Mutex<String>,
     pub shrine_warn_on_take: Mutex<String>,
     pub lab_overlays_enabled: Mutex<bool>,
-    /// Lab mode: "Normal" or "Dedication". Controls OCR vocabulary, font session
-    /// metadata, and comparator behaviour. Persisted to settings.
+    /// Lab mode: "Normal" or "Dedication". Controls OCR vocabulary and comparator
+    /// behaviour. The selection is persisted; manual override lasts until Plaza.
     pub lab_mode: Mutex<String>,
     pub autoclear_minutes: Mutex<u32>,
     pub dedication_pool: Mutex<String>,
@@ -2051,9 +2052,80 @@ fn get_lab_mode(app: AppHandle) -> String {
 
 #[tauri::command]
 fn set_lab_mode(mode: String, app: AppHandle) {
+    if mode != "Normal" && mode != "Dedication" {
+        return;
+    }
     let state = app.state::<AppState>();
-    *state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()) = mode;
+    let changed = {
+        let mut detection = state.lab_scan.detection.lock().unwrap_or_else(|e| e.into_inner());
+        detection.override_mode();
+        change_lab_mode(&state, &mode)
+    };
+    if changed.is_some() {
+        emit_lab_mode_change(&app);
+    }
     persist_settings(&app);
+}
+
+/// Called under the detection lock so a manual override cannot race an auto-switch.
+fn change_lab_mode(state: &AppState, mode: &str) -> Option<String> {
+    let mut current = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner());
+    if current.as_str() == mode {
+        return None;
+    }
+    let previous = std::mem::replace(&mut *current, mode.to_string());
+    // GemProcessingState::reset_for_generation drops the old matcher and any
+    // pending dictionary response, then fetches vocabulary for the new mode.
+    state.lab_scan.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
+    Some(previous)
+}
+
+fn emit_lab_mode_change(app: &AppHandle) {
+    app.state::<AppState>().lab_scan.detected_gems.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    if let Err(e) = app.emit("lab-mode-changed", ()) {
+        log::warn!("emit lab-mode-changed failed: {}", e);
+    }
+    if let Err(e) = app.emit("gems-cleared", ()) {
+        log::warn!("emit gems-cleared failed: {}", e);
+    }
+}
+
+struct LabDetectionUpdate {
+    detected: Option<&'static str>,
+    changed_type: bool,
+    mode_change: Option<(String, &'static str)>,
+}
+
+/// Record under the font session lock when called from OCR, so a concurrent
+/// upload sees its type. Keep gem clearing and events in publish_lab_detection:
+/// build_status acquires the gem mutex before the font session mutex.
+fn record_lab_detection(
+    state: &AppState,
+    update: impl FnOnce(&mut lab_detection::LabDetection),
+) -> LabDetectionUpdate {
+    let (detected, changed_type, mode_change) = {
+        let mut detection = state.lab_scan.detection.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = detection.detected_type();
+        update(&mut detection);
+        let detected = detection.detected_type();
+        let mode_change = detection.automatic_mode().and_then(|mode| {
+            change_lab_mode(state, mode).map(|old| (old, mode))
+        });
+        (detected, previous != detected, mode_change)
+    };
+    LabDetectionUpdate { detected, changed_type, mode_change }
+}
+
+fn publish_lab_detection(app: &AppHandle, update: LabDetectionUpdate) {
+    if update.changed_type {
+        if let Some(kind) = update.detected {
+            app_log(app, format!("Lab type auto-detected: {}", kind));
+        }
+    }
+    if let Some((old, mode)) = update.mode_change {
+        app_log(app, format!("Lab mode auto-switch: {} -> {} (detected {})", old, mode, update.detected.unwrap_or("Unknown")));
+        emit_lab_mode_change(app);
+    }
 }
 
 #[tauri::command]
@@ -2447,11 +2519,13 @@ fn send_font_session_data(app: &AppHandle) {
 
     let device_id = state.device_id.clone();
 
-    // Map lab mode to session metadata. The run is against the selected market
-    // whichever mode it is in, so the session records that one — a fixed
-    // "20/20" attributed every Normal run to a market the player may not have
-    // been farming, and font_sessions.variant is crowd-sourced data.
-    let lab_type = if lab_mode == "Dedication" { "Dedication" } else { "Unknown" };
+    // The observed lab type is independent of the comparator override. If the
+    // watcher missed lab entry, retain the previous manual-mode fallback.
+    let lab_type = state.lab_scan.detection.lock().unwrap_or_else(|e| e.into_inner())
+        .detected_type()
+        .unwrap_or(if lab_mode == "Dedication" { "Dedication" } else { "Unknown" });
+    // Record the selected market: a fixed "20/20" previously attributed every
+    // Normal run to a market the player may not have been farming.
     let variant = current_gem_variant(&state);
 
     let session_data = match font_session::finalize_font_session(
@@ -2994,6 +3068,7 @@ fn spawn_log_watcher(app: AppHandle) {
                         if let Some(nav_event) = lab_navigation::parse_nav_event(&line, in_lab) {
                             match &nav_event {
                                 lab_navigation::NavEvent::PlazaEntered => {
+                                    state.lab_scan.detection.lock().unwrap_or_else(|e| e.into_inner()).reset();
                                     state.in_lab.store(true, Ordering::SeqCst);
                                     app_log(&app, "Lab nav: Plaza entered".to_string());
                                 }
@@ -3143,6 +3218,13 @@ fn spawn_log_watcher(app: AppHandle) {
                             lab_state::LabEvent::GameFocused | lab_state::LabEvent::GameBlurred => {}
                         }
                     }
+                    // Upload the previous zone's font session before observing
+                    // the new area. Area detection also runs while OCR is idle.
+                    if let Some((level, area)) = lab_state::parse_area_change(&line) {
+                        let state = app.state::<AppState>();
+                        let update = record_lab_detection(&state, |detection| detection.observe_area(level, area));
+                        publish_lab_detection(&app, update);
+                    }
                 }
             }
         }
@@ -3203,6 +3285,7 @@ pub fn run() {
         )),
         server_url: Mutex::new(String::from(option_env!("POE_SERVER_URL").unwrap_or("https://profitofexile.localhost"))),
         lab_scan: lab_scan::LabScanState {
+            detection: Mutex::new(lab_detection::LabDetection::default()),
             detected_gems: Mutex::new(Vec::new()),
             gem_scan_generation: AtomicU64::new(0),
             font_scan_generation: AtomicU64::new(0),
