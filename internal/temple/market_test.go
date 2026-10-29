@@ -500,22 +500,37 @@ func TestPickLines_equalListingsInOneCategoryResolveOnTheLowerNinjaID(t *testing
 	}
 }
 
-func TestBuild_everyLineOfAZeroMedianCategoryIsLowConfidence(t *testing.T) {
-	// A category whose median line carries no listings has no depth to measure
-	// anything against, so no line in it is confident — including its deepest.
-	// Rooms are where that matters: they are never served unpriced, so the flag
-	// is the only thing that can say the feed had nothing behind it.
+func TestBuild_zeroMedianCategoryFlagsOnlyZeroListingRooms(t *testing.T) {
+	// A zero median uses 1, matching tier.LowConfidence: zero listings fall
+	// below the 0.4 threshold, while even one listing is confident.
 	m := Build("Allflame", []Line{
 		room("A (Tier 1)", 10, 0),
 		room("B (Tier 1)", 10, 0),
-		room("C (Tier 1)", 10, 5),
+		room("C (Tier 1)", 10, 0),
+		room("D (Tier 1)", 10, 1),
+		room("E (Tier 1)", 10, 5),
 	}, nil, nil)
 
 	rooms := roomsByName(m)
-	for _, name := range []string{"A (Tier 1)", "C (Tier 1)"} {
-		if !rooms[name].LowConfidence {
-			t.Errorf("%s reported lowConfidence = false in a category whose median listing count is 0", name)
-		}
+	for _, tc := range []struct {
+		name string
+		want bool
+	}{
+		{"A (Tier 1)", true},
+		{"B (Tier 1)", true},
+		{"C (Tier 1)", true},
+		{"D (Tier 1)", false},
+		{"E (Tier 1)", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := rooms[tc.name]
+			if !ok {
+				t.Fatalf("room %q missing from market", tc.name)
+			}
+			if got.LowConfidence != tc.want {
+				t.Errorf("%s with %d listings: lowConfidence = %v, want %v in a zero-median category", tc.name, got.Listings, got.LowConfidence, tc.want)
+			}
+		})
 	}
 }
 

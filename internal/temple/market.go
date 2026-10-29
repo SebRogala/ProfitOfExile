@@ -19,7 +19,8 @@ import (
 //
 //   - lowConfidence (POE-131) — the line's listing count is below 40% of its own
 //     market's median. Relative, never an absolute count: an absolute cutoff
-//     encodes a league-age assumption (AGENTS.md, modeling rules).
+//     encodes a league-age assumption (AGENTS.md, modeling rules). A market
+//     whose median is 0 reads it as 1, as tier.LowConfidence does.
 //   - windowPriced / windowHours / windowSamples (POE-252) — a thin line is
 //     priced from a trailing window instead of the newest print, and the row
 //     says so.
@@ -41,8 +42,9 @@ const FloorRule = "floor = median of the newest room lines; above floor when the
 
 // lowConfidenceDepth is the fraction of its market's median listing count below
 // which a line is flagged thin. It is POE-131's gem rule applied unchanged —
-// tier.LowConfidence in internal/price/tier — because it answers the
-// same question about the same kind of feed.
+// tier.LowConfidence in internal/price/tier, including a stand-in median of 1
+// when the median is nonpositive — because it answers the same question about
+// the same kind of feed.
 const lowConfidenceDepth = 0.4
 
 // aboveFloorMultiple is how far above the floor a room-tier's trailing-WindowHours
@@ -285,18 +287,8 @@ func thinLines(byCategory map[string][]Line) map[string]bool {
 	thin := make(map[string]bool)
 	for _, lines := range byCategory {
 		median := medianOf(lines, func(l Line) float64 { return float64(l.Listings) })
-		// No stand-in median; a category with no depth is all low-confidence.
-		// A stand-in of 1 would make the threshold 0.4, an absolute cutoff
-		// nothing chose and one only a zero-listing line can fall under — so it
-		// would read the deepest line of a listing-less feed as confident. There
-		// is no confident line in a market whose median carries no listings, and
-		// rooms are the case that shows it: they are never served unpriced, so
-		// the flag is the only thing that can say so.
 		if median <= 0 {
-			for _, line := range lines {
-				thin[lineKey(line)] = true
-			}
-			continue
+			median = 1
 		}
 		threshold := lowConfidenceDepth * median
 		for _, line := range lines {
