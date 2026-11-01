@@ -274,7 +274,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	}
 
 	if cfg.Pool != nil {
-		bossLoot := handlers.NewBossLoot(cfg.Pool, ratelimit.NewRateLimiter(
+		bossLoot := handlers.NewBossLoot(cfg.Pool, cfg.League, ratelimit.NewRateLimiter(
 			handlers.DefaultBossLootWriteBudget,
 			handlers.DefaultBossLootWriteWindow,
 			handlers.DefaultBossLootRateLimitDevices,

@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"profitofexile/internal/bossloot"
+	"profitofexile/internal/league"
 	"profitofexile/internal/ratelimit"
 	"profitofexile/internal/server/middleware"
 	"reflect"
@@ -23,6 +24,94 @@ import (
 )
 
 const bossEye = "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly"
+
+func TestBossLootHTTPUsesBootScope(t *testing.T) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL required")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	boot, err := league.Resolve(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boss := fmt.Sprintf("boot-scope-%d", time.Now().UnixNano())
+	next := boss + "-B"
+	deviceID := fmt.Sprintf("%x", sha256.Sum256([]byte(boss)))
+	// Register cleanup before the first committed fixture or runtime change.
+	defer func() {
+		if _, err := pool.Exec(ctx, `UPDATE runtime_config SET active_league=$1,revision=$2 WHERE singleton=TRUE`, boot.ID(), boot.Revision()); err != nil {
+			t.Error(err)
+		}
+		for _, cleanup := range []struct {
+			query string
+			arg   string
+		}{
+			{`DELETE FROM boss_loot_runs WHERE boss=$1`, boss},
+			{`DELETE FROM devices WHERE fingerprint=$1`, deviceID},
+			{`DELETE FROM leagues WHERE id=$1`, next},
+		} {
+			if _, err := pool.Exec(ctx, cleanup.query, cleanup.arg); err != nil {
+				t.Error(err)
+			}
+		}
+		restored, err := league.Resolve(ctx, pool)
+		if err != nil || restored != boot {
+			t.Errorf("runtime identity/revision restoration failed: %v", err)
+		}
+		var remaining int
+		if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM boss_loot_runs WHERE boss=$1) + (SELECT count(*) FROM devices WHERE fingerprint=$2) + (SELECT count(*) FROM leagues WHERE id=$3)`, boss, deviceID, next).Scan(&remaining); err != nil || remaining != 0 {
+			t.Errorf("fixture restoration: remaining=%d err=%v", remaining, err)
+		}
+		t.Log("verified runtime identity/revision restoration and zero remaining boot-scope fixtures")
+	}()
+	if _, err := pool.Exec(ctx, `INSERT INTO leagues(id,display_name,collection_state) VALUES ($1,$1,'archived')`, next); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO devices(fingerprint) VALUES ($1)`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	h := NewBossLoot(pool, boot, nil)
+	if _, err := pool.Exec(ctx, `UPDATE runtime_config SET active_league=$1,revision=revision+1 WHERE singleton=TRUE`, next); err != nil {
+		t.Fatal(err)
+	}
+	submit := func(wantLeague string) {
+		t.Helper()
+		body := bossloot.Submit{
+			Profile: bossloot.Profile{Boss: boss, ProfileKey: "Normal", ProfileVersion: 1},
+			Mode:    "forceNew", League: boss + "-C",
+			Items: bossloot.Items{Quantities: map[string]int64{"Urn": 1}, Counted: []string{"Urn"}},
+		}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest("POST", "/api/boss-loot/runs", bytes.NewReader(raw))
+		req.Header.Set("X-Device-ID", deviceID)
+		w := httptest.NewRecorder()
+		middleware.DeviceMiddleware(bossLootDevice{})(http.HandlerFunc(h.Submit)).ServeHTTP(w, req)
+		var out bossloot.SubmitOutcome
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || w.Code != 201 || out.State != "saved" || out.Run.League != wantLeague {
+			t.Fatalf("boot scope submission: status=%d body=%s err=%v; want saved league %q", w.Code, w.Body.String(), err, wantLeague)
+		}
+		var storedLeague string
+		if err := pool.QueryRow(ctx, `SELECT league FROM boss_loot_runs WHERE id=$1 AND device_id=$2`, out.Run.ID, deviceID).Scan(&storedLeague); err != nil || storedLeague != wantLeague {
+			t.Fatalf("persisted league=%q err=%v; want %q", storedLeague, err, wantLeague)
+		}
+	}
+	submit(boot.ID())
+	reboot, err := league.Resolve(ctx, pool)
+	if err != nil || reboot.ID() != next || reboot.Revision() != boot.Revision()+1 {
+		t.Fatalf("reboot scope did not capture runtime B: %v", err)
+	}
+	h = NewBossLoot(pool, reboot, nil)
+	submit(next)
+}
 
 func TestBossLootHTTPRetainsHistoricalObservation(t *testing.T) {
 	url := os.Getenv("DATABASE_URL")
@@ -39,26 +128,47 @@ func TestBossLootHTTPRetainsHistoricalObservation(t *testing.T) {
 	// fixed middleware boundary, independent of body-supplied attribution.
 	boss := fmt.Sprintf("http-%d", time.Now().UnixNano())
 	a, b := fmt.Sprintf("%x", sha256.Sum256([]byte(boss+"a"))), fmt.Sprintf("%x", sha256.Sum256([]byte(boss+"b")))
-	if _, err = pool.Exec(ctx, `INSERT INTO leagues(id,display_name,collection_state) VALUES ('Standard','Boss loot synthetic historical league','archived') ON CONFLICT DO NOTHING`); err != nil {
+	boot, err := league.Resolve(ctx, pool)
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, dev := range []string{a, b} {
-		if _, err = pool.Exec(ctx, `INSERT INTO devices(fingerprint) VALUES ($1) ON CONFLICT DO NOTHING`, dev); err != nil {
-			t.Fatal(err)
-		}
-	}
+	insertedStandard := false
 	defer func() {
+		if _, err := pool.Exec(ctx, `UPDATE runtime_config SET active_league=$1,revision=$2 WHERE singleton=TRUE`, boot.ID(), boot.Revision()); err != nil {
+			t.Error(err)
+		}
 		if _, err := pool.Exec(ctx, `DELETE FROM boss_loot_runs WHERE boss=$1`, boss); err != nil {
 			t.Error(err)
 		}
 		if _, err := pool.Exec(ctx, `DELETE FROM devices WHERE fingerprint=ANY($1)`, []string{a, b}); err != nil {
 			t.Error(err)
 		}
-		if _, err := pool.Exec(ctx, `DELETE FROM leagues WHERE id='Standard' AND display_name='Boss loot synthetic historical league' AND NOT EXISTS (SELECT 1 FROM boss_loot_runs WHERE league='Standard')`); err != nil {
-			t.Error(err)
+		if insertedStandard {
+			if _, err := pool.Exec(ctx, `DELETE FROM leagues WHERE id='Standard'`); err != nil {
+				t.Error(err)
+			}
 		}
+		restored, err := league.Resolve(ctx, pool)
+		if err != nil || restored != boot {
+			t.Errorf("historical runtime identity/revision restoration failed: %v", err)
+		}
+		var remaining int
+		if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM boss_loot_runs WHERE boss=$1) + (SELECT count(*) FROM devices WHERE fingerprint=ANY($2)) + (SELECT count(*) FROM leagues WHERE id='Standard' AND $3::boolean)`, boss, []string{a, b}, insertedStandard).Scan(&remaining); err != nil || remaining != 0 {
+			t.Errorf("historical fixture restoration: remaining=%d err=%v", remaining, err)
+		}
+		t.Log("verified runtime identity/revision restoration and zero remaining historical fixtures")
 	}()
-	h := NewBossLoot(pool, ratelimit.NewRateLimiter(DefaultBossLootWriteBudget, DefaultBossLootWriteWindow, DefaultBossLootRateLimitDevices))
+	insert, err := pool.Exec(ctx, `INSERT INTO leagues(id,display_name,collection_state) VALUES ('Standard','Boss loot synthetic historical league','archived') ON CONFLICT DO NOTHING`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	insertedStandard = insert.RowsAffected() == 1
+	for _, dev := range []string{a, b} {
+		if _, err = pool.Exec(ctx, `INSERT INTO devices(fingerprint) VALUES ($1)`, dev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := NewBossLoot(pool, boot, ratelimit.NewRateLimiter(DefaultBossLootWriteBudget, DefaultBossLootWriteWindow, DefaultBossLootRateLimitDevices))
 	router := chi.NewRouter()
 	router.Use(middleware.DeviceMiddleware(bossLootDevice{}))
 	router.Post("/api/boss-loot/runs", h.Submit)
@@ -168,13 +278,7 @@ func TestBossLootHTTPRetainsHistoricalObservation(t *testing.T) {
 	request(a, "POST", path, bossloot.Submit{Profile: profile, Mode: "forceNew", Seed: original.Seed, Items: bossloot.Items{Quantities: map[string]int64{bossEye: 1, "Urn": 1}, Counted: []string{"Urn", "Cane", bossEye}}}, 201, &forced)
 	stats(a, "own", bossloot.ItemStats{Drops: 1, EligibleRuns: 1})
 	stats(a, "collective", bossloot.ItemStats{Drops: 2, EligibleRuns: 2})
-	// Switch the committed runtime selection so HTTP requests observe rollover.
-	// Restore the exact selection/revision before the fixture leaves this test.
-	var previousLeague string
-	var previousRevision int64
-	if err = pool.QueryRow(ctx, `SELECT active_league,revision FROM runtime_config WHERE singleton=TRUE`).Scan(&previousLeague, &previousRevision); err != nil {
-		t.Fatal(err)
-	}
+	// Change the committed selection while the handler retains its boot scope.
 	next := "Standard"
 	if original.League == next {
 		next = "Mirage"
@@ -182,7 +286,6 @@ func TestBossLootHTTPRetainsHistoricalObservation(t *testing.T) {
 	if _, err = pool.Exec(ctx, `UPDATE runtime_config SET active_league=$1,revision=revision+1 WHERE singleton=TRUE`, next); err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `UPDATE runtime_config SET active_league=$1,revision=$2 WHERE singleton=TRUE`, previousLeague, previousRevision)
 	request(a, "GET", path+query, nil, 200, &page)
 	edited := page.Items[0]
 	if edited.ID != forced.Run.ID {

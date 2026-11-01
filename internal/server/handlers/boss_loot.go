@@ -26,12 +26,12 @@ const (
 
 type BossLoot struct {
 	repo    *bossloot.Repository
-	pool    *pgxpool.Pool
+	scope   league.Scope
 	limiter *ratelimit.RateLimiter
 }
 
-func NewBossLoot(pool *pgxpool.Pool, limiter *ratelimit.RateLimiter) *BossLoot {
-	return &BossLoot{repo: bossloot.NewRepository(pool), pool: pool, limiter: limiter}
+func NewBossLoot(pool *pgxpool.Pool, scope league.Scope, limiter *ratelimit.RateLimiter) *BossLoot {
+	return &BossLoot{repo: bossloot.NewRepository(pool), scope: scope, limiter: limiter}
 }
 func bossDevice(w http.ResponseWriter, r *http.Request) string {
 	dev := middleware.DeviceFromContext(r.Context())
@@ -100,12 +100,7 @@ func (h *BossLoot) Submit(w http.ResponseWriter, r *http.Request) {
 		bossError(w, err)
 		return
 	}
-	scope, err := league.Resolve(r.Context(), h.pool)
-	if err != nil {
-		bossError(w, err)
-		return
-	}
-	out, err := h.repo.Submit(r.Context(), scope, device, body)
+	out, err := h.repo.Submit(r.Context(), h.scope, device, body)
 	if err != nil {
 		bossError(w, err)
 		return

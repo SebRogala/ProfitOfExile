@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"profitofexile/internal/device"
+	"profitofexile/internal/league"
 	"profitofexile/internal/ratelimit"
 	"profitofexile/internal/server/middleware"
 	"strconv"
@@ -20,7 +21,7 @@ func (bossLootDevice) Upsert(_ context.Context, fp, _ string) (*device.Device, e
 	return &device.Device{Fingerprint: fp}, nil
 }
 func TestBossLootRequiresIdentityBeforeDatabase(t *testing.T) {
-	h := NewBossLoot(nil, ratelimit.NewRateLimiter(3, time.Hour, 8))
+	h := NewBossLoot(nil, league.Scope{}, ratelimit.NewRateLimiter(3, time.Hour, 8))
 	for _, handler := range []http.HandlerFunc{h.Submit, h.List, h.Edit, h.Delete, h.Stats} {
 		w := httptest.NewRecorder()
 		handler(w, httptest.NewRequest("POST", "/", strings.NewReader(`{}`)))
@@ -30,7 +31,7 @@ func TestBossLootRequiresIdentityBeforeDatabase(t *testing.T) {
 	}
 }
 func TestBossLootRejectsInvalidRequestBeforeDatabase(t *testing.T) {
-	h := NewBossLoot(nil, nil)
+	h := NewBossLoot(nil, league.Scope{}, nil)
 	for _, tc := range []struct {
 		handler    http.HandlerFunc
 		path, body string
@@ -53,7 +54,7 @@ func TestBossLootRejectsInvalidRequestBeforeDatabase(t *testing.T) {
 }
 
 func TestBossLootWritesShareDeviceBudget(t *testing.T) {
-	h := NewBossLoot(nil, ratelimit.NewRateLimiter(3, time.Hour, 8))
+	h := NewBossLoot(nil, league.Scope{}, ratelimit.NewRateLimiter(3, time.Hour, 8))
 	writes := []http.HandlerFunc{h.Submit, h.Edit, h.Delete}
 	request := func(handler http.HandlerFunc, fp string) *httptest.ResponseRecorder {
 		t.Helper()
