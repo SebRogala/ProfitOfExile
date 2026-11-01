@@ -5,6 +5,7 @@
 	import ItemIcon from '$lib/components/ItemIcon.svelte'
 	import Toggle from '$lib/components/Toggle.svelte'
 	import ShortcutCapture from '$lib/boss-loot/ShortcutCapture.svelte'
+	import BossResultsTables from '$lib/boss-loot/BossResultsTables.svelte'
 	import { persisted } from '$lib/prefs.svelte'
 	import { groupNumber } from '$lib/stores/number-format.svelte'
 	import { createBossLootPageController, type PagePorts } from '$lib/boss-loot/page-controller.svelte'
@@ -70,38 +71,7 @@
 				<span>{groupNumber(view.runs.toString())} runs · {view.deviceNote}</span>
 			</div>
 			{#if view.message}<div class="status-line">{view.message}</div>{/if}
-			<table>
-				<colgroup><col /><col class="drops-col" /><col class="rate-col" /><col class="wiki-col" /></colgroup>
-				<thead><tr>
-					<th aria-sort={page.sort === 'name' ? 'ascending' : 'none'}>
-						<button type="button" class="sort" class:active={page.sort === 'name'} onclick={() => page.selectSort('name')}>Item {page.sort === 'name' ? '↑' : ''}</button>
-					</th>
-					<th class="right">Drops</th>
-					<th aria-sort={page.sort === 'rate' ? 'descending' : 'none'}>
-						<button type="button" class="sort" class:active={page.sort === 'rate'} onclick={() => page.selectSort('rate')}>Rate {page.sort === 'rate' ? '↓' : ''}</button>
-						<span class="rate-header">{view.rateHeader}</span>
-					</th>
-					<th class="right">Wiki</th>
-				</tr></thead>
-				{#each view.groups as group (group.id)}
-					<tbody>
-						<tr class="group"><th colspan="4"><span>{group.title}</span><span class="group-note">{group.note}</span></th></tr>
-						{#each group.items as item (item.id)}
-							<tr>
-								<td><span class="item"><ItemIcon src={iconFor(item)} alt="" size={26} /><span>{item.name}<small>{item.base}</small></span></span></td>
-								<td class="right mono">{item.drops === null ? '—' : groupNumber(String(item.drops))}</td>
-								<td>
-									{#if item.disabled}<span class="not-counted">not counted</span>
-									{:else}<div class="bar" title={item.provenance}><i style:width="{item.bar}%"></i><b>{item.rate}</b></div>
-										{#if view.mixed}<small class="provenance">{item.provenance}</small>{/if}
-									{/if}
-								</td>
-								<td class="right wiki">{item.wikiRate}</td>
-							</tr>
-						{/each}
-					</tbody>
-				{/each}
-			</table>
+			<BossResultsTables profile={page.profile} {view} sort={page.sort} onSort={(sort) => page.selectSort(sort)} {iconFor} />
 		</section>
 	{/if}
 	{#if tab.value === 'runs'}
@@ -237,29 +207,9 @@
 	.boss-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 16px; padding: 10px 12px; }
 	.zone { font-family: Consolas, Monaco, monospace; }
 	.mono { font-family: Consolas, Monaco, monospace; font-weight: 600; }
-	table { width: 100%; table-layout: fixed; border-collapse: collapse; }
-	.drops-col { width: 74px; }
-	.rate-col { width: 180px; }
-	.wiki-col { width: 73px; }
-	th { font-size: .6875rem; text-transform: uppercase; letter-spacing: .5px; color: var(--color-lab-text-secondary); font-weight: 600; text-align: left; }
-	td, th { border-top: 1px solid var(--color-lab-border); padding: 5px; }
-	td:first-child, th:first-child { padding-left: 12px; }
-	td:last-child, th:last-child { padding-right: 12px; }
-	thead th { padding-top: 6px; padding-bottom: 6px; }
-	.right { text-align: right; }
 	.item { display: flex; align-items: center; gap: 8px; min-width: 0; }
 	small { display: block; font-size: 11px; color: var(--color-lab-text-secondary); }
-	.bar { position: relative; height: 14px; background: rgba(255,255,255,.04); border-radius: 2px; display: flex; align-items: center; }
-	.bar i { position: absolute; inset: 0 auto 0 0; background: rgba(59,130,246,.35); border-radius: 2px; }
-	.bar b { position: relative; padding-left: 6px; font-family: Consolas, Monaco, monospace; font-size: 12px; font-weight: 600; }
-	.group th { padding: 8px 12px 4px; }
-	.group-note { float: right; font-size: 11px; text-transform: none; letter-spacing: 0; font-weight: 400; }
-	.sort { all: unset; cursor: pointer; display: inline-flex; gap: 4px; border-radius: 3px; padding: 1px 2px; }
-	.sort:hover, .sort.active { color: var(--color-lab-text); }
-	.sort:focus-visible, .pill:focus-visible { outline: 1px solid var(--color-lab-blue); outline-offset: 2px; }
-	.rate-header { text-transform: none; letter-spacing: 0; font-weight: 400; }
-	.wiki { color: var(--color-lab-text-secondary); }
-	.not-counted { display: inline-block; border-radius: 10px; padding: 1px 6px; font-size: 11px; color: var(--color-lab-yellow); background: rgba(234,179,8,.15); }
+	.pill:focus-visible { outline: 1px solid var(--color-lab-blue); outline-offset: 2px; }
 	.status-line { padding: 4px 12px; color: var(--color-lab-text-secondary); font-size: 12px; }
 	.warning { color: var(--color-lab-yellow); }
 	.runrow { display: grid; grid-template-columns: 44px 64px 200px minmax(0,1fr) 112px; align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid var(--color-lab-border); }
