@@ -108,6 +108,7 @@
 	.confirmation :global(.btn) { height: 28px; padding: 0 12px; border-color: var(--color-lab-text-muted); color: var(--color-lab-text); font: inherit; }
 	.save :global(.btn) { background: var(--color-lab-blue); border-color: var(--color-lab-blue); color: var(--color-lab-bg); font-weight: 600; }
 	.save :global(.btn:hover:not(:disabled)), .save :global(.btn:focus-visible:not(:disabled)) { background: var(--color-lab-blue); border-color: var(--color-lab-blue); color: var(--color-lab-bg); }
+	.save :global(.btn:focus-visible:not(:disabled)) { outline: 1px solid var(--color-lab-bg); outline-offset: -3px; }
 	.confirmation :global(button:focus-visible) { outline: 1px solid var(--color-lab-blue); outline-offset: -2px; }
 	.spinner { width: 10px; height: 10px; border: 2px solid var(--color-lab-border); border-top-color: var(--color-lab-blue); border-radius: 50%; animation: spin 1s linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }
