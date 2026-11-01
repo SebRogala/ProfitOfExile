@@ -61,7 +61,7 @@
 	const bossLootPorts: PagePorts = {
 		profiles: createNativeProfiles(), stats: createNativeStats(), runs: createNativeRuns(),
 		moduleSettings: createNativeModuleSettings(), device: createNativeDevice(),
-		saveCsv: async (profile) => saveNativeCsv(profile)
+		exportHistory: async (profile) => saveNativeCsv(profile)
 	};
 
 	// Sidebar state: driven by store.status.sidebar_open (persisted in Rust settings).

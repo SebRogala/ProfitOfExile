@@ -519,3 +519,16 @@ describe('native snapshot reconciliation', () => {
 		expect(page.editorView?.request.items.quantities['The Devouring Diadem']).toBeUndefined()
 	})
 })
+
+describe('native history export', () => {
+	it('opens the native export owner without prefetching history before cancellation', async () => {
+		const deps = ports()
+		deps.runs.list = async () => { throw Error('history must be read by native export only') }
+		let exports = 0
+		deps.exportHistory = async () => { exports++ }
+		const page = createBossLootPageController(deps)
+		await page.load(); await page.exportCsv()
+		expect(exports).toBe(1)
+		expect(page.error).toBe('')
+	})
+})

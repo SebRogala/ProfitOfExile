@@ -9,8 +9,10 @@ export interface PagePorts {
 	moduleSettings: ModuleSettingsPort
 	device: DevicePort
 	runs: RunsPort
-	/** WI-5/9 supplies the native destination dialog and writer; cancellation resolves without writing. */
-	saveCsv(profile: BossProfile, csv: string): Promise<void>
+	/** Native owns the dialog and complete history; cancellation resolves without writing. */
+	exportHistory?(profile: BossProfile): Promise<void>
+	/** Original fixture preview seam; production uses exportHistory. */
+	saveCsv?(profile: BossProfile, csv: string): Promise<void>
 }
 
 export function createBossLootPageController(ports: PagePorts, prefs?: { scope: PersistedString; sort: PersistedString }) {
@@ -291,8 +293,11 @@ export function createBossLootPageController(ports: PagePorts, prefs?: { scope: 
 		exporting = true
 		error = ''
 		try {
-			const rows = await readAllRuns(target)
-			await ports.saveCsv(target, runsCsv(target, rows))
+			if (ports.exportHistory) await ports.exportHistory(target)
+			else if (ports.saveCsv) {
+				const rows = await readAllRuns(target)
+				await ports.saveCsv(target, runsCsv(target, rows))
+			} else throw new Error('CSV export owner is unavailable')
 		} catch (cause) { error = String(cause) }
 		finally { exporting = false }
 	}
