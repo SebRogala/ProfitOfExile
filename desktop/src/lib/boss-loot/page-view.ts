@@ -1,4 +1,4 @@
-import type { BossProfile, BossStats, LootItem, StatsScope, StoredRun } from './contracts'
+import { editRunItems, type BossProfile, type BossStats, type LootItem, type Quantities, type RunsPage, type StatsScope, type StoredRun } from './contracts'
 import { groupNumber } from '$lib/stores/number-format.svelte'
 
 export type ResultsSort = 'rate' | 'name'
@@ -66,4 +66,38 @@ export function runsCsv(profile: BossProfile, runs: StoredRun[]): string {
 		...runs.map((run) => [run.run, run.date ?? '', ...items.map((item) =>
 			Object.hasOwn(run.items.quantities, item.id) ? run.items.quantities[item.id] : 0)])]
 		.map((row) => row.map(cell).join(',')).join('\r\n')
+}
+
+export function buildRunsView(profile: BossProfile, runs: RunsPage) {
+	const uniques = profile.groups.flatMap((group) => group.items)
+	const extras = [...profile.extra, ...profile.categories]
+	const rows = runs.items.map((run) => {
+		const positive = (item: LootItem) => Object.hasOwn(run.items.quantities, item.id) && run.items.quantities[item.id] > 0
+		const project = (item: LootItem) => ({ ...item, quantity: run.items.quantities[item.id] })
+		return { id: run.id, run: run.run, date: run.date === null ? 'no date' : run.date.slice(0, 10),
+			unique: uniques.filter(positive).map(project), extra: extras.filter(positive).map(project) }
+	})
+	const pages = Array.from({ length: Math.ceil(runs.total / runs.pageSize) }, (_, index) => index + 1)
+	return { rows, page: runs.page, pages, first: runs.page <= 1, last: runs.page >= pages.length,
+		range: rows.length ? `Runs ${groupNumber(String(rows[0].run))}–${groupNumber(String(rows.at(-1)!.run))} of ${groupNumber(String(runs.total))}, newest first`
+			: 'No runs logged for this boss yet.' }
+}
+
+/** The request begins with the complete stored map, including keys absent from today's chips. */
+export function buildRunEditor(profile: BossProfile, run: StoredRun, notCounted: string[], changes: Quantities) {
+	const editable = (item: LootItem) => !notCounted.includes(item.id) && run.items.counted.includes(item.id)
+	const editableKeys = [...profile.groups.flatMap((group) => group.items), ...profile.extra, ...profile.categories]
+		.filter(editable).map((item) => item.id)
+	const request = editRunItems(run, editableKeys, changes)
+	const quantity = (id: string) => Object.hasOwn(request.items.quantities, id) ? request.items.quantities[id] : 0
+	const project = (item: LootItem) => ({ ...item, selected: quantity(item.id) > 0, quantity: quantity(item.id) })
+	const valid = profile.groups.every((group) => {
+		const picked = group.items.filter((item) => quantity(item.id) > 0)
+		return picked.length >= group.min && picked.length <= group.max && picked.every((item) => quantity(item.id) === 1)
+	})
+	return { id: run.id, run: run.run, request, editableKeys, valid,
+		groups: profile.groups.map((group) => ({ id: group.id, label: group.label,
+			rule: group.min === 1 && group.max === 1 ? 'pick one' : `pick ${group.min}–${group.max}`,
+			items: group.items.filter(editable).map(project) })),
+		extra: [...profile.extra, ...profile.categories].filter(editable).map(project) }
 }

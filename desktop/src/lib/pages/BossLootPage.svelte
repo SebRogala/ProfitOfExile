@@ -14,10 +14,17 @@
 	const sort = persisted('bossLootSort', 'rate')
 	const page = untrack(() => createBossLootPageController(ports, { scope, sort }))
 	const view = $derived(page.results)
+	const history = $derived(page.runsView)
+	const editor = $derived(page.editorView)
 	onMount(() => { untrack(() => { void page.load() }) })
 	$effect(() => {
 		const selected = page.scope
 		untrack(() => { void page.selectScope(selected) })
+	})
+	$effect(() => {
+		const section = tab.value
+		const profile = page.profile?.boss
+		if (section === 'runs' && profile) untrack(() => { void page.loadRuns(1) })
 	})
 </script>
 
@@ -41,9 +48,9 @@
 		<SegmentedButtons value={tab.value} options={[{ value: 'results', label: 'Results' }, { value: 'runs', label: 'Runs' }, { value: 'settings', label: 'Settings' }]}
 			title="Section" onselect={(value) => { tab.value = value }} />
 	</div>
-	{#if page.status === 'loading'}
+	{#if tab.value === 'results' && page.status === 'loading'}
 		<div class="status-line" role="status">Loading…</div>
-	{:else if page.status === 'unreachable'}
+	{:else if tab.value === 'results' && page.status === 'unreachable'}
 		<div class="status-line warning" role="status">Server unreachable.</div>
 	{/if}
 	{#if page.error}<div class="status-line warning" role="alert">{page.error}</div>{/if}
@@ -89,6 +96,74 @@
 			</table>
 		</section>
 	{/if}
+	{#if tab.value === 'runs'}
+		{#if page.runsStatus === 'loading'}
+			<div class="status-line" role="status">Loading…</div>
+		{:else if page.runsStatus === 'unreachable'}
+			<div class="status-line warning" role="status">Server unreachable.</div>
+		{/if}
+		{#if page.runsError}<div class="status-line warning" role="alert">{page.runsError}</div>{/if}
+		{#if page.runMutationError}<div class="status-line warning" role="alert">{page.runMutationError}</div>{/if}
+		{#if history}
+			<section class="panel" aria-label="Boss loot runs">
+				<div role="table" aria-label="Runs">
+					<div class="runrow run-head" role="row">
+						<span role="columnheader">Run</span><span role="columnheader">Date</span><span role="columnheader">Unique</span><span role="columnheader">Additional</span><span role="columnheader" aria-label="Actions"></span>
+					</div>
+					{#each history.rows as row (row.id)}
+						<div role="rowgroup">
+							<div class="runrow" role="row" data-run={row.run}>
+								<span class="mono" role="cell">{groupNumber(String(row.run))}</span>
+								<span class="run-date" role="cell">{row.date}</span>
+								<span class="chips" role="cell">
+									{#each row.unique as item (item.id)}<span class="item"><ItemIcon src={iconFor(item)} alt="" size={22} />{item.name}</span>{/each}
+								</span>
+								<span class="chips" role="cell">
+									{#each row.extra as item (item.id)}<span class="history-chip"><ItemIcon src={iconFor(item)} alt="" size={18} />{item.name}{#if item.quantity > 1} ×{groupNumber(String(item.quantity))}{/if}</span>
+									{:else}<span class="secondary">—</span>{/each}
+								</span>
+								<span class="run-actions" role="cell">
+									<Button disabled={page.runMutationPending} onclick={() => page.beginEdit(row.id)}>Edit</Button>
+									<Button disabled={page.runMutationPending} title="Delete run {row.run}" onclick={() => { if (confirm(`Delete run ${row.run}?`)) void page.deleteRun(row.id) }}>Delete</Button>
+								</span>
+							</div>
+							{#if editor?.id === row.id}
+								<div role="row"><div role="cell" aria-colspan="5" class="run-editor" aria-label="Edit run {row.run}">
+									{#each editor.groups as group (group.id)}
+										<span class="table-heading">{group.label} pool · {group.rule}</span>
+										<div class="chips">
+											{#each group.items as item (item.id)}
+												<button type="button" class="edit-chip" class:selected={item.selected} disabled={page.runMutationPending} aria-pressed={item.selected} onclick={() => page.toggleEditorItem(item.id)}><ItemIcon src={iconFor(item)} alt="" size={18} />{item.name}</button>
+											{/each}
+										</div>
+									{/each}
+									<span class="table-heading">Additional drops</span>
+									<div class="chips">
+										{#each editor.extra as item (item.id)}
+											<button type="button" class="edit-chip" class:selected={item.selected} disabled={page.runMutationPending} aria-pressed={item.selected} onclick={() => page.toggleEditorItem(item.id)}><ItemIcon src={iconFor(item)} alt="" size={18} />{item.name}{#if item.quantity > 1} ×{groupNumber(String(item.quantity))}{/if}</button>
+										{/each}
+									</div>
+									{#if !editor.valid}<span class="warning">Check guaranteed groups before saving.</span>{/if}
+									<div class="editor-actions">
+										<Button variant="save" disabled={page.runMutationPending || !editor.valid} onclick={() => page.saveEditor()}>Save run {row.run}</Button>
+										<Button disabled={page.runMutationPending} onclick={() => page.cancelEdit()}>Cancel</Button>
+									</div>
+								</div></div>
+							{/if}
+						</div>
+					{/each}
+				</div>
+				<nav class="pager" aria-label="Runs pages">
+					<span class="secondary">{history.range}</span>
+					<div class="page-buttons">
+						<button type="button" class="page-button" aria-label="Previous page" disabled={history.first || page.runMutationPending} onclick={() => page.loadRuns(history.page - 1)}>‹</button>
+						{#each history.pages as number (number)}<button type="button" class="page-button" class:current={number === history.page} aria-current={number === history.page ? 'page' : undefined} disabled={page.runMutationPending} onclick={() => page.loadRuns(number)}>{number}</button>{/each}
+						<button type="button" class="page-button" aria-label="Next page" disabled={history.last || page.runMutationPending} onclick={() => page.loadRuns(history.page + 1)}>›</button>
+					</div>
+				</nav>
+			</section>
+		{/if}
+	{/if}
 </div>
 
 <style>
@@ -132,4 +207,28 @@
 	.not-counted { display: inline-block; border-radius: 10px; padding: 1px 6px; font-size: 11px; color: var(--color-lab-yellow); background: rgba(234,179,8,.15); }
 	.status-line { padding: 4px 12px; color: var(--color-lab-text-secondary); font-size: 12px; }
 	.warning { color: var(--color-lab-yellow); }
+	.runrow { display: grid; grid-template-columns: 44px 64px 200px minmax(0,1fr) 112px; align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid var(--color-lab-border); }
+	.run-head { border-top: 0; }
+	.run-head, .table-heading { font-size: .6875rem; text-transform: uppercase; letter-spacing: .5px; color: var(--color-lab-text-secondary); font-weight: 600; }
+	.run-date, .secondary { color: var(--color-lab-text-secondary); font-size: 12px; }
+	.chips { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+	.history-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px 1px 2px; border-radius: 4px; background: rgba(255,255,255,.05); font-size: 11px; white-space: nowrap; }
+	.run-actions { display: flex; gap: 4px; justify-content: flex-end; }
+	.run-actions :global(.btn) { height: 24px; padding: 0 8px; border-color: var(--color-lab-border); color: var(--color-lab-text); }
+	.run-editor { padding: 8px 12px 12px 74px; display: flex; flex-direction: column; gap: 8px; background: rgba(59,130,246,.05); }
+	.edit-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border: 1px solid var(--color-lab-border); border-radius: 4px; background: transparent; color: var(--color-lab-text); font: inherit; font-size: 11px; cursor: pointer; }
+	.edit-chip.selected { border-color: var(--color-lab-blue); background: rgba(59,130,246,.14); }
+	.edit-chip:not(.selected) :global(img) { opacity: .45; }
+	.editor-actions { display: flex; gap: 6px; }
+	.editor-actions :global(.btn) { height: 28px; padding: 0 12px; border-color: var(--color-lab-text-muted); color: var(--color-lab-text); }
+	.editor-actions :global(.btn.save) { border-color: var(--color-lab-blue); background: var(--color-lab-blue); color: var(--color-lab-bg); font-weight: 600; }
+	.editor-actions :global(.btn.save:hover:not(:disabled)) { border-color: var(--color-lab-blue); background: var(--color-lab-blue); color: var(--color-lab-bg); }
+	.run-actions :global(.btn:hover:not(:disabled)), .editor-actions :global(.btn:not(.save):hover:not(:disabled)) { border-color: var(--color-lab-blue); color: var(--color-lab-text); }
+	.run-actions :global(.btn:focus-visible), .editor-actions :global(.btn:focus-visible), .edit-chip:focus-visible, .page-button:focus-visible { outline: 1px solid var(--color-lab-blue); outline-offset: 2px; }
+	.pager { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--color-lab-border); }
+	.page-buttons { display: flex; gap: 4px; align-items: center; }
+	.page-button { min-width: 28px; height: 26px; padding: 0 8px; border-radius: 4px; border: 1px solid var(--color-lab-border); background: transparent; color: var(--color-lab-text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
+	.page-button:hover { color: var(--color-lab-text); }
+	.page-button.current { background: rgba(99,102,241,.2); color: var(--color-lab-text); border-color: rgba(99,102,241,.5); }
+	.page-button:disabled, .edit-chip:disabled { opacity: .35; cursor: default; }
 </style>

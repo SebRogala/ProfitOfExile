@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import source from './__fixtures__/boss-loot.json'
-import { createFixtureModuleSettings, createFixtureProfiles, createFixtureStats } from './fixture-adapters'
-import { buildResultsView, runsCsv, type ResultsInput } from './page-view'
+import { createFixtureModuleSettings, createFixtureProfiles, createFixtureStats, createFixtureRuns } from './fixture-adapters'
+import { buildResultsView, buildRunsView, buildRunEditor, runsCsv, type ResultsInput } from './page-view'
 import type { StoredRun } from './contracts'
 
 async function input(): Promise<ResultsInput> {
@@ -97,5 +97,86 @@ describe('CSV', () => {
 		const run: StoredRun = { ...profile, id: 'row', league: 'test', run: 8, date: null, seed: null,
 			version: 1, items: { quantities: { 'Cane of Kulemak': 1, 'Communion Support': 3 }, counted: [] } }
 		expect(runsCsv(profile, [run]).split('\r\n')[1]).toBe('8,,0,0,1,0,0,0,0,0,0,3,0,0,0,0')
+	})
+})
+
+async function runInput(page = 1) {
+	const { profile, notCounted } = await input()
+	return { profile, notCounted, runs: await createFixtureRuns(source.runs).list(profile, page, 10) }
+}
+
+describe('Runs projection', () => {
+	it('shows the newest ten fixture runs on page one', async () => {
+		const { profile, runs } = await runInput()
+		const view = buildRunsView(profile, runs)
+		expect(view.rows.map((row) => row.run)).toEqual([78, 77, 76, 75, 74, 73, 72, 71, 70, 69])
+		expect(view.range).toBe('Runs 78–69 of 78, newest first')
+		expect(view.pages).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+		expect(view.first).toBe(true)
+		expect(view.last).toBe(false)
+	})
+	it('shows the final eight fixture runs on page eight', async () => {
+		const { profile, runs } = await runInput(8)
+		const view = buildRunsView(profile, runs)
+		expect(view.rows.map((row) => row.run)).toEqual([8, 7, 6, 5, 4, 3, 2, 1])
+		expect(view.range).toBe('Runs 8–1 of 78, newest first')
+		expect(view.first).toBe(false)
+		expect(view.last).toBe(true)
+	})
+	it('retains four additional chips for fixture run six', async () => {
+		const { profile, runs } = await runInput(8)
+		expect(buildRunsView(profile, runs).rows.find((row) => row.run === 6)?.extra.map((item) => item.name))
+			.toEqual(["Zorath's Eye of the Endless", 'Veiled Exalted Orb', 'Allflame Ember of Kulemak', 'Templar Astrolabe'])
+	})
+	it('renders a null historical date as no date', async () => {
+		const { profile, runs } = await runInput()
+		expect(buildRunsView(profile, runs).rows[0].date).toBe('no date')
+	})
+	it('retains the supplied calendar date without inventing a time', async () => {
+		const { profile, runs } = await runInput()
+		runs.items[0].date = '2026-10-31T23:45:00-07:00'
+		expect(buildRunsView(profile, runs).rows[0].date).toBe('2026-10-31')
+	})
+	it('retains the server order when display run numbers have gaps', async () => {
+		const { profile, runs } = await runInput()
+		runs.items = [runs.items[3], runs.items[0]]
+		expect(buildRunsView(profile, runs).rows.map((row) => row.run)).toEqual([75, 78])
+	})
+	it('does not hide historical Communion from the read-only run row', async () => {
+		const { profile, runs } = await runInput(8)
+		expect(buildRunsView(profile, runs).rows.at(-1)?.extra.map((item) => item.name)).toContain('Communion Support')
+	})
+	it('shows an empty history without invented run numbers', async () => {
+		const { profile, runs } = await runInput()
+		const view = buildRunsView(profile, { ...runs, total: 0, items: [] })
+		expect(view.rows).toEqual([])
+		expect(view.range).toBe('No runs logged for this boss yet.')
+		expect(view.pages).toEqual([])
+	})
+})
+
+describe('Runs editor projection', () => {
+	it('hides a currently excluded Eye without changing its historical quantity', async () => {
+		const { profile, runs } = await runInput(8)
+		const view = buildRunEditor(profile, runs.items[0], [profile.extra[0].id], { 'Cane of Kulemak': 0, 'Cinderswallow Urn': 1 })
+		expect(view.extra.map((item) => item.id)).not.toContain(profile.extra[0].id)
+		expect(view.request.items.quantities).toEqual({ 'Cinderswallow Urn': 1, [profile.extra[0].id]: 1 })
+		expect(view.request.items.counted).toEqual(runs.items[0].items.counted)
+	})
+	it('omits items outside the original counted set from editable chips', async () => {
+		const { profile, runs } = await runInput(8)
+		runs.items[0].items.counted = ['Cane of Kulemak']
+		const view = buildRunEditor(profile, runs.items[0], [], {})
+		expect(view.groups[0].items.map((item) => item.id)).toEqual(['Cane of Kulemak'])
+		expect(view.extra).toEqual([])
+	})
+	it('rejects an edit to a currently hidden key', async () => {
+		const { profile, runs } = await runInput(8)
+		expect(() => buildRunEditor(profile, runs.items[0], [profile.extra[0].id], { [profile.extra[0].id]: 0 }))
+			.toThrow('Item is not editable')
+	})
+	it('withholds saving when a full guaranteed group would be empty', async () => {
+		const { profile, runs } = await runInput(8)
+		expect(buildRunEditor(profile, runs.items[0], [], { 'Cane of Kulemak': 0 }).valid).toBe(false)
 	})
 })
