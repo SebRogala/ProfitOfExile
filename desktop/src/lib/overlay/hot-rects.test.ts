@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { hotRectsEqual, physicalHotRect, type HotRect } from './hot-rects';
+import { cssHotPoint, hotRectsEqual, physicalHotRect, type HotRect } from './hot-rects';
 
 const rect = (left: number, top: number, right: number, bottom: number) => ({
 	left,
 	top,
 	right,
 	bottom,
+});
+
+describe('converting forwarded physical clicks into CSS points', () => {
+	it('divides by the Tauri window scale factor', () => {
+		expect(cssHotPoint(150, 90, 1.5)).toEqual({ x: 100, y: 60 });
+	});
+	it('declines before the window scale factor resolves', () => {
+		expect(cssHotPoint(150, 90, 0)).toBeNull();
+	});
 });
 
 describe('converting a measured element into a hot rect', () => {

@@ -65,6 +65,7 @@
 	import { configExitDecision, type ConfigExitOutcome } from './widget-config-exit';
 	import { configBarAnchor } from './widget-config-bar';
 	import { useHotRects } from './use-hot-rects';
+	import { cssHotPoint } from '../hot-rects';
 
 	let {
 		module,
@@ -647,11 +648,9 @@
 		const pending = getCurrentWebviewWindow().listen<{ label: string; x: number; y: number }>(
 			'overlay-click',
 			(event) => {
-				if (scaleFactor === 0) return;
-				const el = document.elementFromPoint(
-					event.payload.x / scaleFactor,
-					event.payload.y / scaleFactor
-				);
+				const point = cssHotPoint(event.payload.x, event.payload.y, scaleFactor);
+				if (!point) return;
+				const el = document.elementFromPoint(point.x, point.y);
 				if (!el) {
 					log(`elementFromPoint found nothing at the forwarded click — DPI mismatch?`);
 					return;

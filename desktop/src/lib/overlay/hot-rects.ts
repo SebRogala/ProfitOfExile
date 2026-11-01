@@ -31,6 +31,12 @@ export interface MeasuredRect {
 	bottom: number;
 }
 
+/** Inverse of physicalHotRect for a forwarded window-relative physical point. */
+export function cssHotPoint(x: number, y: number, scaleFactor: number): { x: number; y: number } | null {
+	if (scaleFactor === 0) return null;
+	return { x: x / scaleFactor, y: y / scaleFactor };
+}
+
 /**
  * The physical hot rect for a measured element, or null when there is nothing
  * to claim.
