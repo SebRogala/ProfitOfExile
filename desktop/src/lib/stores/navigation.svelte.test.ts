@@ -270,7 +270,7 @@ describe('Boss loot sidebar', () => {
 
 	it.each([true, false])('shows Boss loot navigation with beta when expanded=%s', async (open) => {
 		const html = await sidebar(open, true);
-		expect(html).toMatch(open ? /nav-item[^\"]* active[^>]*>.*?👹.*?Boss loot/s : /collapsed-item[^\"]* active[^>]*title="Boss loot"/);
+		expect(html).toMatch(open ? /nav-item[^\"]* active[^>]*>.*?<img src="\/boss-loot-icon\.png".*?Boss loot/s : /collapsed-item[^\"]* active[^>]*title="Boss loot"/);
 	});
 
 	it.each([true, false])('omits Boss loot without beta when expanded=%s', async (open) => {
