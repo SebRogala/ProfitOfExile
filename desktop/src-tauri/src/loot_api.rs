@@ -45,6 +45,11 @@ pub struct BossStats { pub runs: u64, pub devices: u64, pub next_run: u64, pub i
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ApiError { Conflict, Unreachable, Rejected(String), Cancelled }
+/// A registry receiver belongs to one module generation. A new generation
+/// gets a new channel, so re-enabling never revives cancelled capture work.
+pub fn work_cancelled(cancel: &tokio::sync::watch::Receiver<bool>) -> bool {
+    *cancel.borrow() || cancel.has_changed().is_err()
+}
 pub trait LootTransport: Sync {
     fn submit(&self, request: &SubmitRun) -> impl std::future::Future<Output = Result<SubmitOutcome, ApiError>> + Send;
     fn latest(&self, profile: &ProfileRef) -> impl std::future::Future<Output = Result<Option<StoredRun>, ApiError>> + Send;
@@ -57,6 +62,15 @@ impl LootApi {
     }
     pub fn with_cancel(mut self, cancel: tokio::sync::watch::Receiver<bool>) -> Self {
         self.cancel = Some(cancel); self
+    }
+    fn check_cancel(&self) -> Result<(), ApiError> {
+        if self.cancel.as_ref().is_some_and(work_cancelled) { Err(ApiError::Cancelled) } else { Ok(()) }
+    }
+    async fn send<T: serde::de::DeserializeOwned>(&self, request: reqwest::RequestBuilder) -> Result<T, ApiError> {
+        self.check_cancel()?;
+        let result = decode(request).await;
+        self.check_cancel()?;
+        result
     }
     pub async fn capture_context(&self, profile: &ProfileRef) -> Result<(Option<StoredRun>, u64), ApiError> {
         Ok((self.latest(profile).await?, self.stats(profile, "own").await?.next_run))
@@ -71,17 +85,17 @@ impl LootApi {
         if page == 0 || page > 1_000_000 || size == 0 || size > 200 { return Err(ApiError::Rejected("invalid pagination".into())); }
         let mut query = Self::query(profile);
         query.extend([("page", page.to_string()), ("pageSize", size.to_string())]);
-        decode(self.request(reqwest::Method::GET, "runs").query(&query)).await
+        self.send(self.request(reqwest::Method::GET, "runs").query(&query)).await
     }
     pub async fn stats(&self, profile: &ProfileRef, scope: &str) -> Result<BossStats, ApiError> {
         if !matches!(scope, "own" | "collective") { return Err(ApiError::Rejected("invalid scope".into())); }
         let mut query = Self::query(profile); query.push(("scope", scope.into()));
-        decode(self.request(reqwest::Method::GET, "stats").query(&query)).await
+        self.send(self.request(reqwest::Method::GET, "stats").query(&query)).await
     }
 }
 impl LootTransport for LootApi {
     async fn submit(&self, request: &SubmitRun) -> Result<SubmitOutcome, ApiError> {
-        decode(self.request(reqwest::Method::POST, "runs").json(request)).await
+        self.send(self.request(reqwest::Method::POST, "runs").json(request)).await
     }
     async fn latest(&self, profile: &ProfileRef) -> Result<Option<StoredRun>, ApiError> {
         // List is date-ordered, whereas the merge transaction uses run_number.
@@ -90,6 +104,7 @@ impl LootTransport for LootApi {
         let mut page = 1;
         let mut seen = 0;
         loop {
+            self.check_cancel()?;
             let result = self.list(profile, page, 200).await?;
             if result.items.is_empty() && seen < result.total { return Err(ApiError::Rejected("incomplete history".into())); }
             seen += result.items.len() as u64;

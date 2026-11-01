@@ -139,6 +139,7 @@ pub fn merge_items(profile: &LootProfile, target: &StoredRun, incoming: &Selecti
 pub struct LootOwner {
     sequence: u64,
     poll_generation: u64,
+    work_cancel: Option<tokio::sync::watch::Receiver<bool>>,
     pub area: Option<Attribution>,
     pub pending: Option<PendingCapture>,
     pub frame: Option<Frame>,
@@ -186,6 +187,8 @@ impl LootOwner {
             profile: crate::loot_profiles::profile_for_area(Some(area)).map(ProfileRef::from) });
     }
     pub fn begin(&mut self, league: String, rect: [i32; 4], settings: &LootSettings, now: u64) -> Result<u64, String> {
+        // A capture attempt ends preview even when attribution is refused.
+        self.preview = false;
         let area = self.area.clone();
         let profile = area.as_ref().and_then(|a| a.profile.as_ref())
             .and_then(|r| crate::loot_profiles::built_in_profiles().iter().find(|p| ProfileRef::from(*p) == *r));
@@ -195,7 +198,6 @@ impl LootOwner {
         };
         if league.is_empty() { return Err("League not resolved".into()); }
         self.sequence += 1;
-        self.preview = false;
         self.frame = Some(Frame { rect, phase: "reading".into(), attribution: area.clone(), until_ms: None });
         self.pending = Some(PendingCapture {
             id: self.sequence, attribution: area.unwrap(), league, profile: profile.clone(),
@@ -295,7 +297,7 @@ impl LootOwner {
             p.error = Some("Merge target changed; save as new run or discard".into());
         }
     }
-    pub fn stop(&mut self) { self.pending = None; self.frame = None; self.preview = false; self.rebind = None; }
+    pub fn stop(&mut self) { self.pending = None; self.frame = None; self.preview = false; self.rebind = None; self.work_cancel = None; }
 }
 pub async fn submit_pending(owner: &Mutex<LootOwner>, settings: &LootSettings, http: &impl LootTransport, now: u64, manual: bool) {
     let id = owner.lock().unwrap_or_else(|e| e.into_inner()).pending.as_ref().map(|p| p.id);
@@ -310,6 +312,7 @@ async fn submit_capture(owner: &Mutex<LootOwner>, settings: &LootSettings, http:
     };
     let Some((id, request)) = request else { return };
     let result = http.submit(&request).await;
+    if matches!(result, Err(ApiError::Cancelled)) { return; }
     if matches!(result, Err(ApiError::Conflict)) {
         let fresh = http.latest(&request.profile).await;
         let mut o = owner.lock().unwrap_or_else(|e| e.into_inner());
@@ -322,6 +325,7 @@ async fn submit_capture(owner: &Mutex<LootOwner>, settings: &LootSettings, http:
                 if o.pending.as_ref().is_some_and(|p| p.target.is_none()) { o.pause_conflict(id); }
             }
             Ok(_) => o.pause_conflict(id),
+            Err(ApiError::Cancelled) => {},
             Err(error) => o.complete(id, Err(error), now),
         }
     } else {
@@ -343,15 +347,19 @@ fn read_capture(
     preprocess: impl FnOnce(&image::DynamicImage) -> image::DynamicImage,
     scaled_error: impl FnOnce(String),
 ) -> Result<Option<([i32; 4], Vec<String>)>, String> {
-    let result = (|| {
-        let (rect, crop) = grab()?;
-        let raw = recognize(&crop)?;
-        let scaled = preprocess(&crop);
-        let upscaled = recognize(&scaled).unwrap_or_else(|error| { scaled_error(error); Vec::new() });
-        Ok((rect, raw.into_iter().chain(upscaled).collect()))
-    })();
     if !active() { return Ok(None); }
-    result.map(Some)
+    let result = grab();
+    if !active() { return Ok(None); }
+    let (rect, crop) = result?;
+    let raw = recognize(&crop);
+    if !active() { return Ok(None); }
+    let raw = raw?;
+    let scaled = preprocess(&crop);
+    if !active() { return Ok(None); }
+    let upscaled = recognize(&scaled);
+    if !active() { return Ok(None); }
+    let upscaled = upscaled.unwrap_or_else(|error| { scaled_error(error); Vec::new() });
+    Ok(Some((rect, raw.into_iter().chain(upscaled).collect())))
 }
 pub fn snapshot(state: &crate::AppState) -> LootSlice {
     let enabled = state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).get(MODULE_ID) == Some(&true);
@@ -404,9 +412,13 @@ pub fn boss_loot_action(app: tauri::AppHandle, id: u64, action: CaptureAction) -
 pub async fn boss_loot_submit(app: tauri::AppHandle, id: u64) -> Result<(), String> {
     let state = app.state::<crate::AppState>();
     if state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).get(MODULE_ID) != Some(&true) { return Err("Module is off".into()); }
-    if !state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).pending.as_ref().is_some_and(|p| p.id == id) { return Err("Stale capture".into()); }
+    let cancel = {
+        let owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+        if !owner.pending.as_ref().is_some_and(|p| p.id == id) { return Err("Stale capture".into()); }
+        owner.work_cancel.clone().ok_or_else(|| "Module is not running".to_string())?
+    };
     let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    submit_capture(&state.boss_loot, &settings, &LootApi::from_state(&state), now_ms(), true, id).await;
+    submit_capture(&state.boss_loot, &settings, &LootApi::from_state(&state).with_cancel(cancel), now_ms(), true, id).await;
     crate::ssot::emit_ssot(&app); Ok(())
 }
 #[tauri::command]
@@ -436,14 +448,16 @@ pub fn spawn_hotkey_poller(app: tauri::AppHandle, cancel: tokio::sync::watch::Re
         let generation = {
             let state = app.state::<crate::AppState>();
             let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
-            if *cancel.borrow() { return; }
-            owner.start_polling()
+            if work_cancelled(&cancel) { return; }
+            let generation = owner.start_polling();
+            owner.work_cancel = Some(cancel.clone());
+            generation
         };
         #[cfg(windows)]
         let mut poll = ShortcutPoll::default();
-        while !*cancel.borrow() {
+        while !work_cancelled(&cancel) {
             std::thread::sleep(Duration::from_millis(30));
-            if *cancel.borrow() { break; }
+            if work_cancelled(&cancel) { break; }
             let state = app.state::<crate::AppState>();
             #[cfg(windows)] {
                 let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -465,17 +479,20 @@ pub fn spawn_hotkey_poller(app: tauri::AppHandle, cancel: tokio::sync::watch::Re
                     }
                     None => {}
                 }
+                if work_cancelled(&cancel) { break; }
                 platform::preview(&app, foreground);
             }
             let due = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).pending.as_ref()
                 .is_some_and(|p| p.phase == Phase::Open && p.deadline_ms.is_some_and(|t| now_ms() >= t));
             if due {
                 let app = app.clone();
+                let cancel = cancel.clone();
                 tauri::async_runtime::spawn(async move {
+                    if work_cancelled(&cancel) { return; }
                     let state = app.state::<crate::AppState>();
                     if state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).get(MODULE_ID) != Some(&true) { return; }
                     let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                    submit_pending(&state.boss_loot, &settings, &LootApi::from_state(&state), now_ms(), false).await;
+                    submit_pending(&state.boss_loot, &settings, &LootApi::from_state(&state).with_cancel(cancel), now_ms(), false).await;
                     crate::ssot::emit_ssot(&app);
                 });
             }
@@ -502,6 +519,7 @@ mod platform {
         owner.preview_tick(foreground, rect);
     }
     pub fn capture_once(app: &tauri::AppHandle, cancel: &tokio::sync::watch::Receiver<bool>) {
+        if work_cancelled(cancel) { return; }
         let Some(cur) = cursor() else { return };
         let state = app.state::<crate::AppState>();
         let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -510,13 +528,17 @@ mod platform {
         let rect = capture_rect((cur.0 - g.x, cur.1 - g.y), (g.width, g.height));
         let league = crate::ssot::build_snapshot(&state).league.name.unwrap_or_default();
         // Freeze the area, seed, profile, league and identity BEFORE grabbing/OCR.
-        let begin = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).begin(league, rect, &settings, now_ms());
+        let begin = {
+            let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+            if work_cancelled(cancel) { return; }
+            owner.begin(league, rect, &settings, now_ms())
+        };
         let id = match begin {
             Ok(id) => id, Err(error) => { crate::app_log(app, error); crate::ssot::emit_ssot(app); return; }
         };
         crate::ssot::emit_ssot(app);
         let result = read_capture(
-            || !*cancel.borrow(),
+            || !work_cancelled(cancel),
             || {
                 let shot = crate::capture::capture_screen(app)?;
                 let rect = capture_rect((cur.0 - shot.origin.0, cur.1 - shot.origin.1), (shot.image.width(), shot.image.height()));
@@ -532,19 +554,23 @@ mod platform {
             Ok(Some((rect, lines))) => {
                 {
                     let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+                    if work_cancelled(cancel) { return; }
                     if let Some(p) = owner.pending.as_mut().filter(|p| p.id == id) { p.rect = rect; }
                     owner.finish_ocr(id, lines, &settings, now_ms());
                 }
                 let app = app.clone();
+                let cancel = cancel.clone();
                 tauri::async_runtime::spawn(async move {
+                    if work_cancelled(&cancel) { return; }
                     let state = app.state::<crate::AppState>();
-                    let api = LootApi::from_state(&state);
+                    let api = LootApi::from_state(&state).with_cancel(cancel.clone());
                     let profile = { state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).pending.as_ref().filter(|p| p.id == id).map(|p| ProfileRef::from(&p.profile)) };
                     let Some(profile) = profile else { return };
                     let result = api.capture_context(&profile).await;
                     let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
                     {
                         let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+                        if work_cancelled(&cancel) { return; }
                         match result {
                             Ok((latest, next)) => owner.ready(id, latest, next, &settings, now_ms()),
                             Err(error) => if let Some(p) = owner.pending.as_mut().filter(|p| p.id == id && p.phase == Phase::Loading) {
@@ -557,8 +583,10 @@ mod platform {
             }
             Err(error) => {
                 let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(p) = owner.pending.as_mut().filter(|p| p.id == id) { p.phase = Phase::Rejected; p.error = Some(error); }
-                owner.frame = None;
+                if work_cancelled(cancel) { return; }
+                if let Some(p) = owner.pending.as_mut().filter(|p| p.id == id) {
+                    p.phase = Phase::Rejected; p.error = Some(error); owner.frame = None;
+                }
             }
         }
         crate::ssot::emit_ssot(app);
