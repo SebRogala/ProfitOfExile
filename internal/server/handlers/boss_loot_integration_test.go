@@ -140,6 +140,23 @@ func TestBossLootHTTPRetainsHistoricalObservation(t *testing.T) {
 	merge.Items.Quantities = map[string]int64{"Urn": 1}
 	merge.IncomingPositiveKeys = []string{"Urn"}
 	request(a, "POST", path, merge, 200, &merged)
+	correctedItems := bossloot.Items{Quantities: map[string]int64{"Urn": 1}, Counted: original.Items.Counted}
+	correctedVersion := merge.Target.ExpectedVersion + 1
+	if merged.State != "saved" || merged.Run.ID != original.ID || merged.Run.Run != original.Run ||
+		merged.Run.Profile != original.Profile || merged.Run.Version != correctedVersion ||
+		merged.Run.League != original.League || !reflect.DeepEqual(merged.Run.Items, correctedItems) {
+		t.Fatalf("corrected merge response: %+v; want original identity, version %d and items %+v", merged, correctedVersion, correctedItems)
+	}
+	request(a, "GET", path+query, nil, 200, &page)
+	if page.Total != 1 || len(page.Items) != 1 {
+		t.Fatalf("corrected merge must retain one row: %+v", page)
+	}
+	corrected := page.Items[0]
+	if corrected.ID != original.ID || corrected.Run != original.Run || corrected.Profile != original.Profile ||
+		corrected.Version != correctedVersion || corrected.League != original.League ||
+		!reflect.DeepEqual(corrected.Items, correctedItems) {
+		t.Fatalf("persisted corrected merge: %+v; want original identity, version %d and items %+v", corrected, correctedVersion, correctedItems)
+	}
 	var forced bossloot.SubmitOutcome
 	request(a, "POST", path, bossloot.Submit{Profile: profile, Mode: "forceNew", Seed: original.Seed, Items: bossloot.Items{Quantities: map[string]int64{bossEye: 1, "Urn": 1}, Counted: []string{"Urn", "Cane", bossEye}}}, 201, &forced)
 	stats(a, "own", bossloot.ItemStats{Drops: 1, EligibleRuns: 1})

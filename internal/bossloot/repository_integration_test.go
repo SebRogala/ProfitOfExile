@@ -384,3 +384,65 @@ func TestRepositoryListOrdersEqualDatesByRunWithNullDatesLast(t *testing.T) {
 		t.Fatalf("stable legacy order %+v", page)
 	}
 }
+
+func TestRepositoryStatsIsolateProfileVersions(t *testing.T) {
+	ctx := context.Background()
+	r, _, a := repoFixture(t)
+	_, _, b := repoFixture(t)
+	_, _, c := repoFixture(t)
+	_, _, d := repoFixture(t)
+	const v1Only = "category:version-test:1:eligible"
+	const v2Only = "category:version-test:2:eligible"
+	cases := []struct {
+		name       string
+		version    int
+		collective bool
+		want       Stats
+	}{
+		{"v1 own", 1, false, Stats{Runs: 1, Devices: 1, NextRun: 2, Items: map[string]ItemStats{eye: {Drops: 2, EligibleRuns: 1}, v1Only: {EligibleRuns: 1}}}},
+		{"v1 collective", 1, true, Stats{Runs: 3, Devices: 2, NextRun: 2, Items: map[string]ItemStats{eye: {Drops: 5, EligibleRuns: 2}, v1Only: {EligibleRuns: 2}, "Urn": {Drops: 1, EligibleRuns: 1}}}},
+		{"v2 own", 2, false, Stats{Runs: 2, Devices: 1, NextRun: 3, Items: map[string]ItemStats{eye: {Drops: 7, EligibleRuns: 1}, v2Only: {Drops: 2, EligibleRuns: 1}}}},
+		{"v2 collective", 2, true, Stats{Runs: 6, Devices: 3, NextRun: 3, Items: map[string]ItemStats{eye: {Drops: 18, EligibleRuns: 3}, v2Only: {Drops: 7, EligibleRuns: 4}}}},
+	}
+	profile := testProfile
+	profile.Boss = "version-stats-" + a
+	for _, seed := range []struct {
+		version    int
+		device     string
+		quantities map[string]int64
+		counted    []string
+		run        int64
+	}{
+		{1, a, map[string]int64{eye: 2}, []string{eye, v1Only}, 1},
+		{1, b, map[string]int64{eye: 3}, []string{eye, v1Only}, 1},
+		{1, b, map[string]int64{"Urn": 1}, []string{"Urn"}, 2},
+		{2, a, map[string]int64{eye: 7}, []string{eye}, 1},
+		{2, a, map[string]int64{v2Only: 2}, []string{v2Only}, 2},
+		{2, c, map[string]int64{eye: 11}, []string{eye, v2Only}, 1},
+		{2, c, map[string]int64{}, []string{v2Only}, 2},
+		{2, c, map[string]int64{}, []string{eye}, 3},
+		{2, d, map[string]int64{v2Only: 5}, []string{v2Only}, 1},
+	} {
+		profile.ProfileVersion = seed.version
+		out, err := r.Submit(ctx, league.Historical("Mirage"), seed.device, Submit{Profile: profile, Mode: "forceNew", Items: Items{Quantities: seed.quantities, Counted: seed.counted}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.Run.Run != seed.run {
+			t.Fatalf("version %d device %s: stored run %d, want %d", seed.version, seed.device, out.Run.Run, seed.run)
+		}
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requested := profile
+			requested.ProfileVersion = tc.version
+			got, err := r.StatsCumulative(ctx, a, requested, tc.collective)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("version %d collective=%t: stats %+v, want %+v", tc.version, tc.collective, got, tc.want)
+			}
+		})
+	}
+}
