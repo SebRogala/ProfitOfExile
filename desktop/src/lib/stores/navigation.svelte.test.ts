@@ -138,6 +138,10 @@ describe('parseView', () => {
 });
 
 describe('viewToPath', () => {
+	it("maps 'boss-loot' to '/boss-loot'", async () => {
+		const { viewToPath } = await loadStoreWith({});
+		expect(viewToPath('boss-loot' as View)).toBe('/boss-loot');
+	});
 	it("maps 'lab' to '/' — the root path, not '/lab'", async () => {
 		const { viewToPath } = await loadStoreWith({});
 		expect(viewToPath('lab')).toBe('/');
@@ -175,6 +179,11 @@ describe('viewToPath', () => {
 });
 
 describe('go', () => {
+	it("selects 'boss-loot' from the literal Sidebar path '/boss-loot'", async () => {
+		const mod = await loadStoreWith({ navView: 'lab' });
+		mod.nav.go('/boss-loot');
+		expect(mod.nav.view).toBe('boss-loot');
+	});
 	/**
 	 * A store parked on a view other than `view`, so a pass proves `go` wrote it.
 	 * The seed is the STORED pref, not a `go` call: seeding through the same
@@ -245,6 +254,50 @@ describe('go', () => {
 		mod.nav.go('constructor');
 		await vi.advanceTimersByTimeAsync(300);
 		expect(callsOf('set_ui_pref', 'navView')).toEqual([{ key: 'navView', value: 'lab' }]);
+	});
+});
+
+describe('Boss loot sidebar', () => {
+	async function sidebar(open: boolean, beta: boolean, enabled = false): Promise<string> {
+		const { render } = await import('svelte/server');
+		const { default: Sidebar } = await import('$lib/components/Sidebar.svelte');
+		const { entitlements } = await import('./entitlements.svelte');
+		const { ssot } = await import('./ssot.svelte');
+		entitlements.features = beta ? ['beta'] : [];
+		ssot.modules = { boss_loot: enabled };
+		return render(Sidebar, { props: { open, currentPath: '/boss-loot', onToggle: () => {} } }).body;
+	}
+
+	it.each([true, false])('shows Boss loot navigation with beta when expanded=%s', async (open) => {
+		const html = await sidebar(open, true);
+		expect(html).toMatch(open ? /nav-item[^\"]* active[^>]*>.*?👹.*?Boss loot/s : /collapsed-item[^\"]* active[^>]*title="Boss loot"/);
+	});
+
+	it.each([true, false])('omits Boss loot without beta when expanded=%s', async (open) => {
+		const html = await sidebar(open, false);
+		expect(html).not.toContain('Boss loot');
+	});
+
+	it.each([true, false])('replaces the Bosses placeholder when expanded=%s', async (open) => {
+		const html = await sidebar(open, false);
+		expect(html).not.toContain('Bosses');
+	});
+
+	it.each([true, false])('shows the module title when expanded=%s', async (open) => {
+		const html = await sidebar(open, true);
+		expect(html).toContain('Boss loot: the capture shortcut AND the confirmation overlay. The Boss loot page stays browsable either way.');
+	});
+
+	it.each([true, false])('shows module off when expanded=%s', async (open) => {
+		const html = await sidebar(open, true);
+		const module = html.match(/<button[^>]*title="Boss loot:[^>]*>.*?<\/button>/s)?.[0] ?? '';
+		expect(module).toMatch(open ? /mode[^\"]* off[^>]*>off<\/span>/ : /indicator[^\"]* off[^>]*><\/span>/);
+	});
+
+	it.each([true, false])('shows module on when expanded=%s', async (open) => {
+		const html = await sidebar(open, true, true);
+		const module = html.match(/<button[^>]*title="Boss loot:[^>]*>.*?<\/button>/s)?.[0] ?? '';
+		expect(module).toMatch(open ? /mode[^\"]* always[^>]*>on<\/span>/ : /indicator[^\"]* always[^>]*><\/span>/);
 	});
 });
 

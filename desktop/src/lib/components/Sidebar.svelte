@@ -16,7 +16,7 @@
 	// themselves live in `ssot.modules`; this map only supplies the label and
 	// the icon, which is the module's nav-page icon so a switch reads as
 	// belonging to its page.
-	const MODULES: Record<string, { label: string; icon: string }> = {
+	const MODULES: Record<string, { label: string; icon?: string; glyph?: string }> = {
 		// One switch, three things since POE-199: the capture loop, the page's
 		// capture + verdict, AND the verdict overlay window. The Mercenaries
 		// PAGE is a nav item and stays reachable with this off — it just has no
@@ -27,6 +27,7 @@
 		// behind it can only show a board that is no longer on screen. The Temple
 		// PAGE is a nav item and stays reachable with this off.
 		temple: { label: 'Temple reader', icon: '/temple-icon.png' },
+		boss_loot: { label: 'Boss loot', glyph: '👹' },
 	};
 
 	/**
@@ -39,6 +40,7 @@
 	const MODULE_FEATURES: Record<string, string> = {
 		mercenary: MERC_FEATURE,
 		temple: TEMPLE_FEATURE,
+		boss_loot: BETA_FEATURE,
 	};
 
 	/** Whether this device may see the Mercenaries page and the Merc OCR switch. */
@@ -52,6 +54,7 @@
 
 	/** Whether this device may see the Harvest Flipping page (beta, POE-283). */
 	const harvestGranted = $derived(hasFeature(BETA_FEATURE));
+	const bossLootGranted = $derived(hasFeature(BETA_FEATURE));
 
 	/** Whether this device may see the Chaos ⇄ Div page (beta, POE-316). */
 	const chaosDivGranted = $derived(hasFeature(BETA_FEATURE));
@@ -71,6 +74,7 @@
 	const MODULE_TITLES: Record<string, string> = {
 		mercenary: 'Merc OCR: watches for a recruit window AND spawns the verdict overlay — one switch for the loop, the page data and the strip over the game. The Mercenaries page stays browsable either way.',
 		temple: 'Temple reader: reads the layout panel AND spawns the temple overlay — one switch for both. The Temple page stays browsable either way.',
+		boss_loot: 'Boss loot: the capture shortcut AND the confirmation overlay. The Boss loot page stays browsable either way.',
 	};
 
 	/** What a module toggle's `title` says: the specific note, or the default. */
@@ -141,12 +145,14 @@
 				<img src="/harvest-flipping-icon.png" alt="Harvest Flipping" class="rail-icon" />
 			</button>
 		{/if}
+		{#if bossLootGranted}
+			<button class="collapsed-item" class:active={currentPath === '/boss-loot'} title="Boss loot" onclick={() => nav.go('/boss-loot')}>
+				<span class="icon" aria-hidden="true">👹</span>
+			</button>
+		{/if}
 		{#if import.meta.env.DEV}
 			<div class="collapsed-item disabled" title="Mapping (soon)">
 				<span class="icon">&#x1F5FA;&#xFE0F;</span>
-			</div>
-			<div class="collapsed-item disabled" title="Bosses (soon)">
-				<span class="icon">&#x1F479;</span>
 			</div>
 		{/if}
 		{#if chaosDivGranted || import.meta.env.DEV}
@@ -199,10 +205,11 @@
 		{#if moduleEntries.length > 0}
 			<div class="collapsed-sep"></div>
 		{/if}
-		{#each moduleEntries as [id, { label, icon }] (id)}
+		{#each moduleEntries as [id, { label, icon, glyph }] (id)}
 			{@const on = ssot.modules[id] ?? false}
 			<button class="collapsed-overlay" title={moduleTitle(id, label, on)} onclick={() => setModuleEnabled(id, !on)}>
-				<img src={icon} alt={label} class="rail-icon" />
+				{#if glyph}<span class="icon" aria-hidden="true">{glyph}</span>
+				{:else}<img src={icon} alt={label} class="rail-icon" />{/if}
 				<span class="indicator" class:off={!on} class:always={on}></span>
 			</button>
 		{/each}
@@ -242,15 +249,16 @@
 					<span>Harvest Flipping</span>
 				</button>
 			{/if}
+				{#if bossLootGranted}
+					<button class="nav-item" class:active={currentPath === '/boss-loot'} onclick={() => nav.go('/boss-loot')}>
+						<span class="icon" aria-hidden="true">👹</span>
+						<span>Boss loot</span>
+					</button>
+				{/if}
 			{#if import.meta.env.DEV}
 				<div class="nav-item disabled">
 					<span class="icon">&#x1F5FA;&#xFE0F;</span>
 					<span>Mapping</span>
-					<span class="badge">soon</span>
-				</div>
-				<div class="nav-item disabled">
-					<span class="icon">&#x1F479;</span>
-					<span>Bosses</span>
 					<span class="badge">soon</span>
 				</div>
 			{/if}
@@ -306,10 +314,11 @@
 			<span class="mode" class:off={!timerActive} class:always={timerActive && gameFocused} class:auto={timerActive && !gameFocused}>{timerActive ? (gameFocused ? 'on' : 'hidden') : 'off'}</span>
 		</button>
 		<div class="label">Modules</div>
-		{#each moduleEntries as [id, { label, icon }] (id)}
+		{#each moduleEntries as [id, { label, icon, glyph }] (id)}
 			{@const on = ssot.modules[id] ?? false}
 			<button class="overlay-row clickable" title={moduleTitle(id, label, on)} onclick={() => setModuleEnabled(id, !on)}>
-				<span class="module-name"><img src={icon} alt="" class="module-icon" />{label}</span>
+				<span class="module-name">{#if glyph}<span class="module-glyph" aria-hidden="true">{glyph}</span>
+					{:else}<img src={icon} alt="" class="module-icon" />{/if}{label}</span>
 				<span class="mode" class:off={!on} class:always={on}>{on ? 'on' : 'off'}</span>
 			</button>
 		{/each}
@@ -411,6 +420,12 @@
 		width: 14px;
 		height: 14px;
 		object-fit: contain;
+	}
+
+	.module-glyph {
+		width: 14px;
+		font-size: 11px;
+		text-align: center;
 	}
 
 	/* Square game-art icons fill the rail button's 22 px instead of the

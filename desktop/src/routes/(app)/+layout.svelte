@@ -44,10 +44,27 @@
 	import CurrencyExchangePage from '$lib/pages/CurrencyExchangePage.svelte';
 	import HarvestFlippingPage from '$lib/pages/HarvestFlippingPage.svelte';
 	import ChaosDivPage from '$lib/pages/ChaosDivPage.svelte';
+	import BossLootPage from '$lib/pages/BossLootPage.svelte';
+	import bossLootFixture from '$lib/boss-loot/__fixtures__/boss-loot.json';
+	import {
+		createFixtureProfiles, createFixtureStats, createFixtureRuns,
+		createFixtureModuleSettings, createFixtureDevice
+	} from '$lib/boss-loot/fixture-adapters';
+	import type { PagePorts } from '$lib/boss-loot/page-controller.svelte';
 	import DevPage from '$lib/pages/DevPage.svelte';
 	import IdentifyDialog from '$lib/components/IdentifyDialog.svelte';
 
 	let { children } = $props();
+
+	// Owner-specific fixtures at PagePorts until WI-9 supplies native adapters.
+	const bossLootPorts: PagePorts = {
+		profiles: createFixtureProfiles(bossLootFixture.profiles),
+		stats: createFixtureStats(bossLootFixture.stats),
+		runs: createFixtureRuns(bossLootFixture.runs),
+		moduleSettings: createFixtureModuleSettings(bossLootFixture.moduleSettings),
+		device: createFixtureDevice(bossLootFixture.device),
+		saveCsv: async () => { throw new Error('CSV export is not connected yet.'); }
+	};
 
 	// Sidebar state: driven by store.status.sidebar_open (persisted in Rust settings).
 	let sidebarOpen = $derived(store.status?.sidebar_open ?? true);
@@ -67,7 +84,8 @@
 		temple: TEMPLE_FEATURE,
 		'currency-exchange': EXCHANGE_FEATURE,
 		'harvest-flipping': BETA_FEATURE,
-		'chaos-div': BETA_FEATURE
+		'chaos-div': BETA_FEATURE,
+		'boss-loot': BETA_FEATURE
 	};
 
 	/** Whether this device may see a view. Reactive — `hasFeature` reads the store. */
@@ -86,6 +104,8 @@
 	let harvestGranted = $derived(viewGranted('harvest-flipping'));
 	/** Gates the Chaos ⇄ Div page (beta, POE-316; no overlay, no module). */
 	let chaosDivGranted = $derived(viewGranted('chaos-div'));
+	/** Page visibility is independent of the boss_loot work flag (ADR-014). */
+	let bossLootGranted = $derived(viewGranted('boss-loot'));
 
 	/**
 	 * The view actually on screen.
@@ -718,6 +738,11 @@
 			{#if import.meta.env.DEV}
 				<div class:view-hidden={visibleView !== 'dev'}>
 					<DevPage />
+				</div>
+			{/if}
+			{#if bossLootGranted}
+				<div class:view-hidden={visibleView !== 'boss-loot'}>
+					<BossLootPage ports={bossLootPorts} />
 				</div>
 			{/if}
 			{#if chaosDivGranted}

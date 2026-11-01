@@ -30,6 +30,7 @@ export type View =
 	| 'temple'
 	| 'currency-exchange'
 	| 'harvest-flipping'
+	| 'boss-loot'
 	| 'chaos-div';
 
 /**
@@ -49,6 +50,7 @@ export const VIEW_PATHS: Record<View, string> = {
 	temple: '/temple',
 	'currency-exchange': '/currency-exchange',
 	'harvest-flipping': '/harvest-flipping',
+	'boss-loot': '/boss-loot',
 	'chaos-div': '/chaos-div',
 };
 
