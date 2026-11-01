@@ -92,9 +92,12 @@
 </div>
 
 <style>
-	.boss-loot-page { display: flex; flex-direction: column; gap: 10px; font-size: .8125rem; color: var(--color-lab-text); }
+	.boss-loot-page { display: flex; flex-direction: column; gap: 10px; font-size: .8125rem; line-height: normal; color: var(--color-lab-text); }
 	.page-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 16px; background: var(--color-lab-surface); border: 1px solid var(--color-lab-border); }
 	.page-head h1 { margin: 0; font-size: 1rem; font-weight: 700; }
+	.page-head :global(.btn) { height: 28px; padding: 0 12px; border-color: var(--color-lab-border); color: var(--color-lab-text); }
+	.page-head :global(.btn:hover:not(:disabled)) { border-color: var(--color-lab-blue); color: var(--color-lab-text); }
+	.page-head :global(.btn:focus-visible) { outline: 1px solid var(--color-lab-blue); outline-offset: 2px; }
 	.caption, .boss-summary > span { color: var(--color-lab-text-secondary); font-size: 12px; }
 	.spacer { flex: 1; }
 	.page-picks, .boss-pills { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
