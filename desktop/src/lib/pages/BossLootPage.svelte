@@ -154,7 +154,7 @@
 					{/each}
 				</div>
 				<nav class="pager" aria-label="Runs pages">
-					<span class="secondary">{history.range}</span>
+					<span class="secondary">{#if history.rows.length}Runs <span class="mono">{groupNumber(String(history.rows[0].run))}–{groupNumber(String(history.rows[history.rows.length - 1].run))}</span> of <span class="mono">{groupNumber(String(history.total))}</span>, newest first{:else}{history.range}{/if}</span>
 					<div class="page-buttons">
 						<button type="button" class="page-button" aria-label="Previous page" disabled={history.first || page.runMutationPending} onclick={() => page.loadRuns(history.page - 1)}>‹</button>
 						{#each history.pages as number (number)}<button type="button" class="page-button" class:current={number === history.page} aria-current={number === history.page ? 'page' : undefined} disabled={page.runMutationPending} onclick={() => page.loadRuns(number)}>{number}</button>{/each}
@@ -212,11 +212,11 @@
 	.run-head, .table-heading { font-size: .6875rem; text-transform: uppercase; letter-spacing: .5px; color: var(--color-lab-text-secondary); font-weight: 600; }
 	.run-date, .secondary { color: var(--color-lab-text-secondary); font-size: 12px; }
 	.chips { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
-	.history-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px 1px 2px; border-radius: 4px; background: rgba(255,255,255,.05); font-size: 11px; white-space: nowrap; }
+	.history-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 20px; padding: 1px 6px 1px 2px; border-radius: 4px; background: rgba(255,255,255,.05); font-size: 11px; white-space: nowrap; }
 	.run-actions { display: flex; gap: 4px; justify-content: flex-end; }
 	.run-actions :global(.btn) { height: 24px; padding: 0 8px; border-color: var(--color-lab-border); color: var(--color-lab-text); }
 	.run-editor { padding: 8px 12px 12px 74px; display: flex; flex-direction: column; gap: 8px; background: rgba(59,130,246,.05); }
-	.edit-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border: 1px solid var(--color-lab-border); border-radius: 4px; background: transparent; color: var(--color-lab-text); font: inherit; font-size: 11px; cursor: pointer; }
+	.edit-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 2px 6px; border: 1px solid var(--color-lab-border); border-radius: 4px; background: transparent; color: var(--color-lab-text); font: inherit; font-size: 11px; cursor: pointer; }
 	.edit-chip.selected { border-color: var(--color-lab-blue); background: rgba(59,130,246,.14); }
 	.edit-chip:not(.selected) :global(img) { opacity: .45; }
 	.editor-actions { display: flex; gap: 6px; }
@@ -227,6 +227,7 @@
 	.run-actions :global(.btn:focus-visible), .editor-actions :global(.btn:focus-visible), .edit-chip:focus-visible, .page-button:focus-visible { outline: 1px solid var(--color-lab-blue); outline-offset: 2px; }
 	.pager { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--color-lab-border); }
 	.page-buttons { display: flex; gap: 4px; align-items: center; }
+	.pager .mono { color: var(--color-lab-text); }
 	.page-button { min-width: 28px; height: 26px; padding: 0 8px; border-radius: 4px; border: 1px solid var(--color-lab-border); background: transparent; color: var(--color-lab-text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
 	.page-button:hover { color: var(--color-lab-text); }
 	.page-button.current { background: rgba(99,102,241,.2); color: var(--color-lab-text); border-color: rgba(99,102,241,.5); }

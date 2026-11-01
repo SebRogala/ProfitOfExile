@@ -78,7 +78,7 @@ export function buildRunsView(profile: BossProfile, runs: RunsPage) {
 			unique: uniques.filter(positive).map(project), extra: extras.filter(positive).map(project) }
 	})
 	const pages = Array.from({ length: Math.ceil(runs.total / runs.pageSize) }, (_, index) => index + 1)
-	return { rows, page: runs.page, pages, first: runs.page <= 1, last: runs.page >= pages.length,
+	return { rows, total: runs.total, page: runs.page, pages, first: runs.page <= 1, last: runs.page >= pages.length,
 		range: rows.length ? `Runs ${groupNumber(String(rows[0].run))}–${groupNumber(String(rows.at(-1)!.run))} of ${groupNumber(String(runs.total))}, newest first`
 			: 'No runs logged for this boss yet.' }
 }
