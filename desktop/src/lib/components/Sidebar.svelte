@@ -16,7 +16,7 @@
 	// themselves live in `ssot.modules`; this map only supplies the label and
 	// the icon, which is the module's nav-page icon so a switch reads as
 	// belonging to its page.
-	const MODULES: Record<string, { label: string; icon?: string; glyph?: string }> = {
+	const MODULES: Record<string, { label: string; icon: string }> = {
 		// One switch, three things since POE-199: the capture loop, the page's
 		// capture + verdict, AND the verdict overlay window. The Mercenaries
 		// PAGE is a nav item and stays reachable with this off — it just has no
@@ -27,7 +27,7 @@
 		// behind it can only show a board that is no longer on screen. The Temple
 		// PAGE is a nav item and stays reachable with this off.
 		temple: { label: 'Temple reader', icon: '/temple-icon.png' },
-		boss_loot: { label: 'Boss loot', glyph: '👹' },
+		boss_loot: { label: 'Boss loot', icon: '/boss-loot-icon.png' },
 	};
 
 	/**
@@ -136,8 +136,8 @@
 			</button>
 		{/if}
 		{#if exchangeGranted}
-			<button class="collapsed-item" class:active={currentPath === '/currency-exchange'} title="Currency Exchange" onclick={() => nav.go('/currency-exchange')}>
-				<img src="/currency-exchange-icon.png" alt="Currency Exchange" class="rail-icon" />
+			<button class="collapsed-item" class:active={currentPath === '/currency-exchange'} title="Currency Exchange Flipping" onclick={() => nav.go('/currency-exchange')}>
+				<img src="/currency-exchange-icon.png" alt="Currency Exchange Flipping" class="rail-icon" />
 			</button>
 		{/if}
 		{#if harvestGranted}
@@ -147,7 +147,7 @@
 		{/if}
 		{#if bossLootGranted}
 			<button class="collapsed-item" class:active={currentPath === '/boss-loot'} title="Boss loot" onclick={() => nav.go('/boss-loot')}>
-				<span class="icon" aria-hidden="true">👹</span>
+				<img src="/boss-loot-icon.png" alt="" class="rail-icon" />
 			</button>
 		{/if}
 		{#if import.meta.env.DEV}
@@ -159,8 +159,8 @@
 			<div class="collapsed-sep"></div>
 		{/if}
 		{#if chaosDivGranted}
-			<button class="collapsed-item" class:active={currentPath === '/chaos-div'} title="Chaos ⇄ Div" onclick={() => nav.go('/chaos-div')}>
-				<span class="icon" aria-hidden="true">⇄</span>
+			<button class="collapsed-item" class:active={currentPath === '/chaos-div'} title="Currency Exchange Companion" onclick={() => nav.go('/chaos-div')}>
+				<img src="/faustus-icon.png" alt="" class="rail-icon" />
 			</button>
 		{/if}
 		{#if import.meta.env.DEV}
@@ -205,11 +205,10 @@
 		{#if moduleEntries.length > 0}
 			<div class="collapsed-sep"></div>
 		{/if}
-		{#each moduleEntries as [id, { label, icon, glyph }] (id)}
+		{#each moduleEntries as [id, { label, icon }] (id)}
 			{@const on = ssot.modules[id] ?? false}
 			<button class="collapsed-overlay" title={moduleTitle(id, label, on)} onclick={() => setModuleEnabled(id, !on)}>
-				{#if glyph}<span class="icon" aria-hidden="true">{glyph}</span>
-				{:else}<img src={icon} alt={label} class="rail-icon" />{/if}
+				<img src={icon} alt={label} class="rail-icon" />
 				<span class="indicator" class:off={!on} class:always={on}></span>
 			</button>
 		{/each}
@@ -240,7 +239,7 @@
 			{#if exchangeGranted}
 				<button class="nav-item" class:active={currentPath === '/currency-exchange'} onclick={() => nav.go('/currency-exchange')}>
 					<img src="/currency-exchange-icon.png" alt="" class="lab-icon-expanded" style="height: 18px" />
-					<span>Currency Exchange</span>
+					<span>Currency Exchange Flipping</span>
 				</button>
 			{/if}
 			{#if harvestGranted}
@@ -251,7 +250,7 @@
 			{/if}
 				{#if bossLootGranted}
 					<button class="nav-item" class:active={currentPath === '/boss-loot'} onclick={() => nav.go('/boss-loot')}>
-						<span class="icon" aria-hidden="true">👹</span>
+						<img src="/boss-loot-icon.png" alt="" class="lab-icon-expanded" style="height: 18px" />
 						<span>Boss loot</span>
 					</button>
 				{/if}
@@ -269,8 +268,8 @@
 			<div class="label">Tools</div>
 			{#if chaosDivGranted}
 			<button class="nav-item" class:active={currentPath === '/chaos-div'} onclick={() => nav.go('/chaos-div')}>
-				<span class="icon" aria-hidden="true">⇄</span>
-				<span>Chaos ⇄ Div</span>
+				<img src="/faustus-icon.png" alt="" class="lab-icon-expanded" style="height: 18px" />
+				<span>Currency Exchange Companion</span>
 			</button>
 			{/if}
 			{#if import.meta.env.DEV}
@@ -314,11 +313,10 @@
 			<span class="mode" class:off={!timerActive} class:always={timerActive && gameFocused} class:auto={timerActive && !gameFocused}>{timerActive ? (gameFocused ? 'on' : 'hidden') : 'off'}</span>
 		</button>
 		<div class="label">Modules</div>
-		{#each moduleEntries as [id, { label, icon, glyph }] (id)}
+		{#each moduleEntries as [id, { label, icon }] (id)}
 			{@const on = ssot.modules[id] ?? false}
 			<button class="overlay-row clickable" title={moduleTitle(id, label, on)} onclick={() => setModuleEnabled(id, !on)}>
-				<span class="module-name">{#if glyph}<span class="module-glyph" aria-hidden="true">{glyph}</span>
-					{:else}<img src={icon} alt="" class="module-icon" />{/if}{label}</span>
+				<span class="module-name"><img src={icon} alt="" class="module-icon" />{label}</span>
 				<span class="mode" class:off={!on} class:always={on}>{on ? 'on' : 'off'}</span>
 			</button>
 		{/each}
@@ -420,12 +418,6 @@
 		width: 14px;
 		height: 14px;
 		object-fit: contain;
-	}
-
-	.module-glyph {
-		width: 14px;
-		font-size: 11px;
-		text-align: center;
 	}
 
 	/* Square game-art icons fill the rail button's 22 px instead of the

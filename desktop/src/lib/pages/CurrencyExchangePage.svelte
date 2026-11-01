@@ -433,7 +433,7 @@
 
 <div class="exchange-page" aria-busy={loading}>
 	<div class="page-head">
-		<h1>Currency Exchange</h1>
+		<h1>Currency Exchange Flipping</h1>
 		{#if result}
 			<span class="league">{result.league}</span>
 		{/if}

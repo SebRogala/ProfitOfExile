@@ -84,7 +84,7 @@
 
 <div class="chaos-div-page">
 	<header class="page-head">
-		<h1>Chaos ⇄ Div</h1>
+		<h1>Currency Exchange Companion</h1>
 		<div class="spacer"></div>
 		<Button onclick={reset}>
 			<span class="reset-label">
