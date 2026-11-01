@@ -14,11 +14,11 @@ function deferred<T>() {
 	const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
 	return { promise, resolve, reject };
 }
-function setup() {
-	applySnapshot({ league: { name: 'A', generation: ssot.leagueGeneration + 1 } });
+function setup(resolveLeague = true) {
+	if (resolveLeague) applySnapshot({ league: { name: 'A', generation: ssot.leagueGeneration + 1 } });
 	const compares: ReturnType<typeof deferred<CompareGem[]>>[] = [];
 	const trades: ReturnType<typeof deferred<TradeLookupResult>>[] = [];
-	const overlays: { results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null>; divineRate: number }[] = [];
+	const overlays: { results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null>; divineRate: number; tradeLoading: Record<string, boolean>; tradeError: Record<string, boolean> }[] = [];
 	const queued: string[] = [];
 	const names = deferred<string[]>();
 	const handlers: Record<string, (event: { payload: unknown }) => void> = {};
@@ -133,4 +133,70 @@ it('outgoing trade progress cannot restore the cleared queue display', async () 
 	expect(controller.state.tradeQueue).toBeNull();
 	trades[0].resolve(trade('A'));
 	await pending;
+});
+
+it('uncorrelated same-gem events cannot contaminate a replacement league lookup', async () => {
+	const { controller, handlers, trades, compares, overlays } = setup();
+	const old = controller.invokeRustTrade('Arc');
+	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+	controller.selectGem('Arc');
+	const replacement = controller.invokeRustTrade('Arc');
+	compares[1].resolve([row(55)]);
+	await Promise.resolve(); await Promise.resolve();
+	const assertPendingB = () => {
+		expect([controller.state.tradeQueue, controller.state.tradeError.Arc, controller.state.tradeErrorMsg.Arc]).toEqual([null, false, undefined]);
+		expect(overlays.at(-1)).toEqual({
+			results: [row(55)], tradeData: {}, tradeLoading: { Arc: true }, tradeError: { Arc: false }, divineRate: 300, labMode: 'normal'
+		});
+	};
+	handlers['trade-queue']({ payload: { kind: 'waiting', source: 'gem', gem: 'Arc', position: 1, total: 1, waitSecs: 20 } });
+	assertPendingB();
+	handlers['trade-queue']({ payload: { kind: 'error', source: 'gem', gem: 'Arc', error: 'outgoing A failed' } });
+	assertPendingB();
+	trades[0].resolve(trade('A'));
+	await old;
+	// A's already-emitted events may be delivered after its promise settles; B remains uncorrelated.
+	handlers['trade-queue']({ payload: { kind: 'waiting', source: 'gem', gem: 'Arc', position: 1, total: 1, waitSecs: 19 } });
+	handlers['trade-queue']({ payload: { kind: 'error', source: 'gem', gem: 'Arc', error: 'delayed A error' } });
+	assertPendingB();
+	trades[1].resolve(trade('B'));
+	await replacement;
+	expect([controller.state.tradeQueue, controller.state.tradeError.Arc, controller.state.tradeErrorMsg.Arc, controller.state.tradeData.Arc?.league]).toEqual([null, false, undefined, 'B']);
+	expect(overlays.at(-1)).toEqual({
+		results: [row(55)], tradeData: { Arc: trade('B') }, tradeLoading: { Arc: false }, tradeError: { Arc: false }, divineRate: 300, labMode: 'normal'
+	});
+});
+
+it('a fresh lookup regains attributable progress after overlapping requests settle', async () => {
+	const { controller, handlers, trades } = setup();
+	const old = controller.invokeRustTrade('Arc');
+	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+	controller.selectGem('Arc');
+	const replacement = controller.invokeRustTrade('Arc');
+	trades[0].resolve(trade('A'));
+	trades[1].resolve(trade('B'));
+	await Promise.all([old, replacement]);
+	const fresh = controller.invokeRustTrade('Arc');
+	handlers['trade-queue']({ payload: { kind: 'waiting', source: 'gem', gem: 'Arc', position: 1, total: 1, waitSecs: 4 } });
+	expect(controller.state.tradeQueue).toEqual({ gem: 'Arc', position: 1, total: 1, status: 'waiting', waitSecs: 4 });
+	trades[2].resolve(trade('B'));
+	await fresh;
+	expect(controller.state.tradeQueue).toBeNull();
+});
+
+it('same-gem overlap remains uncorrelated across controller disposal', async () => {
+	const outgoing = setup();
+	const old = outgoing.controller.invokeRustTrade('Arc');
+	stop();
+	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+	const incoming = setup(false);
+	const replacement = incoming.controller.invokeRustTrade('Arc');
+	incoming.handlers['trade-queue']({ payload: { kind: 'waiting', source: 'gem', gem: 'Arc', position: 1, total: 1, waitSecs: 20 } });
+	incoming.handlers['trade-queue']({ payload: { kind: 'error', source: 'gem', gem: 'Arc', error: 'disposed A error' } });
+	expect([incoming.controller.state.tradeQueue, incoming.controller.state.tradeError.Arc, incoming.controller.state.tradeErrorMsg.Arc]).toEqual([null, false, undefined]);
+	incoming.trades[0].resolve(trade('B'));
+	await replacement;
+	outgoing.trades[0].resolve(trade('A'));
+	await old;
+	expect(incoming.overlays.at(-1)).toMatchObject({ tradeData: { Arc: trade('B') }, tradeLoading: { Arc: false }, tradeError: { Arc: false } });
 });
