@@ -1638,8 +1638,14 @@ describe('the native bossLoot slice', () => {
 
 	it('clears a finished capture frame on the next native delivery', async () => {
 		const mod = await import('./ssot.svelte');
-		mod.applySnapshot({ league: { name: null }, bossLoot: { enabled: false, settings: {},
-			numberFormat: 'none', pending: null, frame: null, rebind: null, nowMs: 123457 } } as unknown as SsotSnapshot);
+		const settings = { layout: 'grid', autoSaveSeconds: 10, notCounted: [],
+			captureShortcut: { key: 2, shift: true, ctrl: false, alt: false },
+			previewShortcut: { key: 119, shift: true, ctrl: false, alt: false } } as const;
+		const slice = { enabled: false, settings, numberFormat: 'none', pending: null,
+			frame: { rect: [10, 20, 900, 750], phase: 'preview', attribution: null, untilMs: null },
+			rebind: null, nowMs: 123456 };
+		mod.applySnapshot({ league: { name: null }, bossLoot: slice } as unknown as SsotSnapshot);
+		mod.applySnapshot({ league: { name: null }, bossLoot: { ...slice, frame: null, nowMs: 123457 } } as unknown as SsotSnapshot);
 		expect(mod.ssot).toMatchObject({ bossLoot: { frame: null, nowMs: 123457 } });
 	});
 });
