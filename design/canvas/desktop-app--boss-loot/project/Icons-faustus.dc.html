@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Faustus helper icon pass</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:var(--bg);color:var(--text)}
+.cap{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--color-lab-text-secondary)}
+.strip{display:flex;flex-direction:column;gap:4px;background:var(--surface);padding:6px 4px;border-radius:4px;width:180px}
+.nav{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;border-radius:5px;color:var(--text)}
+.nav.active{background:var(--border);color:var(--accent)}
+.nav img{width:18px;height:18px;object-fit:contain}
+.rail{position:relative;width:32px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px}
+.rail img{width:22px;height:22px;object-fit:contain}
+.ind{position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;background:var(--success);box-shadow:0 0 4px rgba(74,222,128,.5)}
+.orow{display:flex;justify-content:space-between;align-items:center;background:var(--bg);padding:4px 8px;border-radius:4px;font-size:11px}
+.mname{display:inline-flex;align-items:center;gap:6px}
+.mname img{width:14px;height:14px;object-fit:contain}
+.x2{zoom:2}
+</style>
+</helmet>
+<div style="width: 1240px; padding: 24px 28px; display: flex; flex-direction: column; gap: 20px">
+  <span class="cap">Chaos ⇄ Div · Faustus helper · real nav size (nav 18 px, rail 22 px, module row 14 px) and 2×</span>
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px">
+    <sc-for list="{{opts}}" as="o" hint-placeholder-count="3">
+      <div style="display: flex; flex-direction: column; gap: 12px">
+        <span style="font-size: 13px; font-weight: 600; color: var(--color-lab-text)">{{o.name}}</span>
+        <div style="height: 64px; display: flex; align-items: center"><img src="{{o.src}}" alt="" width="64" height="64"></div>
+        <span class="cap">1×</span>
+        <div class="strip">
+          <span class="nav"><img src="{{o.src}}" alt=""><span>Chaos ⇄ Div</span></span>
+          <span class="nav active"><img src="{{o.src}}" alt=""><span>Chaos ⇄ Div</span></span>
+          <span style="display: flex; align-items: center; gap: 8px; padding: 0 6px"><span class="rail"><img src="{{o.src}}" alt=""><i class="ind"></i></span><span style="font-size: 10px; color: var(--color-lab-text-secondary)">rail + status dot</span></span>
+          <span class="orow"><span class="mname"><img src="{{o.src}}" alt="">Chaos ⇄ Div</span><span style="font-size: 10px; color: var(--success)">on</span></span>
+        </div>
+        <span class="cap">2×</span>
+        <div class="x2">
+          <div class="strip">
+            <span class="nav"><img src="{{o.src}}" alt=""><span>Chaos ⇄ Div</span></span>
+            <span class="nav active"><img src="{{o.src}}" alt=""><span>Chaos ⇄ Div</span></span>
+            <span style="display: flex; align-items: center; gap: 8px; padding: 0 6px"><span class="rail"><img src="{{o.src}}" alt=""><i class="ind"></i></span></span>
+            <span class="orow"><span class="mname"><img src="{{o.src}}" alt="">Chaos ⇄ Div</span><span style="font-size: 10px; color: var(--success)">on</span></span>
+          </div>
+        </div>
+        <span style="font-size: 11px; color: var(--color-lab-text-secondary)">{{o.src_note}}</span>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1240,"height":760}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var b = '/_blob/';
+    return { opts: [
+      { name: 'F · Faustus, head crop (current pick)', src: b + 'c9de7b39363ed29331a20a3d591183f9', src_note: 'art/2ditems/hideout/faustus.dds (hideout decoration)' },
+      { name: 'S · Scale (native, Currency Exchange)', src: b + '1f30f5988a89d3ea8f0342ce6f8002e0', src_note: 'uiimages1.txt: InGame/Market/4K/MarketIconRatioMarket, 40 px sprite' },
+      { name: 'B · Reward bag (native, Currency Exchange)', src: b + '494233ff8e5f31de1ad8a5f48c63657d', src_note: 'uiimages1.txt: InGame/Market/4K/IconNPCReward, 40 px sprite' }
+    ] };
+  }
+}
+</script>
+</body>
+</html>
