@@ -717,8 +717,11 @@ func TestTradeSubmit_LeagueAdmission(t *testing.T) {
 					t.Fatalf("body=%q, want %q", w.Body.String(), want)
 				}
 				after, _ := json.Marshal(cache.GetSnapshot())
-				if string(after) != string(before) || len(queued) != 0 || checks != 0 {
-					t.Fatalf("rejected contribution changed cache: before=%s after=%s queued=%d dictionary=%d", before, after, len(queued), checks)
+				if string(after) != string(before) {
+					t.Fatalf("rejected contribution changed cache: before=%s after=%s", before, after)
+				}
+				if len(queued) != 0 || checks != 0 {
+					t.Fatalf("rejected contribution reached side effects: queued=%d dictionary=%d, want both zero", len(queued), checks)
 				}
 				return
 			}
