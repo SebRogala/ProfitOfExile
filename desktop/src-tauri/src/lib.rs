@@ -3001,6 +3001,8 @@ fn spawn_log_watcher(app: AppHandle) {
         // temple would otherwise sit disarmed for the whole run — no further
         // Alva line, no further area change.
         temple::trigger::catch_up(&app, std::path::Path::new(&client_txt));
+        let loot_tail = lab_navigation::recent_log_tail(std::path::Path::new(&client_txt));
+        app.state::<AppState>().boss_loot.lock().unwrap_or_else(|e| e.into_inner()).catch_up(loot_tail.as_deref());
 
         emit_status(&app);
 

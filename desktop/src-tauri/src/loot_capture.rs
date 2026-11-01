@@ -9,8 +9,6 @@ use std::time::{Duration, Instant};
 use tauri::Manager;
 
 pub const MODULE_ID: &str = "boss_loot";
-// WI-8 owns the fullscreen widget window, capability and capture-exclusion migration.
-pub const WINDOW_LABEL: &str = "loot";
 pub fn now_ms() -> u64 {
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
@@ -94,10 +92,12 @@ pub struct PendingCapture {
     pub unknown_lines: Vec<String>, pub ambiguous: Vec<Vec<String>>,
     pub phase: Phase, pub deadline_ms: Option<u64>, pub close_at_ms: Option<u64>,
     pub target: Option<StoredRun>, pub force_new: bool, pub run: u64, pub next_run: u64,
+    pub merge_blocked: bool,
     pub dropped_positive_keys: Vec<String>, pub error: Option<String>,
 }
 impl PendingCapture {
     fn effective(&self, settings: &LootSettings) -> Result<RunItems, String> {
+        if self.merge_blocked { return Err("Merge target changed; save as new run or discard".into()); }
         if !self.ambiguous.is_empty() { return Err("which one?".into()); }
         if let Some(target) = &self.target {
             merge_items(&self.profile, target, &self.incoming)
@@ -138,6 +138,7 @@ pub fn merge_items(profile: &LootProfile, target: &StoredRun, incoming: &Selecti
 #[derive(Debug, Default)]
 pub struct LootOwner {
     sequence: u64,
+    poll_generation: u64,
     pub area: Option<Attribution>,
     pub pending: Option<PendingCapture>,
     pub frame: Option<Frame>,
@@ -161,6 +162,18 @@ impl Default for LootSlice {
     fn default() -> Self { Self { enabled: false, settings: LootSettings::default(), number_format: NumberFormat::Auto, pending: None, frame: None, rebind: None, now_ms: 0 } }
 }
 impl LootOwner {
+    pub fn catch_up(&mut self, tail: Option<&str>) {
+        self.area = None;
+        if let Some(area) = tail.and_then(|tail| tail.lines().rev().find_map(crate::lab_state::parse_area_change)) {
+            self.observe_area(&area);
+        }
+    }
+    fn start_polling(&mut self) -> u64 {
+        self.stop(); self.poll_generation += 1; self.poll_generation
+    }
+    fn stop_polling(&mut self, generation: u64) {
+        if generation == self.poll_generation { self.stop(); }
+    }
     pub fn observe_area(&mut self, area: &crate::lab_state::AreaChange<'_>) {
         self.area = Some(Attribution { area: area.area.into(), level: area.level, seed: area.seed.map(|s| s.to_string()),
             profile: crate::loot_profiles::profile_for_area(Some(area)).map(ProfileRef::from) });
@@ -182,6 +195,7 @@ impl LootOwner {
             layout: settings.layout, rect, incoming: Selection::new(), items: RunItems { quantities: Selection::new(), counted: counted(profile, settings) },
             read_lines: Vec::new(), unknown_lines: Vec::new(), ambiguous: Vec::new(), phase: Phase::Reading,
             deadline_ms: None, close_at_ms: None, target: None, force_new: false, run: 0, next_run: 0,
+            merge_blocked: false,
             dropped_positive_keys: Vec::new(), error: None,
         });
         Ok(self.sequence)
@@ -230,7 +244,7 @@ impl LootOwner {
         p.restart(settings, now); Ok(())
     }
     pub fn force_new(&mut self, id: u64, settings: &LootSettings, now: u64) -> Result<(), String> {
-        let p = self.editable(id)?; p.force_new = true; p.target = None; p.run = p.next_run; p.restart(settings, now); Ok(())
+        let p = self.editable(id)?; p.force_new = true; p.merge_blocked = false; p.target = None; p.run = p.next_run; p.restart(settings, now); Ok(())
     }
     pub fn discard(&mut self, id: u64) -> Result<(), String> {
         if self.pending.as_ref().is_some_and(|p| p.id == id && p.phase != Phase::Saving) {
@@ -268,6 +282,12 @@ impl LootOwner {
         if self.pending.as_ref().is_some_and(|p| p.close_at_ms.is_some_and(|t| now >= t)) { self.pending = None; }
         if self.frame.as_ref().is_some_and(|f| f.until_ms.is_some_and(|t| now >= t)) { self.frame = None; }
     }
+    fn pause_conflict(&mut self, id: u64) {
+        if let Some(p) = self.pending.as_mut().filter(|p| p.id == id) {
+            p.merge_blocked = true; p.phase = Phase::Open; p.deadline_ms = None;
+            p.error = Some("Merge target changed; save as new run or discard".into());
+        }
+    }
     pub fn stop(&mut self) { self.pending = None; self.frame = None; self.preview = false; self.rebind = None; }
 }
 pub async fn submit_pending(owner: &Mutex<LootOwner>, settings: &LootSettings, http: &impl LootTransport, now: u64, manual: bool) {
@@ -288,15 +308,13 @@ async fn submit_capture(owner: &Mutex<LootOwner>, settings: &LootSettings, http:
         let mut o = owner.lock().unwrap_or_else(|e| e.into_inner());
         if !o.pending.as_ref().is_some_and(|p| p.id == id && p.phase == Phase::Saving) { return; }
         match fresh {
-            Ok(Some(target)) if request.target.as_ref().is_some_and(|t| t.id == target.id) => {
+            Ok(Some(target)) if request.target.as_ref().is_none_or(|t| t.id == target.id) => {
                 let next = o.pending.as_ref().unwrap().next_run;
                 o.ready(id, Some(target), next, settings, now + started.elapsed().as_millis() as u64);
                 // A different league/seed/profile cannot silently become an append.
-                if let Some(p) = o.pending.as_mut() {
-                    if p.target.is_none() { p.phase = Phase::Rejected; p.deadline_ms = None; p.error = Some("Merge target changed; capture again".into()); }
-                }
+                if o.pending.as_ref().is_some_and(|p| p.target.is_none()) { o.pause_conflict(id); }
             }
-            Ok(_) => o.complete(id, Err(ApiError::Rejected("Merge target is no longer latest".into())), now),
+            Ok(_) => o.pause_conflict(id),
             Err(error) => o.complete(id, Err(error), now),
         }
     } else {
@@ -391,6 +409,12 @@ impl ShortcutPoll {
 }
 pub fn spawn_hotkey_poller(app: tauri::AppHandle, cancel: tokio::sync::watch::Receiver<bool>) -> crate::modules::ModuleJoin {
     crate::modules::ModuleJoin::Thread(std::thread::spawn(move || {
+        let generation = {
+            let state = app.state::<crate::AppState>();
+            let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+            if *cancel.borrow() { return; }
+            owner.start_polling()
+        };
         #[cfg(windows)]
         let mut poll = ShortcutPoll::default();
         while !*cancel.borrow() {
@@ -432,7 +456,7 @@ pub fn spawn_hotkey_poller(app: tauri::AppHandle, cancel: tokio::sync::watch::Re
                 });
             }
         }
-        app.state::<crate::AppState>().boss_loot.lock().unwrap_or_else(|e| e.into_inner()).stop();
+        app.state::<crate::AppState>().boss_loot.lock().unwrap_or_else(|e| e.into_inner()).stop_polling(generation);
         crate::ssot::emit_ssot(&app);
     }))
 }
@@ -523,6 +547,31 @@ mod owner_tests {
 
     const EYE: &str = "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly";
     fn profile() -> LootProfile { crate::loot_profiles::built_in_profiles()[0].clone() }
+    #[test]
+    fn startup_catch_up_uses_latest_area_and_missing_history_refuses_capture() {
+        let s = LootSettings::default();
+        let mut owner = LootOwner::default();
+        owner.catch_up(Some("Generating level 83 area \"MapWorldsStrand\" with seed 1\nGenerating level 83 area \"BetrayalMastermindFight\" with seed 42\n"));
+        let id = owner.begin("test".into(), [0;4], &s, 0).unwrap();
+        assert_eq!(owner.pending.as_ref().unwrap().id, id);
+        assert_eq!(owner.pending.as_ref().unwrap().attribution.seed.as_deref(), Some("42"));
+        owner.catch_up(None);
+        assert!(owner.begin("test".into(), [0;4], &s, 1).is_err());
+        assert_eq!(owner.frame.as_ref().unwrap().phase, "refused");
+    }
+    #[test]
+    fn cancelled_poller_cannot_clear_a_new_generations_capture() {
+        let s = LootSettings::default();
+        let (owner, _) = pending(&s);
+        let mut owner = owner.lock().unwrap();
+        let old = owner.start_polling();
+        let new = owner.start_polling();
+        let id = owner.begin("test".into(), [0;4], &s, 0).unwrap();
+        owner.stop_polling(old);
+        assert_eq!(owner.pending.as_ref().unwrap().id, id);
+        owner.stop_polling(new);
+        assert!(owner.pending.is_none());
+    }
     fn selection(pairs: &[(&str, u32)]) -> Selection {
         pairs.iter().map(|(k, q)| (k.to_string(), *q)).collect()
     }
@@ -768,6 +817,41 @@ mod owner_tests {
         let close = o.pending.as_ref().unwrap().close_at_ms.unwrap();
         o.retire(close - 1); assert!(o.pending.is_some());
         o.retire(close); assert!(o.pending.is_none());
+    }
+    #[tokio::test]
+    async fn conflicting_first_capture_revalidates_the_new_previous_run_before_merging() {
+        let s = LootSettings::default();
+        let (owner, _) = pending(&s);
+        let http = Http::default();
+        http.replies.lock().unwrap().push_back(Err(ApiError::Conflict));
+        *http.latest.lock().unwrap() = Some(run(5));
+        submit_pending(&owner, &s, &http, 10_000, false).await;
+        assert_eq!(http.requests.lock().unwrap().len(), 1);
+        let o = owner.lock().unwrap();
+        assert_eq!(o.pending.as_ref().unwrap().target.as_ref().unwrap().version, 5);
+        assert_eq!(o.pending.as_ref().unwrap().items.quantities, selection(&[("Cane of Kulemak", 1)]));
+        assert!(o.pending.as_ref().unwrap().deadline_ms.is_some());
+    }
+    #[tokio::test]
+    async fn intervening_run_blocks_stale_merge_but_allows_explicit_force_new() {
+        let s = LootSettings::default();
+        let (owner, id) = pending(&s);
+        owner.lock().unwrap().ready(id, Some(run(1)), 2, &s, 0);
+        let http = Http::default();
+        http.replies.lock().unwrap().push_back(Err(ApiError::Conflict));
+        let mut intervening = run(2); intervening.id = "2".into(); intervening.run = 2;
+        *http.latest.lock().unwrap() = Some(intervening);
+        submit_pending(&owner, &s, &http, 10_000, false).await;
+        submit_pending(&owner, &s, &http, 30_000, true).await;
+        assert_eq!(http.requests.lock().unwrap().len(), 1);
+        assert_eq!(owner.lock().unwrap().pending.as_ref().unwrap().phase, Phase::Open);
+        assert_eq!(owner.lock().unwrap().pending.as_ref().unwrap().deadline_ms, None);
+        owner.lock().unwrap().force_new(id, &s, 30_001).unwrap();
+        submit_pending(&owner, &s, &http, 30_002, true).await;
+        let requests = http.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1].mode, "forceNew");
+        assert!(requests[1].target.is_none());
     }
 }
 
