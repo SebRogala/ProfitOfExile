@@ -1,4 +1,5 @@
 import type { BossProfile, BossStats, LootItem, StatsScope, StoredRun } from './contracts'
+import { groupNumber } from '$lib/stores/number-format.svelte'
 
 export type ResultsSort = 'rate' | 'name'
 export interface ResultsInput {
@@ -10,6 +11,8 @@ export interface ResultsInput {
 }
 
 export function buildResultsView({ profile, stats, scope, sort, notCounted }: ResultsInput) {
+	const runs = groupNumber(String(stats.runs))
+	const deviceNote = scope === 'own' ? 'this device' : `${groupNumber(String(stats.devices))} device${stats.devices === 1 ? '' : 's'}`
 	const items = [...profile.groups.flatMap((group) => group.items), ...profile.extra, ...profile.categories]
 	const mixed = stats.runs > 0 && items.some((item) => !notCounted.includes(item.id) &&
 		(Object.hasOwn(stats.items, item.id) ? stats.items[item.id].eligibleRuns : 0) !== stats.runs)
@@ -20,7 +23,7 @@ export function buildResultsView({ profile, stats, scope, sort, notCounted }: Re
 		return { ...item, disabled, drops: disabled ? null : measurement.drops,
 			rate: disabled ? '—' : stats.runs === 0 ? `wiki ${item.wikiRate}`
 				: percent === null || (scope === 'collective' && measurement.drops === 0) ? '—' : `${Math.round(percent)}%`,
-			provenance: disabled || stats.runs === 0 ? '' : `${measurement.drops}/${measurement.eligibleRuns}${mixed ? ' eligible runs' : ''}`,
+			provenance: disabled || stats.runs === 0 ? '' : `${groupNumber(String(measurement.drops))}/${groupNumber(String(measurement.eligibleRuns))}${mixed ? ' eligible runs' : ''}`,
 			bar: disabled || stats.runs === 0 ? 0 : Math.min(100, percent ?? 0),
 			// Flags change presentation only; sorting uses the underlying measurement (ADR-018).
 			sortRate: percent
@@ -37,9 +40,9 @@ export function buildResultsView({ profile, stats, scope, sort, notCounted }: Re
 		return byName(a, b)
 	})
 	return {
-		runs: stats.runs, deviceNote: scope === 'own' ? 'this device' : `${stats.devices} device${stats.devices === 1 ? '' : 's'}`,
-		mixed, rateHeader: mixed ? '= drops / eligible runs' : `= drops / ${stats.runs} runs`,
-		summary: `${stats.runs} runs · ${scope === 'own' ? 'this device' : `${stats.devices} device${stats.devices === 1 ? '' : 's'}`}`,
+		runs: stats.runs, deviceNote,
+		mixed, rateHeader: mixed ? '= drops / eligible runs' : `= drops / ${runs} runs`,
+		summary: `${runs} runs · ${deviceNote}`,
 		message: stats.runs === 0 ? 'No runs logged for this boss yet: rates show the wiki estimate.' : '',
 		groups: [
 			...profile.groups.map((group) => {
@@ -47,7 +50,7 @@ export function buildResultsView({ profile, stats, scope, sort, notCounted }: Re
 				const single = group.min === 1 && group.max === 1
 				const drops = group.items.reduce((sum, item) => sum + (Object.hasOwn(stats.items, item.id) ? stats.items[item.id].drops : 0), 0)
 				return { id: group.id, title: `${group.label} pool · ${single ? 'one per kill' : `${group.min}–${group.max} per kill`}`,
-					note: single && uniform && drops === stats.runs ? `${stats.runs} of ${stats.runs} runs have exactly one`
+					note: single && uniform && drops === stats.runs ? `${runs} of ${runs} runs have exactly one`
 						: single ? 'exactly one per kill' : `${group.min}–${group.max} per kill`, items: sorted(group.items) }
 			}),
 			{ id: 'additional', title: 'Additional drops', note: 'any number per kill', items: sorted([...profile.extra, ...profile.categories]) }
