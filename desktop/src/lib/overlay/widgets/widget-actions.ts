@@ -1,4 +1,4 @@
-/** Structural DOM boundary: forwarding and native callers share one action owner. */
+/** Structural DOM boundary for widget action dispatch. */
 export interface ActionElement {
 	dataset: { action?: string; widget?: string; index?: string; item?: string }
 	parentElement: ActionElement | null
