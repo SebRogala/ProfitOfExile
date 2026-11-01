@@ -1548,8 +1548,9 @@ async fn fetch_league_once(app: &AppHandle) -> bool {
         let state = app.state::<AppState>();
         let current_url = state.server_url.lock().unwrap_or_else(|e| e.into_inner());
         let mut task = LEAGUE_TASK.lock().unwrap_or_else(|e| e.into_inner());
-        if task.url_generation != url_generation { return false; }
-        let Some(changed) = accept_league_response(&state.ssot, &current_url, &server_url, name) else {
+        let Some(changed) = accept_league_response(
+            &state.ssot, (&current_url, task.url_generation), (&server_url, url_generation), name,
+        ) else {
             return false;
         };
         // Hints received during this authoritative request are coalesced.
@@ -1563,11 +1564,11 @@ async fn fetch_league_once(app: &AppHandle) -> bool {
 /// The URL owner stays locked through this synchronous acceptance step.
 fn accept_league_response(
     ssot: &std::sync::Mutex<AppSsotSnapshot>,
-    current_url: &str,
-    requested_url: &str,
+    current: (&str, u64),
+    requested: (&str, u64),
     name: String,
 ) -> Option<Option<LeagueChanged>> {
-    if current_url != requested_url { return None; }
+    if current != requested { return None; }
     Some(write_league(ssot, name))
 }
 
@@ -1697,23 +1698,17 @@ pub fn spawn_league_fetch(app: AppHandle) {
     });
 }
 
-/// Manually set the resolved league. The POE-126 seam for a
-/// future user league-choice UI; also the sink the fetch task writes through.
+/// Retained POE-126 command seam; no user-choice UI currently calls it.
 #[tauri::command]
 pub fn set_league(name: String, app: AppHandle) {
-    // POE-126 latent hazard: an active resolver request is not cancelled here.
-    // If a manual set lands while a resolve is still in flight, that loop lives on
-    // and will overwrite this manual choice when the server recovers. The real fix
-    // (abort the JoinHandle / generation-guard the write) belongs with POE-126 —
-    // the user-choice UI that actually arms this path; there is no manual-set UI
-    // today. For now, make the collision visible if it is ever hit.
+    // The server remains authoritative: an in-flight response can replace this
+    // explicit mutation. User selection semantics remain deferred to POE-126.
     {
         let state = app.state::<AppState>();
         let in_flight = state.ssot.lock().unwrap_or_else(|e| e.into_inner()).resolving;
         if in_flight {
             log::warn!(
-                "set_league({:?}) landing over an active resolver; leaving an orphan \
-                 retry loop that may clobber this manual set on server recovery (POE-126)",
+                "set_league({:?}) during resolution; the server response may replace this value (POE-126)",
                 name
             );
         }
@@ -4541,7 +4536,7 @@ mod league_resolver_tests {
             *self.attempts.lock().unwrap() += 1;
             match self.replies.lock().unwrap().pop_front().expect("scripted response") {
                 Some(name) => {
-                    accept_league_response(&self.ssot, "server", "server", name.into());
+                    accept_league_response(&self.ssot, ("server", 0), ("server", 0), name.into());
                     true
                 }
                 None => false,
@@ -4653,9 +4648,37 @@ mod league_resolver_tests {
     fn superseded_server_response_cannot_replace_current_resolution() {
         let ssot = Mutex::new(AppSsotSnapshot::default());
         write_league(&ssot, "B".into());
-        assert!(accept_league_response(&ssot, "new-server", "old-server", "A".into()).is_none());
+        assert!(accept_league_response(&ssot, ("new-server", 1), ("old-server", 0), "A".into()).is_none());
         let snapshot = ssot.lock().unwrap();
         assert_eq!((snapshot.league.name.as_deref(), snapshot.league.generation), (Some("B"), 1));
+    }
+
+    #[test]
+    fn returning_to_a_server_url_still_rejects_its_old_response() {
+        let ssot = Mutex::new(AppSsotSnapshot::default());
+        write_league(&ssot, "B".into());
+        assert!(accept_league_response(&ssot, ("server", 2), ("server", 0), "A".into()).is_none());
+        let snapshot = ssot.lock().unwrap();
+        assert_eq!((snapshot.league.name.as_deref(), snapshot.league.generation), (Some("B"), 1));
+    }
+
+    struct Hint<'a>(&'a Runtime, &'a tokio::sync::mpsc::UnboundedSender<bool>);
+    impl LeagueResolver for Hint<'_> {
+        fn current_league(&self) -> Option<String> { self.0.ssot.lock().unwrap().league.name.clone() }
+        fn rearm(self) { self.1.send(true).unwrap(); }
+    }
+
+    #[test]
+    fn event_hint_resolves_authoritative_status_instead_of_applying_the_hint() {
+        let (runtime, clock) = runtime(vec![Some("A"), Some("authoritative")]);
+        let mut resolver = std::pin::pin!(run_league_resolver(&runtime));
+        advance(resolver.as_mut());
+        note_server_league(Hint(&runtime, &clock), Some("untrusted-hint"));
+        assert_eq!(runtime.ssot.lock().unwrap().league.name.as_deref(), Some("A"));
+        advance(resolver.as_mut());
+        assert_eq!(*runtime.attempts.lock().unwrap(), 2);
+        assert_eq!(runtime.ssot.lock().unwrap().league.name.as_deref(), Some("authoritative"));
+        assert_eq!(runtime.waits.lock().unwrap().last(), Some(&None));
     }
 }
 
