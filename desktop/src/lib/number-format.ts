@@ -17,9 +17,6 @@ export const NUMBER_FORMAT_OPTIONS: { value: NumberFormat; label: string }[] = [
 	{ value: 'none', label: 'None' }
 ];
 
-/** The `ui_prefs` key (ADR-013): a view preference Rust never reads. */
-export const NUMBER_FORMAT_PREF = 'numberFormat';
-
 /** No-break space: it renders as a space and never wraps `11 225` across lines. */
 const SPACE = ' ';
 

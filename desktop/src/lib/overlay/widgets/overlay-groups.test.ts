@@ -12,8 +12,8 @@ import { canStartConfigure, overlayGroups, widgetGeometryText } from './overlay-
 import { anchoredWidgetsFor, placeableWidgetsFor, type WidgetSpec } from './widget-registry';
 import { LAB_WINDOW_LABEL, MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
 
-const ALL_GRANTS = { merc: true, temple: true };
-const NO_GRANTS = { merc: false, temple: false };
+const ALL_GRANTS = { merc: true, temple: true, beta: true };
+const NO_GRANTS = { merc: false, temple: false, beta: false };
 const FILL: WidgetSpec = {
 	id: 'test.fill',
 	module: 'test',
@@ -29,7 +29,8 @@ describe('the Overlay Positions groups', () => {
 		expect(overlayGroups(ALL_GRANTS).map((group) => group.heading)).toEqual([
 			'Lab',
 			'Merc',
-			'Temple'
+			'Temple',
+			'Boss loot'
 		]);
 	});
 
@@ -53,7 +54,7 @@ describe('the Overlay Positions groups', () => {
 	});
 
 	it('drops the whole Merc group, widget row included, without the merc feature', () => {
-		const groups = overlayGroups({ merc: false, temple: true });
+		const groups = overlayGroups({ merc: false, temple: true, beta: false });
 		expect(groups.map((group) => group.heading)).toEqual(['Lab', 'Temple']);
 		expect(groups.flatMap((group) => group.widgets.map((row) => row.spec.id))).not.toContain(
 			'mercenary.verdict'
@@ -61,7 +62,7 @@ describe('the Overlay Positions groups', () => {
 	});
 
 	it('drops the whole Temple group without the temple feature', () => {
-		expect(overlayGroups({ merc: true, temple: false }).map((group) => group.heading)).toEqual([
+		expect(overlayGroups({ merc: true, temple: false, beta: false }).map((group) => group.heading)).toEqual([
 			'Lab',
 			'Merc'
 		]);
@@ -120,7 +121,8 @@ describe('the Overlay Positions groups', () => {
 		).toEqual([
 			['Lab', LAB_WINDOW_LABEL],
 			['Merc', MERCENARY_WINDOW_LABEL],
-			['Temple', TEMPLE_WINDOW_LABEL]
+			['Temple', TEMPLE_WINDOW_LABEL],
+			['Boss loot', 'loot']
 		]);
 	});
 });
@@ -199,5 +201,23 @@ describe('whether another widget Configure session may be started', () => {
 
 	it('refuses one while a widget config session is running', () => {
 		expect(canStartConfigure({ ...IDLE, widgets: true })).toBe(false);
+	});
+});
+
+describe('Boss loot placement group', () => {
+	it('omits the whole group without beta', () => {
+		expect(overlayGroups({ merc: true, temple: true, beta: false }).map((group) => group.heading))
+			.toEqual(['Lab', 'Merc', 'Temple']);
+	});
+
+	it('offers independent Show rows for confirmation and anchored capture', () => {
+		const boss = overlayGroups(ALL_GRANTS).find((group) => group.id === 'loot');
+		expect(boss?.widgets.map((row) => [row.spec.id, row.placeable])).toEqual([
+			['loot.confirmation', true], ['loot.capture', false]
+		]);
+	});
+
+	it('configures the loot window rather than the boss_loot work flag', () => {
+		expect(overlayGroups(ALL_GRANTS).find((group) => group.id === 'loot')?.configureModule).toBe('loot');
 	});
 });

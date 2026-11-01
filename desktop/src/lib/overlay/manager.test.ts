@@ -64,3 +64,10 @@ describe('the mercenary constants', () => {
 		expect(MERCENARY_WINDOW_LABEL).toBe(MERCENARY_MODULE_ID);
 	});
 });
+
+describe('the boss loot identities', () => {
+	it('keeps native work separate from the overlay window', async () => {
+		const manager = await import('./manager');
+		expect(manager).toMatchObject({ LOOT_MODULE_ID: 'boss_loot', LOOT_WINDOW_LABEL: 'loot' });
+	});
+});

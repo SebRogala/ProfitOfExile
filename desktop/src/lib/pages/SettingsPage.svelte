@@ -3,8 +3,8 @@
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { createSettingsUpdateController } from '$lib/updater/settings-update.svelte';
 	import { store } from '$lib/stores/status.svelte';
-	import { hasFeature, MERC_FEATURE, TEMPLE_FEATURE } from '$lib/stores/entitlements.svelte';
-	import { ssot, fetchSsot } from '$lib/stores/ssot.svelte';
+	import { hasFeature, MERC_FEATURE, TEMPLE_FEATURE, BETA_FEATURE } from '$lib/stores/entitlements.svelte';
+	import { ssot, fetchSsot, setBossLootSettings } from '$lib/stores/ssot.svelte';
 	import { nav } from '$lib/stores/navigation.svelte';
 	import { untrack } from 'svelte';
 	import { ocrRectsKey, screenGeometryView } from '$lib/geometry/view';
@@ -301,8 +301,13 @@
 	 * already mounted.
 	 */
 	const overlayGroupRows = $derived(
-		overlayGroups({ merc: hasFeature(MERC_FEATURE), temple: hasFeature(TEMPLE_FEATURE) })
+		overlayGroups({ merc: hasFeature(MERC_FEATURE), temple: hasFeature(TEMPLE_FEATURE), beta: hasFeature(BETA_FEATURE) })
 	);
+	let lootLayoutError = $state('');
+	async function selectLootLayout(layout: string): Promise<void> {
+		if ((layout !== 'grid' && layout !== 'list') || !ssot.bossLoot) return;
+		lootLayoutError = await setBossLootSettings({ ...$state.snapshot(ssot.bossLoot.settings), layout }) ?? '';
+	}
 
 	/** The modules with widget rows on this page. Read inside handlers as well
 	 *  as the load effect, so it is a plain derived rather than a local. */
@@ -452,6 +457,20 @@
 						</span>
 					</div>
 				{/each}
+
+				{#if group.id === 'loot'}
+					<div class="setting-row">
+						<span class="setting-label">Loot layout</span>
+						{#if ssot.bossLoot}
+						<SegmentedButtons value={ssot.bossLoot.settings.layout} title="Loot layout"
+							options={[{ value: 'grid', label: 'Grid' }, { value: 'list', label: 'List' }]}
+							onselect={selectLootLayout} />
+						{:else}<span class="setting-value muted">Loading...</span>{/if}
+						<span class="setting-value">{ssot.bossLoot?.settings.layout === 'list'
+							? 'One row per item, wiki rate column' : 'Item icons in tiles'}</span>
+					</div>
+					{#if lootLayoutError}<p class="warning-banner" role="alert">{lootLayoutError}</p>{/if}
+				{/if}
 
 				{#if group.configureModule}
 					{@const module = group.configureModule}

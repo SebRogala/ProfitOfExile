@@ -16,7 +16,8 @@ merc overlay redesign, whose canvas is the only artefact so far). Amends
 [ADR-019](019-nothing-a-module-draws-may-cover-what-that-module-reads.md):
 that rule's premise — the grab contains the app's own overlay — no longer holds
 for a window on the list. Today the list is `mercenary`, the merc verdict strip,
-and `overlay-preview`, the Settings-owned read-only OCR frame.
+`overlay-preview`, the Settings-owned read-only OCR frame, and `loot`, which
+contains both the anchored Boss loot capture frame and the confirmation widget.
 
 Amended 2026-09-12 (POE-232) — see
 [the widget-placement amendment at the end](#amendment-the-mercenary-geometry-is-a-widget-placement-2026-09-12).
@@ -75,7 +76,8 @@ Windows has a primitive for the second: `SetWindowDisplayAffinity` with
   and it needs a line in this ADR's list. The temple's surfaces stay under
   ADR-019 until someone adds them here on their own evidence.
 - **The current excluded-window list is:** `mercenary` for the in-place verdict
-  strip, and `overlay-preview` for the Settings-owned OCR frame and label. Both
+  strip, `overlay-preview` for the Settings-owned OCR frame and label, and `loot`
+  for both the anchored capture frame and confirmation widget. All three
   are excluded only for the duration of each grab; every other overlay remains
   under ADR-019.
 - **Failure is loud, once per process.** The first successful hold of ANY listed label logs (one flag for the whole list, so with two labels only the first exclusion logs)
@@ -134,3 +136,19 @@ POE-232 changes only the geometry reference: the window keeps the `mercenary`
 label that `EXCLUDED_WHILE_GRABBING` is keyed on, and its geometry is now
 `Settings.widgets["mercenary.verdict"]` rather than the legacy
 `mercenary_overlay` row in `settings.json`. Nothing about this decision changes.
+
+## Amendment: Boss loot window replaces the POC flash (2026-11-01)
+
+Accepted for POE-317 WI-8. The former `loot-capture` POC window was already in
+`EXCLUDED_WHILE_GRABBING` but its membership had not been documented here.
+WI-5 removed its builder; WI-8 replaces its capability and exclusion label with
+`loot`, the single monitor-sized widget window. Membership covers both
+`loot.capture` (the anchored frame) and `loot.confirmation` (the content-sized
+confirmation). Neither surface needs to avoid the read rectangle.
+
+The existing per-grab `ExcludedFromCapture` guard remains the sole affinity
+owner. No permanent content protection is added: ordinary screenshots between
+grabs retain both surfaces. Linux tests and Windows target checks do not prove
+Windows capture behavior; grab exclusion and ordinary-screenshot inclusion are
+WI-10 runtime evidence. Focus-list wiring and overlay count formatting are
+assigned to WI-9 by plan amendment A3.

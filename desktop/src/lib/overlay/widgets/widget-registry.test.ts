@@ -41,6 +41,8 @@ describe('every declared widget', () => {
 	// user reads.
 	it('ships the temple widgets followed by the Merc and Lab widgets, without the board', () => {
 		expect(WIDGETS.map((widget) => widget.id)).toEqual([
+			'loot.confirmation',
+			'loot.capture',
 			'temple.offers',
 			'temple.door',
 			'temple.waiting',
@@ -337,5 +339,25 @@ describe('one home for the shipped widget geometry', () => {
 		// Both halves, since POE-244: a host that read only the placeable list
 		// would drop every anchored widget with no error anywhere.
 		expect(hostSource).toContain('anchoredWidgetsFor(module)');
+	});
+});
+
+describe('the loot window widgets', () => {
+	it('keeps confirmation content-sized at the shipped placement', () => {
+		const spec = placeableWidgetsFor('loot').find((widget) => widget.id === 'loot.confirmation');
+		expect(spec?.resizable).toBe(false);
+		expect(spec && placementFor(spec, undefined, 1, { width: 1920, height: 1080 })).toMatchObject({
+			x: 1480, y: 120, width: null, height: null
+		});
+	});
+
+	it('preserves physical confirmation coordinates when the monitor scale changes', () => {
+		const spec = placeableWidgetsFor('loot').find((widget) => widget.id === 'loot.confirmation');
+		expect(spec && placementFor(spec, { x: 1480, y: 120, width: 0, height: 0, visible: true }, 2,
+			{ width: 1920, height: 1080 })).toMatchObject({ x: 740, y: 60, width: null, height: null });
+	});
+
+	it('keeps capture out of draggable placement', () => {
+		expect(anchoredWidgetsFor('loot').map((widget) => widget.id)).toEqual(['loot.capture']);
 	});
 });

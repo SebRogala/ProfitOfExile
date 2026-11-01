@@ -144,6 +144,25 @@ export interface WidgetSpec {
  */
 export const WIDGETS: readonly WidgetSpec[] = [
 	{
+		id: 'loot.confirmation',
+		module: 'loot',
+		label: 'Loot confirmation',
+		// The handoff's placement on a 1920×1080 host. Content controls size;
+		// Grid/List is captured by the native PendingCapture for each confirmation.
+		defaults: { x: 1480, y: 120, w: 420, h: 600 },
+		resizable: false
+	},
+	{
+		id: 'loot.capture',
+		module: 'loot',
+		label: 'Loot capture frame',
+		// The native frame supplies its capture-relative physical rectangle.
+		// Anchored specs use no stored position; only their Show flag is read.
+		defaults: { x: 1, y: 1, w: 900, h: 750 },
+		resizable: false,
+		anchored: true
+	},
+	{
 		id: 'temple.offers',
 		module: 'temple',
 		label: 'Temple offer boxes',

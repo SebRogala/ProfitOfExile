@@ -1620,3 +1620,26 @@ describe('screen slice (POE-214)', () => {
 		expect(ssot.league).toBe('Mirage');
 	});
 });
+
+describe('the native bossLoot slice', () => {
+	it('delivers the typed settings and monotonic capture clock without adapters', async () => {
+		const mod = await import('./ssot.svelte');
+		const bossLoot = {
+			enabled: false, settings: { layout: 'list', autoSaveSeconds: 20, notCounted: ['Metadata/Example'],
+				captureShortcut: { key: 65, shift: false, ctrl: true, alt: false },
+				previewShortcut: { key: 119, shift: true, ctrl: false, alt: false } },
+			numberFormat: 'comma', pending: null,
+			frame: { rect: [10, 20, 900, 750], phase: 'preview', attribution: null, untilMs: null },
+			rebind: 'capture', nowMs: 123456
+		};
+		mod.applySnapshot({ league: { name: null }, bossLoot } as unknown as SsotSnapshot);
+		expect(mod.ssot).toMatchObject({ bossLoot });
+	});
+
+	it('clears a finished capture frame on the next native delivery', async () => {
+		const mod = await import('./ssot.svelte');
+		mod.applySnapshot({ league: { name: null }, bossLoot: { enabled: false, settings: {},
+			numberFormat: 'none', pending: null, frame: null, rebind: null, nowMs: 123457 } } as unknown as SsotSnapshot);
+		expect(mod.ssot).toMatchObject({ bossLoot: { frame: null, nowMs: 123457 } });
+	});
+});

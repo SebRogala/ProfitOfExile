@@ -14,7 +14,7 @@
  *
  * The Lab comparator is a widget row alongside the other Lab widgets.
  */
-import { LAB_WINDOW_LABEL, MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
+import { LAB_WINDOW_LABEL, LOOT_WINDOW_LABEL, MERCENARY_WINDOW_LABEL, TEMPLE_WINDOW_LABEL } from '../manager';
 import type { WidgetGeometry } from './widget-geometry';
 import { anchoredWidgetsFor, placeableWidgetsFor, type WidgetSpec } from './widget-registry';
 
@@ -30,6 +30,7 @@ import { anchoredWidgetsFor, placeableWidgetsFor, type WidgetSpec } from './widg
 export interface OverlayGroupGrants {
 	merc: boolean;
 	temple: boolean;
+	beta: boolean;
 }
 
 /** One widget row under a heading. */
@@ -107,6 +108,12 @@ const GROUPS: readonly GroupSpec[] = [
 		heading: 'Temple',
 		grant: 'temple',
 		module: TEMPLE_WINDOW_LABEL
+	},
+	{
+		id: 'loot',
+		heading: 'Boss loot',
+		grant: 'beta',
+		module: LOOT_WINDOW_LABEL
 	}
 ];
 

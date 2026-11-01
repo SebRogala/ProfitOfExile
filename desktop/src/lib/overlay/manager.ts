@@ -69,3 +69,7 @@ export const MERCENARY_WINDOW_LABEL = 'mercenary';
  * failing. `manager.test.ts` pins it against the registry source.
  */
 export const MERCENARY_MODULE_ID = 'mercenary';
+
+/** Native work identity and widget-window identity deliberately differ. */
+export const LOOT_MODULE_ID = 'boss_loot';
+export const LOOT_WINDOW_LABEL = 'loot';

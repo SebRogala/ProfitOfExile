@@ -1,10 +1,11 @@
 {
   "identifier": "default",
   "description": "Default permissions for the desktop app",
-  "windows": ["main", "overlay", "overlay-preview", "temple", "mercenary", "lab", "loot-capture"],
+  "windows": ["main", "overlay", "overlay-preview", "temple", "mercenary", "lab", "loot"],
   "permissions": [
     "core:default",
     "shell:allow-open",
+    "dialog:allow-save",
     "core:window:allow-close",
     "core:window:allow-minimize",
     "core:window:allow-maximize",

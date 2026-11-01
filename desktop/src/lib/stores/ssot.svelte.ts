@@ -41,6 +41,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { DEDICATION_VARIANTS, VARIANTS } from '$lib/api';
 import { mercenarySliceDefault, type MercenarySlice } from '$lib/mercenaries/capture';
+import type { BossProfile, LootLayout, ProfileRef, RunItems, StoredRun } from '$lib/boss-loot/contracts';
+import type { NumberFormat } from '$lib/number-format';
 import {
 	isTempleStatus,
 	templeSliceDefault,
@@ -185,6 +187,71 @@ export interface ScreenSlice {
 }
 
 /** Serialized Rust `AppSsotSnapshot` — `league.name` is `string | null`. */
+/** Wire mirrors of loot_capture::LootSlice and its owned settings/capture types.
+ * Native profiles have key + profileVersion; PagePorts adds profileKey in WI-9. */
+export interface BossLootShortcut {
+	key: number;
+	shift: boolean;
+	ctrl: boolean;
+	alt: boolean;
+}
+
+export interface BossLootSettings {
+	layout: LootLayout;
+	autoSaveSeconds: number;
+	notCounted: string[];
+	captureShortcut: BossLootShortcut;
+	previewShortcut: BossLootShortcut;
+}
+
+export type BossLootProfile = Omit<BossProfile, 'profileKey' | 'level' | 'fullName' | 'capture'> & {
+	level: number;
+	fullName: string;
+};
+
+export interface BossLootAttribution {
+	area: string;
+	level: number;
+	seed: string | null;
+	profile: ProfileRef | null;
+}
+
+export interface BossLootPending {
+	id: number;
+	attribution: BossLootAttribution;
+	league: string;
+	profile: BossLootProfile;
+	layout: LootLayout;
+	rect: [number, number, number, number];
+	incoming: Record<string, number>;
+	items: RunItems;
+	readLines: string[];
+	unknownLines: string[];
+	ambiguous: string[][];
+	phase: 'reading' | 'loading' | 'open' | 'saving' | 'saved' | 'unreachable' | 'rejected';
+	deadlineMs: number | null;
+	closeAtMs: number | null;
+	target: StoredRun | null;
+	forceNew: boolean;
+	run: number;
+	nextRun: number;
+	mergeBlocked: boolean;
+	droppedPositiveKeys: string[];
+	error: string | null;
+}
+
+export interface BossLootSlice {
+	enabled: boolean;
+	settings: BossLootSettings;
+	numberFormat: NumberFormat;
+	pending: BossLootPending | null;
+	frame: { rect: [number, number, number, number]; phase: string;
+		attribution: BossLootAttribution | null; untilMs: number | null } | null;
+	rebind: 'capture' | 'preview' | null;
+	/** Native monotonic clock; never compare with Date.now(). */
+	nowMs: number;
+}
+
 export interface SsotSnapshot {
 	league: { name: string | null };
 	/** A league resolve is in flight (bounded-retry fetch task running). */
@@ -200,6 +267,7 @@ export interface SsotSnapshot {
 	dedicationPool?: string;
 	/** Per-module enabled flags, keyed by registry id (Rust owns the keys). */
 	modules?: Record<string, boolean>;
+	bossLoot?: BossLootSlice;
 	/** Merc OCR module state + the last capture (POE-165). Rust-owned, read-only here. */
 	mercenary?: MercenarySlice;
 	/** Temple builder module state + the last board read (POE-171). Rust-owned,
@@ -261,6 +329,8 @@ export const ssot = $state({
 	 *  the registry, not this file, owns which modules exist and what they
 	 *  default to. Intent, not liveness. */
 	modules: {} as Record<string, boolean>,
+	/** Unknown until Rust answers; do not re-create profile/settings defaults here. */
+	bossLoot: null as BossLootSlice | null,
 	/** Merc OCR module state, its last capture and the enabled-guide echo
 	 *  (POE-165, POE-199). Rust owns every field; `setMercSourcesOff` writes
 	 *  through a command and re-fetches rather than assigning here, so there is
@@ -594,6 +664,7 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	applyMarketField('dedicationVariant', snap.dedicationVariant, dispatchedAtSeq);
 	applyMarketField('dedicationPool', snap.dedicationPool, dispatchedAtSeq);
 	applyModules(snap.modules, dispatchedAtSeq);
+	if (snap.bossLoot !== undefined) ssot.bossLoot = snap.bossLoot;
 	applyMercenary(snap.mercenary);
 	applyTemple(snap.temple);
 	// NOT fail-closed on absence, unlike the two module slices above — this one
@@ -845,6 +916,11 @@ async function sliceCommand(
  */
 export function setMercSourcesOff(sourcesOff: string[]): Promise<string | null> {
 	return sliceCommand('merc', 'merc_set_sources_off', { sourcesOff });
+}
+
+/** Whole native settings write; rejection is visible beside the initiating control. */
+export function setBossLootSettings(settings: BossLootSettings): Promise<string | null> {
+	return sliceCommand('loot', 'boss_loot_set_settings', { settings });
 }
 
 /**

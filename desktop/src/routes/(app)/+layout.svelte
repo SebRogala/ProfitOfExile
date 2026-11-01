@@ -20,6 +20,8 @@
 	} from '$lib/stores/entitlements.svelte';
 	import {
 		LAB_WINDOW_LABEL,
+		LOOT_MODULE_ID,
+		LOOT_WINDOW_LABEL,
 		MERCENARY_MODULE_ID,
 		MERCENARY_WINDOW_LABEL,
 		TEMPLE_MODULE_ID,
@@ -178,6 +180,22 @@
 		debug: () => false
 	});
 
+	function lootOverlayWanted(): boolean {
+		return moduleOverlayWanted(
+			ssot.modules[LOOT_MODULE_ID],
+			widgetConfigLive(widgetConfigSessions, LOOT_WINDOW_LABEL),
+			bossLootGranted
+		);
+	}
+
+	const lootWindow = createWidgetWindow({
+		label: LOOT_WINDOW_LABEL,
+		moduleId: LOOT_MODULE_ID,
+		wanted: lootOverlayWanted,
+		configLive: () => widgetConfigLive(widgetConfigSessions, LOOT_WINDOW_LABEL),
+		debug: () => false
+	});
+
 	function labOverlayWanted(): boolean {
 		return moduleOverlayWanted(
 			labOverlaysLoaded ? labOverlaysActive : undefined,
@@ -195,7 +213,7 @@
 	const LAB_PATHSTRIP_SPEC = WIDGETS.find((spec) => spec.id === 'lab.pathstrip')!;
 	const LAB_TIMER_SPEC = WIDGETS.find((spec) => spec.id === 'lab.timer')!;
 	/** Every monitor-sized widget window this layout builds. */
-	const WIDGET_WINDOWS: WidgetWindow[] = [templeWindow, mercenaryWindow, labWindow];
+	const WIDGET_WINDOWS: WidgetWindow[] = [templeWindow, mercenaryWindow, labWindow, lootWindow];
 
 	// Window-scoped, because Rust sends this with `emit_to("main")`.
 	getCurrentWebviewWindow()
@@ -246,6 +264,13 @@
 		const configuring = widgetConfigLive(widgetConfigSessions, MERCENARY_WINDOW_LABEL);
 		if (enabled === undefined && !configuring && !mercenaryWindow.driver.built()) return;
 		mercenaryWindow.driver.setDesired(mercOverlayWanted());
+	});
+
+	$effect(() => {
+		const enabled = ssot.modules[LOOT_MODULE_ID];
+		const configuring = widgetConfigLive(widgetConfigSessions, LOOT_WINDOW_LABEL);
+		if (enabled === undefined && !configuring && !lootWindow.driver.built()) return;
+		lootWindow.driver.setDesired(lootOverlayWanted());
 	});
 
 	$effect(() => {
