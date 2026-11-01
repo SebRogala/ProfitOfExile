@@ -4,8 +4,9 @@
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte'
 	import Button from '$lib/components/Button.svelte'
 	import { groupNumber } from '$lib/stores/number-format.svelte'
+	import { ssot } from '$lib/stores/ssot.svelte'
 	import LootItem from './LootItem.svelte'
-	import { buildOverlayView, type OverlayInput } from './overlay-view'
+	import { buildOverlayView, startOverlayClock, type OverlayInput } from './overlay-view'
 
 	let { input, iconFor, ontouch, onaction }: {
 		input: OverlayInput
@@ -13,7 +14,15 @@
 		ontouch: () => void
 		onaction: (action: string, item?: string) => void
 	} = $props()
-	const view = $derived(buildOverlayView(input))
+	let nowMs = $state<number | undefined>(undefined)
+	const view = $derived(buildOverlayView(input, nowMs))
+	const countingNative = $derived(view.counting && !!input.native)
+	$effect(() => {
+		if (!countingNative || !ssot.bossLoot) return
+		// Rust's deadline and snapshot time share a monotonic origin. Browser
+		// elapsed time advances that snapshot between polls, only for display.
+		return startOverlayClock(ssot.bossLoot.nowMs, (now) => { nowMs = now })
+	})
 
 	const widgetActions = getContext<WidgetActionRegistry>(WIDGET_ACTIONS)
 	$effect(() => widgetActions.register('loot.confirmation', {

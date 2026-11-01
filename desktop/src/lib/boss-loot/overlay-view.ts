@@ -14,7 +14,7 @@ export interface OverlayInput {
 	seconds: number
 	outcome?: SubmitOutcome | { state: 'saved'; run: { run: number }; droppedPositiveKeys: string[] }
 	previousRun?: number
-	/** Read-side native authority; no browser timer or submit owner. */
+	/** Read-side native authority; submission stays owned by Rust. */
 	native?: { phase: string; error: string | null; deadlineMs: number | null; run: number; droppedPositiveKeys: string[] }
 }
 
@@ -35,6 +35,14 @@ export interface ItemView extends Omit<LootItem, 'quantity'> {
 }
 
 export type SelectionAction = { type: 'toggle'; id: string } | { type: 'quantity'; id: string; delta: number }
+
+/** Advance native monotonic time for display only; the component owns cleanup. */
+export function startOverlayClock(nowMs: number, render: (nowMs: number) => void): () => void {
+	const started = performance.now()
+	render(nowMs)
+	const timer = setInterval(() => render(nowMs + performance.now() - started), 1000)
+	return () => clearInterval(timer)
+}
 
 /** Fixture interaction projection; WI-9 forwards the same user intent to Rust's owner. */
 export function changeSelection(profile: BossProfile, selection: LootSelection, notCounted: string[], action: SelectionAction): LootSelection {
@@ -59,7 +67,7 @@ export function changeSelection(profile: BossProfile, selection: LootSelection, 
 	return next
 }
 
-export function buildOverlayView(input: OverlayInput) {
+export function buildOverlayView(input: OverlayInput, nowMs?: number) {
 	const { profile, capture, stats, scope, notCounted, outcome, autoSaveSeconds } = input
 	const items = [...profile.groups.flatMap((group) => group.items), ...profile.extra, ...profile.categories]
 	const noRuns = stats?.runs === 0
@@ -110,10 +118,12 @@ export function buildOverlayView(input: OverlayInput) {
 	const valid = input.native ? input.native.phase === 'open' && input.native.error === null : !capture.ambiguous && groups.every((group) => group.valid)
 	const open = outcome === undefined
 	const counting = open && valid && autoSaveSeconds > 0 && (!input.native || input.native.deadlineMs !== null)
+	const seconds = counting && input.native && nowMs !== undefined
+		? Math.max(0, Math.ceil((input.native.deadlineMs! - nowMs) / 1000)) : input.seconds
 	const pause = capture.ambiguous ? `which ${capture.ambiguous.base}?` : 'check guaranteed'
 	const badge = outcome?.state === 'saving' ? 'Saving' : outcome?.state === 'saved' ? 'Saved'
 		: outcome?.state === 'unreachable' ? 'Not saved' : outcome?.state === 'conflict' || (open && !valid)
-			? `Paused: ${pause}` : counting ? `Saving in ${input.seconds} s` : ''
+			? `Paused: ${pause}` : counting ? `Saving in ${seconds} s` : ''
 	const dropped = outcome?.state === 'saved' ? outcome.droppedPositiveKeys : []
 	return {
 		layout: input.layout, width: input.layout === 'grid' ? 400 : 420, groups, extra,
@@ -122,7 +132,7 @@ export function buildOverlayView(input: OverlayInput) {
 			: `Chances from ${groupNumber(String(stats.runs))} runs${scope === 'collective' ? ` · ${groupNumber(String(stats.devices))} device${stats.devices === 1 ? '' : 's'}` : ''}`,
 		extraMessage: `${groupNumber(String(quantity))} item${quantity === 1 ? '' : 's'}`,
 		unknownLine: capture.unknownLines.length ? `Not in table: ${capture.unknownLines.join(', ')}` : '',
-		badge, barPercent: counting ? Math.min(100, Math.max(0, input.seconds / autoSaveSeconds * 100)) : 0,
+		badge, counting, barPercent: counting ? Math.min(100, Math.max(0, seconds / autoSaveSeconds * 100)) : 0,
 		canSave: open && valid, open,
 		message: outcome?.state === 'saved' ? `Saved as run ${groupNumber(String(outcome.run.run))}.`
 			: outcome?.state === 'unreachable' ? 'Server unreachable. This run was not recorded.' : input.native?.error ?? '',
