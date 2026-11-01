@@ -82,8 +82,8 @@
 	.row-name small, .wiki { color: var(--color-lab-text-secondary); font-size: 11px; }
 	.row-rate { text-align: right; }
 	.row-rate b { font: 600 12px 'Consolas', 'Monaco', monospace; }
-	.row-rate small { display: block; color: var(--color-lab-text-secondary); font-size: 11px; line-height: 13px; }
-	.row:has(.row-rate small) .row-hit { grid-template-columns: 16px 26px minmax(0, 1fr) 90px 52px; }
+	.row-rate small { display: block; color: var(--color-lab-text-secondary); font-size: 11px; line-height: 13px; white-space: nowrap; }
+	.row:has(.row-rate small) .row-hit { grid-template-columns: 16px 26px minmax(0, 1fr) 112px 52px; }
 	.wiki { text-align: right; }
 	.row :global(.quantity) { padding: 0 6px 0 0; }
 </style>

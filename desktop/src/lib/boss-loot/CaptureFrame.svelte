@@ -47,7 +47,7 @@
 <style>
 	.capture-frame { position: absolute; box-sizing: border-box; pointer-events: none; user-select: none; color: var(--color-lab-cyan); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 	.capture-frame.refused { color: var(--color-lab-yellow); }
-	.reading { border: 3px solid var(--color-lab-cyan); border-radius: 2px; }
+	.reading { box-shadow: inset 0 0 0 3px var(--color-lab-cyan); border-radius: 2px; }
 	.corner { position: absolute; width: 48px; height: 48px; border: 0 solid currentColor; }
 	.top-left { top: 0; left: 0; border-top-width: 3px; border-left-width: 3px; }
 	.top-right { top: 0; right: 0; border-top-width: 3px; border-right-width: 3px; }
