@@ -262,6 +262,7 @@ export function createBossLootPageController(ports: PagePorts, prefs?: { scope: 
 			if (requestGeneration === runsGeneration && runs) {
 				runs = { ...runs, items: runs.items.map((run) => run.id === saved.id ? saved : run) }
 				editor = null
+				await loadRuns(runs.page)
 			}
 			await refreshStats()
 		} catch (cause) {

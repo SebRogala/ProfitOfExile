@@ -97,3 +97,61 @@ describe('native boss loot owners', () => {
 		expect(mapNativeOverlay(slice, stats, 'own')?.native).toMatchObject({ phase: 'saved', run: 31, droppedPositiveKeys: ['hidden-eye'] })
 	})
 })
+
+describe('native Runs controller integration', () => {
+	it('rereads history after an edit instead of retaining an incomplete page', async () => {
+		const { createBossLootPageController } = await import('./page-controller.svelte')
+		const { deps, slice } = boundary()
+		let rows = [structuredClone(row)]
+		deps.call = async (command, args) => {
+			if (command === 'boss_loot_profiles') return [nativeProfile]
+			if (command === 'boss_loot_stats') return { runs: rows.length, devices: 1, nextRun: 33, items: {} }
+			if (command === 'boss_loot_runs') return { total: rows.length, page: 1, pageSize: 10, items: rows }
+			if (command === 'boss_loot_edit') {
+				const saved = { ...rows[0], version: 8, items: args!.items }
+				rows = [{ ...structuredClone(row), id: '32', run: 32 }, saved as typeof row]
+				return saved
+			}
+			throw Error(command)
+		}
+		slice.settings.notCounted = []
+		const page = createBossLootPageController({ profiles: createNativeProfiles(deps), stats: createNativeStats(deps), runs: createNativeRuns(deps), moduleSettings: createNativeModuleSettings(deps), device: createNativeDevice(deps), saveCsv: async () => {} })
+		await page.load(); await page.loadRuns()
+		page.beginEdit('31'); await page.saveEditor()
+		expect(page.runsView?.rows.map((item) => item.run)).toEqual([32, 31])
+		expect(page.results?.runs).toBe(2)
+	})
+	it('reapplies a stale unique correction to the latest hidden Eye map without changing either rate', async () => {
+		const { createBossLootPageController } = await import('./page-controller.svelte')
+		const eye = 'Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly'
+		const { deps, slice } = boundary()
+		slice.settings.notCounted = [eye]
+		let savedRow = { ...structuredClone(row), items: { quantities: { 'Cinderswallow Urn': 1, [eye]: 3 }, counted: ['Cinderswallow Urn', 'Cane of Kulemak', eye] } }
+		const writes: unknown[] = []
+		deps.call = async (command, args) => {
+			if (command === 'boss_loot_profiles') return [nativeProfile]
+			if (command === 'boss_loot_stats') return { runs: args!.scope === 'own' ? 1 : 2, devices: args!.scope === 'own' ? 1 : 2, nextRun: 32, items: { [eye]: { drops: args!.scope === 'own' ? savedRow.items.quantities[eye] : savedRow.items.quantities[eye] + 2, eligibleRuns: args!.scope === 'own' ? 1 : 2 } } }
+			if (command === 'boss_loot_runs') return { total: 1, page: 1, pageSize: 10, items: [savedRow] }
+			if (command === 'boss_loot_edit') {
+				writes.push(structuredClone(args))
+				if (args!.expectedVersion !== savedRow.version) throw Error('conflict')
+				savedRow = { ...savedRow, version: savedRow.version + 1, items: args!.items as typeof savedRow.items }
+				return savedRow
+			}
+			throw Error(command)
+		}
+		const page = createBossLootPageController({ profiles: createNativeProfiles(deps), stats: createNativeStats(deps), runs: createNativeRuns(deps), moduleSettings: createNativeModuleSettings(deps), device: createNativeDevice(deps), saveCsv: async () => {} })
+		await page.load(); await page.loadRuns(); page.beginEdit('31'); page.toggleEditorItem('Cane of Kulemak')
+		savedRow.version = 8; savedRow.items.quantities[eye] = 4
+		const ownBefore = await createNativeStats(deps).load(ref, 'own')
+		const collectiveBefore = await createNativeStats(deps).load(ref, 'collective')
+		await page.saveEditor()
+		expect(writes).toHaveLength(2)
+		expect(writes[1]).toEqual({ id: '31', expectedVersion: 8, items: { quantities: { 'Cane of Kulemak': 1, [eye]: 4 }, counted: ['Cinderswallow Urn', 'Cane of Kulemak', eye] } })
+		expect(savedRow.league).toBe('Historical')
+		expect((await createNativeStats(deps).load(ref, 'own')).items[eye]).toEqual({ drops: 4, eligibleRuns: 1 })
+		expect((await createNativeStats(deps).load(ref, 'collective')).items[eye]).toEqual({ drops: 6, eligibleRuns: 2 })
+		expect(ownBefore.items[eye]).toEqual({ drops: 4, eligibleRuns: 1 })
+		expect(collectiveBefore.items[eye]).toEqual({ drops: 6, eligibleRuns: 2 })
+	})
+})
