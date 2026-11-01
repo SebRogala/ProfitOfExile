@@ -1353,38 +1353,9 @@ async fn trade_lookup(
         let app_clone = app.clone();
         tauri::async_runtime::spawn(async move {
             let url = format!("{}/api/trade/submit", server_url);
-            match ssot::submit_trade_result(&http, &url, &submit_result,
+            ssot::submit_trade_result(&http, &url, &submit_result, app_clone.clone(),
                 |line| app_log(&app_clone, line),
-            ).await {
-                Ok(res) if res.status().is_success() => {
-                    app_log(&app_clone, format!("Trade submitted to server: {} ({})", submit_result.gem, submit_result.variant));
-                }
-                Ok(res) if res.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE => {
-                    app_log(&app_clone, format!(
-                        "Trade submit shed by server after {} attempts — history row lost: {} ({})",
-                        TRADE_SUBMIT_ATTEMPTS, submit_result.gem, submit_result.variant,
-                    ));
-                }
-                Ok(res) if res.status() == reqwest::StatusCode::CONFLICT => {
-                    ssot::reconcile_trade_mismatch(res, |observed| {
-                        ssot::note_server_league(app_clone.clone(), observed);
-                    }).await;
-                    app_log(&app_clone, "Trade submit rejected: league mismatch; resolving server league".to_string());
-                }
-                Ok(res) => {
-                    // Preserve the reason for a 400/422 rejection in the log.
-                    let status = res.status();
-                    let body = res.text().await.unwrap_or_default();
-                    app_log(&app_clone, format!(
-                        "Trade submit rejected: {} — {}",
-                        status,
-                        body_excerpt(&body, 200),
-                    ));
-                }
-                Err(e) => {
-                    app_log(&app_clone, format!("Trade submit failed: {}", e));
-                }
-            }
+            ).await;
         });
     }
 

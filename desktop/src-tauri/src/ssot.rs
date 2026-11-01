@@ -1676,28 +1676,48 @@ pub fn refresh_league(app: AppHandle) {
     rearm_league(app);
 }
 
-/// Server hints only trigger a status read; they never relabel captured prices.
-pub(crate) fn note_server_league(app: AppHandle, observed: Option<&str>) {
-    let current = {
-        let state = app.state::<AppState>();
+/// Window-independent access to the existing resolver's state and scheduling.
+/// Tests observe the scheduling boundary without replacing hint dispatch.
+pub(crate) trait LeagueResolver {
+    fn current_league(&self) -> Option<String>;
+    fn rearm(self);
+}
+
+impl LeagueResolver for AppHandle {
+    fn current_league(&self) -> Option<String> {
+        let state = self.state::<AppState>();
         let snapshot = state.ssot.lock().unwrap_or_else(|e| e.into_inner());
         snapshot.league.name.clone()
-    };
-    if observed.is_none() || observed != current.as_deref() {
-        rearm_league(app);
+    }
+
+    fn rearm(self) {
+        rearm_league(self);
     }
 }
 
-/// Keep the captured row unchanged while retrying overload responses. Every
-/// other response is terminal and is handled by the submitter exactly once.
+/// Server hints only trigger a status read; they never relabel captured prices.
+pub(crate) fn note_server_league(resolver: impl LeagueResolver, observed: Option<&str>) {
+    let current = resolver.current_league();
+    if observed.is_none() || observed != current.as_deref() {
+        resolver.rearm();
+    }
+}
+
+/// Submit the captured row, including terminal dispatch and reconciliation.
+/// Only overload responses retry; mismatches schedule resolution once and end.
 pub(crate) async fn submit_trade_result(
     http: &reqwest::Client,
     url: &str,
     result: &crate::trade::types::TradeLookupResult,
+    resolver: impl LeagueResolver,
     log: impl Fn(String),
-) -> Result<reqwest::Response, reqwest::Error> {
+) {
     for attempt in 1..=crate::TRADE_SUBMIT_ATTEMPTS {
         match http.post(url).json(result).send().await {
+            Ok(res) if res.status().is_success() => {
+                log(format!("Trade submitted to server: {} ({})", result.gem, result.variant));
+                return;
+            }
             Ok(res) if res.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE
                 && attempt < crate::TRADE_SUBMIT_ATTEMPTS =>
             {
@@ -1710,20 +1730,46 @@ pub(crate) async fn submit_trade_result(
                 ));
                 tokio::time::sleep(delay).await;
             }
-            terminal => return terminal,
+            Ok(res) if res.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE => {
+                log(format!(
+                    "Trade submit shed by server after {} attempts — history row lost: {} ({})",
+                    crate::TRADE_SUBMIT_ATTEMPTS, result.gem, result.variant,
+                ));
+                return;
+            }
+            Ok(res) if res.status() == reqwest::StatusCode::CONFLICT => {
+                let observed = reconcile_trade_mismatch(res, |observed| {
+                    note_server_league(resolver, observed);
+                }).await;
+                log(format!(
+                    "Trade submit rejected: league mismatch; server league: {}; resolving server league",
+                    observed.as_deref().unwrap_or("unknown"),
+                ));
+                return;
+            }
+            Ok(res) => {
+                let status = res.status();
+                let body = res.text().await.unwrap_or_default();
+                log(format!("Trade submit rejected: {} — {}", status, crate::body_excerpt(&body, 200)));
+                return;
+            }
+            Err(e) => {
+                log(format!("Trade submit failed: {}", e));
+                return;
+            }
         }
     }
-    unreachable!("the final attempt always returns its response")
 }
 
 /// Consume a 409 once. A malformed hint still asks for authoritative status.
 pub(crate) async fn reconcile_trade_mismatch(
     response: reqwest::Response,
     reconcile: impl FnOnce(Option<&str>),
-) {
+) -> Option<String> {
     let observed = response.json::<serde_json::Value>().await.ok()
         .and_then(|body| parse_league_from_status(&body));
     reconcile(observed.as_deref());
+    observed
 }
 
 #[cfg(test)]
@@ -1732,7 +1778,26 @@ mod trade_submit_tests {
     use std::sync::{Arc, Mutex};
     use tokio::io::AsyncWriteExt;
 
-    async fn submit_responses(responses: &[(u16, &str)]) -> (Vec<String>, Vec<Option<String>>, Vec<String>) {
+    struct RecordingResolver<'a> {
+        current: &'a Mutex<Option<String>>,
+        scheduled: &'a Mutex<usize>,
+    }
+
+    impl LeagueResolver for RecordingResolver<'_> {
+        fn current_league(&self) -> Option<String> {
+            self.current.lock().unwrap().clone()
+        }
+
+        fn rearm(self) {
+            *self.scheduled.lock().unwrap() += 1;
+        }
+    }
+
+    async fn submit_responses(responses: &[(u16, &str)]) -> (Vec<String>, usize, Vec<String>) {
+        submit_responses_in_league(responses, "League A").await
+    }
+
+    async fn submit_responses_in_league(responses: &[(u16, &str)], current_name: &str) -> (Vec<String>, usize, Vec<String>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/api/trade/submit", listener.local_addr().unwrap());
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -1758,20 +1823,14 @@ mod trade_submit_tests {
                 seen.lock().unwrap().push(request);
             }
         });
-        let hints = Mutex::new(Vec::new());
+        let current = Mutex::new(Some(current_name.to_string()));
+        let scheduled = Mutex::new(0);
         let logs = Mutex::new(Vec::new());
         let result = crate::trade::signals::build_result("Gem", "20/20", "League A", "", 0, vec![], 0.0);
-        let response = submit_trade_result(&reqwest::Client::new(), &url, &result,
+        submit_trade_result(&reqwest::Client::new(), &url, &result,
+            RecordingResolver { current: &current, scheduled: &scheduled },
             |line| logs.lock().unwrap().push(line),
-        ).await.unwrap();
-        if response.status() == reqwest::StatusCode::CONFLICT {
-            reconcile_trade_mismatch(response,
-                |hint| hints.lock().unwrap().push(hint.map(str::to_string)),
-            ).await;
-        } else {
-            let status = response.status();
-            logs.lock().unwrap().push(format!("terminal {status}"));
-        }
+        ).await;
         server.await.unwrap();
         let requests = requests.lock().unwrap().clone();
         for request in &requests {
@@ -1779,38 +1838,51 @@ mod trade_submit_tests {
             let json: serde_json::Value = serde_json::from_str(body).unwrap();
             assert_eq!(json["league"], "League A", "never relabel the old contribution");
         }
-        (requests, hints.into_inner().unwrap(), logs.into_inner().unwrap())
+        assert_eq!(current.into_inner().unwrap().as_deref(), Some(current_name), "a hint never replaces authoritative league state");
+        (requests, scheduled.into_inner().unwrap(), logs.into_inner().unwrap())
     }
 
     #[tokio::test]
     async fn trade_submit_mismatch_reconciles_once_without_resubmission() {
-        let (requests, hints, _) = submit_responses(&[(409, r#"{"error":"league_mismatch","league":"League B"}"#)]).await;
+        let (requests, scheduled, logs) = submit_responses(&[(409, r#"{"error":"league_mismatch","league":"League B"}"#)]).await;
         assert_eq!(requests.len(), 1);
-        assert_eq!(hints, vec![Some("League B".to_string())]);
+        assert_eq!(scheduled, 1, "different league schedules reconciliation exactly once");
+        assert_eq!(logs, vec!["Trade submit rejected: league mismatch; server league: League B; resolving server league"]);
     }
 
     #[tokio::test]
     async fn trade_submit_malformed_mismatch_reconciles_unknown_once() {
-        let (requests, hints, _) = submit_responses(&[(409, "not JSON")]).await;
+        let (requests, scheduled, logs) = submit_responses(&[(409, "not JSON")]).await;
         assert_eq!(requests.len(), 1);
-        assert_eq!(hints, vec![None]);
+        assert_eq!(scheduled, 1, "unknown league schedules reconciliation exactly once");
+        assert_eq!(logs, vec!["Trade submit rejected: league mismatch; server league: unknown; resolving server league"]);
+    }
+
+    #[tokio::test]
+    async fn trade_submit_matching_hint_does_not_schedule_reconciliation() {
+        let (requests, scheduled, logs) = submit_responses_in_league(
+            &[(409, r#"{"error":"league_mismatch","league":"League B"}"#)], "League B",
+        ).await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(scheduled, 0, "the standing league already agrees with the hint");
+        assert_eq!(logs, vec!["Trade submit rejected: league mismatch; server league: League B; resolving server league"]);
     }
 
     #[tokio::test]
     async fn trade_submit_overload_retries_the_captured_row() {
-        let (requests, hints, logs) = submit_responses(&[(503, "busy"), (503, "busy"), (200, "{}")]).await;
+        let (requests, scheduled, logs) = submit_responses(&[(503, "busy"), (503, "busy"), (200, "{}")]).await;
         assert_eq!(requests.len(), 3);
-        assert!(hints.is_empty());
+        assert_eq!(scheduled, 0);
         assert_eq!(logs.len(), 3);
-        assert_eq!(logs[2], "terminal 200 OK");
+        assert_eq!(logs[2], "Trade submitted to server: Gem (20/20)");
     }
 
     #[tokio::test]
     async fn trade_submit_overload_stops_at_the_retry_bound() {
-        let (requests, hints, logs) = submit_responses(&[(503, "busy"), (503, "busy"), (503, "busy")]).await;
+        let (requests, scheduled, logs) = submit_responses(&[(503, "busy"), (503, "busy"), (503, "busy")]).await;
         assert_eq!(requests.len(), 3);
-        assert!(hints.is_empty());
-        assert_eq!(logs[2], "terminal 503 Service Unavailable");
+        assert_eq!(scheduled, 0);
+        assert_eq!(logs[2], "Trade submit shed by server after 3 attempts — history row lost: Gem (20/20)");
     }
 }
 
