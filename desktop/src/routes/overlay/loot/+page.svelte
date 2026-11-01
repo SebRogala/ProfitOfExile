@@ -70,11 +70,18 @@
 		if (name === 'loot.save') { enqueue(() => submit.submit(id)); return }
 		if (name === 'loot.force-new') { enqueue(() => captures.action(id, { type: 'forceNew' })); return }
 		if (!item || !input || !['loot.toggle', 'loot.increment', 'loot.decrement'].includes(name)) return
-		const selection = input.capture
-		const quantity = Object.values(selection.picks).some((keys) => keys.includes(item)) ? 1
-			: selection.extra[item] ?? selection.categories[item] ?? 0
-		const next = name === 'loot.toggle' ? quantity > 0 ? 0 : 1 : Math.max(0, quantity + (name === 'loot.increment' ? 1 : -1))
-		enqueue(() => captures.action(id, { type: 'select', key: item, quantity: next }))
+		enqueue(async () => {
+			// Preceding actions reconcile before this read; an old click never acquires a new capture's id.
+			const latest = await captures.load()
+			if (latest.pending?.id !== id) return
+			const current = mapNativeOverlay(latest, stats, scope)
+			if (!current) return
+			const selection = current.capture
+			const quantity = Object.values(selection.picks).some((keys) => keys.includes(item)) ? 1
+				: selection.extra[item] ?? selection.categories[item] ?? 0
+			const next = name === 'loot.toggle' ? quantity > 0 ? 0 : 1 : Math.max(0, quantity + (name === 'loot.increment' ? 1 : -1))
+			await captures.action(id, { type: 'select', key: item, quantity: next })
+		})
 	}
 </script>
 
