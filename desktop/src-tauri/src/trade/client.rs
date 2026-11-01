@@ -12,7 +12,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Mutex;
 use std::time::Duration;
 
 use super::rate_limiter::TradeRateLimiter;
@@ -820,7 +819,7 @@ pub(crate) mod tests {
     // exists on the far side of two HTTP calls, and a test that reached
     // pathofexile.com would be neither deterministic nor allowed.
 
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     /// A loopback HTTP/1.1 server answering the two trade endpoints with canned

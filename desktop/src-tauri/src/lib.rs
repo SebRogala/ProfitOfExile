@@ -1421,6 +1421,15 @@ enum ClickthroughSetup {
 /// test below is what stops this end of the pair drifting.
 const CLICKTHROUGH_WINDOW_GONE: &str = "window-gone";
 
+#[cfg(any(windows, test))]
+fn clickthrough_failure_log_level(message: &str) -> log::Level {
+    if message.starts_with(CLICKTHROUGH_WINDOW_GONE) {
+        log::Level::Info
+    } else {
+        log::Level::Error
+    }
+}
+
 /// Turn what the setup observed into the answer `set_overlay_clickthrough`
 /// gives its caller.
 ///
@@ -1508,7 +1517,7 @@ async fn apply_overlay_clickthrough(label: String, app: AppHandle) -> Result<(),
         // Logged here as well as returned: the caller reports through the app
         // log too, but a Rust-side line is what pairs the failure with the
         // Win32 detail that produced it.
-        Err(msg) => log::error!("{}", msg),
+        Err(msg) => log::log!(clickthrough_failure_log_level(msg), "{}", msg),
     }
     outcome
 }
@@ -3645,7 +3654,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        body_excerpt, clickthrough_outcome, crop_shortfall, assemble_ocr_rects,
+        body_excerpt, clickthrough_failure_log_level, clickthrough_outcome, crop_shortfall, assemble_ocr_rects,
         dictionary_reject_reason, ocr_warning_field, overlay_focus_action,
         retry_after_delay, temple_rects_from_rois, write_debug_mode, write_server_url, CaptureRegion,
         ClickthroughSetup,
@@ -3777,6 +3786,28 @@ mod tests {
 
         assert_eq!(CLICKTHROUGH_WINDOW_GONE, "window-gone");
         assert!(out.is_err_and(|e| e.starts_with("window-gone")));
+    }
+
+    #[test]
+    fn a_vanished_window_is_logged_at_info() {
+        let message = clickthrough_outcome("temple", ClickthroughSetup::WindowGone)
+            .expect_err("a vanished window fails setup");
+
+        assert_eq!(clickthrough_failure_log_level(&message), log::Level::Info);
+    }
+
+    #[test]
+    fn a_live_window_setup_failure_is_logged_at_error() {
+        for setup in [
+            ClickthroughSetup::NotTransparent,
+            ClickthroughSetup::HwndUnavailable,
+            ClickthroughSetup::IgnoreCursorFailed("no event loop".into()),
+        ] {
+            let message = clickthrough_outcome("temple", setup)
+                .expect_err("a live window failed setup");
+
+            assert_eq!(clickthrough_failure_log_level(&message), log::Level::Error, "{message}");
+        }
     }
 
     /// The other four must NOT carry it, or a live window eating clicks would be
