@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import source from './__fixtures__/boss-loot.json'
 import { createFixtureModuleSettings, createFixtureProfiles, createFixtureStats, createFixtureRuns } from './fixture-adapters'
-import { buildResultsView, buildRunsView, buildRunEditor, runsCsv, type ResultsInput } from './page-view'
+import { buildResultsView, buildRunsView, buildRunEditor, buildSettingsView, keyboardShortcut, mouseShortcut, runsCsv, type ResultsInput } from './page-view'
 import type { StoredRun } from './contracts'
 
 async function input(): Promise<ResultsInput> {
@@ -178,5 +178,49 @@ describe('Runs editor projection', () => {
 	it('withholds saving when a full guaranteed group would be empty', async () => {
 		const { profile, runs } = await runInput(8)
 		expect(buildRunEditor(profile, runs.items[0], [], { 'Cane of Kulemak': 0 }).valid).toBe(false)
+	})
+})
+
+describe('Settings projection', () => {
+	it('uses the settings owners timeout options including Off', async () => {
+		const { profile } = await input()
+		const settings = await createFixtureModuleSettings(source.moduleSettings).load()
+		expect(buildSettingsView(profile, settings).timeouts).toEqual([
+			{ value: '5', label: '5 s' }, { value: '10', label: '10 s' }, { value: '20', label: '20 s' },
+			{ value: '30', label: '30 s' }, { value: '0', label: 'Off' }
+		])
+	})
+	it('marks Communion as excluded in the named additional checklist', async () => {
+		const { profile } = await input()
+		const settings = await createFixtureModuleSettings(source.moduleSettings).load()
+		expect(buildSettingsView(profile, settings).notCounted.map((item) => [item.name, item.checked])).toEqual([
+			["Zorath's Eye of the Endless", false], ['Veiled Exalted Orb', false], ['Allflame Ember of Kulemak', false],
+			['Communion Support', true], ['Templar Astrolabe', false], ["Nook's Crown", false], ["Keeper's Corruption", false]
+		])
+	})
+})
+
+const modifiers = { ctrlKey: false, altKey: false, shiftKey: false, metaKey: false }
+describe('Shortcut capture projection', () => {
+	it('formats the default preview keyboard shortcut', () => {
+		expect(keyboardShortcut({ ...modifiers, key: 'F8', shiftKey: true })).toBe('Shift + F8')
+	})
+	it('formats a keyboard binding with multiple modifiers', () => {
+		expect(keyboardShortcut({ ...modifiers, key: 'a', ctrlKey: true, altKey: true })).toBe('Ctrl + Alt + A')
+	})
+	it('does not bind a modifier pressed on its own', () => {
+		expect(keyboardShortcut({ ...modifiers, key: 'Shift', shiftKey: true })).toBeNull()
+	})
+	it('does not bind Escape', () => {
+		expect(keyboardShortcut({ ...modifiers, key: 'Escape' })).toBeNull()
+	})
+	it('formats the default right mouse shortcut', () => {
+		expect(mouseShortcut({ ...modifiers, button: 2, shiftKey: true })).toBe('Shift + Right click')
+	})
+	it('formats an auxiliary mouse button shortcut', () => {
+		expect(mouseShortcut({ ...modifiers, button: 3, ctrlKey: true })).toBe('Ctrl + Mouse 4')
+	})
+	it('does not invent an unsupported mouse button name', () => {
+		expect(mouseShortcut({ ...modifiers, button: -1 })).toBeNull()
 	})
 })

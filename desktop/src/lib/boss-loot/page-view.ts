@@ -1,4 +1,4 @@
-import { editRunItems, type BossProfile, type BossStats, type LootItem, type Quantities, type RunsPage, type StatsScope, type StoredRun } from './contracts'
+import { editRunItems, type BossProfile, type BossStats, type LootItem, type ModuleSettings, type Quantities, type RunsPage, type StatsScope, type StoredRun } from './contracts'
 import { groupNumber } from '$lib/stores/number-format.svelte'
 
 export type ResultsSort = 'rate' | 'name'
@@ -100,4 +100,32 @@ export function buildRunEditor(profile: BossProfile, run: StoredRun, notCounted:
 			rule: group.min === 1 && group.max === 1 ? 'pick one' : `pick ${group.min}–${group.max}`,
 			items: group.items.filter(editable).map(project) })),
 		extra: [...profile.extra, ...profile.categories].filter(editable).map(project) }
+}
+
+export function buildSettingsView(profile: BossProfile | null, settings: ModuleSettings) {
+	return {
+		timeouts: settings.autoSaveOptions.map((seconds) => ({ value: String(seconds), label: seconds === 0 ? 'Off' : `${seconds} s` })),
+		notCounted: (profile?.extra ?? []).map((item) => ({ ...item, checked: settings.notCounted.includes(item.id) }))
+	}
+}
+
+interface ShortcutModifiers { ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean }
+export interface ShortcutKeyInput extends ShortcutModifiers { key: string }
+export interface ShortcutMouseInput extends ShortcutModifiers { button: number }
+
+function shortcutLabel(input: ShortcutModifiers, trigger: string): string {
+	return [...(input.ctrlKey ? ['Ctrl'] : []), ...(input.altKey ? ['Alt'] : []),
+		...(input.shiftKey ? ['Shift'] : []), ...(input.metaKey ? ['Meta'] : []), trigger].join(' + ')
+}
+
+export function keyboardShortcut(input: ShortcutKeyInput): string | null {
+	if (!input.key || ['Escape', 'Control', 'Alt', 'AltGraph', 'Shift', 'Meta', 'Unidentified', 'Dead'].includes(input.key)) return null
+	const key = input.key === ' ' ? 'Space' : input.key.length === 1 ? input.key.toUpperCase() : input.key
+	return shortcutLabel(input, key)
+}
+
+export function mouseShortcut(input: ShortcutMouseInput): string | null {
+	const buttons = ['Left click', 'Middle click', 'Right click', 'Mouse 4', 'Mouse 5']
+	if (!Number.isInteger(input.button) || input.button < 0 || input.button >= buttons.length) return null
+	return shortcutLabel(input, buttons[input.button])
 }

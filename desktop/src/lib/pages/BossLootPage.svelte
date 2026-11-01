@@ -3,6 +3,8 @@
 	import Button from '$lib/components/Button.svelte'
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte'
 	import ItemIcon from '$lib/components/ItemIcon.svelte'
+	import Toggle from '$lib/components/Toggle.svelte'
+	import ShortcutCapture from '$lib/boss-loot/ShortcutCapture.svelte'
 	import { persisted } from '$lib/prefs.svelte'
 	import { groupNumber } from '$lib/stores/number-format.svelte'
 	import { createBossLootPageController, type PagePorts } from '$lib/boss-loot/page-controller.svelte'
@@ -16,6 +18,7 @@
 	const view = $derived(page.results)
 	const history = $derived(page.runsView)
 	const editor = $derived(page.editorView)
+	const behavior = $derived(page.settingsView)
 	onMount(() => { untrack(() => { void page.load() }) })
 	$effect(() => {
 		const selected = page.scope
@@ -34,7 +37,7 @@
 		<span class="caption">Drop rates per boss from logged kills.</span>
 		<span class="spacer"></span>
 		<SegmentedButtons value={page.scope} options={[{ value: 'own', label: 'Own' }, { value: 'collective', label: 'Collective' }]}
-			title="Whose data" onselect={(value) => page.selectScope(value === 'collective' ? 'collective' : 'own')} />
+			title="Whose data" onselect={(value) => { scope.value = value === 'collective' ? 'collective' : 'own' }} />
 		<Button disabled={!page.profile || page.exporting} onclick={() => page.exportCsv()}>Export CSV</Button>
 	</header>
 	<div class="page-picks">
@@ -164,6 +167,53 @@
 			</section>
 		{/if}
 	{/if}
+	{#if tab.value === 'settings'}
+		{#if page.settingsStatus === 'loading'}<div class="status-line" role="status">Loading…</div>
+		{:else if page.settingsStatus === 'unreachable'}<div class="status-line warning" role="status">Settings unavailable.</div>{/if}
+		{#if page.settingsError}<div class="status-line warning" role="alert">{page.settingsError}</div>{/if}
+		{#if behavior && page.settings}
+			<section class="panel" aria-label="Boss loot settings">
+				<div class="setting-row">
+					<span class="setting-label"><span>Boss loot module</span><small>Capture shortcut and overlay</small></span>
+					<fieldset class="setting-control" disabled={page.modulePending}><Toggle checked={page.enabled} label="Boss loot module" onchange={(enabled) => { void page.setEnabled(enabled) }} /></fieldset>
+				</div>
+				<div class="setting-row">
+					<span class="setting-label"><span>Auto-save after</span><small>Any click on the overlay restarts it</small></span>
+					<fieldset class="setting-control" disabled={page.settingsPending}>
+						<SegmentedButtons value={String(page.settings.autoSaveSeconds)} options={behavior.timeouts} title="Auto-save after" onselect={(value) => { void page.setAutoSave(Number(value)) }} />
+					</fieldset>
+				</div>
+				<div class="setting-row">
+					<span class="setting-label"><span>Capture</span><small>Only while Path of Exile is in front; the click still reaches the game</small></span>
+					<ShortcutCapture value={page.settings.captureShortcut} label="Capture" listening={page.listening === 'capture'} disabled={page.settingsPending}
+						onlisten={() => page.listenShortcut('capture')} onkey={(event) => { void page.captureKey(event) }} onmouse={(event) => { void page.captureMouse(event) }} />
+				</div>
+				<div class="setting-row">
+					<span class="setting-label"><span>Preview frame</span><small>Shows the capture area around the cursor</small></span>
+					<ShortcutCapture value={page.settings.previewShortcut} label="Preview frame" keycaps listening={page.listening === 'preview'} disabled={page.settingsPending}
+						onlisten={() => page.listenShortcut('preview')} onkey={(event) => { void page.captureKey(event) }} onmouse={(event) => { void page.captureMouse(event) }} />
+				</div>
+				<div class="setting-row exclusions">
+					<span class="setting-label"><span>Not counted</span><small>Items your loot filter hides. Their rate leaves out your runs.</small></span>
+					<fieldset class="setting-control not-counted-list" disabled={page.settingsPending}>
+						{#each behavior.notCounted as item (item.id)}
+							<label><input type="checkbox" checked={item.checked} onchange={(event) => {
+								const checked = event.currentTarget.checked
+								event.currentTarget.checked = item.checked
+								void page.setNotCounted(item.id, checked)
+							}} /><ItemIcon src={iconFor(item)} alt="" size={20} />{item.name}</label>
+						{/each}
+					</fieldset>
+				</div>
+				<div class="setting-row">
+					<span>Where runs go</span>
+					{#if page.deviceId !== null}<span class="storage-note">To the ProfitOfExile server, with this device's id <span class="device-id">{page.deviceId}</span>. Nothing is kept on this PC; a run made while the server is down is not saved.</span>
+					{:else}<span class="storage-note">Device identity unavailable.</span>{/if}
+				</div>
+				{#if page.deviceError}<div class="status-line warning" role="alert">{page.deviceError}</div>{/if}
+			</section>
+		{/if}
+	{/if}
 </div>
 
 <style>
@@ -232,4 +282,16 @@
 	.page-button:hover { color: var(--color-lab-text); }
 	.page-button.current { background: rgba(99,102,241,.2); color: var(--color-lab-text); border-color: rgba(99,102,241,.5); }
 	.page-button:disabled, .edit-chip:disabled { opacity: .35; cursor: default; }
+	.setting-row { display: grid; grid-template-columns: 200px minmax(0,1fr); gap: 16px; align-items: center; padding: 10px 16px; border-top: 1px solid var(--color-lab-border); }
+	.setting-row:first-child { border-top: 0; }
+	.setting-row > :last-child { justify-self: start; }
+	.setting-label { display: flex; flex-direction: column; gap: 2px; }
+	.setting-control { border: 0; margin: 0; padding: 0; min-width: 0; }
+	.setting-control:disabled { opacity: .6; }
+	.exclusions { align-items: start; }
+	.not-counted-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px 16px; }
+	.not-counted-list label { display: inline-flex; align-items: center; gap: 8px; min-height: 20px; font-size: 12px; cursor: pointer; }
+	.not-counted-list input { width: 14px; height: 14px; accent-color: var(--color-lab-blue); flex-shrink: 0; }
+	.storage-note { font-size: 12px; color: var(--color-lab-text-secondary); }
+	.device-id { font-family: Consolas, Monaco, monospace; color: var(--color-lab-text); }
 </style>

@@ -1,12 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import source from './__fixtures__/boss-loot.json'
-import { createFixtureProfiles, createFixtureModuleSettings, createFixtureStats, createFixtureRuns } from './fixture-adapters'
+import { createFixtureProfiles, createFixtureModuleSettings, createFixtureStats, createFixtureRuns, createFixtureDevice } from './fixture-adapters'
 import { createBossLootPageController, type PagePorts } from './page-controller.svelte'
 import type { BossStats } from './contracts'
+import { invoke } from '@tauri-apps/api/core'
+import { ssot } from '$lib/stores/ssot.svelte'
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => ({})) }))
 
 function ports(): PagePorts {
 	return { profiles: createFixtureProfiles(source.profiles), stats: createFixtureStats(source.stats),
 		moduleSettings: createFixtureModuleSettings(source.moduleSettings), runs: createFixtureRuns(source.runs),
+		device: createFixtureDevice(source.device),
 		saveCsv: async () => {} }
 }
 
@@ -308,3 +313,173 @@ describe('Runs controller', () => {
 			expect(h.page.runsView?.range).toBe('Runs 8–1 of 78, newest first')
 		})
 	})
+
+describe('Settings controller', () => {
+	it('reads the enabled flag from the existing module SSOT rather than moduleSettings', async () => {
+		ssot.modules.boss_loot = false
+		const page = createBossLootPageController(ports())
+		await page.load()
+		expect(page.enabled).toBe(false)
+		ssot.modules.boss_loot = true
+		expect(page.enabled).toBe(true)
+	})
+	it('writes the module flag through the existing module writer', async () => {
+		ssot.modules.boss_loot = true
+		const deps = ports()
+		const behaviorWrites: unknown[] = []
+		deps.moduleSettings.save = async (settings) => { behaviorWrites.push(settings); return settings }
+		const page = createBossLootPageController(deps)
+		await page.load()
+		vi.mocked(invoke).mockClear()
+		await page.setEnabled(false)
+		expect(invoke).toHaveBeenCalledWith('set_module_enabled', { id: 'boss_loot', enabled: false })
+		expect(behaviorWrites).toEqual([])
+	})
+	it('retains the existing owners rejection and SSOT reconciliation policy', async () => {
+		ssot.modules.boss_loot = true
+		const page = createBossLootPageController(ports())
+		const rejection = new Error('unregistered module')
+		vi.mocked(invoke).mockRejectedValueOnce(rejection)
+		const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+		try {
+			await page.setEnabled(false)
+			expect(warning).toHaveBeenCalledWith('[ssot] set_module_enabled failed:', rejection)
+			ssot.modules.boss_loot = true
+			expect(page.enabled).toBe(true)
+		} finally { warning.mockRestore() }
+	})
+	it('keeps confirmed settings while a write is pending', async () => {
+		const deps = ports()
+		const pending = deferred<import('./contracts').ModuleSettings>()
+		deps.moduleSettings.save = () => pending.promise
+		const page = createBossLootPageController(deps)
+		await page.load()
+		const writing = page.setAutoSave(20)
+		expect(page.settings?.autoSaveSeconds).toBe(10)
+		pending.resolve({ ...(await deps.moduleSettings.load()), autoSaveSeconds: 20 })
+		await writing
+		expect(page.settings?.autoSaveSeconds).toBe(20)
+	})
+	it('shows the accepted owner value rather than assuming a requested timeout was accepted', async () => {
+		const deps = ports()
+		deps.moduleSettings.save = async (settings) => ({ ...settings, autoSaveSeconds: 30 })
+		const page = createBossLootPageController(deps)
+		await page.load()
+		await page.setAutoSave(20)
+		expect(page.settings?.autoSaveSeconds).toBe(30)
+	})
+	it('retains the confirmed timeout on a rejected settings write', async () => {
+		const deps = ports()
+		deps.moduleSettings.save = async () => { throw new Error('settings rejected') }
+		const page = createBossLootPageController(deps)
+		await page.load()
+		await page.setAutoSave(20)
+		expect(page.settings?.autoSaveSeconds).toBe(10)
+		expect(page.settingsError).toContain('settings rejected')
+	})
+	it('keeps Off as the settings owners zero-second value', async () => {
+		const page = createBossLootPageController(ports())
+		await page.load()
+		await page.setAutoSave(0)
+		expect(page.settings?.autoSaveSeconds).toBe(0)
+	})
+	it('rejects a timeout absent from the owners options', async () => {
+		const deps = ports()
+		const requests: unknown[] = []
+		deps.moduleSettings.save = async (settings) => { requests.push(settings); return settings }
+		const page = createBossLootPageController(deps)
+		await page.load()
+		await page.setAutoSave(7)
+		expect(requests).toEqual([])
+		expect(page.settingsError).toContain('Unsupported auto-save timeout')
+	})
+	it('propagates accepted exclusions to Results', async () => {
+		const page = createBossLootPageController(ports())
+		await page.load()
+		await page.setNotCounted('Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly', true)
+		expect(page.results?.groups[1].items.find((item) => item.name === "Zorath's Eye of the Endless"))
+			.toMatchObject({ disabled: true, rate: '—', drops: null })
+	})
+	it('propagates accepted exclusions to the next Runs editor without losing history', async () => {
+		const page = createBossLootPageController(ports())
+		await page.load(); await page.loadRuns(8)
+		await page.setNotCounted('Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly', true)
+		page.beginEdit('fixture-catarina-8')
+		expect(page.editorView?.extra.map((item) => item.name)).not.toContain("Zorath's Eye of the Endless")
+		expect(page.editorView?.request.items.quantities['Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly']).toBe(1)
+	})
+	it('preserves confirmed exclusions on a rejected checkbox write', async () => {
+		const deps = ports()
+		deps.moduleSettings.save = async () => { throw new Error('exclusion rejected') }
+		const page = createBossLootPageController(deps)
+		await page.load()
+		await page.setNotCounted('Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly', true)
+		expect(page.settings?.notCounted).toEqual(['Communion Support'])
+		expect(page.settingsError).toContain('exclusion rejected')
+	})
+	it('keeps unrelated settings when saving an exclusion', async () => {
+		const page = createBossLootPageController(ports())
+		await page.load()
+		await page.setNotCounted('Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly', true)
+		expect(page.settings).toMatchObject({ autoSaveSeconds: 10, captureShortcut: 'Shift + Right click', previewShortcut: 'Shift + F8' })
+	})
+	it('cancels shortcut listening with Escape without writing a binding', async () => {
+		const deps = ports()
+		const requests: unknown[] = []
+		deps.moduleSettings.save = async (settings) => { requests.push(settings); return settings }
+		const page = createBossLootPageController(deps)
+		await page.load()
+		page.listenShortcut('capture')
+		await page.captureKey({ key: 'Escape', ctrlKey: false, shiftKey: false, altKey: false, metaKey: false })
+		expect(page.listening).toBeNull()
+		expect(requests).toEqual([])
+		expect(page.settings?.captureShortcut).toBe('Shift + Right click')
+	})
+	it('saves a keyboard binding only for the listening shortcut', async () => {
+		const page = createBossLootPageController(ports())
+		await page.load()
+		page.listenShortcut('preview')
+		await page.captureKey({ key: 'F9', ctrlKey: true, shiftKey: false, altKey: false, metaKey: false })
+		expect(page.settings).toMatchObject({ previewShortcut: 'Ctrl + F9', captureShortcut: 'Shift + Right click' })
+	})
+	it('saves a mouse binding for the listening capture shortcut', async () => {
+		const page = createBossLootPageController(ports())
+		await page.load()
+		page.listenShortcut('capture')
+		await page.captureMouse({ button: 3, ctrlKey: true, shiftKey: false, altKey: false, metaKey: false })
+		expect(page.settings?.captureShortcut).toBe('Ctrl + Mouse 4')
+	})
+	it('keeps listening when only a modifier key is pressed', async () => {
+		const page = createBossLootPageController(ports())
+		await page.load()
+		page.listenShortcut('capture')
+		await page.captureKey({ key: 'Shift', ctrlKey: false, shiftKey: true, altKey: false, metaKey: false })
+		expect(page.listening).toBe('capture')
+		expect(page.settings?.captureShortcut).toBe('Shift + Right click')
+	})
+	it('preserves the confirmed shortcut after a rejected binding write', async () => {
+		const deps = ports()
+		deps.moduleSettings.save = async () => { throw new Error('binding rejected') }
+		const page = createBossLootPageController(deps)
+		await page.load()
+		page.listenShortcut('capture')
+		await page.captureMouse({ button: 1, ctrlKey: false, shiftKey: true, altKey: false, metaKey: false })
+		expect(page.settings?.captureShortcut).toBe('Shift + Right click')
+		expect(page.settingsError).toContain('binding rejected')
+	})
+	it('renders no fake device identity after the device owner fails', async () => {
+		const deps = ports()
+		deps.device.load = async () => { throw new Error('device unavailable') }
+		const page = createBossLootPageController(deps)
+		await page.load()
+		expect(page.deviceId).toBeNull()
+		expect(page.deviceError).toContain('device unavailable')
+	})
+	it('reads the storage caption identity from DevicePort', async () => {
+		const deps = ports()
+		deps.device.load = async () => ({ id: 'fixture-device-23' })
+		const page = createBossLootPageController(deps)
+		await page.load()
+		expect(page.deviceId).toBe('fixture-device-23')
+	})
+})
