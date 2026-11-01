@@ -8,6 +8,7 @@
 export interface TradeLookupResult {
 	gem: string;
 	variant: string;
+	league: string;
 	total: number;
 	priceFloor: number;
 	priceCeiling: number;

@@ -25,6 +25,7 @@ function lookup(listings: TradeListingDetail[], priceFloor = 0): TradeLookupResu
 	return {
 		gem: 'Kinetic Blast of Clustering',
 		variant: '20/20',
+		league: 'Test League',
 		total: listings.length,
 		priceFloor,
 		priceCeiling: 0,

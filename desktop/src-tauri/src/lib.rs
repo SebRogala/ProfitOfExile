@@ -1353,55 +1353,36 @@ async fn trade_lookup(
         let app_clone = app.clone();
         tauri::async_runtime::spawn(async move {
             let url = format!("{}/api/trade/submit", server_url);
-            for attempt in 1..=TRADE_SUBMIT_ATTEMPTS {
-                match http.post(&url).json(&submit_result).send().await {
-                    Ok(res) if res.status().is_success() => {
-                        app_log(&app_clone, format!("Trade submitted to server: {} ({})", submit_result.gem, submit_result.variant));
-                        return;
-                    }
-                    // 503 is the server shedding a saturated persist queue, not
-                    // a rejection of this row — it carries Retry-After and the
-                    // insert is idempotent, so re-sending is safe.
-                    Ok(res)
-                        if res.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE
-                            && attempt < TRADE_SUBMIT_ATTEMPTS =>
-                    {
-                        let delay = retry_after_delay(
-                            res.headers()
-                                .get(reqwest::header::RETRY_AFTER)
-                                .and_then(|v| v.to_str().ok()),
-                        );
-                        app_log(&app_clone, format!(
-                            "Trade submit shed by server (503), retrying in {:.1}s (attempt {}/{})",
-                            delay.as_secs_f64(), attempt, TRADE_SUBMIT_ATTEMPTS,
-                        ));
-                        tokio::time::sleep(delay).await;
-                    }
-                    Ok(res) if res.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE => {
-                        app_log(&app_clone, format!(
-                            "Trade submit shed by server after {} attempts — history row lost: {} ({})",
-                            TRADE_SUBMIT_ATTEMPTS, submit_result.gem, submit_result.variant,
-                        ));
-                        return;
-                    }
-                    Ok(res) => {
-                        // A 400/422 loses the row AND the reason unless the body
-                        // is read — the status alone cannot say which field the
-                        // server objected to. Same shape as the font session
-                        // rejection path below.
-                        let status = res.status();
-                        let body = res.text().await.unwrap_or_default();
-                        app_log(&app_clone, format!(
-                            "Trade submit rejected: {} — {}",
-                            status,
-                            body_excerpt(&body, 200),
-                        ));
-                        return;
-                    }
-                    Err(e) => {
-                        app_log(&app_clone, format!("Trade submit failed: {}", e));
-                        return;
-                    }
+            match ssot::submit_trade_result(&http, &url, &submit_result,
+                |line| app_log(&app_clone, line),
+            ).await {
+                Ok(res) if res.status().is_success() => {
+                    app_log(&app_clone, format!("Trade submitted to server: {} ({})", submit_result.gem, submit_result.variant));
+                }
+                Ok(res) if res.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE => {
+                    app_log(&app_clone, format!(
+                        "Trade submit shed by server after {} attempts — history row lost: {} ({})",
+                        TRADE_SUBMIT_ATTEMPTS, submit_result.gem, submit_result.variant,
+                    ));
+                }
+                Ok(res) if res.status() == reqwest::StatusCode::CONFLICT => {
+                    ssot::reconcile_trade_mismatch(res, |observed| {
+                        ssot::note_server_league(app_clone.clone(), observed);
+                    }).await;
+                    app_log(&app_clone, "Trade submit rejected: league mismatch; resolving server league".to_string());
+                }
+                Ok(res) => {
+                    // Preserve the reason for a 400/422 rejection in the log.
+                    let status = res.status();
+                    let body = res.text().await.unwrap_or_default();
+                    app_log(&app_clone, format!(
+                        "Trade submit rejected: {} — {}",
+                        status,
+                        body_excerpt(&body, 200),
+                    ));
+                }
+                Err(e) => {
+                    app_log(&app_clone, format!("Trade submit failed: {}", e));
                 }
             }
         });

@@ -762,7 +762,7 @@ fn extract_numeric_property_value(property: &GggItemProperty) -> i32 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A freshly constructed client has no resolved league, so the clone-helper
@@ -879,7 +879,9 @@ mod tests {
                     return;
                 };
                 let request = read_request(&mut sock).await;
-                let body = if request.contains("/api/trade/search/") {
+                let body = if request.contains("/api/analysis/status") {
+                    serde_json::json!({"league": "League B"})
+                } else if request.contains("/api/trade/search/") {
                     search.clone()
                 } else {
                     fetch.clone()
@@ -901,7 +903,7 @@ mod tests {
     /// Read one request: headers, then as many body bytes as `content-length`
     /// announced. Answering before the body is in would race the client's
     /// write.
-    async fn read_request(sock: &mut tokio::net::TcpStream) -> String {
+    pub(crate) async fn read_request(sock: &mut tokio::net::TcpStream) -> String {
         let mut buf: Vec<u8> = Vec::new();
         let mut chunk = [0u8; 2048];
         loop {
@@ -1113,6 +1115,34 @@ mod tests {
             tokio::task::yield_now().await;
         }
         panic!("only {} of {want} lookups reached the queue", client.pending());
+    }
+
+    #[tokio::test]
+    async fn queued_lookup_preserves_captured_league_across_refresh() {
+        let stub = stub_api(search_ok(), fetch_ok()).await;
+        let client = stub_client(&stub);
+        let ssot = Mutex::new(crate::ssot::AppSsotSnapshot::default());
+        ssot.lock().unwrap().league.name = Some("Allflame".to_string());
+        let held = client.lookup_mutex.lock().await;
+        let queued_client = client.clone();
+        let queued = tokio::spawn(async move {
+            queued_client.lookup_gem_with_mode("Empower Support", "20/20", 0.0, false, |_| {}).await
+        });
+        park_until(&client, 1).await;
+
+        crate::ssot::refresh_league_for_test(&stub.base_url, &ssot, &client).await;
+        assert_eq!(ssot.lock().unwrap().league.name.as_deref(), Some("League B"));
+        assert_eq!(client.league().unwrap(), "League B");
+        drop(held);
+
+        let result = queued.await.unwrap().expect("queued A lookup completes");
+        assert_eq!(result.league, "Allflame");
+        let requests = stub.requests();
+        assert_eq!(requests.len(), 3, "status, search and fetch: {requests:?}");
+        assert!(requests[1].starts_with("POST /api/trade/search/Allflame "), "{}", requests[1]);
+        assert_eq!(result.trade_url, "https://www.pathofexile.com/trade/search/Allflame/qid-1");
+        assert_eq!(result.listings[0].price, 12.5);
+        assert_eq!(serde_json::to_value(&result).unwrap()["league"], "Allflame");
     }
 
     /// Gem-path regression (POE-202 moved the queue body into `lookup_query`):

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct TradeLookupResult {
     pub gem: String,
     pub variant: String,
+    pub league: String,
     pub total: i32,
     pub price_floor: f64,
     pub price_ceiling: f64,

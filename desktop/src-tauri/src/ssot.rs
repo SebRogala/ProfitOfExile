@@ -1534,6 +1534,10 @@ async fn fetch_league_once(app: &AppHandle) -> Option<String> {
             .clone();
         (url, state.server_http.clone())
     };
+    fetch_league_from_server(&http, &server_url).await
+}
+
+async fn fetch_league_from_server(http: &reqwest::Client, server_url: &str) -> Option<String> {
     let url = format!("{}/api/analysis/status", server_url);
 
     let resp = match http.get(&url).send().await {
@@ -1555,6 +1559,20 @@ async fn fetch_league_once(app: &AppHandle) -> Option<String> {
         }
     };
     parse_league_from_status(&body)
+}
+
+/// Exercise Refresh's status read and dual-write without constructing windows.
+#[cfg(test)]
+pub(crate) async fn refresh_league_for_test(
+    server_url: &str,
+    ssot: &std::sync::Mutex<AppSsotSnapshot>,
+    trade_client: &TradeApiClient,
+) {
+    assert!(try_begin_resolving(ssot));
+    let league = fetch_league_from_server(&reqwest::Client::new(), server_url)
+        .await.expect("Refresh must resolve the stub's league");
+    write_league(ssot, trade_client, league);
+    clear_resolution_flags(ssot);
 }
 
 /// Spawn the start-only league resolver: fetch `/api/analysis/status`, and on
@@ -1656,6 +1674,144 @@ pub fn set_league(name: String, app: AppHandle) {
 #[tauri::command]
 pub fn refresh_league(app: AppHandle) {
     rearm_league(app);
+}
+
+/// Server hints only trigger a status read; they never relabel captured prices.
+pub(crate) fn note_server_league(app: AppHandle, observed: Option<&str>) {
+    let current = {
+        let state = app.state::<AppState>();
+        let snapshot = state.ssot.lock().unwrap_or_else(|e| e.into_inner());
+        snapshot.league.name.clone()
+    };
+    if observed.is_none() || observed != current.as_deref() {
+        rearm_league(app);
+    }
+}
+
+/// Keep the captured row unchanged while retrying overload responses. Every
+/// other response is terminal and is handled by the submitter exactly once.
+pub(crate) async fn submit_trade_result(
+    http: &reqwest::Client,
+    url: &str,
+    result: &crate::trade::types::TradeLookupResult,
+    log: impl Fn(String),
+) -> Result<reqwest::Response, reqwest::Error> {
+    for attempt in 1..=crate::TRADE_SUBMIT_ATTEMPTS {
+        match http.post(url).json(result).send().await {
+            Ok(res) if res.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE
+                && attempt < crate::TRADE_SUBMIT_ATTEMPTS =>
+            {
+                let delay = crate::retry_after_delay(
+                    res.headers().get(reqwest::header::RETRY_AFTER).and_then(|v| v.to_str().ok()),
+                );
+                log(format!(
+                    "Trade submit shed by server (503), retrying in {:.1}s (attempt {}/{})",
+                    delay.as_secs_f64(), attempt, crate::TRADE_SUBMIT_ATTEMPTS,
+                ));
+                tokio::time::sleep(delay).await;
+            }
+            terminal => return terminal,
+        }
+    }
+    unreachable!("the final attempt always returns its response")
+}
+
+/// Consume a 409 once. A malformed hint still asks for authoritative status.
+pub(crate) async fn reconcile_trade_mismatch(
+    response: reqwest::Response,
+    reconcile: impl FnOnce(Option<&str>),
+) {
+    let observed = response.json::<serde_json::Value>().await.ok()
+        .and_then(|body| parse_league_from_status(&body));
+    reconcile(observed.as_deref());
+}
+
+#[cfg(test)]
+mod trade_submit_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use tokio::io::AsyncWriteExt;
+
+    async fn submit_responses(responses: &[(u16, &str)]) -> (Vec<String>, Vec<Option<String>>, Vec<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/api/trade/submit", listener.local_addr().unwrap());
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let seen = requests.clone();
+        let responses: Vec<_> = responses.iter().map(|(status, body)| (*status, body.to_string())).collect();
+        let server = tokio::spawn(async move {
+            for (status, body) in responses {
+                let Ok(accepted) = tokio::time::timeout(Duration::from_secs(1), listener.accept()).await else {
+                    break;
+                };
+                let (mut socket, _) = accepted.unwrap();
+                let request = crate::trade::client::tests::read_request(&mut socket).await;
+                seen.lock().unwrap().push(request);
+                let response = format!(
+                    "HTTP/1.1 {status} Stub\r\ncontent-type: application/json\r\nretry-after: 0\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len(),
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+                socket.shutdown().await.unwrap();
+            }
+            // Keep the endpoint open to observe any forbidden extra submission.
+            if let Ok(Ok((mut socket, _))) = tokio::time::timeout(Duration::from_millis(100), listener.accept()).await {
+                let request = crate::trade::client::tests::read_request(&mut socket).await;
+                seen.lock().unwrap().push(request);
+            }
+        });
+        let hints = Mutex::new(Vec::new());
+        let logs = Mutex::new(Vec::new());
+        let result = crate::trade::signals::build_result("Gem", "20/20", "League A", "", 0, vec![], 0.0);
+        let response = submit_trade_result(&reqwest::Client::new(), &url, &result,
+            |line| logs.lock().unwrap().push(line),
+        ).await.unwrap();
+        if response.status() == reqwest::StatusCode::CONFLICT {
+            reconcile_trade_mismatch(response,
+                |hint| hints.lock().unwrap().push(hint.map(str::to_string)),
+            ).await;
+        } else {
+            let status = response.status();
+            logs.lock().unwrap().push(format!("terminal {status}"));
+        }
+        server.await.unwrap();
+        let requests = requests.lock().unwrap().clone();
+        for request in &requests {
+            let body = request.split_once("\r\n\r\n").unwrap().1;
+            let json: serde_json::Value = serde_json::from_str(body).unwrap();
+            assert_eq!(json["league"], "League A", "never relabel the old contribution");
+        }
+        (requests, hints.into_inner().unwrap(), logs.into_inner().unwrap())
+    }
+
+    #[tokio::test]
+    async fn trade_submit_mismatch_reconciles_once_without_resubmission() {
+        let (requests, hints, _) = submit_responses(&[(409, r#"{"error":"league_mismatch","league":"League B"}"#)]).await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(hints, vec![Some("League B".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn trade_submit_malformed_mismatch_reconciles_unknown_once() {
+        let (requests, hints, _) = submit_responses(&[(409, "not JSON")]).await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(hints, vec![None]);
+    }
+
+    #[tokio::test]
+    async fn trade_submit_overload_retries_the_captured_row() {
+        let (requests, hints, logs) = submit_responses(&[(503, "busy"), (503, "busy"), (200, "{}")]).await;
+        assert_eq!(requests.len(), 3);
+        assert!(hints.is_empty());
+        assert_eq!(logs.len(), 3);
+        assert_eq!(logs[2], "terminal 200 OK");
+    }
+
+    #[tokio::test]
+    async fn trade_submit_overload_stops_at_the_retry_bound() {
+        let (requests, hints, logs) = submit_responses(&[(503, "busy"), (503, "busy"), (503, "busy")]).await;
+        assert_eq!(requests.len(), 3);
+        assert!(hints.is_empty());
+        assert_eq!(logs[2], "terminal 503 Service Unavailable");
+    }
 }
 
 /// Resolve the league again, now.

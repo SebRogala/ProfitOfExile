@@ -60,6 +60,7 @@ pub fn build_result(
     TradeLookupResult {
         gem: gem.to_string(),
         variant: variant.to_string(),
+        league: league.to_string(),
         total,
         price_floor,
         price_ceiling,
@@ -146,6 +147,21 @@ pub(crate) fn floor_chaos_price(prices: &[f64]) -> f64 {
 mod tests {
     use super::*;
     use serde::Deserialize;
+
+    #[test]
+    fn populated_lookup_serializes_captured_league() {
+        let built = result(&vectors().remove(0));
+        let json = serde_json::to_value(built).unwrap();
+        assert_eq!(json["league"], "Test League");
+    }
+
+    #[test]
+    fn zero_result_lookup_serializes_captured_league_without_url() {
+        let built = build_result("Gem", "20/20", "League A", "", 0, vec![], 0.0);
+        let json = serde_json::to_value(built).unwrap();
+        assert_eq!(json["tradeUrl"], "");
+        assert_eq!(json["league"], "League A");
+    }
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
