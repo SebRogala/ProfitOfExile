@@ -163,6 +163,20 @@ function selection(profile: BossProfile, quantities: Quantities, ambiguous: stri
 		ambiguous: group ? { group: group.id, base: group.items.find((item) => candidates.includes(item.id))!.base, ids: candidates } : null
 	}
 }
+/** Display-only tags mirror LootProfile::match_line using immutable OCR labels.
+ * Native incoming changes on edits; these tags never construct selections or writes. */
+function ocrReadTags(profile: BossProfile, lines: string[]): LootSelection {
+	const label = (value: string) => value.replace(/['’`‘]/g, '').toUpperCase().replace(/\s+/g, ' ').trim()
+		.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').replace(/^SUPERIOR /, '')
+	const quantities: Quantities = {}
+	for (const line of lines) {
+		const normalized = label(line)
+		const candidates = [...profile.groups.flatMap((group) => group.items).filter((item) => label(item.base) === normalized || label(item.name) === normalized),
+			...profile.extra.filter((item) => label(item.name) === normalized)]
+		if (candidates.length === 1) quantities[candidates[0].id] = 1
+	}
+	return selection(profile, quantities, [])
+}
 export function mapNativeOverlay(slice: BossLootSlice, stats: BossStats | null, scope: StatsScope): OverlayInput | null {
 	const pending = slice.pending
 	if (!pending || pending.phase === 'reading' || pending.phase === 'loading') return null
@@ -171,7 +185,7 @@ export function mapNativeOverlay(slice: BossLootSlice, stats: BossStats | null, 
 	const capture: Capture = { ...selection(profile, pending.error || !pending.target ? pending.incoming : pending.items.quantities, pending.ambiguous), boss: profile.boss,
 		run: pending.run, seed: pending.attribution.seed, attribution: { ...pending.attribution, profileKey: profile.profileKey }, readLines: pending.readLines, unknownLines: pending.unknownLines }
 	const allItems = [...profile.groups.flatMap((group) => group.items), ...profile.extra, ...profile.categories]
-	return { profile, capture, readSelection: selection(profile, pending.incoming, []), stats, scope, layout: pending.layout,
+	return { profile, capture, readSelection: ocrReadTags(profile, pending.readLines), stats, scope, layout: pending.layout,
 		notCounted: allItems.filter((item) => !pending.items.counted.includes(item.id)).map((item) => item.id),
 		autoSaveSeconds: slice.settings.autoSaveSeconds,
 		seconds: pending.deadlineMs === null ? 0 : Math.max(0, Math.ceil((pending.deadlineMs - slice.nowMs) / 1000)),

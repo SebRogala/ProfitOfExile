@@ -105,6 +105,11 @@ describe('native boss loot owners', () => {
 		Object.assign(slice.pending!, { target: null, incoming: {}, error: 'Check guaranteed groups', deadlineMs: null })
 		expect(mapNativeOverlay(slice, null, 'own')?.capture.picks.unique).toEqual([])
 	})
+	it('retains the original OCR read tag after native selection changes', () => {
+		const slice = pendingSlice()
+		Object.assign(slice.pending!, { target: null, incoming: {}, error: 'Check guaranteed groups', deadlineMs: null })
+		expect(mapNativeOverlay(slice, null, 'own')?.readSelection?.picks.unique).toEqual(['Cinderswallow Urn'])
+	})
 })
 
 describe('native Runs controller integration', () => {
