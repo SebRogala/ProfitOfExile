@@ -93,7 +93,7 @@ pub struct PendingCapture {
     pub incoming: Selection, pub items: RunItems, pub read_lines: Vec<String>,
     pub unknown_lines: Vec<String>, pub ambiguous: Vec<Vec<String>>,
     pub phase: Phase, pub deadline_ms: Option<u64>, pub close_at_ms: Option<u64>,
-    pub target: Option<StoredRun>, pub force_new: bool, pub run: u64,
+    pub target: Option<StoredRun>, pub force_new: bool, pub run: u64, pub next_run: u64,
     pub dropped_positive_keys: Vec<String>, pub error: Option<String>,
 }
 impl PendingCapture {
@@ -181,7 +181,7 @@ impl LootOwner {
             id: self.sequence, attribution: area.unwrap(), league, profile: profile.clone(),
             layout: settings.layout, rect, incoming: Selection::new(), items: RunItems { quantities: Selection::new(), counted: counted(profile, settings) },
             read_lines: Vec::new(), unknown_lines: Vec::new(), ambiguous: Vec::new(), phase: Phase::Reading,
-            deadline_ms: None, close_at_ms: None, target: None, force_new: false, run: 0,
+            deadline_ms: None, close_at_ms: None, target: None, force_new: false, run: 0, next_run: 0,
             dropped_positive_keys: Vec::new(), error: None,
         });
         Ok(self.sequence)
@@ -204,6 +204,7 @@ impl LootOwner {
         p.target = latest.filter(|r| r.profile == ProfileRef::from(&p.profile) && r.league == p.league &&
             r.seed.is_some() && r.seed == p.attribution.seed);
         p.run = p.target.as_ref().map(|r| r.run).unwrap_or(next);
+        p.next_run = next;
         p.phase = Phase::Open;
         p.restart(settings, now);
     }
@@ -229,7 +230,7 @@ impl LootOwner {
         p.restart(settings, now); Ok(())
     }
     pub fn force_new(&mut self, id: u64, settings: &LootSettings, now: u64) -> Result<(), String> {
-        let p = self.editable(id)?; p.force_new = true; p.target = None; p.restart(settings, now); Ok(())
+        let p = self.editable(id)?; p.force_new = true; p.target = None; p.run = p.next_run; p.restart(settings, now); Ok(())
     }
     pub fn discard(&mut self, id: u64) -> Result<(), String> {
         if self.pending.as_ref().is_some_and(|p| p.id == id && p.phase != Phase::Saving) {
@@ -288,7 +289,8 @@ async fn submit_capture(owner: &Mutex<LootOwner>, settings: &LootSettings, http:
         if !o.pending.as_ref().is_some_and(|p| p.id == id && p.phase == Phase::Saving) { return; }
         match fresh {
             Ok(Some(target)) if request.target.as_ref().is_some_and(|t| t.id == target.id) => {
-                o.ready(id, Some(target), 0, settings, now + started.elapsed().as_millis() as u64);
+                let next = o.pending.as_ref().unwrap().next_run;
+                o.ready(id, Some(target), next, settings, now + started.elapsed().as_millis() as u64);
                 // A different league/seed/profile cannot silently become an append.
                 if let Some(p) = o.pending.as_mut() {
                     if p.target.is_none() { p.phase = Phase::Rejected; p.deadline_ms = None; p.error = Some("Merge target changed; capture again".into()); }
@@ -517,7 +519,6 @@ mod platform {
 #[cfg(test)]
 mod owner_tests {
     use super::*;
-    use crate::loot_api::*;
     use std::collections::VecDeque;
 
     const EYE: &str = "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly";
@@ -684,6 +685,7 @@ mod owner_tests {
         assert!(o.pending.as_ref().unwrap().target.is_none());
         o.ready(id, Some(run(1)), 2, &s, 0);
         o.force_new(id, &s, 1).unwrap();
+        assert_eq!(o.pending.as_ref().unwrap().run, 2);
         let changed = LootSettings { not_counted: vec![EYE.into()], ..s };
         let request = o.prepare(&changed, 2, true).unwrap();
         assert_eq!(request.1.mode, "forceNew");
