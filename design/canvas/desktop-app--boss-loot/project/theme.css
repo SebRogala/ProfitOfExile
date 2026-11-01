@@ -1,0 +1,80 @@
+/* POE-317 Boss loot — shared styles for every board on this canvas.
+   Token values are copied verbatim from desktop/src/tokens.css (the only token
+   declaration site); boards use var(--…) only, never raw hex. */
+:root {
+	--bg: #1a1a2e;
+	--surface: #16213e;
+	--border: #0f3460;
+	--text: #e0e0e0;
+	--text-muted: #888;
+	--accent: #e94560;
+	--success: #4ade80;
+	--warning: #fbbf24;
+	--color-lab-bg: #0f1117;
+	--color-lab-surface: #1a1d27;
+	--color-lab-border: #2a2d37;
+	--color-lab-text: #e4e4e7;
+	--color-lab-text-secondary: #9ca3af;
+	--color-lab-text-muted: #888;
+	--color-lab-green: #22c55e;
+	--color-lab-red: #ef4444;
+	--color-lab-yellow: #eab308;
+	--color-lab-blue: #3b82f6;
+	--color-lab-cyan: #22d3ee;
+	--color-lab-purple: #a855f7;
+	--color-lab-green-muted: #6b9e7a;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--color-lab-text); }
+button { font-family: inherit; }
+button:focus-visible, input:focus-visible, a:focus-visible { outline: 1px solid var(--color-lab-blue); outline-offset: -1px; }
+a { color: var(--color-lab-blue); }
+.mono { font-family: 'Consolas', 'Monaco', monospace; font-weight: 600; }
+
+/* ---- Game stand-in behind overlay boards (no capture screenshots yet) ---- */
+.game { background: repeating-linear-gradient(135deg, #20232b 0 14px, #1a1c23 14px 28px); position: relative; }
+.game-tag { position: absolute; left: 12px; bottom: 10px; font-size: 11px; color: var(--color-lab-text-secondary); background: var(--color-lab-bg); padding: 2px 6px; border-radius: 3px; }
+
+/* ---- Overlay panel (both variants) ---- */
+.ov { background: var(--color-lab-bg); border: 1px solid var(--color-lab-border); border-radius: 6px; color: var(--color-lab-text); font-size: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.55); }
+.ov-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 10px 12px 8px; border-bottom: 1px solid var(--color-lab-border); }
+.ov-title { font-size: 13px; font-weight: 700; }
+.ov-why { font-size: 11px; color: var(--color-lab-text-secondary); margin-top: 2px; }
+.ov-sec { padding: 8px 12px 10px; }
+.ov-sec + .ov-sec { border-top: 1px solid var(--color-lab-border); }
+.grp { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--color-lab-text-secondary); display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.grp-note { text-transform: none; letter-spacing: 0; }
+.ok { color: var(--color-lab-green); }
+.warn { color: var(--color-lab-yellow); }
+.bad { color: var(--color-lab-red); }
+.sec { color: var(--color-lab-text-secondary); }
+
+/* state badge: tinted pill, no border, no pointer */
+.badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 8px; white-space: nowrap; }
+.badge-yellow { background: rgba(234,179,8,.14); color: var(--color-lab-yellow); }
+.badge-green { background: rgba(34,197,94,.14); color: var(--color-lab-green); }
+.badge-red { background: rgba(239,68,68,.22); color: var(--color-lab-text); }
+.badge-blue { background: rgba(59,130,246,.16); color: var(--color-lab-text); }
+.badge-grey { background: rgba(255,255,255,.07); color: var(--color-lab-text-secondary); }
+
+/* Do: a box */
+.btn { height: 28px; padding: 0 12px; border-radius: 4px; border: 1px solid var(--color-lab-border); background: var(--color-lab-surface); color: var(--color-lab-text); font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn:hover { background: rgba(255,255,255,.06); }
+/* dark label on blue: 5.1:1 (white on this blue is 3.7:1 and fails AA at 12px) */
+.btn-primary { background: var(--color-lab-blue); border-color: var(--color-lab-blue); color: var(--color-lab-bg); font-weight: 600; }
+.btn-primary:hover { filter: brightness(1.1); }
+.btn-ghost { background: transparent; border-color: var(--color-lab-text-muted); }
+
+/* SegmentedButtons recreation (desktop/src/lib/components/SegmentedButtons.svelte) */
+.segmented { display: inline-flex; border: 1px solid var(--color-lab-border); border-radius: 4px; overflow: hidden; }
+.segmented-btn { background: transparent; border: none; color: var(--color-lab-text-secondary); padding: 4px 10px; font-size: .6875rem; font-weight: 600; cursor: pointer; }
+.segmented-btn:hover { color: var(--color-lab-text); background: rgba(255,255,255,.05); }
+.segmented-btn.active { color: var(--color-lab-text); background: rgba(99,102,241,.2); }
+
+/* countdown bar */
+.cd { height: 3px; background: var(--color-lab-border); border-radius: 2px; overflow: hidden; }
+.cd > i { display: block; height: 100%; background: var(--color-lab-blue); }
+
+/* keycap (shortcut display) */
+.kbd { font-family: 'Consolas', 'Monaco', monospace; font-size: 11px; padding: 1px 6px; border: 1px solid var(--color-lab-text-muted); border-bottom-width: 2px; border-radius: 3px; color: var(--color-lab-text); background: var(--color-lab-surface); white-space: nowrap; }

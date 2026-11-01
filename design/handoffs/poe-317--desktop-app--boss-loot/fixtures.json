@@ -1,0 +1,1160 @@
+{
+ "_note": "Exact mock data for POE-317 Boss loot. Do NOT invent or widen fields. Item ids are fixture keys; map them onto codebase types per AGENT.md §6. Catarina is the only shipped profile; testProfiles exist only to exercise the general overlay shape in tests and are never shipped or shown.",
+ "_owners": {
+  "profiles": "desktop built-in boss-profile table (Rust, beside loot_capture.rs) — config, shipped with the app",
+  "testProfiles": "test-only data, same shape as profiles",
+  "capture": "desktop session: OCR of the capture (loot_capture.rs) + Client.txt zone/level/seed (lab_state.rs parser)",
+  "capture.attribution": "derived (client, this task): latest non-town/hideout 'Generating level NN area \"<id>\" with seed N' matched against profiles[].area + level",
+  "stats": "server: boss-loot run aggregates per boss and scope (endpoint not designed; stub)",
+  "stats.*.items[].rate": "derived (client, this task): round(drops / runs × 100) + '%'; '—' when runs = 0 or the item is not counted",
+  "runs": "server: boss-loot runs for this device (endpoint not designed; stub)",
+  "submit": "server: submit-run endpoint (not designed; stub the outcomes listed)",
+  "moduleSettings": "desktop settings (persisted; ui_prefs vs Settings struct is the implementer's call per ADR-013)",
+  "overlaySettings": "desktop settings: Settings.widgets placement map + a ui_prefs key for the layout",
+  "device": "desktop: the existing device identity"
+ },
+ "_formats": {
+  "rate": "whole percent, Math.round(drops/runs*100), e.g. 31% for 24/78; provenance 'drops/runs' e.g. 24/78; never decimals",
+  "wikiRate": "display text exactly as stored (~50%, <0.5%, 3–5%, —); never parsed",
+  "counts": "plain integers, no grouping (values stay below 1,000 in this fixture; larger values go through groupNumber())",
+  "runDate": "null for seed runs → render 'no date'",
+  "countdown": "whole seconds"
+ },
+ "profiles": {
+  "catarina": {
+   "name": "Catarina",
+   "fullName": "Catarina, Master of Undeath",
+   "key": "Normal",
+   "area": "BetrayalMastermindFight",
+   "level": 83,
+   "groups": [
+    {
+     "id": "unique",
+     "label": "Unique",
+     "min": 1,
+     "max": 1,
+     "items": [
+      {
+       "id": "urn",
+       "name": "Cinderswallow Urn",
+       "base": "Silver Flask",
+       "wikiRate": "30%"
+      },
+      {
+       "id": "spinehail",
+       "name": "Spinehail",
+       "base": "Vile Arrow Quiver",
+       "wikiRate": "20%"
+      },
+      {
+       "id": "cane",
+       "name": "Cane of Kulemak",
+       "base": "Serpentine Staff",
+       "wikiRate": "18%"
+      },
+      {
+       "id": "diadem",
+       "name": "The Devouring Diadem",
+       "base": "Necromancer Circlet",
+       "wikiRate": "16%"
+      },
+      {
+       "id": "bitterbind",
+       "name": "Bitterbind Point",
+       "base": "Titanium Spirit Shield",
+       "wikiRate": "10%"
+      },
+      {
+       "id": "queens",
+       "name": "The Queen's Hunger",
+       "base": "Vaal Regalia",
+       "wikiRate": "6%"
+      }
+     ],
+     "_note": "Base types confirmed on poe.ninja 2026-11-01. Cane of Kulemak has plain / 3-veiled / 4-veiled variants on one base: one entry, variant not recorded (owner 2026-11-01)."
+    }
+   ],
+   "extra": [
+    {
+     "id": "eye",
+     "name": "Zorath's Eye of the Endless",
+     "base": "Map fragment",
+     "wikiRate": "~50%"
+    },
+    {
+     "id": "veiledex",
+     "name": "Veiled Exalted Orb",
+     "base": "Currency",
+     "wikiRate": "25%"
+    },
+    {
+     "id": "allflame",
+     "name": "Allflame Ember of Kulemak",
+     "base": "Allflame Ember",
+     "wikiRate": "60%"
+    },
+    {
+     "id": "communion",
+     "name": "Communion Support",
+     "base": "Support gem",
+     "wikiRate": "10%",
+     "notCountedDefault": true
+    },
+    {
+     "id": "astrolabe",
+     "name": "Templar Astrolabe",
+     "base": "Astrolabe",
+     "wikiRate": "—"
+    },
+    {
+     "id": "nooks",
+     "name": "Nook's Crown",
+     "base": "Divination card",
+     "wikiRate": "<0.5%"
+    },
+    {
+     "id": "keepers",
+     "name": "Keeper's Corruption",
+     "base": "Divination card",
+     "wikiRate": "—"
+    }
+   ],
+   "categories": [
+    {
+     "id": "rareveiled",
+     "name": "Rare, two veiled modifiers",
+     "base": "any rare equipment",
+     "wikiRate": "—",
+     "_note": "category tile: counted by hand, OCR cannot read mods"
+    }
+   ]
+  }
+ },
+ "testProfiles": {
+  "maven": {
+   "name": "The Maven",
+   "key": "Normal pool",
+   "area": "[area id]",
+   "level": "[NN]",
+   "groups": [
+    {
+     "id": "unique",
+     "label": "Unique",
+     "min": 1,
+     "max": 1,
+     "items": [
+      {
+       "id": "legacy",
+       "name": "Legacy of Fury",
+       "base": "Wyrmscale Boots",
+       "wikiRate": "—"
+      },
+      {
+       "id": "graven",
+       "name": "Graven's Secret",
+       "base": "Cloth Belt",
+       "wikiRate": "17%"
+      },
+      {
+       "id": "arn",
+       "name": "Arn's Anguish",
+       "base": "Cloth Belt",
+       "wikiRate": "17%"
+      },
+      {
+       "id": "olesya",
+       "name": "Olesya's Delight",
+       "base": "Cloth Belt",
+       "wikiRate": "17%"
+      },
+      {
+       "id": "doppel",
+       "name": "Doppelgänger Guise",
+       "base": "Sadist Garb",
+       "wikiRate": "—"
+      },
+      {
+       "id": "echoforge",
+       "name": "Echoforge",
+       "base": "Infernal Sword",
+       "wikiRate": "—"
+      }
+     ]
+    }
+   ],
+   "extra": [
+    {
+     "id": "conflict",
+     "name": "Orb of Conflict",
+     "base": "Currency",
+     "wikiRate": "32%",
+     "quantity": true
+    },
+    {
+     "id": "invert",
+     "name": "Invert the Rules",
+     "base": "[item type]",
+     "wikiRate": "10%"
+    },
+    {
+     "id": "auspicious",
+     "name": "Auspicious Ambitions",
+     "base": "Divination card",
+     "wikiRate": "<0.05%"
+    }
+   ],
+   "categories": [],
+   "capture": {
+    "picks": {
+     "unique": []
+    },
+    "extra": {
+     "conflict": 2
+    },
+    "categories": {},
+    "ambiguous": {
+     "group": "unique",
+     "base": "Cloth Belt",
+     "ids": [
+      "graven",
+      "arn",
+      "olesya"
+     ]
+    },
+    "_note": "three uniques on Cloth Belt: never pre-filled, picker + paused countdown"
+   }
+  },
+  "fear": {
+   "name": "Incarnation of Fear",
+   "key": "Normal pool",
+   "area": "[area id]",
+   "level": "[NN]",
+   "groups": [
+    {
+     "id": "unique",
+     "label": "Unique",
+     "min": 1,
+     "max": 1,
+     "items": [
+      {
+       "id": "servant",
+       "name": "Servant of Decay",
+       "base": "Torturer Garb",
+       "wikiRate": "—"
+      },
+      {
+       "id": "enmity",
+       "name": "Enmity's Embrace",
+       "base": "Vermillion Ring",
+       "wikiRate": "—"
+      },
+      {
+       "id": "opalu",
+       "name": "[unique on Opal Ring]",
+       "base": "Opal Ring",
+       "wikiRate": "—"
+      },
+      {
+       "id": "axeu",
+       "name": "[unique on Abyssal Axe]",
+       "base": "Abyssal Axe",
+       "wikiRate": "—"
+      }
+     ]
+    },
+    {
+     "id": "astrolabe",
+     "label": "Astrolabe",
+     "min": 1,
+     "max": 1,
+     "items": [
+      {
+       "id": "templar",
+       "name": "Templar Astrolabe",
+       "base": "Astrolabe",
+       "wikiRate": "33%"
+      },
+      {
+       "id": "otherastro",
+       "name": "[9 other Astrolabe types]",
+       "base": "Astrolabe · 7.5% each",
+       "wikiRate": "—"
+      }
+     ]
+    }
+   ],
+   "extra": [
+    {
+     "id": "intention",
+     "name": "Orb of Intention",
+     "base": "Currency",
+     "wikiRate": "50%",
+     "quantity": true
+    },
+    {
+     "id": "bound",
+     "name": "Bound by Destiny",
+     "base": "[item type]",
+     "wikiRate": "10%"
+    }
+   ],
+   "categories": [
+    {
+     "id": "memory",
+     "name": "Memory Strand items",
+     "base": "any item with memory strands",
+     "wikiRate": "—"
+    }
+   ],
+   "capture": {
+    "picks": {
+     "unique": [
+      "servant"
+     ],
+     "astrolabe": [
+      "templar"
+     ]
+    },
+    "extra": {
+     "intention": 1
+    },
+    "categories": {
+     "memory": 2
+    },
+    "ambiguous": null
+   }
+  },
+  "blackstar": {
+   "name": "Black Star",
+   "key": "Polaric Invitation",
+   "area": "[area id]",
+   "level": "[NN]",
+   "groups": [],
+   "extra": [
+    {
+     "id": "polaric",
+     "name": "Polaric Devastation",
+     "base": "Opal Ring",
+     "wikiRate": "—"
+    },
+    {
+     "id": "dawn",
+     "name": "Sudden Dawn",
+     "base": "Steel Circlet",
+     "wikiRate": "3–5%"
+    },
+    {
+     "id": "struggle",
+     "name": "The Eternal Struggle",
+     "base": "Onyx Amulet",
+     "wikiRate": "5–10%"
+    },
+    {
+     "id": "eannul",
+     "name": "Eldritch Orb of Annulment",
+     "base": "Currency",
+     "wikiRate": "5–10%",
+     "quantity": true
+    },
+    {
+     "id": "echaos",
+     "name": "Eldritch Chaos Orb",
+     "base": "Currency",
+     "wikiRate": "5–10%",
+     "quantity": true
+    },
+    {
+     "id": "eexalt",
+     "name": "Eldritch Exalted Orb",
+     "base": "Currency",
+     "wikiRate": "5–10%",
+     "quantity": true
+    },
+    {
+     "id": "gember",
+     "name": "Grand Eldritch Ember",
+     "base": "Currency",
+     "wikiRate": "12–20%",
+     "quantity": true
+    }
+   ],
+   "categories": [],
+   "capture": {
+    "picks": {},
+    "extra": {
+     "struggle": 1,
+     "gember": 3,
+     "echaos": 1
+    },
+    "categories": {},
+    "ambiguous": null,
+    "_note": "no guaranteed group: the guaranteed area is absent, not empty"
+   }
+  }
+ },
+ "capture": {
+  "boss": "catarina",
+  "run": 79,
+  "seed": "2667568808",
+  "attribution": {
+   "area": "BetrayalMastermindFight",
+   "level": 83,
+   "profileKey": "Normal"
+  },
+  "picks": {
+   "unique": [
+    "urn"
+   ]
+  },
+  "extra": {
+   "eye": 1,
+   "veiledex": 1,
+   "allflame": 1
+  },
+  "categories": {},
+  "ambiguous": null,
+  "readLines": [
+   "SILVER FLASK",
+   "VEILED EXALTED ORB",
+   "ZORATH'S EYE OF THE ENDLESS",
+   "ALLFLAME EMBER OF KULEMAK"
+  ],
+  "unknownLines": [
+   "Spidersilk Robe"
+  ],
+  "_note": "Spidersilk Robe: a magic item next to the drops in the owner's 2026-10-27 screenshot; exact-base matching leaves it unmatched → 'Not in table'.",
+  "refusedExample": {
+   "area": "MapWorldsStrand",
+   "level": 83,
+   "_note": "illustrative zone with no profile → capture refused, nothing logged (reference 14)"
+  },
+  "mergedExample": {
+   "previousRun": 79,
+   "_note": "a second capture in seed 2667568808 merges into run 79 (reference 04)"
+  }
+ },
+ "stats": {
+  "catarina": {
+   "own": {
+    "runs": 78,
+    "devices": 1,
+    "items": {
+     "allflame": 22,
+     "astrolabe": 2,
+     "bitterbind": 6,
+     "cane": 14,
+     "communion": 1,
+     "diadem": 11,
+     "eye": 33,
+     "queens": 7,
+     "spinehail": 16,
+     "urn": 24,
+     "veiledex": 26
+    }
+   },
+   "collective": {
+    "runs": 78,
+    "devices": 1,
+    "items": {
+     "allflame": 22,
+     "astrolabe": 2,
+     "bitterbind": 6,
+     "cane": 14,
+     "communion": 1,
+     "diadem": 11,
+     "eye": 33,
+     "queens": 7,
+     "spinehail": 16,
+     "urn": 24,
+     "veiledex": 26
+    },
+    "_note": "today only this device has runs, so collective = own; the UI still says '1 device'"
+   },
+   "_note": "items = drops (runs containing the item). Every one of the 78 runs has exactly one unique-pool drop: 24+16+14+11+6+7 = 78. communion has 1 drop but is not counted by default (moduleSettings.notCounted) → shown '—', 'not counted'. Rare-veiled category: 0."
+  }
+ },
+ "runs": {
+  "catarina": {
+   "total": 78,
+   "pageSize": 10,
+   "order": "newest first",
+   "items": [
+    {
+     "run": 1,
+     "date": null,
+     "items": [
+      "cane",
+      "communion"
+     ]
+    },
+    {
+     "run": 2,
+     "date": null,
+     "items": [
+      "urn"
+     ]
+    },
+    {
+     "run": 3,
+     "date": null,
+     "items": [
+      "urn"
+     ]
+    },
+    {
+     "run": 4,
+     "date": null,
+     "items": [
+      "cane",
+      "eye"
+     ]
+    },
+    {
+     "run": 5,
+     "date": null,
+     "items": [
+      "cane",
+      "veiledex",
+      "allflame"
+     ]
+    },
+    {
+     "run": 6,
+     "date": null,
+     "items": [
+      "urn",
+      "eye",
+      "veiledex",
+      "allflame",
+      "astrolabe"
+     ]
+    },
+    {
+     "run": 7,
+     "date": null,
+     "items": [
+      "bitterbind"
+     ]
+    },
+    {
+     "run": 8,
+     "date": null,
+     "items": [
+      "cane",
+      "eye"
+     ]
+    },
+    {
+     "run": 9,
+     "date": null,
+     "items": [
+      "urn",
+      "eye"
+     ]
+    },
+    {
+     "run": 10,
+     "date": null,
+     "items": [
+      "spinehail",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 11,
+     "date": null,
+     "items": [
+      "cane"
+     ]
+    },
+    {
+     "run": 12,
+     "date": null,
+     "items": [
+      "bitterbind",
+      "eye",
+      "allflame"
+     ]
+    },
+    {
+     "run": 13,
+     "date": null,
+     "items": [
+      "queens",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 14,
+     "date": null,
+     "items": [
+      "queens",
+      "eye",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 15,
+     "date": null,
+     "items": [
+      "cane"
+     ]
+    },
+    {
+     "run": 16,
+     "date": null,
+     "items": [
+      "urn",
+      "eye",
+      "veiledex",
+      "allflame"
+     ]
+    },
+    {
+     "run": 17,
+     "date": null,
+     "items": [
+      "spinehail",
+      "eye",
+      "allflame"
+     ]
+    },
+    {
+     "run": 18,
+     "date": null,
+     "items": [
+      "urn",
+      "eye",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 19,
+     "date": null,
+     "items": [
+      "urn",
+      "eye"
+     ]
+    },
+    {
+     "run": 20,
+     "date": null,
+     "items": [
+      "spinehail"
+     ]
+    },
+    {
+     "run": 21,
+     "date": null,
+     "items": [
+      "diadem",
+      "eye",
+      "allflame"
+     ]
+    },
+    {
+     "run": 22,
+     "date": null,
+     "items": [
+      "urn"
+     ]
+    },
+    {
+     "run": 23,
+     "date": null,
+     "items": [
+      "cane",
+      "eye",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 24,
+     "date": null,
+     "items": [
+      "queens",
+      "eye",
+      "veiledex",
+      "allflame"
+     ]
+    },
+    {
+     "run": 25,
+     "date": null,
+     "items": [
+      "urn",
+      "allflame"
+     ]
+    },
+    {
+     "run": 26,
+     "date": null,
+     "items": [
+      "spinehail"
+     ]
+    },
+    {
+     "run": 27,
+     "date": null,
+     "items": [
+      "spinehail",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 28,
+     "date": null,
+     "items": [
+      "urn"
+     ]
+    },
+    {
+     "run": 29,
+     "date": null,
+     "items": [
+      "diadem",
+      "eye"
+     ]
+    },
+    {
+     "run": 30,
+     "date": null,
+     "items": [
+      "bitterbind",
+      "eye"
+     ]
+    },
+    {
+     "run": 31,
+     "date": null,
+     "items": [
+      "spinehail",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 32,
+     "date": null,
+     "items": [
+      "spinehail",
+      "eye"
+     ]
+    },
+    {
+     "run": 33,
+     "date": null,
+     "items": [
+      "bitterbind"
+     ]
+    },
+    {
+     "run": 34,
+     "date": null,
+     "items": [
+      "urn",
+      "eye",
+      "veiledex",
+      "allflame"
+     ]
+    },
+    {
+     "run": 35,
+     "date": null,
+     "items": [
+      "queens",
+      "eye",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 36,
+     "date": null,
+     "items": [
+      "urn",
+      "eye",
+      "veiledex",
+      "allflame"
+     ]
+    },
+    {
+     "run": 37,
+     "date": null,
+     "items": [
+      "cane"
+     ]
+    },
+    {
+     "run": 38,
+     "date": null,
+     "items": [
+      "urn",
+      "eye"
+     ]
+    },
+    {
+     "run": 39,
+     "date": null,
+     "items": [
+      "urn",
+      "eye",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 40,
+     "date": null,
+     "items": [
+      "queens",
+      "eye"
+     ]
+    },
+    {
+     "run": 41,
+     "date": null,
+     "items": [
+      "queens",
+      "veiledex",
+      "allflame"
+     ]
+    },
+    {
+     "run": 42,
+     "date": null,
+     "items": [
+      "urn",
+      "eye",
+      "allflame"
+     ]
+    },
+    {
+     "run": 43,
+     "date": null,
+     "items": [
+      "bitterbind",
+      "eye",
+      "allflame"
+     ]
+    },
+    {
+     "run": 44,
+     "date": null,
+     "items": [
+      "spinehail",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 45,
+     "date": null,
+     "items": [
+      "cane",
+      "eye"
+     ]
+    },
+    {
+     "run": 46,
+     "date": null,
+     "items": [
+      "diadem",
+      "eye",
+      "veiledex",
+      "allflame"
+     ]
+    },
+    {
+     "run": 47,
+     "date": null,
+     "items": [
+      "urn"
+     ]
+    },
+    {
+     "run": 48,
+     "date": null,
+     "items": [
+      "urn"
+     ]
+    },
+    {
+     "run": 49,
+     "date": null,
+     "items": [
+      "spinehail",
+      "veiledex",
+      "allflame"
+     ]
+    },
+    {
+     "run": 50,
+     "date": null,
+     "items": [
+      "spinehail"
+     ]
+    },
+    {
+     "run": 51,
+     "date": null,
+     "items": [
+      "cane",
+      "veiledex",
+      "allflame"
+     ]
+    },
+    {
+     "run": 52,
+     "date": null,
+     "items": [
+      "spinehail",
+      "eye"
+     ]
+    },
+    {
+     "run": 53,
+     "date": null,
+     "items": [
+      "cane"
+     ]
+    },
+    {
+     "run": 54,
+     "date": null,
+     "items": [
+      "urn"
+     ]
+    },
+    {
+     "run": 55,
+     "date": null,
+     "items": [
+      "diadem"
+     ]
+    },
+    {
+     "run": 56,
+     "date": null,
+     "items": [
+      "diadem"
+     ]
+    },
+    {
+     "run": 57,
+     "date": null,
+     "items": [
+      "spinehail",
+      "eye",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 58,
+     "date": null,
+     "items": [
+      "urn",
+      "veiledex",
+      "allflame"
+     ]
+    },
+    {
+     "run": 59,
+     "date": null,
+     "items": [
+      "diadem",
+      "eye"
+     ]
+    },
+    {
+     "run": 60,
+     "date": null,
+     "items": [
+      "spinehail",
+      "eye",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 61,
+     "date": null,
+     "items": [
+      "urn",
+      "allflame"
+     ]
+    },
+    {
+     "run": 62,
+     "date": null,
+     "items": [
+      "cane"
+     ]
+    },
+    {
+     "run": 63,
+     "date": null,
+     "items": [
+      "spinehail",
+      "astrolabe"
+     ]
+    },
+    {
+     "run": 64,
+     "date": null,
+     "items": [
+      "bitterbind",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 65,
+     "date": null,
+     "items": [
+      "cane",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 66,
+     "date": null,
+     "items": [
+      "urn",
+      "veiledex"
+     ]
+    },
+    {
+     "run": 67,
+     "date": null,
+     "items": [
+      "spinehail",
+      "allflame"
+     ]
+    },
+    {
+     "run": 68,
+     "date": null,
+     "items": [
+      "urn",
+      "allflame"
+     ]
+    },
+    {
+     "run": 69,
+     "date": null,
+     "items": [
+      "spinehail"
+     ]
+    },
+    {
+     "run": 70,
+     "date": null,
+     "items": [
+      "urn",
+      "eye"
+     ]
+    },
+    {
+     "run": 71,
+     "date": null,
+     "items": [
+      "urn",
+      "eye"
+     ]
+    },
+    {
+     "run": 72,
+     "date": null,
+     "items": [
+      "diadem",
+      "allflame"
+     ]
+    },
+    {
+     "run": 73,
+     "date": null,
+     "items": [
+      "diadem"
+     ]
+    },
+    {
+     "run": 74,
+     "date": null,
+     "items": [
+      "diadem",
+      "eye"
+     ]
+    },
+    {
+     "run": 75,
+     "date": null,
+     "items": [
+      "cane"
+     ]
+    },
+    {
+     "run": 76,
+     "date": null,
+     "items": [
+      "queens"
+     ]
+    },
+    {
+     "run": 77,
+     "date": null,
+     "items": [
+      "diadem"
+     ]
+    },
+    {
+     "run": 78,
+     "date": null,
+     "items": [
+      "diadem",
+      "allflame"
+     ]
+    }
+   ],
+   "_note": "the owner's seed data has no dates. Page 1 shows runs 78–69, page 8 runs 8–1."
+  }
+ },
+ "submit": {
+  "outcomes": [
+   "saving",
+   "saved",
+   "unreachable"
+  ],
+  "_note": "unreachable → 'Not saved', the run is lost; no local queue (owner 2026-11-01)"
+ },
+ "moduleSettings": {
+  "enabled": true,
+  "autoSaveSeconds": 10,
+  "autoSaveOptions": [
+   5,
+   10,
+   20,
+   30,
+   0
+  ],
+  "_note_autoSave": "0 = Off: the overlay waits for Save",
+  "captureShortcut": "Shift + Right click",
+  "previewShortcut": "Shift + F8",
+  "notCounted": [
+   "communion"
+  ]
+ },
+ "overlaySettings": {
+  "show": true,
+  "layout": "grid",
+  "layoutOptions": [
+   "grid",
+   "list"
+  ],
+  "defaultPlacement": {
+   "x": 1480,
+   "y": 120,
+   "hostWidth": 1920,
+   "hostHeight": 1080,
+   "size": "content-sized"
+  },
+  "_note": "defaultPlacement is the designer's default (right edge, top); the user moves it with Configure widgets"
+ },
+ "device": {
+  "id": "[device id]"
+ }
+}

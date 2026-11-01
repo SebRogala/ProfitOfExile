@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Boss loot page · prototype</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+<script src="data.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:var(--bg)}
+/* ---- chrome: 1:1 from TopBar.svelte / Sidebar.svelte ---- */
+.topbar{height:36px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding-left:.75rem;color:var(--text)}
+.tb-l,.tb-c,.tb-r{display:flex;align-items:center;gap:.5rem}
+.tb-r{gap:12px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--text-muted)}
+.dot.on{background:var(--success)}
+.rate{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:2px 6px}
+.win{background:none;border:none;color:var(--text-muted);width:46px;height:36px;font-size:14px}
+.sidebar{width:180px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;justify-content:space-between}
+.sb-top{padding:10px 8px}
+.sb-sec{margin-bottom:16px}
+.sb-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);padding:0 10px;margin-bottom:4px}
+.nav{all:unset;display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;border-radius:5px;color:var(--text);cursor:pointer;width:100%;box-sizing:border-box}
+.nav:hover{background:var(--border)}
+.nav.active{background:var(--border);color:var(--accent)}
+.nav img{width:18px;height:18px;object-fit:contain;flex-shrink:0}
+.nav img.lab{width:18px;height:14px}
+.nav .ic{width:16px;text-align:center;flex-shrink:0}
+.sb-bottom{border-top:1px solid var(--border);padding:8px}
+.sb-bottom .sb-label{margin-bottom:6px}
+.orow{display:flex;justify-content:space-between;align-items:center;background:var(--bg);padding:4px 8px;margin-bottom:3px;border-radius:4px;font-size:11px;width:100%;border:none;color:var(--text);cursor:pointer}
+.orow:hover{background:var(--border)}
+.orow.group{font-weight:600;margin-top:4px;border-top:1px solid var(--border);padding-top:6px}
+.orow.indent{padding-left:16px;font-size:10px}
+.mname{display:inline-flex;align-items:center;gap:6px}
+.mname img{width:14px;height:14px;object-fit:contain}
+.mode{font-size:10px}
+.mode.off{color:var(--text-muted)}
+.mode.always{color:var(--success)}
+.mode.auto{color:var(--warning)}
+.collapse{width:100%;border:none;border-top:1px solid var(--border);background:none;color:var(--text-muted);font-size:12px;padding:6px}
+/* ---- page ---- */
+.page{display:flex;flex-direction:column;gap:10px;font-size:.8125rem;color:var(--color-lab-text)}
+.page-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--color-lab-surface);border:1px solid var(--color-lab-border);padding:10px 16px}
+.page-head h1{margin:0;font-size:1rem;font-weight:700}
+.panel{background:var(--color-lab-surface);border:1px solid var(--color-lab-border)}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:14px;border:1px solid var(--color-lab-border);background:transparent;color:var(--color-lab-text-secondary);font-size:12px;cursor:pointer}
+.pill.active{background:rgba(99,102,241,.2);color:var(--color-lab-text);border-color:rgba(99,102,241,.5)}
+.pill.ghost{border-style:dashed;cursor:default}
+.th{font-size:.6875rem;text-transform:uppercase;letter-spacing:.5px;color:var(--color-lab-text-secondary);font-weight:600}
+.trow{display:grid;grid-template-columns:minmax(0,1fr) 64px 170px 56px;align-items:center;gap:10px;padding:5px 12px;border-top:1px solid var(--color-lab-border)}
+.trow img{width:26px;height:26px;object-fit:contain}
+.it{display:flex;align-items:center;gap:8px;min-width:0}
+.it small{display:block;font-size:11px;color:var(--color-lab-text-secondary)}
+.r{text-align:right}
+.bar{position:relative;height:14px;background:rgba(255,255,255,.04);border-radius:2px;display:flex;align-items:center}
+.bar i{position:absolute;left:0;top:0;bottom:0;background:rgba(59,130,246,.35);border-radius:2px}
+.bar b{position:relative;padding-left:6px;font-family:'Consolas','Monaco',monospace;font-weight:600;font-size:12px}
+.grow{display:flex;justify-content:space-between;padding:8px 12px 4px;border-top:1px solid var(--color-lab-border)}
+.runrow{display:grid;grid-template-columns:44px 64px 200px minmax(0,1fr) 112px;align-items:center;gap:10px;padding:6px 12px;border-top:1px solid var(--color-lab-border)}
+.runrow img{width:22px;height:22px;object-fit:contain}
+.chips{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:1px solid var(--color-lab-border);border-radius:4px;background:transparent;color:var(--color-lab-text);font-size:11px;cursor:pointer}
+.chip img{width:18px;height:18px}
+.chip.on{border-color:var(--color-lab-blue);background:rgba(59,130,246,.14)}
+.chip.off img{opacity:.45}
+.xchip{display:inline-flex;align-items:center;gap:4px;padding:1px 6px 1px 2px;border-radius:4px;background:rgba(255,255,255,.05);font-size:11px;white-space:nowrap}
+.xchip img{width:18px;height:18px;object-fit:contain}
+.sortbtn{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-radius:3px;padding:1px 2px}
+.sortbtn:hover{color:var(--color-lab-text)}
+.sortbtn:focus-visible{outline:1px solid var(--color-lab-blue)}
+.sortbtn.on{color:var(--color-lab-text)}
+.pager{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;border-top:1px solid var(--color-lab-border)}
+.pbtn{min-width:28px;height:26px;padding:0 8px;border-radius:4px;border:1px solid var(--color-lab-border);background:transparent;color:var(--color-lab-text-secondary);font-size:12px;cursor:pointer;font-family:inherit}
+.pbtn:hover{color:var(--color-lab-text)}
+.pbtn.on{background:rgba(99,102,241,.2);color:var(--color-lab-text);border-color:rgba(99,102,241,.5)}
+.pbtn:disabled{opacity:.35;cursor:default}
+.srow{display:grid;grid-template-columns:200px minmax(0,1fr);gap:16px;align-items:center;padding:10px 16px;border-top:1px solid var(--color-lab-border)}
+.srow:first-child{border-top:0}
+.srow > *:last-child{justify-self:start}
+.slabel{display:flex;flex-direction:column;gap:2px}
+.slabel small{font-size:11px;color:var(--color-lab-text-secondary)}
+.toggle{position:relative;width:36px;height:20px;border-radius:10px;border:1px solid var(--border);background:var(--bg);cursor:pointer;padding:0}
+.toggle.on{background:var(--accent);border-color:var(--accent)}
+.knob{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--text-muted)}
+.toggle.on .knob{transform:translateX(16px);background:var(--bg)}
+.keybtn{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border:1px solid var(--color-lab-border);border-radius:4px;background:var(--color-lab-bg);color:var(--color-lab-text);cursor:pointer;min-width:180px}
+.keybtn.listen{border-color:var(--color-lab-blue);color:var(--color-lab-text-secondary)}
+.cbox{display:inline-flex;align-items:center;gap:8px;font-size:12px;cursor:pointer}
+.cbox input{width:14px;height:14px;accent-color:var(--color-lab-blue)}
+.cbox img{width:20px;height:20px;object-fit:contain}
+</style>
+</helmet>
+<div style="min-height: 900px; display: flex; flex-direction: column; background: var(--bg)">
+
+  <header class="topbar">
+    <div class="tb-l"><img src="/_blob/4ddc0f30782949224cbbf282bcfee54d" alt="ProfitOfExile" width="26" height="26"><span style="font-size: 12px; font-weight: 600">ProfitOfExile</span></div>
+    <div class="tb-c"><span class="dot on" title="Server: Connected"></span><span class="dot" title="OCR Scanner: Idle"></span><span style="font-size: 1rem; opacity: .6">⚙️</span></div>
+    <div class="tb-r">
+      <span class="rate"><img src="/_blob/65e930f438c7ce19665d8a6fb43cb9ea" alt="Divine Orb" width="18" height="18"><span class="mono">1</span><span>=</span><span class="mono">[rate]</span><img src="/_blob/dea744e10eb4366d17026c8567a81476" alt="Chaos Orb" width="18" height="18"></span>
+      <span style="display: flex"><button class="win" type="button" title="Minimize">–</button><button class="win" type="button" title="Maximize">◻</button><button class="win" type="button" title="Close">✕</button></span>
+    </div>
+  </header>
+
+  <div style="flex: 1; display: flex; flex-wrap: wrap; min-height: 0">
+    <nav class="sidebar">
+      <div class="sb-top">
+        <div class="sb-sec">
+          <div class="sb-label">Strategies</div>
+          <button type="button" class="nav"><img class="lab" src="/_blob/9ea5cc191076ca9e45cb20f0a03827ca" alt=""><span>Lab Farming</span></button>
+          <button type="button" class="nav"><img src="/_blob/c77463eb4953b18b08d01546ba091cce" alt=""><span>Mercenaries</span></button>
+          <button type="button" class="nav"><img src="/_blob/d3d62799b09805e33e62efcac25b704e" alt=""><span>Temple</span></button>
+          <button type="button" class="nav"><img src="/_blob/8ffcf3264239f0679cd9695bd74fae33" alt=""><span>Currency Exchange</span></button>
+          <button type="button" class="nav"><img src="/_blob/8b1f5efd856aecc9e39db02aeabbb366" alt=""><span>Harvest Flipping</span></button>
+          <button type="button" class="nav active"><span class="ic" aria-hidden="true">👹</span><span>Boss loot</span></button>
+        </div>
+        <div class="sb-sec">
+          <div class="sb-label">Tools</div>
+          <button type="button" class="nav"><span class="ic" aria-hidden="true">⇄</span><span>Chaos ⇄ Div</span></button>
+        </div>
+      </div>
+      <div>
+        <div class="sb-bottom">
+          <div class="sb-label">Overlays</div>
+          <button type="button" class="orow group"><span class="mname"><img src="/_blob/9ea5cc191076ca9e45cb20f0a03827ca" alt="">Lab Overlays</span><span class="mode always">on</span></button>
+          <button type="button" class="orow indent"><span class="mname"><img src="/_blob/6bdc28be2af60109d374ad05f7165f1a" alt="">Compare</span><span class="mode auto">hidden</span></button>
+          <button type="button" class="orow indent"><span class="mname"><img src="/_blob/0b48844f5d68392521e44ad6bf219183" alt="">Compass</span><span class="mode auto">hidden</span></button>
+          <button type="button" class="orow indent"><span class="mname"><img src="/_blob/e3d70078fdf8f074870972f2bc17713e" alt="">Map</span><span class="mode off">off</span></button>
+          <button type="button" class="orow indent"><span class="mname"><img src="/_blob/0da5428350fcff7e3485e93071f5f34f" alt="">Timer</span><span class="mode off">off</span></button>
+          <div class="sb-label">Modules</div>
+          <button type="button" class="orow"><span class="mname"><img src="/_blob/c77463eb4953b18b08d01546ba091cce" alt="">Merc OCR</span><span class="mode off">off</span></button>
+          <button type="button" class="orow"><span class="mname"><img src="/_blob/d3d62799b09805e33e62efcac25b704e" alt="">Temple reader</span><span class="mode off">off</span></button>
+          <button type="button" class="orow" onClick="{{toggleModule}}" title="Boss loot: the capture shortcut AND the confirmation overlay. The Boss loot page stays browsable either way."><span class="mname"><span style="width: 14px; font-size: 11px; text-align: center" aria-hidden="true">👹</span>Boss loot</span><span class="mode {{modCls}}">{{modLabel}}</span></button>
+        </div>
+        <button type="button" class="collapse" title="Collapse sidebar">◀</button>
+      </div>
+    </nav>
+
+    <main style="flex: 999 1 560px; min-width: 0; padding: 12px; background: var(--color-lab-bg)">
+      <div class="page">
+        <header class="page-head">
+          <h1>Boss loot</h1>
+          <span class="sec" style="font-size: 12px">Drop rates per boss from logged kills.</span>
+          <span style="flex: 1"></span>
+          <span class="segmented" role="group" aria-label="Whose data">
+            <button type="button" class="segmented-btn {{ownCls}}" aria-pressed="{{isOwn}}" onClick="{{pickOwn}}">Own</button>
+            <button type="button" class="segmented-btn {{colCls}}" aria-pressed="{{isCol}}" onClick="{{pickCol}}">Collective</button>
+          </span>
+          <button type="button" class="btn">Export CSV</button>
+        </header>
+
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap">
+          <div style="display: flex; gap: 6px; flex-wrap: wrap" role="group" aria-label="Boss">
+            <button type="button" class="pill active" aria-pressed="true">Catarina <span class="mono">78</span></button>
+          </div>
+          <span class="segmented" role="tablist" aria-label="Section">
+            <button type="button" role="tab" class="segmented-btn {{tabResCls}}" aria-selected="{{isRes}}" onClick="{{tabRes}}">Results</button>
+            <button type="button" role="tab" class="segmented-btn {{tabRunCls}}" aria-selected="{{isRun}}" onClick="{{tabRun}}">Runs</button>
+            <button type="button" role="tab" class="segmented-btn {{tabSetCls}}" aria-selected="{{isSet}}" onClick="{{tabSet}}">Settings</button>
+          </span>
+        </div>
+
+        <!-- RESULTS -->
+        <sc-if value="{{isRes}}" hint-placeholder-val="{{ true }}">
+          <section class="panel">
+            <div style="padding: 10px 12px; display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline">
+              <b>Catarina, Master of Undeath</b>
+              <span class="sec" style="font-size: 12px">Zone <span class="mono" style="font-weight: 400">BetrayalMastermindFight</span> · level 83</span>
+              <span class="sec" style="font-size: 12px"><span class="mono" style="color: var(--color-lab-text)">78</span> runs{{deviceNote}}</span>
+            </div>
+            <div class="trow" style="padding-top: 6px; padding-bottom: 6px">
+              <span class="th"><button type="button" class="sortbtn {{sNameCls}}" aria-sort="{{sNameAria}}" onClick="{{sortName}}">Item {{sNameArrow}}</button></span><span class="th r">Drops</span><span class="th"><button type="button" class="sortbtn {{sRateCls}}" aria-sort="{{sRateAria}}" onClick="{{sortRate}}">Rate {{sRateArrow}}</button> <span style="text-transform: none; letter-spacing: 0; font-weight: 400">= drops / 78 runs</span></span><span class="th r">Wiki</span>
+            </div>
+            <div class="grow"><span class="th">Unique pool · one per kill</span><span class="sec" style="font-size: 11px">78 of 78 runs have exactly one</span></div>
+            <sc-for list="{{pool}}" as="x" hint-placeholder-count="6">
+              <div class="trow">
+                <span class="it"><img src="{{x.src}}" alt=""><span><span>{{x.name}}</span><small>{{x.base}}</small></span></span>
+                <span class="r mono">{{x.drops}}</span>
+                <span class="bar"><i style="width: {{x.w}}"></i><b>{{x.rate}}</b></span>
+                <span class="r sec">{{x.wiki}}</span>
+              </div>
+            </sc-for>
+            <div class="grow"><span class="th">Additional drops</span><span class="sec" style="font-size: 11px">any number per kill</span></div>
+            <sc-for list="{{extra}}" as="x" hint-placeholder-count="8">
+              <div class="trow">
+                <span class="it"><sc-if value="{{x.src}}" hint-placeholder-val="{{ true }}"><img src="{{x.src}}" alt=""></sc-if><span><span>{{x.name}}</span><small>{{x.base}}</small></span></span>
+                <span class="r mono">{{x.dropsCell}}</span>
+                <sc-if value="{{x.counted}}" hint-placeholder-val="{{ true }}"><span class="bar"><i style="width: {{x.w}}"></i><b>{{x.rate}}</b></span></sc-if>
+                <sc-if value="{{x.notCounted}}" hint-placeholder-val="{{ false }}"><span><span class="badge badge-yellow">not counted</span></span></sc-if>
+                <span class="r sec">{{x.wiki}}</span>
+              </div>
+            </sc-for>
+          </section>
+        </sc-if>
+
+        <!-- RUNS -->
+        <sc-if value="{{isRun}}" hint-placeholder-val="{{ false }}">
+          <section class="panel">
+            <div class="runrow" style="border-top: 0"><span class="th">Run</span><span class="th">Date</span><span class="th">Unique</span><span class="th">Additional</span><span></span></div>
+            <sc-for list="{{runs}}" as="r" hint-placeholder-count="10">
+              <div>
+                <div class="runrow">
+                  <span class="mono">{{r.n}}</span>
+                  <span class="sec" style="font-size: 12px">no date</span>
+                  <span class="it"><img src="{{r.uSrc}}" alt=""><span>{{r.uName}}</span></span>
+                  <span class="chips"><sc-for list="{{r.ex}}" as="e" hint-placeholder-count="2"><span class="xchip"><img src="{{e.src}}" alt="">{{e.name}}</span></sc-for><sc-if value="{{r.noEx}}" hint-placeholder-val="{{ false }}"><span class="sec">—</span></sc-if></span>
+                  <span style="display: flex; gap: 4px; justify-content: flex-end"><button type="button" class="btn" style="height: 24px; padding: 0 8px" onClick="{{r.edit}}">Edit</button><button type="button" class="btn btn-ghost" style="height: 24px; padding: 0 8px" aria-label="Delete run {{r.n}}">Delete</button></span>
+                </div>
+                <sc-if value="{{r.editing}}" hint-placeholder-val="{{ false }}">
+                  <div style="padding: 8px 12px 12px 74px; display: flex; flex-direction: column; gap: 8px; background: rgba(59,130,246,.05)">
+                    <span class="th">Unique pool · pick one</span>
+                    <span class="chips"><sc-for list="{{edPool}}" as="c" hint-placeholder-count="6"><button type="button" class="chip {{c.cls}}" aria-pressed="{{c.on}}" onClick="{{c.toggle}}"><img src="{{c.src}}" alt="">{{c.name}}</button></sc-for></span>
+                    <span class="th">Additional drops</span>
+                    <span class="chips"><sc-for list="{{edExtra}}" as="c" hint-placeholder-count="8"><button type="button" class="chip {{c.cls}}" aria-pressed="{{c.on}}" onClick="{{c.toggle}}"><sc-if value="{{c.src}}" hint-placeholder-val="{{ true }}"><img src="{{c.src}}" alt=""></sc-if>{{c.name}}</button></sc-for></span>
+                    <span style="display: flex; gap: 6px"><button type="button" class="btn btn-primary" onClick="{{endEdit}}">Save run {{r.n}}</button><button type="button" class="btn btn-ghost" onClick="{{endEdit}}">Cancel</button></span>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+            <nav class="pager" aria-label="Runs pages">
+              <span class="sec" style="font-size: 12px">Runs <span class="mono" style="color: var(--color-lab-text)">{{pFrom}}–{{pTo}}</span> of <span class="mono" style="color: var(--color-lab-text)">78</span>, newest first</span>
+              <span style="display: flex; gap: 4px; align-items: center">
+                <button type="button" class="pbtn" aria-label="Previous page" disabled="{{pFirst}}" onClick="{{pPrev}}">‹</button>
+                <sc-for list="{{pages}}" as="p" hint-placeholder-count="8"><button type="button" class="pbtn {{p.cls}}" aria-current="{{p.cur}}" onClick="{{p.go}}">{{p.label}}</button></sc-for>
+                <button type="button" class="pbtn" aria-label="Next page" disabled="{{pLast}}" onClick="{{pNext}}">›</button>
+              </span>
+            </nav>
+          </section>
+        </sc-if>
+
+        <!-- SETTINGS -->
+        <sc-if value="{{isSet}}" hint-placeholder-val="{{ false }}">
+          <section class="panel">
+            <div class="srow">
+              <span class="slabel"><span>Boss loot module</span><small>Capture shortcut and overlay</small></span>
+              <span><button type="button" class="toggle {{modOnCls}}" role="switch" aria-checked="{{modOn}}" aria-label="Boss loot module" onClick="{{toggleModule}}"><span class="knob"></span></button></span>
+            </div>
+            <div class="srow">
+              <span class="slabel"><span>Auto-save after</span><small>Any click on the overlay restarts it</small></span>
+              <span class="segmented" role="group" aria-label="Auto-save after">
+                <sc-for list="{{timeouts}}" as="o" hint-placeholder-count="5"><button type="button" class="segmented-btn {{o.cls}}" aria-pressed="{{o.on}}" onClick="{{o.pick}}">{{o.label}}</button></sc-for>
+              </span>
+            </div>
+            <div class="srow">
+              <span class="slabel"><span>Capture</span><small>Only while Path of Exile is in front; the click still reaches the game</small></span>
+              <span style="display: flex; gap: 6px; align-items: center"><button type="button" class="keybtn {{capCls}}" onClick="{{listenCap}}">{{capKeys}}</button><sc-if value="{{capListening}}" hint-placeholder-val="{{ false }}"><span class="sec" style="font-size: 11px">Esc cancels</span></sc-if></span>
+            </div>
+            <div class="srow">
+              <span class="slabel"><span>Preview frame</span><small>Shows the capture area around the cursor</small></span>
+              <span><button type="button" class="keybtn"><span class="kbd">Shift</span>+<span class="kbd">F8</span></button></span>
+            </div>
+                        <div class="srow" style="align-items: start">
+              <span class="slabel"><span>Not counted</span><small>Items your loot filter hides. Their rate leaves out your runs.</small></span>
+              <span style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px">
+                <sc-for list="{{ncList}}" as="c" hint-placeholder-count="8"><label class="cbox"><input type="checkbox" checked="{{c.on}}" onChange="{{c.toggle}}"><sc-if value="{{c.src}}" hint-placeholder-val="{{ true }}"><img src="{{c.src}}" alt=""></sc-if>{{c.name}}</label></sc-for>
+              </span>
+            </div>
+            <div class="srow">
+              <span class="slabel"><span>Where runs go</span></span>
+              <span class="sec" style="font-size: 12px">To the ProfitOfExile server, with this device's id <span class="mono" style="font-weight: 400; color: var(--color-lab-text)">{{deviceId}}</span>. Nothing is kept on this PC; a run made while the server is down is not saved.</span>
+            </div>
+          </section>
+        </sc-if>
+      </div>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1024,"height":900}}'>
+class Component extends DCLogic {
+  constructor(p) { super(p); this.state = { sort: 'rate', page: 0, tab: 'res', mode: 'own', mod: true, timeout: 10, capListen: false, editing: null, nc: { communion: true }, ed: null }; }
+  renderVals() {
+    var D = window.POE317, s = this.state, self = this;
+    var byId = {}; D.pool.concat(D.extra).forEach(function (x) { byId[x.id] = x; });
+    var w = function (x) { return Math.round((x.drops / D.boss.runs) * 100) + '%'; };
+    var pool = D.pool.map(function (x) { return Object.assign({}, x, { w: w(x) }); });
+    var extra = D.extra.map(function (x) {
+      var nc = !!s.nc[x.id];
+      return Object.assign({}, x, { w: w(x), counted: !nc, notCounted: nc, src: x.src || '',
+        rate: Math.round((x.drops / D.boss.runs) * 100) + '%', dropsCell: nc ? '—' : x.drops, runsCell: nc ? '—' : D.boss.runs });
+    });
+    var cmp = s.sort === 'name' ? function (a, b) { return a.name.replace(/^The /, '').localeCompare(b.name.replace(/^The /, '')); }
+      : function (a, b) { var ra = a.notCounted ? -1 : a.drops, rb = b.notCounted ? -1 : b.drops; return rb - ra || a.name.localeCompare(b.name); };
+    pool = pool.slice().sort(cmp); extra = extra.slice().sort(cmp);
+    var poolIds = {}; D.pool.forEach(function (x) { poolIds[x.id] = 1; });
+    var PER = 10, all = D.allRuns.map(function (items, i) { return { n: i + 1, items: items }; }).reverse();
+    var nPages = Math.ceil(all.length / PER), pg = Math.min(s.page, nPages - 1);
+    var slice = all.slice(pg * PER, pg * PER + PER);
+    var runs = slice.map(function (r) {
+      var u = byId[r.items.filter(function (i) { return poolIds[i]; })[0]];
+      var ex = r.items.filter(function (i) { return !poolIds[i]; }).map(function (i) { return byId[i]; });
+      return { n: r.n, uSrc: u.src, uName: u.name, ex: ex, noEx: ex.length === 0, editing: s.editing === r.n,
+        edit: function () { self.setState({ editing: s.editing === r.n ? null : r.n, ed: { pick: u.id, ex: ex.reduce(function (a, e) { a[e.id] = true; return a; }, {}) } }); } };
+    });
+    var ed = s.ed || { pick: null, ex: {} };
+    var edPool = D.pool.map(function (x) { var on = ed.pick === x.id; return { name: x.name, src: x.src, on: on, cls: on ? 'on' : 'off', toggle: function () { self.setState({ ed: Object.assign({}, ed, { pick: x.id }) }); } }; });
+    var edExtra = D.extra.filter(function (x) { return !s.nc[x.id]; }).map(function (x) { var on = !!ed.ex[x.id]; return { name: x.name, src: x.src || '', on: on, cls: on ? 'on' : 'off', toggle: function () { var e = Object.assign({}, ed.ex); e[x.id] = !on; self.setState({ ed: { pick: ed.pick, ex: e } }); } }; });
+    var timeouts = [5, 10, 20, 30, 0].map(function (t) { return { label: t ? t + ' s' : 'Off', on: s.timeout === t, cls: s.timeout === t ? 'active' : '', pick: function () { self.setState({ timeout: t }); } }; });
+    var ncList = D.extra.filter(function (x) { return !x.manual; }).map(function (x) { return { name: x.name, src: x.src || '', on: !!s.nc[x.id], toggle: function () { var n = Object.assign({}, s.nc); n[x.id] = !n[x.id]; self.setState({ nc: n }); } }; });
+    var t = function (k) { return function () { self.setState({ tab: k }); }; };
+    return {
+      modCls: s.mod ? 'always' : 'off', modLabel: s.mod ? 'on' : 'off', modOn: s.mod, modOnCls: s.mod ? 'on' : '',
+      toggleModule: function () { self.setState({ mod: !s.mod }); },
+      isOwn: s.mode === 'own', isCol: s.mode === 'col', ownCls: s.mode === 'own' ? 'active' : '', colCls: s.mode === 'col' ? 'active' : '',
+      pickOwn: function () { self.setState({ mode: 'own' }); }, pickCol: function () { self.setState({ mode: 'col' }); },
+      deviceNote: s.mode === 'col' ? ' · 1 device' : ' · this device',
+      isRes: s.tab === 'res', isRun: s.tab === 'run', isSet: s.tab === 'set',
+      tabResCls: s.tab === 'res' ? 'active' : '', tabRunCls: s.tab === 'run' ? 'active' : '', tabSetCls: s.tab === 'set' ? 'active' : '',
+      tabRes: t('res'), tabRun: t('run'), tabSet: t('set'),
+      pool: pool, extra: extra, runs: runs, edPool: edPool, edExtra: edExtra,
+      endEdit: function () { self.setState({ editing: null }); },
+      sNameCls: s.sort === 'name' ? 'on' : '', sRateCls: s.sort === 'rate' ? 'on' : '',
+      sNameAria: s.sort === 'name' ? 'ascending' : 'none', sRateAria: s.sort === 'rate' ? 'descending' : 'none',
+      sNameArrow: s.sort === 'name' ? '↑' : '', sRateArrow: s.sort === 'rate' ? '↓' : '',
+      sortName: function () { self.setState({ sort: 'name' }); }, sortRate: function () { self.setState({ sort: 'rate' }); },
+      pFrom: all[pg * PER].n, pTo: slice[slice.length - 1].n, pFirst: pg === 0, pLast: pg === nPages - 1,
+      pPrev: function () { self.setState({ page: Math.max(0, pg - 1), editing: null }); }, pNext: function () { self.setState({ page: Math.min(nPages - 1, pg + 1), editing: null }); },
+      pages: Array.from({ length: nPages }, function (_, i) { return { label: String(i + 1), cls: i === pg ? 'on' : '', cur: i === pg ? 'page' : 'false', go: function () { self.setState({ page: i, editing: null }); } }; }),
+      timeouts: timeouts, ncList: ncList, deviceId: D.deviceId,
+      capKeys: s.capListen ? 'Press a key or mouse button…' : 'Shift + Right click', capCls: s.capListen ? 'listen' : '', capListening: s.capListen,
+      listenCap: function () { self.setState({ capListen: !s.capListen }); }
+    };
+  }
+}
+</script>
+</body>
+</html>

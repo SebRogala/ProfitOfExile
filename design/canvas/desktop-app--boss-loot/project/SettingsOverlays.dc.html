@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings · Overlay Positions with Boss loot</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:var(--bg);color:var(--text)}
+/* 1:1 from SettingsPage.svelte (section, h2, .group-heading, .setting-row, .widget-show) */
+.settings-page{max-width:960px;margin:0 auto}
+h1{font-size:1.1rem;margin:0 0 1rem}
+section{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem;margin-bottom:1rem}
+h2{font-size:.8rem;text-transform:uppercase;color:var(--text-muted);margin:0 0 .75rem}
+.group-heading{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin:.75rem 0 .15rem;font-weight:700}
+.setting-row{display:flex;align-items:center;gap:.5rem;padding:.4rem 0;min-height:32px}
+.setting-row + .setting-row{border-top:1px solid rgba(255,255,255,.05)}
+.setting-label{min-width:140px;flex-shrink:0;font-size:.85rem;color:var(--text)}
+.widget-show{display:flex;align-items:center;gap:.35rem;flex-shrink:0;font-size:.75rem;color:var(--text-muted)}
+.setting-value{flex:1;font-size:.8rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.setting-value.mono{font-family:'Consolas','Courier New',monospace;letter-spacing:.1em}
+.toggle{position:relative;width:36px;height:20px;border-radius:10px;border:1px solid var(--border);background:var(--bg);cursor:pointer;padding:0;flex-shrink:0}
+.toggle.on{background:var(--accent);border-color:var(--accent)}
+.knob{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--text-muted)}
+.toggle.on .knob{transform:translateX(16px);background:var(--bg)}
+.sbtn{background:transparent;border:1px solid var(--border);color:var(--text-muted);padding:.2rem .5rem;border-radius:4px;font-size:.75rem;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.sbtn:hover{border-color:var(--accent);color:var(--text)}
+.new{background:rgba(59,130,246,.08);border-radius:4px;margin:0 -.5rem;padding-left:.5rem;padding-right:.5rem}
+</style>
+</helmet>
+<div style="width: 1024px; padding: 16px; box-sizing: border-box">
+  <div class="settings-page">
+    <h1>Settings</h1>
+    <section>
+      <h2>Overlay Positions</h2>
+
+      <h3 class="group-heading">Lab</h3>
+      <div class="setting-row"><span class="setting-label">Gems Compare</span><span class="widget-show">Show <button type="button" class="toggle on" role="switch" aria-checked="true" aria-label="Gems Compare"><span class="knob"></span></button></span><span class="setting-value mono">[geometry]</span></div>
+      <div class="setting-row"><span class="setting-label">Lab Compass</span><span class="widget-show">Show <button type="button" class="toggle on" role="switch" aria-checked="true" aria-label="Lab Compass"><span class="knob"></span></button></span><span class="setting-value mono">[geometry]</span></div>
+      <div class="setting-row"><span class="setting-label">Lab Map</span><span class="widget-show">Show <button type="button" class="toggle on" role="switch" aria-checked="true" aria-label="Lab Map"><span class="knob"></span></button></span><span class="setting-value mono">[geometry]</span></div>
+      <div class="setting-row"><span class="setting-label">Lab Timer</span><span class="widget-show">Show <button type="button" class="toggle on" role="switch" aria-checked="true" aria-label="Lab Timer"><span class="knob"></span></button></span><span class="setting-value mono">[geometry]</span></div>
+      <div class="setting-row"><span class="setting-label"></span><span class="setting-value"></span><button type="button" class="sbtn">Configure widgets</button></div>
+
+      <h3 class="group-heading">Merc</h3>
+      <div class="setting-row"><span class="setting-label">Merc Verdict</span><span class="widget-show">Show <button type="button" class="toggle on" role="switch" aria-checked="true" aria-label="Merc Verdict"><span class="knob"></span></button></span><span class="setting-value mono">[geometry]</span></div>
+      <div class="setting-row"><span class="setting-label"></span><span class="setting-value"></span><button type="button" class="sbtn">Configure widgets</button></div>
+
+      <h3 class="group-heading">Temple</h3>
+      <div class="setting-row"><span class="setting-label">[Temple widgets, unchanged]</span><span class="setting-value"></span></div>
+
+      <h3 class="group-heading">Boss loot</h3>
+      <div class="setting-row new"><span class="setting-label">Loot confirmation</span><span class="widget-show">Show <button type="button" class="toggle on" role="switch" aria-checked="true" aria-label="Loot confirmation"><span class="knob"></span></button></span><span class="setting-value mono">([x], [y]) content-sized</span></div>
+      <div class="setting-row new"><span class="setting-label"></span><span class="setting-value"></span><button type="button" class="sbtn">Configure widgets</button></div>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1024,"height":560}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

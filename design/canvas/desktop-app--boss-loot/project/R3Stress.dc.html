@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stress: Maven, Incarnation of Fear, Black Star</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+<script src="data.js"></script>
+<script src="profiles.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.cap{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--color-lab-text-secondary);background:var(--color-lab-bg);padding:2px 6px;border-radius:3px;align-self:flex-start}
+</style>
+</helmet>
+<div class="game" style="width: 1400px; min-height: 900px; padding: 24px; display: flex; gap: 32px; align-items: flex-start">
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <span class="cap">The Maven · which-one picker (3 uniques on Cloth Belt)</span>
+    <dc-import name="LootOverlay" profile="maven" layout="grid" hint-size="420px,760px"></dc-import>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <span class="cap">Incarnation of Fear · 2 guaranteed groups + category</span>
+    <dc-import name="LootOverlay" profile="fear" layout="grid" hint-size="420px,760px"></dc-import>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <span class="cap">Black Star · no guaranteed group · quantities</span>
+    <dc-import name="LootOverlay" profile="blackstar" layout="grid" hint-size="420px,760px"></dc-import>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1400,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

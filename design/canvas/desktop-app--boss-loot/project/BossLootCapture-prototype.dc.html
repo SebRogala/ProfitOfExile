@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Boss loot capture frame · prototype</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.br{position:absolute;width:48px;height:48px;border-style:solid;border-width:0}
+.br.tl{left:0;top:0;border-left-width:3px;border-top-width:3px}
+.br.tr{right:0;top:0;border-right-width:3px;border-top-width:3px}
+.br.bl{left:0;bottom:0;border-left-width:3px;border-bottom-width:3px}
+.br.brr{right:0;bottom:0;border-right-width:3px;border-bottom-width:3px}
+.solid{position:absolute;inset:0;border:3px solid var(--color-lab-cyan);border-radius:2px}
+.chip{position:absolute;left:12px;top:12px;display:flex;align-items:center;gap:8px;background:var(--color-lab-bg);border:1px solid var(--color-lab-border);border-radius:4px;padding:5px 10px;font-size:13px;color:var(--color-lab-text)}
+.cursor{position:absolute;left:444px;top:494px;width:12px;height:12px;border-radius:50%;border:2px solid var(--color-lab-text)}
+.label{position:absolute;font-size:15px;font-weight:700;color:var(--color-lab-text);text-shadow:0 1px 2px var(--color-lab-bg)}
+.spin{display:inline-block;width:12px;height:12px;border-radius:50%;border:2px solid var(--color-lab-border);border-top-color:var(--color-lab-blue)}
+</style>
+</helmet>
+<div class="game" style="width: 940px; height: 790px; padding: 20px">
+  <div style="position: relative; width: 900px; height: 750px">
+    <sc-if value="{{isCapture}}" hint-placeholder-val="{{ false }}"><i class="solid"></i></sc-if>
+    <sc-if value="{{notCapture}}" hint-placeholder-val="{{ true }}"><i class="br tl" style="border-color: {{edge}}"></i><i class="br tr" style="border-color: {{edge}}"></i><i class="br bl" style="border-color: {{edge}}"></i><i class="br brr" style="border-color: {{edge}}"></i></sc-if>
+    <span class="label" style="left: 300px; top: 240px">SILVER FLASK</span>
+    <span class="label" style="left: 120px; top: 340px">VEILED EXALTED ORB</span>
+    <span class="label" style="left: 420px; top: 400px">ALLFLAME EMBER OF KULEMAK</span>
+    <span class="label" style="left: 180px; top: 580px">ZORATH'S EYE OF THE ENDLESS</span>
+    <i class="cursor"></i>
+    <sc-if value="{{isPreview}}" hint-placeholder-val="{{ true }}"><div class="chip"><b>Boss loot</b><span class="sec">preview</span><span class="kbd">Shift</span>+<span class="kbd">F8</span><span class="sec">hides</span></div></sc-if>
+    <sc-if value="{{isCapture}}" hint-placeholder-val="{{ false }}"><div class="chip"><i class="spin"></i><span>Reading loot · Catarina · run 79</span></div></sc-if>
+    <sc-if value="{{isRefused}}" hint-placeholder-val="{{ false }}"><div class="chip" style="flex-direction: column; align-items: flex-start; gap: 2px"><span><b class="warn">Not logged</b> · no boss profile for this zone</span><span class="sec" style="font-size: 12px">Last zone <span class="mono" style="font-weight: 400">MapWorldsStrand</span>, level 83. Boss loot tracks: Catarina.</span></div></sc-if>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"mode":{"editor":"enum","options":["preview","capture","refused"],"default":"preview"},"$preview":{"width":940,"height":790}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var m = this.props.mode ?? 'preview';
+    return { isPreview: m === 'preview', isCapture: m === 'capture', isRefused: m === 'refused', notCapture: m !== 'capture',
+      edge: m === 'refused' ? 'var(--color-lab-yellow)' : 'var(--color-lab-cyan)' };
+  }
+}
+</script>
+</body>
+</html>

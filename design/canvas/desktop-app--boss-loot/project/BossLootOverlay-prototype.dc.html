@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Boss loot confirmation · prototype</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+<script src="data.js"></script>
+<script src="profiles.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.lo-tile{position:relative;display:flex;flex-direction:column;border-radius:5px;border:1px solid var(--color-lab-border);background:var(--color-lab-surface)}
+.lo-tile.on{border:2px solid var(--color-lab-blue);background:rgba(59,130,246,.12)}
+.lo-tile.amb{border:2px dashed var(--color-lab-yellow)}
+.lo-tile.cat{border-style:dashed;border-color:var(--color-lab-text-muted)}
+.lo-tile.cat.on{border-style:solid}
+.lo-hit{all:unset;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 4px 5px;cursor:pointer;text-align:center;width:100%;min-height:92px;color:var(--color-lab-text)}
+.lo-hit:focus-visible{outline:1px solid var(--color-lab-blue);outline-offset:-2px}
+.lo-tile.off .lo-art{opacity:.4}
+.lo-art{width:38px;height:38px;object-fit:contain}
+.lo-ph{width:38px;height:38px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--color-lab-text-muted);border-radius:4px;color:var(--color-lab-text-secondary);font-size:10px}
+.lo-name{font-size:11px;line-height:13px;max-height:39px;overflow:hidden}
+.lo-rate{font-size:11px;color:var(--color-lab-text-secondary)}
+.lo-rate b{font-family:'Consolas','Monaco',monospace;color:var(--color-lab-text);font-weight:600}
+.lo-tag{position:absolute;top:3px;left:3px;font-size:10px;line-height:12px;padding:0 3px;border-radius:3px;background:rgba(255,255,255,.08);color:var(--color-lab-text-secondary)}
+.lo-tag.q{background:rgba(234,179,8,.16);color:var(--color-lab-yellow)}
+.lo-mark{position:absolute;top:3px;right:3px;width:14px;height:14px;border-radius:50%;background:var(--color-lab-blue);display:flex;align-items:center;justify-content:center}
+.lo-qty{display:flex;align-items:center;justify-content:center;gap:2px;padding:0 4px 5px}
+.lo-qb{width:22px;height:20px;border-radius:3px;border:1px solid var(--color-lab-text-muted);background:var(--color-lab-bg);color:var(--color-lab-text);font-size:13px;line-height:1;cursor:pointer;padding:0}
+.lo-qn{min-width:22px;text-align:center;font-family:'Consolas','Monaco',monospace;font-weight:600;font-size:12px}
+.lo-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px;border-radius:4px;border:1px solid transparent}
+.lo-row.on{background:rgba(59,130,246,.12);border-color:var(--color-lab-blue)}
+.lo-row.amb{border:1px dashed var(--color-lab-yellow)}
+.lo-rhit{all:unset;box-sizing:border-box;display:grid;grid-template-columns:16px 26px minmax(0,1fr) 44px 52px;align-items:center;gap:8px;padding:3px 6px;cursor:pointer;min-height:34px;color:var(--color-lab-text)}
+.lo-rhit:focus-visible{outline:1px solid var(--color-lab-blue)}
+.lo-row.off .lo-ric{opacity:.45}
+.lo-ric{width:26px;height:26px;object-fit:contain}
+.lo-rph{width:26px;height:26px;border:1px dashed var(--color-lab-text-muted);border-radius:3px}
+.lo-nm{display:flex;flex-direction:column;min-width:0;line-height:14px;font-size:12px}
+.lo-nm span,.lo-nm small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lo-nm small{font-size:11px;color:var(--color-lab-text-secondary)}
+.lo-ctl{width:14px;height:14px;border:1.5px solid var(--color-lab-text-secondary);border-radius:3px;display:flex;align-items:center;justify-content:center}
+.lo-ctl.radio{border-radius:50%}
+.lo-ctl.on{border-color:var(--color-lab-blue);background:var(--color-lab-blue)}
+.lo-ctl.amb{border-color:var(--color-lab-yellow);border-style:dashed}
+.lo-num{font-family:'Consolas','Monaco',monospace;font-weight:600;text-align:right;font-size:12px}
+.lo-wk{font-size:11px;color:var(--color-lab-text-secondary);text-align:right}
+.spin{display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid var(--color-lab-border);border-top-color:var(--color-lab-blue)}
+.lo-line{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;font-size:12px;border-bottom:1px solid var(--color-lab-border)}
+.lo-link{background:none;border:0;padding:0;color:var(--color-lab-blue);text-decoration:underline;font-size:12px;cursor:pointer;font-family:inherit}
+.lo-ask{display:flex;align-items:center;gap:6px;margin:0 0 6px;padding:5px 8px;border-radius:4px;background:rgba(234,179,8,.10);font-size:12px}
+</style>
+</helmet>
+<sc-if value="{{visible}}" hint-placeholder-val="{{ true }}">
+<section class="ov" aria-label="Boss loot confirmation" style="width: {{panelW}}; position: relative; border-color: {{edge}}">
+  <div class="ov-head">
+    <div>
+      <div class="ov-title" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap">{{p.name}} · run {{p.run}} <span class="badge badge-grey">{{p.key}}</span></div>
+      <div class="ov-why">Zone <span class="mono" style="font-weight: 400">{{p.area}}</span>, level {{p.level}}</div>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px">
+      <sc-if value="{{counting}}" hint-placeholder-val="{{ true }}"><span class="badge badge-blue">Saving in <b class="mono">{{secs}}</b> s</span></sc-if>
+      <sc-if value="{{paused}}" hint-placeholder-val="{{ false }}"><span class="badge badge-yellow">Paused: {{pauseWhy}}</span></sc-if>
+      <sc-if value="{{savingB}}" hint-placeholder-val="{{ false }}"><span class="badge badge-blue"><i class="spin"></i>Saving</span></sc-if>
+      <sc-if value="{{savedB}}" hint-placeholder-val="{{ false }}"><span class="badge badge-green">Saved</span></sc-if>
+      <sc-if value="{{failB}}" hint-placeholder-val="{{ false }}"><span class="badge badge-red">Not saved</span></sc-if>
+      <span class="segmented" role="group" aria-label="Whose data">
+        <button type="button" class="segmented-btn {{ownCls}}" aria-pressed="{{isOwn}}" onClick="{{pickOwn}}">Own</button>
+        <button type="button" class="segmented-btn {{colCls}}" aria-pressed="{{isCol}}" onClick="{{pickCol}}">Collective</button>
+      </span>
+    </div>
+  </div>
+  <div class="cd"><i style="width: {{barW}}"></i></div>
+  <sc-if value="{{mergedB}}" hint-placeholder-val="{{ false }}"><div class="lo-line" style="background: rgba(59,130,246,.08)"><span>Same seed as run {{prevRun}}: added to it.</span><button type="button" class="lo-link" onClick="{{splitRun}}">Save as new run</button></div></sc-if>
+  <sc-if value="{{savedB}}" hint-placeholder-val="{{ false }}"><div class="lo-line"><span>Saved as run {{p.run}}.</span></div></sc-if>
+  <sc-if value="{{failB}}" hint-placeholder-val="{{ false }}"><div class="lo-line"><span>Server unreachable. This run was not recorded.</span><button type="button" class="btn btn-ghost" onClick="{{close}}">Close</button></div></sc-if>
+  <div class="sec" style="font-size: 11px; padding: 6px 12px 0">{{runsNote}}</div>
+
+  <sc-for list="{{groups}}" as="g" hint-placeholder-count="1">
+    <div class="ov-sec">
+      <div class="grp"><span>Guaranteed · {{g.label}} · {{g.rule}}</span><span class="grp-note {{g.stCls}}">{{g.st}}</span></div>
+      <sc-if value="{{g.hasAmb}}" hint-placeholder-val="{{ false }}"><div class="lo-ask"><span class="warn">?</span><span><b>{{g.ambBase}}</b> was read. Several uniques share this base: which one dropped?</span></div></sc-if>
+      <sc-if value="{{grid}}" hint-placeholder-val="{{ true }}">
+        <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px" role="radiogroup" aria-label="{{g.label}}">
+          <sc-for list="{{g.items}}" as="t" hint-placeholder-count="6">
+            <div class="lo-tile {{t.cls}}">
+              <button type="button" class="lo-hit" role="radio" aria-checked="{{t.on}}" onClick="{{t.toggle}}" title="{{t.title}}">
+                <sc-if value="{{t.tag}}" hint-placeholder-val="{{ false }}"><span class="lo-tag {{t.tagCls}}">{{t.tag}}</span></sc-if>
+                <sc-if value="{{t.on}}" hint-placeholder-val="{{ false }}"><span class="lo-mark"><svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 5.2 4 7.6 8.6 2.4" fill="none" stroke="var(--color-lab-bg)" stroke-width="2"/></svg></span></sc-if>
+                <sc-if value="{{t.src}}" hint-placeholder-val="{{ true }}"><img class="lo-art" src="{{t.src}}" alt=""></sc-if>
+                <sc-if value="{{t.noSrc}}" hint-placeholder-val="{{ false }}"><span class="lo-ph">art</span></sc-if>
+                <span class="lo-name">{{t.name}}</span>
+                <span class="lo-rate"><b>{{t.rate}}</b> {{t.prov}}</span>
+              </button>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+      <sc-if value="{{list}}" hint-placeholder-val="{{ false }}">
+        <div style="display: flex; flex-direction: column; gap: 2px" role="radiogroup" aria-label="{{g.label}}">
+          <sc-for list="{{g.items}}" as="t" hint-placeholder-count="6">
+            <div class="lo-row {{t.cls}}">
+              <button type="button" class="lo-rhit" role="radio" aria-checked="{{t.on}}" onClick="{{t.toggle}}">
+                <span class="lo-ctl radio {{t.ctlCls}}"></span>
+                <sc-if value="{{t.src}}" hint-placeholder-val="{{ true }}"><img class="lo-ric" src="{{t.src}}" alt=""></sc-if>
+                <sc-if value="{{t.noSrc}}" hint-placeholder-val="{{ false }}"><span class="lo-rph"></span></sc-if>
+                <span class="lo-nm"><span>{{t.name}}</span><small>{{t.sub}}</small></span>
+                <span class="lo-num">{{t.rate}}</span>
+                <span class="lo-wk">{{t.wikiCol}}</span>
+              </button>
+              <span></span>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+  </sc-for>
+
+  <div class="ov-sec">
+    <div class="grp"><span>Additional drops</span><span class="grp-note sec">{{extraMsg}}</span></div>
+    <sc-if value="{{grid}}" hint-placeholder-val="{{ true }}">
+      <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px">
+        <sc-for list="{{extra}}" as="t" hint-placeholder-count="8">
+          <div class="lo-tile {{t.cls}}">
+            <button type="button" class="lo-hit" aria-pressed="{{t.on}}" aria-disabled="{{t.nc}}" onClick="{{t.toggle}}" title="{{t.title}}">
+              <sc-if value="{{t.tag}}" hint-placeholder-val="{{ false }}"><span class="lo-tag {{t.tagCls}}">{{t.tag}}</span></sc-if>
+              <sc-if value="{{t.on}}" hint-placeholder-val="{{ false }}"><span class="lo-mark"><svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 5.2 4 7.6 8.6 2.4" fill="none" stroke="var(--color-lab-bg)" stroke-width="2"/></svg></span></sc-if>
+              <sc-if value="{{t.src}}" hint-placeholder-val="{{ true }}"><img class="lo-art" src="{{t.src}}" alt=""></sc-if>
+              <sc-if value="{{t.noSrc}}" hint-placeholder-val="{{ false }}"><span class="lo-ph">{{t.phLabel}}</span></sc-if>
+              <span class="lo-name">{{t.name}}</span>
+              <sc-if value="{{t.nc}}" hint-placeholder-val="{{ false }}"><span class="badge badge-yellow">not counted</span></sc-if>
+              <sc-if value="{{t.counted}}" hint-placeholder-val="{{ true }}"><span class="lo-rate"><b>{{t.rate}}</b> {{t.prov}}</span></sc-if>
+            </button>
+            <sc-if value="{{t.showQty}}" hint-placeholder-val="{{ false }}">
+              <div class="lo-qty"><button type="button" class="lo-qb" aria-label="One fewer {{t.name}}" onClick="{{t.dec}}">−</button><span class="lo-qn" aria-live="polite">{{t.q}}</span><button type="button" class="lo-qb" aria-label="One more {{t.name}}" onClick="{{t.inc}}">+</button></div>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+    <sc-if value="{{list}}" hint-placeholder-val="{{ false }}">
+      <div style="display: flex; flex-direction: column; gap: 2px">
+        <sc-for list="{{extra}}" as="t" hint-placeholder-count="8">
+          <div class="lo-row {{t.cls}}">
+            <button type="button" class="lo-rhit" aria-pressed="{{t.on}}" aria-disabled="{{t.nc}}" onClick="{{t.toggle}}" title="{{t.title}}">
+              <span class="lo-ctl {{t.ctlCls}}"></span>
+              <sc-if value="{{t.src}}" hint-placeholder-val="{{ true }}"><img class="lo-ric" src="{{t.src}}" alt=""></sc-if>
+              <sc-if value="{{t.noSrc}}" hint-placeholder-val="{{ false }}"><span class="lo-rph"></span></sc-if>
+              <span class="lo-nm"><span>{{t.name}}</span><small>{{t.sub}}</small></span>
+              <span class="lo-num">{{t.rate}}</span>
+              <span class="lo-wk">{{t.wikiCol}}</span>
+            </button>
+            <sc-if value="{{t.showQty}}" hint-placeholder-val="{{ false }}">
+              <div class="lo-qty" style="padding: 0 6px 0 0"><button type="button" class="lo-qb" aria-label="One fewer {{t.name}}" onClick="{{t.dec}}">−</button><span class="lo-qn">{{t.q}}</span><button type="button" class="lo-qb" aria-label="One more {{t.name}}" onClick="{{t.inc}}">+</button></div>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+  </div>
+
+  <div class="ov-sec" style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+    <span class="sec" style="font-size: 11px">{{unknownLine}}</span>
+    <sc-if value="{{isOpen}}" hint-placeholder-val="{{ true }}"><span style="display: flex; gap: 6px">
+      <button type="button" class="btn btn-ghost" onClick="{{discard}}">Discard</button>
+      <button type="button" class="btn btn-primary" onClick="{{save}}">Save now</button>
+    </span></sc-if>
+  </div>
+</section>
+</sc-if>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"profile":{"editor":"enum","options":["catarina","maven","fear","blackstar"],"default":"catarina"},"layout":{"editor":"enum","options":["grid","list"],"default":"grid"},"state":{"editor":"enum","options":["live","merged","submitting","saved","unreachable"],"default":"live"},"timeout":{"editor":"int","default":10,"min":3,"max":60,"unit":"s"},"$preview":{"width":420,"height":760}}'>
+class Component extends DCLogic {
+  constructor(p) { super(p); this.state = this.fresh(); }
+  prof() { return window.POE317P[(this.props && this.props.profile) || 'catarina']; }
+  fresh() {
+    var P = this.prof(), c = P.capture;
+    var picks = {}; P.groups.forEach(function (g) { picks[g.id] = (c.picks[g.id] || []).slice(); });
+    var st = (this.props && this.props.state) || 'live';
+    return { picks: picks, ex: Object.assign({}, c.extra), cats: Object.assign({}, c.cats), amb: c.amb, secs: (this.props && this.props.timeout) || 10, mode: 'own', done: st === 'saved' || st === 'unreachable' || st === 'submitting', phase: st === 'live' || st === 'merged' ? 'open' : st, merged: st === 'merged', hidden: false };
+  }
+  componentDidMount() {
+    var self = this;
+    this.iv = setInterval(function () {
+      var s = self.state; if (s.done || !self.valid()) return;
+      if (s.secs <= 1) self.setState({ secs: 0, done: true, phase: 'saved' }); else self.setState({ secs: s.secs - 1 });
+    }, 1000);
+  }
+  componentWillUnmount() { clearInterval(this.iv); }
+  valid() {
+    var P = this.prof(), s = this.state;
+    if (s.amb) return false;
+    return P.groups.every(function (g) { var n = (s.picks[g.id] || []).length; return n >= g.min && n <= g.max; });
+  }
+  touch(patch) { this.setState(Object.assign({ secs: this.props.timeout ?? 10 }, patch)); }
+  renderVals() {
+    var P = this.prof(), s = this.state, self = this, t = this.props.timeout ?? 10, grid = (this.props.layout ?? 'grid') === 'grid';
+    var read = {}; Object.keys(P.capture.picks).forEach(function (k) { P.capture.picks[k].forEach(function (id) { read[id] = 1; }); });
+    Object.keys(P.capture.extra).forEach(function (id) { read[id] = 1; });
+    var noRuns = !P.runs;
+    function rateOf(x) { return noRuns ? '' :(s.mode === 'col' && !x.drops ? '—' : (x.own || '—')); }
+    function provOf(x) { return noRuns ? 'wiki ' + x.wiki : (x.ownProv || ''); }
+    var groups = P.groups.map(function (g) {
+      var picked = s.picks[g.id] || [], amb = s.amb && s.amb.group === g.id ? s.amb : null;
+      var items = g.items.map(function (x) {
+        var on = picked.indexOf(x.id) >= 0, isAmb = !!amb && amb.ids.indexOf(x.id) >= 0;
+        return { name: x.name, src: x.src, noSrc: !x.src, on: on, rate: rateOf(x), prov: provOf(x), wikiCol: x.wiki,
+          sub: isAmb ? amb.base + '? pick if this one dropped' : x.base + (read[x.id] ? ' · read' : ''),
+          tag: isAmb ? amb.base + '?' : (read[x.id] ? 'read' : ''), tagCls: isAmb ? 'q' : '',
+          cls: on ? 'on' : (isAmb ? 'amb' : 'off'), ctlCls: on ? 'on' : (isAmb ? 'amb' : ''), title: x.base + ' · wiki ' + x.wiki,
+          toggle: function () {
+            if (s.done) return;
+            var p = Object.assign({}, s.picks), cur = (p[g.id] || []).slice(), i = cur.indexOf(x.id);
+            if (i >= 0) cur.splice(i, 1); else if (g.max === 1) cur = [x.id]; else cur.push(x.id);
+            p[g.id] = cur; self.touch({ picks: p, amb: amb && isAmb ? null : s.amb });
+          } };
+      });
+      var n = picked.length, st, stCls;
+      if (amb) { st = 'which one?'; stCls = 'warn'; }
+      else if (n > g.max) { st = n + ' picked: max ' + g.max; stCls = 'bad'; }
+      else if (n < g.min) { st = 'pick ' + (g.min === g.max ? g.min : 'at least ' + g.min); stCls = 'warn'; }
+      else { st = n + ' picked'; stCls = 'ok'; }
+      return { label: g.label, rule: g.min === g.max ? 'exactly ' + g.min : g.min + '–' + g.max, items: items, st: st, stCls: stCls, hasAmb: !!amb, ambBase: amb ? amb.base : '' };
+    });
+    var extra = P.extra.map(function (x) {
+      var q = s.ex[x.id] || 0, on = q > 0 && !x.notCounted;
+      return { name: x.name, src: x.src || '', noSrc: !x.src, phLabel: 'art', on: on, nc: !!x.notCounted, counted: !x.notCounted,
+        rate: rateOf(x), prov: provOf(x), wikiCol: x.wiki, q: q, showQty: !!x.qty && on,
+        sub: x.notCounted ? 'your loot filter hides it' : x.base + (read[x.id] ? ' · read' : ''),
+        tag: read[x.id] ? 'read' : '', tagCls: '', title: x.notCounted ? 'Not counted: change on the Boss loot page' : x.base,
+        cls: x.notCounted ? 'off' : (on ? 'on' : 'off'), ctlCls: on ? 'on' : '',
+        toggle: function () { if (s.done || x.notCounted) return; var e = Object.assign({}, s.ex); e[x.id] = q ? 0 : 1; self.touch({ ex: e }); },
+        inc: function () { var e = Object.assign({}, s.ex); e[x.id] = q + 1; self.touch({ ex: e }); },
+        dec: function () { var e = Object.assign({}, s.ex); e[x.id] = Math.max(0, q - 1); self.touch({ ex: e }); } };
+    }).concat(P.categories.map(function (c) {
+      var q = s.cats[c.id] || 0;
+      return { name: c.name, src: '', noSrc: true, phLabel: 'any', on: q > 0, nc: false, counted: true, rate: noRuns ? '' : '0%', prov: noRuns ? 'count by hand' : '0/' + P.runs,
+        wikiCol: c.wiki, q: q, showQty: true, sub: c.base, tag: 'category', tagCls: '', title: c.base, cls: 'cat ' + (q ? 'on' : 'off'), ctlCls: q ? 'on' : '',
+        toggle: function () { var e = Object.assign({}, s.cats); e[c.id] = q ? 0 : 1; self.touch({ cats: e }); },
+        inc: function () { var e = Object.assign({}, s.cats); e[c.id] = q + 1; self.touch({ cats: e }); },
+        dec: function () { var e = Object.assign({}, s.cats); e[c.id] = Math.max(0, q - 1); self.touch({ cats: e }); } };
+    }));
+    var nEx = extra.reduce(function (a, x) { return a + (x.on ? x.q : 0); }, 0);
+    var valid = this.valid(), pauseWhy = s.amb ? 'which ' + s.amb.base + '?' : 'check guaranteed';
+    return {
+      p: P, grid: grid, list: !grid, panelW: grid ? '400px' : '420px',
+      runsNote: noRuns ? 'No runs logged for this boss yet: rates show the wiki estimate.' : 'Chances from ' + P.runs + ' runs' + (s.mode === 'col' ? ' · 1 device' : ''),
+      groups: groups, extra: extra, extraMsg: nEx + ' item' + (nEx === 1 ? '' : 's'),
+      secs: s.secs, counting: !s.done && valid, paused: !s.done && !valid, pauseWhy: pauseWhy,
+      isOpen: s.phase === 'open', savingB: s.phase === 'submitting', savedB: s.phase === 'saved', failB: s.phase === 'unreachable', mergedB: s.merged && !s.done,
+      visible: !s.hidden, edge: s.phase === 'unreachable' ? 'var(--color-lab-red)' : 'var(--color-lab-border)', prevRun: P.run,
+      splitRun: function () { self.touch({ merged: false }); }, close: function () { self.setState({ hidden: true }); },
+      barW: (s.done || !valid ? 0 : Math.round((s.secs / t) * 100)) + '%',
+      isOwn: s.mode === 'own', isCol: s.mode === 'col', ownCls: s.mode === 'own' ? 'active' : '', colCls: s.mode === 'col' ? 'active' : '',
+      pickOwn: function () { self.touch({ mode: 'own' }); }, pickCol: function () { self.touch({ mode: 'col' }); },
+      unknownLine: P.capture.unknown.length ? 'Not in table: ' + P.capture.unknown.join(', ') : '',
+      save: function () { if (self.valid()) self.setState({ done: true, phase: 'saved' }); },
+      discard: function () { self.setState({ hidden: true }); }
+    };
+  }
+}
+</script>
+</body>
+</html>

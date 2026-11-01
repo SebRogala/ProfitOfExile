@@ -4,7 +4,7 @@
 > is requested**, not during design.
 
 ## Playbook source
-Local clone: **`/var/www/claude-design`** (read fresh; don't rely on memory). This is the Claude
+Local clone: **`/var/www/claude-design-playbook`** (read fresh; don't rely on memory). This is the Claude
 Code path (README Door 2b): read its `LOCAL.md` first; its overrides win.
 - When handed a brief (`design/tasks/<slug>.intake.md`) → triage it first per `PRODUCE.md`
   ("When handed a task"): check it against `INTAKE.md`, read the repo yourself for anything

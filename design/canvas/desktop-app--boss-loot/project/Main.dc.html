@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Boss loot confirmation · icon grid</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+<script src="data.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.tile{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 4px 5px;border-radius:5px;border:1px solid var(--color-lab-border);background:var(--color-lab-surface);color:var(--color-lab-text);cursor:pointer;min-height:96px;text-align:center}
+.tile:hover{border-color:var(--color-lab-text-muted)}
+.tile.on{border:2px solid var(--color-lab-blue);padding:5px 3px 4px;background:rgba(59,130,246,.12)}
+.tile.dim .art{opacity:.4}
+.tile.nc{border-style:dashed;cursor:default}
+.art{width:40px;height:40px;object-fit:contain}
+.ph{width:40px;height:40px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--color-lab-text-muted);border-radius:4px;font-size:11px;color:var(--color-lab-text-secondary)}
+.tname{font-size:11px;line-height:13px;max-height:39px;overflow:hidden}
+.trate{font-size:11px;color:var(--color-lab-text-secondary);display:flex;gap:4px;align-items:baseline}
+.trate b{font-family:'Consolas','Monaco',monospace;color:var(--color-lab-text);font-weight:600}
+.mark{position:absolute;top:3px;right:3px;width:14px;height:14px;border-radius:50%;background:var(--color-lab-blue);display:flex;align-items:center;justify-content:center}
+.read{position:absolute;top:3px;left:3px;font-size:10px;line-height:12px;padding:0 3px;border-radius:3px;background:rgba(255,255,255,.08);color:var(--color-lab-text-secondary)}
+</style>
+</helmet>
+<div class="game" style="width: 600px; height: 800px; padding: 20px; display: flex; justify-content: flex-end; align-items: flex-start">
+  <span class="game-tag">[game, 1080p] · panel at its saved position</span>
+  <sc-if value="{{done}}" hint-placeholder-val="{{ false }}">
+    <button type="button" class="btn" onClick="{{replay}}" style="position: absolute; left: 20px; top: 20px">Replay capture</button>
+  </sc-if>
+
+  <section class="ov" aria-label="Boss loot confirmation" style="width: 392px; position: relative; z-index: 1">
+    <div class="ov-head">
+      <div>
+        <div class="ov-title">{{bossShort}} · run {{run}}</div>
+        <div class="ov-why">Zone <span class="mono" style="font-weight: 400">{{area}}</span>, level {{level}}</div>
+      </div>
+      <sc-if value="{{counting}}" hint-placeholder-val="{{ true }}">
+        <span class="badge badge-blue">Saving in <b class="mono">{{secs}}</b> s</span>
+      </sc-if>
+      <sc-if value="{{paused}}" hint-placeholder-val="{{ false }}">
+        <span class="badge badge-yellow">Paused: pick one unique</span>
+      </sc-if>
+      <sc-if value="{{savedB}}" hint-placeholder-val="{{ false }}">
+        <span class="badge badge-green">Saved · run {{run}}</span>
+      </sc-if>
+      <sc-if value="{{discB}}" hint-placeholder-val="{{ false }}">
+        <span class="badge badge-grey">Discarded</span>
+      </sc-if>
+    </div>
+    <div class="cd" style="margin: 0 12px"><i style="width: {{barW}}"></i></div>
+
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px 0">
+      <span class="sec" style="font-size: 11px">Chances from <span class="mono">{{n}}</span> runs{{devices}}</span>
+      <span class="segmented" role="group" aria-label="Whose data">
+        <button type="button" class="segmented-btn {{ownCls}}" aria-pressed="{{isOwn}}" onClick="{{pickOwn}}">Own</button>
+        <button type="button" class="segmented-btn {{colCls}}" aria-pressed="{{isCol}}" onClick="{{pickCol}}">Collective</button>
+      </span>
+    </div>
+
+    <div class="ov-sec">
+      <div class="grp"><span>Unique pool · one per kill</span><span class="grp-note {{poolCls}}">{{poolMsg}}</span></div>
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px" role="radiogroup" aria-label="Unique pool">
+        <sc-for list="{{pool}}" as="t" hint-placeholder-count="6">
+          <button type="button" role="radio" aria-checked="{{t.on}}" class="tile {{t.cls}}" onClick="{{t.toggle}}" title="{{t.base}}">
+            <sc-if value="{{t.wasRead}}" hint-placeholder-val="{{ false }}"><span class="read">read</span></sc-if>
+            <sc-if value="{{t.on}}" hint-placeholder-val="{{ false }}"><span class="mark"><svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 5.2 4 7.6 8.6 2.4" fill="none" stroke="var(--color-lab-bg)" stroke-width="2"/></svg></span></sc-if>
+            <img class="art" src="{{t.src}}" alt="">
+            <span class="tname">{{t.name}}</span>
+            <span class="trate"><b>{{t.rate}}</b><span>{{t.prov}}</span></span>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+
+    <div class="ov-sec">
+      <div class="grp"><span>Additional drops</span><span class="grp-note sec">{{extraMsg}}</span></div>
+      <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px">
+        <sc-for list="{{extra}}" as="t" hint-placeholder-count="8">
+          <button type="button" aria-pressed="{{t.on}}" aria-disabled="{{t.notCounted}}" class="tile {{t.cls}}" onClick="{{t.toggle}}" title="{{t.title}}">
+            <sc-if value="{{t.wasRead}}" hint-placeholder-val="{{ false }}"><span class="read">read</span></sc-if>
+            <sc-if value="{{t.on}}" hint-placeholder-val="{{ false }}"><span class="mark"><svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 5.2 4 7.6 8.6 2.4" fill="none" stroke="var(--color-lab-bg)" stroke-width="2"/></svg></span></sc-if>
+            <sc-if value="{{t.hasArt}}" hint-placeholder-val="{{ true }}"><img class="art" src="{{t.src}}" alt=""></sc-if>
+            <sc-if value="{{t.noArt}}" hint-placeholder-val="{{ false }}"><span class="ph">rare</span></sc-if>
+            <span class="tname">{{t.name}}</span>
+            <sc-if value="{{t.notCounted}}" hint-placeholder-val="{{ false }}"><span class="badge badge-yellow">not counted</span></sc-if>
+            <sc-if value="{{t.counted}}" hint-placeholder-val="{{ true }}"><span class="trate"><b>{{t.rate}}</b><span>{{t.prov}}</span></span></sc-if>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+
+    <div class="ov-sec" style="display: flex; flex-direction: column; gap: 8px">
+      <div class="sec" style="font-size: 11px">Read but not in Catarina's table: <span style="color: var(--color-lab-text)">{{unknown}}</span></div>
+      <div style="display: flex; justify-content: flex-end; gap: 6px">
+        <button type="button" class="btn btn-ghost" onClick="{{discard}}">Discard</button>
+        <button type="button" class="btn btn-primary" onClick="{{save}}">{{saveLabel}}</button>
+      </div>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"timeout":{"editor":"int","default":10,"min":3,"max":60,"unit":"s"},"$preview":{"width":600,"height":800}}'>
+class Component extends DCLogic {
+  constructor(p) { super(p); this.state = this.fresh(); }
+  fresh() {
+    var D = window.POE317, t = (this.props && this.props.timeout) || 10;
+    var ex = {}; D.capture.matched.forEach(function (id) { ex[id] = true; });
+    return { pick: 'urn', ex: ex, secs: t, mode: 'own', done: false, discarded: false };
+  }
+  componentDidMount() {
+    var self = this;
+    this.iv = setInterval(function () {
+      var s = self.state;
+      if (s.done || !s.pick) return;
+      if (s.secs <= 1) self.setState({ secs: 0, done: true }); else self.setState({ secs: s.secs - 1 });
+    }, 1000);
+  }
+  componentWillUnmount() { clearInterval(this.iv); }
+  touch(patch) { var t = this.props.timeout ?? 10; this.setState(Object.assign({ secs: t }, patch)); }
+  renderVals() {
+    var D = window.POE317, s = this.state, self = this, t = this.props.timeout ?? 10;
+    var read = {}; D.capture.matched.forEach(function (id) { read[id] = true; });
+    var pool = D.pool.map(function (x) {
+      var on = s.pick === x.id;
+      return Object.assign({}, x, { on: on, wasRead: !!read[x.id], cls: on ? 'on' : 'dim', base: x.base + ' · wiki ' + x.wiki,
+        toggle: function () { if (!s.done) self.touch({ pick: on ? null : x.id }); } });
+    });
+    var extra = D.extra.map(function (x) {
+      var on = !!s.ex[x.id] && !x.notCounted;
+      return Object.assign({}, x, { on: on, wasRead: !!read[x.id], hasArt: !!x.src, noArt: !x.src,
+        counted: !x.notCounted, notCounted: !!x.notCounted,
+        rate: s.mode === 'col' && x.drops === 0 ? '—' : x.rate,
+        cls: x.notCounted ? 'nc dim' : (on ? 'on' : 'dim'),
+        title: x.notCounted ? x.name + ': not counted (your loot filter hides it). Change on the Boss loot page.' : (x.manual ? x.name + ': OCR cannot see veiled mods; tick it by hand.' : x.base + ' · wiki ' + x.wiki),
+        toggle: function () { if (s.done || x.notCounted) return; var e = Object.assign({}, s.ex); e[x.id] = !e[x.id]; self.touch({ ex: e }); } });
+    });
+    var nEx = extra.filter(function (x) { return x.on; }).length;
+    var counting = !s.done && !!s.pick;
+    return {
+      bossShort: D.boss.short, run: D.capture.run, area: D.boss.area, level: D.boss.level,
+      n: D.boss.runs, devices: s.mode === 'col' ? ' · ' + D.boss.devices + ' device' : '',
+      secs: s.secs, counting: counting, paused: !s.done && !s.pick, done: s.done,
+      savedB: s.done && !s.discarded, discB: s.discarded,
+      barW: (s.done ? 0 : Math.round((s.secs / t) * 100)) + '%',
+      isOwn: s.mode === 'own', isCol: s.mode === 'col', ownCls: s.mode === 'own' ? 'active' : '', colCls: s.mode === 'col' ? 'active' : '',
+      pickOwn: function () { self.touch({ mode: 'own' }); }, pickCol: function () { self.touch({ mode: 'col' }); },
+      pool: pool, poolMsg: s.pick ? '1 picked' : 'none picked', poolCls: s.pick ? 'ok' : 'warn',
+      extra: extra, extraMsg: nEx + ' ticked',
+      unknown: D.capture.unknown.join(', '),
+      saveLabel: s.done ? 'Saved' : 'Save now',
+      save: function () { if (s.pick) self.setState({ done: true, secs: 0 }); },
+      discard: function () { self.setState({ done: true, discarded: true, secs: 0 }); },
+      replay: function () { self.setState(self.fresh()); }
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Catarina in the general shape</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+<script src="data.js"></script>
+<script src="profiles.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.cap{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--color-lab-text-secondary);background:var(--color-lab-bg);padding:2px 6px;border-radius:3px;align-self:flex-start}
+</style>
+</helmet>
+<div class="game" style="width: 960px; min-height: 900px; padding: 24px; display: flex; gap: 32px; align-items: flex-start">
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <span class="cap">A · grid · 1 guaranteed group + category tile</span>
+    <dc-import name="LootOverlay" profile="catarina" layout="grid" hint-size="420px,760px"></dc-import>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <span class="cap">B · list · same profile</span>
+    <dc-import name="LootOverlay" profile="catarina" layout="list" hint-size="420px,760px"></dc-import>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

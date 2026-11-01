@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Boss loot capture · frame and states</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+<script src="data.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.cap{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--color-lab-text-secondary);background:var(--color-lab-bg);padding:2px 6px;border-radius:3px;align-self:flex-start}
+.frame{position:relative;width:400px;height:333px}
+.br{position:absolute;width:28px;height:28px;border-color:var(--color-lab-cyan);border-style:solid;border-width:0}
+.br.tl{left:0;top:0;border-left-width:3px;border-top-width:3px}
+.br.tr{right:0;top:0;border-right-width:3px;border-top-width:3px}
+.br.bl{left:0;bottom:0;border-left-width:3px;border-bottom-width:3px}
+.br.brr{right:0;bottom:0;border-right-width:3px;border-bottom-width:3px}
+.solid{position:absolute;inset:0;border:3px solid var(--color-lab-cyan);border-radius:2px}
+.chip{position:absolute;left:8px;top:8px;display:flex;align-items:center;gap:8px;background:var(--color-lab-bg);border:1px solid var(--color-lab-border);border-radius:4px;padding:4px 8px;font-size:12px;color:var(--color-lab-text);max-width:384px}
+.cursor{position:absolute;left:195px;top:217px;width:9px;height:9px;border-radius:50%;border:2px solid var(--color-lab-text)}
+.label{position:absolute;font-size:12px;font-weight:700;color:var(--color-lab-text);text-shadow:0 1px 2px var(--color-lab-bg)}
+.mini{width:392px}
+.line{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12px}
+.mtile{color:var(--color-lab-text);display:flex;align-items:center;gap:8px;padding:4px 8px;border:1px solid var(--color-lab-border);border-radius:4px;background:var(--color-lab-surface);font-size:12px}
+.mtile img{width:28px;height:28px;object-fit:contain}
+.mtile.on{border:2px solid var(--color-lab-blue);padding:3px 7px;background:rgba(59,130,246,.12)}
+.spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--color-lab-border);border-top-color:var(--color-lab-blue)}
+.lbtn{background:none;border:0;padding:0;color:var(--color-lab-blue);text-decoration:underline;font-size:12px;cursor:pointer}
+</style>
+</helmet>
+<div class="game" style="width: 1320px; min-height: 920px; padding: 24px; display: flex; flex-direction: column; gap: 28px">
+
+  <!-- Row 1: capture frame -->
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px">
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <span class="cap">1 · Preview (Shift+F8) · follows cursor · 44% scale</span>
+      <div class="frame">
+        <i class="br tl"></i><i class="br tr"></i><i class="br bl"></i><i class="br brr"></i>
+        <span class="label" style="left: 130px; top: 105px">SILVER FLASK</span>
+        <span class="label" style="left: 40px; top: 150px">VEILED EXALTED ORB</span>
+        <span class="label" style="left: 170px; top: 182px">ALLFLAME EMBER OF KULEMAK</span>
+        <span class="label" style="left: 70px; top: 258px">ZORATH'S EYE OF THE ENDLESS</span>
+        <i class="cursor"></i>
+        <div class="chip"><b>Boss loot</b><span class="sec">preview</span><span class="kbd">Shift</span>+<span class="kbd">F8</span><span class="sec">hides</span></div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <span class="cap">2 · Capture (Shift+Right click) · reading</span>
+      <div class="frame">
+        <i class="solid"></i>
+        <span class="label" style="left: 130px; top: 105px">SILVER FLASK</span>
+        <span class="label" style="left: 40px; top: 150px">VEILED EXALTED ORB</span>
+        <span class="label" style="left: 170px; top: 182px">ALLFLAME EMBER OF KULEMAK</span>
+        <span class="label" style="left: 70px; top: 258px">ZORATH'S EYE OF THE ENDLESS</span>
+        <i class="cursor"></i>
+        <div class="chip"><i class="spin"></i><span>Reading loot · Catarina · run 79</span></div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <span class="cap">3 · Refused · no boss profile for this zone</span>
+      <div class="frame">
+        <i class="br tl" style="border-color: var(--color-lab-yellow)"></i><i class="br tr" style="border-color: var(--color-lab-yellow)"></i><i class="br bl" style="border-color: var(--color-lab-yellow)"></i><i class="br brr" style="border-color: var(--color-lab-yellow)"></i>
+        <i class="cursor"></i>
+        <div class="chip" style="flex-direction: column; align-items: flex-start; gap: 2px"><span><b class="warn">Not logged</b> · no boss profile for this zone</span><span class="sec" style="font-size: 11px">Last zone <span class="mono" style="font-weight: 400">[area id]</span>, level [NN]. Boss loot tracks: Catarina.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 2: save outcomes -->
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px">
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <span class="cap">4 · Submitting</span>
+      <section class="ov mini">
+        <div class="ov-head"><div><div class="ov-title">Catarina · run 79</div><div class="ov-why">Urn, Zorath's Eye, Veiled Exalted Orb, Allflame Ember</div></div><span class="badge badge-blue"><i class="spin"></i>Saving</span></div>
+      </section>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <span class="cap">5 · Saved · panel closes after 2 s</span>
+      <section class="ov mini">
+        <div class="ov-head"><div><div class="ov-title">Catarina · run 79</div><div class="ov-why">Urn, Zorath's Eye, Veiled Exalted Orb, Allflame Ember</div></div><span class="badge badge-green">Saved</span></div>
+        <div class="line sec">Cinderswallow Urn now <b class="mono" style="color: var(--color-lab-text)">32%</b> (25/79)</div>
+      </section>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <span class="cap">6 · Server unreachable · not saved</span>
+      <section class="ov mini" style="border-color: var(--color-lab-red)">
+        <div class="ov-head"><div><div class="ov-title">Catarina · run 79</div><div class="ov-why">Urn, Zorath's Eye, Veiled Exalted Orb, Allflame Ember</div></div><span class="badge badge-red">Not saved</span></div>
+        <div class="line" style="justify-content: space-between"><span>Server unreachable. This run was not recorded.</span><button type="button" class="btn btn-ghost">Close</button></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Row 3: attribution + validation -->
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px">
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <span class="cap">7 · Same instance (seed) · merged</span>
+      <section class="ov mini">
+        <div class="ov-head"><div><div class="ov-title">Catarina · run 79</div><div class="ov-why">Zone <span class="mono" style="font-weight: 400">BetrayalMastermindFight</span>, level 83</div></div><span class="badge badge-blue">Saving in <b class="mono">8</b> s</span></div>
+        <div class="line" style="justify-content: space-between; background: rgba(59,130,246,.08)"><span>Same seed as run 79: added to it.</span><button type="button" class="lbtn">Save as new run</button></div>
+        <div class="line sec" style="font-size: 11px">Seed <span class="mono" style="font-weight: 400">2667568808</span> · 2nd capture · Templar Astrolabe added</div>
+      </section>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <span class="cap">8 · Two pool bases read · paused</span>
+      <section class="ov mini">
+        <div class="ov-head"><div><div class="ov-title">Catarina · run 80</div><div class="ov-why">Zone <span class="mono" style="font-weight: 400">BetrayalMastermindFight</span>, level 83</div></div><span class="badge badge-yellow">Paused</span></div>
+        <div class="ov-sec">
+          <div class="grp"><span>Unique pool · one per kill</span><span class="grp-note bad">2 read: pick one</span></div>
+          <div style="display: flex; gap: 6px">
+            <button type="button" class="mtile"><img src="/_blob/ad9f408c9d6c5c0f04678e30ff690583" alt="">Cinderswallow Urn</button>
+            <button type="button" class="mtile"><img src="/_blob/7b30a3a9870578e59076e048a03b8728" alt="">Spinehail</button>
+          </div>
+        </div>
+      </section>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <span class="cap">9 · Nothing matched · paused</span>
+      <section class="ov mini">
+        <div class="ov-head"><div><div class="ov-title">Catarina · run 80</div><div class="ov-why">Zone <span class="mono" style="font-weight: 400">BetrayalMastermindFight</span>, level 83</div></div><span class="badge badge-yellow">Paused</span></div>
+        <div class="line" style="flex-direction: column; align-items: flex-start; gap: 4px"><span>Nothing from Catarina's table was read. Pick the unique, or discard.</span><span class="sec" style="font-size: 11px">Read: Jun Ortoi, Nocturnal Hideout, 1,204 Gold</span></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Row 4: data quality -->
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px">
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <span class="cap">10 · Partial label matched by fragment</span>
+      <section class="ov mini">
+        <div class="ov-sec">
+          <div class="grp"><span>Unique pool · one per kill</span><span class="grp-note ok">1 picked</span></div>
+          <button type="button" class="mtile on" style="width: 100%"><img src="/_blob/7eaf40d8e92f04cb4cc436b0afcd0fd0" alt=""><span style="display: flex; flex-direction: column; align-items: flex-start"><span>Bitterbind Point</span><span class="sec" style="font-size: 11px">read “TANIUM SPIRI” → Titanium Spirit Shield</span></span></button>
+        </div>
+      </section>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <span class="cap">11 · Low n (first 5 runs) · rates marked</span>
+      <section class="ov mini">
+        <div class="ov-sec">
+          <div class="grp"><span>Unique pool</span><span class="grp-note warn">5 runs · low n</span></div>
+          <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; font-size: 11px">
+            <span class="mtile" style="flex-direction: column; gap: 2px"><img src="/_blob/ad9f408c9d6c5c0f04678e30ff690583" alt=""><span>Cinderswallow Urn</span><span class="sec"><b class="mono" style="color: var(--color-lab-yellow)">~40%</b> 2/5</span></span>
+            <span class="mtile" style="flex-direction: column; gap: 2px"><img src="/_blob/b7aa20d6cc278f5631055cab7c3f16a7" alt=""><span>Cane of Kulemak</span><span class="sec"><b class="mono" style="color: var(--color-lab-yellow)">~60%</b> 3/5</span></span>
+            <span class="mtile" style="flex-direction: column; gap: 2px"><img src="/_blob/7b30a3a9870578e59076e048a03b8728" alt=""><span>Spinehail</span><span class="sec"><b class="mono" style="color: var(--color-lab-yellow)">~0%</b> 0/5</span></span>
+          </div>
+        </div>
+      </section>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <span class="cap">12 · Auto-save off (timeout set to Off)</span>
+      <section class="ov mini">
+        <div class="ov-head"><div><div class="ov-title">Catarina · run 79</div><div class="ov-why">Zone <span class="mono" style="font-weight: 400">BetrayalMastermindFight</span>, level 83</div></div><span class="badge badge-grey">Waiting for you</span></div>
+        <div class="line" style="justify-content: flex-end; gap: 6px"><button type="button" class="btn btn-ghost">Discard</button><button type="button" class="btn btn-primary">Save</button></div>
+      </section>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1320,"height":920}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

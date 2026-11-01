@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sidebar icon candidates</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+<script src="data.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:var(--bg);color:var(--text)}
+.cap{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)}
+.nav{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;border-radius:5px;color:var(--text);width:164px}
+.nav.active{background:var(--border);color:var(--accent)}
+.nav img{width:18px;height:18px;object-fit:contain}
+.nav .glyph{width:16px;text-align:center}
+.rail{position:relative;width:32px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px}
+.rail img{width:22px;height:22px;object-fit:contain}
+.ind{position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;background:var(--success);box-shadow:0 0 4px rgba(74,222,128,.5)}
+.orow{display:flex;justify-content:space-between;align-items:center;background:var(--bg);padding:4px 8px;border-radius:4px;font-size:11px;width:164px}
+.mname{display:inline-flex;align-items:center;gap:6px}
+.mname img{width:14px;height:14px;object-fit:contain}
+</style>
+</helmet>
+<div style="width: 1000px; padding: 24px 28px; display: flex; flex-direction: column; gap: 28px">
+  <sc-for list="{{rows}}" as="row" hint-placeholder-count="2">
+    <section style="display: flex; flex-direction: column; gap: 12px">
+      <span class="cap">{{row.label}}</span>
+      <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px">
+        <sc-for list="{{row.opts}}" as="o" hint-placeholder-count="4">
+          <div style="display: flex; flex-direction: column; gap: 10px">
+            <div style="height: 64px; display: flex; align-items: center">
+              <sc-if value="{{o.src}}" hint-placeholder-val="{{ true }}"><img src="{{o.src}}" alt="" width="64" height="64"></sc-if>
+              <sc-if value="{{o.glyph}}" hint-placeholder-val="{{ false }}"><span style="font-size: 40px; line-height: 64px">⇄</span></sc-if>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 4px; background: var(--surface); padding: 6px 4px; border-radius: 4px">
+              <span class="nav"><sc-if value="{{o.src}}" hint-placeholder-val="{{ true }}"><img src="{{o.src}}" alt=""></sc-if><sc-if value="{{o.glyph}}" hint-placeholder-val="{{ false }}"><span class="glyph">⇄</span></sc-if><span>{{row.page}}</span></span>
+              <span class="nav active"><sc-if value="{{o.src}}" hint-placeholder-val="{{ true }}"><img src="{{o.src}}" alt=""></sc-if><sc-if value="{{o.glyph}}" hint-placeholder-val="{{ false }}"><span class="glyph">⇄</span></sc-if><span>{{row.page}}</span></span>
+              <span style="display: flex; align-items: center; gap: 8px; padding: 0 6px">
+                <span class="rail"><sc-if value="{{o.src}}" hint-placeholder-val="{{ true }}"><img src="{{o.src}}" alt=""></sc-if><sc-if value="{{o.glyph}}" hint-placeholder-val="{{ false }}"><span>⇄</span></sc-if><sc-if value="{{row.module}}" hint-placeholder-val="{{ false }}"><i class="ind"></i></sc-if></span>
+                <span style="font-size: 10px; color: var(--text-muted)">rail 22 px</span>
+              </span>
+              <sc-if value="{{row.module}}" hint-placeholder-val="{{ false }}"><span class="orow"><span class="mname"><img src="{{o.src}}" alt="">Boss loot</span><span style="font-size: 10px; color: var(--success)">on</span></span></sc-if>
+            </div>
+            <span style="font-size: 12px; color: var(--color-lab-text-secondary)">{{o.name}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+  </sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1000,"height":620}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var b = '/_blob/';
+    return { rows: [
+      { label: 'Boss loot · nav, rail switch, Modules row', page: 'Boss loot', module: true, opts: [
+        { name: 'A · Unique reward chest (minimap RewardChestUnique)', src: b + '43ef9b37b26cb7bd603044d897f6d988', glyph: false },
+        { name: 'B · Boss skull + chest badge (ExpeditionBoss + RewardChestUnique)', src: b + '4b6994c75f4d3ae5b4243a1c43400658', glyph: false },
+        { name: 'C · Unique monster marker (minimap WardenTrackerUniqueMonster)', src: b + 'a240f0b81be5a4ca78fe245baf3db4fd', glyph: false }
+      ] },
+      { label: 'Chaos ⇄ Div · nav and rail', page: 'Chaos ⇄ Div', module: false, opts: [
+        { name: 'Today · bare ⇄ glyph', src: '', glyph: true },
+        { name: 'A · Divine over Chaos, overlapping', src: b + 'dd1e83ff6302721524d1d27fcdd9d364', glyph: false },
+        { name: 'B · Divine with a Chaos badge', src: b + '2114b2972bffc57dc800338229697cda', glyph: false },
+        { name: 'C · Divine and Chaos side by side', src: b + '119a0557a9f15bb956acb72d23fa1e69', glyph: false }
+      ] }
+    ] };
+  }
+}
+</script>
+</body>
+</html>
