@@ -2888,7 +2888,7 @@ fn spawn_focus_poller(app: AppHandle) {
                     // stops an overlay click from blanking every overlay, and
                     // NOT holding it is what stops the capture loop from
                     // photographing our own window instead of the game.
-                    for overlay_name in &["temple", "mercenary", "lab"] {
+                    for overlay_name in &["temple", "mercenary", "lab", "loot"] {
                         apply_overlay_focus(&app, overlay_name, is_focused, debug);
                     }
                 }
