@@ -60,12 +60,51 @@ const LEAGUE_FETCH_MAX_BACKOFF: Duration = Duration::from_secs(60);
 const LEAGUE_UNREACHABLE_AFTER_ATTEMPTS: u32 = 4;
 
 /// One process owns the resolver, including while its UI flag is idle.
-static RETRY_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
-static LEAGUE_TASK: std::sync::Mutex<LeagueTask> = std::sync::Mutex::new(LeagueTask {
-    live: false,
-    pending: false,
-    url_generation: 0,
-});
+static LEAGUE_SCHEDULER: LazyLock<LeagueScheduler> = LazyLock::new(LeagueScheduler::new);
+
+struct LeagueScheduler {
+    task: std::sync::Mutex<LeagueTask>,
+    notify: Notify,
+}
+
+impl LeagueScheduler {
+    fn new() -> Self {
+        Self { task: std::sync::Mutex::new(LeagueTask::default()), notify: Notify::new() }
+    }
+
+    fn trigger(&self) -> bool {
+        let spawn = self.task.lock().unwrap_or_else(|e| e.into_inner()).trigger();
+        self.notify.notify_one();
+        spawn
+    }
+
+    fn begin_request(&self) {
+        // This request covers only triggers already received. Later triggers
+        // remain pending through its response and require another status read.
+        self.task.lock().unwrap_or_else(|e| e.into_inner()).pending = false;
+    }
+
+    async fn wait(&self, delay: Option<Duration>, runtime: &impl LeagueRuntime) -> bool {
+        let wake = async {
+            loop {
+                let notified = self.notify.notified();
+                if std::mem::take(&mut self.task.lock().unwrap_or_else(|e| e.into_inner()).pending) {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        if let Some(delay) = delay {
+            tokio::select! {
+                _ = wake => true,
+                _ = runtime.sleep(delay) => false,
+            }
+        } else {
+            wake.await;
+            true
+        }
+    }
+}
 
 #[derive(Default)]
 struct LeagueTask {
@@ -1526,10 +1565,9 @@ fn parse_league_from_status(body: &serde_json::Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// One league fetch attempt. Returns `Some(league)` on a clean success, `None`
-/// on any failure (offline, non-2xx, bad JSON, missing field) so the caller can
-/// retry. The server-URL guard and the cloned HTTP client are scoped before the
-/// first `.await`, so no lock is held across the network round-trip.
+/// One league fetch attempt. Return true only for an accepted status response;
+/// failures and superseded server requests retry. Clone the HTTP client and
+/// request identity before awaiting, with no lock across the round-trip.
 async fn fetch_league_once(app: &AppHandle) -> bool {
     let (server_url, http, url_generation) = {
         let state = app.state::<AppState>();
@@ -1538,7 +1576,7 @@ async fn fetch_league_once(app: &AppHandle) -> bool {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        let generation = LEAGUE_TASK.lock().unwrap_or_else(|e| e.into_inner()).url_generation;
+        let generation = LEAGUE_SCHEDULER.task.lock().unwrap_or_else(|e| e.into_inner()).url_generation;
         (url, state.server_http.clone(), generation)
     };
     let Some(name) = fetch_league_from_server(&http, &server_url).await else {
@@ -1547,14 +1585,12 @@ async fn fetch_league_once(app: &AppHandle) -> bool {
     let changed = {
         let state = app.state::<AppState>();
         let current_url = state.server_url.lock().unwrap_or_else(|e| e.into_inner());
-        let mut task = LEAGUE_TASK.lock().unwrap_or_else(|e| e.into_inner());
+        let task = LEAGUE_SCHEDULER.task.lock().unwrap_or_else(|e| e.into_inner());
         let Some(changed) = accept_league_response(
             &state.ssot, (&current_url, task.url_generation), (&server_url, url_generation), name,
         ) else {
             return false;
         };
-        // Hints received during this authoritative request are coalesced.
-        task.pending = false;
         changed
     };
     publish_league_resolution(app, changed);
@@ -1608,29 +1644,30 @@ pub(crate) async fn refresh_league_for_test(
     write_league(ssot, league);
 }
 
-/// Inject network and waiting at the production loop boundary, so tests drive
-/// the same idle/retry transitions without a wall clock or Tauri windows.
+/// Inject network and clock at the production loop boundary. Trigger
+/// bookkeeping and Notify waiting remain shared with the application.
 trait LeagueRuntime {
+    fn scheduler(&self) -> &LeagueScheduler;
     fn begin(&self);
     async fn fetch(&self) -> bool;
     fn failed(&self, failures: u32);
-    /// None waits indefinitely; true means a trigger reset the backoff.
-    async fn wait(&self, delay: Option<Duration>) -> bool;
+    async fn sleep(&self, delay: Duration);
 }
 
 async fn run_league_resolver(runtime: &impl LeagueRuntime) {
     let mut backoff = LEAGUE_FETCH_INITIAL_BACKOFF;
     let mut failures = 0;
     loop {
+        runtime.scheduler().begin_request();
         runtime.begin();
         if runtime.fetch().await {
             failures = 0;
             backoff = LEAGUE_FETCH_INITIAL_BACKOFF;
-            runtime.wait(None).await;
+            runtime.scheduler().wait(None, runtime).await;
         } else {
             failures += 1;
             runtime.failed(failures);
-            if runtime.wait(Some(backoff)).await {
+            if runtime.scheduler().wait(Some(backoff), runtime).await {
                 backoff = LEAGUE_FETCH_INITIAL_BACKOFF;
             } else {
                 backoff = (backoff * 2).min(LEAGUE_FETCH_MAX_BACKOFF);
@@ -1642,8 +1679,9 @@ async fn run_league_resolver(runtime: &impl LeagueRuntime) {
 struct AppLeagueRuntime(AppHandle);
 
 impl LeagueRuntime for AppLeagueRuntime {
+    fn scheduler(&self) -> &LeagueScheduler { &LEAGUE_SCHEDULER }
+
     fn begin(&self) {
-        LEAGUE_TASK.lock().unwrap_or_else(|e| e.into_inner()).pending = false;
         let state = self.0.state::<AppState>();
         mark_resolving(&state.ssot);
         emit_ssot(&self.0);
@@ -1666,32 +1704,14 @@ impl LeagueRuntime for AppLeagueRuntime {
         }
     }
 
-    async fn wait(&self, delay: Option<Duration>) -> bool {
-        let wake = async {
-            loop {
-                let notified = RETRY_NOTIFY.notified();
-                if std::mem::take(&mut LEAGUE_TASK.lock().unwrap_or_else(|e| e.into_inner()).pending) {
-                    return;
-                }
-                notified.await;
-            }
-        };
-        if let Some(delay) = delay {
-            tokio::select! {
-                _ = wake => true,
-                _ = tokio::time::sleep(delay) => false,
-            }
-        } else {
-            wake.await;
-            true
-        }
+    async fn sleep(&self, delay: Duration) {
+        tokio::time::sleep(delay).await;
     }
 }
 
 /// Start one live service. After success it waits for a trigger, never a poll.
 pub fn spawn_league_fetch(app: AppHandle) {
-    let spawn = LEAGUE_TASK.lock().unwrap_or_else(|e| e.into_inner()).trigger();
-    RETRY_NOTIFY.notify_one();
+    let spawn = LEAGUE_SCHEDULER.trigger();
     if !spawn { return; }
     tauri::async_runtime::spawn(async move {
         run_league_resolver(&AppLeagueRuntime(app)).await;
@@ -1972,7 +1992,7 @@ pub const TEMPLE_MARKET_POLL: Duration = Duration::from_secs(5 * 60);
 ///
 /// Notified when the league resolves (the poll cannot key a payload before
 /// then, so the first one would otherwise wait out a whole period) and when the
-/// server url changes. A module-local `static` for the reason [`RETRY_NOTIFY`]
+/// server url changes. A module-local `static` for the reason [`LEAGUE_SCHEDULER`]
 /// is one: there is exactly one poller, and the signal is wholly contained in
 /// this file.
 static TEMPLE_MARKET_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
@@ -2416,7 +2436,7 @@ pub fn spawn_temple_market_poll(app: AppHandle) {
 ///    life of the session. The resolver's success wakes the poller, so the new
 ///    league's prices land as soon as the league does.
 pub fn on_server_url_changed(app: &AppHandle) {
-    LEAGUE_TASK.lock().unwrap_or_else(|e| e.into_inner()).url_generation += 1;
+    LEAGUE_SCHEDULER.task.lock().unwrap_or_else(|e| e.into_inner()).url_generation += 1;
     {
         let state = app.state::<AppState>();
         drop_market(&state.temple_market);
@@ -4514,7 +4534,6 @@ mod league_generation_tests {
 #[cfg(test)]
 mod league_resolver_tests {
     use super::*;
-    use std::collections::VecDeque;
     use std::future::Future;
     use std::sync::{Arc, Mutex};
     use std::task::{Context, Poll, Wake, Waker};
@@ -4523,18 +4542,21 @@ mod league_resolver_tests {
     impl Wake for NoopWake { fn wake(self: Arc<Self>) {} }
 
     struct Runtime {
+        scheduler: LeagueScheduler,
         ssot: Mutex<AppSsotSnapshot>,
-        replies: Mutex<VecDeque<Option<&'static str>>>,
-        waits: Mutex<Vec<Option<Duration>>>,
+        replies: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<Option<&'static str>>>,
+        waits: Mutex<Vec<Duration>>,
         attempts: Mutex<usize>,
-        clock: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<bool>>,
+        clock: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<()>>,
     }
 
     impl LeagueRuntime for Runtime {
+        fn scheduler(&self) -> &LeagueScheduler { &self.scheduler }
         fn begin(&self) { mark_resolving(&self.ssot); }
         async fn fetch(&self) -> bool {
             *self.attempts.lock().unwrap() += 1;
-            match self.replies.lock().unwrap().pop_front().expect("scripted response") {
+            let reply = self.replies.lock().await.recv().await.expect("network remains open");
+            match reply {
                 Some(name) => {
                     accept_league_response(&self.ssot, ("server", 0), ("server", 0), name.into());
                     true
@@ -4545,19 +4567,28 @@ mod league_resolver_tests {
         fn failed(&self, failures: u32) {
             if should_flag_unreachable(failures) { self.ssot.lock().unwrap().unreachable = true; }
         }
-        async fn wait(&self, delay: Option<Duration>) -> bool {
+        async fn sleep(&self, delay: Duration) {
             self.waits.lock().unwrap().push(delay);
-            self.clock.lock().await.recv().await.expect("clock remains open")
+            self.clock.lock().await.recv().await.expect("clock remains open");
         }
     }
 
-    fn runtime(replies: Vec<Option<&'static str>>) -> (Runtime, tokio::sync::mpsc::UnboundedSender<bool>) {
+    fn runtime(replies: Vec<Option<&'static str>>) -> (
+        Runtime,
+        tokio::sync::mpsc::UnboundedSender<()>,
+        tokio::sync::mpsc::UnboundedSender<Option<&'static str>>,
+    ) {
         let (clock, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (network, responses) = tokio::sync::mpsc::unbounded_channel();
+        for reply in replies { network.send(reply).unwrap(); }
+        let scheduler = LeagueScheduler::new();
+        assert!(scheduler.trigger(), "startup claims the sole resolver task");
         (Runtime {
+            scheduler,
             ssot: Mutex::new(AppSsotSnapshot::default()),
-            replies: Mutex::new(replies.into()), waits: Mutex::new(Vec::new()),
+            replies: tokio::sync::Mutex::new(responses), waits: Mutex::new(Vec::new()),
             attempts: Mutex::new(0), clock: tokio::sync::Mutex::new(receiver),
-        }, clock)
+        }, clock, network)
     }
 
     fn advance(future: std::pin::Pin<&mut impl Future<Output = ()>>) {
@@ -4567,20 +4598,20 @@ mod league_resolver_tests {
 
     #[test]
     fn success_waits_indefinitely_for_each_isolated_trigger() {
-        let (runtime, clock) = runtime(vec![Some("A"), Some("B"), Some("B"), Some("B")]);
+        let (runtime, _clock, _network) = runtime(vec![Some("A"), Some("B"), Some("B"), Some("B")]);
         let mut resolver = std::pin::pin!(run_league_resolver(&runtime));
         advance(resolver.as_mut());
         // Polling the executor without a trigger represents arbitrarily much
         // idle time: the production loop must not even arm a status timer.
         for _ in 0..100 { advance(resolver.as_mut()); }
         assert_eq!(*runtime.attempts.lock().unwrap(), 1);
-        assert_eq!(*runtime.waits.lock().unwrap(), vec![None]);
+        assert!(runtime.waits.lock().unwrap().is_empty(), "idle must not arm a timer");
         for attempt in 2..=4 {
-            // The shared wait receives 409, Mercure and Refresh wakes alike.
-            clock.send(true).unwrap();
+            // The shared production scheduler receives all trigger sources.
+            assert!(!runtime.scheduler.trigger());
             advance(resolver.as_mut());
             assert_eq!(*runtime.attempts.lock().unwrap(), attempt);
-            assert_eq!(runtime.waits.lock().unwrap().last(), Some(&None));
+            assert!(runtime.waits.lock().unwrap().is_empty());
             assert!(!runtime.ssot.lock().unwrap().resolving);
         }
         assert_eq!(runtime.ssot.lock().unwrap().league.name.as_deref(), Some("B"));
@@ -4589,15 +4620,15 @@ mod league_resolver_tests {
 
     #[test]
     fn failures_retry_with_capped_backoff_until_recovery() {
-        let (runtime, clock) = runtime(vec![None, None, None, None, None, None, None, None, Some("A")]);
+        let (runtime, clock, _network) = runtime(vec![None, None, None, None, None, None, None, None, Some("A")]);
         let mut resolver = std::pin::pin!(run_league_resolver(&runtime));
         advance(resolver.as_mut());
-        for _ in 0..7 { clock.send(false).unwrap(); advance(resolver.as_mut()); }
-        assert_eq!(*runtime.waits.lock().unwrap(), [2, 4, 8, 16, 32, 60, 60, 60].map(|s| Some(Duration::from_secs(s))));
+        for _ in 0..7 { clock.send(()).unwrap(); advance(resolver.as_mut()); }
+        assert_eq!(*runtime.waits.lock().unwrap(), [2, 4, 8, 16, 32, 60, 60, 60].map(Duration::from_secs));
         assert!(runtime.ssot.lock().unwrap().unreachable);
-        clock.send(false).unwrap();
+        clock.send(()).unwrap();
         advance(resolver.as_mut());
-        assert_eq!(runtime.waits.lock().unwrap().last(), Some(&None));
+        assert_eq!(runtime.waits.lock().unwrap().len(), 8, "recovery arms no idle timer");
         let snapshot = runtime.ssot.lock().unwrap();
         assert_eq!(snapshot.league.name.as_deref(), Some("A"));
         assert!(!snapshot.unreachable);
@@ -4606,28 +4637,28 @@ mod league_resolver_tests {
 
     #[test]
     fn trigger_wakes_backoff_without_erasing_the_resolved_baseline() {
-        let (runtime, clock) = runtime(vec![Some("A"), None, None, Some("B")]);
+        let (runtime, clock, _network) = runtime(vec![Some("A"), None, None, Some("B")]);
         let mut resolver = std::pin::pin!(run_league_resolver(&runtime));
         advance(resolver.as_mut());
-        clock.send(true).unwrap(); advance(resolver.as_mut());
-        clock.send(false).unwrap(); advance(resolver.as_mut());
-        assert_eq!(runtime.waits.lock().unwrap().last(), Some(&Some(Duration::from_secs(4))));
+        runtime.scheduler.trigger(); advance(resolver.as_mut());
+        clock.send(()).unwrap(); advance(resolver.as_mut());
+        assert_eq!(runtime.waits.lock().unwrap().last(), Some(&Duration::from_secs(4)));
         let snapshot = runtime.ssot.lock().unwrap();
         assert_eq!((snapshot.league.name.as_deref(), snapshot.league.generation), (Some("A"), 1));
         drop(snapshot);
-        clock.send(true).unwrap(); advance(resolver.as_mut());
-        assert_eq!(runtime.waits.lock().unwrap().last(), Some(&None));
+        runtime.scheduler.trigger(); advance(resolver.as_mut());
+        assert_eq!(runtime.waits.lock().unwrap().len(), 2, "recovery arms no idle timer");
         assert_eq!(runtime.ssot.lock().unwrap().league.generation, 2);
     }
 
     #[test]
     fn trigger_during_backoff_resets_the_retry_delay() {
-        let (runtime, clock) = runtime(vec![None, None, None]);
+        let (runtime, clock, _network) = runtime(vec![None, None, None]);
         let mut resolver = std::pin::pin!(run_league_resolver(&runtime));
         advance(resolver.as_mut());
-        clock.send(false).unwrap(); advance(resolver.as_mut());
-        clock.send(true).unwrap(); advance(resolver.as_mut());
-        assert_eq!(*runtime.waits.lock().unwrap(), [2, 4, 2].map(|s| Some(Duration::from_secs(s))));
+        clock.send(()).unwrap(); advance(resolver.as_mut());
+        runtime.scheduler.trigger(); advance(resolver.as_mut());
+        assert_eq!(*runtime.waits.lock().unwrap(), [2, 4, 2].map(Duration::from_secs));
     }
 
     #[test]
@@ -4662,23 +4693,74 @@ mod league_resolver_tests {
         assert_eq!((snapshot.league.name.as_deref(), snapshot.league.generation), (Some("B"), 1));
     }
 
-    struct Hint<'a>(&'a Runtime, &'a tokio::sync::mpsc::UnboundedSender<bool>);
+    struct Hint<'a>(&'a Runtime);
     impl LeagueResolver for Hint<'_> {
         fn current_league(&self) -> Option<String> { self.0.ssot.lock().unwrap().league.name.clone() }
-        fn rearm(self) { self.1.send(true).unwrap(); }
+        fn rearm(self) { self.0.scheduler.trigger(); }
     }
 
     #[test]
     fn event_hint_resolves_authoritative_status_instead_of_applying_the_hint() {
-        let (runtime, clock) = runtime(vec![Some("A"), Some("authoritative")]);
+        let (runtime, _clock, _network) = runtime(vec![Some("A"), Some("authoritative")]);
         let mut resolver = std::pin::pin!(run_league_resolver(&runtime));
         advance(resolver.as_mut());
-        note_server_league(Hint(&runtime, &clock), Some("untrusted-hint"));
+        note_server_league(Hint(&runtime), Some("untrusted-hint"));
         assert_eq!(runtime.ssot.lock().unwrap().league.name.as_deref(), Some("A"));
         advance(resolver.as_mut());
         assert_eq!(*runtime.attempts.lock().unwrap(), 2);
         assert_eq!(runtime.ssot.lock().unwrap().league.name.as_deref(), Some("authoritative"));
-        assert_eq!(runtime.waits.lock().unwrap().last(), Some(&None));
+        assert!(runtime.waits.lock().unwrap().is_empty());
+    }
+
+    enum PendingTrigger { HintsAndRefresh, Unknown, Refresh }
+
+    fn parked_response_preserves_trigger(trigger: PendingTrigger) {
+        let (runtime, _clock, network) = runtime(vec![]);
+        write_league(&runtime.ssot, "A".into());
+        let mut resolver = std::pin::pin!(run_league_resolver(&runtime));
+        advance(resolver.as_mut());
+        assert_eq!(*runtime.attempts.lock().unwrap(), 1, "A request is parked on the network");
+
+        match trigger {
+            PendingTrigger::HintsAndRefresh => {
+                note_server_league(Hint(&runtime), Some("B"));
+                note_server_league(Hint(&runtime), None);
+                assert!(!runtime.scheduler.trigger(), "Refresh wakes the existing task");
+            }
+            PendingTrigger::Unknown => note_server_league(Hint(&runtime), None),
+            PendingTrigger::Refresh => {
+                assert!(!runtime.scheduler.trigger(), "Refresh wakes the existing task");
+            }
+        }
+        assert_eq!(runtime.ssot.lock().unwrap().league.name.as_deref(), Some("A"));
+        network.send(Some("A")).unwrap();
+        advance(resolver.as_mut());
+        assert_eq!(*runtime.attempts.lock().unwrap(), 2, "a trigger received during A requires a subsequent authoritative request");
+
+        network.send(Some("B")).unwrap();
+        advance(resolver.as_mut());
+        let snapshot = runtime.ssot.lock().unwrap();
+        assert_eq!((snapshot.league.name.as_deref(), snapshot.league.generation), (Some("B"), 2));
+        assert!(!snapshot.resolving);
+        drop(snapshot);
+        for _ in 0..100 { advance(resolver.as_mut()); }
+        assert_eq!(*runtime.attempts.lock().unwrap(), 2, "all prior triggers coalesce into the B request, then idle");
+        assert!(runtime.waits.lock().unwrap().is_empty(), "successful requests never arm a timer");
+    }
+
+    #[test]
+    fn hints_and_refresh_during_a_request_resolve_again_before_idle() {
+        parked_response_preserves_trigger(PendingTrigger::HintsAndRefresh);
+    }
+
+    #[test]
+    fn unknown_hint_during_a_request_resolves_again_before_idle() {
+        parked_response_preserves_trigger(PendingTrigger::Unknown);
+    }
+
+    #[test]
+    fn refresh_during_a_request_resolves_again_before_idle() {
+        parked_response_preserves_trigger(PendingTrigger::Refresh);
     }
 }
 
