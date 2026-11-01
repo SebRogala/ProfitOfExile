@@ -147,23 +147,46 @@ pub async fn boss_loot_delete(app: tauri::AppHandle, id: String, expected_versio
     Ok(())
 }
 
-/// Fetch this device's complete history before writing the user-chosen file.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum ExportOutcome { Saved, Cancelled }
+
+async fn export_selected(
+    selected: Option<std::path::PathBuf>,
+    contents: impl std::future::Future<Output = Result<String, ApiError>>,
+    write: impl FnOnce(&std::path::Path, &str) -> Result<(), ApiError>,
+) -> Result<ExportOutcome, ApiError> {
+    let Some(path) = selected else { return Ok(ExportOutcome::Cancelled) };
+    write(&path, &contents.await?)?;
+    Ok(ExportOutcome::Saved)
+}
+
+/// The native dialog is the only source of an export write destination.
 #[tauri::command]
-pub async fn boss_loot_export(app: tauri::AppHandle, profile: ProfileRef, destination: String) -> Result<(), ApiError> {
-    if destination.is_empty() { return Err(ApiError::Rejected("export destination required".into())); }
+pub async fn boss_loot_export(app: tauri::AppHandle, profile: ProfileRef) -> Result<ExportOutcome, ApiError> {
+    use tauri_plugin_dialog::DialogExt;
     let p = crate::loot_profiles::built_in_profiles().iter().find(|p| ProfileRef::from(*p) == profile)
         .ok_or_else(|| ApiError::Rejected("unknown profile".into()))?;
+    let dialog_app = app.clone();
+    let filename = format!("{}-runs.csv", p.boss);
+    let selected = tokio::task::spawn_blocking(move || {
+        dialog_app.dialog().file().add_filter("CSV", &["csv"]).set_file_name(filename)
+            .blocking_save_file().map(|file| file.into_path()
+                .map_err(|e| ApiError::Rejected(e.to_string()))).transpose()
+    }).await.map_err(|e| ApiError::Rejected(e.to_string()))??;
     let api = LootApi::from_state(&app.state::<crate::AppState>());
-    let mut runs = Vec::new();
-    let mut page = 1;
-    loop {
-        let result = api.list(&profile, page, 200).await?;
-        if result.items.is_empty() && (runs.len() as u64) < result.total { return Err(ApiError::Rejected("incomplete export".into())); }
-        runs.extend(result.items);
-        if (runs.len() as u64) >= result.total { break; }
-        page += 1;
-    }
-    std::fs::write(destination, csv(p, &runs)).map_err(|e| ApiError::Rejected(e.to_string()))
+    export_selected(selected, async {
+        let mut runs = Vec::new();
+        let mut page = 1;
+        loop {
+            let result = api.list(&profile, page, 200).await?;
+            if result.items.is_empty() && (runs.len() as u64) < result.total { return Err(ApiError::Rejected("incomplete export".into())); }
+            runs.extend(result.items);
+            if (runs.len() as u64) >= result.total { break; }
+            page += 1;
+        }
+        Ok(csv(p, &runs))
+    }, |path, contents| std::fs::write(path, contents).map_err(|e| ApiError::Rejected(e.to_string()))).await
 }
 fn csv(profile: &LootProfile, runs: &[StoredRun]) -> String {
     let items: Vec<_> = profile.groups.iter().flat_map(|g| &g.items).chain(&profile.extra).chain(&profile.categories).collect();
@@ -385,5 +408,39 @@ mod review_r1_tests {
         let requests = current.requests.lock().unwrap();
         assert_eq!(requests.len(), 2);
         assert!(requests[1].starts_with("/api/boss-loot/stats?"));
+    }
+}
+
+#[cfg(test)]
+mod export_dialog_tests {
+    use super::*;
+    #[tokio::test]
+    async fn loot_export_writes_only_the_dialog_selected_path() {
+        let selected = std::path::PathBuf::from("dialog-selected.csv");
+        let mut writes = Vec::new();
+        let outcome = export_selected(Some(selected.clone()), async { Ok("Run,Date\n1,\n".to_string()) }, |path, contents| {
+            writes.push((path.to_path_buf(), contents.to_string())); Ok(())
+        }).await.unwrap();
+        assert_eq!(outcome, ExportOutcome::Saved);
+        assert_eq!(writes, vec![(selected, "Run,Date\n1,\n".to_string())]);
+    }
+    #[tokio::test]
+    async fn loot_export_cancel_does_not_fetch_or_write() {
+        let outcome = export_selected(None, async { panic!("cancel must not read history") }, |_, _| {
+            panic!("cancel must not write a file")
+        }).await.unwrap();
+        assert_eq!(outcome, ExportOutcome::Cancelled);
+    }
+    #[tokio::test]
+    async fn loot_export_failed_history_does_not_write() {
+        let result = export_selected(Some("dialog-selected.csv".into()), async { Err(ApiError::Unreachable) }, |_, _| {
+            panic!("incomplete history must not write")
+        }).await;
+        assert_eq!(result.unwrap_err(), ApiError::Unreachable);
+    }
+    #[test]
+    fn loot_export_command_accepts_only_app_and_profile() {
+        fn signature<F, R>(_: F) where F: Fn(tauri::AppHandle, ProfileRef) -> R {}
+        signature(boss_loot_export);
     }
 }
