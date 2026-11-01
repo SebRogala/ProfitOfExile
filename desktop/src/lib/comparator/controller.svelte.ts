@@ -50,7 +50,8 @@ export function createComparatorController(dependencies: ComparatorDependencies)
 	function pushOverlay() {
 		const { divineRate, mode } = dependencies.selection();
 		dependencies.pushOverlay({ results: [...state.results], tradeData: { ...state.tradeData },
-			tradeLoading: { ...state.tradeLoading }, tradeError: { ...state.tradeError }, divineRate, labMode: mode });
+			tradeLoading: { ...state.tradeLoading }, tradeError: { ...state.tradeError },
+			divineRate: state.results.length ? divineRate : 0, labMode: mode });
 	}
 	function dropTradeData() {
 		state.tradeData = {}; state.tradeLoading = {}; state.tradeError = {};

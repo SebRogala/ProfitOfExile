@@ -54,6 +54,25 @@ it('rejects a mismatched payload in the current generation', async () => {
 	expect([controller.result, controller.loading]).toEqual([null, false]);
 });
 
+it('admits the initial server snapshot before SSOT first resolves', async () => {
+	const { controller, calls } = setup();
+	ssot.league = null;
+	calls[0].resolve(response('boot', [{ id: 'initial' }]));
+	await Promise.resolve(); await Promise.resolve();
+	expect([controller.result?.plays, controller.loading]).toEqual([[{ id: 'initial' }], false]);
+});
+
+it('a late A finalizer cannot stop the pending B spinner', async () => {
+	const { controller, calls } = setup();
+	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+	calls[0].resolve(response('A', [{ id: 'late-A' }]));
+	await Promise.resolve(); await Promise.resolve();
+	expect([controller.result, controller.loading]).toEqual([null, true]);
+	calls[1].resolve(response('B'));
+	await Promise.resolve(); await Promise.resolve();
+	expect([controller.result?.plays, controller.loading]).toEqual([[], false]);
+});
+
 it('preserves a same-league answer through identical snapshots', async () => {
 	const { controller, calls } = setup();
 	calls[0].resolve(response('A', [{ id: 'kept' }]));

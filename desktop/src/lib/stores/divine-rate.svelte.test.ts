@@ -79,6 +79,33 @@ afterEach(() => {
 });
 
 describe('initDivineRateStore', () => {
+	it('identical snapshots preserve the populated rate', async () => {
+		const s = await load();
+		const { applySnapshot, ssot } = await import('./ssot.svelte');
+		applySnapshot({ league: { name: 'A', generation: ssot.leagueGeneration + 1 } });
+		mocks.fetchDivineRate.mockResolvedValueOnce(port());
+		cleanup = s.initDivineRateStore();
+		await settle();
+		applySnapshot({ league: { name: 'A', generation: ssot.leagueGeneration } });
+		expect(s.currentDivineRate()).toBe(360.07);
+		await settle();
+		expect(s.currentDivineRate()).toBe(360.07);
+	});
+
+	it('disposal removes the league subscription', async () => {
+		const s = await load();
+		const { applySnapshot, ssot } = await import('./ssot.svelte');
+		applySnapshot({ league: { name: 'A', generation: ssot.leagueGeneration + 1 } });
+		mocks.fetchDivineRate.mockResolvedValueOnce(port());
+		cleanup = s.initDivineRateStore();
+		await settle();
+		cleanup();
+		cleanup = null;
+		mocks.fetchDivineRate.mockResolvedValueOnce(port({ divineChaosRate: 999 }));
+		applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+		await settle();
+		expect(s.currentDivineRate()).toBe(360.07);
+	});
 	it('withdraws the outgoing rate before a failed new-league read', async () => {
 		const s = await load();
 		const { applySnapshot, ssot } = await import('./ssot.svelte');

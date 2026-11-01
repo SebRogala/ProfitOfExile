@@ -26,7 +26,9 @@ export function createExchangeController(dependencies: ExchangeDependencies) {
 		loading = true;
 		try {
 			const response = await dependencies.load(parseMode(mode), parseHorizon(horizon));
-			if (disposed || mine !== generation || response.league !== ssot.league) return;
+			if (disposed || mine !== generation) return;
+			// First resolution emits no change notification. Keep the initial HTTP read usable while SSOT is cold.
+			if (ssot.league !== null && response.league !== ssot.league) return;
 			result = response;
 			lastFetchedAt = new Date();
 			lastError = null;

@@ -18,7 +18,7 @@ function setup() {
 	applySnapshot({ league: { name: 'A', generation: ssot.leagueGeneration + 1 } });
 	const compares: ReturnType<typeof deferred<CompareGem[]>>[] = [];
 	const trades: ReturnType<typeof deferred<TradeLookupResult>>[] = [];
-	const overlays: { results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null> }[] = [];
+	const overlays: { results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null>; divineRate: number }[] = [];
 	const queued: string[] = [];
 	const names = deferred<string[]>();
 	const handlers: Record<string, (event: { payload: unknown }) => void> = {};
@@ -48,6 +48,7 @@ it('withdraws prices and history from the overlay without queueing the outgoing 
 	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
 	expect([controller.state.results, controller.state.selectedGems, controller.state.tradeQueue]).toEqual([[], [], null]);
 	expect(overlays.at(-1)?.results).toEqual([]);
+	expect(overlays.at(-1)?.divineRate).toBe(0);
 	expect(queued).toEqual([]);
 	compares[1].resolve([row(999)]);
 	await pending;
