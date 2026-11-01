@@ -135,6 +135,23 @@ try {
   const result = await evaluate('window.calls.filter(([name])=>name!=="set_overlay_hot_rects"&&name!=="set_overlay_has_content")')
   assert.deepEqual(result, [['app_log_from_frontend', { msg: '[temple-widgets] hot-rect probe clicked — the mouse hook forwarded a click' }]]); return result
  }, '&module=temple&debug')
+ if (process.argv.includes('--config')) for (const module of ['lab', 'temple']) {
+  await scenario(`${module} config suppresses widget actions`, async () => {
+   await until('Boolean(window.listeners["widget-config"])')
+   await evaluate(`window.fire('widget-config',{module:${JSON.stringify(module)},on:true})`)
+   await until('Boolean(document.querySelector(".config-bar"))')
+   const selector = module === 'lab' ? '.pick-btn' : '[data-action=hot-probe]'
+   if (module === 'temple') await evaluate('const button=document.createElement("button");button.dataset.action="hot-probe";document.querySelector(".widget").append(button)')
+   await evaluate(`window.calls=[];window.emissions=[];window.forward(${JSON.stringify(selector)});document.querySelector(${JSON.stringify(selector)}).click()`)
+   await pause(40)
+   assert.deepEqual(await evaluate('window.emissions'), [])
+   assert.deepEqual(await evaluate('window.calls.filter(([name])=>["app_log_from_frontend","trade_cancel","request_trade_refresh"].includes(name))'), [])
+   await evaluate('document.querySelector(".config-btn.cancel").dispatchEvent(new PointerEvent("pointerup",{bubbles:true}))')
+   await until('!document.querySelector(".config-bar")')
+   assert.equal(await evaluate('window.calls.some(([name,args])=>name==="set_overlay_config_mode"&&args.on===false)'), true)
+   return 'widget inert; native config Cancel works'
+  }, module === 'temple' ? '&module=temple&debug' : '')
+ }
  fs.writeFileSync(`${root}/observations.json`, JSON.stringify({ failures, observations }, null, 2))
  assert.equal(failures, 0, 'characterization scenarios failed')
 } finally { ws.close(); browser.kill('SIGTERM') }
