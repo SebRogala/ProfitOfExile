@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createNativeProfiles, createNativeStats, createNativeRuns, createNativeModuleSettings, createNativeDevice, createNativeCapture, mapNativeOverlay, saveNativeCsv, type NativeBoundary } from './native-adapters'
+import { createNativeProfiles, createNativeStats, createNativeRuns, createNativeModuleSettings, createNativeDevice, createNativeCapture, createNativeSubmit, mapNativeOverlay, saveNativeCsv, type NativeBoundary } from './native-adapters'
 import type { BossLootProfile, BossLootSlice } from '$lib/stores/ssot.svelte'
 
 export const nativeProfile: BossLootProfile = {
@@ -88,6 +88,11 @@ describe('native boss loot owners', () => {
 		const { deps, call } = boundary(); const owner = createNativeCapture(deps)
 		await owner.action(81, { type: 'select', key: 'Cane of Kulemak', quantity: 1 })
 		expect(call).toHaveBeenCalledWith('boss_loot_action', { id: 81, action: { type: 'select', key: 'Cane of Kulemak', quantity: 1 } })
+	})
+	it('submits through an independently replaceable owner using only native capture identity', async () => {
+		const { deps, call } = boundary()
+		await createNativeSubmit(deps).submit(81)
+		expect(call).toHaveBeenCalledWith('boss_loot_submit', { id: 81 })
 	})
 	it('projects native phase and deadline without creating a second countdown', () => {
 		const slice = pendingSlice()

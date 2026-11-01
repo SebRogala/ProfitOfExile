@@ -4,12 +4,13 @@
 	import WidgetHost from '$lib/overlay/widgets/WidgetHost.svelte'
 	import CaptureFrame from '$lib/boss-loot/CaptureFrame.svelte'
 	import LootConfirmation from '$lib/boss-loot/LootConfirmation.svelte'
-	import { createNativeCapture, createNativeProfiles, createNativeStats, mapNativeOverlay, shortcutLabel } from '$lib/boss-loot/native-adapters'
+	import { createNativeCapture, createNativeSubmit, createNativeProfiles, createNativeStats, mapNativeOverlay, shortcutLabel } from '$lib/boss-loot/native-adapters'
 	import { bossLootIcon } from '$lib/boss-loot/art'
 	import { ssot } from '$lib/stores/ssot.svelte'
 	import type { BossProfile, BossStats, StatsScope } from '$lib/boss-loot/contracts'
 
 	const captures = createNativeCapture()
+	const submit = createNativeSubmit()
 	const profilesOwner = createNativeProfiles()
 	const statsOwner = createNativeStats()
 	let profiles = $state.raw<BossProfile[]>([])
@@ -66,7 +67,7 @@
 			enqueue(async () => { scope = name === 'loot.own' ? 'own' : 'collective' }); return
 		}
 		if (name === 'loot.close' || name === 'loot.discard') { enqueue(() => captures.action(id, { type: 'discard' })); return }
-		if (name === 'loot.save') { enqueue(() => captures.submit(id)); return }
+		if (name === 'loot.save') { enqueue(() => submit.submit(id)); return }
 		if (name === 'loot.force-new') { enqueue(() => captures.action(id, { type: 'forceNew' })); return }
 		if (!item || !input || !['loot.toggle', 'loot.increment', 'loot.decrement'].includes(name)) return
 		const selection = input.capture

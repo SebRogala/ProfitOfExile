@@ -146,7 +146,11 @@ export function createNativeCapture(deps = native) {
 		action: async (id: number, action: { type: 'touch' | 'forceNew' | 'discard' } | { type: 'select'; key: string; quantity: number }) => {
 			try { await deps.call('boss_loot_action', { id, action }) }
 			finally { await deps.reconcile() }
-		},
+		}
+	}
+}
+export function createNativeSubmit(deps = native) {
+	return {
 		submit: async (id: number) => {
 			try { await deps.call('boss_loot_submit', { id }) }
 			finally { await deps.reconcile() }
@@ -164,7 +168,7 @@ function selection(profile: BossProfile, quantities: Quantities, ambiguous: stri
 	}
 }
 /** Display-only tags mirror LootProfile::match_line using immutable OCR labels.
- * Native incoming changes on edits; these tags never construct selections or writes. */
+ * Native incoming changes on edits; these tags never drive native selections or writes. */
 function ocrReadTags(profile: BossProfile, lines: string[]): LootSelection {
 	const label = (value: string) => value.replace(/['’`‘]/g, '').toUpperCase().replace(/\s+/g, ' ').trim()
 		.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').replace(/^SUPERIOR /, '')
