@@ -483,8 +483,8 @@ pub fn spawn_hotkey_poller(app: tauri::AppHandle, cancel: tokio::sync::watch::Re
                 platform::preview(&app, foreground);
             }
             let due = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).pending.as_ref()
-                .is_some_and(|p| p.phase == Phase::Open && p.deadline_ms.is_some_and(|t| now_ms() >= t));
-            if due {
+                .filter(|p| p.phase == Phase::Open && p.deadline_ms.is_some_and(|t| now_ms() >= t)).map(|p| p.id);
+            if let Some(id) = due {
                 let app = app.clone();
                 let cancel = cancel.clone();
                 tauri::async_runtime::spawn(async move {
@@ -492,7 +492,7 @@ pub fn spawn_hotkey_poller(app: tauri::AppHandle, cancel: tokio::sync::watch::Re
                     let state = app.state::<crate::AppState>();
                     if state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).get(MODULE_ID) != Some(&true) { return; }
                     let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                    submit_pending(&state.boss_loot, &settings, &LootApi::from_state(&state).with_cancel(cancel), now_ms(), false).await;
+                    submit_capture(&state.boss_loot, &settings, &LootApi::from_state(&state).with_cancel(cancel), now_ms(), false, id).await;
                     crate::ssot::emit_ssot(&app);
                 });
             }
