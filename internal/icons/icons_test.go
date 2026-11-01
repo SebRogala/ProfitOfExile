@@ -399,7 +399,7 @@ func TestNewSets_embeddedCategoriesBuildIndependentCaches(t *testing.T) {
 		t.Fatalf("NewSets() error = %v, want nil", err)
 	}
 
-	wantCounts := map[string]int{"gems": 763, "items": 2, "temple": 32}
+	wantCounts := map[string]int{"gems": 763, "items": 9, "temple": 32}
 	for category, want := range wantCounts {
 		c := sets.caches[category]
 		if c == nil {
@@ -1083,5 +1083,32 @@ func writeIconFile(t *testing.T, path string, body []byte) {
 	}
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatalf("seed icon file %q: %v", path, err)
+	}
+}
+
+func TestBossLootItemIconsResolveFromItemsMap(t *testing.T) {
+	sets, err := NewSets(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Cinderswallow Urn", "Spinehail", "Cane of Kulemak", "The Devouring Diadem", "Bitterbind Point", "The Queen's Hunger", "Communion Support"} {
+		t.Run(name, func(t *testing.T) {
+			src := sets.caches["items"].urls[name]
+			if !strings.HasPrefix(src, "https://www.poewiki.net/images/") || !strings.HasSuffix(src, "_inventory_icon.png") {
+				t.Fatalf("unresolved item source %q: %q", name, src)
+			}
+			cache := sets.caches["items"]
+			payload := append(append([]byte{}, fakePNG...), name...)
+			if err := os.WriteFile(cache.filePath(name, src), payload, 0600); err != nil {
+				t.Fatal(err)
+			}
+			router := chi.NewRouter()
+			router.Get("/api/icon/{type}/{name}", sets.Handler())
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest("GET", "/api/icon/items/"+url.PathEscape(name), nil))
+			if w.Code != 200 || !bytes.Equal(w.Body.Bytes(), payload) {
+				t.Fatalf("typed item icon %d %q", w.Code, w.Body.Bytes())
+			}
+		})
 	}
 }

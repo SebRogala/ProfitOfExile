@@ -41,6 +41,14 @@ func TestScopedTablesMatchesPublicLeagueForeignKeys(t *testing.T) {
 		}
 	}
 	for name := range schema {
+		// ADR-011 retains versioned boss observations across rollover. Keep
+		// this sole league-FK exception explicit so new tables still fail closed.
+		if name == "boss_loot_runs" {
+			if registry[name] {
+				t.Error("boss_loot_runs must remain outside the rollover wipe set")
+			}
+			continue
+		}
 		if !registry[name] {
 			t.Errorf("missing registry relation %q: public league foreign key exists", name)
 		}

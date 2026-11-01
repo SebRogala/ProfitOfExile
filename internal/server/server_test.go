@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/exchange"
 	"profitofexile/internal/league"
@@ -540,5 +541,33 @@ func TestNewRouter_DeviceMeRouteIsRegisteredWithoutADeviceRepo(t *testing.T) {
 	}
 	if !reflect.DeepEqual(body.Features, []string{"temple"}) {
 		t.Errorf("features = %#v, want %#v", body.Features, []string{"temple"})
+	}
+}
+
+func TestBossLootMutationCORS(t *testing.T) {
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{AllowedOrigins: []string{"https://loot.example"}})
+	for _, tc := range []struct{ method, path string }{{"PATCH", "/api/boss-loot/runs/1"}, {"POST", "/api/boss-loot/runs/1/delete"}} {
+		req := httptest.NewRequest("OPTIONS", tc.path, nil)
+		req.Header.Set("Origin", "https://loot.example")
+		req.Header.Set("Access-Control-Request-Method", tc.method)
+		req.Header.Set("Access-Control-Request-Headers", "Content-Type,X-Device-ID")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != 200 || w.Header().Get("Access-Control-Allow-Origin") != "https://loot.example" || !strings.Contains(w.Header().Get("Access-Control-Allow-Methods"), tc.method) {
+			t.Fatalf("%s preflight %d %v", tc.method, w.Code, w.Header())
+		}
+	}
+}
+
+func TestBossLootRoutesReturnIdentityError(t *testing.T) {
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{Pool: &pgxpool.Pool{}})
+	for _, tc := range []struct{ method, path string }{
+		{"POST", "/api/boss-loot/runs"}, {"GET", "/api/boss-loot/runs"}, {"PATCH", "/api/boss-loot/runs/1"}, {"POST", "/api/boss-loot/runs/1/delete"}, {"GET", "/api/boss-loot/stats"},
+	} {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`)))
+		if w.Code != 401 || !strings.Contains(w.Body.String(), `"error":"device identification required"`) {
+			t.Fatalf("%s %s: %d %s", tc.method, tc.path, w.Code, w.Body.String())
+		}
 	}
 }

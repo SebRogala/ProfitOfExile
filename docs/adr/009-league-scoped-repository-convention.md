@@ -82,3 +82,18 @@ silently substitute the active league.
 - `internal/db/migrations/20260723160016_create_league_control_tables.up.sql`
   — `leagues` and `runtime_config`.
 - POE-119 — schema foundation that establishes the storage boundary.
+
+## Amended 2026-11-01 (POE-317): retained boss observations
+
+Status: accepted. `boss_loot_runs` retains league identity while serving cumulative
+observations within one boss/profile/version. `ListCumulative` and
+`StatsCumulative` name this cross-league read explicitly; they are exceptions to
+the ordinary scope-taking read convention, not implicit active-league reads.
+
+New submissions resolve `league.Scope` at the HTTP boundary and carry it through
+the transaction. Edit/delete first look up the row by device ownership and id,
+then construct `league.Historical` from that owned row's stored league. Every
+mutation predicate includes device, id, stored league and expected row version.
+Client league never grants mutation authority. Active-league changes therefore
+neither retag nor prevent edits to an owned historical observation. Counted sets
+remain historical, and profile versions keep changed pools separate.

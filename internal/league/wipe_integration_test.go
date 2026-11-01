@@ -364,3 +364,26 @@ func TestWipeRollbackRestoresGemRows(t *testing.T) {
 		t.Errorf("gem pool count after rollback = %d, want original %d", after, before)
 	}
 }
+
+func TestWipePreservesVersionedBossHistory(t *testing.T) {
+	ctx, _, tx := wipeArchivedFixture(t)
+	const device = "boss-loot-wipe-fixture"
+	if _, err := tx.Exec(ctx, `INSERT INTO devices(fingerprint) VALUES ($1) ON CONFLICT DO NOTHING`, device); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO boss_loot_runs(league,device_id,boss,profile_key,profile_version,run_number,items) VALUES ('Mirage',$1,'catarina','Normal',1,1,'{"quantities":{"Cinderswallow Urn":1},"counted":["Cinderswallow Urn"]}')`, device); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Wipe(ctx, tx, "Mirage", false); err != nil {
+		t.Fatal(err)
+	}
+	assertWipeRows(t, ctx, tx, "", 0)
+	var league string
+	var quantity int
+	if err := tx.QueryRow(ctx, `SELECT league,(items->'quantities'->>'Cinderswallow Urn')::int FROM boss_loot_runs WHERE device_id=$1`, device).Scan(&league, &quantity); err != nil {
+		t.Fatal(err)
+	}
+	if league != "Mirage" || quantity != 1 {
+		t.Fatalf("retained observation %s/%d", league, quantity)
+	}
+}

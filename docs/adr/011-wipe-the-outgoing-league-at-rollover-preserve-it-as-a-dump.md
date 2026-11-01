@@ -111,3 +111,17 @@ lifetime" is superseded: that reach now requires a dump restore.
   retain-history decision this supersedes in part.
 - `internal/db/migrations/20260819120000_create_currency_exchange_markets.up.sql`
   — the two POE-173 tables, created with compression and no retention policy.
+
+## Amended 2026-11-01 (POE-317): retain versioned boss observations
+
+Status: accepted. The final Operator retention decision explicitly excludes
+`boss_loot_runs` from `league.ScopedTables()` and rollover wipes. Unlike market
+snapshots, these are device-owned empirical observations used cumulatively by
+Boss loot. Keep their league FK and profile version: retained observations do
+not establish permanent league invariance, and changed profile pools must not
+silently combine. Historical owned edit/delete follows ADR-009's amendment.
+
+This exception supersedes the blanket statements above that every league-FK
+table joins the wipe set and that live queries can reach only the active league.
+All other wipe-set tables retain their existing rollover behavior. The new
+migration header records this same explicit exclusion for schema readers.

@@ -273,6 +273,12 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	}
 
 	if cfg.Pool != nil {
+		bossLoot := handlers.NewBossLoot(cfg.Pool)
+		r.Post("/api/boss-loot/runs", bossLoot.Submit)
+		r.Get("/api/boss-loot/runs", bossLoot.List)
+		r.Patch("/api/boss-loot/runs/{id}", bossLoot.Edit)
+		r.Post("/api/boss-loot/runs/{id}/delete", bossLoot.Delete)
+		r.Get("/api/boss-loot/stats", bossLoot.Stats)
 		r.Post("/api/desktop/font-session", handlers.FontSession(cfg.Pool))
 		r.Post("/api/lab/runs", handlers.StoreLabRun(cfg.Pool))
 		r.Get("/api/lab/runs", handlers.ListLabRuns(cfg.Pool))
