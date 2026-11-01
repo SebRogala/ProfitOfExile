@@ -212,7 +212,7 @@
 	.pill:focus-visible { outline: 1px solid var(--color-lab-blue); outline-offset: 2px; }
 	.status-line { padding: 4px 12px; color: var(--color-lab-text-secondary); font-size: 12px; }
 	.warning { color: var(--color-lab-yellow); }
-	.runrow { display: grid; grid-template-columns: 44px 64px 200px minmax(0,1fr) 112px; align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid var(--color-lab-border); }
+	.runrow { display: grid; grid-template-columns: 44px 120px 200px minmax(0,1fr) 112px; align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid var(--color-lab-border); }
 	.run-head { border-top: 0; }
 	.run-head, .table-heading { font-size: .6875rem; text-transform: uppercase; letter-spacing: .5px; color: var(--color-lab-text-secondary); font-weight: 600; }
 	.run-date, .secondary { color: var(--color-lab-text-secondary); font-size: 12px; }

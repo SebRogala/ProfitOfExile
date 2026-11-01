@@ -1,5 +1,6 @@
 import { editRunItems, type BossProfile, type BossStats, type LootItem, type ModuleSettings, type Quantities, type RunsPage, type StatsScope, type StoredRun } from './contracts'
 import { groupNumber } from '$lib/stores/number-format.svelte'
+import { formatClock } from '$lib/stores/divine-rate'
 
 export type ResultsSort = 'rate' | 'name'
 export interface ResultsInput {
@@ -68,13 +69,22 @@ export function runsCsv(profile: BossProfile, runs: StoredRun[]): string {
 		.map((row) => row.map(cell).join(',')).join('\r\n')
 }
 
+function runDate(value: string | null): string {
+	if (value === null) return 'no date'
+	if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
+	const date = new Date(value)
+	const month = String(date.getMonth() + 1).padStart(2, '0')
+	const day = String(date.getDate()).padStart(2, '0')
+	return `${date.getFullYear()}-${month}-${day} ${formatClock(value)}`
+}
+
 export function buildRunsView(profile: BossProfile, runs: RunsPage) {
 	const uniques = profile.groups.flatMap((group) => group.items)
 	const extras = [...profile.extra, ...profile.categories]
 	const rows = runs.items.map((run) => {
 		const positive = (item: LootItem) => Object.hasOwn(run.items.quantities, item.id) && run.items.quantities[item.id] > 0
 		const project = (item: LootItem) => ({ ...item, dropQuantity: run.items.quantities[item.id] })
-		return { id: run.id, run: run.run, date: run.date === null ? 'no date' : run.date.slice(0, 10),
+		return { id: run.id, run: run.run, date: runDate(run.date),
 			unique: uniques.filter(positive).map(project), extra: extras.filter(positive).map(project) }
 	})
 	const pages = Array.from({ length: Math.ceil(runs.total / runs.pageSize) }, (_, index) => index + 1)

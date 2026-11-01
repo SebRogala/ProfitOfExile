@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import source from './__fixtures__/boss-loot.json'
 import { createFixtureModuleSettings, createFixtureProfiles, createFixtureStats, createFixtureRuns } from './fixture-adapters'
 import { buildResultsView, buildRunsView, buildRunEditor, buildSettingsView, keyboardShortcut, mouseShortcut, runsCsv, type ResultsInput } from './page-view'
@@ -85,6 +85,11 @@ describe('Results', () => {
 })
 
 describe('CSV', () => {
+	it.each(['2026-10-31T23:45:00Z', '2026-10-31', null])('exports the original date %s', async (date) => {
+		const { profile, runs } = await runInput()
+		runs.items[0].date = date
+		expect(runsCsv(profile, [runs.items[0]]).split('\r\n')[1].split(',')[1]).toBe(date ?? '')
+	})
 	it('uses profile-ordered item names as CSV columns', async () => {
 		const { profile } = await input()
 		const run: StoredRun = { ...profile, id: 'row', league: 'test', run: 8, date: null, seed: null,
@@ -106,6 +111,8 @@ async function runInput(page = 1) {
 }
 
 describe('Runs projection', () => {
+	beforeAll(() => vi.stubEnv('TZ', 'Europe/Warsaw'))
+	afterAll(() => vi.unstubAllEnvs())
 	it('shows the newest ten fixture runs on page one', async () => {
 		const { profile, runs } = await runInput()
 		const view = buildRunsView(profile, runs)
@@ -132,9 +139,18 @@ describe('Runs projection', () => {
 		const { profile, runs } = await runInput()
 		expect(buildRunsView(profile, runs).rows[0].date).toBe('no date')
 	})
-	it('retains the supplied calendar date without inventing a time', async () => {
+	it.each([
+		['2026-10-31T23:45:00Z', '2026-11-01 00:45'],
+		['2026-06-01T12:05:00Z', '2026-06-01 14:05'],
+		['2026-10-31T23:45:00-07:00', '2026-11-01 07:45']
+	])('renders timestamp %s in viewer local time', async (date, expected) => {
 		const { profile, runs } = await runInput()
-		runs.items[0].date = '2026-10-31T23:45:00-07:00'
+		runs.items[0].date = date
+		expect(buildRunsView(profile, runs).rows[0].date).toBe(expected)
+	})
+	it('retains a date-only value without inventing a time', async () => {
+		const { profile, runs } = await runInput()
+		runs.items[0].date = '2026-10-31'
 		expect(buildRunsView(profile, runs).rows[0].date).toBe('2026-10-31')
 	})
 	it('retains the server order when display run numbers have gaps', async () => {
