@@ -155,3 +155,48 @@ describe('native Runs controller integration', () => {
 		expect(collectiveBefore.items[eye]).toEqual({ drops: 6, eligibleRuns: 2 })
 	})
 })
+
+describe('native behavior settings', () => {
+	it('serializes a preview keyboard shortcut into native Win32 shape', async () => {
+		const { deps, call } = boundary()
+		const owner = createNativeModuleSettings(deps)
+		await owner.save({ ...await owner.load(), previewShortcut: 'Ctrl + F9' })
+		expect(call).toHaveBeenCalledWith('boss_loot_set_settings', { settings: {
+			layout: 'grid', autoSaveSeconds: 10, notCounted: [], captureShortcut: { key: 2, shift: true, ctrl: false, alt: false }, previewShortcut: { key: 120, shift: false, ctrl: true, alt: false }
+		} })
+	})
+	it('serializes a captured mouse shortcut without changing other settings', async () => {
+		const { deps, call } = boundary()
+		const owner = createNativeModuleSettings(deps)
+		await owner.save({ ...await owner.load(), captureShortcut: 'Ctrl + Mouse 4' })
+		expect(call).toHaveBeenCalledWith('boss_loot_set_settings', { settings: {
+			layout: 'grid', autoSaveSeconds: 10, notCounted: [], captureShortcut: { key: 5, shift: false, ctrl: true, alt: false }, previewShortcut: { key: 119, shift: true, ctrl: false, alt: false }
+		} })
+	})
+	it('rejects an unrepresentable modifier instead of silently dropping it', async () => {
+		const { deps } = boundary(); const owner = createNativeModuleSettings(deps)
+		await expect(owner.save({ ...await owner.load(), captureShortcut: 'Meta + F9' })).rejects.toThrow('Invalid')
+	})
+	it('rejects a malformed settings snapshot instead of rendering invented defaults', async () => {
+		const { deps, slice } = boundary()
+		slice.settings.autoSaveSeconds = '10' as unknown as number
+		await expect(createNativeModuleSettings(deps).load()).rejects.toThrow('Invalid')
+	})
+	it('reads an accepted settings echo through independent window adapters', async () => {
+		const first = boundary(); const second = boundary()
+		let accepted = structuredClone(first.slice.settings)
+		first.deps.call = async (_command, args) => { accepted = structuredClone(args!.settings as typeof accepted) }
+		first.deps.reconcile = async () => { first.slice.settings = structuredClone(accepted) }
+		second.deps.reconcile = async () => { second.slice.settings = structuredClone(accepted) }
+		const owner = createNativeModuleSettings(first.deps)
+		await owner.save({ ...await owner.load(), autoSaveSeconds: 20, notCounted: ['Communion Support'] })
+		await second.deps.reconcile()
+		expect(await createNativeModuleSettings(second.deps).load()).toMatchObject({ autoSaveSeconds: 20, notCounted: ['Communion Support'] })
+	})
+	it('keeps confirmed settings after a rejected native write', async () => {
+		const { deps } = boundary(); const owner = createNativeModuleSettings(deps)
+		deps.call = async () => { throw Error('shortcut conflict') }
+		await expect(owner.save({ ...await owner.load(), autoSaveSeconds: 20 })).rejects.toThrow('shortcut conflict')
+		expect((await owner.load()).autoSaveSeconds).toBe(10)
+	})
+})

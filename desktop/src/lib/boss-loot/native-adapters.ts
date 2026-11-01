@@ -21,6 +21,7 @@ function object(value: unknown): Record<string, unknown> {
 	return value as Record<string, unknown>
 }
 function string(value: unknown): string { return typeof value === 'string' ? value : invalid('string') }
+function boolean(value: unknown): boolean { return typeof value === 'boolean' ? value : invalid('boolean') }
 function integer(value: unknown, minimum = 0): number {
 	return typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum ? value : invalid('integer')
 }
@@ -85,19 +86,20 @@ export function createNativeRuns(deps = native): RunsPort {
 	}
 }
 const mouseKeys: Record<string, number> = { 'Left click': 1, 'Right click': 2, 'Middle click': 4, 'Mouse 4': 5, 'Mouse 5': 6 }
+const triggerKeys: Record<string, number> = { ...mouseKeys, Backspace: 8, Tab: 9, Enter: 13, Space: 32, PageUp: 33, PageDown: 34, End: 35, Home: 36, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Insert: 45, Delete: 46 }
 export function shortcutLabel(shortcut: BossLootShortcut): string {
-	const mouse = Object.entries(mouseKeys).find(([, key]) => key === shortcut.key)?.[0]
-	const key = mouse ?? (shortcut.key >= 112 && shortcut.key <= 135 ? `F${shortcut.key - 111}`
+	const named = Object.entries(triggerKeys).find(([, key]) => key === shortcut.key)?.[0]
+	const key = named ?? (shortcut.key >= 112 && shortcut.key <= 135 ? `F${shortcut.key - 111}`
 		: shortcut.key >= 48 && shortcut.key <= 90 ? String.fromCharCode(shortcut.key)
-		: Object.entries({ Backspace: 8, Tab: 9, Enter: 13, Space: 32, PageUp: 33, PageDown: 34, End: 35, Home: 36, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Insert: 45, Delete: 46 }).find(([, code]) => code === shortcut.key)?.[0] ?? `Key ${shortcut.key}`)
+		: `Key ${shortcut.key}`)
 	return [...(shortcut.ctrl ? ['Ctrl'] : []), ...(shortcut.alt ? ['Alt'] : []), ...(shortcut.shift ? ['Shift'] : []), key].join(' + ')
 }
 function parseShortcut(label: string, existing: BossLootShortcut): BossLootShortcut {
 	if (label === shortcutLabel(existing)) return existing
 	const parts = label.split(' + ')
 	const name = parts.pop()!
-	const named: Record<string, number> = { ...mouseKeys, Backspace: 8, Tab: 9, Enter: 13, Space: 32, PageUp: 33, PageDown: 34, End: 35, Home: 36, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Insert: 45, Delete: 46 }
-	const key = Object.hasOwn(named, name) ? named[name] : /^F([1-9]|1\d|2[0-4])$/.test(name) ? Number(name.slice(1)) + 111
+	if (parts.some((part) => !['Shift', 'Ctrl', 'Alt'].includes(part))) invalid('shortcut modifier')
+	const key = Object.hasOwn(triggerKeys, name) ? triggerKeys[name] : /^F([1-9]|1\d|2[0-4])$/.test(name) ? Number(name.slice(1)) + 111
 		: /^[A-Z0-9]$/.test(name) ? name.charCodeAt(0) : invalid('shortcut')
 	return { key, shift: parts.includes('Shift'), ctrl: parts.includes('Ctrl'), alt: parts.includes('Alt') }
 }
@@ -106,8 +108,13 @@ async function snapshot(deps: NativeBoundary): Promise<BossLootSlice> {
 	return deps.snapshot() ?? invalid('snapshot unavailable')
 }
 export function moduleSettingsFromSnapshot(slice: BossLootSlice): ModuleSettings {
-	return { enabled: slice.enabled, autoSaveSeconds: slice.settings.autoSaveSeconds, autoSaveOptions: [5, 10, 20, 30, 0],
-		captureShortcut: shortcutLabel(slice.settings.captureShortcut), previewShortcut: shortcutLabel(slice.settings.previewShortcut), notCounted: [...slice.settings.notCounted] }
+	const shortcut = (value: unknown): BossLootShortcut => {
+		const binding = object(value)
+		return { key: integer(binding.key, 1), shift: boolean(binding.shift), ctrl: boolean(binding.ctrl), alt: boolean(binding.alt) }
+	}
+	const settings = object(slice.settings)
+	return { enabled: boolean(slice.enabled), autoSaveSeconds: integer(settings.autoSaveSeconds), autoSaveOptions: [5, 10, 20, 30, 0],
+		captureShortcut: shortcutLabel(shortcut(settings.captureShortcut)), previewShortcut: shortcutLabel(shortcut(settings.previewShortcut)), notCounted: array(settings.notCounted, string) }
 }
 export function createNativeModuleSettings(deps = native): ModuleSettingsPort {
 	return {
