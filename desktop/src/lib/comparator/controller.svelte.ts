@@ -25,18 +25,14 @@ interface ComparatorDependencies {
 	autoRefreshDue?: (gem: string) => boolean;
 }
 
-interface NativeTradeRequest {
-	gem: string;
-	acceptsEvents: boolean;
-	current: () => boolean;
-}
-
-// Native work survives league changes and component disposal. Keep outstanding
-// Comparator invocations here until their promises settle, including across remounts.
-const pendingNativeTrades = new Set<NativeTradeRequest>();
+// Queue events carry no league/request identity, and settled promises do not
+// prove event delivery has drained. Fence them for this WebView session after
+// rollover, including across remounts; promises still own results/errors/loading.
+const nativeEventProvenance = { generation: null as number | null, fenced: false };
 
 /** Owns the actual compare/native requests and the state also sent to the overlay. */
 export function createComparatorController(dependencies: ComparatorDependencies) {
+	if (ssot.leagueGeneration > 0) nativeEventProvenance.generation ??= ssot.leagueGeneration;
 	const state = $state({
 		selectedGems: [] as string[], results: [] as CompareGem[],
 		selectedForQueue: null as string | null,
@@ -57,12 +53,6 @@ export function createComparatorController(dependencies: ComparatorDependencies)
 	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 	let searchGeneration = 0;
 	let loadedKey = '';
-	const ownedNativeTrades = new Set<NativeTradeRequest>();
-	function nativeEventOwner(gem?: string): NativeTradeRequest | null {
-		const candidates = [...pendingNativeTrades].filter((request) => gem === undefined || request.gem === gem);
-		const only = candidates.length === 1 ? candidates[0] : null;
-		return only && ownedNativeTrades.has(only) && only.acceptsEvents && only.current() ? only : null;
-	}
 	function pushOverlay() {
 		const { divineRate, mode } = dependencies.selection();
 		dependencies.pushOverlay({ results: [...state.results], tradeData: { ...state.tradeData },
@@ -142,14 +132,7 @@ export function createComparatorController(dependencies: ComparatorDependencies)
 		tradeGeneration[gem] = request;
 		const selection = dependencies.selection();
 		const current = () => !disposed && mine === generation && tradeGeneration[gem] === request;
-		const overlapping = [...pendingNativeTrades].filter((pending) => pending.gem === gem);
-		// Events carry only a gem/source. Once invocations overlap, neither can
-		// attribute an event, even after the other's promise settles (delivery may lag).
-		for (const pending of overlapping) pending.acceptsEvents = false;
-		const nativeRequest = { gem, current, acceptsEvents: overlapping.length === 0 };
-		pendingNativeTrades.add(nativeRequest);
-		ownedNativeTrades.add(nativeRequest);
-		if (overlapping.length && state.tradeQueue?.gem === gem) state.tradeQueue = null;
+		nativeEventProvenance.generation ??= ssot.leagueGeneration;
 		state.tradeLoading[gem] = true; state.tradeError[gem] = false; delete state.tradeErrorMsg[gem];
 		pushOverlay();
 		try {
@@ -162,9 +145,8 @@ export function createComparatorController(dependencies: ComparatorDependencies)
 			if (!current() || error === 'cancelled') return;
 			console.warn(`[Trade] Rust lookup failed for ${gem}:`, error);
 			state.tradeError[gem] = true;
+			state.tradeErrorMsg[gem] = String((error as Error)?.message ?? error);
 		} finally {
-			pendingNativeTrades.delete(nativeRequest);
-			ownedNativeTrades.delete(nativeRequest);
 			if (current()) {
 				state.tradeLoading[gem] = false;
 				if (state.tradeQueue?.gem === gem) state.tradeQueue = null;
@@ -206,7 +188,11 @@ export function createComparatorController(dependencies: ComparatorDependencies)
 	}
 	function start() {
 		disposed = false;
-		const stopLeague = onLeagueChange(() => { clearAll(false); void loadResults(); });
+		const stopLeague = onLeagueChange(() => {
+			nativeEventProvenance.fenced = true;
+			clearAll(false);
+			void loadResults();
+		});
 		const subscriptions: Promise<() => void>[] = [];
 		function on<T>(event: string, handler: (value: T) => void) {
 			subscriptions.push(dependencies.listen<T>(event, ({ payload }) => { if (!disposed) handler(payload); }));
@@ -217,10 +203,10 @@ export function createComparatorController(dependencies: ComparatorDependencies)
 		on<{ name: string }>('overlay-trade-refresh', ({ name }) => { if (state.selectedGems.includes(name)) void invokeRustTrade(name); });
 		on('overlay-clear', () => clearAll());
 		on<TradeQueueEvent>('trade-queue', (event) => {
-			// Admit only an unambiguous outstanding invocation owned by this controller.
 			if (!isSource(event, 'gem')) return;
-			if (event.kind === 'cancelled') { if (nativeEventOwner()) state.tradeQueue = null; return; }
-			if (!('gem' in event) || !event.gem || !nativeEventOwner(event.gem)) return;
+			if (nativeEventProvenance.fenced || nativeEventProvenance.generation !== ssot.leagueGeneration) return;
+			if (event.kind === 'cancelled') { state.tradeQueue = null; return; }
+			if (!('gem' in event) || !event.gem || !state.tradeLoading[event.gem]) return;
 			if (event.kind === 'queued' || event.kind === 'waiting' || event.kind === 'fetching') {
 				state.tradeQueue = { gem: event.gem, position: event.position, total: event.total,
 					status: event.kind, waitSecs: event.kind === 'waiting' ? event.waitSecs : 0 };

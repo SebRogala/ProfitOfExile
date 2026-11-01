@@ -1,13 +1,20 @@
-import { afterEach, expect, it, vi } from 'vitest';
-import { applySnapshot, ssot } from '$lib/stores/ssot.svelte';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { CompareGem } from '$lib/api';
 import type { TradeLookupResult } from '$lib/tradeApi';
-import { createComparatorController } from './controller.svelte';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => ({})) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 let stop = () => {};
-afterEach(() => { stop(); vi.useRealTimers(); });
+let applySnapshot: typeof import('$lib/stores/ssot.svelte').applySnapshot;
+let ssot: typeof import('$lib/stores/ssot.svelte').ssot;
+let createComparatorController: typeof import('./controller.svelte').createComparatorController;
+beforeEach(async () => {
+	// Each test starts a WebView module session; remounts within a test retain its provenance fence.
+	vi.resetModules();
+	({ applySnapshot, ssot } = await import('$lib/stores/ssot.svelte'));
+	({ createComparatorController } = await import('./controller.svelte'));
+});
+afterEach(() => { stop(); vi.useRealTimers(); vi.restoreAllMocks(); });
 function deferred<T>() {
 	let resolve!: (value: T) => void;
 	let reject!: (error: Error) => void;
@@ -167,7 +174,7 @@ it('uncorrelated same-gem events cannot contaminate a replacement league lookup'
 	});
 });
 
-it('a fresh lookup regains attributable progress after overlapping requests settle', async () => {
+it('settled promises do not restore native event admission after rollover', async () => {
 	const { controller, handlers, trades } = setup();
 	const old = controller.invokeRustTrade('Arc');
 	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
@@ -178,10 +185,70 @@ it('a fresh lookup regains attributable progress after overlapping requests sett
 	await Promise.all([old, replacement]);
 	const fresh = controller.invokeRustTrade('Arc');
 	handlers['trade-queue']({ payload: { kind: 'waiting', source: 'gem', gem: 'Arc', position: 1, total: 1, waitSecs: 4 } });
-	expect(controller.state.tradeQueue).toEqual({ gem: 'Arc', position: 1, total: 1, status: 'waiting', waitSecs: 4 });
+	expect(controller.state.tradeQueue).toBeNull();
 	trades[2].resolve(trade('B'));
 	await fresh;
 	expect(controller.state.tradeQueue).toBeNull();
+});
+
+it.each([
+	{ remount: false, gap: false, outcome: 'success' },
+	{ remount: false, gap: false, outcome: 'failure' },
+	{ remount: true, gap: false, outcome: 'success' },
+	{ remount: true, gap: false, outcome: 'failure' },
+	{ remount: true, gap: true, outcome: 'success' },
+	{ remount: true, gap: true, outcome: 'failure' }
+])('settled A events stay fenced from B $outcome with remount=$remount and unmounted rollover=$gap', async ({ remount, gap, outcome }) => {
+	const outgoing = setup();
+	const old = outgoing.controller.invokeRustTrade('Arc');
+	if (gap) {
+		outgoing.trades[0].resolve(trade('A'));
+		await old;
+		stop();
+	}
+	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+	if (!gap) {
+		outgoing.trades[0].resolve(trade('A'));
+		await old;
+		if (remount) stop();
+	}
+	const incoming = remount ? setup(false) : outgoing;
+	if (!remount) incoming.controller.selectGem('Arc');
+	const replacement = incoming.controller.invokeRustTrade('Arc');
+	incoming.compares[remount ? 0 : 1].resolve([row(55)]);
+	await Promise.resolve(); await Promise.resolve();
+	const pendingOverlay = {
+		results: [row(55)], tradeData: {}, tradeLoading: { Arc: true }, tradeError: { Arc: false }, divineRate: 300, labMode: 'normal'
+	};
+	const assertPendingB = () => {
+		expect([incoming.controller.state.tradeQueue, incoming.controller.state.tradeError.Arc, incoming.controller.state.tradeErrorMsg.Arc, incoming.controller.state.tradeLoading.Arc]).toEqual([null, false, undefined, true]);
+		expect(incoming.overlays.at(-1)).toEqual(pendingOverlay);
+	};
+	assertPendingB();
+	incoming.handlers['trade-queue']({ payload: { kind: 'waiting', source: 'gem', gem: 'Arc', position: 1, total: 1, waitSecs: 20 } });
+	assertPendingB();
+	incoming.handlers['trade-queue']({ payload: { kind: 'error', source: 'gem', gem: 'Arc', error: 'delayed settled A error' } });
+	assertPendingB();
+	const reply = incoming.trades[remount ? 0 : 1];
+	if (outcome === 'failure') {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const error = new Error('B request failed');
+		reply.reject(error);
+		await replacement;
+		expect(warn).toHaveBeenCalledWith('[Trade] Rust lookup failed for Arc:', error);
+	} else {
+		reply.resolve(trade('B'));
+		await replacement;
+	}
+	const failed = outcome === 'failure';
+	expect([incoming.controller.state.tradeQueue, incoming.controller.state.tradeError.Arc, incoming.controller.state.tradeErrorMsg.Arc, incoming.controller.state.tradeLoading.Arc]).toEqual([null, failed, failed ? 'B request failed' : undefined, false]);
+	const settledOverlay = {
+		...pendingOverlay, tradeData: failed ? {} : { Arc: trade('B') }, tradeLoading: { Arc: false }, tradeError: { Arc: failed }
+	};
+	expect(incoming.overlays.at(-1)).toEqual(settledOverlay);
+	incoming.handlers['trade-queue']({ payload: { kind: 'error', source: 'gem', gem: 'Arc', error: 'even later A error' } });
+	expect(incoming.controller.state.tradeErrorMsg.Arc).toBe(failed ? 'B request failed' : undefined);
+	expect(incoming.overlays.at(-1)).toEqual(settledOverlay);
 });
 
 it('same-gem overlap remains uncorrelated across controller disposal', async () => {
