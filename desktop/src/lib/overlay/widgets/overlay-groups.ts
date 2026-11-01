@@ -1,7 +1,7 @@
 /**
  * What Settings → Overlay Positions actually lists (POE-226).
  *
- * It is three groups — Lab, Merc, Temple — because each overlay is a single
+ * It is four groups — Lab, Merc, Temple, Boss loot — because each overlay is a single
  * fullscreen canvas with WIDGETS inside it (POE-225), and it is arranged with
  * one in-window config session.
  *
@@ -81,7 +81,7 @@ interface GroupSpec {
 }
 
 /**
- * The three groups, in display order.
+ * The groups, in display order; Boss loot requires the beta grant.
  *
  * Lab is the lab window's compass, map, timer and comparator widgets, unchanged
  * and ungated. Merc is the verdict widget: its row belongs to the merc MODULE,

@@ -1,5 +1,5 @@
 /**
- * The window LABELS and MODULE IDS of the two module-coupled overlays, plus
+ * The window LABELS and MODULE IDS of the module-coupled overlays, plus
  * the lab widget window label.
  *
  * This file used to be a window manager as well — `showOverlay`,

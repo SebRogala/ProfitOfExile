@@ -78,8 +78,8 @@ export interface WidgetSpec {
 	 * lists it with `placeable: false`) — an anchored widget the user cannot
 	 * switch off would be the one overlay surface with no control at all.
 	 *
-	 * `temple.offers` is the only one — POE-244's `temple.advice` under a new
-	 * id since POE-249. The host does not place it — nothing generic can,
+	 * `temple.offers` and `loot.capture` use this path. The host does not place
+	 * either — nothing generic can,
 	 * because where it goes is a function of where the game drew the thing it
 	 * points at — so the host renders anchored widgets through
 	 * a SECOND snippet, into a layer the size of the whole window, and the
