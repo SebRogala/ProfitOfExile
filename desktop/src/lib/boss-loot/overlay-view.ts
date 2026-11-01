@@ -1,4 +1,5 @@
 import type { BossProfile, BossStats, Capture, LootItem, LootLayout, LootSelection, StatsScope, SubmitOutcome } from './contracts'
+import { groupNumber } from '$lib/stores/number-format.svelte'
 
 export interface OverlayInput {
 	profile: BossProfile
@@ -11,8 +12,10 @@ export interface OverlayInput {
 	notCounted: string[]
 	autoSaveSeconds: number
 	seconds: number
-	outcome?: SubmitOutcome
+	outcome?: SubmitOutcome | { state: 'saved'; run: { run: number }; droppedPositiveKeys: string[] }
 	previousRun?: number
+	/** Read-side native authority; no browser timer or submit owner. */
+	native?: { phase: string; error: string | null; deadlineMs: number | null; run: number; droppedPositiveKeys: string[] }
 }
 
 export interface ItemView extends Omit<LootItem, 'quantity'> {
@@ -79,7 +82,7 @@ export function buildOverlayView(input: OverlayInput) {
 		const rate = disabled ? '—' : noRuns ? '' : denominator === 0 || (scope === 'collective' && measurement.drops === 0)
 			? '—' : `${Math.round(measurement.drops / denominator * 100)}%`
 		const provenance = disabled ? '' : noRuns ? category ? 'count by hand' : `wiki ${item.wikiRate}`
-			: `${measurement.drops}/${denominator}${mixed ? ' eligible runs' : ''}`
+			: `${groupNumber(String(measurement.drops))}/${groupNumber(String(denominator))}${mixed ? ' eligible runs' : ''}`
 		return {
 			...item, selected: selected && !disabled && !ambiguous, disabled, ambiguous, category, radio,
 			quantity, showQuantity: !disabled && (category || (!!item.quantity && selected)), rate, provenance,
@@ -110,9 +113,9 @@ export function buildOverlayView(input: OverlayInput) {
 		...profile.categories.map((item) => project(item, (capture.categories[item.id] ?? 0) > 0, capture.categories[item.id] ?? 0, true))
 	]
 	const quantity = extra.reduce((sum, item) => sum + (item.selected ? item.quantity : 0), 0)
-	const valid = !capture.ambiguous && groups.every((group) => group.valid)
+	const valid = input.native ? input.native.phase === 'open' && input.native.error === null : !capture.ambiguous && groups.every((group) => group.valid)
 	const open = outcome === undefined
-	const counting = open && valid && autoSaveSeconds > 0
+	const counting = open && valid && autoSaveSeconds > 0 && (!input.native || input.native.deadlineMs !== null)
 	const pause = capture.ambiguous ? `which ${capture.ambiguous.base}?` : 'check guaranteed'
 	const badge = outcome?.state === 'saving' ? 'Saving' : outcome?.state === 'saved' ? 'Saved'
 		: outcome?.state === 'unreachable' ? 'Not saved' : outcome?.state === 'conflict' || (open && !valid)
@@ -120,17 +123,17 @@ export function buildOverlayView(input: OverlayInput) {
 	const dropped = outcome?.state === 'saved' ? outcome.droppedPositiveKeys : []
 	return {
 		layout: input.layout, width: input.layout === 'grid' ? 400 : 420, groups, extra,
-		rateHeader: mixed ? '= drops / eligible runs' : `= drops / ${stats.runs} runs`, mixed,
+		rateHeader: mixed ? '= drops / eligible runs' : `= drops / ${groupNumber(String(stats.runs))} runs`, mixed,
 		runsNote: noRuns ? 'No runs logged for this boss yet: rates show the wiki estimate.'
-			: `Chances from ${stats.runs} runs${scope === 'collective' ? ` · ${stats.devices} device${stats.devices === 1 ? '' : 's'}` : ''}`,
-		extraMessage: `${quantity} item${quantity === 1 ? '' : 's'}`,
+			: `Chances from ${groupNumber(String(stats.runs))} runs${scope === 'collective' ? ` · ${groupNumber(String(stats.devices))} device${stats.devices === 1 ? '' : 's'}` : ''}`,
+		extraMessage: `${groupNumber(String(quantity))} item${quantity === 1 ? '' : 's'}`,
 		unknownLine: capture.unknownLines.length ? `Not in table: ${capture.unknownLines.join(', ')}` : '',
 		badge, barPercent: counting ? Math.min(100, Math.max(0, input.seconds / autoSaveSeconds * 100)) : 0,
 		canSave: open && valid, open,
-		message: outcome?.state === 'saved' ? `Saved as run ${outcome.run.run}.`
-			: outcome?.state === 'unreachable' ? 'Server unreachable. This run was not recorded.' : '',
+		message: outcome?.state === 'saved' ? `Saved as run ${groupNumber(String(outcome.run.run))}.`
+			: outcome?.state === 'unreachable' ? 'Server unreachable. This run was not recorded.' : input.native?.error ?? '',
 		excludedMessage: dropped.length ? `Not added (not counted in the original run): ${dropped.map((id) => items.find((item) => item.id === id)?.name ?? id).join(', ')}.` : '',
-		mergeMessage: open && input.previousRun !== undefined ? `Same seed as run ${input.previousRun}: added to it.` : '',
+		mergeMessage: open && input.previousRun !== undefined ? `Same seed as run ${groupNumber(String(input.previousRun))}: added to it.` : '',
 		tone: outcome?.state === 'unreachable' ? 'error' : outcome?.state === 'saved' ? 'success'
 			: outcome?.state === 'conflict' || (open && !valid) ? 'warning' : 'info'
 	}

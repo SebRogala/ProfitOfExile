@@ -38,6 +38,9 @@ export function createBossLootPageController(ports: PagePorts, prefs?: { scope: 
 	let editor = $state.raw<{ run: StoredRun; changes: Quantities } | null>(null)
 	let runsGeneration = 0
 	let generation = 0
+	let reconciliationPending = false
+	let lastReconciledMs = 0
+	let lastCaptureKey = ''
 	const currentScope = () => prefs ? prefs.scope.value === 'collective' ? 'collective' : 'own' : scope
 	const currentSort = () => prefs ? prefs.sort.value === 'name' ? 'name' : 'rate' : sort
 	const results = $derived(profile && stats && settings && status === 'ready'
@@ -135,6 +138,45 @@ export function createBossLootPageController(ports: PagePorts, prefs?: { scope: 
 		scope = next
 		if (prefs) prefs.scope.value = next
 		await refreshStats()
+	}
+	/** SSOT's existing delivery clock also repairs a save whose transient nudge was missed. */
+	async function reconcileNative(slice: { nowMs: number; pending: { id: number; phase: string; run: number } | null }) {
+		if (!profile || !settings || reconciliationPending || runMutationPending) return
+		const key = slice.pending ? `${slice.pending.id}:${slice.pending.phase}:${slice.pending.run}` : ''
+		const changedCapture = key !== lastCaptureKey
+		lastCaptureKey = key
+		const refresh = changedCapture || slice.nowMs - lastReconciledMs >= 30000
+		reconciliationPending = true
+		try {
+			settings = await ports.moduleSettings.load()
+			settingsStatus = 'ready'
+			if (!refresh) return
+			lastReconciledMs = slice.nowMs
+			const request = ++generation
+			const target = profile
+			const runRequest = runsGeneration
+			await Promise.all([
+				(async () => {
+					try {
+						const next = await ports.stats.load(target, currentScope())
+						if (request === generation) { stats = next; status = 'ready'; error = '' }
+					} catch (cause) {
+						if (request === generation) { stats = null; status = 'unreachable'; error = String(cause) }
+					}
+				})(),
+				(async () => {
+					if (!runs) return
+					try {
+						const next = await ports.runs.list(target, runs.page, runs.pageSize)
+						// Refresh history without closing the editor or discarding its explicit changes.
+						if (runRequest === runsGeneration) { runs = next; runsStatus = 'ready'; runsError = '' }
+					} catch (cause) {
+						if (runRequest === runsGeneration) { runsStatus = 'unreachable'; runsError = String(cause) }
+					}
+				})()
+			])
+		} catch (cause) { settingsError = String(cause) }
+		finally { reconciliationPending = false }
 	}
 	function selectSort(next: ResultsSort) {
 		sort = next
@@ -265,6 +307,6 @@ export function createBossLootPageController(ports: PagePorts, prefs?: { scope: 
 		get runsView() { return runsView }, get runsStatus() { return runsStatus }, get runsError() { return runsError },
 		get editorView() { return editorView }, get runMutationPending() { return runMutationPending },
 		get runMutationError() { return runMutationError }, loadRuns, beginEdit, cancelEdit, toggleEditorItem, saveEditor, deleteRun,
-		get exporting() { return exporting }, load, selectScope, selectSort, exportCsv
+		get exporting() { return exporting }, load, selectScope, selectSort, exportCsv, reconcileNative
 	}
 }

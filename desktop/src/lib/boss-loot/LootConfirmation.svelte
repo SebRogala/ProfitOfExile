@@ -1,6 +1,7 @@
 <script lang="ts">
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte'
 	import Button from '$lib/components/Button.svelte'
+	import { groupNumber } from '$lib/stores/number-format.svelte'
 	import LootItem from './LootItem.svelte'
 	import { buildOverlayView, dispatchOverlayAction, type OverlayInput } from './overlay-view'
 
@@ -38,8 +39,8 @@
 	class:list={input.layout === 'list'} style:width="{view.width}px"
 	aria-label="Boss loot confirmation" data-hot data-action="loot.touch" onclick={click}>
 	<header>
-		<div class="identity"><div class="title">{input.profile.name} · run {input.capture.run} <span class="profile-key">{input.profile.key}</span></div>
-			<div class="zone">Zone <span class="mono">{input.capture.attribution.area}</span>, level {input.capture.attribution.level}</div>
+		<div class="identity"><div class="title">{input.profile.name} · run {groupNumber(String(input.capture.run))} <span class="profile-key">{input.profile.key}</span></div>
+			<div class="zone">Zone <span class="mono">{input.capture.attribution.area}</span>, level {groupNumber(String(input.capture.attribution.level))}</div>
 		</div>
 		<div class="controls">
 			{#if view.badge}<span class="badge {view.tone}" role="status">{#if input.outcome?.state === 'saving'}<i class="spinner" aria-hidden="true"></i>{/if}{view.badge}</span>{/if}

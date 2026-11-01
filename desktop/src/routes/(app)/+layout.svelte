@@ -47,25 +47,21 @@
 	import HarvestFlippingPage from '$lib/pages/HarvestFlippingPage.svelte';
 	import ChaosDivPage from '$lib/pages/ChaosDivPage.svelte';
 	import BossLootPage from '$lib/pages/BossLootPage.svelte';
-	import bossLootFixture from '$lib/boss-loot/__fixtures__/boss-loot.json';
 	import {
-		createFixtureProfiles, createFixtureStats, createFixtureRuns,
-		createFixtureModuleSettings, createFixtureDevice
-	} from '$lib/boss-loot/fixture-adapters';
+		createNativeProfiles, createNativeStats, createNativeRuns,
+		createNativeModuleSettings, createNativeDevice, saveNativeCsv
+	} from '$lib/boss-loot/native-adapters';
+	import { bossLootIcon } from '$lib/boss-loot/art';
 	import type { PagePorts } from '$lib/boss-loot/page-controller.svelte';
 	import DevPage from '$lib/pages/DevPage.svelte';
 	import IdentifyDialog from '$lib/components/IdentifyDialog.svelte';
 
 	let { children } = $props();
 
-	// Owner-specific fixtures at PagePorts until WI-9 supplies native adapters.
 	const bossLootPorts: PagePorts = {
-		profiles: createFixtureProfiles(bossLootFixture.profiles),
-		stats: createFixtureStats(bossLootFixture.stats),
-		runs: createFixtureRuns(bossLootFixture.runs),
-		moduleSettings: createFixtureModuleSettings(bossLootFixture.moduleSettings),
-		device: createFixtureDevice(bossLootFixture.device),
-		saveCsv: async () => { throw new Error('CSV export is not connected yet.'); }
+		profiles: createNativeProfiles(), stats: createNativeStats(), runs: createNativeRuns(),
+		moduleSettings: createNativeModuleSettings(), device: createNativeDevice(),
+		saveCsv: async (profile) => saveNativeCsv(profile)
 	};
 
 	// Sidebar state: driven by store.status.sidebar_open (persisted in Rust settings).
@@ -767,7 +763,7 @@
 			{/if}
 			{#if bossLootGranted}
 				<div class:view-hidden={visibleView !== 'boss-loot'}>
-					<BossLootPage ports={bossLootPorts} />
+					<BossLootPage ports={bossLootPorts} iconFor={(item) => bossLootIcon(item.id)} />
 				</div>
 			{/if}
 			{#if chaosDivGranted}

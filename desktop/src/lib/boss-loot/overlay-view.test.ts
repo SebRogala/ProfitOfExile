@@ -190,3 +190,36 @@ it('resets a blank-panel click without another action', () => {
 	dispatchOverlayAction('loot.touch', () => events.push('touch'), (action) => events.push(action))
 	expect(events).toEqual(['touch'])
 })
+
+describe('native overlay authority', () => {
+	it('keeps a native rejected confirmation paused even when the visible selection is valid', async () => {
+		const state = await input()
+		state.native = { phase: 'rejected', deadlineMs: null, error: 'Merge target changed; save as new run or discard', run: 79, droppedPositiveKeys: [] }
+		const view = buildOverlayView(state)
+		expect(view.canSave).toBe(false)
+		expect(view.barPercent).toBe(0)
+		expect(view.message).toContain('Merge target changed')
+	})
+	it('keeps a valid native confirmation with no deadline paused', async () => {
+		const state = await input()
+		state.native = { phase: 'open', deadlineMs: null, error: 'Check guaranteed groups', run: 79, droppedPositiveKeys: [] }
+		expect(buildOverlayView(state).badge).toBe('Paused: check guaranteed')
+	})
+})
+
+describe('grouped overlay counts', () => {
+	it.each(['auto', 'space', 'comma', 'none'] as const)('matches the page formatter for %s', async (format) => {
+		const { ssot } = await import('$lib/stores/ssot.svelte')
+		const { groupNumber } = await import('$lib/stores/number-format.svelte')
+		const prior = ssot.bossLoot
+		ssot.bossLoot = { ...prior!, numberFormat: format }
+		try {
+			const state = await input()
+			state.stats.runs = 12000
+			state.stats.items['Cinderswallow Urn'] = { drops: 1234, eligibleRuns: 10000 }
+			const view = buildOverlayView(state)
+			expect(view.groups[0].items[0].provenance).toBe(`${groupNumber('1234')}/${groupNumber('10000')} eligible runs`)
+			expect(view.runsNote).toBe(`Chances from ${groupNumber('12000')} runs`)
+		} finally { ssot.bossLoot = prior }
+	})
+})

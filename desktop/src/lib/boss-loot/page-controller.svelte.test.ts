@@ -495,3 +495,27 @@ describe('Settings owner persistence', () => {
 		expect(reopened.settings?.autoSaveSeconds).toBe(20)
 	})
 })
+
+describe('native snapshot reconciliation', () => {
+	it('refreshes statistics after a missed transient save', async () => {
+		const deps = ports()
+		let count = 1
+		deps.stats.load = async () => ({ runs: count, devices: 1, nextRun: count + 1, items: {} })
+		const page = createBossLootPageController(deps)
+		await page.load()
+		count = 2
+		await page.reconcileNative({ nowMs: 31000, pending: null })
+		expect(page.results?.runs).toBe(2)
+	})
+	it('preserves explicit editor changes during background reconciliation', async () => {
+		const deps = ports()
+		const page = createBossLootPageController(deps)
+		await page.load(); await page.loadRuns()
+		const row = page.runsView!.rows[0]
+		page.beginEdit(row.id)
+		page.toggleEditorItem('Cinderswallow Urn')
+		await page.reconcileNative({ nowMs: 31000, pending: null })
+		expect(page.editorView?.request.items.quantities['Cinderswallow Urn']).toBe(1)
+		expect(page.editorView?.request.items.quantities['The Devouring Diadem']).toBeUndefined()
+	})
+})

@@ -9,6 +9,7 @@
 	import { groupNumber } from '$lib/stores/number-format.svelte'
 	import { createBossLootPageController, type PagePorts } from '$lib/boss-loot/page-controller.svelte'
 	import type { LootItem } from '$lib/boss-loot/contracts'
+	import { ssot } from '$lib/stores/ssot.svelte'
 
 	let { ports, iconFor = () => null }: { ports: PagePorts; iconFor?: (item: LootItem) => string | null } = $props()
 	const tab = persisted('bossLootTab', 'results')
@@ -20,6 +21,10 @@
 	const editor = $derived(page.editorView)
 	const behavior = $derived(page.settingsView)
 	onMount(() => { untrack(() => { void page.load() }) })
+	$effect(() => {
+		const clock = ssot.bossLoot?.nowMs
+		if (clock !== undefined) untrack(() => { void page.reconcileNative(ssot.bossLoot!) })
+	})
 	$effect(() => {
 		const selected = page.scope
 		untrack(() => { void page.selectScope(selected) })
