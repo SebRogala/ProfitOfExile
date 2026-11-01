@@ -91,13 +91,13 @@
 		.results-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
 		.results-columns .drops-col { width: 16%; }
 		.results-columns .rate-col { width: 25%; }
-		.results-columns .wiki-col { width: 18%; }
+		.results-columns .wiki-col { width: 19%; }
 		.results-columns td:last-child, .results-columns th:last-child { padding-right: 8px; }
-		.results-columns .wiki { overflow-wrap: anywhere; }
-		.results-columns .item > span { min-width: 0; overflow-wrap: anywhere; }
+		.results-columns .wiki { white-space: nowrap; }
+		.results-columns .item { flex-wrap: wrap; row-gap: 4px; }
+		.results-columns .item > span { flex: 1; min-width: min-content; }
 		.results-columns .item :global(img), .results-columns .item :global(.item-icon-fallback) { flex-shrink: 0; }
 		.results-columns .group-note { float: none; display: block; margin-top: 2px; }
 		.results-columns .rate-header { display: block; }
-		.results-columns .provenance { overflow-wrap: anywhere; }
 	}
 </style>
