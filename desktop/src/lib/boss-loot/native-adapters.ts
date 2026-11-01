@@ -163,11 +163,12 @@ function selection(profile: BossProfile, quantities: Quantities, ambiguous: stri
 		ambiguous: group ? { group: group.id, base: group.items.find((item) => candidates.includes(item.id))!.base, ids: candidates } : null
 	}
 }
-export function mapNativeOverlay(slice: BossLootSlice, stats: BossStats, scope: StatsScope): OverlayInput | null {
+export function mapNativeOverlay(slice: BossLootSlice, stats: BossStats | null, scope: StatsScope): OverlayInput | null {
 	const pending = slice.pending
 	if (!pending || pending.phase === 'reading' || pending.phase === 'loading') return null
 	const profile = mapNativeProfile(pending.profile)
-	const capture: Capture = { ...selection(profile, pending.items.quantities, pending.ambiguous), boss: profile.boss,
+	// PendingCapture.items retains the last valid submission map while incoming remains editable.
+	const capture: Capture = { ...selection(profile, pending.error || !pending.target ? pending.incoming : pending.items.quantities, pending.ambiguous), boss: profile.boss,
 		run: pending.run, seed: pending.attribution.seed, attribution: { ...pending.attribution, profileKey: profile.profileKey }, readLines: pending.readLines, unknownLines: pending.unknownLines }
 	const allItems = [...profile.groups.flatMap((group) => group.items), ...profile.extra, ...profile.categories]
 	return { profile, capture, readSelection: selection(profile, pending.incoming, []), stats, scope, layout: pending.layout,

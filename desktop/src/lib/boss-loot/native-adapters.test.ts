@@ -21,6 +21,14 @@ function boundary(response: unknown = null) {
 	const deps: NativeBoundary = { call, snapshot: () => slice, reconcile: async () => {}, deviceId: () => 'test-device' }
 	return { deps, slice, call }
 }
+function pendingSlice(): BossLootSlice {
+	const { slice } = boundary()
+	slice.pending = { id: 81, attribution: { area: nativeProfile.area, level: 83, seed: '42', profile: ref }, league: 'Historical', profile: nativeProfile,
+		layout: 'list', rect: [10, 20, 900, 750], incoming: { 'Cinderswallow Urn': 1 }, items: { quantities: { 'Cinderswallow Urn': 1 }, counted: ['Cinderswallow Urn'] },
+		readLines: ['SILVER FLASK'], unknownLines: ['Spidersilk Robe'], ambiguous: [], phase: 'open', deadlineMs: 4500, closeAtMs: null,
+		target: row, forceNew: false, run: 31, nextRun: 32, mergeBlocked: false, droppedPositiveKeys: [], error: null }
+	return slice
+}
 describe('native boss loot owners', () => {
 	it('maps native profile key without fixture aliases', async () => {
 		const { deps } = boundary([nativeProfile])
@@ -82,19 +90,20 @@ describe('native boss loot owners', () => {
 		expect(call).toHaveBeenCalledWith('boss_loot_action', { id: 81, action: { type: 'select', key: 'Cane of Kulemak', quantity: 1 } })
 	})
 	it('projects native phase and deadline without creating a second countdown', () => {
-		const { slice } = boundary()
-		slice.pending = { id: 81, attribution: { area: nativeProfile.area, level: 83, seed: '42', profile: ref }, league: 'Historical', profile: nativeProfile,
-			layout: 'list', rect: [10, 20, 900, 750], incoming: { 'Cinderswallow Urn': 1 }, items: { quantities: { 'Cinderswallow Urn': 1 }, counted: ['Cinderswallow Urn'] },
-			readLines: ['SILVER FLASK'], unknownLines: ['Spidersilk Robe'], ambiguous: [], phase: 'open', deadlineMs: 4500, closeAtMs: null,
-			target: row, forceNew: false, run: 31, nextRun: 32, mergeBlocked: false, droppedPositiveKeys: [], error: null }
+		const slice = pendingSlice()
 		const stats = { runs: 1, devices: 1, nextRun: 32, items: {} }
 		const projected = mapNativeOverlay(slice, stats, 'own')!
 		expect(projected.seconds).toBe(3)
 		expect(projected.layout).toBe('list')
 		expect(projected.previousRun).toBe(31)
 		expect(projected.capture.unknownLines).toEqual(['Spidersilk Robe'])
-		slice.pending.phase = 'saved'; slice.pending.droppedPositiveKeys = ['hidden-eye']
+		slice.pending!.phase = 'saved'; slice.pending!.droppedPositiveKeys = ['hidden-eye']
 		expect(mapNativeOverlay(slice, stats, 'own')?.native).toMatchObject({ phase: 'saved', run: 31, droppedPositiveKeys: ['hidden-eye'] })
+	})
+	it('shows an invalid new capture selection instead of the last valid submit map', () => {
+		const slice = pendingSlice()
+		Object.assign(slice.pending!, { target: null, incoming: {}, error: 'Check guaranteed groups', deadlineMs: null })
+		expect(mapNativeOverlay(slice, null, 'own')?.capture.picks.unique).toEqual([])
 	})
 })
 

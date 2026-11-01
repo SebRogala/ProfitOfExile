@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import type { HTMLButtonAttributes } from 'svelte/elements';
 
 	let {
 		variant = 'default',
@@ -7,16 +8,18 @@
 		title,
 		onclick,
 		children,
+		...rest
 	}: {
 		variant?: 'default' | 'save' | 'danger';
 		disabled?: boolean;
 		title?: string;
 		onclick?: (e: MouseEvent) => void;
 		children: Snippet;
-	} = $props();
+	} & HTMLButtonAttributes = $props();
 </script>
 
 <button
+	{...rest}
 	class="btn"
 	class:save={variant === 'save'}
 	class:danger={variant === 'danger'}

@@ -49,7 +49,7 @@
 	</header>
 	<div class="countdown"><i style:width="{view.barPercent}%"></i></div>
 	{#if view.mergeMessage}<div class="message merge"><span>{view.mergeMessage}</span><button type="button" class="link" data-action="loot.force-new">Save as new run</button></div>{/if}
-	{#if view.message}<div class="message"><span>{view.message}</span>{#if input.outcome?.state === 'unreachable'}<span data-action="loot.close"><Button>Close</Button></span>{/if}</div>{/if}
+	{#if view.message}<div class="message"><span>{view.message}</span>{#if input.outcome?.state === 'unreachable'}<Button data-action="loot.close">Close</Button>{/if}</div>{/if}
 	{#if view.excludedMessage}<div class="message warning">{view.excludedMessage}</div>{/if}
 	<div class="runs-note">{view.runsNote}{#if view.mixed}<div>{view.rateHeader}</div>{/if}</div>
 	{#each view.groups as group (group.id)}
@@ -67,7 +67,7 @@
 	</div>
 	<footer class="section">
 		<span class="unknown">{view.unknownLine}</span>
-		{#if view.open}<div class="buttons"><span data-action="loot.discard"><Button>Discard</Button></span><span class="save" data-action="loot.save"><Button disabled={!view.canSave}>Save now</Button></span></div>{/if}
+		{#if view.open}<div class="buttons"><Button data-action="loot.discard">Discard</Button><span class="save"><Button data-action="loot.save" disabled={!view.canSave}>Save now</Button></span></div>{/if}
 	</footer>
 </section>
 

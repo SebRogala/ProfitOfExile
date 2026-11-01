@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import source from './__fixtures__/boss-loot.json'
 import { createFixtureCapture, createFixtureModuleSettings, createFixtureProfiles, createFixtureStats } from './fixture-adapters'
-import type { LootLayout, StatsScope, SubmitOutcome } from './contracts'
+import type { BossStats, LootLayout, StatsScope, SubmitOutcome } from './contracts'
 import { buildOverlayView, changeSelection, dispatchOverlayAction, type OverlayInput } from './overlay-view'
 
-async function input(layout: LootLayout = 'grid', scope: StatsScope = 'own'): Promise<OverlayInput> {
+async function input(layout: LootLayout = 'grid', scope: StatsScope = 'own'): Promise<OverlayInput & { stats: BossStats }> {
 	const [profile] = await createFixtureProfiles(source.profiles).load()
 	return {
 		profile, capture: (await createFixtureCapture(source.capture).load())!,
@@ -222,4 +222,15 @@ describe('grouped overlay counts', () => {
 			expect(view.runsNote).toBe(`Chances from ${groupNumber('12000')} runs`)
 		} finally { ssot.bossLoot = prior }
 	})
+})
+
+it('keeps native unreachable feedback visible when statistics have never loaded', async () => {
+	const state: OverlayInput = await input()
+	state.stats = null
+	state.outcome = { state: 'unreachable' }
+	const view = buildOverlayView(state)
+	expect(view.message).toBe('Server unreachable. This run was not recorded.')
+	expect(view.groups[0].items[0].rate).toBe('—')
+	expect(view.groups[0].items[0].provenance).toBe('')
+	expect(view.runsNote).toBe('')
 })

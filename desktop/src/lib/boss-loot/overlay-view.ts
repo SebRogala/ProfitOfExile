@@ -6,7 +6,7 @@ export interface OverlayInput {
 	capture: Capture
 	/** Original OCR selection remains unchanged while the fixture's picks are edited. */
 	readSelection?: LootSelection
-	stats: BossStats
+	stats: BossStats | null
 	scope: StatsScope
 	layout: LootLayout
 	notCounted: string[]
@@ -68,8 +68,8 @@ export function dispatchOverlayAction(action: string, touch: () => void, perform
 export function buildOverlayView(input: OverlayInput) {
 	const { profile, capture, stats, scope, notCounted, outcome, autoSaveSeconds } = input
 	const items = [...profile.groups.flatMap((group) => group.items), ...profile.extra, ...profile.categories]
-	const noRuns = stats.runs === 0
-	const mixed = !noRuns && items.some((item) => !notCounted.includes(item.id) &&
+	const noRuns = stats?.runs === 0
+	const mixed = !!stats && !noRuns && items.some((item) => !notCounted.includes(item.id) &&
 		(Object.hasOwn(stats.items, item.id) ? stats.items[item.id].eligibleRuns : 0) !== stats.runs)
 	const read = input.readSelection ?? capture
 	const reads = new Set([...Object.values(read.picks).flat(),
@@ -77,11 +77,11 @@ export function buildOverlayView(input: OverlayInput) {
 	const project = (item: LootItem, selected: boolean, quantity: number, category = false, radio = false): ItemView => {
 		const disabled = notCounted.includes(item.id)
 		const ambiguous = capture.ambiguous?.ids.includes(item.id) ?? false
-		const measurement = Object.hasOwn(stats.items, item.id) ? stats.items[item.id] : { drops: 0, eligibleRuns: 0 }
+		const measurement = stats && Object.hasOwn(stats.items, item.id) ? stats.items[item.id] : { drops: 0, eligibleRuns: 0 }
 		const denominator = measurement.eligibleRuns
-		const rate = disabled ? '—' : noRuns ? '' : denominator === 0 || (scope === 'collective' && measurement.drops === 0)
+		const rate = disabled || !stats ? '—' : noRuns ? '' : denominator === 0 || (scope === 'collective' && measurement.drops === 0)
 			? '—' : `${Math.round(measurement.drops / denominator * 100)}%`
-		const provenance = disabled ? '' : noRuns ? category ? 'count by hand' : `wiki ${item.wikiRate}`
+		const provenance = disabled || !stats ? '' : noRuns ? category ? 'count by hand' : `wiki ${item.wikiRate}`
 			: `${groupNumber(String(measurement.drops))}/${groupNumber(String(denominator))}${mixed ? ' eligible runs' : ''}`
 		return {
 			...item, selected: selected && !disabled && !ambiguous, disabled, ambiguous, category, radio,
@@ -123,8 +123,8 @@ export function buildOverlayView(input: OverlayInput) {
 	const dropped = outcome?.state === 'saved' ? outcome.droppedPositiveKeys : []
 	return {
 		layout: input.layout, width: input.layout === 'grid' ? 400 : 420, groups, extra,
-		rateHeader: mixed ? '= drops / eligible runs' : `= drops / ${groupNumber(String(stats.runs))} runs`, mixed,
-		runsNote: noRuns ? 'No runs logged for this boss yet: rates show the wiki estimate.'
+		rateHeader: !stats ? '' : mixed ? '= drops / eligible runs' : `= drops / ${groupNumber(String(stats.runs))} runs`, mixed,
+		runsNote: !stats ? '' : noRuns ? 'No runs logged for this boss yet: rates show the wiki estimate.'
 			: `Chances from ${groupNumber(String(stats.runs))} runs${scope === 'collective' ? ` · ${groupNumber(String(stats.devices))} device${stats.devices === 1 ? '' : 's'}` : ''}`,
 		extraMessage: `${groupNumber(String(quantity))} item${quantity === 1 ? '' : 's'}`,
 		unknownLine: capture.unknownLines.length ? `Not in table: ${capture.unknownLines.join(', ')}` : '',

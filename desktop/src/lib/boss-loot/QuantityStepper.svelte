@@ -1,10 +1,11 @@
 <script lang="ts">
+	import { groupNumber } from '$lib/stores/number-format.svelte'
 	let { id, name, quantity, disabled = false }: { id: string; name: string; quantity: number; disabled?: boolean } = $props()
 </script>
 
 <div class="quantity">
 	<button type="button" data-action="loot.decrement" data-item={id} {disabled} aria-label="One fewer {name}">−</button>
-	<span aria-live="polite">{quantity}</span>
+	<span aria-live="polite">{groupNumber(String(quantity))}</span>
 	<button type="button" data-action="loot.increment" data-item={id} {disabled} aria-label="One more {name}">+</button>
 </div>
 
