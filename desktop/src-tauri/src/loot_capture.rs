@@ -162,6 +162,13 @@ impl Default for LootSlice {
     fn default() -> Self { Self { enabled: false, settings: LootSettings::default(), number_format: NumberFormat::Auto, pending: None, frame: None, rebind: None, now_ms: 0 } }
 }
 impl LootOwner {
+    fn preview_tick(&mut self, foreground: bool, rect: Option<[i32; 4]>) {
+        if !self.preview { return; }
+        if !foreground { self.frame = None; return; }
+        if let Some(rect) = rect {
+            self.frame = Some(Frame { rect, phase: "preview".into(), attribution: self.area.clone(), until_ms: None });
+        }
+    }
     pub fn catch_up(&mut self, tail: Option<&str>) {
         self.area = None;
         if let Some(area) = tail.and_then(|tail| tail.lines().rev().find_map(crate::lab_state::parse_area_change)) {
@@ -329,6 +336,23 @@ pub fn capture_rect(cursor: (i32, i32), screen: (u32, u32)) -> [i32; 4] {
     let h = ((750.0 * scale).round() as i32).clamp(1, sh.max(1));
     [(cursor.0 - w / 2).clamp(0, (sw - w).max(0)), (cursor.1 - (h as f64 * 2.0 / 3.0).round() as i32).clamp(0, (sh - h).max(0)), w, h]
 }
+fn read_capture(
+    active: impl Fn() -> bool,
+    grab: impl FnOnce() -> Result<([i32; 4], image::DynamicImage), String>,
+    mut recognize: impl FnMut(&image::DynamicImage) -> Result<Vec<String>, String>,
+    preprocess: impl FnOnce(&image::DynamicImage) -> image::DynamicImage,
+    scaled_error: impl FnOnce(String),
+) -> Result<Option<([i32; 4], Vec<String>)>, String> {
+    let result = (|| {
+        let (rect, crop) = grab()?;
+        let raw = recognize(&crop)?;
+        let scaled = preprocess(&crop);
+        let upscaled = recognize(&scaled).unwrap_or_else(|error| { scaled_error(error); Vec::new() });
+        Ok((rect, raw.into_iter().chain(upscaled).collect()))
+    })();
+    if !active() { return Ok(None); }
+    result.map(Some)
+}
 pub fn snapshot(state: &crate::AppState) -> LootSlice {
     let enabled = state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).get(MODULE_ID) == Some(&true);
     let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -472,12 +496,10 @@ mod platform {
         let state = app.state::<crate::AppState>();
         let game = *state.game_monitor.lock().unwrap_or_else(|e| e.into_inner());
         let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
-        if !owner.preview { return; }
-        if !foreground { owner.frame = None; return; }
-        if let (Some(cur), Some(g)) = (cursor(), game) {
-            owner.frame = Some(Frame { rect: capture_rect((cur.0 - g.x, cur.1 - g.y), (g.width, g.height)), phase: "preview".into(),
-                attribution: owner.area.clone(), until_ms: None });
-        }
+        let rect = if owner.preview && foreground {
+            cursor().zip(game).map(|(cur, g)| capture_rect((cur.0 - g.x, cur.1 - g.y), (g.width, g.height)))
+        } else { None };
+        owner.preview_tick(foreground, rect);
     }
     pub fn capture_once(app: &tauri::AppHandle, cancel: &tokio::sync::watch::Receiver<bool>) {
         let Some(cur) = cursor() else { return };
@@ -493,18 +515,21 @@ mod platform {
             Ok(id) => id, Err(error) => { crate::app_log(app, error); crate::ssot::emit_ssot(app); return; }
         };
         crate::ssot::emit_ssot(app);
-        let result = (|| {
-            let shot = crate::capture::capture_screen(app)?;
-            let rect = capture_rect((cur.0 - shot.origin.0, cur.1 - shot.origin.1), (shot.image.width(), shot.image.height()));
-            let crop = shot.image.crop_imm(rect[0] as u32, rect[1] as u32, rect[2] as u32, rect[3] as u32);
-            let raw = crate::ocr::recognize_text(&crop)?;
-            let scaled = crate::capture::preprocess_for_ocr_fast(&crop);
-            let upscaled = crate::ocr::recognize_text(&scaled).unwrap_or_else(|error| { crate::app_log(app, format!("loot: 2x OCR failed: {error}")); Vec::new() });
-            Ok::<_, String>((rect, raw.into_iter().chain(upscaled).collect()))
-        })();
-        if *cancel.borrow() { return; }
+        let result = read_capture(
+            || !*cancel.borrow(),
+            || {
+                let shot = crate::capture::capture_screen(app)?;
+                let rect = capture_rect((cur.0 - shot.origin.0, cur.1 - shot.origin.1), (shot.image.width(), shot.image.height()));
+                let crop = shot.image.crop_imm(rect[0] as u32, rect[1] as u32, rect[2] as u32, rect[3] as u32);
+                Ok((rect, crop))
+            },
+            crate::ocr::recognize_text,
+            crate::capture::preprocess_for_ocr_fast,
+            |error| crate::app_log(app, format!("loot: 2x OCR failed: {error}")),
+        );
         match result {
-            Ok((rect, lines)) => {
+            Ok(None) => return,
+            Ok(Some((rect, lines))) => {
                 {
                     let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(p) = owner.pending.as_mut().filter(|p| p.id == id) { p.rect = rect; }
@@ -516,7 +541,7 @@ mod platform {
                     let api = LootApi::from_state(&state);
                     let profile = { state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).pending.as_ref().filter(|p| p.id == id).map(|p| ProfileRef::from(&p.profile)) };
                     let Some(profile) = profile else { return };
-                    let result = async { Ok::<_, ApiError>((api.latest(&profile).await?, api.stats(&profile, "own").await?.next_run)) }.await;
+                    let result = api.capture_context(&profile).await;
                     let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
                     {
                         let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
@@ -903,5 +928,92 @@ mod shortcut_tests {
         assert_eq!(capture_rect((960, 540), (1920, 1080)), [510, 40, 900, 750]);
         assert_eq!(capture_rect((1920, 1080), (3840, 2160)), [1020, 80, 1800, 1500]);
         assert_eq!(capture_rect((10, 1070), (1920, 1080)), [0, 330, 900, 750]);
+    }
+}
+
+#[cfg(test)]
+mod review_r1_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn refused_capture_survives_the_next_preview_tick_without_submission() {
+        struct NoSubmit(AtomicUsize);
+        impl LootTransport for NoSubmit {
+            async fn submit(&self, _: &SubmitRun) -> Result<SubmitOutcome, ApiError> {
+                self.0.fetch_add(1, Ordering::SeqCst); Err(ApiError::Unreachable)
+            }
+            async fn latest(&self, _: &ProfileRef) -> Result<Option<StoredRun>, ApiError> { Ok(None) }
+        }
+        let settings = LootSettings::default();
+        let mut owner = LootOwner::default();
+        owner.preview = true;
+        owner.catch_up(Some("Generating level 83 area \"MapWorldsStrand\" with seed 7"));
+        assert!(owner.begin("test".into(), [10, 20, 900, 750], &settings, 100).is_err());
+        owner.preview_tick(true, Some([30, 40, 900, 750]));
+        let frame = owner.frame.as_ref().unwrap();
+        assert_eq!(frame.phase, "refused");
+        assert_eq!(frame.rect, [10, 20, 900, 750]);
+        assert_eq!(frame.until_ms, Some(3100));
+        assert_eq!(frame.attribution.as_ref().unwrap().area, "MapWorldsStrand");
+        let http = NoSubmit(AtomicUsize::new(0));
+        submit_pending(&Mutex::new(owner), &settings, &http, 10_000, true).await;
+        assert_eq!(http.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn normal_preview_tick_keeps_following_the_cursor() {
+        let mut owner = LootOwner::default();
+        owner.preview = true;
+        owner.preview_tick(true, Some([10, 20, 900, 750]));
+        owner.preview_tick(true, Some([30, 40, 900, 750]));
+        assert_eq!(owner.frame.as_ref().unwrap().phase, "preview");
+        assert_eq!(owner.frame.as_ref().unwrap().rect, [30, 40, 900, 750]);
+        owner.preview_tick(false, Some([30, 40, 900, 750]));
+        assert!(owner.frame.is_none());
+    }
+
+    #[test]
+    fn cancellation_during_raw_ocr_starts_no_preprocessing_or_second_read() {
+        let (cancel, rx) = tokio::sync::watch::channel(false);
+        let (started, started_rx) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        let reads = AtomicUsize::new(0);
+        let scales = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let read_count = &reads;
+            let scale_count = &scales;
+            let work = scope.spawn(move || read_capture(
+                || !*rx.borrow(),
+                || Ok(([0, 0, 1, 1], image::DynamicImage::new_rgb8(1, 1))),
+                |_| {
+                    let pass = read_count.fetch_add(1, Ordering::SeqCst);
+                    if pass == 0 { started.send(()).unwrap(); release_rx.recv_timeout(Duration::from_secs(5)).unwrap(); }
+                    Ok(vec!["Silver Flask".into()])
+                },
+                |crop| { scale_count.fetch_add(1, Ordering::SeqCst); crop.clone() },
+                |_| panic!("OCR should not fail"),
+            ));
+            started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            cancel.send(true).unwrap();
+            release.send(()).unwrap();
+            assert!(work.join().unwrap().unwrap().is_none());
+        });
+        assert_eq!(scales.load(Ordering::SeqCst), 0, "preprocessing started after cancellation");
+        assert_eq!(reads.load(Ordering::SeqCst), 1, "2x OCR started after cancellation");
+    }
+
+    #[test]
+    fn active_capture_preserves_raw_and_scaled_ocr_union() {
+        let mut pass = 0;
+        let result = read_capture(
+            || true,
+            || Ok(([1, 2, 3, 4], image::DynamicImage::new_rgb8(1, 1))),
+            |_| { pass += 1; Ok(vec![if pass == 1 { "Silver Flask".into() } else { "Serpentine Staff".into() }]) },
+            |crop| crop.clone(),
+            |_| panic!("OCR should not fail"),
+        ).unwrap().unwrap();
+        assert_eq!(result.0, [1, 2, 3, 4]);
+        assert_eq!(result.1, ["Silver Flask", "Serpentine Staff"]);
     }
 }

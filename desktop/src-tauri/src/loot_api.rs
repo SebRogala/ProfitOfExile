@@ -44,15 +44,22 @@ pub struct BossStats { pub runs: u64, pub devices: u64, pub next_run: u64, pub i
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum ApiError { Conflict, Unreachable, Rejected(String) }
+pub enum ApiError { Conflict, Unreachable, Rejected(String), Cancelled }
 pub trait LootTransport: Sync {
     fn submit(&self, request: &SubmitRun) -> impl std::future::Future<Output = Result<SubmitOutcome, ApiError>> + Send;
     fn latest(&self, profile: &ProfileRef) -> impl std::future::Future<Output = Result<Option<StoredRun>, ApiError>> + Send;
 }
-pub struct LootApi { http: reqwest::Client, base: String }
+#[derive(Clone)]
+pub struct LootApi { http: reqwest::Client, base: String, cancel: Option<tokio::sync::watch::Receiver<bool>> }
 impl LootApi {
     pub fn from_state(state: &crate::AppState) -> Self {
-        Self { http: state.server_http.clone(), base: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).trim_end_matches('/').into() }
+        Self { http: state.server_http.clone(), base: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).trim_end_matches('/').into(), cancel: None }
+    }
+    pub fn with_cancel(mut self, cancel: tokio::sync::watch::Receiver<bool>) -> Self {
+        self.cancel = Some(cancel); self
+    }
+    pub async fn capture_context(&self, profile: &ProfileRef) -> Result<(Option<StoredRun>, u64), ApiError> {
+        Ok((self.latest(profile).await?, self.stats(profile, "own").await?.next_run))
     }
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         self.http.request(method, format!("{}/api/boss-loot/{path}", self.base)).timeout(std::time::Duration::from_secs(15))
@@ -184,7 +191,7 @@ mod tests {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("X-Device-ID", "test-device".parse().unwrap());
         let http = reqwest::Client::builder().default_headers(headers).build().unwrap();
-        (LootApi { base, http }, handle)
+        (LootApi { base, http, cancel: None }, handle)
     }
     #[tokio::test]
     async fn loot_http_submit_preserves_provenance_and_returns_server_feedback() {
@@ -242,5 +249,126 @@ mod tests {
         assert!(lines[0].ends_with("\"Rare, two veiled modifiers\""));
         assert!(lines[1].starts_with("79,\"\",\"42\",,,1,"));
         assert_eq!(lines.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod review_r1_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+
+    struct HistoryServer {
+        api: LootApi,
+        requests: Arc<std::sync::Mutex<Vec<String>>>,
+        first: Arc<tokio::sync::Notify>,
+        release: std::sync::mpsc::Sender<()>,
+        stop: Arc<AtomicBool>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+    impl HistoryServer {
+        fn new(total: u64) -> Self {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            listener.set_nonblocking(true).unwrap();
+            let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let first = Arc::new(tokio::sync::Notify::new());
+            let stop = Arc::new(AtomicBool::new(false));
+            let (release, released) = std::sync::mpsc::channel();
+            let (record, signal, stopping) = (requests.clone(), first.clone(), stop.clone());
+            let thread = std::thread::spawn(move || {
+                while !stopping.load(Ordering::SeqCst) {
+                    let (mut socket, _) = match listener.accept() {
+                        Ok(connection) => connection,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(std::time::Duration::from_millis(1)); continue;
+                        }
+                        Err(error) => panic!("accept: {error}"),
+                    };
+                    socket.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+                    let mut bytes = Vec::new();
+                    while !bytes.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0]; socket.read_exact(&mut byte).unwrap(); bytes.push(byte[0]);
+                    }
+                    let request = String::from_utf8(bytes).unwrap();
+                    let path = request.lines().next().unwrap().split_whitespace().nth(1).unwrap().to_string();
+                    let n = { let mut records = record.lock().unwrap(); records.push(path.clone()); records.len() };
+                    if n == 1 { signal.notify_one(); released.recv_timeout(std::time::Duration::from_secs(5)).unwrap(); }
+                    let body = if path.starts_with("/api/boss-loot/stats?") {
+                        serde_json::json!({"runs":0,"devices":0,"nextRun":1,"items":{}})
+                    } else {
+                        let url = reqwest::Url::parse(&format!("http://test{path}")).unwrap();
+                        let page: u64 = url.query_pairs().find(|(k,_)| k == "page").unwrap().1.parse().unwrap();
+                        let items: Vec<_> = (0..if page == 1 { total.min(200) } else { total - 200 }).map(|n| serde_json::json!({
+                            "boss":"catarina", "profileKey":"Normal", "profileVersion":1,
+                            "id":(n+1).to_string(), "league":"test", "run":n+1,"date":null,"seed":null,"version":1,
+                            "items":{"quantities":{},"counted":[]}
+                        })).collect();
+                        serde_json::json!({"total":total,"page":page,"pageSize":200,"items":items})
+                    }.to_string();
+                    write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+                }
+            });
+            Self { api: LootApi { http: reqwest::Client::new(), base, cancel: None }, requests, first, release, stop, thread: Some(thread) }
+        }
+    }
+    impl Drop for HistoryServer {
+        fn drop(&mut self) {
+            let _ = self.release.send(());
+            self.stop.store(true, Ordering::SeqCst);
+            self.thread.take().unwrap().join().unwrap();
+        }
+    }
+    fn profile() -> ProfileRef { ProfileRef { boss: "catarina".into(), profile_key: "Normal".into(), profile_version: 1 } }
+
+    async fn cancel_first_read(total: u64) {
+        let server = HistoryServer::new(total);
+        let (stop, cancel) = tokio::sync::watch::channel(false);
+        let api = server.api.clone().with_cancel(cancel);
+        let p = profile();
+        let load = api.capture_context(&p);
+        let cancel_work = async {
+            server.first.notified().await;
+            stop.send(true).unwrap();
+            server.release.send(()).unwrap();
+        };
+        let (result, _) = tokio::join!(load, cancel_work);
+        let requests = server.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 1, "cancelled generation started another HTTP request: {requests:?}");
+        assert!(requests[0].starts_with("/api/boss-loot/runs?"));
+        assert!(matches!(result, Err(ApiError::Cancelled)));
+    }
+    #[tokio::test]
+    async fn cancellation_during_history_starts_no_stats_request() { cancel_first_read(0).await; }
+    #[tokio::test]
+    async fn cancellation_during_paginated_history_starts_no_next_page() { cancel_first_read(201).await; }
+    #[tokio::test]
+    async fn rapid_reenable_does_not_revive_the_old_generations_http_chain() {
+        let old = HistoryServer::new(201);
+        let current = HistoryServer::new(0);
+        let (old_stop, old_cancel) = tokio::sync::watch::channel(false);
+        let (current_stop, current_cancel) = tokio::sync::watch::channel(false);
+        let old_api = old.api.clone().with_cancel(old_cancel);
+        let current_api = current.api.clone().with_cancel(current_cancel);
+        let p = profile();
+        let old_load = old_api.capture_context(&p);
+        let restart = async {
+            old.first.notified().await;
+            old_stop.send(true).unwrap();
+            // A fresh receiver is the same generation boundary the registry creates on re-enable.
+            assert!(!*current_stop.borrow());
+            old.release.send(()).unwrap();
+            current.release.send(()).unwrap();
+            current_api.capture_context(&p).await
+        };
+        let (stopped, fresh) = tokio::join!(old_load, restart);
+        assert_eq!(old.requests.lock().unwrap().len(), 1, "old work launched another history/stats request");
+        assert!(matches!(stopped, Err(ApiError::Cancelled)));
+        let (latest, next) = fresh.unwrap();
+        assert!(latest.is_none());
+        assert_eq!(next, 1);
+        let requests = current.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].starts_with("/api/boss-loot/stats?"));
     }
 }
