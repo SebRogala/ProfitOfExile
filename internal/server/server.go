@@ -21,6 +21,7 @@ import (
 	"profitofexile/internal/league"
 	"profitofexile/internal/mercenary"
 	"profitofexile/internal/mercure"
+	"profitofexile/internal/ratelimit"
 	"profitofexile/internal/server/handlers"
 	devmw "profitofexile/internal/server/middleware"
 	"profitofexile/internal/temple"
@@ -273,7 +274,11 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	}
 
 	if cfg.Pool != nil {
-		bossLoot := handlers.NewBossLoot(cfg.Pool)
+		bossLoot := handlers.NewBossLoot(cfg.Pool, ratelimit.NewRateLimiter(
+			handlers.DefaultBossLootWriteBudget,
+			handlers.DefaultBossLootWriteWindow,
+			handlers.DefaultBossLootRateLimitDevices,
+		))
 		r.Post("/api/boss-loot/runs", bossLoot.Submit)
 		r.Get("/api/boss-loot/runs", bossLoot.List)
 		r.Patch("/api/boss-loot/runs/{id}", bossLoot.Edit)
@@ -298,7 +303,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		// One limiter for the whole process, shared by both writes: a device
 		// that has spent its budget spamming uploads must not get free
 		// tombstones with what is left.
-		mercLimiter := mercenary.NewRateLimiter(
+		mercLimiter := ratelimit.NewRateLimiter(
 			mercenary.DefaultUploadBudget,
 			mercenary.DefaultUploadWindow,
 			mercenary.DefaultRateLimitDevices,

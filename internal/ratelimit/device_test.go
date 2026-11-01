@@ -1,4 +1,4 @@
-package mercenary
+package ratelimit
 
 import (
 	"testing"

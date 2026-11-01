@@ -131,6 +131,9 @@ func ValidatePagination(page, size int) error {
 	if page < 1 || page > 1000000 || size < 1 || size > 200 {
 		return fmt.Errorf("%w: page must be 1..1000000 and pageSize 1..200", ErrInvalid)
 	}
+	if (page-1)*size > 10000 {
+		return fmt.Errorf("%w: offset must not exceed 10000", ErrInvalid)
+	}
 	return nil
 }
 func (s Submit) Validate() error {

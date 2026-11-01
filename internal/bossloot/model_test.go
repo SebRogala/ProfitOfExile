@@ -1,7 +1,9 @@
 package bossloot
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -46,3 +48,25 @@ func TestSubmitRequiresVersionedMergeProvenance(t *testing.T) {
 	}
 }
 func ptr(s string) *string { return &s }
+
+func TestPaginationOffsetBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		page, size int
+		invalid    bool
+	}{
+		{51, 200, false}, {52, 200, true}, {10001, 1, false}, {10002, 1, true},
+		{0, 50, true}, {1000001, 1, true}, {1, 0, true}, {1, 201, true},
+	} {
+		err := ValidatePagination(tc.page, tc.size)
+		if errors.Is(err, ErrInvalid) != tc.invalid {
+			t.Errorf("ValidatePagination(%d,%d) = %v, invalid=%v", tc.page, tc.size, err, tc.invalid)
+		}
+	}
+}
+
+func TestListRejectsExcessiveOffsetBeforeDatabase(t *testing.T) {
+	_, err := NewRepository(nil).ListCumulative(context.Background(), "device", Profile{Boss: "catarina", ProfileKey: "Normal", ProfileVersion: 1}, 52, 200)
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("excessive offset: %v, want ErrInvalid before database access", err)
+	}
+}

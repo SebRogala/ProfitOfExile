@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"profitofexile/internal/bossloot"
+	"profitofexile/internal/ratelimit"
 	"profitofexile/internal/server/middleware"
 	"reflect"
 	"testing"
@@ -57,7 +58,7 @@ func TestBossLootHTTPRetainsHistoricalObservation(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	h := NewBossLoot(pool)
+	h := NewBossLoot(pool, ratelimit.NewRateLimiter(DefaultBossLootWriteBudget, DefaultBossLootWriteWindow, DefaultBossLootRateLimitDevices))
 	router := chi.NewRouter()
 	router.Use(middleware.DeviceMiddleware(bossLootDevice{}))
 	router.Post("/api/boss-loot/runs", h.Submit)
@@ -86,6 +87,12 @@ func TestBossLootHTTPRetainsHistoricalObservation(t *testing.T) {
 		raw, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != status {
 			t.Fatalf("%s %s: %d %s", method, path, resp.StatusCode, raw)
+		}
+		if status == http.StatusTooManyRequests {
+			var refusal map[string]string
+			if e = json.Unmarshal(raw, &refusal); e != nil || len(refusal) != 1 || refusal["error"] != "upload rate limit exceeded" || resp.Header.Get("Retry-After") == "" {
+				t.Fatalf("rate refusal: %s headers=%v", raw, resp.Header)
+			}
 		}
 		if output != nil {
 			// Each HTTP response is a fresh value. Reusing a decoded map would
@@ -217,5 +224,54 @@ func TestBossLootHTTPRetainsHistoricalObservation(t *testing.T) {
 	if err = pool.QueryRow(ctx, `SELECT count(*) FROM boss_loot_runs WHERE id=$1`, saved.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("deleted rows %d: %v", count, err)
 	}
+	t.Run("SuccessfulWritesShareBudget", func(t *testing.T) {
+		h.limiter = ratelimit.NewRateLimiter(3, time.Hour, 8)
+		var created bossloot.SubmitOutcome
+		items := bossloot.Items{Quantities: map[string]int64{"Urn": 1}, Counted: []string{"Urn", "Cane"}}
+		request(a, "POST", path, bossloot.Submit{Profile: profile, Mode: "forceNew", Items: items}, 201, &created)
+		items.Quantities = map[string]int64{"Cane": 1}
+		var updated bossloot.Run
+		request(a, "PATCH", path+"/"+created.Run.ID, map[string]any{"expectedVersion": created.Run.Version, "items": items}, 200, &updated)
+		if updated.ID != created.Run.ID || updated.Version != created.Run.Version+1 || !reflect.DeepEqual(updated.Items, items) {
+			t.Fatalf("budgeted edit: %+v", updated)
+		}
+		var deleted struct {
+			Deleted bool   `json:"deleted"`
+			ID      string `json:"id"`
+		}
+		request(a, "POST", path+"/"+updated.ID+"/delete", map[string]any{"expectedVersion": updated.Version}, 200, &deleted)
+		if !deleted.Deleted || deleted.ID != updated.ID {
+			t.Fatalf("budgeted deletion: %+v", deleted)
+		}
+		for _, write := range []struct{ method, route string }{{"POST", path}, {"PATCH", path + "/" + original.ID}, {"POST", path + "/" + original.ID + "/delete"}} {
+			request(a, write.method, write.route, map[string]any{}, 429, nil)
+		}
+		var remaining bossloot.Page
+		request(a, "GET", path+query, nil, 200, &remaining)
+		if remaining.Total != 1 || len(remaining.Items) != 1 || remaining.Items[0].ID != original.ID || remaining.Items[0].Items.Quantities["Urn"] != 1 {
+			t.Fatalf("read after exhausted budget: %+v", remaining)
+		}
+		for _, scope := range []string{"own", "collective"} {
+			var out bossloot.Stats
+			request(a, "GET", "/api/boss-loot/stats"+query+"&scope="+scope, nil, 200, &out)
+			wantRuns := int64(1)
+			if scope == "collective" {
+				wantRuns = 2
+			}
+			if out.Runs != wantRuns || out.Items["Urn"] != (bossloot.ItemStats{Drops: 1, EligibleRuns: 1}) {
+				t.Fatalf("%s read after exhaustion: %+v", scope, out)
+			}
+		}
+		request(a, "GET", path+query+"&page=51&pageSize=200", nil, 200, &remaining)
+		if remaining.Total != 1 || remaining.Page != 51 || remaining.PageSize != 200 || len(remaining.Items) != 0 || remaining.Items == nil {
+			t.Fatalf("offset boundary: %+v", remaining)
+		}
+		request(a, "GET", path+query+"&page=52&pageSize=200", nil, 400, nil)
+		var independent bossloot.SubmitOutcome
+		request(b, "POST", path, bossloot.Submit{Profile: profile, Mode: "forceNew", Items: items}, 201, &independent)
+		if independent.State != "saved" || independent.Run.ID == "" || !reflect.DeepEqual(independent.Run.Items, items) {
+			t.Fatalf("independent device: %+v", independent)
+		}
+	})
 }
 func bossString(s string) *string { return &s }

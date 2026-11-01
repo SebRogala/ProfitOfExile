@@ -17,6 +17,7 @@ import (
 
 	"profitofexile/internal/device"
 	"profitofexile/internal/mercenary"
+	"profitofexile/internal/ratelimit"
 	"profitofexile/internal/server/middleware"
 )
 
@@ -80,7 +81,7 @@ func (f *fakeMercStore) Tombstone(_ context.Context, version int16, key mercenar
 
 // mercRouter mirrors the production wiring: device middleware in front, the
 // three template routes behind it.
-func mercRouter(store MercTemplateStore, limiter *mercenary.RateLimiter, cache *MercCorpusCache) http.Handler {
+func mercRouter(store MercTemplateStore, limiter *ratelimit.RateLimiter, cache *MercCorpusCache) http.Handler {
 	upserter := &mockUpserter{
 		UpsertFn: func(_ context.Context, fp, _ string) (*device.Device, error) {
 			return &device.Device{Fingerprint: fp, Role: "user"}, nil
@@ -548,7 +549,7 @@ func TestMercTemplatesUpload_BodyJustPastTheCap_Returns413(t *testing.T) {
 // while the cap and the tombstone deal with the pool's contents.
 func TestMercTemplatesUpload_BeyondRateLimit_Returns429(t *testing.T) {
 	store := &fakeMercStore{acceptResult: mercenary.AcceptResult{Stored: 1}}
-	limiter := mercenary.NewRateLimiter(1, time.Minute, 8)
+	limiter := ratelimit.NewRateLimiter(1, time.Minute, 8)
 	router := mercRouter(store, limiter, nil)
 	body := validUploadBody(templateJSON("Chain", 1, mercSignatureB64(1)))
 
@@ -572,7 +573,7 @@ func TestMercTemplatesUpload_BeyondRateLimit_Returns429(t *testing.T) {
 // allowance spamming samples must not get free retirements with what is left.
 func TestMercTemplatesTombstone_SharesTheUploadRateLimit(t *testing.T) {
 	store := &fakeMercStore{acceptResult: mercenary.AcceptResult{Stored: 1}}
-	limiter := mercenary.NewRateLimiter(1, time.Minute, 8)
+	limiter := ratelimit.NewRateLimiter(1, time.Minute, 8)
 	router := mercRouter(store, limiter, nil)
 
 	mercPost(t, router, "/api/desktop/merc-templates",

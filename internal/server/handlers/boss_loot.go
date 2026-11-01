@@ -7,21 +7,31 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"profitofexile/internal/bossloot"
 	"profitofexile/internal/league"
+	"profitofexile/internal/ratelimit"
 	"profitofexile/internal/server/middleware"
 )
 
+// Boss-loot writes share a separate device budget from mercenary writes.
+const (
+	DefaultBossLootWriteBudget      = 60
+	DefaultBossLootWriteWindow      = 10 * time.Minute
+	DefaultBossLootRateLimitDevices = 8192
+)
+
 type BossLoot struct {
-	repo *bossloot.Repository
-	pool *pgxpool.Pool
+	repo    *bossloot.Repository
+	pool    *pgxpool.Pool
+	limiter *ratelimit.RateLimiter
 }
 
-func NewBossLoot(pool *pgxpool.Pool) *BossLoot {
-	return &BossLoot{repo: bossloot.NewRepository(pool), pool: pool}
+func NewBossLoot(pool *pgxpool.Pool, limiter *ratelimit.RateLimiter) *BossLoot {
+	return &BossLoot{repo: bossloot.NewRepository(pool), pool: pool, limiter: limiter}
 }
 func bossDevice(w http.ResponseWriter, r *http.Request) string {
 	dev := middleware.DeviceFromContext(r.Context())
@@ -77,6 +87,9 @@ func bossProfile(r *http.Request) (bossloot.Profile, error) {
 func (h *BossLoot) Submit(w http.ResponseWriter, r *http.Request) {
 	device := bossDevice(w, r)
 	if device == "" {
+		return
+	}
+	if !allowDeviceWrite(w, h.limiter, device) {
 		return
 	}
 	var body bossloot.Submit
@@ -167,6 +180,9 @@ func (h *BossLoot) Edit(w http.ResponseWriter, r *http.Request) {
 	if device == "" {
 		return
 	}
+	if !allowDeviceWrite(w, h.limiter, device) {
+		return
+	}
 	var body struct {
 		ExpectedVersion int64          `json:"expectedVersion"`
 		Items           bossloot.Items `json:"items"`
@@ -189,6 +205,9 @@ func (h *BossLoot) Edit(w http.ResponseWriter, r *http.Request) {
 func (h *BossLoot) Delete(w http.ResponseWriter, r *http.Request) {
 	device := bossDevice(w, r)
 	if device == "" {
+		return
+	}
+	if !allowDeviceWrite(w, h.limiter, device) {
 		return
 	}
 	var body struct {

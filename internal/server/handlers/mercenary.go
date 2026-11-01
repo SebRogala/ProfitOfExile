@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"profitofexile/internal/mercenary"
+	"profitofexile/internal/ratelimit"
 	"profitofexile/internal/server/middleware"
 )
 
@@ -258,7 +259,7 @@ func newMercCorpusEntry(body []byte) *mercCorpusEntry {
 // live samples per key, and tombstones as the cleanup path. A role gate was
 // considered and rejected for v1 — it would have meant only one person ever
 // feeds the pool, which is the problem this endpoint exists to solve.
-func MercTemplatesUpload(store MercTemplateStore, limiter *mercenary.RateLimiter, cache *MercCorpusCache) http.HandlerFunc {
+func MercTemplatesUpload(store MercTemplateStore, limiter *ratelimit.RateLimiter, cache *MercCorpusCache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Identity and budget are checked before the body is read: a client
 		// that may not write should not get 128 KB of parsing done on its
@@ -268,7 +269,7 @@ func MercTemplatesUpload(store MercTemplateStore, limiter *mercenary.RateLimiter
 			jsonError(w, http.StatusUnauthorized, "device identification required")
 			return
 		}
-		if !allowMercWrite(w, limiter, dev.Fingerprint) {
+		if !allowDeviceWrite(w, limiter, dev.Fingerprint) {
 			return
 		}
 
@@ -542,14 +543,14 @@ func etagMatches(header, etag string) bool {
 //
 // Any positive version is accepted, not just the server's current one: a client
 // still on an older format must be able to retire art it published there.
-func MercTemplatesTombstone(store MercTemplateStore, limiter *mercenary.RateLimiter, cache *MercCorpusCache) http.HandlerFunc {
+func MercTemplatesTombstone(store MercTemplateStore, limiter *ratelimit.RateLimiter, cache *MercCorpusCache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		dev := middleware.DeviceFromContext(r.Context())
 		if dev == nil {
 			jsonError(w, http.StatusUnauthorized, "device identification required")
 			return
 		}
-		if !allowMercWrite(w, limiter, dev.Fingerprint) {
+		if !allowDeviceWrite(w, limiter, dev.Fingerprint) {
 			return
 		}
 
@@ -590,10 +591,10 @@ func MercTemplatesTombstone(store MercTemplateStore, limiter *mercenary.RateLimi
 	}
 }
 
-// allowMercWrite spends one write token, answering 429 when the device is out.
+// allowDeviceWrite spends one write token, answering 429 when the device is out.
 // A nil limiter means unlimited, which keeps tests and any future
 // limiter-less wiring honest rather than silently unbounded.
-func allowMercWrite(w http.ResponseWriter, limiter *mercenary.RateLimiter, fingerprint string) bool {
+func allowDeviceWrite(w http.ResponseWriter, limiter *ratelimit.RateLimiter, fingerprint string) bool {
 	if limiter == nil {
 		return true
 	}
