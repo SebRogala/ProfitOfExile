@@ -1,643 +1,821 @@
-//! Loot capture — PROOF OF CONCEPT (2026-10-27).
-//!
-//! The owner farms Catarina and logs each run's drops in a spreadsheet. A
-//! hotkey grabs a rectangle centred on the cursor, OCRs the ground labels in it,
-//! matches them to the sheet's columns and appends one run row to a CSV in the
-//! app-data dir. Read-only towards the game: it reads the screen and the
-//! cursor position, and sends nothing to the client.
-//!
-//! - `Shift+Right mouse button` (game in foreground): capture, flash the
-//!   rectangle and the readout for [`FLASH_MS`], append a row when anything
-//!   matched.
-//! - `Shift+F8`: toggle the preview, where the rectangle follows the cursor.
-//!
-//! The hotkeys are POLLED with `GetAsyncKeyState` rather than registered, so the
-//! key still reaches the game and nothing is consumed. The overlay is one
-//! window, `loot-capture` (`routes/overlay/loot`), built on first use and
-//! afterwards only moved and resized; its page polls [`loot_capture_view`].
-//! It is in `capture.rs`'s exclusion list, so the preview frame never becomes
-//! OCR input.
-//!
-//! Measured offline 2026-10-27: plain `Windows.Media.Ocr` en-US on raw crops of
-//! 10 screenshots read all 27 item labels, in upper case. The noise lines seen
-//! there were gold amounts, "JUN, VEILED MASTER" and short fragments.
-
-// The hotkey thread, the only caller of the capture half, is Windows-only.
+//! Native capture identity, attribution, confirmation and submission owner.
+//! The screen and polled shortcuts are read-only towards the game.
 #![cfg_attr(not(windows), allow(dead_code))]
-
-use serde::Serialize;
+use crate::loot_api::*;
+use crate::loot_profiles::{LineMatch, LootProfile, Selection};
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use tauri::Manager;
 
-/// The sheet's loot columns, in the sheet's order.
-pub const COLUMNS: [&str; 11] = [
-    "Veiled Exalted",
-    "Eye",
-    "Allflame",
-    "Flask",
-    "Staff",
-    "Quiver",
-    "Body armour",
-    "Shield",
-    "Helmet",
-    "Support",
-    "Templar Astrolabe",
-];
-
-/// How long the rectangle and the readout stay up after a capture.
-const FLASH_MS: u64 = 1500;
-
-/// The capture size at 1080p, scaled by the screen height.
-const RECT_W_1080: f64 = 900.0;
-const RECT_H_1080: f64 = 750.0;
-/// The cursor sits this far down the rectangle: labels stack above the boss.
-const CURSOR_Y_FRACTION: f64 = 2.0 / 3.0;
-
-pub const WINDOW_LABEL: &str = "loot-capture";
-
-/// What one OCR line is.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LineKind {
-    /// Index into [`COLUMNS`].
-    Column(usize),
-    /// Gold, NPC names, fragments: dropped silently.
-    Noise,
-    /// Looks like a label but matches no column: shown, never logged.
-    Unknown(String),
+pub const MODULE_ID: &str = "boss_loot";
+// WI-8 owns the fullscreen widget window, capability and capture-exclusion migration.
+pub const WINDOW_LABEL: &str = "loot";
+pub fn now_ms() -> u64 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
-/// Upper-case, collapse whitespace, drop apostrophes, strip non-alphanumeric
-/// characters from both ends (OCR adds `*` and `.`), drop a leading `SUPERIOR `.
-fn normalize(line: &str) -> String {
-    let upper: String = line
-        .chars()
-        .filter(|c| !matches!(c, '\'' | '’' | '`' | '‘'))
-        .collect::<String>()
-        .to_uppercase();
-    let collapsed = upper.split_whitespace().collect::<Vec<_>>().join(" ");
-    let trimmed = collapsed.trim_matches(|c: char| !c.is_alphanumeric());
-    trimmed.strip_prefix("SUPERIOR ").unwrap_or(trimmed).to_string()
-}
-
-fn is_noise(norm: &str) -> bool {
-    let letters = norm.chars().filter(|c| c.is_alphabetic()).count();
-    if letters < 4 {
-        return true;
-    }
-    // "191 GOLD", "4108 Gold".
-    let mut words = norm.split(' ');
-    let first_is_number = words.next().is_some_and(|w| w.chars().all(|c| c.is_ascii_digit() || c == ','));
-    if first_is_number && norm.ends_with("GOLD") {
-        return true;
-    }
-    // "JUN, VEILED MASTER" and any other NPC title line; no item label has a comma.
-    norm.contains(',') || norm.contains("VEILED MASTER")
-}
-
-pub fn classify_line(line: &str) -> LineKind {
-    let norm = normalize(line);
-    if is_noise(&norm) {
-        return LineKind::Noise;
-    }
-    let ends = |suffix: &str| norm == suffix || norm.ends_with(&format!(" {suffix}"));
-    let column = if norm == "VEILED EXALTED ORB" {
-        Some(0)
-    } else if norm.starts_with("ZORATHS EYE") {
-        Some(1)
-    } else if norm.starts_with("ALLFLAME EMBER") {
-        Some(2)
-    } else if ends("FLASK") {
-        Some(3)
-    } else if ends("STAFF") {
-        Some(4)
-    } else if ends("QUIVER") {
-        Some(5)
-    } else if norm == "VAAL REGALIA" || norm == "SPIDERSILK ROBE" {
-        Some(6)
-    } else if ends("SHIELD") {
-        Some(7)
-    } else if ends("CIRCLET") {
-        Some(8)
-    } else if ends("SUPPORT") {
-        Some(9)
-    } else if norm == "TEMPLAR ASTROLABE" {
-        Some(10)
-    } else {
-        None
-    };
-    match column.or_else(|| fragment_column(&norm)) {
-        Some(i) => LineKind::Column(i),
-        None => LineKind::Unknown(line.trim().to_string()),
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LootLayout { #[default] Grid, List }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NumberFormat { #[default] Auto, Space, Comma, None }
+impl NumberFormat {
+    pub fn migrate(typed: Option<Self>, legacy: Option<&String>) -> Self {
+        typed.unwrap_or_else(|| match legacy.map(String::as_str) {
+            Some("space") => Self::Space, Some("comma") => Self::Comma,
+            Some("none") => Self::None, _ => Self::Auto,
+        })
     }
 }
-
-/// Stems of the table's distinctive words, for a label OCR read only part of
-/// (2026-10-27: "TITANIUM SPIRIT SHIELD" came back as "TANIUM SPIRI"). Each
-/// stem occurs in exactly one column's names, so a hit is unambiguous; generic
-/// words ("FLASK", "STAFF", "SHIELD", "ORB") are deliberately absent, because a
-/// fragment of them says nothing a full-word rule above does not.
-const FRAGMENTS: [(&str, usize); 9] = [
-    ("ZORATH", 1),
-    ("ALLFLAM", 2),
-    ("QUIVE", 5),
-    ("REGALI", 6),
-    ("SPIDERSI", 6),
-    ("SPIRI", 7),
-    ("CIRCL", 8),
-    ("SUPPOR", 9),
-    ("ASTROLA", 10),
-];
-
-fn fragment_column(norm: &str) -> Option<usize> {
-    FRAGMENTS.iter().find(|(stem, _)| norm.contains(stem)).map(|(_, i)| *i)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Shortcut { pub key: u16, pub shift: bool, pub ctrl: bool, pub alt: bool }
+impl Shortcut {
+    fn validate(&self) -> Result<(), String> {
+        if !(1..=254).contains(&self.key) || matches!(self.key, 16..=18 | 27 | 160..=165) {
+            return Err("Choose a key or mouse button other than a modifier or Esc".into());
+        }
+        Ok(())
+    }
 }
-
-/// One capture's verdict: which columns got a drop, and the unknown lines.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct RunMatch {
-    pub hits: [bool; COLUMNS.len()],
-    pub unknown: Vec<String>,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LootSettings {
+    pub layout: LootLayout,
+    pub auto_save_seconds: u32,
+    pub not_counted: Vec<String>,
+    pub capture_shortcut: Shortcut,
+    pub preview_shortcut: Shortcut,
 }
-
-impl RunMatch {
-    pub fn from_lines(lines: &[String]) -> Self {
-        let mut out = RunMatch::default();
-        for line in lines {
-            match classify_line(line) {
-                LineKind::Column(i) => out.hits[i] = true,
-                LineKind::Noise => {}
-                LineKind::Unknown(text) => {
-                    if !out.unknown.contains(&text) {
-                        out.unknown.push(text)
-                    }
+impl Default for LootSettings {
+    fn default() -> Self {
+        Self {
+            layout: LootLayout::Grid, auto_save_seconds: 10,
+            not_counted: crate::loot_profiles::built_in_profiles().iter().flat_map(|p| &p.extra)
+                .filter(|i| i.not_counted_default).map(|i| i.id.clone()).collect(),
+            capture_shortcut: Shortcut { key: 2, shift: true, ctrl: false, alt: false },
+            preview_shortcut: Shortcut { key: 119, shift: true, ctrl: false, alt: false },
+        }
+    }
+}
+impl LootSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        if ![0, 5, 10, 20, 30].contains(&self.auto_save_seconds) { return Err("Invalid auto-save timeout".into()); }
+        self.capture_shortcut.validate()?; self.preview_shortcut.validate()?;
+        if self.capture_shortcut == self.preview_shortcut { return Err("Shortcuts must differ".into()); }
+        let mut seen = std::collections::BTreeSet::new();
+        for key in &self.not_counted {
+            if !crate::loot_profiles::built_in_profiles().iter().flat_map(|p| &p.extra).any(|i| &i.id == key) || !seen.insert(key) {
+                return Err(format!("Invalid not-counted item: {key}"));
+            }
+        }
+        Ok(())
+    }
+}
+pub fn counted(p: &LootProfile, s: &LootSettings) -> Vec<String> {
+    p.groups.iter().flat_map(|g| &g.items).chain(&p.extra).chain(&p.categories)
+        .filter(|i| !s.not_counted.contains(&i.id)).map(|i| i.id.clone()).collect()
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Attribution { pub area: String, pub level: u32, pub seed: Option<String>, pub profile: Option<ProfileRef> }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Phase { Reading, Loading, Open, Saving, Saved, Unreachable, Rejected }
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingCapture {
+    pub id: u64, pub attribution: Attribution, pub league: String,
+    pub profile: LootProfile, pub layout: LootLayout, pub rect: [i32; 4],
+    pub incoming: Selection, pub items: RunItems, pub read_lines: Vec<String>,
+    pub unknown_lines: Vec<String>, pub ambiguous: Vec<Vec<String>>,
+    pub phase: Phase, pub deadline_ms: Option<u64>, pub close_at_ms: Option<u64>,
+    pub target: Option<StoredRun>, pub force_new: bool, pub run: u64,
+    pub dropped_positive_keys: Vec<String>, pub error: Option<String>,
+}
+impl PendingCapture {
+    fn effective(&self, settings: &LootSettings) -> Result<RunItems, String> {
+        if !self.ambiguous.is_empty() { return Err("which one?".into()); }
+        if let Some(target) = &self.target {
+            merge_items(&self.profile, target, &self.incoming)
+        } else {
+            let eligible = counted(&self.profile, settings);
+            let quantities = self.incoming.iter().filter(|(k, q)| **q > 0 && eligible.contains(k)).map(|(k,q)| (k.clone(), *q)).collect();
+            validate_items(&self.profile, RunItems { quantities, counted: eligible })
+        }
+    }
+    fn restart(&mut self, settings: &LootSettings, now: u64) {
+        match self.effective(settings) {
+            Ok(items) => {
+                self.items = items; self.error = None;
+                self.deadline_ms = (self.phase == Phase::Open && settings.auto_save_seconds > 0)
+                    .then_some(now + u64::from(settings.auto_save_seconds) * 1000);
+            }
+            Err(error) => { self.error = Some(error); self.deadline_ms = None; }
+        }
+    }
+}
+fn validate_items(profile: &LootProfile, items: RunItems) -> Result<RunItems, String> {
+    if items.quantities.keys().any(|key| !items.counted.contains(key)) { return Err("Selection outside counted set".into()); }
+    profile.validate_selection(&items.quantities).map_err(|e| format!("{e:?}"))?;
+    Ok(items)
+}
+pub fn merge_items(profile: &LootProfile, target: &StoredRun, incoming: &Selection) -> Result<RunItems, String> {
+    let incoming: Selection = incoming.iter().filter(|(key,q)| **q > 0 && target.items.counted.contains(key))
+        .map(|(k,q)| (k.clone(), *q)).collect();
+    let mut quantities = target.items.quantities.clone();
+    for group in &profile.groups {
+        if group.max == 1 && group.items.iter().any(|i| incoming.contains_key(&i.id)) {
+            for item in &group.items { quantities.remove(&item.id); }
+        }
+    }
+    for (key, quantity) in incoming { quantities.entry(key).and_modify(|q| *q = (*q).max(quantity)).or_insert(quantity); }
+    validate_items(profile, RunItems { quantities, counted: target.items.counted.clone() })
+}
+#[derive(Debug, Default)]
+pub struct LootOwner {
+    sequence: u64,
+    pub area: Option<Attribution>,
+    pub pending: Option<PendingCapture>,
+    pub frame: Option<Frame>,
+    pub preview: bool,
+    pub rebind: Option<Rebind>,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Frame { pub rect: [i32; 4], pub phase: String, pub attribution: Option<Attribution>, pub until_ms: Option<u64> }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Rebind { Capture, Preview }
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LootSlice {
+    pub enabled: bool, pub settings: LootSettings, pub number_format: NumberFormat,
+    pub pending: Option<PendingCapture>, pub frame: Option<Frame>, pub rebind: Option<Rebind>,
+    pub now_ms: u64,
+}
+impl Default for LootSlice {
+    fn default() -> Self { Self { enabled: false, settings: LootSettings::default(), number_format: NumberFormat::Auto, pending: None, frame: None, rebind: None, now_ms: 0 } }
+}
+impl LootOwner {
+    pub fn observe_area(&mut self, area: &crate::lab_state::AreaChange<'_>) {
+        self.area = Some(Attribution { area: area.area.into(), level: area.level, seed: area.seed.map(|s| s.to_string()),
+            profile: crate::loot_profiles::profile_for_area(Some(area)).map(ProfileRef::from) });
+    }
+    pub fn begin(&mut self, league: String, rect: [i32; 4], settings: &LootSettings, now: u64) -> Result<u64, String> {
+        let area = self.area.clone();
+        let profile = area.as_ref().and_then(|a| a.profile.as_ref())
+            .and_then(|r| crate::loot_profiles::built_in_profiles().iter().find(|p| ProfileRef::from(*p) == *r));
+        let Some(profile) = profile else {
+            self.frame = Some(Frame { rect, phase: "refused".into(), attribution: area, until_ms: Some(now + 3000) });
+            return Err("No boss profile for this zone".into());
+        };
+        if league.is_empty() { return Err("League not resolved".into()); }
+        self.sequence += 1;
+        self.preview = false;
+        self.frame = Some(Frame { rect, phase: "reading".into(), attribution: area.clone(), until_ms: None });
+        self.pending = Some(PendingCapture {
+            id: self.sequence, attribution: area.unwrap(), league, profile: profile.clone(),
+            layout: settings.layout, rect, incoming: Selection::new(), items: RunItems { quantities: Selection::new(), counted: counted(profile, settings) },
+            read_lines: Vec::new(), unknown_lines: Vec::new(), ambiguous: Vec::new(), phase: Phase::Reading,
+            deadline_ms: None, close_at_ms: None, target: None, force_new: false, run: 0,
+            dropped_positive_keys: Vec::new(), error: None,
+        });
+        Ok(self.sequence)
+    }
+    pub fn finish_ocr(&mut self, id: u64, lines: Vec<String>, _: &LootSettings, _: u64) {
+        let Some(p) = self.pending.as_mut().filter(|p| p.id == id && p.phase == Phase::Reading) else { return };
+        for line in &lines {
+            match p.profile.match_line(line) {
+                LineMatch::Item(key) => { p.incoming.insert(key, 1); }
+                LineMatch::Ambiguous(keys) => { if !p.ambiguous.contains(&keys) { p.ambiguous.push(keys); } }
+                LineMatch::Unknown => { if !p.unknown_lines.contains(line) { p.unknown_lines.push(line.clone()); } }
+            }
+        }
+        p.read_lines = lines;
+        p.phase = Phase::Loading;
+        self.frame = None;
+    }
+    pub fn ready(&mut self, id: u64, latest: Option<StoredRun>, next: u64, settings: &LootSettings, now: u64) {
+        let Some(p) = self.pending.as_mut().filter(|p| p.id == id && matches!(p.phase, Phase::Loading | Phase::Open | Phase::Saving)) else { return };
+        p.target = latest.filter(|r| r.profile == ProfileRef::from(&p.profile) && r.league == p.league &&
+            r.seed.is_some() && r.seed == p.attribution.seed);
+        p.run = p.target.as_ref().map(|r| r.run).unwrap_or(next);
+        p.phase = Phase::Open;
+        p.restart(settings, now);
+    }
+    fn editable(&mut self, id: u64) -> Result<&mut PendingCapture, String> {
+        self.pending.as_mut().filter(|p| p.id == id && p.phase == Phase::Open).ok_or_else(|| "Capture is not editable".into())
+    }
+    pub fn touch(&mut self, id: u64, settings: &LootSettings, now: u64) -> Result<(), String> {
+        self.editable(id)?.restart(settings, now); Ok(())
+    }
+    pub fn select(&mut self, id: u64, key: &str, quantity: u32, settings: &LootSettings, now: u64) -> Result<(), String> {
+        let p = self.editable(id)?;
+        let eligible = p.target.as_ref().map(|r| r.items.counted.clone()).unwrap_or_else(|| counted(&p.profile, settings));
+        if !eligible.contains(&key.to_string()) { return Err("Item is not counted".into()); }
+        if quantity == 0 { p.incoming.remove(key); } else {
+            for group in &p.profile.groups {
+                if group.max == 1 && group.items.iter().any(|i| i.id == key) {
+                    for item in &group.items { p.incoming.remove(&item.id); }
                 }
             }
+            p.incoming.insert(key.into(), quantity);
+            p.ambiguous.retain(|keys| !keys.iter().any(|k| k == key));
         }
-        out
+        p.restart(settings, now); Ok(())
     }
-
-    pub fn any(&self) -> bool {
-        self.hits.iter().any(|h| *h)
+    pub fn force_new(&mut self, id: u64, settings: &LootSettings, now: u64) -> Result<(), String> {
+        let p = self.editable(id)?; p.force_new = true; p.target = None; p.restart(settings, now); Ok(())
     }
-
-    /// The readout lines the overlay shows.
-    fn readout(&self, run: Option<u32>) -> Vec<String> {
-        let mut lines: Vec<String> = Vec::new();
-        if self.any() {
-            let names: Vec<&str> =
-                COLUMNS.iter().zip(self.hits).filter(|(_, h)| *h).map(|(n, _)| *n).collect();
-            match run {
-                Some(n) => lines.push(format!("Run {n}: {}", names.join(", "))),
-                None => lines.push(format!("{} (not saved)", names.join(", "))),
+    pub fn discard(&mut self, id: u64) -> Result<(), String> {
+        if self.pending.as_ref().is_some_and(|p| p.id == id && p.phase != Phase::Saving) {
+            self.pending = None; self.frame = None; Ok(())
+        } else { Err("Capture cannot be discarded".into()) }
+    }
+    fn prepare(&mut self, settings: &LootSettings, now: u64, manual: bool) -> Option<(u64, SubmitRun)> {
+        let p = self.pending.as_mut().filter(|p| p.phase == Phase::Open)?;
+        if !manual && !p.deadline_ms.is_some_and(|deadline| now >= deadline) { return None; }
+        let items = match p.effective(settings) {
+            Ok(items) => items,
+            Err(error) => { p.error = Some(error); p.deadline_ms = None; return None; }
+        };
+        let target = p.target.as_ref().map(|r| Target { id: r.id.clone(), expected_version: r.version });
+        let request = SubmitRun {
+            profile: ProfileRef::from(&p.profile), league: p.league.clone(), seed: p.attribution.seed.clone(),
+            mode: if target.is_some() { "merge" } else if p.force_new { "forceNew" } else { "new" }.into(),
+            items: items.clone(), incoming_positive_keys: target.as_ref().map(|_| p.incoming.iter().filter(|(_,q)| **q > 0).map(|(k,_)| k.clone()).collect()), target,
+        };
+        p.items = items; p.phase = Phase::Saving; p.deadline_ms = None;
+        Some((p.id, request))
+    }
+    fn complete(&mut self, id: u64, result: Result<SubmitOutcome, ApiError>, now: u64) {
+        let Some(p) = self.pending.as_mut().filter(|p| p.id == id && p.phase == Phase::Saving) else { return };
+        match result {
+            Ok(outcome) => {
+                p.run = outcome.run.run; p.items = outcome.run.items; p.phase = Phase::Saved;
+                p.dropped_positive_keys = outcome.dropped_positive_keys; p.close_at_ms = Some(now + 2000);
             }
-        } else {
-            lines.push("nothing matched".to_string());
+            Err(ApiError::Unreachable) => { p.phase = Phase::Unreachable; p.error = Some("Server unreachable. This run was not recorded.".into()); }
+            Err(error) => { p.phase = Phase::Rejected; p.error = Some(format!("{error:?}")); }
         }
-        lines.extend(self.unknown.iter().map(|u| format!("unknown: {u}")));
-        lines
+    }
+    pub fn retire(&mut self, now: u64) {
+        if self.pending.as_ref().is_some_and(|p| p.close_at_ms.is_some_and(|t| now >= t)) { self.pending = None; }
+        if self.frame.as_ref().is_some_and(|f| f.until_ms.is_some_and(|t| now >= t)) { self.frame = None; }
+    }
+    pub fn stop(&mut self) { self.pending = None; self.frame = None; self.preview = false; self.rebind = None; }
+}
+pub async fn submit_pending(owner: &Mutex<LootOwner>, settings: &LootSettings, http: &impl LootTransport, now: u64, manual: bool) {
+    let id = owner.lock().unwrap_or_else(|e| e.into_inner()).pending.as_ref().map(|p| p.id);
+    if let Some(id) = id { submit_capture(owner, settings, http, now, manual, id).await; }
+}
+async fn submit_capture(owner: &Mutex<LootOwner>, settings: &LootSettings, http: &impl LootTransport, now: u64, manual: bool, id: u64) {
+    let started = Instant::now();
+    let request = {
+        let mut owner = owner.lock().unwrap_or_else(|e| e.into_inner());
+        if !owner.pending.as_ref().is_some_and(|p| p.id == id) { return; }
+        owner.prepare(settings, now, manual)
+    };
+    let Some((id, request)) = request else { return };
+    let result = http.submit(&request).await;
+    if matches!(result, Err(ApiError::Conflict)) {
+        let fresh = http.latest(&request.profile).await;
+        let mut o = owner.lock().unwrap_or_else(|e| e.into_inner());
+        if !o.pending.as_ref().is_some_and(|p| p.id == id && p.phase == Phase::Saving) { return; }
+        match fresh {
+            Ok(Some(target)) if request.target.as_ref().is_some_and(|t| t.id == target.id) => {
+                o.ready(id, Some(target), 0, settings, now + started.elapsed().as_millis() as u64);
+                // A different league/seed/profile cannot silently become an append.
+                if let Some(p) = o.pending.as_mut() {
+                    if p.target.is_none() { p.phase = Phase::Rejected; p.deadline_ms = None; p.error = Some("Merge target changed; capture again".into()); }
+                }
+            }
+            Ok(_) => o.complete(id, Err(ApiError::Rejected("Merge target is no longer latest".into())), now),
+            Err(error) => o.complete(id, Err(error), now),
+        }
+    } else {
+        owner.lock().unwrap_or_else(|e| e.into_inner()).complete(id, result, now + started.elapsed().as_millis() as u64);
     }
 }
 
-/// The capture rectangle `[x, y, w, h]` in screen-relative physical pixels:
-/// centred horizontally on `cursor` with the cursor two thirds down, sized by the screen height, clamped inside the screen.
 pub fn capture_rect(cursor: (i32, i32), screen: (u32, u32)) -> [i32; 4] {
     let (sw, sh) = (screen.0 as i32, screen.1 as i32);
     let scale = screen.1 as f64 / 1080.0;
-    let w = ((RECT_W_1080 * scale).round() as i32).clamp(1, sw.max(1));
-    let h = ((RECT_H_1080 * scale).round() as i32).clamp(1, sh.max(1));
-    let x = (cursor.0 - w / 2).clamp(0, (sw - w).max(0));
-    let y = (cursor.1 - (h as f64 * CURSOR_Y_FRACTION).round() as i32).clamp(0, (sh - h).max(0));
-    [x, y, w, h]
+    let w = ((900.0 * scale).round() as i32).clamp(1, sw.max(1));
+    let h = ((750.0 * scale).round() as i32).clamp(1, sh.max(1));
+    [(cursor.0 - w / 2).clamp(0, (sw - w).max(0)), (cursor.1 - (h as f64 * 2.0 / 3.0).round() as i32).clamp(0, (sh - h).max(0)), w, h]
 }
-
-/// The CSV row for run `run`; `timestamp` is the last cell.
-fn csv_row(run: u32, m: &RunMatch, timestamp: &str) -> String {
-    let cells: Vec<&str> = m.hits.iter().map(|h| if *h { "1" } else { "" }).collect();
-    format!("{run},{},{timestamp}", cells.join(","))
+pub fn snapshot(state: &crate::AppState) -> LootSlice {
+    let enabled = state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).get(MODULE_ID) == Some(&true);
+    let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let number_format = *state.number_format.lock().unwrap_or_else(|e| e.into_inner());
+    let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+    owner.retire(now_ms());
+    LootSlice { enabled, settings, number_format, pending: if enabled { owner.pending.clone() } else { None },
+        frame: if enabled { owner.frame.clone() } else { None }, rebind: owner.rebind, now_ms: now_ms() }
 }
-
-fn csv_header() -> String {
-    format!("Run #,{},timestamp", COLUMNS.join(","))
-}
-
-/// Append one run to `path`, writing the header first on a new file. Returns
-/// the run number. Appending never truncates, so the earlier rows survive a
-/// crash mid-write; only the hotkey thread writes this file.
-fn append_run(path: &std::path::Path, m: &RunMatch, timestamp: &str) -> Result<u32, String> {
-    use std::io::Write;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-    }
-    let existing = std::fs::read_to_string(path).unwrap_or_default();
-    let rows = existing.lines().skip(1).filter(|l| !l.trim().is_empty()).count() as u32;
-    let mut text = String::new();
-    if existing.is_empty() {
-        text.push_str(&csv_header());
-        text.push('\n');
-    } else if !existing.ends_with('\n') {
-        text.push('\n');
-    }
-    let run = rows + 1;
-    text.push_str(&csv_row(run, m, timestamp));
-    text.push('\n');
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|e| format!("open {}: {e}", path.display()))?;
-    file.write_all(text.as_bytes()).map_err(|e| format!("write {}: {e}", path.display()))?;
-    Ok(run)
-}
-
-/// What the overlay page draws. Owned by the hotkey thread, read by the page.
-struct ViewState {
-    flash_until: Option<Instant>,
-    preview: bool,
-    lines: Vec<String>,
-}
-
-static VIEW: Mutex<ViewState> = Mutex::new(ViewState { flash_until: None, preview: false, lines: Vec::new() });
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LootCaptureView {
-    pub visible: bool,
-    pub preview: bool,
-    pub lines: Vec<String>,
-}
-
-/// Polled by `routes/overlay/loot`.
 #[tauri::command]
-pub fn loot_capture_view() -> LootCaptureView {
-    let view = VIEW.lock().unwrap_or_else(|e| e.into_inner());
-    let flashing = view.flash_until.is_some_and(|t| Instant::now() < t);
-    LootCaptureView {
-        visible: flashing || view.preview,
-        preview: view.preview,
-        lines: if flashing { view.lines.clone() } else { Vec::new() },
+pub fn loot_capture_view(state: tauri::State<crate::AppState>) -> LootSlice { snapshot(&state) }
+#[tauri::command]
+pub fn boss_loot_profiles() -> Vec<LootProfile> { crate::loot_profiles::built_in_profiles().to_vec() }
+#[tauri::command]
+pub fn boss_loot_set_settings(app: tauri::AppHandle, settings: LootSettings) -> Result<(), String> {
+    settings.validate()?;
+    let state = app.state::<crate::AppState>();
+    *state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()) = settings.clone();
+    {
+        let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(p) = owner.pending.as_mut().filter(|p| p.phase == Phase::Open) { p.restart(&settings, now_ms()); }
+    }
+    crate::persist_settings(&app); crate::ssot::emit_ssot(&app); Ok(())
+}
+#[tauri::command]
+pub fn set_number_format(app: tauri::AppHandle, format: NumberFormat) {
+    *app.state::<crate::AppState>().number_format.lock().unwrap_or_else(|e| e.into_inner()) = format;
+    crate::persist_settings(&app); crate::ssot::emit_ssot(&app);
+}
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum CaptureAction { Touch, Select { key: String, quantity: u32 }, ForceNew, Discard }
+#[tauri::command]
+pub fn boss_loot_action(app: tauri::AppHandle, id: u64, action: CaptureAction) -> Result<(), String> {
+    let state = app.state::<crate::AppState>();
+    let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    {
+        let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+        match action {
+            CaptureAction::Touch => owner.touch(id, &settings, now_ms())?,
+            CaptureAction::Select { key, quantity } => owner.select(id, &key, quantity, &settings, now_ms())?,
+            CaptureAction::ForceNew => owner.force_new(id, &settings, now_ms())?,
+            CaptureAction::Discard => owner.discard(id)?,
+        }
+    }
+    crate::ssot::emit_ssot(&app); Ok(())
+}
+#[tauri::command]
+pub async fn boss_loot_submit(app: tauri::AppHandle, id: u64) -> Result<(), String> {
+    let state = app.state::<crate::AppState>();
+    if state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).get(MODULE_ID) != Some(&true) { return Err("Module is off".into()); }
+    if !state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).pending.as_ref().is_some_and(|p| p.id == id) { return Err("Stale capture".into()); }
+    let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    submit_capture(&state.boss_loot, &settings, &LootApi::from_state(&state), now_ms(), true, id).await;
+    crate::ssot::emit_ssot(&app); Ok(())
+}
+#[tauri::command]
+pub fn boss_loot_rebind(app: tauri::AppHandle, binding: Option<Rebind>) {
+    app.state::<crate::AppState>().boss_loot.lock().unwrap_or_else(|e| e.into_inner()).rebind = binding;
+    crate::ssot::emit_ssot(&app);
+}
+#[derive(Default)]
+struct ShortcutPoll { capture_down: bool, preview_down: bool, previous: std::collections::BTreeSet<u16> }
+enum PollAction { Capture, Preview, Bind(Rebind, Shortcut), CancelBind }
+impl ShortcutPoll {
+    fn poll(&mut self, down: &std::collections::BTreeSet<u16>, foreground: bool, binding: Option<Rebind>, settings: &LootSettings) -> Option<PollAction> {
+        let matches = |s: &Shortcut| down.contains(&s.key) && down.contains(&16) == s.shift && down.contains(&17) == s.ctrl && down.contains(&18) == s.alt;
+        let capture = matches(&settings.capture_shortcut); let preview = matches(&settings.preview_shortcut);
+        let action = if let Some(binding) = binding {
+            if down.contains(&27) { Some(PollAction::CancelBind) } else {
+                down.difference(&self.previous).find(|k| !matches!(**k, 16..=18 | 160..=165)).map(|key|
+                    PollAction::Bind(binding, Shortcut { key: *key, shift: down.contains(&16), ctrl: down.contains(&17), alt: down.contains(&18) }))
+            }
+        } else if foreground && capture && !self.capture_down { Some(PollAction::Capture) }
+        else if foreground && preview && !self.preview_down { Some(PollAction::Preview) } else { None };
+        self.capture_down = capture; self.preview_down = preview; self.previous = down.clone(); action
     }
 }
-
-fn set_flash(lines: Vec<String>) {
-    let mut view = VIEW.lock().unwrap_or_else(|e| e.into_inner());
-    view.flash_until = Some(Instant::now() + Duration::from_millis(FLASH_MS));
-    view.lines = lines;
+pub fn spawn_hotkey_poller(app: tauri::AppHandle, cancel: tokio::sync::watch::Receiver<bool>) -> crate::modules::ModuleJoin {
+    crate::modules::ModuleJoin::Thread(std::thread::spawn(move || {
+        #[cfg(windows)]
+        let mut poll = ShortcutPoll::default();
+        while !*cancel.borrow() {
+            std::thread::sleep(Duration::from_millis(30));
+            if *cancel.borrow() { break; }
+            let state = app.state::<crate::AppState>();
+            #[cfg(windows)] {
+                let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let down = (1..=254).filter(|key| (unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(*key as i32) } as u16 & 0x8000) != 0).collect();
+                let binding = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).rebind;
+                let foreground = state.game_in_foreground.load(std::sync::atomic::Ordering::SeqCst);
+                match poll.poll(&down, foreground, binding, &settings) {
+                    Some(PollAction::Capture) => platform::capture_once(&app, &cancel),
+                    Some(PollAction::Preview) => {
+                        let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()); owner.preview = !owner.preview;
+                        if !owner.preview { owner.frame = None; }
+                    }
+                    Some(PollAction::CancelBind) => state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).rebind = None,
+                    Some(PollAction::Bind(binding, shortcut)) => {
+                        let mut new = settings.clone();
+                        match binding { Rebind::Capture => new.capture_shortcut = shortcut, Rebind::Preview => new.preview_shortcut = shortcut }
+                        if let Err(error) = boss_loot_set_settings(app.clone(), new) { crate::app_log(&app, error); }
+                        state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).rebind = None;
+                    }
+                    None => {}
+                }
+                platform::preview(&app, foreground);
+            }
+            let due = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).pending.as_ref()
+                .is_some_and(|p| p.phase == Phase::Open && p.deadline_ms.is_some_and(|t| now_ms() >= t));
+            if due {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app.state::<crate::AppState>();
+                    if state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).get(MODULE_ID) != Some(&true) { return; }
+                    let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    submit_pending(&state.boss_loot, &settings, &LootApi::from_state(&state), now_ms(), false).await;
+                    crate::ssot::emit_ssot(&app);
+                });
+            }
+        }
+        app.state::<crate::AppState>().boss_loot.lock().unwrap_or_else(|e| e.into_inner()).stop();
+        crate::ssot::emit_ssot(&app);
+    }))
 }
-
-#[cfg(windows)]
-pub use platform::spawn_hotkey_poller;
-
-#[cfg(not(windows))]
-pub fn spawn_hotkey_poller(_app: tauri::AppHandle) {}
-
 #[cfg(windows)]
 mod platform {
     use super::*;
-    use std::sync::atomic::Ordering;
-    use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize};
-    use windows::Win32::Foundation::POINT;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_F8, VK_RBUTTON, VK_SHIFT};
-    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-
-    const POLL_MS: u64 = 30;
-
-    fn key_down(vk: i32) -> bool {
-        (unsafe { GetAsyncKeyState(vk) } as u16 & 0x8000) != 0
-    }
-
     fn cursor() -> Option<(i32, i32)> {
-        let mut p = POINT::default();
-        unsafe { GetCursorPos(&mut p) }.ok()?;
+        let mut p = windows::Win32::Foundation::POINT::default();
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut p) }.ok()?;
         Some((p.x, p.y))
     }
-
-    /// The game's display (origin, size), else the primary's.
-    fn screen(app: &AppHandle) -> Option<((i32, i32), (u32, u32))> {
-        let game = *app.state::<crate::AppState>().game_monitor.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(g) = game {
-            return Some(((g.x, g.y), (g.width, g.height)));
+    pub fn preview(app: &tauri::AppHandle, foreground: bool) {
+        let state = app.state::<crate::AppState>();
+        let game = *state.game_monitor.lock().unwrap_or_else(|e| e.into_inner());
+        let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+        if !owner.preview { return; }
+        if !foreground { owner.frame = None; return; }
+        if let (Some(cur), Some(g)) = (cursor(), game) {
+            owner.frame = Some(Frame { rect: capture_rect((cur.0 - g.x, cur.1 - g.y), (g.width, g.height)), phase: "preview".into(),
+                attribution: owner.area.clone(), until_ms: None });
         }
-        let m = app.primary_monitor().ok().flatten()?;
-        Some(((m.position().x, m.position().y), (m.size().width, m.size().height)))
     }
-
-    /// Build the window on first use, then only move and resize it. `rect` is
-    /// screen-ABSOLUTE physical px.
-    fn place_window(app: &AppHandle, rect: [i32; 4]) {
-        let position = PhysicalPosition::new(rect[0], rect[1]);
-        let size = PhysicalSize::new(rect[2] as u32, rect[3] as u32);
-        if let Some(win) = app.get_webview_window(WINDOW_LABEL) {
-            if let Err(e) = win.set_position(position).and_then(|_| win.set_size(size)) {
-                crate::app_log(app, format!("loot: moving the overlay failed: {e}"));
-            }
-            return;
-        }
-        let built = tauri::WebviewWindowBuilder::new(
-            app,
-            WINDOW_LABEL,
-            tauri::WebviewUrl::App("overlay/loot".into()),
-        )
-        .transparent(true)
-        .decorations(false)
-        .always_on_top(true)
-        .resizable(false)
-        .shadow(false)
-        .skip_taskbar(true)
-        .focused(false)
-        .inner_size(rect[2] as f64, rect[3] as f64)
-        .build();
-        let win = match built {
-            Ok(w) => w,
-            Err(e) => {
-                crate::app_log(app, format!("loot: building the overlay failed: {e}"));
-                return;
-            }
+    pub fn capture_once(app: &tauri::AppHandle, cancel: &tokio::sync::watch::Receiver<bool>) {
+        let Some(cur) = cursor() else { return };
+        let state = app.state::<crate::AppState>();
+        let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let game = *state.game_monitor.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(g) = game else { return };
+        let rect = capture_rect((cur.0 - g.x, cur.1 - g.y), (g.width, g.height));
+        let league = crate::ssot::build_snapshot(&state).league.name.unwrap_or_default();
+        // Freeze the area, seed, profile, league and identity BEFORE grabbing/OCR.
+        let begin = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).begin(league, rect, &settings, now_ms());
+        let id = match begin {
+            Ok(id) => id, Err(error) => { crate::app_log(app, error); crate::ssot::emit_ssot(app); return; }
         };
-        // Exact physical geometry after construction, with the WebView2
-        // transparency resize nudge (overlay guide, guard 3 and the
-        // runtime-earned observations).
-        let placed = win
-            .set_position(position)
-            .and_then(|_| win.set_size(PhysicalSize::new(size.width + 1, size.height + 1)))
-            .and_then(|_| win.set_size(size))
-            .and_then(|_| win.set_position(position));
-        if let Err(e) = placed {
-            crate::app_log(app, format!("loot: placing the overlay failed: {e}"));
-        }
-        let app2 = app.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(e) = crate::apply_overlay_clickthrough(WINDOW_LABEL.to_string(), app2.clone()).await {
-                crate::app_log(&app2, format!("loot: click-through setup failed: {e}"));
-                if let Some(w) = app2.get_webview_window(WINDOW_LABEL) {
-                    let _ = w.destroy();
+        crate::ssot::emit_ssot(app);
+        let result = (|| {
+            let shot = crate::capture::capture_screen(app)?;
+            let rect = capture_rect((cur.0 - shot.origin.0, cur.1 - shot.origin.1), (shot.image.width(), shot.image.height()));
+            let crop = shot.image.crop_imm(rect[0] as u32, rect[1] as u32, rect[2] as u32, rect[3] as u32);
+            let raw = crate::ocr::recognize_text(&crop)?;
+            let scaled = crate::capture::preprocess_for_ocr_fast(&crop);
+            let upscaled = crate::ocr::recognize_text(&scaled).unwrap_or_else(|error| { crate::app_log(app, format!("loot: 2x OCR failed: {error}")); Vec::new() });
+            Ok::<_, String>((rect, raw.into_iter().chain(upscaled).collect()))
+        })();
+        if *cancel.borrow() { return; }
+        match result {
+            Ok((rect, lines)) => {
+                {
+                    let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(p) = owner.pending.as_mut().filter(|p| p.id == id) { p.rect = rect; }
+                    owner.finish_ocr(id, lines, &settings, now_ms());
                 }
-            }
-        });
-    }
-
-    /// DEBUG AID (preview box vs grabbed pixels, 2026-10-27): every geometry
-    /// input in one line, so a unit mismatch between the preview's monitor
-    /// (`screen`), the grab, the cursor and the window shows up as two numbers
-    /// that disagree.
-    fn log_geometry(app: &AppHandle, cur: (i32, i32), shot: &crate::capture::Capture, rect: [i32; 4]) {
-        let preview_screen = screen(app);
-        let preview_rect = preview_screen.map(|((px, py), dims)| {
-            let r = capture_rect((cur.0 - px, cur.1 - py), dims);
-            [r[0] + px, r[1] + py, r[2], r[3]]
-        });
-        let window = app.get_webview_window(WINDOW_LABEL).map(|w| {
-            format!(
-                "outer {:?} {:?}, inner {:?}, scale {:?}",
-                w.outer_position().map(|p| (p.x, p.y)).ok(),
-                w.outer_size().map(|s| (s.width, s.height)).ok(),
-                w.inner_size().map(|s| (s.width, s.height)).ok(),
-                w.scale_factor().ok()
-            )
-        });
-        let monitor = app.monitor_from_point(cur.0 as f64, cur.1 as f64).ok().flatten().map(|m| {
-            format!("{:?} {:?} scale {}", m.position(), m.size(), m.scale_factor())
-        });
-        crate::app_log(
-            app,
-            format!(
-                "loot: geometry cursor {cur:?}; grab origin {:?} image {}x{}; crop (abs) {:?}; \
-                 preview monitor {preview_screen:?} -> rect {preview_rect:?}; tauri monitor at cursor \
-                 {monitor:?}; window {window:?}",
-                shot.origin,
-                shot.image.width(),
-                shot.image.height(),
-                [rect[0] + shot.origin.0, rect[1] + shot.origin.1, rect[2], rect[3]],
-            ),
-        );
-    }
-
-    /// DEBUG AID: the exact pixels handed to OCR, overwritten per capture.
-    fn save_crop(app: &AppHandle, crop: &image::DynamicImage) {
-        let Ok(dir) = app.path().app_data_dir() else { return };
-        let path = dir.join("loot-runs").join("last-capture.png");
-        let saved = std::fs::create_dir_all(dir.join("loot-runs"))
-            .map_err(|e| e.to_string())
-            .and_then(|_| crop.save(&path).map_err(|e| e.to_string()));
-        if let Err(e) = saved {
-            crate::app_log(app, format!("loot: saving {} failed: {e}", path.display()));
-        }
-    }
-
-    fn capture_once(app: &AppHandle) {
-        let Some(cur) = cursor() else {
-            crate::app_log(app, "loot: cursor position unreadable".to_string());
-            return;
-        };
-        let started = Instant::now();
-        let shot = match crate::capture::capture_screen(app) {
-            Ok(s) => s,
-            Err(e) => {
-                crate::app_log(app, format!("loot: capture failed: {e}"));
-                return;
-            }
-        };
-        let grab_ms = started.elapsed().as_millis();
-        let (ox, oy) = shot.origin;
-        let rect = capture_rect((cur.0 - ox, cur.1 - oy), (shot.image.width(), shot.image.height()));
-        place_window(app, [rect[0] + ox, rect[1] + oy, rect[2], rect[3]]);
-        set_flash(vec!["reading…".to_string()]);
-        let place_ms = started.elapsed().as_millis() - grab_ms;
-
-        let stage = Instant::now();
-        let crop = shot.image.crop_imm(rect[0] as u32, rect[1] as u32, rect[2] as u32, rect[3] as u32);
-        // Two reads, matches unioned: the raw crop (what read all 27 labels
-        // offline) and the app's bilinear 2x preprocessing (`capture.rs`). One
-        // live raw read lost both ends of a label that sat fully inside the box
-        // (2026-10-27), and the gem band showed a kernel can blind one header
-        // while another reads it. A capture is one keypress per run, so the
-        // second OCR costs nothing the player waits on in a loop.
-        let crop_ms = stage.elapsed().as_millis();
-        let stage = Instant::now();
-        let raw = match crate::ocr::recognize_text(&crop) {
-            Ok(l) => l,
-            Err(e) => {
-                crate::app_log(app, format!("loot: OCR failed: {e}"));
-                set_flash(vec![format!("OCR failed: {e}")]);
-                return;
-            }
-        };
-        let raw_ocr_ms = stage.elapsed().as_millis();
-        let stage = Instant::now();
-        let scaled = crate::capture::preprocess_for_ocr_fast(&crop);
-        let preprocess_ms = stage.elapsed().as_millis();
-        let stage = Instant::now();
-        let upscaled = crate::ocr::recognize_text(&scaled)
-            .unwrap_or_else(|e| {
-                crate::app_log(app, format!("loot: OCR of the 2x crop failed: {e}"));
-                Vec::new()
-            });
-        let scaled_ocr_ms = stage.elapsed().as_millis();
-        crate::app_log(
-            app,
-            format!(
-                "loot: rect {:?} on screen at ({ox},{oy}), {} ms, OCR raw: {:?}, OCR 2x: {:?}",
-                rect,
-                started.elapsed().as_millis(),
-                raw,
-                upscaled
-            ),
-        );
-        let lines: Vec<String> = raw.into_iter().chain(upscaled).collect();
-        log_geometry(app, cur, &shot, rect);
-        let stage = Instant::now();
-        save_crop(app, &crop);
-        let save_ms = stage.elapsed().as_millis();
-
-        let m = RunMatch::from_lines(&lines);
-        let mut run = None;
-        if m.any() {
-            match app.path().app_data_dir() {
-                Ok(dir) => {
-                    let path = dir.join("loot-runs").join("catarina.csv");
-                    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-                    match append_run(&path, &m, &ts) {
-                        Ok(n) => {
-                            run = Some(n);
-                            crate::app_log(app, format!("loot: run {n} appended to {}", path.display()));
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app.state::<crate::AppState>();
+                    let api = LootApi::from_state(&state);
+                    let profile = { state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).pending.as_ref().filter(|p| p.id == id).map(|p| ProfileRef::from(&p.profile)) };
+                    let Some(profile) = profile else { return };
+                    let result = async { Ok::<_, ApiError>((api.latest(&profile).await?, api.stats(&profile, "own").await?.next_run)) }.await;
+                    let settings = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    {
+                        let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+                        match result {
+                            Ok((latest, next)) => owner.ready(id, latest, next, &settings, now_ms()),
+                            Err(error) => if let Some(p) = owner.pending.as_mut().filter(|p| p.id == id && p.phase == Phase::Loading) {
+                                p.phase = Phase::Unreachable; p.error = Some(format!("{error:?}"));
+                            }
                         }
-                        Err(e) => crate::app_log(app, format!("loot: CSV write failed: {e}")),
                     }
-                }
-                Err(e) => crate::app_log(app, format!("loot: no app-data dir: {e}")),
+                    crate::ssot::emit_ssot(&app);
+                });
+            }
+            Err(error) => {
+                let mut owner = state.boss_loot.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(p) = owner.pending.as_mut().filter(|p| p.id == id) { p.phase = Phase::Rejected; p.error = Some(error); }
+                owner.frame = None;
             }
         }
-        set_flash(m.readout(run));
-        crate::app_log(
-            app,
-            format!(
-                "loot: timing grab {grab_ms} ms, place window {place_ms}, crop {crop_ms}, OCR raw {raw_ocr_ms}, \
-                 2x preprocess {preprocess_ms}, OCR 2x {scaled_ocr_ms}, PNG save {save_ms}, total {} ms ({} build)",
-                started.elapsed().as_millis(),
-                if cfg!(debug_assertions) { "debug" } else { "release" }
-            ),
-        );
-    }
-
-    pub fn spawn_hotkey_poller(app: AppHandle) {
-        std::thread::spawn(move || {
-            crate::app_log(&app, "loot: hotkey poller started (Shift+RMB capture, Shift+F8 preview)".to_string());
-            let mut capture_was_down = false;
-            let mut preview_was_down = false;
-            let mut last_preview_cursor: Option<(i32, i32)> = None;
-            loop {
-                std::thread::sleep(Duration::from_millis(POLL_MS));
-                let shift = key_down(VK_SHIFT.0 as i32);
-                let capture_down = shift && key_down(VK_RBUTTON.0 as i32);
-                let capture_pressed = capture_down && !capture_was_down;
-                capture_was_down = capture_down;
-                let preview_down = shift && key_down(VK_F8.0 as i32);
-                let preview_pressed = preview_down && !preview_was_down;
-                preview_was_down = preview_down;
-                let in_game = app.state::<crate::AppState>().game_in_foreground.load(Ordering::SeqCst);
-
-                if preview_pressed && in_game {
-                    let on = {
-                        let mut view = VIEW.lock().unwrap_or_else(|e| e.into_inner());
-                        view.preview = !view.preview;
-                        view.preview
-                    };
-                    last_preview_cursor = None;
-                    crate::app_log(&app, format!("loot: preview {}", if on { "on" } else { "off" }));
-                }
-                if capture_pressed && in_game {
-                    capture_once(&app);
-                }
-
-                let preview = VIEW.lock().unwrap_or_else(|e| e.into_inner()).preview;
-                if preview {
-                    let Some(cur) = cursor() else { continue };
-                    if last_preview_cursor == Some(cur) {
-                        continue;
-                    }
-                    last_preview_cursor = Some(cur);
-                    if let Some(((ox, oy), dims)) = screen(&app) {
-                        let r = capture_rect((cur.0 - ox, cur.1 - oy), dims);
-                        place_window(&app, [r[0] + ox, r[1] + oy, r[2], r[3]]);
-                    }
-                }
-            }
-        });
+        crate::ssot::emit_ssot(app);
     }
 }
 
 #[cfg(test)]
-mod tests {
+mod owner_tests {
     use super::*;
+    use crate::loot_api::*;
+    use std::collections::VecDeque;
 
-    fn lines(raw: &[&str]) -> Vec<String> {
-        raw.iter().map(|s| s.to_string()).collect()
+    const EYE: &str = "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly";
+    fn profile() -> LootProfile { crate::loot_profiles::built_in_profiles()[0].clone() }
+    fn selection(pairs: &[(&str, u32)]) -> Selection {
+        pairs.iter().map(|(k, q)| (k.to_string(), *q)).collect()
     }
-
-    #[test]
-    fn ocr_lines_from_a_catarina_drop_map_to_their_sheet_columns() {
-        let m = RunMatch::from_lines(&lines(&[
-            "ZORATH'S EYE OF THE ENDLESS",
-            "VEILED EXALTED ORB*",
-            "SILVER FLASK.",
-            "SUPERIOR VAAL REGALIA",
-            "TITANIUM SPIRIT SHIELD",
-            "ALLFLAME EMBER OF ANARCHY",
-            "HUBRIS CIRCLET",
-            "BROADHEAD ARROW QUIVER",
-            "EZOMYTE STAFF",
-            "SPELL ECHO SUPPORT",
-            "TEMPLAR ASTROLABE",
-        ]));
-        assert_eq!(m.hits, [true; 11]);
-        assert!(m.unknown.is_empty(), "unexpected unknowns: {:?}", m.unknown);
+    fn run(version: u64) -> StoredRun {
+        StoredRun { profile: ProfileRef::from(&profile()), id: "1".into(), league: "test".into(),
+            run: 1, date: None, seed: Some("42".into()), version,
+            items: RunItems { quantities: selection(&[("Cinderswallow Urn", 1)]), counted: counted(&profile(), &LootSettings::default()) } }
     }
-
-    #[test]
-    fn gold_npc_names_and_fragments_are_dropped_as_noise() {
-        let m = RunMatch::from_lines(&lines(&["191 GOLD", "4108 Gold", "JUN, VEILED MASTER", "Ii", "*."]));
-        assert_eq!(m, RunMatch::default());
+    fn pending(settings: &LootSettings) -> (Mutex<LootOwner>, u64) {
+        let mut owner = LootOwner::default();
+        owner.observe_area(&crate::lab_state::parse_area_change(r#"Generating level 83 area "BetrayalMastermindFight" with seed 42"#).unwrap());
+        let id = owner.begin("test".into(), [0, 0, 900, 750], settings, 0).unwrap();
+        owner.finish_ocr(id, vec!["Serpentine Staff".into()], settings, 0);
+        owner.ready(id, None, 1, settings, 0);
+        (Mutex::new(owner), id)
     }
-
-    #[test]
-    fn an_unmatched_label_is_reported_unknown_and_marks_no_column() {
-        let m = RunMatch::from_lines(&lines(&["CHAOS ORB", "VAAL REGALIA"]));
-        assert_eq!(m.unknown, vec!["CHAOS ORB".to_string()]);
-        assert_eq!(m.hits.iter().filter(|h| **h).count(), 1);
-        assert!(m.hits[6]);
+    #[derive(Default)]
+    struct Http {
+        requests: Mutex<Vec<SubmitRun>>,
+        replies: Mutex<VecDeque<Result<SubmitOutcome, ApiError>>>,
+        latest: Mutex<Option<StoredRun>>,
+        reads: Mutex<u32>,
     }
-
-    #[test]
-    fn a_label_read_only_in_part_still_maps_by_its_distinctive_stem() {
-        assert_eq!(classify_line("TANIUM SPIRI"), LineKind::Column(7));
+    impl LootTransport for Http {
+        async fn submit(&self, request: &SubmitRun) -> Result<SubmitOutcome, ApiError> {
+            self.requests.lock().unwrap().push(request.clone());
+            self.replies.lock().unwrap().pop_front().unwrap_or(Err(ApiError::Unreachable))
+        }
+        async fn latest(&self, _: &ProfileRef) -> Result<Option<StoredRun>, ApiError> {
+            *self.reads.lock().unwrap() += 1;
+            Ok(self.latest.lock().unwrap().clone())
+        }
     }
-
-    #[test]
-    fn a_fragment_of_a_generic_word_stays_unknown() {
-        assert_eq!(classify_line("TITANIUM SHIEL"), LineKind::Unknown("TITANIUM SHIEL".to_string()));
+    #[tokio::test]
+    async fn expiry_starts_once_and_failure_never_queues() {
+        let s = LootSettings::default();
+        let (owner, _) = pending(&s);
+        let http = Http::default();
+        submit_pending(&owner, &s, &http, 9_999, false).await;
+        assert!(http.requests.lock().unwrap().is_empty());
+        submit_pending(&owner, &s, &http, 10_000, false).await;
+        submit_pending(&owner, &s, &http, 100_000, false).await;
+        assert_eq!(http.requests.lock().unwrap().len(), 1);
+        assert_eq!(owner.lock().unwrap().pending.as_ref().unwrap().phase, Phase::Unreachable);
     }
-
+    #[tokio::test]
+    async fn off_and_discard_send_nothing() {
+        let s = LootSettings { auto_save_seconds: 0, ..Default::default() };
+        let (owner, id) = pending(&s);
+        let http = Http::default();
+        submit_pending(&owner, &s, &http, 100_000, false).await;
+        owner.lock().unwrap().discard(id).unwrap();
+        submit_pending(&owner, &s, &http, 100_001, true).await;
+        assert!(http.requests.lock().unwrap().is_empty());
+    }
     #[test]
-    fn capture_rect_scales_with_screen_height_and_clamps_at_the_edge() {
+    fn actions_restart_deadline_and_invalid_or_ambiguous_selections_pause() {
+        let s = LootSettings::default();
+        let (owner, id) = pending(&s);
+        let mut o = owner.lock().unwrap();
+        o.touch(id, &s, 500).unwrap();
+        assert_eq!(o.pending.as_ref().unwrap().deadline_ms, Some(10_500));
+        o.select(id, "Cane of Kulemak", 0, &s, 600).unwrap();
+        assert_eq!(o.pending.as_ref().unwrap().deadline_ms, None);
+        o.select(id, "Cinderswallow Urn", 1, &s, 700).unwrap();
+        assert_eq!(o.pending.as_ref().unwrap().deadline_ms, Some(10_700));
+        o.pending.as_mut().unwrap().ambiguous.push(vec!["Cinderswallow Urn".into(), "Cane of Kulemak".into()]);
+        o.touch(id, &s, 800).unwrap();
+        assert_eq!(o.pending.as_ref().unwrap().deadline_ms, None);
+    }
+    #[test]
+    fn attribution_is_frozen_before_ocr_and_old_responses_cannot_replace_new_capture() {
+        let s = LootSettings::default();
+        let (owner, old) = pending(&s);
+        let mut o = owner.lock().unwrap();
+        o.observe_area(&crate::lab_state::parse_area_change(r#"Generating level 83 area "MapWorldsStrand" with seed 7"#).unwrap());
+        assert_eq!(o.pending.as_ref().unwrap().attribution.seed.as_deref(), Some("42"));
+        assert!(o.begin("test".into(), [0; 4], &s, 1).is_err());
+        o.observe_area(&crate::lab_state::parse_area_change(r#"Generating level 83 area "BetrayalMastermindFight" with seed 8"#).unwrap());
+        let new = o.begin("test".into(), [0; 4], &s, 2).unwrap();
+        o.complete(old, Err(ApiError::Unreachable), 3);
+        o.finish_ocr(old, vec!["Silver Flask".into()], &s, 3);
+        assert_eq!(o.pending.as_ref().unwrap().id, new);
+        assert_eq!(o.pending.as_ref().unwrap().phase, Phase::Reading);
+        assert_eq!(o.pending.as_ref().unwrap().attribution.seed.as_deref(), Some("8"));
+    }
+    #[tokio::test]
+    async fn merge_replaces_pick_preserves_eligibility_and_serializes_original_positives() {
+        let s = LootSettings::default();
+        let (owner, id) = pending(&s);
+        let mut target = run(3);
+        target.items.counted.retain(|k| k != EYE);
+        {
+            let mut o = owner.lock().unwrap();
+            o.pending.as_mut().unwrap().incoming.insert(EYE.into(), 1);
+            o.ready(id, Some(target.clone()), 2, &s, 0);
+        }
+        let http = Http::default();
+        let mut saved = target.clone();
+        saved.items.quantities = selection(&[("Cane of Kulemak", 1)]);
+        http.replies.lock().unwrap().push_back(Ok(SubmitOutcome { state: "saved".into(), run: saved, dropped_positive_keys: vec![EYE.into()] }));
+        let changed = LootSettings { not_counted: vec!["Cane of Kulemak".into()], ..s };
+        submit_pending(&owner, &changed, &http, 1, true).await;
+        let requests = http.requests.lock().unwrap();
+        let json = serde_json::to_value(&requests[0]).unwrap();
+        assert_eq!(json["items"]["quantities"], serde_json::json!({"Cane of Kulemak":1}));
+        assert_eq!(json["incomingPositiveKeys"], serde_json::json!(["Cane of Kulemak", EYE]));
+        assert_eq!(requests[0].items.counted, target.items.counted);
+        assert_eq!(owner.lock().unwrap().pending.as_ref().unwrap().dropped_positive_keys, [EYE]);
+    }
+    #[test]
+    fn repeated_picks_remain_single_and_quantities_use_max() {
+        let mut p = profile();
+        p.extra[0].quantity = true;
+        let mut target = run(1);
+        target.items.quantities.insert(EYE.into(), 4);
+        let incoming = selection(&[("Cinderswallow Urn", 1), (EYE, 2)]);
+        let merged = merge_items(&p, &target, &incoming).unwrap();
+        assert_eq!(merged.quantities, selection(&[("Cinderswallow Urn", 1), (EYE, 4)]));
+    }
+    #[tokio::test]
+    async fn conflict_rereads_version_and_counted_together_and_revalidates_without_resending() {
+        let s = LootSettings::default();
+        let (owner, id) = pending(&s);
+        owner.lock().unwrap().ready(id, Some(run(1)), 2, &s, 0);
+        let http = Http::default();
+        http.replies.lock().unwrap().push_back(Err(ApiError::Conflict));
+        let mut fresh = run(2);
+        fresh.items.counted.retain(|k| k != "Cane of Kulemak");
+        fresh.items.quantities.clear();
+        *http.latest.lock().unwrap() = Some(fresh);
+        submit_pending(&owner, &s, &http, 10_000, false).await;
+        assert_eq!(*http.reads.lock().unwrap(), 1);
+        submit_pending(&owner, &s, &http, 30_000, false).await;
+        submit_pending(&owner, &s, &http, 30_001, true).await;
+        assert_eq!(http.requests.lock().unwrap().len(), 1);
+        let o = owner.lock().unwrap();
+        let p = o.pending.as_ref().unwrap();
+        assert_eq!(p.target.as_ref().unwrap().version, 2);
+        assert!(!p.target.as_ref().unwrap().items.counted.contains(&"Cane of Kulemak".into()));
+        assert_eq!(p.deadline_ms, None);
+        assert_eq!(p.phase, Phase::Open);
+    }
+    #[test]
+    fn wider_group_overflow_is_invalid_after_merge() {
+        let mut p = profile();
+        p.groups[0].max = 2;
+        let mut target = run(1);
+        target.items.quantities.insert("Spinehail".into(), 1);
+        assert!(merge_items(&p, &target, &selection(&[("Cane of Kulemak", 1)])).is_err());
+    }
+    #[test]
+    fn force_new_uses_current_counted_set_and_ineligible_previous_seed_does_not_merge() {
+        let s = LootSettings::default();
+        let (owner, id) = pending(&s);
+        let mut o = owner.lock().unwrap();
+        let mut target = run(1);
+        target.seed = Some("9".into());
+        o.ready(id, Some(target), 2, &s, 0);
+        assert!(o.pending.as_ref().unwrap().target.is_none());
+        o.ready(id, Some(run(1)), 2, &s, 0);
+        o.force_new(id, &s, 1).unwrap();
+        let changed = LootSettings { not_counted: vec![EYE.into()], ..s };
+        let request = o.prepare(&changed, 2, true).unwrap();
+        assert_eq!(request.1.mode, "forceNew");
+        assert!(!request.1.items.counted.contains(&EYE.into()));
+    }
+    #[tokio::test]
+    async fn concurrent_expiry_and_late_http_response_cannot_overwrite_replacement() {
+        struct Slow { started: tokio::sync::Notify, release: tokio::sync::Notify, writes: std::sync::atomic::AtomicU32 }
+        impl LootTransport for Slow {
+            async fn submit(&self, _: &SubmitRun) -> Result<SubmitOutcome, ApiError> {
+                self.writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.started.notify_one(); self.release.notified().await;
+                Ok(SubmitOutcome { state: "saved".into(), run: run(1), dropped_positive_keys: vec![] })
+            }
+            async fn latest(&self, _: &ProfileRef) -> Result<Option<StoredRun>, ApiError> { Ok(None) }
+        }
+        let s = LootSettings::default();
+        let (owner, _) = pending(&s);
+        let http = Slow { started: Default::default(), release: Default::default(), writes: Default::default() };
+        let first = submit_pending(&owner, &s, &http, 10_000, false);
+        let replace = async {
+            http.started.notified().await;
+            submit_pending(&owner, &s, &http, 10_001, true).await;
+            let new = owner.lock().unwrap().begin("test".into(), [0; 4], &s, 10_002).unwrap();
+            http.release.notify_one(); new
+        };
+        let (_, new) = tokio::join!(first, replace);
+        assert_eq!(http.writes.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let o = owner.lock().unwrap();
+        assert_eq!(o.pending.as_ref().unwrap().id, new);
+        assert_eq!(o.pending.as_ref().unwrap().phase, Phase::Reading);
+    }
+    #[tokio::test]
+    async fn valid_conflict_restarts_confirmation_and_next_write_uses_fresh_eligibility() {
+        let s = LootSettings::default();
+        let (owner, id) = pending(&s);
+        owner.lock().unwrap().pending.as_mut().unwrap().incoming.insert(EYE.into(), 1);
+        owner.lock().unwrap().ready(id, Some(run(1)), 2, &s, 0);
+        let http = Http::default();
+        http.replies.lock().unwrap().push_back(Err(ApiError::Conflict));
+        let mut fresh = run(7);
+        fresh.items.counted.retain(|k| k != EYE);
+        *http.latest.lock().unwrap() = Some(fresh.clone());
+        submit_pending(&owner, &s, &http, 10_000, false).await;
+        assert!(owner.lock().unwrap().pending.as_ref().unwrap().deadline_ms.unwrap() >= 20_000);
+        submit_pending(&owner, &s, &http, 10_001, true).await;
+        let requests = http.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1].target.as_ref().unwrap().expected_version, 7);
+        assert_eq!(requests[1].items.counted, fresh.items.counted);
+        assert!(!requests[1].items.quantities.contains_key(EYE));
+        assert!(requests[1].incoming_positive_keys.as_ref().unwrap().contains(&EYE.into()));
+    }
+    #[tokio::test]
+    async fn impossible_effective_merge_never_calls_submit() {
+        let s = LootSettings::default();
+        let (owner, id) = pending(&s);
+        let mut target = run(1);
+        target.items.quantities.insert("Spinehail".into(), 1);
+        {
+            let mut o = owner.lock().unwrap();
+            o.pending.as_mut().unwrap().profile.groups[0].max = 2;
+            o.ready(id, Some(target), 2, &s, 0);
+        }
+        let http = Http::default();
+        submit_pending(&owner, &s, &http, 30_000, true).await;
+        assert!(http.requests.lock().unwrap().is_empty());
+        assert_eq!(owner.lock().unwrap().pending.as_ref().unwrap().deadline_ms, None);
+    }
+    #[tokio::test]
+    async fn saved_response_closes_at_two_seconds_and_keeps_server_run_number() {
+        let s = LootSettings::default();
+        let (owner, _) = pending(&s);
+        let http = Http::default();
+        let mut saved = run(1); saved.run = 79;
+        http.replies.lock().unwrap().push_back(Ok(SubmitOutcome { state: "saved".into(), run: saved, dropped_positive_keys: vec![] }));
+        submit_pending(&owner, &s, &http, 0, true).await;
+        let mut o = owner.lock().unwrap();
+        assert_eq!(o.pending.as_ref().unwrap().run, 79);
+        let close = o.pending.as_ref().unwrap().close_at_ms.unwrap();
+        o.retire(close - 1); assert!(o.pending.is_some());
+        o.retire(close); assert!(o.pending.is_none());
+    }
+}
+
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::*;
+    fn down(keys: &[u16]) -> std::collections::BTreeSet<u16> { keys.iter().copied().collect() }
+    #[test]
+    fn loot_shortcuts_require_foreground_and_a_new_press() {
+        let s = LootSettings::default();
+        let mut poll = ShortcutPoll::default();
+        assert!(poll.poll(&down(&[16, 2]), false, None, &s).is_none());
+        assert!(poll.poll(&down(&[16, 2]), true, None, &s).is_none());
+        poll.poll(&down(&[]), true, None, &s);
+        assert!(matches!(poll.poll(&down(&[16, 2]), true, None, &s), Some(PollAction::Capture)));
+        assert!(poll.poll(&down(&[16, 2]), true, None, &s).is_none());
+    }
+    #[test]
+    fn loot_rebind_accepts_keyboard_and_mouse_with_modifiers() {
+        let s = LootSettings::default();
+        let mut poll = ShortcutPoll::default();
+        match poll.poll(&down(&[17, 65]), false, Some(Rebind::Capture), &s) {
+            Some(PollAction::Bind(Rebind::Capture, key)) => assert_eq!(key, Shortcut { key: 65, ctrl: true, shift: false, alt: false }),
+            _ => panic!("keyboard binding was not captured"),
+        }
+        poll.poll(&down(&[]), false, None, &s);
+        match poll.poll(&down(&[18, 5]), false, Some(Rebind::Preview), &s) {
+            Some(PollAction::Bind(Rebind::Preview, key)) => assert_eq!(key, Shortcut { key: 5, ctrl: false, shift: false, alt: true }),
+            _ => panic!("mouse binding was not captured"),
+        }
+    }
+    #[test]
+    fn loot_escape_cancels_rebinding_without_changing_the_binding() {
+        let s = LootSettings::default();
+        let mut poll = ShortcutPoll::default();
+        assert!(matches!(poll.poll(&down(&[27]), false, Some(Rebind::Capture), &s), Some(PollAction::CancelBind)));
+        assert_eq!(s.capture_shortcut.key, 2);
+    }
+    #[test]
+    fn loot_rebound_shortcut_activates_instead_of_default() {
+        let s = LootSettings { capture_shortcut: Shortcut { key: 65, ctrl: true, shift: false, alt: false }, ..Default::default() };
+        let mut poll = ShortcutPoll::default();
+        assert!(poll.poll(&down(&[16, 2]), true, None, &s).is_none());
+        assert!(matches!(poll.poll(&down(&[17, 65]), true, None, &s), Some(PollAction::Capture)));
+    }
+    #[test]
+    fn loot_geometry_preserves_poc_dimensions_and_clamping() {
+        assert_eq!(capture_rect((960, 540), (1920, 1080)), [510, 40, 900, 750]);
         assert_eq!(capture_rect((1920, 1080), (3840, 2160)), [1020, 80, 1800, 1500]);
         assert_eq!(capture_rect((10, 1070), (1920, 1080)), [0, 330, 900, 750]);
-    }
-
-    #[test]
-    fn appended_runs_number_from_one_under_the_header() {
-        let dir = std::env::temp_dir().join(format!("loot-capture-test-{}", uuid::Uuid::new_v4()));
-        let path = dir.join("catarina.csv");
-        let mut eye = RunMatch::default();
-        eye.hits[1] = true;
-        let mut flask = RunMatch::default();
-        flask.hits[3] = true;
-        assert_eq!(append_run(&path, &eye, "t1"), Ok(1));
-        assert_eq!(append_run(&path, &flask, "t2"), Ok(2));
-        let text = std::fs::read_to_string(&path).unwrap();
-        let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(
-            text,
-            "Run #,Veiled Exalted,Eye,Allflame,Flask,Staff,Quiver,Body armour,Shield,Helmet,Support,Templar Astrolabe,timestamp\n\
-             1,,1,,,,,,,,,,t1\n\
-             2,,,,1,,,,,,,,t2\n"
-        );
     }
 }

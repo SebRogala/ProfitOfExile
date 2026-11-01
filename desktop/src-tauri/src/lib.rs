@@ -10,6 +10,7 @@ mod lab_navigation;
 mod lab_state;
 mod log_watcher;
 mod loot_capture;
+mod loot_api;
 mod loot_profiles;
 mod mercenary;
 mod modules;
@@ -330,6 +331,9 @@ pub struct AppStatus {
 pub use font_session::{FontRound, FontSessionData};
 
 pub struct AppState {
+    pub boss_loot: Mutex<loot_capture::LootOwner>,
+    pub boss_loot_settings: Mutex<loot_capture::LootSettings>,
+    pub number_format: Mutex<loot_capture::NumberFormat>,
     /// Hardware-based device fingerprint — computed once at startup, immutable.
     /// String is Sync so no Mutex needed.
     pub device_id: String,
@@ -3243,6 +3247,7 @@ fn spawn_log_watcher(app: AppHandle) {
                     // the new area. Area detection also runs while OCR is idle.
                     if let Some(change) = lab_state::parse_area_change(&line) {
                         let state = app.state::<AppState>();
+                        state.boss_loot.lock().unwrap_or_else(|e| e.into_inner()).observe_area(&change);
                         let update = record_lab_detection(&state, |detection| detection.observe_area(change.level, change.area));
                         publish_lab_detection(&app, update);
                     }
@@ -3299,6 +3304,9 @@ pub fn run() {
         .unwrap_or_else(|_| reqwest::Client::new());
 
     let app_state = AppState {
+        boss_loot: Mutex::new(loot_capture::LootOwner::default()),
+        boss_loot_settings: Mutex::new(loot_capture::LootSettings::default()),
+        number_format: Mutex::new(loot_capture::NumberFormat::default()),
         device_id: device_id.clone(),
         pair_code: Mutex::new(pair_code),
         client_txt_path: Mutex::new(String::from(
@@ -3382,6 +3390,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             get_status,
@@ -3391,6 +3400,17 @@ pub fn run() {
             ssot::geometry_recalibrate,
             capture::get_game_monitor,
             loot_capture::loot_capture_view,
+            loot_capture::boss_loot_profiles,
+            loot_capture::boss_loot_set_settings,
+            loot_capture::set_number_format,
+            loot_capture::boss_loot_action,
+            loot_capture::boss_loot_submit,
+            loot_capture::boss_loot_rebind,
+            loot_api::boss_loot_stats,
+            loot_api::boss_loot_runs,
+            loot_api::boss_loot_edit,
+            loot_api::boss_loot_delete,
+            loot_api::boss_loot_export,
             modules::set_module_enabled,
             get_pair_code,
             get_device_id,
@@ -3532,8 +3552,6 @@ pub fn run() {
 
             spawn_log_watcher(handle.clone());
             spawn_focus_poller(handle.clone());
-            // Loot capture POC (F8 / Shift+F8), see `loot_capture.rs`.
-            loot_capture::spawn_hotkey_poller(handle.clone());
             // Resolve the active league from the server (start-only, bounded
             // retry). Until it succeeds the SSOT stays unresolved and every
             // trade lookup fails closed — by design (POE-128 chunk 3).

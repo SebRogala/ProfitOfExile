@@ -472,6 +472,7 @@ pub fn placements_for(screen: Option<&ScreenSlice>) -> Placements {
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSsotSnapshot {
+    pub boss_loot: crate::loot_capture::LootSlice,
     pub league: LeagueSlice,
     /// A league resolve is currently in flight (the bounded-retry fetch task is
     /// running). Exposed in the polled snapshot so the Settings UI can show an
@@ -628,10 +629,11 @@ const TEMPLE_MODULE_ID: &str = "temple";
 /// `emit_ssot`. Both `get_ssot` and `emit_ssot` go through here so the two
 /// paths cannot compose different snapshots.
 pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
-    let base = {
+    let mut base = {
         let guard = state.ssot.lock().unwrap_or_else(|e| e.into_inner());
         guard.clone()
     };
+    base.boss_loot = crate::loot_capture::snapshot(state);
     let normal_variant = state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let dedication_variant = state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let dedication_pool = state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()).clone();

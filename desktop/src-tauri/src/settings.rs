@@ -13,6 +13,9 @@ const SETTINGS_FILENAME: &str = "settings.json";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub boss_loot: crate::loot_capture::LootSettings,
+    /// None means the legacy numberFormat preference has not migrated yet.
+    pub number_format: Option<crate::loot_capture::NumberFormat>,
     pub client_txt_path: String,
     pub server_url: String,
     pub window: Option<WindowSettings>,
@@ -641,6 +644,8 @@ pub struct WindowSettings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            boss_loot: Default::default(),
+            number_format: None,
             client_txt_path: crate::detect_client_txt_path(),
             server_url: String::from(option_env!("POE_SERVER_URL").unwrap_or("https://profitofexile.localhost")),
             window: None,
@@ -784,6 +789,8 @@ pub fn save(app: &tauri::AppHandle, settings: &Settings) {
 
 /// Build a Settings struct from the current AppState.
 pub fn from_state(state: &crate::AppState) -> Settings {
+    let boss_loot = state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let number_format = *state.number_format.lock().unwrap_or_else(|e| e.into_inner());
     let temple = state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     // Bound HERE rather than inside the struct literal below: a temporary
     // guard in a literal lives to the end of the whole statement, and this
@@ -796,6 +803,8 @@ pub fn from_state(state: &crate::AppState) -> Settings {
     // order").
     let owner_modules = state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).clone();
     Settings {
+        boss_loot,
+        number_format: Some(number_format),
         client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         window: None, // Window settings are saved separately on close, not from AppState
@@ -959,6 +968,52 @@ pub fn persist_overlay_settings(existing: &Settings, target: &mut Settings) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn boss_loot_settings_survive_unrelated_writes_and_echo_through_ssot() {
+        use crate::loot_capture::{LootLayout, NumberFormat, Shortcut};
+        let state = test_app_state();
+        let mut settings = Settings::default();
+        settings.boss_loot.layout = LootLayout::List;
+        settings.boss_loot.auto_save_seconds = 30;
+        settings.boss_loot.not_counted.push("Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly".into());
+        settings.boss_loot.capture_shortcut = Shortcut { key: 65, ctrl: true, shift: false, alt: false };
+        settings.ui_prefs.insert("numberFormat".into(), "comma".into());
+        assert!(apply_to_state(&settings, &state).is_empty());
+        *state.sidebar_open.lock().unwrap() = false;
+        let persisted = from_state(&state);
+        let loaded: Settings = serde_json::from_str(&serde_json::to_string(&persisted).unwrap()).unwrap();
+        assert_eq!(loaded.boss_loot, settings.boss_loot);
+        assert_eq!(loaded.number_format, Some(NumberFormat::Comma));
+        let snapshot = crate::ssot::build_snapshot(&state);
+        let json = serde_json::to_value(snapshot).unwrap();
+        assert_eq!(json["bossLoot"]["settings"]["layout"], "list");
+        assert_eq!(json["bossLoot"]["settings"]["autoSaveSeconds"], 30);
+        assert_eq!(json["bossLoot"]["settings"]["captureShortcut"]["key"], 65);
+        assert_eq!(json["bossLoot"]["settings"]["notCounted"], serde_json::json!(["Communion Support", "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly"]));
+        assert_eq!(json["bossLoot"]["numberFormat"], "comma");
+    }
+    #[test]
+    fn ssot_number_format_migrates_only_once() {
+        use crate::loot_capture::NumberFormat;
+        let state = test_app_state();
+        let mut settings = Settings::default();
+        settings.ui_prefs.insert("numberFormat".into(), "space".into());
+        assert!(apply_to_state(&settings, &state).is_empty());
+        let mut saved = from_state(&state);
+        saved.ui_prefs.insert("numberFormat".into(), "comma".into());
+        assert!(apply_to_state(&saved, &state).is_empty());
+        assert_eq!(crate::ssot::build_snapshot(&state).boss_loot.number_format, NumberFormat::Space);
+    }
+    #[test]
+    fn boss_loot_bad_settings_report_rejection_without_erasing_other_settings() {
+        let state = test_app_state();
+        let mut settings = Settings::default();
+        settings.boss_loot.auto_save_seconds = 1;
+        settings.sidebar_open = false;
+        assert!(apply_to_state(&settings, &state).iter().any(|line| line.contains("boss loot")));
+        assert_eq!(from_state(&state).boss_loot.auto_save_seconds, 10);
+        assert!(!from_state(&state).sidebar_open);
+    }
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
     use std::sync::Mutex;
@@ -968,8 +1023,11 @@ mod tests {
     /// `Default` impl: `run()` stays the one production construction site, and
     /// a new field breaking this helper is the intended signal to decide
     /// whether it also needs a settings touch point.
-    fn test_app_state() -> crate::AppState {
+    pub(crate) fn test_app_state() -> crate::AppState {
         crate::AppState {
+            boss_loot: Mutex::new(crate::loot_capture::LootOwner::default()),
+            boss_loot_settings: Mutex::new(crate::loot_capture::LootSettings::default()),
+            number_format: Mutex::new(crate::loot_capture::NumberFormat::default()),
             device_id: String::new(),
             game_monitor: Mutex::new(None),
             pair_code: Mutex::new(String::new()),
@@ -3203,6 +3261,13 @@ mod tests {
 #[must_use = "a silent settings rejection is the bug this return value exists to prevent"]
 pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<String> {
     let mut rejected: Vec<String> = Vec::new();
+    let boss_loot = match settings.boss_loot.validate() {
+        Ok(()) => settings.boss_loot.clone(),
+        Err(reason) => { rejected.push(format!("boss loot settings: {reason}; using defaults")); Default::default() }
+    };
+    *state.boss_loot_settings.lock().unwrap_or_else(|e| e.into_inner()) = boss_loot;
+    *state.number_format.lock().unwrap_or_else(|e| e.into_inner()) =
+        crate::loot_capture::NumberFormat::migrate(settings.number_format, settings.ui_prefs.get("numberFormat"));
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = settings.client_txt_path.clone();
     *state.server_url.lock().unwrap_or_else(|e| e.into_inner()) = settings.server_url.clone();
     *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()) = settings.sidebar_open;

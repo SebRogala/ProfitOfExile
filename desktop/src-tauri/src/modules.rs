@@ -198,6 +198,14 @@ pub struct ModuleDef {
 pub const MODULES: &[ModuleDef] = &[
     ModuleDef {
         lifecycle: ModuleDefLite {
+            id: crate::loot_capture::MODULE_ID,
+            default_enabled: false,
+            disabled_means: DisabledSemantics::NoWork,
+        },
+        spawn: crate::loot_capture::spawn_hotkey_poller,
+    },
+    ModuleDef {
+        lifecycle: ModuleDefLite {
             id: "mercenary",
             default_enabled: false,
             disabled_means: DisabledSemantics::NoWork,
@@ -505,6 +513,16 @@ fn spawn_temple(app: AppHandle, cancel: watch::Receiver<bool>) -> ModuleJoin {
 // `stop_module`'s doc comment.
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn boss_loot_is_opt_in_and_disable_stops_polling() {
+        let defs = module_lifecycles();
+        let boss = defs.iter().find(|d| d.id == "boss_loot").unwrap();
+        assert!(!boss.default_enabled);
+        assert_eq!(boss.disabled_means, DisabledSemantics::NoWork);
+        let plan = reconcile(&desired(&[("boss_loot", false)]), &running(&["boss_loot"]), &defs, false);
+        assert_eq!(plan.stop, ["boss_loot"]);
+        assert!(!plan.start.contains(&"boss_loot".into()));
+    }
     use super::*;
     use std::sync::Mutex;
 
