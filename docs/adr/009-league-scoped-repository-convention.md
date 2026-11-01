@@ -35,7 +35,7 @@ Tier: required
 
 Scope: All repositories and workflows accessing league-scoped tables.
 
-Summary: Resolve league.Scope once at the lifecycle boundary and carry it through every scoped read and write; historical access is explicit.
+Summary: Resolve league.Scope once at the lifecycle boundary and carry it through every scoped read and write; admit trade contributions by exact league name before side effects; use one desktop league holder and generation subscription service; historical access is explicit.
 
 ## Context
 
@@ -90,10 +90,64 @@ observations within one boss/profile/version. `ListCumulative` and
 `StatsCumulative` name this cross-league read explicitly; they are exceptions to
 the ordinary scope-taking read convention, not implicit active-league reads.
 
-New submissions resolve `league.Scope` at the HTTP boundary and carry it through
-the transaction. Edit/delete first look up the row by device ownership and id,
+New submissions originally resolved `league.Scope` at the HTTP boundary; the
+POE-117 amendment below supersedes that resolution boundary. Edit/delete first
+look up the row by device ownership and id,
 then construct `league.Historical` from that owned row's stored league. Every
 mutation predicate includes device, id, stored league and expected row version.
 Client league never grants mutation authority. Active-league changes therefore
 neither retag nor prevent edits to an owned historical observation. Counted sets
 remain historical, and profile versions keep changed pools separate.
+
+## Amended 2026-11-01 (POE-117): admission and desktop league ownership
+
+Status: accepted convention. Trade contribution admission is implemented under
+POE-319; the boss-loot boot-scope injection and desktop reconciliation rollout
+remain pending at this amendment. Active implementation tracking remains in
+POE-117 and its linked tasks.
+
+The server resolves `runtime_config` through `league.Resolve` once at boot and
+injects that process scope through `server.RouterConfig.League`.
+`AnalysisStatus` remains the public league read. New boss observations use this
+injected scope through `NewBossLoot`, superseding POE-317's HTTP-boundary
+resolution above. Client boss-loot league stays informational; this decision
+adds no league-mismatch 409 there. Historical owned edit/delete predicates,
+row-version/merge-conflict 409s, and explicit cumulative reads remain as accepted
+in POE-317. CLI lifecycle resolution, delayed recompute guard reads and
+`LeagueEventGuard` retain their existing responsibilities.
+
+Trade contributions must pass `league.Scope.Admit` by exact league name
+immediately after JSON decode, before dictionary validation, cache mutation,
+enqueue or persistence. Prefer a nonempty explicit contribution `league`;
+otherwise recover it from the legacy trade URL's league path segment, decoded
+once with `url.PathUnescape` (including existing raw-space URLs). Malformed or
+missing fallback identity is absent, with no default league. Absent identity
+returns HTTP 400; a different name returns HTTP 409 with
+`{"error":"league_mismatch","league":"<active>"}`. An old zero-result
+contribution without a query URL is therefore rejected as absent. Admission
+compares names only; revision on status, the desktop slice and this comparison
+remains deferred. Existing server revision stamps on Mercure events remain.
+
+Desktop `LeagueSlice` in Rust `ssot.rs` is the single holder; the shared trade
+client receives a captured league before queueing rather than owning another
+copy. Mercenary search and its league-keyed cache read the same slice. Preserve
+the shared GGG client, rate limiter and source cancellation behavior. Generation
+advances on first resolution and real name changes, not identical names. A real
+change emits `ssot-changed` before one `league-changed {league,generation}` event;
+first resolution establishes the baseline without a consumer change event.
+The webview SSOT store owns `leagueGeneration` and `onLeagueChange`
+subscriptions: `applySnapshot` notifies once per advanced generation after a
+resolved baseline. Consumers subscribe there rather than listening directly to
+the Tauri event or comparing league names independently.
+
+League resolution is event-driven: startup, a 409 from a write, a Mercure league
+hint, Settings Refresh and server-URL change trigger the shared Rust resolver
+lifecycle. There is no periodic status poll. `note_server_league` re-resolves
+when a hint differs or is unknown; status remains authoritative over hints,
+and successful resolutions apply through `apply_league`. Triggered failures
+retain bounded backoff and wakeable immediate reconciliation. The server
+publishes one `poe/league/active` hint after acquiring its boot fence, reusing the
+market publisher and scope stamp (`topic`, `league`, `leagueRevision`). The
+existing SSE connection carries that topic and forwards it to Rust; it creates
+no second connection. This event-driven convention supersedes earlier periodic
+polling proposals; missed-event retention remains deferred.

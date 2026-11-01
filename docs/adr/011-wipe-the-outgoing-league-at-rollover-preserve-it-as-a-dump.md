@@ -20,7 +20,7 @@ Tier: required
 
 Scope: League rollover, league-dependent tables and schema migration operations.
 
-Summary: Preserve outgoing league data as a dedicated dump before deliberate rollover wipes; league-dependent tables join the wipe set.
+Summary: Preserve outgoing league data as a dedicated dump before deliberate rollover wipes; league-dependent tables join the wipe set except for the accepted retained continuous aggregates and boss observations.
 
 ## Context
 
@@ -71,8 +71,9 @@ outright. Every table added to the league-scoped schema joins it at creation.
 
 At each league rollover, deliberately **wipe** the outgoing league's sixteen scoped
 tables (`TRUNCATE`) rather than keeping them live, and **preserve** that league's
-data as a dedicated dump stored outside the nightly rotation. Analysis of a past
-league is served by restoring its dump to a scratch database, not by a live query.
+data as a dedicated dump stored outside the nightly rotation. Complete past-league
+raw history requires restoring its dump to a scratch database; the dated
+POE-317 and POE-324 amendments below qualify live historical access.
 
 On the first stack deploy the wipe happens **before** the schema migration, so the
 migration runs on empty tables (see the runbook's wipe-first Production execution).
@@ -86,16 +87,19 @@ lifetime" is superseded: that reach now requires a dump restore.
 
 - The stack migration and every subsequent rollover are memory-safe on the
   constrained shared VPS; the OOM / dirty-migration hazard is removed.
-- Live queries reach only the active league. Past-league analysis requires
-  restoring that league's preserved dump to a scratch DB — a proven, disposable
-  workflow (rehearsed 2026-07-24).
-- Backups shrink to the active league's data, which starts small each league and
-  grows over the league instead of accumulating across all leagues.
-- `league.Historical`'s live cross-league reach is lost. A "keep computed, drop
-  raw" middle path was measured (~824 MB computed) but **not** adopted here; it
-  remains candidate future work if live past-league analysis becomes needed.
-- ADR-010's "derived tables are recomputable / first pruning candidate" note is
-  moot for a wiped league — its entire dataset lives only in the preserved dump.
+- Live access to complete past-league raw history requires restoring that
+  league's preserved dump to a scratch DB — a proven, disposable workflow
+  (rehearsed 2026-07-24). Retained aggregate buckets and boss observations remain
+  live under the POE-324 and POE-317 amendments below.
+- The backup-shrink expectation applies only to wiped raw tables. Retained
+  aggregates continue to contribute disk and dump cost (POE-324 below); backups
+  are not limited to the active league's data.
+- `league.Historical` cannot reach complete wiped raw history live. Explicit
+  league-keyed reads can still reach retained aggregates (POE-324 below); this
+  exception does not adopt general retention of all computed data.
+- ADR-010's "derived tables are recomputable / first pruning candidate" note
+  does not recover wiped data without a dump restore; the retained aggregates
+  remain a separate exception under POE-324 below.
 
 ## Evidence
 
@@ -123,5 +127,22 @@ silently combine. Historical owned edit/delete follows ADR-009's amendment.
 
 This exception supersedes the blanket statements above that every league-FK
 table joins the wipe set and that live queries can reach only the active league.
-All other wipe-set tables retain their existing rollover behavior. The new
+Other wipe-set tables retain their existing rollover behavior, subject to the
+separate POE-324 aggregate exception below. The new
 migration header records this same explicit exclusion for schema readers.
+
+## Amended 2026-11-01 (POE-324): retained continuous aggregates
+
+Status: accepted; records current rollover behavior. The wipe deliberately
+retains older-league buckets in `gem_snapshots_hourly` and
+`gem_snapshots_daily`. Explicit historical queries can reach those buckets by
+league key without mixing them with the active league; their presence does not
+promise complete live past-league raw history, which still requires a dump
+restore. Retained buckets continue to consume disk and contribute to logical
+dump size, so the active-only live-access and backup-shrink claims above are
+qualified by this exception. The runbook's
+[Continuous-aggregate data retained](../LEAGUE-SCHEMA-MIGRATION-RUNBOOK.md#continuous-aggregate-data-retained)
+section is normative for the procedure and measured disk/dump cost, including
+the deferral of aggregate deletion pending measurement on a restored dump.
+This exception is separate from POE-317's retained boss observations and does
+not change their ownership, versioning or historical mutation rules.
