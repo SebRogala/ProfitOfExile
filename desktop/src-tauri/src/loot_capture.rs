@@ -634,10 +634,13 @@ mod owner_tests {
             items: RunItems { quantities: selection(&[("Cinderswallow Urn", 1)]), counted: counted(&profile(), &LootSettings::default()) } }
     }
     fn pending(settings: &LootSettings) -> (Mutex<LootOwner>, u64) {
+        pending_with_ocr(settings, &["Serpentine Staff"])
+    }
+    fn pending_with_ocr(settings: &LootSettings, lines: &[&str]) -> (Mutex<LootOwner>, u64) {
         let mut owner = LootOwner::default();
         owner.observe_area(&crate::lab_state::parse_area_change(r#"Generating level 83 area "BetrayalMastermindFight" with seed 42"#).unwrap());
         let id = owner.begin("test".into(), [0, 0, 900, 750], settings, 0).unwrap();
-        owner.finish_ocr(id, vec!["Serpentine Staff".into()], settings, 0);
+        owner.finish_ocr(id, lines.iter().map(|line| (*line).into()).collect(), settings, 0);
         owner.ready(id, None, 1, settings, 0);
         (Mutex::new(owner), id)
     }
@@ -657,6 +660,97 @@ mod owner_tests {
             *self.reads.lock().unwrap() += 1;
             Ok(self.latest.lock().unwrap().clone())
         }
+    }
+    #[tokio::test]
+    async fn deselected_ocr_extras_are_omitted_from_submission() {
+        let s = LootSettings::default();
+        let (owner, id) = pending_with_ocr(&s, &["Serpentine Staff", "Veiled Exalted Orb", "Allflame Ember of Kulemak"]);
+        {
+            let mut o = owner.lock().unwrap();
+            assert_eq!(o.pending.as_ref().unwrap().incoming, selection(&[
+                ("Cane of Kulemak", 1),
+                ("Metadata/Items/Currency/CurrencyRerollRareVeiled", 1),
+                ("Metadata/Items/MapFragments/BetrayalAllflamePack", 1),
+            ]));
+            o.select(id, "category:catarina:1:rare-two-veiled-modifiers", 2, &s, 1).unwrap();
+            for key in ["Metadata/Items/Currency/CurrencyRerollRareVeiled", "Metadata/Items/MapFragments/BetrayalAllflamePack"] {
+                o.select(id, key, 0, &s, 2).unwrap();
+                assert!(!o.pending.as_ref().unwrap().incoming.contains_key(key));
+            }
+            assert_eq!(o.pending.as_ref().unwrap().incoming, selection(&[
+                ("Cane of Kulemak", 1), ("category:catarina:1:rare-two-veiled-modifiers", 2),
+            ]));
+            o.select(id, "category:catarina:1:rare-two-veiled-modifiers", 3, &s, 3).unwrap();
+            assert_eq!(o.pending.as_ref().unwrap().items.quantities, selection(&[
+                ("Cane of Kulemak", 1), ("category:catarina:1:rare-two-veiled-modifiers", 3),
+            ]));
+            o.select(id, "category:catarina:1:rare-two-veiled-modifiers", 0, &s, 4).unwrap();
+            assert_eq!(o.pending.as_ref().unwrap().incoming, selection(&[("Cane of Kulemak", 1)]));
+            assert_eq!(o.pending.as_ref().unwrap().read_lines, ["Serpentine Staff", "Veiled Exalted Orb", "Allflame Ember of Kulemak"]);
+        }
+        let http = Http::default();
+        submit_pending(&owner, &s, &http, 5, true).await;
+        let requests = http.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        let json = serde_json::to_value(&requests[0]).unwrap();
+        assert_eq!(json["items"]["quantities"], serde_json::json!({"Cane of Kulemak": 1}));
+    }
+    #[tokio::test]
+    async fn reselected_ocr_extras_are_included_in_submission() {
+        let s = LootSettings::default();
+        let (owner, id) = pending_with_ocr(&s, &["Serpentine Staff", "Veiled Exalted Orb", "Allflame Ember of Kulemak"]);
+        {
+            let mut o = owner.lock().unwrap();
+            for key in ["Metadata/Items/Currency/CurrencyRerollRareVeiled", "Metadata/Items/MapFragments/BetrayalAllflamePack"] {
+                o.select(id, key, 0, &s, 1).unwrap();
+                assert!(!o.pending.as_ref().unwrap().incoming.contains_key(key));
+                o.select(id, key, 1, &s, 2).unwrap();
+                assert_eq!(o.pending.as_ref().unwrap().incoming.get(key), Some(&1));
+            }
+        }
+        let http = Http::default();
+        submit_pending(&owner, &s, &http, 3, true).await;
+        let requests = http.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        let json = serde_json::to_value(&requests[0]).unwrap();
+        assert_eq!(json["items"]["quantities"], serde_json::json!({
+            "Cane of Kulemak": 1,
+            "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+            "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        }));
+    }
+    #[tokio::test]
+    async fn cleared_ocr_guaranteed_pick_blocks_submission() {
+        let s = LootSettings::default();
+        let (owner, id) = pending(&s);
+        {
+            let mut o = owner.lock().unwrap();
+            o.select(id, "Cane of Kulemak", 0, &s, 1).unwrap();
+            let p = o.pending.as_ref().unwrap();
+            assert!(p.incoming.is_empty());
+            assert_eq!(p.deadline_ms, None);
+            assert_eq!(p.read_lines, ["Serpentine Staff"]);
+        }
+        let http = Http::default();
+        submit_pending(&owner, &s, &http, 2, true).await;
+        assert!(http.requests.lock().unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn replacement_of_ocr_guaranteed_pick_submits_only_replacement() {
+        let s = LootSettings::default();
+        let (owner, id) = pending(&s);
+        {
+            let mut o = owner.lock().unwrap();
+            o.select(id, "Cinderswallow Urn", 1, &s, 1).unwrap();
+            assert_eq!(o.pending.as_ref().unwrap().incoming, selection(&[("Cinderswallow Urn", 1)]));
+            assert_eq!(o.pending.as_ref().unwrap().read_lines, ["Serpentine Staff"]);
+        }
+        let http = Http::default();
+        submit_pending(&owner, &s, &http, 2, true).await;
+        let requests = http.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        let json = serde_json::to_value(&requests[0]).unwrap();
+        assert_eq!(json["items"]["quantities"], serde_json::json!({"Cinderswallow Urn": 1}));
     }
     #[tokio::test]
     async fn expiry_starts_once_and_failure_never_queues() {
