@@ -275,3 +275,36 @@ describe('Runs controller', () => {
 			'Eldritch Chaos Orb': 1, 'Polaric Devastation': 1 })
 	})
 })
+
+	describe('Runs mutation boundaries', () => {
+		it('returns to the previous page after deleting the final row on a page', async () => {
+			const h = await runsHarness()
+			for (let run = 2; run <= 8; run++) h.rows.delete(`fixture-catarina-${run}`)
+			await h.page.loadRuns(8)
+			await h.page.deleteRun('fixture-catarina-1')
+			expect(h.page.runsView?.page).toBe(7)
+			expect(h.page.runsView?.rows.map((row) => row.run)).toEqual([18, 17, 16, 15, 14, 13, 12, 11, 10, 9])
+		})
+		it('preserves the displayed row when the retry of a stale correction is rejected', async () => {
+			const h = await runsHarness()
+			await h.page.loadRuns(8)
+			h.page.beginEdit('fixture-catarina-8')
+			h.page.toggleEditorItem('Cinderswallow Urn')
+			h.rows.get('fixture-catarina-8')!.version = 2
+			const edit = h.deps.runs.edit
+			h.deps.runs.edit = async (request) => {
+				if (request.expectedVersion === 2) throw new Error('changed again')
+				return edit(request)
+			}
+			await h.page.saveEditor()
+			expect(h.page.runsView?.rows[0].unique.map((item) => item.id)).toEqual(['Cane of Kulemak'])
+			expect(h.page.runMutationError).toContain('changed again')
+		})
+		it('loads owned Runs while the separate statistics source is unreachable', async () => {
+			const h = await runsHarness()
+			h.deps.stats.load = async () => { throw new Error('stats offline') }
+			await h.page.selectScope('collective')
+			await h.page.loadRuns(8)
+			expect(h.page.runsView?.range).toBe('Runs 8–1 of 78, newest first')
+		})
+	})
