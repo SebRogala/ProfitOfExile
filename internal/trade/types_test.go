@@ -75,3 +75,22 @@ func TestBuildResult_JSONIncludesTradePrice(t *testing.T) {
 		t.Errorf("JSON medianTop3 = %v, want 50", price)
 	}
 }
+
+func TestBuildResultCarriesLeague(t *testing.T) {
+	for _, queryID := range []string{"", "query"} {
+		t.Run(queryID, func(t *testing.T) {
+			result := BuildResult("Arc", "20/20", "New League", SearchResponse{QueryID: queryID}, nil, 0)
+			data, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(data, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if fields["league"] != "New League" {
+				t.Fatalf("serialized league = %v, want New League", fields["league"])
+			}
+		})
+	}
+}

@@ -145,3 +145,25 @@ func TestDataLockKeySeparatesLeagues(t *testing.T) {
 		t.Errorf("data lock keys collide for distinct leagues: %d", mirage)
 	}
 }
+
+func TestScopeAdmit(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		scope Scope
+		claim string
+		want  error
+	}{
+		{"match", Historical("New League"), "New League", nil},
+		{"mismatch", Historical("New League"), "Old League", ErrLeagueMismatch},
+		{"absent", Historical("New League"), "", ErrLeagueAbsent},
+		{"exact name", Historical("New League"), "new league", ErrLeagueMismatch},
+		{"uninitialized", Scope{}, "New League", ErrUnscoped},
+		{"uninitialized absent", Scope{}, "", ErrUnscoped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.scope.Admit(tc.claim); !errors.Is(err, tc.want) {
+				t.Fatalf("Admit(%q) = %v, want %v", tc.claim, err, tc.want)
+			}
+		})
+	}
+}

@@ -47,6 +47,7 @@ type GateResponse struct {
 
 // TradeLookupResult is the API response for a single gem+variant trade lookup.
 type TradeLookupResult struct {
+	League       string               `json:"league,omitempty"`
 	Gem          string               `json:"gem"`
 	Variant      string               `json:"variant"`
 	Total        int                  `json:"total"`
@@ -187,6 +188,7 @@ func BuildResult(gem, variant, league string, sr SearchResponse, listings []Trad
 	}
 
 	result := &TradeLookupResult{
+		League:      league,
 		Gem:         gem,
 		Variant:     variant,
 		Total:       sr.Total,

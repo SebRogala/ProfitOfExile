@@ -15,6 +15,9 @@ import (
 // failing.
 var ErrUnscoped = errors.New("league scope is not set")
 
+var ErrLeagueAbsent = errors.New("league identity is absent")
+var ErrLeagueMismatch = errors.New("league identity does not match scope")
+
 // Scope identifies a league and the configuration revision that selected it.
 // Its fields are private so callers can obtain a scope only through Resolve or
 // Historical.
@@ -28,6 +31,20 @@ type Scope struct {
 func (s Scope) Validate() error {
 	if s.id == "" {
 		return ErrUnscoped
+	}
+	return nil
+}
+
+// Admit checks a client's captured league against this process's scope.
+func (s Scope) Admit(claimed string) error {
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	if claimed == "" {
+		return ErrLeagueAbsent
+	}
+	if claimed != s.id {
+		return ErrLeagueMismatch
 	}
 	return nil
 }

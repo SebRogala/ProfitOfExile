@@ -500,7 +500,7 @@ func TestTradeSubmit_UnknownNameNeverReachesCacheOrPersistence(t *testing.T) {
 	})
 	for _, gem := range []string{"Junk of 1", "Junk of 2", "Junk of 3", "Junk of 4", "Junk of 5"} {
 		w := submitValidationRequest(t, handler, trade.TradeLookupResult{
-			Gem: gem, Variant: "20/20", FetchedAt: time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
+			League: "Mirage", Gem: gem, Variant: "20/20", FetchedAt: time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
 		})
 		var body map[string]string
 		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
@@ -530,7 +530,7 @@ func TestTradeSubmit_KnownNameReachesCacheAndPersistence(t *testing.T) {
 				now: func() time.Time { return now },
 			})
 			w := submitValidationRequest(t, handler, trade.TradeLookupResult{
-				Gem: gem, Variant: "20/20", Total: 1, PriceFloor: 42, FetchedAt: now.Add(-time.Minute),
+				League: "Mirage", Gem: gem, Variant: "20/20", Total: 1, PriceFloor: 42, FetchedAt: now.Add(-time.Minute),
 				Listings: []trade.TradeListingDetail{{ChaosPrice: 42}},
 			})
 			cached, ok := cache.Get(trade.CacheKey(gem, "20/20"))
@@ -552,7 +552,7 @@ func TestTradeSubmit_InvalidVariantNeverReachesCacheOrPersistence(t *testing.T) 
 		persisted++
 		return true
 	}, tradeSubmitOptions{dictionary: warmTradeDictionary()})
-	w := submitValidationRequest(t, handler, trade.TradeLookupResult{Gem: "Arc", Variant: "20/20junk"})
+	w := submitValidationRequest(t, handler, trade.TradeLookupResult{League: "Mirage", Gem: "Arc", Variant: "20/20junk"})
 	var body map[string]string
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode variant rejection: %v", err)
@@ -576,7 +576,7 @@ func TestTradeSubmit_ColdDictionaryAllowsContribution(t *testing.T) {
 			dictionary: dictionary,
 			checker:    func(context.Context, league.Scope, string) (bool, error) { return false, nil },
 		})
-		w := submitValidationRequest(t, handler, trade.TradeLookupResult{Gem: "Unknown at startup", Variant: "20/20"})
+		w := submitValidationRequest(t, handler, trade.TradeLookupResult{League: "Mirage", Gem: "Unknown at startup", Variant: "20/20"})
 		cached, ok := cache.Get(trade.CacheKey("Unknown at startup", "20/20"))
 		if w.Code != http.StatusNoContent || !ok || cached.Gem != "Unknown at startup" || persisted != 1 {
 			t.Fatalf("cold dictionary: status=%d cached=%+v persisted=%d, want accepted contribution", w.Code, cached, persisted)
@@ -608,7 +608,7 @@ func TestTradeSubmit_TimestampClamping(t *testing.T) {
 				persisted = &snapshot
 				return true
 			}, tradeSubmitOptions{dictionary: warmTradeDictionary(), now: func() time.Time { return now }})
-			w := submitValidationRequest(t, handler, trade.TradeLookupResult{Gem: "Spark of Nova", Variant: "20/20", FetchedAt: tc.fetchedAt})
+			w := submitValidationRequest(t, handler, trade.TradeLookupResult{League: "Mirage", Gem: "Spark of Nova", Variant: "20/20", FetchedAt: tc.fetchedAt})
 			cached, ok := cache.Get(trade.CacheKey("Spark of Nova", "20/20"))
 			if w.Code != http.StatusNoContent || !ok || !cached.FetchedAt.Equal(tc.want) || persisted == nil || !persisted.FetchedAt.Equal(tc.want) {
 				t.Fatalf("status=%d cached=%+v persisted=%+v, want timestamp %v in both writes", w.Code, cached, persisted, tc.want)
@@ -629,7 +629,7 @@ func TestTradeSubmit_AncientTimestampDoesNotLeadStalePicker(t *testing.T) {
 		dictionary: warmTradeDictionary(), now: func() time.Time { return now },
 	})
 	w := submitValidationRequest(t, handler, trade.TradeLookupResult{
-		Gem: "Spark of Nova", Variant: "20/20", FetchedAt: now.Add(-24 * time.Hour),
+		League: "Mirage", Gem: "Spark of Nova", Variant: "20/20", FetchedAt: now.Add(-24 * time.Hour),
 	})
 	key, ok := cache.OldestStale(5*time.Minute, nil)
 	if w.Code != http.StatusNoContent || !ok || key != otherKey {
@@ -659,12 +659,105 @@ func TestTradeSubmit_PublicHandlerUsesDictionary(t *testing.T) {
 	cache := trade.NewTradeCache(10, scope)
 	handler := TradeSubmit(cache, nil, scope, warmTradeDictionary(),
 		func(context.Context, league.Scope, string) (bool, error) { return false, nil })
-	w := submitValidationRequest(t, handler, trade.TradeLookupResult{Gem: "Junk of public", Variant: "20/20"})
+	w := submitValidationRequest(t, handler, trade.TradeLookupResult{League: "Mirage", Gem: "Junk of public", Variant: "20/20"})
 	var body map[string]string
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode public-handler rejection: %v", err)
 	}
 	if w.Code != http.StatusBadRequest || body["error"] != "unknown gem name" || cache.Len() != 0 {
 		t.Fatalf("status=%d body=%v cache=%v, want public handler to reject the unknown name", w.Code, body, cache.GetSnapshot())
+	}
+}
+
+func TestTradeSubmit_LeagueAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name, claim, tradeURL string
+		status                int
+	}{
+		{"explicit match", "New League", "", 204},
+		{"explicit wins stale URL", "New League", "https://www.pathofexile.com/trade/search/Old/abc", 204},
+		{"explicit mismatch", "Old", "", 409},
+		{"explicit mismatch wins matching URL", "Old", "https://www.pathofexile.com/trade/search/New%20League/abc", 409},
+		{"legacy escaped", "", "https://www.pathofexile.com/trade/search/New%20League/abc", 204},
+		{"legacy raw", "", "https://www.pathofexile.com/trade/search/New League/abc", 204},
+		{"legacy mismatch", "", "https://www.pathofexile.com/trade/search/Old/abc", 409},
+		{"legacy decoded once", "", "https://www.pathofexile.com/trade/search/New%2520League/abc", 409},
+		{"absent zero result", "", "", 400},
+		{"malformed fallback", "", "https://www.pathofexile.com/trade/search/New%ZZLeague/abc", 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scope := league.Historical("New League")
+			cache := trade.NewTradeCache(10, scope)
+			key := trade.CacheKey("Empower Support", "20/20")
+			cache.Set(key, &trade.TradeLookupResult{Gem: "Empower Support", Variant: "20/20", PriceFloor: 17})
+			before, _ := json.Marshal(cache.GetSnapshot())
+			var queued []*trade.TradeLookupResult
+			checks := 0
+			dictionary := lab.NewCache(scope)
+			dictionary.SetGemDictionary([]string{"Arc"}, []string{"Spark of Nova"})
+			handler := tradeSubmitHandler(cache, scope, func(_ context.Context, result *trade.TradeLookupResult) bool {
+				queued = append(queued, result)
+				return true
+			}, tradeSubmitOptions{dictionary: dictionary, checker: func(context.Context, league.Scope, string) (bool, error) {
+				checks++
+				return true, nil
+			}})
+			w := submitValidationRequest(t, handler, trade.TradeLookupResult{
+				League: tc.claim, TradeURL: tc.tradeURL, Gem: "Empower Support", Variant: "20/20", PriceFloor: 42,
+			})
+			if w.Code != tc.status {
+				t.Fatalf("status=%d body=%s, want %d", w.Code, w.Body.String(), tc.status)
+			}
+			if tc.status != 204 {
+				want := "{\"error\":\"league_absent\"}\n"
+				if tc.status == 409 {
+					want = "{\"error\":\"league_mismatch\",\"league\":\"New League\"}\n"
+				}
+				if w.Body.String() != want {
+					t.Fatalf("body=%q, want %q", w.Body.String(), want)
+				}
+				after, _ := json.Marshal(cache.GetSnapshot())
+				if string(after) != string(before) || len(queued) != 0 || checks != 0 {
+					t.Fatalf("rejected contribution changed cache: before=%s after=%s queued=%d dictionary=%d", before, after, len(queued), checks)
+				}
+				return
+			}
+			cached, ok := cache.Get(key)
+			if !ok || cached.League != "New League" || cached.PriceFloor != 42 || len(queued) != 1 || queued[0].League != "New League" || checks != 1 || w.Body.Len() != 0 {
+				t.Fatalf("accepted identity: cached=%+v queued=%+v checks=%d body=%s", cached, queued, checks, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestTradeSubmit_UninitializedScopeRefusesContribution(t *testing.T) {
+	queued := 0
+	handler := tradeSubmitHandler(nil, league.Scope{}, func(context.Context, *trade.TradeLookupResult) bool {
+		queued++
+		return true
+	}, tradeSubmitOptions{})
+	w := submitValidationRequest(t, handler, trade.TradeLookupResult{League: "Mirage", Gem: "Arc", Variant: "20/20"})
+	if w.Code != http.StatusServiceUnavailable || w.Body.String() != "{\"error\":\"league_unavailable\"}\n" || queued != 0 {
+		t.Fatalf("status=%d body=%s queued=%d, want unavailable before enqueue", w.Code, w.Body.String(), queued)
+	}
+}
+
+func TestTradeSubmit_AdmittedDictionaryFailurePreservesCache(t *testing.T) {
+	scope := league.Historical("Mirage")
+	cache := trade.NewTradeCache(10, scope)
+	key := trade.CacheKey("Empower Support", "20/20")
+	cache.Set(key, &trade.TradeLookupResult{Gem: "Empower Support", Variant: "20/20", PriceFloor: 17})
+	before, _ := json.Marshal(cache.GetSnapshot())
+	queued := 0
+	handler := tradeSubmitHandler(cache, scope, func(context.Context, *trade.TradeLookupResult) bool {
+		queued++
+		return true
+	}, tradeSubmitOptions{dictionary: warmTradeDictionary(), checker: func(context.Context, league.Scope, string) (bool, error) {
+		return false, context.DeadlineExceeded
+	}})
+	w := submitValidationRequest(t, handler, trade.TradeLookupResult{League: "Mirage", Gem: "Empower Support", Variant: "20/20", PriceFloor: 42})
+	after, _ := json.Marshal(cache.GetSnapshot())
+	if w.Code != http.StatusServiceUnavailable || w.Body.String() != "{\"error\":\"gem dictionary unavailable\"}\n" || queued != 0 || string(before) != string(after) {
+		t.Fatalf("status=%d body=%s queued=%d before=%s after=%s, want dictionary failure before writes", w.Code, w.Body.String(), queued, before, after)
 	}
 }

@@ -28,6 +28,7 @@ func submitRouter(cache *trade.TradeCache, repo *trade.Repository) http.Handler 
 // validSubmitBody returns a JSON string representing a valid TradeLookupResult.
 func validSubmitBody(gem, variant string) string {
 	result := trade.TradeLookupResult{
+		League:       "Mirage",
 		Gem:          gem,
 		Variant:      variant,
 		Total:        15,
@@ -110,32 +111,32 @@ func TestTradeSubmit_MissingFields(t *testing.T) {
 	}{
 		{
 			name:      "missing gem (empty string)",
-			body:      `{"gem":"","variant":"21/20","total":1,"priceFloor":10,"listings":[],"signals":{"sellerConcentration":"NORMAL","cheapestStaleness":"FRESH","priceOutlier":false,"uniqueAccounts":0},"divinePrice":212,"tradeUrl":"","fetchedAt":"2026-03-29T00:00:00Z"}`,
+			body:      `{"league":"Mirage","gem":"","variant":"21/20","total":1,"priceFloor":10,"listings":[],"signals":{"sellerConcentration":"NORMAL","cheapestStaleness":"FRESH","priceOutlier":false,"uniqueAccounts":0},"divinePrice":212,"tradeUrl":"","fetchedAt":"2026-03-29T00:00:00Z"}`,
 			wantError: "gem and variant are required",
 		},
 		{
 			name:      "missing variant (empty string)",
-			body:      `{"gem":"Vaal Grace","variant":"","total":1,"priceFloor":10,"listings":[],"signals":{"sellerConcentration":"NORMAL","cheapestStaleness":"FRESH","priceOutlier":false,"uniqueAccounts":0},"divinePrice":212,"tradeUrl":"","fetchedAt":"2026-03-29T00:00:00Z"}`,
+			body:      `{"league":"Mirage","gem":"Vaal Grace","variant":"","total":1,"priceFloor":10,"listings":[],"signals":{"sellerConcentration":"NORMAL","cheapestStaleness":"FRESH","priceOutlier":false,"uniqueAccounts":0},"divinePrice":212,"tradeUrl":"","fetchedAt":"2026-03-29T00:00:00Z"}`,
 			wantError: "gem and variant are required",
 		},
 		{
 			name:      "both gem and variant empty",
-			body:      `{"gem":"","variant":"","total":1}`,
+			body:      `{"league":"Mirage","gem":"","variant":"","total":1}`,
 			wantError: "gem and variant are required",
 		},
 		{
-			name:      "missing fields entirely (empty object)",
-			body:      `{}`,
+			name:      "missing gem and variant fields",
+			body:      `{"league":"Mirage"}`,
 			wantError: "gem and variant are required",
 		},
 		{
 			name:      "gem too long (>200 chars)",
-			body:      `{"gem":"` + strings.Repeat("x", 201) + `","variant":"21/20","total":1,"priceFloor":10,"listings":[],"signals":{"sellerConcentration":"NORMAL","cheapestStaleness":"FRESH","priceOutlier":false,"uniqueAccounts":0},"divinePrice":212,"tradeUrl":"","fetchedAt":"2026-03-29T00:00:00Z"}`,
+			body:      `{"league":"Mirage","gem":"` + strings.Repeat("x", 201) + `","variant":"21/20","total":1,"priceFloor":10,"listings":[],"signals":{"sellerConcentration":"NORMAL","cheapestStaleness":"FRESH","priceOutlier":false,"uniqueAccounts":0},"divinePrice":212,"tradeUrl":"","fetchedAt":"2026-03-29T00:00:00Z"}`,
 			wantError: "gem or variant too long",
 		},
 		{
 			name:      "variant too long (>20 chars)",
-			body:      `{"gem":"Vaal Grace","variant":"` + strings.Repeat("x", 21) + `","total":1,"priceFloor":10,"listings":[],"signals":{"sellerConcentration":"NORMAL","cheapestStaleness":"FRESH","priceOutlier":false,"uniqueAccounts":0},"divinePrice":212,"tradeUrl":"","fetchedAt":"2026-03-29T00:00:00Z"}`,
+			body:      `{"league":"Mirage","gem":"Vaal Grace","variant":"` + strings.Repeat("x", 21) + `","total":1,"priceFloor":10,"listings":[],"signals":{"sellerConcentration":"NORMAL","cheapestStaleness":"FRESH","priceOutlier":false,"uniqueAccounts":0},"divinePrice":212,"tradeUrl":"","fetchedAt":"2026-03-29T00:00:00Z"}`,
 			wantError: "gem or variant too long",
 		},
 	}
@@ -291,6 +292,7 @@ func TestTradeSubmit_OverwritesExistingCacheEntry(t *testing.T) {
 
 	// Submit updated result with different price.
 	updated := trade.TradeLookupResult{
+		League:       "Mirage",
 		Gem:          gem,
 		Variant:      variant,
 		Total:        25,

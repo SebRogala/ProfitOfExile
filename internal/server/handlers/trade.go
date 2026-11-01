@@ -212,6 +212,15 @@ func tradeSubmitHandler(cache *trade.TradeCache, scope league.Scope, enqueue fun
 			return
 		}
 
+		claimed := result.League
+		if claimed == "" {
+			claimed = trade.LeagueFromTradeURL(result.TradeURL)
+		}
+		if !admitLeague(w, scope, claimed) {
+			return
+		}
+		result.League = claimed
+
 		if !validateTradeInput(w, r, scope, opts.dictionary, opts.checker, result.Gem, result.Variant) {
 			return
 		}
