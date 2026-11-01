@@ -25,7 +25,7 @@ describe('Results', () => {
 		const view = buildResultsView({ ...await input(), sort: 'name' })
 		expect(view.groups.map((group) => group.items.map((item) => item.name))).toEqual([
 			['Bitterbind Point', 'Cane of Kulemak', 'Cinderswallow Urn', 'The Devouring Diadem', "The Queen's Hunger", 'Spinehail'],
-			['Allflame Ember of Kulemak', 'Communion Support', "Keeper's Corruption", "Nook's Crown", 'Rare, two veiled modifiers', 'Templar Astrolabe', 'Veiled Exalted Orb', "Zorath's Eye of the Endless"]
+			['Allflame Ember of Kulemak', 'Communion Support', "Keeper's Corruption", "Nook's Crown", 'Veiled Exalted Orb', "Zorath's Eye of the Endless"]
 		])
 	})
 	it('does not partition currently not-counted rows when sorting rates', async () => {
@@ -35,8 +35,8 @@ describe('Results', () => {
 		expect(rows[0]).toMatchObject({ name: "Zorath's Eye of the Endless", disabled: true, rate: '—', drops: null })
 	})
 	it('breaks tied rates by item name', async () => {
-		expect(buildResultsView(await input()).groups[1].items.slice(-3).map((item) => item.name))
-			.toEqual(["Keeper's Corruption", "Nook's Crown", 'Rare, two veiled modifiers'])
+		expect(buildResultsView(await input()).groups[1].items.slice(-2).map((item) => item.name))
+			.toEqual(["Keeper's Corruption", "Nook's Crown"])
 	})
 	for (const scope of ['own', 'collective'] as const) {
 		it(`shows mixed eligible provenance for ${scope}`, async () => {
@@ -90,13 +90,13 @@ describe('CSV', () => {
 		const run: StoredRun = { ...profile, id: 'row', league: 'test', run: 8, date: null, seed: null,
 			version: 1, items: { quantities: { 'Cane of Kulemak': 1, 'Communion Support': 3 }, counted: [] } }
 		const csv = runsCsv(profile, [run])
-		expect(csv.split('\r\n')[0]).toBe('Run,Date,Cinderswallow Urn,Spinehail,Cane of Kulemak,The Devouring Diadem,Bitterbind Point,The Queen\'s Hunger,Zorath\'s Eye of the Endless,Veiled Exalted Orb,Allflame Ember of Kulemak,Communion Support,Templar Astrolabe,Nook\'s Crown,Keeper\'s Corruption,"Rare, two veiled modifiers"')
+		expect(csv.split('\r\n')[0]).toBe('Run,Date,Cinderswallow Urn,Spinehail,Cane of Kulemak,The Devouring Diadem,Bitterbind Point,The Queen\'s Hunger,Zorath\'s Eye of the Endless,Veiled Exalted Orb,Allflame Ember of Kulemak,Communion Support,Nook\'s Crown,Keeper\'s Corruption')
 	})
 	it('exports hidden historical quantities independently of current eligibility', async () => {
 		const { profile } = await input()
 		const run: StoredRun = { ...profile, id: 'row', league: 'test', run: 8, date: null, seed: null,
 			version: 1, items: { quantities: { 'Cane of Kulemak': 1, 'Communion Support': 3 }, counted: [] } }
-		expect(runsCsv(profile, [run]).split('\r\n')[1]).toBe('8,,0,0,1,0,0,0,0,0,0,3,0,0,0,0')
+		expect(runsCsv(profile, [run]).split('\r\n')[1]).toBe('8,,0,0,1,0,0,0,0,0,0,3,0,0')
 	})
 })
 
@@ -123,10 +123,10 @@ describe('Runs projection', () => {
 		expect(view.first).toBe(false)
 		expect(view.last).toBe(true)
 	})
-	it('retains four additional chips for fixture run six', async () => {
+	it('shows only current additional chips for fixture run six', async () => {
 		const { profile, runs } = await runInput(8)
 		expect(buildRunsView(profile, runs).rows.find((row) => row.run === 6)?.extra.map((item) => item.name))
-			.toEqual(["Zorath's Eye of the Endless", 'Veiled Exalted Orb', 'Allflame Ember of Kulemak', 'Templar Astrolabe'])
+			.toEqual(["Zorath's Eye of the Endless", 'Veiled Exalted Orb', 'Allflame Ember of Kulemak'])
 	})
 	it('renders a null historical date as no date', async () => {
 		const { profile, runs } = await runInput()
@@ -156,6 +156,17 @@ describe('Runs projection', () => {
 })
 
 describe('Runs editor projection', () => {
+	it.each(['Metadata/Items/Currency/AstrolabeGeneric', 'category:catarina:1:rare-two-veiled-modifiers'])(
+		'preserves removed key %s outside the editable rows', async (key) => {
+			const { profile, runs } = await runInput(8)
+			const run = runs.items[0]
+			run.items.quantities[key] = 2
+			run.items.counted.push(key)
+			const view = buildRunEditor(profile, run, [], { 'Cane of Kulemak': 0, 'Cinderswallow Urn': 1 })
+			expect(view.extra.map((item) => item.id)).not.toContain(key)
+			expect(view.request.items.quantities[key]).toBe(2)
+			expect(view.request.items.counted).toContain(key)
+		})
 	it('hides a currently excluded Eye without changing its historical quantity', async () => {
 		const { profile, runs } = await runInput(8)
 		const view = buildRunEditor(profile, runs.items[0], [profile.extra[0].id], { 'Cane of Kulemak': 0, 'Cinderswallow Urn': 1 })
@@ -195,7 +206,7 @@ describe('Settings projection', () => {
 		const settings = await createFixtureModuleSettings(source.moduleSettings).load()
 		expect(buildSettingsView(profile, settings).notCounted.map((item) => [item.name, item.checked])).toEqual([
 			["Zorath's Eye of the Endless", false], ['Veiled Exalted Orb', false], ['Allflame Ember of Kulemak', false],
-			['Communion Support', true], ['Templar Astrolabe', false], ["Nook's Crown", false], ["Keeper's Corruption", false]
+			['Communion Support', true], ["Nook's Crown", false], ["Keeper's Corruption", false]
 		])
 	})
 })

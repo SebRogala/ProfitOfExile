@@ -4,6 +4,8 @@ import { createFixtureCapture, createFixtureModuleSettings, createFixtureProfile
 import type { BossStats, LootLayout, StatsScope, SubmitOutcome } from './contracts'
 import { buildOverlayView, changeSelection, type OverlayInput } from './overlay-view'
 
+const manualCategory = { id: 'category:test:1:manual', name: 'Manual category', base: 'any equipment', wikiRate: '—' }
+
 async function input(layout: LootLayout = 'grid', scope: StatsScope = 'own'): Promise<OverlayInput & { stats: BossStats }> {
 	const [profile] = await createFixtureProfiles(source.profiles).load()
 	return {
@@ -117,8 +119,16 @@ it('shows a stepper only for a selected quantity item', async () => {
 	const view = buildOverlayView(state)
 	expect(view.extra.filter((item) => item.showQuantity).map((item) => item.quantity)).toEqual([1, 3])
 })
+it('omits removed Catarina entries from the overlay', async () => {
+	expect(buildOverlayView(await input()).extra.map((item) => item.name)).toEqual([
+		"Zorath's Eye of the Endless", 'Veiled Exalted Orb', 'Allflame Ember of Kulemak',
+		'Communion Support', "Nook's Crown", "Keeper's Corruption"
+	])
+})
 it('always shows the category stepper at zero', async () => {
-	expect(buildOverlayView(await input()).extra.at(-1)).toMatchObject({ category: true, showQuantity: true, quantity: 0 })
+	const state = await input()
+	state.profile.categories = [manualCategory]
+	expect(buildOverlayView(state).extra.at(-1)).toMatchObject({ category: true, showQuantity: true, quantity: 0 })
 })
 it.each([
 	[{ state: 'saving' }, 'Saving', ''],
@@ -173,7 +183,8 @@ it('rejects a disabled item selection', async () => {
 })
 it('floors decremented quantities at zero', async () => {
 	const state = await input()
-	const id = state.profile.categories[0].id
+	const id = manualCategory.id
+	state.profile.categories = [manualCategory]
 	expect(changeSelection(state.profile, state.capture, [], { type: 'quantity', id, delta: -1 }).categories[id]).toBe(0)
 })
 it('ignores an unknown item action', async () => {

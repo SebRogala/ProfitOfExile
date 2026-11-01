@@ -241,6 +241,14 @@ mod tests {
     }
 
     #[test]
+    fn removed_catarina_entries_stay_unknown() {
+        let profile = &built_in_profiles()[0];
+        for text in ["Templar Astrolabe", "Rare, two veiled modifiers"] {
+            assert_eq!(profile.match_line(text), LineMatch::Unknown, "{text}");
+        }
+    }
+
+    #[test]
     fn old_suffix_category_fragment_matches_stay_unknown() {
         let profile = fixture_profile("catarina");
         for text in ["Flask", "Granite Flask", "Staff", "Other Serpentine Staff", "TANIUM SPIRI", "ALLFLAME EMBER", "ZORATHS EYE", "SUPPORT", "Rare, two veiled modifiers"] {
@@ -324,9 +332,13 @@ mod tests {
 
     #[test]
     fn manual_categories_allow_multiple_items() {
+        let mut profile = fixture_profile("catarina");
+        let mut category = item("Manual category", "any equipment", "—");
+        category.id = "category:test:1:manual".into();
+        profile.categories.push(category);
         let selection = [("Cane of Kulemak".into(), 1),
-            ("category:catarina:1:rare-two-veiled-modifiers".into(), 4)].into_iter().collect();
-        assert_eq!(fixture_profile("catarina").validate_selection(&selection), Ok(()));
+            ("category:test:1:manual".into(), 4)].into_iter().collect();
+        assert_eq!(profile.validate_selection(&selection), Ok(()));
     }
 
     #[test]
@@ -387,8 +399,6 @@ fn catarina() -> LootProfile {
     };
     let mut communion = item("Communion Support", "Support gem", "10%");
     communion.not_counted_default = true;
-    let mut category = item("Rare, two veiled modifiers", "any rare equipment", "—");
-    category.id = "category:catarina:1:rare-two-veiled-modifiers".into();
     LootProfile {
         boss: "catarina".into(), name: "Catarina".into(),
         full_name: "Catarina, Master of Undeath".into(), key: "Normal".into(), version: 1,
@@ -409,11 +419,10 @@ fn catarina() -> LootProfile {
             catalogue_item("Metadata/Items/Currency/CurrencyRerollRareVeiled", "Currency", "25%"),
             catalogue_item("Metadata/Items/MapFragments/BetrayalAllflamePack", "Allflame Ember", "60%"),
             communion,
-            catalogue_item("Metadata/Items/Currency/AstrolabeGeneric", "Astrolabe", "—"),
             catalogue_item("Metadata/Items/DivinationCards/DivinationCardNooksCrown", "Divination card", "<0.5%"),
             catalogue_item("Metadata/Items/DivinationCards/DivinationCardKeepersCorruption", "Divination card", "—"),
         ],
-        categories: vec![category],
+        categories: vec![],
     }
 }
 

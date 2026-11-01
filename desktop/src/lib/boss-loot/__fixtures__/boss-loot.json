@@ -101,12 +101,6 @@
      "notCountedDefault": true
     },
     {
-     "id": "astrolabe",
-     "name": "Templar Astrolabe",
-     "base": "Astrolabe",
-     "wikiRate": "—"
-    },
-    {
      "id": "nooks",
      "name": "Nook's Crown",
      "base": "Divination card",
@@ -119,15 +113,7 @@
      "wikiRate": "—"
     }
    ],
-   "categories": [
-    {
-     "id": "rareveiled",
-     "name": "Rare, two veiled modifiers",
-     "base": "any rare equipment",
-     "wikiRate": "—",
-     "_note": "category tile: counted by hand, OCR cannot read mods"
-    }
-   ]
+   "categories": []
   }
  },
  "testProfiles": {

@@ -673,19 +673,10 @@ mod owner_tests {
                 ("Metadata/Items/Currency/CurrencyRerollRareVeiled", 1),
                 ("Metadata/Items/MapFragments/BetrayalAllflamePack", 1),
             ]));
-            o.select(id, "category:catarina:1:rare-two-veiled-modifiers", 2, &s, 1).unwrap();
             for key in ["Metadata/Items/Currency/CurrencyRerollRareVeiled", "Metadata/Items/MapFragments/BetrayalAllflamePack"] {
                 o.select(id, key, 0, &s, 2).unwrap();
                 assert!(!o.pending.as_ref().unwrap().incoming.contains_key(key));
             }
-            assert_eq!(o.pending.as_ref().unwrap().incoming, selection(&[
-                ("Cane of Kulemak", 1), ("category:catarina:1:rare-two-veiled-modifiers", 2),
-            ]));
-            o.select(id, "category:catarina:1:rare-two-veiled-modifiers", 3, &s, 3).unwrap();
-            assert_eq!(o.pending.as_ref().unwrap().items.quantities, selection(&[
-                ("Cane of Kulemak", 1), ("category:catarina:1:rare-two-veiled-modifiers", 3),
-            ]));
-            o.select(id, "category:catarina:1:rare-two-veiled-modifiers", 0, &s, 4).unwrap();
             assert_eq!(o.pending.as_ref().unwrap().incoming, selection(&[("Cane of Kulemak", 1)]));
             assert_eq!(o.pending.as_ref().unwrap().read_lines, ["Serpentine Staff", "Veiled Exalted Orb", "Allflame Ember of Kulemak"]);
         }

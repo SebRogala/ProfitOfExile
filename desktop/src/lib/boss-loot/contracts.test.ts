@@ -100,24 +100,24 @@ describe('original fixture meanings', () => {
 		expect(profiles[2].capture?.extra).toEqual({ 'The Eternal Struggle': 1, 'Grand Eldritch Ember': 3, 'Eldritch Chaos Orb': 1 })
 	})
 
-	it('maps the six catalogue-backed item ids', async () => {
+	it('maps the current Catarina additional item ids', async () => {
 		const [catarina] = await createFixtureProfiles(source.profiles).load()
 		expect(catarina.extra.map((item) => item.id)).toEqual([
 			eye, 'Metadata/Items/Currency/CurrencyRerollRareVeiled',
 			'Metadata/Items/MapFragments/BetrayalAllflamePack', 'Communion Support',
-			'Metadata/Items/Currency/AstrolabeGeneric', 'Metadata/Items/DivinationCards/DivinationCardNooksCrown',
+			'Metadata/Items/DivinationCards/DivinationCardNooksCrown',
 			'Metadata/Items/DivinationCards/DivinationCardKeepersCorruption'
 		])
 	})
 
-	it('qualifies category keys by profile version', async () => {
+	it('ships Catarina without manual categories', async () => {
 		const [catarina] = await createFixtureProfiles(source.profiles).load()
-		expect(catarina.categories[0].id).toBe('category:catarina:1:rare-two-veiled-modifiers')
+		expect(catarina.categories).toEqual([])
 	})
 
 	it('preserves wiki text without parsing it', async () => {
 		const [catarina] = await createFixtureProfiles(source.profiles).load()
-		expect(catarina.extra.map((item) => item.wikiRate)).toEqual(['~50%', '25%', '60%', '10%', '—', '<0.5%', '—'])
+		expect(catarina.extra.map((item) => item.wikiRate)).toEqual(['~50%', '25%', '60%', '10%', '<0.5%', '—'])
 	})
 
 	it('retains the seed as the original string', async () => {

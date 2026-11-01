@@ -12,7 +12,7 @@ type FixtureProfile = {
 	groups: GuaranteedGroup[]; extra: LootItem[]; categories: LootItem[]; capture?: LootSelection
 }
 
-/** Fixture aliases stop here; catalogue ids follow the plan's six source records. */
+/** Fixture aliases stop here. Removed profile keys remain for historical runs and stats. */
 const CATARINA_KEYS: Record<string, string> = {
 	urn: 'Cinderswallow Urn',
 	spinehail: 'Spinehail',
