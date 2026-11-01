@@ -75,7 +75,7 @@
 	.failed { border-color: var(--color-lab-red); }
 	header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 10px 12px 8px; border-bottom: 1px solid var(--color-lab-border); }
 	.identity { min-width: 0; }
-	.title { font-size: 13px; font-weight: 700; }
+	.title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; font-weight: 700; }
 	.profile-key, .badge { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 8px; font-size: 11px; line-height: 16px; }
 	.profile-key { background: var(--loot-tag); color: var(--color-lab-text-secondary); }
 	.zone { margin-top: 2px; color: var(--color-lab-text-secondary); font-size: 11px; overflow-wrap: anywhere; }

@@ -59,6 +59,9 @@
 	.placeholder { border: 1px dashed var(--color-lab-text-muted); border-radius: 4px; color: var(--color-lab-text-secondary); font-size: 10px; }
 	.name { font-size: 11px; line-height: 13px; max-height: 39px; overflow: hidden; }
 	.rate { color: var(--color-lab-text-secondary); font-size: 11px; }
+	/* Match the rate's line box: the tooltip wrapper otherwise inherits 12px
+	   and adds a pixel to each Grid row (measured against the overlay prototype). */
+	.hit :global(.tooltip-wrap) { font-size: 11px; }
 	.rate b { font: 600 11px 'Consolas', 'Monaco', monospace; color: var(--color-lab-text); }
 	.tag { position: absolute; top: 3px; left: 3px; padding: 0 3px; border-radius: 3px; color: var(--color-lab-text-secondary); background: var(--loot-tag); font-size: 10px; line-height: 12px; }
 	.question, .not-counted { color: var(--color-lab-yellow); background: var(--loot-warning); }
