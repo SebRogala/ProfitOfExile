@@ -21,6 +21,7 @@
  * seam's `divineChaosRate` stand in.
  */
 import { listen } from '@tauri-apps/api/event';
+import { onLeagueChange, ssot } from '$lib/stores/ssot.svelte';
 import { refetchDelay, type CurrencyExchangeHorizon } from '$lib/exchange/view';
 import { persisted, type PersistedString } from '$lib/prefs.svelte';
 import { currentDivineRate } from '$lib/stores/divine-rate.svelte';
@@ -149,12 +150,13 @@ export function createHarvestController(
 		const asked = horizon;
 		requested = asked;
 		const families = dependencies.loadHarvestFamilies(asked, generation).then((read) => {
-			if (generation === loadGeneration && harvest === null) harvest = read;
+			if (generation === loadGeneration && harvest === null && ssot.league === null) harvest = read;
 			return read;
 		});
 		try {
 			const [prices, data] = await Promise.all([dependencies.loadExchangePrices(asked, generation), families]);
 			if (generation !== loadGeneration) return;
+			if (ssot.league !== null && prices.league !== ssot.league) return;
 			exchange = prices;
 			harvest = data;
 			lastFetchedAt = dependencies.now();
@@ -203,11 +205,13 @@ export function createHarvestController(
 	}
 
 	async function copyRegex(kind: RegexKind): Promise<void> {
+		const generation = loadGeneration;
 		const body = view.body;
 		if (body?.kind !== 'family') return;
 		const text = body.regex[kind].text;
 		try {
 			await dependencies.writeClipboard(text);
+			if (generation !== loadGeneration) return;
 			copiedText = { ...copiedText, [kind]: text };
 		} catch (error) {
 			console.warn('[harvest] clipboard write failed:', errorMessage(error));
@@ -240,6 +244,17 @@ export function createHarvestController(
 		let cancelled = false;
 		let refetchTimer: ReturnType<typeof setTimeout> | null = null;
 		started = true;
+		const stopLeague = onLeagueChange(() => {
+			if (refetchTimer) dependencies.clearTimeout(refetchTimer);
+			refetchTimer = null;
+			loadGeneration++;
+			exchange = null;
+			harvest = null;
+			lastFetchedAt = null;
+			lastError = null;
+			copiedText = { feeders: null, keepers: null };
+			void load();
+		});
 		void load();
 		const tick = dependencies.setInterval(() => {
 			now = dependencies.now();
@@ -255,6 +270,8 @@ export function createHarvestController(
 		return () => {
 			cancelled = true;
 			started = false;
+			loadGeneration++;
+			stopLeague();
 			dependencies.clearInterval(tick);
 			if (refetchTimer) dependencies.clearTimeout(refetchTimer);
 			refetchTimer = null;

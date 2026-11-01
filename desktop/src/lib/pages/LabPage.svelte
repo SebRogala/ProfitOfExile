@@ -14,9 +14,7 @@
 		DEDICATION_POOL_LABELS,
 		fetchMarketOverview,
 		connectMercure,
-		type StatusData,
 		type GemPlay,
-		type MarketOverviewData,
 		type MercureConnection,
 	} from '$lib/api';
 	import type { TradeLookupResult } from '$lib/tradeApi';
@@ -26,7 +24,8 @@
 	import Header from '../../routes/(app)/components/Header.svelte';
 	import Comparator from '../../routes/(app)/components/Comparator.svelte';
 	import SessionQueue from '../../routes/(app)/components/SessionQueue.svelte';
-	import { floorQuote, quoteDelta, type QueueItem } from '$lib/session-queue';
+	import { createLabQueueController, createLabController } from '$lib/comparator/controller.svelte';
+	import { floorQuote, type QueueItem } from '$lib/session-queue';
 	import ByVariant from '../../routes/(app)/components/ByVariant.svelte';
 	import MarketOverview from '../../routes/(app)/components/MarketOverview.svelte';
 	import FontEVCompare from '../../routes/(app)/components/FontEVCompare.svelte';
@@ -130,27 +129,14 @@
 		discardTimer = null;
 	});
 
-	// Rankings generation guard + failure surfacing. A re-fetch that loses a race
-	// or fails silently would leave the previous mode's rows on screen, and the
-	// error banner is the only thing that says the numbers are not current.
-	let bestPlaysGeneration = 0;
-	let bestPlaysError = $state('');
-
-	function refreshBestPlays() {
-		const generation = ++bestPlaysGeneration;
-		bestPlaysError = '';
-		loadBestPlays(isDedication)
-			.then(bp => {
-				if (generation !== bestPlaysGeneration) return;
-				bestPlays = bp;
-			})
-			.catch(e => {
-				if (generation !== bestPlaysGeneration) return;
-				console.warn('[LabPage] re-fetch bestPlays failed:', e);
-				bestPlays = [];
-				bestPlaysError = 'Rankings failed to load for this market — retry to see current numbers.';
-			});
-	}
+	const dashboard = createLabController({
+		status: fetchStatus, rankings: () => loadBestPlays(isDedication),
+		market: fetchMarketOverview, rate: setDivineRate,
+		connected: () => mercure?.connected
+	});
+	const bestPlaysError = $derived(dashboard.state.bestPlaysError);
+	const refreshBestPlays = dashboard.refreshBestPlays;
+	const loadAll = dashboard.loadAll;
 
 	// Rankings are fetched per variant, not as one global top-100. The server ranks
 	// across all variants, so a single capped list let the best-ranking variants
@@ -179,11 +165,11 @@
 		refreshBestPlays();
 	}
 
-	let status = $state<StatusData | null>(null);
-	let bestPlays = $state<GemPlay[]>([]);
-	let marketOverview = $state<MarketOverviewData | null>(null);
-	let loading = $state(true);
-	let error = $state('');
+	const status = $derived(dashboard.state.status);
+	const bestPlays = $derived(dashboard.state.bestPlays);
+	const marketOverview = $derived(dashboard.state.marketOverview);
+	const loading = $derived(dashboard.state.loading);
+	const error = $derived(dashboard.state.error);
 	let mercure = $state<MercureConnection | null>(null);
 	let refreshKey = $state(0);
 
@@ -226,6 +212,28 @@
 
 	// --- Session Queue state ---
 	let sessionQueue = $state<QueueItem[]>([]);
+	const queueController = createLabQueueController({
+		queue: {
+			get items() { return sessionQueue; },
+			set items(value) { sessionQueue = value; }
+		},
+		lookup: (item) => invoke<TradeLookupResult>('trade_lookup', {
+			// Refresh the queued item's market and normalize divine listings with the current rate.
+			gem: item.gem, variant: item.variant, divineRate: status?.divinePrice || undefined,
+			mode: (DEDICATION_VARIANTS as readonly string[]).includes(item.variant) ? 'dedication' : undefined
+		})
+	});
+	$effect(() => dashboard.start(() => {
+		if (mercureDebounceTimer) clearTimeout(mercureDebounceTimer);
+		mercureDebounceTimer = null;
+		handleClearQueue();
+		refreshKey++;
+	}));
+	$effect(() => () => {
+		queueController.clear();
+		if (autoClearTimeout) clearTimeout(autoClearTimeout);
+		if (autoClearInterval) clearInterval(autoClearInterval);
+	});
 	let autoClearMinutes = $state(2);
 	// Load persisted autoclear from Rust settings
 	$effect(() => {
@@ -245,7 +253,7 @@
 			autoClearSecondsLeft = Math.max(0, autoClearSecondsLeft - 1);
 		}, 1000);
 		autoClearTimeout = setTimeout(() => {
-			sessionQueue = [];
+			queueController.clear();
 			if (autoClearInterval) clearInterval(autoClearInterval);
 			autoClearSecondsLeft = 0;
 		}, totalSeconds * 1000);
@@ -267,52 +275,7 @@
 	}
 
 	async function handleRefreshQueue() {
-		// Mark all items as refreshing
-		sessionQueue = sessionQueue.map((item) => ({ ...item, refreshing: true }));
-
-		await Promise.allSettled(
-			sessionQueue.map(async (item) => {
-				// Rows are addressed by (gem, variant), the same key handleQueueGem
-				// dedupes on — not by index. A row removed mid-refresh shifts every
-				// index after it, and a session can hold both markets at once, so an
-				// index write lands on a different gem in a different market.
-				const patch = (fn: (q: QueueItem) => QueueItem) => {
-					sessionQueue = sessionQueue.map((q) =>
-						q.gem === item.gem && q.variant === item.variant ? fn(q) : q
-					);
-				};
-				try {
-					// Mode comes from the queued item's own variant, not from the
-					// current lab mode: the snapshot floor was taken against a
-					// corrupted market, so a refresh without it would search
-					// uncorrupted listings and difference two different markets.
-					// The divine rate must match too — without it Rust leaves
-					// divine-priced listings unnormalized, so the refreshed floor
-					// and the snapshot are quoted in different currencies.
-					const result = await invoke<TradeLookupResult>('trade_lookup', {
-						gem: item.gem,
-						variant: item.variant,
-						divineRate: status?.divinePrice || undefined,
-						mode: (DEDICATION_VARIANTS as readonly string[]).includes(item.variant) ? 'dedication' : undefined,
-					});
-
-					if (result) {
-						const current = floorQuote(result);
-						patch(q => ({
-							...q,
-							current,
-							priceDelta: quoteDelta(current, q.snapshot),
-							refreshing: false,
-						}));
-					} else {
-						patch(q => ({ ...q, refreshing: false }));
-					}
-				} catch {
-					patch(q => ({ ...q, refreshing: false }));
-				}
-			})
-		);
-
+		await queueController.refresh();
 	}
 
 	function handleRemoveFromQueue(index: number) {
@@ -320,7 +283,7 @@
 	}
 
 	function handleClearQueue() {
-		sessionQueue = [];
+		queueController.clear();
 		if (autoClearTimeout) clearTimeout(autoClearTimeout);
 		if (autoClearInterval) clearInterval(autoClearInterval);
 		autoClearTimeout = null;
@@ -333,41 +296,6 @@
 		invoke('set_autoclear_minutes', { minutes: mins }).catch(() => {});
 		resetAutoClearTimer();
 	}
-
-	async function loadAll() {
-		// Rankings go through the same generation counter as a manual refresh.
-		// This path awaits three requests where refreshBestPlays awaits one, so it
-		// is systematically the slower of the two: without sharing the counter, a
-		// Mercure reload started before a market switch lands after it and puts
-		// the old market's rows back under the new heading.
-		const generation = ++bestPlaysGeneration;
-		try {
-			error = '';
-			const [s, bp, mo] = await Promise.all([
-				fetchStatus(),
-				loadBestPlays(isDedication),
-				fetchMarketOverview(),
-			]);
-			status = s;
-			// One rate for every price on screen — see $lib/price.svelte.
-			setDivineRate(s?.divinePrice ?? 0);
-			if (generation === bestPlaysGeneration) {
-				bestPlays = bp;
-				bestPlaysError = '';
-			}
-			marketOverview = mo;
-
-			// Update connection status from Mercure
-			if (mercure) {
-				status = { ...status, connected: mercure.connected };
-			}
-		} catch (e: any) {
-			error = e?.message || 'Failed to load dashboard data';
-		} finally {
-			loading = false;
-		}
-	}
-
 
 	// Detect when store.status first becomes available.
 	// statusReady flips once (false → true) and never changes again,
@@ -399,7 +327,7 @@
 		const connection = connectMercure(debouncedMercureUpdate, (connected) => {
 			store.serverConnected = connected;
 			if (status) {
-				status = { ...status, connected };
+				dashboard.state.status = { ...status, connected };
 			}
 		}, (data) => {
 			// Layout updated or reset on server — notify overlays

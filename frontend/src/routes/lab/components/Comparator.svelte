@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fetchGemNames, fetchCompare, DEDICATION_VARIANTS, type CompareGem } from '$lib/api';
+	import { untrack } from 'svelte';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { hasTradeListings, lookupTrade, pollTradeResult, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
@@ -29,6 +30,27 @@
 	let isDedication = $derived(labMode === 'dedication');
 
 	let selectedForQueue = $state<string | null>(null);
+	let requestGeneration = 0;
+	let compareGeneration = 0;
+	let disposed = false;
+	const tradeListeners = new Set<() => void>();
+	let loadedLeague: string | undefined;
+	$effect(() => {
+		const current = league;
+		untrack(() => {
+			if (loadedLeague !== undefined && loadedLeague !== current) {
+				clearAll();
+				void loadResults();
+			}
+			loadedLeague = current;
+		});
+	});
+	$effect(() => () => {
+		disposed = true; requestGeneration++; compareGeneration++;
+		if (searchDebounce) clearTimeout(searchDebounce);
+		for (const stop of tradeListeners) stop();
+		tradeListeners.clear();
+	});
 
 	$effect(() => {
 		// Auto-select the BEST gem when results change
@@ -65,6 +87,11 @@
 	// changes — the prices would keep describing the market just left while the
 	// labels moved.
 	function dropTradeData() {
+		requestGeneration++;
+		compareGeneration++;
+		results = [];
+		for (const stop of tradeListeners) stop();
+		tradeListeners.clear();
 		tradeData = {};
 		tradeLoading = {};
 		tradeExpanded = {};
@@ -197,27 +224,31 @@
 	/** Fetch trade data — full lookup with async wait for GGG response.
 	 *  Uses a generation counter so cancelled requests don't overwrite current state. */
 	async function fetchTradeData(gem: string, force = false) {
+		const generation = requestGeneration;
+		const requestedVariant = variant;
 		const gen = (tradeGeneration[gem] || 0) + 1;
 		tradeGeneration[gem] = gen;
 		tradeLoading[gem] = { loading: true };
-		const isStale = () => tradeGeneration[gem] !== gen;
+		const isStale = () => disposed || requestGeneration !== generation || tradeGeneration[gem] !== gen;
 
 		try {
-			const { immediate, requestId } = await lookupTrade(gem, variant, force);
+			const { immediate, requestId } = await lookupTrade(gem, requestedVariant, force);
 			if (isStale()) return;
 			if (immediate) {
+				if (immediate.league !== league) { tradeLoading[gem] = { loading: false }; return; }
 				tradeData[gem] = immediate;
 				tradeLoading[gem] = { loading: false };
 			} else if (requestId) {
 				let resolved = false;
 				const unsub = registerTradeListener(requestId, {
 					onWait: (s) => { if (!isStale()) tradeLoading[gem] = { loading: true, waitSeconds: s }; },
-					onReady: (data) => { resolved = true; if (!isStale()) { tradeData[gem] = data; tradeLoading[gem] = { loading: false }; } unsub(); },
+					onReady: (data) => { resolved = true; if (!isStale()) { if (data.league === league && data.variant === requestedVariant) tradeData[gem] = data; tradeLoading[gem] = { loading: false }; } unsub(); },
 					onError: () => { resolved = true; if (!isStale()) tradeLoading[gem] = { loading: false }; unsub(); },
 				});
+				tradeListeners.add(unsub);
 				// Polling fallback when Mercure SSE isn't connected
-				pollTradeResult(gem, variant).then((data) => {
-					if (!resolved && !isStale() && data) {
+				pollTradeResult(gem, requestedVariant).then((data) => {
+					if (!resolved && !isStale() && data && data.league === league) {
 						resolved = true;
 						tradeData[gem] = data;
 						tradeLoading[gem] = { loading: false };
@@ -238,9 +269,11 @@
 	/** Cache-only lookup — returns backend LRU data without triggering a GGG request.
 	 *  Returns 204 on cache miss (no API call queued). */
 	async function fetchTradeCacheOnly(gem: string) {
+		const generation = requestGeneration;
+		const requestedVariant = variant;
 		try {
-			const { immediate } = await lookupTrade(gem, variant, false, true);
-			if (immediate) {
+			const { immediate } = await lookupTrade(gem, requestedVariant, false, true);
+			if (!disposed && generation === requestGeneration && immediate?.league === league) {
 				tradeData[gem] = immediate;
 			}
 		} catch (err) {
@@ -259,14 +292,20 @@
 	}
 
 	async function loadResults() {
+		const generation = requestGeneration;
+		const request = ++compareGeneration;
+		const requestedVariant = variant;
 		const active = selectedGems.filter(Boolean);
 		if (active.length === 0) {
 			results = [];
 			return;
 		}
 		try {
-			results = await fetchCompare(active, variant, isDedication ? 'dedication' : undefined);
+			const rows = await fetchCompare(active, requestedVariant, isDedication ? 'dedication' : undefined);
+			if (disposed || generation !== requestGeneration || request !== compareGeneration) return;
+			results = rows;
 		} catch (err) {
+			if (disposed || generation !== requestGeneration || request !== compareGeneration) return;
 			console.error('[Comparator] Failed to load results:', err);
 			results = [];
 		}
@@ -275,6 +314,7 @@
 	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
 	function handleInput(query: string) {
+		const generation = requestGeneration;
 		searchQuery = query;
 		if (searchDebounce) clearTimeout(searchDebounce);
 		if (query.length < 2) {
@@ -285,10 +325,10 @@
 		}
 		searchDebounce = setTimeout(async () => {
 			// Guard: if query changed while waiting, skip stale fetch
-			if (searchQuery !== query) return;
+			if (disposed || generation !== requestGeneration || searchQuery !== query) return;
 			const allNames = await fetchGemNames(query, isDedication ? 'dedication' : undefined);
 			// Guard: if query changed during fetch, skip stale results
-			if (searchQuery !== query) return;
+			if (disposed || generation !== requestGeneration || searchQuery !== query) return;
 			suggestions = allNames.filter((n) => !selectedGems.includes(n));
 			showDropdown = suggestions.length > 0;
 			highlightedIndex = suggestions.length === 1 ? 0 : -1;
@@ -316,6 +356,7 @@
 		const removed = selectedGems[index];
 		selectedGems = selectedGems.filter((_, i) => i !== index);
 		if (removed) {
+			tradeGeneration[removed] = (tradeGeneration[removed] ?? 0) + 1;
 			delete tradeData[removed];
 			delete tradeLoading[removed];
 			delete tradeExpanded[removed];
@@ -325,6 +366,9 @@
 	}
 
 	function clearAll() {
+		dropTradeData();
+		if (searchDebounce) clearTimeout(searchDebounce);
+		selectedForQueue = null;
 		selectedGems = [];
 		results = [];
 		tradeData = {};

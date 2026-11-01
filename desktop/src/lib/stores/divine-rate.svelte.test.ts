@@ -79,6 +79,27 @@ afterEach(() => {
 });
 
 describe('initDivineRateStore', () => {
+	it('withdraws the outgoing rate before a failed new-league read', async () => {
+		const s = await load();
+		const { applySnapshot, ssot } = await import('./ssot.svelte');
+		applySnapshot({ league: { name: 'A', generation: ssot.leagueGeneration + 1 } });
+		mocks.fetchDivineRate.mockResolvedValueOnce(port());
+		cleanup = s.initDivineRateStore();
+		await settle();
+		expect(s.currentDivineRate()).toBe(360.07);
+		const old = deferred();
+		mocks.fetchDivineRate.mockReturnValueOnce(old.promise);
+		const pending = s.refreshDivineRate();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		mocks.fetchDivineRate.mockRejectedValueOnce(new Error('B offline'));
+		applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+		expect(s.currentDivineRate()).toBeNull();
+		await settle();
+		old.resolve(port({ divineChaosRate: 999 }));
+		await pending;
+		expect([s.currentDivineRate(), s.divineRateState()]).toEqual([null, 'cold']);
+		expect(warn).toHaveBeenCalledWith('[divine-rate] read failed, keeping the last rate:', expect.any(Error));
+	});
 	it('reads the port once and serves its rate', async () => {
 		mocks.fetchDivineRate.mockResolvedValue(port());
 		const s = await load();

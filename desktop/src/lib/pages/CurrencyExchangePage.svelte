@@ -5,8 +5,8 @@
 	 *
 	 * Deliberately thin. Every derivation the header, the filters and the cells
 	 * need lives in `$lib/exchange/view` and `$lib/exchange/filters`, which are
-	 * pure and unit-tested; this file owns the persisted picks, the fetch that
-	 * fills the four loose state variables, and the markup. A `.svelte` file has
+	 * pure and unit-tested; this file owns the persisted picks and markup while
+	 * `createExchangeController` owns the requests and league lifecycle. A `.svelte` file has
 	 * no unit-test harness here, so anything with a rule in it belongs on the
 	 * other side of those imports.
 	 *
@@ -25,8 +25,9 @@
 	 * dropped connection — throws away the only data the user has while the
 	 * server is the thing that is down.
 	 */
-	import { listen } from '@tauri-apps/api/event';
-	import { fetchCurrencyExchangePlays, getApiBase, type CurrencyExchangeResponse } from '$lib/api';
+	import { createExchangeController, productionDependencies } from '$lib/exchange/controller.svelte';
+	import { untrack } from 'svelte';
+	import { getApiBase } from '$lib/api';
 	import {
 		DENSITY_OPTIONS,
 		HORIZON_OPTIONS,
@@ -50,7 +51,6 @@
 		parseSort,
 		parseUnit,
 		printsExpectedRoi,
-		refetchDelay,
 		rowCapLimit,
 		rowCounts,
 		sortPlays,
@@ -153,19 +153,12 @@
 	 */
 	const apiBase = $derived(getApiBase());
 
-	let result = $state<CurrencyExchangeResponse | null>(null);
-	let lastFetchedAt = $state<Date | null>(null);
-	let lastError = $state<string | null>(null);
-	let loading = $state(false);
-
-	/**
-	 * The clock the relative strings are measured against. Ticked rather than
-	 * read inline: "as of 14:35 (3 min ago)" is derived once and would otherwise
-	 * stay frozen at its fetch-time wording until the next Mercure publish, which
-	 * on a quiet hour is an hour away.
-	 */
-	let now = $state(new Date());
-	const NOW_TICK_MS = 30_000;
+	const controller = createExchangeController(productionDependencies(() => ({ mode: mode.value, horizon: horizon.value })));
+	const result = $derived(controller.result);
+	const lastFetchedAt = $derived(controller.lastFetchedAt);
+	const lastError = $derived(controller.lastError);
+	const loading = $derived(controller.loading);
+	const now = $derived(controller.now);
 
 	const viewState = $derived(deriveState({ result, lastFetchedAt, lastError, now }));
 	const age = $derived(dataAgeParts(result, now));
@@ -413,88 +406,11 @@
 		investMaxPref.value = '';
 	}
 
-	// ------------------------------------------------------------- the fetch --
-
-	/**
-	 * Which `load()` call owns the state. Two fetches are routinely in flight at
-	 * once — a cold start fires the defaults and then the restored picks a tick
-	 * later, and a Mercure refetch can be overtaken by a mode switch — and the
-	 * requests are not guaranteed to answer in the order they were sent. Without
-	 * the counter the slower one wins and the table shows one mode's plays under
-	 * the other mode's button. Same pattern as `LabPage.svelte`'s
-	 * `bestPlaysGeneration`.
-	 *
-	 * A plain `let`, not `$state`: nothing renders it, and making it reactive
-	 * would re-run the effects that call `load()`.
-	 */
-	let loadGeneration = 0;
-
-	async function load() {
-		const generation = ++loadGeneration;
-		loading = true;
-		try {
-			const response = await fetchCurrencyExchangePlays(
-				parseMode(mode.value),
-				parseHorizon(horizon.value)
-			);
-			if (generation !== loadGeneration) return;
-			result = response;
-			lastFetchedAt = new Date();
-			lastError = null;
-		} catch (e: any) {
-			if (generation !== loadGeneration) return;
-			// Keep `result`: the header downgrades to `stale` and the table stays.
-			lastError = String(e?.message ?? e);
-		} finally {
-			// A superseded fetch leaves `loading` to the call that overtook it.
-			if (generation === loadGeneration) loading = false;
-		}
-	}
-
-	// Fetch on mount and on every mode or horizon change — one effect for all
-	// three, because both picks are parameters of the same request.
+	$effect(() => untrack(() => controller.start()));
 	$effect(() => {
-		// The explicit reads are the dependencies: reactivity must not rest on
-		// `load()` happening to read them before its first await.
 		void mode.value;
 		void horizon.value;
-		load();
-	});
-
-	// Re-derive the relative strings on a wall clock the data does not move.
-	$effect(() => {
-		const timer = setInterval(() => {
-			now = new Date();
-		}, NOW_TICK_MS);
-		return () => clearInterval(timer);
-	});
-
-	/**
-	 * Mercure fan-out from LabPage. The refetch is debounced AND jittered
-	 * (`refetchDelay`) because every client receives the same publish within
-	 * milliseconds — see the constants' comment in `$lib/exchange/view`.
-	 */
-	let refetchTimer: ReturnType<typeof setTimeout> | null = null;
-
-	$effect(() => {
-		let cancelled = false;
-		const promise = listen('currency-exchange-updated', () => {
-			if (cancelled) return;
-			if (refetchTimer) clearTimeout(refetchTimer);
-			refetchTimer = setTimeout(() => {
-				refetchTimer = null;
-				load();
-			}, refetchDelay());
-		});
-		return () => {
-			cancelled = true;
-			if (refetchTimer) {
-				clearTimeout(refetchTimer);
-				refetchTimer = null;
-			}
-			// Expected to reject outside a Tauri context (the browser dev server).
-			promise.then((unlisten) => unlisten()).catch(() => {});
-		};
+		untrack(() => controller.syncSelection());
 	});
 </script>
 

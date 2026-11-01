@@ -1,14 +1,15 @@
 <script lang="ts">
-	import { fetchGemNames, fetchCompare, DEDICATION_VARIANTS, VARIANTS, type CompareGem } from '$lib/api';
+	import { DEDICATION_VARIANTS, VARIANTS, type CompareGem } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
-	import type { TradeLookupResult, TradeSignals, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
-	import { hasTradeListings, isSource, toListingRow } from '$lib/tradeApi';
+	import type { TradeLookupResult, TradeSignals } from '$lib/tradeApi';
+	import { hasTradeListings, toListingRow } from '$lib/tradeApi';
 	import { SIGNAL_TOOLTIPS } from '$lib/tooltips';
 	import { formatPrice, formatPriceSigned } from '$lib/price.svelte';
 	import { showsDoubleCorruptCard, doubleCorruptHeadline } from '$lib/double-corrupt-card';
 	import { store } from '$lib/stores/status.svelte';
 	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
-	import { listen } from '@tauri-apps/api/event';
+	import { createComparatorController, productionDependencies } from '$lib/comparator/controller.svelte';
+	import { untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
@@ -46,7 +47,32 @@
 	let isDedication = $derived(labMode === 'dedication');
 
 
-	let selectedForQueue = $state<string | null>(null);
+	const controller = createComparatorController(productionDependencies(
+		() => ({ variant, mode: labMode, divineRate, autoTrade: autoTradeEnabled }),
+		(gem, market, roi, trade) => onQueueGem?.(gem, market, roi, trade),
+		isTradeAutoRefreshDue
+	));
+	const selectedGems = $derived(controller.state.selectedGems);
+	const tradeData = $derived(controller.state.tradeData);
+	const tradeLoading = $derived(controller.state.tradeLoading);
+	const tradeError = $derived(controller.state.tradeError);
+	const tradeErrorMsg = $derived(controller.state.tradeErrorMsg);
+	const tradeExpanded = $derived(controller.state.tradeExpanded);
+	const tradeQueue = $derived(controller.state.tradeQueue);
+	const visibleResults = $derived(controller.state.results.filter((row) => row.variant.replace(/c$/, '') === variant));
+	const selectedForQueue = $derived(controller.state.selectedForQueue);
+	$effect(() => untrack(() => controller.start()));
+	$effect(() => {
+		void variant;
+		void labMode;
+		untrack(() => controller.syncSelection());
+	});
+	$effect(() => {
+		// A display-rate change only refreshes the overlay payload.
+		void divineRate;
+		void labMode;
+		untrack(() => controller.pushOverlay());
+	});
 
 	/** Score a gem for auto-selection. Higher = better pick to sell. */
 	function gemPickScore(gem: CompareGem): number {
@@ -92,184 +118,23 @@
 					bestScore = score;
 				}
 			}
-			selectedForQueue = best.name;
+			controller.state.selectedForQueue = best.name;
 		} else {
-			selectedForQueue = null;
+			controller.state.selectedForQueue = null;
 		}
-	});
-
-	// Push results + trade data + loading state to Rust for overlay to poll
-	$effect(() => {
-		invoke('set_comparator_data', {
-			payload: { results: visibleResults, tradeData: { ...tradeData }, tradeLoading: { ...tradeLoading }, tradeError: { ...tradeError }, divineRate, labMode },
-		}).catch(e => console.warn('[comparator] push to overlay failed:', e));
 	});
 
 	let activeVariants = $derived<readonly string[]>(isDedication ? DEDICATION_VARIANTS : VARIANTS);
 	let VARIANT_OPTIONS = $derived(activeVariants.map((v) => ({ value: v, label: v })));
 
-	// Rows are fetched per market AND per mode (loadResults sends the mode), so
-	// the mode has to trigger a refetch in its own right. Keying only on the
-	// market string works today solely because the two market lists are
-	// disjoint — one shared string and a mode flip would leave the previous
-	// mode's rows on screen, priced and unrefetched.
-	let loadedForMode: string | null = null;
-	let loadedForVariant: string | null = null;
-
-	// The market is NOT the comparator's to own — it is the ssot store's, and it
-	// is what Rust stamps onto the uploaded font session and onto every OCR push
-	// to a paired web view. This effect only reacts to the store's value; it
-	// never assigns it.
-	$effect(() => {
-		if (variant === loadedForVariant && labMode === loadedForMode) return;
-		loadedForVariant = variant;
-		loadedForMode = labMode;
-		dropTradeData();
-		loadResults();
-	});
-
-	// Trade lookups are keyed by gem name alone and Dedication rows carry no
-	// server-side trade enrichment, so nothing overwrites them when the market
-	// changes: the listing prices, floor and cache age would keep describing the
-	// market the player just left, while the labels moved. Those figures feed
-	// the pick score and the session-queue snapshot, so they are dropped rather
-	// than shown stale.
-
-	// Listen for gem-detected events from Rust OCR.
-	// Rust emits one gem at a time as a string. Accumulate up to 3, then auto-compare.
-	// loadResults is debounced with 300ms to collapse rapid OCR detections.
-	let loadDebounce: ReturnType<typeof setTimeout> | null = null;
-	let compareAbort: AbortController | null = null;
-
-	function debouncedLoadResults() {
-		if (loadDebounce) clearTimeout(loadDebounce);
-		loadDebounce = setTimeout(() => loadResults(), 300);
-	}
-
-	$effect(() => {
-		let cancelled = false;
-		const gemPromise = listen<string>('gem-detected', (event) => {
-			if (cancelled) return;
-			const gemName = event.payload;
-			if (!gemName || selectedGems.includes(gemName)) return;
-			if (selectedGems.length >= 3) return;
-			selectedGems = [...selectedGems, gemName];
-			debouncedLoadResults();
-		});
-
-		// Auto-clear when new font round starts or manual scan restarts
-		const clearPromise = listen('gems-cleared', () => {
-			if (cancelled) return;
-			clearAll();
-		});
-
-		// Listen for pick from overlay window
-		const pickPromise = listen<{ name: string; variant: string; roi: number }>('overlay-pick', (event) => {
-			if (cancelled) return;
-			const { name } = event.payload;
-			selectedForQueue = name;
-			handleNext();
-		});
-
-		// Listen for trade refresh request from overlay
-		const refreshPromise = listen<{ name: string; variant: string }>('overlay-trade-refresh', (event) => {
-			if (cancelled) return;
-			refreshTradeData(event.payload.name);
-		});
-
-		// Listen for clear from overlay
-		const overlayClearPromise = listen('overlay-clear', () => {
-			if (cancelled) return;
-			clearAll();
-		});
-
-		// Listen for trade queue events from Rust.
-		// tradeQueueStale: after cancel, ignore events from the in-flight request
-		// until a fresh 'queued' event arrives (new lookup batch).
-		let tradeQueueStale = false;
-		const tradeQueuePromise = listen<TradeQueueEvent>('trade-queue', (event) => {
-			if (cancelled) return;
-			const e = event.payload;
-			// One queue, several consumers (POE-202): a mercenary auto-search
-			// shares this client and would otherwise show up as the Comparator's
-			// own progress and clear its queue row.
-			if (!isSource(e, 'gem')) return;
-			switch (e.kind) {
-				case 'queued':
-					tradeQueueStale = false;
-					tradeQueue = { gem: e.gem, position: e.position, total: e.total, status: 'queued', waitSecs: 0 };
-					break;
-				case 'waiting':
-				case 'fetching':
-					if (tradeQueueStale) break;
-					tradeQueue = {
-						gem: e.gem, position: e.position, total: e.total,
-						status: e.kind === 'waiting' ? 'waiting' : 'fetching',
-						waitSecs: e.kind === 'waiting' ? e.waitSecs : 0,
-					};
-					break;
-				case 'cancelled':
-					tradeQueueStale = true;
-					tradeQueue = null;
-					break;
-				case 'error':
-					// Surface the actionable reason (e.g. "league not resolved yet")
-					// instead of silently dropping it in the default arm. The rejected
-					// invoke already flags the gem; this makes the *reason* visible.
-					if (tradeQueueStale) break;
-					if (e.gem) {
-						tradeError[e.gem] = true;
-						tradeErrorMsg[e.gem] = e.error;
-					}
-					tradeQueue = null;
-					break;
-				default:
-					tradeQueue = null;
-			}
-		});
-
-		return () => {
-			cancelled = true;
-			if (loadDebounce) clearTimeout(loadDebounce);
-			if (compareAbort) compareAbort.abort();
-			gemPromise.then(unlisten => unlisten());
-			clearPromise.then(unlisten => unlisten());
-			pickPromise.then(unlisten => unlisten());
-			refreshPromise.then(unlisten => unlisten());
-			overlayClearPromise.then(unlisten => unlisten());
-			tradeQueuePromise.then(unlisten => unlisten());
-		};
-	});
-
 	const variant = $derived(isDedication ? ssot.dedicationVariant : ssot.normalVariant);
-	let searchQuery = $state('');
-	let suggestions = $state<string[]>([]);
-	let selectedGems = $state<string[]>([]);
-	let results = $state<CompareGem[]>([]);
-
-	// Rows carry the market they were computed for. The header label follows the
-	// selection immediately while the refetch is in flight, so everything that
-	// renders or scores a gem reads this list instead of `results`: an empty grid
-	// for one round trip beats a grid of the previous market's prices under the
-	// new label — and those prices otherwise feed the BEST pick and the queue
-	// snapshot. Row variants arrive in DB form ("21/20c") while the selector
-	// holds display form ("21/20").
-	const visibleResults = $derived(results.filter(r => r.variant.replace(/c$/, '') === variant));
-	let showDropdown = $state(false);
-	let highlightedIndex = $state(-1);
+	const searchQuery = $derived(controller.state.searchQuery);
+	const suggestions = $derived(controller.state.suggestions);
+	const showDropdown = $derived(controller.state.showDropdown);
+	const highlightedIndex = $derived(controller.state.highlightedIndex);
 	let inputRef = $state<HTMLInputElement | null>(null);
 
-	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
-	let tradeLoading = $state<Record<string, boolean>>({});
-	let tradeError = $state<Record<string, boolean>>({});
-	// Actionable reason string for a failed lookup (e.g. "league not resolved yet"),
-	// surfaced from the trade-queue 'error' event so the cause is visible, not just the flag.
-	let tradeErrorMsg = $state<Record<string, string>>({});
-	let tradeExpanded = $state<Record<string, boolean>>({});
 	let autoTradeEnabled = $state(store.status?.auto_trade_enabled ?? false);
-
-	// Trade queue state — driven by Rust trade-queue events
-	let tradeQueue = $state<TradeQueueDisplay | null>(null);
 
 	/** Trade cache age in milliseconds, or null if no data. */
 	function tradeCacheAge(gem: string): number | null {
@@ -306,159 +171,27 @@
 		return age >= refreshMs;
 	}
 
-	async function loadResults() {
-		const active = selectedGems.filter(Boolean);
-		if (active.length === 0) {
-			results = [];
-			return;
-		}
-		// Cancel any in-flight compare request
-		if (compareAbort) compareAbort.abort();
-		compareAbort = new AbortController();
-		try {
-			results = await fetchCompare(active, variant, compareAbort.signal, isDedication ? 'dedication' : undefined);
-			// Populate tradeData from compare response (server-side cache enrichment)
-			for (const gem of results) {
-				if (gem.trade) {
-					tradeData[gem.name] = gem.trade;
-				}
-			}
-			// Auto-trade: if enabled, invoke Rust trade_lookup for gems with no/stale trade data
-			if (autoTradeEnabled) {
-				for (const gem of results) {
-					if (!tradeData[gem.name] || isTradeAutoRefreshDue(gem.name)) {
-						invokeRustTrade(gem.name);
-					}
-				}
-			}
-		} catch (err: any) {
-			if (err?.name === 'AbortError') return; // cancelled, not an error
-			console.error('[Comparator] Failed to load results:', err);
-			results = [];
-		}
-	}
-
-	/** Invoke Rust-side trade lookup (hits GGG directly, Rust handles server submit). */
-	async function invokeRustTrade(gem: string) {
-		const requestedVariant = variant;
-		tradeLoading[gem] = true;
-		tradeError[gem] = false;
-		delete tradeErrorMsg[gem];
-		try {
-			const result = await invoke<TradeLookupResult>('trade_lookup', {
-				gem, variant: requestedVariant, divineRate: divineRate || undefined,
-				mode: isDedication ? 'dedication' : undefined,
-			});
-			// Lookups are serialized behind a mutex and sleep for rate-limit
-			// capacity, so this can land tens of seconds after a market switch —
-			// long after dropTradeData() cleared the maps. The result carries the
-			// market it was fetched for, so it answers for itself rather than
-			// relying on the request having been cancelled.
-			if (result.variant !== variant) {
-				console.warn(`[Trade] discarding ${gem} lookup for ${result.variant}: market is now ${variant}`);
-				return;
-			}
-			tradeData[gem] = result;
-		} catch (err: any) {
-			if (typeof err === 'string' && err === 'cancelled') return; // queue cancelled, not an error
-			console.warn(`[Trade] Rust lookup failed for ${gem}:`, err);
-			if (requestedVariant !== variant) return;
-			tradeError[gem] = true;
-		} finally {
-			// Only the current market's spinner is ours to clear: a superseded
-			// lookup finishing would otherwise kill the new one's.
-			if (requestedVariant === variant) tradeLoading[gem] = false;
-		}
-	}
-
-	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
-
-	function handleInput(query: string) {
-		searchQuery = query;
-		if (searchDebounce) clearTimeout(searchDebounce);
-		if (query.length < 2) {
-			suggestions = [];
-			showDropdown = false;
-			highlightedIndex = -1;
-			return;
-		}
-		searchDebounce = setTimeout(async () => {
-			// Guard: if query changed while waiting, skip stale fetch
-			if (searchQuery !== query) return;
-			const allNames = await fetchGemNames(query, isDedication ? 'dedication' : undefined);
-			// Guard: if query changed during fetch, skip stale results
-			if (searchQuery !== query) return;
-			suggestions = allNames.filter((n) => !selectedGems.includes(n));
-			showDropdown = suggestions.length > 0;
-			highlightedIndex = suggestions.length === 1 ? 0 : -1;
-		}, 100);
-	}
+	const resetSearch = controller.resetSearch;
+	const handleInput = controller.handleInput;
 
 	function selectGem(name: string) {
-		if (selectedGems.length >= 3) return;
-		if (selectedGems.includes(name)) return;
-		selectedGems = [...selectedGems, name];
-		searchQuery = '';
-		suggestions = [];
-		showDropdown = false;
-		highlightedIndex = -1;
-		loadResults();
+		controller.selectGem(name);
+		resetSearch();
 		setTimeout(() => inputRef?.focus(), 0);
 	}
-
 	function removeGem(index: number) {
-		const removed = selectedGems[index];
-		selectedGems = selectedGems.filter((_, i) => i !== index);
-		if (removed) {
-			delete tradeData[removed];
-			delete tradeLoading[removed];
-			delete tradeError[removed];
-			delete tradeErrorMsg[removed];
-			delete tradeExpanded[removed];
-		}
-		loadResults();
+		controller.removeGem(index);
 		setTimeout(() => inputRef?.focus(), 0);
 	}
-
 	function clearAll(autoQueue = true) {
-		// Auto-add selected gem to session queue before clearing
-		if (autoQueue && selectedForQueue && onQueueGem) {
-			const selected = visibleResults.find((g) => g.name === selectedForQueue);
-			if (selected) {
-				const trade = tradeData[selectedForQueue] ?? null;
-				onQueueGem(selectedForQueue, variant, selected.roi, trade);
-			}
-		}
-		if (compareAbort) compareAbort.abort();
-		if (loadDebounce) clearTimeout(loadDebounce);
-		selectedGems = [];
-		results = [];
-		tradeData = {};
-		tradeLoading = {};
-		tradeError = {};
-		tradeErrorMsg = {};
-		tradeExpanded = {};
-		searchQuery = '';
-		suggestions = [];
-		showDropdown = false;
-		highlightedIndex = -1;
+		controller.clearAll(autoQueue);
+		resetSearch();
 		setTimeout(() => inputRef?.focus(), 0);
 	}
-
-	// Drops every trade figure without touching the gem selection: the gems are
-	// still the ones on screen, only their prices belong to the previous market.
-	function dropTradeData() {
-		tradeData = {};
-		tradeLoading = {};
-		tradeError = {};
-		tradeErrorMsg = {};
-		tradeExpanded = {};
-	}
-
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
-			showDropdown = false;
-			highlightedIndex = -1;
+			controller.state.showDropdown = false;
+			controller.state.highlightedIndex = -1;
 			return;
 		}
 		if (e.key === 'Backspace' && searchQuery === '' && selectedGems.length > 0) {
@@ -468,10 +201,10 @@
 		if (!showDropdown || suggestions.length === 0) return;
 		if (e.key === 'ArrowDown') {
 			e.preventDefault();
-			highlightedIndex = (highlightedIndex + 1) % suggestions.length;
+			controller.state.highlightedIndex = (highlightedIndex + 1) % suggestions.length;
 		} else if (e.key === 'ArrowUp') {
 			e.preventDefault();
-			highlightedIndex = highlightedIndex <= 0 ? suggestions.length - 1 : highlightedIndex - 1;
+			controller.state.highlightedIndex = highlightedIndex <= 0 ? suggestions.length - 1 : highlightedIndex - 1;
 		} else if ((e.key === 'Enter' || e.key === ' ') && highlightedIndex >= 0) {
 			e.preventDefault();
 			selectGem(suggestions[highlightedIndex]);
@@ -542,7 +275,7 @@
 
 	function refreshTradeData(gem: string) {
 		// Don't clear existing data — keep showing cached while loading.
-		invokeRustTrade(gem);
+		controller.invokeRustTrade(gem);
 	}
 
 	function concentrationClass(c: TradeSignals['sellerConcentration']): string {
@@ -556,12 +289,8 @@
 	}
 
 	function handleNext() {
-		if (!selectedForQueue || !onQueueGem) return;
-		const selected = visibleResults.find((g) => g.name === selectedForQueue);
-		if (!selected) return;
-		const trade = tradeData[selectedForQueue] ?? null;
-		onQueueGem(selectedForQueue, variant, selected.roi, trade);
-		clearAll(false); // already queued explicitly, don't auto-queue again
+		controller.handleNext();
+		resetSearch();
 	}
 
 </script>
@@ -627,8 +356,8 @@
 					value={searchQuery}
 					oninput={(e) => handleInput((e.target as HTMLInputElement).value)}
 					onkeydown={handleKeydown}
-					onfocus={() => { if (suggestions.length) showDropdown = true; }}
-					onblur={() => setTimeout(() => { showDropdown = false; }, 200)}
+					onfocus={() => { if (suggestions.length) controller.state.showDropdown = true; }}
+					onblur={() => setTimeout(() => { controller.state.showDropdown = false; }, 200)}
 				/>
 				{#if showDropdown && suggestions.length > 0}
 					<div class="dropdown">
@@ -656,7 +385,7 @@
 				{@const noData = gem.confidence === 'NO_DATA' || (gem.transPrice === 0 && gem.low7d === 0 && gem.high7d === 0)}
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<div class="compare-card" class:queue-selected={selectedForQueue === gem.name} onclick={() => { selectedForQueue = gem.name; }}>
+				<div class="compare-card" class:queue-selected={selectedForQueue === gem.name} onclick={() => { controller.state.selectedForQueue = gem.name; }}>
 					<div class="card-name-row">
 						<GemIcon name={gem.name} size={40} />
 						<span class="card-name">{gem.name}</span>

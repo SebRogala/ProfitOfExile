@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CurrencyExchangeHorizon } from '$lib/exchange/view';
 import type { PersistedString } from '$lib/prefs.svelte';
 import { divineRate as sharedDivineRate } from '$lib/stores/divine-rate.svelte';
+import { applySnapshot, ssot } from '$lib/stores/ssot.svelte';
 import {
 	createHarvestController,
 	productionDependencies,
@@ -169,6 +170,7 @@ function started(prefs?: Parameters<typeof harness>[0]) {
 	const h = harness(prefs);
 	const controller = createHarvestController(h.dependencies);
 	const stop = controller.start();
+	cleanups.push(stop);
 	horizonEffect(controller);
 	return { h, controller, stop };
 }
@@ -199,6 +201,8 @@ async function refetched() {
 	return s;
 }
 
+const cleanups: (() => void)[] = [];
+
 const RESTORED = {
 	picks: JSON.stringify({ fossil: { [DENSE]: 'reroll' } }),
 	horizon: 'recent',
@@ -206,11 +210,13 @@ const RESTORED = {
 };
 
 beforeEach(() => {
+	ssot.league = null;
 	vi.useFakeTimers();
 	vi.setSystemTime(NOW);
 });
 
 afterEach(() => {
+	for (const stop of cleanups.splice(0)) stop();
 	vi.useRealTimers();
 	vi.restoreAllMocks();
 });
@@ -540,7 +546,7 @@ describe('createHarvestController — one divine rate', () => {
 		const h = harness();
 		h.dependencies.divineRate = () => 720;
 		const controller = createHarvestController(h.dependencies);
-		controller.start();
+		cleanups.push(controller.start());
 		horizonEffect(controller);
 		await answer(h, 0);
 
@@ -551,7 +557,7 @@ describe('createHarvestController — one divine rate', () => {
 		const h = harness();
 		h.dependencies.divineRate = () => 720;
 		const controller = createHarvestController(h.dependencies);
-		controller.start();
+		cleanups.push(controller.start());
 		horizonEffect(controller);
 		await answer(h, 0);
 
@@ -576,7 +582,7 @@ describe('createHarvestController — the shared divine rate (POE-284 store)', (
 		const shared = sharedRate(initial);
 		h.dependencies.divineRate = shared.read;
 		const controller = createHarvestController(h.dependencies);
-		controller.start();
+		cleanups.push(controller.start());
 		horizonEffect(controller);
 		await answer(h, 0);
 		return { h, controller, shared };
@@ -642,6 +648,38 @@ describe('createHarvestController — the shared divine rate (POE-284 store)', (
 });
 
 describe('createHarvestController — before prices', () => {
+	it('rejects a snapshot stamped for another league in the current generation', async () => {
+		applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+		const { h, controller } = started();
+		await answer(h, 0, { ...await exchangeRead('day'), league: 'A' });
+		expect([controller.exchange, controller.harvest, controller.copied]).toEqual([null, null, { feeders: false, keepers: false }]);
+	});
+
+	it('disposal rejects an in-flight market answer', async () => {
+		const { h, controller, stop } = started();
+		stop();
+		await answer(h, 0);
+		expect([controller.exchange, controller.harvest]).toEqual([null, null]);
+	});
+	it('withdraws outgoing advice before a failed replacement read', async () => {
+		applySnapshot({ league: { name: (await exchangeRead('day')).league, generation: ssot.leagueGeneration + 1 } });
+		const { h, controller, stop } = await loaded();
+		await controller.copyRegex('keepers');
+		const pending = controller.load();
+		const old = latest(h);
+		applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+		expect([controller.exchange, controller.harvest, controller.copied]).toEqual([
+			null, null, { feeders: false, keepers: false }
+		]);
+		h.exchangeCalls[latest(h)].reply.reject(new Error('B offline'));
+		await settle();
+		await answer(h, old);
+		await pending;
+		expect([controller.exchange, controller.harvest, controller.view.stateLine]).toEqual([
+			null, null, "Couldn't reach the server"
+		]);
+		stop();
+	});
 	it('stays loading while Harvest has answered and prices have not', async () => {
 		const { h, controller } = started();
 		h.harvestCalls[0].reply.resolve(await loadHarvestFamilies('day'));
@@ -726,6 +764,7 @@ describe('Harvest completion refetch with the live adapter', () => {
 		h.dependencies.loadHarvestFamilies = http.loadHarvestFamilies;
 		const controller = createHarvestController(h.dependencies);
 		const stop = controller.start();
+	cleanups.push(stop);
 		try {
 			h.fireUpdated();
 			await vi.advanceTimersByTimeAsync(DELAY_MS);

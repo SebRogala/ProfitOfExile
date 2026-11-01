@@ -13,6 +13,7 @@
  * Main window only: an overlay is its own WebView and shares no module state.
  */
 import { listen } from '@tauri-apps/api/event';
+import { onLeagueChange } from './ssot.svelte';
 import { fetchDivineRate, getApiBase } from '$lib/api';
 import { refetchDelay } from '$lib/exchange/view';
 import { deriveDivineRateState, normalizeDivineRate, type DivineRateSnapshot, type DivineRateState } from './divine-rate';
@@ -112,6 +113,12 @@ export function syncDivineRateToServer(): Promise<void> {
 export function initDivineRateStore(): () => void {
 	let cancelled = false;
 	let refetchTimer: ReturnType<typeof setTimeout> | null = null;
+	const stopLeague = onLeagueChange(() => {
+		if (refetchTimer) clearTimeout(refetchTimer);
+		refetchTimer = null;
+		resetDivineRate();
+		void refreshDivineRate();
+	});
 
 	void refreshDivineRate();
 
@@ -136,6 +143,9 @@ export function initDivineRateStore(): () => void {
 
 	return () => {
 		cancelled = true;
+		generation++;
+		readInFlight = false;
+		stopLeague();
 		clearInterval(clock);
 		clearInterval(healthPoll);
 		if (refetchTimer) {
