@@ -27,6 +27,9 @@
 	import Toggle from '$lib/components/Toggle.svelte';
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
+	import { NUMBER_FORMAT_OPTIONS, parseNumberFormat } from '$lib/number-format';
+	import { groupNumber, numberFormat, setNumberFormat } from '$lib/stores/number-format.svelte';
 	import { getVersion } from '@tauri-apps/api/app';
 	const LAB_PREVIEW_KEYS = ['lab.gem', 'lab.font'] as const;
 	const TEMPLE_PREVIEW_KEYS = ['temple.panel', 'temple.remaining'] as const;
@@ -588,6 +591,17 @@
 				which measures a base from the screen itself, without needing either module
 				running. Merc and Temple refine the scale from the game's art when they next run.
 			</p>
+		</section>
+
+		<!-- Display -->
+		<section>
+			<h2>Display</h2>
+
+			<div class="setting-row">
+				<span class="setting-label">Number format</span>
+				<SegmentedButtons value={numberFormat()} title="Thousands separator" options={NUMBER_FORMAT_OPTIONS} onselect={(value) => setNumberFormat(parseNumberFormat(value))} />
+				<span class="setting-value mono">{groupNumber('11225')}c</span>
+			</div>
 		</section>
 
 		<!-- Timer Appearance -->

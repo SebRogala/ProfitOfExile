@@ -5,7 +5,7 @@
  * `fixtures.json` `_formats`) or measured with node 24 on 2026-10-10 using the
  * same Intl/Number calls — never a re-call of the helper under test.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import {
 	deriveDivineRateState,
 	divineRateView,
@@ -18,6 +18,11 @@ import {
 	type DivineRateSnapshot
 } from './divine-rate';
 import { readDivineRateFixture } from './divine-rate-fixture';
+import { setNumberFormat } from '$lib/stores/number-format.svelte';
+
+// The expectations below are written with comma grouping; pin it so they do
+// not follow the test machine's locale (Auto). POE-323's own tests vary it.
+beforeAll(() => setNumberFormat('comma'));
 
 const NOW = Date.parse('2026-09-10T00:00:00Z');
 const MIN = 60_000;
@@ -55,6 +60,15 @@ describe('formatChipRate', () => {
 	it('groups a rate above 1,000', () => {
 		expect(formatChipRate(1234.5)).toBe('1,235');
 	});
+
+	it('groups with the picked Number format', () => {
+		setNumberFormat('space');
+		try {
+			expect(formatChipRate(1234.5)).toBe('1\u00a0235');
+		} finally {
+			setNumberFormat('comma');
+		}
+	});
 });
 
 describe('formatTooltipRate', () => {
@@ -64,6 +78,15 @@ describe('formatTooltipRate', () => {
 
 	it('keeps the decimal and the grouping above 1,000', () => {
 		expect(formatTooltipRate(1234.5)).toBe('1,234.5');
+	});
+
+	it('keeps the decimal point when the Number format groups with a space', () => {
+		setNumberFormat('space');
+		try {
+			expect(formatTooltipRate(1234.5)).toBe('1\u00a0234.5');
+		} finally {
+			setNumberFormat('comma');
+		}
 	});
 });
 

@@ -5,7 +5,7 @@
  * fixture adapters behind its ports. Tauri's prefs load and `listen` are
  * mocked; `render()` runs no `$effect`, so the page's own `start()` stays off.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
 import type { HarvestController, HarvestControllerDependencies } from '$lib/harvest/controller.svelte';
 import type { ExchangePriceRead, HarvestFamily, HarvestFamilyData } from '$lib/harvest/seam';
@@ -37,6 +37,11 @@ const { createHarvestController, productionDependencies } = await vi.importActua
 >('$lib/harvest/controller.svelte');
 
 import HarvestFlippingPage from './HarvestFlippingPage.svelte';
+import { setNumberFormat } from '$lib/stores/number-format.svelte';
+
+// The expectations below are written with comma grouping; pin it so they do
+// not follow the test machine's locale (Auto). POE-323's own tests vary it.
+beforeAll(() => setNumberFormat('comma'));
 
 const KEEPERS_REGEX = '"den|san|fac|hol|fra|gly|shu|gil"';
 const DENSE = 'Metadata/Items/Currency/CurrencyDelveCraftingDefences';

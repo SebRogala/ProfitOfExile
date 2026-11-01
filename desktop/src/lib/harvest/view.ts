@@ -29,6 +29,7 @@ import {
 	type Pick
 } from './engine';
 import { STASH_SEARCH_LIMIT, stashRegex } from './regex';
+import { groupNumber } from '$lib/stores/number-format.svelte';
 import type { ExchangeItemPrice, ExchangePriceRead, HarvestFamily, HarvestFamilyData } from './seam';
 
 // ------------------------------------------------------------- formatting --
@@ -49,9 +50,9 @@ function roundHalfUp(value: number, decimals: number): number {
 	return (Math.sign(value) * Math.round(scaled)) / scale;
 }
 
-/** Comma grouping by hand (as `exchange/view.ts` `formatChaos`): a locale grouping with "." would misread. */
+/** The reader's Number format (POE-323); no mode groups with ".", which would misread beside a decimal. */
 function group(whole: number): string {
-	return String(whole).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+	return groupNumber(String(whole));
 }
 
 /** `_formats.chaos`: one decimal below 100 (`9.1c`), whole and grouped from 100 (`1,344c`). */

@@ -1,4 +1,6 @@
 /** POE-316's page-local calculator, matching Main.dc.html's renderVals. */
+import { groupNumber } from '$lib/stores/number-format.svelte';
+
 export type ChaosDivMode = 'sell' | 'buy';
 export type ChaosDivCurrency = 'chaos' | 'div';
 export type ChaosDivOneSide = 'left' | 'right';
@@ -64,8 +66,9 @@ export function normalizeChaosDivAmount(amount: number): number {
 	return Number.isFinite(amount) ? Math.max(1, Math.min(100_000, Math.floor(amount))) : 1;
 }
 
+/** Whole chaos, grouped with the reader's Number format (POE-323); Copy puts the ungrouped value. */
 export function formatChaosDivWhole(value: number): string {
-	return Math.round(value).toLocaleString('en-US');
+	return groupNumber(Math.round(value).toLocaleString('en-US', { useGrouping: false }));
 }
 
 export function formatChaosDivItems(count: number): string {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import fixture from './__fixtures__/chaos-div.json';
 import {
 	calculateChaosDiv,
@@ -9,6 +9,11 @@ import {
 	switchChaosDivMode,
 	type ChaosDivInput
 } from './chaos-div';
+import { setNumberFormat } from '$lib/stores/number-format.svelte';
+
+// The expectations below are written with comma grouping; pin it so they do
+// not follow the test machine's locale (Auto). POE-323's own tests vary it.
+beforeAll(() => setNumberFormat('comma'));
 
 const defaults = (): ChaosDivInput => ({ ...CHAOS_DIV_DEFAULTS, rate: 420 });
 
@@ -111,6 +116,22 @@ describe('display formats', () => {
 	});
 	it('groups whole chaos from 1,000', () => {
 		expect(formatChaosDivWhole(1935)).toBe('1,935');
+	});
+	it('groups whole chaos with the picked Number format', () => {
+		setNumberFormat('space');
+		try {
+			expect(formatChaosDivWhole(11225)).toBe('11\u00a0225');
+		} finally {
+			setNumberFormat('comma');
+		}
+	});
+	it('groups the per-item chaos with the picked Number format', () => {
+		setNumberFormat('space');
+		try {
+			expect(calculateChaosDiv({ ...defaults(), ratio: 11225 }).perItemC).toBe('11\u00a0225');
+		} finally {
+			setNumberFormat('comma');
+		}
 	});
 	it('keeps two chaos decimals below 10c', () => {
 		expect(calculateChaosDiv({ ...defaults(), ratio: 9.994 }).perItemC).toBe('9.99');

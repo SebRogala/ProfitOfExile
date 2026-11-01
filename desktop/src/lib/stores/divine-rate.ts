@@ -9,6 +9,7 @@
  * (`design/handoffs/poe-284--desktop-app--top-bar--divine-rate/`).
  */
 import type { DivineRate } from '$lib/api';
+import { groupNumber } from '$lib/stores/number-format.svelte';
 
 export type DivineRateState = DivineRate['state'];
 
@@ -47,14 +48,14 @@ export function deriveDivineRateState(snap: Pick<DivineRateSnapshot, 'divineChao
 	return snap.state === 'stale' ? 'stale' : 'ready';
 }
 
-/** Whole chaos, grouped from 1,000 (`_formats.chip`). */
+/** Whole chaos, grouped from 1,000 (`_formats.chip`) with the reader's Number format. */
 export function formatChipRate(rate: number): string {
-	return Math.round(rate).toLocaleString('en-US');
+	return groupNumber(Math.round(rate).toLocaleString('en-US', { useGrouping: false }));
 }
 
 /** One decimal (`_formats.tooltip`); grouping at ≥1,000 matches the chip. */
 export function formatTooltipRate(rate: number): string {
-	return rate.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+	return groupNumber(rate.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false }));
 }
 
 /**

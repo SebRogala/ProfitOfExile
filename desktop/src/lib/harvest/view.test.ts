@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { beforeAll, describe, it, expect } from 'vitest';
 import {
 	applyPick,
 	combineOwnerState,
@@ -24,6 +24,11 @@ import { createExchangeFixture } from './sources/exchange-fixture';
 import { loadHarvestFamilies } from './sources/harvest-fixture';
 import type { ExchangePriceRead, HarvestFamily, HarvestFamilyData } from './seam';
 import type { CurrencyExchangeHorizon } from '$lib/exchange/view';
+import { setNumberFormat } from '$lib/stores/number-format.svelte';
+
+// The expectations below are written with comma grouping; pin it so they do
+// not follow the test machine's locale (Auto). POE-323's own tests vary it.
+beforeAll(() => setNumberFormat('comma'));
 
 /**
  * Read models come from the WI-5 fixture adapters; every expected string is a
@@ -116,6 +121,15 @@ describe('formatHarvestChaos', () => {
 		expect(formatHarvestChaos(1344)).toBe('1,344c');
 	});
 
+	it('groups chaos with the picked Number format: 1344 → 1 344c under Space', () => {
+		setNumberFormat('space');
+		try {
+			expect(formatHarvestChaos(1344)).toBe('1\u00a0344c');
+		} finally {
+			setNumberFormat('comma');
+		}
+	});
+
 	it('rounds the 19.35 half-tie up: 19.4c', () => {
 		expect(formatHarvestChaos(19.35)).toBe('19.4c');
 	});
@@ -174,6 +188,15 @@ describe('formatHarvestPercent / Rolls / Count', () => {
 
 	it('groups counts: 9905 → 9,905', () => {
 		expect(formatHarvestCount(9905)).toBe('9,905');
+	});
+
+	it('leaves counts ungrouped under the None Number format: 9905', () => {
+		setNumberFormat('none');
+		try {
+			expect(formatHarvestCount(9905)).toBe('9905');
+		} finally {
+			setNumberFormat('comma');
+		}
 	});
 });
 

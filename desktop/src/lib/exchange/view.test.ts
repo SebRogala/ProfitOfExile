@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { beforeAll, describe, it, expect } from 'vitest';
 import {
 	CHAOS_ID,
 	DIVINE_ID,
@@ -46,6 +46,11 @@ import type {
 	CurrencyExchangePlay,
 	CurrencyExchangeResponse
 } from '$lib/api';
+import { setNumberFormat } from '$lib/stores/number-format.svelte';
+
+// The expectations below are written with comma grouping; pin it so they do
+// not follow the test machine's locale (Auto). POE-323's own tests vary it.
+beforeAll(() => setNumberFormat('comma'));
 
 /**
  * A warm response with no plays. Every `deriveState` case overrides only the
@@ -1685,6 +1690,15 @@ describe('formatChaos', () => {
 		expect(formatChaos(5050)).toBe('5,050');
 	});
 
+	it('writes a loss ungrouped under the None Number format', () => {
+		setNumberFormat('none');
+		try {
+			expect(formatChaos(-1234567)).toBe('-1234567');
+		} finally {
+			setNumberFormat('comma');
+		}
+	});
+
 	it('separates every group of a seven-figure payout', () => {
 		expect(formatChaos(1234567.891)).toBe('1,234,568');
 	});
@@ -2733,6 +2747,19 @@ describe('routeSlots', () => {
 		expect(route?.get.sub).toBe('keep ≈ 100c (≈ 0.50 div)');
 	});
 
+	/** One posting of a market that posts a single item for 1,000 div (see the test below). */
+	const thousandDivinePlay = () => divineScarab({
+		legs: [
+			leg({ ...DIVINE_SIDE, price: 1000, priceItemQty: 1, priceQuoteQty: 1000 }),
+			leg({ ...DIVINE_SIDE, action: 'sell', price: 1200, priceItemQty: 1, priceQuoteQty: 1200 })
+		],
+		roiPct: 0.17623762376237623,
+		edge: 0.17623762376237623,
+		roiPctRaw: 0.19999999999999996,
+		investment: 202000,
+		roi: 35600
+	});
+
 	it('groups a divine end into thousands', () => {
 		// One posting of a market that posts a single item for 1,000 div:
 		// `u0 = 1,010` div, so at `r = 200` the investment is 202,000c, which is
@@ -2743,19 +2770,16 @@ describe('routeSlots', () => {
 		// Wire-consistent: the sell market posts one for 1,200 div, so
 		// `u1 = 1,188` and `roi = r · (u1 − u0) = 35,600`c, whose back-solved
 		// `roiPct` is `35,600 / 202,000`. `roiPctRaw = 1,200 / 1,000 − 1 = 0.2`.
-		const huge = divineScarab({
-			legs: [
-				leg({ ...DIVINE_SIDE, price: 1000, priceItemQty: 1, priceQuoteQty: 1000 }),
-				leg({ ...DIVINE_SIDE, action: 'sell', price: 1200, priceItemQty: 1, priceQuoteQty: 1200 })
-			],
-			roiPct: 0.17623762376237623,
-			edge: 0.17623762376237623,
-			roiPctRaw: 0.19999999999999996,
-			investment: 202000,
-			roi: 35600
-		});
+		expect(routeSlots(thousandDivinePlay(), DIVINE_RATE)?.spend.amount).toBe('1,010.00');
+	});
 
-		expect(routeSlots(huge, DIVINE_RATE)?.spend.amount).toBe('1,010.00');
+	it('groups a divine end with the picked Number format, keeping the decimal point', () => {
+		setNumberFormat('space');
+		try {
+			expect(routeSlots(thousandDivinePlay(), DIVINE_RATE)?.spend.amount).toBe('1\u00a0010.00');
+		} finally {
+			setNumberFormat('comma');
+		}
 	});
 
 	it('gives the end tiles the built artwork of the currency the row is entered with', () => {

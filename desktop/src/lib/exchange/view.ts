@@ -12,7 +12,9 @@
  * state the header renders.
  *
  * Pure TypeScript on purpose — no Svelte runes, no Tauri imports — so the
- * whole file is reachable from vitest without a component harness.
+ * whole file is reachable from vitest without a component harness. The one
+ * outside read is the thousands separator (`groupNumber`, POE-323), the
+ * reader's Number format pick; a test that is not about it pins it.
  *
  * This file is the ONLY emitter of a Currency Exchange row's mechanical
  * numbers — the route's ends, its step totals and the three money columns. What
@@ -30,6 +32,7 @@ import type {
 	CurrencyExchangePlay,
 	CurrencyExchangeResponse
 } from '$lib/api';
+import { groupNumber } from '$lib/stores/number-format.svelte';
 
 /**
  * Re-exported from `$lib/api` so the page can import its wire enums from the
@@ -427,14 +430,15 @@ export function formatLegPrice(price: number): string {
  * round to the same number of orbs — `Math.round` alone breaks halves towards
  * +Infinity, which would print a loss one orb smaller than the matching gain.
  *
- * Grouped by hand rather than through `toLocaleString`, for the reason
- * `formatTime` gives: a locale that groups with "." would print 5.050 beside an
- * English sentence and read as five point zero five.
+ * Grouped through `groupNumber` (the reader's Number format, POE-323) rather
+ * than `toLocaleString`, for the reason `formatTime` gives: a locale that groups
+ * with "." would print 5.050 beside an English sentence and read as five point
+ * zero five, and no Number format groups with ".".
  */
 export function formatChaos(amount: number): string {
 	if (!Number.isFinite(amount)) return '0';
 	const rounded = Math.round(Math.abs(amount));
-	const grouped = String(rounded).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+	const grouped = groupNumber(String(rounded));
 	return rounded === 0 || amount > 0 ? grouped : `-${grouped}`;
 }
 
@@ -453,7 +457,7 @@ export function formatChaos(amount: number): string {
  * page is being.
  *
  * Grouping and the signed-zero rule are `formatChaos`'s, for `formatChaos`'s
- * reasons: hand-grouped so a locale that separates with "." cannot turn 1,204
+ * reasons: grouped through `groupNumber` so a locale that separates with "." cannot turn 1,204
  * into one point two, and the sign taken from the rounded magnitude so an amount
  * too small to print never comes out as "-0.00".
  */
@@ -461,7 +465,7 @@ function formatFractionalOrbs(amount: number): string {
 	if (!Number.isFinite(amount)) return '0.00';
 	const fixed = Math.abs(amount).toFixed(2);
 	const [whole, fraction] = fixed.split('.');
-	const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+	const grouped = groupNumber(whole);
 	const sign = Number(fixed) !== 0 && amount < 0 ? '-' : '';
 	return `${sign}${grouped}.${fraction}`;
 }
