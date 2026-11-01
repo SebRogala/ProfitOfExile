@@ -106,9 +106,10 @@
 		<div class="field">
 			<div class="field-label">
 				<label class="caption" for="chaos-div-amount">{amountLabel}</label>
-				{#if !selling}
+				<!-- Rendered in both modes so the header row keeps the toggle's height; hidden (and out of the tab order) while selling. -->
+				<div class="amount-kind" class:reserved={selling}>
 					<SegmentedButtons value={amountKind} title="Amount input" options={[{ value: 'items', label: 'Items' }, { value: 'budget', label: 'Budget' }]} onselect={(value) => { amountKind = value === 'budget' ? 'budget' : 'items'; clearCopy(); }} />
-				{/if}
+				</div>
 			</div>
 			<div class="stepper">
 				<button type="button" class="square" aria-label="Decrease amount" onclick={() => { amount = Math.max(1, result.amount - 1); clearCopy(); }}>−</button>
@@ -228,12 +229,18 @@
 		border: 1px solid var(--color-lab-border);
 	}
 
+	/* Each field spans the bar's three rows through a subgrid, so the header row is as tall as the tallest
+	   header (the Items/Budget toggle) in every column and the control rows line up. The bar scrolls
+	   instead of wrapping on a narrow window, since a wrapped field would leave that shared row. */
 	.input-bar {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: start;
-		gap: 12px;
+		display: grid;
+		grid-template-columns: repeat(4, max-content);
+		grid-template-rows: repeat(3, auto);
+		column-gap: 12px;
+		row-gap: 4px;
 		padding: 8px 12px;
+		overflow-x: auto;
+		overflow-y: hidden;
 	}
 
 	.field-label,
@@ -245,10 +252,19 @@
 	}
 
 	.field {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
+		display: grid;
+		grid-row: span 3;
+		grid-template-rows: subgrid;
+		justify-items: start;
 		min-width: 0;
+	}
+
+	.field > :first-child {
+		align-self: center;
+	}
+
+	.amount-kind.reserved {
+		visibility: hidden;
 	}
 
 	.caption,
