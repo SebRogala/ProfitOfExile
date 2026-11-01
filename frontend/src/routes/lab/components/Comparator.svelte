@@ -677,7 +677,12 @@
 									<span class="trade-actions">
 										<span class="trade-cache-age" class:trade-cache-stale={isTradeCacheStale(gem.name)} title="Time since last trade lookup">{tradeCacheAgeStr(gem.name)}</span>
 										{#if gem.name.includes(' of ')}
-											<a class="trade-action-btn trade-base-link" href={baseGemTradeUrl(gem.name, variant, league)} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Buy Base</a>
+											{@const url = baseGemTradeUrl(gem.name, variant, league)}
+											{#if url}
+												<a class="trade-action-btn trade-base-link" href={url} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Buy Base</a>
+											{:else}
+												<span class="trade-action-btn trade-base-disabled" aria-disabled="true" title="League not detected — trade link unavailable">Buy Base</span>
+											{/if}
 										{/if}
 									</span>
 								</div>
@@ -738,6 +743,10 @@
 </section>
 
 <style>
+	.trade-base-disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
 	.section {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);

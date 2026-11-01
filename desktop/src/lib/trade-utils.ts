@@ -13,13 +13,56 @@ export function baseGemName(name: string): string {
 }
 
 /**
+ * Build trade URL for the cheapest corrupted gems of a color at one Dedication
+ * variant ("21/23" or "21/20"), for Dedication lab input cost.
+ * Filters: gem_level >= the variant's level, exact variant quality, category
+ * gem.activegem (skills only).
+ * Color filter via req_filters attribute caps (same pattern as FontEVCompare buyBaseUrl).
+ * isTransfigured: true = only transfigured gems, false = exclude transfigured gems.
+ */
+export function cheapestCorruptedTradeUrl(color: string, isTransfigured: boolean, league?: string | null, variant = '21/23'): string | null {
+	if (!league?.trim()) return null;
+	// Attribute caps to isolate pure-color gems (hybrids start at 98).
+	const reqFilters: Record<string, any> = {};
+	if (color === 'RED')   { reqFilters.dex = { max: 97 }; reqFilters.int = { max: 97 }; }
+	if (color === 'GREEN') { reqFilters.str = { max: 97 }; reqFilters.int = { max: 97 }; }
+	if (color === 'BLUE')  { reqFilters.str = { max: 97 }; reqFilters.dex = { max: 97 }; }
+
+	// Quality is pinned exactly: 21/20 and 21/23 are separate markets, and a
+	// quality minimum would list the dearer 23s against the 20-quality pool.
+	const [levelPart, qualityPart] = variant.split('/');
+	const miscFilters: Record<string, any> = {
+		gem_level: { min: parseInt(levelPart) || 21 },
+		quality: { min: parseInt(qualityPart) || 0, max: parseInt(qualityPart) || 0 },
+		corrupted: { option: 'true' },
+	};
+
+	// "Transfigured Gem" filter on the trade site: "Yes" or "No".
+	miscFilters.gem_transfigured = { option: isTransfigured ? 'true' : 'false' };
+
+	const q: any = {
+		query: {
+			status: { option: 'securable' },
+			filters: {
+				type_filters: { filters: { category: { option: 'gem.activegem' } } },
+				req_filters: { filters: reqFilters },
+				misc_filters: { filters: miscFilters },
+				trade_filters: { filters: { sale_type: { option: 'priced' }, collapse: { option: 'true' } } },
+			},
+		},
+		sort: { price: 'asc' },
+	};
+
+	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league)}?q=${encodeURIComponent(JSON.stringify(q))}`;
+}
+
+/**
  * Build GGG trade search URL for a base gem with variant filters.
  * Parameters: gem name (transfigured), variant string ("20/20"), league name.
- * `league` MUST be a resolved league (callers fail closed on the SSOT `null`
- * before calling — there is no default-league fallback here on purpose).
  * Returns: full trade URL with query.
  */
-export function baseGemTradeUrl(name: string, variant: string, league: string): string {
+export function baseGemTradeUrl(name: string, variant: string, league?: string | null): string | null {
+	if (!league?.trim()) return null;
 	const base = baseGemName(name);
 	const parts = variant.split('/');
 	const level = parseInt(parts[0]) || 0;
@@ -45,35 +88,57 @@ export function baseGemTradeUrl(name: string, variant: string, league: string): 
 }
 
 /**
- * Build trade URL for the cheapest corrupted gems of a color at one Dedication
- * variant ("21/23" or "21/20"), for Dedication lab input cost.
- * `league` MUST be a resolved league (callers fail closed on the SSOT `null` first).
+ * Cheapest Normal base by color. Attribute caps exclude hybrids (98+).
+ * Level-one gems have no requirements, so cannot be searched by color.
+ * Unlike baseGemTradeUrl, level and positive quality are minimums here.
  */
-export function cheapestCorruptedTradeUrl(color: string, isTransfigured: boolean, league: string, variant = '21/23'): string {
+export function buyBaseUrl(variant: string, color: string, league?: string | null): string | null {
+	if (!league?.trim()) return null;
+	const parts = variant.split('/');
+	const level = parseInt(parts[0]) || 0;
+	const quality = parts.length > 1 ? parseInt(parts[1]) : 0;
+	if (level < 20) return null;
+
 	const reqFilters: Record<string, any> = {};
 	if (color === 'RED')   { reqFilters.dex = { max: 97 }; reqFilters.int = { max: 97 }; }
 	if (color === 'GREEN') { reqFilters.str = { max: 97 }; reqFilters.int = { max: 97 }; }
 	if (color === 'BLUE')  { reqFilters.str = { max: 97 }; reqFilters.dex = { max: 97 }; }
 
-	// Quality is pinned exactly: 21/20 and 21/23 are separate markets, and a
-	// quality minimum would list the dearer 23s against the 20-quality pool.
-	const [levelPart, qualityPart] = variant.split('/');
 	const miscFilters: Record<string, any> = {
-		gem_level: { min: parseInt(levelPart) || 21 },
-		quality: { min: parseInt(qualityPart) || 0, max: parseInt(qualityPart) || 0 },
-		corrupted: { option: 'true' },
+		gem_level: { min: level },
+		corrupted: { option: 'false' },
 	};
+	if (quality > 0) {
+		miscFilters.quality = { min: quality };
+	} else {
+		miscFilters.quality = { max: 0 };
+	}
 
-	// "Transfigured Gem" filter on the trade site: "Yes" or "No".
-	miscFilters.gem_transfigured = { option: isTransfigured ? 'true' : 'false' };
-
-	const q: any = {
+	const q = {
 		query: {
 			status: { option: 'securable' },
 			filters: {
 				type_filters: { filters: { category: { option: 'gem.activegem' } } },
 				req_filters: { filters: reqFilters },
 				misc_filters: { filters: miscFilters },
+				trade_filters: { filters: { sale_type: { option: 'priced' }, collapse: { option: 'true' } } },
+			},
+		},
+		sort: { price: 'asc' },
+	};
+	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league)}?q=${encodeURIComponent(JSON.stringify(q))}`;
+}
+
+/** GCP recipe input: level 20+, uncorrupted, with unrestricted quality. */
+export function baseGemNoQualityUrl(gemName: string, league?: string | null): string | null {
+	if (!league?.trim()) return null;
+	const q = {
+		query: {
+			type: baseGemName(gemName),
+			status: { option: 'securable' },
+			filters: {
+				type_filters: { filters: { category: { option: 'gem' } } },
+				misc_filters: { filters: { gem_level: { min: 20 }, corrupted: { option: 'false' } } },
 				trade_filters: { filters: { sale_type: { option: 'priced' }, collapse: { option: 'true' } } },
 			},
 		},

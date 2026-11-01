@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, DEDICATION_POOL_LABELS, type DedicationPool, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
-	import { baseGemTradeUrl, cheapestCorruptedTradeUrl } from '$lib/trade-utils';
+	import { baseGemTradeUrl, cheapestCorruptedTradeUrl, buyBaseUrl, baseGemNoQualityUrl } from '$lib/trade-utils';
 	import { formatPrice, formatPriceSigned, type PriceUnit } from '$lib/price.svelte';
 	import InfoTooltip from './InfoTooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
@@ -194,63 +194,6 @@
 		return `${ratio} (${pct}%)  ~${formatPrice(raw, unit)}`;
 	}
 
-	/**
-	 * Build trade URL for cheapest base gem of a color + variant (Normal mode).
-	 */
-	function buyBaseUrl(variant: string, color: string): string | null {
-		const parts = variant.split('/');
-		const level = parseInt(parts[0]) || 0;
-		const quality = parts.length > 1 ? parseInt(parts[1]) : 0;
-
-		if (level < 20) return null;
-
-		const reqFilters: Record<string, any> = {};
-		if (color === 'RED')   { reqFilters.dex = { max: 97 }; reqFilters.int = { max: 97 }; }
-		if (color === 'GREEN') { reqFilters.str = { max: 97 }; reqFilters.int = { max: 97 }; }
-		if (color === 'BLUE')  { reqFilters.str = { max: 97 }; reqFilters.dex = { max: 97 }; }
-
-		const miscFilters: Record<string, any> = {
-			gem_level: { min: level },
-			corrupted: { option: 'false' },
-		};
-		if (quality > 0) {
-			miscFilters.quality = { min: quality };
-		} else {
-			miscFilters.quality = { max: 0 };
-		}
-
-		const q = {
-			query: {
-				status: { option: 'securable' },
-				filters: {
-					type_filters: { filters: { category: { option: 'gem.activegem' } } },
-					req_filters: { filters: reqFilters },
-					misc_filters: { filters: miscFilters },
-					trade_filters: { filters: { sale_type: { option: 'priced' }, collapse: { option: 'true' } } },
-				},
-			},
-			sort: { price: 'asc' },
-		};
-		return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
-	}
-
-	function baseGemNoQualityUrl(gemName: string): string {
-		const base = gemName.lastIndexOf(' of ') > 0 ? gemName.substring(0, gemName.lastIndexOf(' of ')) : gemName;
-		const q = {
-			query: {
-				type: base,
-				status: { option: 'securable' },
-				filters: {
-					type_filters: { filters: { category: { option: 'gem' } } },
-					misc_filters: { filters: { gem_level: { min: 20 }, corrupted: { option: 'false' } } },
-					trade_filters: { filters: { sale_type: { option: 'priced' }, collapse: { option: 'true' } } },
-				},
-			},
-			sort: { price: 'asc' },
-		};
-		return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
-	}
-
 	// Probability of getting at least 1 winner in 3 picks without replacement.
 	function pWin3(winners: number, total: number): number {
 		if (winners <= 0 || total < 3) return 0;
@@ -367,13 +310,17 @@
 						<td class="buy-col">
 							<div class="buy-buttons">
 								{#each COLORS as color}
-									{@const url = cheapestCorruptedTradeUrl(color, row.poolKey === 'transfigured', league || '', row.variant)}
-									<a
-										class="buy-btn buy-{color.toLowerCase()}"
-										href={url}
-										target="_blank"
-										title="Buy cheapest corrupted {row.variant} {color} {row.poolKey === 'transfigured' ? 'transfigured ' : ''}gems"
-									>{color}</a>
+									{@const url = cheapestCorruptedTradeUrl(color, row.poolKey === 'transfigured', league, row.variant)}
+									{#if url}
+										<a
+											class="buy-btn buy-{color.toLowerCase()}"
+											href={url}
+											target="_blank"
+											title="Buy cheapest corrupted {row.variant} {color} {row.poolKey === 'transfigured' ? 'transfigured ' : ''}gems"
+										>{color}</a>
+									{:else}
+										<span class="buy-btn buy-{color.toLowerCase()} buy-disabled" aria-disabled="true" title="League not detected — trade link unavailable">{color}</span>
+									{/if}
 								{/each}
 							</div>
 						</td>
@@ -476,12 +423,20 @@
 										</div>
 										{#if jackpot && jackpot.winners > 0}
 										{@const gemList = (jackpot.jackpotGems || []).map(g => {
-											let html = `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><b>${g.name}</b>: ${formatPrice(g.chaos)} &nbsp;&nbsp;<a href="${baseGemTradeUrl(g.name, variant, league || '')}" target="_blank" style="padding:1px 8px;font-size:0.75rem;font-weight:600;color:#5eead4;border:1px solid rgba(94,234,212,0.4);text-decoration:none;letter-spacing:0.03em">Buy Base</a>`;
+											const baseUrl = baseGemTradeUrl(g.name, variant, league);
+											const buyBase = baseUrl
+												? ` &nbsp;&nbsp;<a href="${baseUrl}" target="_blank" style="padding:1px 8px;font-size:0.75rem;font-weight:600;color:#5eead4;border:1px solid rgba(94,234,212,0.4);text-decoration:none;letter-spacing:0.03em">Buy Base</a>`
+												: ' &nbsp;&nbsp;<span aria-disabled="true" title="League not detected — trade link unavailable" style="opacity:0.4;cursor:not-allowed">Buy Base</span>';
+											let html = `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><b>${g.name}</b>: ${formatPrice(g.chaos)}${buyBase}`;
 											if ((g.gcpRecipeCost || 0) > 0) {
 												const saves = Math.round(g.gcpRecipeSaves || 0);
 												const savesColor = saves >= 0 ? '#22c55e' : '#ef4444';
 												const savesText = saves >= 0 ? `saves ${formatPrice(saves)}` : `costs ${formatPrice(Math.abs(saves))} more`;
-												html += `<div style="margin-top:3px;font-size:0.75rem;color:#94a3b8">GCP recipe: <b>${formatPrice(g.gcpRecipeBase || 0)}</b> base + ${formatPrice((g.gcpRecipeCost || 0) - (g.gcpRecipeBase || 0))} GCPs = <b>${formatPrice(g.gcpRecipeCost || 0)}</b> <span style="color:${savesColor}">(${savesText})</span> &nbsp;<a href="${baseGemNoQualityUrl(g.name)}" target="_blank" style="padding:1px 6px;font-size:0.6875rem;font-weight:600;color:#fbbf24;border:1px solid rgba(251,191,36,0.4);text-decoration:none">Buy 20/0</a></div>`;
+												const noQualUrl = baseGemNoQualityUrl(g.name, league);
+												const buy20 = noQualUrl
+													? ` &nbsp;<a href="${noQualUrl}" target="_blank" style="padding:1px 6px;font-size:0.6875rem;font-weight:600;color:#fbbf24;border:1px solid rgba(251,191,36,0.4);text-decoration:none">Buy 20/0</a>`
+													: ' &nbsp;<span aria-disabled="true" title="League not detected — trade link unavailable" style="opacity:0.4;cursor:not-allowed">Buy 20/0</span>';
+												html += `<div style="margin-top:3px;font-size:0.75rem;color:#94a3b8">GCP recipe: <b>${formatPrice(g.gcpRecipeBase || 0)}</b> base + ${formatPrice((g.gcpRecipeCost || 0) - (g.gcpRecipeBase || 0))} GCPs = <b>${formatPrice(g.gcpRecipeCost || 0)}</b> <span style="color:${savesColor}">(${savesText})</span>${buy20}</div>`;
 											}
 											html += `</div>`;
 											return html;
@@ -502,7 +457,7 @@
 							{#if parseInt(variant) >= 20}
 								<div class="buy-buttons">
 									{#each COLORS as color}
-										{@const url = buyBaseUrl(variant, color)}
+										{@const url = buyBaseUrl(variant, color, league)}
 										{#if url}
 											<a
 												class="buy-btn buy-{color.toLowerCase()}"
@@ -510,6 +465,8 @@
 												target="_blank"
 												title="Buy cheapest {color} base gem ({variant})"
 											>{color}</a>
+										{:else}
+											<span class="buy-btn buy-{color.toLowerCase()} buy-disabled" aria-disabled="true" title="League not detected — trade link unavailable">{color}</span>
 										{/if}
 									{/each}
 								</div>
@@ -589,6 +546,10 @@
 </section>
 
 <style>
+	.buy-disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
 	.section {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);

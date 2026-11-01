@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, DEDICATION_POOL_LABELS, type DedicationPool, VARIANTS, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
-	import { baseGemTradeUrl, cheapestCorruptedTradeUrl } from '$lib/trade-utils';
+	import { baseGemTradeUrl, cheapestCorruptedTradeUrl, buyBaseUrl, baseGemNoQualityUrl } from '$lib/trade-utils';
 	import { formatPrice, formatPriceSigned, type PriceUnit } from '$lib/price.svelte';
 	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
@@ -204,74 +204,6 @@
 		return `${ratio} (${pct}%)  ~${formatPrice(raw, unit)}`;
 	}
 
-	/**
-	 * Build trade URL for cheapest base gem of a color + variant.
-	 * Color filtering uses attribute requirement caps (max 97) to exclude hybrids (98+).
-	 * RED = STR gems: cap dex+int. GREEN = DEX: cap str+int. BLUE = INT: cap str+dex.
-	 * Level 1 gems have no attribute requirements — can't filter by color, returns null.
-	 */
-	function buyBaseUrl(variant: string, color: string): string | null {
-		// Fail closed: no resolved league -> no trade link (never default a league).
-		const lg = ssot.league;
-		if (!lg) return null;
-		const parts = variant.split('/');
-		const level = parseInt(parts[0]) || 0;
-		const quality = parts.length > 1 ? parseInt(parts[1]) : 0;
-
-		// Level 1 gems have no attribute requirements — no color filter possible.
-		if (level < 20) return null;
-
-		// Attribute caps to isolate pure-color gems (hybrids start at 98).
-		const reqFilters: Record<string, any> = {};
-		if (color === 'RED')   { reqFilters.dex = { max: 97 }; reqFilters.int = { max: 97 }; }
-		if (color === 'GREEN') { reqFilters.str = { max: 97 }; reqFilters.int = { max: 97 }; }
-		if (color === 'BLUE')  { reqFilters.str = { max: 97 }; reqFilters.dex = { max: 97 }; }
-
-		const miscFilters: Record<string, any> = {
-			gem_level: { min: level },
-			corrupted: { option: 'false' },
-		};
-		if (quality > 0) {
-			miscFilters.quality = { min: quality };
-		} else {
-			miscFilters.quality = { max: 0 };
-		}
-
-		const q = {
-			query: {
-				status: { option: 'securable' },
-				filters: {
-					type_filters: { filters: { category: { option: 'gem.activegem' } } },
-					req_filters: { filters: reqFilters },
-					misc_filters: { filters: miscFilters },
-					trade_filters: { filters: { sale_type: { option: 'priced' }, collapse: { option: 'true' } } },
-				},
-			},
-			sort: { price: 'asc' },
-		};
-		return `https://www.pathofexile.com/trade/search/${encodeURIComponent(lg)}?q=${encodeURIComponent(JSON.stringify(q))}`;
-	}
-
-	function baseGemNoQualityUrl(gemName: string): string | null {
-		// Fail closed: no resolved league -> no trade link (never default a league).
-		const lg = ssot.league;
-		if (!lg) return null;
-		const base = gemName.lastIndexOf(' of ') > 0 ? gemName.substring(0, gemName.lastIndexOf(' of ')) : gemName;
-		const q = {
-			query: {
-				type: base,
-				status: { option: 'securable' },
-				filters: {
-					type_filters: { filters: { category: { option: 'gem' } } },
-					misc_filters: { filters: { gem_level: { min: 20 }, corrupted: { option: 'false' } } },
-					trade_filters: { filters: { sale_type: { option: 'priced' }, collapse: { option: 'true' } } },
-				},
-			},
-			sort: { price: 'asc' },
-		};
-		return `https://www.pathofexile.com/trade/search/${encodeURIComponent(lg)}?q=${encodeURIComponent(JSON.stringify(q))}`;
-	}
-
 	// Probability of getting at least 1 winner in 3 picks without replacement.
 	function pWin3(winners: number, total: number): number {
 		if (winners <= 0 || total < 3) return 0;
@@ -331,7 +263,6 @@
 			</thead>
 			<tbody>
 				{#each DEDICATION_ROWS as row, i}
-					{@const lg = ssot.league}
 					{#if i > 0 && DEDICATION_ROWS[i - 1].variant !== row.variant}
 						<tr class="ded-sep"><td colspan={COLORS.length + 2}></td></tr>
 					{/if}
@@ -382,20 +313,20 @@
 							</td>
 						{/each}
 						<td class="buy-col">
-							{#if lg}
-								<div class="buy-buttons">
-									{#each COLORS as color}
-										{@const url = cheapestCorruptedTradeUrl(color, row.poolKey === 'transfigured', lg, row.variant)}
+							<div class="buy-buttons">
+								{#each COLORS as color}
+									{@const url = cheapestCorruptedTradeUrl(color, row.poolKey === 'transfigured', ssot.league, row.variant)}
+									{#if url}
 										<Tooltip text="Buy cheapest corrupted {row.variant} {color} {row.poolKey === 'transfigured' ? 'transfigured ' : ''}gems"><a
 											class="buy-btn buy-{color.toLowerCase()}"
 											href={url}
 											target="_blank"
 										>{color}</a></Tooltip>
-									{/each}
-								</div>
-							{:else}
-								<span class="buy-disabled" title="League not detected — trade links unavailable">n/a</span>
-							{/if}
+									{:else}
+										<span class="buy-btn buy-{color.toLowerCase()} buy-disabled" aria-disabled="true" title="League not detected — trade link unavailable">{color}</span>
+									{/if}
+								{/each}
+							</div>
 						</td>
 					</tr>
 				{/each}
@@ -502,20 +433,19 @@
 										</div>
 										{#if jackpot && jackpot.winners > 0}
 										{@const gemList = (jackpot.jackpotGems || []).map(g => {
-											// Fail closed: only emit trade links when the league is resolved.
-											const lg = ssot.league;
-											const buyBase = lg
-												? ` &nbsp;&nbsp;<a href="${baseGemTradeUrl(g.name, variant, lg)}" target="_blank" style="padding:1px 8px;font-size:0.75rem;font-weight:600;color:#5eead4;border:1px solid rgba(94,234,212,0.4);text-decoration:none;letter-spacing:0.03em">Buy Base</a>`
-												: '';
+											const baseUrl = baseGemTradeUrl(g.name, variant, ssot.league);
+											const buyBase = baseUrl
+												? ` &nbsp;&nbsp;<a href="${baseUrl}" target="_blank" style="padding:1px 8px;font-size:0.75rem;font-weight:600;color:#5eead4;border:1px solid rgba(94,234,212,0.4);text-decoration:none;letter-spacing:0.03em">Buy Base</a>`
+												: ' &nbsp;&nbsp;<span aria-disabled="true" title="League not detected — trade link unavailable" style="opacity:0.4;cursor:not-allowed">Buy Base</span>';
 											let html = `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><b>${g.name}</b>: ${formatPrice(g.chaos)}${buyBase}`;
 											if (g.gcpRecipeCost > 0) {
 												const saves = Math.round(g.gcpRecipeSaves);
 												const savesColor = saves >= 0 ? '#22c55e' : '#ef4444';
 												const savesText = saves >= 0 ? `saves ${formatPrice(saves)}` : `costs ${formatPrice(Math.abs(saves))} more`;
-												const noQualUrl = baseGemNoQualityUrl(g.name);
+												const noQualUrl = baseGemNoQualityUrl(g.name, ssot.league);
 												const buy20 = noQualUrl
 													? ` &nbsp;<a href="${noQualUrl}" target="_blank" style="padding:1px 6px;font-size:0.6875rem;font-weight:600;color:#fbbf24;border:1px solid rgba(251,191,36,0.4);text-decoration:none">Buy 20/0</a>`
-													: '';
+													: ' &nbsp;<span aria-disabled="true" title="League not detected — trade link unavailable" style="opacity:0.4;cursor:not-allowed">Buy 20/0</span>';
 												html += `<div style="margin-top:3px;font-size:0.75rem;color:#94a3b8">GCP recipe: <b>${formatPrice(g.gcpRecipeBase)}</b> base + ${formatPrice(g.gcpRecipeCost - g.gcpRecipeBase)} GCPs = <b>${formatPrice(g.gcpRecipeCost)}</b> <span style="color:${savesColor}">(${savesText})</span>${buy20}</div>`;
 											}
 											html += `</div>`;
@@ -535,22 +465,20 @@
 						{/each}
 						<td class="buy-col">
 							{#if parseInt(variant) >= 20}
-								{#if ssot.league}
-									<div class="buy-buttons">
-										{#each COLORS as color}
-											{@const url = buyBaseUrl(variant, color)}
-											{#if url}
-												<Tooltip text="Buy cheapest {color} base gem ({variant})"><a
-													class="buy-btn buy-{color.toLowerCase()}"
-													href={url}
-													target="_blank"
-												>{color}</a></Tooltip>
-											{/if}
-										{/each}
-									</div>
-								{:else}
-									<span class="buy-disabled" title="League not detected — trade links unavailable">n/a</span>
-								{/if}
+								<div class="buy-buttons">
+									{#each COLORS as color}
+										{@const url = buyBaseUrl(variant, color, ssot.league)}
+										{#if url}
+											<Tooltip text="Buy cheapest {color} base gem ({variant})"><a
+												class="buy-btn buy-{color.toLowerCase()}"
+												href={url}
+												target="_blank"
+											>{color}</a></Tooltip>
+										{:else}
+											<span class="buy-btn buy-{color.toLowerCase()} buy-disabled" aria-disabled="true" title="League not detected — trade link unavailable">{color}</span>
+										{/if}
+									{/each}
+								</div>
 							{/if}
 						</td>
 					</tr>

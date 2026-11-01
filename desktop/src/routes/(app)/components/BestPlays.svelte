@@ -200,11 +200,11 @@
 								Color: <span class="color-{gem.color.toLowerCase()}">{gem.color}</span> |
 								Sellability: {gem.sellabilityLabel} ({gem.sellability})
 								{#if gem.name.includes(' of ')}
-									{@const lg = ssot.league}
-									{#if lg}
-										| <Tooltip text="Buy {baseGemName(gem.name)} ({gem.variant})"><a class="buy-base-link" href={baseGemTradeUrl(gem.name, gem.variant, lg)} target="_blank">Buy Base</a></Tooltip>
+									{@const url = baseGemTradeUrl(gem.name, gem.variant, ssot.league)}
+									{#if url}
+										| <Tooltip text="Buy {baseGemName(gem.name)} ({gem.variant})"><a class="buy-base-link" href={url} target="_blank">Buy Base</a></Tooltip>
 									{:else}
-										| <Tooltip text="League not detected — trade link unavailable"><span class="buy-base-disabled">Buy Base</span></Tooltip>
+										| <Tooltip text="League not detected — trade link unavailable"><span class="buy-base-disabled" aria-disabled="true">Buy Base</span></Tooltip>
 									{/if}
 								{/if}
 							</span>
@@ -218,11 +218,11 @@
 										<span class="gcp-more-expensive">(costs {formatPrice(Math.abs(gem.gcpRecipeSaves))} more)</span>
 									{/if}
 									{#if gem.name.includes(' of ')}
-										{@const lg = ssot.league}
-										{#if lg}
-											<a class="buy-base-link gcp-buy" href={baseGemTradeUrl(gem.name, '20/0', lg)} target="_blank">Buy 20/0</a>
+										{@const url = baseGemTradeUrl(gem.name, '20/0', ssot.league)}
+										{#if url}
+											<a class="buy-base-link gcp-buy" href={url} target="_blank">Buy 20/0</a>
 										{:else}
-											<span class="gcp-buy buy-base-disabled" title="League not detected">Buy 20/0</span>
+											<span class="gcp-buy buy-base-disabled" aria-disabled="true" title="League not detected">Buy 20/0</span>
 										{/if}
 									{/if}
 								</div>

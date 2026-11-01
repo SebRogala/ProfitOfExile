@@ -191,7 +191,12 @@
 								Color: <span class="color-{gem.color.toLowerCase()}">{gem.color}</span> |
 								Sellability: {gem.sellabilityLabel} ({gem.sellability})
 								{#if gem.name.includes(' of ')}
-									| <a class="buy-base-link" href={baseGemTradeUrl(gem.name, gem.variant, league)} target="_blank" title="Buy {baseGemName(gem.name)} ({gem.variant})">Buy Base</a>
+									{@const url = baseGemTradeUrl(gem.name, gem.variant, league)}
+									{#if url}
+										| <a class="buy-base-link" href={url} target="_blank" title="Buy {baseGemName(gem.name)} ({gem.variant})">Buy Base</a>
+									{:else}
+										| <span class="buy-base-link buy-base-disabled" aria-disabled="true" title="League not detected — trade link unavailable">Buy Base</span>
+									{/if}
 								{/if}
 							</span>
 							{#if gem.gcpRecipeCost > 0}
@@ -204,7 +209,12 @@
 										<span class="gcp-more-expensive">(costs {formatPrice(Math.abs(gem.gcpRecipeSaves))} more)</span>
 									{/if}
 									{#if gem.name.includes(' of ')}
-										<a class="buy-base-link gcp-buy" href={baseGemTradeUrl(gem.name, '20/0', league)} target="_blank">Buy 20/0</a>
+										{@const url = baseGemTradeUrl(gem.name, '20/0', league)}
+										{#if url}
+											<a class="buy-base-link gcp-buy" href={url} target="_blank">Buy 20/0</a>
+										{:else}
+											<span class="buy-base-link gcp-buy buy-base-disabled" aria-disabled="true" title="League not detected — trade link unavailable">Buy 20/0</span>
+										{/if}
 									{/if}
 								</div>
 							{/if}
@@ -247,6 +257,10 @@
 </div>
 
 <style>
+	.buy-base-disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
 	.plays-header {
 		display: flex;
 		justify-content: space-between;
