@@ -101,10 +101,11 @@ remain historical, and profile versions keep changed pools separate.
 
 ## Amended 2026-11-01 (POE-117): admission and desktop league ownership
 
-Status: accepted convention. Trade contribution admission is implemented under
-POE-319; the boss-loot boot-scope injection and desktop reconciliation rollout
-remain pending at this amendment. Active implementation tracking remains in
-POE-117 and its linked tasks.
+Status: accepted and implemented. Repository implementation verified 2026-11-01
+at `66ea8fc7`: POE-117 WI-1 delivered trade contribution admission (POE-319),
+WI-3 delivered desktop ownership and reconciliation, and WI-6 delivered
+boss-loot boot-scope injection. Active tracking remains in POE-117 and its linked
+tasks.
 
 The server resolves `runtime_config` through `league.Resolve` once at boot and
 injects that process scope through `server.RouterConfig.League`.
@@ -151,3 +152,15 @@ market publisher and scope stamp (`topic`, `league`, `leagueRevision`). The
 existing SSE connection carries that topic and forwards it to Rust; it creates
 no second connection. This event-driven convention supersedes earlier periodic
 polling proposals; missed-event retention remains deferred.
+
+Implementation evidence:
+
+- `internal/server/handlers/trade.go` (`tradeSubmitHandler`),
+  `internal/league/league.go` (`Scope.Admit`) and
+  `internal/trade/tradeurl.go` (`LeagueFromTradeURL`) implement admission.
+- `desktop/src-tauri/src/ssot.rs` (`write_league`, `apply_league`,
+  `run_league_resolver`) and `desktop/src/lib/stores/ssot.svelte.ts`
+  (`applySnapshot`, `onLeagueChange`) implement ownership and reconciliation.
+- `internal/server/server.go` (`NewRouter`) injects `RouterConfig.League` into
+  `NewBossLoot`; `internal/server/handlers/boss_loot.go` (`Submit`) passes that
+  scope to the repository.

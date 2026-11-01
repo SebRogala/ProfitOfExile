@@ -123,7 +123,9 @@ Status: accepted. The final Operator retention decision explicitly excludes
 snapshots, these are device-owned empirical observations used cumulatively by
 Boss loot. Keep their league FK and profile version: retained observations do
 not establish permanent league invariance, and changed profile pools must not
-silently combine. Historical owned edit/delete follows ADR-009's amendment.
+silently combine. Submission scope and historical owned edit/delete follow
+[ADR-009's accepted amendments](009-league-scoped-repository-convention.md#amended-2026-11-01-poe-317-retained-boss-observations),
+including the delivered POE-117 boot-scope lifecycle.
 
 This exception supersedes the blanket statements above that every league-FK
 table joins the wipe set and that live queries can reach only the active league.
@@ -146,3 +148,7 @@ section is normative for the procedure and measured disk/dump cost, including
 the deferral of aggregate deletion pending measurement on a restored dump.
 This exception is separate from POE-317's retained boss observations and does
 not change their ownership, versioning or historical mutation rules.
+
+The delivered active-league lifecycle in
+[ADR-009](009-league-scoped-repository-convention.md#amended-2026-11-01-poe-117-admission-and-desktop-league-ownership)
+leaves this explicit historical aggregate access and retention exception intact.
