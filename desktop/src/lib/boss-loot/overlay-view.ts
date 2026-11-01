@@ -36,12 +36,38 @@ export interface ItemView extends Omit<LootItem, 'quantity'> {
 
 export type SelectionAction = { type: 'toggle'; id: string } | { type: 'quantity'; id: string; delta: number }
 
-/** Advance native monotonic time for display only; the component owns cleanup. */
-export function startOverlayClock(nowMs: number, render: (nowMs: number) => void): () => void {
-	const started = performance.now()
-	render(nowMs)
-	const timer = setInterval(() => render(nowMs + performance.now() - started), 1000)
-	return () => clearInterval(timer)
+/** Own display-clock transitions; the component updates snapshots and destroys on teardown. */
+export function createOverlayClock(render: (nowMs: number | undefined) => void) {
+	let timer: ReturnType<typeof setInterval> | undefined
+	let snapshotNowMs: number | undefined
+	let anchorMs = 0
+	let anchoredAt = 0
+	function tick() {
+		render(anchorMs + performance.now() - anchoredAt)
+	}
+	function stop() {
+		clearInterval(timer)
+		timer = undefined
+	}
+	return {
+		update(input: OverlayInput | null, nowMs?: number) {
+			if (!input?.native || nowMs === undefined || !buildOverlayView(input).counting) {
+				stop()
+				render(undefined)
+				return
+			}
+			// A delivery recalibrates native time without shifting the live cadence.
+			// Local input edits reuse the snapshot, so retain its elapsed time too.
+			if (timer === undefined || nowMs !== snapshotNowMs) {
+				snapshotNowMs = nowMs
+				anchorMs = nowMs
+				anchoredAt = performance.now()
+			}
+			if (timer === undefined) timer = setInterval(tick, 1000)
+			tick()
+		},
+		destroy: stop
+	}
 }
 
 /** Fixture interaction projection; WI-9 forwards the same user intent to Rust's owner. */

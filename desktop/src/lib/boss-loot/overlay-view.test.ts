@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import source from './__fixtures__/boss-loot.json'
 import { createFixtureCapture, createFixtureModuleSettings, createFixtureProfiles, createFixtureStats } from './fixture-adapters'
 import type { BossStats, LootLayout, StatsScope, SubmitOutcome } from './contracts'
-import { buildOverlayView, changeSelection, startOverlayClock, type OverlayInput } from './overlay-view'
+import { buildOverlayView, changeSelection, createOverlayClock, type OverlayInput } from './overlay-view'
 
 const manualCategory = { id: 'category:test:1:manual', name: 'Manual category', base: 'any equipment', wikiRate: '—' }
 
@@ -242,7 +242,8 @@ describe('native countdown display clock', () => {
 		state.native = { phase: 'open', deadlineMs: 15000, error: null, run: 79, droppedPositiveKeys: [] }
 		vi.useFakeTimers()
 		let view = buildOverlayView(state)
-		const stop = startOverlayClock(5000, (nowMs) => { view = buildOverlayView(state, nowMs) })
+		const clock = createOverlayClock((nowMs) => { view = buildOverlayView(state, nowMs) })
+		clock.update(state, 5000)
 		try {
 			expect(view).toMatchObject({ badge: 'Saving in 10 s', barPercent: 100 })
 			for (let seconds = 9; seconds >= 0; seconds--) {
@@ -251,17 +252,23 @@ describe('native countdown display clock', () => {
 			}
 			vi.advanceTimersByTime(2000)
 			expect(view).toMatchObject({ badge: 'Saving in 0 s', barPercent: 0, canSave: true })
-		} finally { stop(); vi.useRealTimers() }
+		} finally { clock.destroy(); vi.useRealTimers() }
 	})
-	it('stops delivering display ticks on cleanup', () => {
+	it('stops delivering display ticks when its running owner is destroyed', async () => {
+		const state = await input()
+		state.native = { phase: 'open', deadlineMs: 15000, error: null, run: 79, droppedPositiveKeys: [] }
 		vi.useFakeTimers()
 		const render = vi.fn()
-		const stop = startOverlayClock(5000, render)
-		stop()
+		const clock = createOverlayClock(render)
+		clock.update(state, 5000)
+		vi.advanceTimersByTime(1000)
+		expect(render).toHaveBeenLastCalledWith(6000)
+		clock.destroy()
 		render.mockClear()
 		try {
 			vi.advanceTimersByTime(3000)
 			expect(render).not.toHaveBeenCalled()
+			expect(vi.getTimerCount()).toBe(0)
 		} finally { vi.useRealTimers() }
 	})
 	it('uses elapsed time when a display callback is delayed', async () => {
@@ -270,12 +277,13 @@ describe('native countdown display clock', () => {
 		vi.useFakeTimers()
 		const clock = vi.spyOn(performance, 'now').mockReturnValue(100)
 		let view = buildOverlayView(state)
-		const stop = startOverlayClock(5000, (nowMs) => { view = buildOverlayView(state, nowMs) })
+		const owner = createOverlayClock((nowMs) => { view = buildOverlayView(state, nowMs) })
+		owner.update(state, 5000)
 		try {
 			clock.mockReturnValue(3700)
 			vi.advanceTimersByTime(1000)
 			expect(view).toMatchObject({ badge: 'Saving in 7 s', barPercent: 70 })
-		} finally { stop(); clock.mockRestore(); vi.useRealTimers() }
+		} finally { owner.destroy(); clock.mockRestore(); vi.useRealTimers() }
 	})
 	it.each(['saving', 'saved', 'unreachable', 'rejected', 'closed'])('stops counting in native phase %s', async (phase) => {
 		const state = await input()
@@ -289,5 +297,78 @@ describe('native countdown display clock', () => {
 	})
 	it('preserves fixture seconds when a local clock is supplied', async () => {
 		expect(buildOverlayView(await input(), 5000)).toMatchObject({ badge: 'Saving in 7 s', barPercent: 70 })
+	})
+})
+
+describe('overlay clock owner lifecycle', () => {
+	it('preserves second boundaries across an off-second SSOT replacement', async () => {
+		let state: OverlayInput = await input()
+		state.native = { phase: 'open', deadlineMs: 15000, error: null, run: 79, droppedPositiveKeys: [] }
+		vi.useFakeTimers()
+		let view = buildOverlayView(state)
+		const clock = createOverlayClock((nowMs) => { view = buildOverlayView(state, nowMs) })
+		try {
+			clock.update(state, 5000)
+			vi.advanceTimersByTime(2000)
+			expect(view).toMatchObject({ badge: 'Saving in 8 s', barPercent: 80 })
+			vi.advanceTimersByTime(500)
+			state = { ...state, native: { ...state.native! } }
+			clock.update(state, 7500)
+			vi.advanceTimersByTime(500)
+			expect(view).toMatchObject({ badge: 'Saving in 7 s', barPercent: 70 })
+			vi.advanceTimersByTime(1000)
+			expect(view).toMatchObject({ badge: 'Saving in 6 s', barPercent: 60 })
+			expect(vi.getTimerCount()).toBe(1)
+		} finally { clock.destroy(); vi.useRealTimers() }
+	})
+
+	it('retains elapsed time when a scope update reuses the same snapshot timestamp', async () => {
+		let state: OverlayInput = await input()
+		state.native = { phase: 'open', deadlineMs: 15000, error: null, run: 79, droppedPositiveKeys: [] }
+		vi.useFakeTimers()
+		let view = buildOverlayView(state)
+		const clock = createOverlayClock((nowMs) => { view = buildOverlayView(state, nowMs) })
+		try {
+			clock.update(state, 5000)
+			vi.advanceTimersByTime(2500)
+			state = { ...state, scope: 'collective' }
+			clock.update(state, 5000)
+			expect(view).toMatchObject({ badge: 'Saving in 8 s', barPercent: 80 })
+			vi.advanceTimersByTime(500)
+			expect(view).toMatchObject({ badge: 'Saving in 7 s', barPercent: 70 })
+		} finally { clock.destroy(); vi.useRealTimers() }
+	})
+
+	it.each(['paused', 'saving', 'saved', 'unreachable', 'rejected', 'closed', 'off', 'fixture', 'absent', 'no snapshot'])('stops the running clock on %s and resumes from a fresh deadline', async (transition) => {
+		const running: OverlayInput = await input()
+		running.native = { phase: 'open', deadlineMs: 15000, error: null, run: 79, droppedPositiveKeys: [] }
+		let state: OverlayInput | null = running
+		vi.useFakeTimers()
+		const render = vi.fn((nowMs: number | undefined) => state ? buildOverlayView(state, nowMs) : null)
+		const clock = createOverlayClock(render)
+		try {
+			clock.update(state, 5000)
+			vi.advanceTimersByTime(1000)
+			expect(render.mock.results.at(-1)?.value).toMatchObject({ badge: 'Saving in 9 s', barPercent: 90 })
+			state = { ...running, native: { ...running.native! } }
+			if (transition === 'paused') { state.native!.deadlineMs = null; state.native!.error = 'Check guaranteed groups' }
+			else if (transition === 'off') state.autoSaveSeconds = 0
+			else if (transition === 'fixture') delete state.native
+			else if (transition === 'absent') state = null
+			else if (transition !== 'no snapshot') state.native!.phase = transition
+			clock.update(state, transition === 'no snapshot' ? undefined : 6000)
+			const stopped = render.mock.results.at(-1)?.value
+			if (transition === 'paused') expect(stopped).toMatchObject({ badge: 'Paused: check guaranteed', barPercent: 0 })
+			expect(vi.getTimerCount()).toBe(0)
+			render.mockClear()
+			vi.advanceTimersByTime(4000)
+			expect(render).not.toHaveBeenCalled()
+			state = { ...running, native: { ...running.native!, deadlineMs: 20000 } }
+			clock.update(state, 10000)
+			expect(render.mock.results.at(-1)?.value).toMatchObject({ badge: 'Saving in 10 s', barPercent: 100 })
+			vi.advanceTimersByTime(1000)
+			expect(render.mock.results.at(-1)?.value).toMatchObject({ badge: 'Saving in 9 s', barPercent: 90 })
+			expect(vi.getTimerCount()).toBe(1)
+		} finally { clock.destroy(); vi.useRealTimers() }
 	})
 })
