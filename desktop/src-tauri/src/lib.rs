@@ -10,6 +10,7 @@ mod lab_navigation;
 mod lab_state;
 mod log_watcher;
 mod loot_capture;
+mod loot_profiles;
 mod mercenary;
 mod modules;
 mod ocr;
@@ -3240,9 +3241,9 @@ fn spawn_log_watcher(app: AppHandle) {
                     }
                     // Upload the previous zone's font session before observing
                     // the new area. Area detection also runs while OCR is idle.
-                    if let Some((level, area)) = lab_state::parse_area_change(&line) {
+                    if let Some(change) = lab_state::parse_area_change(&line) {
                         let state = app.state::<AppState>();
-                        let update = record_lab_detection(&state, |detection| detection.observe_area(level, area));
+                        let update = record_lab_detection(&state, |detection| detection.observe_area(change.level, change.area));
                         publish_lab_detection(&app, update);
                     }
                 }
