@@ -56,7 +56,7 @@
 	{:else if tab.value === 'results' && page.status === 'unreachable'}
 		<div class="status-line warning" role="status">Server unreachable.</div>
 	{/if}
-	{#if page.error}<div class="status-line warning" role="alert">{page.error}</div>{/if}
+	{#if page.error && (tab.value !== 'settings' || page.error !== page.settingsError)}<div class="status-line warning" role="alert">{page.error}</div>{/if}
 	{#if tab.value === 'results' && view && page.profile}
 		<section class="panel" aria-label="Boss loot results">
 			<div class="boss-summary">
@@ -288,6 +288,7 @@
 	.setting-label { display: flex; flex-direction: column; gap: 2px; }
 	.setting-control { border: 0; margin: 0; padding: 0; min-width: 0; }
 	.setting-control:disabled { opacity: .6; }
+	.setting-control :global(.toggle:focus-visible), .not-counted-list input:focus-visible { outline: 1px solid var(--color-lab-blue); outline-offset: 2px; }
 	.exclusions { align-items: start; }
 	.not-counted-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px 16px; }
 	.not-counted-list label { display: inline-flex; align-items: center; gap: 8px; min-height: 20px; font-size: 12px; cursor: pointer; }

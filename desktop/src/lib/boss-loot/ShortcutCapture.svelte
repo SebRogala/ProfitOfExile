@@ -55,7 +55,7 @@
 
 <style>
 	.shortcut { display: inline-flex; gap: 6px; align-items: center; }
-	button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border: 1px solid var(--color-lab-border); border-radius: 4px; background: var(--color-lab-bg); color: var(--color-lab-text); cursor: pointer; min-width: 180px; font: inherit; font-size: 14px; }
+	button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border: 1px solid var(--color-lab-border); border-radius: 4px; background: var(--color-lab-bg); color: var(--color-lab-text); cursor: pointer; min-width: 180px; font: inherit; font-size: .83333rem; }
 	button.listening { border-color: var(--color-lab-blue); color: var(--color-lab-text-secondary); }
 	button:focus-visible { outline: 1px solid var(--color-lab-blue); outline-offset: 2px; }
 	button:disabled { opacity: .35; cursor: default; }
