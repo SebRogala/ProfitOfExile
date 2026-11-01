@@ -73,7 +73,7 @@ export function buildRunsView(profile: BossProfile, runs: RunsPage) {
 	const extras = [...profile.extra, ...profile.categories]
 	const rows = runs.items.map((run) => {
 		const positive = (item: LootItem) => Object.hasOwn(run.items.quantities, item.id) && run.items.quantities[item.id] > 0
-		const project = (item: LootItem) => ({ ...item, quantity: run.items.quantities[item.id] })
+		const project = (item: LootItem) => ({ ...item, dropQuantity: run.items.quantities[item.id] })
 		return { id: run.id, run: run.run, date: run.date === null ? 'no date' : run.date.slice(0, 10),
 			unique: uniques.filter(positive).map(project), extra: extras.filter(positive).map(project) }
 	})
@@ -90,7 +90,7 @@ export function buildRunEditor(profile: BossProfile, run: StoredRun, notCounted:
 		.filter(editable).map((item) => item.id)
 	const request = editRunItems(run, editableKeys, changes)
 	const quantity = (id: string) => Object.hasOwn(request.items.quantities, id) ? request.items.quantities[id] : 0
-	const project = (item: LootItem) => ({ ...item, selected: quantity(item.id) > 0, quantity: quantity(item.id) })
+	const project = (item: LootItem) => ({ ...item, selected: quantity(item.id) > 0, dropQuantity: quantity(item.id) })
 	const valid = profile.groups.every((group) => {
 		const picked = group.items.filter((item) => quantity(item.id) > 0)
 		return picked.length >= group.min && picked.length <= group.max && picked.every((item) => quantity(item.id) === 1)

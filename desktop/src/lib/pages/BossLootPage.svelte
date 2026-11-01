@@ -119,7 +119,7 @@
 									{#each row.unique as item (item.id)}<span class="item"><ItemIcon src={iconFor(item)} alt="" size={22} />{item.name}</span>{/each}
 								</span>
 								<span class="chips" role="cell">
-									{#each row.extra as item (item.id)}<span class="history-chip"><ItemIcon src={iconFor(item)} alt="" size={18} />{item.name}{#if item.quantity > 1} ×{groupNumber(String(item.quantity))}{/if}</span>
+									{#each row.extra as item (item.id)}<span class="history-chip"><ItemIcon src={iconFor(item)} alt="" size={18} />{item.name}{#if item.dropQuantity > 1} ×{groupNumber(String(item.dropQuantity))}{/if}</span>
 									{:else}<span class="secondary">—</span>{/each}
 								</span>
 								<span class="run-actions" role="cell">
@@ -140,7 +140,7 @@
 									<span class="table-heading">Additional drops</span>
 									<div class="chips">
 										{#each editor.extra as item (item.id)}
-											<button type="button" class="edit-chip" class:selected={item.selected} disabled={page.runMutationPending} aria-pressed={item.selected} onclick={() => page.toggleEditorItem(item.id)}><ItemIcon src={iconFor(item)} alt="" size={18} />{item.name}{#if item.quantity > 1} ×{groupNumber(String(item.quantity))}{/if}</button>
+											<button type="button" class="edit-chip" class:selected={item.selected} disabled={page.runMutationPending} aria-pressed={item.selected} onclick={() => page.toggleEditorItem(item.id)}><ItemIcon src={iconFor(item)} alt="" size={18} />{item.name}{#if item.dropQuantity > 1} ×{groupNumber(String(item.dropQuantity))}{/if}</button>
 										{/each}
 									</div>
 									{#if !editor.valid}<span class="warning">Check guaranteed groups before saving.</span>{/if}
