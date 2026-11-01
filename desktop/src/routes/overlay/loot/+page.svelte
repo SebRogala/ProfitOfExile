@@ -21,7 +21,7 @@
 	let input = $state<OverlayInput | null>(null)
 	let overlaySettings = $state<OverlaySettings | null>(null)
 	let previewShortcut = $state('')
-	let confirmation: LootConfirmation | undefined
+	let confirmation = $state<LootConfirmation | undefined>(undefined)
 	let closeTimer: ReturnType<typeof setTimeout> | undefined
 	let scopeGeneration = 0
 	let disposed = false

@@ -13,7 +13,7 @@ export interface OverlayInput {
 	previousRun?: number
 }
 
-export interface ItemView extends LootItem {
+export interface ItemView extends Omit<LootItem, 'quantity'> {
 	selected: boolean
 	disabled: boolean
 	ambiguous: boolean

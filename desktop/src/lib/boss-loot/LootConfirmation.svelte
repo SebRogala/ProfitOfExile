@@ -32,7 +32,8 @@
 	}
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<!-- Buttons supply keyboard activation; their click bubbles to this single dispatcher. -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
 <section class="confirmation" class:failed={input.outcome?.state === 'unreachable'}
 	aria-label="Boss loot confirmation" data-hot data-action="loot.touch" onclick={click}>
 	<header>
