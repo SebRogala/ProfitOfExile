@@ -1,0 +1,1721 @@
+[
+  {
+    "run": 1,
+    "sourceRow": 4,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Cane of Kulemak": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 2,
+    "sourceRow": 5,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 3,
+    "sourceRow": 6,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 4,
+    "sourceRow": 7,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Cane of Kulemak": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 5,
+    "sourceRow": 8,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Cane of Kulemak": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 6,
+    "sourceRow": 9,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 7,
+    "sourceRow": 10,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Bitterbind Point": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 8,
+    "sourceRow": 11,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Cane of Kulemak": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 9,
+    "sourceRow": 12,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 10,
+    "sourceRow": 13,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 11,
+    "sourceRow": 14,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Cane of Kulemak": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 12,
+    "sourceRow": 15,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Bitterbind Point": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 13,
+    "sourceRow": 16,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "The Queen's Hunger": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 14,
+    "sourceRow": 17,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "The Queen's Hunger": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 15,
+    "sourceRow": 18,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Cane of Kulemak": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 16,
+    "sourceRow": 19,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 17,
+    "sourceRow": 20,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 18,
+    "sourceRow": 21,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 19,
+    "sourceRow": 22,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 20,
+    "sourceRow": 23,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 21,
+    "sourceRow": 24,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "The Devouring Diadem": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 22,
+    "sourceRow": 25,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 23,
+    "sourceRow": 26,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Cane of Kulemak": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 24,
+    "sourceRow": 27,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "The Queen's Hunger": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 25,
+    "sourceRow": 28,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 26,
+    "sourceRow": 29,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 27,
+    "sourceRow": 30,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 28,
+    "sourceRow": 31,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 29,
+    "sourceRow": 32,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "The Devouring Diadem": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 30,
+    "sourceRow": 33,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Bitterbind Point": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 31,
+    "sourceRow": 34,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 32,
+    "sourceRow": 35,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 33,
+    "sourceRow": 36,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Bitterbind Point": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 34,
+    "sourceRow": 37,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 35,
+    "sourceRow": 38,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "The Queen's Hunger": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 36,
+    "sourceRow": 39,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 37,
+    "sourceRow": 40,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Cane of Kulemak": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 38,
+    "sourceRow": 41,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 39,
+    "sourceRow": 42,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 40,
+    "sourceRow": 43,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "The Queen's Hunger": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 41,
+    "sourceRow": 44,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "The Queen's Hunger": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 42,
+    "sourceRow": 45,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 43,
+    "sourceRow": 46,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Bitterbind Point": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 44,
+    "sourceRow": 47,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 45,
+    "sourceRow": 48,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Cane of Kulemak": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 46,
+    "sourceRow": 49,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "The Devouring Diadem": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 47,
+    "sourceRow": 50,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 48,
+    "sourceRow": 51,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 49,
+    "sourceRow": 52,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 50,
+    "sourceRow": 53,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 51,
+    "sourceRow": 54,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Cane of Kulemak": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 52,
+    "sourceRow": 55,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 53,
+    "sourceRow": 56,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Cane of Kulemak": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 54,
+    "sourceRow": 57,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 55,
+    "sourceRow": 58,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "The Devouring Diadem": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 56,
+    "sourceRow": 59,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "The Devouring Diadem": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 57,
+    "sourceRow": 60,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 58,
+    "sourceRow": 61,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 59,
+    "sourceRow": 62,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "The Devouring Diadem": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 60,
+    "sourceRow": 63,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 61,
+    "sourceRow": 64,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 62,
+    "sourceRow": 65,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Cane of Kulemak": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 63,
+    "sourceRow": 66,
+    "date": "2026-10-27",
+    "items": {
+      "quantities": {
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 64,
+    "sourceRow": 67,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Bitterbind Point": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 65,
+    "sourceRow": 68,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Cane of Kulemak": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 66,
+    "sourceRow": 69,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 67,
+    "sourceRow": 70,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 68,
+    "sourceRow": 71,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 69,
+    "sourceRow": 72,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "Spinehail": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 70,
+    "sourceRow": 73,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 71,
+    "sourceRow": 74,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "Cinderswallow Urn": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 72,
+    "sourceRow": 75,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "The Devouring Diadem": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 73,
+    "sourceRow": 76,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "The Devouring Diadem": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 74,
+    "sourceRow": 77,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly": 1,
+        "The Devouring Diadem": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 75,
+    "sourceRow": 78,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "Cane of Kulemak": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 76,
+    "sourceRow": 79,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "The Queen's Hunger": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 77,
+    "sourceRow": 80,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "The Devouring Diadem": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  },
+  {
+    "run": 78,
+    "sourceRow": 81,
+    "date": "2026-10-29",
+    "items": {
+      "quantities": {
+        "Metadata/Items/MapFragments/BetrayalAllflamePack": 1,
+        "The Devouring Diadem": 1
+      },
+      "counted": [
+        "Metadata/Items/Currency/CurrencyRerollRareVeiled",
+        "Metadata/Items/MapFragments/AbyssPinnacleKeyGhastly",
+        "Metadata/Items/MapFragments/BetrayalAllflamePack",
+        "Cinderswallow Urn",
+        "Cane of Kulemak",
+        "Spinehail",
+        "The Queen's Hunger",
+        "Bitterbind Point",
+        "The Devouring Diadem"
+      ]
+    }
+  }
+]
