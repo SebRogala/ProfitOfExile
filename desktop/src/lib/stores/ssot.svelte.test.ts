@@ -1649,3 +1649,53 @@ describe('the native bossLoot slice', () => {
 		expect(mod.ssot).toMatchObject({ bossLoot: { frame: null, nowMs: 123457 } });
 	});
 });
+
+describe('league generation delivery', () => {
+	async function fresh() {
+		vi.resetModules();
+		return import('./ssot.svelte');
+	}
+
+	it('establishes the first resolved generation without notifying consumers', async () => {
+		const mod = await fresh();
+		const changed = vi.fn();
+		mod.onLeagueChange(changed);
+		mod.applySnapshot({ league: { name: 'A', generation: 1 } });
+		expect(mod.ssot.leagueGeneration).toBe(1);
+		expect(mod.ssot.league).toBe('A');
+		expect(changed).not.toHaveBeenCalled();
+	});
+
+	it('delivers each advanced generation once', async () => {
+		const mod = await fresh();
+		const changed = vi.fn(() => [mod.ssot.league, mod.ssot.leagueGeneration]);
+		mod.onLeagueChange(changed);
+		mod.applySnapshot({ league: { name: 'A', generation: 1 } });
+		mod.applySnapshot({ league: { name: 'B', generation: 2 } });
+		mod.applySnapshot({ league: { name: 'B', generation: 2 } });
+		mod.applySnapshot({ league: { name: 'A', generation: 3 } });
+		expect(changed.mock.results.map(result => result.value)).toEqual([['B', 2], ['A', 3]]);
+	});
+
+	it('retains the resolved identity when a delayed snapshot arrives', async () => {
+		const mod = await fresh();
+		mod.applySnapshot({ league: { name: 'B', generation: 2 } });
+		mod.applySnapshot({ league: { name: 'A', generation: 1 } });
+		mod.applySnapshot({ league: { name: null, generation: 0 } });
+		expect([mod.ssot.league, mod.ssot.leagueGeneration]).toEqual(['B', 2]);
+	});
+
+	it('disposes only the selected listener', async () => {
+		const mod = await fresh();
+		const disposed = vi.fn();
+		const live = vi.fn();
+		const dispose = mod.onLeagueChange(disposed);
+		mod.onLeagueChange(live);
+		mod.applySnapshot({ league: { name: 'A', generation: 1 } });
+		dispose();
+		dispose();
+		mod.applySnapshot({ league: { name: 'B', generation: 2 } });
+		expect(disposed).not.toHaveBeenCalled();
+		expect(live).toHaveBeenCalledTimes(1);
+	});
+});

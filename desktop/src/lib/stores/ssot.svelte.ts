@@ -253,7 +253,7 @@ export interface BossLootSlice {
 }
 
 export interface SsotSnapshot {
-	league: { name: string | null };
+	league: { name: string | null; generation?: number };
 	/** A league resolve is in flight (bounded-retry fetch task running). */
 	resolving?: boolean;
 	/** The resolver has failed enough times to treat the server as unreachable
@@ -308,6 +308,7 @@ const POLL_INTERVAL_MS = 3000;
  */
 export const ssot = $state({
 	league: null as string | null,
+	leagueGeneration: 0,
 	/** True while Rust is resolving the league (drives the Settings "Resolving…"
 	 *  state and neutralises the Refresh button). Defaults false. */
 	resolving: false,
@@ -656,8 +657,21 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
  *
  *  `dispatchedAtSeq` is the write counter as of the moment this snapshot was
  *  requested; it defaults to "now" so direct callers get no guard suppression. */
+const leagueListeners = new Set<() => void>();
+
+export function onLeagueChange(listener: () => void): () => void {
+	leagueListeners.add(listener);
+	return () => { leagueListeners.delete(listener); };
+}
+
 export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writeSeq): void {
-	ssot.league = snap.league?.name ?? null;
+	const generation = snap.league?.generation ?? 0;
+	const advanced = generation > ssot.leagueGeneration;
+	const changed = advanced && ssot.league !== null;
+	if (advanced || (generation === 0 && ssot.leagueGeneration === 0)) {
+		ssot.league = snap.league?.name ?? null;
+		ssot.leagueGeneration = generation;
+	}
 	ssot.resolving = snap.resolving ?? false;
 	ssot.unreachable = snap.unreachable ?? false;
 	applyMarketField('normalVariant', snap.normalVariant, dispatchedAtSeq);
@@ -676,6 +690,9 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	// only ever means a payload older than the field.
 	ssot.screen = snap.screen ?? null;
 	ssot.placements = snap.placements ?? null;
+	if (changed) {
+		for (const listener of [...leagueListeners]) listener();
+	}
 }
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;

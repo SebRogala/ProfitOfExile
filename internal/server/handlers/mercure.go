@@ -46,6 +46,7 @@ func signSubscriberToken(secret string) (string, error) {
 	claims := map[string]any{
 		"mercure": map[string]any{
 			"subscribe": []string{
+				"poe/league/active",
 				"poe/analysis/updated",
 				"poe/trade/results",
 				"poe/desktop/{pair}",

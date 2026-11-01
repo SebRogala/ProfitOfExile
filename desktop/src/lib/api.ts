@@ -1179,7 +1179,9 @@ export const HARVEST_UPDATED_TOPIC = 'poe/harvest/updated';
  *   simply drop those events.
  * @param onHarvestUpdate `poe/harvest/updated` payloads; only Harvest reloads.
  */
-export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void, onLayoutUpdate?: (data?: any) => void, onCurrencyExchangeUpdate?: (data?: any) => void, onHarvestUpdate?: (data?: any) => void): MercureConnection {
+export const LEAGUE_ACTIVE_TOPIC = 'poe/league/active';
+
+export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void, onLayoutUpdate?: (data?: any) => void, onCurrencyExchangeUpdate?: (data?: any) => void, onHarvestUpdate?: (data?: any) => void, onLeagueActive?: (data?: any) => void): MercureConnection {
 	const state: MercureConnection = { close: () => {}, connected: false };
 	let eventSource: EventSource | null = null;
 	let tokenTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -1259,6 +1261,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 			authedUrl.searchParams.append('topic', 'poe/lab/layout');
 			authedUrl.searchParams.append('topic', CURRENCY_EXCHANGE_UPDATED_TOPIC);
 			authedUrl.searchParams.append('topic', HARVEST_UPDATED_TOPIC);
+			authedUrl.searchParams.append('topic', LEAGUE_ACTIVE_TOPIC);
 			authedUrl.searchParams.set('authorization', token);
 
 			eventSource = new EventSource(authedUrl.toString());
@@ -1287,6 +1290,11 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 					// full loadAll() fan-out and threw the parse error away. Matches
 					// frontend/src/lib/api.ts.
 					console.warn('[Mercure] Failed to parse message:', err, 'raw:', event.data);
+					return;
+				}
+
+				if (data?.topic === LEAGUE_ACTIVE_TOPIC) {
+					onLeagueActive?.(data);
 					return;
 				}
 

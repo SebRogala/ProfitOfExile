@@ -289,6 +289,7 @@ func TestMercureToken_IncludesTradeTopics(t *testing.T) {
 
 	// Verify explicit subscribe topics (analysis, trade, desktop).
 	wantTopics := []string{
+		"poe/league/active",
 		"poe/analysis/updated",
 		"poe/trade/results",
 		"poe/desktop/{pair}",

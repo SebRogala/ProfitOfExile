@@ -207,3 +207,18 @@ func postedData(t *testing.T, hub *hubRecorder) map[string]any {
 	}
 	return data
 }
+
+func TestLeagueActivePublisher_postsBootIdentity(t *testing.T) {
+	hub := newHubRecorder(t)
+	publisher := marketUpdatePublisher{scope: publisherScope, mercureURL: hub.server.URL, mercureSecret: "test-secret"}
+	if err := publisher.PublishLeagueActive(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := postedData(t, hub)
+	if got["topic"] != "poe/league/active" || got["league"] != "Mirage" || got["leagueRevision"] != float64(0) {
+		t.Fatalf("boot identity = %v", got)
+	}
+	if got := hub.posted()[0].Get("topic"); got != "poe/league/active" {
+		t.Fatalf("hub topic = %q", got)
+	}
+}

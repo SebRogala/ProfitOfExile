@@ -26,6 +26,11 @@ type marketUpdatePublisher struct {
 	mercureSecret string
 }
 
+// PublishLeagueActive announces the fenced process scope on the shared stream.
+func (p marketUpdatePublisher) PublishLeagueActive(ctx context.Context) error {
+	return p.Publish(ctx, "poe/league/active", map[string]any{"topic": "poe/league/active"})
+}
+
 // Publish stamps the league identity onto the payload and posts it to the hub.
 // mercure.PublishMercureEvent is a no-op when the URL or the secret is empty, so
 // a server without a hub costs one marshal per recompute burst and nothing else.

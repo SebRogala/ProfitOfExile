@@ -169,6 +169,9 @@ func main() {
 	// stores several hours back to back and triggers one recompute per hour, and
 	// clients only need to be told once, about the final state.
 	marketPublisher := marketUpdatePublisher{scope: scope, mercureURL: mercureURL, mercureSecret: mercureSecret}
+	if err := marketPublisher.PublishLeagueActive(ctx); err != nil {
+		slog.Warn("league: publishing the boot event failed", "error", err)
+	}
 	// Captured explicitly: the closure runs on a timer goroutine long after this
 	// line, so it must hold the process-lifetime context by value.
 	publishCtx := ctx

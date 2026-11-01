@@ -226,12 +226,6 @@ pub struct TradeApiClient {
     /// two-phase path (queue events, cancel checkpoints, result shaping)
     /// without reaching GGG.
     base_url: String,
-    /// Resolved league name. `None` means **not yet resolved** — trade lookups
-    /// fail closed (error out) rather than silently querying the wrong league.
-    /// No hardcoded default; written only via `set_league` once resolved
-    /// (POE-128). Guarded by a std Mutex used with lock-clone-drop discipline —
-    /// the guard is never held across an `.await`.
-    league: Mutex<Option<String>>,
     rate_limiter: TradeRateLimiter,
     /// Serializes all lookup_gem calls — one search+fetch pair at a time.
     lookup_mutex: tokio::sync::Mutex<()>,
@@ -270,7 +264,6 @@ impl TradeApiClient {
         Self {
             http_client,
             base_url: TRADE_API_BASE_URL.to_string(),
-            league: Mutex::new(None),
             rate_limiter: TradeRateLimiter::new(),
             lookup_mutex: tokio::sync::Mutex::new(()),
             pending_count: AtomicUsize::new(0),
@@ -279,30 +272,6 @@ impl TradeApiClient {
             enqueued: AtomicUsize::new(0),
             completed: AtomicUsize::new(0),
         }
-    }
-
-    /// Set the resolved league. Lock, set `Some(name)`, drop the guard.
-    /// Unused in chunk 2 — the fetch task that calls this lands in chunk 3.
-    #[allow(dead_code)]
-    pub fn set_league(&self, name: String) {
-        let mut guard = self.league.lock().unwrap_or_else(|e| e.into_inner());
-        *guard = Some(name);
-    }
-
-    /// Clone-helper for the resolved league name (lock → clone → drop guard).
-    ///
-    /// Returns `Err` when the league is unset (`None`) so callers **fail
-    /// closed** instead of querying the wrong league. The guard is dropped
-    /// before returning, so it is never held across an `.await` at any call
-    /// site — preserving the `Send` bound on the async lookup path.
-    pub(crate) fn league(&self) -> Result<String, String> {
-        let value = {
-            let guard = self.league.lock().unwrap_or_else(|e| e.into_inner());
-            guard.clone()
-        };
-        value.ok_or_else(|| {
-            "Trade lookup unavailable: league not resolved yet".to_string()
-        })
     }
 
     /// Cancel `source`'s pending trade lookups. An in-flight request completes
@@ -341,16 +310,18 @@ impl TradeApiClient {
     /// `emit`: callback to emit TradeQueueEvent to the frontend.
     pub async fn lookup_gem(
         &self,
+        league: Option<String>,
         gem_name: &str,
         variant: &str,
         divine_chaos_rate: f64,
         emit: impl Fn(TradeQueueEvent),
     ) -> Result<TradeLookupResult, String> {
-        self.lookup_gem_with_mode(gem_name, variant, divine_chaos_rate, false, emit).await
+        self.lookup_gem_with_mode(league, gem_name, variant, divine_chaos_rate, false, emit).await
     }
 
     pub async fn lookup_gem_with_mode(
         &self,
+        league: Option<String>,
         gem_name: &str,
         variant: &str,
         divine_chaos_rate: f64,
@@ -365,7 +336,7 @@ impl TradeApiClient {
         log::info!("Trade gem lookup: {} ({}), dedication={}", gem_name, variant, dedication);
 
         let raw = self
-            .lookup_query(TradeSource::Gem, gem_name, query_body, &emit)
+            .lookup_query(league, TradeSource::Gem, gem_name, query_body, &emit)
             .await?;
 
         let mut listings = Vec::with_capacity(raw.items.len());
@@ -412,6 +383,7 @@ impl TradeApiClient {
     /// `Err`), never from the event stream.
     pub async fn lookup_query(
         &self,
+        league: Option<String>,
         source: TradeSource,
         label: &str,
         query_body: serde_json::Value,
@@ -419,9 +391,11 @@ impl TradeApiClient {
     ) -> Result<RawSearch, String> {
         // Fail closed on an unresolved league — do this before touching queue
         // counters or awaiting anything, so an unknown league never reaches the
-        // GGG API and no bookkeeping needs unwinding. `league()` locks, clones
-        // and drops its guard, so nothing is held across the awaits below.
-        let league = match self.league() {
+        // GGG API and no bookkeeping needs unwinding. The caller captured the
+        // sole SSOT holder before joining this queue.
+        let league = match league.filter(|name| !name.trim().is_empty()).ok_or_else(|| {
+            "Trade lookup unavailable: league not resolved yet".to_string()
+        }) {
             Ok(l) => l,
             Err(e) => {
                 emit(TradeQueueEvent::Error {
@@ -765,14 +739,12 @@ fn extract_numeric_property_value(property: &GggItemProperty) -> i32 {
 pub(crate) mod tests {
     use super::*;
 
-    /// A freshly constructed client has no resolved league, so the clone-helper
-    /// must fail rather than hand back a default — this is the fail-closed
-    /// contract (POE-128). Mutation check: if `league()` returned `Ok` for the
-    /// `None` state, this assertion fails.
-    #[test]
-    fn league_returns_err_when_unset() {
+    /// An absent caller snapshot must fail before queueing or network access.
+    #[tokio::test]
+    async fn league_returns_err_when_unset() {
         let client = TradeApiClient::new();
-        assert!(client.league().is_err());
+        let error = client.lookup_gem(None, "Spark", "20/20", 0.0, |_| {}).await.unwrap_err();
+        assert_eq!(error, "Trade lookup unavailable: league not resolved yet");
     }
 
     /// The `Waiting` payload is a wire contract with `tradeApi.ts`, which reads
@@ -796,13 +768,14 @@ pub(crate) mod tests {
         assert!(json.get("wait_secs").is_none(), "snake_case key must not be present: {}", json);
     }
 
-    /// Once resolved via `set_league`, the clone-helper returns that exact name.
-    /// Guards against a helper that drops or mangles the stored value.
-    #[test]
-    fn league_returns_name_after_set() {
-        let client = TradeApiClient::new();
-        client.set_league("Mirage".to_string());
-        assert_eq!(client.league().unwrap(), "Mirage");
+    /// A shared client uses the explicit identity of each operation.
+    #[tokio::test]
+    async fn league_uses_each_caller_snapshot() {
+        let stub = stub_api(search_ok(), fetch_ok()).await;
+        let client = stub_client(&stub);
+        let result = client.lookup_gem(Some("Mirage".into()), "Spark", "20/20", 0.0, |_| {}).await.unwrap();
+        assert_eq!(result.league, "Mirage");
+        assert!(stub.requests()[0].starts_with("POST /api/trade/search/Mirage "));
     }
 
     /// The full lookup read path fails closed when the league is unset: it
@@ -816,7 +789,7 @@ pub(crate) mod tests {
         let events = std::sync::Mutex::new(Vec::new());
 
         let result = client
-            .lookup_gem_with_mode("Empower Support", "20/20", 0.0, false, |e| {
+            .lookup_gem_with_mode(None, "Empower Support", "20/20", 0.0, false, |e| {
                 events.lock().unwrap().push(e);
             })
             .await;
@@ -970,10 +943,9 @@ pub(crate) mod tests {
                 .await;
         let mut client = TradeApiClient::new();
         client.base_url = base_url;
-        client.set_league("Allflame".to_string());
 
         let error = client
-            .lookup_query(TradeSource::Mercenary, "merc", serde_json::json!({}), |_| {})
+            .lookup_query(Some("Allflame".into()), TradeSource::Mercenary, "merc", serde_json::json!({}), |_| {})
             .await
             .expect_err("the stub rejects the search");
 
@@ -995,10 +967,9 @@ pub(crate) mod tests {
         let base_url = stub_api_status(400, "Bad Request", body).await;
         let mut client = TradeApiClient::new();
         client.base_url = base_url;
-        client.set_league("Allflame".to_string());
 
         let error = client
-            .lookup_query(TradeSource::Mercenary, "merc", serde_json::json!({}), |_| {})
+            .lookup_query(Some("Allflame".into()), TradeSource::Mercenary, "merc", serde_json::json!({}), |_| {})
             .await
             .expect_err("the stub rejects the search");
 
@@ -1015,10 +986,9 @@ pub(crate) mod tests {
         let base_url = stub_api_status(503, "Service Unavailable", "upstream unavailable").await;
         let mut client = TradeApiClient::new();
         client.base_url = base_url;
-        client.set_league("Allflame".to_string());
 
         let error = client
-            .lookup_query(TradeSource::Mercenary, "merc", serde_json::json!({}), |_| {})
+            .lookup_query(Some("Allflame".into()), TradeSource::Mercenary, "merc", serde_json::json!({}), |_| {})
             .await
             .expect_err("the stub fails the search");
 
@@ -1039,10 +1009,9 @@ pub(crate) mod tests {
         let base_url = stub_api_status(429, "Too Many Requests", "").await;
         let mut client = TradeApiClient::new();
         client.base_url = base_url;
-        client.set_league("Allflame".to_string());
 
         let error = client
-            .lookup_query(TradeSource::Mercenary, "merc", serde_json::json!({}), |_| {})
+            .lookup_query(Some("Allflame".into()), TradeSource::Mercenary, "merc", serde_json::json!({}), |_| {})
             .await
             .expect_err("the stub rate-limits the search");
 
@@ -1067,11 +1036,10 @@ pub(crate) mod tests {
         assert_eq!(error_status(CANCELLED), None);
     }
 
-    /// A client pointed at the stub, with the league already resolved.
+    /// One shared client pointed at the local GGG stub.
     fn stub_client(stub: &StubApi) -> Arc<TradeApiClient> {
         let mut client = TradeApiClient::new();
         client.base_url = stub.base_url.clone();
-        client.set_league("Allflame".to_string());
         Arc::new(client)
     }
 
@@ -1125,14 +1093,15 @@ pub(crate) mod tests {
         ssot.lock().unwrap().league.name = Some("Allflame".to_string());
         let held = client.lookup_mutex.lock().await;
         let queued_client = client.clone();
+        let captured_league = ssot.lock().unwrap().league.name.clone();
         let queued = tokio::spawn(async move {
-            queued_client.lookup_gem_with_mode("Empower Support", "20/20", 0.0, false, |_| {}).await
+            queued_client.lookup_gem_with_mode(captured_league, "Empower Support", "20/20", 0.0, false, |_| {}).await
         });
         park_until(&client, 1).await;
 
-        crate::ssot::refresh_league_for_test(&stub.base_url, &ssot, &client).await;
+        crate::ssot::refresh_league_for_test(&stub.base_url, &ssot).await;
         assert_eq!(ssot.lock().unwrap().league.name.as_deref(), Some("League B"));
-        assert_eq!(client.league().unwrap(), "League B");
+        assert_eq!(ssot.lock().unwrap().league.generation, 1);
         drop(held);
 
         let result = queued.await.unwrap().expect("queued A lookup completes");
@@ -1156,7 +1125,7 @@ pub(crate) mod tests {
         let events = Mutex::new(Vec::new());
 
         client
-            .lookup_gem_with_mode("Empower Support", "20/20", 0.0, false, |e| {
+            .lookup_gem_with_mode(Some("Allflame".into()), "Empower Support", "20/20", 0.0, false, |e| {
                 events.lock().unwrap().push(e)
             })
             .await
@@ -1181,7 +1150,7 @@ pub(crate) mod tests {
         let client = stub_client(&stub);
 
         let result = client
-            .lookup_gem_with_mode("Empower Support", "20/20", 0.0, false, |_| {})
+            .lookup_gem_with_mode(Some("Allflame".into()), "Empower Support", "20/20", 0.0, false, |_| {})
             .await
             .expect("the stub answers both phases");
 
@@ -1209,7 +1178,7 @@ pub(crate) mod tests {
         let client = stub_client(&stub);
 
         client
-            .lookup_gem_with_mode("Empower Support", "20/20", 0.0, false, |_| {})
+            .lookup_gem_with_mode(Some("Allflame".into()), "Empower Support", "20/20", 0.0, false, |_| {})
             .await
             .expect("the stub answers both phases");
 
@@ -1244,13 +1213,13 @@ pub(crate) mod tests {
         let merc_client = client.clone();
         let merc = tokio::spawn(async move {
             merc_client
-                .lookup_query(TradeSource::Mercenary, "Kaom", serde_json::json!({}), |_| {})
+                .lookup_query(Some("Allflame".into()), TradeSource::Mercenary, "Kaom", serde_json::json!({}), |_| {})
                 .await
         });
         let gem_client = client.clone();
         let gem = tokio::spawn(async move {
             gem_client
-                .lookup_query(TradeSource::Gem, "Spark", serde_json::json!({}), |_| {})
+                .lookup_query(Some("Allflame".into()), TradeSource::Gem, "Spark", serde_json::json!({}), |_| {})
                 .await
         });
         park_until(&client, 2).await;
@@ -1280,13 +1249,13 @@ pub(crate) mod tests {
         let gem_client = client.clone();
         let gem = tokio::spawn(async move {
             gem_client
-                .lookup_query(TradeSource::Gem, "Spark", serde_json::json!({}), |_| {})
+                .lookup_query(Some("Allflame".into()), TradeSource::Gem, "Spark", serde_json::json!({}), |_| {})
                 .await
         });
         let merc_client = client.clone();
         let merc = tokio::spawn(async move {
             merc_client
-                .lookup_query(TradeSource::Mercenary, "Kaom", serde_json::json!({}), |_| {})
+                .lookup_query(Some("Allflame".into()), TradeSource::Mercenary, "Kaom", serde_json::json!({}), |_| {})
                 .await
         });
         park_until(&client, 2).await;
@@ -1315,13 +1284,13 @@ pub(crate) mod tests {
         let merc_client = client.clone();
         let merc = tokio::spawn(async move {
             merc_client
-                .lookup_query(TradeSource::Mercenary, "Kaom", serde_json::json!({}), |_| {})
+                .lookup_query(Some("Allflame".into()), TradeSource::Mercenary, "Kaom", serde_json::json!({}), |_| {})
                 .await
         });
         let gem_client = client.clone();
         let gem = tokio::spawn(async move {
             gem_client
-                .lookup_query(TradeSource::Gem, "Spark", serde_json::json!({}), |_| {})
+                .lookup_query(Some("Allflame".into()), TradeSource::Gem, "Spark", serde_json::json!({}), |_| {})
                 .await
         });
         park_until(&client, 2).await;
@@ -1345,7 +1314,7 @@ pub(crate) mod tests {
         assert_eq!(client.cancel(TradeSource::Mercenary), 0, "nothing is pending yet");
 
         let result = client
-            .lookup_query(TradeSource::Mercenary, "Kaom", serde_json::json!({}), |_| {})
+            .lookup_query(Some("Allflame".into()), TradeSource::Mercenary, "Kaom", serde_json::json!({}), |_| {})
             .await
             .expect("a cancel with nothing pending must not stop the next lookup");
 
@@ -1363,7 +1332,7 @@ pub(crate) mod tests {
         let events = Mutex::new(Vec::new());
 
         let result = client
-            .lookup_query(TradeSource::Mercenary, "Kaom", serde_json::json!({}), |e| {
+            .lookup_query(None, TradeSource::Mercenary, "Kaom", serde_json::json!({}), |e| {
                 events.lock().unwrap().push(e)
             })
             .await;

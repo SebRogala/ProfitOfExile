@@ -1199,7 +1199,7 @@ pub fn tick(
         return;
     }
 
-    let league = state.trade_client.league().ok();
+    let league = state.ssot.lock().unwrap_or_else(|e| e.into_inner()).league.name.clone();
     // Taken BEFORE `decide`, not looked up after it: `decide` is told whether a
     // cached answer exists, and a lookup that raced the check would leave the
     // caller told "cached" with nothing to publish.
@@ -1389,6 +1389,8 @@ pub fn close_session(app: &AppHandle) {
 /// `TradeApiClient` directly, so there is no branch in it that could ever get
 /// there.
 fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
+    let league = app.state::<AppState>().ssot.lock()
+        .unwrap_or_else(|e| e.into_inner()).league.name.clone();
     let divine_rate = *app
         .state::<AppState>()
         .merc_divine_rate
@@ -1403,7 +1405,7 @@ fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
             let state = app.state::<AppState>();
             state
                 .trade_client
-                .lookup_query(TradeSource::Mercenary, &label, query.body.clone(), |event| {
+                .lookup_query(league, TradeSource::Mercenary, &label, query.body.clone(), |event| {
                     // `Fetching` is the queue saying the request is going out
                     // now — the difference between "waiting behind the rate
                     // limiter" and "asking GGG", which is the whole reason the

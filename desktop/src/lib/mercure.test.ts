@@ -241,10 +241,11 @@ describe('connectMercure topic routing', () => {
 				'poe/lab/layout',
 				'poe/currency-exchange/updated',
 				'poe/harvest/updated',
+				'poe/league/active',
 			]),
 		);
-		// Exactly these four topics, each subscribed once.
-		expect(subscribedTopics()).toHaveLength(4);
+		// Exactly these five topics, each subscribed once.
+		expect(subscribedTopics()).toHaveLength(5);
 	});
 
 	it('hands a currency exchange publish to the currency exchange callback', async () => {
@@ -331,5 +332,29 @@ describe('Harvest Mercure routing', () => {
 		await vi.advanceTimersByTimeAsync(0);
 		opened[0].onmessage!({ data: JSON.stringify({ topic: HARVEST_UPDATED_TOPIC }) } as MessageEvent);
 		expect(onUpdate).not.toHaveBeenCalled();
+	});
+});
+
+describe('league active hints', () => {
+	it('subscribes to league hints on the existing connection', async () => {
+		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
+		const connection = connectMercure(vi.fn());
+		await vi.advanceTimersByTimeAsync(0);
+		expect(opened).toHaveLength(1);
+		expect(new URL(opened[0].url).searchParams.getAll('topic')).toContain('poe/league/active');
+		connection.close();
+	});
+
+	it('dispatches league hints only to the league callback', async () => {
+		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
+		const callbacks = Array.from({ length: 5 }, () => vi.fn());
+		const connection = connectMercure(callbacks[0], undefined, callbacks[1], callbacks[2], callbacks[3], callbacks[4]);
+		await vi.advanceTimersByTimeAsync(0);
+		const payload = { topic: 'poe/league/active', league: 'B', leagueRevision: 7 };
+		opened[0].onmessage!({ data: JSON.stringify(payload) } as MessageEvent);
+		expect(callbacks.map(callback => callback.mock.calls)).toEqual([[], [], [], [], [[payload]]]);
+		connection.close();
+		expect(opened[0].onmessage).toBeNull();
+		expect(opened[0].closeCalls).toBe(1);
 	});
 });

@@ -1320,7 +1320,8 @@ async fn trade_lookup(
     app_log(&app, format!("Trade lookup: {} ({}) divine_rate={:.0} dedication={}", gem, variant, rate, dedication));
 
     let app_for_emit = app.clone();
-    let result = state.trade_client.lookup_gem_with_mode(&gem, &variant, rate, dedication, |event| {
+    let league = state.ssot.lock().unwrap_or_else(|e| e.into_inner()).league.name.clone();
+    let result = state.trade_client.lookup_gem_with_mode(league, &gem, &variant, rate, dedication, |event| {
         use tauri::Emitter;
         if let Err(e) = app_for_emit.emit("trade-queue", &event) {
             log::warn!("emit trade-queue failed: {}", e);
@@ -3350,6 +3351,7 @@ pub fn run() {
             get_status,
             ssot::get_ssot,
             ssot::set_league,
+            ssot::league_command::note_server_league,
             ssot::refresh_league,
             ssot::geometry_recalibrate,
             capture::get_game_monitor,

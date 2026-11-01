@@ -638,7 +638,9 @@ export interface MercureConnection {
 	connected: boolean;
 }
 
-export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void): MercureConnection {
+export const LEAGUE_ACTIVE_TOPIC = 'poe/league/active';
+
+export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void, onLeagueActive?: (data?: any) => void): MercureConnection {
 	const state: MercureConnection = { close: () => {}, connected: false };
 	let eventSource: EventSource | null = null;
 	let tokenTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -727,6 +729,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 
 			const authedUrl = new URL(url);
 			authedUrl.searchParams.set('topic', 'poe/analysis/updated');
+			authedUrl.searchParams.append('topic', LEAGUE_ACTIVE_TOPIC);
 			authedUrl.searchParams.set('authorization', token);
 
 			eventSource = new EventSource(authedUrl.toString());
@@ -753,6 +756,10 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 					// data is not an update — treating it as one fired the full six-request
 					// loadAll() and threw the parse error away.
 					console.warn('[Mercure] Failed to parse message:', err, 'raw:', msg.data);
+					return;
+				}
+				if (parsed?.topic === LEAGUE_ACTIVE_TOPIC) {
+					onLeagueActive?.(parsed);
 					return;
 				}
 				if (parsed.type === 'waiting' || parsed.type === 'ready' || parsed.type === 'error') {

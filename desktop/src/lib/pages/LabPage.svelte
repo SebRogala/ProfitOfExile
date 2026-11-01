@@ -416,6 +416,9 @@
 			// Harvest publishes after its own snapshots are stored.
 			emit('harvest-updated', data)
 				.catch(e => console.warn('[mercure] failed to emit harvest update:', e));
+		}, (data) => {
+			invoke('note_server_league', { observed: typeof data?.league === 'string' ? data.league : null })
+				.catch(e => console.warn('[mercure] failed to reconcile league:', e));
 		});
 		mercure = connection;
 

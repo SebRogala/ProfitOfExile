@@ -15,10 +15,9 @@
 //! behind that note was about JS-to-JS cross-window events, not Rust emits.
 //!
 //! Chunk 1 built the core types + the poll-target command. Chunk 3 adds the
-//! league resolution seam: a start-only fetch task (`spawn_league_fetch`), the
-//! `set_league` / `refresh_league` mutator commands, and the dual-write
-//! (`write_league`) that keeps the SSOT slice and the trade client in lockstep.
-//! The webview store lands in a later chunk.
+//! league resolution service: startup, write 409, Mercure hints, Refresh and
+//! server-URL changes wake one task. Success leaves it idle, with no status
+//! poll. `LeagueSlice` is the sole holder; trade callers capture it pre-queue.
 //!
 //! POE-258 adds the second server read this file owns: `spawn_temple_market_poll`,
 //! a slow poller for `GET /api/analysis/temple-market` whose payload feeds the
@@ -47,7 +46,6 @@ use crate::temple::market::MarketInput;
 use crate::temple::preset::{ValuationKey, ValuationSource};
 use crate::temple::slice::{MarketView, TempleSettings, TempleSlice};
 use crate::temple::valuation::Valued;
-use crate::trade::TradeApiClient;
 use crate::AppState;
 
 /// First retry delay for the startup league fetch.
@@ -61,18 +59,29 @@ const LEAGUE_FETCH_MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// perpetual "Resolving…". The loop keeps retrying past this point.
 const LEAGUE_UNREACHABLE_AFTER_ATTEMPTS: u32 = 4;
 
-/// Wake signal for the live retry loop. `refresh_league` notifies this instead
-/// of spawning a duplicate loop when a resolve is already in flight, so the
-/// Settings Refresh button forces an immediate retry (and backoff reset) while
-/// "Server unreachable" is showing.
-///
-/// Module-local `static` rather than an `AppState` field: the resolver and its
-/// wake are wholly contained in this file, nothing else references the signal,
-/// and there is exactly one resolver at a time (single-flight via `resolving`),
-/// so a process-global singleton is semantically correct. Keeping it here holds
-/// the blast radius to `ssot.rs` instead of churning the ~40-field `AppState`
-/// literal for state no other module touches.
+/// One process owns the resolver, including while its UI flag is idle.
 static RETRY_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
+static LEAGUE_TASK: std::sync::Mutex<LeagueTask> = std::sync::Mutex::new(LeagueTask {
+    live: false,
+    pending: false,
+    url_generation: 0,
+});
+
+#[derive(Default)]
+struct LeagueTask {
+    live: bool,
+    pending: bool,
+    url_generation: u64,
+}
+
+impl LeagueTask {
+    fn trigger(&mut self) -> bool {
+        self.pending = true;
+        let spawn = !self.live;
+        self.live = true;
+        spawn
+    }
+}
 
 /// League slice of the SSOT.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -83,6 +92,13 @@ pub struct LeagueSlice {
     /// treat it as "always valid" or "no active league". A real league name is
     /// written only once it has been resolved (later chunks).
     pub name: Option<String>,
+    pub generation: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LeagueChanged {
+    league: String,
+    generation: u64,
 }
 
 /// Which cue measured [`ScreenSlice::ui_scale`] (POE-214).
@@ -477,9 +493,8 @@ pub struct AppSsotSnapshot {
     /// A league resolve is currently in flight (the bounded-retry fetch task is
     /// running). Exposed in the polled snapshot so the Settings UI can show an
     /// honest "Resolving…" for the whole retry window instead of a one-frame
-    /// flash. Doubles as the single-flight guard (see `try_begin_resolving`):
-    /// while `true`, a second `refresh_league` wakes the live loop rather than
-    /// stacking a duplicate infinite-retry loop. `Default` is `false`.
+    /// flash. Task liveness is independent: after success the task waits for
+    /// a trigger with this flag false. `Default` is `false`.
     pub resolving: bool,
     /// The league resolver has failed `LEAGUE_UNREACHABLE_AFTER_ATTEMPTS`
     /// consecutive times and is now treating the server as unreachable — while
@@ -550,8 +565,7 @@ pub struct AppSsotSnapshot {
 /// (ADR-014: the page reads slices, not module state).
 ///
 /// Pure so the composition is unit-testable without an `AppHandle` or a full
-/// `AppState` — same reason `should_flag_unreachable` and
-/// `clear_resolution_flags` are extracted.
+/// `AppState` — same reason `should_flag_unreachable` is extracted.
 fn compose_snapshot(
     base: AppSsotSnapshot,
     normal_variant: String,
@@ -684,15 +698,6 @@ fn should_flag_unreachable(consecutive_failures: u32) -> bool {
     consecutive_failures >= LEAGUE_UNREACHABLE_AFTER_ATTEMPTS
 }
 
-/// Clear both in-flight flags — the resolver's sole success-exit mutation.
-/// Extracted (taking just the mutex) so the "success drops BOTH `resolving` and
-/// `unreachable`" contract is unit-testable without a Tauri `AppHandle`.
-fn clear_resolution_flags(ssot: &std::sync::Mutex<AppSsotSnapshot>) {
-    let mut guard = ssot.lock().unwrap_or_else(|e| e.into_inner());
-    guard.resolving = false;
-    guard.unreachable = false;
-}
-
 /// How far [`ScreenSlice::ui_scale`] must move before it counts as a different
 /// screen scale.
 ///
@@ -741,7 +746,7 @@ const UI_SCALE_EPS: f32 = 0.01;
 /// `None` — nothing published yet — is always a change.
 ///
 /// Pure so the gate is unit-testable without an `AppHandle`, the same reason
-/// `should_flag_unreachable` and `clear_resolution_flags` are extracted.
+/// `should_flag_unreachable` is extracted.
 fn screen_changed(current: Option<&ScreenSlice>, next: &ScreenSlice) -> bool {
     match current {
         None => true,
@@ -1425,42 +1430,25 @@ pub fn get_ssot(state: tauri::State<AppState>) -> AppSsotSnapshot {
     build_snapshot(&state)
 }
 
-/// Dual-write the resolved league into both sources of truth.
-///
-/// Writes the SSOT `league.name` slice, then the trade client, each under its
-/// own scoped lock — no guard is held across the other write, and neither is
-/// held across an `.await` (this fn is synchronous). This is the POE-126 seam:
-/// auto-fetch and any future user-choice path both funnel through here so the
-/// two stores can never diverge.
+/// Mutate the sole holder and return a consumer event only for a real change.
 fn write_league(
     ssot: &std::sync::Mutex<AppSsotSnapshot>,
-    trade_client: &TradeApiClient,
     name: String,
-) {
-    {
-        let mut guard = ssot.lock().unwrap_or_else(|e| e.into_inner());
-        guard.league.name = Some(name.clone());
-        // Resolve complete: clear the in-flight flag in the SAME locked mutation
-        // that writes the league, so a poller can never observe league-set with
-        // `resolving` still true. This is the sole clear path for the flag.
-        guard.resolving = false;
+) -> Option<LeagueChanged> {
+    let mut guard = ssot.lock().unwrap_or_else(|e| e.into_inner());
+    let changed = guard.league.name.as_ref().is_some_and(|old| old != &name);
+    if guard.league.name.as_ref() != Some(&name) {
+        guard.league.generation += 1;
     }
-    trade_client.set_league(name);
+    guard.league.name = Some(name.clone());
+    guard.resolving = false;
+    guard.unreachable = false;
+    changed.then(|| LeagueChanged { league: name, generation: guard.league.generation })
 }
 
-/// Single-flight gate for the league resolver. Returns `true` (and marks the
-/// SSOT `resolving`) only when no resolve is in flight; returns `false` and
-/// changes nothing when one already is. This is what stops repeated
-/// `refresh_league` clicks against a down server from stacking N concurrent
-/// infinite-retry loops. The lock is scoped to this fn and never held across an
-/// `.await` (the fn is synchronous). Extracted for direct unit testing.
-fn try_begin_resolving(ssot: &std::sync::Mutex<AppSsotSnapshot>) -> bool {
-    let mut guard = ssot.lock().unwrap_or_else(|e| e.into_inner());
-    if guard.resolving {
-        return false;
-    }
-    guard.resolving = true;
-    true
+/// UI state describes an active request/retry window, not task liveness.
+fn mark_resolving(ssot: &std::sync::Mutex<AppSsotSnapshot>) {
+    ssot.lock().unwrap_or_else(|e| e.into_inner()).resolving = true;
 }
 
 /// Trim an incoming league name; return `Some(trimmed)` only when non-empty.
@@ -1478,10 +1466,10 @@ fn normalize_league(name: &str) -> Option<String> {
     }
 }
 
-/// Dual-write via the app state, then emit the `ssot-changed` nudge.
+/// Write via the sole holder, then deliver the snapshot before a change event.
 ///
 /// Blank/whitespace names are rejected here (see `normalize_league`) so
-/// fail-closed cannot be defeated at the seam: nothing changed, so neither store
+/// fail-closed cannot be defeated at the seam: nothing changed, so no state
 /// is written and no `ssot-changed` nudge is emitted. Locks are taken and
 /// dropped inside `write_league`; `emit_ssot` re-locks briefly to clone the
 /// snapshot. Nothing is held across the emit.
@@ -1493,17 +1481,35 @@ fn apply_league(app: &AppHandle, name: String) {
         // itself when it lands a real name. Nothing is written, nothing emitted.
         return;
     };
-    {
+    let changed = {
         let state = app.state::<AppState>();
-        write_league(&state.ssot, &state.trade_client, name);
-    }
+        write_league(&state.ssot, name)
+    };
+    publish_league_resolution(app, changed);
+}
+
+fn publish_league_resolution(app: &AppHandle, changed: Option<LeagueChanged>) {
     // The temple market poll keys every payload on this name (POE-258), so a
     // league landing is the moment its first poll can succeed. Woken
     // unconditionally rather than on a CHANGE: the two servers behind the
     // DEBUG/PROD toggle usually name the same league, and that switch still has
     // to re-fetch, because the prices came from the other one.
-    TEMPLE_MARKET_NOTIFY.notify_one();
-    emit_ssot(app);
+    deliver_league_resolution(changed, || TEMPLE_MARKET_NOTIFY.notify_one(), || emit_ssot(app), |changed| {
+        if let Err(error) = app.emit("league-changed", changed) {
+            log::warn!("emit league-changed failed: {}", error);
+        }
+    });
+}
+
+fn deliver_league_resolution(
+    changed: Option<LeagueChanged>,
+    wake_market: impl FnOnce(),
+    snapshot: impl FnOnce(),
+    consumer_change: impl FnOnce(LeagueChanged),
+) {
+    wake_market();
+    snapshot();
+    if let Some(changed) = changed { consumer_change(changed); }
 }
 
 /// Extract the league name from a `/api/analysis/status` JSON body.
@@ -1524,17 +1530,45 @@ fn parse_league_from_status(body: &serde_json::Value) -> Option<String> {
 /// on any failure (offline, non-2xx, bad JSON, missing field) so the caller can
 /// retry. The server-URL guard and the cloned HTTP client are scoped before the
 /// first `.await`, so no lock is held across the network round-trip.
-async fn fetch_league_once(app: &AppHandle) -> Option<String> {
-    let (server_url, http) = {
+async fn fetch_league_once(app: &AppHandle) -> bool {
+    let (server_url, http, url_generation) = {
         let state = app.state::<AppState>();
         let url = state
             .server_url
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        (url, state.server_http.clone())
+        let generation = LEAGUE_TASK.lock().unwrap_or_else(|e| e.into_inner()).url_generation;
+        (url, state.server_http.clone(), generation)
     };
-    fetch_league_from_server(&http, &server_url).await
+    let Some(name) = fetch_league_from_server(&http, &server_url).await else {
+        return false;
+    };
+    let changed = {
+        let state = app.state::<AppState>();
+        let current_url = state.server_url.lock().unwrap_or_else(|e| e.into_inner());
+        let mut task = LEAGUE_TASK.lock().unwrap_or_else(|e| e.into_inner());
+        if task.url_generation != url_generation { return false; }
+        let Some(changed) = accept_league_response(&state.ssot, &current_url, &server_url, name) else {
+            return false;
+        };
+        // Hints received during this authoritative request are coalesced.
+        task.pending = false;
+        changed
+    };
+    publish_league_resolution(app, changed);
+    true
+}
+
+/// The URL owner stays locked through this synchronous acceptance step.
+fn accept_league_response(
+    ssot: &std::sync::Mutex<AppSsotSnapshot>,
+    current_url: &str,
+    requested_url: &str,
+    name: String,
+) -> Option<Option<LeagueChanged>> {
+    if current_url != requested_url { return None; }
+    Some(write_league(ssot, name))
 }
 
 async fn fetch_league_from_server(http: &reqwest::Client, server_url: &str) -> Option<String> {
@@ -1561,93 +1595,113 @@ async fn fetch_league_from_server(http: &reqwest::Client, server_url: &str) -> O
     parse_league_from_status(&body)
 }
 
-/// Exercise Refresh's status read and dual-write without constructing windows.
+/// Exercise Refresh's authoritative status read without constructing windows.
 #[cfg(test)]
 pub(crate) async fn refresh_league_for_test(
     server_url: &str,
     ssot: &std::sync::Mutex<AppSsotSnapshot>,
-    trade_client: &TradeApiClient,
 ) {
-    assert!(try_begin_resolving(ssot));
+    mark_resolving(ssot);
     let league = fetch_league_from_server(&reqwest::Client::new(), server_url)
         .await.expect("Refresh must resolve the stub's league");
-    write_league(ssot, trade_client, league);
-    clear_resolution_flags(ssot);
+    write_league(ssot, league);
 }
 
-/// Spawn the start-only league resolver: fetch `/api/analysis/status`, and on
-/// success dual-write the league and stop. On failure it retries with bounded
-/// exponential backoff — offline-at-launch is not fatal; the SSOT simply stays
-/// unresolved (fail-closed) until the server answers. There is **no** poller:
-/// once resolved the task returns. `refresh_league` re-arms it on demand.
-pub fn spawn_league_fetch(app: AppHandle) {
-    // Single-flight: claim the resolve right before spawning. If a resolve is
-    // already in flight, do NOT spawn a duplicate loop — the live one owns the
-    // retry window and its `resolving` flag already tells the UI we're working.
-    {
-        let state = app.state::<AppState>();
-        if !try_begin_resolving(&state.ssot) {
-            return;
+/// Inject network and waiting at the production loop boundary, so tests drive
+/// the same idle/retry transitions without a wall clock or Tauri windows.
+trait LeagueRuntime {
+    fn begin(&self);
+    async fn fetch(&self) -> bool;
+    fn failed(&self, failures: u32);
+    /// None waits indefinitely; true means a trigger reset the backoff.
+    async fn wait(&self, delay: Option<Duration>) -> bool;
+}
+
+async fn run_league_resolver(runtime: &impl LeagueRuntime) {
+    let mut backoff = LEAGUE_FETCH_INITIAL_BACKOFF;
+    let mut failures = 0;
+    loop {
+        runtime.begin();
+        if runtime.fetch().await {
+            failures = 0;
+            backoff = LEAGUE_FETCH_INITIAL_BACKOFF;
+            runtime.wait(None).await;
+        } else {
+            failures += 1;
+            runtime.failed(failures);
+            if runtime.wait(Some(backoff)).await {
+                backoff = LEAGUE_FETCH_INITIAL_BACKOFF;
+            } else {
+                backoff = (backoff * 2).min(LEAGUE_FETCH_MAX_BACKOFF);
+            }
         }
     }
-    // Publish `resolving = true` to pollers/main window before the first attempt.
-    emit_ssot(&app);
-    tauri::async_runtime::spawn(async move {
-        let mut backoff = LEAGUE_FETCH_INITIAL_BACKOFF;
-        let mut failures: u32 = 0;
-        loop {
-            if let Some(league) = fetch_league_once(&app).await {
-                log::info!("league resolved: {}", league);
-                apply_league(&app, league);
-                // Sole success exit: clear BOTH flags here, decoupled from
-                // `apply_league`. `write_league` also clears `resolving`, but only
-                // downstream of `normalize_league`'s blank re-check — if that gate
-                // ever drifted from the fetch's own blank-gate it could reject an
-                // already-accepted value and leave the loop wedged. This
-                // unconditional clear cannot be gated by that re-validation, and
-                // also drops `unreachable` (which `write_league` never touches).
-                {
-                    let state = app.state::<AppState>();
-                    clear_resolution_flags(&state.ssot);
-                }
-                emit_ssot(&app);
-                return;
-            }
-            failures += 1;
-            if should_flag_unreachable(failures) {
-                // Server looks down. Flip `unreachable` (still retrying) so the UI
-                // stops showing a perpetual "Resolving…" and offers an actionable
-                // Refresh. Emit only on the transition to avoid nudge spam.
-                let newly_unreachable = {
-                    let state = app.state::<AppState>();
-                    let mut guard = state.ssot.lock().unwrap_or_else(|e| e.into_inner());
-                    let changed = !guard.unreachable;
-                    guard.unreachable = true;
-                    changed
-                };
-                if newly_unreachable {
-                    emit_ssot(&app);
-                }
-            }
-            // Wait out the backoff, but let a `refresh_league` wake short-circuit
-            // it: a manual Refresh retries immediately and resets the backoff.
-            tokio::select! {
-                _ = tokio::time::sleep(backoff) => {
-                    backoff = (backoff * 2).min(LEAGUE_FETCH_MAX_BACKOFF);
-                }
-                _ = RETRY_NOTIFY.notified() => {
-                    backoff = LEAGUE_FETCH_INITIAL_BACKOFF;
-                }
-            }
+}
+
+struct AppLeagueRuntime(AppHandle);
+
+impl LeagueRuntime for AppLeagueRuntime {
+    fn begin(&self) {
+        LEAGUE_TASK.lock().unwrap_or_else(|e| e.into_inner()).pending = false;
+        let state = self.0.state::<AppState>();
+        mark_resolving(&state.ssot);
+        emit_ssot(&self.0);
+    }
+
+    async fn fetch(&self) -> bool {
+        fetch_league_once(&self.0).await
+    }
+
+    fn failed(&self, failures: u32) {
+        if should_flag_unreachable(failures) {
+            let changed = {
+                let state = self.0.state::<AppState>();
+                let mut snapshot = state.ssot.lock().unwrap_or_else(|e| e.into_inner());
+                let changed = !snapshot.unreachable;
+                snapshot.unreachable = true;
+                changed
+            };
+            if changed { emit_ssot(&self.0); }
         }
+    }
+
+    async fn wait(&self, delay: Option<Duration>) -> bool {
+        let wake = async {
+            loop {
+                let notified = RETRY_NOTIFY.notified();
+                if std::mem::take(&mut LEAGUE_TASK.lock().unwrap_or_else(|e| e.into_inner()).pending) {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        if let Some(delay) = delay {
+            tokio::select! {
+                _ = wake => true,
+                _ = tokio::time::sleep(delay) => false,
+            }
+        } else {
+            wake.await;
+            true
+        }
+    }
+}
+
+/// Start one live service. After success it waits for a trigger, never a poll.
+pub fn spawn_league_fetch(app: AppHandle) {
+    let spawn = LEAGUE_TASK.lock().unwrap_or_else(|e| e.into_inner()).trigger();
+    RETRY_NOTIFY.notify_one();
+    if !spawn { return; }
+    tauri::async_runtime::spawn(async move {
+        run_league_resolver(&AppLeagueRuntime(app)).await;
     });
 }
 
-/// Manually set the resolved league (dual-write + emit). The POE-126 seam for a
+/// Manually set the resolved league. The POE-126 seam for a
 /// future user league-choice UI; also the sink the fetch task writes through.
 #[tauri::command]
 pub fn set_league(name: String, app: AppHandle) {
-    // POE-126 latent hazard: the start-only resolver loop is not cancelled here.
+    // POE-126 latent hazard: an active resolver request is not cancelled here.
     // If a manual set lands while a resolve is still in flight, that loop lives on
     // and will overwrite this manual choice when the server recovers. The real fix
     // (abort the JoinHandle / generation-guard the write) belongs with POE-126 —
@@ -1667,10 +1721,7 @@ pub fn set_league(name: String, app: AppHandle) {
     apply_league(&app, name);
 }
 
-/// Manually re-arm the start-only league fetch (e.g. a Settings button after a
-/// server rollover). Fire-and-forget: it spawns the same bounded-retry task.
-/// There is deliberately no background poller — nothing to poll until a server
-/// rollover signal exists.
+/// Settings Refresh wakes the shared service, including during retry backoff.
 #[tauri::command]
 pub fn refresh_league(app: AppHandle) {
     rearm_league(app);
@@ -1700,6 +1751,15 @@ pub(crate) fn note_server_league(resolver: impl LeagueResolver, observed: Option
     let current = resolver.current_league();
     if observed.is_none() || observed != current.as_deref() {
         resolver.rearm();
+    }
+}
+
+pub mod league_command {
+    use super::*;
+
+    #[tauri::command]
+    pub fn note_server_league(app: AppHandle, observed: Option<String>) {
+        super::note_server_league(app, observed.as_deref());
     }
 }
 
@@ -1888,25 +1948,10 @@ mod trade_submit_tests {
 
 /// Resolve the league again, now.
 ///
-/// If a resolve is already looping (e.g. "Server unreachable"), a fresh spawn
-/// would be refused by the single-flight guard anyway — so instead WAKE the
-/// live loop: it retries immediately and resets its backoff. Only when nothing
-/// is in flight do we spawn a new resolver.
-///
-/// Two callers: the Settings **Refresh** button through [`refresh_league`], and
-/// [`on_server_url_changed`], because the league is a fact about the SERVER and
-/// the one standing was resolved against a different one.
+/// Startup, Settings Refresh, URL changes, write 409s and Mercure hints share
+/// one scheduling gate. Liveness stays true through both idle and backoff.
 fn rearm_league(app: AppHandle) {
-    let in_flight = {
-        let state = app.state::<AppState>();
-        let resolving = state.ssot.lock().unwrap_or_else(|e| e.into_inner()).resolving;
-        resolving
-    };
-    if in_flight {
-        RETRY_NOTIFY.notify_one();
-    } else {
-        spawn_league_fetch(app);
-    }
+    spawn_league_fetch(app);
 }
 
 // ------------------------------------------- the temple market poll (POE-258) --
@@ -1914,8 +1959,8 @@ fn rearm_league(app: AppHandle) {
 /// How often the temple market is re-read from the server.
 ///
 /// Five minutes, and the cadence is the poll's own rather than a ride on some
-/// other tick because there is no other tick to ride: the league fetch above is
-/// START-ONLY (it returns the moment it lands a name) and the only periodic
+/// other tick because there is no other tick to ride: the league service above
+/// waits indefinitely after success, and the only periodic
 /// server read the app already had is the webview's 30-minute entitlement +
 /// update check in `stores/status.svelte.ts` — six times too slow for a price
 /// the overlay states the age of.
@@ -2155,8 +2200,7 @@ fn apply_market_view(slice: &mut TempleSlice, view: MarketView) {
 /// [`MarketPoll::Accepted`] replaces.
 ///
 /// Takes the mutex rather than the `AppHandle` so the rule is unit-testable
-/// without a running app — the same extraction `try_begin_resolving` and
-/// `clear_resolution_flags` make, and for the same reason.
+/// without a running app, as with `write_league`.
 fn store_market(
     stored: &std::sync::Mutex<MarketInput>,
     verdict: MarketPoll,
@@ -2377,6 +2421,7 @@ pub fn spawn_temple_market_poll(app: AppHandle) {
 ///    life of the session. The resolver's success wakes the poller, so the new
 ///    league's prices land as soon as the league does.
 pub fn on_server_url_changed(app: &AppHandle) {
+    LEAGUE_TASK.lock().unwrap_or_else(|e| e.into_inner()).url_generation += 1;
     {
         let state = app.state::<AppState>();
         drop_market(&state.temple_market);
@@ -2402,51 +2447,34 @@ mod tests {
         assert_eq!(snap.league.name, None);
     }
 
-    /// The dual-write contract — the whole point of the seam. One `write_league`
-    /// call must land the league in BOTH the SSOT snapshot and the trade client,
-    /// asserted on the real post-state of each (not a status flag).
+    /// The resolved identity belongs to the SSOT slice alone.
     #[test]
-    fn write_league_updates_both_ssot_and_trade_client() {
+    fn write_league_updates_the_ssot_holder() {
         let ssot = Mutex::new(AppSsotSnapshot::default());
-        let trade_client = TradeApiClient::new();
-        // Precondition: both unresolved (fail-closed).
         assert_eq!(ssot.lock().unwrap().league.name, None);
-        assert!(trade_client.league().is_err());
 
-        write_league(&ssot, &trade_client, "Mirage".to_string());
+        write_league(&ssot, "Mirage".to_string());
 
         assert_eq!(
             ssot.lock().unwrap().league.name,
             Some("Mirage".to_string()),
             "SSOT slice must hold the resolved league",
         );
-        assert_eq!(
-            trade_client.league().unwrap(),
-            "Mirage",
-            "trade client must now resolve to the same league",
-        );
+        assert_eq!(ssot.lock().unwrap().league.generation, 1);
     }
 
     /// Single-flight contract: the first caller acquires the resolve right and
     /// marks `resolving`; a second caller is refused while a resolve is in
     /// flight, so repeated `refresh_league` clicks can't stack duplicate loops.
     #[test]
-    fn try_begin_resolving_refuses_second_caller_while_resolving() {
+    fn resolver_liveness_is_independent_of_resolving_ui() {
         let ssot = Mutex::new(AppSsotSnapshot::default());
-        assert!(!ssot.lock().unwrap().resolving, "precondition: not resolving");
-
-        assert!(
-            try_begin_resolving(&ssot),
-            "first caller must acquire the resolve right",
-        );
-        assert!(
-            ssot.lock().unwrap().resolving,
-            "flag must be set after the right is acquired",
-        );
-        assert!(
-            !try_begin_resolving(&ssot),
-            "second caller must be refused while a resolve is in flight",
-        );
+        let mut task = LeagueTask::default();
+        assert!(task.trigger());
+        mark_resolving(&ssot);
+        write_league(&ssot, "A".into());
+        assert!(!ssot.lock().unwrap().resolving);
+        assert!(!task.trigger(), "idle task retains the single-flight claim");
     }
 
     /// The resolve path clears `resolving` in the same write that sets the
@@ -2458,12 +2486,11 @@ mod tests {
             resolving: true,
             ..Default::default()
         });
-        let trade_client = TradeApiClient::new();
         // Precondition: resolve in flight, league not yet written.
         assert!(ssot.lock().unwrap().resolving);
         assert_eq!(ssot.lock().unwrap().league.name, None);
 
-        write_league(&ssot, &trade_client, "Mirage".to_string());
+        write_league(&ssot, "Mirage".to_string());
 
         let guard = ssot.lock().unwrap();
         assert_eq!(
@@ -2478,21 +2505,18 @@ mod tests {
     }
 
     /// A blank/whitespace league name is rejected at the seam: `normalize_league`
-    /// returns `None`, so neither store is written and both stay fail-closed.
+    /// returns `None`, so the holder stays fail-closed.
     /// Guards the `set_league`/`refresh_league` user-choice sink that skips the
     /// server-side `parse_league_from_status` filter.
     #[test]
-    fn blank_league_at_seam_leaves_both_stores_unresolved() {
+    fn blank_league_at_seam_leaves_holder_unresolved() {
         let ssot = Mutex::new(AppSsotSnapshot::default());
-        let trade_client = TradeApiClient::new();
-        // Precondition: both unresolved (fail-closed) before the guarded path.
         assert_eq!(ssot.lock().unwrap().league.name, None);
-        assert!(trade_client.league().is_err());
 
         // The guard `apply_league` applies before writing. Whitespace-only.
         match normalize_league("   ") {
             None => {} // rejected — no write, exactly what `apply_league` does.
-            Some(n) => write_league(&ssot, &trade_client, n),
+            Some(n) => { write_league(&ssot, n); }
         }
 
         assert_eq!(
@@ -2500,10 +2524,7 @@ mod tests {
             None,
             "SSOT slice must stay unresolved after a blank set_league",
         );
-        assert!(
-            trade_client.league().is_err(),
-            "trade client must stay unresolved after a blank set_league",
-        );
+        assert_eq!(ssot.lock().unwrap().league.generation, 0);
     }
 
     /// The pure seam gate: whitespace-only trims to empty and is rejected,
@@ -2519,17 +2540,17 @@ mod tests {
 
     /// The sole success-exit mutation drops BOTH flags. Starting from an
     /// in-flight, unreachable snapshot (the exact state a recovered-after-down
-    /// server exits through), `clear_resolution_flags` must leave `resolving` and
+    /// server exits through), `write_league` must leave `resolving` and
     /// `unreachable` both false — asserted on real post-state, not a return code.
     #[test]
-    fn clear_resolution_flags_drops_both_flags() {
+    fn successful_resolution_drops_both_flags() {
         let ssot = Mutex::new(AppSsotSnapshot {
             resolving: true,
             unreachable: true,
             ..Default::default()
         });
 
-        clear_resolution_flags(&ssot);
+        write_league(&ssot, "Mirage".into());
 
         let guard = ssot.lock().unwrap();
         assert!(!guard.resolving, "resolving must be cleared on success");
@@ -2929,7 +2950,7 @@ mod tests {
     #[test]
     fn compose_snapshot_preserves_the_stored_league_slice() {
         let base = AppSsotSnapshot {
-            league: LeagueSlice { name: Some("Mirage".to_string()) },
+            league: LeagueSlice { name: Some("Mirage".to_string()), generation: 1 },
             resolving: true,
             unreachable: true,
             ..Default::default()
@@ -2988,7 +3009,7 @@ mod tests {
     #[test]
     fn snapshot_serialization_keeps_the_existing_league_keys() {
         let snap = AppSsotSnapshot {
-            league: LeagueSlice { name: Some("Mirage".to_string()) },
+            league: LeagueSlice { name: Some("Mirage".to_string()), generation: 1 },
             resolving: true,
             unreachable: true,
             ..Default::default()
@@ -4459,5 +4480,222 @@ mod tests {
 
         assert_eq!(slice.market, read, "the read's own market is untouched");
         assert_eq!(slice.poll, after_switch, "and the poll's view is what moved");
+    }
+}
+
+#[cfg(test)]
+mod league_generation_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[test]
+    fn first_resolution_establishes_generation_without_consumer_event() {
+        let ssot = Mutex::new(AppSsotSnapshot::default());
+        assert!(write_league(&ssot, "A".into()).is_none());
+        let snapshot = ssot.lock().unwrap();
+        assert_eq!(snapshot.league.name.as_deref(), Some("A"));
+        assert_eq!(snapshot.league.generation, 1);
+    }
+
+    #[test]
+    fn identical_resolution_keeps_generation() {
+        let ssot = Mutex::new(AppSsotSnapshot::default());
+        write_league(&ssot, "A".into());
+        assert!(write_league(&ssot, "A".into()).is_none());
+        assert_eq!(ssot.lock().unwrap().league.generation, 1);
+    }
+
+    #[test]
+    fn returning_to_a_previous_name_advances_generation() {
+        let ssot = Mutex::new(AppSsotSnapshot::default());
+        write_league(&ssot, "A".into());
+        let changed = write_league(&ssot, "B".into()).unwrap();
+        assert_eq!((changed.league.as_str(), changed.generation), ("B", 2));
+        let changed = write_league(&ssot, "A".into()).unwrap();
+        assert_eq!((changed.league.as_str(), changed.generation), ("A", 3));
+    }
+}
+
+#[cfg(test)]
+mod league_resolver_tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::future::Future;
+    use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll, Wake, Waker};
+
+    struct NoopWake;
+    impl Wake for NoopWake { fn wake(self: Arc<Self>) {} }
+
+    struct Runtime {
+        ssot: Mutex<AppSsotSnapshot>,
+        replies: Mutex<VecDeque<Option<&'static str>>>,
+        waits: Mutex<Vec<Option<Duration>>>,
+        attempts: Mutex<usize>,
+        clock: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<bool>>,
+    }
+
+    impl LeagueRuntime for Runtime {
+        fn begin(&self) { mark_resolving(&self.ssot); }
+        async fn fetch(&self) -> bool {
+            *self.attempts.lock().unwrap() += 1;
+            match self.replies.lock().unwrap().pop_front().expect("scripted response") {
+                Some(name) => {
+                    accept_league_response(&self.ssot, "server", "server", name.into());
+                    true
+                }
+                None => false,
+            }
+        }
+        fn failed(&self, failures: u32) {
+            if should_flag_unreachable(failures) { self.ssot.lock().unwrap().unreachable = true; }
+        }
+        async fn wait(&self, delay: Option<Duration>) -> bool {
+            self.waits.lock().unwrap().push(delay);
+            self.clock.lock().await.recv().await.expect("clock remains open")
+        }
+    }
+
+    fn runtime(replies: Vec<Option<&'static str>>) -> (Runtime, tokio::sync::mpsc::UnboundedSender<bool>) {
+        let (clock, receiver) = tokio::sync::mpsc::unbounded_channel();
+        (Runtime {
+            ssot: Mutex::new(AppSsotSnapshot::default()),
+            replies: Mutex::new(replies.into()), waits: Mutex::new(Vec::new()),
+            attempts: Mutex::new(0), clock: tokio::sync::Mutex::new(receiver),
+        }, clock)
+    }
+
+    fn advance(future: std::pin::Pin<&mut impl Future<Output = ()>>) {
+        let waker = Waker::from(Arc::new(NoopWake));
+        assert!(matches!(future.poll(&mut Context::from_waker(&waker)), Poll::Pending));
+    }
+
+    #[test]
+    fn success_waits_indefinitely_for_each_isolated_trigger() {
+        let (runtime, clock) = runtime(vec![Some("A"), Some("B"), Some("B"), Some("B")]);
+        let mut resolver = std::pin::pin!(run_league_resolver(&runtime));
+        advance(resolver.as_mut());
+        // Polling the executor without a trigger represents arbitrarily much
+        // idle time: the production loop must not even arm a status timer.
+        for _ in 0..100 { advance(resolver.as_mut()); }
+        assert_eq!(*runtime.attempts.lock().unwrap(), 1);
+        assert_eq!(*runtime.waits.lock().unwrap(), vec![None]);
+        for attempt in 2..=4 {
+            // The shared wait receives 409, Mercure and Refresh wakes alike.
+            clock.send(true).unwrap();
+            advance(resolver.as_mut());
+            assert_eq!(*runtime.attempts.lock().unwrap(), attempt);
+            assert_eq!(runtime.waits.lock().unwrap().last(), Some(&None));
+            assert!(!runtime.ssot.lock().unwrap().resolving);
+        }
+        assert_eq!(runtime.ssot.lock().unwrap().league.name.as_deref(), Some("B"));
+        assert_eq!(runtime.ssot.lock().unwrap().league.generation, 2);
+    }
+
+    #[test]
+    fn failures_retry_with_capped_backoff_until_recovery() {
+        let (runtime, clock) = runtime(vec![None, None, None, None, None, None, None, None, Some("A")]);
+        let mut resolver = std::pin::pin!(run_league_resolver(&runtime));
+        advance(resolver.as_mut());
+        for _ in 0..7 { clock.send(false).unwrap(); advance(resolver.as_mut()); }
+        assert_eq!(*runtime.waits.lock().unwrap(), [2, 4, 8, 16, 32, 60, 60, 60].map(|s| Some(Duration::from_secs(s))));
+        assert!(runtime.ssot.lock().unwrap().unreachable);
+        clock.send(false).unwrap();
+        advance(resolver.as_mut());
+        assert_eq!(runtime.waits.lock().unwrap().last(), Some(&None));
+        let snapshot = runtime.ssot.lock().unwrap();
+        assert_eq!(snapshot.league.name.as_deref(), Some("A"));
+        assert!(!snapshot.unreachable);
+        assert!(!snapshot.resolving);
+    }
+
+    #[test]
+    fn trigger_wakes_backoff_without_erasing_the_resolved_baseline() {
+        let (runtime, clock) = runtime(vec![Some("A"), None, None, Some("B")]);
+        let mut resolver = std::pin::pin!(run_league_resolver(&runtime));
+        advance(resolver.as_mut());
+        clock.send(true).unwrap(); advance(resolver.as_mut());
+        clock.send(false).unwrap(); advance(resolver.as_mut());
+        assert_eq!(runtime.waits.lock().unwrap().last(), Some(&Some(Duration::from_secs(4))));
+        let snapshot = runtime.ssot.lock().unwrap();
+        assert_eq!((snapshot.league.name.as_deref(), snapshot.league.generation), (Some("A"), 1));
+        drop(snapshot);
+        clock.send(true).unwrap(); advance(resolver.as_mut());
+        assert_eq!(runtime.waits.lock().unwrap().last(), Some(&None));
+        assert_eq!(runtime.ssot.lock().unwrap().league.generation, 2);
+    }
+
+    #[test]
+    fn trigger_during_backoff_resets_the_retry_delay() {
+        let (runtime, clock) = runtime(vec![None, None, None]);
+        let mut resolver = std::pin::pin!(run_league_resolver(&runtime));
+        advance(resolver.as_mut());
+        clock.send(false).unwrap(); advance(resolver.as_mut());
+        clock.send(true).unwrap(); advance(resolver.as_mut());
+        assert_eq!(*runtime.waits.lock().unwrap(), [2, 4, 2].map(|s| Some(Duration::from_secs(s))));
+    }
+
+    #[test]
+    fn concurrent_hints_claim_only_one_live_resolver() {
+        let task = Arc::new(Mutex::new(LeagueTask::default()));
+        let workers: Vec<_> = (0..16).map(|_| {
+            let task = task.clone();
+            std::thread::spawn(move || task.lock().unwrap().trigger())
+        }).collect();
+        let spawned = workers.into_iter().map(|worker| usize::from(worker.join().unwrap())).sum::<usize>();
+        assert_eq!(spawned, 1);
+        assert!(task.lock().unwrap().pending);
+        // A resolved UI flag does not release the live task's claim.
+        assert!(!task.lock().unwrap().trigger());
+    }
+
+    #[test]
+    fn superseded_server_response_cannot_replace_current_resolution() {
+        let ssot = Mutex::new(AppSsotSnapshot::default());
+        write_league(&ssot, "B".into());
+        assert!(accept_league_response(&ssot, "new-server", "old-server", "A".into()).is_none());
+        let snapshot = ssot.lock().unwrap();
+        assert_eq!((snapshot.league.name.as_deref(), snapshot.league.generation), (Some("B"), 1));
+    }
+}
+
+#[cfg(test)]
+mod league_publication_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::sync::Mutex;
+
+    fn resolve(ssot: &Mutex<AppSsotSnapshot>, name: &str) -> Vec<String> {
+        let changed = write_league(ssot, name.into());
+        let events = RefCell::new(Vec::new());
+        deliver_league_resolution(changed,
+            || { events.borrow_mut().push("market-wake".into()); },
+            || {
+                // The snapshot emitter must be able to re-lock the holder.
+                let snapshot = ssot.try_lock().expect("no lock across emission");
+                events.borrow_mut().push(format!("ssot:{}:{}", snapshot.league.name.as_deref().unwrap(), snapshot.league.generation));
+            },
+            |changed| { events.borrow_mut().push(format!("changed:{}:{}", changed.league, changed.generation)); });
+        events.into_inner()
+    }
+
+    #[test]
+    fn first_resolution_publishes_snapshot_without_consumer_change() {
+        let ssot = Mutex::new(AppSsotSnapshot::default());
+        assert_eq!(resolve(&ssot, "A"), ["market-wake", "ssot:A:1"]);
+    }
+
+    #[test]
+    fn real_change_publishes_one_consumer_event_after_snapshot() {
+        let ssot = Mutex::new(AppSsotSnapshot::default());
+        write_league(&ssot, "A".into());
+        assert_eq!(resolve(&ssot, "B"), ["market-wake", "ssot:B:2", "changed:B:2"]);
+    }
+
+    #[test]
+    fn same_name_resolution_still_wakes_market() {
+        let ssot = Mutex::new(AppSsotSnapshot::default());
+        write_league(&ssot, "A".into());
+        assert_eq!(resolve(&ssot, "A"), ["market-wake", "ssot:A:1"]);
     }
 }
