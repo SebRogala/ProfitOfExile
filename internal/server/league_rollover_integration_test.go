@@ -34,6 +34,8 @@ func TestCommittedRolloverRejectsStaleSubmits(t *testing.T) {
 	if databaseURL == "" {
 		t.Skip("DATABASE_URL required")
 	}
+	root, err := filepath.Abs("../..")
+	rolloverMust(t, err)
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -42,8 +44,13 @@ func TestCommittedRolloverRejectsStaleSubmits(t *testing.T) {
 	defer pool.Close()
 	var database string
 	rolloverMust(t, pool.QueryRow(ctx, `SELECT current_database()`).Scan(&database))
-	if database != "profitofexile_lanesecond_integration" {
-		t.Fatal("rollover requires the exclusively leased lanesecond integration database")
+	// Broad integration discovery uses the shared runner's disposable DB rule.
+	// Validate the actual connected database through that rule's owner, without
+	// executing any database command. The dedicated runner keeps its lane lease.
+	databaseGuard := exec.Command("bash", "-c", `source "$1"`, "integration database guard", filepath.Join(root, "scripts/lib/integration-env.sh"))
+	databaseGuard.Env = append(os.Environ(), "INTEGRATION_DB="+database)
+	if output, err := databaseGuard.CombinedOutput(); err != nil {
+		t.Fatalf("rollover requires a supported disposable integration database: %v\n%s", err, output)
 	}
 	savedScope, err := league.Resolve(ctx, pool)
 	rolloverMust(t, err)
@@ -115,8 +122,6 @@ func TestCommittedRolloverRejectsStaleSubmits(t *testing.T) {
 	}()
 
 	// Build the real CLI, rather than substituting its dispatch dependencies.
-	root, err := filepath.Abs("../..")
-	rolloverMust(t, err)
 	binary := filepath.Join(t.TempDir(), "league")
 	build := exec.Command("go", "build", "-buildvcs=false", "-o", binary, "./cmd/league")
 	build.Dir = root
