@@ -28,7 +28,7 @@ function layouts(state = input) {
 	const html = render(BossResultsTables, { props: {
 		profile: state.profile, view: buildResultsView(state), sort: state.sort, onSort: () => {}
 	} }).body.replace(/<!--[\s\S]*?-->/g, '')
-	// SSR emits both alternatives. Chromium evidence verifies which CSS exposes at 599/600px.
+	// SSR emits both alternatives. Chromium evidence verifies which CSS exposes at 1099/1100px.
 	const stacked = html.match(/<div class="results-stacked[^\"]*">([\s\S]*?)<\/div>\s*<div class="results-columns/)
 	const columns = html.slice(html.indexOf('<div class="results-columns'))
 	expect(stacked, 'stacked table must precede the column alternative').not.toBeNull()
