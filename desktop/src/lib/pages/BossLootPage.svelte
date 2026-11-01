@@ -110,7 +110,7 @@
 	table { width: 100%; table-layout: fixed; border-collapse: collapse; }
 	.drops-col { width: 74px; }
 	.rate-col { width: 180px; }
-	.wiki-col { width: 78px; }
+	.wiki-col { width: 73px; }
 	th { font-size: .6875rem; text-transform: uppercase; letter-spacing: .5px; color: var(--color-lab-text-secondary); font-weight: 600; text-align: left; }
 	td, th { border-top: 1px solid var(--color-lab-border); padding: 5px; }
 	td:first-child, th:first-child { padding-left: 12px; }

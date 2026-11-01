@@ -85,12 +85,17 @@ describe('Results', () => {
 })
 
 describe('CSV', () => {
-	it('uses profile-ordered item names and historical quantities', async () => {
+	it('uses profile-ordered item names as CSV columns', async () => {
 		const { profile } = await input()
 		const run: StoredRun = { ...profile, id: 'row', league: 'test', run: 8, date: null, seed: null,
 			version: 1, items: { quantities: { 'Cane of Kulemak': 1, 'Communion Support': 3 }, counted: [] } }
 		const csv = runsCsv(profile, [run])
 		expect(csv.split('\r\n')[0]).toBe('Run,Date,Cinderswallow Urn,Spinehail,Cane of Kulemak,The Devouring Diadem,Bitterbind Point,The Queen\'s Hunger,Zorath\'s Eye of the Endless,Veiled Exalted Orb,Allflame Ember of Kulemak,Communion Support,Templar Astrolabe,Nook\'s Crown,Keeper\'s Corruption,"Rare, two veiled modifiers"')
-		expect(csv.split('\r\n')[1]).toBe('8,,0,0,1,0,0,0,0,0,0,3,0,0,0,0')
+	})
+	it('exports hidden historical quantities independently of current eligibility', async () => {
+		const { profile } = await input()
+		const run: StoredRun = { ...profile, id: 'row', league: 'test', run: 8, date: null, seed: null,
+			version: 1, items: { quantities: { 'Cane of Kulemak': 1, 'Communion Support': 3 }, counted: [] } }
+		expect(runsCsv(profile, [run]).split('\r\n')[1]).toBe('8,,0,0,1,0,0,0,0,0,0,3,0,0,0,0')
 	})
 })
