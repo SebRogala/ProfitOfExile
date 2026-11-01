@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import source from './__fixtures__/boss-loot.json'
 import { createFixtureCapture, createFixtureModuleSettings, createFixtureProfiles, createFixtureStats } from './fixture-adapters'
-import type { BossProfile, Capture, LootLayout, StatsScope, SubmitOutcome } from './contracts'
+import type { LootLayout, StatsScope, SubmitOutcome } from './contracts'
 import { buildOverlayView, changeSelection, dispatchOverlayAction, type OverlayInput } from './overlay-view'
 
 async function input(layout: LootLayout = 'grid', scope: StatsScope = 'own'): Promise<OverlayInput> {
@@ -133,10 +133,12 @@ it('uses the server-confirmed run number on success', async () => {
 })
 it('names excluded merge positives without changing selected items', async () => {
 	const state = await input()
+	delete state.capture.extra[state.profile.extra[0].id]
 	state.outcome = { state: 'saved', run: { ...state.profile, id: 'row', league: 'fixture-only', run: 79, version: 2, seed: null, date: null, items: { quantities: { 'Cinderswallow Urn': 1 }, counted: ['Cinderswallow Urn'] } }, droppedPositiveKeys: [state.profile.extra[0].id] }
 	const view = buildOverlayView(state)
 	expect(view.excludedMessage).toBe("Not added (not counted in the original run): Zorath's Eye of the Endless.")
-	expect(state.capture.extra[state.profile.extra[0].id]).toBe(1)
+	expect(view.extra.find((item) => item.id === state.profile.extra[0].id)?.selected).toBe(false)
+	expect(view.groups[0].items.filter((item) => item.selected).map((item) => item.id)).toEqual(['Cinderswallow Urn'])
 })
 it('offers force-new for a pending same-seed merge', async () => {
 	expect(buildOverlayView({ ...await input(), previousRun: 79 }).mergeMessage).toBe('Same seed as run 79: added to it.')

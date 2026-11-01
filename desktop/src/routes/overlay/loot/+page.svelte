@@ -25,6 +25,7 @@
 	let closeTimer: ReturnType<typeof setTimeout> | undefined
 	let scopeGeneration = 0
 	let disposed = false
+	let deadline = 0
 	const apiBase = $derived(getApiBase())
 
 	// Native crop/mode remain view props until WI-9 supplies the capture owner.
@@ -49,19 +50,23 @@
 				input = { profile, capture, stats: own, scope: 'own', layout: appearance.layout,
 					notCounted: moduleSettings.notCounted, autoSaveSeconds: moduleSettings.autoSaveSeconds,
 					seconds: moduleSettings.autoSaveSeconds }
+				deadline = Date.now() + moduleSettings.autoSaveSeconds * 1000
 			} catch (error) { console.error('[loot] fixture owners could not load:', error) }
 		}
 		void load()
 		const timer = setInterval(() => {
 			if (!input || !buildOverlayView(input).canSave || input.autoSaveSeconds === 0) return
-			input.seconds = Math.max(0, input.seconds - 1)
+			input.seconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000))
 			if (input.seconds === 0) void save()
-		}, 1000)
+		}, 100)
 		return () => { disposed = true; clearInterval(timer); clearTimeout(closeTimer) }
 	})
 
 	function touch(): void {
-		if (input && !input.outcome) input.seconds = input.autoSaveSeconds
+		if (input && !input.outcome) {
+			input.seconds = input.autoSaveSeconds
+			deadline = Date.now() + input.autoSaveSeconds * 1000
+		}
 	}
 	async function selectScope(scope: StatsScope): Promise<void> {
 		if (!input) return
