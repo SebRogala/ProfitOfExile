@@ -3,6 +3,8 @@ import type { BossProfile, BossStats, Capture, LootItem, LootLayout, LootSelecti
 export interface OverlayInput {
 	profile: BossProfile
 	capture: Capture
+	/** Original OCR selection remains unchanged while the fixture's picks are edited. */
+	readSelection?: LootSelection
 	stats: BossStats
 	scope: StatsScope
 	layout: LootLayout
@@ -66,7 +68,9 @@ export function buildOverlayView(input: OverlayInput) {
 	const noRuns = stats.runs === 0
 	const mixed = !noRuns && items.some((item) => !notCounted.includes(item.id) &&
 		(Object.hasOwn(stats.items, item.id) ? stats.items[item.id].eligibleRuns : 0) !== stats.runs)
-	const reads = new Set([...Object.values(capture.picks).flat(), ...Object.keys(capture.extra), ...Object.keys(capture.categories)])
+	const read = input.readSelection ?? capture
+	const reads = new Set([...Object.values(read.picks).flat(),
+		...Object.entries({ ...read.extra, ...read.categories }).filter(([, quantity]) => quantity > 0).map(([id]) => id)])
 	const project = (item: LootItem, selected: boolean, quantity: number, category = false, radio = false): ItemView => {
 		const disabled = notCounted.includes(item.id)
 		const ambiguous = capture.ambiguous?.ids.includes(item.id) ?? false

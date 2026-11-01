@@ -47,7 +47,7 @@
 				if (disposed) return
 				overlaySettings = appearance
 				previewShortcut = moduleSettings.previewShortcut
-				input = { profile, capture, stats: own, scope: 'own', layout: appearance.layout,
+				input = { profile, capture, readSelection: structuredClone(capture), stats: own, scope: 'own', layout: appearance.layout,
 					notCounted: moduleSettings.notCounted, autoSaveSeconds: moduleSettings.autoSaveSeconds,
 					seconds: moduleSettings.autoSaveSeconds }
 				deadline = Date.now() + moduleSettings.autoSaveSeconds * 1000

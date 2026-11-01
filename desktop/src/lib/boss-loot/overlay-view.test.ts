@@ -151,6 +151,18 @@ it('clears a picked guaranteed item', async () => {
 	const state = await input()
 	expect(changeSelection(state.profile, state.capture, [], { type: 'toggle', id: 'Cinderswallow Urn' }).picks.unique).toEqual([])
 })
+it('retains the OCR tag after the read item is deselected', async () => {
+	const state = await input()
+	const readSelection = structuredClone(state.capture)
+	state.capture.picks.unique = []
+	expect(buildOverlayView({ ...state, readSelection }).groups[0].items[0].tag).toBe('read')
+})
+it('does not label a manual replacement as OCR read', async () => {
+	const state = await input()
+	const readSelection = structuredClone(state.capture)
+	state.capture.picks.unique = ['Spinehail']
+	expect(buildOverlayView({ ...state, readSelection }).groups[0].items[1].tag).toBe('')
+})
 it('resolves ambiguity only when a candidate is chosen', async () => {
 	const state = await testProfile('maven')
 	expect(changeSelection(state.profile, state.capture, [], { type: 'toggle', id: state.capture.ambiguous!.ids[0] }).ambiguous).toBe(null)
