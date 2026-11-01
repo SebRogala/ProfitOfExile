@@ -94,10 +94,19 @@
 		.results-columns .wiki-col { width: 19%; }
 		.results-columns td:last-child, .results-columns th:last-child { padding-right: 8px; }
 		.results-columns .wiki { white-space: nowrap; }
-		.results-columns .item { flex-wrap: wrap; row-gap: 4px; }
 		.results-columns .item > span { flex: 1; min-width: min-content; }
 		.results-columns .item :global(img), .results-columns .item :global(.item-icon-fallback) { flex-shrink: 0; }
 		.results-columns .group-note { float: none; display: block; margin-top: 2px; }
 		.results-columns .rate-header { display: block; }
+	}
+	@container boss-results (600px <= width < 900px) {
+		.results-columns .drops-col { width: 14%; }
+		.results-columns .rate-col { width: 23%; }
+		.results-columns .wiki-col { width: 17%; }
+		.results-columns td, .results-columns th { padding-left: 3px; padding-right: 3px; }
+		.results-columns td:first-child, .results-columns th:first-child { padding-left: 6px; }
+		.results-columns td:last-child, .results-columns th:last-child { padding-right: 6px; }
+		.results-columns thead th { vertical-align: top; letter-spacing: 0; }
+		.results-columns .item { gap: 4px; }
 	}
 </style>
