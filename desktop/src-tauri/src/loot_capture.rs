@@ -299,6 +299,7 @@ impl LootOwner {
     }
     pub fn stop(&mut self) { self.pending = None; self.frame = None; self.preview = false; self.rebind = None; self.work_cancel = None; }
 }
+#[cfg(test)]
 pub async fn submit_pending(owner: &Mutex<LootOwner>, settings: &LootSettings, http: &impl LootTransport, now: u64, manual: bool) {
     let id = owner.lock().unwrap_or_else(|e| e.into_inner()).pending.as_ref().map(|p| p.id);
     if let Some(id) = id { submit_capture(owner, settings, http, now, manual, id).await; }
