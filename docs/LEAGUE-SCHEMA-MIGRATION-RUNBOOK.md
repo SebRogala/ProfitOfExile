@@ -137,6 +137,32 @@ table is excluded from the rollover wipe by decision, not by oversight — see t
 | `double_corrupt_snapshots` |  |  |  |
 | `item_snapshots` |  |  |  |
 
+## Runtime fence for archival
+
+After stopping both services with auto-restart disabled, open a dedicated,
+interactive `psql` session against the same database used for the final counts
+and dump. Use the private database administration connection procedure; keep
+the session open while running counts, `pg_dump`, and archive verification from
+another session. In the held session, acquire the exclusive runtime fence once:
+
+```sql
+SELECT pg_try_advisory_lock(2547706464772240820::bigint) AS acquired;
+```
+
+**Proceed only if `acquired` is `t`.** The key is `RuntimeLockKey()` in
+`internal/league/league.go`: FNV-1a 64-bit over `profitofexile/league/`, a zero
+byte, and `runtime`, masked to 63 bits. `AcquireProcessLockWait` in
+`cmd/collector/main.go` takes this session advisory lock. It does not require
+the league schema, so use it for the initial wipe-first archive too; older
+writers may not honor it, so both services must still remain stopped.
+
+Keep the same session connected and the fence held through archive verification.
+If acquisition returns `f`, errors, or the fence session drops, **stop**. Re-verify
+both services are stopped with auto-restart disabled, re-acquire the fence in a
+held session, and redo the final counts, dump, and archive verification before
+continuing. Release explicitly only at the hand-off specified below; keep both
+services stopped with auto-restart disabled until their stated restart steps.
+
 ## Production execution (wipe-first — initial schema migration)
 
 This procedure is specific to the initial schema migration; normal rollover
@@ -163,6 +189,8 @@ steps in order; each line is one action or one check.
 2. Disable auto-restart for both collector and server, then stop both services.
    Confirm both remain stopped and nothing is writing. Keep both stopped with
    auto-restart disabled through the backup, count comparison, and TRUNCATE.
+   Before the final counts and backup, acquire and check the held-session
+   [runtime fence](#runtime-fence-for-archival); retain it through step 7.
 3. Take a dedicated final backup of the outgoing league and store it in a
    non-rotating archive on the backup store (separate from the nightly rotation so
    it can't be overwritten) — this is the only way the old data stays reachable
@@ -184,6 +212,16 @@ steps in order; each line is one action or one check.
    `item_snapshots` from the POE-254 migration onward; drop absent
    tables from the statement when running against an older schema.)
 7. Confirm all sixteen tables report zero rows.
+   Release the fence in the same held session before deployment:
+
+   ```sql
+   SELECT pg_advisory_unlock(2547706464772240820::bigint) AS released;
+   ```
+
+   Require `released` = `t`, then close that session. The direct pre-migration
+   TRUNCATE does not acquire the runtime advisory lock itself; keep the fence
+   through that TRUNCATE and its zero-row check, rather than handing it off to
+   `/league` here.
 8. Deploy the staged 119–121 revision (the atomic merge), allowing only the
    server to start; keep the collector stopped with auto-restart disabled.
    The server migrates on
@@ -271,13 +309,29 @@ wipe dry runs only preview counts, mode, and SQL, executing no TRUNCATE/DELETE.
    stray cleanup. The collector resolves its league **before** acquiring its
    runtime fence, so a process started during the flip could retain the old scope
    even after the fence frees. Pause other administration during this window.
-4. Inside that boundary, capture outgoing-league counts for all sixteen scoped
-   tables and take the final dedicated `pg_dump` outside the nightly rotation.
+4. Inside that boundary, first acquire and check the held-session
+   [runtime fence](#runtime-fence-for-archival). Keep it held through the final
+   counts, dump, and archive verification. Capture outgoing-league counts for all
+   sixteen scoped tables and take the final dedicated `pg_dump` outside the
+   nightly rotation.
    Retain the counts as the dump's manifest, including zero-count tables, and
    verify the dump and its restore procedure using the private backup/restore
    guide outside this repository. Past-league analysis requires restoring that
    dump to a scratch database (ADR-011); do not record backup locations here.
-5. Preview activation, inspect the quoted before/after ids and revision, then
+5. After archive verification, release the fence explicitly in the same held
+   session, immediately before running the activation commands:
+
+   ```sql
+   SELECT pg_advisory_unlock(2547706464772240820::bigint) AS released;
+   ```
+
+   Require `released` = `t`, then close that session. `Activate` and committed
+   `Wipe` call `guard` in `internal/league/admin.go` with the runtime fence
+   required; it takes `pg_try_advisory_xact_lock` on the same key for each CLI
+   transaction, including activation dry runs. Holding the separate session
+   fence would make those commands refuse. Keep both services stopped with
+   auto-restart disabled across this hand-off, activation, and wipe.
+   Preview activation, inspect the quoted before/after ids and revision, then
    commit the same checked id:
 
    ```sh
