@@ -4715,11 +4715,15 @@ mod league_resolver_tests {
     enum PendingTrigger { HintsAndRefresh, Unknown, Refresh }
 
     fn parked_response_preserves_trigger(trigger: PendingTrigger) {
-        let (runtime, _clock, network) = runtime(vec![]);
-        write_league(&runtime.ssot, "A".into());
+        let (runtime, _clock, network) = runtime(vec![Some("A")]);
         let mut resolver = std::pin::pin!(run_league_resolver(&runtime));
         advance(resolver.as_mut());
-        assert_eq!(*runtime.attempts.lock().unwrap(), 1, "A request is parked on the network");
+        assert_eq!(runtime.ssot.lock().unwrap().league.name.as_deref(), Some("A"));
+        // Start the parked A request from a real idle Notify wait. Removing
+        // the production wake must break this regression before any response.
+        assert!(!runtime.scheduler.trigger(), "Refresh wakes the existing idle task");
+        advance(resolver.as_mut());
+        assert_eq!(*runtime.attempts.lock().unwrap(), 2, "Refresh's A request is parked on the network");
 
         match trigger {
             PendingTrigger::HintsAndRefresh => {
@@ -4735,7 +4739,7 @@ mod league_resolver_tests {
         assert_eq!(runtime.ssot.lock().unwrap().league.name.as_deref(), Some("A"));
         network.send(Some("A")).unwrap();
         advance(resolver.as_mut());
-        assert_eq!(*runtime.attempts.lock().unwrap(), 2, "a trigger received during A requires a subsequent authoritative request");
+        assert_eq!(*runtime.attempts.lock().unwrap(), 3, "a trigger received during A requires a subsequent authoritative request");
 
         network.send(Some("B")).unwrap();
         advance(resolver.as_mut());
@@ -4744,7 +4748,7 @@ mod league_resolver_tests {
         assert!(!snapshot.resolving);
         drop(snapshot);
         for _ in 0..100 { advance(resolver.as_mut()); }
-        assert_eq!(*runtime.attempts.lock().unwrap(), 2, "all prior triggers coalesce into the B request, then idle");
+        assert_eq!(*runtime.attempts.lock().unwrap(), 3, "all prior triggers coalesce into the B request, then idle");
         assert!(runtime.waits.lock().unwrap().is_empty(), "successful requests never arm a timer");
     }
 
