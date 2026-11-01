@@ -35,6 +35,7 @@
 <!-- Buttons supply keyboard activation; their click bubbles to this single dispatcher. -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
 <section class="confirmation" class:failed={input.outcome?.state === 'unreachable'}
+	class:list={input.layout === 'list'} style:width="{view.width}px"
 	aria-label="Boss loot confirmation" data-hot data-action="loot.touch" onclick={click}>
 	<header>
 		<div class="identity"><div class="title">{input.profile.name} · run {input.capture.run} <span class="profile-key">{input.profile.key}</span></div>
@@ -54,14 +55,14 @@
 		<div class="section">
 			<div class="group"><span>Guaranteed · {group.label} · {group.rule}</span><span class="status {group.tone}">{group.status}</span></div>
 			{#if group.ambiguity}<div class="ask"><span class="warning">?</span><span><b>{group.ambiguity.base}</b> was read. Several uniques share this base: which one dropped?</span></div>{/if}
-			<div class="guaranteed-grid" role={group.radio ? 'radiogroup' : 'group'} aria-label={group.label}>
-				{#each group.items as item (item.id)}<LootItem {item} icon={iconFor(item.id)} locked={!view.open} />{/each}
+			<div class="guaranteed-grid" class:rows={input.layout === 'list'} role={group.radio ? 'radiogroup' : 'group'} aria-label={group.label}>
+				{#each group.items as item (item.id)}<LootItem {item} layout={input.layout} icon={iconFor(item.id)} locked={!view.open} />{/each}
 			</div>
 		</div>
 	{/each}
 	<div class="section">
 		<div class="group"><span>Additional drops</span><span class="status">{view.extraMessage}</span></div>
-		<div class="additional-grid">{#each view.extra as item (item.id)}<LootItem {item} icon={iconFor(item.id)} locked={!view.open} />{/each}</div>
+		<div class="additional-grid" class:rows={input.layout === 'list'}>{#each view.extra as item (item.id)}<LootItem {item} layout={input.layout} icon={iconFor(item.id)} locked={!view.open} />{/each}</div>
 	</div>
 	<footer class="section">
 		<span class="unknown">{view.unknownLine}</span>
@@ -101,6 +102,7 @@
 	.guaranteed-grid, .additional-grid { display: grid; gap: 6px; }
 	.guaranteed-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 	.additional-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+	.rows { display: flex; flex-direction: column; gap: 2px; }
 	footer, .buttons { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 	.unknown { color: var(--color-lab-text-secondary); font-size: 11px; }
 	.confirmation :global(.btn) { height: 28px; padding: 0 12px; border-color: var(--color-lab-text-muted); color: var(--color-lab-text); font: inherit; }

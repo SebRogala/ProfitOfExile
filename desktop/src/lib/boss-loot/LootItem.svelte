@@ -3,10 +3,26 @@
 	import Tooltip from '$lib/components/Tooltip.svelte'
 	import QuantityStepper from './QuantityStepper.svelte'
 	import type { ItemView } from './overlay-view'
+	import type { LootLayout } from './contracts'
 
-	let { item, icon, locked = false }: { item: ItemView; icon: string | null; locked?: boolean } = $props()
+	let { item, icon, layout = 'grid', locked = false }: { item: ItemView; icon: string | null; layout?: LootLayout; locked?: boolean } = $props()
 </script>
 
+{#if layout === 'list'}
+<div class="row" class:selected={item.selected} class:ambiguous={item.ambiguous} class:off={!item.selected}>
+	<button type="button" class="row-hit" data-action="loot.toggle" data-item={item.id}
+		disabled={item.disabled || locked} title={item.title}
+		role={item.radio ? 'radio' : undefined} aria-checked={item.radio ? item.selected : undefined}
+		aria-pressed={item.radio ? undefined : item.selected}>
+		<span class="control" class:radio={item.radio} class:selected={item.selected} class:ambiguous={item.ambiguous} aria-hidden="true"></span>
+		<span class="row-art">{#if icon}<ItemIcon src={icon} alt="" size={26} />{:else}<span class="row-placeholder"></span>{/if}</span>
+		<span class="row-name"><span>{item.name}</span><small>{item.subtitle}</small></span>
+		<span class="row-rate"><b>{item.rate}</b>{#if item.listProvenance}<small>{item.listProvenance}</small>{/if}</span>
+		<span class="wiki">{item.wikiRate}</span>
+	</button>
+	{#if item.showQuantity}<QuantityStepper id={item.id} name={item.name} quantity={item.quantity} disabled={locked} />{/if}
+</div>
+{:else}
 <div class="tile" class:selected={item.selected} class:ambiguous={item.ambiguous} class:category={item.category} class:off={!item.selected}>
 	<button type="button" class="hit" data-action="loot.toggle" data-item={item.id}
 		disabled={item.disabled || locked} title={item.title}
@@ -27,6 +43,7 @@
 	</button>
 	{#if item.showQuantity}<QuantityStepper id={item.id} name={item.name} quantity={item.quantity} disabled={locked} />{/if}
 </div>
+{/if}
 
 <style>
 	.tile { position: relative; display: flex; flex-direction: column; border: 1px solid var(--color-lab-border); border-radius: 5px; background: var(--color-lab-surface); }
@@ -47,4 +64,26 @@
 	.question, .not-counted { color: var(--color-lab-yellow); background: var(--loot-warning); }
 	.not-counted { padding: 0 6px; border-radius: 8px; font-size: 11px; line-height: 16px; }
 	.check { position: absolute; top: 3px; right: 3px; display: flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: var(--color-lab-blue); color: var(--color-lab-bg); }
+	.row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; border: 1px solid transparent; border-radius: 4px; }
+	.row.selected { border: 1px solid var(--color-lab-blue); background: var(--loot-selected); }
+	.row.ambiguous { border: 1px dashed var(--color-lab-yellow); }
+	.row-hit { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 16px 26px minmax(0, 1fr) 44px 52px; align-items: center; gap: 8px; min-height: 34px; padding: 3px 6px; color: var(--color-lab-text); cursor: pointer; }
+	.row-hit:focus-visible { outline: 1px solid var(--color-lab-blue); outline-offset: -1px; }
+	.row-hit:disabled { cursor: default; }
+	.row-art, .row-placeholder { width: 26px; height: 26px; }
+	.off .row-art { opacity: .45; }
+	.row-placeholder { display: block; border: 1px dashed var(--color-lab-text-muted); border-radius: 3px; }
+	.control { width: 14px; height: 14px; border: 1.5px solid var(--color-lab-text-secondary); border-radius: 3px; }
+	.control.radio { border-radius: 50%; }
+	.control.selected { border-color: var(--color-lab-blue); background: var(--color-lab-blue); }
+	.control.ambiguous { border-color: var(--color-lab-yellow); border-style: dashed; }
+	.row-name { display: flex; flex-direction: column; min-width: 0; line-height: 14px; font-size: 12px; }
+	.row-name span, .row-name small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+	.row-name small, .wiki { color: var(--color-lab-text-secondary); font-size: 11px; }
+	.row-rate { text-align: right; }
+	.row-rate b { font: 600 12px 'Consolas', 'Monaco', monospace; }
+	.row-rate small { display: block; color: var(--color-lab-text-secondary); font-size: 11px; line-height: 13px; }
+	.row:has(.row-rate small) .row-hit { grid-template-columns: 16px 26px minmax(0, 1fr) 90px 52px; }
+	.wiki { text-align: right; }
+	.row :global(.quantity) { padding: 0 6px 0 0; }
 </style>
