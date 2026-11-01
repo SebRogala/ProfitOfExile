@@ -16,14 +16,9 @@
 	import LabComparatorWidget from '$lib/compass/LabComparatorWidget.svelte';
 	import { LAB_WINDOW_LABEL } from '$lib/overlay/manager';
 
-	let comparatorWidget: { handleAction: (action: string, target: HTMLElement | null) => void } | undefined;
-
-	function handleComparatorAction(action: string, target: HTMLElement): void {
-		comparatorWidget?.handleAction(action, target);
-	}
 </script>
 
-<WidgetHost module={LAB_WINDOW_LABEL} onAction={handleComparatorAction}>
+<WidgetHost module={LAB_WINDOW_LABEL}>
 	{#snippet content(spec, configMode)}
 		{#if spec.id === 'lab.compass'}
 			<LabCompassWidget {configMode} label={spec.label} />
@@ -32,7 +27,7 @@
 		{:else if spec.id === 'lab.timer'}
 			<LabTimerWidget {configMode} label={spec.label} />
 		{:else if spec.id === 'lab.comparator'}
-			<LabComparatorWidget bind:this={comparatorWidget} {configMode} label={spec.label} />
+			<LabComparatorWidget {configMode} label={spec.label} />
 		{/if}
 	{/snippet}
 </WidgetHost>

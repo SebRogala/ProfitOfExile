@@ -1,9 +1,11 @@
 <script lang="ts">
+	import { getContext } from 'svelte'
+	import { WIDGET_ACTIONS, type WidgetActionRegistry } from '$lib/overlay/widgets/widget-actions'
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte'
 	import Button from '$lib/components/Button.svelte'
 	import { groupNumber } from '$lib/stores/number-format.svelte'
 	import LootItem from './LootItem.svelte'
-	import { buildOverlayView, dispatchOverlayAction, type OverlayInput } from './overlay-view'
+	import { buildOverlayView, type OverlayInput } from './overlay-view'
 
 	let { input, iconFor, ontouch, onaction }: {
 		input: OverlayInput
@@ -13,17 +15,22 @@
 	} = $props()
 	const view = $derived(buildOverlayView(input))
 
-	/** WidgetHost and native DOM clicks share one reset/action entry. */
-	export function handleAction(action: string, element: HTMLElement): void {
-		dispatchOverlayAction(action, ontouch, (name) => {
-			if (element instanceof HTMLButtonElement && element.disabled) return
-			onaction(name, element.dataset.item)
-		})
-	}
-	function click(event: MouseEvent): void {
-		const element = (event.target as HTMLElement).closest<HTMLElement>('[data-action]')
-		if (element) handleAction(element.dataset.action!, element)
-	}
+	const widgetActions = getContext<WidgetActionRegistry>(WIDGET_ACTIONS)
+	$effect(() => widgetActions.register('loot.confirmation', {
+		interact: () => ontouch(),
+		actions: {
+			'loot.touch': () => {},
+			'loot.own': (target) => onaction('loot.own', target.dataset.item),
+			'loot.collective': (target) => onaction('loot.collective', target.dataset.item),
+			'loot.close': (target) => onaction('loot.close', target.dataset.item),
+			'loot.discard': (target) => onaction('loot.discard', target.dataset.item),
+			'loot.save': (target) => onaction('loot.save', target.dataset.item),
+			'loot.force-new': (target) => onaction('loot.force-new', target.dataset.item),
+			'loot.toggle': (target) => onaction('loot.toggle', target.dataset.item),
+			'loot.increment': (target) => onaction('loot.increment', target.dataset.item),
+			'loot.decrement': (target) => onaction('loot.decrement', target.dataset.item)
+		}
+	}))
 	function scopeActions(node: HTMLElement): void {
 		// Shared SegmentedButtons owns its markup; metadata keeps its real buttons
 		// reachable through WidgetHost's forwarded-click path.
@@ -33,11 +40,9 @@
 	}
 </script>
 
-<!-- Buttons supply keyboard activation; their click bubbles to this single dispatcher. -->
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
 <section class="confirmation" class:failed={input.outcome?.state === 'unreachable'}
 	class:list={input.layout === 'list'} style:width="{view.width}px"
-	aria-label="Boss loot confirmation" data-hot data-action="loot.touch" onclick={click}>
+	aria-label="Boss loot confirmation" data-hot data-action="loot.touch">
 	<header>
 		<div class="identity"><div class="title">{input.profile.name} · run {groupNumber(String(input.capture.run))} <span class="profile-key">{input.profile.key}</span></div>
 			<div class="zone">Zone <span class="mono">{input.capture.attribution.area}</span>, level {groupNumber(String(input.capture.attribution.level))}</div>

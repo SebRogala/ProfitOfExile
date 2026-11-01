@@ -44,6 +44,17 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 
 ## Overlay Utilities
 
+Current click ownership: `WidgetHost.svelte` provides `WIDGET_ACTIONS` context,
+stamps placed and anchored wrappers with `data-widget`, and passes hits to
+`createWidgetActions`'s `dispatch` in `overlay/widgets/widget-actions.ts`.
+That DOM-free module owns resolution, action reads and the inclusive disabled
+path guard. Widgets register their action maps directly; the renderless
+`overlay/widgets/WidgetActions.svelte` registers route-level maps (temple).
+Config mode suppresses all widget actions and interactions. Otherwise interaction
+runs first, preserving loot Touch on disabled Save. The config bar stays native.
+`overlay/hot-rects.ts`'s `cssHotPoint` converts forwarded physical points using
+the Tauri window scale; `physicalHotRect` converts measured CSS rectangles back.
+
 | File | Exports | Description |
 |------|---------|-------------|
 | `overlay/overlay-defaults.ts` | `MERC_OVERLAY_DEFAULTS`, `physicalGeometry()`, `OverlayDefaultGeometry` | The shipped merc-widget placement, in ONE place because `widget-registry.ts` consumes it for the widget default and `physicalGeometry()` converts it for `Settings.widgets`, so a second placement source cannot drift from the registry. The numbers are CSS pixels; `physicalGeometry()` is the conversion, and it is the only thing that should reach Tauri (persisted geometry is already physical and must not go through it). `x`/`y`/`w` are real defaults the user overrides in Settings; `h` is the config-mode seed and the clamp extent while the widget is content-sized — never a height. `overlay-defaults.test.ts` pins the numeric source and conversion. |
@@ -89,7 +100,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | `compass/LabCompassWidget.svelte` | `configMode`, `label` | Lab compass widget moved from its standalone route; preserves compass navigation, shrine warnings, settings polling and catch-up while filling its widget box. |
 | `compass/LabPathstripWidget.svelte` | `configMode`, `label` | Lab map widget moved from its standalone route; preserves graph rendering, navigation, settings polling and catch-up while filling its widget box. |
 | `compass/LabTimerWidget.svelte` | `configMode`, `label` | Lab timer widget moved from its standalone route; preserves lab navigation/catch-up and timer appearance handling while filling its widget box. |
-| `compass/LabComparatorWidget.svelte` | `configMode`, `label`, `handleAction(action, target)` | Lab gem comparator widget moved from its standalone route; preserves comparator polling and trade queue state while filling its widget box. The Lab route binds the component instance and passes the WidgetHost `onAction` callback to `handleAction`. Headline quote selection uses `compass/comparator-price.ts`; the built trade-price contract is referenced in [Trade lifecycle](../../../docs/TRADE-LIFECYCLE.md#trade-price-definition). |
+| `compass/LabComparatorWidget.svelte` | `configMode`, `label` | Lab gem comparator widget; preserves comparator polling, selection and trade queue state while filling its widget box. Registers pick/refresh/clear/cancel entries through WidgetHost's `WIDGET_ACTIONS` context. Headline quote selection uses `compass/comparator-price.ts`; the built trade-price contract is referenced in [Trade lifecycle](../../../docs/TRADE-LIFECYCLE.md#trade-price-definition). |
 | `compass/CompassOverlay.svelte` | `mode`, all child props | Mode switcher — renders minimap, direction, or minimal mode. |
 | `compass/LabGraph.svelte` | layout/navigation props | Full lab graph used by planner and path-strip presentation. |
 | `compass/RoomEditor.svelte` | `room`, `rooms`, `route`, `previousRoom`, `serverUrl`, `difficulty`, `onSave`, `onClose` | Room metadata and connection editor used by planner tooling. Variant thumbnails render through `RoomMinimap` with the route's entry and exit door from `resolveRouteDoors`. |

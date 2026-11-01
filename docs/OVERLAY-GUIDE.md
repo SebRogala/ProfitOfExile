@@ -88,8 +88,8 @@ input.
 
 The Lab comparator widget is the interactive Lab surface: it marks the button
 column (and the trade-queue row while that shows) with `[data-hot]`, and the
-shared widget host maps forwarded coordinates with `elementFromPoint` +
-`data-action`. Buttons must be inside a declared rect and expose that
+shared widget host maps forwarded coordinates with `cssHotPoint` and
+`elementFromPoint`, then calls `widget-actions.ts`'s `dispatch`. Buttons must be inside a declared rect and expose their
 `data-action` metadata; the host claims each marked element rather than a band
 measured from a window edge.
 
@@ -520,10 +520,16 @@ the timer, compass, path-strip and comparator widgets.
   centre for the same host-only reason, states it explicitly. What the rule does NOT bind is a rectangle the USER owns — a
   stored placement, or the registry default `placementFor` falls back to. Those
   are visible, attributable and one drag from fixed; see ADR-019's carve-out.
-- `WidgetHost.svelte` owns placement, hot rects and click routing. Any element a
-  widget draws with `data-hot` is claimed; one that also carries `data-action`
-  is dispatched through `elementFromPoint`. The window declares nothing of its
-  own, so a widget overlay with no buttons on screen is display-only.
+- `WidgetHost.svelte` owns placement and hot rects, provides the `WIDGET_ACTIONS`
+  Svelte context, and forwards its window-scoped clicks to `createWidgetActions`'s
+  `dispatch`. The DOM-free `widget-actions.ts` owns action resolution, metadata
+  reads and the inclusive hit-to-target `:disabled` guard. Placed and anchored
+  wrappers carry `data-widget`; each widget registers its own action map, and
+  `WidgetActions.svelte` registers route-level maps such as the temple probe.
+  Config mode suppresses widget actions and interaction hooks; the config bar's
+  native Save/Cancel remain independent. Otherwise interaction runs before the
+  disabled guard, so loot's disabled Save still touches without saving. Any
+  `data-hot` element is claimed; a window with no such content is display-only.
 - **Hot rects and `has_content` are one declaration, not two.** `hit_test` skips
   a window whose `has_content` is false before it reads a single rect, and the
   flag starts false, so `use-hot-rects.ts` sets it from the rects' emptiness —

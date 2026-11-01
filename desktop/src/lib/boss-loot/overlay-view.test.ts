@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import source from './__fixtures__/boss-loot.json'
 import { createFixtureCapture, createFixtureModuleSettings, createFixtureProfiles, createFixtureStats } from './fixture-adapters'
 import type { BossStats, LootLayout, StatsScope, SubmitOutcome } from './contracts'
-import { buildOverlayView, changeSelection, dispatchOverlayAction, type OverlayInput } from './overlay-view'
+import { buildOverlayView, changeSelection, type OverlayInput } from './overlay-view'
 
 async function input(layout: LootLayout = 'grid', scope: StatsScope = 'own'): Promise<OverlayInput & { stats: BossStats }> {
 	const [profile] = await createFixtureProfiles(source.profiles).load()
@@ -179,16 +179,6 @@ it('floors decremented quantities at zero', async () => {
 it('ignores an unknown item action', async () => {
 	const state = await input()
 	expect(changeSelection(state.profile, state.capture, [], { type: 'toggle', id: 'constructor' })).toEqual(state.capture)
-})
-it('resets once before a nested action', () => {
-	const events: string[] = []
-	dispatchOverlayAction('loot.save', () => events.push('touch'), (action) => events.push(action))
-	expect(events).toEqual(['touch', 'loot.save'])
-})
-it('resets a blank-panel click without another action', () => {
-	const events: string[] = []
-	dispatchOverlayAction('loot.touch', () => events.push('touch'), (action) => events.push(action))
-	expect(events).toEqual(['touch'])
 })
 
 describe('native overlay authority', () => {

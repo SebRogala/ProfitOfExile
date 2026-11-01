@@ -16,7 +16,6 @@
 	let profiles = $state.raw<BossProfile[]>([])
 	let stats = $state.raw<BossStats | null>(null)
 	let scope = $state<StatsScope>('own')
-	let confirmation = $state<LootConfirmation | undefined>(undefined)
 	let statsGeneration = 0
 	let actions = Promise.resolve()
 	const native = $derived(ssot.bossLoot)
@@ -85,11 +84,11 @@
 	}
 </script>
 
-<WidgetHost module="loot" onAction={(name, element) => confirmation?.handleAction(name, element)}>
+<WidgetHost module="loot">
 	{#snippet content(spec, configMode)}
 		{#if spec.id === 'loot.confirmation'}
 			{#if input}
-				<LootConfirmation bind:this={confirmation} {input} iconFor={bossLootIcon} ontouch={touch} onaction={action} />
+				<LootConfirmation {input} iconFor={bossLootIcon} ontouch={touch} onaction={action} />
 			{:else if configMode}<div class="placeholder">Loot confirmation</div>{/if}
 		{/if}
 	{/snippet}

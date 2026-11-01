@@ -59,12 +59,6 @@ export function changeSelection(profile: BossProfile, selection: LootSelection, 
 	return next
 }
 
-/** Both the native forwarded path and DOM bubbling enter here once per click. */
-export function dispatchOverlayAction(action: string, touch: () => void, perform: (action: string) => void): void {
-	touch()
-	if (action !== 'loot.touch') perform(action)
-}
-
 export function buildOverlayView(input: OverlayInput) {
 	const { profile, capture, stats, scope, notCounted, outcome, autoSaveSeconds } = input
 	const items = [...profile.groups.flatMap((group) => group.items), ...profile.extra, ...profile.categories]

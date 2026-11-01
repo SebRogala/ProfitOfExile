@@ -40,7 +40,7 @@
 	 * `onMount` is not reliable in an overlay window and cross-window JS state is
 	 * not either, so everything below is rune effects and Tauri events.
 	 */
-	import type { Snippet } from 'svelte';
+	import { setContext, type Snippet } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { anchoredWidgetsFor, placeableWidgetsFor, type WidgetSpec } from './widget-registry';
@@ -66,13 +66,13 @@
 	import { configBarAnchor } from './widget-config-bar';
 	import { useHotRects } from './use-hot-rects';
 	import { cssHotPoint } from '../hot-rects';
+	import { createWidgetActions, WIDGET_ACTIONS } from './widget-actions';
 
 	let {
 		module,
 		content,
 		anchored,
-		defaultsFor,
-		onAction
+		defaultsFor
 	}: {
 		/** The module whose widgets this host draws — also the window label. */
 		module: string;
@@ -122,12 +122,6 @@
 		 * placement outranks any default, game-anchored or not.
 		 */
 		defaultsFor?: (spec: WidgetSpec, frame: HostFrame) => OverlayDefaultGeometry | null;
-		/**
-		 * A click the mouse hook forwarded, already resolved to the
-		 * `[data-action]` element under it. Only elements inside a declared
-		 * `[data-hot]` rect can ever produce one.
-		 */
-		onAction?: (action: string, element: HTMLElement) => void;
 	} = $props();
 
 	/** Guard 6's channel — the console alone is unreadable in a shipped build. */
@@ -317,6 +311,8 @@
 	// ---- config mode -------------------------------------------------------
 
 	let configMode = $state(false);
+	const widgetActions = createWidgetActions(() => configMode);
+	setContext(WIDGET_ACTIONS, widgetActions);
 
 	/**
 	 * Whether any widget in this session is being arranged from the SHIPPED
@@ -655,10 +651,7 @@
 					log(`elementFromPoint found nothing at the forwarded click — DPI mismatch?`);
 					return;
 				}
-				const target = el.closest('[data-action]') as HTMLElement | null;
-				const action = target?.dataset.action;
-				if (!target || !action) return;
-				onAction?.(action, target);
+				widgetActions.dispatch(el as HTMLElement);
 			}
 		);
 		return () => {
@@ -755,6 +748,7 @@
 	{#each placed as entry (entry.spec.id)}
 		<div
 			class="widget"
+			data-widget={entry.spec.id}
 			class:config={configMode}
 			style={boxStyle(entry.placement, cursors[entry.spec.id] ?? 'move')}
 			bind:this={nodes[entry.spec.id]}
@@ -783,7 +777,7 @@
 			     honouring only the placeable half made the callout the one
 			     overlay surface with no way to switch it off. -->
 			{#if stored[spec.id]?.visible !== false}
-				<div class="anchored-layer">{@render anchored(spec, frame)}</div>
+				<div class="anchored-layer" data-widget={spec.id}>{@render anchored(spec, frame)}</div>
 			{/if}
 		{/each}
 	{/if}

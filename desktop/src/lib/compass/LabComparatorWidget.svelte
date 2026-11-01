@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { getContext } from 'svelte';
+	import { WIDGET_ACTIONS, type ActionElement, type WidgetActionRegistry } from '$lib/overlay/widgets/widget-actions';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { invoke } from '@tauri-apps/api/core';
 	import { formatPrice, setDivineRate } from '$lib/price.svelte';
@@ -166,26 +168,30 @@
 			.catch(e => console.error('[overlay] emit overlay-clear failed:', e));
 	}
 
-	/** Handle actions forwarded by the shared widget host. */
-	export function handleAction(action: string, target: HTMLElement | null): void {
-		if (action === 'clear') {
-			handleClear();
-		} else if (action === 'cancel') {
-			invoke('trade_cancel').catch(e => console.error('trade_cancel failed:', e));
-		} else if (action === 'pick' || action === 'refresh') {
-			const rawIndex = target?.dataset.index;
-			if (rawIndex == null) return; // no index on this button
-			const idx = parseInt(rawIndex, 10);
-			if (isNaN(idx) || idx >= results.length) return;
-			if (action === 'pick') {
-				userPick = results[idx].name;
-				selectedGem = userPick;
-				handlePick();
-			} else {
-				requestTradeRefresh(results[idx]);
-			}
-		}
+	/** Preserve the comparator's index decisions for both row actions. */
+	function rowIndex(target: ActionElement): number | null {
+		const rawIndex = target.dataset.index;
+		if (rawIndex == null) return null;
+		const idx = parseInt(rawIndex, 10);
+		return isNaN(idx) || idx >= results.length ? null : idx;
 	}
+
+	const widgetActions = getContext<WidgetActionRegistry>(WIDGET_ACTIONS);
+	$effect(() => widgetActions.register('lab.comparator', { actions: {
+		clear: handleClear,
+		cancel: () => { invoke('trade_cancel').catch(e => console.error('trade_cancel failed:', e)); },
+		pick: (target) => {
+			const idx = rowIndex(target);
+			if (idx === null) return;
+			userPick = results[idx].name;
+			selectedGem = userPick;
+			handlePick();
+		},
+		refresh: (target) => {
+			const idx = rowIndex(target);
+			if (idx !== null) requestTradeRefresh(results[idx]);
+		}
+	} }));
 
 	// Poll Rust for comparator data (cross-window events unreliable, onMount doesn't fire in overlay)
 	let lastJson = '';

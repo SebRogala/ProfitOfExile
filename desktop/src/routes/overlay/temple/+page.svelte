@@ -106,6 +106,7 @@
 	import TempleOfferBoxes from '$lib/temple/TempleOfferBoxes.svelte';
 	import TempleWaitingNotice from '$lib/temple/TempleWaitingNotice.svelte';
 	import WidgetHost from '$lib/overlay/widgets/WidgetHost.svelte';
+	import WidgetActions from '$lib/overlay/widgets/WidgetActions.svelte';
 	import { TEMPLE_WINDOW_LABEL } from '$lib/overlay/manager';
 	import type { OverlayDefaultGeometry } from '$lib/overlay/overlay-defaults';
 	import type { HostFrame, WidgetRect } from '$lib/overlay/widgets/widget-geometry';
@@ -248,8 +249,7 @@
 	 * click one pixel outside it must reach the GAME, and the only evidence of
 	 * the first half that a shipped build can produce is a log line.
 	 */
-	function handleAction(action: string): void {
-		if (action !== 'hot-probe') return;
+	function hotProbe(): void {
 		invoke('app_log_from_frontend', {
 			msg: '[temple-widgets] hot-rect probe clicked — the mouse hook forwarded a click'
 		}).catch((e) => console.error('[widgets] probe log unreachable:', e));
@@ -354,9 +354,11 @@
 <WidgetHost
 	module={TEMPLE_WINDOW_LABEL}
 	defaultsFor={widgetDefaults}
-	onAction={(action) => handleAction(action)}
 >
 	{#snippet content(spec, configMode)}
+		{#if spec.id === 'temple.door'}
+			<WidgetActions widget={spec.id} actions={{ 'hot-probe': hotProbe }} />
+		{/if}
 		{#if spec.id === 'temple.door' && door}
 			<TempleDoorDiamond
 				diamond={door.diamond}
