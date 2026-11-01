@@ -23,7 +23,11 @@ vi.mock('@tauri-apps/api/event', () => ({
 		return mocks.unlisten;
 	})
 }));
-vi.mock('$lib/api', () => ({ fetchDivineRate: mocks.fetchDivineRate, getApiBase: mocks.getApiBase }));
+vi.mock('$lib/api', async (importOriginal) => ({
+	...await importOriginal<typeof import('$lib/api')>(),
+	fetchDivineRate: mocks.fetchDivineRate,
+	getApiBase: mocks.getApiBase
+}));
 
 const T0 = Date.parse('2026-09-10T00:00:00Z');
 const DELAY_MS = 4000;
