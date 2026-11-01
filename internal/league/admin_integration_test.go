@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"regexp"
 	"slices"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ func adminTestPools(t *testing.T) (context.Context, *pgxpool.Pool, *pgxpool.Pool
 	if err := pool.QueryRow(ctx, `SELECT current_database()`).Scan(&database); err != nil {
 		t.Fatal(err)
 	}
-	if database != "profitofexile_integration" {
+	if !regexp.MustCompile(`^profitofexile_(lane[a-z0-9]{1,20}_)?integration$`).MatchString(database) {
 		t.Fatalf("refuse administration tests on database %q", database)
 	}
 	assertAdminRuntime(t, ctx, pool, "Mirage", 1)
