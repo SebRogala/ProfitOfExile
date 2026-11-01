@@ -483,3 +483,15 @@ describe('Settings controller', () => {
 		expect(page.deviceId).toBe('fixture-device-23')
 	})
 })
+
+describe('Settings owner persistence', () => {
+	it('reloads the saved timeout from its owner in a new controller', async () => {
+		const deps = ports()
+		const first = createBossLootPageController(deps)
+		await first.load()
+		await first.setAutoSave(20)
+		const reopened = createBossLootPageController(deps)
+		await reopened.load()
+		expect(reopened.settings?.autoSaveSeconds).toBe(20)
+	})
+})
