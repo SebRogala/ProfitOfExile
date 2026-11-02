@@ -108,6 +108,25 @@ export const modules: Module[] = [
 		],
 	},
 	{
+		id: 'boss-loot',
+		name: 'Boss Loot',
+		status: 'beta',
+		tagline: 'Record boss drops and compare your drop rates with collective data.',
+		trigger: 'Your capture shortcut, with the game in the foreground in a supported boss area. Currently supports Catarina Normal.',
+		reads: 'Ground item labels in a crop around your cursor, once per capture.',
+		gives: [
+			'A confirmation overlay with item icons, editable picks and quantities, and a countdown to saving the run.',
+			'Your run history and per-item drop rates, with Own and Collective results and CSV export.',
+		],
+		screenshots: [
+			{
+				src: '/module-boss-loot-overlay.webp',
+				alt: 'Catarina run 3 confirmation overlay beside ground item labels: item icons, selected Bitterbind Point and Zorath’s Eye of the Endless, per-item drop rates over eligible runs, a saving countdown and Save now button',
+				caption: 'Boss Loot confirmation — Catarina run 3, selected drops and your recorded drop rates',
+			},
+		],
+	},
+	{
 		id: 'exchange',
 		name: 'Currency Exchange',
 		status: 'beta',
