@@ -2,7 +2,9 @@
 	import { onDestroy } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import Button from '$lib/components/Button.svelte';
+	import TotalCard from '$lib/components/TotalCard.svelte';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
+	import { parseDecimalInput } from '$lib/parse-number';
 	import { currentDivineRate } from '$lib/stores/divine-rate.svelte';
 	import {
 		CHAOS_DIV_DEFAULTS,
@@ -19,11 +21,11 @@
 	let mode = $state<ChaosDivMode>(CHAOS_DIV_DEFAULTS.mode);
 	let currency = $state<ChaosDivCurrency>(CHAOS_DIV_DEFAULTS.currency);
 	let amountKind = $state<ChaosDivAmountKind>('items');
-	let amount = $state<number | undefined>(CHAOS_DIV_DEFAULTS.amount);
-	let ratio = $state<number | undefined>(CHAOS_DIV_DEFAULTS.ratio);
+	let amount = $state(String(CHAOS_DIV_DEFAULTS.amount));
+	let ratio = $state(String(CHAOS_DIV_DEFAULTS.ratio));
 	let oneSide = $state<ChaosDivOneSide>(CHAOS_DIV_DEFAULTS.oneSide);
 	const rate = $derived(currentDivineRate());
-	const result = $derived(calculateChaosDiv({ mode, currency, amount: Number(amount), amountKind, ratio: Number(ratio), oneSide, rate }));
+	const result = $derived(calculateChaosDiv({ mode, currency, amount: parseDecimalInput(amount), amountKind, ratio: parseDecimalInput(ratio), oneSide, rate }));
 	const plain = $derived(result.ratio === 1);
 	const selling = $derived(mode === 'sell');
 	const budgetMode = $derived(!selling && amountKind === 'budget');
@@ -73,8 +75,8 @@
 		mode = CHAOS_DIV_DEFAULTS.mode;
 		currency = CHAOS_DIV_DEFAULTS.currency;
 		amountKind = 'items';
-		amount = CHAOS_DIV_DEFAULTS.amount;
-		ratio = CHAOS_DIV_DEFAULTS.ratio;
+		amount = String(CHAOS_DIV_DEFAULTS.amount);
+		ratio = String(CHAOS_DIV_DEFAULTS.ratio);
 		oneSide = CHAOS_DIV_DEFAULTS.oneSide;
 		clearCopy();
 	}
@@ -112,17 +114,17 @@
 				</div>
 			</div>
 			<div class="stepper">
-				<button type="button" class="square" aria-label="Decrease amount" onclick={() => { amount = Math.max(1, result.amount - 1); clearCopy(); }}>−</button>
-				<input id="chaos-div-amount" class="amount mono" type="number" min="1" max="100000" step="1" bind:value={amount} oninput={clearCopy} onblur={() => { amount = result.amount; }} />
+				<button type="button" class="square" aria-label="Decrease amount" onclick={() => { amount = String(Math.max(1, result.amount - 1)); clearCopy(); }}>−</button>
+				<input id="chaos-div-amount" class="amount mono" type="text" inputmode="decimal" bind:value={amount} oninput={clearCopy} onblur={() => { amount = String(result.amount); }} />
 				{#if budgetMode}<span class="fixed-one">{unit}</span>{/if}
-				<button type="button" class="square" aria-label="Increase amount" onclick={() => { amount = Math.min(100000, result.amount + 1); clearCopy(); }}>+</button>
+				<button type="button" class="square" aria-label="Increase amount" onclick={() => { amount = String(Math.min(100000, result.amount + 1)); clearCopy(); }}>+</button>
 			</div>
 		</div>
 		<div class="field">
 			<label class="caption" for="chaos-div-ratio">Ratio</label>
 			<div class="ratio-control mono">
 				{#if oneSide === 'left'}<span class="fixed-one">1 :</span>{/if}
-				<input id="chaos-div-ratio" class="ratio mono" type="number" min="0.01" step="0.01" bind:value={ratio} oninput={clearCopy} />
+				<input id="chaos-div-ratio" class="ratio mono" type="text" inputmode="decimal" bind:value={ratio} oninput={clearCopy} />
 				{#if oneSide === 'right'}<span class="fixed-one">: 1</span>{/if}
 				<button type="button" class="square" aria-label="Swap which side is 1" title="Swap which side is 1" onclick={() => { oneSide = oneSide === 'left' ? 'right' : 'left'; clearCopy(); }}>
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4 3 8l4 4M3 8h14m0 12 4-4-4-4M21 16H7" /></svg>
@@ -145,21 +147,9 @@
 	{/if}
 
 	<section class="totals" aria-label="Totals">
-		<div class="total-card panel">
-			<div class="caption">{totalLead} in chaos</div>
-			<div class="total-value">
-				<span class="number mono">{result.totalChaos === null ? '—' : formatChaosDivWhole(result.totalChaos)}{#if result.totalChaos !== null}<span class="unit">c</span>{/if}</span>
-				<Button disabled={result.totalChaos === null} title="Copy chaos total" onclick={() => copy(result.totalChaos, 'chaos')}>{copyLabel('chaos', result.totalChaos)}</Button>
-			</div>
-		</div>
-		<div class="total-card panel">
-			<div class="caption">{totalLead} in divine</div>
-			<div class="total-value">
-				<span class="number mono">{result.totalDivine ?? '—'}{#if result.totalDivine !== null}<span class="unit">d</span>{/if}</span>
-				<Button disabled={result.totalDivine === null} title="Copy divine total" onclick={() => copy(result.totalDivine, 'divine')}>{copyLabel('divine', result.totalDivine)}</Button>
-			</div>
-			<div class="split">Whole split <span class="mono">{result.split ?? '—'}</span></div>
-		</div>
+		<TotalCard label={`${totalLead} in chaos`} value={result.totalChaos === null ? null : formatChaosDivWhole(result.totalChaos)} unit="c" copyTitle="Copy chaos total" copyLabel={copyLabel('chaos', result.totalChaos)} oncopy={() => copy(result.totalChaos, 'chaos')} />
+		<TotalCard label={`${totalLead} in divine`} value={result.totalDivine} unit="d" copyTitle="Copy divine total" copyLabel={copyLabel('divine', result.totalDivine)} oncopy={() => copy(result.totalDivine, 'divine')} split={result.split} />
+		<TotalCard label="Item amount" value={result.itemCount === null ? null : formatChaosDivWhole(result.itemCount)} copyTitle="Copy item count" copyLabel={copyLabel('items', result.itemCount)} oncopy={() => copy(result.itemCount, 'items')} />
 	</section>
 
 	{#if result.tableShown}
@@ -349,47 +339,19 @@
 		outline-offset: 1px;
 	}
 
-	.per-item,
-	.split {
+	.per-item {
 		font-size: 0.6875rem;
 		color: var(--color-lab-text-secondary);
 	}
 
-	.per-item .mono,
-	.split .mono {
+	.per-item .mono {
 		color: var(--color-lab-text);
 	}
 
 	.totals {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-columns: repeat(3, minmax(0, 1fr));
 		gap: 10px;
-	}
-
-	.total-card {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		padding: 12px 14px;
-		min-width: 0;
-	}
-
-	.total-value {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		flex-wrap: wrap;
-		gap: 8px;
-	}
-
-	.number {
-		font-size: 1.375rem;
-		overflow-wrap: anywhere;
-	}
-
-	.unit {
-		font-size: 0.8125rem;
-		color: var(--color-lab-text-secondary);
 	}
 
 	.order-panel {

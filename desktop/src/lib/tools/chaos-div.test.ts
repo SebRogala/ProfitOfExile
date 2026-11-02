@@ -17,6 +17,24 @@ beforeAll(() => setNumberFormat('comma'));
 
 const defaults = (): ChaosDivInput => ({ ...CHAOS_DIV_DEFAULTS, rate: 420 });
 
+describe('resolved item amount', () => {
+	it('returns the normalized item input', () => {
+		expect(calculateChaosDiv({ ...defaults(), amount: 20.9 }).itemCount).toBe(20);
+	});
+	it('returns the fitted count rather than the buying budget', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', amountKind: 'budget', amount: 44, ratio: 3.5, oneSide: 'left' }).itemCount).toBe(12);
+	});
+	it('returns zero when the budget cannot buy one item', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', amountKind: 'budget', amount: 3, ratio: 3.5, oneSide: 'left' }).itemCount).toBe(0);
+	});
+	it('leaves the count unknown for a budget with an invalid ratio', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', amountKind: 'budget', ratio: NaN }).itemCount).toBeNull();
+	});
+	it('does not cap a fitted count at the item input limit', () => {
+		expect(calculateChaosDiv({ ...defaults(), mode: 'buy', amountKind: 'budget', amount: 100, ratio: 2000 }).itemCount).toBe(200000);
+	});
+});
+
 describe('handoff calculation vectors', () => {
 	for (const vector of fixture.vectors) {
 		describe(vector.case, () => {

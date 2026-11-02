@@ -47,6 +47,7 @@ export interface ChaosDivBudget {
 
 export interface ChaosDivResult {
 	amount: number;
+	itemCount: number | null;
 	ratio: number | null;
 	perItemChaos: number | null;
 	perItemC: string;
@@ -200,6 +201,7 @@ export function calculateChaosDiv(input: ChaosDivInput): ChaosDivResult {
 	}
 	return {
 		amount,
+		itemCount: budgetMode && budget === null ? null : itemCount,
 		ratio,
 		perItemChaos: perItem === null ? null : perItem < 10 ? Number(perItem.toFixed(perItem < 0.1 ? 4 : 2)) : Math.round(perItem),
 		perItemC,
