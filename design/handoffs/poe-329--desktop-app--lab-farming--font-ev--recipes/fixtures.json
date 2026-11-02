@@ -1,0 +1,43 @@
+{
+  "_note": "Exact mock data for the POE-329 Font EV Recipes section. Do NOT invent or widen fields; map onto existing codebase types and record the mapping (AGENT.md §6). Exceptional prices are real poe.ninja values (gem_snapshots, league Mirage, 2026-09-09 00:33 UTC, variant \"1\", uncorrupted); lens and support prices are ILLUSTRATIVE.",
+
+  "_owners": {
+    "exceptional": "unknown — price source decided in POE-328 (interim: poe.ninja gem prices)",
+    "lens.lens_chaos": "server trade queue, median of the 3 lowest (POE-329 backend)",
+    "lens.support_chaos": "server trade queue, median of the 3 lowest (POE-329 backend, feeder item)",
+    "lens.ev_chaos": "derived: lens_chaos − support_chaos (computed where the POE-329 backend plan puts it)",
+    "*.age": "derived (client, this task): now − fetched_at, formatted"
+  },
+
+  "exceptional": {
+    "title": "Exceptional support",
+    "option_text": "Exchange a Support Gem for a random Empower, Enlighten, or Enhance Support",
+    "source": "poe.ninja · level 1, uncorrupted",
+    "age": "6m ago",
+    "gems": [
+      { "name": "Enhance Support", "chaos": 9, "display": "9c" },
+      { "name": "Enlighten Support", "chaos": 185, "display": "185c" },
+      { "name": "Empower Support", "chaos": 43.2, "display": "43c" }
+    ],
+    "missing_case": { "Enlighten Support": null, "_note": "null → \"no price\"" },
+    "stale_case": { "age": "3h ago" }
+  },
+
+  "lens": {
+    "title": "Facetor’s Lens · 60%",
+    "option_text": "Sacrifice a Gem to gain 60% of its experience as a Facetor’s Lens",
+    "gives": { "name": "Facetor’s Lens", "sub": "stored experience ≥ 999,627,000" },
+    "costs": { "name": "Exceptional Support Gem lv 3+" },
+    "source": "trade · median of the 3 lowest",
+    "age": "18m ago",
+    "priced": { "lens_chaos": 412, "support_chaos": 95, "ev_chaos": 317, "ev_display": "+317c" },
+    "negative": { "lens_chaos": 60, "support_chaos": 95, "ev_chaos": -35, "ev_display": "−35c", "_note": "red, real minus sign" },
+    "missing_case": { "lens_chaos": null, "support_chaos": 95, "ev_display": "— needs the lens price" },
+    "stale_case": { "age": "3h ago", "_note": "badge text \"updated 3h ago\"" }
+  },
+
+  "_formats": {
+    "money": "formatPrice: integer chaos + \"c\" below 2 divines, \"N.Nd\" from 2 divines; EV via formatPriceSigned with \"+\" / \"−\" (U+2212)",
+    "age": "\"<1m\", \"Nm ago\", \"Nh ago\""
+  }
+}

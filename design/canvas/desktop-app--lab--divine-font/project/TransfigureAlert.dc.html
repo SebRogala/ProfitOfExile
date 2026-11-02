@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Transfigure alert</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+<script src="data.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>body{margin:0}</style>
+</helmet>
+<section class="ovp" aria-label="Transfigure craft detected" style="width: 260px; padding: 8px 10px 8px; font-size: 12px">
+  <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px">
+    <div style="font-size: 14px; font-weight: 700">Transfigure gem</div>
+    <div class="sec" style="font-size: 11px">Font option</div>
+  </div>
+  <div class="sec" style="font-size: 11px; margin-top: 1px; line-height: 15px">{{option}}</div>
+  <div style="font-size: 12px; margin-top: 4px">{{note}}</div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":300,"height":120}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const f = window.FONT_FIXTURE.transfigure;
+    return { option: f.option, note: f.note };
+  }
+}
+</script>
+</body>
+</html>

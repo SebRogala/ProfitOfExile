@@ -1,0 +1,46 @@
+/* POE-328 / POE-329 Divine Font crafts — shared styles for every board on this canvas.
+   Token values copied verbatim from desktop/src/tokens.css (the only token declaration
+   site); boards use var(--…) only. Overlay panel values follow the Lab "Gems Compare"
+   widget (desktop/src/lib/compass/LabComparatorWidget.svelte). */
+:root {
+	--warning: #fbbf24;
+	--color-lab-bg: #0f1117;
+	--color-lab-surface: #1a1d27;
+	--color-lab-border: #2a2d37;
+	--color-lab-text: #e4e4e7;
+	--color-lab-text-secondary: #9ca3af;
+	--color-lab-text-muted: #888;
+	--color-lab-green: #22c55e;
+	--color-lab-red: #ef4444;
+	--color-lab-yellow: #eab308;
+	--color-lab-blue: #3b82f6;
+	--color-lab-cyan: #22d3ee;
+	--color-lab-purple: #a855f7;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--color-lab-text); }
+a:focus-visible, button:focus-visible { outline: 1px solid var(--color-lab-blue); outline-offset: 1px; }
+.mono { font-family: 'Consolas', 'Monaco', monospace; font-weight: 600; }
+.sec { color: var(--color-lab-text-secondary); }
+.ok { color: var(--color-lab-green); }
+.bad { color: var(--color-lab-red); }
+.warn { color: var(--color-lab-yellow); }
+
+/* game stand-in behind overlay boards */
+.game { background: repeating-linear-gradient(135deg, #20232b 0 14px, #1a1c23 14px 28px); position: relative; overflow: hidden; }
+.game-tag { position: absolute; font-size: 11px; color: var(--color-lab-text-secondary); background: var(--color-lab-bg); padding: 2px 6px; border-radius: 3px; }
+
+/* overlay panel (Gems Compare language) */
+.ovp { background: rgba(15,17,23,.92); border: 1px solid rgba(42,45,55,.8); border-radius: 8px; color: var(--color-lab-text); backdrop-filter: blur(8px); box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+
+/* state badge: tinted pill, no border, no pointer */
+.badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 8px; white-space: nowrap; }
+.badge-yellow { background: rgba(234,179,8,.14); color: var(--color-lab-yellow); }
+.badge-grey { background: rgba(255,255,255,.07); color: var(--color-lab-text-secondary); }
+
+/* group label over a block */
+.grp { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--color-lab-text-secondary); }
+
+/* board-only state caption (not part of the product) */
+.cap { font-size: 12px; color: var(--color-lab-text-secondary); font-family: 'Consolas', 'Monaco', monospace; }

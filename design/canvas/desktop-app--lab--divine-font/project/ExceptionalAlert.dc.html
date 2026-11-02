@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Exceptional support alert</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+<script src="data.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.xa-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:8px;height:30px;border-bottom:1px solid rgba(42,45,55,.4)}
+.xa-row:last-child{border-bottom:none}
+.xa-gem{width:22px;height:22px;border:1px dashed var(--color-lab-text-muted);border-radius:4px}
+.xa-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xa-price{font-family:'Consolas','Monaco',monospace;font-weight:700;font-size:14px;color:var(--warning)}
+.xa-nil{font-size:11px;font-style:italic;color:var(--color-lab-text-secondary)}
+</style>
+</helmet>
+<section class="ovp" aria-label="Exceptional support craft detected" style="width: 260px; padding: 8px 10px 7px; font-size: 12px">
+  <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px">
+    <div style="font-size: 14px; font-weight: 700">Exceptional support</div>
+    <div class="sec" style="font-size: 11px">Font option</div>
+  </div>
+  <div class="sec" style="font-size: 11px; margin: 1px 0 4px">Gives one of these at random</div>
+  <sc-for list="{{rows}}" as="g" hint-placeholder-count="3">
+    <div class="xa-row">
+      <span class="xa-gem" aria-hidden="true"></span>
+      <span class="xa-name">{{g.name}}</span>
+      <sc-if value="{{g.has}}" hint-placeholder-val="{{ true }}"><span class="xa-price">{{g.price}}</span></sc-if>
+      <sc-if value="{{g.nil}}" hint-placeholder-val="{{ false }}"><span class="xa-nil">{{g.nilText}}</span></sc-if>
+    </div>
+  </sc-for>
+  <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 5px; font-size: 11px">
+    <span class="sec">{{source}} · level 1, uncorrupted</span>
+    <sc-if value="{{fresh}}" hint-placeholder-val="{{ true }}"><span class="sec">{{age}}</span></sc-if>
+    <sc-if value="{{stale}}" hint-placeholder-val="{{ false }}"><span class="badge badge-yellow">{{age}}</span></sc-if>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"state":{"editor":"enum","options":["priced","missing","loading","stale"],"default":"priced"},"$preview":{"width":300,"height":220}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const st = this.props.state ?? 'priced';
+    const f = window.FONT_FIXTURE.exceptional;
+    const rows = f.gems.map((g, i) => {
+      const missing = st === 'missing' && i === 1;
+      const loading = st === 'loading';
+      return {
+        name: g.name,
+        price: g.price,
+        has: !missing && !loading,
+        nil: missing || loading,
+        nilText: loading ? 'pricing…' : 'no price'
+      };
+    });
+    return {
+      rows,
+      source: f.source,
+      age: st === 'loading' ? '' : (st === 'stale' ? f.staleAge : f.age),
+      fresh: st !== 'stale',
+      stale: st === 'stale'
+    };
+  }
+}
+</script>
+</body>
+</html>

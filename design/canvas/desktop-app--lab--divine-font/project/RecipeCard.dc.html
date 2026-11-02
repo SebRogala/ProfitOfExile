@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Font recipe card</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+<script src="data.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.rc{background:var(--color-lab-surface);border:1px solid var(--color-lab-border);border-radius:4px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;font-size:13px;min-width:0}
+.rc-title{font-size:14px;font-weight:700;margin:0}
+.rc-opt{font-size:12px;color:var(--color-lab-text-secondary);margin:0;line-height:16px}
+.rc-grp{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--color-lab-text-secondary);margin-top:4px;border-bottom:1px solid var(--color-lab-border);padding-bottom:3px}
+.rc-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;min-height:28px}
+.rc-nm{display:flex;flex-direction:column;min-width:0;line-height:16px}
+.rc-nm small{font-size:11px;color:var(--color-lab-text-secondary)}
+.rc-num{font-family:'Consolas','Monaco',monospace;font-weight:700;text-align:right}
+.rc-nil{font-size:12px;font-style:italic;color:var(--color-lab-text-secondary);text-align:right}
+.rc-ev{display:flex;align-items:baseline;justify-content:space-between;gap:10px;border-top:1px solid var(--color-lab-border);padding-top:6px;margin-top:2px}
+.rc-evv{font-family:'Consolas','Monaco',monospace;font-weight:700;font-size:1.25rem}
+.rc-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;white-space:nowrap;font-size:11px;color:var(--color-lab-text-secondary);margin-top:2px}
+</style>
+</helmet>
+<article class="rc" aria-label="{{title}}">
+  <div style="display: flex; flex-direction: column; gap: 2px">
+    <h3 class="rc-title">{{title}}</h3>
+    <p class="rc-opt">{{option}}</p>
+  </div>
+
+  <div class="rc-grp">{{givesLabel}}</div>
+  <sc-for list="{{gives}}" as="r" hint-placeholder-count="3">
+    <div class="rc-row">
+      <span class="rc-nm"><span>{{r.name}}</span><sc-if value="{{r.sub}}" hint-placeholder-val="{{ false }}"><small>{{r.sub}}</small></sc-if></span>
+      <sc-if value="{{r.has}}" hint-placeholder-val="{{ true }}"><span class="rc-num">{{r.price}}</span></sc-if>
+      <sc-if value="{{r.nil}}" hint-placeholder-val="{{ false }}"><span class="rc-nil">{{r.nilText}}</span></sc-if>
+    </div>
+  </sc-for>
+
+  <sc-if value="{{hasCosts}}" hint-placeholder-val="{{ false }}">
+    <div class="rc-grp">Costs</div>
+    <div class="rc-row">
+      <span class="rc-nm"><span>{{cost.name}}</span></span>
+      <sc-if value="{{cost.has}}" hint-placeholder-val="{{ true }}"><span class="rc-num">{{cost.price}}</span></sc-if>
+      <sc-if value="{{cost.nil}}" hint-placeholder-val="{{ false }}"><span class="rc-nil">{{cost.nilText}}</span></sc-if>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{hasEv}}" hint-placeholder-val="{{ false }}">
+    <div class="rc-ev">
+      <span class="rc-nm"><span style="font-weight: 600">EV per craft</span><small>lens − support</small></span>
+      <sc-if value="{{evHas}}" hint-placeholder-val="{{ true }}"><span class="rc-evv {{evCls}}">{{ev}}</span></sc-if>
+      <sc-if value="{{evNil}}" hint-placeholder-val="{{ false }}"><span class="rc-nil">{{evNilText}}</span></sc-if>
+    </div>
+  </sc-if>
+
+  <div class="rc-foot">
+    <span style="overflow: hidden; text-overflow: ellipsis">{{source}}</span>
+    <sc-if value="{{fresh}}" hint-placeholder-val="{{ true }}"><span>{{age}}</span></sc-if>
+    <sc-if value="{{stale}}" hint-placeholder-val="{{ false }}"><span class="badge badge-yellow">updated {{age}}</span></sc-if>
+  </div>
+</article>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"recipe":{"editor":"enum","options":["exceptional","lens"],"default":"lens"},"state":{"editor":"enum","options":["priced","loading","missing","stale","negative"],"default":"priced"},"$preview":{"width":380,"height":300}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const recipe = this.props.recipe ?? 'lens';
+    const st = this.props.state ?? 'priced';
+    const F = window.FONT_FIXTURE;
+    const loading = st === 'loading';
+    const stale = st === 'stale';
+    const nilText = loading ? 'pricing…' : 'no price';
+    if (recipe === 'exceptional') {
+      const f = F.exceptional;
+      const gives = f.gems.map((g, i) => {
+        const nil = loading || (st === 'missing' && i === 1);
+        return { name: g.name, sub: '', price: g.price, has: !nil, nil, nilText };
+      });
+      return {
+        title: 'Exceptional support', option: f.option,
+        givesLabel: 'Gives one at random',
+        gives, hasCosts: false, hasEv: false, cost: {},
+        source: f.source + ' · level 1, uncorrupted', age: loading ? '' : (stale ? f.staleAge : f.age),
+        fresh: !stale, stale
+      };
+    }
+    const f = F.lens;
+    const p = st === 'negative' ? f.negative : f.priced;
+    const lensNil = loading || st === 'missing';
+    const ev = p.lens - p.support;
+    const sign = ev < 0 ? '−' : '+';
+    return {
+      title: 'Facetor’s Lens · 60%', option: f.option,
+      givesLabel: 'Gives',
+      gives: [{ name: f.lensName, sub: f.lensSub, price: p.lens + 'c', has: !lensNil, nil: lensNil, nilText }],
+      hasCosts: true,
+      cost: { name: f.supportName, price: p.support + 'c', has: !loading, nil: loading, nilText },
+      hasEv: true,
+      evHas: !lensNil, evNil: lensNil,
+      evNilText: loading ? 'pricing…' : '— needs the lens price',
+      ev: sign + Math.abs(ev) + 'c',
+      evCls: ev < 0 ? 'bad' : '',
+      source: f.source, age: loading ? '' : (stale ? f.staleAge : f.age),
+      fresh: !stale, stale
+    };
+  }
+}
+</script>
+</body>
+</html>

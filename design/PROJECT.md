@@ -50,6 +50,9 @@
 | 13 | Desktop app → Overlay → Boss loot confirmation · general shape (Catarina, A grid / B list) | in review | `R3Catarina.dc.html` + component `LootOverlay.dc.html` (boss-loot, round 3) | 0..k guaranteed groups, category tiles, quantities, which-one picker, profile key |
 | 14 | Desktop app → Overlay → general shape · stress (Maven, Incarnation of Fear, Black Star) | in review | `R3Stress.dc.html` (boss-loot, round 3) | proves a second boss needs no redesign |
 | 15 | Handoff · build sources: BossLootOverlay / BossLootCapture / BossLootPage / SettingsOverlays prototypes | handed off | `*-prototype.dc.html` (boss-loot, page Handoff · build sources) | POE-317 handoff 1 |
+| 17 | Desktop app → Overlay → Exceptional support alert (placement + states) | in review | `Main.dc.html`, `AlertStates.dc.html`, component `ExceptionalAlert.dc.html` (divine-font, round 1) | POE-328; priced, one missing, loading, stale |
+| 18 | Desktop app → Lab Farming → Font EV → Recipes section (cards) + states | in review | `Recipes.dc.html`, component `RecipeCard.dc.html` (divine-font, round 1) | POE-328/329; exceptional + Facetor's Lens 60% |
+| 19 | Handoff · build sources: FontAlerts / FontEvRecipes prototypes | handed off | `*-prototype.dc.html` (divine-font, page Handoff · build sources) | POE-328 + POE-329 handoff 1 |
 | 16 | Desktop app → Sidebar → Faustus helper icon pass: F vs native scale vs reward bag | agreed: S | `Icons-faustus.dc.html` (boss-loot, page Faustus icon pass) | scale = `Market/4K/MarketIconRatioMarket`, bag = `Market/4K/IconNPCReward` (uiimages1.txt sprites) |
 
 ## File map
@@ -60,6 +63,10 @@
 - **Canvas `desktop-app--strategies--harvest-flipping`:** https://claude.ai/artifact/PTogG15PdG1WJYjbDqNHJf
   — source in `design/canvas/desktop-app--strategies--harvest-flipping/project/`.
 - **Handoffs:** `design/handoffs/poe-283--desktop-app--strategies--harvest-flipping/` (build source `Overview-prototype.dc.html`) and `design/handoffs/poe-284--desktop-app--top-bar--divine-rate/` (build source `TopBar-prototype.dc.html`); both prototypes on the canvas page "Handoff · build sources". Index: `design/handoffs/README.md`.
+
+- **Canvas `desktop-app--lab--divine-font`:** https://claude.ai/artifact/Dij6S2j91a9x2HXCVx5cxp
+  — source in `design/canvas/desktop-app--lab--divine-font/project/` (shared `theme.css`, fixture `data.js`).
+  Handoffs: `design/handoffs/poe-328--desktop-app--overlay--font-alerts/`, `design/handoffs/poe-329--desktop-app--lab-farming--font-ev--recipes/`.
 
 ## Decisions log (append-only — date + decision + why)
 - 2026-10-09 — design/ set up per playbook LOCAL.md (Door 2b); canvas created for POE-283.
@@ -91,6 +98,12 @@
 - 2026-11-01 — POE-317 handoff 1 (operator): both overlay layouts ship, Grid and List, chosen by a "Loot layout" setting in global Settings → Overlay Positions → Boss loot group (next to the widget's Show toggle and placement; the module page keeps behaviour settings: auto-save, shortcuts, not counted). Icons and the "Faustus helper" name stay open: current glyphs (👹, ⇄) and labels kept. "Not saved" badge text moved to `--color-lab-text` on a stronger red tint (red on the red tint measured 4.41:1). Default overlay placement (1480, 120) at 1080p is the Designer's.
 - 2026-11-01 — POE-317 handoff open item settled (operator): the Chaos ⇄ Div / Faustus helper icon is S, the game's own Currency Exchange scale (`uiimages1.txt` sprite `Art/2DArt/UIImages/InGame/Market/4K/MarketIconRatioMarket`, 40 px in `Market/4K/1.dds`, upscaled to a 64×64 RGBA PNG; GGG game art, same footing as the shipped minimap icons). Boss loot icon stays D, the red skull. The page name ("Faustus helper" vs "Chaos ⇄ Div") stays open.
 
+- 2026-11-02 — POE-328/329 round 1 (operator update): Font EV gets a collapsible "Recipes" section below the per-variant EV table, above Pool Overview; one card per recipe in an auto-fill grid (min 320px), so a new recipe is a new card. Card = title + font option text, Gives rows, optional Costs row with its action, optional EV line, provenance footer (source + age; stale = yellow "updated N ago" badge). Exceptional card has no EV line (odds and feeder not defined); Lens card EV = lens − support, negative in `--color-lab-red` at 1.25rem bold (red on surface measures 4.47:1, so it must stay large text).
+- 2026-11-02 — POE-328 alert = display-only Lab widget (no hot rects), Gems Compare panel language (amber price, 92% bg, 8px radius), fixed row order Enhance, Enlighten, Empower; default placement right of the font OCR region, top-aligned, 12px gap: (976, 220) at 1080p, clear of the region and the inventory (Designer's default). A missing price keeps its row with "no price".
+
+- 2026-11-02 — POE-328/329 Updates 2–3 (operator via supervisor): no buy button on the Lens recipe card (cannot buy while in the lab; operator called the card "the in-lab overlay", the supervisor ruled it goes from the main-window card); cost line reads "Exceptional Support Gem lv 3+" with no sub-line; a second alert craft, direct transfigure (title "Transfigure gem", option text, "You choose the version"; TOP gems later, not drawn); several alert crafts in one Font panel stack in one column, 6 px apart, in Font panel order.
+- 2026-11-02 — Handoff 1 as two packages: POE-328 = overlay alert stack; POE-329 = Font EV Recipes section (both cards). Interim defaults handed off as open decisions: stale at 2 h, poe.ninja for exceptional prices, stack left of the font region if the right side is too narrow.
+
 ## Open questions / to confirm
 - 2026-10-10: POE-283 got a "Lifeforce colour correction" section (Primal for essences).
 - Brief Q11 (weight updates: merge vs replace, last-updated date) — still open.
@@ -99,3 +112,5 @@
 - Token gap: CX hard-codes `#6b7280` / `#4b5563` greys that fail AA on `--color-lab-surface`; this design uses `--color-lab-text-secondary` / `--color-lab-text-muted` instead, no new token.
 - POE-317: owner to pick overlay variant (A grid / B list), nav icons, and whether "server unreachable" offers a retry (owner said nothing more; drawn without one). Wiki rate shows in B as a column, in A only on hover.
 - POE-317 r2: "many additional items in a single run" — layout handles any count; open whether one item can drop more than once per run (needs a quantity). Is "Faustus helper" a rename of the Chaos ⇄ Div page or only the icon concept?
+- POE-328: price source for the three gems (fixture = poe.ninja gem_snapshots, Mirage 2026-09-09); show an EV for the exceptional exchange (needs the odds and the feeder)? Stale threshold for both recipes (trade lookups warn at 120 s, too tight for a periodic server price).
+- POE-329: Facetor's Lens and support prices on the boards are illustrative (412c / 95c); no trade-queue price exists yet.

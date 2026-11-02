@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Font alert stack</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+<script src="data.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>body{margin:0}</style>
+</helmet>
+<div style="width: 260px; display: flex; flex-direction: column; gap: 6px">
+  <sc-if value="{{showX}}" hint-placeholder-val="{{ true }}"><dc-import name="ExceptionalAlert" state="{{xState}}" hint-size="260px,160px"></dc-import></sc-if>
+  <sc-if value="{{showT}}" hint-placeholder-val="{{ true }}"><dc-import name="TransfigureAlert" hint-size="260px,80px"></dc-import></sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"crafts":{"editor":"enum","options":["both","exceptional","transfigure"],"default":"both"},"state":{"editor":"enum","options":["priced","missing","loading","stale"],"default":"priced"},"$preview":{"width":300,"height":280}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const c = this.props.crafts ?? 'both';
+    return {
+      showX: c !== 'transfigure',
+      showT: c !== 'exceptional',
+      xState: this.props.state ?? 'priced'
+    };
+  }
+}
+</script>
+</body>
+</html>

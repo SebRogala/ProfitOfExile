@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Exceptional support alert placement</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+<script src="data.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.zone{position:absolute;border:1px dashed var(--color-lab-text-muted);display:flex;align-items:flex-start;justify-content:center;padding-top:8px;font-size:11px;color:var(--color-lab-text-secondary);text-align:center}
+</style>
+</helmet>
+<div style="width: 1000px; height: 620px; background: var(--color-lab-bg); padding: 20px; display: flex; flex-direction: column; gap: 10px">
+  <div class="cap">1920×1080 client at 50% · font region [298, 220, 666, 681] · alert stack default (976, 220) · two crafts offered</div>
+  <div class="game" style="width: 960px; height: 540px">
+    <div class="zone" style="left: 149px; top: 110px; width: 333px; height: 340px; border-color: var(--color-lab-cyan)">Divine Font panel<br>OCR read region · nothing covers it<br>up to 6 options, grows downward</div>
+    <div class="zone" style="left: 631px; top: 0; width: 329px; height: 540px">Inventory</div>
+    <div style="position: absolute; left: 488px; top: 110px; width: 260px; transform: scale(.5); transform-origin: 0 0">
+      <dc-import name="AlertStack" crafts="both" state="priced" hint-size="260px,260px"></dc-import>
+    </div>
+    <span class="game-tag" style="left: 12px; bottom: 10px">game (stand-in)</span>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1000,"height":620}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

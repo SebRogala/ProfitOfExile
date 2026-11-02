@@ -1,0 +1,51 @@
+{
+  "_note": "Exact mock data for the POE-328 Font alerts overlay. Do NOT invent or widen fields; map onto existing codebase types and record the mapping (AGENT.md §6). Exceptional prices are real poe.ninja values (gem_snapshots, league Mirage, 2026-09-09 00:33 UTC, variant \"1\", uncorrupted).",
+
+  "_owners": {
+    "font_read": "desktop font OCR session (font_parser.rs / font_session.rs): option types in panel order",
+    "exceptional_prices": "unknown — price source is an open decision (interim: poe.ninja gem prices)",
+    "exceptional_prices.age": "derived (client, this task): now − fetched_at, formatted",
+    "placement": "SSOT placements.lab.font (ssot::font_region)"
+  },
+
+  "font_read": {
+    "two_crafts": ["exchange_exceptional", "transform_direct"],
+    "exceptional_only": ["exchange_exceptional"],
+    "transfigure_only": ["transform_direct"],
+    "_note": "Order = Font panel order, top to bottom. Other option types in the read are ignored by this widget."
+  },
+
+  "exceptional_prices": {
+    "source": "poe.ninja",
+    "variant": "1",
+    "corrupted": false,
+    "age": "6m ago",
+    "gems": [
+      { "name": "Enhance Support", "chaos": 9, "display": "9c" },
+      { "name": "Enlighten Support", "chaos": 185, "display": "185c" },
+      { "name": "Empower Support", "chaos": 43.2, "display": "43c" }
+    ],
+    "missing_case": { "Enlighten Support": null, "_note": "null → \"no price\" in that row; others unchanged" },
+    "stale_case": { "age": "3h ago", "_note": "age past the stale threshold → yellow badge" },
+    "loading_case": { "_note": "no prices yet → every slot \"pricing…\", footer without age" }
+  },
+
+  "transfigure": {
+    "option_text": "Transform a non-Transfigured Skill Gem to a Transfigured version",
+    "note": "You choose the version"
+  },
+
+  "placement": {
+    "client": [1920, 1080],
+    "font_region": [298, 220, 666, 681],
+    "stack_default": [976, 220],
+    "stack_width": 260,
+    "gap": 12,
+    "_note": "font_region = [x, y, w, h] client px at 1080p; stack_default = font.x + font.w + 12·scale, font.y"
+  },
+
+  "_formats": {
+    "money": "formatPrice: integer chaos with \"c\" below 2 divines (43.2 → \"43c\"), \"N.Nd\" from 2 divines; no thousands grouping in this range",
+    "age": "\"<1m\", \"Nm ago\", \"Nh ago\""
+  }
+}

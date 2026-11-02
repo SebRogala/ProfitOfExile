@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Exceptional support alert states</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="theme.css">
+<script src="data.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>body{margin:0}</style>
+</helmet>
+<div class="game" style="width: 1760px; height: 360px; padding: 24px 20px; display: flex; gap: 30px; align-items: flex-start">
+  <div style="display: flex; flex-direction: column; gap: 8px"><span class="cap game-tag" style="position: static; align-self: flex-start">priced</span><dc-import name="ExceptionalAlert" state="priced" hint-size="260px,160px"></dc-import></div>
+  <div style="display: flex; flex-direction: column; gap: 8px"><span class="cap game-tag" style="position: static; align-self: flex-start">one price missing</span><dc-import name="ExceptionalAlert" state="missing" hint-size="260px,160px"></dc-import></div>
+  <div style="display: flex; flex-direction: column; gap: 8px"><span class="cap game-tag" style="position: static; align-self: flex-start">loading</span><dc-import name="ExceptionalAlert" state="loading" hint-size="260px,160px"></dc-import></div>
+  <div style="display: flex; flex-direction: column; gap: 8px"><span class="cap game-tag" style="position: static; align-self: flex-start">stale price</span><dc-import name="ExceptionalAlert" state="stale" hint-size="260px,160px"></dc-import></div>
+  <div style="display: flex; flex-direction: column; gap: 8px"><span class="cap game-tag" style="position: static; align-self: flex-start">transfigure only</span><dc-import name="AlertStack" crafts="transfigure" hint-size="260px,90px"></dc-import></div>
+  <div style="display: flex; flex-direction: column; gap: 8px"><span class="cap game-tag" style="position: static; align-self: flex-start">two crafts, stacked</span><dc-import name="AlertStack" crafts="both" state="priced" hint-size="260px,260px"></dc-import></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1760,"height":360}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
