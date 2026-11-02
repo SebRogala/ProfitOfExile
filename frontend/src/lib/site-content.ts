@@ -153,11 +153,17 @@ export const modules: Module[] = [
 		trigger: 'None — enter your amount and ratio on the page.',
 		reads: 'Nothing on your screen.',
 		gives: [
-			'Totals in chaos and divine, with a whole divine-and-chaos split.',
+			'Totals in chaos and divine, whole split, and item amount with Copy; decimal inputs accept a comma or dot.',
 			'Nearest whole-number undercuts or outbids, with copyable I want and I have values.',
 			'Buying budget mode: how many items fit, what the order costs, and what is left.',
 		],
-		screenshots: [],
+		screenshots: [
+			{
+				src: '/module-exchange-companion.webp',
+				alt: 'Currency Exchange Companion selling 25 items in divine at 6.4:1, with chaos and divine totals, item amount with Copy, and nearest undercuts with copyable I want and I have values',
+				caption: 'Currency Exchange Companion — totals, item amount and whole-number undercuts',
+			},
+		],
 	},
 	{
 		id: 'harvest',
