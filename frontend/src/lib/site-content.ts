@@ -112,7 +112,7 @@ export const modules: Module[] = [
 		name: 'Boss Loot',
 		status: 'beta',
 		tagline: 'Record boss drops and compare your drop rates with collective data.',
-		trigger: 'Your capture shortcut, with the game in the foreground in a supported boss area. Currently supports Catarina Normal.',
+		trigger: 'Shift + right click by default (change it in settings), with the game in the foreground in a supported boss area. Currently supports Catarina.',
 		reads: 'Ground item labels in a crop around your cursor, once per capture.',
 		gives: [
 			'A confirmation overlay with item icons, editable picks and quantities, and a countdown to saving the run.',
