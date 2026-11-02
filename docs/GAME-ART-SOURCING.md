@@ -133,6 +133,12 @@ app (WebView2) until a hard reload (Ctrl+Shift+R), observed 2026-10-11.
 | `compass-icon.png` | CDN `Currency/SurveyorsCompass` resized to 64 |
 | `pathstrip-icon.png` | Drawn, not game art: three room nodes on a zigzag green path into an Izaro ring at the bottom right (clear of the status dot), in the `LabGraph.svelte` colours |
 | `timer-icon.png` | Drawn, not game art: gold stopwatch ring with a progress wedge and "24" |
+| `boss-loot-icon.png` | POE-317 approved candidate D: minimap `HeistSpottedMiniBoss`, red skull and blade |
+| `faustus-icon.png` | POE-317 approved candidate S: `InGame/Market/4K/MarketIconRatioMarket`, native scale |
+
+The two POE-317 assets are bundled 64×64 RGBA PNGs. `Sidebar.svelte` uses
+the boss icon for both navigation and the `boss_loot` module switch, and the
+Faustus icon for Currency Exchange Companion (verified 2026-11-02).
 
 The Lab Overlays group switch reuses `lab-icon.png`, so a switch carries its
 page's icon. That art is the minimap `Labyrinth` icon.

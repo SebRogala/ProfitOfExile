@@ -185,9 +185,23 @@ Current POE-317 shell integration: `boss-loot` maps to `/boss-loot` in `VIEW_PAT
 The layout's `VIEW_FEATURES` mounts `BossLootPage` only with `BETA_FEATURE`,
 independently of the `boss_loot` work flag. Sidebar navigation and the module
 switch share that beta gate; the switch uses `setModuleEnabled`. The page's
-`PagePorts` currently bind the existing owner-specific fixture adapters;
-native adapters and CSV export are pending WI-9. Export reports that it is
-not connected instead of claiming a file was saved.
+`PagePorts` bind native adapters and Rust-owned CSV export. The lifecycle and
+Results/Runs/Settings behavior live in
+[Boss loot lifecycle](../../../docs/BOSS-LOOT-LIFECYCLE.md).
+
+### Boss loot component registry (current, verified 2026-11-02)
+
+| File | Responsibility |
+| --- | --- |
+| `pages/BossLootPage.svelte` | Results/Runs/Settings presentation and persisted tab/scope/sort picks. |
+| `boss-loot/BossResultsTables.svelte` | Reusable responsive results tables with one row/header renderer. |
+| `boss-loot/page-controller.svelte.ts` | Page loading, run editor, settings and export coordination through ports. |
+| `boss-loot/page-view.ts` | Results, Runs, editor and CSV projections; Runs timestamps use local time. |
+| `boss-loot/native-adapters.ts` | Native profiles/stats/runs/settings/device ports and capture action adapters. |
+| `boss-loot/LootConfirmation.svelte` | Native pending-capture projection and registered widget actions. |
+| `boss-loot/overlay-view.ts` | Confirmation projection, selection helpers and one-second display clock. |
+| `boss-loot/CaptureFrame.svelte` | Anchored capture/preview frame. |
+| `boss-loot/LootItem.svelte`, `QuantityStepper.svelte`, `ShortcutCapture.svelte` | Shared loot item, quantity and shortcut controls. |
 
 | Route | Description |
 |-------|-------------|
@@ -231,16 +245,8 @@ Every crop is contrast-stretched and upscaled 2× before recognition (`capture.r
 
 Scans the gem tooltip region to detect transfigured gem names for the comparator.
 
-**Start triggers** (all: clear comparator, restart scan):
-- `FontOpened` — Client.txt `InstanceClientLabyrinthCraftResultOptionsList recieved` (fires on font open AND on CRAFT click — see Game UI facts below)
-- Manual "Start Scanning" button
-
-**Stop triggers**:
-- 3 gems detected (auto-stop)
-- 2.5 min timeout (was 45 s until 2026-09-09; it expired under a player still hovering the results)
-- ZoneChanged (left area)
-- Manual "Stop Scanning"
-- Next start trigger (bumps generation counter → old scan exits)
+Start/stop, timeout and the current odd/even FontOpened exception live in
+[Lab font OCR lifecycle](../../../docs/LAB-FONT-OCR-LIFECYCLE.md).
 
 **Key behavior**: Aborts immediately if gem name list is empty (server unreachable). Uses `AtomicU64` generation counter for clean cancellation — no thread cleanup needed.
 
@@ -252,37 +258,19 @@ Scans the gem tooltip region to detect transfigured gem names for the comparator
 
 Scans the font region to capture craft options (transform, quality, experience, etc.) from the CRAFT screen.
 
-**Start**: Izaro death voiceline (`LabFinished` nav event) — triggers when final Izaro is killed, right when the font becomes available. A `FontOpened` event also starts a scan whenever the liveness token (`font_scan_live_gen`) reads 0, so the panel is still read when `LabFinished` was never seen — the app launched mid-run, or the scan was stopped earlier by a zone change or lab exit.
-
-**Running**: Scans at 250ms, parses options via `font_parser`, then union-merges the frame into the current round's option buffer (`merge_options`). A torn frame never deletes an option an earlier frame of the same panel read, and a value already read is never downgraded to `None` or overwritten by a disagreeing later read.
-
-**Round tracking**: the panel's "Crafts Remaining" count owns the round boundary (`font_ledger`), gated on a `FontOpened` counter. `FontOpened` seals nothing — it fires on font open as well as on CRAFT, an unbounded number of times per craft. A count change with no `FontOpened` since the last accepted count is a misread: the frame's options still merge, the count is ignored. A count change after a `FontOpened` that holds for 2 consecutive frames seals the current round under the *old* count and opens the next one; direction is irrelevant. Known limitation: a round on screen for under 2 frames (~500ms) is never accepted, so its options fold into the neighbouring round.
-
-**Stop**: a `font_scan_generation` bump — ZoneChanged, `LabExited`, a replacement scan, app shutdown — or 10 minutes with no active font panel on screen. There is no wall-clock timeout: a font run has no bounded length (stash trips, town portals, a player reading the options), and a scan expiring under a still-open panel silently lost every remaining craft. The idle limit measures from the last frame that saw the panel, so it only fires on a scan with nothing left to read — it is the backstop for a run whose stop event never arrives (the game killed rather than exited, the font never opened, screen capture failing in a loop). That path sends the session itself; every other stop is either a sender or is followed by one.
-
-**Re-arm**: the token is what makes that restart exactly-once — a scan claims it on spawn and releases it on exit with a compare-exchange, so a superseded loop cannot clear its replacement's claim and a `FontOpened` arriving mid-handover does not stack a second loop. The case that needs it most is a portal trip out of the lab: `LabFinished` never fires again on return, so without the re-arm every remaining craft is lost. Every stop that can have rounds behind it sends and resets the session before a re-arm can run: ZoneChanged does it on the send path (and fires on the same log line as `LabExited`, which only stops the loop), idle expiry does it from inside the loop. So a re-armed scan is always a new segment; a mid-font town trip therefore reports one run as two font-session POSTs.
-
-**Data flow**: ZoneChanged sends accumulated session (all rounds with options + crafts_remaining) to server via `POST /api/desktop/font-session`.
+Start, frame processing, round tracking, stop and re-arm behavior live in
+[Lab font OCR lifecycle](../../../docs/LAB-FONT-OCR-LIFECYCLE.md).
+That guide distinguishes explicit font-scan liveness from the gem-scan parity
+exception and records the remaining open question.
 
 ### Merc Recruit-Window OCR
 
 A third loop (`src-tauri/src/mercenary/run.rs`), on its own thread for the same COM reason, and the only one that is **trigger-only** — it runs no OCR of its own accord (POE-198).
 
-**Start triggers** (two asks, and they buy different looks — POE-204 WI-C):
-- a Client.txt dialogue line whose normalized text is a known `Inspect` text with two or more words, or a one-word `Inspect` grunt licensed by that speaker's previous known multi-word mercenary text: delivered by the ONE log watcher in `lib.rs` (never a second tailer); `speaker_of` still excludes chat-sigil-prefixed player messages
-- the page's **Scan now** button (`merc_scan_now`), for a window that was already open
-
-**The voice-line gate** replaced POE-198's ten-second burst. POE-204 measured on app.log 2026-08-26 09:14–09:42 that most bursts were ten seconds of full-screen OCR for a window nobody opened, while the one thing the burst got right (the window IS open) it learned on its first tick; POE-198's trigger armed on approach as well as on click, which made the burst the wrong shape. POE-280 (2026-09-14) narrows the trigger to known `Inspect` text because `FirstApproach` is the walk-up, not the click. A qualifying `Inspect` text arms the gate; the gate spends **two probes and then stands down**. When the SSOT has a placed Merc panel, `run::probe_tick` OCRs that panel crop after fixed padding and accepts any Wager, Recruit-verdict or button anchor; `placed_layout` applies the positional row-bound check before publishing. With no placed slice it hands the grabbed frame to the one full-screen fallback allowed for that `(merc_refit, trigger generation)` key. Probe 1 is at **+500 ms from the line**, probe 2 at **+1.5 s from the line** — or `PROBE_GAP_MS` (1 s) after the first probe actually ran, whichever is later. A crop miss on a voice-line probe is a miss: it trusts the placement and buys no locate unless a Recalibrate is still pending (`run::locate_decision`, ADR-025 clause 4); Scan now's crop miss buys one full-screen locate per key, and a located panel beyond the half-cell origin band is logged and remembered only after its read succeeds. A probe that finds chrome hands its own grabbed frame to `detect_tick` in the SAME iteration, so a hit never waits a cadence.
-
-**Two rules the gate is worded around.** A qualifying Inspect line arriving while a capture is HELD (`trigger::capture_held` — status `live` or `done`) is ignored outright: no arm, no announcement, no resumed read (a debug-only log line records it; only qualifying Inspect lines reach this branch). MEASURED 2026-08-26 09:41:56 — the arm resumed the paused read, the resumed cadence spent its first tick on a tooltip-covered frame, and "window gone" was published over a window that was plainly open. `capture_held` reads the PUBLISHED status off the watcher thread, so the loop also calls `trigger::disarm_probe` on every live tick — a line landing between the capturing detect and its publish would otherwise arm a gate nothing ever probes, and print a stand-down ten seconds later for a window on screen. **Scan now bypasses the voice probe, not the placed detect:** it asks for one detect, which reads the placed crop first and escalates to the one full-screen fallback only on crop failure. Over a held capture it is still one off-cadence re-detect (`LoopState::resume`, then `detect_tick`).
-
-**A second qualifying Inspect line RE-ARMS the gate** with two fresh probes from its own clock. A re-open is another measured example: `PlayerRetreat` is followed by `Inspect`, so that new click evidence buys a new look. Two rules bound it: `LINE_STALE_MS` runs from the FIRST line of an unbroken chain by the same speaker, so continuous chatter still stands the gate down after 10 s; and `BurstGate::looks` remains monotonic across re-arms, while the crop is always derived from the current placement rather than remembered probe geometry.
-
-**Timing is measured from the LINE, not from delivery.** `trigger::line_timestamp_ms` reads the `2026/08/24 22:51:12` stamp the line carries and `arm_at` backdates the gate to it; `log_watcher` can be up to 5 s behind (its `recv_timeout` fallback), and a 500 ms probe measured from delivery would be five and a half seconds after the click. The stamp is LOCAL time with no zone against a UTC clock, so it is believed only inside `[now - MAX_BACKDATE_MS, now]` — outside that band the gate falls back to the delivery clock, which is wrong by at most one hop, rather than to a skew that would fire both probes at once or leave them never due.
-
-**Running**: both probes fire only while the game is the foreground window (the RAW `game_in_foreground`, not the held `game_focused`). A tick that CAPTURES or REFRESHES a window disarms the gate — never mere `LoopState.live`, which is still true after the first of the two misses that retire a capture. From there the live behaviour is unchanged (re-detect 2 s while reading rounds remain, then 10 s liveness; hover-confirm 400 ms, retire after 2 misses), and retirement drops the loop back to waiting. `LoopStep::Waiting` is the armed-but-not-due state and naps one 100 ms quantum rather than the 250 ms `IDLE_NAP`, so a 500 ms probe is not served at 750 ms.
-
-**Stop**: detection, or a stand-down. Three of those and each is worded apart, because they send the reader to three different places: the gate spent its LAST probe and found nothing (`StandDown::Probed`, the design's normal ending and the only one that is a verdict about the screen), the chain went stale with probes still unspent (`Stale`, `LINE_STALE_MS` 10 s — the game was not in front when they came due, a focus problem and not a detection one), and a **Scan now** whose alt-tab never came (`Manual`, bounded by `MANUAL_ARM_GRACE_MS` 60 s). The split is on WHY the gate ended, not on whether any probe ran: a gate that looked once and then lost the foreground reached no verdict, and reporting it as `Probed` would claim one. One `app_log` line per gate armed and one per gate that stood down; never one per tick, and never one per probe outside debug mode.
+Trigger matching, probe timing, manual detection, live reads and stand-down
+behavior live in [Mercenaries lifecycle](../../../docs/MERCENARIES-LIFECYCLE.md).
+The vocabulary, icon signatures, learning and diagnostic details below remain
+the library's implementation reference.
 
 **The support vocabulary and its families** (`src-tauri/src/mercenary/vocab.rs`, mirrored by the generated `internal/mercenary/families.go`): both sides derive their family list from ONE committed file, `lib/mercenaries/__fixtures__/mercenary-stats.json` — GGG's own `Mercenary` block of `/api/trade/data/stats`, never hand-edited. A support's display text becomes its icon FAMILY in three steps, in order: strip the trailing ` (Tier N)`, strip a leading grade word (`Lesser `/`Greater `/`Gilded `), then fold the result through the family alias table. `Lesser Chain (Tier 1)`, `Chain (Tier 2)` and `Gilded Chain (Tier 3)` are three tiers of the one family `Chain`. The **alias table is the only place two different display names become one family**, and it is a CLOSED LIST of whole names rather than a prefix rule: `Increased Angle` is a real Gilded-only support with no `Angle` sibling, so a generic `Increased ` strip would key its cells under a family the vocabulary does not carry. It holds one entry today (POE-211) — GGG names one support's tiers `Lesser Increased Area of Effect (Tier 1)`, `Increased Area of Effect (Tier 2)` and `Greater Area of Effect (Tier 3)`, so the grade strip alone derived TWO families out of one support and filed the same art under two keys, which the learn-time refusal below then makes permanently unmatchable. Because the server validates uploads against its copy of this list, a change that SHRINKS it ships server-first (docs/DEPLOY.md → *Desktop <-> server ordering*).
 
@@ -333,15 +321,22 @@ Every failure here is soft — an unreachable pool leaves the module fully worki
 
 **The art fixture is not committed.** The 51 poewiki PNGs the seed tests derive from are CC-BY-NC-SA and this repo is GPL-3 — the difference from the 39×39 corpus crops beside them, which are Sebastian's own screenshots. `make merc-seed-art` fetches them through the server route into `desktop/src-tauri/tests/fixtures/merc-seed-art/` (gitignored except its README, honours `POE_SERVER_URL`), and CI fetches from prod before `cargo test`. A test that cannot find them FAILS with that hint rather than skipping, because a silently skipped acceptance test is how a seed map stops being verified.
 
-**Voice-line corpus**: `src-tauri/src/mercenary/assets/merc-voicelines.tsv` embeds 1,058 unique normalized texts extracted from the owner-saved poedb.tw mercenary table on 2026-09-14: 89 are `inspect` texts and the rest are `line` texts. A multi-word `inspect` text is the click; a one-word `inspect` text needs the same speaker's previous known multi-word mercenary text. FirstApproach and fight lines do not arm, plain-name mercenaries are included, and unknown text has no fallback (owner decision 2026-09-14). A GGG patch adding or rewording lines means regenerating the asset.
+**Voice-line corpus**: `src-tauri/src/mercenary/assets/merc-voicelines.tsv` is the
+embedded trigger vocabulary; its provenance lives in the adjacent asset README.
+The [Mercenaries lifecycle](../../../docs/MERCENARIES-LIFECYCLE.md) owns Inspect
+matching, the two-probe gate and the manual fallback.
 
 ### Game UI Context
 
 - **CRAFT screen**: Shows options list + "Crafts Remaining: X" + CRAFT button. "Crafts Remaining" only visible when X > 1.
 - **CONFIRM screen**: Shows 3 gem slots + CONFIRM button. Options list is gone. This is when gem tooltip OCR runs.
-- `FontOpened` (`InstanceClientLabyrinthCraftResultOptionsList recieved`) fires in TWO moments: when the font is OPENED (CRAFT screen appears) and when CRAFT is CLICKED (CONFIRM screen appears). Opening the font, closing it for a stash trip, and reopening it therefore yields 3 events by the time CRAFT is clicked. Never derive CRAFT/CONFIRM parity or the round count from event count — the count is unbounded per craft. (Rule confirmed by Sebastian from play, 2026-08-18; earlier notes claiming "no event on open" were wrong.)
+- `FontOpened` is not a craft-round boundary. The current gem-scan parity
+  exception and the separate font-liveness/ledger owners are documented in
+  [Lab font OCR lifecycle](../../../docs/LAB-FONT-OCR-LIFECYCLE.md#gem-tooltip-startstop-exception).
 - Gem tooltips cover the font panel area when hovering — OCR regions overlap.
-- **Mercenary voice lines** land in Client.txt as `speaker: text`, and the speaker equals the recruit panel's header name. The trigger uses the normalized text, not a speaker shape, so plain-name mercenaries such as `Epipi Rapono` are included. `FirstApproach` is the walk-up with no window; `Inspect`/`InspectNotable` is the click and arms when its text is known, while fight lines do not. The line is a trigger, never a confirmation: 118 of 133 Inspect lines in the ticket evidence were followed by a detection within 6 s, so 15 were not; the panel anchor still decides. One-word Inspect grunts (`Oh`, `Ohh`, `Ooh`, `Agh`, `Eh`, `Well`) require the same speaker's previous known multi-word mercenary line because NPCs also say them (`Sister Cassia: Oh!` ×161; `Sonja, the Farmer: Eh.`). Player chat with a `@`/`&`/`#`/`$`/`%`/`<Guild>` sigil is excluded by `speaker_of`; local chat has no sigil, so a player can type an exact known multi-word Inspect sentence and buy two silent probes, the accepted cost of the owner's text-over-names choice (2026-09-14). The asset texts are English; on another-language Client.txt no line matches and nothing arms. Such a player is unautomated, not broken: Scan now covers every capture. Unknown text does not arm, so Scan now is also the fallback until the asset is regenerated.
+- **Mercenary voice lines** arm probes through the
+  [Mercenaries lifecycle](../../../docs/MERCENARIES-LIFECYCLE.md#arming-and-capture);
+  the panel read, rather than the voice line, establishes a capture.
 
 ### Focus & Overlay
 
@@ -408,25 +403,17 @@ When migrating components from `frontend/src/routes/lab/`:
 `ChaosDivPage` (`/chaos-div`). Navigation, settings keys and component names retain
 their existing identities.
 
-Boss loot navigation and module controls share `/boss-loot-icon.png`, candidate D
-(red skull and blade, minimap `HeistSpottedMiniBoss`) from the approved
-`Icons-r2.dc.html` board. Companion navigation uses `/faustus-icon.png`, candidate S
-(native scale, `InGame/Market/4K/MarketIconRatioMarket`) from `Icons-faustus.dc.html`.
-Both are exact 64×64 RGBA design blobs from the POE-317 canvas at `b3fd6ec9`,
-rendered at the existing nav/rail/module sizes of 18/22/14 px; see
-[game art sourcing](../../../docs/GAME-ART-SOURCING.md) for the general procedure.
+Boss loot navigation/module controls use `/boss-loot-icon.png`; Companion uses
+`/faustus-icon.png`. Artwork provenance lives in
+[game art sourcing](../../../docs/GAME-ART-SOURCING.md#shipped-icons-and-their-sources).
 
-### Boss loot shell and placement (current, POE-317 WI-8)
+### Boss loot shell and placement (current, verified 2026-11-02)
 
 `ssot.bossLoot` mirrors native `LootSlice`: settings, numberFormat, pending,
 frame, rebind and monotonic nowMs; it is unknown until the first snapshot.
 `setBossLootSettings` sends the whole native settings object and fetches the echo.
-The `boss_loot` work module is distinct from the `loot` widget window.
-The app layout creates that window through `createWidgetWindow`, so monitor
+The app layout creates the `loot` window through `createWidgetWindow`, so monitor
 reconciliation and Configure ordering use the existing driver/session owner.
-`loot.confirmation` is content-sized and placeable; `loot.capture` is anchored.
-Both have independent Show flags in `Settings.widgets`. Overlay Positions
-lists their beta-only group after Temple and writes the typed Loot layout.
-Native capture snapshots retain their chosen layout for the active confirmation.
-Focus-list integration and overlay count projection formatting are assigned to
-WI-9 by plan amendment A3; this shell change does not complete those paths.
+Overlay Positions lists the beta-only Loot group after Temple and writes the
+typed Loot layout. Capture, unmarking, countdown and placement behavior live in
+[Boss loot lifecycle](../../../docs/BOSS-LOOT-LIFECYCLE.md).

@@ -10,6 +10,9 @@ This is the documentation entry point. Documents are classified so historical pl
 - [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — current workflows plus clearly labeled reliability targets for collection, native trade, contributions, optional server trading, pairing, and Mercure; includes current POE-297 restriction/backoff and empty-result behavior.
 - [Overlay Guide](OVERLAY-GUIDE.md) — maintained Windows/Tauri overlay mechanics and regression guards.
 - [Temple Lifecycle](TEMPLE-LIFECYCLE.md) — normative order of arming, detection, OCR and overlay show/hide for the temple module (POE-249, implemented 2026-09-04); every rule tagged shipped with the commit that shipped it, plus where the POE-257 room valuation, market read and presets live.
+- [Boss loot lifecycle](BOSS-LOOT-LIFECYCLE.md) — current native capture, confirmation, runs, statistics and seed import; verified 2026-11-02.
+- [Lab font OCR lifecycle](LAB-FONT-OCR-LIFECYCLE.md) — current font scan, craft ledger and gem tooltip scan, including the open gem-scan parity question; verified 2026-11-02.
+- [Mercenaries lifecycle](MERCENARIES-LIFECYCLE.md) — current Inspect trigger, bounded capture and triage; verified 2026-11-02.
 - [Game facts](GAME-FACTS.md) — current, dated reference of Path of Exile facts the code treats as invariants: one golden door per lab run, temple rooms log nothing, Divine Font wordings and parser anchors, Dedication rules, the vial recipe table and poedb's per-tier temple room bonuses, exchange sidebar categories, trade complexity; unvalidated claims kept in their own section.
 - [Collector Endpoint Guide](COLLECTOR-ENDPOINTS.md) — current cross-layer recipe for adding a market-data source.
 - [Icons](ICONS.md) — current procedure for adding or changing an icon, and why seeding precedes deploy.
@@ -22,14 +25,17 @@ This is the documentation entry point. Documents are classified so historical pl
 ## Proposed specifications
 
 Tracker task and epic descriptions are canonical for active specifications. They
-are not mirrored into this repository. Three proposed, unimplemented
+are not mirrored into this repository. Two proposed, unimplemented
 specifications currently describe planned behavior:
 
-- `POE-117` — League SSOT, historical isolation, and safe rollover.
 - `POE-118` — Mercure lifecycle reliability and event coordination.
 - `POE-88` — LabCompass fidelity restoration and overlay SSOT.
 
-The three are interdependent: league identity scopes events and data, Mercure defines notification and coordination behavior, and the Compass specification defines Rust-owned desktop lab state. `POE-118` depends on both `POE-117` and `POE-88`.
+`POE-117` is delivered: league ownership and admission are recorded in
+[ADR-009](adr/009-league-scoped-repository-convention.md), retention history in
+[ADR-010](adr/010-archived-league-history-is-retained-indefinitely.md), and
+rollover in [ADR-011](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-as-a-dump.md).
+`POE-118` depends on that delivered league boundary and on `POE-88`.
 
 ## Accepted architecture decisions
 
@@ -55,9 +61,12 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-021: A module draws one window on the game's monitor, and widgets inside it](adr/021-a-module-draws-one-window-on-the-game-monitor-and-widgets-inside-it.md) — Proposed
 - [ADR-022: Room values are chaos-denominated and market-fed; presets are Default and Custom](adr/022-room-values-are-chaos-denominated-and-market-fed-presets-are-default-and-custom.md) — includes fallback architect tie ordering and the final-incursion R4 gate.
 - [ADR-023: A window excluded from the grab may cover what its module reads](adr/023-a-window-excluded-from-the-grab-may-cover-what-its-module-reads.md) — amends ADR-019
-- [ADR-024: Module OCR positions are placed from the screen slice, not located](adr/024-module-ocr-positions-are-placed-from-the-screen-slice-not-located.md) — Accepted; Temple placement shipped in POE-269, remaining epic tasks pending
-- [ADR-025: A capture reads once, re-reads only the unknown, then stops; only a manual scan moves its geometry](adr/025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md) — Accepted; Temple shipped; Merc shipped (POE-278 WI-B `f78786e` clause 4, WI-C `072c98c` clauses 2, 3, 5)
+- [ADR-024: Module OCR positions are placed from the screen slice, not located](adr/024-module-ocr-positions-are-placed-from-the-screen-slice-not-located.md) — Accepted; read its dated amendments for delivered placement and fallback behavior.
+- [ADR-025: A capture reads once, re-reads only the unknown, then stops; only a manual scan moves its geometry](adr/025-a-capture-reads-once-re-reads-only-the-unknown-then-stops-only-a-manual-scan-moves-its-geometry.md) — Accepted; Temple shipped; Merc geometry `c5e71acc`, read budget `2f53ee61` (resolvable local history).
 - [ADR-026: Price tiering is one leaf package; callers own eligibility and cutoff](adr/026-price-tiering-is-one-leaf-package-callers-own-eligibility-and-cutoff.md)
+- [ADR-027: Trade is the primary gem price; poe.ninja is the fallback](adr/027-trade-is-the-primary-gem-price-poe-ninja-is-the-fallback.md)
+- [ADR-028: Boss loot capture and ownership](adr/028-boss-loot-capture-and-ownership.md)
+- [ADR-029: Overlay widget action boundary](adr/029-overlay-widget-action-boundary.md)
 
 Superseded:
 
@@ -75,6 +84,9 @@ tier does not promote a proposal or restore a superseded clause.
 
 ## Current guides and narratives
 
+- [Boss loot lifecycle](BOSS-LOOT-LIFECYCLE.md) — capture, confirmation, Results/Runs/Settings, server API and import.
+- [Lab font OCR lifecycle](LAB-FONT-OCR-LIFECYCLE.md) — font OCR, round ledger and gem-scan lifecycle.
+- [Mercenaries lifecycle](MERCENARIES-LIFECYCLE.md) — Inspect arming, capture and triage.
 - [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — mixed current/target guide with per-section labels; server gate hardening verified 2026-10-23 (POE-297).
 - [Overlay Guide](OVERLAY-GUIDE.md) — current click-through, positioning, lifecycle distinctions, and Windows regression guards.
 - [Collector Endpoint Guide](COLLECTOR-ENDPOINTS.md) — current endpoint extension procedure, verified against the fragments implementation.
@@ -88,9 +100,6 @@ tier does not promote a proposal or restore a superseded clause.
 - [Server trade gate hardening review — 2026-10-23](history/2026-10-23-trade-gate-hardening.md) — POE-297 timeout mechanisms, dedup event review catch, regression locations and pending runtime gates.
 - [Temple advisor feedback investigation — 2026-10-23](history/2026-10-23-temple-advisor-feedback.md) — seven reported choices, bounded fixes, verification limits and an unimplemented R4 policy proposal.
 - [Historical overlay debugging notes](history/overlay-debugging-notes.md) — preserved runtime discoveries and obsolete implementation generations; not a current recipe.
-
-## Codebase state
-
 
 ## Dated research
 

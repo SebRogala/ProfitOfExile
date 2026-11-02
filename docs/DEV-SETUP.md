@@ -79,9 +79,14 @@ the desktop defaults in `desktop/src-tauri/src/settings.rs`,
 
 ```bash
 make test                     # Go suite, race detector
+make test-league-rollover      # Docker rollover proof; requires the leased lane DB
+make worktree-create LANE=laneexample BASE=dev  # Provision an isolated lane
 make qa                       # Go + desktop Rust + desktop vitest + npm peer-range check
 make desktop-check-windows    # type-checks the cfg(windows) half against x86_64-pc-windows-gnu
 ```
+
+The rollover proof's setup and explicit database checks live in
+`scripts/league-rollover-e2e.sh`; it is a separate gate from `make test`.
 
 Run `make desktop-check-windows` before every Windows build: the Linux
 `cargo check` and `cargo test` never compile the overlay hook, click-through,

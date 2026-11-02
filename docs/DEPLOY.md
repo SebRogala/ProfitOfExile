@@ -184,6 +184,25 @@ This is **hiding, not securing**, and the repository is **public**:
 
 ## Desktop <-> server ordering
 
+### Boss loot release order
+
+Current code verified 2026-11-02: server startup applies migrations, including
+`20261101180000_create_boss_loot_runs`, before serving the boss-loot API.
+For the one-off seed, apply that schema before running `cmd/boss-loot-import`;
+preview the workbook first, then use `--apply` with the intended historical
+league and an existing device. The importer refuses reruns into an occupied
+device/profile history. Its inputs and storage behavior live in the
+[Boss loot lifecycle](BOSS-LOOT-LIFECYCLE.md#seed-import-and-release-order).
+The current server image does not bundle this importer; build/run the command
+from the matching checkout in an authorized database environment.
+
+Verify the API and any intended seed statistics before releasing the desktop
+that consumes them. For league activation, use the
+[league runbook](LEAGUE-SCHEMA-MIGRATION-RUNBOOK.md#phase-b--activate-wipe-and-restart-at-league-start),
+which owns the stop-both-writers, archive fence and restart order for `cmd/league`.
+
+### General server-first rule
+
 The two halves ship on separate pipelines — the server on merge to `main`
 (`deploy.yml`), the desktop on a `v-desktop-X.Y.Z` or `v-desktop-X.Y.Z-beta.N`
 tag (`desktop.yml`) — so a release that spans both has an order, and it is

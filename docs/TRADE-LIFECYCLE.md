@@ -61,7 +61,7 @@ Mercure delivery is not the authority for these prices. PostgreSQL snapshots are
 
 ## 2. Desktop-native GGG trade lookup
 
-**Current behavior:** Implemented. League propagation is being corrected by the proposed league SSOT work.
+**Current behavior:** Implemented; league boundaries verified 2026-11-02.
 
 The Tauri desktop application can query the Path of Exile trade API directly.
 
@@ -80,7 +80,8 @@ Properties:
 - Progress uses local Tauri events, not Mercure.
 - Completion returns directly through the Tauri command.
 - The lookup remains usable when server-side live trading and Mercure are unavailable.
-- League comes from the server-authoritative league status under the league SSOT design.
+- League comes from the Rust-owned SSOT slice, resolved from server status.
+  The queue captures that league before waiting and refuses an unresolved league.
 
 ### Manual lookup
 
@@ -157,6 +158,14 @@ This is the second automatic path through the native lookup, and it is not gover
 
 **Current behavior:** Successful native lookups make a best-effort, fire-and-forget server submission.  
 **Target behavior:** Durable, idempotent, authenticated contribution as described below.
+
+**Current league admission (verified 2026-11-02):**
+[ADR-009](adr/009-league-scoped-repository-convention.md#amended-2026-11-01-poe-117-admission-and-desktop-league-ownership)
+owns the exact-name admission and resolver contract. Submission checks league
+immediately after decode, before name validation or side effects: absent identity
+returns 400, a mismatch returns 409 with `error: league_mismatch` and the active
+league. The native submitter treats 409 as terminal and triggers status
+reconciliation; it does not relabel or replay the outgoing result.
 
 Contribution is a separate persisted opt-in, disabled by default; it is not implied by enabling automatic stale refresh. When the user enables it, every successful native lookup should be contributed to the server so other users and analysis can benefit from a fresher shared pool.
 
@@ -402,7 +411,7 @@ The native desktop's own opt-in automatic stale refresh is a separate workflow. 
 
 ## 7. Shared cache lifecycle
 
-The target shared-cache key is:
+The current shared-cache identity is:
 
 ```text
 (league, gem, variant)
@@ -447,18 +456,29 @@ See tracker item `POE-118` (Mercure lifecycle reliability and event coordination
 
 ## 9. League rollover behavior
 
-All shared market and trade data is league-scoped.
+**Current behavior, verified 2026-11-02:** Shared market and trade data is
+league-scoped. The server retains its boot scope until restart; the desktop
+reconciles its Rust league holder through server status.
 
 During rollover:
 
-- Desktop obtains the new league from server status before enabling lookup actions.
-- Native desktop contributions identify the exact league/revision.
+- Native lookup refuses an unresolved league; trade links also wait for resolution.
+- Native desktop contributions identify the captured league name; desktop
+  status/admission revision comparison remains deferred under ADR-009.
 - Server rejects contributions or events from a different active league.
 - Cache warming selects only the active league.
 - Collector poe.ninja requests use the database-authoritative active league.
 - Optional server Trade Gate and cadence use the same active league.
 
-See tracker item `POE-117` (League SSOT, historical isolation, and safe rollover CLI).
+On a league generation change, the comparator clears outgoing view state and
+fences untagged native queue progress. Direct results also require the current
+request generation, league and selected variant. Trade links remain unavailable
+until a league is resolved.
+
+The accepted boundaries live in [ADR-009](adr/009-league-scoped-repository-convention.md)
+and [ADR-011](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-as-a-dump.md);
+the operational CLI and writer-fence order live in the
+[league runbook](LEAGUE-SCHEMA-MIGRATION-RUNBOOK.md).
 
 ## 10. Failure behavior
 

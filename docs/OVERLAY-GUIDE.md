@@ -93,6 +93,12 @@ shared widget host maps forwarded coordinates with `cssHotPoint` and
 `data-action` metadata; the host claims each marked element rather than a band
 measured from a window edge.
 
+The accepted action-dispatch boundary is recorded in
+[ADR-029](adr/029-overlay-widget-action-boundary.md).
+Current native setup behavior (verified 2026-11-02): a window that disappears
+during the click-through setup delay still returns the `window-gone` failure,
+but logs at Info; other setup failures log at Error.
+
 The hook pairs button-up with button-down: it consumes a release only when it
 consumed the matching press, so a drag that started on the game keeps its
 release. Two overlapping windows are resolved by **the most recently shown
@@ -520,16 +526,10 @@ the timer, compass, path-strip and comparator widgets.
   centre for the same host-only reason, states it explicitly. What the rule does NOT bind is a rectangle the USER owns — a
   stored placement, or the registry default `placementFor` falls back to. Those
   are visible, attributable and one drag from fixed; see ADR-019's carve-out.
-- `WidgetHost.svelte` owns placement and hot rects, provides the `WIDGET_ACTIONS`
-  Svelte context, and forwards its window-scoped clicks to `createWidgetActions`'s
-  `dispatch`. The DOM-free `widget-actions.ts` owns action resolution, metadata
-  reads and the inclusive hit-to-target `:disabled` guard. Placed and anchored
-  wrappers carry `data-widget`; each widget registers its own action map, and
-  `WidgetActions.svelte` registers route-level maps such as the temple probe.
-  Config mode suppresses widget actions and interaction hooks; the config bar's
-  native Save/Cancel remain independent. Otherwise interaction runs before the
-  disabled guard, so loot's disabled Save still touches without saving. Any
-  `data-hot` element is claimed; a window with no such content is display-only.
+- `WidgetHost.svelte` owns placement and hot rects. Its forwarded action
+  boundary and per-widget registrations follow
+  [ADR-029](adr/029-overlay-widget-action-boundary.md).
+  Any `data-hot` element is claimed; a window with no such content is display-only.
 - **Hot rects and `has_content` are one declaration, not two.** `hit_test` skips
   a window whose `has_content` is false before it reads a single rect, and the
   flag starts false, so `use-hot-rects.ts` sets it from the rects' emptiness —

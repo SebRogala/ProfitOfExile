@@ -24,8 +24,12 @@ the language-pack warning, follow the
   architect choices, including room value, reasoning, and gamble risk.
 - **Mercenaries (beta)** — Reads a recruit window and shows a verdict per
   community guide ruleset, with optional live trade checks.
-- **Currency Exchange (beta)** — Ranks arbitrage routes from GGG's public
+- **Boss loot (beta)** — Captures ground labels for a boss run, lets you
+  correct the drops, and compares your recorded drop rates with collective data.
+- **Currency Exchange Flipping (beta)** — Ranks arbitrage routes from GGG's public
   currency-exchange feed and derives a worthwhile trade size.
+- **Currency Exchange Companion (beta)** — Converts chaos and divine amounts
+  using the shared market rate.
 - **Harvest Flipping (beta)** — For Delirium Orbs, Essences, Fossils,
   Astrolabes, Oils and Catalysts: which types to keep, which to reroll with
   lifeforce, what a reroll is worth, and a stash-search regex for each side.
@@ -108,6 +112,8 @@ Everything runs in Docker — no local Go/Node tooling needed.
 make up          # Start app, frontend, desktop (Go + SvelteKit with hot reload); never the collector
 make up-collector  # Opt-in: start the collector (polls poe.ninja + GGG trade)
 make test        # Run all Go tests
+make test-league-rollover     # Docker stale-contribution proof; leased lane DB required
+make worktree-create LANE=laneexample BASE=dev   # Provision an isolated lane
 make migration name=add_foo   # Generate new migration pair
 ```
 

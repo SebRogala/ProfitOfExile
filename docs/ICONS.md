@@ -5,6 +5,11 @@ the HTTP icon routes, embedded source maps, cache layout, and cache seeding.
 Static UI art bundled with the desktop app (nav icons) is sourced per
 [Game art sourcing](GAME-ART-SOURCING.md).
 
+Boss loot uses the bundled `/boss-loot-icon.png`; Currency Exchange Companion
+uses `/faustus-icon.png`. Their shipped provenance is recorded in
+[Game art sourcing](GAME-ART-SOURCING.md#shipped-icons-and-their-sources),
+separately from the HTTP item-icon cache below (verified 2026-11-02).
+
 ## Routes and cache layout
 
 The canonical route is:

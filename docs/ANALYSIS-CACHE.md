@@ -1,7 +1,7 @@
 # The In-Memory Analysis Cache
 
 **Status:** Current  
-**Last verified:** 2026-08-04  
+**Last verified:** League tenancy and rollover 2026-11-02; other sections retain their earlier verification dates.
 **Canonical for:** How `lab.Cache` is populated, served, and safely written, including the sparkline series cache.
 
 `internal/lab.Cache` holds pre-computed analysis results in memory so the HTTP
@@ -325,15 +325,18 @@ transiently, twice per tick.
 immutable (`internal/league/league.go`). `LeagueEventGuard` only rejects
 mismatched incoming Mercure events; it cannot switch a live cache's league.
 
-Per ADR-011 the outgoing league's scoped tables are truncated at rollover, and
-because scope is process-fixed, rollover requires a **server restart**, which
-constructs a fresh `NewCache(scope)`. There is no stale-data leak path today and
-no field needs explicit clearing.
+Rollover requires a **server restart**, which constructs a fresh
+`NewCache(scope)`. The server holds its own process-lifetime writer fence;
+the stop, archive, activate, wipe and restart order lives in the
+[league runbook](LEAGUE-SCHEMA-MIGRATION-RUNBOOK.md#phase-b--activate-wipe-and-restart-at-league-start).
+[ADR-011](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-as-a-dump.md)
+defines the wipe set and its retained aggregate and boss-observation exceptions.
 
 The practical consequence for time-series fields: on a fresh post-rollover
 process `gem_snapshots` is empty, so sparklines are empty or short for the first
 hours of a new league. That is the same cold-start shape every other cache field
 has.
 
-If in-process league switching lands (POE-121), `internal/server/league_events.go`
-and `Cache.For` are the places that change.
+Cold-start trade warming also passes the boot scope to `LatestLookups` and
+`tradeCache.For(scope).Warm`. Desktop reconciliation changes the desktop's
+league holder; it does not switch this server process's cache tenancy.
