@@ -57,8 +57,10 @@ the timing and stand-down model.
 `mercenary::run::LoopState` chooses read plans and cadence;
 `mercenary::read` builds and merges the capture. While a live capture still
 needs reads, detection runs at the two-second cadence. A complete or
-budget-spent capture uses the ten-second liveness cadence without re-reading
-its fields. Hover checks run on their own 400 ms cadence. Shipped:
+budget-spent capture uses the ten-second liveness cadence without pass-2 row
+or skill/support-cell re-reading. Pass 1 still reads the crop's chrome/header
+and can fill unresolved header fields; resolved header fields remain kept.
+Hover checks run on their own 400 ms cadence. Shipped:
 `2f53ee61`; geometry/read separation retained in `a9d6612a`.
 
 Two consecutive counted misses retire a live capture and reset its read budget;

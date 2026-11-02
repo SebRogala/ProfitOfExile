@@ -32,13 +32,15 @@ The module's work flag is `boss_loot`; its widget window is `loot`.
 `loot_capture::capture_rect` defines the cursor-relative crop; this manual
 capture does not use a standing Temple/Merc placement. The `loot` window is
 excluded while grabbing under [ADR-023](adr/023-a-window-excluded-from-the-grab-may-cover-what-its-module-reads.md).
-Shipped: `139a67ba` (capture), `93b428e2` (native overlay binding).
+Shipped: `139a67ba` (capture), `892d997a` (capture exclusion and module shell),
+`93b428e2` (native overlay binding).
 
 ## Confirmation and profiles
 
 The confirmation supports grid and list layouts. `loot.capture` is anchored;
 `loot.confirmation` is placeable. Independent Show flags and Configure use the
-shared widget host. Shipped: `4efedaef`, `93b428e2`.
+shared widget host. Shipped: `4efedaef` (confirmation layouts), `892d997a`
+(registry, Show flags and Configure integration), `93b428e2` (native binding).
 
 **A7 — correction:** clicking an already selected unique unmarks it, including
 an OCR selection. Required-group validation can then pause saving until the
@@ -104,8 +106,6 @@ all 78 runs in one transaction and refuses an existing device/profile history.
 The importer preserves day precision in source metadata rather than inventing
 an observed capture time. Shipped: `88929d35`.
 
-Apply migration `20261101180000_create_boss_loot_runs` before the import; import
-into the intended historical league before validating the seeded statistics.
-Deploy and verify the server API before releasing the desktop that uses it.
-[Deployment](DEPLOY.md#boss-loot-release-order) owns the release ordering.
+[Deployment](DEPLOY.md#boss-loot-release-order) owns migration, import and
+server/desktop release ordering.
 Schema shipped: `a5594665`; importer shipped: `88929d35`.
