@@ -25,7 +25,7 @@ describe('Results', () => {
 		const view = buildResultsView({ ...await input(), sort: 'name' })
 		expect(view.groups.map((group) => group.items.map((item) => item.name))).toEqual([
 			['Bitterbind Point', 'Cane of Kulemak', 'Cinderswallow Urn', 'The Devouring Diadem', "The Queen's Hunger", 'Spinehail'],
-			['Allflame Ember of Kulemak', 'Communion Support', "Keeper's Corruption", "Nook's Crown", 'Veiled Exalted Orb', "Zorath's Eye of the Endless"]
+			['Allflame Ember of Kulemak', 'Communion Support', "Nook's Crown", 'Veiled Exalted Orb', "Zorath's Eye of the Endless"]
 		])
 	})
 	it('does not partition currently not-counted rows when sorting rates', async () => {
@@ -35,8 +35,10 @@ describe('Results', () => {
 		expect(rows[0]).toMatchObject({ name: "Zorath's Eye of the Endless", disabled: true, rate: '—', drops: null })
 	})
 	it('breaks tied rates by item name', async () => {
-		expect(buildResultsView(await input()).groups[1].items.slice(-2).map((item) => item.name))
-			.toEqual(["Keeper's Corruption", "Nook's Crown"])
+		const state = await input()
+		state.stats.items['Metadata/Items/DivinationCards/DivinationCardNooksCrown'].drops = 1
+		expect(buildResultsView(state).groups[1].items.slice(-2).map((item) => item.name))
+			.toEqual(['Communion Support', "Nook's Crown"])
 	})
 	for (const scope of ['own', 'collective'] as const) {
 		it(`shows mixed eligible provenance for ${scope}`, async () => {
@@ -95,13 +97,13 @@ describe('CSV', () => {
 		const run: StoredRun = { ...profile, id: 'row', league: 'test', run: 8, date: null, seed: null,
 			version: 1, items: { quantities: { 'Cane of Kulemak': 1, 'Communion Support': 3 }, counted: [] } }
 		const csv = runsCsv(profile, [run])
-		expect(csv.split('\r\n')[0]).toBe('Run,Date,Cinderswallow Urn,Spinehail,Cane of Kulemak,The Devouring Diadem,Bitterbind Point,The Queen\'s Hunger,Zorath\'s Eye of the Endless,Veiled Exalted Orb,Allflame Ember of Kulemak,Communion Support,Nook\'s Crown,Keeper\'s Corruption')
+		expect(csv.split('\r\n')[0]).toBe('Run,Date,Cinderswallow Urn,Spinehail,Cane of Kulemak,The Devouring Diadem,Bitterbind Point,The Queen\'s Hunger,Zorath\'s Eye of the Endless,Veiled Exalted Orb,Allflame Ember of Kulemak,Communion Support,Nook\'s Crown')
 	})
 	it('exports hidden historical quantities independently of current eligibility', async () => {
 		const { profile } = await input()
 		const run: StoredRun = { ...profile, id: 'row', league: 'test', run: 8, date: null, seed: null,
 			version: 1, items: { quantities: { 'Cane of Kulemak': 1, 'Communion Support': 3 }, counted: [] } }
-		expect(runsCsv(profile, [run]).split('\r\n')[1]).toBe('8,,0,0,1,0,0,0,0,0,0,3,0,0')
+		expect(runsCsv(profile, [run]).split('\r\n')[1]).toBe('8,,0,0,1,0,0,0,0,0,0,3,0')
 	})
 })
 
@@ -172,7 +174,8 @@ describe('Runs projection', () => {
 })
 
 describe('Runs editor projection', () => {
-	it.each(['Metadata/Items/Currency/AstrolabeGeneric', 'category:catarina:1:rare-two-veiled-modifiers'])(
+	it.each(['Metadata/Items/Currency/AstrolabeGeneric', 'category:catarina:1:rare-two-veiled-modifiers',
+		'Metadata/Items/DivinationCards/DivinationCardKeepersCorruption'])(
 		'preserves removed key %s outside the editable rows', async (key) => {
 			const { profile, runs } = await runInput(8)
 			const run = runs.items[0]
@@ -222,7 +225,7 @@ describe('Settings projection', () => {
 		const settings = await createFixtureModuleSettings(source.moduleSettings).load()
 		expect(buildSettingsView(profile, settings).notCounted.map((item) => [item.name, item.checked])).toEqual([
 			["Zorath's Eye of the Endless", false], ['Veiled Exalted Orb', false], ['Allflame Ember of Kulemak', false],
-			['Communion Support', true], ["Nook's Crown", false], ["Keeper's Corruption", false]
+			['Communion Support', true], ["Nook's Crown", false]
 		])
 	})
 })

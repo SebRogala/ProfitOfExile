@@ -105,12 +105,6 @@
      "name": "Nook's Crown",
      "base": "Divination card",
      "wikiRate": "<0.5%"
-    },
-    {
-     "id": "keepers",
-     "name": "Keeper's Corruption",
-     "base": "Divination card",
-     "wikiRate": "—"
     }
    ],
    "categories": []

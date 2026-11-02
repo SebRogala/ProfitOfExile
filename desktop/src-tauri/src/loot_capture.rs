@@ -645,6 +645,15 @@ mod owner_tests {
         owner.ready(id, None, 1, settings, 0);
         (Mutex::new(owner), id)
     }
+    #[test]
+    fn keepers_corruption_ocr_is_reported_as_unknown() {
+        let s = LootSettings::default();
+        let (owner, _) = pending_with_ocr(&s, &["Serpentine Staff", "Keeper's Corruption"]);
+        let owner = owner.lock().unwrap();
+        let capture = owner.pending.as_ref().unwrap();
+        assert_eq!(capture.unknown_lines, ["Keeper's Corruption"]);
+        assert_eq!(capture.incoming, selection(&[("Cane of Kulemak", 1)]));
+    }
     #[derive(Default)]
     struct Http {
         requests: Mutex<Vec<SubmitRun>>,

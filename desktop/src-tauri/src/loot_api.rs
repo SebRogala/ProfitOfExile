@@ -284,7 +284,7 @@ mod tests {
         let output = csv(p, &[run(79)]);
         let lines: Vec<_> = output.lines().collect();
         assert!(lines[0].starts_with("Run,Date,Seed,\"Cinderswallow Urn\",\"Spinehail\",\"Cane of Kulemak\""));
-        assert!(lines[0].ends_with("\"Keeper's Corruption\""));
+        assert!(lines[0].ends_with("\"Nook's Crown\""));
         assert!(lines[1].starts_with("79,\"\",\"42\",,,1,"));
         assert_eq!(lines.len(), 2);
     }

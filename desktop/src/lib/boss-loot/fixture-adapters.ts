@@ -26,7 +26,7 @@ const CATARINA_KEYS: Record<string, string> = {
 	communion: 'Communion Support',
 	astrolabe: 'Metadata/Items/Currency/AstrolabeGeneric',
 	nooks: 'Metadata/Items/DivinationCards/DivinationCardNooksCrown',
-	keepers: 'Metadata/Items/DivinationCards/DivinationCardKeepersCorruption',
+	keepers: 'Metadata/Items/DivinationCards/DivinationCardKeepersCorruption', // Historical only; absent from the current profile.
 	rareveiled: 'category:catarina:1:rare-two-veiled-modifiers'
 }
 

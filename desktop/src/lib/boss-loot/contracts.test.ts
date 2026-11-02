@@ -105,8 +105,7 @@ describe('original fixture meanings', () => {
 		expect(catarina.extra.map((item) => item.id)).toEqual([
 			eye, 'Metadata/Items/Currency/CurrencyRerollRareVeiled',
 			'Metadata/Items/MapFragments/BetrayalAllflamePack', 'Communion Support',
-			'Metadata/Items/DivinationCards/DivinationCardNooksCrown',
-			'Metadata/Items/DivinationCards/DivinationCardKeepersCorruption'
+			'Metadata/Items/DivinationCards/DivinationCardNooksCrown'
 		])
 	})
 
@@ -117,7 +116,7 @@ describe('original fixture meanings', () => {
 
 	it('preserves wiki text without parsing it', async () => {
 		const [catarina] = await createFixtureProfiles(source.profiles).load()
-		expect(catarina.extra.map((item) => item.wikiRate)).toEqual(['~50%', '25%', '60%', '10%', '<0.5%', '—'])
+		expect(catarina.extra.map((item) => item.wikiRate)).toEqual(['~50%', '25%', '60%', '10%', '<0.5%'])
 	})
 
 	it('retains the seed as the original string', async () => {

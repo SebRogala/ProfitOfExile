@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn removed_catarina_entries_stay_unknown() {
         let profile = &built_in_profiles()[0];
-        for text in ["Templar Astrolabe", "Rare, two veiled modifiers"] {
+        for text in ["Templar Astrolabe", "Rare, two veiled modifiers", "Keeper's Corruption"] {
             assert_eq!(profile.match_line(text), LineMatch::Unknown, "{text}");
         }
     }
@@ -420,7 +420,6 @@ fn catarina() -> LootProfile {
             catalogue_item("Metadata/Items/MapFragments/BetrayalAllflamePack", "Allflame Ember", "60%"),
             communion,
             catalogue_item("Metadata/Items/DivinationCards/DivinationCardNooksCrown", "Divination card", "<0.5%"),
-            catalogue_item("Metadata/Items/DivinationCards/DivinationCardKeepersCorruption", "Divination card", "—"),
         ],
         categories: vec![],
     }
