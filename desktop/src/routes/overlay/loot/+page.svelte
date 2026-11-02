@@ -7,6 +7,7 @@
 	import { createNativeCapture, createNativeSubmit, createNativeProfiles, createNativeStats, mapNativeOverlay, shortcutLabel } from '$lib/boss-loot/native-adapters'
 	import { bossLootIcon } from '$lib/boss-loot/art'
 	import { ssot } from '$lib/stores/ssot.svelte'
+	import { initStatusStore } from '$lib/stores/status.svelte'
 	import type { BossProfile, BossStats, StatsScope } from '$lib/boss-loot/contracts'
 
 	const captures = createNativeCapture()
@@ -30,6 +31,18 @@
 		console.error(msg)
 		void invoke('app_log_from_frontend', { msg }).catch((error) => console.error('[loot] log failed:', error))
 	}
+	$effect(() => {
+		// This WebView needs the same saved server URL as the main window's icon resolver.
+		let disposed = false
+		let cleanup: (() => void) | undefined
+		untrack(() => {
+			void initStatusStore().then((stop) => {
+				if (disposed) stop()
+				else cleanup = stop
+			}).catch(report)
+		})
+		return () => { disposed = true; cleanup?.() }
+	})
 	$effect(() => {
 		let disposed = false
 		untrack(() => {
