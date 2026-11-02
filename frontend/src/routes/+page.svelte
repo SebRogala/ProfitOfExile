@@ -1183,7 +1183,9 @@ Get-WindowsCapability -Online | Where-Object &#123; $_.Name -Like 'Language.OCR*
 	}
 
 	.step-img {
-		width: 100%;
+		width: auto;
+		max-width: 100%;
+		height: auto;
 		border: 1px solid rgba(201, 170, 113, 0.15);
 		border-radius: 4px;
 		transition: transform 0.2s;
