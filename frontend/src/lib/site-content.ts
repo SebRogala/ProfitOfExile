@@ -146,6 +146,20 @@ export const modules: Module[] = [
 		],
 	},
 	{
+		id: 'exchange-companion',
+		name: 'Currency Exchange Companion',
+		status: 'beta',
+		tagline: 'Buying or selling on the Currency Exchange: turn a ratio into whole orders.',
+		trigger: 'None — enter your amount and ratio on the page.',
+		reads: 'Nothing on your screen.',
+		gives: [
+			'Totals in chaos and divine, with a whole divine-and-chaos split.',
+			'Nearest whole-number undercuts or outbids, with copyable I want and I have values.',
+			'Buying budget mode: how many items fit, what the order costs, and what is left.',
+		],
+		screenshots: [],
+	},
+	{
 		id: 'harvest',
 		name: 'Harvest Flipping',
 		status: 'beta',
