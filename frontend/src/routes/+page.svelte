@@ -145,7 +145,7 @@
 	<meta property="og:image" content={CARD_IMAGE} />
 	<meta property="og:image:width" content="1200" />
 	<meta property="og:image:height" content="630" />
-	<meta property="og:image:alt" content="ProfitOfExile: Lab Farming Dashboard rankings, Temple of Atzoatl and mercenary overlays for Path of Exile" />
+	<meta property="og:image:alt" content="ProfitOfExile: Lab Farming Dashboard rankings, Temple and mercenary overlays for Path of Exile" />
 	<meta name="twitter:card" content="summary_large_image" />
 	<!-- A literal <script> tag inside <svelte:head> is compiled as component
 	     code, so the JSON-LD goes in as markup. The content is our own strings;
@@ -393,7 +393,7 @@
 				<div class="transparency-item">
 					<span class="transparency-label">4. Price Data from poe.ninja and GGG's Exchange Feed</span>
 					<p>Gem and currency prices come from <a href="https://poe.ninja" target="_blank" rel="noopener">poe.ninja</a>
-						&mdash; a third-party community aggregator; Currency Exchange plays come from GGG's public currency-exchange feed.
+						&mdash; a third-party community aggregator; Currency Exchange Flipping plays come from GGG's public currency-exchange feed.
 						The ProfitOfExile server fetches both periodically, not the desktop app directly. Nothing scrapes the Path of
 						Exile website.</p>
 				</div>

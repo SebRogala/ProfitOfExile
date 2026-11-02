@@ -68,7 +68,7 @@ export const modules: Module[] = [
 	},
 	{
 		id: 'temple',
-		name: 'Temple of Atzoatl',
+		name: 'Temple',
 		status: 'available',
 		tagline: "Alva's incursions: which architect to kill and which door to open.",
 		trigger: "Alva's start line (\"Time to go\"), from Client.txt; any other Alva line or a zone change stands it down. The read needs the sheet on screen, so you open it yourself: inside the incursion, press the league button (V by default) — the game pauses while it is open, so it costs you nothing.",
@@ -109,7 +109,7 @@ export const modules: Module[] = [
 	},
 	{
 		id: 'boss-loot',
-		name: 'Boss Loot',
+		name: 'Boss loot',
 		status: 'beta',
 		tagline: 'Record boss drops and compare your drop rates with collective data.',
 		trigger: 'Shift + right click by default (change it in settings), with the game in the foreground in a supported boss area. Currently supports Catarina.',
@@ -122,13 +122,13 @@ export const modules: Module[] = [
 			{
 				src: '/module-boss-loot-overlay.webp',
 				alt: 'Catarina run 3 confirmation overlay beside ground item labels: item icons, selected Bitterbind Point and Zorath’s Eye of the Endless, per-item drop rates over eligible runs, a saving countdown and Save now button',
-				caption: 'Boss Loot confirmation — Catarina run 3, selected drops and your recorded drop rates',
+				caption: 'Boss loot confirmation — Catarina run 3, selected drops and your recorded drop rates',
 			},
 		],
 	},
 	{
 		id: 'exchange',
-		name: 'Currency Exchange',
+		name: 'Currency Exchange Flipping',
 		status: 'beta',
 		tagline: 'Arbitrage flips on the in-game Currency Exchange, ranked.',
 		trigger: "None — the server ranks plays from GGG's public currency-exchange feed.",
@@ -141,7 +141,7 @@ export const modules: Module[] = [
 			{
 				src: '/module-exchange-page.webp',
 				alt: 'Ranked plays table: per row the mode, what you spend, the buy, sell and convert steps, what you get back, and investment beside ROI, expected ROI and ROI percent',
-				caption: 'Currency Exchange page — plays ranked, each one spend → buy → sell → convert → get',
+				caption: 'Currency Exchange Flipping page — plays ranked, each one spend → buy → sell → convert → get',
 			},
 		],
 	},
