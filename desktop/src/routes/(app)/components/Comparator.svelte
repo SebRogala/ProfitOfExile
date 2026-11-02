@@ -521,14 +521,6 @@
 										{:else}
 											<button class="trade-action-btn" class:trade-refresh-stale={tradeStaleness(gem.name) !== 'normal'} class:trade-refresh-error={tradeError[gem.name]} onclick={() => refreshTradeData(gem.name)} title={tradeError[gem.name] ? (tradeErrorMsg[gem.name] ?? 'Rate limited — click to retry') : 'Refresh trade data'}>&#8635;</button>
 										{/if}
-										{#if gem.name.includes(' of ')}
-											{@const url = baseGemTradeUrl(gem.name, variant, ssot.league)}
-											{#if url}
-												<a class="trade-action-btn trade-base-link" href={url} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Base</a>
-											{:else}
-												<span class="trade-action-btn trade-base-disabled" aria-disabled="true" title="League not detected — trade link unavailable">Base</span>
-											{/if}
-										{/if}
 									</span>
 								</div>
 								{#if listed}
@@ -540,6 +532,19 @@
 										{/snippet}
 									</TradeListings>
 								{/if}
+							</div>
+						{/if}
+						<!-- Buying a base needs the selected market, even when no trade cache is accepted. -->
+						{#if gem.name.includes(' of ')}
+							{@const url = baseGemTradeUrl(gem.name, variant, ssot.league)}
+							<div class="trade-meta-row">
+								<span class="trade-meta-right">
+									{#if url}
+										<a class="trade-action-btn trade-base-link" href={url} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Base</a>
+									{:else}
+										<span class="trade-action-btn trade-base-disabled" aria-disabled="true" title="League not detected — trade link unavailable">Base</span>
+									{/if}
+								</span>
 							</div>
 						{/if}
 					</div>

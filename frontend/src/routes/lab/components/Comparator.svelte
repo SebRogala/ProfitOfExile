@@ -720,14 +720,6 @@
 									{/if}
 									<span class="trade-actions">
 										<span class="trade-cache-age" class:trade-cache-stale={isTradeCacheStale(gem.name)} title="Time since last trade lookup">{tradeCacheAgeStr(gem.name)}</span>
-										{#if gem.name.includes(' of ')}
-											{@const url = baseGemTradeUrl(gem.name, variant, league)}
-											{#if url}
-												<a class="trade-action-btn trade-base-link" href={url} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Buy Base</a>
-											{:else}
-												<span class="trade-action-btn trade-base-disabled" aria-disabled="true" title="League not detected — trade link unavailable">Buy Base</span>
-											{/if}
-										{/if}
 									</span>
 								</div>
 								{#if listed}
@@ -756,6 +748,19 @@
 										{/each}
 									</div>
 								{/if}
+							</div>
+						{/if}
+						<!-- Buying a base needs the selected market, even when no trade cache is accepted. -->
+						{#if gem.name.includes(' of ')}
+							{@const url = baseGemTradeUrl(gem.name, variant, league)}
+							<div class="trade-meta-row">
+								<span class="trade-actions">
+									{#if url}
+										<a class="trade-action-btn trade-base-link" href={url} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Buy Base</a>
+									{:else}
+										<span class="trade-action-btn trade-base-disabled" aria-disabled="true" title="League not detected — trade link unavailable">Buy Base</span>
+									{/if}
+								</span>
 							</div>
 						{/if}
 					</div>
