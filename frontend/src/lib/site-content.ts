@@ -156,6 +156,7 @@ export const modules: Module[] = [
 			'Totals in chaos and divine, whole split, and item amount with Copy; decimal inputs accept a comma or dot.',
 			'Nearest whole-number undercuts or outbids, with copyable I want and I have values.',
 			'Buying budget mode: how many items fit, what the order costs, and what is left.',
+			'Coming soon: OCR that captures the selected items and rates, with an overlay helper.',
 		],
 		screenshots: [
 			{
