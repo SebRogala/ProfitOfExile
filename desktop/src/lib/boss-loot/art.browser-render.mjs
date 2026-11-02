@@ -14,7 +14,7 @@ import {bossLootIcon} from './src/lib/boss-loot/art';
 import {createFixtureProfiles} from './src/lib/boss-loot/fixture-adapters';
 import fixture from './src/lib/boss-loot/__fixtures__/boss-loot.json';
 const profile=(await createFixtureProfiles(fixture.profiles).load())[0];
-// A12 asks for all 13 named items from the original handoff, including the retired Astrolabe.
+// A12 supervisor override retains retired Astrolabe coverage after A13 removes Keeper's Corruption.
 profile.extra.push({id:'Metadata/Items/Currency/AstrolabeGeneric',name:'Templar Astrolabe',base:'Astrolabe',wikiRate:'—'});
 const items=[...profile.groups.flatMap(g=>g.items),...profile.extra];
 window.handlers={};window.errors=[];

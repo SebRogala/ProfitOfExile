@@ -18,7 +18,6 @@ const expected = {
  'Metadata/Items/Currency/CurrencyRerollRareVeiled': 'currency-exchange/Metadata%2FItems%2FCurrency%2FCurrencyRerollRareVeiled',
  'Metadata/Items/MapFragments/BetrayalAllflamePack': 'currency-exchange/Metadata%2FItems%2FMapFragments%2FBetrayalAllflamePack',
  'Metadata/Items/DivinationCards/DivinationCardNooksCrown': 'currency-exchange/Metadata%2FItems%2FDivinationCards%2FDivinationCardNooksCrown',
- 'Metadata/Items/DivinationCards/DivinationCardKeepersCorruption': 'currency-exchange/Metadata%2FItems%2FDivinationCards%2FDivinationCardKeepersCorruption',
  'Metadata/Items/Currency/AstrolabeGeneric': 'currency-exchange/Metadata%2FItems%2FCurrency%2FAstrolabeGeneric'
 }
 const assets = new Map()
@@ -70,16 +69,16 @@ try {
  await call('Page.enable')
  await call('Emulation.setDeviceMetricsOverride', { width: 1000, height: 1050, deviceScaleFactor: 1, mobile: false })
  await call('Page.navigate', { url: origin })
- await until(`window.ready === true && document.querySelectorAll('[data-action="loot.toggle"]').length === 13`)
+ await until(`window.ready === true && document.querySelectorAll('[data-action="loot.toggle"]').length === 12`)
  // No event is delivered: startup must read saved settings in this WebView.
  await evaluate('window.deliverStatus?.(); new Promise(resolve=>setTimeout(resolve,100))')
- assert.deepEqual(await readIcons(), urls(origin), 'all 13 overlay URLs use the saved server')
+ assert.deepEqual(await readIcons(), urls(origin), 'all 12 overlay URLs use the saved server')
  assert.deepEqual((await evaluate('window.renderResults()')).sort(), [...Object.values(urls(origin)), ...Object.values(urls(origin))].sort(), 'both main-window Results layouts render the independent expected URLs')
- console.log('PASS: 13 item URLs match the saved server on both surfaces after delayed startup')
- await until('[...document.querySelectorAll("img")].length === 13 && [...document.querySelectorAll("img")].every(i=>i.complete && i.naturalWidth>0)')
+ console.log('PASS: 12 item URLs match the saved server on both surfaces after delayed startup')
+ await until('[...document.querySelectorAll("img")].length === 12 && [...document.querySelectorAll("img")].every(i=>i.complete && i.naturalWidth>0)')
  assert.equal(await evaluate('document.querySelectorAll(".item-icon-fallback").length'), 0)
  fs.writeFileSync(`${evidence}/overlay-icons.png`, Buffer.from((await call('Page.captureScreenshot', { format: 'png' })).data, 'base64'))
- console.log('PASS: 13 real item images decoded; screenshot captured')
+ console.log('PASS: 12 real item images decoded; screenshot captured')
  await evaluate(`window.handlers['status-changed']({payload:{server_url:${JSON.stringify(origin + '/changed')}}})`)
  await until(`document.querySelector('img')?.src.startsWith(${JSON.stringify(origin + '/changed')})`)
  assert.deepEqual(await readIcons(), urls(origin + '/changed'))
