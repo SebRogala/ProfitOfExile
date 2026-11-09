@@ -43,6 +43,22 @@ pub struct Capture {
     /// POE-268 treats the capture as fullscreen, so this is always the whole
     /// image. POE-272 will add the live client offset for windowed support.
     pub client: [i32; 4],
+    /// Where this grab's time went, for callers that log their own stages.
+    pub timing: GrabTiming,
+}
+
+/// One `capture_screen` call split into its phases, in ms.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct GrabTiming {
+    /// HWND lookups (an event-loop round trip each) plus setting
+    /// `WDA_EXCLUDEFROMCAPTURE` on the listed overlays.
+    pub exclude_ms: u32,
+    /// The xcap copy of the whole monitor.
+    pub grab_ms: u32,
+    /// Clearing the affinity again.
+    pub restore_ms: u32,
+    /// The whole call, monitor lookup included.
+    pub call_ms: u32,
 }
 
 /// The display the GAME is drawn on, as the focus poller last resolved it
@@ -95,7 +111,8 @@ pub fn get_game_monitor(state: tauri::State<crate::AppState>) -> Option<GameMoni
 
 #[cfg(windows)]
 mod platform {
-    use super::{Capture, GameMonitor};
+    use super::{Capture, GameMonitor, GrabTiming};
+    use std::time::Instant;
     use image::DynamicImage;
     use tauri::{AppHandle, Emitter, Manager};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -229,6 +246,7 @@ mod platform {
     /// Cleared, and therefore logged, ONCE: the following captures read `None`
     /// and take the primary without a word.
     pub fn capture_screen(app: &AppHandle) -> Result<Capture, String> {
+        let call_started = Instant::now();
         let target = *app
             .state::<crate::AppState>()
             .game_monitor
@@ -258,16 +276,23 @@ mod platform {
 
         let monitor_id = monitor.id();
         let origin = (monitor.x(), monitor.y());
-        let img = {
-            // Held for exactly this copy — see `EXCLUDED_WHILE_GRABBING`.
-            let _excluded = ExcludedFromCapture::hold(app);
-            monitor
-                .capture_image()
-                .map_err(|e| format!("Screen capture failed: {}", e))?
-        };
+        let ms = |since: Instant| since.elapsed().as_millis() as u32;
+        let mut timing = GrabTiming::default();
+        // Held for exactly this copy — see `EXCLUDED_WHILE_GRABBING`.
+        let phase = Instant::now();
+        let excluded = ExcludedFromCapture::hold(app);
+        timing.exclude_ms = ms(phase);
+        let phase = Instant::now();
+        let grabbed = monitor.capture_image();
+        timing.grab_ms = ms(phase);
+        let phase = Instant::now();
+        drop(excluded);
+        timing.restore_ms = ms(phase);
+        timing.call_ms = ms(call_started);
+        let img = grabbed.map_err(|e| format!("Screen capture failed: {}", e))?;
 
         let client = [0, 0, img.width() as i32, img.height() as i32];
-        Ok(Capture { image: DynamicImage::ImageRgba8(img), monitor_id, origin, client })
+        Ok(Capture { image: DynamicImage::ImageRgba8(img), monitor_id, origin, client, timing })
     }
 
     /// The primary display, or any display at all — the pre-POE-237 target,

@@ -505,6 +505,7 @@ pub fn spawn_hotkey_poller(app: tauri::AppHandle, cancel: tokio::sync::watch::Re
 #[cfg(windows)]
 mod platform {
     use super::*;
+    use std::cell::{Cell, RefCell};
     fn cursor() -> Option<(i32, i32)> {
         let mut p = windows::Win32::Foundation::POINT::default();
         unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut p) }.ok()?;
@@ -538,18 +539,48 @@ mod platform {
             Ok(id) => id, Err(error) => { crate::app_log(app, error); crate::ssot::emit_ssot(app); return; }
         };
         crate::ssot::emit_ssot(app);
+        let grab = Cell::new(crate::capture::GrabTiming::default());
+        let (crop_ms, preprocess_ms) = (Cell::new(0), Cell::new(0));
+        let ocr_ms = RefCell::new(Vec::new());
+        let sizes = Cell::new(((0, 0), (0, 0)));
+        let started = Instant::now();
         let result = read_capture(
             || !work_cancelled(cancel),
             || {
                 let shot = crate::capture::capture_screen(app)?;
+                grab.set(shot.timing);
+                let stage = Instant::now();
                 let rect = capture_rect((cur.0 - shot.origin.0, cur.1 - shot.origin.1), (shot.image.width(), shot.image.height()));
                 let crop = shot.image.crop_imm(rect[0] as u32, rect[1] as u32, rect[2] as u32, rect[3] as u32);
+                crop_ms.set(stage.elapsed().as_millis());
+                sizes.set(((shot.image.width(), shot.image.height()), (crop.width(), crop.height())));
                 Ok((rect, crop))
             },
-            crate::ocr::recognize_text,
-            crate::capture::preprocess_for_ocr_fast,
+            |img: &image::DynamicImage| {
+                let stage = Instant::now();
+                let lines = crate::ocr::recognize_text(img);
+                ocr_ms.borrow_mut().push(stage.elapsed().as_millis().to_string());
+                lines
+            },
+            |img: &image::DynamicImage| {
+                let stage = Instant::now();
+                let scaled = crate::capture::preprocess_for_ocr_fast(img);
+                preprocess_ms.set(stage.elapsed().as_millis());
+                scaled
+            },
             |error| crate::app_log(app, format!("loot: 2x OCR failed: {error}")),
         );
+        let ((sw, sh), (cw, ch)) = sizes.get();
+        let grab = grab.get();
+        let outcome = match &result {
+            Ok(Some((_, lines))) => format!("{} lines", lines.len()),
+            Ok(None) => "cancelled".to_string(),
+            Err(_) => "failed".to_string(),
+        };
+        crate::app_log(app, format!(
+            "loot: capture timing — exclude {} ms, grab {} ms ({sw}x{sh}), restore {} ms, capture_screen {} ms, crop {} ms ({cw}x{ch}), OCR raw+2x {} ms, preprocess {} ms, total {} ms — {outcome}",
+            grab.exclude_ms, grab.grab_ms, grab.restore_ms, grab.call_ms, crop_ms.get(), ocr_ms.borrow().join("+"), preprocess_ms.get(), started.elapsed().as_millis(),
+        ));
         match result {
             Ok(None) => return,
             Ok(Some((rect, lines))) => {
