@@ -1994,6 +1994,21 @@ fn set_timer_appearance(bg_opacity: f32, text_stroke: bool, app: AppHandle) {
     }
 }
 
+/// The stored GPU-free webview choice; the running process may differ until
+/// the next launch (`webview2_browser_args` applies it at startup only).
+#[tauri::command]
+fn get_webview_gpu_disabled(app: AppHandle) -> bool {
+    settings::load(&app).webview_gpu_disabled
+}
+
+#[tauri::command]
+fn set_webview_gpu_disabled(disabled: bool, app: AppHandle) {
+    let mut s = settings::load(&app);
+    s.webview_gpu_disabled = disabled;
+    settings::save(&app, &s);
+    app_log(&app, format!("GPU-free webview rendering {} — applies after restart", if disabled { "on" } else { "off" }));
+}
+
 #[tauri::command]
 fn get_lab_overlays_enabled(app: AppHandle) -> bool {
     let state = app.state::<AppState>();
@@ -3227,23 +3242,16 @@ fn spawn_log_watcher(app: AppHandle) {
 pub fn run() {
     env_logger::init();
 
-    // Keep WebView2 renderer alive when the window is backgrounded — PoE alt-tab steals
-    // focus and Chromium's default backgrounding pauses timers and drops the SSE socket.
-    // If the outer shell already set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, append to it
-    // rather than silently clobbering — that env var is additive and operators may have
-    // set their own flags for debugging or workaround purposes.
-    let prior = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
-    let ours = "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows";
-    let combined = if prior.is_empty() {
-        ours.to_string()
-    } else {
-        log::warn!(
-            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS already set ({:?}); appending our flags",
-            prior
-        );
-        format!("{} {}", prior, ours)
-    };
-    std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", &combined);
+    let context = tauri::generate_context!();
+    // Before the builder: WebView2 reads the variable when the first webview
+    // creates its environment, and every later webview must share those args.
+    let webview_gpu_disabled = settings::settings_path_before_app(&context.config().identifier)
+        .is_some_and(|path| settings::webview_gpu_disabled_in(&path));
+    let prior = std::env::var(WEBVIEW2_ARGS_ENV).unwrap_or_default();
+    if !prior.is_empty() {
+        log::warn!("{} already set ({:?}); appending our flags", WEBVIEW2_ARGS_ENV, prior);
+    }
+    std::env::set_var(WEBVIEW2_ARGS_ENV, webview2_browser_args(&prior, webview_gpu_disabled));
 
     let pair_code = generate_pair_code();
     log::info!("Pair code: {}", pair_code);
@@ -3430,6 +3438,8 @@ pub fn run() {
             get_widget_geometries,
             set_widget_geometry,
             get_timer_appearance,
+            get_webview_gpu_disabled,
+            set_webview_gpu_disabled,
             set_timer_appearance,
             get_lab_overlays_enabled,
             set_lab_overlays_enabled,
@@ -3456,7 +3466,7 @@ pub fn run() {
             discard_font_session,
             updater_channel::check_update_from_endpoint,
         ])
-        .setup(|app| {
+        .setup(move |app| {
             let handle = app.handle().clone();
             // Load persisted settings and apply to state.
             // If no settings file exists, write defaults so the file is always present.
@@ -3467,6 +3477,9 @@ pub fn run() {
             // Logging is the only place that difference is visible.
             for rejection in settings::apply_to_state(&saved, &state) {
                 app_log(&handle, rejection);
+            }
+            if webview_gpu_disabled {
+                app_log(&handle, "WebView2 started with --disable-gpu (GPU-free rendering setting)".into());
             }
 
             // If saved Client.txt path doesn't exist, re-detect
@@ -3647,14 +3660,39 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
+}
+
+const WEBVIEW2_ARGS_ENV: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
+
+/// The WebView2 browser arguments this process starts with.
+///
+/// Always keeps the renderer alive when the window is backgrounded — PoE
+/// alt-tab steals focus and Chromium's default backgrounding pauses timers and
+/// drops the SSE socket. `gpu_disabled` adds `--disable-gpu`
+/// (`Settings::webview_gpu_disabled`). A value the outer shell already set is
+/// kept first: the variable is additive, and operators may set their own flags
+/// for debugging or workarounds.
+fn webview2_browser_args(prior: &str, gpu_disabled: bool) -> String {
+    let mut args = String::from(prior.trim());
+    let mut push = |flag: &str| {
+        if !args.is_empty() {
+            args.push(' ');
+        }
+        args.push_str(flag);
+    };
+    push("--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows");
+    if gpu_disabled {
+        push("--disable-gpu");
+    }
+    args
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        body_excerpt, clickthrough_failure_log_level, clickthrough_outcome, crop_shortfall, assemble_ocr_rects,
+        body_excerpt, webview2_browser_args, clickthrough_failure_log_level, clickthrough_outcome, crop_shortfall, assemble_ocr_rects,
         dictionary_reject_reason, ocr_warning_field, overlay_focus_action,
         retry_after_delay, temple_rects_from_rois, write_debug_mode, write_server_url, CaptureRegion,
         ClickthroughSetup,
@@ -3662,6 +3700,23 @@ mod tests {
     };
     use std::sync::Mutex;
     use std::time::Duration;
+
+    /// A user's own WebView2 flags stay first and intact; the GPU flag is
+    /// appended only when the setting asks for it.
+    #[test]
+    fn webview2_browser_args_keeps_prior_flags_and_adds_gpu_flag_only_when_set() {
+        let keepalive = "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows";
+        assert_eq!(webview2_browser_args("", false), keepalive);
+        assert_eq!(webview2_browser_args("", true), format!("{} --disable-gpu", keepalive));
+        assert_eq!(
+            webview2_browser_args("--remote-debugging-port=9222 ", true),
+            format!("--remote-debugging-port=9222 {} --disable-gpu", keepalive)
+        );
+        assert_eq!(
+            webview2_browser_args("--remote-debugging-port=9222", false),
+            format!("--remote-debugging-port=9222 {}", keepalive)
+        );
+    }
 
     /// The bug the `on` argument exists for. The command was an
     /// argument-less toggle, and the Ctrl+Shift+F12 handler invoked it only on

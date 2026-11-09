@@ -199,6 +199,13 @@ pub struct Settings {
     /// back over what the owner just wrote.
     #[serde(default)]
     pub widgets: std::collections::BTreeMap<String, WidgetGeometry>,
+    /// Start WebView2 with `--disable-gpu`, so every window renders on the CPU.
+    /// Observed 2026-11-08: while a Discord stream is watched and PoE has
+    /// focus, GPU-rendered Chromium surfaces stall for seconds; this flag
+    /// cleared it. Read once by [`webview_gpu_disabled_in`] before any webview
+    /// exists, so a change applies on the next launch. No `AppState` mutex owns
+    /// it: [`persist_overlay_settings`] carries it across saves.
+    pub webview_gpu_disabled: bool,
 }
 
 /// One overlay widget's placement inside its module's fullscreen window
@@ -695,6 +702,7 @@ impl Default for Settings {
             // writing today's numbers into the file would pin a user to them
             // the way an unchosen module default would (see `modules`).
             widgets: std::collections::BTreeMap::new(),
+            webview_gpu_disabled: false,
         }
     }
 }
@@ -869,6 +877,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         // forward by `persist_overlay_settings` — the owner is what
         // `set_widget_geometry` just wrote to, and the file is the stale copy.
         widgets: state.widgets.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        webview_gpu_disabled: false, // File-owned, carried by persist_overlay_settings
     }
 }
 
@@ -964,6 +973,29 @@ pub fn persist_overlay_settings(existing: &Settings, target: &mut Settings) {
     target.mercenary_overlay = existing.mercenary_overlay.clone();
     target.timer_bg_opacity = existing.timer_bg_opacity;
     target.timer_text_stroke = existing.timer_text_stroke;
+    target.webview_gpu_disabled = existing.webview_gpu_disabled;
+}
+
+/// Whether the settings file at `path` asks for GPU-free webview rendering.
+///
+/// Runs before the app handle exists, so it cannot report: a missing or
+/// invalid file reads as off here and [`load`] logs it moments later.
+pub fn webview_gpu_disabled_in(path: &std::path::Path) -> bool {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<Settings>(&contents).ok())
+        .is_some_and(|s| s.webview_gpu_disabled)
+}
+
+/// The settings file's path for an app `identifier`, resolved without an app
+/// handle — the same Roaming directory `app_data_dir` returns on Windows.
+/// `None` elsewhere: only WebView2 reads the flag it decides.
+pub fn settings_path_before_app(identifier: &str) -> Option<PathBuf> {
+    if cfg!(windows) {
+        std::env::var_os("APPDATA").map(|dir| PathBuf::from(dir).join(identifier).join(SETTINGS_FILENAME))
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -1013,6 +1045,41 @@ mod tests {
         assert!(apply_to_state(&settings, &state).iter().any(|line| line.contains("boss loot")));
         assert_eq!(from_state(&state).boss_loot.auto_save_seconds, 10);
         assert!(!from_state(&state).sidebar_open);
+    }
+
+    /// The GPU-free flag has no `AppState` owner, so an unrelated save rebuilt
+    /// from `from_state` must carry the stored choice forward, not reset it.
+    #[test]
+    fn webview_gpu_disabled_survives_an_unrelated_save() {
+        let state = test_app_state();
+        let mut existing = Settings::default();
+        existing.webview_gpu_disabled = true;
+        let mut target = from_state(&state);
+        persist_overlay_settings(&existing, &mut target);
+        let written = serde_json::to_string(&target).unwrap();
+        let path = std::env::temp_dir().join("poe_test_webview_gpu_disabled_saved.json");
+        fs::write(&path, written).unwrap();
+        assert!(webview_gpu_disabled_in(&path));
+        let _ = fs::remove_file(&path);
+    }
+
+    /// The startup read: only an explicit `true` turns the GPU off; a file
+    /// from before the setting, a broken file and no file all leave it on.
+    #[test]
+    fn webview_gpu_disabled_in_reads_only_an_explicit_choice() {
+        let dir = std::env::temp_dir().join("poe_test_webview_gpu_disabled_in");
+        fs::create_dir_all(&dir).unwrap();
+        let on = dir.join("on.json");
+        fs::write(&on, r#"{"webview_gpu_disabled": true, "sidebar_open": false}"#).unwrap();
+        let older = dir.join("older.json");
+        fs::write(&older, r#"{"sidebar_open": false}"#).unwrap();
+        let broken = dir.join("broken.json");
+        fs::write(&broken, r#"{"webview_gpu_disabled": true"#).unwrap();
+        assert!(webview_gpu_disabled_in(&on));
+        assert!(!webview_gpu_disabled_in(&older));
+        assert!(!webview_gpu_disabled_in(&broken));
+        assert!(!webview_gpu_disabled_in(&dir.join("missing.json")));
+        let _ = fs::remove_dir_all(&dir);
     }
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};

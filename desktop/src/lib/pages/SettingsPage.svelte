@@ -385,6 +385,23 @@
 		}).catch((e: any) => console.warn('[settings] load timer appearance failed:', e));
 	});
 
+	// Stored choice only: WebView2 reads it at launch, so it applies after a restart.
+	let webviewGpuDisabled = $state(false);
+
+	$effect(() => {
+		invoke<boolean>('get_webview_gpu_disabled')
+			.then((v) => (webviewGpuDisabled = v))
+			.catch((e: any) => console.warn('[settings] load webview GPU setting failed:', e));
+	});
+
+	function setWebviewGpuDisabled(next: boolean) {
+		invoke('set_webview_gpu_disabled', { disabled: next })
+			.catch((e: any) => {
+				webviewGpuDisabled = !next;
+				console.warn('[settings] save webview GPU setting failed:', e);
+			});
+	}
+
 	/** Whether a Configure widgets button may be pressed. */
 	let configureAllowed = $derived(
 		canStartConfigure({
@@ -621,6 +638,14 @@
 				<SegmentedButtons value={numberFormat()} title="Thousands separator" options={NUMBER_FORMAT_OPTIONS} onselect={(value) => setNumberFormat(parseNumberFormat(value))} />
 				<span class="setting-value mono">{groupNumber('11225')}c</span>
 			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">Render without GPU</span>
+				<Toggle bind:checked={webviewGpuDisabled} label="Render without GPU" onchange={setWebviewGpuDisabled} />
+			</div>
+			<p class="setting-note">
+				Fixes overlay stutter while streaming. Restart the app to apply.
+			</p>
 		</section>
 
 		<!-- Timer Appearance -->
