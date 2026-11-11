@@ -306,6 +306,17 @@ func TestWipeRefusesRunningCollector(t *testing.T) {
 	assertWipeRows(t, ctx, tx, "", 1)
 }
 
+func TestWipeRefusesRunningServer(t *testing.T) {
+	ctx, pool, peer := adminTestPools(t)
+	holdAdminTestLock(t, ctx, peer, ServerLockKey())
+	tx := wipeTestTx(t, ctx, pool)
+	seedWipeRows(t, ctx, tx, "Mirage")
+	if _, err := Wipe(ctx, tx, "Mirage", false); !errors.Is(err, ErrServerRunning) {
+		t.Errorf("wipe with server = %v, want ErrServerRunning", err)
+	}
+	assertWipeRows(t, ctx, tx, "", 1)
+}
+
 func TestWipeAdministrationContentionRefusesOperations(t *testing.T) {
 	for _, operation := range []struct {
 		name string

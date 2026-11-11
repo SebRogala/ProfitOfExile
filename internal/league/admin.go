@@ -19,6 +19,7 @@ var (
 	ErrAlreadyActive      = errors.New("league is already active")
 	ErrNotPrepared        = errors.New("league is not prepared")
 	ErrCollectorRunning   = errors.New("collector holds the runtime lock")
+	ErrServerRunning      = errors.New("server holds the server lock")
 	ErrAdministrationBusy = errors.New("another league administration transaction is running")
 )
 
@@ -88,8 +89,10 @@ func RunAdmin(ctx context.Context, pool *pgxpool.Pool, dryRun bool, op func(pgx.
 }
 
 // guard serializes administration for the transaction's lifetime. Mutations
-// that change the runtime selection or remove data also exclude the collector.
-func guard(ctx context.Context, tx pgx.Tx, collectorMustBeStopped bool) error {
+// that change the runtime selection or remove data also exclude the collector
+// and the server: both keep their boot-time scope, so a running writer would
+// keep serving and storing the outgoing league.
+func guard(ctx context.Context, tx pgx.Tx, writersMustBeStopped bool) error {
 	var acquired bool
 	if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock($1)`, AdministrationLockKey()).Scan(&acquired); err != nil {
 		return fmt.Errorf("try league administration lock: %w", err)
@@ -97,12 +100,19 @@ func guard(ctx context.Context, tx pgx.Tx, collectorMustBeStopped bool) error {
 	if !acquired {
 		return ErrAdministrationBusy
 	}
-	if collectorMustBeStopped {
-		if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock($1)`, RuntimeLockKey()).Scan(&acquired); err != nil {
-			return fmt.Errorf("try league runtime lock: %w", err)
+	if !writersMustBeStopped {
+		return nil
+	}
+	for _, fence := range []struct {
+		key     int64
+		name    string
+		running error
+	}{{RuntimeLockKey(), "runtime", ErrCollectorRunning}, {ServerLockKey(), "server", ErrServerRunning}} {
+		if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock($1)`, fence.key).Scan(&acquired); err != nil {
+			return fmt.Errorf("try league %s lock: %w", fence.name, err)
 		}
 		if !acquired {
-			return ErrCollectorRunning
+			return fence.running
 		}
 	}
 	return nil
@@ -147,7 +157,8 @@ func Prepare(ctx context.Context, tx pgx.Tx, input PrepareInput) (LeagueRow, err
 }
 
 // Activate promotes a prepared league and archives the outgoing league in the
-// caller's transaction. Running processes pick up the selection on restart.
+// caller's transaction. Server and collector must be stopped; they pick up the
+// selection on restart.
 func Activate(ctx context.Context, tx pgx.Tx, id string) (Activation, error) {
 	if err := guard(ctx, tx, true); err != nil {
 		return Activation{}, err

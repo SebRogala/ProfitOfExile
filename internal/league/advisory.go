@@ -136,3 +136,21 @@ func (l *ProcessLock) Release() {
 	_, _ = l.conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, l.key)
 	l.conn.Release()
 }
+
+// AcquireFencedScope takes the process fence on key, then resolves the runtime
+// scope under it. Activation needs the process fences free, so a scope read
+// while the fence is held stays current for the lock's lifetime; a scope read
+// before waiting out a peer's fence could already be superseded. The caller
+// owns the returned ProcessLock and must call Release.
+func AcquireFencedScope(ctx context.Context, pool *pgxpool.Pool, key int64, maxWait time.Duration) (*ProcessLock, Scope, error) {
+	lock, err := AcquireProcessLockWait(ctx, pool, key, maxWait)
+	if err != nil {
+		return nil, Scope{}, err
+	}
+	scope, err := Resolve(ctx, pool)
+	if err != nil {
+		lock.Release()
+		return nil, Scope{}, err
+	}
+	return lock, scope, nil
+}

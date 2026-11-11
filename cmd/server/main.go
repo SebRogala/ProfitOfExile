@@ -73,28 +73,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Resolve the process-active league scope once from the runtime SSOT. Every
-	// scoped repository read/write and analysis run uses this single value for the
-	// process lifetime (per-request selection is POE-121).
-	scope, err := league.Resolve(ctx, pool)
-	if err != nil {
-		slog.Error("failed to resolve active league scope", "error", err)
-		fmt.Fprintln(os.Stderr, "Failed to resolve active league from runtime_config. Ensure league control migrations ran and runtime_config is seeded.")
-		os.Exit(1)
-	}
-	slog.Info("active league resolved", "league", scope.ID(), "revision", scope.Revision())
-
-	// EXPECTED_LEAGUE is an optional deploy-time assertion: if the operator
-	// pins the league they believe this process should serve, a mismatch with
-	// the runtime-resolved scope is a misconfiguration that must not reach
-	// readiness (e.g. pointing a Standard-configured deploy at a Mirage DB).
-	if expected := os.Getenv("EXPECTED_LEAGUE"); expected != "" && expected != scope.ID() {
-		slog.Error("EXPECTED_LEAGUE does not match the resolved active league",
-			"expected", expected, "resolved", scope.ID())
-		fmt.Fprintf(os.Stderr, "EXPECTED_LEAGUE=%q but runtime resolved league %q; refusing to start.\n", expected, scope.ID())
-		os.Exit(1)
-	}
-
 	// Server fence: the server is a writer, not a read-only consumer — it owns
 	// 9 of the 12 league-scoped tables (written on every gem event and on
 	// startup) and makes live GGG trade calls. Two servers on the same league
@@ -117,19 +95,35 @@ func main() {
 		os.Exit(1)
 	}
 
-	serverLock, err := league.AcquireProcessLockWait(ctx, pool, league.ServerLockKey(), fenceAcquireMaxWait)
+	// Resolve the process-active league scope once from the runtime SSOT, under
+	// the fence so a rollover committed while this process waited out a peer's
+	// fence is not missed. Every scoped repository read/write and analysis run
+	// uses this single value for the process lifetime (per-request selection is
+	// POE-121).
+	serverLock, scope, err := league.AcquireFencedScope(ctx, pool, league.ServerLockKey(), fenceAcquireMaxWait)
 	if err != nil {
 		if errors.Is(err, league.ErrLockHeld) {
-			slog.Error("another server still holds the league fence after wait; refusing to start", "league", scope.ID(), "wait", fenceAcquireMaxWait)
+			slog.Error("another server still holds the league fence after wait; refusing to start", "wait", fenceAcquireMaxWait)
 			fmt.Fprintf(os.Stderr, "Another server still holds the server fence after %s — is a previous instance still shutting down? Refusing to start a second writer for the same database.\n", fenceAcquireMaxWait)
 			os.Exit(1)
 		}
-		slog.Error("failed to acquire server fence", "error", err)
-		fmt.Fprintln(os.Stderr, "Failed to acquire the server advisory lock. Check database connectivity.")
+		slog.Error("failed to acquire server fence and resolve the active league", "error", err)
+		fmt.Fprintln(os.Stderr, "Failed to acquire the server advisory lock or resolve the active league from runtime_config. Check database connectivity and that league control migrations ran.")
 		os.Exit(1)
 	}
 	defer serverLock.Release()
-	slog.Info("server fence acquired", "league", scope.ID())
+	slog.Info("server fence acquired", "league", scope.ID(), "revision", scope.Revision())
+
+	// EXPECTED_LEAGUE is an optional deploy-time assertion: if the operator
+	// pins the league they believe this process should serve, a mismatch with
+	// the runtime-resolved scope is a misconfiguration that must not reach
+	// readiness (e.g. pointing a Standard-configured deploy at a Mirage DB).
+	if expected := os.Getenv("EXPECTED_LEAGUE"); expected != "" && expected != scope.ID() {
+		slog.Error("EXPECTED_LEAGUE does not match the resolved active league",
+			"expected", expected, "resolved", scope.ID())
+		fmt.Fprintf(os.Stderr, "EXPECTED_LEAGUE=%q but runtime resolved league %q; refusing to start.\n", expected, scope.ID())
+		os.Exit(1)
+	}
 
 	frontendFS, err := fs.Sub(frontendEmbed, "frontend_build")
 	if err != nil {

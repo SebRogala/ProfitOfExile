@@ -5,6 +5,8 @@ package league
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"reflect"
 	"regexp"
 	"slices"
@@ -90,7 +92,7 @@ func holdAdminTestLock(t *testing.T, ctx context.Context, peer *pgxpool.Pool, ke
 
 func assertAdminLocksAvailable(t *testing.T, ctx context.Context, peer *pgxpool.Pool) {
 	t.Helper()
-	for _, key := range []int64{RuntimeLockKey(), AdministrationLockKey()} {
+	for _, key := range []int64{RuntimeLockKey(), ServerLockKey(), AdministrationLockKey()} {
 		lock, err := AcquireProcessLock(ctx, peer, key)
 		if err != nil {
 			t.Errorf("lock %d still held after transaction: %v", key, err)
@@ -347,6 +349,17 @@ func TestActivateRefusesRunningCollector(t *testing.T) {
 	assertAdminRuntime(t, ctx, tx, "Mirage", 1)
 }
 
+func TestActivateRefusesRunningServer(t *testing.T) {
+	ctx, pool, peer := adminTestPools(t)
+	holdAdminTestLock(t, ctx, peer, ServerLockKey())
+	tx := adminTestTx(t, ctx, pool)
+	prepareAdminNext(t, ctx, tx)
+	if _, err := Activate(ctx, tx, "PlanTestNext"); !errors.Is(err, ErrServerRunning) {
+		t.Errorf("Activate with server error = %v, want ErrServerRunning", err)
+	}
+	assertAdminRuntime(t, ctx, tx, "Mirage", 1)
+}
+
 func TestPrepareSucceedsWithRunningCollector(t *testing.T) {
 	ctx, pool, peer := adminTestPools(t)
 	holdAdminTestLock(t, ctx, peer, RuntimeLockKey())
@@ -487,5 +500,86 @@ func TestPreparePersistsReturnedRow(t *testing.T) {
 	}
 	if !reflect.DeepEqual(row, stored) {
 		t.Errorf("returned row = %+v, persisted row = %+v", row, stored)
+	}
+}
+
+// TestAcquireFencedScopeResolvesSelectionCommittedWhileWaiting reproduces a
+// process starting while a peer holds its fence and an activation commits
+// before the peer releases: the scope must be the post-activation selection.
+func TestAcquireFencedScopeResolvesSelectionCommittedWhileWaiting(t *testing.T) {
+	ctx, pool, peer := adminTestPools(t)
+	var savedUpdatedAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT updated_at FROM runtime_config WHERE singleton`).Scan(&savedUpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(ctx, `UPDATE runtime_config SET active_league = 'Mirage', revision = 1, updated_at = $1 WHERE singleton`, savedUpdatedAt); err != nil {
+			t.Errorf("restore runtime: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM leagues WHERE id = 'PlanTestFenced'`); err != nil {
+			t.Errorf("remove fixture league: %v", err)
+		}
+	})
+	key := testLockKey(t)
+	held, err := AcquireProcessLock(ctx, peer, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(held.Release)
+
+	config, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	application := fmt.Sprintf("fenced-scope-test-%d", time.Now().UnixNano())
+	config.ConnConfig.RuntimeParams["application_name"] = application
+	waiter, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(waiter.Close)
+	type fenced struct {
+		lock  *ProcessLock
+		scope Scope
+		err   error
+	}
+	result := make(chan fenced, 1)
+	go func() {
+		lock, scope, err := AcquireFencedScope(ctx, waiter, key, 20*time.Second)
+		result <- fenced{lock, scope, err}
+	}()
+
+	// The waiter's backend has reached the fence once its last statement is the
+	// lock attempt; resolving first would have preceded it.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var waiting bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+			WHERE application_name = $1 AND query LIKE '%pg_try_advisory_lock%')`, application).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("waiter never attempted the fence")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO leagues (id, display_name, collection_state) VALUES ('PlanTestFenced', 'Plan Test Fenced', 'collecting')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE runtime_config SET active_league = 'PlanTestFenced', revision = revision + 1 WHERE singleton`); err != nil {
+		t.Fatal(err)
+	}
+	held.Release()
+
+	got := <-result
+	if got.err != nil {
+		t.Fatalf("AcquireFencedScope: %v", got.err)
+	}
+	got.lock.Release()
+	if got.scope.ID() != "PlanTestFenced" || got.scope.Revision() != 2 {
+		t.Errorf("fenced scope = %q/%d, want %q/2", got.scope.ID(), got.scope.Revision(), "PlanTestFenced")
 	}
 }

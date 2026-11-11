@@ -87,26 +87,6 @@ func main() {
 	defer pool.Close()
 	slog.Info("database connected")
 
-	// Resolve the active league scope from the runtime SSOT. The collecting league
-	// IS the runtime league (POE-117), so there is no separate LEAGUE env or Mirage
-	// default — the collector writes under whatever runtime_config selects.
-	scope, err := league.Resolve(ctx, pool)
-	if err != nil {
-		slog.Error("failed to resolve active league scope", "error", err)
-		fmt.Fprintln(os.Stderr, "Failed to resolve active league from runtime_config. Ensure the server has run league control migrations and seeded runtime_config.")
-		os.Exit(1)
-	}
-
-	// EXPECTED_LEAGUE is an optional deploy-time assertion: if set, the resolved
-	// runtime league must match it exactly, else the collector refuses to start
-	// rather than silently writing under a league the operator did not intend.
-	// Absence is not an error — the runtime_config selection stands on its own.
-	if err := checkExpectedLeague(os.Getenv("EXPECTED_LEAGUE"), scope.ID()); err != nil {
-		slog.Error("EXPECTED_LEAGUE assertion failed", "error", err)
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
-
 	// Runtime fence: only one collector may own the runtime league at a time.
 	// Two concurrent collectors double-poll poe.ninja (burning the shared GGG /
 	// CDN budget) and race on snapshot inserts. The fence parks one dedicated
@@ -119,18 +99,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	lock, err := league.AcquireProcessLockWait(ctx, pool, league.RuntimeLockKey(), fenceAcquireMaxWait)
+	// The collecting league IS the runtime league (POE-117): no LEAGUE env or
+	// Mirage default. It is resolved only once the fence is held, so a rollover
+	// committed while this process waited out a peer's fence is not missed.
+	lock, scope, err := league.AcquireFencedScope(ctx, pool, league.RuntimeLockKey(), fenceAcquireMaxWait)
 	if err != nil {
 		if errors.Is(err, league.ErrLockHeld) {
-			slog.Error("another collector still holds the runtime fence after wait", "league", scope.ID(), "wait", fenceAcquireMaxWait)
+			slog.Error("another collector still holds the runtime fence after wait", "wait", fenceAcquireMaxWait)
 			fmt.Fprintf(os.Stderr, "Another collector still holds the runtime league fence after %s — is a previous instance still shutting down? Refusing to start a second collector.\n", fenceAcquireMaxWait)
 			os.Exit(1)
 		}
-		slog.Error("failed to acquire runtime league fence", "error", err)
-		fmt.Fprintln(os.Stderr, "Failed to acquire the runtime league fence.")
+		slog.Error("failed to acquire runtime league fence and resolve the active league", "error", err)
+		fmt.Fprintln(os.Stderr, "Failed to acquire the runtime league fence or resolve the active league from runtime_config. Check database connectivity and that the server has run league control migrations.")
 		os.Exit(1)
 	}
 	defer lock.Release()
+
+	// EXPECTED_LEAGUE is an optional deploy-time assertion: if set, the resolved
+	// runtime league must match it exactly, else the collector refuses to start
+	// rather than silently writing under a league the operator did not intend.
+	// Absence is not an error — the runtime_config selection stands on its own.
+	if err := checkExpectedLeague(os.Getenv("EXPECTED_LEAGUE"), scope.ID()); err != nil {
+		slog.Error("EXPECTED_LEAGUE assertion failed", "error", err)
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
 	slog.Info("runtime league fence acquired", "league", scope.ID(), "revision", scope.Revision())
 
 	// Migrations are handled by the server — the collector only reads/writes
