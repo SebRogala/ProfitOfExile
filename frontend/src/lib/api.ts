@@ -649,6 +649,14 @@ export function isLeagueChange(data: unknown, heldLeague: string): boolean {
 	return typeof league === 'string' && league !== heldLeague;
 }
 
+// Re-reads the served league after a stream reopen, when the boot event may have
+// been published while this client was disconnected. fetchStatus() reports a
+// failed read as league '', which is no evidence of a change.
+export async function serverLeagueDiffers(heldLeague: string): Promise<boolean> {
+	const { league } = await fetchStatus();
+	return league !== '' && league !== heldLeague;
+}
+
 export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void, onLeagueActive?: (data?: any) => void): MercureConnection {
 	const state: MercureConnection = { close: () => {}, connected: false };
 	let eventSource: EventSource | null = null;
@@ -660,6 +668,11 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 	// connection — see the guard after the token fetch in connect(), and
 	// frontend/src/lib/desktopBridge.ts, which carries the same flag.
 	let closed = false;
+	// A reopen calls onLeagueActive() without a payload: the server publishes
+	// LEAGUE_ACTIVE_TOPIC once at boot, which a client still reconnecting to the
+	// restarted server misses. The first open needs no check — the page has just
+	// read the league itself.
+	let hasOpened = false;
 
 	// Attempts spent in the fast lane before the delay escalates. 2s/4s/8s/10s/10s
 	// recovers quickly from a deploy; a longer outage should not keep costing a
@@ -754,6 +767,8 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				// successful token fetch, which pinned a stream that opens and then fails
 				// at a permanent 4s retry — the backoff never escalated.
 				retries = 0;
+				if (hasOpened) onLeagueActive?.();
+				hasOpened = true;
 			};
 
 			eventSource.onmessage = (msg) => {

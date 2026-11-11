@@ -6,6 +6,7 @@
 		fetchMarketOverview,
 		connectMercure,
 		isLeagueChange,
+		serverLeagueDiffers,
 		VARIANTS,
 		DEDICATION_VARIANTS,
 		type StatusData,
@@ -227,7 +228,17 @@
 		}, (data) => {
 			// No status yet means the first loadAll() is still in flight and will
 			// read the current league itself.
-			if (status && isLeagueChange(data, status.league)) {
+			if (!status) return;
+			const held = status.league;
+			if (data === undefined) {
+				// Stream reopened: the league is unknown until the status is re-read.
+				serverLeagueDiffers(held).then((differs) => {
+					if (differs) {
+						console.log('[Dashboard] active league changed while disconnected — scheduling reload');
+						debouncedMercureUpdate();
+					}
+				});
+			} else if (isLeagueChange(data, held)) {
 				console.log('[Dashboard] active league changed — scheduling reload');
 				debouncedMercureUpdate();
 			}
