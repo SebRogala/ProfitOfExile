@@ -248,22 +248,25 @@ func renderActivation(w io.Writer, result league.Activation) error {
 }
 
 func renderActivationGuidance(w io.Writer, result league.Activation) error {
-	// This order mirrors the retained WI-5 rollover procedure: verify before
-	// wiping, restart the server before the counted stray-row check, and keep
-	// the collector stopped until any resulting stray rows have been removed.
+	// This order mirrors docs/LEAGUE-SCHEMA-MIGRATION-RUNBOOK.md Phase B: verify
+	// before wiping, run the counted stray-row check and any cleanup while both
+	// writers are still stopped, then restart the server before the collector.
 	_, err := fmt.Fprintf(w, `Verify committed league %q against poe.ninja's exact league id before wiping.
-Keep the collector stopped with auto-restart disabled throughout the wipe and server restart.
-Run in the server container:
-  /league wipe %[3]s --dry-run
-  /league wipe %[3]s
+Keep the server and collector stopped with auto-restart disabled until the stray-row check passes.
+<one-shot> is a CLI-only container from the server image, not the server container:
+  docker run --rm --network <database network> --env DATABASE_URL --entrypoint /league <server image>
+Compare the dry-run counts with the final dump's manifest, then wipe:
+  <one-shot> wipe %[3]s --dry-run
+  <one-shot> wipe %[3]s
 Set EXPECTED_LEAGUE to %[1]q or unset it for both the server and collector services.
-Restart the server and wait until healthy.
-Run the counted stray-row check in the server container:
-  /league status
+Before restarting either service, run the counted stray-row check:
+  <one-shot> status
 If outgoing league %[2]q rows remain, run:
-  /league wipe %[3]s --allow-delete --dry-run
-  /league wipe %[3]s --allow-delete
-Only then re-enable auto-restart and start the collector.
+  <one-shot> wipe %[3]s --allow-delete --dry-run
+  <one-shot> wipe %[3]s --allow-delete
+  <one-shot> status
+Then re-enable server auto-restart, restart the server and wait until healthy.
+Only then re-enable collector auto-restart and start the collector.
 Check /health and /latest report league %[1]q.
 `, result.ToID, result.FromID, shellQuoteID(result.FromID))
 	return err

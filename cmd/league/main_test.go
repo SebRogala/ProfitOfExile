@@ -99,19 +99,20 @@ func TestRenderActivationGuidance_preservesRolloverOrder(t *testing.T) {
 
 func assertRolloverGuidance(t *testing.T, output string) {
 	t.Helper()
-	// WI-5's ordered procedure, substituting WI-4's synthetic outgoing/new ids.
+	// The runbook's Phase B order, substituting WI-4's synthetic outgoing/new ids.
 	steps := []string{
 		"Verify committed league \"NextLeague\" against poe.ninja's exact league id before wiping.",
-		"Keep the collector stopped with auto-restart disabled throughout the wipe and server restart.",
-		"  /league wipe \"OldLeague\" --dry-run\n",
-		"  /league wipe \"OldLeague\"\n",
+		"Keep the server and collector stopped with auto-restart disabled until the stray-row check passes.",
+		"  docker run --rm --network <database network> --env DATABASE_URL --entrypoint /league <server image>\n",
+		"  <one-shot> wipe \"OldLeague\" --dry-run\n",
+		"  <one-shot> wipe \"OldLeague\"\n",
 		"Set EXPECTED_LEAGUE to \"NextLeague\" or unset it for both the server and collector services.",
-		"Restart the server and wait until healthy.",
-		"Run the counted stray-row check in the server container:\n  /league status\n",
+		"Before restarting either service, run the counted stray-row check:\n  <one-shot> status\n",
 		"If outgoing league \"OldLeague\" rows remain, run:",
-		"  /league wipe \"OldLeague\" --allow-delete --dry-run\n",
-		"  /league wipe \"OldLeague\" --allow-delete\n",
-		"Only then re-enable auto-restart and start the collector.",
+		"  <one-shot> wipe \"OldLeague\" --allow-delete --dry-run\n",
+		"  <one-shot> wipe \"OldLeague\" --allow-delete\n  <one-shot> status\n",
+		"Then re-enable server auto-restart, restart the server and wait until healthy.",
+		"Only then re-enable collector auto-restart and start the collector.",
 		"Check /health and /latest report league \"NextLeague\".",
 	}
 	previous := -1

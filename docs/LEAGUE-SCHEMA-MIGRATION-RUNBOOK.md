@@ -3,8 +3,11 @@
 **Status:** Current runbook for league rollover with the POE-127 CLI, plus the
 POE-119 migration gate requiring the matching POE-120/POE-121 application revision.
 
-**Last verified:** 2026-10-23 against the league CLI, collector startup order,
-scoped-table registry, and desktop league refresh. Migration rehearsal
+**Last verified:** 2026-11-11 against the league CLI's fence refusals and
+activation guidance, and the server and collector startup order (fence, then
+league resolve), by a local rollover run and the league integration tests.
+2026-10-23 for the scoped-table registry. Step 13's client behaviour is
+described from the client code, not verified in a rollover. Migration rehearsal
 measurements retain their original dates below.
 
 **Canonical for:** rehearsal and production execution of the POE-119
@@ -151,7 +154,7 @@ SELECT pg_try_advisory_lock(2547706464772240820::bigint) AS acquired;
 
 **Proceed only if `acquired` is `t`.** The key is `RuntimeLockKey()` in
 `internal/league/league.go`: FNV-1a 64-bit over `profitofexile/league/`, a zero
-byte, and `runtime`, masked to 63 bits. `AcquireProcessLockWait` in
+byte, and `runtime`, masked to 63 bits. `AcquireFencedScope` in
 `cmd/collector/main.go` takes this session advisory lock. It does not require
 the league schema, so use it for the initial wipe-first archive too; older
 writers may not honor it, so both services must still remain stopped.
@@ -272,11 +275,14 @@ Resolve the image and database network from the existing deployment. Export the
 same `DATABASE_URL` securely into the operator environment; `--env DATABASE_URL`
 passes it without putting its value in the command. Use this invocation with the
 subcommand shown in each Phase B step. It starts only the CLI, not the server.
-Follow the order below if CLI output suggests running in the server container
-or restarting the server before cleanup.
+The guidance `activate` prints follows the same order, writing `<one-shot>` for
+this invocation.
 
 The CLI serializes administration with transaction advisory locks. Activation
-and committed wipes also require the collector's runtime fence to be free.
+(including its dry run) and committed wipes also require both process fences to
+be free: they refuse with `collector holds the runtime lock` while a collector
+runs and `server holds the server lock` while a server runs, because both keep
+their boot-time league. Wipe dry runs and `prepare` work with either running.
 Prepare and activate dry runs execute their control-row changes and roll back;
 wipe dry runs only preview counts, mode, and SQL, executing no TRUNCATE/DELETE.
 
@@ -306,14 +312,17 @@ wipe dry runs only preview counts, mode, and SQL, executing no TRUNCATE/DELETE.
 3. Disable auto-restart for **both collector and server**, stop both services,
    and confirm both remain stopped with no writes in flight. Keep this
    stopped-write boundary through the final dump, activation, wipe, and any
-   stray cleanup. The collector resolves its league **before** acquiring its
-   runtime fence, so a process started during the flip could retain the old scope
-   even after the fence frees. Pause other administration during this window.
+   stray cleanup. Server and collector resolve their league only after acquiring
+   their fence, and activation refuses while either fence is held, but a writer
+   started before the flip still serves its boot-time league until restarted.
+   Pause other administration during this window.
 4. Inside that boundary, first acquire and check the held-session
    [runtime fence](#runtime-fence-for-archival). Keep it held through the final
    counts, dump, and archive verification. Capture outgoing-league counts for all
    sixteen scoped tables and take the final dedicated `pg_dump` outside the
-   nightly rotation.
+   nightly rotation. `pg_dump` warns that there are circular foreign-key
+   constraints on TimescaleDB's `hypertable` catalog table; the warning is
+   harmless for this dump.
    Retain the counts as the dump's manifest, including zero-count tables, and
    verify the dump and its restore procedure using the private backup/restore
    guide outside this repository. Past-league analysis requires restoring that
@@ -326,9 +335,9 @@ wipe dry runs only preview counts, mode, and SQL, executing no TRUNCATE/DELETE.
    ```
 
    Require `released` = `t`, then close that session. `Activate` and committed
-   `Wipe` call `guard` in `internal/league/admin.go` with the runtime fence
-   required; it takes `pg_try_advisory_xact_lock` on the same key for each CLI
-   transaction, including activation dry runs. Holding the separate session
+   `Wipe` call `guard` in `internal/league/admin.go` with both process fences
+   required; it takes `pg_try_advisory_xact_lock` on this key and on
+   `ServerLockKey()` for each CLI transaction, including activation dry runs. Holding the separate session
    fence would make those commands refuse. Keep both services stopped with
    auto-restart disabled across this hand-off, activation, and wipe.
    Preview activation, inspect the quoted before/after ids and revision, then
@@ -399,9 +408,13 @@ wipe dry runs only preview counts, mode, and SQL, executing no TRUNCATE/DELETE.
     and cleanup have passed.
 12. Check `/health` and `/latest` report `"<NewLeagueId>"`. Confirm a scoped
     write/read lands under it and the server rejects a lingering old-league event.
-13. Desktop users press **Settings → Refresh** or restart the app. Its league
-    resolver has no background poller after a successful resolve
-    (`refresh_league` in `desktop/src-tauri/src/ssot.rs`).
+13. Clients need no manual step in the normal case. The desktop app follows the
+    restarted server's `poe/league/active` boot event, re-checks the server's
+    league on every Mercure stream open, and rearms its league when trade submit
+    returns 409 `league_mismatch` (`desktop/src-tauri/src/ssot.rs`);
+    **Settings → Refresh** or an app restart remains the manual fallback. The
+    public web lab page reloads when the server announces a different active
+    league and re-checks it when its Mercure stream reopens.
 
 ### Wrong committed activation — only before `wipe`
 
