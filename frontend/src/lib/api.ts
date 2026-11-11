@@ -640,6 +640,15 @@ export interface MercureConnection {
 
 export const LEAGUE_ACTIVE_TOPIC = 'poe/league/active';
 
+// The server publishes LEAGUE_ACTIVE_TOPIC on every boot, so most events name
+// the league the page already holds; only a different one means the page's
+// league-scoped data (trade links, prices) is stale. A payload without a league
+// string carries no evidence of a change.
+export function isLeagueChange(data: unknown, heldLeague: string): boolean {
+	const league = (data as { league?: unknown } | null | undefined)?.league;
+	return typeof league === 'string' && league !== heldLeague;
+}
+
 export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void, onLeagueActive?: (data?: any) => void): MercureConnection {
 	const state: MercureConnection = { close: () => {}, connected: false };
 	let eventSource: EventSource | null = null;

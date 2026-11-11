@@ -5,6 +5,7 @@
 		fetchBestPlays,
 		fetchMarketOverview,
 		connectMercure,
+		isLeagueChange,
 		VARIANTS,
 		DEDICATION_VARIANTS,
 		type StatusData,
@@ -222,6 +223,13 @@
 		}, (connected) => {
 			if (status) {
 				status = { ...status, connected };
+			}
+		}, (data) => {
+			// No status yet means the first loadAll() is still in flight and will
+			// read the current league itself.
+			if (status && isLeagueChange(data, status.league)) {
+				console.log('[Dashboard] active league changed — scheduling reload');
+				debouncedMercureUpdate();
 			}
 		});
 
