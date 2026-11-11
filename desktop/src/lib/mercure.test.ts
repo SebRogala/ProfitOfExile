@@ -357,4 +357,30 @@ describe('league active hints', () => {
 		expect(opened[0].onmessage).toBeNull();
 		expect(opened[0].closeCalls).toBe(1);
 	});
+
+	it('asks for a league check without a league each time the stream reopens', async () => {
+		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
+		const onUpdate = vi.fn();
+		const onLeagueActive = vi.fn();
+		const connection = connectMercure(onUpdate, undefined, undefined, undefined, undefined, onLeagueActive);
+		await vi.advanceTimersByTimeAsync(0);
+		opened[0].onopen!();
+		opened[0].onerror!();
+		await vi.advanceTimersByTimeAsync(2000);
+		expect(opened).toHaveLength(2);
+		opened[1].onopen!();
+		expect(onLeagueActive.mock.calls).toEqual([[], []]);
+		expect(onUpdate).not.toHaveBeenCalled();
+		connection.close();
+	});
+
+	it('asks for no league check before the stream opens', async () => {
+		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
+		const onLeagueActive = vi.fn();
+		const connection = connectMercure(vi.fn(), undefined, undefined, undefined, undefined, onLeagueActive);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(opened).toHaveLength(1);
+		expect(onLeagueActive).not.toHaveBeenCalled();
+		connection.close();
+	});
 });

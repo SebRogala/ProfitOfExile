@@ -1159,6 +1159,8 @@ export const CURRENCY_EXCHANGE_UPDATED_TOPIC = 'poe/currency-exchange/updated';
 /** Harvest snapshots are stored before the server publishes this topic. */
 export const HARVEST_UPDATED_TOPIC = 'poe/harvest/updated';
 
+export const LEAGUE_ACTIVE_TOPIC = 'poe/league/active';
+
 /**
  * Open the Mercure SSE stream and keep it open (token refresh, backoff,
  * visibility-aware reconnect). One connection serves the whole app — LabPage
@@ -1178,9 +1180,11 @@ export const HARVEST_UPDATED_TOPIC = 'poe/harvest/updated';
  *   Optional like the rest: three-argument callers keep working unchanged and
  *   simply drop those events.
  * @param onHarvestUpdate `poe/harvest/updated` payloads; only Harvest reloads.
+ * @param onLeagueActive `poe/league/active` payloads, and a call with no
+ *   payload on every stream open: the server publishes that topic once at boot,
+ *   which a client still reconnecting to the restarted server misses, so an
+ *   open is itself a league hint whose league is unknown.
  */
-export const LEAGUE_ACTIVE_TOPIC = 'poe/league/active';
-
 export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void, onLayoutUpdate?: (data?: any) => void, onCurrencyExchangeUpdate?: (data?: any) => void, onHarvestUpdate?: (data?: any) => void, onLeagueActive?: (data?: any) => void): MercureConnection {
 	const state: MercureConnection = { close: () => {}, connected: false };
 	let eventSource: EventSource | null = null;
@@ -1277,6 +1281,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				// successful token fetch, which pinned a stream that opens and then fails
 				// at a permanent 4s retry — the backoff never escalated.
 				retries = 0;
+				onLeagueActive?.();
 			};
 
 			eventSource.onmessage = (event) => {
