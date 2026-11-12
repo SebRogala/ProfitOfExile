@@ -324,30 +324,33 @@
 	$effect(() => {
 		if (!statusReady) return;
 
-		const connection = connectMercure(debouncedMercureUpdate, (connected) => {
+		const connection = connectMercure({ onUpdate: debouncedMercureUpdate, onConnectionChange: (connected) => {
 			store.serverConnected = connected;
 			if (status) {
 				dashboard.state.status = { ...status, connected };
 			}
-		}, (data) => {
+		}, onLayoutUpdate: (data) => {
 			// Layout updated or reset on server — notify overlays
 			emit('lab-layout-updated', { difficulty: data?.difficulty, action: data?.action })
 				.catch(e => console.warn('[mercure] failed to emit layout update:', e));
-		}, (data) => {
+		}, onCurrencyExchangeUpdate: (data) => {
 			// Currency Exchange hour closed. This page owns the app's only Mercure
 			// connection (ADR-014 keeps every page mounted), so the payload is
 			// re-emitted for CurrencyExchangePage to pick up — the lab dashboard
 			// itself does not reload on this topic.
 			emit('currency-exchange-updated', data)
 				.catch(e => console.warn('[mercure] failed to emit currency exchange update:', e));
-		}, (data) => {
+		}, onHarvestUpdate: (data) => {
 			// Harvest publishes after its own snapshots are stored.
 			emit('harvest-updated', data)
 				.catch(e => console.warn('[mercure] failed to emit harvest update:', e));
-		}, (data) => {
+		}, onOpen: () => {
+			invoke('note_server_league', { observed: null })
+				.catch(e => console.warn('[mercure] failed to reconcile league:', e));
+		}, onLeagueActive: (data) => {
 			invoke('note_server_league', { observed: typeof data?.league === 'string' ? data.league : null })
 				.catch(e => console.warn('[mercure] failed to reconcile league:', e));
-		});
+		} });
 		mercure = connection;
 
 		return () => {

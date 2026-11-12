@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 
 // api.ts pulls in Tauri + the status store at module load; neither is needed for
 // the connection lifecycle under test.
@@ -52,7 +52,7 @@ async function connectedWithAllCallbacks() {
 	const onCurrencyExchangeUpdate = vi.fn();
 	const onHarvestUpdate = vi.fn();
 
-	connectMercure(onUpdate, undefined, onLayoutUpdate, onCurrencyExchangeUpdate, onHarvestUpdate);
+	connectMercure({ onUpdate, onLayoutUpdate, onCurrencyExchangeUpdate, onHarvestUpdate });
 	await vi.advanceTimersByTimeAsync(0);
 
 	const publish = (payload: unknown) =>
@@ -92,7 +92,7 @@ describe('connectMercure', () => {
 		// expectation is the guard working and not a harness that never got there.
 		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
 
-		connectMercure(() => {});
+		connectMercure({ onUpdate: () => {} });
 		await vi.advanceTimersByTimeAsync(0);
 
 		expect(opened).toHaveLength(1);
@@ -107,7 +107,7 @@ describe('connectMercure', () => {
 		const token = deferred<typeof TOKEN_RESPONSE>();
 		globalThis.fetch = vi.fn(() => token.promise) as unknown as typeof fetch;
 
-		const connection = connectMercure(() => {});
+		const connection = connectMercure({ onUpdate: () => {} });
 		connection.close();
 		token.resolve(TOKEN_RESPONSE);
 		await vi.advanceTimersByTimeAsync(0);
@@ -121,7 +121,7 @@ describe('connectMercure', () => {
 		const token = deferred<typeof TOKEN_RESPONSE>();
 		globalThis.fetch = vi.fn(() => token.promise) as unknown as typeof fetch;
 
-		const connection = connectMercure(() => {});
+		const connection = connectMercure({ onUpdate: () => {} });
 		connection.close();
 		token.resolve(TOKEN_RESPONSE);
 		await vi.advanceTimersByTimeAsync(0);
@@ -133,7 +133,7 @@ describe('connectMercure', () => {
 		const fetchMock = vi.fn(async () => { throw new Error('hub down'); });
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-		const connection = connectMercure(() => {});
+		const connection = connectMercure({ onUpdate: () => {} });
 		// Let the first attempt fail and a retry be scheduled.
 		await vi.advanceTimersByTimeAsync(5000);
 		const attemptsBeforeClose = fetchMock.mock.calls.length;
@@ -162,7 +162,7 @@ describe('connectMercure', () => {
 		const fetchMock = vi.fn(async () => { throw new Error('hub down'); });
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-		connectMercure(() => {});
+		connectMercure({ onUpdate: () => {} });
 		await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
 
 		expect(fetchMock.mock.calls.length).toBeLessThan(30);
@@ -177,7 +177,7 @@ describe('connectMercure', () => {
 		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
 		const onUpdate = vi.fn();
 
-		connectMercure(onUpdate);
+		connectMercure({ onUpdate });
 		await vi.advanceTimersByTimeAsync(0);
 		opened[0].onmessage!({ data: '{"type":"analysis"}' } as MessageEvent);
 
@@ -195,7 +195,7 @@ describe('connectMercure', () => {
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const raw = '<html>502 Bad Gateway</html>';
 
-		connectMercure(onUpdate);
+		connectMercure({ onUpdate });
 		await vi.advanceTimersByTimeAsync(0);
 		opened[0].onmessage!({ data: raw } as MessageEvent);
 
@@ -232,7 +232,7 @@ describe('connectMercure topic routing', () => {
 		// arrives at all, so the URL is the first half of the feature.
 		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
 
-		connectMercure(() => {});
+		connectMercure({ onUpdate: () => {} });
 		await vi.advanceTimersByTimeAsync(0);
 
 		expect(subscribedTopics()).toEqual(
@@ -294,7 +294,7 @@ describe('connectMercure topic routing', () => {
 		expect(onCurrencyExchangeUpdate).not.toHaveBeenCalled();
 	});
 
-	it('drops a currency exchange publish for a caller that passed no fourth callback', async () => {
+	it('drops a currency exchange publish for a caller that passed no currency exchange handler', async () => {
 		// Every existing caller is three-argument; the new topic is on the shared
 		// subscribe URL, so their handler now receives payloads they never asked
 		// for. Dropping is the contract — throwing would kill the stream, and
@@ -302,7 +302,7 @@ describe('connectMercure topic routing', () => {
 		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
 		const onUpdate = vi.fn();
 
-		connectMercure(onUpdate, undefined, () => {});
+		connectMercure({ onUpdate, onLayoutUpdate: () => {} });
 		await vi.advanceTimersByTimeAsync(0);
 		opened[0].onmessage!({
 			data: JSON.stringify({ topic: CURRENCY_EXCHANGE_UPDATED_TOPIC }),
@@ -328,7 +328,7 @@ describe('Harvest Mercure routing', () => {
 	it('drops a Harvest publish when the caller has no Harvest callback', async () => {
 		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
 		const onUpdate = vi.fn();
-		connectMercure(onUpdate);
+		connectMercure({ onUpdate });
 		await vi.advanceTimersByTimeAsync(0);
 		opened[0].onmessage!({ data: JSON.stringify({ topic: HARVEST_UPDATED_TOPIC }) } as MessageEvent);
 		expect(onUpdate).not.toHaveBeenCalled();
@@ -338,7 +338,7 @@ describe('Harvest Mercure routing', () => {
 describe('league active hints', () => {
 	it('subscribes to league hints on the existing connection', async () => {
 		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
-		const connection = connectMercure(vi.fn());
+		const connection = connectMercure({ onUpdate: vi.fn() });
 		await vi.advanceTimersByTimeAsync(0);
 		expect(opened).toHaveLength(1);
 		expect(new URL(opened[0].url).searchParams.getAll('topic')).toContain('poe/league/active');
@@ -347,40 +347,107 @@ describe('league active hints', () => {
 
 	it('dispatches league hints only to the league callback', async () => {
 		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
-		const callbacks = Array.from({ length: 5 }, () => vi.fn());
-		const connection = connectMercure(callbacks[0], undefined, callbacks[1], callbacks[2], callbacks[3], callbacks[4]);
+		const names = ['onUpdate', 'onOpen', 'onLayoutUpdate', 'onCurrencyExchangeUpdate', 'onHarvestUpdate', 'onLeagueActive'] as const;
+		const handlers = Object.fromEntries(names.map(name => [name, vi.fn()])) as Record<typeof names[number], Mock<() => void>>;
+		const connection = connectMercure(handlers);
 		await vi.advanceTimersByTimeAsync(0);
 		const payload = { topic: 'poe/league/active', league: 'B', leagueRevision: 7 };
 		opened[0].onmessage!({ data: JSON.stringify(payload) } as MessageEvent);
-		expect(callbacks.map(callback => callback.mock.calls)).toEqual([[], [], [], [], [[payload]]]);
+		expect(Object.fromEntries(names.map(name => [name, handlers[name].mock.calls]))).toEqual({
+			onUpdate: [], onOpen: [], onLayoutUpdate: [], onCurrencyExchangeUpdate: [], onHarvestUpdate: [],
+			onLeagueActive: [[payload]],
+		});
 		connection.close();
 		expect(opened[0].onmessage).toBeNull();
 		expect(opened[0].closeCalls).toBe(1);
 	});
 
-	it('asks for a league check without a league each time the stream reopens', async () => {
+	it('fires onOpen once per open, and no league or update callback, across a reopen', async () => {
 		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
 		const onUpdate = vi.fn();
+		const onOpen = vi.fn();
 		const onLeagueActive = vi.fn();
-		const connection = connectMercure(onUpdate, undefined, undefined, undefined, undefined, onLeagueActive);
+		const connection = connectMercure({ onUpdate, onOpen, onLeagueActive });
 		await vi.advanceTimersByTimeAsync(0);
 		opened[0].onopen!();
 		opened[0].onerror!();
 		await vi.advanceTimersByTimeAsync(2000);
 		expect(opened).toHaveLength(2);
 		opened[1].onopen!();
-		expect(onLeagueActive.mock.calls).toEqual([[], []]);
+		expect(onOpen.mock.calls).toEqual([[], []]);
+		expect(onLeagueActive).not.toHaveBeenCalled();
 		expect(onUpdate).not.toHaveBeenCalled();
 		connection.close();
 	});
 
-	it('asks for no league check before the stream opens', async () => {
+	it('fires onOpen after onConnectionChange(true) on an open', async () => {
 		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
-		const onLeagueActive = vi.fn();
-		const connection = connectMercure(vi.fn(), undefined, undefined, undefined, undefined, onLeagueActive);
+		const order: string[] = [];
+		const connection = connectMercure({
+			onUpdate: vi.fn(),
+			onConnectionChange: (connected) => order.push(`connection:${connected}`),
+			onOpen: () => order.push(`open:connected=${connection.connected}`),
+		});
+		await vi.advanceTimersByTimeAsync(0);
+		opened[0].onopen!();
+		expect(order).toEqual(['connection:true', 'open:connected=true']);
+		connection.close();
+	});
+
+	it('fires no onOpen before the stream opens', async () => {
+		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
+		const onOpen = vi.fn();
+		const connection = connectMercure({ onUpdate: vi.fn(), onOpen });
 		await vi.advanceTimersByTimeAsync(0);
 		expect(opened).toHaveLength(1);
-		expect(onLeagueActive).not.toHaveBeenCalled();
+		expect(onOpen).not.toHaveBeenCalled();
+		connection.close();
+	});
+});
+
+describe('connection state through an outage', () => {
+	async function openConnection() {
+		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
+		const onConnectionChange = vi.fn();
+		const connection = connectMercure({ onUpdate: vi.fn(), onConnectionChange });
+		await vi.advanceTimersByTimeAsync(0);
+		opened[0].onopen!();
+		onConnectionChange.mockClear();
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		return { connection, onConnectionChange };
+	}
+
+	it('stays connected through an outage shorter than 5s', async () => {
+		const { connection, onConnectionChange } = await openConnection();
+		opened[0].onerror!();
+		await vi.advanceTimersByTimeAsync(4999);
+		expect(connection.connected).toBe(true);
+		expect(onConnectionChange).not.toHaveBeenCalled();
+		connection.close();
+	});
+
+	it('reports disconnected once the outage reaches 5s', async () => {
+		// Fail every reconnect so the stream cannot reopen inside the window.
+		const { connection, onConnectionChange } = await openConnection();
+		globalThis.fetch = vi.fn(async () => { throw new Error('hub down'); }) as unknown as typeof fetch;
+		opened[0].onerror!();
+		await vi.advanceTimersByTimeAsync(5000);
+		expect(connection.connected).toBe(false);
+		expect(onConnectionChange.mock.calls).toEqual([[false]]);
+		connection.close();
+	});
+
+	it('reports connected again when the stream reopens after the outage', async () => {
+		const { connection, onConnectionChange } = await openConnection();
+		globalThis.fetch = vi.fn(async () => { throw new Error('hub down'); }) as unknown as typeof fetch;
+		opened[0].onerror!();
+		await vi.advanceTimersByTimeAsync(5000);
+		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
+		await vi.advanceTimersByTimeAsync(60000);
+		expect(opened).toHaveLength(2);
+		opened[1].onopen!();
+		expect(connection.connected).toBe(true);
+		expect(onConnectionChange.mock.calls).toEqual([[false], [true]]);
 		connection.close();
 	});
 });

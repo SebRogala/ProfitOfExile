@@ -1161,6 +1161,20 @@ export const HARVEST_UPDATED_TOPIC = 'poe/harvest/updated';
 
 export const LEAGUE_ACTIVE_TOPIC = 'poe/league/active';
 
+/** Callbacks for {@link connectMercure}; see its doc for the routing. */
+export interface MercureHandlers {
+	/** Every topic without a dedicated handler. */
+	onUpdate: () => void;
+	/** Every stream open. */
+	onOpen?: () => void;
+	/** Connection state, debounced by 5s on the way down. */
+	onConnectionChange?: (connected: boolean) => void;
+	onLayoutUpdate?: (data: any) => void;
+	onCurrencyExchangeUpdate?: (data: any) => void;
+	onHarvestUpdate?: (data: any) => void;
+	onLeagueActive?: (data: any) => void;
+}
+
 /**
  * Open the Mercure SSE stream and keep it open (token refresh, backoff,
  * visibility-aware reconnect). One connection serves the whole app — LabPage
@@ -1173,19 +1187,14 @@ export const LEAGUE_ACTIVE_TOPIC = 'poe/league/active';
  * `poe/harvest/updated` likewise reaches `onHarvestUpdate` only.
  * Everything else — `poe/analysis/updated` above all — calls `onUpdate`.
  *
- * @param onUpdate Fired for every topic without a dedicated callback.
- * @param onConnectionChange Connection state, debounced by 5s on the way down.
- * @param onLayoutUpdate `poe/lab/layout` payloads.
- * @param onCurrencyExchangeUpdate `poe/currency-exchange/updated` payloads.
- *   Optional like the rest: three-argument callers keep working unchanged and
- *   simply drop those events.
- * @param onHarvestUpdate `poe/harvest/updated` payloads; only Harvest reloads.
- * @param onLeagueActive `poe/league/active` payloads, and a call with no
- *   payload on every stream open: the server publishes that topic once at boot,
- *   which a client still reconnecting to the restarted server misses, so an
- *   open is itself a league hint whose league is unknown.
+ * `handlers.onOpen` fires on every stream open, after `onConnectionChange(true)`:
+ * the server publishes `poe/league/active` once at boot, which a client still
+ * reconnecting to the restarted server misses, so an open is itself a league
+ * hint whose league is unknown. `onLeagueActive` receives only that topic's
+ * payloads. Handlers left out drop their topic's events.
  */
-export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void, onLayoutUpdate?: (data?: any) => void, onCurrencyExchangeUpdate?: (data?: any) => void, onHarvestUpdate?: (data?: any) => void, onLeagueActive?: (data?: any) => void): MercureConnection {
+export function connectMercure(handlers: MercureHandlers): MercureConnection {
+	const { onUpdate, onOpen, onConnectionChange, onLayoutUpdate, onCurrencyExchangeUpdate, onHarvestUpdate, onLeagueActive } = handlers;
 	const state: MercureConnection = { close: () => {}, connected: false };
 	let eventSource: EventSource | null = null;
 	let tokenTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -1281,7 +1290,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				// successful token fetch, which pinned a stream that opens and then fails
 				// at a permanent 4s retry — the backoff never escalated.
 				retries = 0;
-				onLeagueActive?.();
+				onOpen?.();
 			};
 
 			eventSource.onmessage = (event) => {
