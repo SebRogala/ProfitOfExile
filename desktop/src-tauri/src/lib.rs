@@ -4,6 +4,7 @@ mod font_ledger;
 mod font_parser;
 mod font_session;
 mod gem_matcher;
+mod http;
 mod lab_detection;
 mod lab_scan;
 mod lab_navigation;
@@ -349,6 +350,9 @@ pub struct AppState {
     /// General-purpose HTTP client for server communication (separate from trade_client
     /// which has GGG-specific User-Agent/headers).
     pub server_http: reqwest::Client,
+    /// The proxy `run()` read at startup and every transport uses until the
+    /// next launch; the saved `Settings::proxy_url` may differ.
+    pub proxy_in_effect: Option<http::ProxyUrl>,
     /// Cancel signal for the current log watcher. Send () to stop it.
     pub watcher_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
     /// Cached comparator overlay data (results + trade data) shared between windows.
@@ -2001,6 +2005,33 @@ fn get_webview_gpu_disabled(app: AppHandle) -> bool {
     settings::load(&app).webview_gpu_disabled
 }
 
+/// The saved proxy and the one this process started with; they differ until
+/// the next launch.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProxySettings {
+    saved: String,
+    in_effect: String,
+}
+
+#[tauri::command]
+fn get_proxy_settings(app: AppHandle) -> ProxySettings {
+    let in_effect = app.state::<AppState>().proxy_in_effect.as_ref().map(|p| p.as_str().to_string());
+    ProxySettings { saved: settings::load(&app).proxy_url, in_effect: in_effect.unwrap_or_default() }
+}
+
+/// Stores a validated proxy (empty clears it); applies after a restart.
+#[tauri::command]
+fn set_proxy_url(url: String, app: AppHandle) -> Result<(), String> {
+    let proxy = http::ProxyUrl::parse(&url)?;
+    let mut s = settings::load(&app);
+    s.proxy_url = proxy.as_ref().map(|p| p.as_str().to_string()).unwrap_or_default();
+    settings::save(&app, &s);
+    let shown = proxy.map(|p| p.redacted()).unwrap_or_else(|| "none".into());
+    app_log(&app, format!("Proxy set to {shown} — applies after restart"));
+    Ok(())
+}
+
 #[tauri::command]
 fn set_webview_gpu_disabled(disabled: bool, app: AppHandle) {
     let mut s = settings::load(&app);
@@ -3245,13 +3276,25 @@ pub fn run() {
     let context = tauri::generate_context!();
     // Before the builder: WebView2 reads the variable when the first webview
     // creates its environment, and every later webview must share those args.
-    let webview_gpu_disabled = settings::settings_path_before_app(&context.config().identifier)
-        .is_some_and(|path| settings::webview_gpu_disabled_in(&path));
+    let settings_path = settings::settings_path_before_app(&context.config().identifier);
+    let webview_gpu_disabled = settings_path
+        .as_deref()
+        .is_some_and(settings::webview_gpu_disabled_in);
+    // Also before the builder: the proxy goes into the WebView2 args and into
+    // both reqwest clients below.
+    let (proxy_in_effect, proxy_rejection) =
+        match http::ProxyUrl::parse(&settings_path.as_deref().map(settings::proxy_url_in).unwrap_or_default()) {
+            Ok(proxy) => (proxy, None),
+            Err(e) => (None, Some(e)),
+        };
     let prior = std::env::var(WEBVIEW2_ARGS_ENV).unwrap_or_default();
     if !prior.is_empty() {
         log::warn!("{} already set ({:?}); appending our flags", WEBVIEW2_ARGS_ENV, prior);
     }
-    std::env::set_var(WEBVIEW2_ARGS_ENV, webview2_browser_args(&prior, webview_gpu_disabled));
+    std::env::set_var(
+        WEBVIEW2_ARGS_ENV,
+        webview2_browser_args(&prior, webview_gpu_disabled, proxy_in_effect.as_ref()),
+    );
 
     let pair_code = generate_pair_code();
     log::info!("Pair code: {}", pair_code);
@@ -3270,10 +3313,10 @@ pub fn run() {
     if let Ok(v) = reqwest::header::HeaderValue::from_str(version) {
         default_headers.insert("X-App-Version", v);
     }
-    let server_http = reqwest::Client::builder()
+    let server_http = http::client_builder(proxy_in_effect.as_ref())
         .default_headers(default_headers)
         .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+        .expect("failed to build server HTTP client");
 
     let app_state = AppState {
         boss_loot: Mutex::new(loot_capture::LootOwner::default()),
@@ -3300,8 +3343,9 @@ pub fn run() {
         logs: Mutex::new(Vec::new()),
         sidebar_open: Mutex::new(true),
         game_focused: Mutex::new(false),
-        trade_client: trade::TradeApiClient::new(),
+        trade_client: trade::TradeApiClient::new(proxy_in_effect.as_ref()),
         server_http,
+        proxy_in_effect: proxy_in_effect.clone(),
         watcher_cancel: Mutex::new(None),
         comparator_data: Mutex::new(serde_json::json!({"results":[],"tradeData":{}})),
         overlay_hook_stop: Mutex::new(None),
@@ -3440,6 +3484,8 @@ pub fn run() {
             get_timer_appearance,
             get_webview_gpu_disabled,
             set_webview_gpu_disabled,
+            get_proxy_settings,
+            set_proxy_url,
             set_timer_appearance,
             get_lab_overlays_enabled,
             set_lab_overlays_enabled,
@@ -3480,6 +3526,12 @@ pub fn run() {
             }
             if webview_gpu_disabled {
                 app_log(&handle, "WebView2 started with --disable-gpu (GPU-free rendering setting)".into());
+            }
+            if let Some(proxy) = &proxy_in_effect {
+                app_log(&handle, format!("Proxy in effect: {}", proxy.redacted()));
+            }
+            if let Some(rejection) = &proxy_rejection {
+                app_log(&handle, format!("Saved proxy ignored, connecting directly: {rejection}"));
             }
 
             // If saved Client.txt path doesn't exist, re-detect
@@ -3671,10 +3723,11 @@ const WEBVIEW2_ARGS_ENV: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
 /// Always keeps the renderer alive when the window is backgrounded — PoE
 /// alt-tab steals focus and Chromium's default backgrounding pauses timers and
 /// drops the SSE socket. `gpu_disabled` adds `--disable-gpu`
-/// (`Settings::webview_gpu_disabled`). A value the outer shell already set is
+/// (`Settings::webview_gpu_disabled`); `proxy` adds the proxy server and its
+/// local bypass list (`Settings::proxy_url`). A value the outer shell already set is
 /// kept first: the variable is additive, and operators may set their own flags
 /// for debugging or workarounds.
-fn webview2_browser_args(prior: &str, gpu_disabled: bool) -> String {
+fn webview2_browser_args(prior: &str, gpu_disabled: bool, proxy: Option<&http::ProxyUrl>) -> String {
     let mut args = String::from(prior.trim());
     let mut push = |flag: &str| {
         if !args.is_empty() {
@@ -3685,6 +3738,9 @@ fn webview2_browser_args(prior: &str, gpu_disabled: bool) -> String {
     push("--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows");
     if gpu_disabled {
         push("--disable-gpu");
+    }
+    if let Some(proxy) = proxy {
+        push(&http::webview2_proxy_args(proxy));
     }
     args
 }
@@ -3706,16 +3762,32 @@ mod tests {
     #[test]
     fn webview2_browser_args_keeps_prior_flags_and_adds_gpu_flag_only_when_set() {
         let keepalive = "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows";
-        assert_eq!(webview2_browser_args("", false), keepalive);
-        assert_eq!(webview2_browser_args("", true), format!("{} --disable-gpu", keepalive));
+        assert_eq!(webview2_browser_args("", false, None), keepalive);
+        assert_eq!(webview2_browser_args("", true, None), format!("{} --disable-gpu", keepalive));
         assert_eq!(
-            webview2_browser_args("--remote-debugging-port=9222 ", true),
+            webview2_browser_args("--remote-debugging-port=9222 ", true, None),
             format!("--remote-debugging-port=9222 {} --disable-gpu", keepalive)
         );
         assert_eq!(
-            webview2_browser_args("--remote-debugging-port=9222", false),
+            webview2_browser_args("--remote-debugging-port=9222", false, None),
             format!("--remote-debugging-port=9222 {}", keepalive)
         );
+    }
+
+    /// The proxy flags come last and only when a proxy is in effect; the
+    /// keep-alive and GPU flags are unchanged by them.
+    #[test]
+    fn webview2_browser_args_appends_proxy_flags_only_when_set() {
+        let keepalive = "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows";
+        let proxy = crate::http::ProxyUrl::parse("socks5://127.0.0.1:1080").unwrap().unwrap();
+        assert_eq!(
+            webview2_browser_args("", true, Some(&proxy)),
+            format!(
+                "{} --disable-gpu --proxy-server=socks5://127.0.0.1:1080 --proxy-bypass-list=localhost;127.0.0.1;[::1];*.localhost",
+                keepalive
+            )
+        );
+        assert!(!webview2_browser_args("", true, None).contains("--proxy"));
     }
 
     /// The bug the `on` argument exists for. The command was an

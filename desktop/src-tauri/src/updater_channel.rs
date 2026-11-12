@@ -65,8 +65,11 @@ pub async fn check_update_from_endpoint<R: Runtime>(
     // re-exported by a dependency this crate already has.
     let url = reqwest::Url::parse(&endpoint).map_err(|e| format!("bad updater endpoint: {e}"))?;
 
-    let updater = webview
-        .updater_builder()
+    let mut builder = webview.updater_builder();
+    if let Some(proxy) = webview.state::<crate::AppState>().proxy_in_effect.as_ref() {
+        builder = builder.proxy(reqwest::Url::parse(proxy.as_str()).map_err(|e| format!("bad proxy: {e}"))?);
+    }
+    let updater = builder
         .endpoints(vec![url])
         .map_err(|e| format!("updater endpoint rejected: {e}"))?
         .build()

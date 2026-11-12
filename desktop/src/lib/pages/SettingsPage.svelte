@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
+	import { getProxySettings, setProxyUrl } from '$lib/proxy';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { createSettingsUpdateController } from '$lib/updater/settings-update.svelte';
 	import { store } from '$lib/stores/status.svelte';
@@ -60,6 +61,46 @@
 			await invoke('refresh_league');
 		} catch (e) {
 			console.warn('[settings] refresh_league failed:', e);
+		}
+	}
+
+	// --- Proxy (POE-360) ---
+	// Rust validates and owns the value; it applies on the next launch, so the
+	// note shows while the saved value differs from the one in effect.
+	let proxySaved = $state('');
+	let proxyInEffect = $state('');
+	let editingProxy = $state(false);
+	let editProxyValue = $state('');
+	let proxyError = $state('');
+
+	$effect(() => {
+		getProxySettings()
+			.then((p) => {
+				proxySaved = p.saved;
+				proxyInEffect = p.inEffect;
+			})
+			.catch((e: any) => console.warn('[settings] load proxy failed:', e));
+	});
+
+	function startEditProxy() {
+		editProxyValue = proxySaved;
+		proxyError = '';
+		editingProxy = true;
+	}
+
+	function cancelEditProxy() {
+		editingProxy = false;
+		proxyError = '';
+	}
+
+	async function saveProxy() {
+		try {
+			await setProxyUrl(editProxyValue);
+			proxySaved = (await getProxySettings()).saved;
+			editingProxy = false;
+			proxyError = '';
+		} catch (e: any) {
+			proxyError = String(e);
 		}
 	}
 
@@ -787,6 +828,36 @@
 					<Button onclick={refreshLeague}>Refresh</Button>
 				{/if}
 			</div>
+
+			<div class="setting-row">
+				<label class="setting-label" for="proxy-url">Proxy</label>
+				{#if editingProxy}
+					<div class="setting-edit">
+						<input
+							id="proxy-url"
+							type="text"
+							class="setting-input"
+							placeholder="socks5://host:port or http://user:pass@host:port"
+							bind:value={editProxyValue}
+							onkeydown={(e) => { if (e.key === 'Enter') saveProxy(); if (e.key === 'Escape') cancelEditProxy(); }}
+						/>
+						<Button variant="save" onclick={saveProxy}>Save</Button>
+						<Button onclick={cancelEditProxy}>Cancel</Button>
+					</div>
+				{:else}
+					<span class="setting-value" class:muted={!proxySaved}>{proxySaved || 'None'}</span>
+					<Button onclick={startEditProxy}>Edit</Button>
+				{/if}
+			</div>
+			{#if proxyError}
+				<div class="setting-row">
+					<span class="setting-label"></span>
+					<span class="setting-error">{proxyError}</span>
+				</div>
+			{/if}
+			{#if proxySaved !== proxyInEffect}
+				<p class="setting-note">Restart the app to apply.</p>
+			{/if}
 
 		</section>
 

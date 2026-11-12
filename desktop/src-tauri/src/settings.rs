@@ -206,6 +206,12 @@ pub struct Settings {
     /// exists, so a change applies on the next launch. No `AppState` mutex owns
     /// it: [`persist_overlay_settings`] carries it across saves.
     pub webview_gpu_disabled: bool,
+    /// Proxy for every outbound request (POE-360): `http://`, `https://` or
+    /// `socks5://`, optionally with `user:pass@`; empty = none. Validated by
+    /// `http::ProxyUrl::parse` on write and read once by [`proxy_url_in`] at
+    /// startup, so a change applies on the next launch. File-owned like
+    /// `webview_gpu_disabled`: [`persist_overlay_settings`] carries it.
+    pub proxy_url: String,
 }
 
 /// One overlay widget's placement inside its module's fullscreen window
@@ -703,6 +709,7 @@ impl Default for Settings {
             // the way an unchosen module default would (see `modules`).
             widgets: std::collections::BTreeMap::new(),
             webview_gpu_disabled: false,
+            proxy_url: String::new(),
         }
     }
 }
@@ -878,6 +885,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         // `set_widget_geometry` just wrote to, and the file is the stale copy.
         widgets: state.widgets.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         webview_gpu_disabled: false, // File-owned, carried by persist_overlay_settings
+        proxy_url: String::new(),    // File-owned, carried by persist_overlay_settings
     }
 }
 
@@ -974,6 +982,18 @@ pub fn persist_overlay_settings(existing: &Settings, target: &mut Settings) {
     target.timer_bg_opacity = existing.timer_bg_opacity;
     target.timer_text_stroke = existing.timer_text_stroke;
     target.webview_gpu_disabled = existing.webview_gpu_disabled;
+    target.proxy_url = existing.proxy_url.clone();
+}
+
+/// The raw `proxy_url` in the settings file at `path`; empty when unset or
+/// when the file is missing or invalid (the same silence as
+/// [`webview_gpu_disabled_in`]).
+pub fn proxy_url_in(path: &std::path::Path) -> String {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<Settings>(&contents).ok())
+        .map(|s| s.proxy_url)
+        .unwrap_or_default()
 }
 
 /// Whether the settings file at `path` asks for GPU-free webview rendering.
@@ -1081,6 +1101,35 @@ mod tests {
         assert!(!webview_gpu_disabled_in(&dir.join("missing.json")));
         let _ = fs::remove_dir_all(&dir);
     }
+
+    /// `proxy_url` has no `AppState` owner either, so an unrelated save must
+    /// carry it forward for the next launch to read it.
+    #[test]
+    fn proxy_url_survives_an_unrelated_save() {
+        let state = test_app_state();
+        let mut existing = Settings::default();
+        existing.proxy_url = "socks5://127.0.0.1:1080".into();
+        let mut target = from_state(&state);
+        persist_overlay_settings(&existing, &mut target);
+        let path = std::env::temp_dir().join("poe_test_proxy_url_saved.json");
+        fs::write(&path, serde_json::to_string(&target).unwrap()).unwrap();
+        assert_eq!(proxy_url_in(&path), "socks5://127.0.0.1:1080");
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn proxy_url_in_reads_empty_for_an_older_broken_or_missing_file() {
+        let dir = std::env::temp_dir().join("poe_test_proxy_url_in");
+        fs::create_dir_all(&dir).unwrap();
+        let older = dir.join("older.json");
+        fs::write(&older, r#"{"sidebar_open": false}"#).unwrap();
+        let broken = dir.join("broken.json");
+        fs::write(&broken, r#"{"proxy_url": "http://p:1""#).unwrap();
+        assert_eq!(proxy_url_in(&older), "");
+        assert_eq!(proxy_url_in(&broken), "");
+        assert_eq!(proxy_url_in(&dir.join("missing.json")), "");
+        let _ = fs::remove_dir_all(&dir);
+    }
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
     use std::sync::Mutex;
@@ -1115,8 +1164,9 @@ mod tests {
             logs: Mutex::new(Vec::new()),
             sidebar_open: Mutex::new(true),
             game_focused: Mutex::new(false),
-            trade_client: crate::trade::TradeApiClient::new(),
-            server_http: reqwest::Client::new(),
+            trade_client: crate::trade::TradeApiClient::new(None),
+            server_http: crate::http::client_builder(None).build().unwrap(),
+            proxy_in_effect: None,
             watcher_cancel: Mutex::new(None),
             comparator_data: Mutex::new(serde_json::json!({})),
             overlay_hook_stop: Mutex::new(None),

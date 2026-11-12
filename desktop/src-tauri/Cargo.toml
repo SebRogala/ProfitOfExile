@@ -21,7 +21,11 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 notify = "6"
 strsim = "0.11"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "socks"] }
+# Never imported: enables `socks` on the reqwest 0.13 that tauri-plugin-updater
+# builds its own client with (feature unification), so a socks5:// proxy
+# reaches the update check too.
+reqwest_updater = { package = "reqwest", version = "0.13", default-features = false, features = ["socks"] }
 log = "0.4"
 env_logger = "0.11"
 rand = "0.8"

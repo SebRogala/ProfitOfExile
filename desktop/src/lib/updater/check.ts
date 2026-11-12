@@ -24,6 +24,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { check, Update } from '@tauri-apps/plugin-updater';
 import { entitlements } from '$lib/stores/entitlements.svelte';
+import { getProxySettings } from '$lib/proxy';
 import { higherUpdate } from './semver';
 
 /**
@@ -34,6 +35,15 @@ import { higherUpdate } from './semver';
  */
 export const BETA_MANIFEST_URL =
 	'https://github.com/SebRogala/ProfitOfExile/releases/download/desktop-beta/latest.json';
+
+/**
+ * Ask the `tauri.conf.json` manifest. The plugin's init has no proxy option, so
+ * the proxy in effect is passed per call (the beta arm applies it in Rust).
+ */
+async function checkStableManifest(): Promise<Update | null> {
+	const { inEffect } = await getProxySettings();
+	return inEffect ? check({ proxy: inEffect }) : check();
+}
 
 /** Ask the beta manifest, through the Rust endpoint override. */
 async function checkBetaManifest(): Promise<Update | null> {
@@ -64,11 +74,11 @@ async function discard(update: Update | null, kept: Update | null): Promise<void
  * "you are on the latest version".
  */
 export async function checkForUpdate(): Promise<Update | null> {
-	if (entitlements.channel !== 'beta') return check();
+	if (entitlements.channel !== 'beta') return checkStableManifest();
 
 	// Stable first: `higherUpdate` keeps its first argument on a tie, so a beta
 	// build promoted to stable unchanged leaves the device on the stable one.
-	const [stableArm, betaArm] = await Promise.allSettled([check(), checkBetaManifest()]);
+	const [stableArm, betaArm] = await Promise.allSettled([checkStableManifest(), checkBetaManifest()]);
 
 	if (stableArm.status === 'rejected' && betaArm.status === 'rejected') {
 		console.warn('[updater] beta check failed:', betaArm.reason);

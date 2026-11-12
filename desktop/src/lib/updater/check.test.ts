@@ -32,7 +32,11 @@ vi.mock('@tauri-apps/plugin-updater', () => ({
 	}
 }));
 
+// The proxy in effect, which the stable arm hands to `check()` (POE-360).
+vi.mock('$lib/proxy', () => ({ getProxySettings: vi.fn() }));
+
 import { invoke } from '@tauri-apps/api/core';
+import { getProxySettings } from '$lib/proxy';
 import { check, type Update } from '@tauri-apps/plugin-updater';
 import { entitlements } from '$lib/stores/entitlements.svelte';
 import { BETA_MANIFEST_URL, checkForUpdate } from './check';
@@ -60,6 +64,7 @@ beforeEach(() => {
 	entitlements.role = '';
 	entitlements.channel = 'stable';
 	entitlements.features = [];
+	vi.mocked(getProxySettings).mockResolvedValue({ saved: '', inEffect: '' });
 	// The half-failed paths log on purpose; one test below asserts on it.
 	warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
@@ -85,6 +90,29 @@ describe('checkForUpdate on a stable device', () => {
 		await checkForUpdate();
 
 		expect(invoke).not.toHaveBeenCalled();
+	});
+});
+
+describe('checkForUpdate with a proxy setting', () => {
+	it('passes the proxy in effect to the stable check', async () => {
+		vi.mocked(getProxySettings).mockResolvedValue({
+			saved: 'socks5://127.0.0.1:1080',
+			inEffect: 'http://127.0.0.1:8080'
+		});
+		vi.mocked(check).mockResolvedValue(null);
+
+		await checkForUpdate();
+
+		expect(check).toHaveBeenCalledWith({ proxy: 'http://127.0.0.1:8080' });
+	});
+
+	it('calls the stable check without options when no proxy is in effect', async () => {
+		vi.mocked(getProxySettings).mockResolvedValue({ saved: 'http://127.0.0.1:8080', inEffect: '' });
+		vi.mocked(check).mockResolvedValue(null);
+
+		await checkForUpdate();
+
+		expect(check).toHaveBeenCalledWith();
 	});
 });
 
