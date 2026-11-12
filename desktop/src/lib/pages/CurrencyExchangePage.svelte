@@ -15,8 +15,8 @@
 	 * publishes 40-60 minutes after an hour closes, so a reader who takes these
 	 * numbers for the live book is reading something up to two hours stale.
 	 *
-	 * It does not open its own Mercure connection: `LabPage.svelte` owns the one
-	 * connection for the whole app (ADR-014 keeps every page mounted) and
+	 * It does not open its own Mercure connection: the mercure store
+	 * (`stores/mercure.svelte.ts`) owns the one connection for the whole app and
 	 * re-emits the Currency Exchange payloads as a Tauri `currency-exchange-updated`
 	 * event, which this page listens for and answers with a jittered refetch.
 	 *

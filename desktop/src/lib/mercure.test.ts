@@ -216,7 +216,7 @@ describe('connectMercure', () => {
 });
 
 /**
- * One SSE stream serves the whole app (LabPage owns it, ADR-014), so every page
+ * One SSE stream serves the whole app (the mercure store in stores/mercure.svelte.ts owns it), so every page
  * that wants server pushes depends on two things this describe pins: the
  * subscribe URL naming its topic, and the message handler routing that topic to
  * its own callback instead of the generic reload.
@@ -255,14 +255,14 @@ describe('connectMercure topic routing', () => {
 		publish(payload);
 
 		// The parsed payload, not the raw MessageEvent. The page ignores the
-		// payload today, but LabPage forwards this object through a Tauri `emit`,
+		// payload today, but the mercure store forwards this object through a Tauri `emit`,
 		// which a MessageEvent would not survive — and a consumer that later
 		// wants to filter (on `league`, say) needs the fields to be there.
 		expect(onCurrencyExchangeUpdate.mock.calls).toEqual([[payload]]);
 	});
 
 	it('does not reload the lab dashboard on a currency exchange publish', async () => {
-		// onUpdate is LabPage's loadAll() fan-out — half a dozen requests. A
+		// onUpdate reaches LabPage's loadAll() fan-out — half a dozen requests. A
 		// Currency Exchange hour closing must not drag it through them, which is
 		// what the early `return` in the topic branch is for.
 		const { publish, onUpdate } = await connectedWithAllCallbacks();

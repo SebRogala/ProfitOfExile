@@ -5,7 +5,7 @@
  * going live swaps that function's body and nothing here.
  *
  * Refresh: one read at init, then one debounced read per
- * `currency-exchange-updated` burst — LabPage's re-emit of the exchange's
+ * `currency-exchange-updated` burst — the mercure store's re-emit of the exchange's
  * Mercure topic, so this opens no second connection. A periodic read also
  * detects outages and recovery when no event arrives. The first failed read
  * marks a held rate stale until a good read replaces it.

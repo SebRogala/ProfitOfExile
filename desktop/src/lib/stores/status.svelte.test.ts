@@ -273,3 +273,42 @@ describe('the divine rate across server_url', () => {
 		expect(mocks.syncDivineRateToServer).toHaveBeenCalledTimes(1);
 	});
 });
+
+describe('onStatusReady', () => {
+	async function initWithStatus(status: unknown) {
+		const { invoke } = await import('@tauri-apps/api/core');
+		vi.mocked(invoke).mockImplementation(async (cmd: string) => (cmd === 'get_status' ? status : null) as never);
+		mocks.loadEntitlements.mockReturnValue(neverLands());
+		return import('./status.svelte');
+	}
+
+	it('fires once when the first non-null status is written', async () => {
+		const mod = await initWithStatus(null);
+		const fn = vi.fn();
+		mod.onStatusReady(fn);
+		const cleanup = await mod.initStatusStore();
+		expect(fn).not.toHaveBeenCalled();
+		mocks.handlers['status-changed']({ payload: { state: 'Idle' } });
+		mocks.handlers['status-changed']({ payload: { state: 'PickingGems' } });
+		expect(fn).toHaveBeenCalledTimes(1);
+		cleanup();
+	});
+
+	it('fires immediately when a status is already held', async () => {
+		const mod = await initWithStatus({ state: 'Idle' });
+		const cleanup = await mod.initStatusStore();
+		const fn = vi.fn();
+		mod.onStatusReady(fn);
+		expect(fn).toHaveBeenCalledTimes(1);
+		cleanup();
+	});
+
+	it('an unsubscribe before readiness cancels the call', async () => {
+		const mod = await initWithStatus({ state: 'Idle' });
+		const fn = vi.fn();
+		mod.onStatusReady(fn)();
+		const cleanup = await mod.initStatusStore();
+		expect(fn).not.toHaveBeenCalled();
+		cleanup();
+	});
+});

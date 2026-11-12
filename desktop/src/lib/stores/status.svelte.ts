@@ -61,6 +61,28 @@ export const store = $state({
 	updateVersion: '',
 });
 
+const statusReadyListeners = new Set<() => void>();
+
+/** Write a status and fire the onStatusReady listeners on the first non-null one. */
+function setStatus(status: AppStatus | null) {
+	store.status = status;
+	if (!status) return;
+	const ready = [...statusReadyListeners];
+	statusReadyListeners.clear();
+	for (const fn of ready) fn();
+}
+
+/**
+ * Call `fn` once, when `store.status` is first non-null — immediately if it
+ * already is. Non-reactive, so it also runs where effects do not (tests).
+ * Returns the unsubscribe; unsubscribing before readiness cancels the call.
+ */
+export function onStatusReady(fn: () => void): () => void {
+	if (store.status) { fn(); return () => {}; }
+	statusReadyListeners.add(fn);
+	return () => { statusReadyListeners.delete(fn); };
+}
+
 /**
  * Initialize the status store — loads initial state, subscribes to events.
  * Call once from the root (app) layout.
@@ -69,7 +91,7 @@ export const store = $state({
 export async function initStatusStore(): Promise<() => void> {
 	// Subscribe to backend events first (so we don't miss any)
 	const unlistenStatus = await listen<AppStatus>('status-changed', (event) => {
-		store.status = event.payload;
+		setStatus(event.payload);
 		noteServerUrl(event.payload?.server_url);
 	});
 
@@ -79,7 +101,7 @@ export async function initStatusStore(): Promise<() => void> {
 
 	// Then do initial load as fallback
 	try {
-		store.status = await invoke<AppStatus>('get_status');
+		setStatus(await invoke<AppStatus>('get_status'));
 		noteServerUrl(store.status?.server_url);
 	} catch (e) {
 		console.warn('[store] initial get_status failed:', e);

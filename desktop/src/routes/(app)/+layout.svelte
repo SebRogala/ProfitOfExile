@@ -8,6 +8,7 @@
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
 	import { ssot, startSsotStore } from '$lib/stores/ssot.svelte';
 	import { currentDivineRate, initDivineRateStore } from '$lib/stores/divine-rate.svelte';
+	import { startMercureStore } from '$lib/stores/mercure.svelte';
 	import { initNumberFormatStore } from '$lib/stores/number-format.svelte';
 	import { startRunRecorder } from '$lib/run-recorder';
 	import { nav, viewToPath, type View } from '$lib/stores/navigation.svelte';
@@ -665,6 +666,8 @@
 	// and cheap for a low-churn slice. No cleanup — this layout never unmounts.
 	startSsotStore();
 	initDivineRateStore();
+	// The app's one Mercure connection; it opens once store.status arrives.
+	startMercureStore();
 	// The Number format pick every grouped figure reads (POE-323). Main window
 	// only: no overlay route formats a grouped number.
 	initNumberFormatStore();

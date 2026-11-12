@@ -237,7 +237,7 @@ export function createHarvestController(
 
 	/**
 	 * The first load, the wall clock and the Mercure refetch
-	 * (`harvest-updated`, LabPage's re-emit) after a jittered
+	 * (`harvest-updated`, the mercure store's re-emit) after a jittered
 	 * `refetchDelay()`. Returns the disposer.
 	 */
 	function start(): () => void {

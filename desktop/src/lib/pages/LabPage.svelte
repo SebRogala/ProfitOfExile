@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	import { emit, listen } from '@tauri-apps/api/event';
+	import { listen } from '@tauri-apps/api/event';
 	import { untrack } from 'svelte';
 	import { store } from '$lib/stores/status.svelte';
 	import { ssot, fetchSsot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
 	import { setDivineRate } from '$lib/price.svelte';
+	import { mercureConnected, subscribeMercureConnection, subscribeMercureUpdate } from '$lib/stores/mercure.svelte';
 	import {
 		fetchStatus,
 		fetchBestPlays,
@@ -13,9 +14,7 @@
 		DEDICATION_POOLS,
 		DEDICATION_POOL_LABELS,
 		fetchMarketOverview,
-		connectMercure,
 		type GemPlay,
-		type MercureConnection,
 	} from '$lib/api';
 	import type { TradeLookupResult } from '$lib/tradeApi';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
@@ -132,7 +131,8 @@
 	const dashboard = createLabController({
 		status: fetchStatus, rankings: () => loadBestPlays(isDedication),
 		market: fetchMarketOverview, rate: setDivineRate,
-		connected: () => mercure?.connected
+		connected: mercureConnected,
+		onReload: () => { refreshKey++; }
 	});
 	const bestPlaysError = $derived(dashboard.state.bestPlaysError);
 	const refreshBestPlays = dashboard.refreshBestPlays;
@@ -170,43 +170,11 @@
 	const marketOverview = $derived(dashboard.state.marketOverview);
 	const loading = $derived(dashboard.state.loading);
 	const error = $derived(dashboard.state.error);
-	let mercure = $state<MercureConnection | null>(null);
 	let refreshKey = $state(0);
 
-	// --- Mercure debounce + jitter ---
-	// The 2s debounce collapses a burst of publishes into a single reload instead
-	// of one six-request loadAll() per event.
-	//
-	// The jitter is the part the debounce alone does not solve. A fixed per-client
-	// delay does not spread a herd, it aligns one — every client receives the same
-	// publish within milliseconds, so all of them would fire at publish + 2000ms
-	// exactly. The random offset de-synchronises clients: arrivals land somewhere in
-	// 2–6s rather than stacking on one tick. The server already debounces publishes
-	// by 2s (lab.Throttler) and the collector cycle is minutes, so up to 6s of extra
-	// delay is invisible on screen.
-	//
-	// Kept in step with frontend/src/routes/lab/+page.svelte, which runs the same
-	// two constants against the same publish.
-	let mercureDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-	const MERCURE_DEBOUNCE_MS = 2000;
-	const MERCURE_JITTER_MS = 4000;
-
-	function debouncedMercureUpdate() {
-		if (mercureDebounceTimer) clearTimeout(mercureDebounceTimer);
-		// Re-rolled on every fire, not once per session: a fixed per-client offset
-		// would put the same clients in the same slot on every publish, which only
-		// spreads the herd once instead of on each tick.
-		const delay = MERCURE_DEBOUNCE_MS + Math.random() * MERCURE_JITTER_MS;
-		mercureDebounceTimer = setTimeout(() => {
-			mercureDebounceTimer = null;
-			refreshKey++;
-			loadAll();
-		}, delay);
-	}
-
-	// --- Mercure connection guard ---
+	// --- Initial-load guard ---
 	// $state flag that flips once (false → true) when store.status first arrives.
-	// Used as the sole dependency for the Mercure effect so it fires exactly once,
+	// Used as the sole dependency for the initial load so it fires exactly once,
 	// not on every store.status mutation (game focus, lab state, etc.).
 	let statusReady = $state(false);
 
@@ -224,8 +192,6 @@
 		})
 	});
 	$effect(() => dashboard.start(() => {
-		if (mercureDebounceTimer) clearTimeout(mercureDebounceTimer);
-		mercureDebounceTimer = null;
 		handleClearQueue();
 		refreshKey++;
 	}));
@@ -307,7 +273,7 @@
 	});
 
 	// Initial data load — fires once when status is ready.
-	// Subsequent reloads come from Mercure events via debouncedMercureUpdate.
+	// Subsequent reloads come from Mercure events via dashboard.onMercureUpdate.
 	// untrack prevents Svelte from tracking isDedication (read inside loadAll),
 	// which would re-trigger the full reload on mode change and overwrite
 	// status.connected, causing a disconnect flash.
@@ -318,45 +284,11 @@
 		untrack(() => loadAll());
 	});
 
-	// Mercure connection — connects once when status is ready.
-	// statusReady only changes once, so this effect never re-runs and the
-	// EventSource is never torn down by Svelte's cleanup-on-rerun cycle.
+	// The app's one Mercure connection lives in the mercure store, started by the layout.
 	$effect(() => {
-		if (!statusReady) return;
-
-		const connection = connectMercure({ onUpdate: debouncedMercureUpdate, onConnectionChange: (connected) => {
-			store.serverConnected = connected;
-			if (status) {
-				dashboard.state.status = { ...status, connected };
-			}
-		}, onLayoutUpdate: (data) => {
-			// Layout updated or reset on server — notify overlays
-			emit('lab-layout-updated', { difficulty: data?.difficulty, action: data?.action })
-				.catch(e => console.warn('[mercure] failed to emit layout update:', e));
-		}, onCurrencyExchangeUpdate: (data) => {
-			// Currency Exchange hour closed. This page owns the app's only Mercure
-			// connection (ADR-014 keeps every page mounted), so the payload is
-			// re-emitted for CurrencyExchangePage to pick up — the lab dashboard
-			// itself does not reload on this topic.
-			emit('currency-exchange-updated', data)
-				.catch(e => console.warn('[mercure] failed to emit currency exchange update:', e));
-		}, onHarvestUpdate: (data) => {
-			// Harvest publishes after its own snapshots are stored.
-			emit('harvest-updated', data)
-				.catch(e => console.warn('[mercure] failed to emit harvest update:', e));
-		}, onOpen: () => {
-			invoke('note_server_league', { observed: null })
-				.catch(e => console.warn('[mercure] failed to reconcile league:', e));
-		}, onLeagueActive: (data) => {
-			invoke('note_server_league', { observed: typeof data?.league === 'string' ? data.league : null })
-				.catch(e => console.warn('[mercure] failed to reconcile league:', e));
-		} });
-		mercure = connection;
-
-		return () => {
-			connection?.close();
-			if (mercureDebounceTimer) clearTimeout(mercureDebounceTimer);
-		};
+		const stopUpdates = subscribeMercureUpdate(dashboard.onMercureUpdate);
+		const stopConnection = subscribeMercureConnection(dashboard.setConnected);
+		return () => { stopUpdates(); stopConnection(); dashboard.dispose(); };
 	});
 </script>
 

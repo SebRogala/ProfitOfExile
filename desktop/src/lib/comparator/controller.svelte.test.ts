@@ -8,11 +8,12 @@ let stop = () => {};
 let applySnapshot: typeof import('$lib/stores/ssot.svelte').applySnapshot;
 let ssot: typeof import('$lib/stores/ssot.svelte').ssot;
 let createComparatorController: typeof import('./controller.svelte').createComparatorController;
+let createLabController: typeof import('./controller.svelte').createLabController;
 beforeEach(async () => {
 	// Each test starts a WebView module session; remounts within a test retain its provenance fence.
 	vi.resetModules();
 	({ applySnapshot, ssot } = await import('$lib/stores/ssot.svelte'));
-	({ createComparatorController } = await import('./controller.svelte'));
+	({ createComparatorController, createLabController } = await import('./controller.svelte'));
 });
 afterEach(() => { stop(); vi.useRealTimers(); vi.restoreAllMocks(); });
 function deferred<T>() {
@@ -266,4 +267,86 @@ it('same-gem overlap remains uncorrelated across controller disposal', async () 
 	outgoing.trades[0].resolve(trade('A'));
 	await old;
 	expect(incoming.overlays.at(-1)).toMatchObject({ tradeData: { Arc: trade('B') }, tradeLoading: { Arc: false }, tradeError: { Arc: false } });
+});
+
+// Lab's Mercure reload: 2000 ms debounce + random() × 4000 ms jitter; random is pinned to 0.5.
+const LAB_RELOAD_MS = 4000;
+function labSetup() {
+	vi.useFakeTimers();
+	const reloads: string[] = [];
+	const status = vi.fn(async () => ({ lastUpdate: '', nextFetch: '', connected: false, collectorUptime: '', divinePrice: 1 }));
+	const lab = createLabController({
+		status, rankings: async () => [], market: async () => ({}) as never, rate: () => {},
+		connected: () => undefined, onReload: () => reloads.push('reload'), random: () => 0.5
+	});
+	return { lab, reloads, status };
+}
+it('lab reloads once after the jittered debounce of a Mercure update', () => {
+	const { lab, reloads, status } = labSetup();
+	lab.onMercureUpdate();
+	vi.advanceTimersByTime(LAB_RELOAD_MS - 1);
+	expect(reloads).toEqual([]);
+	vi.advanceTimersByTime(1);
+	expect(reloads).toEqual(['reload']);
+	expect(status).toHaveBeenCalledTimes(1);
+});
+it('lab collapses a burst of Mercure updates into one reload', () => {
+	const { lab, reloads } = labSetup();
+	lab.onMercureUpdate();
+	vi.advanceTimersByTime(1000);
+	lab.onMercureUpdate();
+	vi.advanceTimersByTime(1000);
+	lab.onMercureUpdate();
+	vi.advanceTimersByTime(LAB_RELOAD_MS * 3);
+	expect(reloads).toEqual(['reload']);
+});
+it('lab re-rolls the jitter on every update', () => {
+	vi.useFakeTimers();
+	const rolls = [0, 1];
+	const reloads: number[] = [];
+	const lab = createLabController({
+		status: async () => ({}) as never, rankings: async () => [], market: async () => ({}) as never, rate: () => {},
+		connected: () => undefined, onReload: () => reloads.push(Date.now()), random: () => rolls.shift() ?? 0
+	});
+	const t0 = Date.now();
+	lab.onMercureUpdate();
+	vi.advanceTimersByTime(1999);
+	lab.onMercureUpdate();
+	vi.advanceTimersByTime(6000);
+	expect(reloads).toEqual([t0 + 1999 + 6000]);
+});
+it('lab dispose cancels a pending Mercure reload', () => {
+	const { lab, reloads } = labSetup();
+	lab.onMercureUpdate();
+	lab.dispose();
+	vi.advanceTimersByTime(LAB_RELOAD_MS * 2);
+	expect(reloads).toEqual([]);
+});
+it('a league change cancels a pending Mercure reload', () => {
+	applySnapshot({ league: { name: 'A', generation: ssot.leagueGeneration + 1 } });
+	const { lab, reloads } = labSetup();
+	stop = lab.start(() => {});
+	lab.onMercureUpdate();
+	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+	vi.advanceTimersByTime(LAB_RELOAD_MS * 2);
+	expect(reloads).toEqual([]);
+});
+it('lab setConnected patches a changed connected flag on the loaded status', async () => {
+	const { lab } = labSetup();
+	await lab.loadAll();
+	const before = lab.state.status;
+	lab.setConnected(true);
+	expect(lab.state.status).toEqual({ ...before, connected: true });
+});
+it('lab setConnected leaves an equal connected flag unwritten', async () => {
+	const { lab } = labSetup();
+	await lab.loadAll();
+	const before = lab.state.status;
+	lab.setConnected(false);
+	expect(lab.state.status).toBe(before);
+});
+it('lab setConnected leaves a null status null', () => {
+	const { lab } = labSetup();
+	lab.setConnected(true);
+	expect(lab.state.status).toBeNull();
 });

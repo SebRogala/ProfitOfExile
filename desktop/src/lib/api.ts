@@ -1177,8 +1177,9 @@ export interface MercureHandlers {
 
 /**
  * Open the Mercure SSE stream and keep it open (token refresh, backoff,
- * visibility-aware reconnect). One connection serves the whole app — LabPage
- * owns it and fans the per-topic payloads out to the other pages.
+ * visibility-aware reconnect). One connection serves the whole app — the
+ * mercure store (`stores/mercure.svelte.ts`) owns it and fans the per-topic
+ * payloads out to the other pages.
  *
  * Dispatch is per topic, and each specific topic returns instead of falling
  * through: `poe/lab/layout` reaches `onLayoutUpdate` only, and

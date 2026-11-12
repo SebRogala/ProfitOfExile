@@ -286,13 +286,20 @@ export function createLabQueueController(dependencies: {
 }
 
 /** Lab's retained dashboard reads share one league fence, including failure/finally paths. */
+const MERCURE_DEBOUNCE_MS = 2000;
+const MERCURE_JITTER_MS = 4000;
+
 export function createLabController(dependencies: {
 	status: () => Promise<StatusData>;
 	rankings: () => Promise<GemPlay[]>;
 	market: () => Promise<MarketOverviewData>;
 	rate: (value: number) => void;
 	connected: () => boolean | undefined;
+	/** Runs before each Mercure-driven reload (LabPage bumps its refreshKey). */
+	onReload?: () => void;
+	random?: () => number;
 }) {
+	const random = dependencies.random ?? Math.random;
 	const state = $state({
 		status: null as StatusData | null,
 		bestPlays: [] as GemPlay[],
@@ -334,16 +341,52 @@ export function createLabController(dependencies: {
 			if (mine === generation && request === loadGeneration) state.loading = false;
 		}
 	}
+	// --- Mercure debounce + jitter ---
+	// The 2s debounce collapses a burst of publishes into a single reload instead
+	// of one six-request loadAll() per event.
+	//
+	// The jitter is the part the debounce alone does not solve. A fixed per-client
+	// delay does not spread a herd, it aligns one — every client receives the same
+	// publish within milliseconds, so all of them would fire at publish + 2000ms
+	// exactly. The random offset de-synchronises clients: arrivals land somewhere in
+	// 2–6s rather than stacking on one tick. The server already debounces publishes
+	// by 2s (lab.Throttler) and the collector cycle is minutes, so up to 6s of extra
+	// delay is invisible on screen.
+	//
+	// Kept in step with frontend/src/routes/lab/+page.svelte, which runs the same
+	// two constants against the same publish.
+	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+	function clearDebounce() {
+		if (debounceTimer) clearTimeout(debounceTimer);
+		debounceTimer = null;
+	}
+	function onMercureUpdate() {
+		clearDebounce();
+		// Re-rolled on every fire, not once per session: a fixed per-client offset
+		// would put the same clients in the same slot on every publish, which only
+		// spreads the herd once instead of on each tick.
+		const delay = MERCURE_DEBOUNCE_MS + random() * MERCURE_JITTER_MS;
+		debounceTimer = setTimeout(() => {
+			debounceTimer = null;
+			dependencies.onReload?.();
+			void loadAll();
+		}, delay);
+	}
+	function setConnected(connected: boolean) {
+		const status = state.status;
+		if (status && status.connected !== connected) state.status = { ...status, connected };
+	}
 	function start(invalidateQueue: () => void) {
 		const stop = onLeagueChange(() => {
 			generation++;
 			state.bestPlays = []; state.status = null; state.marketOverview = null;
 			state.bestPlaysError = ''; state.error = ''; state.loading = true;
 			dependencies.rate(0);
+			clearDebounce();
 			invalidateQueue();
 			void loadAll();
 		});
 		return () => { generation++; stop(); };
 	}
-	return { state, refreshBestPlays, loadAll, start };
+	return { state, refreshBestPlays, loadAll, start, onMercureUpdate, setConnected, dispose: clearDebounce };
 }
