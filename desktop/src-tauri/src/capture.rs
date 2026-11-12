@@ -224,26 +224,30 @@ mod platform {
                         continue;
                     }
                 };
+                // Only the first holder calls the platform; its result is
+                // reported after the ledger lock is released.
+                let mut set_result = None;
                 let held = LEDGER.acquire(hwnd.0 as isize, || {
-                    match unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) } {
-                        Ok(()) => {
-                            if !AFFINITY_ARMED_REPORTED.swap(true, Ordering::Relaxed) {
-                                crate::app_log(
-                                    app,
-                                    format!("capture: overlay '{label}' is excluded from each grab while it is taken"),
-                                );
-                            }
-                            true
-                        }
-                        Err(e) => {
-                            report_once(
+                    let result = unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) };
+                    let ok = result.is_ok();
+                    set_result = Some(result);
+                    ok
+                });
+                match set_result {
+                    Some(Ok(())) => {
+                        if !AFFINITY_ARMED_REPORTED.swap(true, Ordering::Relaxed) {
+                            crate::app_log(
                                 app,
-                                format!("overlay '{label}' could not be excluded from capture: {e}"),
+                                format!("capture: overlay '{label}' is excluded from each grab while it is taken"),
                             );
-                            false
                         }
                     }
-                });
+                    Some(Err(e)) => report_once(
+                        app,
+                        format!("overlay '{label}' could not be excluded from capture: {e}"),
+                    ),
+                    None => {}
+                }
                 if held {
                     hwnds.push(hwnd)
                 }
