@@ -278,6 +278,7 @@ export function createLabQueueController(dependencies: {
 
 /** Lab's retained dashboard reads share one league fence, including failure/finally paths. */
 const MERCURE_DEBOUNCE_MS = 2000;
+export const RANKINGS_DEBOUNCE_MS = 300;
 const MERCURE_JITTER_MS = 4000;
 
 export function createLabController(dependencies: {
@@ -328,16 +329,29 @@ export function createLabController(dependencies: {
 			state.bestPlaysError = 'Rankings failed to load for this market — retry to see current numbers.';
 		}
 	}
+	// A control change invalidates at once: the previous query's rows are cleared
+	// and its outstanding response is dropped. Only the network fetch is
+	// debounced (the budget box is a text input).
+	let rankingsTimer: ReturnType<typeof setTimeout> | null = null;
+	function clearRankingsTimer() {
+		if (rankingsTimer) clearTimeout(rankingsTimer);
+		rankingsTimer = null;
+	}
 	function setRankingsQuery(q: RankingsQuery) {
 		const key = JSON.stringify(q);
 		rankingsQuery = q;
 		if (key !== rankingsQueryKey) {
 			rankingsQueryKey = key;
+			rankingsGeneration++;
 			state.bestPlays = [];
 			state.rankingsTotal = 0;
 			state.rankingsPending = true;
 		}
-		return refreshBestPlays();
+		clearRankingsTimer();
+		rankingsTimer = setTimeout(() => {
+			rankingsTimer = null;
+			void refreshBestPlays();
+		}, RANKINGS_DEBOUNCE_MS);
 	}
 	async function loadAll() {
 		const mine = generation;
@@ -400,10 +414,55 @@ export function createLabController(dependencies: {
 			state.bestPlaysError = ''; state.error = ''; state.loading = true;
 			dependencies.rate(0);
 			clearDebounce();
+			clearRankingsTimer();
 			invalidateQueue();
 			void loadAll();
 		});
 		return () => { generation++; stop(); };
 	}
-	return { state, refreshBestPlays, setRankingsQuery, loadAll, start, onMercureUpdate, setConnected, dispose: clearDebounce };
+	return { state, refreshBestPlays, setRankingsQuery, loadAll, start, onMercureUpdate, setConnected, dispose: () => { clearDebounce(); clearRankingsTimer(); } };
+}
+
+/**
+ * The rankings gem search. It is fenced by the league like the browse page: a
+ * league change clears the outgoing results at once, drops any response still
+ * in flight, and refetches the selected gem for the new league.
+ */
+export function createRankingsSearch(fetchRows: (q: RankingsQuery) => Promise<GemPlay[]>) {
+	const state = $state({ results: null as GemPlay[] | null, error: '' });
+	let query: RankingsQuery | null = null;
+	let generation = 0;
+	async function run() {
+		const q = query;
+		const mine = ++generation;
+		state.error = '';
+		if (!q) return;
+		try {
+			const rows = await fetchRows(q);
+			if (mine === generation) state.results = rows;
+		} catch (error) {
+			// Without this the rejection was silent and the UI simply never changed.
+			console.warn('[ByVariant] gem search failed:', error);
+			if (mine !== generation) return;
+			state.results = null;
+			state.error = `Search for "${q.search}" failed \u2014 check the connection and try again.`;
+		}
+	}
+	function search(q: RankingsQuery) {
+		query = q;
+		return run();
+	}
+	function clear() {
+		query = null;
+		generation++;
+		state.results = null;
+		state.error = '';
+	}
+	function start() {
+		return onLeagueChange(() => {
+			state.results = null;
+			void run();
+		});
+	}
+	return { state, search, clear, start };
 }

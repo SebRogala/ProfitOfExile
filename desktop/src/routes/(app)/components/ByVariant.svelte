@@ -15,6 +15,7 @@
 	} from '$lib/api';
 	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
 	import { persisted } from '$lib/prefs.svelte';
+	import { createRankingsSearch } from '$lib/comparator/controller.svelte';
 	import BestPlays from './BestPlays.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
@@ -128,7 +129,16 @@
 	const budgetPref = persisted('rankingsBudget', '');
 	const budgetChaos = $derived(parseInt(budgetPref.value) > 0 ? parseInt(budgetPref.value) : 0);
 	let selectedGem = $state('');
-	let searchGeneration = 0;
+	// The dedication endpoint answers for ONE market per request: omitting
+	// `variant` does not mean "all", it silently defaults to 21/23, so a 21/20
+	// tab found nothing. Fan out and merge. Normal mode does return every
+	// variant in one response.
+	const gemSearch = createRankingsSearch(async (q) => q.mode === 'dedication'
+		? (await Promise.all(DEDICATION_VARIANTS.map((v) => fetchRankingsPage({ ...q, tab: v })))).flatMap((p) => p.rows)
+		: (await fetchRankingsPage(q)).rows);
+	$effect(() => gemSearch.start());
+	const searchResults = $derived(gemSearch.state.results);
+	const searchError = $derived(gemSearch.state.error);
 	$effect(() => {
 		const q: RankingsQuery = {
 			mode: isDedication ? 'dedication' : 'normal',
@@ -139,38 +149,17 @@
 			pageSize: parseInt(limitPref.value) || 20,
 			sort: sortBy,
 			showLowConf,
-			search: selectedGem || undefined,
 		};
-		const generation = ++searchGeneration;
-		// Debounced: the budget box is a text input.
-		const timer = setTimeout(async () => {
-			if (!q.search) {
-				onQuery(q);
-				return;
-			}
-			try {
-				// The dedication endpoint answers for ONE market per request: omitting
-				// `variant` does not mean "all", it silently defaults to 21/23, so a
-				// 21/20 tab found nothing. Fan out and merge. Normal mode does return
-				// every variant in one response.
-				const rows = q.mode === 'dedication'
-					? (await Promise.all(DEDICATION_VARIANTS.map((v) => fetchRankingsPage({ ...q, tab: v })))).flatMap((p) => p.rows)
-					: (await fetchRankingsPage(q)).rows;
-				if (generation === searchGeneration) searchResults = rows;
-			} catch (err) {
-				// Without this the rejection was silent and the UI simply never changed.
-				console.warn('[ByVariant] gem search failed:', err);
-				if (generation !== searchGeneration) return;
-				searchResults = null;
-				searchError = `Search for "${q.search}" failed \u2014 check the connection and try again.`;
-			}
-		}, 300);
-		return () => clearTimeout(timer);
+		const gem = selectedGem;
+		// The controller invalidates the previous page at once and debounces its fetch.
+		if (!gem) {
+			untrack(() => onQuery(q));
+			return;
+		}
+		untrack(() => { void gemSearch.search({ ...q, search: gem }); });
 	});
 
 	let searchQuery = $state('');
-	let searchResults = $state<GemPlay[] | null>(null);
-	let searchError = $state('');
 	let suggestions = $state<string[]>([]);
 	let showDropdown = $state(false);
 	let highlightedIndex = $state(-1);
@@ -179,8 +168,7 @@
 	function clearSearch() {
 		searchQuery = '';
 		selectedGem = '';
-		searchResults = null;
-		searchError = '';
+		gemSearch.clear();
 		suggestions = [];
 		showDropdown = false;
 		highlightedIndex = -1;
@@ -219,7 +207,6 @@
 		searchQuery = name;
 		suggestions = [];
 		showDropdown = false;
-		searchError = '';
 		selectedGem = name;
 	}
 

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { applySnapshot, ssot } from '$lib/stores/ssot.svelte';
-import { createComparatorController, createLabQueueController, createLabController } from '$lib/comparator/controller.svelte';
+import { createComparatorController, createLabQueueController, createLabController, createRankingsSearch, RANKINGS_DEBOUNCE_MS } from '$lib/comparator/controller.svelte';
 import { createExchangeController } from '$lib/exchange/controller.svelte';
 import { createHarvestController } from '$lib/harvest/controller.svelte';
 import { createExchangeFixture } from '$lib/harvest/sources/exchange-fixture';
@@ -34,6 +34,7 @@ function deferred<T>() {
 	return { promise, resolve, reject };
 }
 const settle = () => vi.advanceTimersByTimeAsync(0);
+const debounce = () => vi.advanceTimersByTimeAsync(RANKINGS_DEBOUNCE_MS);
 const rate = (value: number) => ({ divineChaosRate: value, state: 'ready', updatedAt: '2026-09-10T00:00:00Z', priceHour: '2026-09-10T00:00:00Z', unreachableSince: null } as DivineRate);
 const queueItem = () => ({ gem: 'Arc', variant: '20/20', pickedAt: new Date(), snapshotROI: 10, snapshot: null, snapshotDivineRate: 0 } as QueueItem);
 function dashboard() {
@@ -114,56 +115,102 @@ it('rankings refetch after a league change uses the stored query', async () => {
 	stops.push(controller.start(() => {}));
 	const stored = { ...rankingsQuery('1/20'), color: 'BLUE', budget: 40, sort: 'roiPercent' as const };
 	controller.setRankingsQuery(stored);
-	await settle();
+	await debounce();
 	asked.length = 0;
 	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
 	await settle();
 	expect(asked).toEqual([stored]);
 });
 
-it('a rankings response from a superseded query is dropped', async () => {
-	const pages = { '20/20': deferred<RankingsPage>(), '1/0': deferred<RankingsPage>() };
+function pagedController() {
+	const calls: { q: RankingsQuery; reply: ReturnType<typeof deferred<RankingsPage>> }[] = [];
 	const controller = createLabController({
 		status: async () => ({ divinePrice: 0 } as StatusData),
-		rankings: (q) => pages[q.tab as keyof typeof pages].promise,
+		rankings: (q) => { const reply = deferred<RankingsPage>(); calls.push({ q, reply }); return reply.promise; },
 		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
 	});
+	stops.push(controller.dispose);
+	return { controller, calls };
+}
+
+it('a rankings response from a superseded query is dropped', async () => {
+	const { controller, calls } = pagedController();
 	controller.setRankingsQuery(rankingsQuery('20/20'));
+	await debounce();
 	controller.setRankingsQuery(rankingsQuery('1/0'));
-	pages['1/0'].resolve(page('current'));
+	await debounce();
+	calls[1].reply.resolve(page('current'));
 	await settle();
-	pages['20/20'].resolve(page('superseded'));
+	calls[0].reply.resolve(page('superseded'));
 	await settle();
 	expect(controller.state.bestPlays.map((g) => g.name)).toEqual(['current']);
 });
 
-it('a failed rankings page sets bestPlaysError and clears rows', async () => {
-	let fail = false;
-	const controller = createLabController({
-		status: async () => ({ divinePrice: 0 } as StatusData),
-		rankings: async () => { if (fail) throw new Error('offline'); return page('kept?'); },
-		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
-	});
-	vi.spyOn(console, 'warn').mockImplementation(() => {});
+it('a superseded rankings response resolving inside the new query debounce window is dropped', async () => {
+	const { controller, calls } = pagedController();
 	controller.setRankingsQuery(rankingsQuery('20/20'));
+	await debounce();
+	controller.setRankingsQuery(rankingsQuery('1/0'));
+	calls[0].reply.resolve(page('old market'));
 	await settle();
-	fail = true;
-	await controller.refreshBestPlays();
-	expect([controller.state.bestPlays, controller.state.bestPlaysError]).toEqual([[], 'Rankings failed to load for this market — retry to see current numbers.']);
+	expect(controller.state.bestPlays).toEqual([]);
 });
 
-it('a new rankings query clears the previous query rows until its page arrives', async () => {
-	const pages = { '20/20': deferred<RankingsPage>(), '1/0': deferred<RankingsPage>() };
-	const controller = createLabController({
-		status: async () => ({ divinePrice: 0 } as StatusData),
-		rankings: (q) => pages[q.tab as keyof typeof pages].promise,
-		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
-	});
+it('a new rankings query clears the previous query rows before its debounced fetch', async () => {
+	const { controller, calls } = pagedController();
 	controller.setRankingsQuery(rankingsQuery('20/20'));
-	pages['20/20'].resolve(page('old market'));
+	await debounce();
+	calls[0].reply.resolve(page('old market'));
 	await settle();
 	controller.setRankingsQuery(rankingsQuery('1/0'));
 	expect(controller.state.bestPlays).toEqual([]);
+});
+
+it('a rankings query is fetched once after the debounce', async () => {
+	const { controller, calls } = pagedController();
+	controller.setRankingsQuery(rankingsQuery('20/20'));
+	controller.setRankingsQuery({ ...rankingsQuery('20/20'), budget: 4 });
+	controller.setRankingsQuery({ ...rankingsQuery('20/20'), budget: 40 });
+	await debounce();
+	expect(calls.map((c) => c.q.budget)).toEqual([40]);
+});
+
+function failingController() {
+	let fail = false;
+	const controller = createLabController({
+		status: async () => ({ divinePrice: 0 } as StatusData),
+		rankings: async () => { if (fail) throw new Error('offline'); return page('shown before'); },
+		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
+	});
+	const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+	return { controller, warn, failNext: () => { fail = true; } };
+}
+
+it('a failed rankings page clears the rows', async () => {
+	const { controller, failNext } = failingController();
+	controller.setRankingsQuery(rankingsQuery('20/20'));
+	await debounce();
+	failNext();
+	await controller.refreshBestPlays();
+	expect(controller.state.bestPlays).toEqual([]);
+});
+
+it('a failed rankings page sets bestPlaysError', async () => {
+	const { controller, failNext } = failingController();
+	controller.setRankingsQuery(rankingsQuery('20/20'));
+	await debounce();
+	failNext();
+	await controller.refreshBestPlays();
+	expect(controller.state.bestPlaysError).toBe('Rankings failed to load for this market — retry to see current numbers.');
+});
+
+it('a failed rankings page warns with its cause', async () => {
+	const { controller, warn, failNext } = failingController();
+	controller.setRankingsQuery(rankingsQuery('20/20'));
+	await debounce();
+	failNext();
+	await controller.refreshBestPlays();
+	expect(warn).toHaveBeenCalledWith('[LabPage] re-fetch bestPlays failed:', new Error('offline'));
 });
 
 it('a rankings page stores its total', async () => {
@@ -173,8 +220,45 @@ it('a rankings page stores its total', async () => {
 		market: async () => ({} as MarketOverviewData), rate: () => {}, connected: () => undefined
 	});
 	controller.setRankingsQuery(rankingsQuery('20/20'));
-	await settle();
+	await debounce();
 	expect(controller.state.rankingsTotal).toBe(137);
+});
+
+function leagueSearch() {
+	const calls: { league: string | null; q: RankingsQuery; reply: ReturnType<typeof deferred<GemPlay[]>> }[] = [];
+	const search = createRankingsSearch((q) => { const reply = deferred<GemPlay[]>(); calls.push({ league: ssot.league, q, reply }); return reply.promise; });
+	stops.push(search.start());
+	return { search, calls };
+}
+const searchQuery = { ...rankingsQuery('20/20'), search: 'Arc of Surging' };
+
+it('a league change clears an accepted search page at once', async () => {
+	const { search, calls } = leagueSearch();
+	void search.search(searchQuery);
+	calls[0].reply.resolve([{ name: 'A row' } as GemPlay]);
+	await settle();
+	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+	expect(search.state.results).toBeNull();
+});
+
+it('a league change refetches the selected search for the new league', async () => {
+	const { search, calls } = leagueSearch();
+	void search.search(searchQuery);
+	calls[0].reply.resolve([{ name: 'A row' } as GemPlay]);
+	await settle();
+	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+	calls[1].reply.resolve([{ name: 'B row' } as GemPlay]);
+	await settle();
+	expect([calls[1].league, calls[1].q, search.state.results?.map((g) => g.name)]).toEqual(['B', searchQuery, ['B row']]);
+});
+
+it('an in-flight search from the previous league is dropped', async () => {
+	const { search, calls } = leagueSearch();
+	void search.search(searchQuery);
+	applySnapshot({ league: { name: 'B', generation: ssot.leagueGeneration + 1 } });
+	calls[0].reply.resolve([{ name: 'A row' } as GemPlay]);
+	await settle();
+	expect(search.state.results).toBeNull();
 });
 
 it.each(['failed', 'cold'] as const)('withdraws every outgoing consumer while B is %s', async (replacement) => {
