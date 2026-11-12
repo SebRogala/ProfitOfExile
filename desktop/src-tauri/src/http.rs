@@ -45,6 +45,17 @@ impl ProxyUrl {
         &self.0
     }
 
+    /// The URL for reqwest clients and the updater: `socks5://` becomes
+    /// `socks5h://` so DNS resolves at the proxy, as it does in WebView2.
+    pub fn for_http_clients(&self) -> String {
+        let mut url = reqwest::Url::parse(&self.0).expect("validated by ProxyUrl::parse");
+        if url.scheme() == "socks5" {
+            url.set_scheme("socks5h").expect("socks5 and socks5h are both non-special schemes");
+            return url.to_string();
+        }
+        self.0.clone()
+    }
+
     /// `scheme://host[:port]`: Chromium's `--proxy-server` takes no path.
     fn server_for_webview2(&self) -> String {
         let url = reqwest::Url::parse(&self.0).expect("validated by ProxyUrl::parse");
@@ -56,14 +67,47 @@ impl ProxyUrl {
     }
 }
 
-/// The client builder every production client starts from. With no proxy it
-/// is a plain builder, so reqwest's system-proxy detection stays as it was.
-pub fn client_builder(proxy: Option<&ProxyUrl>) -> reqwest::ClientBuilder {
+/// Which transport a client serves: the trade client may opt out of the proxy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    /// pathofexile.com trade API (`TradeApiClient`).
+    Trade,
+    /// Every other client: server, updater.
+    Other,
+}
+
+/// The proxy settings `run()` read at startup, in effect until the next launch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProxyConfig {
+    pub url: Option<ProxyUrl>,
+    /// Whether the trade client uses `url` too (Settings `proxy_trade`).
+    pub trade: bool,
+}
+
+impl ProxyConfig {
+    /// No proxy for any transport: today's behaviour.
+    pub fn none() -> Self {
+        ProxyConfig { url: None, trade: true }
+    }
+
+    /// The proxy `transport` goes through, if any.
+    pub fn for_transport(&self, transport: Transport) -> Option<&ProxyUrl> {
+        match transport {
+            Transport::Trade if !self.trade => None,
+            _ => self.url.as_ref(),
+        }
+    }
+}
+
+/// The client builder every production client starts from. With no proxy for
+/// `transport` it is a plain builder, so reqwest's system-proxy detection
+/// stays as it was.
+pub fn client_builder(proxy: &ProxyConfig, transport: Transport) -> reqwest::ClientBuilder {
     let builder = reqwest::Client::builder();
-    match proxy {
+    match proxy.for_transport(transport) {
         None => builder,
         Some(proxy) => builder.proxy(
-            reqwest::Proxy::all(proxy.as_str())
+            reqwest::Proxy::all(proxy.for_http_clients())
                 .expect("validated by ProxyUrl::parse")
                 .no_proxy(reqwest::NoProxy::from_string(REQWEST_NO_PROXY)),
         ),
@@ -89,6 +133,10 @@ mod tests {
 
     fn proxy(raw: &str) -> ProxyUrl {
         ProxyUrl::parse(raw).unwrap().unwrap()
+    }
+
+    fn config(raw: &str) -> ProxyConfig {
+        ProxyConfig { url: Some(proxy(raw)), trade: true }
     }
 
     #[test]
@@ -167,7 +215,7 @@ mod tests {
     #[tokio::test]
     async fn client_with_proxy_sends_requests_through_it() {
         let (proxy_port, seen) = recording_listener();
-        let client = client_builder(Some(&proxy(&format!("http://127.0.0.1:{proxy_port}"))))
+        let client = client_builder(&config(&format!("http://127.0.0.1:{proxy_port}")), Transport::Other)
             .build()
             .unwrap();
         let body = client.get("http://profitofexile.top/api/status").send().await.unwrap().text().await.unwrap();
@@ -182,7 +230,7 @@ mod tests {
     async fn client_with_proxy_bypasses_local_hosts() {
         let (proxy_port, seen) = recording_listener();
         let (origin_port, _origin) = recording_listener();
-        let client = client_builder(Some(&proxy(&format!("http://127.0.0.1:{proxy_port}"))))
+        let client = client_builder(&config(&format!("http://127.0.0.1:{proxy_port}")), Transport::Other)
             .timeout(Duration::from_secs(2))
             .build()
             .unwrap();
@@ -197,7 +245,76 @@ mod tests {
 
     #[test]
     fn socks5_proxy_builds_a_client() {
-        assert!(client_builder(Some(&proxy("socks5://127.0.0.1:1080"))).build().is_ok());
+        assert!(client_builder(&config("socks5://127.0.0.1:1080"), Transport::Other).build().is_ok());
+    }
+
+    #[test]
+    fn http_clients_resolve_dns_at_a_socks5_proxy() {
+        assert_eq!(proxy("socks5://127.0.0.1:1080").for_http_clients(), "socks5h://127.0.0.1:1080");
+        assert_eq!(proxy("SOCKS5://proxy.example:1080").for_http_clients(), "socks5h://proxy.example:1080");
+        assert_eq!(proxy("http://proxy.example:3128").for_http_clients(), "http://proxy.example:3128");
+        assert_eq!(proxy("https://proxy.example:443").for_http_clients(), "https://proxy.example:443");
+    }
+
+    #[test]
+    fn socks5h_is_not_accepted_input() {
+        assert!(ProxyUrl::parse("socks5h://127.0.0.1:1080").is_err());
+    }
+
+    /// A socks5 proxy answers the client greeting; the CONNECT request that
+    /// follows names the target by domain (ATYP 0x03) only when DNS is left
+    /// to the proxy.
+    #[tokio::test]
+    async fn socks5_client_sends_the_hostname_to_the_proxy() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else { return };
+            let mut greeting = [0u8; 3];
+            if stream.read_exact(&mut greeting).is_err() {
+                return;
+            }
+            let _ = stream.write_all(&[0x05, 0x00]);
+            let mut head = [0u8; 4];
+            if stream.read_exact(&mut head).is_ok() {
+                let _ = tx.send(head[3]);
+            }
+        });
+        let client = client_builder(&config(&format!("socks5://127.0.0.1:{port}")), Transport::Other)
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let _ = client.get("http://profitofexile.top/").send().await;
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), 0x03, "address type must be a domain name");
+    }
+
+    #[test]
+    fn trade_transport_skips_the_proxy_only_when_trade_is_off() {
+        let url = Some(proxy("http://proxy.example:3128"));
+        let on = ProxyConfig { url: url.clone(), trade: true };
+        let off = ProxyConfig { url: url.clone(), trade: false };
+        assert_eq!(on.for_transport(Transport::Trade), url.as_ref());
+        assert_eq!(off.for_transport(Transport::Trade), None);
+        assert_eq!(off.for_transport(Transport::Other), url.as_ref());
+        assert_eq!(ProxyConfig::none().for_transport(Transport::Other), None);
+    }
+
+    /// Trade off: a trade client sends nothing to the proxy (the direct
+    /// request may fail, only where it went matters); with trade on, the
+    /// same request reaches the proxy.
+    #[tokio::test]
+    async fn trade_client_skips_the_proxy_when_trade_is_off() {
+        let (proxy_port, seen) = recording_listener();
+        let mut cfg = config(&format!("http://127.0.0.1:{proxy_port}"));
+        cfg.trade = false;
+        let direct = client_builder(&cfg, Transport::Trade).timeout(Duration::from_secs(2)).build().unwrap();
+        let _ = direct.get("http://profitofexile.top/").send().await;
+        assert!(seen.recv_timeout(Duration::from_millis(500)).is_err(), "trade went through the proxy with trade off");
+        cfg.trade = true;
+        let proxied = client_builder(&cfg, Transport::Trade).build().unwrap();
+        let _ = proxied.get("http://profitofexile.top/").send().await;
+        assert!(seen.recv_timeout(Duration::from_secs(2)).is_ok());
     }
 
     // --- Guard: no client construction outside this module ---

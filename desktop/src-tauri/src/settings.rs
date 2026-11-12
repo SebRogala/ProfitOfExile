@@ -212,6 +212,15 @@ pub struct Settings {
     /// startup, so a change applies on the next launch. File-owned like
     /// `webview_gpu_disabled`: [`persist_overlay_settings`] carries it.
     pub proxy_url: String,
+    /// Whether the trade client (pathofexile.com) uses `proxy_url` too
+    /// (POE-360); default on. Read once by [`proxy_trade_in`] at startup;
+    /// file-owned like `proxy_url`.
+    #[serde(default = "default_proxy_trade")]
+    pub proxy_trade: bool,
+}
+
+fn default_proxy_trade() -> bool {
+    true
 }
 
 /// One overlay widget's placement inside its module's fullscreen window
@@ -710,6 +719,7 @@ impl Default for Settings {
             widgets: std::collections::BTreeMap::new(),
             webview_gpu_disabled: false,
             proxy_url: String::new(),
+            proxy_trade: default_proxy_trade(),
         }
     }
 }
@@ -886,6 +896,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         widgets: state.widgets.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         webview_gpu_disabled: false, // File-owned, carried by persist_overlay_settings
         proxy_url: String::new(),    // File-owned, carried by persist_overlay_settings
+        proxy_trade: default_proxy_trade(), // File-owned, carried by persist_overlay_settings
     }
 }
 
@@ -983,6 +994,16 @@ pub fn persist_overlay_settings(existing: &Settings, target: &mut Settings) {
     target.timer_text_stroke = existing.timer_text_stroke;
     target.webview_gpu_disabled = existing.webview_gpu_disabled;
     target.proxy_url = existing.proxy_url.clone();
+    target.proxy_trade = existing.proxy_trade;
+}
+
+/// The `proxy_trade` flag in the settings file at `path`; on (the default)
+/// when unset or when the file is missing or invalid.
+pub fn proxy_trade_in(path: &std::path::Path) -> bool {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<Settings>(&contents).ok())
+        .map_or_else(default_proxy_trade, |s| s.proxy_trade)
 }
 
 /// The raw `proxy_url` in the settings file at `path`; empty when unset or
@@ -1118,6 +1139,33 @@ mod tests {
     }
 
     #[test]
+    fn proxy_trade_survives_an_unrelated_save() {
+        let state = test_app_state();
+        let mut existing = Settings::default();
+        existing.proxy_trade = false;
+        let mut target = from_state(&state);
+        persist_overlay_settings(&existing, &mut target);
+        let path = std::env::temp_dir().join("poe_test_proxy_trade_saved.json");
+        fs::write(&path, serde_json::to_string(&target).unwrap()).unwrap();
+        assert!(!proxy_trade_in(&path));
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn proxy_trade_in_reads_on_for_an_older_broken_or_missing_file() {
+        let dir = std::env::temp_dir().join("poe_test_proxy_trade_in");
+        fs::create_dir_all(&dir).unwrap();
+        let older = dir.join("older.json");
+        fs::write(&older, r#"{"proxy_url": "http://p:1"}"#).unwrap();
+        let broken = dir.join("broken.json");
+        fs::write(&broken, r#"{"proxy_trade": false"#).unwrap();
+        assert!(proxy_trade_in(&older));
+        assert!(proxy_trade_in(&broken));
+        assert!(proxy_trade_in(&dir.join("missing.json")));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn proxy_url_in_reads_empty_for_an_older_broken_or_missing_file() {
         let dir = std::env::temp_dir().join("poe_test_proxy_url_in");
         fs::create_dir_all(&dir).unwrap();
@@ -1164,9 +1212,9 @@ mod tests {
             logs: Mutex::new(Vec::new()),
             sidebar_open: Mutex::new(true),
             game_focused: Mutex::new(false),
-            trade_client: crate::trade::TradeApiClient::new(None),
-            server_http: crate::http::client_builder(None).build().unwrap(),
-            proxy_in_effect: None,
+            trade_client: crate::trade::TradeApiClient::new(&crate::http::ProxyConfig::none()),
+            server_http: crate::http::client_builder(&crate::http::ProxyConfig::none(), crate::http::Transport::Other).build().unwrap(),
+            proxy_in_effect: crate::http::ProxyConfig::none(),
             watcher_cancel: Mutex::new(None),
             comparator_data: Mutex::new(serde_json::json!({})),
             overlay_hook_stop: Mutex::new(None),

@@ -49,7 +49,7 @@ fn endpoint_updater<R: Runtime, M: Manager<R>>(
 ) -> Result<tauri_plugin_updater::Updater, String> {
     let mut builder = manager.updater_builder();
     if let Some(proxy) = proxy {
-        builder = builder.proxy(reqwest::Url::parse(proxy.as_str()).map_err(|e| format!("bad proxy: {e}"))?);
+        builder = builder.proxy(reqwest::Url::parse(&proxy.for_http_clients()).map_err(|e| format!("bad proxy: {e}"))?);
     }
     builder
         .endpoints(vec![endpoint])
@@ -82,7 +82,7 @@ pub async fn check_update_from_endpoint<R: Runtime>(
     // re-exported by a dependency this crate already has.
     let url = reqwest::Url::parse(&endpoint).map_err(|e| format!("bad updater endpoint: {e}"))?;
 
-    let updater = endpoint_updater(&webview, url, webview.state::<crate::AppState>().proxy_in_effect.as_ref())?;
+    let updater = endpoint_updater(&webview, url, webview.state::<crate::AppState>().proxy_in_effect.for_transport(crate::http::Transport::Other))?;
 
     let update = updater
         .check()
@@ -164,5 +164,33 @@ mod tests {
             seen.recv_timeout(Duration::from_secs(5)).unwrap(),
             "GET http://beta.invalid/latest.json HTTP/1.1"
         );
+    }
+
+    /// A socks5 proxy in effect reaches the updater as socks5h: the CONNECT
+    /// request names the manifest host by domain (ATYP 0x03), so DNS
+    /// resolves at the proxy.
+    #[tokio::test]
+    async fn endpoint_updater_leaves_dns_to_a_socks5_proxy() {
+        let app = app();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else { return };
+            let mut greeting = [0u8; 3];
+            if stream.read_exact(&mut greeting).is_err() {
+                return;
+            }
+            let _ = stream.write_all(&[0x05, 0x00]);
+            let mut head = [0u8; 4];
+            if stream.read_exact(&mut head).is_ok() {
+                let _ = tx.send(head[3]);
+            }
+        });
+        let proxy = ProxyUrl::parse(&format!("socks5://127.0.0.1:{port}")).unwrap().unwrap();
+        let endpoint = reqwest::Url::parse("http://beta.invalid/latest.json").unwrap();
+        let updater = endpoint_updater(app.handle(), endpoint, Some(&proxy)).unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(3), updater.check()).await;
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), 0x03, "address type must be a domain name");
     }
 }

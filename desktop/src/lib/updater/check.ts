@@ -41,8 +41,8 @@ export const BETA_MANIFEST_URL =
  * the proxy in effect is passed per call (the beta arm applies it in Rust).
  */
 async function checkStableManifest(): Promise<Update | null> {
-	const { inEffect } = await getProxySettings();
-	return inEffect ? check({ proxy: inEffect }) : check();
+	const { updaterProxy } = await getProxySettings();
+	return updaterProxy ? check({ proxy: updaterProxy }) : check();
 }
 
 /** Ask the beta manifest, through the Rust endpoint override. */

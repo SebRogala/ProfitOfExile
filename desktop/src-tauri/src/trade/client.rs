@@ -253,8 +253,8 @@ pub struct TradeApiClient {
 }
 
 impl TradeApiClient {
-    pub fn new(proxy: Option<&crate::http::ProxyUrl>) -> Self {
-        let http_client = crate::http::client_builder(proxy)
+    pub fn new(proxy: &crate::http::ProxyConfig) -> Self {
+        let http_client = crate::http::client_builder(proxy, crate::http::Transport::Trade)
             .timeout(TRADE_CLIENT_TIMEOUT)
             .user_agent(BROWSER_USER_AGENT)
             .build()
@@ -741,7 +741,7 @@ pub(crate) mod tests {
     /// An absent caller snapshot must fail before queueing or network access.
     #[tokio::test]
     async fn league_returns_err_when_unset() {
-        let client = TradeApiClient::new(None);
+        let client = TradeApiClient::new(&crate::http::ProxyConfig::none());
         let error = client.lookup_gem(None, "Spark", "20/20", 0.0, |_| {}).await.unwrap_err();
         assert_eq!(error, "Trade lookup unavailable: league not resolved yet");
     }
@@ -784,7 +784,7 @@ pub(crate) mod tests {
     /// the Err return is the observable outcome, not a status flag.
     #[tokio::test]
     async fn lookup_fails_closed_when_league_unset() {
-        let client = TradeApiClient::new(None);
+        let client = TradeApiClient::new(&crate::http::ProxyConfig::none());
         let events = std::sync::Mutex::new(Vec::new());
 
         let result = client
@@ -940,7 +940,7 @@ pub(crate) mod tests {
         let base_url =
             stub_api_status(400, "Bad Request", r#"{"error":{"message":"Query is too complex"}}"#)
                 .await;
-        let mut client = TradeApiClient::new(None);
+        let mut client = TradeApiClient::new(&crate::http::ProxyConfig::none());
         client.base_url = base_url;
 
         let error = client
@@ -964,7 +964,7 @@ pub(crate) mod tests {
     async fn a_rejection_body_is_cut_on_a_character_boundary() {
         let body = format!("{}é tail", "x".repeat(299));
         let base_url = stub_api_status(400, "Bad Request", body).await;
-        let mut client = TradeApiClient::new(None);
+        let mut client = TradeApiClient::new(&crate::http::ProxyConfig::none());
         client.base_url = base_url;
 
         let error = client
@@ -983,7 +983,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_search_the_server_failed_to_serve_reads_back_as_retryable() {
         let base_url = stub_api_status(503, "Service Unavailable", "upstream unavailable").await;
-        let mut client = TradeApiClient::new(None);
+        let mut client = TradeApiClient::new(&crate::http::ProxyConfig::none());
         client.base_url = base_url;
 
         let error = client
@@ -1006,7 +1006,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_rate_limited_search_reads_back_as_a_client_error() {
         let base_url = stub_api_status(429, "Too Many Requests", "").await;
-        let mut client = TradeApiClient::new(None);
+        let mut client = TradeApiClient::new(&crate::http::ProxyConfig::none());
         client.base_url = base_url;
 
         let error = client
@@ -1037,7 +1037,7 @@ pub(crate) mod tests {
 
     /// One shared client pointed at the local GGG stub.
     fn stub_client(stub: &StubApi) -> Arc<TradeApiClient> {
-        let mut client = TradeApiClient::new(None);
+        let mut client = TradeApiClient::new(&crate::http::ProxyConfig::none());
         client.base_url = stub.base_url.clone();
         Arc::new(client)
     }
@@ -1326,7 +1326,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn lookup_query_fails_closed_on_an_unset_league_without_reaching_the_api() {
         let stub = stub_api(search_ok(), fetch_ok()).await;
-        let mut client = TradeApiClient::new(None);
+        let mut client = TradeApiClient::new(&crate::http::ProxyConfig::none());
         client.base_url = stub.base_url.clone();
         let events = Mutex::new(Vec::new());
 

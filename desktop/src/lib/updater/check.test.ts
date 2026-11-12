@@ -64,7 +64,7 @@ beforeEach(() => {
 	entitlements.role = '';
 	entitlements.channel = 'stable';
 	entitlements.features = [];
-	vi.mocked(getProxySettings).mockResolvedValue({ saved: '', inEffect: '' });
+	vi.mocked(getProxySettings).mockResolvedValue({ saved: '', inEffect: '', savedTrade: true, tradeInEffect: true, updaterProxy: '' });
 	// The half-failed paths log on purpose; one test below asserts on it.
 	warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
@@ -96,18 +96,27 @@ describe('checkForUpdate on a stable device', () => {
 describe('checkForUpdate with a proxy setting', () => {
 	it('passes the proxy in effect to the stable check', async () => {
 		vi.mocked(getProxySettings).mockResolvedValue({
-			saved: 'socks5://127.0.0.1:1080',
-			inEffect: 'http://127.0.0.1:8080'
+			saved: 'http://127.0.0.1:8080',
+			inEffect: 'socks5://127.0.0.1:1080',
+			savedTrade: true,
+			tradeInEffect: true,
+			updaterProxy: 'socks5h://127.0.0.1:1080'
 		});
 		vi.mocked(check).mockResolvedValue(null);
 
 		await checkForUpdate();
 
-		expect(check).toHaveBeenCalledWith({ proxy: 'http://127.0.0.1:8080' });
+		expect(check).toHaveBeenCalledWith({ proxy: 'socks5h://127.0.0.1:1080' });
 	});
 
 	it('calls the stable check without options when no proxy is in effect', async () => {
-		vi.mocked(getProxySettings).mockResolvedValue({ saved: 'http://127.0.0.1:8080', inEffect: '' });
+		vi.mocked(getProxySettings).mockResolvedValue({
+			saved: 'http://127.0.0.1:8080',
+			inEffect: '',
+			savedTrade: true,
+			tradeInEffect: true,
+			updaterProxy: ''
+		});
 		vi.mocked(check).mockResolvedValue(null);
 
 		await checkForUpdate();

@@ -2,7 +2,8 @@
 	let {
 		checked = $bindable(),
 		label,
-		onchange
+		onchange,
+		disabled = false
 	}: {
 		checked?: boolean;
 		/**
@@ -25,6 +26,8 @@
 		 * `bind:checked` caller is unaffected.
 		 */
 		onchange?: (checked: boolean) => void;
+		/** Greyed and non-interactive; the value is kept. */
+		disabled?: boolean;
 	} = $props();
 
 	const action = $derived(checked ? 'Disable' : 'Enable');
@@ -36,6 +39,8 @@
 	role="switch"
 	aria-checked={checked}
 	aria-label={label ? `${action} ${label}` : action}
+	{disabled}
+	aria-disabled={disabled}
 	onclick={() => { checked = !checked; onchange?.(checked); }}
 >
 	<span class="knob"></span>
@@ -53,6 +58,11 @@
 		padding: 0;
 		flex-shrink: 0;
 		transition: background 0.15s, border-color 0.15s;
+	}
+
+	.toggle:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
 	}
 
 	.toggle.on {

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	import { getProxySettings, setProxyUrl } from '$lib/proxy';
+	import { getProxySettings, proxyRestartNeeded, setProxyTrade, setProxyUrl, type ProxySettings } from '$lib/proxy';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { createSettingsUpdateController } from '$lib/updater/settings-update.svelte';
 	import { store } from '$lib/stores/status.svelte';
@@ -66,9 +66,9 @@
 
 	// --- Proxy (POE-360) ---
 	// Rust validates and owns the value; it applies on the next launch, so the
-	// note shows while the saved value differs from the one in effect.
-	let proxySaved = $state('');
-	let proxyInEffect = $state('');
+	// note shows while the saved URL or trade flag differs from the ones in effect.
+	let proxy = $state<ProxySettings>({ saved: '', inEffect: '', savedTrade: true, tradeInEffect: true, updaterProxy: '' });
+	let proxySaved = $derived(proxy.saved);
 	let editingProxy = $state(false);
 	let editProxyValue = $state('');
 	let proxyError = $state('');
@@ -76,8 +76,7 @@
 	$effect(() => {
 		getProxySettings()
 			.then((p) => {
-				proxySaved = p.saved;
-				proxyInEffect = p.inEffect;
+				proxy = p;
 			})
 			.catch((e: any) => console.warn('[settings] load proxy failed:', e));
 	});
@@ -96,11 +95,20 @@
 	async function saveProxy() {
 		try {
 			await setProxyUrl(editProxyValue);
-			proxySaved = (await getProxySettings()).saved;
+			proxy = await getProxySettings();
 			editingProxy = false;
 			proxyError = '';
 		} catch (e: any) {
 			proxyError = String(e);
+		}
+	}
+
+	async function saveProxyTrade(enabled: boolean) {
+		try {
+			await setProxyTrade(enabled);
+			proxy = await getProxySettings();
+		} catch (e: any) {
+			console.warn('[settings] save proxy trade setting failed:', e);
 		}
 	}
 
@@ -855,7 +863,16 @@
 					<span class="setting-error">{proxyError}</span>
 				</div>
 			{/if}
-			{#if proxySaved !== proxyInEffect}
+			<div class="setting-row">
+				<span class="setting-label">Use the proxy for trade requests (pathofexile.com) too</span>
+				<Toggle
+					checked={proxy.savedTrade}
+					label="the proxy for trade requests"
+					disabled={!proxySaved}
+					onchange={saveProxyTrade}
+				/>
+			</div>
+			{#if proxyRestartNeeded(proxy)}
 				<p class="setting-note">Restart the app to apply.</p>
 			{/if}
 

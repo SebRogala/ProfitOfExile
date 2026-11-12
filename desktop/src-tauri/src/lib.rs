@@ -352,7 +352,7 @@ pub struct AppState {
     pub server_http: reqwest::Client,
     /// The proxy `run()` read at startup and every transport uses until the
     /// next launch; the saved `Settings::proxy_url` may differ.
-    pub proxy_in_effect: Option<http::ProxyUrl>,
+    pub proxy_in_effect: http::ProxyConfig,
     /// Cancel signal for the current log watcher. Send () to stop it.
     pub watcher_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
     /// Cached comparator overlay data (results + trade data) shared between windows.
@@ -2012,12 +2012,36 @@ fn get_webview_gpu_disabled(app: AppHandle) -> bool {
 struct ProxySettings {
     saved: String,
     in_effect: String,
+    saved_trade: bool,
+    trade_in_effect: bool,
+    /// The in-effect proxy as the updater's `check({ proxy })` takes it
+    /// (`socks5h://` for SOCKS); empty when none.
+    updater_proxy: String,
 }
 
 #[tauri::command]
 fn get_proxy_settings(app: AppHandle) -> ProxySettings {
-    let in_effect = app.state::<AppState>().proxy_in_effect.as_ref().map(|p| p.as_str().to_string());
-    ProxySettings { saved: settings::load(&app).proxy_url, in_effect: in_effect.unwrap_or_default() }
+    let in_effect = &app.state::<AppState>().proxy_in_effect;
+    let saved = settings::load(&app);
+    ProxySettings {
+        saved: saved.proxy_url,
+        in_effect: in_effect.url.as_ref().map(|p| p.as_str().to_string()).unwrap_or_default(),
+        saved_trade: saved.proxy_trade,
+        trade_in_effect: in_effect.trade,
+        updater_proxy: in_effect
+            .for_transport(http::Transport::Other)
+            .map(http::ProxyUrl::for_http_clients)
+            .unwrap_or_default(),
+    }
+}
+
+/// Stores whether trade requests use the proxy; applies after a restart.
+#[tauri::command]
+fn set_proxy_trade(enabled: bool, app: AppHandle) {
+    let mut s = settings::load(&app);
+    s.proxy_trade = enabled;
+    settings::save(&app, &s);
+    app_log(&app, format!("Proxy for trade requests {} — applies after restart", if enabled { "on" } else { "off" }));
 }
 
 /// Stores a validated proxy (empty clears it); applies after a restart.
@@ -3282,18 +3306,22 @@ pub fn run() {
         .is_some_and(settings::webview_gpu_disabled_in);
     // Also before the builder: the proxy goes into the WebView2 args and into
     // both reqwest clients below.
-    let (proxy_in_effect, proxy_rejection) =
+    let (proxy_url, proxy_rejection) =
         match http::ProxyUrl::parse(&settings_path.as_deref().map(settings::proxy_url_in).unwrap_or_default()) {
             Ok(proxy) => (proxy, None),
             Err(e) => (None, Some(e)),
         };
+    let proxy_in_effect = http::ProxyConfig {
+        url: proxy_url,
+        trade: settings_path.as_deref().is_none_or(settings::proxy_trade_in),
+    };
     let prior = std::env::var(WEBVIEW2_ARGS_ENV).unwrap_or_default();
     if !prior.is_empty() {
         log::warn!("{} already set ({:?}); appending our flags", WEBVIEW2_ARGS_ENV, prior);
     }
     std::env::set_var(
         WEBVIEW2_ARGS_ENV,
-        webview2_browser_args(&prior, webview_gpu_disabled, proxy_in_effect.as_ref()),
+        webview2_browser_args(&prior, webview_gpu_disabled, proxy_in_effect.url.as_ref()),
     );
 
     let pair_code = generate_pair_code();
@@ -3313,7 +3341,7 @@ pub fn run() {
     if let Ok(v) = reqwest::header::HeaderValue::from_str(version) {
         default_headers.insert("X-App-Version", v);
     }
-    let server_http = http::client_builder(proxy_in_effect.as_ref())
+    let server_http = http::client_builder(&proxy_in_effect, http::Transport::Other)
         .default_headers(default_headers)
         .build()
         .expect("failed to build server HTTP client");
@@ -3343,7 +3371,7 @@ pub fn run() {
         logs: Mutex::new(Vec::new()),
         sidebar_open: Mutex::new(true),
         game_focused: Mutex::new(false),
-        trade_client: trade::TradeApiClient::new(proxy_in_effect.as_ref()),
+        trade_client: trade::TradeApiClient::new(&proxy_in_effect),
         server_http,
         proxy_in_effect: proxy_in_effect.clone(),
         watcher_cancel: Mutex::new(None),
@@ -3486,6 +3514,7 @@ pub fn run() {
             set_webview_gpu_disabled,
             get_proxy_settings,
             set_proxy_url,
+            set_proxy_trade,
             set_timer_appearance,
             get_lab_overlays_enabled,
             set_lab_overlays_enabled,
@@ -3527,8 +3556,9 @@ pub fn run() {
             if webview_gpu_disabled {
                 app_log(&handle, "WebView2 started with --disable-gpu (GPU-free rendering setting)".into());
             }
-            if let Some(proxy) = &proxy_in_effect {
-                app_log(&handle, format!("Proxy in effect: {}", proxy.as_str()));
+            if let Some(proxy) = &proxy_in_effect.url {
+                let trade = if proxy_in_effect.trade { "" } else { " (trade requests direct)" };
+                app_log(&handle, format!("Proxy in effect: {}{trade}", proxy.as_str()));
             }
             if let Some(rejection) = &proxy_rejection {
                 app_log(&handle, format!("Saved proxy ignored, connecting directly: {rejection}"));

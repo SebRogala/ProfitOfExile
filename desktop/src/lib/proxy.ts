@@ -4,6 +4,16 @@ import { invoke } from '@tauri-apps/api/core';
 export interface ProxySettings {
 	saved: string;
 	inEffect: string;
+	/** Whether trade requests (pathofexile.com) use the proxy too. */
+	savedTrade: boolean;
+	tradeInEffect: boolean;
+	/** The proxy in effect as the updater takes it (socks5h for SOCKS); empty when none. */
+	updaterProxy: string;
+}
+
+/** Saved settings differ from the ones this run started with. */
+export function proxyRestartNeeded(p: ProxySettings): boolean {
+	return p.saved !== p.inEffect || p.savedTrade !== p.tradeInEffect;
 }
 
 export function getProxySettings(): Promise<ProxySettings> {
@@ -13,4 +23,8 @@ export function getProxySettings(): Promise<ProxySettings> {
 /** Rejects with the validation message for anything but http/https/socks5. */
 export function setProxyUrl(url: string): Promise<void> {
 	return invoke('set_proxy_url', { url });
+}
+
+export function setProxyTrade(enabled: boolean): Promise<void> {
+	return invoke('set_proxy_trade', { enabled });
 }
