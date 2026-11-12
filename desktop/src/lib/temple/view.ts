@@ -602,11 +602,11 @@ export interface OfferBox {
 
 	// ------------------------------------------- what the number is (POE-260)
 
-	/** The room's worth in chaos per run, or null when no market answered and
-	 *  the letter ladder ranked it — there is no chaos number to print then,
-	 *  and [`valueText`](Self.valueText) carries the grade instead. */
+	/** The room's worth in chaos per run, or null when the offer resolved to
+	 *  no room. On the fallback ladder it is the rung's chaos, marked `est.`
+	 *  (POE-368, T10/T11). */
 	value: number | null;
-	/** What the value slot prints: `"96"`, or `"grade A1"` on the ladder.
+	/** What the value slot prints: `"96"`, in every state.
 	 *  Null when the offer resolved to no room — there is nothing to price, so
 	 *  the box draws no value row at all rather than a zero or a dash. */
 	valueText: string | null;
@@ -627,12 +627,12 @@ export interface OfferBox {
 	/** `"floor · 2 unpriced"` on a partial sum, else null. It replaces
 	 *  `per run` in the value row, so the row's height does not move. */
 	chip: string | null;
-	/** The single box-level provenance marks: `F` for the grade fallback and
-	 *  `G` when any value term is guessed.
+	/** The single box-level provenance marks: `F` for the fallback ladder and
+	 *  `G` when any value term is guessed or the value is a fallback rung.
 	 *
 	 *  Kept as DATA and no longer drawn as letters. POE-277's v5 retired both
-	 *  boxed glyphs from the overlay: `F` said twice what `grade C1` already
-	 *  said in words, and `G` became the muted ` · est.` on the header's second
+	 *  boxed glyphs from the overlay: `F` is said by the ` · est.` its `G`
+	 *  brings, and `G` became the muted ` · est.` on the header's second
 	 *  line — so the box reads this array for that one word and prints nothing
 	 *  else from it. The page and the tests still read both letters. */
 	marks: BoxMark[];
@@ -1013,7 +1013,7 @@ function offerBonusLine(value: RoomValueView): OfferBonus | null {
  * the empty-drop wording yields to it; the instrumental and own-number wordings
  * are about the VALUE — where the number came from — and still print under the
  * content row (POE-277 WI-6). Three different facts share the slot because no
- * box can carry two of them: a room valued at its letter has no priced sale, a
+ * box can carry two of them: an estimated room has no priced sale, a
  * room the player priced has one row that is their own number, and a room with
  * no drops has an empty list that would otherwise read as a missing read.
  */
@@ -1028,7 +1028,7 @@ function offerNote(state: OfferValueState, rows: OfferDriver[], content: string 
 	// content lines, and the wording stays: the content cell says what the
 	// room does, this line says why the number is a rung and not a sum.
 	if (state === 'instrumental') {
-		return 'valued at its letter — its worth is what it does, not what it drops';
+		return 'estimated — its worth is what it does, not what it drops';
 	}
 	if (content !== null) return null;
 	if (rows.length === 0 && state !== 'fallback') {
@@ -1038,12 +1038,8 @@ function offerNote(state: OfferValueState, rows: OfferDriver[], content: string 
 }
 
 /** What the value slot prints, and whether there is a chaos number behind it. */
-function offerValueText(offer: OfferView, value: RoomValueView, state: OfferValueState): string {
-	// The ladder has no chaos number to print — the letter IS the answer — and
-	// an invented one would be the fabrication epic lock L4 exists to prevent.
-	// The `?? ` branch is unreachable in practice (a valued room resolved to a
-	// line, and a line has a grade) and is here because `grade` is nullable.
-	if (state === 'fallback') return `grade ${offer.grade ?? '—'}`;
+function offerValueText(value: RoomValueView): string {
+	// Interim (POE-368, T10/T11): a fallback box prints the rung's chaos, marked `est.`.
 	return offerChaos(value.total);
 }
 
@@ -1075,7 +1071,11 @@ function offerBoxMarks(
 ): BoxMark[] {
 	const marks: BoxMark[] = [];
 	if (state === 'fallback') marks.push('F');
-	if (value.guessed || rows.some((row) => row.marks.includes('G'))) marks.push('G');
+	// A fallback slot prints a rung number, not a priced sum, so it wears
+	// ` · est.` like a guessed one (POE-368, T10/T11).
+	if (state === 'fallback' || value.guessed || rows.some((row) => row.marks.includes('G'))) {
+		marks.push('G');
+	}
 	return marks;
 }
 
@@ -1112,7 +1112,7 @@ function offerStripPrices(terms: DriverTerm[]): string | null {
  * is wrong about the code: a stale read prices nothing (`MarketInput::is_live`
  * is false, so `prices_anything` is false), every line takes `cold_fallback`'s
  * single `GradeFallback` driver, and the box comes back in the FALLBACK form —
- * the grade and an `F`, no rows. It gets SHORTER, not
+ * the rung's chaos marked `est.`, no rows. It gets SHORTER, not
  * equal. What makes `stale` redundant in this string is that `state` is already
  * in it: the transition a snapshot ageing causes is `market` → `fallback`, and
  * that re-measures on the field that names the form. The flag itself buys no
@@ -1253,10 +1253,11 @@ export function offerBoxes(slice: TempleSlice, now: number = Date.now()): OfferB
 			forced: pick ? forcedKillNote(advice) : null,
 			market,
 			ageLine,
-			// The ladder's boxes carry no chaos number, and neither does an
-			// unresolved offer — `valueText` says which of the two it is.
-			value: value === null || state === 'fallback' ? null : value.total,
-			valueText: value === null || state === null ? null : offerValueText(offer, value, state),
+			// Only an unresolved offer carries no number; a fallback box
+			// carries the rung's chaos.
+			value: value === null ? null : value.total,
+			valueText: value === null || state === null ? null : offerValueText(value),
+
 			state,
 			chip: state === null ? null : offerChip(state, allRows),
 			marks: value === null || state === null ? [] : offerBoxMarks(value, state, allRows),

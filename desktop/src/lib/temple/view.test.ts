@@ -165,6 +165,11 @@ function advice(over: Partial<AdviceView> = {}): AdviceView {
 	};
 }
 
+/** POE-368's predicate: a grade letter (`A1`…`E9`) or the word grade/letter. */
+function hasGradeLetter(text: string | null): boolean {
+	return text !== null && (/[A-E][1-9]/.test(text) || /grade|letter/i.test(text));
+}
+
 function offer(over: Partial<OfferView> = {}): OfferView {
 	return {
 		index: 0,
@@ -1636,9 +1641,9 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(box.drivers[0].price).toBe('no price');
 	});
 
-	it('shows the LETTER with F and G marks where the ladder priced the room', () => {
-		// Epic lock L4: no market, no chaos number. The grade is the answer and
-		// the box says so rather than printing a rung as if it were a price.
+	it("prints the rung's chaos on a fallback box, marked as an estimate", () => {
+		// POE-368 (T10/T11): no grade letter is drawn; the slot prints Rust's
+		// rung total unchanged and the `G` mark brings ` · est.`.
 		const box = only(
 			offer({
 				grade: 'A1',
@@ -1646,9 +1651,31 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 			})
 		);
 
-		expect(box.valueText).toBe('grade A1');
-		expect(box.value).toBeNull();
+		expect(box.valueText).toBe('846');
+		expect(box.value).toBe(846);
 		expect(box.marks).toEqual(['F', 'G']);
+		expect(hasGradeLetter(box.valueText)).toBe(false);
+	});
+
+	it('prints the same rung on every fallback box whatever the line\'s grade', () => {
+		const boxes = offerBoxes(
+			slice([
+				offer({
+					index: 0,
+					grade: 'A1',
+					value: value({ priced: 'fallback', total: 846, drivers: [uniqueTerm({ unitPrice: null, chaos: null })] })
+				}),
+				offer({
+					index: 1,
+					grade: 'E7',
+					value: value({ priced: 'fallback', total: 1, drivers: [uniqueTerm({ unitPrice: null, chaos: null })] })
+				})
+			])
+		);
+
+		expect(boxes.map((box) => box.offer.index)).toEqual([0, 1]);
+		expect(boxes.map((box) => box.valueText)).toEqual(['846', '1']);
+		expect(boxes.some((box) => hasGradeLetter(box.valueText))).toBe(false);
 	});
 
 	it('words an instrumental line as what it DOES, never as a missing price', () => {
@@ -1660,7 +1687,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 			offer({ grade: 'C1', value: value({ priced: 'instrumental', total: 21.15, drivers: [] }) })
 		);
 
-		expect(box.note).toBe('valued at its letter — its worth is what it does, not what it drops');
+		expect(box.note).toBe('estimated — its worth is what it does, not what it drops');
+		expect(hasGradeLetter(box.note)).toBe(false);
 		expect(box.valueText).toBe('21');
 		expect(box.marks).not.toContain('F');
 	});
@@ -1702,7 +1730,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		);
 
 		expect(box.content).toBe('Upgrade a room');
-		expect(box.note).toBe('valued at its letter — its worth is what it does, not what it drops');
+		expect(box.note).toBe('estimated — its worth is what it does, not what it drops');
 	});
 
 	it('yields the empty-drop wording to the content cell', () => {
@@ -2006,7 +2034,7 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 		expect(offerBoxesSource).toContain('return box.marks.includes(\'G\');');
 	});
 
-	it('keeps the fallback F mark when its terms are not guessed', () => {
+	it('marks a cold fallback box as an estimate though no term is guessed', () => {
 		const box = only(
 			offer({
 				grade: 'A1',
@@ -2018,7 +2046,8 @@ describe('offerBoxes — what the number is made of (POE-260)', () => {
 			})
 		);
 
-		expect(box.marks).toEqual(['F']);
+		expect(box.marks).toEqual(['F', 'G']);
+
 	});
 
 	it('reports the market\'s own staleness, not the value\'s withheld age', () => {

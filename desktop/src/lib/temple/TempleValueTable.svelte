@@ -217,11 +217,6 @@
 							<span>Room line</span><span class="arrow" aria-hidden="true">{sortArrow('room')}</span>
 						</button>
 					</th>
-					<th class="grade" aria-sort={ariaSort('grade')}>
-						<button type="button" class="sort" onclick={() => pickSort('grade')}>
-							<span>Grade</span><span class="arrow" aria-hidden="true">{sortArrow('grade')}</span>
-						</button>
-					</th>
 					{#if showAllTiers}
 						<th>Tier 1</th>
 						<th>Tier 2</th>
@@ -237,7 +232,7 @@
 				{#each ordered as row (row.key)}
 					<tr>
 						<td class="room">{row.name}</td>
-						<td class="grade">{row.grade}</td>
+
 						{#each shownCells(row) as cell (cell.tier)}
 							<td class="cell">
 								{#if editable}
@@ -354,8 +349,7 @@
 		border-bottom: 1px solid var(--color-lab-border);
 	}
 
-	th.room,
-	th.grade {
+	th.room {
 		text-align: left;
 	}
 
@@ -399,9 +393,6 @@
 		white-space: nowrap;
 	}
 
-	td.grade {
-		color: var(--color-lab-text-muted);
-	}
 
 	td.cell {
 		text-align: right;

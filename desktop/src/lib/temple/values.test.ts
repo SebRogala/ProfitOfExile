@@ -4,6 +4,7 @@ import {
 	PRESET_NOTE,
 	PRESET_OPTIONS,
 	TIERS,
+	VALUE_MARK_LABEL,
 	VALUE_MARK_LEGEND,
 	copyValuesInto,
 	formatChaos,
@@ -164,6 +165,17 @@ describe('VALUE_MARK_LEGEND', () => {
 	});
 });
 
+describe('VALUE_MARK_LABEL', () => {
+	it('words no provenance by a grade or a letter', () => {
+		// POE-368 A1: the legend and the cell titles print these verbatim.
+		expect(VALUE_MARK_LABEL.I).toBe('instrumental — estimated');
+		expect(VALUE_MARK_LABEL.F).toBe('fallback — estimated, nothing priced it');
+		for (const label of Object.values(VALUE_MARK_LABEL)) {
+			expect(label).not.toMatch(/grade|letter/i);
+		}
+	});
+});
+
 describe('valueRows', () => {
 	const rows = [
 		row('corruption', 'Locus of Corruption', [
@@ -188,10 +200,6 @@ describe('valueRows', () => {
 		]);
 	});
 
-	it('carries Rust pick order through to the sortable row', () => {
-		const input = { ...rows[0], pickOrder: 17 };
-		expect(valueRows([input], null)[0].pickOrder).toBe(17);
-	});
 
 	it('reads each cell off its own tier rather than off the row', () => {
 		// The three cells carry three different numbers, so a projection that
@@ -199,12 +207,30 @@ describe('valueRows', () => {
 		expect(valueRows(rows, null)[0].cells.map((c) => c.total)).toEqual([676.8, 676.8, 846]);
 	});
 
-	it('carries the line name and grade through for the row heading', () => {
+	it('carries the line name through for the row heading', () => {
 		expect(valueRows(rows, null)[0]).toMatchObject({
 			key: 'corruption',
-			name: 'Locus of Corruption',
-			grade: 'A1'
+			name: 'Locus of Corruption'
 		});
+	});
+
+	it('keeps every fallback cell at the wire\'s rung under the tier-3 sort', () => {
+		// POE-368 A2: with nothing priced, the table shows Rust's rung totals
+		// unchanged and orders them by value.
+		const cold = (key: string, total: number) =>
+			row(key, key, [
+				{ priced: 'fallback', total },
+				{ priced: 'fallback', total },
+				{ priced: 'fallback', total }
+			]);
+		const derived = valueRows([cold('a', 20), cold('b', 2), cold('c', 846)], null);
+
+		expect(derived.map((r) => r.cells.map((c) => [c.total, c.mark]))).toEqual([
+			[[20, 'F'], [20, 'F'], [20, 'F']],
+			[[2, 'F'], [2, 'F'], [2, 'F']],
+			[[846, 'F'], [846, 'F'], [846, 'F']]
+		]);
+		expect(sortValueRows(derived, 'tier3', 'desc').map((r) => r.cells[2].total)).toEqual([846, 20, 2]);
 	});
 
 	it('marks each cell from its own provenance', () => {
@@ -667,15 +693,12 @@ describe('KNOBS', () => {
  *  column is a sort key. */
 function vrow(
 	name: string,
-	grade: string,
 	tier3: number,
 	overrides: (number | null)[] = [null, null, null]
 ): ValueRow {
 	return {
 		key: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
 		name,
-		grade,
-		pickOrder: 0,
 		cells: TIERS.map((tier) => ({
 			tier,
 			total: tier === 3 ? tier3 : tier3 * 0.8,
@@ -689,7 +712,7 @@ function vrow(
 describe('sortValueRows', () => {
 	it('puts the most valuable tier-3 room first in desc', () => {
 		const sorted = sortValueRows(
-			[vrow('Chamber of Iron', 'C2', 1.86), vrow('Locus of Corruption', 'A1', 856)],
+			[vrow('Chamber of Iron', 1.86), vrow('Locus of Corruption', 856)],
 			'tier3',
 			'desc'
 		);
@@ -699,7 +722,7 @@ describe('sortValueRows', () => {
 
 	it('puts the cheapest tier-3 room first in asc', () => {
 		const sorted = sortValueRows(
-			[vrow('Locus of Corruption', 'A1', 856), vrow('Chamber of Iron', 'C2', 1.86)],
+			[vrow('Locus of Corruption', 856), vrow('Chamber of Iron', 1.86)],
 			'tier3',
 			'asc'
 		);
@@ -711,16 +734,16 @@ describe('sortValueRows', () => {
 		// A comparator on `cells[0]` would order these two the same way, so the
 		// cheaper room carries a HAND-PRICED tier 1 that outvalues the other's
 		// tier 3. Only reading tier 3 keeps Locus on top.
-		const cheap = vrow('Sadist’s Den', 'C2', 10);
+		const cheap = vrow('Sadist’s Den', 10);
 		cheap.cells[0].total = 5000;
-		const sorted = sortValueRows([cheap, vrow('Locus of Corruption', 'A1', 856)], 'tier3', 'desc');
+		const sorted = sortValueRows([cheap, vrow('Locus of Corruption', 856)], 'tier3', 'desc');
 
 		expect(sorted.map((r) => r.name)).toEqual(['Locus of Corruption', 'Sadist’s Den']);
 	});
 
 	it('reads the room column A to Z in asc', () => {
 		const sorted = sortValueRows(
-			[vrow('Toxic Grove', 'C2', 2.65), vrow('Apex of Ascension', 'D3', 0.07)],
+			[vrow('Toxic Grove', 2.65), vrow('Apex of Ascension', 0.07)],
 			'room',
 			'asc'
 		);
@@ -730,7 +753,7 @@ describe('sortValueRows', () => {
 
 	it('reads the room column Z to A in desc', () => {
 		const sorted = sortValueRows(
-			[vrow('Apex of Ascension', 'D3', 0.07), vrow('Toxic Grove', 'C2', 2.65)],
+			[vrow('Apex of Ascension', 0.07), vrow('Toxic Grove', 2.65)],
 			'room',
 			'desc'
 		);
@@ -738,19 +761,6 @@ describe('sortValueRows', () => {
 		expect(sorted.map((r) => r.name)).toEqual(['Toxic Grove', 'Apex of Ascension']);
 	});
 
-	it.each(['asc', 'desc'] as const)('sorts by Rust pick order in %s, ignoring display strings', (direction) => {
-		// Deliberately disagree with lexical order: the transport order is
-		// authoritative, so a second scale inferred from labels must fail.
-		const rows = [
-			{ ...vrow('Crucible', 'A3', 1), pickOrder: 8 },
-			{ ...vrow('Factory', 'B1', 1), pickOrder: 1 },
-			{ ...vrow('Nexus', 'C1', 1), pickOrder: 4 }
-		];
-		const sorted = sortValueRows(rows, 'grade', direction);
-		expect(sorted.map((r) => r.grade)).toEqual(
-			direction === 'asc' ? ['B1', 'C1', 'A3'] : ['A3', 'C1', 'B1']
-		);
-	});
 
 	it('breaks a tie on the room name ascending, even under desc', () => {
 		// The tie-break is there to make the order the same on every re-sort,
@@ -758,7 +768,7 @@ describe('sortValueRows', () => {
 		// direction would move two equal rows past each other for no stated
 		// reason.
 		const sorted = sortValueRows(
-			[vrow('Chamber', 'C2', 100), vrow('Apex', 'C2', 100), vrow('Bath', 'C2', 100)],
+			[vrow('Chamber', 100), vrow('Apex', 100), vrow('Bath', 100)],
 			'tier3',
 			'desc'
 		);
@@ -769,7 +779,7 @@ describe('sortValueRows', () => {
 	it('leaves the array it was handed in the order it arrived', () => {
 		// The caller holds the SSOT's own rows. Sorting in place would reorder
 		// the snapshot every other reader of it is looking at.
-		const rows = [vrow('Chamber of Iron', 'C2', 1.86), vrow('Locus of Corruption', 'A1', 856)];
+		const rows = [vrow('Chamber of Iron', 1.86), vrow('Locus of Corruption', 856)];
 
 		sortValueRows(rows, 'tier3', 'desc');
 
@@ -786,9 +796,9 @@ describe('DEFAULT_VALUE_SORT', () => {
 		// is one the player has to fix by hand every launch.
 		const sorted = sortValueRows(
 			[
-				vrow('Chamber of Iron', 'C2', 1.86),
-				vrow('Doryani’s Institute', 'A2', 400),
-				vrow('Locus of Corruption', 'A1', 856)
+				vrow('Chamber of Iron', 1.86),
+				vrow('Doryani’s Institute', 400),
+				vrow('Locus of Corruption', 856)
 			],
 			DEFAULT_VALUE_SORT.key,
 			DEFAULT_VALUE_SORT.direction
@@ -817,12 +827,6 @@ describe('nextValueSort', () => {
 		});
 	});
 
-	it('opens the grade column at the best grade', () => {
-		expect(nextValueSort({ key: 'room', direction: 'asc' }, 'grade')).toEqual({
-			key: 'grade',
-			direction: 'asc'
-		});
-	});
 
 	it('opens the tier-3 column at the most valuable room', () => {
 		expect(nextValueSort({ key: 'room', direction: 'asc' }, 'tier3')).toEqual({
@@ -847,7 +851,7 @@ describe('parseValueSort', () => {
 	it('reads back every sort it writes', () => {
 		// The pair is what survives a restart (ADR-013). A serialize the parser
 		// does not accept is a table that silently reopens on the default.
-		for (const key of ['room', 'grade', 'tier3'] as const) {
+		for (const key of ['room', 'tier3'] as const) {
 			for (const direction of ['asc', 'desc'] as const) {
 				const sort = { key, direction };
 				expect(parseValueSort(serializeValueSort(sort))).toEqual(sort);
@@ -855,7 +859,13 @@ describe('parseValueSort', () => {
 		}
 	});
 
+	it('falls back to the default on the retired grade column', () => {
+		expect(parseValueSort('grade:asc')).toEqual(DEFAULT_VALUE_SORT);
+		expect(parseValueSort('grade:desc')).toEqual(DEFAULT_VALUE_SORT);
+	});
+
 	it('falls back to the default on a column this build does not have', () => {
+
 		expect(parseValueSort('tier1:desc')).toEqual(DEFAULT_VALUE_SORT);
 	});
 
@@ -888,7 +898,7 @@ describe('orderRows', () => {
 		// The SSOT hands over a fresh array every three seconds. The order is
 		// the reader's; the numbers are the poll's.
 		const held = ['locus-of-corruption', 'chamber-of-iron'];
-		const fresh = [vrow('Chamber of Iron', 'C2', 2.1), vrow('Locus of Corruption', 'A1', 900)];
+		const fresh = [vrow('Chamber of Iron', 2.1), vrow('Locus of Corruption', 900)];
 
 		expect(orderRows(fresh, held).map((r) => [r.name, r.cells[2].total])).toEqual([
 			['Locus of Corruption', 900],
@@ -897,7 +907,7 @@ describe('orderRows', () => {
 	});
 
 	it('drops a key no row answers rather than leaving a hole', () => {
-		const rows = [vrow('Chamber of Iron', 'C2', 1.86)];
+		const rows = [vrow('Chamber of Iron', 1.86)];
 
 		expect(orderRows(rows, ['gone', 'chamber-of-iron']).map((r) => r.name)).toEqual([
 			'Chamber of Iron'
@@ -905,7 +915,7 @@ describe('orderRows', () => {
 	});
 
 	it('keeps a row the held order does not name rather than losing it', () => {
-		const rows = [vrow('Chamber of Iron', 'C2', 1.86), vrow('Toxic Grove', 'C2', 2.65)];
+		const rows = [vrow('Chamber of Iron', 1.86), vrow('Toxic Grove', 2.65)];
 
 		expect(orderRows(rows, ['toxic-grove']).map((r) => r.name)).toEqual([
 			'Toxic Grove',
@@ -918,24 +928,24 @@ describe('hiddenOverrideTitle', () => {
 	it('lists both hidden tiers when one of them is priced by hand', () => {
 		// Collapsed, tiers 1 and 2 are off screen. A number the player typed
 		// that the table then shows nowhere is the one thing it must not do.
-		expect(hiddenOverrideTitle(vrow('Locus of Corruption', 'A1', 856, [500, null, null]))).toBe(
+		expect(hiddenOverrideTitle(vrow('Locus of Corruption', 856, [500, null, null]))).toBe(
 			'tier 1: 500 c, tier 2: —'
 		);
 	});
 
 	it('says nothing when neither hidden tier is priced by hand', () => {
-		expect(hiddenOverrideTitle(vrow('Locus of Corruption', 'A1', 856))).toBeNull();
+		expect(hiddenOverrideTitle(vrow('Locus of Corruption', 856))).toBeNull();
 	});
 
 	it('says nothing when only tier 3 is priced by hand, since tier 3 is on screen', () => {
-		expect(hiddenOverrideTitle(vrow('Locus of Corruption', 'A1', 856, [null, null, 900]))).toBeNull();
+		expect(hiddenOverrideTitle(vrow('Locus of Corruption', 856, [null, null, 900]))).toBeNull();
 	});
 
 	it('prints a hidden override the way the cell it stands for would', () => {
 		// `formatChaos` and not `toFixed(2)`: a sub-chaos override rendered as
 		// `0.00` reads as zero, which is what POE-262's significant-digit band
 		// exists to prevent.
-		expect(hiddenOverrideTitle(vrow('Sadist’s Den', 'C2', 10, [null, 0.015, null]))).toBe(
+		expect(hiddenOverrideTitle(vrow('Sadist’s Den', 10, [null, 0.015, null]))).toBe(
 			'tier 1: —, tier 2: 0.015 c'
 		);
 	});

@@ -109,8 +109,8 @@ export type ValueMark = 'O' | 'I' | 'F' | 'P' | 'G' | 'M';
 /** What each letter means, in the legend's own words. */
 export const VALUE_MARK_LABEL: Record<ValueMark, string> = {
 	O: 'your own number',
-	I: 'instrumental — priced at its letter',
-	F: 'grade fallback — nothing priced it',
+	I: 'instrumental — estimated',
+	F: 'fallback — estimated, nothing priced it',
 	P: 'partial — some terms could not be priced',
 	G: 'guessed — rests on an estimate',
 	M: 'measured — every term came from the market'
@@ -131,9 +131,9 @@ export const VALUE_MARK_LEGEND: string = (
  * precedence and not a switch over disjoint states, worst-provenance first:
  *
  * 1. `O` — the player stated the number, so nothing else about it is news.
- * 2. `I` — one of the two instrumental lines, priced at its letter because
+ * 2. `I` — one of the two instrumental lines, estimated because
  *    summing is the wrong question for it. Not a missing price.
- * 3. `F` — nothing at all was priced and the grade ladder stood in.
+ * 3. `F` — nothing at all was priced and the fallback ladder stood in.
  * 4. `P` — the sum is incomplete, so the number is an UNDERCOUNT. That outranks
  *    `G`, which says the number rests on an estimate but is whole.
  * 5. `G` / `M` — a complete sum, resting on an estimate or not.
@@ -263,9 +263,6 @@ export interface ValueCell {
 export interface ValueRow {
 	key: string;
 	name: string;
-	grade: string;
-	/** Rust-derived total pick order, zero = best. */
-	pickOrder: number;
 	cells: ValueCell[];
 }
 
@@ -280,8 +277,6 @@ export function valueRows(rows: TempleValueRow[], custom: TempleCustom | null): 
 	return rows.map((row) => ({
 		key: row.key,
 		name: row.name,
-		grade: row.grade,
-		pickOrder: row.pickOrder,
 		cells: TIERS.map((tier) => {
 			const value = row.tiers[tier - 1];
 			return {
@@ -305,11 +300,11 @@ export function overrideOf(custom: TempleCustom, key: string, tier: number): num
 
 // --- sorting, and the columns the table shows ------------------------------
 
-/** The three sortable columns. Tier 1 and 2 are not among them: they are
+/** The two sortable columns. Tier 1 and 2 are not among them: they are
  *  `tierFraction` of tier 3 (ADR-022 §1), so sorting on one of them is
  *  sorting on tier 3 with extra steps — unless the player overrode it, and a
  *  column that means two different things is not a sort key. */
-export type ValueSortKey = 'room' | 'grade' | 'tier3';
+export type ValueSortKey = 'room' | 'tier3';
 
 /** Which way a column is read. */
 export type ValueSortDirection = 'asc' | 'desc';
@@ -320,17 +315,16 @@ export interface ValueSort {
 	direction: ValueSortDirection;
 }
 
-/** What the table opens on: the moving number, biggest first. Grade never
- *  changes and the room name is a lookup order, so tier 3 is the only column
+/** What the table opens on: the moving number, biggest first. The room name
+ *  is a lookup order, so tier 3 is the only column
  *  whose default order tells the player something they did not already know. */
 export const DEFAULT_VALUE_SORT: ValueSort = { key: 'tier3', direction: 'desc' };
 
-/** Which way a column reads when it is FIRST clicked: a name ascends (A→Z), a
- *  pick order ascends (best first), and a value descends. A column that opened
+/** Which way a column reads when it is FIRST clicked: a name ascends (A→Z)
+ *  and a value descends. A column that opened
  *  at its least interesting end would cost every player a second click. */
 const FIRST_DIRECTION: Record<ValueSortKey, ValueSortDirection> = {
 	room: 'asc',
-	grade: 'asc',
 	tier3: 'desc'
 };
 
@@ -359,12 +353,12 @@ export function serializeValueSort(sort: ValueSort): string {
  *
  * Defensive on purpose: the value is a line in `settings.json` that a build
  * before this one never wrote and a build after this one may stop writing, so
- * anything that is not one of the six legal pairs falls back rather than
+ * anything that is not one of the four legal pairs falls back rather than
  * putting the table in a state no header can undo.
  */
 export function parseValueSort(raw: string): ValueSort {
 	const [key, direction] = raw.split(':');
-	if (key !== 'room' && key !== 'grade' && key !== 'tier3') return DEFAULT_VALUE_SORT;
+	if (key !== 'room' && key !== 'tier3') return DEFAULT_VALUE_SORT;
 	if (direction !== 'asc' && direction !== 'desc') return DEFAULT_VALUE_SORT;
 	return { key, direction };
 }
@@ -413,7 +407,7 @@ export function sortValueRows(
 	return [...rows].sort((a, b) => {
 		let primary = 0;
 		if (key === 'room') primary = a.name.localeCompare(b.name);
-		else if (key === 'grade') primary = a.pickOrder - b.pickOrder;
+
 		else primary = tier3Total(a) - tier3Total(b);
 		if (primary !== 0) return primary * sign;
 		return a.name.localeCompare(b.name);

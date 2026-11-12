@@ -34,8 +34,8 @@
 	 *   market warning — with a 1 px hairline between each pair that is
 	 *   present, never one over nothing. Every margin is drawn from
 	 *   `{3, 5, 6}` and stated per row.
-	 * - **Ramp.** Seven font sizes with no relationship became six: 22 (the
-	 *   value), 17 (the grade letter), 15 (the room name and the ladder rungs),
+	 * - **Ramp.** Seven font sizes with no relationship became five: 22 (the
+	 *   value), 15 (the room name and the ladder rungs),
 	 *   13 (prices, sale gain, architect name), 11 (kind, sale name, fold, the ladder's
 	 *   stat word, market line), 10 (the section label and
 	 *   the rate caption). The 15 px yellow ladder
@@ -65,8 +65,8 @@
 	 *   right, and it is the row's one droppable part — see `bonusAmount`.
 	 * - **One value token.** `39 c ⧠G` was three visual objects for one fact.
 	 *   It is `39c` in one span; the `G` box became the muted ` · est.` on the
-	 *   header's second line and the `F` box was dropped outright, because the
-	 *   value it sat beside already reads `grade C1`.
+	 *   header's second line and the `F` box was dropped outright, because a
+	 *   fallback value already wears ` · est.`.
 	 * - **The architect line names the block's architect, uncoloured.** It
 	 *   was the temple-mod block — Vertolka's green/red verdict on the name,
 	 *   its price and `Appears on:` word chips — until 3.30 removed the
@@ -84,7 +84,7 @@
 	 *
 	 * The honesty rules are the design's and are not negotiable in markup: an
 	 * unpriced item keeps its icon and reads `no price`, a board with no market
-	 * at all reads `—` and shows the grade instead of a chaos number, and
+	 * at all shows the rung's chaos marked `est.`, and
 	 * nothing is ever drawn as `0c` to fill a gap. `view.ts` decides all of
 	 * those words; this file only places them.
 	 *
@@ -437,7 +437,7 @@
 			{#if box.forced}<span class="forced">({box.forced})</span>{/if}
 			{#if box.valueText !== null}
 				<span class="val">
-					<span class="num" class:grade={box.value === null} class:stale={box.stale}
+					<span class="num" class:stale={box.stale}
 						>{box.valueText}{box.value === null ? '' : 'c'}</span
 					>
 				</span>
@@ -648,15 +648,6 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	/* The ladder's answer is a LETTER, not a number, and it is set smaller so
-	   the two are not mistaken for each other at a glance. No `F` box beside
-	   it: the value already reads `grade C1`, and the letter was saying twice
-	   what the word said once. */
-	.num.grade {
-		font-size: 17px;
-		letter-spacing: 0;
-	}
-
 	/* Marked on the value itself, because that is what a player would otherwise
 	   act on. Since POE-258's M1 fix `OfferBox.stale` is a CLOCK verdict
 	   (`view.ts::marketStale`, the read's own `asOf` against the published
@@ -664,9 +655,10 @@
 	   things and the mark means the same thing about both — do not act on this
 	   number:
 
-	   - the GRADE, on a board Rust valued off an already-stale snapshot: it
-	     priced nothing, so the box is in its fallback form (`OfferBox.state`)
-	     and the underline says the letter standing there is standing in;
+	   - the fallback RUNG'S CHAOS, on a board Rust valued off an already-stale
+	     snapshot: it priced nothing, so the box is in its fallback form
+	     (`OfferBox.state`) and the underline says the number is standing in;
+
 	   - a real CHAOS FIGURE, on a board that priced live and has since aged
 	     past two hours with nothing re-read: the number is a price that has
 	     gone old rather than a stand-in, which is also why `marketNote` drops

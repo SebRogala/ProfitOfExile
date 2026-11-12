@@ -582,11 +582,9 @@ function normaliseTemple(incoming: TempleSlice): TempleSlice {
 					},
 		// The panel's OFFERS go through the same rule one level deeper
 		// (POE-249): `grade` and `lineTop` are `serde(default)` on the Rust
-		// side, so a payload from a build before them carries neither, and
-		// `offerBoxes` tests `grade === null` to decide whether the box prints
-		// a rating line at all. `undefined` there is falsy by accident rather
-		// than by contract, and it makes the declared `string | null` a lie for
-		// anything that later reads it as one. Nothing else on the offer is
+		// side, so a payload from a build before them carries neither. No
+		// surface reads `grade` now (POE-368), but `undefined` would make the
+		// declared `string | null` a lie for anything that later reads it. Nothing else on the offer is
 		// touched: the rest has been on the wire since POE-243.
 		panel:
 			incoming.panel == null
